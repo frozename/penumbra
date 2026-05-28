@@ -1,35 +1,35 @@
-import { expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { runFileContents } from '../../src/recall-sources/file-contents.js';
+import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runFileContents } from "../../src/recall-sources/file-contents.js";
 
-test('file.contents returns text body when file exists and fits', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'file-contents-'));
-  const relPath = 'notes.txt';
+test("file.contents returns text body when file exists and fits", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "file-contents-"));
+  const relPath = "notes.txt";
   const absPath = join(dir, relPath);
-  writeFileSync(absPath, 'hello workflow recall\n');
+  writeFileSync(absPath, "hello workflow recall\n");
   try {
     const out = await runFileContents({ cwd: dir, args: { path: relPath } });
     expect(out.result.path).toBe(absPath);
-    expect(out.result.body).toBe('hello workflow recall\n');
+    expect(out.result.body).toBe("hello workflow recall\n");
     expect(out.result.truncated).toBe(false);
-    expect(out.result.byte_size).toBe(Buffer.byteLength('hello workflow recall\n'));
+    expect(out.result.byte_size).toBe(Buffer.byteLength("hello workflow recall\n"));
     expect(out.warnings).toEqual([]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('file.contents truncates body at max_bytes', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'file-contents-'));
-  const relPath = 'big.txt';
+test("file.contents truncates body at max_bytes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "file-contents-"));
+  const relPath = "big.txt";
   const absPath = join(dir, relPath);
-  writeFileSync(absPath, 'abcdefghij');
+  writeFileSync(absPath, "abcdefghij");
   try {
     const out = await runFileContents({ cwd: dir, args: { path: relPath, max_bytes: 4 } });
     expect(out.result.path).toBe(absPath);
-    expect(out.result.body).toBe('abcd');
+    expect(out.result.body).toBe("abcd");
     expect(out.result.truncated).toBe(true);
     expect(out.result.byte_size).toBe(10);
     expect(out.warnings.length).toBe(1);
@@ -38,47 +38,47 @@ test('file.contents truncates body at max_bytes', async () => {
   }
 });
 
-test('file.contents returns not_found error for missing file', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'file-contents-'));
+test("file.contents returns not_found error for missing file", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "file-contents-"));
   try {
-    const out = await runFileContents({ cwd: dir, args: { path: 'missing.txt' } });
-    expect(out.result.path).toBe(join(dir, 'missing.txt'));
+    const out = await runFileContents({ cwd: dir, args: { path: "missing.txt" } });
+    expect(out.result.path).toBe(join(dir, "missing.txt"));
     expect(out.result.body).toBeNull();
-    expect(out.result.error).toBe('not_found');
+    expect(out.result.error).toBe("not_found");
     expect(out.warnings).toEqual([]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('file.contents returns not_found when path is empty (workflow opt-out)', async () => {
-  const out = await runFileContents({ cwd: '/tmp', args: { path: '' } });
+test("file.contents returns not_found when path is empty (workflow opt-out)", async () => {
+  const out = await runFileContents({ cwd: "/tmp", args: { path: "" } });
   expect(out.result.body).toBeNull();
-  expect(out.result.error).toBe('not_found');
+  expect(out.result.error).toBe("not_found");
   expect(out.warnings).toEqual([]);
 });
 
-test('file.contents returns not_found when path resolves to a directory', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'file-contents-'));
+test("file.contents returns not_found when path resolves to a directory", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "file-contents-"));
   try {
-    const out = await runFileContents({ cwd: dir, args: { path: '.' } });
+    const out = await runFileContents({ cwd: dir, args: { path: "." } });
     expect(out.result.body).toBeNull();
-    expect(out.result.error).toBe('not_found');
+    expect(out.result.error).toBe("not_found");
     expect(out.warnings).toEqual([]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('file.contents marks binary files with placeholder body', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'file-contents-'));
-  const relPath = 'data.bin';
+test("file.contents marks binary files with placeholder body", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "file-contents-"));
+  const relPath = "data.bin";
   const absPath = join(dir, relPath);
   writeFileSync(absPath, Buffer.from([0x00, 0xff, 0x01, 0x02, 0x03]));
   try {
     const out = await runFileContents({ cwd: dir, args: { path: relPath } });
     expect(out.result.path).toBe(absPath);
-    expect(out.result.body).toBe('<binary file omitted>');
+    expect(out.result.body).toBe("<binary file omitted>");
     expect(out.result.truncated).toBe(false);
     expect(out.result.byte_size).toBe(5);
     expect(out.warnings).toEqual([]);
@@ -87,17 +87,17 @@ test('file.contents marks binary files with placeholder body', async () => {
   }
 });
 
-test('file.contents blocks paths outside cwd by default', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'file-contents-'));
-  const outsideDir = mkdtempSync(join(tmpdir(), 'file-contents-outside-'));
-  const absPath = join(outsideDir, 'outside.txt');
-  writeFileSync(absPath, 'nope\n');
+test("file.contents blocks paths outside cwd by default", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "file-contents-"));
+  const outsideDir = mkdtempSync(join(tmpdir(), "file-contents-outside-"));
+  const absPath = join(outsideDir, "outside.txt");
+  writeFileSync(absPath, "nope\n");
   try {
     const out = await runFileContents({ cwd: dir, args: { path: absPath } });
     expect(out.result).toEqual({
       path: absPath,
       body: null,
-      error: 'path_outside_allowed_roots',
+      error: "path_outside_allowed_roots",
     });
     expect(out.warnings).toEqual([]);
   } finally {
@@ -106,17 +106,17 @@ test('file.contents blocks paths outside cwd by default', async () => {
   }
 });
 
-test('file.contents allows paths inside storageRoot', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'file-contents-'));
-  const storageRoot = mkdtempSync(join(tmpdir(), 'file-contents-storage-'));
-  const absPath = join(storageRoot, 'allowed.txt');
-  writeFileSync(absPath, 'allowed\n');
+test("file.contents allows paths inside storageRoot", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "file-contents-"));
+  const storageRoot = mkdtempSync(join(tmpdir(), "file-contents-storage-"));
+  const absPath = join(storageRoot, "allowed.txt");
+  writeFileSync(absPath, "allowed\n");
   try {
     const out = await runFileContents({ cwd: dir, storageRoot, args: { path: absPath } });
     expect(out.result.path).toBe(absPath);
-    expect(out.result.body).toBe('allowed\n');
+    expect(out.result.body).toBe("allowed\n");
     expect(out.result.truncated).toBe(false);
-    expect(out.result.byte_size).toBe(Buffer.byteLength('allowed\n'));
+    expect(out.result.byte_size).toBe(Buffer.byteLength("allowed\n"));
     expect(out.warnings).toEqual([]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -124,12 +124,12 @@ test('file.contents allows paths inside storageRoot', async () => {
   }
 });
 
-test('file.contents allows explicit allowed roots outside cwd and storageRoot', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'file-contents-'));
-  const storageRoot = mkdtempSync(join(tmpdir(), 'file-contents-storage-'));
-  const allowedRoot = mkdtempSync(join(tmpdir(), 'file-contents-allowed-'));
-  const absPath = join(allowedRoot, 'explicit.txt');
-  writeFileSync(absPath, 'explicit\n');
+test("file.contents allows explicit allowed roots outside cwd and storageRoot", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "file-contents-"));
+  const storageRoot = mkdtempSync(join(tmpdir(), "file-contents-storage-"));
+  const allowedRoot = mkdtempSync(join(tmpdir(), "file-contents-allowed-"));
+  const absPath = join(allowedRoot, "explicit.txt");
+  writeFileSync(absPath, "explicit\n");
   try {
     const out = await runFileContents({
       cwd: dir,
@@ -137,9 +137,9 @@ test('file.contents allows explicit allowed roots outside cwd and storageRoot', 
       args: { path: absPath, allowed_roots: [allowedRoot] },
     });
     expect(out.result.path).toBe(absPath);
-    expect(out.result.body).toBe('explicit\n');
+    expect(out.result.body).toBe("explicit\n");
     expect(out.result.truncated).toBe(false);
-    expect(out.result.byte_size).toBe(Buffer.byteLength('explicit\n'));
+    expect(out.result.byte_size).toBe(Buffer.byteLength("explicit\n"));
     expect(out.warnings).toEqual([]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -148,19 +148,19 @@ test('file.contents allows explicit allowed roots outside cwd and storageRoot', 
   }
 });
 
-test('file.contents blocks symlink escapes', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'file-contents-'));
-  const outsideDir = mkdtempSync(join(tmpdir(), 'file-contents-outside-'));
-  const target = join(outsideDir, 'target.txt');
-  const link = join(dir, 'link.txt');
-  writeFileSync(target, 'secret\n');
+test("file.contents blocks symlink escapes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "file-contents-"));
+  const outsideDir = mkdtempSync(join(tmpdir(), "file-contents-outside-"));
+  const target = join(outsideDir, "target.txt");
+  const link = join(dir, "link.txt");
+  writeFileSync(target, "secret\n");
   try {
-    Bun.spawnSync(['ln', '-s', target, link]);
-    const out = await runFileContents({ cwd: dir, args: { path: 'link.txt' } });
+    Bun.spawnSync(["ln", "-s", target, link]);
+    const out = await runFileContents({ cwd: dir, args: { path: "link.txt" } });
     expect(out.result).toEqual({
-      path: join(dir, 'link.txt'),
+      path: join(dir, "link.txt"),
       body: null,
-      error: 'path_outside_allowed_roots',
+      error: "path_outside_allowed_roots",
     });
     expect(out.warnings).toEqual([]);
   } finally {

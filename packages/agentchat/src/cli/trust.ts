@@ -1,4 +1,4 @@
-import type { AgentChatConfig } from '../config/types.js';
+import type { AgentChatConfig } from "../config/types.js";
 
 export function isAutoApproved(config: AgentChatConfig, sender: string, target: string): boolean {
   const senderCfg = config.agents.find((a) => a.name === sender);

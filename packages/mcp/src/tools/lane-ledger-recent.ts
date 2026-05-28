@@ -1,9 +1,9 @@
-import { z } from 'zod';
-import { TaskClassSchema } from '@penumbra/core';
-import type { DaemonClient } from '../daemon-client.js';
+import { z } from "zod";
+import { TaskClassSchema } from "@penumbra/core";
+import type { DaemonClient } from "../daemon-client.js";
 
 export const LaneLedgerRecentInputShape = {
-  status: z.enum(['open', 'passed', 'failed', 'skipped', 'review_debt']).optional(),
+  status: z.enum(["open", "passed", "failed", "skipped", "review_debt"]).optional(),
   task_class: TaskClassSchema.optional(),
   since: z.string().optional(),
   limit: z.coerce.number().int().min(1).optional(),
@@ -11,12 +11,12 @@ export const LaneLedgerRecentInputShape = {
 
 export function laneLedgerRecentHandler(daemon: DaemonClient) {
   return async (input: {
-    status?: 'open' | 'passed' | 'failed' | 'skipped' | 'review_debt';
+    status?: "open" | "passed" | "failed" | "skipped" | "review_debt";
     task_class?: z.infer<typeof TaskClassSchema>;
     since?: string;
     limit?: number;
   }) => {
-    const response = await getFromDaemon(daemon, '/lanes/recent', {
+    const response = await getFromDaemon(daemon, "/lanes/recent", {
       status: input.status,
       task_class: input.task_class,
       since: input.since,
@@ -31,14 +31,16 @@ async function getFromDaemon(
   path: string,
   query: Record<string, string | number | undefined>,
 ): Promise<unknown> {
-  const { baseUrl, token } = (daemon as unknown as { resolve: () => { baseUrl: string; token: string } }).resolve();
+  const { baseUrl, token } = (
+    daemon as unknown as { resolve: () => { baseUrl: string; token: string } }
+  ).resolve();
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
     if (value !== undefined) params.set(key, String(value));
   }
   const queryString = params.toString();
-  const res = await fetch(`${baseUrl}${path}${queryString ? `?${queryString}` : ''}`, {
-    method: 'GET',
+  const res = await fetch(`${baseUrl}${path}${queryString ? `?${queryString}` : ""}`, {
+    method: "GET",
     headers: {
       authorization: `Bearer ${token}`,
     },
@@ -52,5 +54,7 @@ async function daemonHttpError(path: string, res: Response): Promise<Error> {
   try {
     body = await res.json();
   } catch {}
-  return new Error(`daemon ${path}: HTTP ${res.status}${body === undefined ? '' : ` ${JSON.stringify(body)}`}`);
+  return new Error(
+    `daemon ${path}: HTTP ${res.status}${body === undefined ? "" : ` ${JSON.stringify(body)}`}`,
+  );
 }

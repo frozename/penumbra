@@ -1,16 +1,16 @@
-import type { GhClient, GhIssueState, GhIssueComment } from '../services/gh-client.js';
-import { createGhCliClient } from '../services/gh-client.js';
-import { formatPenumbraComment, isPenumbraAuthoredComment } from '../services/gh-comment-format.js';
+import type { GhClient, GhIssueState, GhIssueComment } from "../services/gh-client.js";
+import { createGhCliClient } from "../services/gh-client.js";
+import { formatPenumbraComment, isPenumbraAuthoredComment } from "../services/gh-comment-format.js";
 
-type PushCloseReason = 'completed' | 'not planned';
+type PushCloseReason = "completed" | "not planned";
 
 export interface GhTaskSyncResult {
   task_id: string;
   repo: string;
   issue_number: number;
   gh_state: GhIssueState;
-  action: 'noop' | 'pushed' | 'pulled' | 'error' | 'already_in_progress';
-  direction?: 'push' | 'pull';
+  action: "noop" | "pushed" | "pulled" | "error" | "already_in_progress";
+  direction?: "push" | "pull";
   error?: string;
   last_sync_ts: string;
 }
@@ -28,46 +28,80 @@ export interface GhTaskSyncService {
   syncLinkedTask(task_id: string): Promise<GhTaskSyncResult>;
   syncAllLinkedTasks(): Promise<GhTaskSyncSummary>;
   pushStatusNow(task_id: string): Promise<GhTaskSyncResult | null>;
-  enqueueTaskGhCreate(task_id: string, input: {
-    repo: string;
-    title: string;
-    body: string;
-    labels?: string[];
-    assignees?: string[];
-  }): void;
+  enqueueTaskGhCreate(
+    task_id: string,
+    input: {
+      repo: string;
+      title: string;
+      body: string;
+      labels?: string[];
+      assignees?: string[];
+    },
+  ): void;
   enqueueSyncLinkedTask(task_id: string): void;
   queueStatusUpdate(task_id: string, from_status: string | null, to_status: string | null): void;
   queueVerdictComment(task_id: string, verdict: { passed: boolean; notes: string }): void;
   queueDispatchFailureComment(task_id: string, reason: string): void;
-  postStatusChangeComment(task_id: string, from_status: string, to_status: string): Promise<{ comment_url: string } | null>;
+  postStatusChangeComment(
+    task_id: string,
+    from_status: string,
+    to_status: string,
+  ): Promise<{ comment_url: string } | null>;
   postManualComment(task_id: string, body: string): Promise<{ comment_url: string } | null>;
-  postVerdictComment(task_id: string, verdict: { passed: boolean; notes: string }): Promise<{ comment_url: string } | null>;
-  postDispatchFailureComment(task_id: string, reason: string): Promise<{ comment_url: string } | null>;
+  postVerdictComment(
+    task_id: string,
+    verdict: { passed: boolean; notes: string },
+  ): Promise<{ comment_url: string } | null>;
+  postDispatchFailureComment(
+    task_id: string,
+    reason: string,
+  ): Promise<{ comment_url: string } | null>;
 }
 
 interface GhTaskSyncServiceOpts {
   taskWriter: {
     get(task_id: string): TaskRecordLike;
     cancel(input: { task_id: string; reason?: string }): { status: string };
-    reopenFromGh(task_id: string): { status: 'pending' };
-    linkGhIssue(task_id: string, opts: { repo: string; issue_number: number }): { task_id: string; gh_issue_repo: string; gh_issue_number: number };
+    reopenFromGh(task_id: string): { status: "pending" };
+    linkGhIssue(
+      task_id: string,
+      opts: { repo: string; issue_number: number },
+    ): { task_id: string; gh_issue_repo: string; gh_issue_number: number };
     listLinkedTasks(): TaskRecordLike[];
-    setGhLastCommentId(task_id: string, comment_id: string): { task_id: string; gh_last_comment_id: string };
-    setGhCommentsSyncedAt(task_id: string, synced_at: number): { task_id: string; gh_comments_synced_at: number };
+    setGhLastCommentId(
+      task_id: string,
+      comment_id: string,
+    ): { task_id: string; gh_last_comment_id: string };
+    setGhCommentsSyncedAt(
+      task_id: string,
+      synced_at: number,
+    ): { task_id: string; gh_comments_synced_at: number };
     setGhCreateStatus(
       task_id: string,
-      status: 'queued' | 'pending' | 'created' | 'failed',
+      status: "queued" | "pending" | "created" | "failed",
       error?: string | null,
     ): { task_id: string; gh_create_status: string; gh_create_error: string | null };
     enqueueGhOutbox(
       task_id: string,
-      op: 'gh_create_issue' | 'gh_sync_linked_task' | 'gh_push_status' | 'gh_post_status_comment' | 'gh_post_verdict_comment' | 'gh_post_dispatch_failure_comment',
+      op:
+        | "gh_create_issue"
+        | "gh_sync_linked_task"
+        | "gh_push_status"
+        | "gh_post_status_comment"
+        | "gh_post_verdict_comment"
+        | "gh_post_dispatch_failure_comment",
       payload: unknown,
     ): { id: number };
     listPendingGhOutbox(limit?: number): Array<{
       id: number;
       task_id: string;
-      op: 'gh_create_issue' | 'gh_sync_linked_task' | 'gh_push_status' | 'gh_post_status_comment' | 'gh_post_verdict_comment' | 'gh_post_dispatch_failure_comment';
+      op:
+        | "gh_create_issue"
+        | "gh_sync_linked_task"
+        | "gh_push_status"
+        | "gh_post_status_comment"
+        | "gh_post_verdict_comment"
+        | "gh_post_dispatch_failure_comment";
       payload_json: string;
     }>;
     markGhOutboxAttempt(id: number): void;
@@ -102,12 +136,21 @@ interface GhTaskSyncServiceOpts {
   };
   now: () => Date;
   uuid: () => string;
-  log?: { info?: (obj: unknown, msg?: string) => void; warn?: (obj: unknown, msg?: string) => void };
+  log?: {
+    info?: (obj: unknown, msg?: string) => void;
+    warn?: (obj: unknown, msg?: string) => void;
+  };
   userId?: string;
   machineId?: string;
 }
 
-type TaskStatusLike = 'pending' | 'leased' | 'done_pending_review' | 'done' | 'failed' | 'cancelled';
+type TaskStatusLike =
+  | "pending"
+  | "leased"
+  | "done_pending_review"
+  | "done"
+  | "failed"
+  | "cancelled";
 
 interface TaskRecordLike {
   id: string;
@@ -129,15 +172,15 @@ const GH_TASK_SYNC_BATCH_SIZE = 6;
 
 function toDecision(status: TaskStatusLike): SyncDecision {
   switch (status) {
-    case 'pending':
-    case 'leased':
-    case 'done_pending_review':
-      return { desiredGhState: 'OPEN', closeReason: null };
-    case 'done':
-      return { desiredGhState: 'CLOSED', closeReason: 'completed' };
-    case 'failed':
-    case 'cancelled':
-      return { desiredGhState: 'CLOSED', closeReason: 'not planned' };
+    case "pending":
+    case "leased":
+    case "done_pending_review":
+      return { desiredGhState: "OPEN", closeReason: null };
+    case "done":
+      return { desiredGhState: "CLOSED", closeReason: "completed" };
+    case "failed":
+    case "cancelled":
+      return { desiredGhState: "CLOSED", closeReason: "not planned" };
   }
 }
 
@@ -150,16 +193,20 @@ function buildIssueUrl(repo: string, issue_number: number): string {
   return `https://github.com/${repo}/issues/${issue_number}`;
 }
 
-function isLinked(task: TaskRecordLike): task is TaskRecordLike & { gh_issue_repo: string; gh_issue_number: number } {
-  return typeof task.gh_issue_repo === 'string'
-    && task.gh_issue_repo.length > 0
-    && typeof task.gh_issue_number === 'number'
-    && Number.isInteger(task.gh_issue_number)
-    && task.gh_issue_number > 0;
+function isLinked(
+  task: TaskRecordLike,
+): task is TaskRecordLike & { gh_issue_repo: string; gh_issue_number: number } {
+  return (
+    typeof task.gh_issue_repo === "string" &&
+    task.gh_issue_repo.length > 0 &&
+    typeof task.gh_issue_number === "number" &&
+    Number.isInteger(task.gh_issue_number) &&
+    task.gh_issue_number > 0
+  );
 }
 
 function writePulledEvent(opts: {
-  t0Writer: GhTaskSyncServiceOpts['t0Writer'];
+  t0Writer: GhTaskSyncServiceOpts["t0Writer"];
   nowIso: string;
   uuid: () => string;
   task: TaskRecordLike;
@@ -174,15 +221,15 @@ function writePulledEvent(opts: {
     event_id: `evt_${opts.uuid().toLowerCase()}`,
     ts: opts.nowIso,
     ingest_ts: opts.nowIso,
-    source: 'daemon',
-    source_detail: 'gh-task-sync',
+    source: "daemon",
+    source_detail: "gh-task-sync",
     project_id: opts.task.project_id,
     user_id: opts.userId,
     machine_id: opts.machineId,
     session_id: null,
-    event_type: 'task.gh_state_pulled',
-    lane: 'system',
-    provider: 'github',
+    event_type: "task.gh_state_pulled",
+    lane: "system",
+    provider: "github",
     model: null,
     tokens_in: null,
     tokens_out: null,
@@ -198,7 +245,7 @@ function writePulledEvent(opts: {
       gh_issue_number: opts.issue_number,
     },
     payload_summary: `Pulled GH issue ${opts.repo}#${opts.issue_number} state=${opts.gh_state} into task ${opts.task.id}`,
-    origin: 'dispatch',
+    origin: "dispatch",
   });
 }
 
@@ -236,7 +283,7 @@ function pickMaxCommentId(comments: GhIssueComment[]): string | null {
 }
 
 function writeInboundCommentEvent(opts: {
-  t0Writer: GhTaskSyncServiceOpts['t0Writer'];
+  t0Writer: GhTaskSyncServiceOpts["t0Writer"];
   uuid: () => string;
   nowIso: string;
   task: TaskRecordLike & { gh_issue_repo: string; gh_issue_number: number };
@@ -248,15 +295,15 @@ function writeInboundCommentEvent(opts: {
     event_id: `evt_${opts.uuid().toLowerCase()}`,
     ts: opts.comment.created_at || opts.nowIso,
     ingest_ts: opts.nowIso,
-    source: 'daemon',
-    source_detail: 'gh-task-sync',
+    source: "daemon",
+    source_detail: "gh-task-sync",
     project_id: opts.task.project_id,
     user_id: opts.userId,
     machine_id: opts.machineId,
     session_id: null,
-    event_type: 'gh_issue_comment',
-    lane: 'system',
-    provider: 'github',
+    event_type: "gh_issue_comment",
+    lane: "system",
+    provider: "github",
     model: null,
     tokens_in: null,
     tokens_out: null,
@@ -272,11 +319,11 @@ function writeInboundCommentEvent(opts: {
       body: opts.comment.body,
       created_at: opts.comment.created_at,
       url: opts.comment.url,
-      source: 'gh_comment',
-      trust: 'untrusted',
+      source: "gh_comment",
+      trust: "untrusted",
     },
     payload_summary: `GitHub comment ${opts.comment.id} mirrored to task ${opts.task.id} (${opts.task.gh_issue_repo}#${opts.task.gh_issue_number})`,
-    origin: 'dispatch',
+    origin: "dispatch",
   });
 }
 
@@ -287,29 +334,37 @@ async function pushToGh(args: {
 }): Promise<void> {
   const decision = toDecision(args.task.status);
   if (decision.desiredGhState === args.ghState) return;
-  if (decision.desiredGhState === 'OPEN') {
+  if (decision.desiredGhState === "OPEN") {
     await args.client.reopenIssue(args.task.gh_issue_repo, args.task.gh_issue_number);
     return;
   }
-  await args.client.closeIssue(args.task.gh_issue_repo, args.task.gh_issue_number, decision.closeReason!);
+  await args.client.closeIssue(
+    args.task.gh_issue_repo,
+    args.task.gh_issue_number,
+    decision.closeReason!,
+  );
 }
 
-function createErrorResult(task: TaskRecordLike, message: string, nowIso: string): GhTaskSyncResult {
+function createErrorResult(
+  task: TaskRecordLike,
+  message: string,
+  nowIso: string,
+): GhTaskSyncResult {
   return {
     task_id: task.id,
-    repo: task.gh_issue_repo ?? '',
+    repo: task.gh_issue_repo ?? "",
     issue_number: task.gh_issue_number ?? 0,
-    gh_state: 'OPEN',
-    action: 'error',
+    gh_state: "OPEN",
+    action: "error",
     error: message,
     last_sync_ts: nowIso,
   };
 }
 
 function getErrorCode(error: unknown): string | undefined {
-  if (!error || typeof error !== 'object') return undefined;
+  if (!error || typeof error !== "object") return undefined;
   const code = (error as { code?: unknown }).code;
-  return typeof code === 'string' && code.length > 0 ? code : undefined;
+  return typeof code === "string" && code.length > 0 ? code : undefined;
 }
 
 async function runInBatches<T, R>(
@@ -328,14 +383,14 @@ async function runInBatches<T, R>(
 
 export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSyncService {
   const ghClient = opts.ghClient ?? createGhCliClient();
-  const userId = opts.userId ?? 'penumbra';
-  const machineId = opts.machineId ?? process.env.HOSTNAME ?? 'unknown';
+  const userId = opts.userId ?? "penumbra";
+  const machineId = opts.machineId ?? process.env.HOSTNAME ?? "unknown";
   let knownPenumbraLogin: string | null | undefined;
   const inFlightByTask = new Set<string>();
 
   const resolvePenumbraLogin = async (): Promise<string | null> => {
     if (knownPenumbraLogin !== undefined) return knownPenumbraLogin;
-    if (typeof ghClient.getAuthenticatedLogin !== 'function') {
+    if (typeof ghClient.getAuthenticatedLogin !== "function") {
       knownPenumbraLogin = null;
       return knownPenumbraLogin;
     }
@@ -351,9 +406,11 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
   const isGhUnavailable = (error: unknown): boolean => {
     const msg = error instanceof Error ? error.message : String(error);
     const lower = msg.toLowerCase();
-    return lower.includes('github client unavailable')
-      || lower.includes('no such file or directory')
-      || lower.includes('command not found');
+    return (
+      lower.includes("github client unavailable") ||
+      lower.includes("no such file or directory") ||
+      lower.includes("command not found")
+    );
   };
 
   const processGhOutbox = async (): Promise<void> => {
@@ -361,51 +418,55 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
     for (const row of rows) {
       opts.taskWriter.markGhOutboxAttempt(row.id);
       try {
-        const payload = JSON.parse(row.payload_json || '{}') as Record<string, unknown>;
+        const payload = JSON.parse(row.payload_json || "{}") as Record<string, unknown>;
         switch (row.op) {
-          case 'gh_create_issue': {
-            const repo = String(payload.repo ?? '').trim();
-            const title = String(payload.title ?? '').trim();
-            const body = String(payload.body ?? '');
+          case "gh_create_issue": {
+            const repo = String(payload.repo ?? "").trim();
+            const title = String(payload.title ?? "").trim();
+            const body = String(payload.body ?? "");
             const labels = Array.isArray(payload.labels)
-              ? payload.labels.filter((v): v is string => typeof v === 'string' && v.length > 0)
+              ? payload.labels.filter((v): v is string => typeof v === "string" && v.length > 0)
               : undefined;
             const assignees = Array.isArray(payload.assignees)
-              ? payload.assignees.filter((v): v is string => typeof v === 'string' && v.length > 0)
+              ? payload.assignees.filter((v): v is string => typeof v === "string" && v.length > 0)
               : undefined;
-            if (!repo || !title) throw new Error('gh_create_issue missing repo/title');
-            opts.taskWriter.setGhCreateStatus(row.task_id, 'pending', null);
+            if (!repo || !title) throw new Error("gh_create_issue missing repo/title");
+            opts.taskWriter.setGhCreateStatus(row.task_id, "pending", null);
             const created = await ghClient.createIssue({ repo, title, body, labels, assignees });
             opts.taskWriter.linkGhIssue(row.task_id, { repo, issue_number: created.number });
-            opts.taskWriter.setGhCreateStatus(row.task_id, 'created', null);
+            opts.taskWriter.setGhCreateStatus(row.task_id, "created", null);
             break;
           }
-          case 'gh_sync_linked_task': {
+          case "gh_sync_linked_task": {
             await syncLinkedTask(row.task_id);
             break;
           }
-          case 'gh_push_status': {
+          case "gh_push_status": {
             await pushStatusNow(row.task_id);
             break;
           }
-          case 'gh_post_status_comment': {
-            const from_status = String(payload.from_status ?? '');
-            const to_status = String(payload.to_status ?? '');
+          case "gh_post_status_comment": {
+            const from_status = String(payload.from_status ?? "");
+            const to_status = String(payload.to_status ?? "");
             if (from_status && to_status) {
               await postStatusChangeComment(row.task_id, from_status, to_status);
             }
             break;
           }
-          case 'gh_post_verdict_comment': {
+          case "gh_post_verdict_comment": {
             const verdict = payload.verdict as { passed?: unknown; notes?: unknown } | undefined;
-            if (!verdict || typeof verdict.passed !== 'boolean' || typeof verdict.notes !== 'string') {
-              throw new Error('gh_post_verdict_comment missing verdict payload');
+            if (
+              !verdict ||
+              typeof verdict.passed !== "boolean" ||
+              typeof verdict.notes !== "string"
+            ) {
+              throw new Error("gh_post_verdict_comment missing verdict payload");
             }
             await postVerdictComment(row.task_id, { passed: verdict.passed, notes: verdict.notes });
             break;
           }
-          case 'gh_post_dispatch_failure_comment': {
-            const reason = String(payload.reason ?? '').trim();
+          case "gh_post_dispatch_failure_comment": {
+            const reason = String(payload.reason ?? "").trim();
             if (reason) await postDispatchFailureComment(row.task_id, reason);
             break;
           }
@@ -415,11 +476,11 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
         opts.taskWriter.markGhOutboxDone(row.id);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (row.op === 'gh_create_issue') {
-          opts.taskWriter.setGhCreateStatus(row.task_id, 'failed', message);
+        if (row.op === "gh_create_issue") {
+          opts.taskWriter.setGhCreateStatus(row.task_id, "failed", message);
         }
         if (isGhUnavailable(error)) {
-          opts.taskWriter.markGhOutboxFailed(row.id, 'github client unavailable');
+          opts.taskWriter.markGhOutboxFailed(row.id, "github client unavailable");
         } else {
           opts.taskWriter.markGhOutboxFailed(row.id, message);
         }
@@ -431,15 +492,21 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
     task: TaskRecordLike & { gh_issue_repo: string; gh_issue_number: number },
     nowIso: string,
   ): Promise<void> => {
-    const since = task.gh_comments_synced_at != null ? toIsoFromMs(task.gh_comments_synced_at) : undefined;
-    const comments = await ghClient.listComments(task.gh_issue_repo, task.gh_issue_number, { since });
+    const since =
+      task.gh_comments_synced_at != null ? toIsoFromMs(task.gh_comments_synced_at) : undefined;
+    const comments = await ghClient.listComments(task.gh_issue_repo, task.gh_issue_number, {
+      since,
+    });
     const expectedAuthorLogin = await resolvePenumbraLogin();
     const filtered = comments
-      .filter((comment) => !isPenumbraAuthoredComment({
-        body: comment.body,
-        author_login: comment.author_login,
-        expected_author_login: expectedAuthorLogin,
-      }))
+      .filter(
+        (comment) =>
+          !isPenumbraAuthoredComment({
+            body: comment.body,
+            author_login: comment.author_login,
+            expected_author_login: expectedAuthorLogin,
+          }),
+      )
       .filter((comment) => isCommentAfterLastSeen(comment, task.gh_last_comment_id ?? null));
 
     for (const comment of filtered) {
@@ -479,10 +546,10 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
       const existing = opts.taskWriter.get(task_id);
       return {
         task_id,
-        repo: existing.gh_issue_repo ?? '',
+        repo: existing.gh_issue_repo ?? "",
         issue_number: existing.gh_issue_number ?? 0,
-        gh_state: 'OPEN',
-        action: 'already_in_progress',
+        gh_state: "OPEN",
+        action: "already_in_progress",
         last_sync_ts: nowIso,
       };
     }
@@ -492,10 +559,10 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
       inFlightByTask.delete(task_id);
       return {
         task_id: task.id,
-        repo: task.gh_issue_repo ?? '',
+        repo: task.gh_issue_repo ?? "",
         issue_number: task.gh_issue_number ?? 0,
-        gh_state: 'OPEN',
-        action: 'noop',
+        gh_state: "OPEN",
+        action: "noop",
         last_sync_ts: nowIso,
       };
     }
@@ -503,8 +570,8 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
     try {
       const gh = await ghClient.viewIssue(task.gh_issue_repo, task.gh_issue_number);
       const decision = toDecision(task.status);
-      let action: GhTaskSyncResult['action'] = 'noop';
-      let direction: GhTaskSyncResult['direction'] | undefined;
+      let action: GhTaskSyncResult["action"] = "noop";
+      let direction: GhTaskSyncResult["direction"] | undefined;
 
       if (decision.desiredGhState !== gh.state) {
         const taskUpdatedMs = task.updated_at;
@@ -512,11 +579,11 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
 
         if (taskUpdatedMs > ghUpdatedMs) {
           await pushToGh({ task, ghState: gh.state, client: ghClient });
-          action = 'pushed';
-          direction = 'push';
+          action = "pushed";
+          direction = "push";
         } else {
-          if (gh.state === 'CLOSED') {
-            if (task.status !== 'cancelled') {
+          if (gh.state === "CLOSED") {
+            if (task.status !== "cancelled") {
               opts.taskWriter.cancel({
                 task_id: task.id,
                 reason: `github issue closed: ${task.gh_issue_repo}#${task.gh_issue_number}`,
@@ -537,8 +604,8 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
             userId,
             machineId,
           });
-          action = 'pulled';
-          direction = 'pull';
+          action = "pulled";
+          direction = "pull";
         }
       }
 
@@ -561,11 +628,11 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
       opts.log?.warn?.(
         {
           taskId: task.id,
-          ghRef: `${task.gh_issue_repo ?? ''}#${task.gh_issue_number ?? 0}`,
+          ghRef: `${task.gh_issue_repo ?? ""}#${task.gh_issue_number ?? 0}`,
           err: message,
           code: getErrorCode(error),
         },
-        'gh-task-sync: linked task sync failed',
+        "gh-task-sync: linked task sync failed",
       );
       return createErrorResult(task, message, nowIso);
     } finally {
@@ -586,21 +653,29 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
         repo: task.gh_issue_repo,
         issue_number: task.gh_issue_number,
         gh_state: refreshed.state,
-        action: 'pushed',
-        direction: 'push',
+        action: "pushed",
+        direction: "push",
         last_sync_ts: nowIso,
       };
     } catch (error) {
-      return createErrorResult(task, error instanceof Error ? error.message : String(error), nowIso);
+      return createErrorResult(
+        task,
+        error instanceof Error ? error.message : String(error),
+        nowIso,
+      );
     }
   };
 
-  const postStatusChangeComment = async (task_id: string, from_status: string, to_status: string): Promise<{ comment_url: string } | null> => {
+  const postStatusChangeComment = async (
+    task_id: string,
+    from_status: string,
+    to_status: string,
+  ): Promise<{ comment_url: string } | null> => {
     if (from_status === to_status) return null;
     const nowIso = opts.now().toISOString();
     return postCommentForLinkedTask(task_id, {
       task_id,
-      kind: 'status_change',
+      kind: "status_change",
       ts: nowIso,
       status_transition: { from_status, to_status },
     });
@@ -612,18 +687,21 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
   ): Promise<{ comment_url: string } | null> => {
     return postCommentForLinkedTask(task_id, {
       task_id,
-      kind: 'verdict',
+      kind: "verdict",
       ts: opts.now().toISOString(),
       verdict,
     });
   };
 
-  const postDispatchFailureComment = async (task_id: string, reason: string): Promise<{ comment_url: string } | null> => {
+  const postDispatchFailureComment = async (
+    task_id: string,
+    reason: string,
+  ): Promise<{ comment_url: string } | null> => {
     const normalized = reason.trim();
     if (!normalized) return null;
     return postCommentForLinkedTask(task_id, {
       task_id,
-      kind: 'dispatch_failure',
+      kind: "dispatch_failure",
       ts: opts.now().toISOString(),
       reason: normalized,
     });
@@ -635,14 +713,16 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
     async syncAllLinkedTasks(): Promise<GhTaskSyncSummary> {
       await processGhOutbox();
       const linked = opts.taskWriter.listLinkedTasks();
-      const results = await runInBatches(linked, GH_TASK_SYNC_BATCH_SIZE, async (task) => syncLinkedTask(task.id));
+      const results = await runInBatches(linked, GH_TASK_SYNC_BATCH_SIZE, async (task) =>
+        syncLinkedTask(task.id),
+      );
       let pushed = 0;
       let pulled = 0;
       let errored = 0;
       for (const result of results) {
-        if (result.action === 'pushed') pushed += 1;
-        else if (result.action === 'pulled') pulled += 1;
-        else if (result.action === 'error') errored += 1;
+        if (result.action === "pushed") pushed += 1;
+        else if (result.action === "pulled") pulled += 1;
+        else if (result.action === "error") errored += 1;
       }
       opts.log?.info?.(
         { linked: linked.length, pushed, pulled, errored },
@@ -660,44 +740,53 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
 
     pushStatusNow,
 
-    enqueueTaskGhCreate(task_id: string, input: {
-      repo: string;
-      title: string;
-      body: string;
-      labels?: string[];
-      assignees?: string[];
-    }): void {
-      opts.taskWriter.setGhCreateStatus(task_id, 'queued', null);
-      opts.taskWriter.enqueueGhOutbox(task_id, 'gh_create_issue', input);
+    enqueueTaskGhCreate(
+      task_id: string,
+      input: {
+        repo: string;
+        title: string;
+        body: string;
+        labels?: string[];
+        assignees?: string[];
+      },
+    ): void {
+      opts.taskWriter.setGhCreateStatus(task_id, "queued", null);
+      opts.taskWriter.enqueueGhOutbox(task_id, "gh_create_issue", input);
     },
 
     enqueueSyncLinkedTask(task_id: string): void {
-      opts.taskWriter.enqueueGhOutbox(task_id, 'gh_sync_linked_task', {});
+      opts.taskWriter.enqueueGhOutbox(task_id, "gh_sync_linked_task", {});
     },
 
     queueStatusUpdate(task_id: string, from_status: string | null, to_status: string | null): void {
-      opts.taskWriter.enqueueGhOutbox(task_id, 'gh_push_status', {});
+      opts.taskWriter.enqueueGhOutbox(task_id, "gh_push_status", {});
       if (from_status && to_status && from_status !== to_status) {
-        opts.taskWriter.enqueueGhOutbox(task_id, 'gh_post_status_comment', { from_status, to_status });
+        opts.taskWriter.enqueueGhOutbox(task_id, "gh_post_status_comment", {
+          from_status,
+          to_status,
+        });
       }
     },
 
     queueVerdictComment(task_id: string, verdict: { passed: boolean; notes: string }): void {
-      opts.taskWriter.enqueueGhOutbox(task_id, 'gh_post_verdict_comment', { verdict });
+      opts.taskWriter.enqueueGhOutbox(task_id, "gh_post_verdict_comment", { verdict });
     },
 
     queueDispatchFailureComment(task_id: string, reason: string): void {
-      opts.taskWriter.enqueueGhOutbox(task_id, 'gh_post_dispatch_failure_comment', { reason });
+      opts.taskWriter.enqueueGhOutbox(task_id, "gh_post_dispatch_failure_comment", { reason });
     },
 
     postStatusChangeComment,
 
-    async postManualComment(task_id: string, body: string): Promise<{ comment_url: string } | null> {
+    async postManualComment(
+      task_id: string,
+      body: string,
+    ): Promise<{ comment_url: string } | null> {
       const normalized = body.trim();
       if (!normalized) return null;
       return postCommentForLinkedTask(task_id, {
         task_id,
-        kind: 'manual',
+        kind: "manual",
         ts: opts.now().toISOString(),
         body: normalized,
       });
@@ -712,7 +801,10 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
 export function createGhTaskSyncSweeper(opts: {
   service: GhTaskSyncService;
   intervalMs?: number;
-  log?: { info?: (obj: unknown, msg?: string) => void; warn?: (obj: unknown, msg?: string) => void };
+  log?: {
+    info?: (obj: unknown, msg?: string) => void;
+    warn?: (obj: unknown, msg?: string) => void;
+  };
 }): { start(): void; stop(): void; tick(): Promise<GhTaskSyncSummary> } {
   const intervalMs = opts.intervalMs ?? 30_000;
   let timer: ReturnType<typeof setInterval> | null = null;
@@ -720,7 +812,10 @@ export function createGhTaskSyncSweeper(opts: {
 
   async function tick(): Promise<GhTaskSyncSummary> {
     if (inFlight) {
-      opts.log?.warn?.({ event: 'sweeper.skip_tick', sweeper: 'gh-task-sync' }, 'sweeper.skip_tick');
+      opts.log?.warn?.(
+        { event: "sweeper.skip_tick", sweeper: "gh-task-sync" },
+        "sweeper.skip_tick",
+      );
       return {
         linked: 0,
         pushed: 0,
@@ -743,10 +838,10 @@ export function createGhTaskSyncSweeper(opts: {
       if (timer) return;
       timer = setInterval(() => {
         tick().catch((err) => {
-          opts.log?.warn?.({ err: String(err) }, 'gh-task-sync tick failed');
+          opts.log?.warn?.({ err: String(err) }, "gh-task-sync tick failed");
         });
       }, intervalMs);
-      if (typeof (timer as any).unref === 'function') {
+      if (typeof (timer as any).unref === "function") {
         (timer as any).unref();
       }
     },
@@ -790,10 +885,13 @@ export function createDefaultGhTaskSyncService(
     };
     clock: () => Date;
     uuid: () => string;
-    log?: { info?: (obj: unknown, msg?: string) => void; warn?: (obj: unknown, msg?: string) => void };
+    log?: {
+      info?: (obj: unknown, msg?: string) => void;
+      warn?: (obj: unknown, msg?: string) => void;
+    };
     machineId: { get(): string };
   },
-  taskWriter: GhTaskSyncServiceOpts['taskWriter'],
+  taskWriter: GhTaskSyncServiceOpts["taskWriter"],
   ghClient?: GhClient,
 ): GhTaskSyncService {
   return createGhTaskSyncService({

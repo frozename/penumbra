@@ -105,10 +105,7 @@ export function T0Tail(props: T0TailProps = {}): JSX.Element {
       return frozenRef.current;
     }
     if (!pausedTail && frozenRef.current && postResumeStartRef.current != null) {
-      return [
-        ...frozenRef.current,
-        ...stream.messages.slice(postResumeStartRef.current),
-      ];
+      return [...frozenRef.current, ...stream.messages.slice(postResumeStartRef.current)];
     }
     return stream.messages;
   }, [pausedTail, stream.messages]);
@@ -162,11 +159,7 @@ export function T0Tail(props: T0TailProps = {}): JSX.Element {
         }
       />
       {showReconnected && (
-        <span
-          className="t-tertiary mono"
-          style={{ padding: 4, fontSize: 10 }}
-          role="status"
-        >
+        <span className="t-tertiary mono" style={{ padding: 4, fontSize: 10 }} role="status">
           reconnected — refetching…
         </span>
       )}
@@ -181,9 +174,7 @@ export function T0Tail(props: T0TailProps = {}): JSX.Element {
           borderRadius: 3,
         }}
       >
-        <div
-          style={{ height: virtualizer.getTotalSize(), position: "relative" }}
-        >
+        <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
           {virtualizer.getVirtualItems().map((vi) => {
             const row = filtered[vi.index];
             if (!row) return null;
@@ -220,9 +211,7 @@ function T0Row({ row, virtualItem }: T0RowProps): JSX.Element {
         borderBottom: "1px solid var(--color-border)",
       }}
     >
-      <span
-        style={{ color: "var(--color-text-tertiary)", minWidth: 60 }}
-      >
+      <span style={{ color: "var(--color-text-tertiary)", minWidth: 60 }}>
         {row.ts ? new Date(row.ts).toLocaleTimeString() : "—"}
       </span>
       <EventTypeChip type={row.event ?? "—"} />

@@ -1,12 +1,12 @@
-import { afterEach, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { runPlanValidate } from '../../src/commands/plan.js';
+import { afterEach, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runPlanValidate } from "../../src/commands/plan.js";
 
 const dirs: string[] = [];
 let prevEnv: string | undefined;
-const KNOWN_AGENTS = new Set(['codex-acp-fast', 'claude-acp-sonnet']);
+const KNOWN_AGENTS = new Set(["codex-acp-fast", "claude-acp-sonnet"]);
 
 afterEach(() => {
   if (prevEnv === undefined) delete process.env.PENUMBRA_PROJECTS_YAML;
@@ -15,19 +15,19 @@ afterEach(() => {
 });
 
 function tmpDir(): string {
-  const d = mkdtempSync(join(tmpdir(), 'plan-validate-cross-project-'));
+  const d = mkdtempSync(join(tmpdir(), "plan-validate-cross-project-"));
   dirs.push(d);
   return d;
 }
 
 function writeRegistry(path: string, ids: string[]): void {
   prevEnv = process.env.PENUMBRA_PROJECTS_YAML;
-  const lines = ['projects:'];
+  const lines = ["projects:"];
   for (const id of ids) {
     lines.push(`  - project_id: ${id}`);
     lines.push(`    root_path: /tmp/${id}`);
   }
-  writeFileSync(path, lines.join('\n') + '\n');
+  writeFileSync(path, lines.join("\n") + "\n");
   process.env.PENUMBRA_PROJECTS_YAML = path;
 }
 
@@ -70,12 +70,12 @@ risk_class: paste-ready
 `;
 }
 
-test('valid plan with qualified deps + registered home_project exits 0', async () => {
+test("valid plan with qualified deps + registered home_project exits 0", async () => {
   const dir = tmpDir();
-  const planPath = join(dir, 'plan.md');
+  const planPath = join(dir, "plan.md");
   writeFileSync(planPath, planMd());
-  const regPath = join(dir, 'projects.yaml');
-  writeRegistry(regPath, ['penumbra', 'sirius']);
+  const regPath = join(dir, "projects.yaml");
+  writeRegistry(regPath, ["penumbra", "sirius"]);
   const result = await runPlanValidate({
     path: planPath,
     knownAgents: KNOWN_AGENTS,
@@ -85,12 +85,12 @@ test('valid plan with qualified deps + registered home_project exits 0', async (
   expect(result).toBe(0);
 });
 
-test('home_project not in registry exits 2 with clear message', async () => {
+test("home_project not in registry exits 2 with clear message", async () => {
   const dir = tmpDir();
-  const planPath = join(dir, 'plan.md');
-  writeFileSync(planPath, planMd().replace('home_project: penumbra', 'home_project: nonexistent'));
-  const regPath = join(dir, 'projects.yaml');
-  writeRegistry(regPath, ['penumbra', 'sirius']);
+  const planPath = join(dir, "plan.md");
+  writeFileSync(planPath, planMd().replace("home_project: penumbra", "home_project: nonexistent"));
+  const regPath = join(dir, "projects.yaml");
+  writeRegistry(regPath, ["penumbra", "sirius"]);
   const errs: string[] = [];
   const result = await runPlanValidate({
     path: planPath,
@@ -99,16 +99,16 @@ test('home_project not in registry exits 2 with clear message', async () => {
     err: (s) => errs.push(s),
   });
   expect(result).toBe(2);
-  expect(errs.join('\n')).toContain('nonexistent');
-  expect(errs.join('\n')).toContain('unknown_project');
+  expect(errs.join("\n")).toContain("nonexistent");
+  expect(errs.join("\n")).toContain("unknown_project");
 });
 
-test('--no-registry skips project-membership rule', async () => {
+test("--no-registry skips project-membership rule", async () => {
   const dir = tmpDir();
-  const planPath = join(dir, 'plan.md');
-  writeFileSync(planPath, planMd().replace('home_project: penumbra', 'home_project: foo'));
-  const regPath = join(dir, 'projects.yaml');
-  writeRegistry(regPath, ['penumbra', 'sirius']);
+  const planPath = join(dir, "plan.md");
+  writeFileSync(planPath, planMd().replace("home_project: penumbra", "home_project: foo"));
+  const regPath = join(dir, "projects.yaml");
+  writeRegistry(regPath, ["penumbra", "sirius"]);
   const errs: string[] = [];
   const result = await runPlanValidate({
     path: planPath,
@@ -118,6 +118,6 @@ test('--no-registry skips project-membership rule', async () => {
     err: (s) => errs.push(s),
   });
   expect(result).toBe(2);
-  expect(errs.join('\n')).not.toContain('unknown_project');
-  expect(errs.join('\n')).not.toContain("'foo'");
+  expect(errs.join("\n")).not.toContain("unknown_project");
+  expect(errs.join("\n")).not.toContain("'foo'");
 });

@@ -1,28 +1,28 @@
-import type { Preview } from '@storybook/react';
-import { QueryClient, QueryClientProvider, type QueryKey } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router-dom';
-import '../src/themes/tokens.css';
-import '../src/themes/colors_and_type.css';
-import '../src/themes/app.css';
+import type { Preview } from "@storybook/react";
+import { QueryClient, QueryClientProvider, type QueryKey } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
+import "../src/themes/tokens.css";
+import "../src/themes/colors_and_type.css";
+import "../src/themes/app.css";
 
-import { useDaemonStore } from '../src/stores/daemon-store';
-import { useMissionStore } from '../src/modules/mission/store';
+import { useDaemonStore } from "../src/stores/daemon-store";
+import { useMissionStore } from "../src/modules/mission/store";
 
-useDaemonStore.setState({ baseUrl: '/api', token: '', health: 'ok', lastHealthAt: 0 });
+useDaemonStore.setState({ baseUrl: "/api", token: "", health: "ok", lastHealthAt: 0 });
 
 interface QuerySeed {
   key: QueryKey;
   data: unknown;
 }
 
-declare module '@storybook/react' {
+declare module "@storybook/react" {
   interface Parameters {
     queryCache?: QuerySeed[];
     missionStore?: Partial<{ tailFilter: string | null; pausedTail: boolean }>;
     daemonStore?: Partial<{
       baseUrl: string;
       token: string;
-      health: 'ok' | 'down' | 'unknown';
+      health: "ok" | "down" | "unknown";
       lastHealthAt: number | null;
     }>;
     initialRoute?: string;
@@ -33,10 +33,10 @@ const preview: Preview = {
   parameters: {
     controls: { matchers: { color: /(background|color)$/i, date: /Date$/i } },
     backgrounds: {
-      default: 'sirius',
+      default: "sirius",
       values: [
-        { name: 'sirius', value: 'var(--color-bg)' },
-        { name: 'surface', value: 'var(--color-surface)' },
+        { name: "sirius", value: "var(--color-bg)" },
+        { name: "surface", value: "var(--color-surface)" },
       ],
     },
   },
@@ -63,14 +63,14 @@ const preview: Preview = {
       });
 
       useDaemonStore.setState({
-        baseUrl: '/api',
-        token: '',
-        health: 'ok',
+        baseUrl: "/api",
+        token: "",
+        health: "ok",
         lastHealthAt: 0,
         ...ctx.parameters.daemonStore,
       });
 
-      const initialRoute = ctx.parameters.initialRoute ?? '/mission';
+      const initialRoute = ctx.parameters.initialRoute ?? "/mission";
 
       return (
         <QueryClientProvider client={queryClient}>

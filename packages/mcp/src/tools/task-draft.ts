@@ -1,9 +1,9 @@
-import { z } from 'zod';
-import { toTextContent } from '@nova/mcp-shared';
-import type { DaemonClient } from '../daemon-client.js';
+import { z } from "zod";
+import { toTextContent } from "@nova/mcp-shared";
+import type { DaemonClient } from "../daemon-client.js";
 
 export const TaskDraftListPendingInputShape = {
-  latest_event_type: z.enum(['task_draft', 'task_draft_escalation']),
+  latest_event_type: z.enum(["task_draft", "task_draft_escalation"]),
   project_id: z.string().min(1),
   limit: z.number().int().min(1).max(50).optional(),
 };

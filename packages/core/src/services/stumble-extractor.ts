@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync } from "node:fs";
 
 export interface StumbleEvidence {
   conv_ids: string[];
@@ -19,7 +19,9 @@ export type SessionEventRow = {
   payload_json: unknown;
 };
 
-export type SessionEventReader = (session_id: string) => Promise<SessionEventRow[]> | SessionEventRow[];
+export type SessionEventReader = (
+  session_id: string,
+) => Promise<SessionEventRow[]> | SessionEventRow[];
 
 export interface ExtractStumblesInput {
   session_id: string;
@@ -41,9 +43,9 @@ const STUMBLE_PATTERNS = [
 
 function safeReadTranscript(transcriptPath: string): string {
   try {
-    return readFileSync(transcriptPath, 'utf8');
+    return readFileSync(transcriptPath, "utf8");
   } catch {
-    return '';
+    return "";
   }
 }
 
@@ -66,32 +68,32 @@ function extractStumbleExcerpt(text: string): string {
     if (!match) continue;
     const start = Math.max(0, match.index - STUMBLE_EXCERPT_RADIUS);
     const end = Math.min(text.length, match.index + match[0].length + STUMBLE_EXCERPT_RADIUS);
-    const head = start > 0 ? '…' : '';
-    const tail = end < text.length ? '…' : '';
-    return (head + text.slice(start, end) + tail).replace(/\s+/g, ' ').trim();
+    const head = start > 0 ? "…" : "";
+    const tail = end < text.length ? "…" : "";
+    return (head + text.slice(start, end) + tail).replace(/\s+/g, " ").trim();
   }
   if (text.length <= STUMBLE_EXCERPT_FALLBACK_MAX) {
-    return text.replace(/\s+/g, ' ').trim();
+    return text.replace(/\s+/g, " ").trim();
   }
-  return text.slice(0, STUMBLE_EXCERPT_FALLBACK_MAX).replace(/\s+/g, ' ').trim() + '…';
+  return text.slice(0, STUMBLE_EXCERPT_FALLBACK_MAX).replace(/\s+/g, " ").trim() + "…";
 }
 
 function normalizePrompt(line: string): string {
-  return line.trim().replace(/\s+/g, ' ');
+  return line.trim().replace(/\s+/g, " ");
 }
 
 function canonicalPrompt(prompt: string): string {
   return prompt
     .trim()
-    .replace(/\s+/g, ' ')
-    .replace(/[.?!,;:]+$/g, '')
+    .replace(/\s+/g, " ")
+    .replace(/[.?!,;:]+$/g, "")
     .toLowerCase();
 }
 
 function buildCandidate(
   line: string,
   session_id: string,
-  input: Pick<ExtractStumblesInput, 'default_project' | 'affects_projects_resolver'>,
+  input: Pick<ExtractStumblesInput, "default_project" | "affects_projects_resolver">,
 ): StumbleCandidate {
   const prompt = normalizePrompt(line);
   const affects_projects = input.affects_projects_resolver
@@ -114,30 +116,31 @@ function buildCandidate(
 function isDuplicateInlineFiling(candidate: StumbleCandidate, events: SessionEventRow[]): boolean {
   const needle = canonicalPrompt(candidate.prompt);
   return events.some((event) => {
-    if (event.event_type !== 'task_draft') return false;
+    if (event.event_type !== "task_draft") return false;
     const payload = toRecord(event.payload_json);
-    const prompt = typeof payload?.prompt === 'string' ? payload.prompt : null;
-    return typeof prompt === 'string' && canonicalPrompt(prompt) === needle;
+    const prompt = typeof payload?.prompt === "string" ? payload.prompt : null;
+    return typeof prompt === "string" && canonicalPrompt(prompt) === needle;
   });
 }
 
 function toRecord(input: unknown): Record<string, unknown> | null {
-  if (typeof input === 'string') {
+  if (typeof input === "string") {
     try {
       return toRecord(JSON.parse(input) as unknown);
     } catch {
       return null;
     }
   }
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
   return input as Record<string, unknown>;
 }
 
 function promptFromEvent(event: SessionEventRow): string | null {
   const payload = toRecord(event.payload_json);
   if (payload) {
-    const candidate = payload.prompt ?? payload.text ?? payload.body ?? payload.full_summary ?? payload.summary;
-    if (typeof candidate === 'string' && candidate.trim().length > 0) {
+    const candidate =
+      payload.prompt ?? payload.text ?? payload.body ?? payload.full_summary ?? payload.summary;
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
       return extractStumbleExcerpt(candidate);
     }
   }
@@ -147,7 +150,7 @@ function promptFromEvent(event: SessionEventRow): string | null {
 export async function extractStumblesFromSession(
   input: ExtractStumblesInput,
 ): Promise<StumbleCandidate[]> {
-  const transcript = input.transcript_path ? safeReadTranscript(input.transcript_path) : '';
+  const transcript = input.transcript_path ? safeReadTranscript(input.transcript_path) : "";
   const lines = transcript
     .split(/\r?\n+/)
     .map((line) => normalizePrompt(line))
@@ -161,16 +164,20 @@ export async function extractStumblesFromSession(
     candidates.push(buildCandidate(line, input.session_id, input));
   }
 
-  const allowedSources = input.allowed_sources ?? ['mcp', 'transcript', 'agentchat'];
-  const allowedEventTypes = input.allowed_event_types ?? ['agent-prompt', 'agent-response', 'user-prompt'];
+  const allowedSources = input.allowed_sources ?? ["mcp", "transcript", "agentchat"];
+  const allowedEventTypes = input.allowed_event_types ?? [
+    "agent-prompt",
+    "agent-response",
+    "user-prompt",
+  ];
 
   let dedupeRows: SessionEventRow[] = [];
-  if (typeof input.dispatch_events_query === 'function') {
+  if (typeof input.dispatch_events_query === "function") {
     const rows = await input.dispatch_events_query(input.session_id);
     const allRows = Array.isArray(rows) ? rows : [];
     // Dedup against any existing task_draft event regardless of source/type allowlists —
     // task_draft IS the dedup signal, not a candidate source.
-    dedupeRows = allRows.filter((row) => row.event_type === 'task_draft');
+    dedupeRows = allRows.filter((row) => row.event_type === "task_draft");
     if (candidates.length === 0) {
       // Promote rows into candidates only when they pass source + event-type allowlists.
       const promotable = allRows.filter(

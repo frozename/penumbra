@@ -1,9 +1,16 @@
-import { describe, expect, it } from 'bun:test';
-import { checkPressureCap, type CheckPressureCapDeps, type PressureSnapshot } from '../../src/index.js';
+import { describe, expect, it } from "bun:test";
+import {
+  checkPressureCap,
+  type CheckPressureCapDeps,
+  type PressureSnapshot,
+} from "../../src/index.js";
 
-const now = () => new Date('2026-05-08T01:00:00Z');
+const now = () => new Date("2026-05-08T01:00:00Z");
 
-function makeSnapshot(overrides: Partial<PressureSnapshot> & Pick<PressureSnapshot, 'provider' | 'window_label' | 'used_pct' | 'observed_at'>): PressureSnapshot {
+function makeSnapshot(
+  overrides: Partial<PressureSnapshot> &
+    Pick<PressureSnapshot, "provider" | "window_label" | "used_pct" | "observed_at">,
+): PressureSnapshot {
   return {
     provider: overrides.provider,
     window_label: overrides.window_label,
@@ -11,7 +18,7 @@ function makeSnapshot(overrides: Partial<PressureSnapshot> & Pick<PressureSnapsh
     used_pct: overrides.used_pct,
     observed_at: overrides.observed_at,
     resets_at: overrides.resets_at ?? null,
-    source_kind: overrides.source_kind ?? 'statusline',
+    source_kind: overrides.source_kind ?? "statusline",
   };
 }
 
@@ -22,14 +29,18 @@ function makeDeps(snapshotsByProvider: Record<string, PressureSnapshot[]>): Chec
         return snapshotsByProvider[provider] ?? [];
       },
     },
-    agent: { name: 'agent', pricing_mode: 'subscription', subscription_provider: 'anthropic' },
-    providerCaps: { anthropic: { default: { five_hour: { warn: null, refuse: 90 }, seven_day: { warn: null, refuse: 90 } } } },
+    agent: { name: "agent", pricing_mode: "subscription", subscription_provider: "anthropic" },
+    providerCaps: {
+      anthropic: {
+        default: { five_hour: { warn: null, refuse: 90 }, seven_day: { warn: null, refuse: 90 } },
+      },
+    },
     now,
   };
 }
 
-describe('checkPressureCap', () => {
-  it('pricing_mode: api → pass with pricing_mode_skip', () => {
+describe("checkPressureCap", () => {
+  it("pricing_mode: api → pass with pricing_mode_skip", () => {
     let called = false;
     const result = checkPressureCap({
       cache: {
@@ -38,256 +49,278 @@ describe('checkPressureCap', () => {
           return [];
         },
       },
-      agent: { name: 'agent', pricing_mode: 'api', subscription_provider: 'anthropic' },
+      agent: { name: "agent", pricing_mode: "api", subscription_provider: "anthropic" },
       providerCaps: { anthropic: { default: { five_hour: { warn: null, refuse: 90 } } } },
       now,
     });
 
     expect(called).toBe(false);
-    expect(result).toEqual({ state: 'pass', snapshot_state: 'pricing_mode_skip' });
+    expect(result).toEqual({ state: "pass", snapshot_state: "pricing_mode_skip" });
   });
 
-  it('subscription agent without subscription_provider → pass with no_signal', () => {
+  it("subscription agent without subscription_provider → pass with no_signal", () => {
     const result = checkPressureCap({
       cache: {
         forProvider() {
-          throw new Error('should not be called');
+          throw new Error("should not be called");
         },
       },
-      agent: { name: 'agent', pricing_mode: 'subscription' },
+      agent: { name: "agent", pricing_mode: "subscription" },
       providerCaps: { anthropic: { default: { five_hour: { warn: null, refuse: 90 } } } },
       now,
     });
 
-    expect(result).toEqual({ state: 'pass', snapshot_state: 'no_signal' });
+    expect(result).toEqual({ state: "pass", snapshot_state: "no_signal" });
   });
 
-  it('subscription agent, no snapshot for provider → pass with no_signal', () => {
+  it("subscription agent, no snapshot for provider → pass with no_signal", () => {
     const result = checkPressureCap(makeDeps({}));
 
-    expect(result).toEqual({ state: 'pass', snapshot_state: 'no_signal' });
+    expect(result).toEqual({ state: "pass", snapshot_state: "no_signal" });
   });
 
-  it('fresh + under cap → pass with fresh', () => {
-    const result = checkPressureCap(makeDeps({
-      anthropic: [
-        makeSnapshot({
-          provider: 'anthropic',
-          window_label: 'five_hour',
-          used_pct: 50,
-          observed_at: '2026-05-08T00:50:00Z',
-        }),
-      ],
-    }));
+  it("fresh + under cap → pass with fresh", () => {
+    const result = checkPressureCap(
+      makeDeps({
+        anthropic: [
+          makeSnapshot({
+            provider: "anthropic",
+            window_label: "five_hour",
+            used_pct: 50,
+            observed_at: "2026-05-08T00:50:00Z",
+          }),
+        ],
+      }),
+    );
 
-    expect(result).toEqual({ state: 'pass', snapshot_state: 'fresh' });
+    expect(result).toEqual({ state: "pass", snapshot_state: "fresh" });
   });
 
-  it('fresh + at cap (used_pct === cap_pct) → refuse over_threshold', () => {
-    const result = checkPressureCap(makeDeps({
-      anthropic: [
-        makeSnapshot({
-          provider: 'anthropic',
-          window_label: 'five_hour',
-          used_pct: 90,
-          observed_at: '2026-05-08T00:50:00Z',
-        }),
-      ],
-    }));
+  it("fresh + at cap (used_pct === cap_pct) → refuse over_threshold", () => {
+    const result = checkPressureCap(
+      makeDeps({
+        anthropic: [
+          makeSnapshot({
+            provider: "anthropic",
+            window_label: "five_hour",
+            used_pct: 90,
+            observed_at: "2026-05-08T00:50:00Z",
+          }),
+        ],
+      }),
+    );
 
     expect(result).toEqual({
-      state: 'refuse',
-      reason: 'over_threshold',
-      provider: 'anthropic',
-      window_label: 'five_hour',
+      state: "refuse",
+      reason: "over_threshold",
+      provider: "anthropic",
+      window_label: "five_hour",
       used_pct: 90,
       cap_pct: 90,
       resets_at: null,
       snapshot_age_seconds: 600,
-      snapshot_state: 'fresh',
+      snapshot_state: "fresh",
     });
   });
 
-  it('fresh + over cap → refuse over_threshold', () => {
-    const result = checkPressureCap(makeDeps({
-      anthropic: [
-        makeSnapshot({
-          provider: 'anthropic',
-          window_label: 'five_hour',
-          used_pct: 91,
-          observed_at: '2026-05-08T00:50:00Z',
-        }),
-      ],
-    }));
+  it("fresh + over cap → refuse over_threshold", () => {
+    const result = checkPressureCap(
+      makeDeps({
+        anthropic: [
+          makeSnapshot({
+            provider: "anthropic",
+            window_label: "five_hour",
+            used_pct: 91,
+            observed_at: "2026-05-08T00:50:00Z",
+          }),
+        ],
+      }),
+    );
 
     expect(result).toEqual({
-      state: 'refuse',
-      reason: 'over_threshold',
-      provider: 'anthropic',
-      window_label: 'five_hour',
+      state: "refuse",
+      reason: "over_threshold",
+      provider: "anthropic",
+      window_label: "five_hour",
       used_pct: 91,
       cap_pct: 90,
       resets_at: null,
       snapshot_age_seconds: 600,
-      snapshot_state: 'fresh',
+      snapshot_state: "fresh",
     });
   });
 
-  it('stale + idle (under 50% of cap) → pass with stale_idle', () => {
-    const result = checkPressureCap(makeDeps({
-      anthropic: [
-        makeSnapshot({
-          provider: 'anthropic',
-          window_label: 'five_hour',
-          used_pct: 30,
-          observed_at: '2026-05-08T00:20:00Z',
-        }),
-      ],
-    }));
+  it("stale + idle (under 50% of cap) → pass with stale_idle", () => {
+    const result = checkPressureCap(
+      makeDeps({
+        anthropic: [
+          makeSnapshot({
+            provider: "anthropic",
+            window_label: "five_hour",
+            used_pct: 30,
+            observed_at: "2026-05-08T00:20:00Z",
+          }),
+        ],
+      }),
+    );
 
-    expect(result).toEqual({ state: 'pass', snapshot_state: 'stale_idle' });
+    expect(result).toEqual({ state: "pass", snapshot_state: "stale_idle" });
   });
 
-  it('stale + warm (>= 50% of cap) → refuse stale_warm', () => {
-    const result = checkPressureCap(makeDeps({
-      anthropic: [
-        makeSnapshot({
-          provider: 'anthropic',
-          window_label: 'five_hour',
-          used_pct: 60,
-          observed_at: '2026-05-08T00:20:00Z',
-        }),
-      ],
-    }));
+  it("stale + warm (>= 50% of cap) → refuse stale_warm", () => {
+    const result = checkPressureCap(
+      makeDeps({
+        anthropic: [
+          makeSnapshot({
+            provider: "anthropic",
+            window_label: "five_hour",
+            used_pct: 60,
+            observed_at: "2026-05-08T00:20:00Z",
+          }),
+        ],
+      }),
+    );
 
     expect(result).toEqual({
-      state: 'refuse',
-      reason: 'stale_warm',
-      provider: 'anthropic',
-      window_label: 'five_hour',
+      state: "refuse",
+      reason: "stale_warm",
+      provider: "anthropic",
+      window_label: "five_hour",
       used_pct: 60,
       cap_pct: 90,
       resets_at: null,
       snapshot_age_seconds: 2400,
-      snapshot_state: 'stale_warm',
+      snapshot_state: "stale_warm",
     });
   });
 
-  it('multi-window — five_hour fresh under cap, seven_day fresh over cap → refuse on seven_day', () => {
-    const result = checkPressureCap(makeDeps({
-      anthropic: [
-        makeSnapshot({
-          provider: 'anthropic',
-          window_label: 'five_hour',
-          used_pct: 50,
-          observed_at: '2026-05-08T00:50:00Z',
-        }),
-        makeSnapshot({
-          provider: 'anthropic',
-          window_label: 'seven_day',
-          used_pct: 95,
-          observed_at: '2026-05-08T00:50:00Z',
-        }),
-      ],
-    }));
+  it("multi-window — five_hour fresh under cap, seven_day fresh over cap → refuse on seven_day", () => {
+    const result = checkPressureCap(
+      makeDeps({
+        anthropic: [
+          makeSnapshot({
+            provider: "anthropic",
+            window_label: "five_hour",
+            used_pct: 50,
+            observed_at: "2026-05-08T00:50:00Z",
+          }),
+          makeSnapshot({
+            provider: "anthropic",
+            window_label: "seven_day",
+            used_pct: 95,
+            observed_at: "2026-05-08T00:50:00Z",
+          }),
+        ],
+      }),
+    );
 
     expect(result).toEqual({
-      state: 'refuse',
-      reason: 'over_threshold',
-      provider: 'anthropic',
-      window_label: 'seven_day',
+      state: "refuse",
+      reason: "over_threshold",
+      provider: "anthropic",
+      window_label: "seven_day",
       used_pct: 95,
       cap_pct: 90,
       resets_at: null,
       snapshot_age_seconds: 600,
-      snapshot_state: 'fresh',
+      snapshot_state: "fresh",
     });
   });
 
-  it('multi-window — five_hour stale_warm, seven_day fresh under cap → refuse on five_hour', () => {
-    const result = checkPressureCap(makeDeps({
-      anthropic: [
-        makeSnapshot({
-          provider: 'anthropic',
-          window_label: 'five_hour',
-          used_pct: 60,
-          observed_at: '2026-05-08T00:20:00Z',
-        }),
-        makeSnapshot({
-          provider: 'anthropic',
-          window_label: 'seven_day',
-          used_pct: 50,
-          observed_at: '2026-05-08T00:50:00Z',
-        }),
-      ],
-    }));
+  it("multi-window — five_hour stale_warm, seven_day fresh under cap → refuse on five_hour", () => {
+    const result = checkPressureCap(
+      makeDeps({
+        anthropic: [
+          makeSnapshot({
+            provider: "anthropic",
+            window_label: "five_hour",
+            used_pct: 60,
+            observed_at: "2026-05-08T00:20:00Z",
+          }),
+          makeSnapshot({
+            provider: "anthropic",
+            window_label: "seven_day",
+            used_pct: 50,
+            observed_at: "2026-05-08T00:50:00Z",
+          }),
+        ],
+      }),
+    );
 
     expect(result).toEqual({
-      state: 'refuse',
-      reason: 'stale_warm',
-      provider: 'anthropic',
-      window_label: 'five_hour',
+      state: "refuse",
+      reason: "stale_warm",
+      provider: "anthropic",
+      window_label: "five_hour",
       used_pct: 60,
       cap_pct: 90,
       resets_at: null,
       snapshot_age_seconds: 2400,
-      snapshot_state: 'stale_warm',
+      snapshot_state: "stale_warm",
     });
   });
 
-  it('per-window cap override', () => {
+  it("per-window cap override", () => {
     const passResult = checkPressureCap({
       ...makeDeps({
         anthropic: [
           makeSnapshot({
-            provider: 'anthropic',
-            window_label: 'seven_day',
+            provider: "anthropic",
+            window_label: "seven_day",
             used_pct: 85,
-            observed_at: '2026-05-08T00:50:00Z',
+            observed_at: "2026-05-08T00:50:00Z",
           }),
         ],
       }),
-      providerCaps: { anthropic: { default: { five_hour: { warn: null, refuse: 80 }, seven_day: { warn: null, refuse: 95 } } } },
+      providerCaps: {
+        anthropic: {
+          default: { five_hour: { warn: null, refuse: 80 }, seven_day: { warn: null, refuse: 95 } },
+        },
+      },
     });
 
-    expect(passResult).toEqual({ state: 'pass', snapshot_state: 'fresh' });
+    expect(passResult).toEqual({ state: "pass", snapshot_state: "fresh" });
 
     const refuseResult = checkPressureCap({
       ...makeDeps({
         anthropic: [
           makeSnapshot({
-            provider: 'anthropic',
-            window_label: 'five_hour',
+            provider: "anthropic",
+            window_label: "five_hour",
             used_pct: 85,
-            observed_at: '2026-05-08T00:50:00Z',
+            observed_at: "2026-05-08T00:50:00Z",
           }),
         ],
       }),
-      providerCaps: { anthropic: { default: { five_hour: { warn: null, refuse: 80 }, seven_day: { warn: null, refuse: 95 } } } },
+      providerCaps: {
+        anthropic: {
+          default: { five_hour: { warn: null, refuse: 80 }, seven_day: { warn: null, refuse: 95 } },
+        },
+      },
     });
 
     expect(refuseResult).toEqual({
-      state: 'refuse',
-      reason: 'over_threshold',
-      provider: 'anthropic',
-      window_label: 'five_hour',
+      state: "refuse",
+      reason: "over_threshold",
+      provider: "anthropic",
+      window_label: "five_hour",
       used_pct: 85,
       cap_pct: 80,
       resets_at: null,
       snapshot_age_seconds: 600,
-      snapshot_state: 'fresh',
+      snapshot_state: "fresh",
     });
   });
 
-  it('fresh + in warn band → warn', () => {
+  it("fresh + in warn band → warn", () => {
     const result = checkPressureCap({
       ...makeDeps({
         anthropic: [
           makeSnapshot({
-            provider: 'anthropic',
-            window_label: 'five_hour',
+            provider: "anthropic",
+            window_label: "five_hour",
             used_pct: 85,
-            observed_at: '2026-05-08T00:50:00Z',
+            observed_at: "2026-05-08T00:50:00Z",
           }),
         ],
       }),
@@ -295,56 +328,56 @@ describe('checkPressureCap', () => {
     });
 
     expect(result).toEqual({
-      state: 'warn',
-      provider: 'anthropic',
-      window_label: 'five_hour',
+      state: "warn",
+      provider: "anthropic",
+      window_label: "five_hour",
       used_pct: 85,
       warn_pct: 80,
       refuse_pct: 95,
       snapshot_age_seconds: 600,
-      snapshot_state: 'fresh',
+      snapshot_state: "fresh",
     });
   });
 
-  it('fresh + warn band with warn disabled → pass', () => {
+  it("fresh + warn band with warn disabled → pass", () => {
     const result = checkPressureCap({
       ...makeDeps({
         anthropic: [
           makeSnapshot({
-            provider: 'anthropic',
-            window_label: 'five_hour',
+            provider: "anthropic",
+            window_label: "five_hour",
             used_pct: 85,
-            observed_at: '2026-05-08T00:50:00Z',
+            observed_at: "2026-05-08T00:50:00Z",
           }),
         ],
       }),
       providerCaps: { anthropic: { default: { five_hour: { warn: null, refuse: 95 } } } },
     });
 
-    expect(result).toEqual({ state: 'pass', snapshot_state: 'fresh' });
+    expect(result).toEqual({ state: "pass", snapshot_state: "fresh" });
   });
 
-  it('fresh + refuse beats warn even when another window would warn', () => {
+  it("fresh + refuse beats warn even when another window would warn", () => {
     const result = checkPressureCap({
       cache: {
         forProvider() {
           return [
             makeSnapshot({
-              provider: 'anthropic',
-              window_label: 'seven_day',
+              provider: "anthropic",
+              window_label: "seven_day",
               used_pct: 85,
-              observed_at: '2026-05-08T00:50:00Z',
+              observed_at: "2026-05-08T00:50:00Z",
             }),
             makeSnapshot({
-              provider: 'anthropic',
-              window_label: 'five_hour',
+              provider: "anthropic",
+              window_label: "five_hour",
               used_pct: 96,
-              observed_at: '2026-05-08T00:50:00Z',
+              observed_at: "2026-05-08T00:50:00Z",
             }),
           ];
         },
       },
-      agent: { name: 'agent', pricing_mode: 'subscription', subscription_provider: 'anthropic' },
+      agent: { name: "agent", pricing_mode: "subscription", subscription_provider: "anthropic" },
       providerCaps: {
         anthropic: {
           default: {
@@ -357,27 +390,27 @@ describe('checkPressureCap', () => {
     });
 
     expect(result).toEqual({
-      state: 'refuse',
-      reason: 'over_threshold',
-      provider: 'anthropic',
-      window_label: 'five_hour',
+      state: "refuse",
+      reason: "over_threshold",
+      provider: "anthropic",
+      window_label: "five_hour",
       used_pct: 96,
       cap_pct: 95,
       resets_at: null,
       snapshot_age_seconds: 600,
-      snapshot_state: 'fresh',
+      snapshot_state: "fresh",
     });
   });
 
-  it('stale warm at warn band still refuses via stale_warm', () => {
+  it("stale warm at warn band still refuses via stale_warm", () => {
     const result = checkPressureCap({
       ...makeDeps({
         anthropic: [
           makeSnapshot({
-            provider: 'anthropic',
-            window_label: 'five_hour',
+            provider: "anthropic",
+            window_label: "five_hour",
             used_pct: 85,
-            observed_at: '2026-05-08T00:10:00Z',
+            observed_at: "2026-05-08T00:10:00Z",
           }),
         ],
       }),
@@ -385,188 +418,188 @@ describe('checkPressureCap', () => {
     });
 
     expect(result).toEqual({
-      state: 'refuse',
-      reason: 'stale_warm',
-      provider: 'anthropic',
-      window_label: 'five_hour',
+      state: "refuse",
+      reason: "stale_warm",
+      provider: "anthropic",
+      window_label: "five_hour",
       used_pct: 85,
       cap_pct: 95,
       resets_at: null,
       snapshot_age_seconds: 3000,
-      snapshot_state: 'stale_warm',
+      snapshot_state: "stale_warm",
     });
   });
 
-  it('agent.subscription_model matches per-model snapshot and uses per-model cap', () => {
+  it("agent.subscription_model matches per-model snapshot and uses per-model cap", () => {
     const result = checkPressureCap({
       cache: {
         forProvider() {
           return [
             makeSnapshot({
-              provider: 'google',
-              window_label: 'daily',
-              model: 'gemini-3.1-pro-preview',
+              provider: "google",
+              window_label: "daily",
+              model: "gemini-3.1-pro-preview",
               used_pct: 60,
-              observed_at: '2026-05-08T00:50:00Z',
+              observed_at: "2026-05-08T00:50:00Z",
             }),
           ];
         },
       },
       agent: {
-        name: 'gemini-pro',
-        pricing_mode: 'subscription',
-        subscription_provider: 'google',
-        subscription_model: 'gemini-3.1-pro-preview',
+        name: "gemini-pro",
+        pricing_mode: "subscription",
+        subscription_provider: "google",
+        subscription_model: "gemini-3.1-pro-preview",
       },
       providerCaps: {
         google: {
           default: { daily: { warn: null, refuse: 90 } },
-          perModel: { 'gemini-3.1-pro-preview': { daily: { warn: null, refuse: 50 } } },
+          perModel: { "gemini-3.1-pro-preview": { daily: { warn: null, refuse: 50 } } },
         },
       },
       now,
     });
 
     expect(result).toEqual({
-      state: 'refuse',
-      reason: 'over_threshold',
-      provider: 'google',
-      window_label: 'daily',
+      state: "refuse",
+      reason: "over_threshold",
+      provider: "google",
+      window_label: "daily",
       used_pct: 60,
       cap_pct: 50,
       resets_at: null,
       snapshot_age_seconds: 600,
-      snapshot_state: 'fresh',
+      snapshot_state: "fresh",
     });
   });
 
-  it('agent.subscription_model with only provider-level snapshot falls back to default cap', () => {
+  it("agent.subscription_model with only provider-level snapshot falls back to default cap", () => {
     const result = checkPressureCap({
       cache: {
         forProvider() {
           return [
             makeSnapshot({
-              provider: 'google',
-              window_label: 'daily',
+              provider: "google",
+              window_label: "daily",
               used_pct: 95,
-              observed_at: '2026-05-08T00:50:00Z',
+              observed_at: "2026-05-08T00:50:00Z",
             }),
           ];
         },
       },
       agent: {
-        name: 'gemini-flash',
-        pricing_mode: 'subscription',
-        subscription_provider: 'google',
-        subscription_model: 'gemini-3-flash-preview',
+        name: "gemini-flash",
+        pricing_mode: "subscription",
+        subscription_provider: "google",
+        subscription_model: "gemini-3-flash-preview",
       },
       providerCaps: {
         google: {
           default: { daily: { warn: null, refuse: 90 } },
-          perModel: { 'gemini-3.1-pro-preview': { daily: { warn: null, refuse: 50 } } },
+          perModel: { "gemini-3.1-pro-preview": { daily: { warn: null, refuse: 50 } } },
         },
       },
       now,
     });
 
     expect(result).toEqual({
-      state: 'refuse',
-      reason: 'over_threshold',
-      provider: 'google',
-      window_label: 'daily',
+      state: "refuse",
+      reason: "over_threshold",
+      provider: "google",
+      window_label: "daily",
       used_pct: 95,
       cap_pct: 90,
       resets_at: null,
       snapshot_age_seconds: 600,
-      snapshot_state: 'fresh',
+      snapshot_state: "fresh",
     });
   });
 
-  it('agent.subscription_model ignores snapshot for a different model', () => {
+  it("agent.subscription_model ignores snapshot for a different model", () => {
     const result = checkPressureCap({
       cache: {
         forProvider() {
           return [
             makeSnapshot({
-              provider: 'google',
-              window_label: 'daily',
-              model: 'gemini-3-flash-preview',
+              provider: "google",
+              window_label: "daily",
+              model: "gemini-3-flash-preview",
               used_pct: 95,
-              observed_at: '2026-05-08T00:50:00Z',
+              observed_at: "2026-05-08T00:50:00Z",
             }),
           ];
         },
       },
       agent: {
-        name: 'gemini-pro',
-        pricing_mode: 'subscription',
-        subscription_provider: 'google',
-        subscription_model: 'gemini-3.1-pro-preview',
+        name: "gemini-pro",
+        pricing_mode: "subscription",
+        subscription_provider: "google",
+        subscription_model: "gemini-3.1-pro-preview",
       },
       providerCaps: {
         google: {
           default: { daily: { warn: null, refuse: 90 } },
-          perModel: { 'gemini-3.1-pro-preview': { daily: { warn: null, refuse: 50 } } },
+          perModel: { "gemini-3.1-pro-preview": { daily: { warn: null, refuse: 50 } } },
         },
       },
       now,
     });
 
-    expect(result).toEqual({ state: 'pass', snapshot_state: 'no_signal' });
+    expect(result).toEqual({ state: "pass", snapshot_state: "no_signal" });
   });
 
-  it('agent without subscription_model ignores per-model snapshots', () => {
+  it("agent without subscription_model ignores per-model snapshots", () => {
     const result = checkPressureCap({
       cache: {
         forProvider() {
           return [
             makeSnapshot({
-              provider: 'google',
-              window_label: 'daily',
-              model: 'gemini-3.1-pro-preview',
+              provider: "google",
+              window_label: "daily",
+              model: "gemini-3.1-pro-preview",
               used_pct: 95,
-              observed_at: '2026-05-08T00:50:00Z',
+              observed_at: "2026-05-08T00:50:00Z",
             }),
           ];
         },
       },
       agent: {
-        name: 'gemini-unknown',
-        pricing_mode: 'subscription',
-        subscription_provider: 'google',
+        name: "gemini-unknown",
+        pricing_mode: "subscription",
+        subscription_provider: "google",
       },
       providerCaps: {
         google: {
           default: { daily: { warn: null, refuse: 90 } },
-          perModel: { 'gemini-3.1-pro-preview': { daily: { warn: null, refuse: 50 } } },
+          perModel: { "gemini-3.1-pro-preview": { daily: { warn: null, refuse: 50 } } },
         },
       },
       now,
     });
 
-    expect(result).toEqual({ state: 'pass', snapshot_state: 'no_signal' });
+    expect(result).toEqual({ state: "pass", snapshot_state: "no_signal" });
   });
 
-  it('per-model snapshot uses default cap when no per-model cap exists', () => {
+  it("per-model snapshot uses default cap when no per-model cap exists", () => {
     const result = checkPressureCap({
       cache: {
         forProvider() {
           return [
             makeSnapshot({
-              provider: 'google',
-              window_label: 'daily',
-              model: 'gemini-3-flash-preview',
+              provider: "google",
+              window_label: "daily",
+              model: "gemini-3-flash-preview",
               used_pct: 95,
-              observed_at: '2026-05-08T00:50:00Z',
+              observed_at: "2026-05-08T00:50:00Z",
             }),
           ];
         },
       },
       agent: {
-        name: 'gemini-unknown',
-        pricing_mode: 'subscription',
-        subscription_provider: 'google',
-        subscription_model: 'gemini-3-flash-preview',
+        name: "gemini-unknown",
+        pricing_mode: "subscription",
+        subscription_provider: "google",
+        subscription_model: "gemini-3-flash-preview",
       },
       providerCaps: {
         google: {
@@ -577,15 +610,15 @@ describe('checkPressureCap', () => {
     });
 
     expect(result).toEqual({
-      state: 'refuse',
-      reason: 'over_threshold',
-      provider: 'google',
-      window_label: 'daily',
+      state: "refuse",
+      reason: "over_threshold",
+      provider: "google",
+      window_label: "daily",
       used_pct: 95,
       cap_pct: 90,
       resets_at: null,
       snapshot_age_seconds: 600,
-      snapshot_state: 'fresh',
+      snapshot_state: "fresh",
     });
   });
 });

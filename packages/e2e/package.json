@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
-  "bin": { "penumbra-harness": "./bin/penumbra-harness.ts" },
+  "bin": {
+    "penumbra-harness": "./bin/penumbra-harness.ts"
+  },
   "dependencies": {
     "@penumbra/core": "workspace:*",
     "@penumbra/daemon": "workspace:*",

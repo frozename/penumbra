@@ -1,5 +1,10 @@
-import type { Database } from 'bun:sqlite';
-import { TaskDraftEscalationPayloadSchema, TaskDraftPayloadSchema, type TaskDraftEscalationPayload, type TaskDraftPayload } from '../schemas/task-draft.js';
+import type { Database } from "bun:sqlite";
+import {
+  TaskDraftEscalationPayloadSchema,
+  TaskDraftPayloadSchema,
+  type TaskDraftEscalationPayload,
+  type TaskDraftPayload,
+} from "../schemas/task-draft.js";
 
 export type PendingTaskDraft = {
   event_id: string;
@@ -11,13 +16,18 @@ export type PendingTaskDraft = {
   evidence: { conv_ids?: string[]; commits?: string[]; files?: string[]; session_id?: string };
   auto_ok: boolean;
   filed_by_agent: string;
-  filed_via: 'skill_inline' | 'stop_hook';
+  filed_via: "skill_inline" | "stop_hook";
   parent_draft_id: string | null;
-  provenance?: { filing_path: string; session_id: string; extractor_version: string; filtered_by: string[] };
+  provenance?: {
+    filing_path: string;
+    session_id: string;
+    extractor_version: string;
+    filtered_by: string[];
+  };
 };
 
 export type ListPendingInput = {
-  latest_event_type: 'task_draft' | 'task_draft_escalation';
+  latest_event_type: "task_draft" | "task_draft_escalation";
   project_id: string;
   limit?: number;
 };
@@ -38,8 +48,8 @@ export class TaskDraftReader {
 
   listPending(input: ListPendingInput): PendingTaskDraft[] {
     const limit = clampLimit(input.limit);
-    if (input.latest_event_type === 'task_draft_escalation') {
-      console.warn('task_draft_escalation surface awaits dedicated reader — returning empty');
+    if (input.latest_event_type === "task_draft_escalation") {
+      console.warn("task_draft_escalation surface awaits dedicated reader — returning empty");
       return [];
     }
     const rows = this.queryPending(input.latest_event_type, limit, input.project_id);
@@ -49,7 +59,7 @@ export class TaskDraftReader {
         const payload = this.parseRowPayload(row);
         out.push(mapPendingTaskDraft(row, payload));
       } catch (err) {
-        console.warn('task draft reader skipped invalid payload', { event_id: row.event_id, err });
+        console.warn("task draft reader skipped invalid payload", { event_id: row.event_id, err });
       }
     }
     return out;
@@ -62,7 +72,7 @@ export class TaskDraftReader {
     for (const row of rows) {
       try {
         if (row.original_project_id !== row.escalation_project_id) {
-          console.warn('task draft escalation reader skipped cross-project join', {
+          console.warn("task draft escalation reader skipped cross-project join", {
             escalation_event_id: row.escalation_event_id,
             escalation_project_id: row.escalation_project_id,
             original_event_id: row.original_event_id,
@@ -73,7 +83,14 @@ export class TaskDraftReader {
         const originalPayload = this.parseDraftPayload(row.original_payload);
         const escalationPayload = this.parseEscalationPayload(row.escalation_payload);
         out.push({
-          ...mapPendingTaskDraft({ event_id: row.original_event_id, ts: row.original_ts, project_id: row.original_project_id }, originalPayload),
+          ...mapPendingTaskDraft(
+            {
+              event_id: row.original_event_id,
+              ts: row.original_ts,
+              project_id: row.original_project_id,
+            },
+            originalPayload,
+          ),
           event_id: row.escalation_event_id,
           ts: row.escalation_ts,
           project_id: row.original_project_id,
@@ -82,13 +99,21 @@ export class TaskDraftReader {
           escalation_ts: row.escalation_ts,
         });
       } catch (err) {
-        console.warn('task draft escalation reader skipped invalid payload', { escalation_event_id: row.escalation_event_id, original_event_id: row.original_event_id, err });
+        console.warn("task draft escalation reader skipped invalid payload", {
+          escalation_event_id: row.escalation_event_id,
+          original_event_id: row.original_event_id,
+          err,
+        });
       }
     }
     return out;
   }
 
-  private queryPending(latestEventType: ListPendingInput['latest_event_type'], limit: number, projectId: string): Array<{
+  private queryPending(
+    latestEventType: ListPendingInput["latest_event_type"],
+    limit: number,
+    projectId: string,
+  ): Array<{
     event_id: string;
     ts: string;
     project_id: string | null;
@@ -117,34 +142,45 @@ export class TaskDraftReader {
         AND project_id = ?
       ORDER BY ts ASC, ingest_ts ASC, event_id ASC
       LIMIT ?`;
-    return this.opts.db.query<{
-      event_id: string;
-      ts: string;
-      project_id: string | null;
-      event_type: string;
-      draft_id: string;
-      payload_json: string;
-    }, [ListPendingInput['latest_event_type'], string, number]>(sql).all(latestEventType, projectId, limit);
+    return this.opts.db
+      .query<
+        {
+          event_id: string;
+          ts: string;
+          project_id: string | null;
+          event_type: string;
+          draft_id: string;
+          payload_json: string;
+        },
+        [ListPendingInput["latest_event_type"], string, number]
+      >(sql)
+      .all(latestEventType, projectId, limit);
   }
 
-  private parseRowPayload(
-    row: { draft_id: string; event_type: string; payload_json: string },
-  ): TaskDraftPayload {
-    const rawPayload = typeof row.payload_json === 'string' ? JSON.parse(row.payload_json) : row.payload_json;
+  private parseRowPayload(row: {
+    draft_id: string;
+    event_type: string;
+    payload_json: string;
+  }): TaskDraftPayload {
+    const rawPayload =
+      typeof row.payload_json === "string" ? JSON.parse(row.payload_json) : row.payload_json;
     return TaskDraftPayloadSchema.parse(rawPayload as unknown);
   }
 
   private parseDraftPayload(payloadJson: string): TaskDraftPayload {
-    const rawPayload = typeof payloadJson === 'string' ? JSON.parse(payloadJson) : payloadJson;
+    const rawPayload = typeof payloadJson === "string" ? JSON.parse(payloadJson) : payloadJson;
     return TaskDraftPayloadSchema.parse(rawPayload as unknown);
   }
 
   private parseEscalationPayload(payloadJson: string): TaskDraftEscalationPayload {
-    const rawPayload = typeof payloadJson === 'string' ? JSON.parse(payloadJson) : payloadJson;
+    const rawPayload = typeof payloadJson === "string" ? JSON.parse(payloadJson) : payloadJson;
     return TaskDraftEscalationPayloadSchema.parse(rawPayload as unknown);
   }
 
-  private queryPendingEscalations(limit: number, projectId: string): Array<{
+  private queryPendingEscalations(
+    limit: number,
+    projectId: string,
+  ): Array<{
     escalation_event_id: string;
     escalation_ts: string;
     escalation_payload: string;
@@ -198,28 +234,36 @@ export class TaskDraftReader {
         AND ranked.project_id = ?
       ORDER BY ranked.ts ASC, ranked.ingest_ts ASC, ranked.event_id ASC
       LIMIT ?`;
-    return this.opts.db.query<{
-      escalation_event_id: string;
-      escalation_ts: string;
-      escalation_payload: string;
-      escalation_project_id: string | null;
-      original_event_id: string;
-      original_ts: string;
-      original_project_id: string | null;
-      original_payload: string;
-    }, [string, number]>(sql).all(projectId, limit);
+    return this.opts.db
+      .query<
+        {
+          escalation_event_id: string;
+          escalation_ts: string;
+          escalation_payload: string;
+          escalation_project_id: string | null;
+          original_event_id: string;
+          original_ts: string;
+          original_project_id: string | null;
+          original_payload: string;
+        },
+        [string, number]
+      >(sql)
+      .all(projectId, limit);
   }
 }
 
 function clampLimit(limit?: number): number {
   if (limit === undefined) return 5;
   if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
-    throw new Error('limit out of range');
+    throw new Error("limit out of range");
   }
   return limit;
 }
 
-function mapPendingTaskDraft(row: { event_id: string; ts: string; project_id: string | null }, payload: TaskDraftPayload): PendingTaskDraft {
+function mapPendingTaskDraft(
+  row: { event_id: string; ts: string; project_id: string | null },
+  payload: TaskDraftPayload,
+): PendingTaskDraft {
   return {
     event_id: row.event_id,
     ts: row.ts,

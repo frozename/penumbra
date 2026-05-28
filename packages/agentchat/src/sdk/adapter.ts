@@ -5,10 +5,10 @@ export interface ToolCallContext {
   dispatchId: string;
 }
 
-import type { WriteToolsExecutor } from '../worker/write-tools-executor.js';
-import type { DispatchEventInput } from '@penumbra/core';
+import type { WriteToolsExecutor } from "../worker/write-tools-executor.js";
+import type { DispatchEventInput } from "@penumbra/core";
 
-export type PermissionDecision = 'approve' | 'reject';
+export type PermissionDecision = "approve" | "reject";
 
 export interface DispatchInput {
   prompt: string;
@@ -39,13 +39,13 @@ export interface DispatchOutput {
 }
 
 export type DispatchEvent =
-  | { type: 'delta'; text: string }
-  | { type: 'done'; result: DispatchOutput }
+  | { type: "delta"; text: string }
+  | { type: "done"; result: DispatchOutput }
   // Reserved for v2 tool-use plumbing. Adapters do not emit these in v1; the
   // shapes are defined now so adding tool-use later is a non-breaking change.
-  | { type: 'tool_call'; tool_name: string; args: unknown; call_id: string }
-  | { type: 'tool_result'; call_id: string; result: unknown }
-  | { type: 'tool_error'; call_id: string; error: string };
+  | { type: "tool_call"; tool_name: string; args: unknown; call_id: string }
+  | { type: "tool_result"; call_id: string; result: unknown }
+  | { type: "tool_error"; call_id: string; error: string };
 
 export interface Adapter {
   readonly kind: string;

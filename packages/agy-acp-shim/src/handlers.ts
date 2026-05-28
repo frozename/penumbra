@@ -1,5 +1,5 @@
-import { createRpcServer } from './rpc.js';
-import { spawnAgy as _spawnAgy } from './agy-subprocess.js';
+import { createRpcServer } from "./rpc.js";
+import { spawnAgy as _spawnAgy } from "./agy-subprocess.js";
 import type {
   InitializeParams,
   InitializeResult,
@@ -7,9 +7,9 @@ import type {
   SessionNewResult,
   SessionPromptParams,
   SessionPromptResult,
-} from './types.js';
+} from "./types.js";
 
-const AGY_BINARY = process.env['AGY_BINARY'] ?? 'agy';
+const AGY_BINARY = process.env["AGY_BINARY"] ?? "agy";
 
 export interface AgyHandle {
   exited: Promise<number | null>;
@@ -52,16 +52,18 @@ export function makeHandlers(opts: HandlersOptions): Handlers {
 
   async function handleSessionPrompt(params: SessionPromptParams): Promise<SessionPromptResult> {
     const promptText = params.prompt
-      .filter((p) => p.type === 'text')
+      .filter((p) => p.type === "text")
       .map((p) => p.text)
-      .join('\n');
+      .join("\n");
 
     const argv = [
-      '--print',
-      '--dangerously-skip-permissions',
-      '--sandbox',
-      '--print-timeout', '10m',
-      '--conversation', params.sessionId,
+      "--print",
+      "--dangerously-skip-permissions",
+      "--sandbox",
+      "--print-timeout",
+      "10m",
+      "--conversation",
+      params.sessionId,
     ];
 
     const handle = opts.spawnAgy({
@@ -69,13 +71,13 @@ export function makeHandlers(opts: HandlersOptions): Handlers {
       args: argv,
       prompt: promptText,
       onLine: (line) => {
-        opts.notify('session/update', {
+        opts.notify("session/update", {
           sessionId: params.sessionId,
           update: {
-            sessionUpdate: 'agent_message_chunk',
+            sessionUpdate: "agent_message_chunk",
             content: {
-              type: 'text',
-              text: line + '\n',
+              type: "text",
+              text: line + "\n",
             },
           },
         });
@@ -86,20 +88,20 @@ export function makeHandlers(opts: HandlersOptions): Handlers {
 
     try {
       await handle.exited;
-      opts.notify('done', {});
+      opts.notify("done", {});
     } finally {
       if (inFlight.get(params.sessionId) === handle) {
         inFlight.delete(params.sessionId);
       }
     }
 
-    return { stopReason: 'end_turn' };
+    return { stopReason: "end_turn" };
   }
 
   async function handleSessionCancel(params: { sessionId: string }): Promise<{}> {
     const handle = inFlight.get(params.sessionId);
     if (!handle) {
-      const err = new Error('not_a_session');
+      const err = new Error("not_a_session");
       (err as Error & { code?: number }).code = -32002;
       throw err;
     }
@@ -115,16 +117,17 @@ export function makeHandlers(opts: HandlersOptions): Handlers {
 export async function runShim(): Promise<void> {
   let server: ReturnType<typeof createRpcServer>;
 
-  const { handleInitialize, handleSessionNew, handleSessionPrompt, handleSessionCancel } = makeHandlers({
-    spawnAgy: _spawnAgy,
-    notify: (method, params) => server.notify(method, params),
-  });
+  const { handleInitialize, handleSessionNew, handleSessionPrompt, handleSessionCancel } =
+    makeHandlers({
+      spawnAgy: _spawnAgy,
+      notify: (method, params) => server.notify(method, params),
+    });
 
   server = createRpcServer({
     initialize: (params) => handleInitialize(params as InitializeParams),
-    'session/new': (params) => handleSessionNew(params as SessionNewParams),
-    'session/prompt': (params) => handleSessionPrompt(params as SessionPromptParams),
-    'session/cancel': (params) => handleSessionCancel(params as { sessionId: string }),
+    "session/new": (params) => handleSessionNew(params as SessionNewParams),
+    "session/prompt": (params) => handleSessionPrompt(params as SessionPromptParams),
+    "session/cancel": (params) => handleSessionCancel(params as { sessionId: string }),
   });
 
   server.start();

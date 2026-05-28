@@ -1,8 +1,8 @@
-import { z } from 'zod';
-import type { Services } from '@penumbra/core';
-import { json } from './_helpers.js';
-import type { OrphanHandoffRecoveryService } from '../services/orphan-handoff-recovery.js';
-import { requireWorkerPrincipalMatch } from '../auth.js';
+import { z } from "zod";
+import type { Services } from "@penumbra/core";
+import { json } from "./_helpers.js";
+import type { OrphanHandoffRecoveryService } from "../services/orphan-handoff-recovery.js";
+import { requireWorkerPrincipalMatch } from "../auth.js";
 
 /**
  * POST /worker/reconcile-orphans
@@ -11,11 +11,14 @@ import { requireWorkerPrincipalMatch } from '../auth.js';
 export async function workerReconcileOrphansRoute(
   req: Request,
   _services: Services,
-  recovery: OrphanHandoffRecoveryService
+  recovery: OrphanHandoffRecoveryService,
 ): Promise<Response> {
   const raw = await safeJson(req);
   if (raw === null) {
-    return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400);
+    return json(
+      { error: { code: "invalid_json", message: "request body was not valid JSON" } },
+      400,
+    );
   }
 
   const body = z.object({ worker_id: z.string().min(1) }).safeParse(raw);
@@ -23,8 +26,8 @@ export async function workerReconcileOrphansRoute(
     return json(
       {
         error: {
-          code: 'validation_error',
-          message: 'body failed schema validation',
+          code: "validation_error",
+          message: "body failed schema validation",
           field_errors: body.error.issues.map((i) => ({ path: i.path, message: i.message })),
         },
       },
@@ -44,12 +47,15 @@ export async function workerReconcileOrphansRoute(
       exhaustedRowIds: result.exhaustedRowIds,
     });
   } catch (err) {
-    _services.log.error({ err, worker_id: body.data.worker_id }, 'worker reconcile orphan recovery failed');
+    _services.log.error(
+      { err, worker_id: body.data.worker_id },
+      "worker reconcile orphan recovery failed",
+    );
     return json(
       {
-        error: { code: 'recovery_failed' },
+        error: { code: "recovery_failed" },
       },
-      500
+      500,
     );
   }
 }

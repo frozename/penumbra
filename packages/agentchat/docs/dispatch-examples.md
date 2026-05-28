@@ -12,6 +12,7 @@ echo "@local-gemma26 Reply with exactly: OK" \
 ```
 
 Expected output:
+
 ```
 [local-gemma26]
 OK

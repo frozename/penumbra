@@ -1,7 +1,7 @@
-import { readdirSync, renameSync, mkdirSync, statSync } from 'node:fs';
-import { join, dirname, basename } from 'node:path';
+import { readdirSync, renameSync, mkdirSync, statSync } from "node:fs";
+import { join, dirname, basename } from "node:path";
 
-const PREFIXES = ['maestro-continuation-', 'session-summary-'] as const;
+const PREFIXES = ["maestro-continuation-", "session-summary-"] as const;
 const DEFAULT_KEEP_COUNT = 10;
 const SANITY_MIN_KEEP_COUNT = 5;
 
@@ -31,19 +31,28 @@ export async function runNotesRotate(opts: NotesRotateOpts): Promise<NotesRotate
     throw new Error(`keep-count must be at least ${SANITY_MIN_KEEP_COUNT}`);
   }
 
-  const notesDir = join(opts.rootDir, 'docs', 'notes');
+  const notesDir = join(opts.rootDir, "docs", "notes");
   const archiveMonth = monthKey(opts.now ?? new Date());
   const candidates = scanCandidates(notesDir);
-  const modifiedCount = countModifiedCandidates(opts.rootDir, candidates.flatMap((group) => group.files.map((name) => join(notesDir, name))));
+  const modifiedCount = countModifiedCandidates(
+    opts.rootDir,
+    candidates.flatMap((group) => group.files.map((name) => join(notesDir, name))),
+  );
 
   if (modifiedCount > 0) {
-    throw new Error(`refusing — ${modifiedCount} modified files in candidate set; commit or stash first`);
+    throw new Error(
+      `refusing — ${modifiedCount} modified files in candidate set; commit or stash first`,
+    );
   }
 
-  const wouldMove = candidates.flatMap((group) => group.files.slice(keepCount).map((name) => ({
-    source: join(notesDir, name),
-    destination: join(notesDir, 'archive', archiveMonth, name),
-  }))).sort((a, b) => basename(a.source).localeCompare(basename(b.source)));
+  const wouldMove = candidates
+    .flatMap((group) =>
+      group.files.slice(keepCount).map((name) => ({
+        source: join(notesDir, name),
+        destination: join(notesDir, "archive", archiveMonth, name),
+      })),
+    )
+    .sort((a, b) => basename(a.source).localeCompare(basename(b.source)));
 
   const moved: NotesRotateItem[] = [];
   if (opts.apply) {
@@ -64,7 +73,9 @@ export async function runNotesRotate(opts: NotesRotateOpts): Promise<NotesRotate
 }
 
 function scanCandidates(notesDir: string): Array<{ prefix: string; files: string[] }> {
-  const names = readdirSync(notesDir).filter((name) => PREFIXES.some((prefix) => name.startsWith(prefix)));
+  const names = readdirSync(notesDir).filter((name) =>
+    PREFIXES.some((prefix) => name.startsWith(prefix)),
+  );
   const grouped = new Map<string, string[]>();
   for (const prefix of PREFIXES) grouped.set(prefix, []);
 
@@ -81,24 +92,23 @@ function scanCandidates(notesDir: string): Array<{ prefix: string; files: string
 }
 
 function countModifiedCandidates(rootDir: string, relativeFiles: string[]): number {
-  const gitDir = join(rootDir, '.git');
+  const gitDir = join(rootDir, ".git");
   if (!existsLike(gitDir)) return 0;
 
   const proc = Bun.spawnSync({
-    cmd: ['git', 'status', '--porcelain', '--untracked-files=no', '--', ...relativeFiles],
+    cmd: ["git", "status", "--porcelain", "--untracked-files=no", "--", ...relativeFiles],
     cwd: rootDir,
-    stderr: 'pipe',
-    stdout: 'pipe',
+    stderr: "pipe",
+    stdout: "pipe",
   });
   if (proc.exitCode !== 0) return 0;
 
   const text = new TextDecoder().decode(proc.stdout);
   return text
-    .split('\n')
+    .split("\n")
     .map((line) => line.trimEnd())
     .filter(Boolean)
-    .filter((line) => line.length >= 2 && line[0] !== '?' && line[1] === 'M')
-    .length;
+    .filter((line) => line.length >= 2 && line[0] !== "?" && line[1] === "M").length;
 }
 
 function existsLike(path: string): boolean {
@@ -112,6 +122,6 @@ function existsLike(path: string): boolean {
 
 function monthKey(date: Date): string {
   const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, "0");
   return `${year}-${month}`;
 }

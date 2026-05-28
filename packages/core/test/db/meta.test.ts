@@ -1,8 +1,8 @@
-import { expect, test, beforeEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
-import { applySchema } from '../../src/db/schema.js';
-import { DbMeta } from '../../src/db/meta.js';
+import { expect, test, beforeEach } from "bun:test";
+import { Database } from "bun:sqlite";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { applySchema } from "../../src/db/schema.js";
+import { DbMeta } from "../../src/db/meta.js";
 
 // On macOS, Bun uses the Apple SQLite build which disables extension loading.
 // Switch to Homebrew's full-featured SQLite before any Database is created.
@@ -10,8 +10,8 @@ import { DbMeta } from '../../src/db/meta.js';
 // Guard: setCustomSQLite throws if called after SQLite is already loaded (e.g.
 // when multiple test files in the same bun test run each attempt the call).
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {
   // already loaded in this process
@@ -19,32 +19,32 @@ try {
 
 let db: Database;
 beforeEach(() => {
-  db = new Database(':memory:');
+  db = new Database(":memory:");
   loadSqliteVec(db);
   applySchema(db);
 });
 
-test('set and get roundtrip', () => {
+test("set and get roundtrip", () => {
   const m = new DbMeta(db);
-  m.set('embedder_name', 'minilm');
-  expect(m.get('embedder_name')).toBe('minilm');
+  m.set("embedder_name", "minilm");
+  expect(m.get("embedder_name")).toBe("minilm");
 });
 
-test('get returns undefined for missing key', () => {
+test("get returns undefined for missing key", () => {
   const m = new DbMeta(db);
-  expect(m.get('nope')).toBeUndefined();
+  expect(m.get("nope")).toBeUndefined();
 });
 
-test('set overwrites existing value', () => {
+test("set overwrites existing value", () => {
   const m = new DbMeta(db);
-  m.set('k', 'v1');
-  m.set('k', 'v2');
-  expect(m.get('k')).toBe('v2');
+  m.set("k", "v1");
+  m.set("k", "v2");
+  expect(m.get("k")).toBe("v2");
 });
 
-test('getNumber parses and returns typed values', () => {
+test("getNumber parses and returns typed values", () => {
   const m = new DbMeta(db);
-  m.set('dim', '384');
-  expect(m.getNumber('dim')).toBe(384);
-  expect(m.getNumber('missing')).toBeUndefined();
+  m.set("dim", "384");
+  expect(m.getNumber("dim")).toBe(384);
+  expect(m.getNumber("missing")).toBeUndefined();
 });

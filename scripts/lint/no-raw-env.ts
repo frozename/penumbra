@@ -12,10 +12,7 @@ const ROOT = resolve(process.env.PENUMBRA_LINT_NO_RAW_ENV_ROOT ?? join(import.me
 const STRICT = process.env.PENUMBRA_LINT_NO_RAW_ENV_STRICT === "1";
 const DEFAULT_PATHS = ["packages/**/*.ts"];
 const ALLOWLIST = ["packages/config/**"];
-const PATTERNS = [
-  /\bprocess\.env\.PENUMBRA_[A-Z0-9_]+\b/g,
-  /\bBun\.env\.PENUMBRA_[A-Z0-9_]+\b/g,
-];
+const PATTERNS = [/\bprocess\.env\.PENUMBRA_[A-Z0-9_]+\b/g, /\bBun\.env\.PENUMBRA_[A-Z0-9_]+\b/g];
 
 function readArgs(argv: string[]) {
   const paths: string[] = [];
@@ -90,7 +87,9 @@ function main() {
     process.exit(1);
   }
 
-  console.error(`warn: found ${findings.length} raw PENUMBRA env read${findings.length === 1 ? "" : "s"}; set PENUMBRA_LINT_NO_RAW_ENV_STRICT=1 to fail`);
+  console.error(
+    `warn: found ${findings.length} raw PENUMBRA env read${findings.length === 1 ? "" : "s"}; set PENUMBRA_LINT_NO_RAW_ENV_STRICT=1 to fail`,
+  );
   process.exit(0);
 }
 

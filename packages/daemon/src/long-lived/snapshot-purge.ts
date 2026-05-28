@@ -1,4 +1,4 @@
-import type { Database } from 'bun:sqlite';
+import type { Database } from "bun:sqlite";
 
 export interface SnapshotPurgeSnapshot {
   id: string;
@@ -23,10 +23,12 @@ export async function runSnapshotPurge(deps: SnapshotPurgeDeps): Promise<Snapsho
   const dryRun = deps.dryRun ?? true;
   const snapshots = await deps.listSnapshots();
   const cutoff = deps.now - deps.ttlMs;
-  const candidates = snapshots.filter((snapshot) => snapshot.created_at < cutoff).map((snapshot) => snapshot.id);
+  const candidates = snapshots
+    .filter((snapshot) => snapshot.created_at < cutoff)
+    .map((snapshot) => snapshot.id);
 
   if (dryRun && deps.log) {
-    deps.log(`snapshot-purge dry-run would delete: ${candidates.join(', ')}`);
+    deps.log(`snapshot-purge dry-run would delete: ${candidates.join(", ")}`);
   }
 
   return { candidates };

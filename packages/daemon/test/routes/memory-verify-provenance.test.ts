@@ -1,15 +1,15 @@
-import { expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
-import { TestEmbedder } from '@penumbra/core/testing';
-import { createDaemonFetchHandler } from '../../src/serve.js';
+import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
+import { createDaemonFetchHandler } from "../../src/serve.js";
 
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {}
 
@@ -19,20 +19,20 @@ function startTestDaemon(): {
   token: string;
   stop: () => void;
 } {
-  const db = new Database(':memory:');
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
-  const root = mkdtempSync(join(tmpdir(), 'memory-verify-route-'));
+  const root = mkdtempSync(join(tmpdir(), "memory-verify-route-"));
   const services = buildServices({
     env: {},
     input: {},
     storageRoot: root,
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date('2026-05-12T12:00:00.000Z'),
+    clock: () => new Date("2026-05-12T12:00:00.000Z"),
   });
 
-  const token = 'tok';
+  const token = "tok";
   const handler = createDaemonFetchHandler({ services, token });
 
   return {
@@ -40,8 +40,12 @@ function startTestDaemon(): {
     services,
     token,
     stop: () => {
-      try { services.supervisor.stopAll(); } catch {}
-      try { db.close(); } catch {}
+      try {
+        services.supervisor.stopAll();
+      } catch {}
+      try {
+        db.close();
+      } catch {}
       rmSync(root, { recursive: true, force: true });
     },
   };
@@ -59,14 +63,14 @@ function insertT2(db: Database, memoryId: string, createdAt: string): void {
     [
       memoryId,
       null,
-      'u1',
-      'fact',
-      '[]',
+      "u1",
+      "fact",
+      "[]",
       createdAt,
       createdAt,
       memoryId,
       `body for ${memoryId}`,
-      '{}',
+      "{}",
       null,
       createdAt,
       createdAt,
@@ -74,67 +78,71 @@ function insertT2(db: Database, memoryId: string, createdAt: string): void {
       null,
       null,
       null,
-      'feature',
-      '[]',
+      "feature",
+      "[]",
       null,
-      '[]',
+      "[]",
     ],
   );
 }
 
-test('POST /memory/verify stores provenance and search returns it', async () => {
+test("POST /memory/verify stores provenance and search returns it", async () => {
   const daemon = startTestDaemon();
   try {
-    const createdAt = new Date('2026-05-12T11:00:00.000Z').toISOString();
-    insertT2(daemon.services.db, 'memory-route-1', createdAt);
+    const createdAt = new Date("2026-05-12T11:00:00.000Z").toISOString();
+    insertT2(daemon.services.db, "memory-route-1", createdAt);
 
-    const res = await daemon.fetch('/memory/verify', {
-      method: 'POST',
+    const res = await daemon.fetch("/memory/verify", {
+      method: "POST",
       headers: { authorization: `Bearer ${daemon.token}` },
       body: JSON.stringify({
-        memory_id: 'memory-route-1',
-        claimed_by: 'agent-name@worktree',
-        reason: 'manual spot check',
-        session_id: 'lane-xyz',
+        memory_id: "memory-route-1",
+        claimed_by: "agent-name@worktree",
+        reason: "manual spot check",
+        session_id: "lane-xyz",
       }),
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
-      memory_id: 'memory-route-1',
-      last_verified_reason: 'manual spot check',
-      last_verified_session_id: 'lane-xyz',
-      claimed_by: 'agent-name@worktree',
+      memory_id: "memory-route-1",
+      last_verified_reason: "manual spot check",
+      last_verified_session_id: "lane-xyz",
+      claimed_by: "agent-name@worktree",
       verifier_actor: daemon.services.machineId.get(),
     });
 
-    const searchRes = await daemon.fetch('/memory/search', {
-      method: 'POST',
+    const searchRes = await daemon.fetch("/memory/search", {
+      method: "POST",
       headers: { authorization: `Bearer ${daemon.token}` },
-      body: JSON.stringify({ query: 'memory-route-1', project_id: null, limit: 5, tiers: ['t2'] }),
+      body: JSON.stringify({ query: "memory-route-1", project_id: null, limit: 5, tiers: ["t2"] }),
     });
     expect(searchRes.status).toBe(200);
-    const body = await searchRes.json() as { hits: Array<Record<string, unknown>> };
+    const body = (await searchRes.json()) as { hits: Array<Record<string, unknown>> };
     expect(body.hits[0]).toMatchObject({
-      id: 'memory-route-1',
-      last_verified_reason: 'manual spot check',
-      last_verified_session_id: 'lane-xyz',
+      id: "memory-route-1",
+      last_verified_reason: "manual spot check",
+      last_verified_session_id: "lane-xyz",
     });
   } finally {
     daemon.stop();
   }
 });
 
-test('POST /memory/verify rejects invalid by values', async () => {
+test("POST /memory/verify rejects invalid by values", async () => {
   const daemon = startTestDaemon();
   try {
-    insertT2(daemon.services.db, 'memory-route-2', new Date('2026-05-12T11:00:00.000Z').toISOString());
+    insertT2(
+      daemon.services.db,
+      "memory-route-2",
+      new Date("2026-05-12T11:00:00.000Z").toISOString(),
+    );
 
-    const res = await daemon.fetch('/memory/verify', {
-      method: 'POST',
+    const res = await daemon.fetch("/memory/verify", {
+      method: "POST",
       headers: { authorization: `Bearer ${daemon.token}` },
       body: JSON.stringify({
-        memory_id: 'memory-route-2',
-        by: '<script>',
+        memory_id: "memory-route-2",
+        by: "<script>",
       }),
     });
     expect(res.status).toBe(400);

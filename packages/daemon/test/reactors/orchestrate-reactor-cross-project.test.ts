@@ -1,12 +1,18 @@
-import { afterEach, expect, mock, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import type { AgentDescriptor, ChainStartRequest } from '@penumbra/core';
-import { loadSqliteVec, MaestroSessionWriter, migrate, TaskEventBus, TaskWriter } from '@penumbra/core';
-import { createOrchestrateReactor } from '../../src/reactors/orchestrate-reactor.js';
+import { afterEach, expect, mock, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import type { AgentDescriptor, ChainStartRequest } from "@penumbra/core";
+import {
+  loadSqliteVec,
+  MaestroSessionWriter,
+  migrate,
+  TaskEventBus,
+  TaskWriter,
+} from "@penumbra/core";
+import { createOrchestrateReactor } from "../../src/reactors/orchestrate-reactor.js";
 
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {}
 
@@ -17,14 +23,14 @@ const DEFAULT_BOUNDS = {
 };
 
 const MAESTRO_AGENT: AgentDescriptor = {
-  name: 'claude-acp-sonnet',
+  name: "claude-acp-sonnet",
   maestro_capable: true,
-  tags: ['typescript'],
-  tier: 'premium',
+  tags: ["typescript"],
+  tier: "premium",
 };
 
 function setupDb(): Database {
-  const db = new Database(':memory:');
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   return db;
@@ -35,7 +41,7 @@ afterEach(() => {
   return Bun.sleep(5);
 });
 
-test('orchestrate reactor forwards task.project_id into chainStart', async () => {
+test("orchestrate reactor forwards task.project_id into chainStart", async () => {
   const db = setupDb();
   const bus = new TaskEventBus();
   const sessions = new MaestroSessionWriter({ db });
@@ -48,9 +54,9 @@ test('orchestrate reactor forwards task.project_id into chainStart', async () =>
   const hasProjectId = db
     .query<{ name: string }, []>("PRAGMA table_info('tasks')")
     .all()
-    .some((row) => row.name === 'project_id');
+    .some((row) => row.name === "project_id");
   if (!hasProjectId) {
-    db.exec('ALTER TABLE tasks ADD COLUMN project_id TEXT');
+    db.exec("ALTER TABLE tasks ADD COLUMN project_id TEXT");
   }
 
   const chainStartCalls: ChainStartRequest[] = [];
@@ -61,14 +67,14 @@ test('orchestrate reactor forwards task.project_id into chainStart', async () =>
     taskWriter,
     chainStart: async (req) => {
       chainStartCalls.push(req);
-      return { handoff_id: 'handoff-1', conversation_id: 'conv-1' };
+      return { handoff_id: "handoff-1", conversation_id: "conv-1" };
     },
     resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
     defaults: DEFAULT_BOUNDS,
   });
   reactor.start();
 
-  const task_id = 'task_cross_project';
+  const task_id = "task_cross_project";
   const now = Date.now();
   db.run(
     `INSERT INTO tasks (
@@ -82,19 +88,19 @@ test('orchestrate reactor forwards task.project_id into chainStart', async () =>
       task_id,
       now,
       now,
-      'human',
-      'cli',
-      'sirius',
+      "human",
+      "cli",
+      "sirius",
       null,
-      'Ship task 3.2',
+      "Ship task 3.2",
       JSON.stringify({ allow_agents: [MAESTRO_AGENT.name] }),
     ],
   );
   bus.publish({
     task_id,
     at: now,
-    kind: 'filed',
-    actor: 'cli',
+    kind: "filed",
+    actor: "cli",
     payload: null,
   });
 
@@ -103,8 +109,8 @@ test('orchestrate reactor forwards task.project_id into chainStart', async () =>
   expect(chainStartCalls).toHaveLength(1);
   expect(chainStartCalls[0]).toMatchObject({
     initial_agent: MAESTRO_AGENT.name,
-    project_id: 'sirius',
-    task_type: 'implement_substantial',
+    project_id: "sirius",
+    task_type: "implement_substantial",
   });
 
   const session = sessions.get(task_id);

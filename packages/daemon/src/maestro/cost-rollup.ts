@@ -1,7 +1,9 @@
-import type { Database } from 'bun:sqlite';
+import type { Database } from "bun:sqlite";
 
 export function rollupCostForChain(db: Database, chain_handoff_id: string): number {
-  const row = db.query<{ total_cents: number | null }, [string]>(`
+  const row = db
+    .query<{ total_cents: number | null }, [string]>(
+      `
     WITH RECURSIVE chain_tree(id) AS (
       SELECT ? AS id
       UNION ALL
@@ -23,7 +25,9 @@ export function rollupCostForChain(db: Database, chain_handoff_id: string): numb
     SELECT CAST(ROUND(COALESCE(SUM(group_cost_usd), 0) * 100.0) AS INTEGER) AS total_cents
     FROM per_handoff_usage
     WHERE group_cost_usd IS NOT NULL
-  `).get(chain_handoff_id);
+  `,
+    )
+    .get(chain_handoff_id);
 
   return row?.total_cents ?? 0;
 }

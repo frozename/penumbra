@@ -1,8 +1,8 @@
-import { mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
-import type { WorkflowFn, WorkflowSpec, RecallBundle, WorkflowCtx } from '@penumbra/workflows';
-import { z } from 'zod';
-import { resolveOutDir, sanitizeFileStem } from '../_shared/io.js';
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import type { WorkflowFn, WorkflowSpec, RecallBundle, WorkflowCtx } from "@penumbra/workflows";
+import { z } from "zod";
+import { resolveOutDir, sanitizeFileStem } from "../_shared/io.js";
 
 type PlannerPersona = {
   name: string;
@@ -27,20 +27,22 @@ type PersonaResolution =
   | { ok: true; personas: Record<string, PlannerPersona> }
   | {
       ok: false;
-      error: 'unknown_persona';
+      error: "unknown_persona";
       missing_persona: string;
-      workload: 'plan_refine';
+      workload: "plan_refine";
       hint: string;
     };
 
-export const inputSchema = z.object({
-  topic: z.string().optional(),
-  content_path: z.string().optional(),
-  personas: z.array(z.string().min(1)).optional(),
-  focus: z.string().min(1).max(2000).optional(),
-  timeout_ms: z.number().int().positive().default(1200000),
-  out_dir: z.string().optional(),
-}).strict();
+export const inputSchema = z
+  .object({
+    topic: z.string().optional(),
+    content_path: z.string().optional(),
+    personas: z.array(z.string().min(1)).optional(),
+    focus: z.string().min(1).max(2000).optional(),
+    timeout_ms: z.number().int().positive().default(1200000),
+    out_dir: z.string().optional(),
+  })
+  .strict();
 
 export type Input = z.infer<typeof inputSchema>;
 
@@ -48,7 +50,7 @@ type PersonaRunResult = {
   persona: string;
   persona_key: string;
   bias: string;
-  status: 'completed' | 'failed' | 'timeout';
+  status: "completed" | "failed" | "timeout";
   response_text: string | null;
   conversation_id: string | null;
   handoff_id: string | null;
@@ -70,28 +72,31 @@ async function sleep(ms: number): Promise<void> {
 }
 
 const spec: WorkflowSpec = {
-  name: 'adversarial-plan',
-  description: 'Fan out a planning topic across N planner personas with distinct biases; synthesize a phased TDD plan.',
-  triggers: [{ kind: 'manual' }, { kind: 'slash', command: 'adversarial-plan' }],
-  recall: [
-    { source: 'file.contents', args: { path: '{{args.content_path}}' } },
-  ],
+  name: "adversarial-plan",
+  description:
+    "Fan out a planning topic across N planner personas with distinct biases; synthesize a phased TDD plan.",
+  triggers: [{ kind: "manual" }, { kind: "slash", command: "adversarial-plan" }],
+  recall: [{ source: "file.contents", args: { path: "{{args.content_path}}" } }],
   recall_budget_tokens: 12000,
   output: [],
-  run: { kind: 'ts-function' },
+  run: { kind: "ts-function" },
 };
 
 function getPlanWorkload(ctx: WorkflowCtx): PlanWorkloadConfig | null {
   const workloads = ctx.config.workloads;
-  if (!workloads || typeof workloads !== 'object' || Array.isArray(workloads)) return null;
+  if (!workloads || typeof workloads !== "object" || Array.isArray(workloads)) return null;
   const raw = (workloads as Record<string, unknown>).plan_refine;
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const row = raw as Record<string, unknown>;
   const eligibleAgents = Array.isArray(row.eligible_agents)
-    ? row.eligible_agents.filter((x): x is string => typeof x === 'string' && x.length > 0)
+    ? row.eligible_agents.filter((x): x is string => typeof x === "string" && x.length > 0)
     : [];
-  const fanOut = Number.isInteger(row.fan_out) && (row.fan_out as number) > 0 ? (row.fan_out as number) : undefined;
-  const synthesizer = typeof row.synthesizer === 'string' && row.synthesizer.length > 0 ? row.synthesizer : undefined;
+  const fanOut =
+    Number.isInteger(row.fan_out) && (row.fan_out as number) > 0
+      ? (row.fan_out as number)
+      : undefined;
+  const synthesizer =
+    typeof row.synthesizer === "string" && row.synthesizer.length > 0 ? row.synthesizer : undefined;
   return {
     eligible_agents: eligibleAgents,
     fan_out: fanOut,
@@ -101,18 +106,18 @@ function getPlanWorkload(ctx: WorkflowCtx): PlanWorkloadConfig | null {
 
 function getConfiguredPersonas(ctx: WorkflowCtx): Record<string, PlannerPersona> {
   const raw = ctx.config.personas;
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const entries = Object.entries(raw as Record<string, unknown>).filter(
-    ([, value]) => value && typeof value === 'object' && !Array.isArray(value),
+    ([, value]) => value && typeof value === "object" && !Array.isArray(value),
   ) as Array<[string, Record<string, unknown>]>;
   const out: Record<string, PlannerPersona> = {};
   for (const [key, value] of entries) {
     if (
-      typeof value.preferred_agent !== 'string' ||
+      typeof value.preferred_agent !== "string" ||
       value.preferred_agent.length === 0 ||
-      typeof value.bias !== 'string' ||
+      typeof value.bias !== "string" ||
       value.bias.length === 0 ||
-      typeof value.system_prompt !== 'string' ||
+      typeof value.system_prompt !== "string" ||
       value.system_prompt.length === 0
     ) {
       continue;
@@ -122,9 +127,10 @@ function getConfiguredPersonas(ctx: WorkflowCtx): Record<string, PlannerPersona>
       preferred_agent: value.preferred_agent,
       bias: value.bias,
       system_prompt: value.system_prompt,
-      timeout_ms: Number.isInteger(value.timeout_ms) && (value.timeout_ms as number) > 0
-        ? (value.timeout_ms as number)
-        : undefined,
+      timeout_ms:
+        Number.isInteger(value.timeout_ms) && (value.timeout_ms as number) > 0
+          ? (value.timeout_ms as number)
+          : undefined,
     };
   }
   return out;
@@ -145,9 +151,9 @@ function getPersonas(ctx: WorkflowCtx): PersonaResolution | null {
     if (!persona) {
       return {
         ok: false,
-        error: 'unknown_persona',
+        error: "unknown_persona",
         missing_persona: personaKey,
-        workload: 'plan_refine',
+        workload: "plan_refine",
         hint: `add personas.${personaKey} to routing.yaml`,
       };
     }
@@ -161,25 +167,30 @@ function getSynthesizer(ctx: WorkflowCtx): PlanSynthesizer | null {
   if (!workload || !workload.synthesizer) return null;
   return {
     preferred_agent: workload.synthesizer,
-    system_prompt: 'You are merging N planner outputs into one prioritized phased TDD plan.',
+    system_prompt: "You are merging N planner outputs into one prioritized phased TDD plan.",
   };
 }
 
 function inlineTopicAndSpec(args: Input, recall: RecallBundle): { topic: string; spec: string } {
-  const topic = typeof args.topic === 'string' ? args.topic : '';
-  const fileContents = recall.byKey['file.contents'];
-  const spec = fileContents && typeof fileContents === 'object' && !Array.isArray(fileContents) && typeof (fileContents as Record<string, unknown>).body === 'string'
-    ? String((fileContents as Record<string, unknown>).body)
-    : '';
+  const topic = typeof args.topic === "string" ? args.topic : "";
+  const fileContents = recall.byKey["file.contents"];
+  const spec =
+    fileContents &&
+    typeof fileContents === "object" &&
+    !Array.isArray(fileContents) &&
+    typeof (fileContents as Record<string, unknown>).body === "string"
+      ? String((fileContents as Record<string, unknown>).body)
+      : "";
   return { topic, spec };
 }
 
 function renderPersonaPrompt(persona: PlannerPersona, args: Input, recall: RecallBundle): string {
   const { topic, spec } = inlineTopicAndSpec(args, recall);
-  const specSection = spec.length > 0 ? spec : '(none provided)';
-  const focusSection = typeof args.focus === 'string' && args.focus.length > 0
-    ? `## Caller's focus\n\n${args.focus}\n\n`
-    : '';
+  const specSection = spec.length > 0 ? spec : "(none provided)";
+  const focusSection =
+    typeof args.focus === "string" && args.focus.length > 0
+      ? `## Caller's focus\n\n${args.focus}\n\n`
+      : "";
 
   return `${persona.system_prompt}
 
@@ -205,15 +216,16 @@ function synthesisPrompt(
   const sections = selected.map(({ key, persona }) => {
     const result = personaResults.find((r) => r.persona_key === key);
     if (!result) return `### ${persona.name} (${persona.bias})\nDISPATCH FAILED: missing result`;
-    if (result.status !== 'completed') {
+    if (result.status !== "completed") {
       return `### ${persona.name} (${persona.bias})\nDISPATCH FAILED: ${result.error ?? result.status}`;
     }
-    return `### ${persona.name} (${persona.bias})\n${result.response_text ?? ''}`;
+    return `### ${persona.name} (${persona.bias})\n${result.response_text ?? ""}`;
   });
 
-  const focusPrefix = typeof args.focus === 'string' && args.focus.length > 0
-    ? `Caller focus: ${args.focus}\n\n`
-    : '';
+  const focusPrefix =
+    typeof args.focus === "string" && args.focus.length > 0
+      ? `Caller focus: ${args.focus}\n\n`
+      : "";
 
   return `You are the synthesizer for an /adversarial-plan fan-out. This is NOT a session start.
 Do not run first moves. Do not check git status. Do not query handoff_list_pending.
@@ -229,7 +241,7 @@ ${synth.system_prompt}
 
 ${focusPrefix}## Plans
 
-${sections.join('\n\n')}
+${sections.join("\n\n")}
 
 ## Synthesis instructions
 
@@ -244,18 +256,18 @@ function buildSynthesisFrontmatter(args: {
   personas: string[];
 }): string {
   const lines = [
-    '---',
+    "---",
     `run_ts: ${args.run_ts}`,
-    `synthesis_handoff_id: ${args.synthesis_handoff_id ?? ''}`,
+    `synthesis_handoff_id: ${args.synthesis_handoff_id ?? ""}`,
     `topic: ${args.topic}`,
-    `personas: ${args.personas.join(', ')}`,
-    'persona_handoff_ids:',
+    `personas: ${args.personas.join(", ")}`,
+    "persona_handoff_ids:",
   ];
   for (const [key, id] of Object.entries(args.persona_handoff_ids)) {
     lines.push(`  ${key}: ${id}`);
   }
-  lines.push('---');
-  return lines.join('\n') + '\n\n';
+  lines.push("---");
+  return lines.join("\n") + "\n\n";
 }
 
 export const fn: WorkflowFn<Input> = async (ctx, recall) => {
@@ -263,8 +275,8 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   if (!personaResolution) {
     return {
       ok: false,
-      error: 'no_personas_configured',
-      hint: 'add workloads.plan_refine.eligible_agents to ~/.config/penumbra/routing.yaml',
+      error: "no_personas_configured",
+      hint: "add workloads.plan_refine.eligible_agents to ~/.config/penumbra/routing.yaml",
     };
   }
   if (!personaResolution.ok) {
@@ -282,20 +294,20 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   if (!synthesizer) {
     return {
       ok: false,
-      error: 'no_synthesizer_configured',
-      hint: 'add workloads.plan_refine.synthesizer to ~/.config/penumbra/routing.yaml',
+      error: "no_synthesizer_configured",
+      hint: "add workloads.plan_refine.synthesizer to ~/.config/penumbra/routing.yaml",
     };
   }
 
   const parsedArgs = ctx.args;
   if (
-    (typeof parsedArgs.topic !== 'string' || parsedArgs.topic.length === 0) &&
-    (typeof parsedArgs.content_path !== 'string' || parsedArgs.content_path.length === 0)
+    (typeof parsedArgs.topic !== "string" || parsedArgs.topic.length === 0) &&
+    (typeof parsedArgs.content_path !== "string" || parsedArgs.content_path.length === 0)
   ) {
     return {
       ok: false,
-      error: 'no_topic_or_content',
-      hint: 'provide topic or content_path',
+      error: "no_topic_or_content",
+      hint: "provide topic or content_path",
     };
   }
 
@@ -305,18 +317,20 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   if (missing.length > 0) {
     return {
       ok: false,
-      error: 'unknown_personas',
+      error: "unknown_personas",
       missing_personas: missing,
-      hint: `available personas: ${personaKeys.join(', ')}`,
+      hint: `available personas: ${personaKeys.join(", ")}`,
     };
   }
 
-  const selected = requestedPersonas.map((key) => ({ key, persona: personasByKey[key]! })).filter(Boolean);
+  const selected = requestedPersonas
+    .map((key) => ({ key, persona: personasByKey[key]! }))
+    .filter(Boolean);
   if (selected.length === 0) {
     return {
       ok: false,
-      error: 'no_personas_selected',
-      hint: `available personas: ${personaKeys.join(', ')}`,
+      error: "no_personas_selected",
+      hint: `available personas: ${personaKeys.join(", ")}`,
     };
   }
 
@@ -324,7 +338,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   if (!outDirResolution.ok) {
     return {
       ok: false,
-      error: 'out_dir_outside_allowed_roots',
+      error: "out_dir_outside_allowed_roots",
     };
   }
   const absoluteOutDir = outDirResolution.path;
@@ -351,7 +365,9 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     );
     await ctx.fileWrite(
       join(absoluteOutDir, `${stem}.md`),
-      result.status === 'completed' ? (result.response_text ?? '') : `<dispatch failed: ${result.error ?? result.status}>`,
+      result.status === "completed"
+        ? (result.response_text ?? "")
+        : `<dispatch failed: ${result.error ?? result.status}>`,
     );
   };
 
@@ -361,13 +377,13 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       let retryCount: 0 | 1 = 0;
       try {
         let dispatch: { conversation_id: string; handoff_id: string };
-        let wait: { status: 'completed' | 'failed' | 'timeout'; response_text: string | null };
+        let wait: { status: "completed" | "failed" | "timeout"; response_text: string | null };
         while (true) {
           try {
             dispatch = await ctx.dispatch({
               agent: persona.preferred_agent,
               message: `cd ${ctx.cwd}\n\n${renderPersonaPrompt(persona, parsedArgs, recall)}`,
-              task_type: 'plan_refine',
+              task_type: "plan_refine",
               use_worktree: false,
             });
             const timeoutMs = persona.timeout_ms ?? parsedArgs.timeout_ms;
@@ -399,7 +415,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           persona: persona.name,
           persona_key: key,
           bias: persona.bias,
-          status: 'failed',
+          status: "failed",
           response_text: null,
           conversation_id: null,
           handoff_id: null,
@@ -413,7 +429,10 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   );
 
   const completedResults = personaResults.filter(
-    (result) => result.status === 'completed' && typeof result.response_text === 'string' && result.response_text.length > 0,
+    (result) =>
+      result.status === "completed" &&
+      typeof result.response_text === "string" &&
+      result.response_text.length > 0,
   );
 
   if (completedResults.length === 0) {
@@ -427,13 +446,13 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       })),
       synthesis_path: null,
       synthesizer_status: null,
-      error: 'all_persona_dispatches_failed',
-      hint: 'all persona dispatches failed or timed out',
+      error: "all_persona_dispatches_failed",
+      hint: "all persona dispatches failed or timed out",
     };
   }
 
   let synthesisPath: string | null = null;
-  let synthStatus: 'completed' | 'failed' | 'timeout' | null = null;
+  let synthStatus: "completed" | "failed" | "timeout" | null = null;
   let synthHandoffId: string | null = null;
   let synthRetryUsed = false;
   const personaHandoffIds: Record<string, string> = {};
@@ -445,7 +464,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
 
   const dispatchSynth = async (): Promise<{
     dispatch: { conversation_id: string; handoff_id: string };
-    wait: { status: 'completed' | 'failed' | 'timeout'; response_text: string | null };
+    wait: { status: "completed" | "failed" | "timeout"; response_text: string | null };
   }> => {
     let attempts = 0;
     while (true) {
@@ -453,10 +472,12 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
         const dispatch = await ctx.dispatch({
           agent: synthesizer.preferred_agent,
           message: `cd ${ctx.cwd}\n\n${synthesisPrompt(synthesizer, selected, personaResults, parsedArgs)}`,
-          task_type: 'plan_refine',
+          task_type: "plan_refine",
           use_worktree: false,
         });
-        const wait = await ctx.awaitChain(dispatch.conversation_id, { timeoutMs: parsedArgs.timeout_ms });
+        const wait = await ctx.awaitChain(dispatch.conversation_id, {
+          timeoutMs: parsedArgs.timeout_ms,
+        });
         return { dispatch, wait };
       } catch (err) {
         if (attempts < 1 && shouldRetryNoWorkerRegistered(err)) {
@@ -472,37 +493,44 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
 
   try {
     const { dispatch: synthDispatch, wait: synthWait } = await dispatchSynth();
-    const synthRetryBanner = synthRetryUsed ? '> Synthesizer retried once after 503 no_worker_registered\n\n' : '';
+    const synthRetryBanner = synthRetryUsed
+      ? "> Synthesizer retried once after 503 no_worker_registered\n\n"
+      : "";
     synthHandoffId = synthDispatch.handoff_id;
     synthStatus = synthWait.status;
-    synthesisPath = join(absoluteOutDir, 'synthesis.md');
+    synthesisPath = join(absoluteOutDir, "synthesis.md");
     const frontmatter = buildSynthesisFrontmatter({
       run_ts: runTs,
       synthesis_handoff_id: synthHandoffId,
       persona_handoff_ids: personaHandoffIds,
-      topic: parsedArgs.topic ?? parsedArgs.content_path ?? '',
+      topic: parsedArgs.topic ?? parsedArgs.content_path ?? "",
       personas: selected.map(({ persona }) => persona.name),
     });
     await ctx.fileWrite(
       synthesisPath,
-      synthRetryBanner + (synthWait.status === 'completed'
-        ? frontmatter + (synthWait.response_text ?? '')
-        : frontmatter + `<synthesizer failed: ${synthWait.status}>`),
+      synthRetryBanner +
+        (synthWait.status === "completed"
+          ? frontmatter + (synthWait.response_text ?? "")
+          : frontmatter + `<synthesizer failed: ${synthWait.status}>`),
     );
   } catch (err) {
-    const synthRetryBanner = synthRetryUsed ? '> Synthesizer retried once after 503 no_worker_registered\n\n' : '';
-    synthStatus = 'failed';
-    synthesisPath = join(absoluteOutDir, 'synthesis.md');
+    const synthRetryBanner = synthRetryUsed
+      ? "> Synthesizer retried once after 503 no_worker_registered\n\n"
+      : "";
+    synthStatus = "failed";
+    synthesisPath = join(absoluteOutDir, "synthesis.md");
     const frontmatter = buildSynthesisFrontmatter({
       run_ts: runTs,
       synthesis_handoff_id: synthHandoffId,
       persona_handoff_ids: personaHandoffIds,
-      topic: parsedArgs.topic ?? parsedArgs.content_path ?? '',
+      topic: parsedArgs.topic ?? parsedArgs.content_path ?? "",
       personas: selected.map(({ persona }) => persona.name),
     });
     await ctx.fileWrite(
       synthesisPath,
-      synthRetryBanner + frontmatter + `<synthesizer failed: ${err instanceof Error ? err.message : String(err)}>`,
+      synthRetryBanner +
+        frontmatter +
+        `<synthesizer failed: ${err instanceof Error ? err.message : String(err)}>`,
     );
   }
 

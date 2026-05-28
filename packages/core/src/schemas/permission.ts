@@ -1,9 +1,9 @@
-import { z } from 'zod';
+import { z } from "zod";
 
-export const PermissionStatusSchema = z.enum(['pending', 'approved', 'rejected', 'expired']);
+export const PermissionStatusSchema = z.enum(["pending", "approved", "rejected", "expired"]);
 export type PermissionStatus = z.infer<typeof PermissionStatusSchema>;
 
-export const PermissionRememberSchema = z.enum(['this_call', 'this_dispatch']);
+export const PermissionRememberSchema = z.enum(["this_call", "this_dispatch"]);
 export type PermissionRemember = z.infer<typeof PermissionRememberSchema>;
 
 export const PermissionRequestRowSchema = z.object({
@@ -35,7 +35,7 @@ export const CreatePermissionRequestSchema = z.object({
 export type CreatePermissionRequest = z.infer<typeof CreatePermissionRequestSchema>;
 
 export const ApprovePermissionRequestSchema = z.object({
-  decision: z.enum(['approve', 'reject']),
+  decision: z.enum(["approve", "reject"]),
   remember: PermissionRememberSchema.optional(),
   reason: z.string().optional(),
   resolved_by: z.string().min(1).optional(),

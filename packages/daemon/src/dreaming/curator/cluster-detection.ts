@@ -1,14 +1,18 @@
-import type { Database } from 'bun:sqlite';
+import type { Database } from "bun:sqlite";
 
 export function findSimilarityClusters(
   db: Database,
-  opts: { minSize: number; minWeight: number }
+  opts: { minSize: number; minWeight: number },
 ): string[][] {
-  const edges = db.prepare(`
+  const edges = db
+    .prepare(
+      `
     SELECT src_id, dst_id 
     FROM memory_links 
     WHERE link_type='semantic_near' AND retired_at IS NULL AND weight >= ?
-  `).all(opts.minWeight) as { src_id: string; dst_id: string }[];
+  `,
+    )
+    .all(opts.minWeight) as { src_id: string; dst_id: string }[];
 
   const parent = new Map<string, string>();
 
@@ -51,6 +55,6 @@ export function findSimilarityClusters(
   }
 
   return Array.from(clusters.values())
-    .filter(cluster => cluster.length >= opts.minSize)
-    .map(cluster => cluster.sort());
+    .filter((cluster) => cluster.length >= opts.minSize)
+    .map((cluster) => cluster.sort());
 }

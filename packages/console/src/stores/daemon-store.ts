@@ -21,8 +21,7 @@ export const useDaemonStore = create<DaemonStoreState>((set) => {
       bootError: null,
       health: "unknown",
       lastHealthAt: null,
-      setHealth: (health, checkedAt) =>
-        set({ health, lastHealthAt: checkedAt }),
+      setHealth: (health, checkedAt) => set({ health, lastHealthAt: checkedAt }),
     };
   } catch (error) {
     return {
@@ -31,8 +30,7 @@ export const useDaemonStore = create<DaemonStoreState>((set) => {
       bootError: error instanceof Error ? error : new Error("Failed to load daemon config"),
       health: "unknown",
       lastHealthAt: null,
-      setHealth: (health, checkedAt) =>
-        set({ health, lastHealthAt: checkedAt }),
+      setHealth: (health, checkedAt) => set({ health, lastHealthAt: checkedAt }),
     };
   }
 });

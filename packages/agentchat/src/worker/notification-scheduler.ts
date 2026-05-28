@@ -1,5 +1,5 @@
-import type { DiscordNotificationEvent } from './discord-events.js';
-import type { RuntimeNotificationConfig } from './notification-config.js';
+import type { DiscordNotificationEvent } from "./discord-events.js";
+import type { RuntimeNotificationConfig } from "./notification-config.js";
 
 export interface NotificationSchedulerProviderRow {
   provider: string;
@@ -19,19 +19,21 @@ export interface NotificationSchedulerDeps {
   postEvent: (event: DiscordNotificationEvent) => Promise<void> | void;
 }
 
-function periodKey(ts: number, interval: 'daily' | 'hourly'): string {
+function periodKey(ts: number, interval: "daily" | "hourly"): string {
   const iso = new Date(ts).toISOString();
-  return interval === 'hourly' ? iso.slice(0, 13) : iso.slice(0, 10);
+  return interval === "hourly" ? iso.slice(0, 13) : iso.slice(0, 10);
 }
 
 function formatUsageSummary(rows: NotificationSchedulerProviderRow[]): string {
-  if (rows.length === 0) return 'no configured provider quotas';
-  return rows.map((row) => {
-    const label = row.model ? `${row.provider}/${row.model}` : row.provider;
-    const quota = row.quota_tokens ?? 'n/a';
-    const remaining = row.remaining_pct_tokens ?? 'n/a';
-    return `${label}: ${row.used_tokens}/${quota} tokens (${remaining}% remaining)`;
-  }).join('\n');
+  if (rows.length === 0) return "no configured provider quotas";
+  return rows
+    .map((row) => {
+      const label = row.model ? `${row.provider}/${row.model}` : row.provider;
+      const quota = row.quota_tokens ?? "n/a";
+      const remaining = row.remaining_pct_tokens ?? "n/a";
+      return `${label}: ${row.used_tokens}/${quota} tokens (${remaining}% remaining)`;
+    })
+    .join("\n");
 }
 
 export function createNotificationScheduler(deps: NotificationSchedulerDeps): {
@@ -48,15 +50,12 @@ export function createNotificationScheduler(deps: NotificationSchedulerDeps): {
       if (!deps.config.events.cost_quota_summary) return;
       if (!deps.config.summaries.costQuota.enabled) return;
 
-      const period = periodKey(
-        deps.now(),
-        deps.config.summaries.costQuota.interval,
-      );
+      const period = periodKey(deps.now(), deps.config.summaries.costQuota.interval);
       if (period === lastSentPeriod) return;
 
       const summary = await deps.getQuotaSummary();
       await deps.postEvent({
-        kind: 'cost_quota_summary',
+        kind: "cost_quota_summary",
         period,
         usage_summary: formatUsageSummary(summary.providers),
       });

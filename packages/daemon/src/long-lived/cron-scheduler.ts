@@ -1,4 +1,4 @@
-import { Cron } from 'croner';
+import { Cron } from "croner";
 
 export interface ScheduledJob {
   id: string;

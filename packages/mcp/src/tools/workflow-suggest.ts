@@ -1,9 +1,9 @@
-import { z } from 'zod';
-import { toTextContent } from '@nova/mcp-shared';
-import type { DaemonClient } from '../daemon-client.js';
+import { z } from "zod";
+import { toTextContent } from "@nova/mcp-shared";
+import type { DaemonClient } from "../daemon-client.js";
 
 export const WorkflowSuggestInputShape = {
-  now: z.string().optional().describe('Optional ISO8601 override for state-threshold evaluation.'),
+  now: z.string().optional().describe("Optional ISO8601 override for state-threshold evaluation."),
 };
 
 const WorkflowSuggestSchema = z.object(WorkflowSuggestInputShape).strict();

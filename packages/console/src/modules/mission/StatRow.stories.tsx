@@ -1,9 +1,9 @@
-import type { Meta, StoryObj } from '@storybook/react';
-import { usageQuotaStatus } from '../../lib/query-keys';
-import { StatRow } from './StatRow';
+import type { Meta, StoryObj } from "@storybook/react";
+import { usageQuotaStatus } from "../../lib/query-keys";
+import { StatRow } from "./StatRow";
 
 const meta: Meta<typeof StatRow> = {
-  title: 'Mission/StatRow',
+  title: "Mission/StatRow",
   component: StatRow,
 };
 

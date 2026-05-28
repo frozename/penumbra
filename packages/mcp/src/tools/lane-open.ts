@@ -1,7 +1,7 @@
-import { randomUUID } from 'node:crypto';
-import { z } from 'zod';
-import { TaskClassSchema } from '@penumbra/core';
-import type { DaemonClient } from '../daemon-client.js';
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
+import { TaskClassSchema } from "@penumbra/core";
+import type { DaemonClient } from "../daemon-client.js";
 
 export const LaneOpenInputShape = {
   implementer_handoff_id: z.string().min(1),
@@ -9,23 +9,28 @@ export const LaneOpenInputShape = {
 };
 
 export function laneOpenHandler(daemon: DaemonClient) {
-  return async (input: { implementer_handoff_id: string; task_class: z.infer<typeof TaskClassSchema> }) => {
-    const response = await postToDaemon(daemon, '/lanes/open', {
+  return async (input: {
+    implementer_handoff_id: string;
+    task_class: z.infer<typeof TaskClassSchema>;
+  }) => {
+    const response = await postToDaemon(daemon, "/lanes/open", {
       lane_id: randomUUID(),
       implementer_handoff: input.implementer_handoff_id,
       task_class: input.task_class,
     });
-    return response as { lane_id: string; ts_opened: string; gate_status: 'open' };
+    return response as { lane_id: string; ts_opened: string; gate_status: "open" };
   };
 }
 
 async function postToDaemon(daemon: DaemonClient, path: string, body: unknown): Promise<unknown> {
-  const { baseUrl, token } = (daemon as unknown as { resolve: () => { baseUrl: string; token: string } }).resolve();
+  const { baseUrl, token } = (
+    daemon as unknown as { resolve: () => { baseUrl: string; token: string } }
+  ).resolve();
   const res = await fetch(`${baseUrl}${path}`, {
-    method: 'POST',
+    method: "POST",
     headers: {
       authorization: `Bearer ${token}`,
-      'content-type': 'application/json',
+      "content-type": "application/json",
     },
     body: JSON.stringify(body),
   });
@@ -38,5 +43,7 @@ async function daemonHttpError(path: string, res: Response): Promise<Error> {
   try {
     body = await res.json();
   } catch {}
-  return new Error(`daemon ${path}: HTTP ${res.status}${body === undefined ? '' : ` ${JSON.stringify(body)}`}`);
+  return new Error(
+    `daemon ${path}: HTTP ${res.status}${body === undefined ? "" : ` ${JSON.stringify(body)}`}`,
+  );
 }

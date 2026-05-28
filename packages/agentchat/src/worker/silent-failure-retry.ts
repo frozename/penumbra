@@ -5,7 +5,7 @@ export interface PerformanceForRetry {
 }
 
 export interface RetryHandoffContext {
-  dispatch_kind?: 'long_lived_tick' | null | undefined;
+  dispatch_kind?: "long_lived_tick" | null | undefined;
 }
 
 export interface SilentRetryPayloadInput {
@@ -25,24 +25,27 @@ export interface SilentRetryPayload {
   project_id: string | null;
   task_type: string | undefined;
   use_worktree: true;
-  trust_mode: 'all';
+  trust_mode: "all";
 }
 
-export const SILENT_RETRY_PREFIX = '[silent-failure-retry]';
+export const SILENT_RETRY_PREFIX = "[silent-failure-retry]";
 
 export function shouldRetryForSilentFailure(perf: PerformanceForRetry | null | undefined): boolean {
   if (!perf) return false;
-  const notes = typeof perf.notes === 'string' ? perf.notes : '';
-  if (perf.outcome === 'failed' && notes.includes('silent_failure')) {
+  const notes = typeof perf.notes === "string" ? perf.notes : "";
+  if (perf.outcome === "failed" && notes.includes("silent_failure")) {
     return true;
   }
-  if (perf.reliability_status === 'no_worktree_activity') {
+  if (perf.reliability_status === "no_worktree_activity") {
     return true;
   }
-  if (perf.reliability_status === 'tool_failure_with_end_turn') {
+  if (perf.reliability_status === "tool_failure_with_end_turn") {
     return true;
   }
-  if (perf.reliability_status === 'non_terminal_stale' && notes.includes('recommended_action=cancel')) {
+  if (
+    perf.reliability_status === "non_terminal_stale" &&
+    notes.includes("recommended_action=cancel")
+  ) {
     return true;
   }
   return false;
@@ -52,19 +55,21 @@ export function shouldRetryHandoffForSilentFailure(
   handoff: RetryHandoffContext,
   perf: PerformanceForRetry | null | undefined,
 ): boolean {
-  if (handoff.dispatch_kind === 'long_lived_tick') return false;
+  if (handoff.dispatch_kind === "long_lived_tick") return false;
   return shouldRetryForSilentFailure(perf);
 }
 
-export function buildRetryPayloadOrNull(input: Omit<SilentRetryPayload, 'initial_agent' | 'message' | 'task_type'> & {
-  failed_handoff_id: string;
-  failed_to_agent: string;
-  conversation_id: string;
-  project_id?: string | null;
-  task_type?: string;
-  message: string;
-  next_agent: string;
-}): SilentRetryPayload | null {
+export function buildRetryPayloadOrNull(
+  input: Omit<SilentRetryPayload, "initial_agent" | "message" | "task_type"> & {
+    failed_handoff_id: string;
+    failed_to_agent: string;
+    conversation_id: string;
+    project_id?: string | null;
+    task_type?: string;
+    message: string;
+    next_agent: string;
+  },
+): SilentRetryPayload | null {
   if (input.project_id === null || input.project_id === undefined) {
     return null;
   }
@@ -79,6 +84,6 @@ export function buildSilentRetryPayload(input: SilentRetryPayloadInput): SilentR
     project_id: input.project_id,
     task_type: input.task_type,
     use_worktree: true,
-    trust_mode: 'all',
+    trust_mode: "all",
   };
 }

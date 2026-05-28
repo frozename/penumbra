@@ -18,13 +18,13 @@ export function buildFramedCommand(input: BuildFramedCommandInput): BuildFramedC
   const commandLines = [`echo "${startMarker}"`, `{ ${input.userCommand}; } 2>&3`];
 
   if (input.stdin !== undefined) {
-    commandLines[1] = `${commandLines[1]} <<${stdinMarker}\n${input.stdin}${input.stdin.endsWith('\n') ? '' : '\n'}${stdinMarker}`;
+    commandLines[1] = `${commandLines[1]} <<${stdinMarker}\n${input.stdin}${input.stdin.endsWith("\n") ? "" : "\n"}${stdinMarker}`;
   }
 
   commandLines.push(`echo "${endMarker} exit:$?"`);
 
   return {
-    snippet: commandLines.join('\n'),
+    snippet: commandLines.join("\n"),
     startMarker,
     endMarker,
   };
@@ -48,7 +48,7 @@ export function parseFramedOutput(input: ParseFramedOutputInput): ParseFramedOut
   const startIdx = input.stdout.indexOf(input.startMarker);
   if (startIdx === -1) {
     return {
-      stdout: '',
+      stdout: "",
       stderr: input.stderr,
       exitCode: -1,
       complete: false,
@@ -56,9 +56,9 @@ export function parseFramedOutput(input: ParseFramedOutputInput): ParseFramedOut
   }
 
   let framedOutput = input.stdout.slice(startIdx + input.startMarker.length);
-  if (framedOutput.startsWith('\r\n')) {
+  if (framedOutput.startsWith("\r\n")) {
     framedOutput = framedOutput.slice(2);
-  } else if (framedOutput.startsWith('\n')) {
+  } else if (framedOutput.startsWith("\n")) {
     framedOutput = framedOutput.slice(1);
   }
 

@@ -2,7 +2,7 @@ export type RegistryError = { path: string; error: string };
 
 export type RegistryEntry<Spec = unknown> = {
   spec: Spec;
-  source: 'markdown' | 'ts';
+  source: "markdown" | "ts";
   path: string;
   fn?: (ctx: unknown, recall: unknown) => Promise<unknown>;
 };

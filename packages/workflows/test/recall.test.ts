@@ -1,18 +1,18 @@
-import { expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {}
 
-import { loadSqliteVec, migrate } from '@penumbra/core';
-import { TestEmbedder } from '@penumbra/core/testing';
-import { composeRecall } from '../src/recall.js';
+import { loadSqliteVec, migrate } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
+import { composeRecall } from "../src/recall.js";
 
 function insertMemory(
   db: Database,
@@ -35,25 +35,36 @@ function insertMemory(
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   stmt.run(
-    row.memory_id, row.project_id, 'u1', 'observation',
-    JSON.stringify(['s1']), row.created_at, row.created_at,
-    row.title, row.body, '{}', row.created_at, row.created_at,
-    row.obs_type ?? 'note', JSON.stringify([]), 'low',
+    row.memory_id,
+    row.project_id,
+    "u1",
+    "observation",
+    JSON.stringify(["s1"]),
+    row.created_at,
+    row.created_at,
+    row.title,
+    row.body,
+    "{}",
+    row.created_at,
+    row.created_at,
+    row.obs_type ?? "note",
+    JSON.stringify([]),
+    "low",
   );
 }
 
-test('composes bundle from multiple sources, partial failures captured as warnings', async () => {
-  const db = new Database(':memory:');
+test("composes bundle from multiple sources, partial failures captured as warnings", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
   insertMemory(db, {
-    memory_id: 'm1',
-    project_id: 'demo',
-    title: 'Fix bug',
-    body: 'Fixed a bug in login flow',
-    created_at: '2026-05-04T10:00:00Z',
-    obs_type: 'bugfix',
+    memory_id: "m1",
+    project_id: "demo",
+    title: "Fix bug",
+    body: "Fixed a bug in login flow",
+    created_at: "2026-05-04T10:00:00Z",
+    obs_type: "bugfix",
   });
 
   db.exec(`
@@ -69,34 +80,34 @@ test('composes bundle from multiple sources, partial failures captured as warnin
   const bundle = await composeRecall({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    cwd: '/nonexistent-path-for-git-failure-test',
-    project: 'demo',
+    cwd: "/nonexistent-path-for-git-failure-test",
+    project: "demo",
     sources: [
-      { source: 'memory_search', args: { query: 'bug', project: 'demo', limit: 10 } },
-      { source: 'dispatch_events', args: { since: '2026-05-04T10:00:00Z' } },
-      { source: 'handoff_list_pending' },
-      { source: 'git.log', args: { range: 'HEAD' } },
+      { source: "memory_search", args: { query: "bug", project: "demo", limit: 10 } },
+      { source: "dispatch_events", args: { since: "2026-05-04T10:00:00Z" } },
+      { source: "handoff_list_pending" },
+      { source: "git.log", args: { range: "HEAD" } },
     ],
     budgetTokens: 8000,
   });
 
-  expect(bundle.byKey['memory_search']).toBeDefined();
-  expect(bundle.byKey['dispatch_events']).toBeDefined();
-  expect(bundle.byKey['handoff_list_pending']).toBeDefined();
-  expect(bundle.byKey['git.log']).toBeDefined();
-  expect(bundle.warnings.some((w) => w.includes('git.log'))).toBe(true);
+  expect(bundle.byKey["memory_search"]).toBeDefined();
+  expect(bundle.byKey["dispatch_events"]).toBeDefined();
+  expect(bundle.byKey["handoff_list_pending"]).toBeDefined();
+  expect(bundle.byKey["git.log"]).toBeDefined();
+  expect(bundle.warnings.some((w) => w.includes("git.log"))).toBe(true);
 });
 
-test('budget trim drops oldest items first', async () => {
-  const db = new Database(':memory:');
+test("budget trim drops oldest items first", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
   for (let i = 0; i < 50; i++) {
-    const day = String(i + 1).padStart(2, '0');
+    const day = String(i + 1).padStart(2, "0");
     insertMemory(db, {
       memory_id: `m${i}`,
-      project_id: 'demo',
+      project_id: "demo",
       title: `Memory ${i}`,
       body: `Body of memory number ${i} with some additional padding text to consume tokens`,
       created_at: `2026-03-${day}T10:00:00Z`,
@@ -107,26 +118,26 @@ test('budget trim drops oldest items first', async () => {
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     cwd: process.cwd(),
-    project: 'demo',
+    project: "demo",
     sources: [
-      { source: 'memory_search', args: { project: 'demo', limit: 50, dateStart: '2026-03-01' } },
+      { source: "memory_search", args: { project: "demo", limit: 50, dateStart: "2026-03-01" } },
     ],
     budgetTokens: 200,
   });
 
   expect(bundle.estimatedTokens).toBeLessThanOrEqual(200);
-  expect(bundle.warnings.some((w) => w.includes('budget'))).toBe(true);
+  expect(bundle.warnings.some((w) => w.includes("budget"))).toBe(true);
 });
 
-test('budget trim preserves string sources before memory items', async () => {
-  const db = new Database(':memory:');
+test("budget trim preserves string sources before memory items", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
   for (let i = 0; i < 60; i++) {
     insertMemory(db, {
       memory_id: `m${i}`,
-      project_id: 'demo',
+      project_id: "demo",
       title: `Memory ${i}`,
       body: `Memory ${i} body text`,
       created_at: `2026-05-0${(i % 9) + 1}T10:00:00Z`,
@@ -137,39 +148,39 @@ test('budget trim preserves string sources before memory items', async () => {
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     cwd: process.cwd(),
-    project: 'demo',
+    project: "demo",
     sources: [
-      { source: 'git.log', args: { range: 'HEAD~2..HEAD', format: '%s' } },
-      { source: 'memory_search', args: { project: 'demo', limit: 60, dateStart: '2026-05-01' } },
+      { source: "git.log", args: { range: "HEAD~2..HEAD", format: "%s" } },
+      { source: "memory_search", args: { project: "demo", limit: 60, dateStart: "2026-05-01" } },
     ],
     budgetTokens: 400,
   });
 
-  expect(typeof bundle.byKey['git.log']).toBe('string');
-  expect((bundle.byKey['git.log'] as string).length).toBeGreaterThan(0);
-  expect(bundle.warnings.some((w) => w.includes('budget exceeded'))).toBe(true);
+  expect(typeof bundle.byKey["git.log"]).toBe("string");
+  expect((bundle.byKey["git.log"] as string).length).toBeGreaterThan(0);
+  expect(bundle.warnings.some((w) => w.includes("budget exceeded"))).toBe(true);
 });
 
-test('composes file.contents source output', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'recall-file-contents-'));
-  const file = join(dir, 'README.md');
-  writeFileSync(file, 'recall body\n');
-  const db = new Database(':memory:');
+test("composes file.contents source output", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "recall-file-contents-"));
+  const file = join(dir, "README.md");
+  writeFileSync(file, "recall body\n");
+  const db = new Database(":memory:");
   try {
     const bundle = await composeRecall({
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       cwd: dir,
       storageRoot: dir,
-      project: 'demo',
-      sources: [{ source: 'file.contents', args: { path: 'README.md' } }],
+      project: "demo",
+      sources: [{ source: "file.contents", args: { path: "README.md" } }],
     });
 
-    expect(bundle.byKey['file.contents']).toEqual({
+    expect(bundle.byKey["file.contents"]).toEqual({
       path: file,
-      body: 'recall body\n',
+      body: "recall body\n",
       truncated: false,
-      byte_size: Buffer.byteLength('recall body\n'),
+      byte_size: Buffer.byteLength("recall body\n"),
     });
     expect(bundle.warnings).toEqual([]);
   } finally {

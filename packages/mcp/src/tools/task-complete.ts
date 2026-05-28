@@ -1,11 +1,11 @@
-import { toTextContent } from '@nova/mcp-shared';
-import { CompleteTaskInputSchema } from '@penumbra/core';
-import type { DaemonClient } from '../daemon-client.js';
+import { toTextContent } from "@nova/mcp-shared";
+import { CompleteTaskInputSchema } from "@penumbra/core";
+import type { DaemonClient } from "../daemon-client.js";
 
 export const TaskCompleteInputSchema = CompleteTaskInputSchema;
 export const TaskCompleteInputShape = TaskCompleteInputSchema.shape;
 
-export function taskCompleteHandler(daemon: Pick<DaemonClient, 'taskComplete'>) {
+export function taskCompleteHandler(daemon: Pick<DaemonClient, "taskComplete">) {
   return async (input: unknown) => {
     const parsed = TaskCompleteInputSchema.parse(input ?? {});
     const out = await daemon.taskComplete(parsed.task_id, {

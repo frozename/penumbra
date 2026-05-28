@@ -46,7 +46,7 @@ plan_synthesizer:
 
 ```ts
 mcp__penumbra__workflow_run({
-  name: 'adversarial-plan',
+  name: "adversarial-plan",
   args: {
     topic,
     personas,

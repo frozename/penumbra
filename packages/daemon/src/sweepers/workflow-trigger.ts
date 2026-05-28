@@ -1,5 +1,5 @@
-import type { Registry, StateMetrics } from '@penumbra/workflows';
-import { evaluateStateThresholds } from '@penumbra/workflows';
+import type { Registry, StateMetrics } from "@penumbra/workflows";
+import { evaluateStateThresholds } from "@penumbra/workflows";
 
 type WorkflowRegistryLike = {
   list(): ReadonlyArray<unknown>;
@@ -53,7 +53,7 @@ export async function runWorkflowTriggerSweep(
     try {
       await opts.runWorkflow(name);
     } catch (err) {
-      opts.log?.warn?.({ err: String(err), workflow: name }, 'workflow-trigger sweep run failed');
+      opts.log?.warn?.({ err: String(err), workflow: name }, "workflow-trigger sweep run failed");
     }
   }
 
@@ -69,9 +69,9 @@ export function startWorkflowTriggerSweeper(
   const state = { lastFired: new Map<string, number>() };
   const timer = setInterval(() => {
     runWorkflowTriggerSweep(opts, state, now).catch((err) => {
-      opts.log?.warn?.({ err: String(err) }, 'workflow-trigger sweep tick failed');
+      opts.log?.warn?.({ err: String(err) }, "workflow-trigger sweep tick failed");
     });
   }, intervalMs);
-  if (typeof (timer as any).unref === 'function') (timer as any).unref();
+  if (typeof (timer as any).unref === "function") (timer as any).unref();
   return () => clearInterval(timer);
 }

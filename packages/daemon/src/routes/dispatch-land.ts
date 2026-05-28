@@ -1,15 +1,15 @@
-import { spawn } from 'node:child_process';
-import { z } from 'zod';
-import { captureAgentPerformanceFromReconciler, type Services } from '@penumbra/core';
-import { createGhCliClient, type GhClient } from '../services/gh-client.js';
-import { memoryVerifyAuthorizeRoute } from './memory-verify.js';
-import { dispatchAuditRoute } from './dispatch-audit.js';
+import { spawn } from "node:child_process";
+import { z } from "zod";
+import { captureAgentPerformanceFromReconciler, type Services } from "@penumbra/core";
+import { createGhCliClient, type GhClient } from "../services/gh-client.js";
+import { memoryVerifyAuthorizeRoute } from "./memory-verify.js";
+import { dispatchAuditRoute } from "./dispatch-audit.js";
 
-import { json } from './_helpers.js';
+import { json } from "./_helpers.js";
 const DispatchLandInputSchema = z.object({
   handoff_id: z.string().min(1),
   commit_message: z.string().min(1),
-  mode: z.enum(['squash', 'ff']).optional().default('squash'),
+  mode: z.enum(["squash", "ff"]).optional().default("squash"),
   delete_branch: z.boolean().optional().default(true),
   force: z.boolean().optional().default(false),
 });
@@ -25,7 +25,7 @@ interface RunGitOpts {
   cwd?: string;
 }
 
-type DispatchLandTaskStatus = 'queued' | 'running' | 'done' | 'failed';
+type DispatchLandTaskStatus = "queued" | "running" | "done" | "failed";
 
 interface DispatchLandTaskError {
   code: string;
@@ -59,14 +59,14 @@ interface DispatchLandTaskRecord {
 
 export interface DispatchLandDeps {
   runGit: (args: string[], opts?: RunGitOpts) => Promise<GitExecResult>;
-  gh: Pick<GhClient, 'listOpenPullRequestsByHead' | 'closePullRequest'>;
+  gh: Pick<GhClient, "listOpenPullRequestsByHead" | "closePullRequest">;
   now: () => Date;
 }
 
 function parseJsonRecord(raw: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object') return parsed as Record<string, unknown>;
+    if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
   } catch {
     // ignored
   }
@@ -75,7 +75,7 @@ function parseJsonRecord(raw: string): Record<string, unknown> {
 
 function subjectFromCommitMessage(message: string): string {
   const first = message
-    .split('\n')
+    .split("\n")
     .map((line) => line.trim())
     .find((line) => line.length > 0);
   return first ?? message.trim();
@@ -89,23 +89,23 @@ function createDefaultDeps(services: Services, repoDir: string): DispatchLandDep
     runGit: (args, opts) =>
       new Promise((resolve, reject) => {
         const cwd = opts?.cwd ?? repoDir;
-        const proc = spawn('git', ['-C', cwd, ...args], {
+        const proc = spawn("git", ["-C", cwd, ...args], {
           shell: false,
         });
-        let stdout = '';
-        let stderr = '';
-        proc.stdout?.on('data', (chunk) => {
+        let stdout = "";
+        let stderr = "";
+        proc.stdout?.on("data", (chunk) => {
           stdout += chunk.toString();
         });
-        proc.stderr?.on('data', (chunk) => {
+        proc.stderr?.on("data", (chunk) => {
           stderr += chunk.toString();
         });
-        proc.on('error', reject);
+        proc.on("error", reject);
         if (opts?.stdin != null) {
           proc.stdin?.write(opts.stdin);
         }
         proc.stdin?.end();
-        proc.on('close', (code) => {
+        proc.on("close", (code) => {
           resolve({
             code: code ?? -1,
             stdout,
@@ -136,15 +136,15 @@ function readLatestVerdict(services: Services, handoffId: string): Record<string
 
 function verdictFailed(verdict: Record<string, unknown> | null): boolean {
   if (!verdict) return true;
-  return verdict.typecheck === 'fail' || verdict.tests === 'fail';
+  return verdict.typecheck === "fail" || verdict.tests === "fail";
 }
 
 function verdictConflictFiles(verdict: Record<string, unknown> | null): string[] | null {
   if (!verdict) return null;
-  if (verdict.rebase_result !== 'conflict') return null;
+  if (verdict.rebase_result !== "conflict") return null;
   const raw = verdict.rebase_conflict_files;
   if (!Array.isArray(raw)) return [];
-  return raw.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+  return raw.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
 }
 
 async function isAuditTrustedAccept(services: Services, handoffId: string): Promise<boolean> {
@@ -154,21 +154,24 @@ async function isAuditTrustedAccept(services: Services, handoffId: string): Prom
       services,
     );
     if (!res.ok) return false;
-    const body = await res.json() as {
+    const body = (await res.json()) as {
       report?: { trustworthy?: boolean; recommended_action?: string };
     };
-    return body.report?.trustworthy === true && body.report?.recommended_action === 'accept';
+    return body.report?.trustworthy === true && body.report?.recommended_action === "accept";
   } catch {
     return false;
   }
 }
 
 async function closeOpenPrIfAny(
-  gh: Pick<GhClient, 'listOpenPullRequestsByHead' | 'closePullRequest'>,
+  gh: Pick<GhClient, "listOpenPullRequestsByHead" | "closePullRequest">,
   branch: string,
   commitSha: string,
 ): Promise<boolean> {
-  if (typeof gh.listOpenPullRequestsByHead !== 'function' || typeof gh.closePullRequest !== 'function') {
+  if (
+    typeof gh.listOpenPullRequestsByHead !== "function" ||
+    typeof gh.closePullRequest !== "function"
+  ) {
     return false;
   }
   const prs = await gh.listOpenPullRequestsByHead(branch);
@@ -182,16 +185,21 @@ async function closeOpenPrIfAny(
   return true;
 }
 
-function resolveReviewerHandoffForDispatchLand(services: Services, handoffId: string): string | null {
-  const row = services.db.query<{ reviewer_handoff: string | null }, [string]>(
-    `SELECT reviewer_handoff
+function resolveReviewerHandoffForDispatchLand(
+  services: Services,
+  handoffId: string,
+): string | null {
+  const row = services.db
+    .query<{ reviewer_handoff: string | null }, [string]>(
+      `SELECT reviewer_handoff
      FROM lane_ledger
      WHERE implementer_handoff = ?
        AND ts_closed IS NOT NULL
        AND reviewer_handoff IS NOT NULL
      ORDER BY ts_closed DESC
      LIMIT 1`,
-  ).get(handoffId);
+    )
+    .get(handoffId);
   return row?.reviewer_handoff ?? null;
 }
 
@@ -201,14 +209,14 @@ async function authorizeDispatchLandMemoryVerify(input: {
   reviewerHandoff: string;
   commitSha: string;
 }): Promise<void> {
-  const req = new Request('http://daemon/memory-verify/authorize', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
+  const req = new Request("http://daemon/memory-verify/authorize", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({
       handoff_id: input.handoffId,
-      verdict: 'passed',
+      verdict: "passed",
       basis: {
-        kind: 'dispatch_land',
+        kind: "dispatch_land",
         merge_commit: input.commitSha,
         reviewer_handoff: input.reviewerHandoff,
       },
@@ -217,7 +225,7 @@ async function authorizeDispatchLandMemoryVerify(input: {
   });
   const res = await memoryVerifyAuthorizeRoute(req, input.services);
   if (!res.ok) {
-    const body = await res.text().catch(() => '');
+    const body = await res.text().catch(() => "");
     input.services.log?.warn?.(
       {
         handoff_id: input.handoffId,
@@ -226,7 +234,7 @@ async function authorizeDispatchLandMemoryVerify(input: {
         status: res.status,
         body,
       },
-      'dispatch-land memory verify authorize failed',
+      "dispatch-land memory verify authorize failed",
     );
   }
 }
@@ -239,14 +247,14 @@ export async function dispatchLandRoute(
   const raw = await req.json().catch(() => null);
   const parsed = DispatchLandInputSchema.safeParse(raw ?? {});
   if (!parsed.success) {
-    return json({ error: { code: 'invalid_params', issues: parsed.error.issues } }, 400);
+    return json({ error: { code: "invalid_params", issues: parsed.error.issues } }, 400);
   }
 
   const { handoff_id, commit_message, mode, delete_branch, force } = parsed.data;
   const now = deps?.now ?? services.clock;
   const handoff = services.handoffReader.get(handoff_id);
   if (!handoff) {
-    return json({ error: { code: 'not_found', message: `handoff ${handoff_id} not found` } }, 404);
+    return json({ error: { code: "not_found", message: `handoff ${handoff_id} not found` } }, 404);
   }
   const repoDir = (() => {
     if (handoff.project_id == null) return process.cwd();
@@ -259,16 +267,19 @@ export async function dispatchLandRoute(
   const verdict = readLatestVerdict(services, handoff_id);
   const conflictFiles = verdictConflictFiles(verdict);
   if (!force && conflictFiles !== null) {
-    return json({
-      error: {
-        code: 'merge_conflict',
-        files: conflictFiles,
-        hint: `rebase ${branch} onto main and retry`,
+    return json(
+      {
+        error: {
+          code: "merge_conflict",
+          files: conflictFiles,
+          hint: `rebase ${branch} onto main and retry`,
+        },
       },
-    }, 409);
+      409,
+    );
   }
   if (!force && verdictFailed(verdict) && !(await isAuditTrustedAccept(services, handoff_id))) {
-    return json({ error: { code: 'verdict_unverified', verdict } }, 409);
+    return json({ error: { code: "verdict_unverified", verdict } }, 409);
   }
 
   const task_id = services.uuid();
@@ -276,7 +287,7 @@ export async function dispatchLandRoute(
   const task: DispatchLandTaskRecord = {
     task_id,
     handoff_id,
-    status: 'queued',
+    status: "queued",
     created_at,
     started_at: null,
     finished_at: null,
@@ -287,7 +298,7 @@ export async function dispatchLandRoute(
 
   dispatchLandQueue = dispatchLandQueue
     .then(async () => {
-      task.status = 'running';
+      task.status = "running";
       task.started_at = now().toISOString();
       const outcome = await executeLand({
         services,
@@ -303,28 +314,31 @@ export async function dispatchLandRoute(
         delete_branch,
       });
       task.finished_at = now().toISOString();
-      if ('error' in outcome) {
-        task.status = 'failed';
+      if ("error" in outcome) {
+        task.status = "failed";
         task.error = outcome.error;
       } else {
-        task.status = 'done';
+        task.status = "done";
         task.result = outcome;
       }
     })
     .catch((error) => {
-      task.status = 'failed';
+      task.status = "failed";
       task.finished_at = now().toISOString();
       task.error = {
-        code: 'internal_error',
+        code: "internal_error",
         message: error instanceof Error ? error.message : String(error),
       };
     });
 
-  return json({
-    ok: true,
-    task_id,
-    status: task.status,
-  }, 202);
+  return json(
+    {
+      ok: true,
+      task_id,
+      status: task.status,
+    },
+    202,
+  );
 }
 
 export async function dispatchLandTaskRoute(
@@ -334,7 +348,10 @@ export async function dispatchLandTaskRoute(
 ): Promise<Response> {
   const task = dispatchLandTasks.get(taskId);
   if (!task) {
-    return json({ error: { code: 'not_found', message: `dispatch-land task ${taskId} not found` } }, 404);
+    return json(
+      { error: { code: "not_found", message: `dispatch-land task ${taskId} not found` } },
+      404,
+    );
   }
   return json({
     task_id: task.task_id,
@@ -352,10 +369,10 @@ async function executeLand(input: {
   services: Services;
   deps: DispatchLandDeps;
   now: () => Date;
-  handoff: ReturnType<Services['handoffReader']['get']>;
+  handoff: ReturnType<Services["handoffReader"]["get"]>;
   handoff_id: string;
   commit_message: string;
-  mode: 'squash' | 'ff';
+  mode: "squash" | "ff";
   delete_branch: boolean;
 }): Promise<DispatchLandSuccess | DispatchLandFailure> {
   const { services, deps, now, handoff_id, commit_message, mode, delete_branch } = input;
@@ -363,50 +380,50 @@ async function executeLand(input: {
   if (!handoff) {
     return {
       status: 404,
-      error: { code: 'not_found', message: `handoff ${handoff_id} not found` },
+      error: { code: "not_found", message: `handoff ${handoff_id} not found` },
     };
   }
 
   const message_subject = subjectFromCommitMessage(commit_message);
-  const beforeMain = await deps.runGit(['rev-parse', 'main']);
+  const beforeMain = await deps.runGit(["rev-parse", "main"]);
   if (beforeMain.code !== 0) {
     return {
       status: 500,
       error: {
-        code: 'git_failed',
-        step: 'rev_parse_main_before',
+        code: "git_failed",
+        step: "rev_parse_main_before",
         stderr: beforeMain.stderr.trim() || undefined,
       },
     };
   }
 
   const branch = `agent/${handoff_id}`;
-  if (mode === 'squash') {
-    const checkout = await deps.runGit(['checkout', 'main']);
+  if (mode === "squash") {
+    const checkout = await deps.runGit(["checkout", "main"]);
     if (checkout.code !== 0) {
       return {
         status: 500,
         error: {
-          code: 'git_failed',
-          step: 'checkout_main',
+          code: "git_failed",
+          step: "checkout_main",
           stderr: checkout.stderr.trim() || undefined,
         },
       };
     }
 
-    const merge = await deps.runGit(['merge', '--squash', branch]);
+    const merge = await deps.runGit(["merge", "--squash", branch]);
     if (merge.code !== 0) {
-      const conflicts = await deps.runGit(['diff', '--name-only', '--diff-filter=U']);
+      const conflicts = await deps.runGit(["diff", "--name-only", "--diff-filter=U"]);
       const files = conflicts.stdout
-        .split('\n')
+        .split("\n")
         .map((line) => line.trim())
         .filter(Boolean);
       if (files.length > 0) {
-        await deps.runGit(['merge', '--abort']);
+        await deps.runGit(["merge", "--abort"]);
         return {
           status: 409,
           error: {
-            code: 'merge_conflict',
+            code: "merge_conflict",
             files,
             hint: `rebase ${branch} onto main and retry`,
           },
@@ -415,45 +432,45 @@ async function executeLand(input: {
       return {
         status: 500,
         error: {
-          code: 'git_failed',
-          step: 'merge_squash',
+          code: "git_failed",
+          step: "merge_squash",
           stderr: merge.stderr.trim() || undefined,
         },
       };
     }
 
-    const commit = await deps.runGit(['commit', '-F', '-'], { stdin: commit_message });
+    const commit = await deps.runGit(["commit", "-F", "-"], { stdin: commit_message });
     if (commit.code !== 0) {
       return {
         status: 500,
         error: {
-          code: 'git_failed',
-          step: 'commit_squash',
+          code: "git_failed",
+          step: "commit_squash",
           stderr: commit.stderr.trim() || undefined,
         },
       };
     }
   } else {
-    const merge = await deps.runGit(['merge', '--ff-only', `agent/${handoff_id}`]);
+    const merge = await deps.runGit(["merge", "--ff-only", `agent/${handoff_id}`]);
     if (merge.code !== 0) {
       return {
         status: 500,
         error: {
-          code: 'git_failed',
-          step: 'merge_ff_only',
+          code: "git_failed",
+          step: "merge_ff_only",
           stderr: merge.stderr.trim() || undefined,
         },
       };
     }
   }
 
-  const afterMain = await deps.runGit(['rev-parse', 'main']);
+  const afterMain = await deps.runGit(["rev-parse", "main"]);
   if (afterMain.code !== 0) {
     return {
       status: 500,
       error: {
-        code: 'git_failed',
-        step: 'rev_parse_main_after',
+        code: "git_failed",
+        step: "rev_parse_main_after",
         stderr: afterMain.stderr.trim() || undefined,
       },
     };
@@ -465,14 +482,14 @@ async function executeLand(input: {
     event_id: services.uuid(),
     ts: landed_at,
     ingest_ts: landed_at,
-    source: 'mcp',
-    source_detail: 'dispatch-land',
+    source: "mcp",
+    source_detail: "dispatch-land",
     project_id: handoff.project_id,
-    user_id: 'penumbra',
+    user_id: "penumbra",
     machine_id: services.machineId.get(),
     session_id: handoff.conversation_id,
-    event_type: 'dispatch.landed',
-    lane: 'local',
+    event_type: "dispatch.landed",
+    lane: "local",
     provider: null,
     model: null,
     tokens_in: null,
@@ -480,7 +497,7 @@ async function executeLand(input: {
     cost_usd: null,
     latency_ms: null,
     request_id: null,
-    origin: 'dispatch',
+    origin: "dispatch",
     payload_json: {
       handoff_id,
       conversation_id: handoff.conversation_id,
@@ -495,20 +512,22 @@ async function executeLand(input: {
 
   let branch_deleted = false;
   if (delete_branch) {
-    const del = await deps.runGit(['branch', '-D', `agent/${handoff_id}`]);
+    const del = await deps.runGit(["branch", "-D", `agent/${handoff_id}`]);
     branch_deleted = del.code === 0;
   }
 
-  const pr_closed = await closeOpenPrIfAny(deps.gh, `agent/${handoff_id}`, commit_sha).catch(() => false);
+  const pr_closed = await closeOpenPrIfAny(deps.gh, `agent/${handoff_id}`, commit_sha).catch(
+    () => false,
+  );
 
   let worktree_torn_down = false;
   try {
-    await services.worktreeManager.teardownWorktree(handoff_id, /*force=*/false);
+    await services.worktreeManager.teardownWorktree(handoff_id, /*force=*/ false);
     worktree_torn_down = true;
   } catch (err) {
     services.log?.warn?.(
       { handoff_id, err: String(err) },
-      'dispatch-land worktree teardown failed; orphan worktree will need manual GC',
+      "dispatch-land worktree teardown failed; orphan worktree will need manual GC",
     );
   }
 
@@ -519,13 +538,13 @@ async function executeLand(input: {
       clock: services.clock,
       input: {
         handoff_id,
-        result: { status: 'merged', timed_out: false },
+        result: { status: "merged", timed_out: false },
       },
     });
   } catch (err) {
     services.log?.warn?.(
       { handoff_id, err: String(err) },
-      'dispatch-land agent_performance re-stamp failed',
+      "dispatch-land agent_performance re-stamp failed",
     );
   }
 

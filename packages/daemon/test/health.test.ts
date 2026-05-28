@@ -1,20 +1,20 @@
-import { expect, test } from 'bun:test';
-import { makeTempDaemon } from './helpers.js';
+import { expect, test } from "bun:test";
+import { makeTempDaemon } from "./helpers.js";
 
-test('GET /health returns 200', async () => {
+test("GET /health returns 200", async () => {
   const d = makeTempDaemon();
   try {
     const res = await fetch(`${d.url}/health`);
     expect(res.status).toBe(200);
-    const body = await res.json() as Record<string, unknown>;
-    expect(body.status).toBe('ok');
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.status).toBe("ok");
     expect(body.version).toBeDefined();
   } finally {
     d.stop();
   }
 });
 
-test('GET /health needs no auth', async () => {
+test("GET /health needs no auth", async () => {
   const d = makeTempDaemon();
   try {
     const res = await fetch(`${d.url}/health`);
@@ -24,10 +24,10 @@ test('GET /health needs no auth', async () => {
   }
 });
 
-test('GET /other returns 401 without token', async () => {
+test("GET /other returns 401 without token", async () => {
   const d = makeTempDaemon();
   try {
-    const res = await fetch(`${d.url}/observations`, { method: 'POST' });
+    const res = await fetch(`${d.url}/observations`, { method: "POST" });
     expect(res.status).toBe(401);
   } finally {
     d.stop();

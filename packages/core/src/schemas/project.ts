@@ -1,7 +1,7 @@
-import { z } from 'zod';
-import { SafeProjectIdSchema } from './project-id.js';
+import { z } from "zod";
+import { SafeProjectIdSchema } from "./project-id.js";
 
-export const ProjectKindSchema = z.enum(['git', 'marker', 'declared']);
+export const ProjectKindSchema = z.enum(["git", "marker", "declared"]);
 
 export const ProjectSchema = z.object({
   project_id: SafeProjectIdSchema,

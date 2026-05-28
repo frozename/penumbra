@@ -2,12 +2,10 @@
 import { readdirSync, statSync, rmSync, existsSync } from "fs";
 import { join } from "path";
 
-const CHECK_MODE =
-  process.argv.includes("--check") || process.env.DIST_CHECK_STRICT === "1";
+const CHECK_MODE = process.argv.includes("--check") || process.env.DIST_CHECK_STRICT === "1";
 
 // Allow test harness to override via env; otherwise resolve relative to this script
-const packagesDir =
-  process.env.PENUMBRA_PACKAGES_DIR ?? join(import.meta.dir, "..", "packages");
+const packagesDir = process.env.PENUMBRA_PACKAGES_DIR ?? join(import.meta.dir, "..", "packages");
 
 function newestMtime(dir: string, ext: string): number {
   let newest = 0;
@@ -38,9 +36,7 @@ const stale: string[] = [];
 
 let entries;
 try {
-  entries = readdirSync(packagesDir, { withFileTypes: true }).filter((e) =>
-    e.isDirectory()
-  );
+  entries = readdirSync(packagesDir, { withFileTypes: true }).filter((e) => e.isDirectory());
 } catch {
   console.error(`cannot read packages dir: ${packagesDir}`);
   process.exit(1);
@@ -78,7 +74,5 @@ if (CHECK_MODE) {
 for (const p of stale) {
   rmSync(join(p, "dist"), { recursive: true, force: true });
 }
-console.log(
-  `removed ${stale.length} stale dist dir${stale.length === 1 ? "" : "s"}`
-);
+console.log(`removed ${stale.length} stale dist dir${stale.length === 1 ? "" : "s"}`);
 process.exit(0);

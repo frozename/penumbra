@@ -16,6 +16,7 @@ Load plan, review critically, execute all tasks, report when complete.
 ## The Process
 
 ### Step 1: Load and Review Plan
+
 1. Read plan file
 2. Review critically - identify any questions or concerns about the plan
 3. If concerns: Raise them with your human partner before starting
@@ -24,6 +25,7 @@ Load plan, review critically, execute all tasks, report when complete.
 ### Step 2: Execute Tasks
 
 For each task:
+
 1. Mark as in_progress
 2. Follow each step exactly (plan has bite-sized steps)
 3. Run verifications as specified
@@ -32,6 +34,7 @@ For each task:
 ### Step 3: Complete Development
 
 After all tasks complete and verified:
+
 - Announce: "I'm using the finishing-a-development-branch skill to complete this work."
 - **REQUIRED SUB-SKILL:** Use penumbra:finishing-a-development-branch
 - Follow that skill to verify tests, present options, execute choice
@@ -39,6 +42,7 @@ After all tasks complete and verified:
 ## When to Stop and Ask for Help
 
 **STOP executing immediately when:**
+
 - Hit a blocker (missing dependency, test fails, instruction unclear)
 - Plan has critical gaps preventing starting
 - You don't understand an instruction
@@ -49,12 +53,14 @@ After all tasks complete and verified:
 ## When to Revisit Earlier Steps
 
 **Return to Review (Step 1) when:**
+
 - Partner updates the plan based on your feedback
 - Fundamental approach needs rethinking
 
 **Don't force through blockers** - stop and ask.
 
 ## Remember
+
 - Review plan critically first
 - Follow plan steps exactly
 - Don't skip verifications
@@ -65,6 +71,7 @@ After all tasks complete and verified:
 ## Integration
 
 **Required workflow skills:**
+
 - **penumbra:writing-plans** - Creates the plan this skill executes
 - **penumbra:finishing-a-development-branch** - Complete development after all tasks (includes worktree teardown via `mcp__penumbra__worktree_cleanup`)
 
@@ -74,6 +81,7 @@ In penumbra, plans authored via `/write-plan` are typically dispatched
 via plan-runtime (per-task `kind=orchestrate` leaf to its
 `preferred_agent`), not executed inline in a maestro session. This
 skill applies when:
+
 - A plan is being executed in the current session by the maestro (rare).
 - Inline execution is chosen at the `writing-plans` handoff prompt.
 

@@ -1,4 +1,4 @@
-import type { Database } from 'bun:sqlite';
+import type { Database } from "bun:sqlite";
 
 export interface MemoryEfficacyJobRow {
   job_id: string;
@@ -137,7 +137,7 @@ export function completeJob(
   opts?: { workerId?: string },
 ): boolean {
   const workerId = opts?.workerId;
-  if ('error' in result) {
+  if ("error" in result) {
     const sql = workerId
       ? `UPDATE memory_efficacy_jobs
          SET status = 'failed',
@@ -157,7 +157,10 @@ export function completeJob(
              heartbeat_at = NULL,
              lease_expires_at = NULL
          WHERE job_id = ?`;
-    const update = db.run(sql, workerId ? [now, result.error, jobId, workerId] : [now, result.error, jobId]);
+    const update = db.run(
+      sql,
+      workerId ? [now, result.error, jobId, workerId] : [now, result.error, jobId],
+    );
     return update.changes > 0;
   } else {
     const sql = workerId
@@ -194,11 +197,11 @@ export function completeJob(
 }
 
 export function getJobStatus(db: Database, jobId: string): MemoryEfficacyJobRow | null {
-  return db
-    .query<MemoryEfficacyJobRow, [string]>(
-      `SELECT * FROM memory_efficacy_jobs WHERE job_id = ?`,
-    )
-    .get(jobId) ?? null;
+  return (
+    db
+      .query<MemoryEfficacyJobRow, [string]>(`SELECT * FROM memory_efficacy_jobs WHERE job_id = ?`)
+      .get(jobId) ?? null
+  );
 }
 
 export function listRecentJobs(
@@ -208,14 +211,16 @@ export function listRecentJobs(
   const limit = opts?.limit ?? 20;
   if (opts?.status) {
     return db
-      .query<MemoryEfficacyJobRow, [string, number]>(
-        `SELECT * FROM memory_efficacy_jobs WHERE status = ? ORDER BY ts_enqueued DESC LIMIT ?`,
-      )
+      .query<
+        MemoryEfficacyJobRow,
+        [string, number]
+      >(`SELECT * FROM memory_efficacy_jobs WHERE status = ? ORDER BY ts_enqueued DESC LIMIT ?`)
       .all(opts.status, limit);
   }
   return db
-    .query<MemoryEfficacyJobRow, [number]>(
-      `SELECT * FROM memory_efficacy_jobs ORDER BY ts_enqueued DESC LIMIT ?`,
-    )
+    .query<
+      MemoryEfficacyJobRow,
+      [number]
+    >(`SELECT * FROM memory_efficacy_jobs ORDER BY ts_enqueued DESC LIMIT ?`)
     .all(limit);
 }

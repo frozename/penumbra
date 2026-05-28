@@ -1,18 +1,18 @@
-import { expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {}
 
-import { loadSqliteVec, migrate } from '@penumbra/core';
-import { runDispatchEventsSource } from '../../src/recall-sources/dispatch.js';
-import { runHandoffPendingSource } from '../../src/recall-sources/handoff.js';
+import { loadSqliteVec, migrate } from "@penumbra/core";
+import { runDispatchEventsSource } from "../../src/recall-sources/dispatch.js";
+import { runHandoffPendingSource } from "../../src/recall-sources/handoff.js";
 
-test('dispatch_events filters by since', () => {
-  const db = new Database(':memory:');
+test("dispatch_events filters by since", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
@@ -24,14 +24,14 @@ test('dispatch_events filters by since', () => {
       (3, 'h2', 'worker', 'dispatch.start', '2026-05-04T11:00:00Z', '{}');
   `);
 
-  const out = runDispatchEventsSource({ db, args: { since: '2026-05-04T10:30:00Z' } });
+  const out = runDispatchEventsSource({ db, args: { since: "2026-05-04T10:30:00Z" } });
   expect(out.events.map((e) => e.id)).toEqual([3]);
   expect(out.summaries).toBeUndefined();
   expect(out.warnings).toEqual([]);
 });
 
-test('dispatch_events excludes heartbeat/watchdog ticks by default', () => {
-  const db = new Database(':memory:');
+test("dispatch_events excludes heartbeat/watchdog ticks by default", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
@@ -52,8 +52,8 @@ test('dispatch_events excludes heartbeat/watchdog ticks by default', () => {
   expect(out.warnings).toEqual([]);
 });
 
-test('dispatch_events restores heartbeat/watchdog when include_heartbeats=true', () => {
-  const db = new Database(':memory:');
+test("dispatch_events restores heartbeat/watchdog when include_heartbeats=true", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
@@ -69,8 +69,8 @@ test('dispatch_events restores heartbeat/watchdog when include_heartbeats=true',
   expect(out.summaries).toBeUndefined();
 });
 
-test('dispatch_events outcomes_only=true returns one summary per handoff with derived outcome/duration', () => {
-  const db = new Database(':memory:');
+test("dispatch_events outcomes_only=true returns one summary per handoff with derived outcome/duration", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
@@ -100,37 +100,37 @@ test('dispatch_events outcomes_only=true returns one summary per handoff with de
   expect(out.summaries).toHaveLength(3);
 
   const byId = new Map((out.summaries ?? []).map((summary) => [summary.handoff_id, summary]));
-  expect(byId.get('h1')).toEqual({
-    handoff_id: 'h1',
-    agent: 'codex',
-    started_at: '2026-05-07T10:00:00Z',
-    ended_at: '2026-05-07T10:01:00Z',
+  expect(byId.get("h1")).toEqual({
+    handoff_id: "h1",
+    agent: "codex",
+    started_at: "2026-05-07T10:00:00Z",
+    ended_at: "2026-05-07T10:01:00Z",
     duration_seconds: 60,
-    outcome: 'ok',
-    failed_event_kinds: ['agent.tool_call.failed'],
+    outcome: "ok",
+    failed_event_kinds: ["agent.tool_call.failed"],
   });
-  expect(byId.get('h2')).toEqual({
-    handoff_id: 'h2',
-    agent: 'gemini',
-    started_at: '2026-05-07T11:00:00Z',
-    ended_at: '2026-05-07T11:00:45Z',
+  expect(byId.get("h2")).toEqual({
+    handoff_id: "h2",
+    agent: "gemini",
+    started_at: "2026-05-07T11:00:00Z",
+    ended_at: "2026-05-07T11:00:45Z",
     duration_seconds: 45,
-    outcome: 'failed',
-    failed_event_kinds: ['dispatch.failed'],
+    outcome: "failed",
+    failed_event_kinds: ["dispatch.failed"],
   });
-  expect(byId.get('h3')).toEqual({
-    handoff_id: 'h3',
-    agent: 'claude',
-    started_at: '2026-05-07T12:00:00Z',
+  expect(byId.get("h3")).toEqual({
+    handoff_id: "h3",
+    agent: "claude",
+    started_at: "2026-05-07T12:00:00Z",
     ended_at: null,
     duration_seconds: null,
-    outcome: 'in_progress',
+    outcome: "in_progress",
     failed_event_kinds: [],
   });
 });
 
-test('dispatch_events outcomes_only=true keeps failed kinds for successful terminal dispatch', () => {
-  const db = new Database(':memory:');
+test("dispatch_events outcomes_only=true keeps failed kinds for successful terminal dispatch", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
@@ -146,12 +146,12 @@ test('dispatch_events outcomes_only=true keeps failed kinds for successful termi
       (3, 'h1', 'worker', 'dispatch.end',           '2026-05-07T10:00:10Z', '{}');
   `);
   const out = runDispatchEventsSource({ db, args: { outcomes_only: true } });
-  expect(out.summaries?.[0]?.outcome).toBe('ok');
-  expect(out.summaries?.[0]?.failed_event_kinds).toEqual(['agent.tool_call.failed']);
+  expect(out.summaries?.[0]?.outcome).toBe("ok");
+  expect(out.summaries?.[0]?.failed_event_kinds).toEqual(["agent.tool_call.failed"]);
 });
 
-test('dispatch_events outcomes_only=true marks cancel kinds as failed', () => {
-  const db = new Database(':memory:');
+test("dispatch_events outcomes_only=true marks cancel kinds as failed", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
@@ -166,11 +166,11 @@ test('dispatch_events outcomes_only=true marks cancel kinds as failed', () => {
       (2, 'h1', 'worker', 'dispatch.cancel', '2026-05-07T10:00:05Z', '{}');
   `);
   const out = runDispatchEventsSource({ db, args: { outcomes_only: true } });
-  expect(out.summaries?.[0]?.outcome).toBe('failed');
+  expect(out.summaries?.[0]?.outcome).toBe("failed");
 });
 
-test('dispatch_events outcomes_only=true applies limit to most-recent raw events', () => {
-  const db = new Database(':memory:');
+test("dispatch_events outcomes_only=true applies limit to most-recent raw events", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
@@ -183,28 +183,35 @@ test('dispatch_events outcomes_only=true applies limit to most-recent raw events
     `INSERT INTO dispatch_events (id, handoff_id, source, kind, ts, meta_json)
      VALUES (?, ?, 'worker', ?, ?, '{}')`,
   );
-  const baseMs = Date.parse('2026-05-06T00:00:00Z');
+  const baseMs = Date.parse("2026-05-06T00:00:00Z");
 
   for (let i = 0; i < 120; i += 1) {
-    const handoffId = `h${String(i).padStart(3, '0')}`;
+    const handoffId = `h${String(i).padStart(3, "0")}`;
     const startMs = baseMs + i * 12 * 60 * 1000;
     insertHandoff.run(handoffId, new Date(startMs).toISOString());
-    insertEvent.run(eventId++, handoffId, 'dispatch.start', new Date(startMs).toISOString());
-    insertEvent.run(eventId++, handoffId, 'agent.tool_call.failed', new Date(startMs + 20_000).toISOString());
-    insertEvent.run(eventId++, handoffId, 'dispatch.end', new Date(startMs + 40_000).toISOString());
-    insertEvent.run(eventId++, '', 'heartbeat.sent', new Date(startMs + 50_000).toISOString());
+    insertEvent.run(eventId++, handoffId, "dispatch.start", new Date(startMs).toISOString());
+    insertEvent.run(
+      eventId++,
+      handoffId,
+      "agent.tool_call.failed",
+      new Date(startMs + 20_000).toISOString(),
+    );
+    insertEvent.run(eventId++, handoffId, "dispatch.end", new Date(startMs + 40_000).toISOString());
+    insertEvent.run(eventId++, "", "heartbeat.sent", new Date(startMs + 50_000).toISOString());
   }
 
   const out = runDispatchEventsSource({ db, args: { outcomes_only: true, limit: 50 } });
-  const summaryIndexes = (out.summaries ?? []).map((summary) => Number(summary.handoff_id.slice(1)));
+  const summaryIndexes = (out.summaries ?? []).map((summary) =>
+    Number(summary.handoff_id.slice(1)),
+  );
   expect(summaryIndexes).toContain(119);
   expect(summaryIndexes).toContain(103);
   expect(summaryIndexes).not.toContain(102);
   expect(summaryIndexes.every((index) => index >= 103)).toBe(true);
 });
 
-test('handoff.list_pending returns pending only', () => {
-  const db = new Database(':memory:');
+test("handoff.list_pending returns pending only", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
@@ -216,6 +223,6 @@ test('handoff.list_pending returns pending only', () => {
   `);
 
   const out = runHandoffPendingSource({ db });
-  expect(out.handoffs.map((h) => h.handoff_id)).toEqual(['h1']);
+  expect(out.handoffs.map((h) => h.handoff_id)).toEqual(["h1"]);
   expect(out.warnings).toEqual([]);
 });

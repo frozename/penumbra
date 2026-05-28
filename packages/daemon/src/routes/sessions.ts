@@ -1,23 +1,23 @@
-import type { Services } from '@penumbra/core';
-import { bodyJson, json } from './_helpers.js';
+import type { Services } from "@penumbra/core";
+import { bodyJson, json } from "./_helpers.js";
 export async function sessionsTouchRoute(req: Request, services: Services): Promise<Response> {
   const raw = await bodyJson(req);
-  if (!raw || typeof raw !== 'object') {
-    return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400);
+  if (!raw || typeof raw !== "object") {
+    return json(
+      { error: { code: "invalid_json", message: "request body was not valid JSON" } },
+      400,
+    );
   }
   const body = raw as { session_id?: unknown; project_id?: unknown; ts?: unknown };
   const sessionId = body.session_id;
-  if (typeof sessionId !== 'string' || sessionId.length === 0) {
-    return json({ error: { code: 'bad_request', message: 'session_id required' } }, 400);
+  if (typeof sessionId !== "string" || sessionId.length === 0) {
+    return json({ error: { code: "bad_request", message: "session_id required" } }, 400);
   }
-  const ts = typeof body.ts === 'string' && body.ts.length > 0
-    ? body.ts
-    : new Date().toISOString();
-  const projectId = typeof body.project_id === 'string' && body.project_id.length > 0
-    ? body.project_id
-    : null;
+  const ts = typeof body.ts === "string" && body.ts.length > 0 ? body.ts : new Date().toISOString();
+  const projectId =
+    typeof body.project_id === "string" && body.project_id.length > 0 ? body.project_id : null;
 
-  const db = (services as any).db as import('bun:sqlite').Database;
+  const db = (services as any).db as import("bun:sqlite").Database;
   db.prepare(
     `INSERT INTO claude_code_sessions (session_id, session_start_at, last_seen_at, project_id)
      VALUES (?, ?, ?, ?)
@@ -30,30 +30,28 @@ export async function sessionsTouchRoute(req: Request, services: Services): Prom
 }
 
 export function lookupSessionStart(
-  db: import('bun:sqlite').Database,
+  db: import("bun:sqlite").Database,
   sessionId: string,
 ): string | null {
   const row = db
-    .query<{ session_start_at: string }, [string]>(
-      'SELECT session_start_at FROM claude_code_sessions WHERE session_id = ?',
-    )
+    .query<
+      { session_start_at: string },
+      [string]
+    >("SELECT session_start_at FROM claude_code_sessions WHERE session_id = ?")
     .get(sessionId);
   return row?.session_start_at ?? null;
 }
 
 const SESSION_BUDGET_MAX = 6;
 const SESSION_BUDGET_SOFT_WARN_PCT = 0.8;
-const NO_SESSION_PROJECT = { id: '—', name: 'no project' };
+const NO_SESSION_PROJECT = { id: "—", name: "no project" };
 
 export async function sessionCurrentRoute(_req: Request, services: Services): Promise<Response> {
-  const db = (services as any).db as import('bun:sqlite').Database;
+  const db = (services as any).db as import("bun:sqlite").Database;
 
   // Latest seen claude-code session is the working session.
   const latest = db
-    .query<
-      { session_id: string; session_start_at: string; project_id: string | null },
-      []
-    >(
+    .query<{ session_id: string; session_start_at: string; project_id: string | null }, []>(
       `SELECT session_id, session_start_at, project_id
        FROM claude_code_sessions
        ORDER BY last_seen_at DESC
@@ -68,9 +66,9 @@ export async function sessionCurrentRoute(_req: Request, services: Services): Pr
   let failed = 0;
   for (const c of allChains) {
     const s = (c as { latest_status?: string }).latest_status;
-    if (s === 'dispatched') dispatched += 1;
-    else if (s === 'completed') resolved += 1;
-    else if (s === 'failed') failed += 1;
+    if (s === "dispatched") dispatched += 1;
+    else if (s === "completed") resolved += 1;
+    else if (s === "failed") failed += 1;
   }
 
   const project = latest?.project_id
@@ -78,7 +76,7 @@ export async function sessionCurrentRoute(_req: Request, services: Services): Pr
     : NO_SESSION_PROJECT;
 
   return json({
-    id: latest?.session_id ?? 'no-session',
+    id: latest?.session_id ?? "no-session",
     project,
     started_at: latest?.session_start_at ?? new Date(0).toISOString(),
     dispatched,

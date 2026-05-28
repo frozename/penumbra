@@ -1,10 +1,10 @@
-import type { HandoffRow } from '@penumbra/api-contract';
-import type { Meta, StoryObj } from '@storybook/react';
-import { handoffsPending } from '../lib/query-keys';
-import { Rail } from './Rail';
+import type { HandoffRow } from "@penumbra/api-contract";
+import type { Meta, StoryObj } from "@storybook/react";
+import { handoffsPending } from "../lib/query-keys";
+import { Rail } from "./Rail";
 
 const meta: Meta<typeof Rail> = {
-  title: 'Shell/Rail',
+  title: "Shell/Rail",
   component: Rail,
 };
 
@@ -14,14 +14,14 @@ type Story = StoryObj<typeof meta>;
 function makeHandoff(id: string): HandoffRow {
   return {
     handoff_id: `h-${id}`,
-    ts: '2026-05-09T05:00:00.000Z',
+    ts: "2026-05-09T05:00:00.000Z",
     project_id: null,
     conversation_id: `c-${id}`,
-    from_agent: 'claude',
-    to_agent: 'codex',
+    from_agent: "claude",
+    to_agent: "codex",
     to_role: null,
     message: `handoff ${id}`,
-    status: 'pending',
+    status: "pending",
     resolved_by: null,
     resolved_at: null,
     redirected_to: null,
@@ -41,7 +41,7 @@ function makeHandoff(id: string): HandoffRow {
 export const NoBadge: Story = {
   parameters: {
     queryCache: [{ key: handoffsPending(), data: { handoffs: [] } }],
-    initialRoute: '/mission',
+    initialRoute: "/mission",
   },
 };
 
@@ -50,9 +50,9 @@ export const WithBadge3: Story = {
     queryCache: [
       {
         key: handoffsPending(),
-        data: { handoffs: [makeHandoff('1'), makeHandoff('2'), makeHandoff('3')] },
+        data: { handoffs: [makeHandoff("1"), makeHandoff("2"), makeHandoff("3")] },
       },
     ],
-    initialRoute: '/mission',
+    initialRoute: "/mission",
   },
 };

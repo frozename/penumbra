@@ -1,4 +1,4 @@
-import type { JudgeChatFn } from './judge-chat.js';
+import type { JudgeChatFn } from "./judge-chat.js";
 
 const REFINER_SYSTEM_PROMPT = `You receive a draft DISPATCH PROMPT meant for an autonomous coding agent (ACP). Your job is to reshape it so the agent does not misread it as session-bootstrap context, brainstorming material, or a request for approval.
 
@@ -19,17 +19,17 @@ export const REFINER_INPUT_MAX_BYTES = 64 * 1024;
 export const REFINER_OUTPUT_MAX_BYTES = 16 * 1024;
 
 export type RefineErrorCode =
-  | 'input_too_large'
-  | 'input_blank'
-  | 'output_empty'
-  | 'output_too_large'
-  | 'upstream_failed';
+  | "input_too_large"
+  | "input_blank"
+  | "output_empty"
+  | "output_too_large"
+  | "upstream_failed";
 
 export class RefineError extends Error {
   readonly code: RefineErrorCode;
   constructor(code: RefineErrorCode, message: string) {
     super(message);
-    this.name = 'RefineError';
+    this.name = "RefineError";
     this.code = code;
   }
 }
@@ -41,30 +41,36 @@ export interface RefineDispatchPromptOpts {
 }
 
 export async function refineDispatchPrompt(opts: RefineDispatchPromptOpts): Promise<string> {
-  if (Buffer.byteLength(opts.message, 'utf8') > REFINER_INPUT_MAX_BYTES) {
-    throw new RefineError('input_too_large', `input exceeds ${REFINER_INPUT_MAX_BYTES} bytes`);
+  if (Buffer.byteLength(opts.message, "utf8") > REFINER_INPUT_MAX_BYTES) {
+    throw new RefineError("input_too_large", `input exceeds ${REFINER_INPUT_MAX_BYTES} bytes`);
   }
   if (opts.message.trim().length === 0) {
-    throw new RefineError('input_blank', 'input is empty or whitespace-only');
+    throw new RefineError("input_blank", "input is empty or whitespace-only");
   }
   let raw: string;
   try {
     raw = await opts.chat({
       model: opts.model,
       messages: [
-        { role: 'system', content: REFINER_SYSTEM_PROMPT },
-        { role: 'user', content: opts.message },
+        { role: "system", content: REFINER_SYSTEM_PROMPT },
+        { role: "user", content: opts.message },
       ],
     });
   } catch (err) {
-    throw new RefineError('upstream_failed', err instanceof Error ? err.message : 'upstream call failed');
+    throw new RefineError(
+      "upstream_failed",
+      err instanceof Error ? err.message : "upstream call failed",
+    );
   }
   const refined = raw.trim();
   if (refined.length === 0) {
-    throw new RefineError('output_empty', 'refiner returned empty content');
+    throw new RefineError("output_empty", "refiner returned empty content");
   }
-  if (Buffer.byteLength(refined, 'utf8') > REFINER_OUTPUT_MAX_BYTES) {
-    throw new RefineError('output_too_large', `refined output exceeds ${REFINER_OUTPUT_MAX_BYTES} bytes`);
+  if (Buffer.byteLength(refined, "utf8") > REFINER_OUTPUT_MAX_BYTES) {
+    throw new RefineError(
+      "output_too_large",
+      `refined output exceeds ${REFINER_OUTPUT_MAX_BYTES} bytes`,
+    );
   }
   return refined;
 }

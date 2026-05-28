@@ -28,19 +28,22 @@ output:
 run:
   kind: markdown-template
 ---
+
 Pre-flight context (advisory):
 
 Recent session activity:
 {{#each recall.memory_search}}
+
 - {{title}} — {{snippet}}
-{{/each}}
+  {{/each}}
 
 Recent commits:
 {{recall.git.log}}
 
 Pending handoffs:
 {{#each recall.handoff_list_pending}}
+
 - {{handoff_id}} ({{status}})
-{{/each}}
+  {{/each}}
 
 Reminder: search memory (`mcp__penumbra__memory_search`) and consider `mcp__penumbra__agent_recommend` before non-trivial code work. Delegate via `chain_start` rather than hand-implementing.

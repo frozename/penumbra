@@ -1,18 +1,18 @@
-import { expect, mock, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { mkdir, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join } from 'node:path';
-import type { RecallBundle, WorkflowCtx } from '@penumbra/workflows';
-import { parse as parseYaml } from 'yaml';
-import spec, { fn, inputSchema } from '../../../../plugin/workflows/adversarial-plan/workflow.ts';
+import { expect, mock, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { mkdir, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, isAbsolute, join } from "node:path";
+import type { RecallBundle, WorkflowCtx } from "@penumbra/workflows";
+import { parse as parseYaml } from "yaml";
+import spec, { fn, inputSchema } from "../../../../plugin/workflows/adversarial-plan/workflow.ts";
 
 function baseRecall(): RecallBundle {
   return {
     byKey: {
-      'file.contents': {
-        path: '/repo/specs/plan.md',
-        body: '# Spec\n\nBuild the thing.',
+      "file.contents": {
+        path: "/repo/specs/plan.md",
+        body: "# Spec\n\nBuild the thing.",
       },
     },
     warnings: [],
@@ -24,36 +24,36 @@ function makeConfig() {
   return {
     personas: {
       architect: {
-        preferred_agent: 'architect',
-        bias: 'architect',
-        system_prompt: 'Review architecture trade-offs and sequencing risks.',
+        preferred_agent: "architect",
+        bias: "architect",
+        system_prompt: "Review architecture trade-offs and sequencing risks.",
       },
       simplifier: {
-        preferred_agent: 'simplifier',
-        bias: 'simplifier',
-        system_prompt: 'Prefer the smallest viable implementation path.',
+        preferred_agent: "simplifier",
+        bias: "simplifier",
+        system_prompt: "Prefer the smallest viable implementation path.",
       },
-      'test-first': {
-        preferred_agent: 'test-first',
-        bias: 'test-first',
-        system_prompt: 'Force explicit failing tests and narrow implementation.',
+      "test-first": {
+        preferred_agent: "test-first",
+        bias: "test-first",
+        system_prompt: "Force explicit failing tests and narrow implementation.",
       },
       risk: {
-        preferred_agent: 'risk',
-        bias: 'risk',
-        system_prompt: 'Prioritize outage, regressions, and rollback concerns.',
+        preferred_agent: "risk",
+        bias: "risk",
+        system_prompt: "Prioritize outage, regressions, and rollback concerns.",
       },
       integration: {
-        preferred_agent: 'integration',
-        bias: 'integration',
-        system_prompt: 'Focus on boundary integration and deployment ordering.',
+        preferred_agent: "integration",
+        bias: "integration",
+        system_prompt: "Focus on boundary integration and deployment ordering.",
       },
     },
     workloads: {
       plan_refine: {
-        eligible_agents: ['architect', 'simplifier', 'test-first', 'risk', 'integration'],
+        eligible_agents: ["architect", "simplifier", "test-first", "risk", "integration"],
         fan_out: 5,
-        synthesizer: 'codex',
+        synthesizer: "codex",
       },
     },
   };
@@ -61,10 +61,18 @@ function makeConfig() {
 
 function makeCtx(opts?: {
   args?: Record<string, unknown>;
-  dispatchImpl?: (input: { agent: string; message: string; task_type?: string; use_worktree?: boolean }) => Promise<{ conversation_id: string; handoff_id: string }>;
-  awaitImpl?: (conversationId: string, opts?: { timeoutMs?: number }) => Promise<{ status: 'completed' | 'failed' | 'timeout'; response_text: string | null }>;
+  dispatchImpl?: (input: {
+    agent: string;
+    message: string;
+    task_type?: string;
+    use_worktree?: boolean;
+  }) => Promise<{ conversation_id: string; handoff_id: string }>;
+  awaitImpl?: (
+    conversationId: string,
+    opts?: { timeoutMs?: number },
+  ) => Promise<{ status: "completed" | "failed" | "timeout"; response_text: string | null }>;
 }) {
-  const root = mkdtempSync(join(tmpdir(), 'adv-plan-'));
+  const root = mkdtempSync(join(tmpdir(), "adv-plan-"));
   const writes: Array<{ path: string; body: string }> = [];
   const dispatch = mock(
     opts?.dispatchImpl ??
@@ -76,7 +84,7 @@ function makeCtx(opts?: {
   const awaitChain = mock(
     opts?.awaitImpl ??
       (async (conversationId: string) => ({
-        status: 'completed' as const,
+        status: "completed" as const,
         response_text: `plan for ${conversationId}`,
       })),
   );
@@ -94,7 +102,7 @@ function makeCtx(opts?: {
     config: makeConfig(),
     cwd: root,
     storageRoot: root,
-    project: 'penumbra',
+    project: "penumbra",
     args: inputSchema.parse(opts?.args ?? {}),
   };
 
@@ -106,37 +114,39 @@ function parseSynthesisFrontmatter(content: string): Record<string, unknown> | n
   if (!match) return null;
   try {
     const parsed = parseYaml(match[1]);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
   } catch {
     return null;
   }
 }
 
-test('spec metadata is registered as manual + slash ts-function workflow', () => {
-  expect(spec.name).toBe('adversarial-plan');
+test("spec metadata is registered as manual + slash ts-function workflow", () => {
+  expect(spec.name).toBe("adversarial-plan");
   expect(spec.triggers).toEqual([
-    { kind: 'manual' },
-    { kind: 'slash', command: 'adversarial-plan' },
+    { kind: "manual" },
+    { kind: "slash", command: "adversarial-plan" },
   ]);
-  expect(spec.run).toEqual({ kind: 'ts-function' });
+  expect(spec.run).toEqual({ kind: "ts-function" });
 });
 
-test('inputSchema applies defaults and rejects unknown keys', () => {
+test("inputSchema applies defaults and rejects unknown keys", () => {
   expect(inputSchema.parse({})).toEqual({
     timeout_ms: 1200000,
   });
   expect(() => inputSchema.parse({ unexpected: true })).toThrow();
-  expect(() => inputSchema.parse({ focus: '' })).toThrow();
-  expect(() => inputSchema.parse({ focus: 'x'.repeat(3000) })).toThrow();
+  expect(() => inputSchema.parse({ focus: "" })).toThrow();
+  expect(() => inputSchema.parse({ focus: "x".repeat(3000) })).toThrow();
 });
 
-test('persona prompt includes caller focus when provided', async () => {
+test("persona prompt includes caller focus when provided", async () => {
   const dispatchMessages: string[] = [];
   const { ctx, root } = makeCtx({
     args: {
-      topic: 'Ship a planning workflow',
-      personas: ['architect'],
-      focus: 'scrutinize the regex',
+      topic: "Ship a planning workflow",
+      personas: ["architect"],
+      focus: "scrutinize the regex",
     },
     dispatchImpl: async (input) => {
       dispatchMessages.push(input.message);
@@ -148,49 +158,52 @@ test('persona prompt includes caller focus when provided', async () => {
     expect(result.ok).toBe(true);
     expect(dispatchMessages.length).toBeGreaterThanOrEqual(1);
     expect(dispatchMessages[0]).toContain("## Caller's focus");
-    expect(dispatchMessages[0]).toContain('scrutinize the regex');
+    expect(dispatchMessages[0]).toContain("scrutinize the regex");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('persona mapping uses personas.<name>.preferred_agent, not workload key', async () => {
+test("persona mapping uses personas.<name>.preferred_agent, not workload key", async () => {
   const { ctx, root, dispatch } = makeCtx({
     args: {
-      topic: 'Ship a planning workflow',
-      personas: ['architect'],
+      topic: "Ship a planning workflow",
+      personas: ["architect"],
     },
     awaitImpl: async (conversationId: string) => {
-      if (conversationId === 'claude-acp-sonnet-conv') {
-        return { status: 'completed', response_text: 'architect plan' };
+      if (conversationId === "claude-acp-sonnet-conv") {
+        return { status: "completed", response_text: "architect plan" };
       }
-      return { status: 'completed', response_text: 'synthesized plan' };
+      return { status: "completed", response_text: "synthesized plan" };
     },
   });
   try {
     (ctx.config as Record<string, unknown>).personas = {
       architect: {
-        preferred_agent: 'claude-acp-sonnet',
-        bias: 'architect',
-        system_prompt: 'Review architecture trade-offs and sequencing risks.',
+        preferred_agent: "claude-acp-sonnet",
+        bias: "architect",
+        system_prompt: "Review architecture trade-offs and sequencing risks.",
       },
     };
-    const planRefine = (ctx.config.workloads as Record<string, unknown>).plan_refine as Record<string, unknown>;
-    planRefine.eligible_agents = ['architect'];
+    const planRefine = (ctx.config.workloads as Record<string, unknown>).plan_refine as Record<
+      string,
+      unknown
+    >;
+    planRefine.eligible_agents = ["architect"];
     planRefine.fan_out = 1;
     const result = (await fn(ctx, baseRecall())) as { ok: boolean };
     expect(result.ok).toBe(true);
-    expect(dispatch.mock.calls[0]?.[0]?.agent).toBe('claude-acp-sonnet');
+    expect(dispatch.mock.calls[0]?.[0]?.agent).toBe("claude-acp-sonnet");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('happy path: two personas complete, synthesizer runs, and synthesis is written', async () => {
+test("happy path: two personas complete, synthesizer runs, and synthesis is written", async () => {
   const { ctx, root, dispatch } = makeCtx({
     args: {
-      topic: 'Ship a planning workflow',
-      personas: ['architect', 'simplifier'],
+      topic: "Ship a planning workflow",
+      personas: ["architect", "simplifier"],
     },
   });
   try {
@@ -203,64 +216,64 @@ test('happy path: two personas complete, synthesizer runs, and synthesis is writ
     };
     expect(result.ok).toBe(true);
     expect(result.personas).toEqual([
-      { name: 'architect', status: 'completed', conversation_id: 'architect-conv' },
-      { name: 'simplifier', status: 'completed', conversation_id: 'simplifier-conv' },
+      { name: "architect", status: "completed", conversation_id: "architect-conv" },
+      { name: "simplifier", status: "completed", conversation_id: "simplifier-conv" },
     ]);
-    expect(result.synthesis_path).toBe(join(result.out_dir, 'synthesis.md'));
-    expect(result.synthesizer_status).toBe('completed');
+    expect(result.synthesis_path).toBe(join(result.out_dir, "synthesis.md"));
+    expect(result.synthesizer_status).toBe("completed");
     expect(dispatch).toHaveBeenCalledTimes(3);
-    const synthContent = await readFile(join(result.out_dir, 'synthesis.md'), 'utf8');
+    const synthContent = await readFile(join(result.out_dir, "synthesis.md"), "utf8");
     const fm = parseSynthesisFrontmatter(synthContent);
     expect(fm).not.toBeNull();
     if (!fm) return;
-    expect(fm.topic).toBe('Ship a planning workflow');
-    expect(fm.personas).toBe('architect, simplifier');
-    expect(fm.synthesis_handoff_id).toBe('codex-handoff');
+    expect(fm.topic).toBe("Ship a planning workflow");
+    expect(fm.personas).toBe("architect, simplifier");
+    expect(fm.synthesis_handoff_id).toBe("codex-handoff");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('one persona fails: synth still runs with surviving persona only', async () => {
+test("one persona fails: synth still runs with surviving persona only", async () => {
   const { ctx, root } = makeCtx({
     args: {
-      topic: 'Ship a planning workflow',
-      personas: ['architect', 'simplifier'],
+      topic: "Ship a planning workflow",
+      personas: ["architect", "simplifier"],
     },
     dispatchImpl: (() => {
       let call = 0;
       return async ({ agent }) => {
         call += 1;
         if (call === 1) {
-          return { conversation_id: 'claude-conv', handoff_id: 'claude-handoff' };
+          return { conversation_id: "claude-conv", handoff_id: "claude-handoff" };
         }
         if (call === 2) {
-          return { conversation_id: 'codex-conv', handoff_id: 'codex-handoff' };
+          return { conversation_id: "codex-conv", handoff_id: "codex-handoff" };
         }
         return { conversation_id: `${agent}-synth-conv`, handoff_id: `${agent}-synth-handoff` };
       };
     })(),
     awaitImpl: async (conversationId: string) => {
-      if (conversationId === 'claude-conv') {
+      if (conversationId === "claude-conv") {
         return {
-          status: 'completed' as const,
-          response_text: 'architect plan',
+          status: "completed" as const,
+          response_text: "architect plan",
         };
       }
-      if (conversationId === 'codex-conv') {
+      if (conversationId === "codex-conv") {
         return {
-          status: 'failed' as const,
+          status: "failed" as const,
           response_text: null,
         };
       }
-      if (conversationId === 'codex-synth-conv') {
+      if (conversationId === "codex-synth-conv") {
         return {
-          status: 'completed' as const,
-          response_text: 'synthesized plan',
+          status: "completed" as const,
+          response_text: "synthesized plan",
         };
       }
       return {
-        status: 'failed' as const,
+        status: "failed" as const,
         response_text: null,
       };
     },
@@ -275,27 +288,27 @@ test('one persona fails: synth still runs with surviving persona only', async ()
     };
     expect(result.ok).toBe(true);
     expect(result.personas).toEqual([
-      { name: 'architect', status: 'completed', conversation_id: 'claude-conv' },
-      { name: 'simplifier', status: 'failed', conversation_id: 'codex-conv' },
+      { name: "architect", status: "completed", conversation_id: "claude-conv" },
+      { name: "simplifier", status: "failed", conversation_id: "codex-conv" },
     ]);
-    expect(result.synthesis_path).toBe(join(result.out_dir, 'synthesis.md'));
-    expect(result.synthesizer_status).toBe('completed');
-    const synthContent = await readFile(join(result.out_dir, 'synthesis.md'), 'utf8');
-    expect(synthContent).toContain('synthesized plan');
-    expect(synthContent).not.toContain('simplifier plan');
+    expect(result.synthesis_path).toBe(join(result.out_dir, "synthesis.md"));
+    expect(result.synthesizer_status).toBe("completed");
+    const synthContent = await readFile(join(result.out_dir, "synthesis.md"), "utf8");
+    expect(synthContent).toContain("synthesized plan");
+    expect(synthContent).not.toContain("simplifier plan");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('all personas fail: synth does not run and synthesis_path is null', async () => {
+test("all personas fail: synth does not run and synthesis_path is null", async () => {
   const { ctx, root, dispatch } = makeCtx({
     args: {
-      topic: 'Ship a planning workflow',
-      personas: ['architect', 'simplifier'],
+      topic: "Ship a planning workflow",
+      personas: ["architect", "simplifier"],
     },
     dispatchImpl: async () => {
-      throw new Error('dispatch failed');
+      throw new Error("dispatch failed");
     },
   });
   try {
@@ -307,7 +320,7 @@ test('all personas fail: synth does not run and synthesis_path is null', async (
     };
     expect(result.ok).toBe(false);
     expect(result.synthesis_path).toBeNull();
-    expect(result.error).toBe('all_persona_dispatches_failed');
+    expect(result.error).toBe("all_persona_dispatches_failed");
     expect(result.synthesizer_status).toBeNull();
     expect(dispatch).toHaveBeenCalledTimes(2);
   } finally {
@@ -315,100 +328,112 @@ test('all personas fail: synth does not run and synthesis_path is null', async (
   }
 });
 
-test('unknown_personas error when args.personas includes an unconfigured name', async () => {
+test("unknown_personas error when args.personas includes an unconfigured name", async () => {
   const { ctx, root } = makeCtx({
     args: {
-      topic: 'Ship a planning workflow',
-      personas: ['architect', 'ghost'],
+      topic: "Ship a planning workflow",
+      personas: ["architect", "ghost"],
     },
   });
   try {
-    const result = (await fn(ctx, baseRecall())) as { ok: boolean; error?: string; missing_personas?: string[] };
+    const result = (await fn(ctx, baseRecall())) as {
+      ok: boolean;
+      error?: string;
+      missing_personas?: string[];
+    };
     expect(result.ok).toBe(false);
-    expect(result.error).toBe('unknown_personas');
-    expect(result.missing_personas).toEqual(['ghost']);
+    expect(result.error).toBe("unknown_personas");
+    expect(result.missing_personas).toEqual(["ghost"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('no_personas_configured error when plan_refine workload has no eligible agents', async () => {
+test("no_personas_configured error when plan_refine workload has no eligible agents", async () => {
   const { ctx, root } = makeCtx({
     args: {
-      topic: 'Ship a planning workflow',
+      topic: "Ship a planning workflow",
     },
   });
   try {
-    const planRefine = (ctx.config.workloads as Record<string, unknown>).plan_refine as Record<string, unknown>;
+    const planRefine = (ctx.config.workloads as Record<string, unknown>).plan_refine as Record<
+      string,
+      unknown
+    >;
     planRefine.eligible_agents = [];
     const result = (await fn(ctx, baseRecall())) as { ok: boolean; error?: string };
     expect(result.ok).toBe(false);
-    expect(result.error).toBe('no_personas_configured');
+    expect(result.error).toBe("no_personas_configured");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('no_topic_or_content error when neither topic nor content_path is provided', async () => {
+test("no_topic_or_content error when neither topic nor content_path is provided", async () => {
   const { ctx, root } = makeCtx();
   try {
     const result = (await fn(ctx, baseRecall())) as { ok: boolean; error?: string };
     expect(result.ok).toBe(false);
-    expect(result.error).toBe('no_topic_or_content');
+    expect(result.error).toBe("no_topic_or_content");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('synth dispatch message includes the anti-derail preamble and uses workload synthesizer', async () => {
+test("synth dispatch message includes the anti-derail preamble and uses workload synthesizer", async () => {
   const { ctx, root, dispatch } = makeCtx({
     args: {
-      topic: 'Ship a planning workflow',
-      personas: ['architect', 'simplifier'],
+      topic: "Ship a planning workflow",
+      personas: ["architect", "simplifier"],
     },
   });
   try {
-    const result = (await fn(ctx, baseRecall())) as { ok: boolean; synthesizer_status: string | null };
+    const result = (await fn(ctx, baseRecall())) as {
+      ok: boolean;
+      synthesizer_status: string | null;
+    };
     expect(result.ok).toBe(true);
-    expect(result.synthesizer_status).toBe('completed');
+    expect(result.synthesizer_status).toBe("completed");
     expect(dispatch).toHaveBeenCalledTimes(3);
     const synthCall = dispatch.mock.calls[2]?.[0] as { message: string } | undefined;
-    const synthMessage = synthCall?.message ?? '';
-    expect(synthMessage).toContain('You are the synthesizer for an /adversarial-plan fan-out');
-    expect(synthMessage).toContain('This is NOT a session start');
-    expect(synthMessage).toContain('Do not run first moves');
-    expect(synthMessage).toContain('Do not check git status');
-    expect(synthMessage).toContain('Do not output status summaries');
+    const synthMessage = synthCall?.message ?? "";
+    expect(synthMessage).toContain("You are the synthesizer for an /adversarial-plan fan-out");
+    expect(synthMessage).toContain("This is NOT a session start");
+    expect(synthMessage).toContain("Do not run first moves");
+    expect(synthMessage).toContain("Do not check git status");
+    expect(synthMessage).toContain("Do not output status summaries");
     const synthAgentCall = dispatch.mock.calls[2]?.[0] as { agent?: string } | undefined;
-    expect(synthAgentCall?.agent).toBe('codex');
+    expect(synthAgentCall?.agent).toBe("codex");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('retries synthesizer once on 503 no_worker_registered and annotates synthesis', async () => {
+test("retries synthesizer once on 503 no_worker_registered and annotates synthesis", async () => {
   const { ctx, root, dispatch } = makeCtx({
     args: {
-      topic: 'Ship a planning workflow',
-      personas: ['architect'],
+      topic: "Ship a planning workflow",
+      personas: ["architect"],
     },
     dispatchImpl: (() => {
       let synthAttempts = 0;
       return async ({ agent }) => {
-        if (agent === 'codex') {
+        if (agent === "codex") {
           synthAttempts += 1;
           if (synthAttempts === 1) {
-            throw new Error('chain.start failed with 503: {"error":{"code":"no_worker_registered"}}');
+            throw new Error(
+              'chain.start failed with 503: {"error":{"code":"no_worker_registered"}}',
+            );
           }
         }
         return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
       };
     })(),
     awaitImpl: async (conversationId: string) => {
-      if (conversationId === 'codex-conv') {
-        return { status: 'completed', response_text: 'final synthesizer text' };
+      if (conversationId === "codex-conv") {
+        return { status: "completed", response_text: "final synthesizer text" };
       }
-      return { status: 'completed', response_text: 'architect plan' };
+      return { status: "completed", response_text: "architect plan" };
     },
   });
   try {
@@ -416,9 +441,9 @@ test('retries synthesizer once on 503 no_worker_registered and annotates synthes
     expect(result.ok).toBe(true);
     expect(dispatch).toHaveBeenCalledTimes(3);
     expect(result.synthesis_path).toBeTruthy();
-    const synthesis = await readFile(result.synthesis_path!, 'utf8');
-    expect(synthesis).toContain('> Synthesizer retried once after 503 no_worker_registered');
-    expect(synthesis).toContain('final synthesizer text');
+    const synthesis = await readFile(result.synthesis_path!, "utf8");
+    expect(synthesis).toContain("> Synthesizer retried once after 503 no_worker_registered");
+    expect(synthesis).toContain("final synthesizer text");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

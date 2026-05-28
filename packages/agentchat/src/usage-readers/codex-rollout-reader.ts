@@ -1,7 +1,7 @@
-import { existsSync, readFileSync, statSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
-import type { UsageReader, UsageReaderResult, RateLimitDelta } from './index.js';
+import { existsSync, readFileSync, statSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
+import type { UsageReader, UsageReaderResult, RateLimitDelta } from "./index.js";
 
 export interface CodexRolloutReaderOptions {
   rootDir?: string;
@@ -11,26 +11,37 @@ export interface CodexRolloutReaderOptions {
   now?: () => number;
 }
 
-interface FileCursor { byte_offset: number; mtime_ms: number; }
-interface CodexRolloutCursor { files: Record<string, FileCursor>; }
+interface FileCursor {
+  byte_offset: number;
+  mtime_ms: number;
+}
+interface CodexRolloutCursor {
+  files: Record<string, FileCursor>;
+}
 
 export class CodexRolloutReader implements UsageReader {
-  readonly id = 'codex-rollout';
+  readonly id = "codex-rollout";
   private rootDir: string;
   private lookbackHours: number;
   private now: () => number;
 
   constructor(opts: CodexRolloutReaderOptions = {}) {
-    this.rootDir = opts.rootDir ?? join(homedir(), '.codex', 'sessions');
+    this.rootDir = opts.rootDir ?? join(homedir(), ".codex", "sessions");
     this.lookbackHours = opts.lookbackHours ?? 24;
     this.now = opts.now ?? (() => Date.now());
   }
 
   async read(previousCursor: unknown | null): Promise<UsageReaderResult> {
     if (!existsSync(this.rootDir)) {
-      return { cursor: previousCursor ?? { files: {} }, usage_deltas: [], rate_limit_snapshots: [] };
+      return {
+        cursor: previousCursor ?? { files: {} },
+        usage_deltas: [],
+        rate_limit_snapshots: [],
+      };
     }
-    const cursor: CodexRolloutCursor = (previousCursor as CodexRolloutCursor | null) ?? { files: {} };
+    const cursor: CodexRolloutCursor = (previousCursor as CodexRolloutCursor | null) ?? {
+      files: {},
+    };
     const newCursor: CodexRolloutCursor = { files: { ...cursor.files } };
 
     const files = await this.listRolloutFiles();
@@ -47,30 +58,38 @@ export class CodexRolloutReader implements UsageReader {
       if (fileCursor && fileCursor.mtime_ms === mtime_ms && fileCursor.byte_offset >= size) {
         continue;
       }
-      const buf = readFileSync(filePath, 'utf8');
+      const buf = readFileSync(filePath, "utf8");
       const start = fileCursor?.byte_offset ?? 0;
       const slice = buf.slice(start);
 
       let latestRateLimits: any = null;
-      for (const rawLine of slice.split('\n')) {
+      for (const rawLine of slice.split("\n")) {
         const line = rawLine.trim();
         if (!line) continue;
         let obj: any;
-        try { obj = JSON.parse(line); } catch { continue; }
-        if (obj?.type === 'event_msg' && obj?.payload?.type === 'token_count' && obj?.payload?.rate_limits) {
+        try {
+          obj = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (
+          obj?.type === "event_msg" &&
+          obj?.payload?.type === "token_count" &&
+          obj?.payload?.rate_limits
+        ) {
           latestRateLimits = obj.payload.rate_limits;
         }
       }
       if (latestRateLimits) {
-        for (const key of ['primary', 'secondary']) {
+        for (const key of ["primary", "secondary"]) {
           const w = latestRateLimits[key];
           if (!w) continue;
           allRateLimitSnapshots.push({
             provider: this.canonicalizeProvider(latestRateLimits.limit_id),
             window_label: key,
             used_pct: Number(w.used_percent),
-            window_minutes: typeof w.window_minutes === 'number' ? w.window_minutes : undefined,
-            resets_at: typeof w.resets_at === 'number' ? w.resets_at : undefined,
+            window_minutes: typeof w.window_minutes === "number" ? w.window_minutes : undefined,
+            resets_at: typeof w.resets_at === "number" ? w.resets_at : undefined,
             extra: { plan_type: latestRateLimits.plan_type, limit_id: latestRateLimits.limit_id },
           });
         }
@@ -84,7 +103,7 @@ export class CodexRolloutReader implements UsageReader {
   private async listRolloutFiles(): Promise<string[]> {
     const out: string[] = [];
     const walk = (dir: string) => {
-      let entries: import('node:fs').Dirent[];
+      let entries: import("node:fs").Dirent[];
       try {
         entries = readdirSync(dir, { withFileTypes: true });
       } catch {
@@ -93,7 +112,8 @@ export class CodexRolloutReader implements UsageReader {
       for (const ent of entries) {
         const p = join(dir, ent.name);
         if (ent.isDirectory()) walk(p);
-        else if (ent.isFile() && ent.name.startsWith('rollout-') && ent.name.endsWith('.jsonl')) out.push(p);
+        else if (ent.isFile() && ent.name.startsWith("rollout-") && ent.name.endsWith(".jsonl"))
+          out.push(p);
       }
     };
     walk(this.rootDir);
@@ -101,7 +121,7 @@ export class CodexRolloutReader implements UsageReader {
   }
 
   private canonicalizeProvider(limit_id: string | undefined): string {
-    if (!limit_id || limit_id === 'codex') return 'openai';
+    if (!limit_id || limit_id === "codex") return "openai";
     return limit_id;
   }
 }

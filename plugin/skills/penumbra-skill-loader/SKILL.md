@@ -27,10 +27,10 @@ User instructions in the project (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, direct 
 
 If the `superpowers/*` plugin is also installed, prefer the penumbra equivalent. Keep the mapping below as the default replacement path.
 
-| superpowers skill | penumbra skill |
-| --- | --- |
-| `superpowers:using-superpowers` | `penumbra-skill-loader` |
-| `penumbra:brainstorming` | `brainstorming` |
-| `penumbra:writing-plans` | `writing-plans` |
-| `penumbra:dispatching` / `dispatching-parallel-agents` | `dispatching` |
-| `penumbra:test-driven-development` | `test-driven-development` |
+| superpowers skill                                      | penumbra skill            |
+| ------------------------------------------------------ | ------------------------- |
+| `superpowers:using-superpowers`                        | `penumbra-skill-loader`   |
+| `penumbra:brainstorming`                               | `brainstorming`           |
+| `penumbra:writing-plans`                               | `writing-plans`           |
+| `penumbra:dispatching` / `dispatching-parallel-agents` | `dispatching`             |
+| `penumbra:test-driven-development`                     | `test-driven-development` |

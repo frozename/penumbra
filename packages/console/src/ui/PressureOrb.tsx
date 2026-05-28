@@ -46,14 +46,7 @@ export function PressureOrb({ p }: PressureOrbProps): JSX.Element {
   return (
     <div className={`orb ${state}`}>
       <svg className="orb-svg" viewBox={`0 0 ${DIM} ${DIM}`}>
-        <circle
-          cx={CX}
-          cy={CY}
-          r={R}
-          stroke="var(--color-surface-3)"
-          strokeWidth="3"
-          fill="none"
-        />
+        <circle cx={CX} cy={CY} r={R} stroke="var(--color-surface-3)" strokeWidth="3" fill="none" />
         <circle
           cx={CX}
           cy={CY}
@@ -106,8 +99,7 @@ export function PressureOrb({ p }: PressureOrbProps): JSX.Element {
         <div className="prov">{providerLabel(p.provider)}</div>
         <div className="mod">{p.model}</div>
         <div className="t-tertiary mono" style={{ fontSize: 10 }}>
-          {p.window_label} · warn {Math.round(warn * 100)} · cap{" "}
-          {Math.round(refuse * 100)}
+          {p.window_label} · warn {Math.round(warn * 100)} · cap {Math.round(refuse * 100)}
         </div>
       </div>
     </div>

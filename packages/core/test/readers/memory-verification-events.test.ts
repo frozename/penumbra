@@ -1,11 +1,11 @@
-import { expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
-import { applySchema } from '../../src/db/schema.js';
-import { getMemoryVerificationEvents } from '../../src/readers/memory-verification-events.js';
+import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { applySchema } from "../../src/db/schema.js";
+import { getMemoryVerificationEvents } from "../../src/readers/memory-verification-events.js";
 
-test('getMemoryVerificationEvents clamps limit to a bounded range', () => {
-  const db = new Database(':memory:');
+test("getMemoryVerificationEvents clamps limit to a bounded range", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   applySchema(db);
 
@@ -16,19 +16,19 @@ test('getMemoryVerificationEvents clamps limit to a bounded range', () => {
       compressed_from, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      'memory-limit',
+      "memory-limit",
       null,
-      'u1',
-      'fact',
-      '[]',
-      '2026-05-12T12:00:00.000Z',
-      '2026-05-12T12:00:00.000Z',
-      'memory-limit',
-      'body',
-      '{}',
+      "u1",
+      "fact",
+      "[]",
+      "2026-05-12T12:00:00.000Z",
+      "2026-05-12T12:00:00.000Z",
+      "memory-limit",
+      "body",
+      "{}",
       null,
-      '2026-05-12T12:00:00.000Z',
-      '2026-05-12T12:00:00.000Z',
+      "2026-05-12T12:00:00.000Z",
+      "2026-05-12T12:00:00.000Z",
     ],
   );
 
@@ -37,18 +37,10 @@ test('getMemoryVerificationEvents clamps limit to a bounded range', () => {
       `INSERT INTO t2_memory_verification_events(
         event_id, memory_id, verifier_actor, claimed_by, reason, session_id, verified_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        `evt-${i}`,
-        'memory-limit',
-        'machine-1',
-        null,
-        null,
-        null,
-        `2026-05-12T12:0${i}:00.000Z`,
-      ],
+      [`evt-${i}`, "memory-limit", "machine-1", null, null, null, `2026-05-12T12:0${i}:00.000Z`],
     );
   }
 
-  expect(getMemoryVerificationEvents(db, 'memory-limit', -1)).toHaveLength(1);
-  expect(getMemoryVerificationEvents(db, 'memory-limit', 99999)).toHaveLength(3);
+  expect(getMemoryVerificationEvents(db, "memory-limit", -1)).toHaveLength(1);
+  expect(getMemoryVerificationEvents(db, "memory-limit", 99999)).toHaveLength(3);
 });

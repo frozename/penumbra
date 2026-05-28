@@ -1,25 +1,25 @@
-import { beforeEach, expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { beforeEach, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import {
   buildServices,
   loadSqliteVec,
   migrate,
   MaestroSessionWriter,
   type Services,
-} from '@penumbra/core';
-import { TestEmbedder } from '@penumbra/core/testing';
-import { createBoundsCallbacks } from '../../src/maestro/bounds-callbacks.js';
-import { createBoundsTracker } from '../../src/maestro/bounds-tracker.js';
+} from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
+import { createBoundsCallbacks } from "../../src/maestro/bounds-callbacks.js";
+import { createBoundsTracker } from "../../src/maestro/bounds-tracker.js";
 
-if (process.platform === 'darwin') {
+if (process.platform === "darwin") {
   try {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   } catch {}
 }
 
 type AgentConfig = {
   name: string;
-  pricing_mode?: 'api' | 'subscription';
+  pricing_mode?: "api" | "subscription";
   subscription_provider?: string;
 };
 
@@ -32,18 +32,18 @@ function makeServices(opts: {
   agents: AgentConfig[];
   providerQuotas: ProviderQuotaWithPressureCaps[];
 }): Services {
-  const db = new Database(':memory:');
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = buildServices({
     env: {},
     input: {},
-    storageRoot: '/tmp/penumbra-bounds-tracker-pressure-test',
+    storageRoot: "/tmp/penumbra-bounds-tracker-pressure-test",
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     providerQuotas: opts.providerQuotas as any,
-    worktreeRootDir: '/tmp/penumbra-bounds-tracker-pressure-test/worktrees',
-    mainRepoDir: '/tmp/penumbra-bounds-tracker-pressure-test/repo',
+    worktreeRootDir: "/tmp/penumbra-bounds-tracker-pressure-test/worktrees",
+    mainRepoDir: "/tmp/penumbra-bounds-tracker-pressure-test/repo",
   });
   (services as Services & { agentchatConfig?: any }).agentchatConfig = {
     agents: opts.agents,
@@ -60,32 +60,35 @@ function makeServices(opts: {
 }
 
 function seedTask(db: Database, taskId: string): void {
-  db.query<unknown, [
-    string,
-    number,
-    number,
-    string,
-    string,
-    string | null,
-    string,
-    string,
-    string,
-    string | null,
-    string | null,
-    string,
-    string | null,
-    number,
-    number | null,
-    number | null,
-    number | null,
-    string | null,
-    string,
-    string | null,
-    string | null,
-    string | null,
-    string | null,
-    string | null,
-  ]>(
+  db.query<
+    unknown,
+    [
+      string,
+      number,
+      number,
+      string,
+      string,
+      string | null,
+      string,
+      string,
+      string,
+      string | null,
+      string | null,
+      string,
+      string | null,
+      number,
+      number | null,
+      number | null,
+      number | null,
+      string | null,
+      string,
+      string | null,
+      string | null,
+      string | null,
+      string | null,
+      string | null,
+    ]
+  >(
     `INSERT INTO tasks (
       id, created_at, updated_at, created_by_kind, created_by_id,
       parent_task_id, kind, priority, prompt, acceptance_criteria,
@@ -98,22 +101,22 @@ function seedTask(db: Database, taskId: string): void {
     taskId,
     1,
     1,
-    'workflow',
-    'test-suite',
+    "workflow",
+    "test-suite",
     0,
-    'orchestrate',
-    'normal',
-    'coordinate the run',
+    "orchestrate",
+    "normal",
+    "coordinate the run",
     null,
     null,
-    '{}',
+    "{}",
     null,
     0,
     null,
     null,
     null,
     null,
-    'pending',
+    "pending",
     null,
     null,
     null,
@@ -133,32 +136,35 @@ function startSession(
   sessions.start({
     task_id: args.taskId,
     chain_handoff_id: args.chainHandoffId,
-    agent_id: 'maestro',
+    agent_id: "maestro",
     wall_clock_budget_ms: args.wallClockBudgetMs,
     cost_budget_cents: 100,
     sub_dispatch_budget: 10,
   });
 }
 
-function seedPressureSnapshot(services: Services, input: {
-  event_id: string;
-  provider: string;
-  window_label: string;
-  used_pct: number;
-  observed_at: string;
-}): void {
+function seedPressureSnapshot(
+  services: Services,
+  input: {
+    event_id: string;
+    provider: string;
+    window_label: string;
+    used_pct: number;
+    observed_at: string;
+  },
+): void {
   services.t0Writer.write({
     event_id: input.event_id,
     ts: input.observed_at,
     ingest_ts: input.observed_at,
-    source: 'agentchat',
-    source_detail: 'pressure-cap-test',
+    source: "agentchat",
+    source_detail: "pressure-cap-test",
     project_id: null,
-    user_id: 'local-user',
+    user_id: "local-user",
     machine_id: services.machineId.get(),
     session_id: null,
-    event_type: 'rate-limit-snapshot',
-    lane: 'cli-subscription',
+    event_type: "rate-limit-snapshot",
+    lane: "cli-subscription",
     provider: input.provider,
     model: null,
     tokens_in: null,
@@ -170,14 +176,17 @@ function seedPressureSnapshot(services: Services, input: {
       window_label: input.window_label,
       used_pct: input.used_pct,
       resets_at: null,
-      source_kind: 'statusline',
+      source_kind: "statusline",
     },
     payload_summary: null,
     origin: null,
   });
 }
 
-function seedSnapshots(services: Services, snapshots: Array<Parameters<typeof seedPressureSnapshot>[1]>): void {
+function seedSnapshots(
+  services: Services,
+  snapshots: Array<Parameters<typeof seedPressureSnapshot>[1]>,
+): void {
   for (const snapshot of snapshots) {
     seedPressureSnapshot(services, snapshot);
   }
@@ -241,287 +250,369 @@ function makeTracker(
   };
 }
 
-test('subscription maestro at 96% on seven_day trips pressure_capped:over_threshold', () => {
+test("subscription maestro at 96% on seven_day trips pressure_capped:over_threshold", () => {
   let nowMs = 0;
   const freshObservedAt = new Date(Date.now() - 60_000).toISOString();
   const services = makeServices({
-    agents: [{ name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' }],
-    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: { warn: null, refuse: 95 } } }],
+    agents: [{ name: "maestro", pricing_mode: "subscription", subscription_provider: "anthropic" }],
+    providerQuotas: [
+      { provider: "anthropic", pressure_caps: { seven_day: { warn: null, refuse: 95 } } },
+    ],
   });
   const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
-  seedTask(services.db, 'task-1');
-  startSession(sessions, { taskId: 'task-1', chainHandoffId: 'h-root-1', wallClockBudgetMs: 10_000 });
-  seedSnapshots(services, [{
-    event_id: 'snap-1',
-    provider: 'anthropic',
-    window_label: 'seven_day',
-    used_pct: 96,
-    observed_at: freshObservedAt,
-  }]);
+  seedTask(services.db, "task-1");
+  startSession(sessions, {
+    taskId: "task-1",
+    chainHandoffId: "h-root-1",
+    wallClockBudgetMs: 10_000,
+  });
+  seedSnapshots(services, [
+    {
+      event_id: "snap-1",
+      provider: "anthropic",
+      window_label: "seven_day",
+      used_pct: 96,
+      observed_at: freshObservedAt,
+    },
+  ]);
 
   nowMs = 10_001;
   const { tracker } = makeTracker(services, sessions, () => nowMs);
   tracker.tick();
 
-  expect(sessions.get('task-1')?.termination_reason).toBe('pressure_capped:over_threshold');
+  expect(sessions.get("task-1")?.termination_reason).toBe("pressure_capped:over_threshold");
 });
 
-test('subscription maestro under cap does not pressure-trip and still obeys wall-clock bounds', () => {
+test("subscription maestro under cap does not pressure-trip and still obeys wall-clock bounds", () => {
   let nowMs = 0;
   const freshObservedAt = new Date(Date.now() - 60_000).toISOString();
   const services = makeServices({
-    agents: [{ name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' }],
-    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: { warn: null, refuse: 95 } } }],
+    agents: [{ name: "maestro", pricing_mode: "subscription", subscription_provider: "anthropic" }],
+    providerQuotas: [
+      { provider: "anthropic", pressure_caps: { seven_day: { warn: null, refuse: 95 } } },
+    ],
   });
   const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
-  seedTask(services.db, 'task-2');
-  startSession(sessions, { taskId: 'task-2', chainHandoffId: 'h-root-2', wallClockBudgetMs: 10_000 });
-  seedSnapshots(services, [{
-    event_id: 'snap-2',
-    provider: 'anthropic',
-    window_label: 'seven_day',
-    used_pct: 50,
-    observed_at: freshObservedAt,
-  }]);
+  seedTask(services.db, "task-2");
+  startSession(sessions, {
+    taskId: "task-2",
+    chainHandoffId: "h-root-2",
+    wallClockBudgetMs: 10_000,
+  });
+  seedSnapshots(services, [
+    {
+      event_id: "snap-2",
+      provider: "anthropic",
+      window_label: "seven_day",
+      used_pct: 50,
+      observed_at: freshObservedAt,
+    },
+  ]);
 
   const { tracker } = makeTracker(services, sessions, () => nowMs);
   tracker.tick();
-  expect(sessions.get('task-2')?.termination_reason).toBeNull();
+  expect(sessions.get("task-2")?.termination_reason).toBeNull();
 
   nowMs = 10_001;
   tracker.tick();
-  expect(sessions.get('task-2')?.termination_reason).toBe('bounds_exceeded:wall_clock');
+  expect(sessions.get("task-2")?.termination_reason).toBe("bounds_exceeded:wall_clock");
 });
 
-test('pricing_mode api skips pressure check and wall-clock still trips', () => {
+test("pricing_mode api skips pressure check and wall-clock still trips", () => {
   let nowMs = 0;
   const freshObservedAt = new Date(Date.now() - 60_000).toISOString();
   const services = makeServices({
-    agents: [{ name: 'maestro', pricing_mode: 'api', subscription_provider: 'anthropic' }],
-    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: { warn: null, refuse: 95 } } }],
+    agents: [{ name: "maestro", pricing_mode: "api", subscription_provider: "anthropic" }],
+    providerQuotas: [
+      { provider: "anthropic", pressure_caps: { seven_day: { warn: null, refuse: 95 } } },
+    ],
   });
   const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
-  seedTask(services.db, 'task-3');
-  startSession(sessions, { taskId: 'task-3', chainHandoffId: 'h-root-3', wallClockBudgetMs: 10_000 });
-  seedSnapshots(services, [{
-    event_id: 'snap-3',
-    provider: 'anthropic',
-    window_label: 'seven_day',
-    used_pct: 96,
-    observed_at: freshObservedAt,
-  }]);
+  seedTask(services.db, "task-3");
+  startSession(sessions, {
+    taskId: "task-3",
+    chainHandoffId: "h-root-3",
+    wallClockBudgetMs: 10_000,
+  });
+  seedSnapshots(services, [
+    {
+      event_id: "snap-3",
+      provider: "anthropic",
+      window_label: "seven_day",
+      used_pct: 96,
+      observed_at: freshObservedAt,
+    },
+  ]);
 
   nowMs = 10_001;
   const { tracker } = makeTracker(services, sessions, () => nowMs);
   tracker.tick();
 
-  expect(sessions.get('task-3')?.termination_reason).toBe('bounds_exceeded:wall_clock');
+  expect(sessions.get("task-3")?.termination_reason).toBe("bounds_exceeded:wall_clock");
 });
 
-test('stale_warm pressure trips terminate with pressure_capped:stale_warm', () => {
+test("stale_warm pressure trips terminate with pressure_capped:stale_warm", () => {
   let nowMs = 0;
   const staleObservedAt = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
   const services = makeServices({
-    agents: [{ name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' }],
-    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: { warn: null, refuse: 95 } } }],
+    agents: [{ name: "maestro", pricing_mode: "subscription", subscription_provider: "anthropic" }],
+    providerQuotas: [
+      { provider: "anthropic", pressure_caps: { seven_day: { warn: null, refuse: 95 } } },
+    ],
   });
   const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
-  seedTask(services.db, 'task-4');
-  startSession(sessions, { taskId: 'task-4', chainHandoffId: 'h-root-4', wallClockBudgetMs: 10_000 });
-  seedSnapshots(services, [{
-    event_id: 'snap-4',
-    provider: 'anthropic',
-    window_label: 'seven_day',
-    used_pct: 60,
-    observed_at: staleObservedAt,
-  }]);
+  seedTask(services.db, "task-4");
+  startSession(sessions, {
+    taskId: "task-4",
+    chainHandoffId: "h-root-4",
+    wallClockBudgetMs: 10_000,
+  });
+  seedSnapshots(services, [
+    {
+      event_id: "snap-4",
+      provider: "anthropic",
+      window_label: "seven_day",
+      used_pct: 60,
+      observed_at: staleObservedAt,
+    },
+  ]);
 
   nowMs = 10_001;
   const { tracker } = makeTracker(services, sessions, () => nowMs);
   tracker.tick();
 
-  expect(sessions.get('task-4')?.termination_reason).toBe('pressure_capped:stale_warm');
+  expect(sessions.get("task-4")?.termination_reason).toBe("pressure_capped:stale_warm");
 });
 
-test('pressure trip writes t0 event with tracker_tick trigger', () => {
+test("pressure trip writes t0 event with tracker_tick trigger", () => {
   let nowMs = 0;
   const freshObservedAt = new Date(Date.now() - 60_000).toISOString();
   const services = makeServices({
-    agents: [{ name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' }],
-    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: { warn: null, refuse: 95 } } }],
+    agents: [{ name: "maestro", pricing_mode: "subscription", subscription_provider: "anthropic" }],
+    providerQuotas: [
+      { provider: "anthropic", pressure_caps: { seven_day: { warn: null, refuse: 95 } } },
+    ],
   });
   const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
-  seedTask(services.db, 'task-5');
-  startSession(sessions, { taskId: 'task-5', chainHandoffId: 'h-root-5', wallClockBudgetMs: 10_000 });
-  seedSnapshots(services, [{
-    event_id: 'snap-5',
-    provider: 'anthropic',
-    window_label: 'seven_day',
-    used_pct: 96,
-    observed_at: freshObservedAt,
-  }]);
+  seedTask(services.db, "task-5");
+  startSession(sessions, {
+    taskId: "task-5",
+    chainHandoffId: "h-root-5",
+    wallClockBudgetMs: 10_000,
+  });
+  seedSnapshots(services, [
+    {
+      event_id: "snap-5",
+      provider: "anthropic",
+      window_label: "seven_day",
+      used_pct: 96,
+      observed_at: freshObservedAt,
+    },
+  ]);
 
   nowMs = 10_001;
   const { tracker } = makeTracker(services, sessions, () => nowMs);
   tracker.tick();
 
-  const row = services.db.query<{ provider: string | null; payload_json: string }, []>(
-    `SELECT provider, payload_json
+  const row = services.db
+    .query<{ provider: string | null; payload_json: string }, []>(
+      `SELECT provider, payload_json
      FROM t0_events
      WHERE event_type = 'subscription-pressure-cap-trip'
      ORDER BY ts DESC
      LIMIT 1`,
-  ).get();
+    )
+    .get();
 
-  expect(row?.provider).toBe('anthropic');
-  expect(JSON.parse(row?.payload_json ?? '{}')).toMatchObject({
-    state: 'refuse',
-    reason: 'over_threshold',
-    provider: 'anthropic',
-    window_label: 'seven_day',
+  expect(row?.provider).toBe("anthropic");
+  expect(JSON.parse(row?.payload_json ?? "{}")).toMatchObject({
+    state: "refuse",
+    reason: "over_threshold",
+    provider: "anthropic",
+    window_label: "seven_day",
     used_pct: 96,
     cap_pct: 95,
-    snapshot_state: 'fresh',
-    subject: 'maestro',
-    trigger: 'tracker_tick',
-    agent_name: 'maestro',
-    task_id: 'task-5',
+    snapshot_state: "fresh",
+    subject: "maestro",
+    trigger: "tracker_tick",
+    agent_name: "maestro",
+    task_id: "task-5",
   });
 });
 
-test('pressure trip preempts wall-clock termination', () => {
+test("pressure trip preempts wall-clock termination", () => {
   let nowMs = 0;
   const freshObservedAt = new Date(Date.now() - 60_000).toISOString();
   const services = makeServices({
-    agents: [{ name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' }],
-    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: { warn: null, refuse: 95 } } }],
+    agents: [{ name: "maestro", pricing_mode: "subscription", subscription_provider: "anthropic" }],
+    providerQuotas: [
+      { provider: "anthropic", pressure_caps: { seven_day: { warn: null, refuse: 95 } } },
+    ],
   });
   const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
-  seedTask(services.db, 'task-6');
-  startSession(sessions, { taskId: 'task-6', chainHandoffId: 'h-root-6', wallClockBudgetMs: 10_000 });
-  seedSnapshots(services, [{
-    event_id: 'snap-6',
-    provider: 'anthropic',
-    window_label: 'seven_day',
-    used_pct: 96,
-    observed_at: freshObservedAt,
-  }]);
+  seedTask(services.db, "task-6");
+  startSession(sessions, {
+    taskId: "task-6",
+    chainHandoffId: "h-root-6",
+    wallClockBudgetMs: 10_000,
+  });
+  seedSnapshots(services, [
+    {
+      event_id: "snap-6",
+      provider: "anthropic",
+      window_label: "seven_day",
+      used_pct: 96,
+      observed_at: freshObservedAt,
+    },
+  ]);
 
   nowMs = 10_001;
   const { tracker } = makeTracker(services, sessions, () => nowMs);
   tracker.tick();
 
-  expect(sessions.get('task-6')?.termination_reason).toBe('pressure_capped:over_threshold');
+  expect(sessions.get("task-6")?.termination_reason).toBe("pressure_capped:over_threshold");
 });
 
-test('pressure trip fires every tick even when wall-clock/cost/sub_dispatches are healthy', () => {
+test("pressure trip fires every tick even when wall-clock/cost/sub_dispatches are healthy", () => {
   let nowMs = 0;
   const freshObservedAt = new Date(Date.now() - 60_000).toISOString();
   const services = makeServices({
-    agents: [{ name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' }],
-    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: { warn: null, refuse: 95 } } }],
+    agents: [{ name: "maestro", pricing_mode: "subscription", subscription_provider: "anthropic" }],
+    providerQuotas: [
+      { provider: "anthropic", pressure_caps: { seven_day: { warn: null, refuse: 95 } } },
+    ],
   });
   const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
-  seedTask(services.db, 'task-7');
+  seedTask(services.db, "task-7");
   // generous wall-clock budget so it cannot trip on its own
-  startSession(sessions, { taskId: 'task-7', chainHandoffId: 'h-root-7', wallClockBudgetMs: 1_000_000 });
-  seedSnapshots(services, [{
-    event_id: 'snap-7',
-    provider: 'anthropic',
-    window_label: 'seven_day',
-    used_pct: 96,
-    observed_at: freshObservedAt,
-  }]);
+  startSession(sessions, {
+    taskId: "task-7",
+    chainHandoffId: "h-root-7",
+    wallClockBudgetMs: 1_000_000,
+  });
+  seedSnapshots(services, [
+    {
+      event_id: "snap-7",
+      provider: "anthropic",
+      window_label: "seven_day",
+      used_pct: 96,
+      observed_at: freshObservedAt,
+    },
+  ]);
 
   // nowMs stays at 0 (well within wall-clock budget) — pressure must trip on its own
   nowMs = 50;
   const { tracker, hardKills } = makeTracker(services, sessions, () => nowMs);
   tracker.tick();
 
-  expect(sessions.get('task-7')?.termination_reason).toBe('pressure_capped:over_threshold');
-  expect(hardKills).toEqual([{ axis: 'subscription_pressure' }]);
+  expect(sessions.get("task-7")?.termination_reason).toBe("pressure_capped:over_threshold");
+  expect(hardKills).toEqual([{ axis: "subscription_pressure" }]);
 });
 
-test('pressure warn soft-injects once and skips the budget warn path', () => {
+test("pressure warn soft-injects once and skips the budget warn path", () => {
   let nowMs = 0;
   const freshObservedAt = new Date(Date.now() - 60_000).toISOString();
   const services = makeServices({
-    agents: [{ name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' }],
-    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: { warn: 70, refuse: 95 } } }],
+    agents: [{ name: "maestro", pricing_mode: "subscription", subscription_provider: "anthropic" }],
+    providerQuotas: [
+      { provider: "anthropic", pressure_caps: { seven_day: { warn: 70, refuse: 95 } } },
+    ],
   });
   const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
-  seedTask(services.db, 'task-8');
-  startSession(sessions, { taskId: 'task-8', chainHandoffId: 'h-root-8', wallClockBudgetMs: 1_000_000 });
-  seedSnapshots(services, [{
-    event_id: 'snap-8',
-    provider: 'anthropic',
-    window_label: 'seven_day',
-    used_pct: 73,
-    observed_at: freshObservedAt,
-  }]);
+  seedTask(services.db, "task-8");
+  startSession(sessions, {
+    taskId: "task-8",
+    chainHandoffId: "h-root-8",
+    wallClockBudgetMs: 1_000_000,
+  });
+  seedSnapshots(services, [
+    {
+      event_id: "snap-8",
+      provider: "anthropic",
+      window_label: "seven_day",
+      used_pct: 73,
+      observed_at: freshObservedAt,
+    },
+  ]);
 
   nowMs = 50;
   const { tracker, softWarns, budgetSoftWarns } = makeTracker(services, sessions, () => nowMs);
   tracker.tick();
 
   expect(softWarns).toHaveLength(1);
-  expect(softWarns[0]?.task_id).toBe('task-8');
+  expect(softWarns[0]?.task_id).toBe("task-8");
   expect(budgetSoftWarns).toHaveLength(0);
-  expect(sessions.get('task-8')?.soft_warned_at).not.toBeNull();
-  expect(sessions.get('task-8')?.termination_reason).toBeNull();
+  expect(sessions.get("task-8")?.soft_warned_at).not.toBeNull();
+  expect(sessions.get("task-8")?.termination_reason).toBeNull();
 });
 
-test('pressure warn does not re-fire once soft_warned_at is already set', () => {
+test("pressure warn does not re-fire once soft_warned_at is already set", () => {
   let nowMs = 0;
   const freshObservedAt = new Date(Date.now() - 60_000).toISOString();
   const services = makeServices({
-    agents: [{ name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' }],
-    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: { warn: 70, refuse: 95 } } }],
+    agents: [{ name: "maestro", pricing_mode: "subscription", subscription_provider: "anthropic" }],
+    providerQuotas: [
+      { provider: "anthropic", pressure_caps: { seven_day: { warn: 70, refuse: 95 } } },
+    ],
   });
   const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
-  seedTask(services.db, 'task-9');
-  startSession(sessions, { taskId: 'task-9', chainHandoffId: 'h-root-9', wallClockBudgetMs: 1_000_000 });
-  seedSnapshots(services, [{
-    event_id: 'snap-9',
-    provider: 'anthropic',
-    window_label: 'seven_day',
-    used_pct: 73,
-    observed_at: freshObservedAt,
-  }]);
-  sessions.markSoftWarned('task-9');
+  seedTask(services.db, "task-9");
+  startSession(sessions, {
+    taskId: "task-9",
+    chainHandoffId: "h-root-9",
+    wallClockBudgetMs: 1_000_000,
+  });
+  seedSnapshots(services, [
+    {
+      event_id: "snap-9",
+      provider: "anthropic",
+      window_label: "seven_day",
+      used_pct: 73,
+      observed_at: freshObservedAt,
+    },
+  ]);
+  sessions.markSoftWarned("task-9");
 
   nowMs = 50;
   const { tracker, softWarns } = makeTracker(services, sessions, () => nowMs);
   tracker.tick();
 
   expect(softWarns).toHaveLength(0);
-  expect(sessions.get('task-9')?.soft_warned_at).not.toBeNull();
-  expect(sessions.get('task-9')?.termination_reason).toBeNull();
+  expect(sessions.get("task-9")?.soft_warned_at).not.toBeNull();
+  expect(sessions.get("task-9")?.termination_reason).toBeNull();
 });
 
-test('pressure refuse still hard-kills after a previous warn', () => {
+test("pressure refuse still hard-kills after a previous warn", () => {
   let nowMs = 0;
   const freshObservedAt = new Date(Date.now() - 60_000).toISOString();
   const services = makeServices({
-    agents: [{ name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' }],
-    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: { warn: 70, refuse: 95 } } }],
+    agents: [{ name: "maestro", pricing_mode: "subscription", subscription_provider: "anthropic" }],
+    providerQuotas: [
+      { provider: "anthropic", pressure_caps: { seven_day: { warn: 70, refuse: 95 } } },
+    ],
   });
   const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
-  seedTask(services.db, 'task-10');
-  startSession(sessions, { taskId: 'task-10', chainHandoffId: 'h-root-10', wallClockBudgetMs: 1_000_000 });
-  seedSnapshots(services, [{
-    event_id: 'snap-10',
-    provider: 'anthropic',
-    window_label: 'seven_day',
-    used_pct: 96,
-    observed_at: freshObservedAt,
-  }]);
-  sessions.markSoftWarned('task-10');
+  seedTask(services.db, "task-10");
+  startSession(sessions, {
+    taskId: "task-10",
+    chainHandoffId: "h-root-10",
+    wallClockBudgetMs: 1_000_000,
+  });
+  seedSnapshots(services, [
+    {
+      event_id: "snap-10",
+      provider: "anthropic",
+      window_label: "seven_day",
+      used_pct: 96,
+      observed_at: freshObservedAt,
+    },
+  ]);
+  sessions.markSoftWarned("task-10");
 
   nowMs = 50;
   const { tracker, hardKills } = makeTracker(services, sessions, () => nowMs);
   tracker.tick();
 
-  expect(hardKills).toEqual([{ axis: 'subscription_pressure' }]);
-  expect(sessions.get('task-10')?.termination_reason).toBe('pressure_capped:over_threshold');
+  expect(hardKills).toEqual([{ axis: "subscription_pressure" }]);
+  expect(sessions.get("task-10")?.termination_reason).toBe("pressure_capped:over_threshold");
 });

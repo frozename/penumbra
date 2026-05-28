@@ -1,13 +1,13 @@
-import { describe, it, expect, beforeAll } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { applySchema, loadSqliteVec } from '@penumbra/core';
-import { runDreamCycle } from '../../src/dreaming/cycle.js';
-import { revertDreamAction } from '../../src/dreaming/reembed.js';
-import type { DreamConfig } from '../../src/dreaming/config.js';
+import { describe, it, expect, beforeAll } from "bun:test";
+import { Database } from "bun:sqlite";
+import { applySchema, loadSqliteVec } from "@penumbra/core";
+import { runDreamCycle } from "../../src/dreaming/cycle.js";
+import { revertDreamAction } from "../../src/dreaming/reembed.js";
+import type { DreamConfig } from "../../src/dreaming/config.js";
 
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {
   // already loaded
@@ -24,7 +24,7 @@ function makeConfig(overrides?: Partial<DreamConfig>): DreamConfig {
     perCycleUsd: 1.0,
     dailyUsd: 100.0,
     pressureGuardEnabled: false,
-    perCycleEmbeddingUsd: 0.10,
+    perCycleEmbeddingUsd: 0.1,
     perCycleResearchUsd: 0.25,
     linkAutoThreshold: 0.75,
     p1BatchSize: 10,
@@ -45,14 +45,14 @@ function makeConfig(overrides?: Partial<DreamConfig>): DreamConfig {
 }
 
 function openTestDb(): Database {
-  const db = new Database(':memory:');
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   applySchema(db, { embeddingDim: 3 });
   return db;
 }
 
-describe('curator e2e', () => {
-  it('runDreamCycle skips PC phases when curatorEnabled=false', async () => {
+describe("curator e2e", () => {
+  it("runDreamCycle skips PC phases when curatorEnabled=false", async () => {
     const db = openTestDb();
     // Seed an obvious-junk t2 (UUID body) that PC1 WOULD retire if enabled.
     const memId = crypto.randomUUID();
@@ -64,15 +64,21 @@ describe('curator e2e', () => {
 
     await runDreamCycle(db, makeConfig({ curatorEnabled: false }));
 
-    const phases = (db.prepare(`SELECT phases_run FROM dream_cycles ORDER BY started_at DESC LIMIT 1`).get() as any).phases_run;
+    const phases = (
+      db
+        .prepare(`SELECT phases_run FROM dream_cycles ORDER BY started_at DESC LIMIT 1`)
+        .get() as any
+    ).phases_run;
     const arr = JSON.parse(phases) as string[];
-    expect(arr).not.toContain('PC1');
-    expect(arr).not.toContain('PC2');
-    const action = db.prepare(`SELECT * FROM dream_actions WHERE action_type='ephemera_retire'`).get();
+    expect(arr).not.toContain("PC1");
+    expect(arr).not.toContain("PC2");
+    const action = db
+      .prepare(`SELECT * FROM dream_actions WHERE action_type='ephemera_retire'`)
+      .get();
     expect(action).toBeNull();
   });
 
-  it('full dream cycle with curatorEnabled=true produces PC1 ephemera_retire', async () => {
+  it("full dream cycle with curatorEnabled=true produces PC1 ephemera_retire", async () => {
     const db = openTestDb();
     const memId = crypto.randomUUID();
     const nowIso = new Date().toISOString();
@@ -83,17 +89,25 @@ describe('curator e2e', () => {
 
     await runDreamCycle(db, makeConfig({ curatorEnabled: true }));
 
-    const row = db.prepare(`SELECT phases_run FROM dream_cycles ORDER BY started_at DESC LIMIT 1`).get() as any;
+    const row = db
+      .prepare(`SELECT phases_run FROM dream_cycles ORDER BY started_at DESC LIMIT 1`)
+      .get() as any;
     const arr = JSON.parse(row.phases_run) as string[];
-    expect(arr).toContain('PC1');
-    expect(arr).toContain('PC2');
-    const action = db.prepare(`SELECT * FROM dream_actions WHERE action_type='ephemera_retire' AND status='auto_applied'`).get();
+    expect(arr).toContain("PC1");
+    expect(arr).toContain("PC2");
+    const action = db
+      .prepare(
+        `SELECT * FROM dream_actions WHERE action_type='ephemera_retire' AND status='auto_applied'`,
+      )
+      .get();
     expect(action).toBeDefined();
-    const mem = db.prepare(`SELECT retired_at FROM t2_memories WHERE memory_id=?`).get(memId) as any;
+    const mem = db
+      .prepare(`SELECT retired_at FROM t2_memories WHERE memory_id=?`)
+      .get(memId) as any;
     expect(mem.retired_at).toBeTruthy();
   });
 
-  it('revert ephemera_retire un-retires the memory', async () => {
+  it("revert ephemera_retire un-retires the memory", async () => {
     const db = openTestDb();
     const memId = crypto.randomUUID();
     const nowIso = new Date().toISOString();
@@ -103,11 +117,15 @@ describe('curator e2e', () => {
     ).run(memId, nowIso, nowIso, nowIso, nowIso);
 
     await runDreamCycle(db, makeConfig({ curatorEnabled: true }));
-    const action = db.prepare(`SELECT action_id FROM dream_actions WHERE action_type='ephemera_retire' LIMIT 1`).get() as any;
+    const action = db
+      .prepare(`SELECT action_id FROM dream_actions WHERE action_type='ephemera_retire' LIMIT 1`)
+      .get() as any;
     expect(action).toBeDefined();
 
-    revertDreamAction(db, action.action_id, 'none');
-    const mem = db.prepare(`SELECT retired_at FROM t2_memories WHERE memory_id=?`).get(memId) as any;
+    revertDreamAction(db, action.action_id, "none");
+    const mem = db
+      .prepare(`SELECT retired_at FROM t2_memories WHERE memory_id=?`)
+      .get(memId) as any;
     expect(mem.retired_at).toBeNull();
   });
 });

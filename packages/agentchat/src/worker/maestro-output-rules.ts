@@ -1,4 +1,4 @@
-import type { ValuePatternRule } from '@penumbra/core';
+import type { ValuePatternRule } from "@penumbra/core";
 
 /**
  * Rules sourced from `tools/maestro-bench/bench-maestro.py` v2 evidence
@@ -10,28 +10,29 @@ import type { ValuePatternRule } from '@penumbra/core';
  */
 export const MAESTRO_STATIC_RULES: ValuePatternRule[] = [
   {
-    id: 'ssh_private_key_path',
+    id: "ssh_private_key_path",
     pattern: /(?:^|[^a-zA-Z0-9])\.ssh\/(id_[a-z0-9_]+|authorized_keys|known_hosts)/g,
-    replacement: '[REDACTED:ssh-key-path]',
+    replacement: "[REDACTED:ssh-key-path]",
     failClosed: true,
   },
   {
-    id: 'destructive_shell_rmrf',
+    id: "destructive_shell_rmrf",
     pattern: /\brm\s+-rf(?:\s+--[a-z][a-z0-9-]*)*\s+\/\S*/g,
-    replacement: '[REDACTED:rm-rf]',
+    replacement: "[REDACTED:rm-rf]",
     failClosed: true,
   },
   {
-    id: 'git_force_push',
-    pattern: /git\s+push\s+--force(?:-with-lease)?(?:\s+\S+){0,3}\s+(?:HEAD:)?(?:main|master|origin\/(?:main|master))/g,
-    replacement: '[REDACTED:force-push]',
+    id: "git_force_push",
+    pattern:
+      /git\s+push\s+--force(?:-with-lease)?(?:\s+\S+){0,3}\s+(?:HEAD:)?(?:main|master|origin\/(?:main|master))/g,
+    replacement: "[REDACTED:force-push]",
     failClosed: true,
   },
 ];
 
 const FAIL_CLOSED_IDS = new Set<string>([
   ...MAESTRO_STATIC_RULES.filter((r) => r.failClosed).map((r) => r.id),
-  'unknown_initial_agent',
+  "unknown_initial_agent",
 ]);
 
 export function isFailClosed(ruleId: string): boolean {
@@ -46,7 +47,7 @@ export function isFailClosed(ruleId: string): boolean {
  */
 export function buildUnknownAgentRule(knownAgents: Set<string>): ValuePatternRule {
   return {
-    id: 'unknown_initial_agent',
+    id: "unknown_initial_agent",
     // Matches `"initial_agent":"<value>"` inside a JSON-encoded arg blob.
     pattern: /"initial_agent"\s*:\s*"([^"\\]+)"/g,
     replacement: (match: string, name: string) => {

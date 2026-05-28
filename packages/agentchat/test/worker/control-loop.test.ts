@@ -1,22 +1,22 @@
-import { expect, test, mock } from 'bun:test';
-import { createWorkerDispatcher } from '../../src/worker/dispatcher.js';
+import { expect, test, mock } from "bun:test";
+import { createWorkerDispatcher } from "../../src/worker/dispatcher.js";
 
-test('dispatcher.cancel(cid) triggers abort on active dispatch', async () => {
+test("dispatcher.cancel(cid) triggers abort on active dispatch", async () => {
   let signalSent: AbortSignal | null = null;
   let dispatchStarted = false;
 
   const deps: any = {
-    claim: mock().mockResolvedValue({ status: 'dispatched' }),
+    claim: mock().mockResolvedValue({ status: "dispatched" }),
     dispatch: mock().mockImplementation(async (_h, _oc, signal) => {
       signalSent = signal;
       dispatchStarted = true;
       // Wait for signal or timeout
       return new Promise((resolve) => {
         const onAbort = () => {
-          signal.removeEventListener('abort', onAbort);
-          resolve({ next: null, text: 'aborted', agent: 'x' });
+          signal.removeEventListener("abort", onAbort);
+          resolve({ next: null, text: "aborted", agent: "x" });
         };
-        signal.addEventListener('abort', onAbort);
+        signal.addEventListener("abort", onAbort);
       });
     }),
     postProgress: mock().mockResolvedValue(undefined),
@@ -25,7 +25,7 @@ test('dispatcher.cancel(cid) triggers abort on active dispatch', async () => {
   };
 
   const dispatcher = createWorkerDispatcher(deps);
-  const handoff = { handoff_id: 'h1', conversation_id: 'c1', to_agent: 'a1' };
+  const handoff = { handoff_id: "h1", conversation_id: "c1", to_agent: "a1" };
 
   // Start dispatch
   void dispatcher.handle(handoff);
@@ -38,31 +38,35 @@ test('dispatcher.cancel(cid) triggers abort on active dispatch', async () => {
   expect(signalSent!.aborted).toBe(false);
 
   // Trigger cancel
-  dispatcher.cancel('c1');
+  dispatcher.cancel("c1");
 
   await dispatcher.idle();
   expect(signalSent!.aborted).toBe(true);
 });
 
-test('dispatcher.stop() aborts all active dispatches', async () => {
+test("dispatcher.stop() aborts all active dispatches", async () => {
   let signal1: AbortSignal | null = null;
   let signal2: AbortSignal | null = null;
   let started1 = false;
   let started2 = false;
 
   const deps: any = {
-    claim: mock().mockResolvedValue({ status: 'dispatched' }),
+    claim: mock().mockResolvedValue({ status: "dispatched" }),
     dispatch: mock().mockImplementation(async (_h, _oc, signal) => {
       if (!signal1) signal1 = signal;
       else signal2 = signal;
-      
+
       if (!started1) started1 = true;
       else started2 = true;
 
       return new Promise((resolve) => {
-        signal.addEventListener('abort', () => {
-          resolve({ next: null, text: 'aborted', agent: 'x' });
-        }, { once: true });
+        signal.addEventListener(
+          "abort",
+          () => {
+            resolve({ next: null, text: "aborted", agent: "x" });
+          },
+          { once: true },
+        );
       });
     }),
     postProgress: mock().mockResolvedValue(undefined),
@@ -72,8 +76,8 @@ test('dispatcher.stop() aborts all active dispatches', async () => {
   };
 
   const dispatcher = createWorkerDispatcher(deps);
-  void dispatcher.handle({ handoff_id: 'h1', conversation_id: 'c1', to_agent: 'a1' });
-  void dispatcher.handle({ handoff_id: 'h2', conversation_id: 'c2', to_agent: 'a2' });
+  void dispatcher.handle({ handoff_id: "h1", conversation_id: "c1", to_agent: "a1" });
+  void dispatcher.handle({ handoff_id: "h2", conversation_id: "c2", to_agent: "a2" });
 
   while (!started1 || !started2) {
     await new Promise((r) => setTimeout(r, 5));
@@ -88,7 +92,7 @@ test('dispatcher.stop() aborts all active dispatches', async () => {
   expect(signal2!.aborted).toBe(true);
 });
 
-test('dispatcher.cancel(cid, hid) does NOT abort when hid is for a different (stale) handoff in same conv', async () => {
+test("dispatcher.cancel(cid, hid) does NOT abort when hid is for a different (stale) handoff in same conv", async () => {
   // Repro for the SSE-reconnect replay bug: daemon flushes durable
   // cancellations on every fresh /worker/control connection. If a
   // previously-cancelled handoff's row is still in the replay set when
@@ -98,16 +102,16 @@ test('dispatcher.cancel(cid, hid) does NOT abort when hid is for a different (st
   let dispatchStarted = false;
 
   const deps: any = {
-    claim: mock().mockResolvedValue({ status: 'dispatched' }),
+    claim: mock().mockResolvedValue({ status: "dispatched" }),
     dispatch: mock().mockImplementation(async (_h, _oc, signal) => {
       signalSent = signal;
       dispatchStarted = true;
       return new Promise((resolve) => {
         const onAbort = () => {
-          signal.removeEventListener('abort', onAbort);
-          resolve({ next: null, text: 'aborted', agent: 'x' });
+          signal.removeEventListener("abort", onAbort);
+          resolve({ next: null, text: "aborted", agent: "x" });
         };
-        signal.addEventListener('abort', onAbort);
+        signal.addEventListener("abort", onAbort);
       });
     }),
     postProgress: mock().mockResolvedValue(undefined),
@@ -119,11 +123,11 @@ test('dispatcher.cancel(cid, hid) does NOT abort when hid is for a different (st
   const dispatcher = createWorkerDispatcher(deps);
 
   // Active dispatch is handoff h-current
-  void dispatcher.handle({ handoff_id: 'h-current', conversation_id: 'c1', to_agent: 'a1' });
+  void dispatcher.handle({ handoff_id: "h-current", conversation_id: "c1", to_agent: "a1" });
   while (!dispatchStarted) await new Promise((r) => setTimeout(r, 5));
 
   // Replayed cancel targets stale handoff h-stale in the same conversation
-  dispatcher.cancel('c1', 'h-stale');
+  dispatcher.cancel("c1", "h-stale");
 
   // Give the abort a tick to (incorrectly) fire if the bug is present
   await new Promise((r) => setTimeout(r, 20));
@@ -131,26 +135,26 @@ test('dispatcher.cancel(cid, hid) does NOT abort when hid is for a different (st
   expect(signalSent!.aborted).toBe(false);
 
   // Cleanup: now actually cancel the current handoff
-  dispatcher.cancel('c1', 'h-current');
+  dispatcher.cancel("c1", "h-current");
   await dispatcher.idle();
   expect(signalSent!.aborted).toBe(true);
 });
 
-test('dispatcher.cancel(cid, hid) for stale hid does NOT pre-abort a fresh handoff in same conv', async () => {
+test("dispatcher.cancel(cid, hid) for stale hid does NOT pre-abort a fresh handoff in same conv", async () => {
   // Same bug, but cancel arrives BEFORE the fresh dispatch starts (e.g.
   // via durable replay just as a new handoff is being claimed).
   let signalSent: AbortSignal | null = null;
 
   const deps: any = {
-    claim: mock().mockResolvedValue({ status: 'dispatched' }),
+    claim: mock().mockResolvedValue({ status: "dispatched" }),
     dispatch: mock().mockImplementation(async (_h, _oc, signal) => {
       signalSent = signal;
       return new Promise((resolve) => {
         const onAbort = () => {
-          resolve({ next: null, text: 'aborted', agent: 'x' });
+          resolve({ next: null, text: "aborted", agent: "x" });
         };
         if (signal.aborted) onAbort();
-        else signal.addEventListener('abort', onAbort, { once: true });
+        else signal.addEventListener("abort", onAbort, { once: true });
       });
     }),
     postProgress: mock().mockResolvedValue(undefined),
@@ -163,10 +167,10 @@ test('dispatcher.cancel(cid, hid) for stale hid does NOT pre-abort a fresh hando
 
   // Stale cancel arrives first, targeting a handoff that won't be the
   // one we dispatch.
-  dispatcher.cancel('c1', 'h-stale');
+  dispatcher.cancel("c1", "h-stale");
 
   // Now dispatch a fresh handoff in the same conv.
-  void dispatcher.handle({ handoff_id: 'h-fresh', conversation_id: 'c1', to_agent: 'a1' });
+  void dispatcher.handle({ handoff_id: "h-fresh", conversation_id: "c1", to_agent: "a1" });
 
   // Let it run briefly.
   await new Promise((r) => setTimeout(r, 20));
@@ -174,26 +178,26 @@ test('dispatcher.cancel(cid, hid) for stale hid does NOT pre-abort a fresh hando
   expect(signalSent!.aborted).toBe(false);
 
   // Cleanup.
-  dispatcher.cancel('c1', 'h-fresh');
+  dispatcher.cancel("c1", "h-fresh");
   await dispatcher.idle();
   expect(signalSent!.aborted).toBe(true);
 });
 
-test('dispatcher.cancel(cid) before handle() starts dispatch should still abort', async () => {
+test("dispatcher.cancel(cid) before handle() starts dispatch should still abort", async () => {
   let signalSent: AbortSignal | null = null;
 
   const deps: any = {
-    claim: mock().mockResolvedValue({ status: 'dispatched' }),
+    claim: mock().mockResolvedValue({ status: "dispatched" }),
     dispatch: mock().mockImplementation(async (_h, _oc, signal) => {
       signalSent = signal;
       return new Promise((resolve) => {
         const onAbort = () => {
-          resolve({ next: null, text: 'aborted', agent: 'x' });
+          resolve({ next: null, text: "aborted", agent: "x" });
         };
         if (signal.aborted) {
           onAbort();
         } else {
-          signal.addEventListener('abort', onAbort, { once: true });
+          signal.addEventListener("abort", onAbort, { once: true });
         }
       });
     }),
@@ -204,16 +208,16 @@ test('dispatcher.cancel(cid) before handle() starts dispatch should still abort'
   };
 
   const dispatcher = createWorkerDispatcher(deps);
-  const handoff = { handoff_id: 'h1', conversation_id: 'c1', to_agent: 'a1' };
+  const handoff = { handoff_id: "h1", conversation_id: "c1", to_agent: "a1" };
 
   // Trigger cancel BEFORE handle
-  dispatcher.cancel('c1');
+  dispatcher.cancel("c1");
 
   // Now handle
   void dispatcher.handle(handoff);
 
   await dispatcher.idle();
-  
+
   expect(deps.dispatch).toHaveBeenCalled();
   expect(signalSent!.aborted).toBe(true);
 });

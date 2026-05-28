@@ -1,19 +1,19 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 export const MaestroTerminationReason = z.enum([
-  'completed',
-  'failed',
-  'bounds_exceeded:wall_clock',
-  'bounds_exceeded:cost',
-  'bounds_exceeded:sub_dispatches',
-  'pressure_capped:over_threshold',
-  'pressure_capped:stale_warm',
-  'cancelled',
-  'daemon_restart',
+  "completed",
+  "failed",
+  "bounds_exceeded:wall_clock",
+  "bounds_exceeded:cost",
+  "bounds_exceeded:sub_dispatches",
+  "pressure_capped:over_threshold",
+  "pressure_capped:stale_warm",
+  "cancelled",
+  "daemon_restart",
 ]);
 export type MaestroTerminationReason = z.infer<typeof MaestroTerminationReason>;
 
-export const BoundsAxis = z.enum(['wall_clock', 'cost', 'sub_dispatches', 'subscription_pressure']);
+export const BoundsAxis = z.enum(["wall_clock", "cost", "sub_dispatches", "subscription_pressure"]);
 export type BoundsAxis = z.infer<typeof BoundsAxis>;
 
 export const MaestroSessionRecord = z.object({

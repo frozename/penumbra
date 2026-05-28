@@ -1,15 +1,15 @@
-export type AcpPromotionRunStatus = 'passed' | 'failed' | 'skipped' | 'blocked';
+export type AcpPromotionRunStatus = "passed" | "failed" | "skipped" | "blocked";
 
 export type AcpPromotionScenarioId =
-  | 'ping_exact'
-  | 'read_repo_file'
-  | 'write_worktree_file'
-  | 'terminal_verify'
-  | 'review_no_edit'
-  | 'intentional_failure';
+  | "ping_exact"
+  | "read_repo_file"
+  | "write_worktree_file"
+  | "terminal_verify"
+  | "review_no_edit"
+  | "intentional_failure";
 
 export interface ExpectedResponse {
-  kind: 'exact' | 'package_name' | 'non_empty_or_no_findings' | 'denial_or_failure';
+  kind: "exact" | "package_name" | "non_empty_or_no_findings" | "denial_or_failure";
   value?: string;
 }
 

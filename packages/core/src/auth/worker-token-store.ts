@@ -1,5 +1,5 @@
-import type { Database } from 'bun:sqlite';
-import { randomBytes, createHash } from 'node:crypto';
+import type { Database } from "bun:sqlite";
+import { randomBytes, createHash } from "node:crypto";
 
 export interface WorkerTokenRow {
   token_hash: string;
@@ -24,8 +24,8 @@ export class WorkerTokenStore {
   constructor(private readonly db: Database) {}
 
   issue(args: IssueArgs, nowMs: number): IssueResult {
-    const token = randomBytes(32).toString('base64url');
-    const token_hash = createHash('sha256').update(token).digest('hex');
+    const token = randomBytes(32).toString("base64url");
+    const token_hash = createHash("sha256").update(token).digest("hex");
     const metadata_json = args.metadata != null ? JSON.stringify(args.metadata) : null;
 
     this.db.run(
@@ -38,7 +38,7 @@ export class WorkerTokenStore {
   }
 
   lookup(plaintextToken: string): WorkerTokenRow | null {
-    const token_hash = createHash('sha256').update(plaintextToken).digest('hex');
+    const token_hash = createHash("sha256").update(plaintextToken).digest("hex");
     return (
       this.db
         .query<WorkerTokenRow, [string]>(

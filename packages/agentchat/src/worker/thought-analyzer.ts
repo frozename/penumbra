@@ -1,5 +1,5 @@
-import type { DispatchEventInput } from '@penumbra/core';
-import type { RuntimeThoughtsConfig } from './thought-config.js';
+import type { DispatchEventInput } from "@penumbra/core";
+import type { RuntimeThoughtsConfig } from "./thought-config.js";
 
 export interface ThoughtRow {
   sequence_n: number;
@@ -17,8 +17,13 @@ export interface ThoughtAnalyzerDeps {
     parent_handoff_id?: string;
     task_type?: string;
   }) => Promise<{ conversation_id: string; handoff_id: string }>;
-  chainWait: (input: { conversation_id: string; timeout_ms?: number }) => Promise<{ status: 'completed' | 'failed' | 'timeout' }>;
-  chainResponse: (input: { conversation_id: string }) => Promise<{ responses: Array<{ text?: string }> }>;
+  chainWait: (input: {
+    conversation_id: string;
+    timeout_ms?: number;
+  }) => Promise<{ status: "completed" | "failed" | "timeout" }>;
+  chainResponse: (input: {
+    conversation_id: string;
+  }) => Promise<{ responses: Array<{ text?: string }> }>;
   recordEvent: (event: DispatchEventInput) => Promise<void> | void;
   log: { warn: (...args: unknown[]) => void; info?: (...args: unknown[]) => void } | typeof console;
   getHandoff?: (handoffId: string) => Promise<{ project_id: string | null } | null>;
@@ -34,7 +39,10 @@ export interface ThoughtAnalyzerInput {
   deps: ThoughtAnalyzerDeps;
 }
 
-function joinThoughtsForPrompt(rows: ThoughtRow[], limit: number): { body: string; truncated: boolean } {
+function joinThoughtsForPrompt(
+  rows: ThoughtRow[],
+  limit: number,
+): { body: string; truncated: boolean } {
   const reversed = [...rows].reverse();
   const kept: ThoughtRow[] = [];
   let used = 0;
@@ -47,7 +55,9 @@ function joinThoughtsForPrompt(rows: ThoughtRow[], limit: number): { body: strin
   const truncated = kept.length < rows.length;
   const ordered = kept.reverse();
   return {
-    body: ordered.map((r) => `[#${r.sequence_n} ${r.adapter}/${r.agent_name}] ${r.text}`).join('\n'),
+    body: ordered
+      .map((r) => `[#${r.sequence_n} ${r.adapter}/${r.agent_name}] ${r.text}`)
+      .join("\n"),
     truncated,
   };
 }
@@ -65,12 +75,15 @@ async function runOneSubHandoff(
     message: prompt,
     parent_handoff_id: parentHandoffId,
     project_id: projectId,
-    task_type: 'unknown',
+    task_type: "unknown",
   });
-  const wait = await deps.chainWait({ conversation_id: started.conversation_id, timeout_ms: timeoutMs });
-  if (wait.status !== 'completed') throw new Error(`sub-handoff did not complete: ${wait.status}`);
+  const wait = await deps.chainWait({
+    conversation_id: started.conversation_id,
+    timeout_ms: timeoutMs,
+  });
+  if (wait.status !== "completed") throw new Error(`sub-handoff did not complete: ${wait.status}`);
   const resp = await deps.chainResponse({ conversation_id: started.conversation_id });
-  return resp.responses[resp.responses.length - 1]?.text ?? '';
+  return resp.responses[resp.responses.length - 1]?.text ?? "";
 }
 
 export async function runThoughtAnalyzer(input: ThoughtAnalyzerInput): Promise<void> {
@@ -95,11 +108,13 @@ export async function runThoughtAnalyzer(input: ThoughtAnalyzerInput): Promise<v
     const cap = config.analyze.digest.maxInputChars;
     const { body, truncated } = joinThoughtsForPrompt(thoughts, cap);
     const prompt = [
-      'Summarize the agent reasoning below in 2-4 sentences. Focus on the final approach, not abandoned steps.',
-      truncated ? '(Stream truncated; only most recent thoughts shown.)' : '',
-      '---',
+      "Summarize the agent reasoning below in 2-4 sentences. Focus on the final approach, not abandoned steps.",
+      truncated ? "(Stream truncated; only most recent thoughts shown.)" : "",
+      "---",
       body,
-    ].filter(Boolean).join('\n');
+    ]
+      .filter(Boolean)
+      .join("\n");
 
     tasks.push(
       runOneSubHandoff(
@@ -114,21 +129,24 @@ export async function runThoughtAnalyzer(input: ThoughtAnalyzerInput): Promise<v
           await deps.recordEvent({
             handoff_id: handoffId,
             worker_id: deps.workerId ?? null,
-            source: 'worker',
-            kind: 'agent.thought.digest',
+            source: "worker",
+            kind: "agent.thought.digest",
             ts,
             meta: { digester_agent: config.analyze.digest.agent, digest_text: text },
           });
         })
         .catch(async (err) => {
-          deps.log.warn?.('thought analyzer digest failed', { handoffId, err: String(err) });
+          deps.log.warn?.("thought analyzer digest failed", { handoffId, err: String(err) });
           await deps.recordEvent({
             handoff_id: handoffId,
             worker_id: deps.workerId ?? null,
-            source: 'worker',
-            kind: 'agent.thought.digest',
+            source: "worker",
+            kind: "agent.thought.digest",
             ts,
-            meta: { digester_agent: config.analyze.digest.agent, digest_text: `<analyzer failed: ${String(err)}>` },
+            meta: {
+              digester_agent: config.analyze.digest.agent,
+              digest_text: `<analyzer failed: ${String(err)}>`,
+            },
           });
         }),
     );
@@ -140,10 +158,12 @@ export async function runThoughtAnalyzer(input: ThoughtAnalyzerInput): Promise<v
     for (const def of config.analyze.signals.definitions) {
       const prompt = [
         def.prompt,
-        truncated ? '(Stream truncated; only most recent thoughts shown.)' : '',
-        '---',
+        truncated ? "(Stream truncated; only most recent thoughts shown.)" : "",
+        "---",
         body,
-      ].filter(Boolean).join('\n');
+      ]
+        .filter(Boolean)
+        .join("\n");
       tasks.push(
         runOneSubHandoff(
           config.analyze.signals.agent,
@@ -157,19 +177,27 @@ export async function runThoughtAnalyzer(input: ThoughtAnalyzerInput): Promise<v
             await deps.recordEvent({
               handoff_id: handoffId,
               worker_id: deps.workerId ?? null,
-              source: 'worker',
-              kind: 'agent.thought.signal',
+              source: "worker",
+              kind: "agent.thought.signal",
               ts,
-              meta: { signal_name: def.name, evidence_text: text, extractor_agent: config.analyze.signals.agent },
+              meta: {
+                signal_name: def.name,
+                evidence_text: text,
+                extractor_agent: config.analyze.signals.agent,
+              },
             });
           })
           .catch(async (err) => {
-            deps.log.warn?.('thought analyzer signal failed', { handoffId, signal: def.name, err: String(err) });
+            deps.log.warn?.("thought analyzer signal failed", {
+              handoffId,
+              signal: def.name,
+              err: String(err),
+            });
             await deps.recordEvent({
               handoff_id: handoffId,
               worker_id: deps.workerId ?? null,
-              source: 'worker',
-              kind: 'agent.thought.signal',
+              source: "worker",
+              kind: "agent.thought.signal",
               ts,
               meta: {
                 signal_name: def.name,

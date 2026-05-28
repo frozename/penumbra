@@ -1,20 +1,27 @@
-import { z } from 'zod';
-import { toTextContent } from '@nova/mcp-shared';
-import type { DaemonClient } from '../daemon-client.js';
+import { z } from "zod";
+import { toTextContent } from "@nova/mcp-shared";
+import type { DaemonClient } from "../daemon-client.js";
 
 export const WorkflowRunInputShape = {
-  name: z.string().min(1).describe('Workflow name from `workflow.list`.'),
-  cwd: z.string().optional().describe('Optional cwd override for project resolution.'),
+  name: z.string().min(1).describe("Workflow name from `workflow.list`."),
+  cwd: z.string().optional().describe("Optional cwd override for project resolution."),
   args: z
     .record(z.string(), z.unknown())
     .optional()
-    .describe('Optional workflow args map; forwarded to ts-function workflows as ctx.args and template vars as {{args.*}}.'),
+    .describe(
+      "Optional workflow args map; forwarded to ts-function workflows as ctx.args and template vars as {{args.*}}.",
+    ),
   session_id: z
     .string()
     .min(1)
     .optional()
-    .describe('Optional Claude Code session id; scopes recall sources that use sessionStart (e.g., dispatch_events).'),
-  wait: z.boolean().optional().describe('When true, wait for the workflow to finish and return the full result body.'),
+    .describe(
+      "Optional Claude Code session id; scopes recall sources that use sessionStart (e.g., dispatch_events).",
+    ),
+  wait: z
+    .boolean()
+    .optional()
+    .describe("When true, wait for the workflow to finish and return the full result body."),
 };
 
 const WorkflowRunSchema = z.object(WorkflowRunInputShape).strict();
@@ -32,19 +39,19 @@ export interface WorkflowRunHandlerOpts {
 }
 
 export class WorkflowCwdRequiredError extends Error {
-  readonly code = 'workflow_cwd_required';
+  readonly code = "workflow_cwd_required";
   readonly hint =
-    'Pass an explicit `cwd` for cross-repo workflow runs. The MCP-subprocess cwd is the daemon, not your repo. PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID is set.';
+    "Pass an explicit `cwd` for cross-repo workflow runs. The MCP-subprocess cwd is the daemon, not your repo. PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID is set.";
 
-  constructor(message = 'workflow_cwd_required') {
+  constructor(message = "workflow_cwd_required") {
     super(message);
-    this.name = 'WorkflowCwdRequiredError';
+    this.name = "WorkflowCwdRequiredError";
   }
 }
 
 function isEnvTruthy(value: string | undefined): boolean {
   if (!value) return false;
-  return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
 }
 
 export function workflowRunHandler(daemon: DaemonClient, opts: WorkflowRunHandlerOpts = {}) {
@@ -58,7 +65,8 @@ export function workflowRunHandler(daemon: DaemonClient, opts: WorkflowRunHandle
       const resolvedCwd = opts.resolveCwd?.();
       if (resolvedCwd !== undefined) {
         payload.cwd = resolvedCwd;
-        (payload as Record<string, unknown>).resolution_warning = 'workflow_cwd_inferred_from_mcp_cwd';
+        (payload as Record<string, unknown>).resolution_warning =
+          "workflow_cwd_inferred_from_mcp_cwd";
       }
     }
     return toTextContent(await daemon.workflowRun(payload));

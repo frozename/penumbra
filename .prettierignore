@@ -3,4 +3,4 @@ node_modules
 coverage
 bun.lock
 .penumbra
-docs/notes
+docs/**

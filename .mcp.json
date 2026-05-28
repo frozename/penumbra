@@ -3,9 +3,7 @@
     "penumbra": {
       "type": "stdio",
       "command": "bun",
-      "args": [
-        "/Volumes/WorkSSD/repos/personal/penumbra/packages/mcp/bin/penumbra-mcp.ts"
-      ]
+      "args": ["/Volumes/WorkSSD/repos/personal/penumbra/packages/mcp/bin/penumbra-mcp.ts"]
     }
   }
 }

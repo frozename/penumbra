@@ -1,23 +1,25 @@
-import { expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { serve } from '../src/serve.js';
-import { buildServices, loadSqliteVec, migrate, BundledEmbedder } from '@penumbra/core';
+import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { serve } from "../src/serve.js";
+import { buildServices, loadSqliteVec, migrate, BundledEmbedder } from "@penumbra/core";
 
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch { /* already loaded */ }
+} catch {
+  /* already loaded */
+}
 
-test('onStop callback is invoked exactly once when handle.stop() is called', async () => {
-  const db = new Database(':memory:');
+test("onStop callback is invoked exactly once when handle.stop() is called", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
   const services = buildServices({
     env: {},
     input: {},
-    storageRoot: '/tmp',
+    storageRoot: "/tmp",
     db,
     embedder: new BundledEmbedder(),
   });
@@ -25,9 +27,11 @@ test('onStop callback is invoked exactly once when handle.stop() is called', asy
   let callCount = 0;
   const handle = serve({
     services,
-    token: 'test-token',
+    token: "test-token",
     port: 0,
-    onStop: () => { callCount += 1; },
+    onStop: () => {
+      callCount += 1;
+    },
   });
 
   expect(callCount).toBe(0);
@@ -35,24 +39,26 @@ test('onStop callback is invoked exactly once when handle.stop() is called', asy
   expect(callCount).toBe(1);
 });
 
-test('onStop callback swallows throws and does not propagate', () => {
-  const db = new Database(':memory:');
+test("onStop callback swallows throws and does not propagate", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
   const services = buildServices({
     env: {},
     input: {},
-    storageRoot: '/tmp',
+    storageRoot: "/tmp",
     db,
     embedder: new BundledEmbedder(),
   });
 
   const handle = serve({
     services,
-    token: 'test-token',
+    token: "test-token",
     port: 0,
-    onStop: () => { throw new Error('db already closed'); },
+    onStop: () => {
+      throw new Error("db already closed");
+    },
   });
 
   // Must not throw — onStop errors are swallowed.

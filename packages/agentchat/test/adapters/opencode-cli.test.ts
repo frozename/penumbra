@@ -1,18 +1,18 @@
-import { afterEach, expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { OpencodeCliAdapter } from '../../src/adapters/opencode-cli.js';
-import { buildAdapter } from '../../src/adapters/registry.js';
+import { afterEach, expect, test } from "bun:test";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { OpencodeCliAdapter } from "../../src/adapters/opencode-cli.js";
+import { buildAdapter } from "../../src/adapters/registry.js";
 
 const tempDirs: string[] = [];
 
 function createCaptureScript() {
-  const dir = mkdtempSync(join(tmpdir(), 'opencode-cli-test-'));
+  const dir = mkdtempSync(join(tmpdir(), "opencode-cli-test-"));
   tempDirs.push(dir);
-  const markerPath = join(dir, 'xdg-home.txt');
-  const snapshotPath = join(dir, 'config-snapshot.json');
-  const scriptPath = join(dir, 'capture-xdg.sh');
+  const markerPath = join(dir, "xdg-home.txt");
+  const snapshotPath = join(dir, "config-snapshot.json");
+  const scriptPath = join(dir, "capture-xdg.sh");
   writeFileSync(
     scriptPath,
     `#!/bin/sh
@@ -20,7 +20,7 @@ printf '%s' "$XDG_CONFIG_HOME" > "$1"
 cp "$XDG_CONFIG_HOME/opencode/config.json" "$2"
 cat
 `,
-    'utf8',
+    "utf8",
   );
   chmodSync(scriptPath, 0o755);
   return { markerPath, snapshotPath, scriptPath };
@@ -33,78 +33,78 @@ afterEach(() => {
   tempDirs.length = 0;
 });
 
-test('opencode-cli sets a per-dispatch XDG_CONFIG_HOME when mcpServers are provided', async () => {
+test("opencode-cli sets a per-dispatch XDG_CONFIG_HOME when mcpServers are provided", async () => {
   const { markerPath, snapshotPath, scriptPath } = createCaptureScript();
   const adapter = new OpencodeCliAdapter({
-    model: 'gpt-5',
+    model: "gpt-5",
     command: scriptPath,
     args: [markerPath, snapshotPath],
-    pass_via: 'stdin',
+    pass_via: "stdin",
     mcpServers: [
       {
-        name: 'penumbra',
-        command: 'bun',
-        args: ['/tmp/penumbra-mcp.ts'],
-        env: [{ name: 'PENUMBRA_STORAGE_ROOT', value: '/tmp/penumbra-live' }],
+        name: "penumbra",
+        command: "bun",
+        args: ["/tmp/penumbra-mcp.ts"],
+        env: [{ name: "PENUMBRA_STORAGE_ROOT", value: "/tmp/penumbra-live" }],
       } as any,
     ],
   });
 
   const out = await adapter.dispatch({
-    prompt: 'hi opencode',
-    conversation: { id: 'c', project_id: null },
+    prompt: "hi opencode",
+    conversation: { id: "c", project_id: null },
     config: {},
     signal: new AbortController().signal,
   });
 
-  const xdgConfigHome = readFileSync(markerPath, 'utf8');
-  const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf8'));
+  const xdgConfigHome = readFileSync(markerPath, "utf8");
+  const snapshot = JSON.parse(readFileSync(snapshotPath, "utf8"));
 
-  expect(out.text.trim()).toBe('hi opencode');
-  expect(xdgConfigHome).toContain('penumbra-oc-mcp-');
+  expect(out.text.trim()).toBe("hi opencode");
+  expect(xdgConfigHome).toContain("penumbra-oc-mcp-");
   expect(snapshot).toEqual({
-    $schema: 'https://opencode.ai/config.json',
+    $schema: "https://opencode.ai/config.json",
     mcp: {
       penumbra: {
-        type: 'local',
-        command: ['bun', '/tmp/penumbra-mcp.ts'],
-        environment: { PENUMBRA_STORAGE_ROOT: '/tmp/penumbra-live' },
+        type: "local",
+        command: ["bun", "/tmp/penumbra-mcp.ts"],
+        environment: { PENUMBRA_STORAGE_ROOT: "/tmp/penumbra-live" },
         enabled: true,
       },
     },
   });
-  expect(existsSync(join(xdgConfigHome, 'opencode', 'config.json'))).toBe(false);
+  expect(existsSync(join(xdgConfigHome, "opencode", "config.json"))).toBe(false);
 });
 
-test('registry forwards mcpServers to opencode-cli', async () => {
+test("registry forwards mcpServers to opencode-cli", async () => {
   const { markerPath, snapshotPath, scriptPath } = createCaptureScript();
-  const adapter = buildAdapter('opencode-cli', {
-    model: 'gpt-5',
+  const adapter = buildAdapter("opencode-cli", {
+    model: "gpt-5",
     command: scriptPath,
     args: [markerPath, snapshotPath],
-    pass_via: 'stdin',
+    pass_via: "stdin",
     mcpServers: [
       {
-        name: 'penumbra',
-        command: 'bun',
-        args: ['/tmp/penumbra-mcp.ts'],
-        env: [{ name: 'PENUMBRA_STORAGE_ROOT', value: '/tmp/penumbra-live' }],
+        name: "penumbra",
+        command: "bun",
+        args: ["/tmp/penumbra-mcp.ts"],
+        env: [{ name: "PENUMBRA_STORAGE_ROOT", value: "/tmp/penumbra-live" }],
       } as any,
     ],
   });
 
   const out = await adapter.dispatch({
-    prompt: 'hi registry',
-    conversation: { id: 'c', project_id: null },
+    prompt: "hi registry",
+    conversation: { id: "c", project_id: null },
     config: {},
     signal: new AbortController().signal,
   });
 
-  const xdgConfigHome = readFileSync(markerPath, 'utf8');
-  const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf8'));
+  const xdgConfigHome = readFileSync(markerPath, "utf8");
+  const snapshot = JSON.parse(readFileSync(snapshotPath, "utf8"));
 
-  expect(out.text.trim()).toBe('hi registry');
-  expect(xdgConfigHome).toContain('penumbra-oc-mcp-');
+  expect(out.text.trim()).toBe("hi registry");
+  expect(xdgConfigHome).toContain("penumbra-oc-mcp-");
   expect(snapshot.mcp.penumbra).toBeDefined();
-  expect(existsSync(join(xdgConfigHome, 'opencode', 'config.json'))).toBe(false);
+  expect(existsSync(join(xdgConfigHome, "opencode", "config.json"))).toBe(false);
 });

@@ -1,7 +1,7 @@
-import type { Services } from '@penumbra/core';
-import type { EmittedPermissionEvent } from '@penumbra/core';
+import type { Services } from "@penumbra/core";
+import type { EmittedPermissionEvent } from "@penumbra/core";
 
-import { json } from './_helpers.js';
+import { json } from "./_helpers.js";
 function formatSse(evt: EmittedPermissionEvent): string {
   return `event: ${evt.kind}\nid: ${evt.permission_id}:${evt.seq}\ndata: ${JSON.stringify(evt.payload)}\n\n`;
 }
@@ -17,7 +17,7 @@ function parseLastEventSeq(header: string | null): number | null {
 export async function permissionsEventsRoute(req: Request, services: Services): Promise<Response> {
   let off: (() => void) | null = null;
   let keepalive: ReturnType<typeof setInterval> | null = null;
-  const lastSeq = parseLastEventSeq(req.headers.get('last-event-id'));
+  const lastSeq = parseLastEventSeq(req.headers.get("last-event-id"));
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -28,14 +28,14 @@ export async function permissionsEventsRoute(req: Request, services: Services): 
         const replay = services.permissionEvents.replaySince(lastSeq);
         if (replay === null) {
           // Ring buffer evicted — signal client to resync via per-id GET.
-          controller.enqueue(encoder.encode(': resync\n\n'));
+          controller.enqueue(encoder.encode(": resync\n\n"));
         } else {
           for (const evt of replay) {
             controller.enqueue(encoder.encode(formatSse(evt)));
           }
         }
       } else {
-        controller.enqueue(encoder.encode(': ok\n\n'));
+        controller.enqueue(encoder.encode(": ok\n\n"));
       }
 
       off = services.permissionEvents.subscribe((evt) => {
@@ -51,7 +51,7 @@ export async function permissionsEventsRoute(req: Request, services: Services): 
 
       keepalive = setInterval(() => {
         try {
-          controller.enqueue(encoder.encode(': keepalive\n\n'));
+          controller.enqueue(encoder.encode(": keepalive\n\n"));
         } catch {
           off?.();
           off = null;
@@ -63,7 +63,11 @@ export async function permissionsEventsRoute(req: Request, services: Services): 
     cancel() {
       if (keepalive) clearInterval(keepalive);
       keepalive = null;
-      try { off?.(); } catch { /* noop */ }
+      try {
+        off?.();
+      } catch {
+        /* noop */
+      }
       off = null;
     },
   });
@@ -71,9 +75,9 @@ export async function permissionsEventsRoute(req: Request, services: Services): 
   return new Response(stream, {
     status: 200,
     headers: {
-      'content-type': 'text/event-stream',
-      'cache-control': 'no-cache',
-      connection: 'keep-alive',
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
     },
   });
 }

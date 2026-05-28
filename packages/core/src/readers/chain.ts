@@ -1,5 +1,5 @@
-import type { Database } from 'bun:sqlite';
-import type { HandoffStatus } from '../schemas/handoff.js';
+import type { Database } from "bun:sqlite";
+import type { HandoffStatus } from "../schemas/handoff.js";
 
 export interface ChainTerminatedEvent {
   ts: string;
@@ -31,45 +31,56 @@ export interface AgentResponseEvent {
 export class ChainReader {
   constructor(private readonly db: Database) {}
 
-  getResponses(conversation_id: string, which: 'final' | 'all' = 'final'): AgentResponseEvent[] {
-    const orderSql = which === 'final'
-      ? 'ORDER BY ts DESC, ingest_ts DESC, event_id DESC'
-      : 'ORDER BY ts ASC, ingest_ts ASC, event_id ASC';
-    const limitSql = which === 'final' ? 'LIMIT 1' : '';
-    const rows = this.db.query<
-      {
-        event_id: string;
-        ts: string;
-        ingest_ts: string;
-        source_detail: string | null;
-        source: string;
-        user_id: string | null;
-        payload_json: string;
-      },
-      [string]
-    >(`
+  getResponses(conversation_id: string, which: "final" | "all" = "final"): AgentResponseEvent[] {
+    const orderSql =
+      which === "final"
+        ? "ORDER BY ts DESC, ingest_ts DESC, event_id DESC"
+        : "ORDER BY ts ASC, ingest_ts ASC, event_id ASC";
+    const limitSql = which === "final" ? "LIMIT 1" : "";
+    const rows = this.db
+      .query<
+        {
+          event_id: string;
+          ts: string;
+          ingest_ts: string;
+          source_detail: string | null;
+          source: string;
+          user_id: string | null;
+          payload_json: string;
+        },
+        [string]
+      >(
+        `
       SELECT event_id, ts, ingest_ts, source_detail, source, user_id, payload_json
       FROM t0_events
       WHERE event_type = 'agent-response'
         AND session_id = ?
       ${orderSql}
       ${limitSql}
-    `).all(conversation_id);
+    `,
+      )
+      .all(conversation_id);
 
     return rows.map((row) => {
       const payload = parseAgentResponsePayload(row.payload_json);
       return {
         ts: row.ts,
-        agent: row.user_id && row.user_id !== 'local-user'
-          ? row.user_id
-          : (row.source_detail ?? row.source),
+        agent:
+          row.user_id && row.user_id !== "local-user"
+            ? row.user_id
+            : (row.source_detail ?? row.source),
         text: payload.text,
         ...(payload.error ? { error: { message: payload.error } } : {}),
       };
     });
   }
 
-  listChains(opts: { status?: HandoffStatus; project_id?: string; limit: number; offset: number }): ChainSummary[] {
+  listChains(opts: {
+    status?: HandoffStatus;
+    project_id?: string;
+    limit: number;
+    offset: number;
+  }): ChainSummary[] {
     // A chain = one conversation_id, summarized from its handoffs. The
     // window picks the latest handoff per conversation, ordered by ts DESC.
     // The `status` filter is applied to the *latest* handoff; the
@@ -84,7 +95,7 @@ export class ChainReader {
       where.push(`(project_id = ? OR project_id IS NULL)`);
       params.push(opts.project_id);
     }
-    const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
 
     const sql = `
       SELECT
@@ -116,43 +127,53 @@ export class ChainReader {
       LIMIT ? OFFSET ?
     `;
     params.push(opts.limit, opts.offset);
-    const rows = this.db.query<{
-      conversation_id: string;
-      project_id: string | null;
-      latest_status: HandoffStatus;
-      latest_ts: string;
-      earliest_ts: string;
-      handoff_count: number;
-      root_handoff_id: string | null;
-      to_agent: string | null;
-      to_role: string | null;
-    }, (string | number)[]>(sql).all(...params);
+    const rows = this.db
+      .query<
+        {
+          conversation_id: string;
+          project_id: string | null;
+          latest_status: HandoffStatus;
+          latest_ts: string;
+          earliest_ts: string;
+          handoff_count: number;
+          root_handoff_id: string | null;
+          to_agent: string | null;
+          to_role: string | null;
+        },
+        (string | number)[]
+      >(sql)
+      .all(...params);
     return rows;
   }
 
   conversationExists(conversation_id: string): boolean {
-    const row = this.db.query<{ found: number }, [string, string]>(`
+    const row = this.db
+      .query<{ found: number }, [string, string]>(
+        `
       SELECT CASE
         WHEN EXISTS(SELECT 1 FROM t0_events WHERE session_id = ? LIMIT 1) THEN 1
         WHEN EXISTS(SELECT 1 FROM handoffs WHERE conversation_id = ? LIMIT 1) THEN 1
         ELSE 0
       END AS found
-    `).get(conversation_id, conversation_id);
+    `,
+      )
+      .get(conversation_id, conversation_id);
     return row?.found === 1;
   }
 
   listHistory(conversation_id: string, limit: number = 50): ChainTerminatedEvent[] {
-    const rows = this.db.query<
-      { ts: string; session_id: string; payload_json: string },
-      [string, number]
-    >(`
+    const rows = this.db
+      .query<{ ts: string; session_id: string; payload_json: string }, [string, number]>(
+        `
       SELECT ts, session_id, payload_json
       FROM t0_events
       WHERE event_type = 'chain-terminated'
         AND session_id = ?
       ORDER BY ts DESC
       LIMIT ?
-    `).all(conversation_id, limit);
+    `,
+      )
+      .all(conversation_id, limit);
 
     return rows.map((row) => {
       let payload: any = null;
@@ -171,7 +192,10 @@ export class ChainReader {
     });
   }
 
-  getMessages(conversation_id: string, types?: string[]): {
+  getMessages(
+    conversation_id: string,
+    types?: string[],
+  ): {
     event_id: string;
     ts: string;
     event_type: string;
@@ -188,22 +212,27 @@ export class ChainReader {
     const params: (string | number)[] = [conversation_id];
 
     if (types && types.length > 0) {
-      const placeholders = types.map(() => '?').join(', ');
+      const placeholders = types.map(() => "?").join(", ");
       sql += ` AND event_type IN (${placeholders})`;
       params.push(...types);
     }
 
     sql += ` ORDER BY ts ASC, ingest_ts ASC, event_id ASC`;
 
-    const rows = this.db.query<{
-      event_id: string;
-      ts: string;
-      event_type: string;
-      source: string;
-      source_detail: string | null;
-      user_id: string | null;
-      payload_json: string;
-    }, any>(sql).all(...params);
+    const rows = this.db
+      .query<
+        {
+          event_id: string;
+          ts: string;
+          event_type: string;
+          source: string;
+          source_detail: string | null;
+          user_id: string | null;
+          payload_json: string;
+        },
+        any
+      >(sql)
+      .all(...params);
 
     return rows.map((row) => {
       let payload = null;
@@ -228,10 +257,10 @@ export class ChainReader {
 function parseAgentResponsePayload(payload_json: string): { text: string; error?: string } {
   try {
     const payload = JSON.parse(payload_json) as { response?: unknown; error?: unknown };
-    if (typeof payload.response === 'string') return { text: payload.response };
-    if (typeof payload.error === 'string') return { text: '', error: payload.error };
-    return { text: '' };
+    if (typeof payload.response === "string") return { text: payload.response };
+    if (typeof payload.error === "string") return { text: "", error: payload.error };
+    return { text: "" };
   } catch {
-    return { text: '', error: 'malformed payload_json' };
+    return { text: "", error: "malformed payload_json" };
   }
 }

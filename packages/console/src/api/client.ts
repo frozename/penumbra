@@ -156,24 +156,24 @@ export class DaemonClient {
   private buildHeaders(extra?: HeadersInit): HeadersInit {
     const cfg = this.deps.getConfig();
     const headers: Record<string, string> = {
-      'Accept': 'application/json',
+      Accept: "application/json",
       ...Object.fromEntries(new Headers(extra).entries()),
     };
     if (cfg.token) {
-      headers['Authorization'] = `Bearer ${cfg.token}`;
+      headers["Authorization"] = `Bearer ${cfg.token}`;
     }
     return headers;
   }
 
-  private async request<S extends ZodTypeAny>(
-    opts: RequestOpts<S>,
-  ): Promise<z.infer<S>> {
+  private async request<S extends ZodTypeAny>(opts: RequestOpts<S>): Promise<z.infer<S>> {
     const { baseUrl } = this.deps.getConfig();
     const url = buildRequestUrl(baseUrl, opts.path, opts.query);
     const init: RequestInit = {
       method: opts.method ?? "GET",
-      credentials: 'include',
-      headers: this.buildHeaders(opts.body !== undefined ? { 'Content-Type': 'application/json' } : undefined),
+      credentials: "include",
+      headers: this.buildHeaders(
+        opts.body !== undefined ? { "Content-Type": "application/json" } : undefined,
+      ),
     };
     if (opts.body !== undefined) {
       init.body = JSON.stringify(opts.body);

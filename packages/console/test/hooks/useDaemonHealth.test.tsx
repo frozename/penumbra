@@ -67,9 +67,7 @@ describe("useDaemonHealth", () => {
     const health = mock(async () => ({ status: "ok" as const }));
     const client = { health } as unknown as DaemonClient;
 
-    const { unmount } = renderHook(() =>
-      useDaemonHealth({ client, intervalMs: 20 }),
-    );
+    const { unmount } = renderHook(() => useDaemonHealth({ client, intervalMs: 20 }));
 
     await waitFor(() => expect(health).toHaveBeenCalledTimes(1));
     unmount();

@@ -1,8 +1,8 @@
-import { describe, it, expect } from 'bun:test';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { loadConfig } from '../../src/config/load.js';
+import { describe, it, expect } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { loadConfig } from "../../src/config/load.js";
 
 const yamlSample = `
 agents:
@@ -37,34 +37,38 @@ agents:
 `;
 
 function loadYaml(yaml: string) {
-  const dir = mkdtempSync(join(tmpdir(), 'agentchat-long-lived-'));
-  const file = join(dir, 'agentchat.yaml');
+  const dir = mkdtempSync(join(tmpdir(), "agentchat-long-lived-"));
+  const file = join(dir, "agentchat.yaml");
   writeFileSync(file, yaml);
   return loadConfig(file);
 }
 
-describe('agentchat.yaml long-lived extension', () => {
-  it('parses an entry with long_lived_config', () => {
+describe("agentchat.yaml long-lived extension", () => {
+  it("parses an entry with long_lived_config", () => {
     const parsed = loadYaml(yamlSample);
-    const home = parsed.agents.find((a) => a.name === 'home-mgmt')!;
+    const home = parsed.agents.find((a) => a.name === "home-mgmt")!;
     expect(home.long_lived).toBe(true);
-    expect(home.long_lived_config!.schedule_cron).toBe('*/15 * * * *');
-    expect(home.long_lived_config!.subscriptions).toEqual([{ server: 'ha', event: 'state_changed' }]);
+    expect(home.long_lived_config!.schedule_cron).toBe("*/15 * * * *");
+    expect(home.long_lived_config!.subscriptions).toEqual([
+      { server: "ha", event: "state_changed" },
+    ]);
     expect(home.long_lived_config!.bounds.wall_clock_ms).toBe(180000);
-    expect(home.long_lived_config!.action_tiers!.approval_required_globs).toContain('ha:integration.*');
-    expect(home.long_lived_config!.action_tiers!.cooldown_overrides!['ha:dashboard.*']).toBe(60000);
+    expect(home.long_lived_config!.action_tiers!.approval_required_globs).toContain(
+      "ha:integration.*",
+    );
+    expect(home.long_lived_config!.action_tiers!.cooldown_overrides!["ha:dashboard.*"]).toBe(60000);
     expect(home.long_lived_config!.hosted_mcp_servers).toEqual([
       {
-        name: 'local-mcp',
-        command: 'node',
-        args: ['server.js'],
-        env: [{ name: 'TOKEN', value: '' }],
+        name: "local-mcp",
+        command: "node",
+        args: ["server.js"],
+        env: [{ name: "TOKEN", value: "" }],
       },
     ]);
-    expect(home.long_lived_config!.mcp_allowlist_sdk_patterns).toEqual(['mcp__ha__state.*']);
+    expect(home.long_lived_config!.mcp_allowlist_sdk_patterns).toEqual(["mcp__ha__state.*"]);
   });
 
-  it('parses task-refiner-escalation long-lived config', () => {
+  it("parses task-refiner-escalation long-lived config", () => {
     const yaml = `
 agents:
   - name: task-refiner-escalation
@@ -100,22 +104,22 @@ agents:
         task_draft_escalation.
 `;
     const parsed = loadYaml(yaml);
-    const agent = parsed.agents.find((a) => a.name === 'task-refiner-escalation')!;
+    const agent = parsed.agents.find((a) => a.name === "task-refiner-escalation")!;
     expect(agent.long_lived).toBe(true);
-    expect(agent.long_lived_config!.project_id).toBe('penumbra');
+    expect(agent.long_lived_config!.project_id).toBe("penumbra");
     expect(agent.long_lived_config!.bounds.wall_clock_ms).toBe(240000);
     expect(agent.long_lived_config!.bounds.cost_cents).toBe(50);
-    expect(agent.long_lived_config!.standing_brief).toContain('task-refiner-escalation');
+    expect(agent.long_lived_config!.standing_brief).toContain("task-refiner-escalation");
   });
 
-  it('non-long-lived agents have undefined long_lived_config', () => {
+  it("non-long-lived agents have undefined long_lived_config", () => {
     const parsed = loadYaml(yamlSample);
-    const reg = parsed.agents.find((a) => a.name === 'regular-coder')!;
+    const reg = parsed.agents.find((a) => a.name === "regular-coder")!;
     expect(reg.long_lived).toBeUndefined();
     expect(reg.long_lived_config).toBeUndefined();
   });
 
-  it('rejects a long_lived entry without standing_brief', () => {
+  it("rejects a long_lived entry without standing_brief", () => {
     const bad = `
 agents:
   - name: bad
@@ -126,7 +130,7 @@ agents:
     expect(() => loadYaml(bad)).toThrow();
   });
 
-  it('rejects invalid cron syntax', () => {
+  it("rejects invalid cron syntax", () => {
     const bad = `
 agents:
   - name: bad
@@ -138,7 +142,7 @@ agents:
     expect(() => loadYaml(bad)).toThrow();
   });
 
-  it('rejects malformed hosted_mcp_servers entries', () => {
+  it("rejects malformed hosted_mcp_servers entries", () => {
     const bad = `
 agents:
   - name: bad
@@ -158,7 +162,7 @@ agents:
     expect(() => loadYaml(bad)).toThrow();
   });
 
-  it('defaults hosted_mcp_servers to [] when omitted', () => {
+  it("defaults hosted_mcp_servers to [] when omitted", () => {
     const yaml = `
 agents:
   - name: no-mcp
@@ -173,11 +177,11 @@ agents:
       standing_brief: "x"
 `;
     const parsed = loadYaml(yaml);
-    const agent = parsed.agents.find((a: any) => a.name === 'no-mcp')!;
+    const agent = parsed.agents.find((a: any) => a.name === "no-mcp")!;
     expect(agent.long_lived_config!.hosted_mcp_servers).toEqual([]);
   });
 
-  it('rejects require_snapshot=true without snapshot_tool', () => {
+  it("rejects require_snapshot=true without snapshot_tool", () => {
     // Adversarial-review M4: fail-closed mode is meaningless if the snapshot
     // tool isn't configured. Catch this at config-validation rather than
     // runtime so misconfigured agents fail the daemon reload, not a tick.
@@ -198,7 +202,7 @@ agents:
     expect(() => loadYaml(bad)).toThrow(/snapshot_tool/);
   });
 
-  it('accepts require_snapshot=true when snapshot_tool is set', () => {
+  it("accepts require_snapshot=true when snapshot_tool is set", () => {
     const ok = `
 agents:
   - name: ok-snap
@@ -215,8 +219,8 @@ agents:
       standing_brief: "x"
 `;
     const parsed = loadYaml(ok);
-    const agent = parsed.agents.find((a: any) => a.name === 'ok-snap')!;
-    expect(agent.long_lived_config!.snapshot_tool).toBe('ha:ha_backup_create');
+    const agent = parsed.agents.find((a: any) => a.name === "ok-snap")!;
+    expect(agent.long_lived_config!.snapshot_tool).toBe("ha:ha_backup_create");
     expect(agent.long_lived_config!.require_snapshot).toBe(true);
   });
 });

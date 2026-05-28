@@ -1,14 +1,14 @@
-import type { Database } from 'bun:sqlite';
+import type { Database } from "bun:sqlite";
 import type {
   BoundsAxis,
   CapCheckWarn,
   MaestroSessionRecord,
   MaestroTerminationReason,
   Services,
-} from '@penumbra/core';
-import { checkPressureCap } from '@penumbra/core';
-import { formatBudgetWarning } from './warning-text.js';
-import { buildProviderCaps } from './build-provider-caps.js';
+} from "@penumbra/core";
+import { checkPressureCap } from "@penumbra/core";
+import { formatBudgetWarning } from "./warning-text.js";
+import { buildProviderCaps } from "./build-provider-caps.js";
 
 interface BoundsSnapshot {
   wall_clock_ms: number;
@@ -27,7 +27,9 @@ export interface CreateBoundsCallbacksOpts {
   sessions: {
     terminate(task_id: string, reason: MaestroTerminationReason): void;
   };
-  injector: { inject: (chain_handoff_id: string, message: { role: 'user'; text: string }) => Promise<void> };
+  injector: {
+    inject: (chain_handoff_id: string, message: { role: "user"; text: string }) => Promise<void>;
+  };
   bus: {
     publish(event: {
       task_id: string;
@@ -52,7 +54,7 @@ interface OpenLeaseRow {
 type AgentChatConfigLike = {
   agents: Array<{
     name: string;
-    pricing_mode?: 'api' | 'subscription';
+    pricing_mode?: "api" | "subscription";
     subscription_provider?: string;
     subscription_model?: string;
   }>;
@@ -86,11 +88,11 @@ function computeSnapshot(session: MaestroSessionRecord, nowMs: number): BoundsSn
 
 function insertTaskEvent(
   db: Database,
-  bus: CreateBoundsCallbacksOpts['bus'],
+  bus: CreateBoundsCallbacksOpts["bus"],
   input: {
     task_id: string;
     at: number;
-    kind: 'orchestrate_warning' | 'orchestrate_terminated';
+    kind: "orchestrate_warning" | "orchestrate_terminated";
     payload: Record<string, unknown>;
   },
 ): void {
@@ -125,44 +127,46 @@ function synthesizeFailedWithoutLease(
 function recordPressureCapTrip(opts: {
   db: Database;
   session: MaestroSessionRecord;
-  outcome: Extract<ReturnType<typeof checkPressureCap>, { state: 'refuse' }>;
+  outcome: Extract<ReturnType<typeof checkPressureCap>, { state: "refuse" }>;
 }): void {
   const ts = new Date().toISOString();
-  opts.db.prepare(`
+  opts.db
+    .prepare(
+      `
     INSERT INTO t0_events (event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, provider, payload_json)
     VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'subscription-pressure-cap-trip', 'cli-subscription', ?, ?)
-  `).run(
-    crypto.randomUUID(),
-    ts,
-    ts,
-    opts.outcome.provider,
-    JSON.stringify({
-      ...opts.outcome,
-      subject: 'maestro',
-      trigger: 'tracker_tick',
-      agent_name: opts.session.agent_id,
-      task_id: opts.session.task_id,
-    }),
-  );
+  `,
+    )
+    .run(
+      crypto.randomUUID(),
+      ts,
+      ts,
+      opts.outcome.provider,
+      JSON.stringify({
+        ...opts.outcome,
+        subject: "maestro",
+        trigger: "tracker_tick",
+        agent_name: opts.session.agent_id,
+        task_id: opts.session.task_id,
+      }),
+    );
 }
 
 function terminateSessionWithReason(opts: {
   db: Database;
-  taskWriter: CreateBoundsCallbacksOpts['taskWriter'];
-  sessions: CreateBoundsCallbacksOpts['sessions'];
-  chainCancel: CreateBoundsCallbacksOpts['chainCancel'];
-  bus: CreateBoundsCallbacksOpts['bus'];
+  taskWriter: CreateBoundsCallbacksOpts["taskWriter"];
+  sessions: CreateBoundsCallbacksOpts["sessions"];
+  chainCancel: CreateBoundsCallbacksOpts["chainCancel"];
+  bus: CreateBoundsCallbacksOpts["bus"];
   session: MaestroSessionRecord;
   reason: MaestroTerminationReason;
   nowMs: number;
 }): void {
   const statusRow = opts.db
-    .query<TaskStatusRow | null, [string]>(
-      'SELECT status FROM tasks WHERE id = ?',
-    )
+    .query<TaskStatusRow | null, [string]>("SELECT status FROM tasks WHERE id = ?")
     .get(opts.session.task_id);
-  if (statusRow && (statusRow.status === 'done' || statusRow.status === 'done_pending_review')) {
-    opts.sessions.terminate(opts.session.task_id, 'completed');
+  if (statusRow && (statusRow.status === "done" || statusRow.status === "done_pending_review")) {
+    opts.sessions.terminate(opts.session.task_id, "completed");
     return;
   }
 
@@ -196,7 +200,7 @@ function terminateSessionWithReason(opts: {
   insertTaskEvent(opts.db, opts.bus, {
     task_id: opts.session.task_id,
     at: opts.nowMs,
-    kind: 'orchestrate_terminated',
+    kind: "orchestrate_terminated",
     payload: {
       reason: opts.reason,
       consumed: {
@@ -211,7 +215,10 @@ function terminateSessionWithReason(opts: {
 
   if (opts.session.chain_handoff_id) {
     void opts.chainCancel(opts.session.chain_handoff_id).catch((error) => {
-      console.error(`[bounds-callbacks] chain cancel failed for chain_handoff_id=${opts.session.chain_handoff_id}`, error);
+      console.error(
+        `[bounds-callbacks] chain cancel failed for chain_handoff_id=${opts.session.chain_handoff_id}`,
+        error,
+      );
     });
   }
 }
@@ -219,11 +226,18 @@ function terminateSessionWithReason(opts: {
 function evaluatePressureForSession(
   services: Services | undefined,
   session: MaestroSessionRecord,
-): { kind: 'warn'; outcome: CapCheckWarn } | { kind: 'refuse'; outcome: Extract<ReturnType<typeof checkPressureCap>, { state: 'refuse' }>; reason: MaestroTerminationReason } | null {
+):
+  | { kind: "warn"; outcome: CapCheckWarn }
+  | {
+      kind: "refuse";
+      outcome: Extract<ReturnType<typeof checkPressureCap>, { state: "refuse" }>;
+      reason: MaestroTerminationReason;
+    }
+  | null {
   if (!services) return null;
   const cfg = services.agentchatConfig;
   const agent = cfg?.agents?.find((candidate) => candidate.name === session.agent_id);
-  if (!agent || agent.pricing_mode !== 'subscription') return null;
+  if (!agent || agent.pricing_mode !== "subscription") return null;
   const providerCaps = buildProviderCaps(services.providerQuotas);
   const agentForCheck = {
     name: agent.name,
@@ -234,16 +248,18 @@ function evaluatePressureForSession(
   const outcome = checkPressureCap({
     cache: services.subscriptionPressureCache,
     agent: agentForCheck,
-    providerCaps: providerCaps as unknown as Parameters<typeof checkPressureCap>[0]['providerCaps'],
+    providerCaps: providerCaps as unknown as Parameters<typeof checkPressureCap>[0]["providerCaps"],
   });
-  if (outcome.state === 'warn') {
-    return { kind: 'warn', outcome };
+  if (outcome.state === "warn") {
+    return { kind: "warn", outcome };
   }
-  if (outcome.state !== 'refuse') return null;
-  const reason = (outcome.reason === 'over_threshold'
-    ? 'pressure_capped:over_threshold'
-    : 'pressure_capped:stale_warm') as MaestroTerminationReason;
-  return { kind: 'refuse', outcome, reason };
+  if (outcome.state !== "refuse") return null;
+  const reason = (
+    outcome.reason === "over_threshold"
+      ? "pressure_capped:over_threshold"
+      : "pressure_capped:stale_warm"
+  ) as MaestroTerminationReason;
+  return { kind: "refuse", outcome, reason };
 }
 
 function formatPressureWarning(outcome: CapCheckWarn): string {
@@ -254,7 +270,9 @@ export function createBoundsCallbacks(opts: CreateBoundsCallbacksOpts): {
   onSoftWarn: (session: MaestroSessionRecord) => void;
   onPressureSoftWarn: (session: MaestroSessionRecord, outcome: CapCheckWarn) => void;
   onHardKill: (session: MaestroSessionRecord, axis: BoundsAxis) => void;
-  evaluatePressure: (session: MaestroSessionRecord) => { kind: 'warn'; outcome: CapCheckWarn } | { kind: 'refuse'; axis: BoundsAxis } | null;
+  evaluatePressure: (
+    session: MaestroSessionRecord,
+  ) => { kind: "warn"; outcome: CapCheckWarn } | { kind: "refuse"; axis: BoundsAxis } | null;
 } {
   const now = opts.now ?? Date.now;
   const services = opts.services;
@@ -263,8 +281,8 @@ export function createBoundsCallbacks(opts: CreateBoundsCallbacksOpts): {
     evaluatePressure(session) {
       const result = evaluatePressureForSession(services, session);
       if (!result) return null;
-      if (result.kind === 'warn') return { kind: 'warn', outcome: result.outcome };
-      return { kind: 'refuse', axis: 'subscription_pressure' };
+      if (result.kind === "warn") return { kind: "warn", outcome: result.outcome };
+      return { kind: "refuse", axis: "subscription_pressure" };
     },
     onSoftWarn(session): void {
       const nowMs = now();
@@ -285,15 +303,20 @@ export function createBoundsCallbacks(opts: CreateBoundsCallbacksOpts): {
       );
 
       if (session.chain_handoff_id) {
-        void opts.injector.inject(session.chain_handoff_id, { role: 'user', text }).catch((error) => {
-          console.error(`[bounds-callbacks] soft warn inject failed for chain_handoff_id=${session.chain_handoff_id}`, error);
-        });
+        void opts.injector
+          .inject(session.chain_handoff_id, { role: "user", text })
+          .catch((error) => {
+            console.error(
+              `[bounds-callbacks] soft warn inject failed for chain_handoff_id=${session.chain_handoff_id}`,
+              error,
+            );
+          });
       }
 
       insertTaskEvent(opts.db, opts.bus, {
         task_id: session.task_id,
         at: nowMs,
-        kind: 'orchestrate_warning',
+        kind: "orchestrate_warning",
         payload: {
           pct_consumed: snapshot.pct_consumed,
           axis_breakdown: snapshot.axis_breakdown,
@@ -307,17 +330,22 @@ export function createBoundsCallbacks(opts: CreateBoundsCallbacksOpts): {
       const text = formatPressureWarning(outcome);
 
       if (session.chain_handoff_id) {
-        void opts.injector.inject(session.chain_handoff_id, { role: 'user', text }).catch((error) => {
-          console.error(`[bounds-callbacks] pressure soft warning failed for chain_handoff_id=${session.chain_handoff_id}`, error);
-        });
+        void opts.injector
+          .inject(session.chain_handoff_id, { role: "user", text })
+          .catch((error) => {
+            console.error(
+              `[bounds-callbacks] pressure soft warning failed for chain_handoff_id=${session.chain_handoff_id}`,
+              error,
+            );
+          });
       }
 
       insertTaskEvent(opts.db, opts.bus, {
         task_id: session.task_id,
         at: nowMs,
-        kind: 'orchestrate_warning',
+        kind: "orchestrate_warning",
         payload: {
-          axis: 'subscription_pressure',
+          axis: "subscription_pressure",
           provider: outcome.provider,
           window_label: outcome.window_label,
           used_pct: outcome.used_pct,
@@ -331,7 +359,7 @@ export function createBoundsCallbacks(opts: CreateBoundsCallbacksOpts): {
     onHardKill(session, axis): void {
       const nowMs = now();
       const pressure = evaluatePressureForSession(services, session);
-      if (pressure?.kind === 'refuse') {
+      if (pressure?.kind === "refuse") {
         recordPressureCapTrip({ db: opts.db, session, outcome: pressure.outcome });
         terminateSessionWithReason({
           db: opts.db,

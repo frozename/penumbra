@@ -3,11 +3,11 @@ export interface ProjectRegistryLike {
 }
 
 export class UnknownProjectError extends Error {
-  readonly code = 'unknown_project' as const;
+  readonly code = "unknown_project" as const;
 
   constructor(public readonly project_id: string) {
     super(`unknown project_id: ${project_id}`);
-    this.name = 'UnknownProjectError';
+    this.name = "UnknownProjectError";
   }
 }
 

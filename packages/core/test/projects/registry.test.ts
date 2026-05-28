@@ -1,15 +1,15 @@
-import { afterEach, expect, mock, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { afterEach, expect, mock, test } from "bun:test";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   defaultProjectRegistryPath,
   getGithubRepo,
   loadProjectRegistry,
   ProjectRegistryDuplicateId,
   ProjectRegistryParseError,
-} from '../../src/projects/registry.js';
-import { writeBootstrapRegistry } from './registry-fixtures.js';
+} from "../../src/projects/registry.js";
+import { writeBootstrapRegistry } from "./registry-fixtures.js";
 
 const dirs: string[] = [];
 
@@ -19,26 +19,26 @@ afterEach(() => {
   }
 });
 
-test('bootstrap parse loads five entries', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("bootstrap parse loads five entries", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
   const path = writeBootstrapRegistry(dir);
 
   const registry = loadProjectRegistry(path);
   expect(registry.list()).toHaveLength(5);
-  expect(registry.get('sirius')?.root_path).toBe('/tmp/sirius');
-  expect(registry.has('penumbra')).toBe(true);
-  expect(registry.has('nope')).toBe(false);
+  expect(registry.get("sirius")?.root_path).toBe("/tmp/sirius");
+  expect(registry.has("penumbra")).toBe(true);
+  expect(registry.has("nope")).toBe(false);
 });
 
-test('loadProjectRegistry stores canonical_root_path for symlinked roots', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("loadProjectRegistry stores canonical_root_path for symlinked roots", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const canonicalDir = join(dir, 'canonical');
-  const aliasDir = join(dir, 'alias');
+  const canonicalDir = join(dir, "canonical");
+  const aliasDir = join(dir, "alias");
   mkdirSync(canonicalDir);
-  symlinkSync(canonicalDir, aliasDir, 'dir');
-  const path = join(dir, 'projects.yaml');
+  symlinkSync(canonicalDir, aliasDir, "dir");
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -48,15 +48,15 @@ test('loadProjectRegistry stores canonical_root_path for symlinked roots', () =>
   );
 
   const registry = loadProjectRegistry(path);
-  expect(registry.get('penumbra')?.root_path).toBe(aliasDir);
-  expect(registry.get('penumbra')?.canonical_root_path).toBe(realpathSync(canonicalDir));
+  expect(registry.get("penumbra")?.root_path).toBe(aliasDir);
+  expect(registry.get("penumbra")?.canonical_root_path).toBe(realpathSync(canonicalDir));
 });
 
-test('loadProjectRegistry ignores missing root_path canonicalization failures', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("loadProjectRegistry ignores missing root_path canonicalization failures", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const missingRoot = join(dir, 'does-not-exist');
-  const path = join(dir, 'projects.yaml');
+  const missingRoot = join(dir, "does-not-exist");
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -66,15 +66,15 @@ test('loadProjectRegistry ignores missing root_path canonicalization failures', 
   );
 
   const registry = loadProjectRegistry(path);
-  expect(registry.get('penumbra')?.root_path).toBe(missingRoot);
-  expect(registry.get('penumbra')?.canonical_root_path).toBeUndefined();
+  expect(registry.get("penumbra")?.root_path).toBe(missingRoot);
+  expect(registry.get("penumbra")?.canonical_root_path).toBeUndefined();
 });
 
-test('canonicalization warning truncates long values', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("canonicalization warning truncates long values", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const missingRoot = `${'a'.repeat(300)}`;
-  const path = join(dir, 'projects.yaml');
+  const missingRoot = `${"a".repeat(300)}`;
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -89,16 +89,16 @@ test('canonicalization warning truncates long values', () => {
   try {
     loadProjectRegistry(path);
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(String(warn.mock.calls[0]?.[0])).toContain(`${'a'.repeat(253)}...`);
+    expect(String(warn.mock.calls[0]?.[0])).toContain(`${"a".repeat(253)}...`);
   } finally {
     console.warn = originalWarn;
   }
 });
 
-test('duplicate id throws', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("duplicate id throws", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -114,20 +114,20 @@ test('duplicate id throws', () => {
     loadProjectRegistry(path);
   } catch (err) {
     expect(err).toBeInstanceOf(ProjectRegistryDuplicateId);
-    expect((err as ProjectRegistryDuplicateId).id).toBe('penumbra');
+    expect((err as ProjectRegistryDuplicateId).id).toBe("penumbra");
   }
 });
 
-test('malformed yaml throws', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("malformed yaml throws", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
-  writeFileSync(path, 'projects: [\n  - not valid yaml\n');
+  const path = join(dir, "projects.yaml");
+  writeFileSync(path, "projects: [\n  - not valid yaml\n");
 
   expect(() => loadProjectRegistry(path)).toThrow(ProjectRegistryParseError);
 });
 
-test('missing file returns empty registry and warns once', () => {
+test("missing file returns empty registry and warns once", () => {
   const path = join(tmpdir(), `penumbra-missing-${Date.now()}-${Math.random()}.yaml`);
   const warn = mock(() => {});
   const originalWarn = console.warn;
@@ -136,7 +136,7 @@ test('missing file returns empty registry and warns once', () => {
     const first = loadProjectRegistry(path);
     const second = loadProjectRegistry(path);
     expect(first.list()).toHaveLength(0);
-    expect(first.get('penumbra')).toBeUndefined();
+    expect(first.get("penumbra")).toBeUndefined();
     expect(second.list()).toHaveLength(0);
     expect(warn).toHaveBeenCalledTimes(1);
   } finally {
@@ -144,10 +144,10 @@ test('missing file returns empty registry and warns once', () => {
   }
 });
 
-test('bad project_id format throws', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("bad project_id format throws", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -159,10 +159,10 @@ test('bad project_id format throws', () => {
   expect(() => loadProjectRegistry(path)).toThrow(ProjectRegistryParseError);
 });
 
-test('gh_repo parses owner/name form', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("gh_repo parses owner/name form", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -173,13 +173,13 @@ test('gh_repo parses owner/name form', () => {
   );
 
   const registry = loadProjectRegistry(path);
-  expect(getGithubRepo(registry.get('penumbra'))).toBe('acordeiro/penumbra');
+  expect(getGithubRepo(registry.get("penumbra"))).toBe("acordeiro/penumbra");
 });
 
-test('invalid gh_repo format throws', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("invalid gh_repo format throws", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -192,10 +192,10 @@ test('invalid gh_repo format throws', () => {
   expect(() => loadProjectRegistry(path)).toThrow(ProjectRegistryParseError);
 });
 
-test('remote github form parses and helper prefers remote repo', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("remote github form parses and helper prefers remote repo", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -208,14 +208,14 @@ test('remote github form parses and helper prefers remote repo', () => {
   );
 
   const registry = loadProjectRegistry(path);
-  expect(registry.get('penumbra')?.remote).toEqual({ kind: 'github', repo: 'acordeiro/penumbra' });
-  expect(getGithubRepo(registry.get('penumbra'))).toBe('acordeiro/penumbra');
+  expect(registry.get("penumbra")?.remote).toEqual({ kind: "github", repo: "acordeiro/penumbra" });
+  expect(getGithubRepo(registry.get("penumbra"))).toBe("acordeiro/penumbra");
 });
 
-test('both gh_repo and remote throw', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("both gh_repo and remote throw", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -228,13 +228,15 @@ test('both gh_repo and remote throw', () => {
 `,
   );
 
-  expect(() => loadProjectRegistry(path)).toThrow('declares both legacy gh_repo and remote; pick one');
+  expect(() => loadProjectRegistry(path)).toThrow(
+    "declares both legacy gh_repo and remote; pick one",
+  );
 });
 
-test('invalid remote github repo format throws', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("invalid remote github repo format throws", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -249,10 +251,10 @@ test('invalid remote github repo format throws', () => {
   expect(() => loadProjectRegistry(path)).toThrow(ProjectRegistryParseError);
 });
 
-test('remote parses when repo appears before kind', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("remote parses when repo appears before kind", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -265,13 +267,13 @@ test('remote parses when repo appears before kind', () => {
   );
 
   const registry = loadProjectRegistry(path);
-  expect(registry.get('penumbra')?.remote).toEqual({ kind: 'github', repo: 'acordeiro/penumbra' });
+  expect(registry.get("penumbra")?.remote).toEqual({ kind: "github", repo: "acordeiro/penumbra" });
 });
 
-test('remote parses with blank line before kind', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("remote parses with blank line before kind", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -285,13 +287,13 @@ test('remote parses with blank line before kind', () => {
   );
 
   const registry = loadProjectRegistry(path);
-  expect(registry.get('penumbra')?.remote).toEqual({ kind: 'github', repo: 'acordeiro/penumbra' });
+  expect(registry.get("penumbra")?.remote).toEqual({ kind: "github", repo: "acordeiro/penumbra" });
 });
 
-test('remote block missing repo throws', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("remote block missing repo throws", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -302,13 +304,13 @@ test('remote block missing repo throws', () => {
 `,
   );
 
-  expect(() => loadProjectRegistry(path)).toThrow('remote block must contain kind and repo');
+  expect(() => loadProjectRegistry(path)).toThrow("remote block must contain kind and repo");
 });
 
-test('multiple remote entries do not swallow the next project', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("multiple remote entries do not swallow the next project", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -327,18 +329,18 @@ test('multiple remote entries do not swallow the next project', () => {
 
   const registry = loadProjectRegistry(path);
   expect(registry.list()).toHaveLength(2);
-  expect(registry.get('penumbra')?.remote).toEqual({ kind: 'github', repo: 'acordeiro/penumbra' });
-  expect(registry.get('sirius')?.remote).toEqual({ kind: 'github', repo: 'acordeiro/sirius' });
+  expect(registry.get("penumbra")?.remote).toEqual({ kind: "github", repo: "acordeiro/penumbra" });
+  expect(registry.get("sirius")?.remote).toEqual({ kind: "github", repo: "acordeiro/sirius" });
 });
 
-test('default registry path points at home .config/penumbra/projects.yaml', () => {
+test("default registry path points at home .config/penumbra/projects.yaml", () => {
   expect(defaultProjectRegistryPath()).toMatch(/\.config[\\/]penumbra[\\/]+projects\.yaml$/);
 });
 
-test('dreaming block parses full config', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("dreaming block parses full config", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -353,16 +355,16 @@ test('dreaming block parses full config', () => {
   );
 
   const registry = loadProjectRegistry(path);
-  expect(registry.get('penumbra')?.dreaming).toEqual({
-    research_provider: 'firecrawl',
-    allowed_domains: ['example.com', 'wikipedia.org'],
+  expect(registry.get("penumbra")?.dreaming).toEqual({
+    research_provider: "firecrawl",
+    allowed_domains: ["example.com", "wikipedia.org"],
   });
 });
 
-test('dreaming block parses without allowed_domains', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("dreaming block parses without allowed_domains", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -374,14 +376,14 @@ test('dreaming block parses without allowed_domains', () => {
   );
 
   const registry = loadProjectRegistry(path);
-  expect(registry.get('penumbra')?.dreaming?.research_provider).toBe('webfetch');
-  expect(registry.get('penumbra')?.dreaming?.allowed_domains).toBeUndefined();
+  expect(registry.get("penumbra")?.dreaming?.research_provider).toBe("webfetch");
+  expect(registry.get("penumbra")?.dreaming?.allowed_domains).toBeUndefined();
 });
 
-test('missing dreaming block leaves dreaming undefined', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("missing dreaming block leaves dreaming undefined", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -391,13 +393,13 @@ test('missing dreaming block leaves dreaming undefined', () => {
   );
 
   const registry = loadProjectRegistry(path);
-  expect(registry.get('penumbra')?.dreaming).toBeUndefined();
+  expect(registry.get("penumbra")?.dreaming).toBeUndefined();
 });
 
-test('invalid dreaming research_provider throws', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("invalid dreaming research_provider throws", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -411,10 +413,10 @@ test('invalid dreaming research_provider throws', () => {
   expect(() => loadProjectRegistry(path)).toThrow(ProjectRegistryParseError);
 });
 
-test('dreaming block parses research_provider and allowed_domains', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("dreaming block parses research_provider and allowed_domains", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -429,16 +431,16 @@ test('dreaming block parses research_provider and allowed_domains', () => {
   );
 
   const registry = loadProjectRegistry(path);
-  expect(registry.get('penumbra')?.dreaming).toEqual({
-    research_provider: 'firecrawl',
-    allowed_domains: ['example.com', 'wikipedia.org'],
+  expect(registry.get("penumbra")?.dreaming).toEqual({
+    research_provider: "firecrawl",
+    allowed_domains: ["example.com", "wikipedia.org"],
   });
 });
 
-test('dreaming block parses only research_provider and leaves allowed_domains undefined', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("dreaming block parses only research_provider and leaves allowed_domains undefined", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -450,14 +452,14 @@ test('dreaming block parses only research_provider and leaves allowed_domains un
   );
 
   const registry = loadProjectRegistry(path);
-  expect(registry.get('penumbra')?.dreaming?.research_provider).toBe('webfetch');
-  expect(registry.get('penumbra')?.dreaming?.allowed_domains).toBeUndefined();
+  expect(registry.get("penumbra")?.dreaming?.research_provider).toBe("webfetch");
+  expect(registry.get("penumbra")?.dreaming?.allowed_domains).toBeUndefined();
 });
 
-test('dreaming block omitted leaves entry dreaming undefined', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("dreaming block omitted leaves entry dreaming undefined", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -467,13 +469,13 @@ test('dreaming block omitted leaves entry dreaming undefined', () => {
   );
 
   const registry = loadProjectRegistry(path);
-  expect(registry.get('penumbra')?.dreaming).toBeUndefined();
+  expect(registry.get("penumbra")?.dreaming).toBeUndefined();
 });
 
-test('invalid dreaming research_provider is rejected by schema', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("invalid dreaming research_provider is rejected by schema", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -487,14 +489,14 @@ test('invalid dreaming research_provider is rejected by schema', () => {
   expect(() => loadProjectRegistry(path)).toThrow(ProjectRegistryParseError);
 });
 
-test('dreaming block followed by another project entry: domain-list parser stops at sibling indent', () => {
+test("dreaming block followed by another project entry: domain-list parser stops at sibling indent", () => {
   // Regression: original parser greedily consumed the next project's `  - project_id:`
   // as a domain entry because `^\s+-\s*(.+)\s*$` didn't enforce strict indent depth.
-  mkdirSync('/tmp/penumbra', { recursive: true });
-  mkdirSync('/tmp/sirius', { recursive: true });
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  mkdirSync("/tmp/penumbra", { recursive: true });
+  mkdirSync("/tmp/sirius", { recursive: true });
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -512,18 +514,18 @@ test('dreaming block followed by another project entry: domain-list parser stops
 
   const registry = loadProjectRegistry(path);
   expect(registry.list()).toHaveLength(2);
-  expect(registry.get('penumbra')?.dreaming?.allowed_domains).toEqual([
-    'en.wikipedia.org',
-    'docs.anthropic.com',
+  expect(registry.get("penumbra")?.dreaming?.allowed_domains).toEqual([
+    "en.wikipedia.org",
+    "docs.anthropic.com",
   ]);
-  expect(registry.has('sirius')).toBe(true);
-  expect(registry.get('sirius')?.root_path).toBe('/tmp/sirius');
+  expect(registry.has("sirius")).toBe(true);
+  expect(registry.get("sirius")?.root_path).toBe("/tmp/sirius");
 });
 
-test('entry key inline comments are stripped', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("entry key inline comments are stripped", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -533,13 +535,13 @@ test('entry key inline comments are stripped', () => {
   );
 
   const registry = loadProjectRegistry(path);
-  expect(registry.get('foo')?.project_id).toBe('foo');
+  expect(registry.get("foo")?.project_id).toBe("foo");
 });
 
-test('quoted root_path inline comments are stripped from raw value only', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("quoted root_path inline comments are stripped from raw value only", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -549,13 +551,13 @@ test('quoted root_path inline comments are stripped from raw value only', () => 
   );
 
   const registry = loadProjectRegistry(path);
-  expect(registry.get('quotes')?.root_path).toBe('/path/with spaces');
+  expect(registry.get("quotes")?.root_path).toBe("/path/with spaces");
 });
 
-test('dreaming research_provider inline comments are stripped', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("dreaming research_provider inline comments are stripped", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -567,13 +569,13 @@ test('dreaming research_provider inline comments are stripped', () => {
   );
 
   const registry = loadProjectRegistry(path);
-  expect(registry.get('penumbra')?.dreaming?.research_provider).toBe('firecrawl');
+  expect(registry.get("penumbra")?.dreaming?.research_provider).toBe("firecrawl");
 });
 
-test('allowed_domains inline comments are stripped', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("allowed_domains inline comments are stripped", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -586,13 +588,13 @@ test('allowed_domains inline comments are stripped', () => {
   );
 
   const registry = loadProjectRegistry(path);
-  expect(registry.get('penumbra')?.dreaming?.allowed_domains).toEqual(['example.com']);
+  expect(registry.get("penumbra")?.dreaming?.allowed_domains).toEqual(["example.com"]);
 });
 
-test('quoted inline # is preserved', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+test("quoted inline # is preserved", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
+  const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
     `projects:
@@ -602,5 +604,5 @@ test('quoted inline # is preserved', () => {
   );
 
   const registry = loadProjectRegistry(path);
-  expect(registry.get('foo')?.root_path).toBe('foo # not-comment');
+  expect(registry.get("foo")?.root_path).toBe("foo # not-comment");
 });

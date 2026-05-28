@@ -1,10 +1,10 @@
-import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import {
   openInvocationSink,
   type InvocationSink,
   type InvocationSinkOptions,
-} from './invocation-sink.js';
+} from "./invocation-sink.js";
 
 const DEFAULT_OPTIONS: Readonly<InvocationSinkOptions> = Object.freeze({});
 
@@ -17,8 +17,8 @@ export function resolveDefaultInvocationLogPath(
   env: NodeJS.ProcessEnv = process.env,
   home: string = homedir(),
 ): string {
-  const stateHome = env.XDG_STATE_HOME || join(home, '.local', 'state');
-  return resolve(stateHome, 'penumbra', 'mcp-invocations.jsonl');
+  const stateHome = env.XDG_STATE_HOME || join(home, ".local", "state");
+  return resolve(stateHome, "penumbra", "mcp-invocations.jsonl");
 }
 
 let activeSink: InvocationSink | null = null;
@@ -39,7 +39,7 @@ export async function initSink(
 ): Promise<InvocationSink> {
   if (closing !== null) await closing;
   if (activeSink !== null) {
-    throw new Error('initSink: invocation sink is already initialized; call closeSink first');
+    throw new Error("initSink: invocation sink is already initialized; call closeSink first");
   }
   activeSink = openInvocationSink(path, options);
   return activeSink;
@@ -51,10 +51,10 @@ export async function initSink(
  */
 export function getSink(): InvocationSink {
   if (closing !== null) {
-    throw new Error('getSink: invocation sink is closing; await closeSink before reopening');
+    throw new Error("getSink: invocation sink is closing; await closeSink before reopening");
   }
   if (activeSink === null) {
-    throw new Error('getSink: invocation sink not initialized; call initSink first');
+    throw new Error("getSink: invocation sink not initialized; call initSink first");
   }
   return activeSink;
 }

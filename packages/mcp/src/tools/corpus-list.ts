@@ -1,5 +1,5 @@
-import { toTextContent } from '@nova/mcp-shared';
-import type { DaemonClient } from '../daemon-client.js';
+import { toTextContent } from "@nova/mcp-shared";
+import type { DaemonClient } from "../daemon-client.js";
 
 export const CorpusListInputShape = {} as const;
 

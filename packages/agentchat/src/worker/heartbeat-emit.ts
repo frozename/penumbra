@@ -1,4 +1,4 @@
-import type { DispatchEventInput } from '@penumbra/core';
+import type { DispatchEventInput } from "@penumbra/core";
 
 export interface EmitHeartbeatOpts {
   client: { postHeartbeat: (worker_id: string) => Promise<void> };
@@ -14,10 +14,10 @@ export async function emitHeartbeat(opts: EmitHeartbeatOpts): Promise<void> {
     err = caught;
   } finally {
     opts.onEvent?.({
-      handoff_id: '',
+      handoff_id: "",
       worker_id: opts.workerId,
-      source: 'worker',
-      kind: 'heartbeat.sent',
+      source: "worker",
+      kind: "heartbeat.sent",
       ts: new Date().toISOString(),
     });
   }

@@ -1,43 +1,48 @@
-import { z } from 'zod';
-import type { DispatchEvent, DispatchEventInput, DispatchEventKind, Services } from '@penumbra/core';
+import { z } from "zod";
+import type {
+  DispatchEvent,
+  DispatchEventInput,
+  DispatchEventKind,
+  Services,
+} from "@penumbra/core";
 
-import { json } from './_helpers.js';
+import { json } from "./_helpers.js";
 const KIND_VALUES = [
-  'dispatch.start',
-  'dispatch.end',
-  'acp.server.start',
-  'acp.session.start',
-  'acp.session.end',
-  'http.server.start',
-  'http.session.start',
-  'http.session.end',
-  'proc.spawn',
-  'proc.kill.sent',
-  'proc.exited.resolved',
-  'cancel.received',
-  'cancel.dispatched',
-  'heartbeat.sent',
-  'heartbeat.received',
-  'watchdog.tick',
-  'watchdog.auto_fail',
-  'claim',
-  'agent.thought',
-  'agent.thought.overflow',
-  'agent.thought.digest',
-  'agent.thought.signal',
-  'agent.tool_call.failed',
-  'extra_worker_wedge_evicted',
-  'shell.session.open',
-  'shell.run',
-  'shell.session.close',
-  'worker.recovery.requeued',
-  'worker.recovery.exhausted',
+  "dispatch.start",
+  "dispatch.end",
+  "acp.server.start",
+  "acp.session.start",
+  "acp.session.end",
+  "http.server.start",
+  "http.session.start",
+  "http.session.end",
+  "proc.spawn",
+  "proc.kill.sent",
+  "proc.exited.resolved",
+  "cancel.received",
+  "cancel.dispatched",
+  "heartbeat.sent",
+  "heartbeat.received",
+  "watchdog.tick",
+  "watchdog.auto_fail",
+  "claim",
+  "agent.thought",
+  "agent.thought.overflow",
+  "agent.thought.digest",
+  "agent.thought.signal",
+  "agent.tool_call.failed",
+  "extra_worker_wedge_evicted",
+  "shell.session.open",
+  "shell.run",
+  "shell.session.close",
+  "worker.recovery.requeued",
+  "worker.recovery.exhausted",
 ] as const satisfies readonly DispatchEventKind[];
 
 const EventSchema = z.object({
   handoff_id: z.string(),
   worker_id: z.string().nullish(),
-  source: z.enum(['worker', 'daemon']),
+  source: z.enum(["worker", "daemon"]),
   kind: z.enum(KIND_VALUES),
   ts: z.string().min(1),
   meta: z.record(z.string(), z.unknown()).optional(),
@@ -52,11 +57,11 @@ export async function dispatchEventsPostRoute(req: Request, services: Services):
   try {
     body = await req.json();
   } catch {
-    return json({ error: 'invalid_json' }, 400);
+    return json({ error: "invalid_json" }, 400);
   }
   const parsed = BatchSchema.safeParse(body);
   if (!parsed.success) {
-    return json({ error: 'invalid_payload', issues: parsed.error.issues }, 400);
+    return json({ error: "invalid_payload", issues: parsed.error.issues }, 400);
   }
 
   services.dispatchEventLog.recordBatch(parsed.data.events as DispatchEventInput[]);
@@ -65,8 +70,8 @@ export async function dispatchEventsPostRoute(req: Request, services: Services):
 
 export async function dispatchEventsGetRoute(req: Request, services: Services): Promise<Response> {
   const url = new URL(req.url);
-  const handoff_id = url.searchParams.get('handoff_id');
-  if (!handoff_id) return json({ error: 'missing_handoff_id' }, 400);
+  const handoff_id = url.searchParams.get("handoff_id");
+  if (!handoff_id) return json({ error: "missing_handoff_id" }, 400);
 
   const events = services.dispatchEventLog.listByHandoff(handoff_id).map((row) => ({
     handoff_id: row.handoff_id,
@@ -79,16 +84,18 @@ export async function dispatchEventsGetRoute(req: Request, services: Services): 
   return json({ events });
 }
 
-const StreamQuerySchema = z.object({
-  since: z.coerce.number().int().nonnegative().optional(),
-  handoff_id: z.string().min(1).optional(),
-  source: z.enum(['worker', 'daemon']).optional(),
-}).strict();
+const StreamQuerySchema = z
+  .object({
+    since: z.coerce.number().int().nonnegative().optional(),
+    handoff_id: z.string().min(1).optional(),
+    source: z.enum(["worker", "daemon"]).optional(),
+  })
+  .strict();
 
 interface DispatchEventDbRow {
   handoff_id: string;
   worker_id: string | null;
-  source: 'worker' | 'daemon';
+  source: "worker" | "daemon";
   kind: string;
   ts: string;
   meta_json: string | null;
@@ -96,11 +103,14 @@ interface DispatchEventDbRow {
 
 function parseStreamKindFilter(raw: string | null): Set<DispatchEventKind> | Response | null {
   if (!raw) return null;
-  const items = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  const items = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   if (items.length === 0) return null;
   const parsed = z.array(z.enum(KIND_VALUES)).min(1).safeParse(items);
   if (!parsed.success) {
-    return json({ error: 'invalid_input', details: parsed.error.issues }, 400);
+    return json({ error: "invalid_input", details: parsed.error.issues }, 400);
   }
   return new Set(parsed.data);
 }
@@ -112,20 +122,23 @@ function hydrateRow(row: DispatchEventDbRow): DispatchEvent {
     source: row.source,
     kind: row.kind as DispatchEventKind,
     ts: row.ts,
-    meta: row.meta_json ? JSON.parse(row.meta_json) as Record<string, unknown> : null,
+    meta: row.meta_json ? (JSON.parse(row.meta_json) as Record<string, unknown>) : null,
   };
 }
 
-export async function dispatchEventsStreamRoute(req: Request, services: Services): Promise<Response> {
+export async function dispatchEventsStreamRoute(
+  req: Request,
+  services: Services,
+): Promise<Response> {
   const url = new URL(req.url);
   const query = StreamQuerySchema.safeParse({
-    since: url.searchParams.get('since') ?? undefined,
-    handoff_id: url.searchParams.get('handoff_id') ?? undefined,
-    source: url.searchParams.get('source') ?? undefined,
+    since: url.searchParams.get("since") ?? undefined,
+    handoff_id: url.searchParams.get("handoff_id") ?? undefined,
+    source: url.searchParams.get("source") ?? undefined,
   });
-  if (!query.success) return json({ error: 'invalid_input', details: query.error.issues }, 400);
+  if (!query.success) return json({ error: "invalid_input", details: query.error.issues }, 400);
 
-  const kindFilter = parseStreamKindFilter(url.searchParams.get('kind'));
+  const kindFilter = parseStreamKindFilter(url.searchParams.get("kind"));
   if (kindFilter instanceof Response) return kindFilter;
 
   const predicate = (event: DispatchEvent): boolean => {
@@ -189,7 +202,7 @@ export async function dispatchEventsStreamRoute(req: Request, services: Services
         }
       }
 
-      write(': ok\n\n');
+      write(": ok\n\n");
 
       void (async () => {
         try {
@@ -202,7 +215,7 @@ export async function dispatchEventsStreamRoute(req: Request, services: Services
       })();
 
       keepalive = setInterval(() => {
-        if (!write(': keepalive\n\n')) {
+        if (!write(": keepalive\n\n")) {
           void close();
         }
       }, 30_000);
@@ -218,9 +231,9 @@ export async function dispatchEventsStreamRoute(req: Request, services: Services
   return new Response(stream, {
     status: 200,
     headers: {
-      'content-type': 'text/event-stream',
-      'cache-control': 'no-cache',
-      connection: 'keep-alive',
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
     },
   });
 }

@@ -1,6 +1,6 @@
-import { access } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import type { TaskMeta } from './schema.js';
+import { access } from "node:fs/promises";
+import { resolve } from "node:path";
+import type { TaskMeta } from "./schema.js";
 
 export type ValidationError = { task_id: string; rule: string; message: string };
 
@@ -19,7 +19,7 @@ export interface ValidateOpts {
   header?: ValidatorPlanHeader;
 }
 
-const NO_PROJECT_KEY = '__noproject__';
+const NO_PROJECT_KEY = "__noproject__";
 
 type TaskIndex = Map<string, number>;
 
@@ -36,10 +36,11 @@ function effectiveProject(
   task: ValidatorTask,
   header: ValidatorPlanHeader | undefined,
 ): string | undefined {
-  const fromTask = typeof task.project === 'string' && task.project.length > 0 ? task.project : undefined;
+  const fromTask =
+    typeof task.project === "string" && task.project.length > 0 ? task.project : undefined;
   if (fromTask) return fromTask;
   const fromHeader =
-    header && typeof header.home_project === 'string' && header.home_project.length > 0
+    header && typeof header.home_project === "string" && header.home_project.length > 0
       ? header.home_project
       : undefined;
   return fromHeader;
@@ -53,7 +54,7 @@ function parseDep(
   dep: string,
   declarerProject: string | undefined,
 ): { project: string | undefined; id: string; qualified: boolean } {
-  const slash = dep.indexOf('/');
+  const slash = dep.indexOf("/");
   if (slash > 0 && slash < dep.length - 1) {
     return { project: dep.slice(0, slash), id: dep.slice(slash + 1), qualified: true };
   }
@@ -148,7 +149,7 @@ export async function validatePlan(
       if (parallelTaskIndex === undefined) {
         errors.push({
           task_id: task.id,
-          rule: 'parallel_with_unknown',
+          rule: "parallel_with_unknown",
           message: `parallel_with references unknown task id "${parallelId}"`,
         });
         continue;
@@ -161,19 +162,19 @@ export async function validatePlan(
       if (!parallelTask.parallel_with.includes(task.id)) {
         errors.push({
           task_id: task.id,
-          rule: 'parallel_with_not_reciprocal',
+          rule: "parallel_with_not_reciprocal",
           message: `parallel_with must be reciprocated by task "${parallelId}"`,
         });
       }
     }
 
-    if (task.file_scope === 'new') {
+    if (task.file_scope === "new") {
       for (const file of task.files) {
         const filePath = resolve(opts.repoRoot, file);
         if (await pathExists(filePath)) {
           errors.push({
             task_id: task.id,
-            rule: 'file_already_exists',
+            rule: "file_already_exists",
             message: `file already exists: ${file}`,
           });
         }
@@ -183,7 +184,7 @@ export async function validatePlan(
     if (!opts.knownAgents.has(task.preferred_agent)) {
       errors.push({
         task_id: task.id,
-        rule: 'preferred_agent_unknown',
+        rule: "preferred_agent_unknown",
         message: `preferred_agent "${task.preferred_agent}" is not in the registry`,
       });
     }
@@ -191,7 +192,7 @@ export async function validatePlan(
     if (!opts.knownAgents.has(task.fallback_agent)) {
       errors.push({
         task_id: task.id,
-        rule: 'fallback_agent_unknown',
+        rule: "fallback_agent_unknown",
         message: `fallback_agent "${task.fallback_agent}" is not in the registry`,
       });
     }
@@ -199,7 +200,7 @@ export async function validatePlan(
     if (opts.projectRegistry && eff && !opts.projectRegistry.has(eff)) {
       errors.push({
         task_id: task.id,
-        rule: 'unknown_project',
+        rule: "unknown_project",
         message: `unknown project "${eff}" (not in registry)`,
       });
     }
@@ -210,7 +211,7 @@ export async function validatePlan(
       if (!canonicalIndex.has(depKey)) {
         errors.push({
           task_id: task.id,
-          rule: 'unknown_dep_target',
+          rule: "unknown_dep_target",
           message: `depends_on "${dependency}" not found in plan`,
         });
       }
@@ -219,8 +220,8 @@ export async function validatePlan(
     if (cycleNodes.has(canonicalKey(eff, task.id))) {
       errors.push({
         task_id: task.id,
-        rule: 'depends_on_cycle',
-        message: 'depends_on cycle detected',
+        rule: "depends_on_cycle",
+        message: "depends_on cycle detected",
       });
     }
   }

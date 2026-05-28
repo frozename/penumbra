@@ -1,6 +1,6 @@
-import { z } from 'zod';
-import { toTextContent } from '@nova/mcp-shared';
-import type { DaemonClient } from '../daemon-client.js';
+import { z } from "zod";
+import { toTextContent } from "@nova/mcp-shared";
+import type { DaemonClient } from "../daemon-client.js";
 
 export const MemoryListPendingDreamActionsInputShape = {
   limit: z
@@ -9,7 +9,7 @@ export const MemoryListPendingDreamActionsInputShape = {
     .min(1)
     .max(500)
     .optional()
-    .describe('Maximum actions to return (default 100, max 500)'),
+    .describe("Maximum actions to return (default 100, max 500)"),
 };
 
 const Schema = z.object(MemoryListPendingDreamActionsInputShape);

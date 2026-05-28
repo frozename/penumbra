@@ -1,25 +1,25 @@
 export type DispatchReliabilityStatus =
-  | 'complete'
-  | 'missing_dispatch_start'
-  | 'missing_adapter_lifecycle'
-  | 'missing_dispatch_end'
-  | 'non_terminal_stale'
-  | 'cancel_completed'
-  | 'watchdog_only'
-  | 'no_agent_output'
-  | 'no_worktree_activity'
-  | 'tool_failure_with_end_turn'
-  | 'reconcile_missing'
-  | 'agent_declared_done_unverified'
-  | 'timeline_inconsistent';
+  | "complete"
+  | "missing_dispatch_start"
+  | "missing_adapter_lifecycle"
+  | "missing_dispatch_end"
+  | "non_terminal_stale"
+  | "cancel_completed"
+  | "watchdog_only"
+  | "no_agent_output"
+  | "no_worktree_activity"
+  | "tool_failure_with_end_turn"
+  | "reconcile_missing"
+  | "agent_declared_done_unverified"
+  | "timeline_inconsistent";
 
 export type DispatchRecommendedAction =
-  | 'wait'
-  | 'inspect_worktree'
-  | 'cancel'
-  | 'retry'
-  | 'review_manually'
-  | 'accept';
+  | "wait"
+  | "inspect_worktree"
+  | "cancel"
+  | "retry"
+  | "review_manually"
+  | "accept";
 
 export interface DispatchReliabilityEvent {
   kind: string;
@@ -72,22 +72,28 @@ export interface DispatchReliabilityReport {
   recommended_action: DispatchRecommendedAction;
 }
 
-const TERMINAL_STATUSES = new Set(['completed', 'failed', 'rejected', 'expired']);
-const ADAPTER_EVENT_PREFIXES = ['proc.', 'http.', 'acp.'];
+const TERMINAL_STATUSES = new Set(["completed", "failed", "rejected", "expired"]);
+const ADAPTER_EVENT_PREFIXES = ["proc.", "http.", "acp."];
 
-export function classifyDispatchReliability(input: DispatchReliabilityInput): DispatchReliabilityReport {
+export function classifyDispatchReliability(
+  input: DispatchReliabilityInput,
+): DispatchReliabilityReport {
   const eventKinds = input.events.map((event) => event.kind);
   const has = (kind: string) => eventKinds.includes(kind);
-  const toolFailureCount = input.events.filter((event) => event.kind === 'agent.tool_call.failed').length;
-  const hasAdapterLifecycle = eventKinds.some((kind) => ADAPTER_EVENT_PREFIXES.some((prefix) => kind.startsWith(prefix)));
+  const toolFailureCount = input.events.filter(
+    (event) => event.kind === "agent.tool_call.failed",
+  ).length;
+  const hasAdapterLifecycle = eventKinds.some((kind) =>
+    ADAPTER_EVENT_PREFIXES.some((prefix) => kind.startsWith(prefix)),
+  );
   const terminal = TERMINAL_STATUSES.has(input.handoff.status);
   const cancelRequested = input.handoff.cancel_requested_at !== null;
-  const watchdogFailed = has('watchdog.auto_fail');
+  const watchdogFailed = has("watchdog.auto_fail");
   const missing: string[] = [];
 
-  if (!has('dispatch.start')) missing.push('dispatch.start');
-  if (!hasAdapterLifecycle) missing.push('adapter.lifecycle');
-  if (!has('dispatch.end')) missing.push('dispatch.end');
+  if (!has("dispatch.start")) missing.push("dispatch.start");
+  if (!hasAdapterLifecycle) missing.push("adapter.lifecycle");
+  if (!has("dispatch.end")) missing.push("dispatch.end");
 
   const baseEvidence = {
     handoff_status: input.handoff.status,
@@ -120,66 +126,132 @@ export function classifyDispatchReliability(input: DispatchReliabilityInput): Di
 
   if (!terminal && isStale(input)) {
     return report(
-      'non_terminal_stale',
+      "non_terminal_stale",
       false,
-      'handoff is non-terminal past the stale threshold',
-      usesWorktree(input.handoff) || input.adapterStreaming === false ? 'inspect_worktree' : 'cancel',
+      "handoff is non-terminal past the stale threshold",
+      usesWorktree(input.handoff) || input.adapterStreaming === false
+        ? "inspect_worktree"
+        : "cancel",
       [],
     );
   }
 
-  if (cancelRequested && input.handoff.status === 'completed') {
-    return report('cancel_completed', false, 'cancel-requested handoff completed', 'review_manually', []);
+  if (cancelRequested && input.handoff.status === "completed") {
+    return report(
+      "cancel_completed",
+      false,
+      "cancel-requested handoff completed",
+      "review_manually",
+      [],
+    );
   }
 
-  if (watchdogFailed && !has('dispatch.end')) {
-    return report('watchdog_only', false, 'watchdog failed the handoff without dispatch.end', 'retry', ['dispatch.end']);
+  if (watchdogFailed && !has("dispatch.end")) {
+    return report(
+      "watchdog_only",
+      false,
+      "watchdog failed the handoff without dispatch.end",
+      "retry",
+      ["dispatch.end"],
+    );
   }
 
-  if (!has('dispatch.start')) {
-    return report('missing_dispatch_start', false, 'dispatch.start event is missing', 'review_manually', ['dispatch.start']);
+  if (!has("dispatch.start")) {
+    return report(
+      "missing_dispatch_start",
+      false,
+      "dispatch.start event is missing",
+      "review_manually",
+      ["dispatch.start"],
+    );
   }
 
   if (!hasAdapterLifecycle) {
-    return report('missing_adapter_lifecycle', false, 'adapter lifecycle event is missing', 'review_manually', ['adapter.lifecycle']);
+    return report(
+      "missing_adapter_lifecycle",
+      false,
+      "adapter lifecycle event is missing",
+      "review_manually",
+      ["adapter.lifecycle"],
+    );
   }
 
-  if (!has('dispatch.end')) {
-    return report('missing_dispatch_end', false, 'dispatch.end event is missing', terminal ? 'review_manually' : 'wait', ['dispatch.end']);
+  if (!has("dispatch.end")) {
+    return report(
+      "missing_dispatch_end",
+      false,
+      "dispatch.end event is missing",
+      terminal ? "review_manually" : "wait",
+      ["dispatch.end"],
+    );
   }
 
   if (terminal && input.responseCount === 0 && !input.finalResponseText?.trim()) {
-    return report('no_agent_output', false, 'terminal handoff has no agent output', 'retry', []);
+    return report("no_agent_output", false, "terminal handoff has no agent output", "retry", []);
   }
 
   if (isImplementationTask(input.handoff) && terminal && input.worktreeChanged === false) {
-    return report('no_worktree_activity', false, 'implementation task completed without worktree activity', 'review_manually', []);
-  }
-
-  // tool_call.failed events are treated as recovered when dispatch.end reported committed=true.
-  if (terminal && toolFailureCount > 0 && input.worktreeChanged === true && input.dispatchEndCommitted !== true) {
     return report(
-      'tool_failure_with_end_turn',
+      "no_worktree_activity",
       false,
-      `tool call failed during dispatch (${toolFailureCount}); end_turn reached without recovery`,
-      'retry',
+      "implementation task completed without worktree activity",
+      "review_manually",
       [],
     );
   }
 
-  if (isImplementationTask(input.handoff) && terminal && input.worktreeChanged === true && input.reconciled === false) {
-    return report('reconcile_missing', false, 'implementation task changed files but lacks reconciliation evidence', 'review_manually', []);
+  // tool_call.failed events are treated as recovered when dispatch.end reported committed=true.
+  if (
+    terminal &&
+    toolFailureCount > 0 &&
+    input.worktreeChanged === true &&
+    input.dispatchEndCommitted !== true
+  ) {
+    return report(
+      "tool_failure_with_end_turn",
+      false,
+      `tool call failed during dispatch (${toolFailureCount}); end_turn reached without recovery`,
+      "retry",
+      [],
+    );
+  }
+
+  if (
+    isImplementationTask(input.handoff) &&
+    terminal &&
+    input.worktreeChanged === true &&
+    input.reconciled === false
+  ) {
+    return report(
+      "reconcile_missing",
+      false,
+      "implementation task changed files but lacks reconciliation evidence",
+      "review_manually",
+      [],
+    );
   }
 
   if (hasImpossibleOrder(input.events)) {
-    return report('timeline_inconsistent', false, 'dispatch timeline has impossible event ordering', 'review_manually', []);
+    return report(
+      "timeline_inconsistent",
+      false,
+      "dispatch timeline has impossible event ordering",
+      "review_manually",
+      [],
+    );
   }
 
   if (!terminal) {
-    return report('complete', false, 'handoff is still running and not stale', 'wait', []);
+    return report("complete", false, "handoff is still running and not stale", "wait", []);
   }
 
-  return report('complete', true, 'dispatch lifecycle and result evidence are complete', 'accept', []);
+  return report(
+    "complete",
+    true,
+    "dispatch lifecycle and result evidence are complete",
+    "accept",
+    [],
+  );
 }
 
 function isStale(input: DispatchReliabilityInput): boolean {
@@ -197,8 +269,10 @@ function isStale(input: DispatchReliabilityInput): boolean {
 }
 
 function isImplementationTask(handoff: DispatchReliabilityHandoff): boolean {
-  const taskType = handoff.chain_task_type ?? '';
-  return taskType === 'implement_small' || taskType === 'implement_substantial' || usesWorktree(handoff);
+  const taskType = handoff.chain_task_type ?? "";
+  return (
+    taskType === "implement_small" || taskType === "implement_substantial" || usesWorktree(handoff)
+  );
 }
 
 function usesWorktree(handoff: DispatchReliabilityHandoff): boolean {
@@ -206,8 +280,8 @@ function usesWorktree(handoff: DispatchReliabilityHandoff): boolean {
 }
 
 function hasImpossibleOrder(events: DispatchReliabilityEvent[]): boolean {
-  const start = firstIndex(events, 'dispatch.start');
-  const end = firstIndex(events, 'dispatch.end');
+  const start = firstIndex(events, "dispatch.start");
+  const end = firstIndex(events, "dispatch.end");
   return start >= 0 && end >= 0 && end < start;
 }
 

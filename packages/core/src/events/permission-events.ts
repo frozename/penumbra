@@ -1,4 +1,7 @@
-export type PermissionEventKind = 'permission.created' | 'permission.decided' | 'permission.expired';
+export type PermissionEventKind =
+  | "permission.created"
+  | "permission.decided"
+  | "permission.expired";
 
 export interface PermissionEvent {
   kind: PermissionEventKind;
@@ -26,7 +29,9 @@ export class PermissionEventBus {
 
   subscribe(fn: PermissionEventListener): () => void {
     this.listeners.add(fn);
-    return () => { this.listeners.delete(fn); };
+    return () => {
+      this.listeners.delete(fn);
+    };
   }
 
   emit(evt: PermissionEvent): EmittedPermissionEvent {
@@ -36,7 +41,11 @@ export class PermissionEventBus {
       this.ring.splice(0, this.ring.length - this.ringSize);
     }
     for (const fn of this.listeners) {
-      try { fn(stamped); } catch { /* one bad subscriber must not block others */ }
+      try {
+        fn(stamped);
+      } catch {
+        /* one bad subscriber must not block others */
+      }
     }
     return stamped;
   }

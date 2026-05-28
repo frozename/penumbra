@@ -1,11 +1,11 @@
-import { Database } from 'bun:sqlite';
+import { Database } from "bun:sqlite";
 
 function hasColumnName(column: unknown): column is { name: string } {
   return (
-    typeof column === 'object'
-    && column !== null
-    && 'name' in column
-    && typeof (column as { name?: unknown }).name === 'string'
+    typeof column === "object" &&
+    column !== null &&
+    "name" in column &&
+    typeof (column as { name?: unknown }).name === "string"
   );
 }
 
@@ -13,7 +13,7 @@ export function retireNonDirectMemory(db: Database, memoryId: string, now: numbe
   const hasOrigin = db
     .prepare(`PRAGMA table_info(t2_memories)`)
     .all()
-    .some((column) => hasColumnName(column) && column.name === 'origin');
+    .some((column) => hasColumnName(column) && column.name === "origin");
 
   const sql = hasOrigin
     ? `UPDATE t2_memories
@@ -26,9 +26,7 @@ export function retireNonDirectMemory(db: Database, memoryId: string, now: numbe
        WHERE memory_id = ?
          AND retired_at IS NULL`;
 
-  const result = db.prepare(
-    sql,
-  ).run(now, memoryId);
+  const result = db.prepare(sql).run(now, memoryId);
   return result.changes > 0;
 }
 

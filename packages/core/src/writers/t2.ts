@@ -1,10 +1,10 @@
-import { Database } from 'bun:sqlite';
-import { randomUUID } from 'node:crypto';
-import { z } from 'zod';
-import type { Embedder } from '../embedder/interface.js';
-import { T2MemoryWriteSchema, type T2MemoryWriteInput } from '../schemas/memory.js';
-import type { Clock } from '../utils/clock.js';
-import type { Uuid } from '../utils/uuid.js';
+import { Database } from "bun:sqlite";
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
+import type { Embedder } from "../embedder/interface.js";
+import { T2MemoryWriteSchema, type T2MemoryWriteInput } from "../schemas/memory.js";
+import type { Clock } from "../utils/clock.js";
+import type { Uuid } from "../utils/uuid.js";
 
 export const T2MemoryExtractionSchema = z.object({
   title: z.string().min(1),
@@ -52,9 +52,10 @@ export function writeDirectT2Memory(db: Database, input: DirectT2WriteInput): Di
 
   if (slug !== null) {
     const existing = db
-      .query<{ memory_id: string }, [string, string | null]>(
-        'SELECT memory_id FROM t2_memories WHERE slug = ? AND COALESCE(project_id, \'\') = COALESCE(?, \'\')',
-      )
+      .query<
+        { memory_id: string },
+        [string, string | null]
+      >("SELECT memory_id FROM t2_memories WHERE slug = ? AND COALESCE(project_id, '') = COALESCE(?, '')")
       .get(slug, projectId);
     if (existing) {
       db.run(
@@ -64,10 +65,10 @@ export function writeDirectT2Memory(db: Database, input: DirectT2WriteInput): Di
         [input.title, input.body, hook, subKind, ccKind, projectId, now, existing.memory_id],
       );
       const rowid = db
-        .query<{ rowid: number }, [string]>('SELECT rowid FROM t2_memories WHERE memory_id = ?')
+        .query<{ rowid: number }, [string]>("SELECT rowid FROM t2_memories WHERE memory_id = ?")
         .get(existing.memory_id)!.rowid;
-      db.run('DELETE FROM t2_vec WHERE rowid = ?', [rowid]);
-      db.run('INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)', [rowid, input.embedding]);
+      db.run("DELETE FROM t2_vec WHERE rowid = ?", [rowid]);
+      db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [rowid, input.embedding]);
       return { memory_id: existing.memory_id, created: false };
     }
   }
@@ -83,12 +84,12 @@ export function writeDirectT2Memory(db: Database, input: DirectT2WriteInput): Di
     [
       memoryId,
       projectId,
-      '[]',
+      "[]",
       now,
       now,
       input.title,
       input.body,
-      '{}',
+      "{}",
       null,
       now,
       now,
@@ -100,14 +101,14 @@ export function writeDirectT2Memory(db: Database, input: DirectT2WriteInput): Di
   );
 
   const rowid = db
-    .query<{ rowid: number }, [string]>('SELECT rowid FROM t2_memories WHERE memory_id = ?')
+    .query<{ rowid: number }, [string]>("SELECT rowid FROM t2_memories WHERE memory_id = ?")
     .get(memoryId)!.rowid;
   // Defensive DELETE: SQLite reuses recently-freed rowids on INSERT, so an
   // orphan t2_vec row (left behind by a t2_memories DELETE that didn't cascade)
   // collides with the fresh INSERT here. vec0 virtual tables don't accept
   // INSERT OR REPLACE, so explicit DELETE+INSERT is the canonical pattern.
-  db.run('DELETE FROM t2_vec WHERE rowid = ?', [rowid]);
-  db.run('INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)', [rowid, input.embedding]);
+  db.run("DELETE FROM t2_vec WHERE rowid = ?", [rowid]);
+  db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [rowid, input.embedding]);
   return { memory_id: memoryId, created: true };
 }
 
@@ -138,7 +139,7 @@ export function verifyMemory(
   written: boolean;
 } | null {
   const row = db
-    .query<{ memory_id: string }, [string]>('SELECT memory_id FROM t2_memories WHERE memory_id = ?')
+    .query<{ memory_id: string }, [string]>("SELECT memory_id FROM t2_memories WHERE memory_id = ?")
     .get(memoryId);
   if (!row) return null;
 
@@ -154,7 +155,7 @@ export function verifyMemory(
   try {
     db.transaction(() => {
       db.run(
-        'UPDATE t2_memories SET last_verified_at = ?, last_verified_by = ?, last_verified_actor = ?, last_verified_reason = ?, last_verified_session_id = ? WHERE memory_id = ?',
+        "UPDATE t2_memories SET last_verified_at = ?, last_verified_by = ?, last_verified_actor = ?, last_verified_reason = ?, last_verified_session_id = ? WHERE memory_id = ?",
         [now, claimedBy, verifierActor, reason, sessionId, memoryId],
       );
       db.run(
@@ -179,7 +180,11 @@ export function verifyMemory(
     })();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (message.includes('UNIQUE constraint failed: t2_memory_verification_events.memory_id, t2_memory_verification_events.session_id')) {
+    if (
+      message.includes(
+        "UNIQUE constraint failed: t2_memory_verification_events.memory_id, t2_memory_verification_events.session_id",
+      )
+    ) {
       return {
         memory_id: memoryId,
         last_verified_at: now,
@@ -245,9 +250,9 @@ export async function writeT2Memory(db: Database, input: T2MemoryWriterInput): P
     );
 
     const rowid = db
-      .query<{ rowid: number }, [string]>('SELECT rowid FROM t2_memories WHERE memory_id=?')
+      .query<{ rowid: number }, [string]>("SELECT rowid FROM t2_memories WHERE memory_id=?")
       .get(rec.memory_id)!.rowid;
-    db.run('INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)', [rowid, rec.embedding]);
+    db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [rowid, rec.embedding]);
   })();
 }
 
@@ -275,16 +280,19 @@ export class T2Promotion {
    */
   async promoteRollup(rollupId: string): Promise<number> {
     const rollup = this.opts.db
-      .query<{
-        rollup_id: string;
-        session_id: string;
-        project_id: string | null;
-        user_id: string;
-        started_at: string;
-        ended_at: string | null;
-        origin: string | null;
-      }, [string]>(
-        'SELECT rollup_id, session_id, project_id, user_id, started_at, ended_at, origin FROM t1_rollups WHERE rollup_id = ?',
+      .query<
+        {
+          rollup_id: string;
+          session_id: string;
+          project_id: string | null;
+          user_id: string;
+          started_at: string;
+          ended_at: string | null;
+          origin: string | null;
+        },
+        [string]
+      >(
+        "SELECT rollup_id, session_id, project_id, user_id, started_at, ended_at, origin FROM t1_rollups WHERE rollup_id = ?",
       )
       .get(rollupId);
 
@@ -292,9 +300,10 @@ export class T2Promotion {
 
     // Fetch transcript from t0_events
     const events = this.opts.db
-      .query<{ event_type: string; payload_summary: string | null }, [string]>(
-        'SELECT event_type, payload_summary FROM t0_events WHERE session_id = ? ORDER BY ts ASC',
-      )
+      .query<
+        { event_type: string; payload_summary: string | null },
+        [string]
+      >("SELECT event_type, payload_summary FROM t0_events WHERE session_id = ? ORDER BY ts ASC")
       .all(rollup.session_id);
 
     if (events.length === 0) {
@@ -303,14 +312,14 @@ export class T2Promotion {
     }
 
     const transcript = events
-      .filter(e => e.event_type === 'agent-prompt' || e.event_type === 'agent-response')
+      .filter((e) => e.event_type === "agent-prompt" || e.event_type === "agent-response")
       .map((e) => {
-        const role = e.event_type === 'agent-prompt' ? 'User' : 'Assistant';
-        const content = (e.payload_summary || '').trim();
+        const role = e.event_type === "agent-prompt" ? "User" : "Assistant";
+        const content = (e.payload_summary || "").trim();
         return content ? `${role}: ${content}` : null;
       })
       .filter(Boolean)
-      .join('\n\n');
+      .join("\n\n");
 
     if (!transcript) {
       this.markPromoted(rollupId);
@@ -321,15 +330,18 @@ export class T2Promotion {
       const minTranscriptChars = this.opts.minTranscriptChars ?? 200;
       const maxTranscriptChars = this.opts.maxTranscriptChars ?? 20_000;
       const highFrequencyThreshold = this.opts.highFrequencyThreshold ?? 5;
-      const rollupKind = rollup.origin ?? 't1_rollup';
-      const shapeKey = `${rollup.project_id ?? ''}:${rollupKind}`;
+      const rollupKind = rollup.origin ?? "t1_rollup";
+      const shapeKey = `${rollup.project_id ?? ""}:${rollupKind}`;
       const transcriptLength = transcript.length;
 
       if (transcriptLength < minTranscriptChars) {
-        console.debug(
-          '[t2-promotion] skipping transcript below minimum length',
-          { rollupId, projectId: rollup.project_id, kind: rollupKind, transcriptLength, minTranscriptChars },
-        );
+        console.debug("[t2-promotion] skipping transcript below minimum length", {
+          rollupId,
+          projectId: rollup.project_id,
+          kind: rollupKind,
+          transcriptLength,
+          minTranscriptChars,
+        });
         this.markPromoted(rollupId);
         return 0;
       }
@@ -337,10 +349,13 @@ export class T2Promotion {
       let llmTranscript = transcript;
       if (transcriptLength > maxTranscriptChars) {
         llmTranscript = `${transcript.slice(0, 8000)}\n… [truncated] …\n${transcript.slice(-8000)}`;
-        console.debug(
-          '[t2-promotion] truncating transcript before llm call',
-          { rollupId, projectId: rollup.project_id, kind: rollupKind, transcriptLength, maxTranscriptChars },
-        );
+        console.debug("[t2-promotion] truncating transcript before llm call", {
+          rollupId,
+          projectId: rollup.project_id,
+          kind: rollupKind,
+          transcriptLength,
+          maxTranscriptChars,
+        });
       }
 
       const seenCount = (this.recentShapes.get(shapeKey) ?? 0) + 1;
@@ -350,10 +365,14 @@ export class T2Promotion {
       }
       this.recentShapes.set(shapeKey, seenCount);
       if (seenCount > highFrequencyThreshold && Math.random() < 0.5) {
-        console.debug(
-          '[t2-promotion] skipping high-frequency transcript sample',
-          { rollupId, projectId: rollup.project_id, kind: rollupKind, shapeKey, seenCount, highFrequencyThreshold },
-        );
+        console.debug("[t2-promotion] skipping high-frequency transcript sample", {
+          rollupId,
+          projectId: rollup.project_id,
+          kind: rollupKind,
+          shapeKey,
+          seenCount,
+          highFrequencyThreshold,
+        });
         this.markPromoted(rollupId);
         return 0;
       }
@@ -377,7 +396,7 @@ export class T2Promotion {
         return 0;
       }
 
-      const bodies = extractions.map(e => e.body);
+      const bodies = extractions.map((e) => e.body);
       const embeddings = await this.opts.embedder.embed(bodies);
 
       this.opts.db.transaction(() => {
@@ -410,10 +429,10 @@ export class T2Promotion {
           );
 
           const rowid = this.opts.db
-            .query<{ rowid: number }, [string]>('SELECT rowid FROM t2_memories WHERE memory_id=?')
+            .query<{ rowid: number }, [string]>("SELECT rowid FROM t2_memories WHERE memory_id=?")
             .get(memoryId)!.rowid;
-          this.opts.db.run('DELETE FROM t2_vec WHERE rowid = ?', [rowid]);
-          this.opts.db.run('INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)', [rowid, vec]);
+          this.opts.db.run("DELETE FROM t2_vec WHERE rowid = ?", [rowid]);
+          this.opts.db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [rowid, vec]);
         }
 
         this.markPromoted(rollupId);
@@ -428,14 +447,14 @@ export class T2Promotion {
 
   private markPromoted(rollupId: string): void {
     this.opts.db.run(
-      'UPDATE t1_rollups SET t2_promoted_at = ?, failed_promotion_attempts = 0 WHERE rollup_id = ?',
+      "UPDATE t1_rollups SET t2_promoted_at = ?, failed_promotion_attempts = 0 WHERE rollup_id = ?",
       [this.opts.clock().toISOString(), rollupId],
     );
   }
 
   private recordFailure(rollupId: string): void {
     this.opts.db.run(
-      'UPDATE t1_rollups SET failed_promotion_attempts = failed_promotion_attempts + 1 WHERE rollup_id = ?',
+      "UPDATE t1_rollups SET failed_promotion_attempts = failed_promotion_attempts + 1 WHERE rollup_id = ?",
       [rollupId],
     );
   }

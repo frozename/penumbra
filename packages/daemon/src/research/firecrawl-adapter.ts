@@ -1,6 +1,6 @@
-import type { WebResearchAdapter, WebResearchResult } from '../../../core/src/research/types.js';
-import { OffAdapter } from './off-adapter.js';
-import { WebFetchAdapter } from './webfetch-adapter.js';
+import type { WebResearchAdapter, WebResearchResult } from "../../../core/src/research/types.js";
+import { OffAdapter } from "./off-adapter.js";
+import { WebFetchAdapter } from "./webfetch-adapter.js";
 
 // Injectable transport — real impl hits the Firecrawl HTTP API; test stubs override.
 export interface FirecrawlTransport {
@@ -38,8 +38,8 @@ class DefaultFirecrawlTransport implements FirecrawlTransport {
   private baseUrl: string;
 
   constructor() {
-    this.apiKey = process.env.FIRECRAWL_API_KEY ?? '';
-    this.baseUrl = process.env.FIRECRAWL_BASE_URL ?? 'https://api.firecrawl.dev';
+    this.apiKey = process.env.FIRECRAWL_API_KEY ?? "";
+    this.baseUrl = process.env.FIRECRAWL_BASE_URL ?? "https://api.firecrawl.dev";
   }
 
   async search(args: {
@@ -49,8 +49,8 @@ class DefaultFirecrawlTransport implements FirecrawlTransport {
     ignoreInvalidURLs?: boolean;
   }): Promise<FirecrawlSearchResponse> {
     const res = await fetch(`${this.baseUrl}/v2/search`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.apiKey}` },
       body: JSON.stringify({
         query: args.query,
         limit: args.max_pages ?? 5,
@@ -69,9 +69,9 @@ class DefaultFirecrawlTransport implements FirecrawlTransport {
 
   async scrape(args: { url: string }): Promise<FirecrawlScrapeResponse> {
     const res = await fetch(`${this.baseUrl}/v2/scrape`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
-      body: JSON.stringify({ url: args.url, formats: ['markdown'] }),
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.apiKey}` },
+      body: JSON.stringify({ url: args.url, formats: ["markdown"] }),
     });
     if (!res.ok) {
       const err = Object.assign(new Error(`Firecrawl scrape failed: ${res.status}`), {
@@ -123,10 +123,10 @@ export class FirecrawlAdapter implements WebResearchAdapter {
 
     return items.map((item) => ({
       url: item.url,
-      title: item.title ?? '',
-      markdown: item.markdown ?? '',
+      title: item.title ?? "",
+      markdown: item.markdown ?? "",
       fetched_at: new Date().toISOString(),
-      source_provider: 'firecrawl' as const,
+      source_provider: "firecrawl" as const,
       source_billed_usd: topLevelBilled ?? item.source_billed_usd,
     }));
   }
@@ -143,10 +143,10 @@ export class FirecrawlAdapter implements WebResearchAdapter {
     const response = await this.transport.scrape({ url: args.url });
     return {
       url: response.data.url ?? args.url,
-      title: response.data.title ?? '',
-      markdown: response.data.markdown ?? '',
+      title: response.data.title ?? "",
+      markdown: response.data.markdown ?? "",
       fetched_at: new Date().toISOString(),
-      source_provider: 'firecrawl' as const,
+      source_provider: "firecrawl" as const,
       source_billed_usd: response.source_billed_usd ?? response.data.source_billed_usd,
     };
   }
@@ -192,13 +192,13 @@ class FirecrawlWithFallbackAdapter implements WebResearchAdapter {
 
 export function createResearchAdapter(
   opts: {
-    provider: 'firecrawl' | 'webfetch' | 'off';
+    provider: "firecrawl" | "webfetch" | "off";
     allowedDomains?: string[];
   },
   transport?: FirecrawlTransport,
 ): WebResearchAdapter {
-  if (opts.provider === 'off') return new OffAdapter();
-  if (opts.provider === 'webfetch') return new WebFetchAdapter();
+  if (opts.provider === "off") return new OffAdapter();
+  if (opts.provider === "webfetch") return new WebFetchAdapter();
   const primary = new FirecrawlAdapter({ allowedDomains: opts.allowedDomains }, transport);
   return new FirecrawlWithFallbackAdapter(primary, new WebFetchAdapter());
 }

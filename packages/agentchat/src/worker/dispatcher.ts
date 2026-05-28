@@ -1,12 +1,16 @@
-import type { Logger } from '@penumbra/core';
-import type { DispatchEventInput } from '@penumbra/core';
-import type { DispatchHandoffResult } from '../cli/dispatch-handoff.js';
-import { PenumbraHttpError, isTerminalHttpStatus } from '../penumbra-client.js';
-import type { DiscordNotificationEvent } from './discord-events.js';
+import type { Logger } from "@penumbra/core";
+import type { DispatchEventInput } from "@penumbra/core";
+import type { DispatchHandoffResult } from "../cli/dispatch-handoff.js";
+import { PenumbraHttpError, isTerminalHttpStatus } from "../penumbra-client.js";
+import type { DiscordNotificationEvent } from "./discord-events.js";
 
 export interface WorkerDispatcherDeps {
   claim: (handoff_id: string) => Promise<{ status: string }>;
-  dispatch: (handoff: any, onChunk: (delta: string) => void, signal: AbortSignal) => Promise<DispatchHandoffResult>;
+  dispatch: (
+    handoff: any,
+    onChunk: (delta: string) => void,
+    signal: AbortSignal,
+  ) => Promise<DispatchHandoffResult>;
   postProgress: (handoff_id: string, payload: any) => Promise<void>;
   complete: (handoff_id: string) => Promise<void>;
   log: Logger;
@@ -14,7 +18,13 @@ export interface WorkerDispatcherDeps {
   /**
    * Called when a chain terminated.
    */
-  onChainEnd?: (handoff: any, reason: string, worktreeChanged: boolean | null, dirty: boolean | null, committed: boolean | null) => void;
+  onChainEnd?: (
+    handoff: any,
+    reason: string,
+    worktreeChanged: boolean | null,
+    dirty: boolean | null,
+    committed: boolean | null,
+  ) => void;
   /**
    * Optional recovery hook invoked for completed chains that ended with a
    * dirty worktree but no explicit commit. The worker provides the concrete
@@ -40,7 +50,11 @@ export interface WorkerDispatcherDeps {
    * operator reviews, main may have moved past the worktree's HEAD,
    * destroying the signal.
    */
-  getWorktreeSnapshot?: (handoffId: string) => Promise<{ worktreeChanged: boolean | null; dirty: boolean | null; committed: boolean | null }>;
+  getWorktreeSnapshot?: (handoffId: string) => Promise<{
+    worktreeChanged: boolean | null;
+    dirty: boolean | null;
+    committed: boolean | null;
+  }>;
 }
 
 export interface WorkerDispatcher {
@@ -66,7 +80,10 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
   const inflight = new Set<Promise<void>>();
 
   const acquireSemaphore = (): Promise<void> => {
-    if (semaphore > 0) { semaphore--; return Promise.resolve(); }
+    if (semaphore > 0) {
+      semaphore--;
+      return Promise.resolve();
+    }
     return new Promise((resolve) => semaphoreWaiters.push(resolve));
   };
   const releaseSemaphore = () => {
@@ -82,7 +99,9 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
       await existing;
     }
     let release!: () => void;
-    const p = new Promise<void>((r) => { release = r; });
+    const p = new Promise<void>((r) => {
+      release = r;
+    });
     convLocks.set(conv, p);
     return () => {
       convLocks.delete(conv);
@@ -95,8 +114,14 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
     await acquireSemaphore();
 
     const abort = new AbortController();
-    if (pendingCancelsByHandoff.has(handoff.handoff_id) || pendingCancelsByConv.has(handoff.conversation_id)) {
-      deps.log.info({ conversation_id: handoff.conversation_id, handoff_id: handoff.handoff_id }, 'applying pre-dispatch cancellation');
+    if (
+      pendingCancelsByHandoff.has(handoff.handoff_id) ||
+      pendingCancelsByConv.has(handoff.conversation_id)
+    ) {
+      deps.log.info(
+        { conversation_id: handoff.conversation_id, handoff_id: handoff.handoff_id },
+        "applying pre-dispatch cancellation",
+      );
       pendingCancelsByHandoff.delete(handoff.handoff_id);
       pendingCancelsByConv.delete(handoff.conversation_id);
       abort.abort();
@@ -114,11 +139,17 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
         const status = err instanceof PenumbraHttpError ? err.status : null;
         const isTerminal = status !== null && isTerminalHttpStatus(status);
         if (isTerminal) {
-          deps.log.debug({ handoff_id: handoff.handoff_id, status, err: String(err) }, 'claim failed; terminal');
+          deps.log.debug(
+            { handoff_id: handoff.handoff_id, status, err: String(err) },
+            "claim failed; terminal",
+          );
         } else {
-          deps.log.warn({ handoff_id: handoff.handoff_id, status, err: String(err) }, 'claim failed; retryable, will be re-tried on next event');
+          deps.log.warn(
+            { handoff_id: handoff.handoff_id, status, err: String(err) },
+            "claim failed; retryable, will be re-tried on next event",
+          );
           deps.onDispatchEvent?.({
-            kind: 'claim_retry',
+            kind: "claim_retry",
             handoff_id: handoff.handoff_id,
             conversation_id: handoff.conversation_id,
             project_id: handoff.project_id ?? undefined,
@@ -132,7 +163,7 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
       }
 
       const dispatchStart = Date.now();
-      let dispatchStatus: 'ok' | 'error' | 'aborted' = 'ok';
+      let dispatchStatus: "ok" | "error" | "aborted" = "ok";
       // Memoised worktree snapshot. Captured once on the success path so
       // both the onChainEnd callback (which uses it for silent-failure
       // detection in the worker) and the dispatch.end event meta read the
@@ -144,17 +175,18 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
       deps.onEvent?.({
         handoff_id: handoff.handoff_id,
         worker_id: deps.workerId,
-        source: 'worker',
-        kind: 'dispatch.start',
+        source: "worker",
+        kind: "dispatch.start",
         ts: new Date().toISOString(),
         meta: {
           agent: handoff.to_agent,
-          adapter: handoff.adapter ?? 'unknown',
-          prompt_bytes: typeof handoff.message === 'string' ? Buffer.byteLength(handoff.message) : 0,
+          adapter: handoff.adapter ?? "unknown",
+          prompt_bytes:
+            typeof handoff.message === "string" ? Buffer.byteLength(handoff.message) : 0,
         },
       });
       deps.onDispatchEvent?.({
-        kind: 'dispatch_start',
+        kind: "dispatch_start",
         handoff_id: handoff.handoff_id,
         conversation_id: handoff.conversation_id,
         project_id: handoff.project_id ?? undefined,
@@ -163,7 +195,7 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
       });
 
       // Progress reporting state
-      let buffer = '';
+      let buffer = "";
       let seq = 0;
       let inflightProgress: Promise<void> | null = null;
       let batchTimer: Timer | null = null;
@@ -171,14 +203,14 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
       const flush = async () => {
         if (inflightProgress || buffer.length === 0) return;
         const delta = buffer;
-        buffer = '';
+        buffer = "";
         const currentSeq = ++seq;
-        
+
         // Use an async IIFE to wrap the postProgress + cooldown into a single flight
         inflightProgress = (async () => {
           try {
             await deps.postProgress(handoff.handoff_id, {
-              type: 'token',
+              type: "token",
               handoff_id: handoff.handoff_id,
               seq: currentSeq,
               delta,
@@ -186,10 +218,16 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           } catch (err) {
             const status = err instanceof PenumbraHttpError ? err.status : null;
             if (status === 410) {
-              deps.log.warn({ handoff_id: handoff.handoff_id }, 'progress rejected (410 Gone); aborting hop');
+              deps.log.warn(
+                { handoff_id: handoff.handoff_id },
+                "progress rejected (410 Gone); aborting hop",
+              );
               abort.abort();
             } else {
-              deps.log.debug({ handoff_id: handoff.handoff_id, err: String(err) }, 'postProgress failed');
+              deps.log.debug(
+                { handoff_id: handoff.handoff_id, err: String(err) },
+                "postProgress failed",
+              );
             }
           } finally {
             // Min 100ms interval between flights to avoid overwhelming the daemon
@@ -204,12 +242,12 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
 
       try {
         await deps.postProgress(handoff.handoff_id, {
-          type: 'hop-start',
+          type: "hop-start",
           handoff_id: handoff.handoff_id,
           chain_id: handoff.conversation_id, // Fallback to conversation_id if no explicit chain_id
           idx: handoff.hop_idx ?? 0,
           agent_name: handoff.to_agent,
-          status: 'in_progress',
+          status: "in_progress",
         });
 
         const result = await deps.dispatch(
@@ -226,11 +264,11 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           abort.signal,
         );
         if (abort.signal.aborted) {
-          dispatchStatus = 'aborted';
-        } else if (result.terminatedReason === 'error') {
-          dispatchStatus = 'error';
+          dispatchStatus = "aborted";
+        } else if (result.terminatedReason === "error") {
+          dispatchStatus = "error";
           deps.onDispatchEvent?.({
-            kind: 'adapter_retry_exhausted',
+            kind: "adapter_retry_exhausted",
             handoff_id: handoff.handoff_id,
             conversation_id: handoff.conversation_id,
             project_id: handoff.project_id ?? undefined,
@@ -248,7 +286,7 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
         await inflightProgress;
         if (buffer.length > 0) {
           await deps.postProgress(handoff.handoff_id, {
-            type: 'token',
+            type: "token",
             handoff_id: handoff.handoff_id,
             seq: ++seq,
             delta: buffer,
@@ -256,24 +294,24 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
         }
 
         await deps.postProgress(handoff.handoff_id, {
-          type: 'hop-end',
+          type: "hop-end",
           handoff_id: handoff.handoff_id,
           chain_id: handoff.conversation_id,
           text: result.text,
           next_handoff_id: result.next?.handoff_id ?? result.cappedHandoffId ?? null,
-          error: result.terminatedReason === 'error' ? 'dispatch error' : null,
+          error: result.terminatedReason === "error" ? "dispatch error" : null,
         });
 
         if (result.terminatedReason) {
           const reasonMap: Record<string, string> = {
-            no_mention: 'completed',
-            max_hops: 'max_hops',
-            untrusted: 'cancelled',
-            error: 'error',
+            no_mention: "completed",
+            max_hops: "max_hops",
+            untrusted: "cancelled",
+            error: "error",
           };
-          const reason = reasonMap[result.terminatedReason] ?? 'completed';
+          const reason = reasonMap[result.terminatedReason] ?? "completed";
           await deps.postProgress(handoff.handoff_id, {
-            type: 'chain-end',
+            type: "chain-end",
             chain_id: handoff.conversation_id,
             reason,
           } as any);
@@ -288,7 +326,10 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
               capturedDirty = snap.dirty;
               capturedCommitted = snap.committed;
             } catch (err) {
-              deps.log.debug({ handoff_id: handoff.handoff_id, err: String(err) }, 'getWorktreeSnapshot failed; recording null');
+              deps.log.debug(
+                { handoff_id: handoff.handoff_id, err: String(err) },
+                "getWorktreeSnapshot failed; recording null",
+              );
               capturedWorktreeChanged = null;
               capturedDirty = null;
               capturedCommitted = null;
@@ -297,7 +338,12 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           const worktreeChanged = capturedWorktreeChanged ?? null;
           const dirty = capturedDirty ?? null;
           const committed = capturedCommitted ?? null;
-          if (reason === 'completed' && dirty === true && committed === false && deps.autocommitOnChainEnd) {
+          if (
+            reason === "completed" &&
+            dirty === true &&
+            committed === false &&
+            deps.autocommitOnChainEnd
+          ) {
             try {
               await deps.autocommitOnChainEnd(handoff);
               if (deps.getWorktreeSnapshot) {
@@ -307,11 +353,14 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
                   capturedDirty = snap.dirty;
                   capturedCommitted = snap.committed;
                 } catch (err) {
-                  deps.log.debug({ handoff_id: handoff.handoff_id, err: String(err) }, 'getWorktreeSnapshot failed after autocommit; keeping prior snapshot');
+                  deps.log.debug(
+                    { handoff_id: handoff.handoff_id, err: String(err) },
+                    "getWorktreeSnapshot failed after autocommit; keeping prior snapshot",
+                  );
                 }
               }
               deps.onDispatchEvent?.({
-                kind: 'autocommit_on_chain_end',
+                kind: "autocommit_on_chain_end",
                 handoff_id: handoff.handoff_id,
                 conversation_id: handoff.conversation_id,
                 project_id: handoff.project_id ?? undefined,
@@ -319,20 +368,30 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
                 worker_id: deps.workerId,
               });
             } catch (err) {
-              deps.log.warn({ component: 'autocommit-on-chain-end', handoff_id: handoff.handoff_id, err: String(err) }, 'autocommit on chain end failed');
+              deps.log.warn(
+                {
+                  component: "autocommit-on-chain-end",
+                  handoff_id: handoff.handoff_id,
+                  err: String(err),
+                },
+                "autocommit on chain end failed",
+              );
             }
           }
           deps.onChainEnd?.(handoff, reason, worktreeChanged, dirty, committed);
         }
       } catch (err) {
-        dispatchStatus = abort.signal.aborted ? 'aborted' : 'error';
+        dispatchStatus = abort.signal.aborted ? "aborted" : "error";
         const status = err instanceof PenumbraHttpError ? err.status : null;
         if (status === 410) {
-          deps.log.debug({ handoff_id: handoff.handoff_id }, 'progress rejected (handoff already terminal)');
+          deps.log.debug(
+            { handoff_id: handoff.handoff_id },
+            "progress rejected (handoff already terminal)",
+          );
         } else {
-          deps.log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, 'dispatch threw');
+          deps.log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, "dispatch threw");
           deps.onDispatchEvent?.({
-            kind: 'adapter_retry_exhausted',
+            kind: "adapter_retry_exhausted",
             handoff_id: handoff.handoff_id,
             conversation_id: handoff.conversation_id,
             project_id: handoff.project_id ?? undefined,
@@ -352,7 +411,10 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
             capturedDirty = snap.dirty;
             capturedCommitted = snap.committed;
           } catch (err) {
-            deps.log.debug({ handoff_id: handoff.handoff_id, err: String(err) }, 'getWorktreeSnapshot failed; recording null');
+            deps.log.debug(
+              { handoff_id: handoff.handoff_id, err: String(err) },
+              "getWorktreeSnapshot failed; recording null",
+            );
             capturedWorktreeChanged = null;
             capturedDirty = null;
             capturedCommitted = null;
@@ -364,8 +426,8 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
         deps.onEvent?.({
           handoff_id: handoff.handoff_id,
           worker_id: deps.workerId,
-          source: 'worker',
-          kind: 'dispatch.end',
+          source: "worker",
+          kind: "dispatch.end",
           ts: new Date().toISOString(),
           meta: {
             status: dispatchStatus,
@@ -379,9 +441,15 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           await deps.complete(handoff.handoff_id);
         } catch (err) {
           if (err instanceof PenumbraHttpError && err.status === 409) {
-            deps.log.debug({ handoff_id: handoff.handoff_id, err: String(err) }, 'completeHandoff conflict (likely already terminal)');
+            deps.log.debug(
+              { handoff_id: handoff.handoff_id, err: String(err) },
+              "completeHandoff conflict (likely already terminal)",
+            );
           } else {
-            deps.log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, 'completeHandoff failed');
+            deps.log.warn(
+              { handoff_id: handoff.handoff_id, err: String(err) },
+              "completeHandoff failed",
+            );
           }
         }
       }
@@ -398,7 +466,10 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
       // but a defensive .catch keeps the floating Promise from ever surfacing
       // as an unhandledRejection if a future refactor changes that.
       const p = handleOne(handoff).catch((err) => {
-        deps.log.warn({ handoff_id: handoff?.handoff_id, err: String(err) }, 'handleOne unexpectedly rejected');
+        deps.log.warn(
+          { handoff_id: handoff?.handoff_id, err: String(err) },
+          "handleOne unexpectedly rejected",
+        );
       });
       inflight.add(p);
       p.finally(() => inflight.delete(p));
@@ -408,10 +479,10 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
       const entry = activeAborts.get(conversation_id);
       const matched = !!entry && (handoff_id === undefined || entry.handoff_id === handoff_id);
       deps.onEvent?.({
-        handoff_id: handoff_id ?? entry?.handoff_id ?? '',
+        handoff_id: handoff_id ?? entry?.handoff_id ?? "",
         worker_id: deps.workerId,
-        source: 'worker',
-        kind: 'cancel.dispatched',
+        source: "worker",
+        kind: "cancel.dispatched",
         ts: new Date().toISOString(),
         meta: { matched },
       });
@@ -421,7 +492,10 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
       // cancel events — replayed by the daemon's durable-flush on every SSE
       // reconnect — killing a fresh dispatch that happens to share conv_id.
       if (matched) {
-        deps.log.info({ conversation_id, handoff_id }, 'aborting active dispatch via control event');
+        deps.log.info(
+          { conversation_id, handoff_id },
+          "aborting active dispatch via control event",
+        );
         entry.abort.abort();
       } else if (handoff_id !== undefined) {
         pendingCancelsByHandoff.add(handoff_id);

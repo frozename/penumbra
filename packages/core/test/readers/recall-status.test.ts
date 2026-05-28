@@ -1,15 +1,16 @@
-import { describe, expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 try {
-  if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin")
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
 } catch {}
-import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
-import { migrate } from '../../src/db/migrations.js';
-import { recallStatus } from '../../src/readers/recall-status.js';
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { migrate } from "../../src/db/migrations.js";
+import { recallStatus } from "../../src/readers/recall-status.js";
 
-describe('recallStatus', () => {
-  test('reports tier counts, t2 type/severity histograms, t1 promotion backlog, and corpus count', () => {
-    const db = new Database(':memory:');
+describe("recallStatus", () => {
+  test("reports tier counts, t2 type/severity histograms, t1 promotion backlog, and corpus count", () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 4 });
     db.run(

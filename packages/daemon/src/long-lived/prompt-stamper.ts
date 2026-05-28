@@ -1,7 +1,7 @@
-import type { WorkingMemory } from '@penumbra/core/long-lived/types';
+import type { WorkingMemory } from "@penumbra/core/long-lived/types";
 
 function toSdkForm(entry: string): string {
-  const idx = entry.includes(':') ? entry.indexOf(':') : entry.indexOf('.');
+  const idx = entry.includes(":") ? entry.indexOf(":") : entry.indexOf(".");
   if (idx < 0) return entry;
   return `mcp__${entry.slice(0, idx)}__${entry.slice(idx + 1)}`;
 }
@@ -18,7 +18,7 @@ export interface StampInputAgent {
 
 export interface StampInputTick {
   id: string;
-  trigger_kind: 'cron' | 'event' | 'injected_goal' | 'manual';
+  trigger_kind: "cron" | "event" | "injected_goal" | "manual";
   trigger_payload: unknown;
   now_iso: string;
 }
@@ -27,11 +27,13 @@ export function stampPrompt(input: { agent: StampInputAgent; tick: StampInputTic
   const { agent, tick } = input;
   const wm = agent.working_memory;
   const goalsBlock = wm.pending_goals.length
-    ? wm.pending_goals.map((g: unknown, i: number) => `  ${i + 1}. ${JSON.stringify(g)}`).join('\n')
-    : '  (none)';
+    ? wm.pending_goals.map((g: unknown, i: number) => `  ${i + 1}. ${JSON.stringify(g)}`).join("\n")
+    : "  (none)";
 
-  const hasHaTools = agent.mcp_allowlist.some((t) => t.startsWith('ha:') || t.startsWith('ha.'));
-  const hasNonHaTools = agent.mcp_allowlist.some((t) => !t.startsWith('ha:') && !t.startsWith('ha.'));
+  const hasHaTools = agent.mcp_allowlist.some((t) => t.startsWith("ha:") || t.startsWith("ha."));
+  const hasNonHaTools = agent.mcp_allowlist.some(
+    (t) => !t.startsWith("ha:") && !t.startsWith("ha."),
+  );
   const needsAntiConfusion = hasHaTools && hasNonHaTools;
 
   let result = `You are ${agent.display_name}, a long-lived agent with persistent state.
@@ -47,12 +49,12 @@ ${goalsBlock}
 
 Tick context:
 - Trigger: ${tick.trigger_kind}
-- Triggering event payload (if any): ${tick.trigger_payload ? JSON.stringify(tick.trigger_payload) : '(none)'}
+- Triggering event payload (if any): ${tick.trigger_payload ? JSON.stringify(tick.trigger_payload) : "(none)"}
 - Tick id: ${tick.id}
 - Now: ${tick.now_iso}
 
 Tools available to you (call each tool by its exact name shown below):
-${agent.mcp_allowlist.map((t) => `  - ${toSdkForm(t)}`).join('\n')}
+${agent.mcp_allowlist.map((t) => `  - ${toSdkForm(t)}`).join("\n")}
 `;
 
   if (needsAntiConfusion) {
@@ -61,7 +63,9 @@ IMPORTANT — tool invocation: the tools above are independent top-level tools. 
 `;
   }
 
-  const canDispatchSubChains = agent.mcp_allowlist.includes('penumbra:chain_start') || agent.mcp_allowlist.includes('penumbra:chain_start_simple');
+  const canDispatchSubChains =
+    agent.mcp_allowlist.includes("penumbra:chain_start") ||
+    agent.mcp_allowlist.includes("penumbra:chain_start_simple");
   if (canDispatchSubChains) {
     result += `
 Dispatching sub-chains from this tick:

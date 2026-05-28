@@ -1,12 +1,23 @@
-import { z } from 'zod';
-import { SafeProjectIdSchema } from './project-id.js';
+import { z } from "zod";
+import { SafeProjectIdSchema } from "./project-id.js";
 
 export const ObsTypeEnum = z
-  .enum(['decision', 'bugfix', 'feature', 'refactor', 'discovery', 'change', 'security_alert', 'security_note', 'session', 'other'])
+  .enum([
+    "decision",
+    "bugfix",
+    "feature",
+    "refactor",
+    "discovery",
+    "change",
+    "security_alert",
+    "security_note",
+    "session",
+    "other",
+  ])
   .optional()
   .nullable();
 
-export const SeverityEnum = z.enum(['info', 'warn', 'error']).optional().nullable();
+export const SeverityEnum = z.enum(["info", "warn", "error"]).optional().nullable();
 
 export const T2MemorySchema = z.object({
   memory_id: z.string(),

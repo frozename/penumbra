@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { buildServices, loadSqliteVec, migrate, type Services, WorkerTokenStore } from "@penumbra/core";
+import {
+  buildServices,
+  loadSqliteVec,
+  migrate,
+  type Services,
+  WorkerTokenStore,
+} from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { createDaemonFetchHandler } from "../../src/serve.js";
 import { createHash } from "node:crypto";
@@ -37,30 +43,30 @@ test("POST /worker/register with shared bearer returns 200 + worker_token", asyn
   const services = tempServices();
   const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
 
-  const res = await fetchHandler(new Request("http://x/worker/register", {
-    method: "POST",
-    headers: { 
-        "Authorization": `Bearer ${SHARED_TOKEN}`,
-        "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ worker_id: "W-A", metadata: { host: "mac-mini" } }),
-  }));
+  const res = await fetchHandler(
+    new Request("http://x/worker/register", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${SHARED_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ worker_id: "W-A", metadata: { host: "mac-mini" } }),
+    }),
+  );
 
   expect(res.status).toBe(200);
-  const body = await res.json() as any;
+  const body = (await res.json()) as any;
   expect(body.worker_id).toBe("W-A");
   expect(typeof body.worker_token).toBe("string");
   expect(body.worker_token.length).toBeGreaterThan(10);
 
   // Verify DB
-  
-  
-  const hash = createHash("sha256").update(body.worker_token).digest("hex");
-  
-  
-  
 
-  const row = services.db.query("SELECT * FROM worker_tokens WHERE token_hash = ?").get(hash) as any;
+  const hash = createHash("sha256").update(body.worker_token).digest("hex");
+
+  const row = services.db
+    .query("SELECT * FROM worker_tokens WHERE token_hash = ?")
+    .get(hash) as any;
   expect(row).toBeDefined();
   expect(row.worker_id).toBe("W-A");
   expect(row.metadata_json).toBe(JSON.stringify({ host: "mac-mini" }));
@@ -70,25 +76,25 @@ test("POST /worker/register without metadata persists metadata_json NULL", async
   const services = tempServices();
   const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
 
-  const res = await fetchHandler(new Request("http://x/worker/register", {
-    method: "POST",
-    headers: { 
-        "Authorization": `Bearer ${SHARED_TOKEN}`,
-        "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ worker_id: "W-B" }),
-  }));
+  const res = await fetchHandler(
+    new Request("http://x/worker/register", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${SHARED_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ worker_id: "W-B" }),
+    }),
+  );
 
   expect(res.status).toBe(200);
-  const body = await res.json() as any;
-  
-  
-  const hash = createHash("sha256").update(body.worker_token).digest("hex");
-  
-  
-  
+  const body = (await res.json()) as any;
 
-  const row = services.db.query("SELECT * FROM worker_tokens WHERE token_hash = ?").get(hash) as any;
+  const hash = createHash("sha256").update(body.worker_token).digest("hex");
+
+  const row = services.db
+    .query("SELECT * FROM worker_tokens WHERE token_hash = ?")
+    .get(hash) as any;
   expect(row.metadata_json).toBe(null);
 });
 
@@ -96,11 +102,13 @@ test("POST /worker/register without Authorization returns 401", async () => {
   const services = tempServices();
   const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
 
-  const res = await fetchHandler(new Request("http://x/worker/register", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ worker_id: "W-A" }),
-  }));
+  const res = await fetchHandler(
+    new Request("http://x/worker/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ worker_id: "W-A" }),
+    }),
+  );
 
   expect(res.status).toBe(401);
 });
@@ -109,17 +117,19 @@ test("POST /worker/register with unknown bearer returns 401", async () => {
   const services = tempServices();
   const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
 
-  const res = await fetchHandler(new Request("http://x/worker/register", {
-    method: "POST",
-    headers: { 
-        "Authorization": "Bearer wrong-secret",
-        "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ worker_id: "W-A" }),
-  }));
+  const res = await fetchHandler(
+    new Request("http://x/worker/register", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer wrong-secret",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ worker_id: "W-A" }),
+    }),
+  );
 
   expect(res.status).toBe(401);
-  
+
   const count = services.db.query("SELECT COUNT(*) as n FROM worker_tokens").get() as any;
   expect(count.n).toBe(0);
 });
@@ -129,29 +139,33 @@ test("POST /worker/register with a worker token returns 403 shared_bearer_requir
   const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
 
   // 1. Register W-A
-  const res1 = await fetchHandler(new Request("http://x/worker/register", {
-    method: "POST",
-    headers: { 
-        "Authorization": `Bearer ${SHARED_TOKEN}`,
-        "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ worker_id: "W-A" }),
-  }));
-  const body1 = await res1.json() as any;
+  const res1 = await fetchHandler(
+    new Request("http://x/worker/register", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${SHARED_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ worker_id: "W-A" }),
+    }),
+  );
+  const body1 = (await res1.json()) as any;
   const workerToken = body1.worker_token;
 
   // 2. Try to register W-B using W-A's token
-  const res2 = await fetchHandler(new Request("http://x/worker/register", {
-    method: "POST",
-    headers: { 
-        "Authorization": `Bearer ${workerToken}`,
-        "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ worker_id: "W-B" }),
-  }));
+  const res2 = await fetchHandler(
+    new Request("http://x/worker/register", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${workerToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ worker_id: "W-B" }),
+    }),
+  );
 
   expect(res2.status).toBe(403);
-  const body2 = await res2.json() as any;
+  const body2 = (await res2.json()) as any;
   expect(body2.error.code).toBe("shared_bearer_required_for_registration");
 });
 
@@ -159,24 +173,27 @@ test("Two register calls for the same worker_id produce distinct tokens; both ro
   const services = tempServices();
   const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
 
-  const req = (id: string) => new Request("http://x/worker/register", {
-    method: "POST",
-    headers: { 
-        "Authorization": `Bearer ${SHARED_TOKEN}`,
-        "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ worker_id: id }),
-  });
+  const req = (id: string) =>
+    new Request("http://x/worker/register", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${SHARED_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ worker_id: id }),
+    });
 
   const res1 = await fetchHandler(req("W-A"));
-  const body1 = await res1.json() as any;
+  const body1 = (await res1.json()) as any;
 
   const res2 = await fetchHandler(req("W-A"));
-  const body2 = await res2.json() as any;
+  const body2 = (await res2.json()) as any;
 
   expect(body1.worker_token).not.toBe(body2.worker_token);
 
-  const count = services.db.query("SELECT COUNT(*) as n FROM worker_tokens WHERE worker_id = 'W-A'").get() as any;
+  const count = services.db
+    .query("SELECT COUNT(*) as n FROM worker_tokens WHERE worker_id = 'W-A'")
+    .get() as any;
   expect(count.n).toBe(2);
 });
 
@@ -184,17 +201,19 @@ test("POST /worker/register with malformed JSON returns 400 invalid_json", async
   const services = tempServices();
   const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
 
-  const res = await fetchHandler(new Request("http://x/worker/register", {
-    method: "POST",
-    headers: { 
-        "Authorization": `Bearer ${SHARED_TOKEN}`,
-        "Content-Type": "application/json"
-    },
-    body: "{{{not json}}}",
-  }));
+  const res = await fetchHandler(
+    new Request("http://x/worker/register", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${SHARED_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: "{{{not json}}}",
+    }),
+  );
 
   expect(res.status).toBe(400);
-  const body = await res.json() as any;
+  const body = (await res.json()) as any;
   expect(body.error.code).toBe("invalid_json");
 });
 
@@ -202,17 +221,19 @@ test("POST /worker/register with missing worker_id returns 400 validation_error"
   const services = tempServices();
   const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
 
-  const res = await fetchHandler(new Request("http://x/worker/register", {
-    method: "POST",
-    headers: {
-        "Authorization": `Bearer ${SHARED_TOKEN}`,
-        "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ metadata: {} }),
-  }));
+  const res = await fetchHandler(
+    new Request("http://x/worker/register", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${SHARED_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ metadata: {} }),
+    }),
+  );
 
   expect(res.status).toBe(400);
-  const body = await res.json() as any;
+  const body = (await res.json()) as any;
   expect(body.error.code).toBe("validation_error");
 });
 
@@ -221,20 +242,24 @@ test("POST /worker/register with metadata > 4 KiB returns 400 metadata_too_large
   const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
 
   const huge = { blob: "x".repeat(5000) };
-  const res = await fetchHandler(new Request("http://x/worker/register", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${SHARED_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ worker_id: "W-A", metadata: huge }),
-  }));
+  const res = await fetchHandler(
+    new Request("http://x/worker/register", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${SHARED_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ worker_id: "W-A", metadata: huge }),
+    }),
+  );
 
   expect(res.status).toBe(400);
-  const body = await res.json() as any;
+  const body = (await res.json()) as any;
   expect(body.error.code).toBe("metadata_too_large");
 
-  const count = services.db.query("SELECT COUNT(*) as n FROM worker_tokens WHERE worker_id = 'W-A'").get() as any;
+  const count = services.db
+    .query("SELECT COUNT(*) as n FROM worker_tokens WHERE worker_id = 'W-A'")
+    .get() as any;
   expect(count.n).toBe(0);
 });
 
@@ -246,14 +271,16 @@ test("metadata at exactly 4096 UTF-8 bytes succeeds", async () => {
   const meta = { blob: "x".repeat(4085) };
   expect(Buffer.byteLength(JSON.stringify(meta), "utf8")).toBe(4096);
 
-  const res = await fetchHandler(new Request("http://x/worker/register", {
-    method: "POST",
-    headers: { "Authorization": `Bearer ${SHARED_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ worker_id: "W-boundary-ok", metadata: meta }),
-  }));
+  const res = await fetchHandler(
+    new Request("http://x/worker/register", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${SHARED_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ worker_id: "W-boundary-ok", metadata: meta }),
+    }),
+  );
 
   expect(res.status).toBe(200);
-  const body = await res.json() as any;
+  const body = (await res.json()) as any;
   expect(body.worker_id).toBe("W-boundary-ok");
 });
 
@@ -265,14 +292,16 @@ test("metadata at 4097 UTF-8 bytes returns 400 metadata_too_large", async () => 
   const meta = { blob: "x".repeat(4086) };
   expect(Buffer.byteLength(JSON.stringify(meta), "utf8")).toBe(4097);
 
-  const res = await fetchHandler(new Request("http://x/worker/register", {
-    method: "POST",
-    headers: { "Authorization": `Bearer ${SHARED_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ worker_id: "W-boundary-fail", metadata: meta }),
-  }));
+  const res = await fetchHandler(
+    new Request("http://x/worker/register", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${SHARED_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ worker_id: "W-boundary-fail", metadata: meta }),
+    }),
+  );
 
   expect(res.status).toBe(400);
-  const body = await res.json() as any;
+  const body = (await res.json()) as any;
   expect(body.error.code).toBe("metadata_too_large");
 });
 
@@ -284,17 +313,19 @@ test("metadata with multibyte characters is sized by UTF-8 bytes, not char count
   // But JSON.stringify(...).length = 11 + 2050 = 2061 ≤ 4096, so old .length check would pass.
   const meta = { blob: "é".repeat(2050) };
   const serialized = JSON.stringify(meta);
-  expect(serialized.length).toBeLessThanOrEqual(4096);           // old check would allow this
+  expect(serialized.length).toBeLessThanOrEqual(4096); // old check would allow this
   expect(Buffer.byteLength(serialized, "utf8")).toBeGreaterThan(4096); // byte check rejects it
 
-  const res = await fetchHandler(new Request("http://x/worker/register", {
-    method: "POST",
-    headers: { "Authorization": `Bearer ${SHARED_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ worker_id: "W-multibyte-fail", metadata: meta }),
-  }));
+  const res = await fetchHandler(
+    new Request("http://x/worker/register", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${SHARED_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ worker_id: "W-multibyte-fail", metadata: meta }),
+    }),
+  );
 
   expect(res.status).toBe(400);
-  const body = await res.json() as any;
+  const body = (await res.json()) as any;
   expect(body.error.code).toBe("metadata_too_large");
 });
 
@@ -306,14 +337,16 @@ test("metadata of multibyte characters under the byte cap succeeds", async () =>
   const meta = { blob: "é".repeat(2000) };
   expect(Buffer.byteLength(JSON.stringify(meta), "utf8")).toBeLessThanOrEqual(4096);
 
-  const res = await fetchHandler(new Request("http://x/worker/register", {
-    method: "POST",
-    headers: { "Authorization": `Bearer ${SHARED_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ worker_id: "W-multibyte-ok", metadata: meta }),
-  }));
+  const res = await fetchHandler(
+    new Request("http://x/worker/register", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${SHARED_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ worker_id: "W-multibyte-ok", metadata: meta }),
+    }),
+  );
 
   expect(res.status).toBe(200);
-  const body = await res.json() as any;
+  const body = (await res.json()) as any;
   expect(body.worker_id).toBe("W-multibyte-ok");
 });
 
@@ -325,17 +358,19 @@ test("POST /worker/register with metadata at the 4 KiB boundary succeeds", async
   const boundaryMeta = { v: "x".repeat(4000) };
   expect(JSON.stringify(boundaryMeta).length).toBeLessThanOrEqual(4096);
 
-  const res = await fetchHandler(new Request("http://x/worker/register", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${SHARED_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ worker_id: "W-B", metadata: boundaryMeta }),
-  }));
+  const res = await fetchHandler(
+    new Request("http://x/worker/register", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${SHARED_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ worker_id: "W-B", metadata: boundaryMeta }),
+    }),
+  );
 
   expect(res.status).toBe(200);
-  const body = await res.json() as any;
+  const body = (await res.json()) as any;
   expect(body.worker_id).toBe("W-B");
   expect(typeof body.worker_token).toBe("string");
 });

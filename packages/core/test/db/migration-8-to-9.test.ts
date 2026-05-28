@@ -1,12 +1,12 @@
-import { expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
-import { migrate } from '../../src/db/migrations.js';
-import { SCHEMA_VERSION } from '../../src/db/schema.js';
+import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { migrate } from "../../src/db/migrations.js";
+import { SCHEMA_VERSION } from "../../src/db/schema.js";
 
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {
   // already loaded in this process
@@ -30,26 +30,24 @@ function indexNames(db: Database): string[] {
     .map((row) => row.name);
 }
 
-test('migration applies cleanly to a v14 db', () => {
-  const db = new Database(':memory:');
+test("migration applies cleanly to a v14 db", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
 
   migrate(db, { embeddingDim: 384 });
 
   const version = db
-    .query<{ value: string }, [string]>(
-      'SELECT value FROM db_meta WHERE key = ?',
-    )
-    .get('schema_version');
+    .query<{ value: string }, [string]>("SELECT value FROM db_meta WHERE key = ?")
+    .get("schema_version");
 
   expect(version?.value).toBe(String(SCHEMA_VERSION));
-  expect(tableNames(db)).toEqual(['task_events', 'task_leases', 'tasks']);
+  expect(tableNames(db)).toEqual(["task_events", "task_leases", "tasks"]);
 
   db.close();
 });
 
-test('migration is idempotent on a v14 db', () => {
-  const db = new Database(':memory:');
+test("migration is idempotent on a v14 db", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
 
   migrate(db, { embeddingDim: 384 });
@@ -57,27 +55,25 @@ test('migration is idempotent on a v14 db', () => {
   migrate(db, { embeddingDim: 384 });
 
   const version = db
-    .query<{ value: string }, [string]>(
-      'SELECT value FROM db_meta WHERE key = ?',
-    )
-    .get('schema_version');
+    .query<{ value: string }, [string]>("SELECT value FROM db_meta WHERE key = ?")
+    .get("schema_version");
 
   expect(version?.value).toBe(String(SCHEMA_VERSION));
-  expect(tableNames(db)).toEqual(['task_events', 'task_leases', 'tasks']);
+  expect(tableNames(db)).toEqual(["task_events", "task_leases", "tasks"]);
   expect(indexNames(db)).toEqual(firstIndexes);
-  expect(firstIndexes).toContain('task_events_task_id_at');
-  expect(firstIndexes).toContain('task_leases_agent_id_released_at');
-  expect(firstIndexes).toContain('task_leases_task_id_released_at');
-  expect(firstIndexes).toContain('tasks_chain_id');
-  expect(firstIndexes).toContain('tasks_created_by_id');
-  expect(firstIndexes).toContain('tasks_parent_task_id');
-  expect(firstIndexes).toContain('tasks_status_priority_created_at');
+  expect(firstIndexes).toContain("task_events_task_id_at");
+  expect(firstIndexes).toContain("task_leases_agent_id_released_at");
+  expect(firstIndexes).toContain("task_leases_task_id_released_at");
+  expect(firstIndexes).toContain("tasks_chain_id");
+  expect(firstIndexes).toContain("tasks_created_by_id");
+  expect(firstIndexes).toContain("tasks_parent_task_id");
+  expect(firstIndexes).toContain("tasks_status_priority_created_at");
 
   db.close();
 });
 
-test('migration preserves existing rows in pre-existing tables', () => {
-  const db = new Database(':memory:');
+test("migration preserves existing rows in pre-existing tables", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
 
   migrate(db, { embeddingDim: 384 });
@@ -118,55 +114,60 @@ test('migration preserves existing rows in pre-existing tables', () => {
   migrate(db, { embeddingDim: 384 });
 
   const t0 = db
-    .query<{
-      event_id: string;
-      payload_json: string;
-      payload_summary: string | null;
-    }, [string]>(
-      'SELECT event_id, payload_json, payload_summary FROM t0_events WHERE event_id = ?',
-    )
-    .get('evt-1');
+    .query<
+      {
+        event_id: string;
+        payload_json: string;
+        payload_summary: string | null;
+      },
+      [string]
+    >("SELECT event_id, payload_json, payload_summary FROM t0_events WHERE event_id = ?")
+    .get("evt-1");
   expect(t0).toEqual({
-    event_id: 'evt-1',
+    event_id: "evt-1",
     payload_json: '{"text":"hello"}',
-    payload_summary: 'hello summary',
+    payload_summary: "hello summary",
   });
 
   const t1 = db
-    .query<{
-      rollup_id: string;
-      source_event_ids: string;
-      failed_promotion_attempts: number;
-    }, [string]>(
-      'SELECT rollup_id, source_event_ids, failed_promotion_attempts FROM t1_rollups WHERE rollup_id = ?',
+    .query<
+      {
+        rollup_id: string;
+        source_event_ids: string;
+        failed_promotion_attempts: number;
+      },
+      [string]
+    >(
+      "SELECT rollup_id, source_event_ids, failed_promotion_attempts FROM t1_rollups WHERE rollup_id = ?",
     )
-    .get('rollup-1');
+    .get("rollup-1");
   expect(t1).toEqual({
-    rollup_id: 'rollup-1',
+    rollup_id: "rollup-1",
     source_event_ids: '["evt-1"]',
     failed_promotion_attempts: 0,
   });
 
   const handoff = db
-    .query<{
-      handoff_id: string;
-      status: string;
-      worker_id: string;
-    }, [string]>(
-      'SELECT handoff_id, status, worker_id FROM handoffs WHERE handoff_id = ?',
-    )
-    .get('handoff-1');
+    .query<
+      {
+        handoff_id: string;
+        status: string;
+        worker_id: string;
+      },
+      [string]
+    >("SELECT handoff_id, status, worker_id FROM handoffs WHERE handoff_id = ?")
+    .get("handoff-1");
   expect(handoff).toEqual({
-    handoff_id: 'handoff-1',
-    status: 'pending',
-    worker_id: 'worker-1',
+    handoff_id: "handoff-1",
+    status: "pending",
+    worker_id: "worker-1",
   });
 
   db.close();
 });
 
-test('migration can recreate v9 tables after downgrading schema_version to 8', () => {
-  const db = new Database(':memory:');
+test("migration can recreate v9 tables after downgrading schema_version to 8", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
 
   migrate(db, { embeddingDim: 384 });
@@ -180,13 +181,11 @@ test('migration can recreate v9 tables after downgrading schema_version to 8', (
   migrate(db, { embeddingDim: 384 });
 
   const version = db
-    .query<{ value: string }, [string]>(
-      'SELECT value FROM db_meta WHERE key = ?',
-    )
-    .get('schema_version');
+    .query<{ value: string }, [string]>("SELECT value FROM db_meta WHERE key = ?")
+    .get("schema_version");
 
   expect(version?.value).toBe(String(SCHEMA_VERSION));
-  expect(tableNames(db)).toEqual(['task_events', 'task_leases', 'tasks']);
+  expect(tableNames(db)).toEqual(["task_events", "task_leases", "tasks"]);
 
   db.close();
 });

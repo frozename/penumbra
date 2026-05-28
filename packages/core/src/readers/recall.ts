@@ -1,8 +1,8 @@
-import { Database } from 'bun:sqlite';
-import type { Embedder } from '../embedder/interface.js';
-import type { RecallRequest, RecallResult } from '../schemas/recall.js';
-import { fuseRRF, type RankedResult } from './rrf.js';
-import { hybridSearch } from './hybrid.js';
+import { Database } from "bun:sqlite";
+import type { Embedder } from "../embedder/interface.js";
+import type { RecallRequest, RecallResult } from "../schemas/recall.js";
+import { fuseRRF, type RankedResult } from "./rrf.js";
+import { hybridSearch } from "./hybrid.js";
 
 export class RecallReader {
   private readonly db: Database;
@@ -20,7 +20,7 @@ export class RecallReader {
    * using Reciprocal Rank Fusion (RRF).
    */
   async recall(req: RecallRequest): Promise<RecallResult[]> {
-    if (req.strategy_hint === 'hybrid') {
+    if (req.strategy_hint === "hybrid") {
       const hits = await hybridSearch(this.db, this.embedder, {
         query: req.query,
         limit: req.limit,
@@ -33,10 +33,10 @@ export class RecallReader {
       });
       return hits.map((h) => ({
         id: h.id,
-        tier: 't2',
+        tier: "t2",
         score: h.score,
         fusedScore: 0,
-        sources: ['t2'],
+        sources: ["t2"],
         title: h.title,
         body: h.body,
         project_id: h.project_id,
@@ -46,15 +46,15 @@ export class RecallReader {
       }));
     }
     const limit = req.limit;
-    const requestedSources = req.sources ?? (req.include_raw ? ['t0', 't1', 't2'] : ['t1', 't2']);
+    const requestedSources = req.sources ?? (req.include_raw ? ["t0", "t1", "t2"] : ["t1", "t2"]);
 
     let qvec: Float32Array | undefined;
-    if (requestedSources.includes('t1') || requestedSources.includes('t2')) {
+    if (requestedSources.includes("t1") || requestedSources.includes("t2")) {
       [qvec] = await this.embedder.embed([req.query]);
     }
 
     let t0Results: RankedResult<RecallResult>[] = [];
-    if (requestedSources.includes('t0')) {
+    if (requestedSources.includes("t0")) {
       const raw = queryT0(this.db, {
         query: req.query,
         limit,
@@ -71,10 +71,10 @@ export class RecallReader {
           score: r.score,
           payload: {
             id: r.event_id,
-            tier: 't0',
+            tier: "t0",
             score: r.score,
             fusedScore: 0,
-            sources: ['t0'],
+            sources: ["t0"],
             title: null,
             body: r.content_snippet,
             project_id: r.project_id,
@@ -87,7 +87,7 @@ export class RecallReader {
     }
 
     let t1Results: RankedResult<RecallResult>[] = [];
-    if (requestedSources.includes('t1') && qvec) {
+    if (requestedSources.includes("t1") && qvec) {
       type T1Row = {
         rollup_id: string;
         project_id: string | null;
@@ -98,7 +98,10 @@ export class RecallReader {
         distance: number;
       };
       const t1Rows = this.db
-        .query<T1Row, [Float32Array, number, string | null, string | null, string | null, string | null]>(
+        .query<
+          T1Row,
+          [Float32Array, number, string | null, string | null, string | null, string | null]
+        >(
           `SELECT r.rollup_id, r.project_id, r.session_id, r.started_at,
                   r.first_prompt_excerpt, r.last_response_excerpt,
                   v.distance
@@ -110,7 +113,14 @@ export class RecallReader {
               AND (? IS NULL OR r.session_id = ?)
             ORDER BY v.distance ASC`,
         )
-        .all(qvec, limit, req.project_id, req.project_id, req.session_id ?? null, req.session_id ?? null);
+        .all(
+          qvec,
+          limit,
+          req.project_id,
+          req.project_id,
+          req.session_id ?? null,
+          req.session_id ?? null,
+        );
 
       t1Results = t1Rows
         .map((r): RankedResult<RecallResult> => {
@@ -120,25 +130,27 @@ export class RecallReader {
             score,
             payload: {
               id: r.rollup_id,
-              tier: 't1' as const,
+              tier: "t1" as const,
               score,
               fusedScore: 0,
-              sources: ['t1'],
+              sources: ["t1"],
               title: null,
-              body: [r.first_prompt_excerpt, r.last_response_excerpt].filter((s): s is string => !!s).join('\n\n'),
+              body: [r.first_prompt_excerpt, r.last_response_excerpt]
+                .filter((s): s is string => !!s)
+                .join("\n\n"),
               project_id: r.project_id,
               source_session_ids: [r.session_id],
               created_at: r.started_at,
               ts: r.started_at,
               payload: { rollup_id: r.rollup_id },
-            }
+            },
           };
         })
         .filter((r) => r.score >= req.min_score);
     }
 
     let t2Results: RankedResult<RecallResult>[] = [];
-    if (requestedSources.includes('t2') && qvec) {
+    if (requestedSources.includes("t2") && qvec) {
       type T2Row = {
         memory_id: string;
         project_id: string | null;
@@ -170,10 +182,10 @@ export class RecallReader {
             score,
             payload: {
               id: r.memory_id,
-              tier: 't2' as const,
+              tier: "t2" as const,
               score,
               fusedScore: 0,
-              sources: ['t2' as const],
+              sources: ["t2" as const],
               title: r.title,
               body: r.body,
               project_id: r.project_id,
@@ -181,14 +193,14 @@ export class RecallReader {
               created_at: r.created_at,
               ts: r.created_at,
               payload: { memory_id: r.memory_id },
-            }
+            },
           };
         })
         .filter((r) => r.score >= req.min_score);
     }
 
     const lists = [t0Results, t1Results, t2Results];
-    const sourceMap = ['t0', 't1', 't2'] as const;
+    const sourceMap = ["t0", "t1", "t2"] as const;
 
     const fused = fuseRRF(lists, { k: req.rrf_k, limit });
 
@@ -249,7 +261,7 @@ export function queryT0(db: Database, opts: QueryT0Options): T0RecallResult[] {
     session_id: string | null;
   };
 
-  const where: string[] = ['t0_fts MATCH ?'];
+  const where: string[] = ["t0_fts MATCH ?"];
   const params: (string | number | null)[] = [matchQuery];
 
   // Exclude memory_recall MCP calls captured by the PreToolUse hook. Their
@@ -258,24 +270,26 @@ export function queryT0(db: Database, opts: QueryT0Options): T0RecallResult[] {
   // forever surface its own prior calls before any real content. The hook
   // captures these as event_type='agent-tool-use' with summary starting
   // 'mcp__penumbra__memory_recall('.
-  where.push("NOT (e.event_type = 'agent-tool-use' AND e.payload_summary LIKE 'mcp__penumbra__memory_recall%')");
+  where.push(
+    "NOT (e.event_type = 'agent-tool-use' AND e.payload_summary LIKE 'mcp__penumbra__memory_recall%')",
+  );
   if (!opts.include_untrusted) {
     where.push("COALESCE(json_extract(e.payload_json, '$.trust'), '') != 'untrusted'");
   }
 
   const projectId = opts.project_id ?? null;
   if (projectId !== null) {
-    where.push('e.project_id = ?');
+    where.push("e.project_id = ?");
     params.push(projectId);
   }
 
   if (opts.session_id !== undefined) {
-    where.push('e.session_id = ?');
+    where.push("e.session_id = ?");
     params.push(opts.session_id);
   }
 
   if (opts.event_types && opts.event_types.length > 0) {
-    const placeholders = opts.event_types.map(() => '?').join(',');
+    const placeholders = opts.event_types.map(() => "?").join(",");
     where.push(`e.event_type IN (${placeholders})`);
     params.push(...opts.event_types);
   }
@@ -283,8 +297,8 @@ export function queryT0(db: Database, opts: QueryT0Options): T0RecallResult[] {
   params.push(limit);
 
   const fileJoin = opts.file_path
-    ? 'INNER JOIN t0_file_refs r ON r.event_id = e.event_id AND r.file_path = ?'
-    : '';
+    ? "INNER JOIN t0_file_refs r ON r.event_id = e.event_id AND r.file_path = ?"
+    : "";
   if (opts.file_path) {
     // SQL parses ? in source order. The JOIN's `?` precedes every WHERE-clause `?`,
     // so the file_path binding must come FIRST in params, ahead of matchQuery.
@@ -304,7 +318,7 @@ export function queryT0(db: Database, opts: QueryT0Options): T0RecallResult[] {
          FROM t0_fts
          JOIN t0_events e ON e.event_id = t0_fts.event_id
          ${fileJoin}
-        WHERE ${where.join(' AND ')}
+        WHERE ${where.join(" AND ")}
         ORDER BY bm25(t0_fts) ASC
         LIMIT ?`,
     )
@@ -349,8 +363,8 @@ function sanitizeFts5Query(raw: string): string {
     .filter((t) => /[0-9A-Za-z]/.test(t))
     .slice(0, 20);
 
-  if (tokens.length === 0) return '';
-  return tokens.map((t) => `"${escapeFts5PhraseToken(t)}"`).join(' OR ');
+  if (tokens.length === 0) return "";
+  return tokens.map((t) => `"${escapeFts5PhraseToken(t)}"`).join(" OR ");
 }
 
 function escapeFts5PhraseToken(token: string): string {

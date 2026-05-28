@@ -1,6 +1,6 @@
 export interface InjectableSessionLike {
   adapter?: string | null;
-  inject?: (message: { role: 'user'; text: string }) => Promise<void> | void;
+  inject?: (message: { role: "user"; text: string }) => Promise<void> | void;
 }
 
 const sessions = new Map<string, InjectableSessionLike>();

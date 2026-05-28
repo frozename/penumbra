@@ -126,10 +126,7 @@ export default tseslint.config(
       "perfectionist/sort-named-imports": ["warn", { type: "natural", order: "asc" }],
       "perfectionist/sort-named-exports": ["warn", { type: "natural", order: "asc" }],
       "perfectionist/sort-exports": ["warn", { type: "natural", order: "asc" }],
-      "max-lines-per-function": [
-        "warn",
-        { max: 150, skipBlankLines: true, skipComments: true },
-      ],
+      "max-lines-per-function": ["warn", { max: 150, skipBlankLines: true, skipComments: true }],
       "sonarjs/cognitive-complexity": ["warn", 15],
       "unicorn/no-for-loop": "warn",
       "unicorn/no-array-for-each": "warn",
@@ -154,10 +151,7 @@ export default tseslint.config(
   {
     files: ["packages/**/routes/**/*.ts", "packages/**/tools/**/*.ts"],
     rules: {
-      "max-lines-per-function": [
-        "warn",
-        { max: 250, skipBlankLines: true, skipComments: true },
-      ],
+      "max-lines-per-function": ["warn", { max: 250, skipBlankLines: true, skipComments: true }],
     },
   },
   {

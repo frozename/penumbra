@@ -1,4 +1,4 @@
-import type { DispatchEventInput } from '@penumbra/core';
+import type { DispatchEventInput } from "@penumbra/core";
 
 export interface DispatchEventQueueOpts {
   send: (events: DispatchEventInput[], signal: AbortSignal) => Promise<void>;

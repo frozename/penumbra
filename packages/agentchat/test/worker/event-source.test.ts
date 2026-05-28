@@ -1,5 +1,5 @@
-import { expect, test, mock } from 'bun:test';
-import { startEventSource, type EventSourceClient } from '../../src/worker/event-source.js';
+import { expect, test, mock } from "bun:test";
+import { startEventSource, type EventSourceClient } from "../../src/worker/event-source.js";
 
 function makeClient(overrides: Partial<EventSourceClient> = {}): EventSourceClient {
   return {
@@ -13,191 +13,223 @@ function makeClient(overrides: Partial<EventSourceClient> = {}): EventSourceClie
   };
 }
 
-test('drains backlog from listHandoffs(status=approved,redirected) on startup', async () => {
+test("drains backlog from listHandoffs(status=approved,redirected) on startup", async () => {
   const handler = mock();
   const client = makeClient({
     listHandoffs: mock().mockResolvedValue({
-      handoffs: [{ handoff_id: 'a', status: 'approved' }, { handoff_id: 'b', status: 'redirected' }],
+      handoffs: [
+        { handoff_id: "a", status: "approved" },
+        { handoff_id: "b", status: "redirected" },
+      ],
     }),
   });
-  const { stop } = startEventSource({ client, statuses: ['approved', 'redirected'], onEvent: handler, pollIntervalMs: 50 });
+  const { stop } = startEventSource({
+    client,
+    statuses: ["approved", "redirected"],
+    onEvent: handler,
+    pollIntervalMs: 50,
+  });
   await new Promise((r) => setTimeout(r, 30));
   expect(handler).toHaveBeenCalledTimes(2);
-  expect(handler.mock.calls.map((c) => c[0].handoff_id).sort()).toEqual(['a', 'b']);
+  expect(handler.mock.calls.map((c) => c[0].handoff_id).sort()).toEqual(["a", "b"]);
   await stop();
 });
 
-test('hard isolation polls only project-scoped queue', async () => {
+test("hard isolation polls only project-scoped queue", async () => {
   const handler = mock();
-  const listHandoffs = mock().mockResolvedValue({ handoffs: [{ handoff_id: 'filtered', status: 'approved' }] });
+  const listHandoffs = mock().mockResolvedValue({
+    handoffs: [{ handoff_id: "filtered", status: "approved" }],
+  });
   const { stop } = startEventSource({
     client: {
       listHandoffs,
       subscribeHandoffEvents: mock().mockImplementation(async function* () {
-        throw new Error('sse-down');
+        throw new Error("sse-down");
       }),
     },
-    statuses: ['approved'],
-    project_id: 'alpha',
-    isolation: 'hard',
+    statuses: ["approved"],
+    project_id: "alpha",
+    isolation: "hard",
     pollIntervalMs: 1000,
     onEvent: handler,
   });
   await new Promise((r) => setTimeout(r, 25));
   expect(listHandoffs).toHaveBeenCalled();
   expect(handler).toHaveBeenCalledTimes(1);
-  expect(listHandoffs).toHaveBeenCalledWith({ statuses: ['approved'], project_id: 'alpha' });
+  expect(listHandoffs).toHaveBeenCalledWith({ statuses: ["approved"], project_id: "alpha" });
   for (const [opts] of listHandoffs.mock.calls as any) {
-    expect(opts.project_id).toBe('alpha');
+    expect(opts.project_id).toBe("alpha");
   }
   await stop();
 });
 
-test('sticky isolation falls back to shared queue when project queue is empty', async () => {
+test("sticky isolation falls back to shared queue when project queue is empty", async () => {
   const handler = mock();
   const calls: Array<{ statuses: string[]; project_id?: string | null }> = [];
-  const listHandoffs = mock().mockImplementation(async (opts: { statuses: string[]; project_id?: string | null }) => {
-    calls.push(opts);
-    if (opts.project_id) {
-      return { handoffs: [] };
-    }
-    return { handoffs: [{ handoff_id: 'shared', status: 'approved' }] };
-  });
+  const listHandoffs = mock().mockImplementation(
+    async (opts: { statuses: string[]; project_id?: string | null }) => {
+      calls.push(opts);
+      if (opts.project_id) {
+        return { handoffs: [] };
+      }
+      return { handoffs: [{ handoff_id: "shared", status: "approved" }] };
+    },
+  );
 
   const { stop } = startEventSource({
     client: {
       listHandoffs,
       subscribeHandoffEvents: mock().mockImplementation(async function* () {
-        throw new Error('sse-down');
+        throw new Error("sse-down");
       }),
     },
-    statuses: ['approved'],
-    project_id: 'alpha',
-    isolation: 'sticky',
+    statuses: ["approved"],
+    project_id: "alpha",
+    isolation: "sticky",
     pollIntervalMs: 1000,
     onEvent: handler,
   });
   await new Promise((r) => setTimeout(r, 30));
-  expect(calls.some((call) => call.project_id === 'alpha')).toBe(true);
+  expect(calls.some((call) => call.project_id === "alpha")).toBe(true);
   expect(calls.some((call) => call.project_id === undefined)).toBe(true);
-  expect(handler).toHaveBeenCalledWith(expect.objectContaining({ handoff_id: 'shared' }));
+  expect(handler).toHaveBeenCalledWith(expect.objectContaining({ handoff_id: "shared" }));
   await stop();
 });
 
-test('shared isolation ignores project_id for listHandoffs polling', async () => {
+test("shared isolation ignores project_id for listHandoffs polling", async () => {
   const handler = mock();
-  const listHandoffs = mock().mockImplementation(async () => ({ handoffs: [{ handoff_id: 'shared-only', status: 'approved' }] }));
+  const listHandoffs = mock().mockImplementation(async () => ({
+    handoffs: [{ handoff_id: "shared-only", status: "approved" }],
+  }));
   const { stop } = startEventSource({
     client: {
       listHandoffs,
       subscribeHandoffEvents: mock().mockImplementation(async function* () {
-        throw new Error('sse-down');
+        throw new Error("sse-down");
       }),
     },
-    statuses: ['approved'],
-    project_id: 'alpha',
-    isolation: 'shared',
+    statuses: ["approved"],
+    project_id: "alpha",
+    isolation: "shared",
     pollIntervalMs: 1000,
     onEvent: handler,
   });
   await new Promise((r) => setTimeout(r, 25));
   expect(listHandoffs).toHaveBeenCalled();
-  expect(handler).toHaveBeenCalledWith(expect.objectContaining({ handoff_id: 'shared-only' }));
+  expect(handler).toHaveBeenCalledWith(expect.objectContaining({ handoff_id: "shared-only" }));
   for (const [opts] of listHandoffs.mock.calls as any) {
     expect((opts as any).project_id).toBeUndefined();
   }
   await stop();
 });
 
-test('SSE events are delivered to handler', async () => {
+test("SSE events are delivered to handler", async () => {
   const handler = mock();
   const client = makeClient({
     subscribeHandoffEvents: mock().mockImplementation(async function* () {
-      yield { handoff_id: 'sse-1', status: 'approved' };
-      yield { handoff_id: 'sse-2', status: 'approved' };
+      yield { handoff_id: "sse-1", status: "approved" };
+      yield { handoff_id: "sse-2", status: "approved" };
       // hold open
-      await new Promise<void>(() => {});
-    }),
-  });
-  const { stop } = startEventSource({ client, statuses: ['approved'], onEvent: handler, pollIntervalMs: 1000 });
-  await new Promise((r) => setTimeout(r, 60));
-  expect(handler).toHaveBeenCalledTimes(2);
-  await stop();
-});
-
-test('hard isolation drops SSE handoff events from other projects', async () => {
-  const handler = mock();
-  const client = makeClient({
-    subscribeHandoffEvents: mock().mockImplementation(async function* () {
-      yield { handoff_id: 'sse-matched', status: 'approved', project_id: 'proj-a' };
-      yield { handoff_id: 'sse-other', status: 'approved', project_id: 'proj-b' };
       await new Promise<void>(() => {});
     }),
   });
   const { stop } = startEventSource({
     client,
-    statuses: ['approved'],
-    project_id: 'proj-a',
-    isolation: 'hard',
+    statuses: ["approved"],
+    onEvent: handler,
+    pollIntervalMs: 1000,
+  });
+  await new Promise((r) => setTimeout(r, 60));
+  expect(handler).toHaveBeenCalledTimes(2);
+  await stop();
+});
+
+test("hard isolation drops SSE handoff events from other projects", async () => {
+  const handler = mock();
+  const client = makeClient({
+    subscribeHandoffEvents: mock().mockImplementation(async function* () {
+      yield { handoff_id: "sse-matched", status: "approved", project_id: "proj-a" };
+      yield { handoff_id: "sse-other", status: "approved", project_id: "proj-b" };
+      await new Promise<void>(() => {});
+    }),
+  });
+  const { stop } = startEventSource({
+    client,
+    statuses: ["approved"],
+    project_id: "proj-a",
+    isolation: "hard",
     onEvent: handler,
     pollIntervalMs: 1000,
   });
 
   await new Promise((r) => setTimeout(r, 60));
   expect(handler).toHaveBeenCalledTimes(1);
-  expect(handler).toHaveBeenCalledWith(expect.objectContaining({ handoff_id: 'sse-matched' }));
-  expect(handler.mock.calls.some((call) => call[0].handoff_id === 'sse-other')).toBe(false);
+  expect(handler).toHaveBeenCalledWith(expect.objectContaining({ handoff_id: "sse-matched" }));
+  expect(handler.mock.calls.some((call) => call[0].handoff_id === "sse-other")).toBe(false);
   await stop();
 });
 
-test('dedupes by handoff_id across SSE + poll', async () => {
+test("dedupes by handoff_id across SSE + poll", async () => {
   const handler = mock();
   let pollCount = 0;
   const client = makeClient({
     listHandoffs: mock().mockImplementation(async () => {
       pollCount++;
-      return { handoffs: [{ handoff_id: 'x', status: 'approved' }] };
+      return { handoffs: [{ handoff_id: "x", status: "approved" }] };
     }),
     subscribeHandoffEvents: mock().mockImplementation(async function* () {
-      yield { handoff_id: 'x', status: 'approved' };
+      yield { handoff_id: "x", status: "approved" };
       await new Promise<void>(() => {});
     }),
   });
-  const { stop } = startEventSource({ client, statuses: ['approved'], onEvent: handler, pollIntervalMs: 30 });
+  const { stop } = startEventSource({
+    client,
+    statuses: ["approved"],
+    onEvent: handler,
+    pollIntervalMs: 30,
+  });
   await new Promise((r) => setTimeout(r, 100));
   // Even though SSE emits 'x' AND polling sees 'x' multiple times, handler runs once.
   expect(handler).toHaveBeenCalledTimes(1);
   await stop();
 });
 
-test('SSE error switches to polling and resumes when SSE recovers', async () => {
+test("SSE error switches to polling and resumes when SSE recovers", async () => {
   const handler = mock();
   let sseAttempt = 0;
   const client = makeClient({
-    listHandoffs: mock().mockResolvedValue({ handoffs: [{ handoff_id: 'p', status: 'approved' }] }),
+    listHandoffs: mock().mockResolvedValue({ handoffs: [{ handoff_id: "p", status: "approved" }] }),
     subscribeHandoffEvents: mock().mockImplementation(async function* () {
       sseAttempt++;
-      if (sseAttempt === 1) throw new Error('boom');
-      yield { handoff_id: 'sse-after-recover', status: 'approved' };
+      if (sseAttempt === 1) throw new Error("boom");
+      yield { handoff_id: "sse-after-recover", status: "approved" };
       await new Promise<void>(() => {});
     }),
   });
   const { stop } = startEventSource({
-    client, statuses: ['approved'], onEvent: handler,
-    pollIntervalMs: 30, sseBackoffStartMs: 5,
+    client,
+    statuses: ["approved"],
+    onEvent: handler,
+    pollIntervalMs: 30,
+    sseBackoffStartMs: 5,
   });
   await new Promise((r) => setTimeout(r, 200));
   expect(sseAttempt).toBeGreaterThanOrEqual(2);
   const ids = handler.mock.calls.map((c) => c[0].handoff_id);
-  expect(ids).toContain('p');
-  expect(ids).toContain('sse-after-recover');
+  expect(ids).toContain("p");
+  expect(ids).toContain("sse-after-recover");
   await stop();
 });
 
-test('stop() cancels SSE iterator and stops polling', async () => {
+test("stop() cancels SSE iterator and stops polling", async () => {
   const handler = mock();
   const client = makeClient();
-  const { stop } = startEventSource({ client, statuses: ['approved'], onEvent: handler, pollIntervalMs: 10 });
+  const { stop } = startEventSource({
+    client,
+    statuses: ["approved"],
+    onEvent: handler,
+    pollIntervalMs: 10,
+  });
   await new Promise((r) => setTimeout(r, 25));
   await stop();
   const callsBefore = handler.mock.calls.length;
@@ -205,20 +237,23 @@ test('stop() cancels SSE iterator and stops polling', async () => {
   expect(handler.mock.calls.length).toBe(callsBefore);
 });
 
-test('forget(id) drops the dedup entry so a future event for that id re-fires the handler', async () => {
+test("forget(id) drops the dedup entry so a future event for that id re-fires the handler", async () => {
   const handler = mock();
-  const pollResults: any[] = [{ handoff_id: 'h1', status: 'approved' }];
+  const pollResults: any[] = [{ handoff_id: "h1", status: "approved" }];
   const client = makeClient({
     listHandoffs: mock().mockImplementation(async () => ({ handoffs: pollResults })),
     // Make SSE error immediately so polling is the active path (sseAlive stays false).
     subscribeHandoffEvents: mock().mockImplementation(async function* () {
-      throw new Error('sse-down');
+      throw new Error("sse-down");
     }),
   });
   const { stop, forget } = startEventSource({
-    client, statuses: ['approved'], onEvent: handler,
+    client,
+    statuses: ["approved"],
+    onEvent: handler,
     pollIntervalMs: 20,
-    sseBackoffStartMs: 1000, sseBackoffCapMs: 1000, // SSE retry window beyond the test
+    sseBackoffStartMs: 1000,
+    sseBackoffCapMs: 1000, // SSE retry window beyond the test
   });
   // First poll fires handler once
   await new Promise((r) => setTimeout(r, 50));
@@ -227,33 +262,36 @@ test('forget(id) drops the dedup entry so a future event for that id re-fires th
   await new Promise((r) => setTimeout(r, 80));
   expect(handler).toHaveBeenCalledTimes(1);
   // After forget, the next poll re-fires the handler
-  forget('h1');
+  forget("h1");
   await new Promise((r) => setTimeout(r, 80));
   expect(handler.mock.calls.length).toBeGreaterThanOrEqual(2);
   await stop();
 });
 
-test('logs daemon unreachable on poll failure when log is provided, throttled to once per window', async () => {
+test("logs daemon unreachable on poll failure when log is provided, throttled to once per window", async () => {
   const warns: any[] = [];
   const log = { warn: (obj: any, msg: string) => warns.push({ obj, msg }) };
   const client = makeClient({
-    listHandoffs: mock().mockRejectedValue(new Error('connect ECONNREFUSED')),
+    listHandoffs: mock().mockRejectedValue(new Error("connect ECONNREFUSED")),
     // SSE errors immediately so sseAlive stays false and polls keep ticking.
     subscribeHandoffEvents: mock().mockImplementation(async function* () {
-      throw new Error('sse-down');
+      throw new Error("sse-down");
     }),
   });
   const { stop } = startEventSource({
-    client, statuses: ['approved'], onEvent: () => {},
+    client,
+    statuses: ["approved"],
+    onEvent: () => {},
     pollIntervalMs: 20,
-    sseBackoffStartMs: 1000, sseBackoffCapMs: 1000,
+    sseBackoffStartMs: 1000,
+    sseBackoffCapMs: 1000,
     log,
     unreachableLogThrottleMs: 100,
   });
   // Multiple poll ticks within the throttle window → exactly one log
   await new Promise((r) => setTimeout(r, 60));
   expect(warns.length).toBe(1);
-  expect(warns[0].msg).toBe('daemon unreachable, retrying');
+  expect(warns[0].msg).toBe("daemon unreachable, retrying");
   // After the throttle window expires, the next poll error logs again
   await new Promise((r) => setTimeout(r, 130));
   expect(warns.length).toBeGreaterThanOrEqual(2);

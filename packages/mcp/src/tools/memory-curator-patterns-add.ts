@@ -1,11 +1,11 @@
-import { z } from 'zod';
-import { toTextContent } from '@nova/mcp-shared';
-import type { DaemonClient } from '../daemon-client.js';
+import { z } from "zod";
+import { toTextContent } from "@nova/mcp-shared";
+import type { DaemonClient } from "../daemon-client.js";
 
 export const MemoryCuratorPatternsAddInputShape = {
-  pattern: z.string().min(1).describe('Pattern string to match against memory content'),
-  reason: z.string().min(1).describe('Why this pattern is being proposed'),
-  proposed_by: z.string().optional().describe('Identifier of the proposer (default: mcp-caller)'),
+  pattern: z.string().min(1).describe("Pattern string to match against memory content"),
+  reason: z.string().min(1).describe("Why this pattern is being proposed"),
+  proposed_by: z.string().optional().describe("Identifier of the proposer (default: mcp-caller)"),
 };
 
 const Schema = z.object(MemoryCuratorPatternsAddInputShape);

@@ -1,4 +1,7 @@
-export interface RecentResponse { agent: string; text: string }
+export interface RecentResponse {
+  agent: string;
+  text: string;
+}
 
 export interface BuildPromptInput {
   projectContext: string;
@@ -31,5 +34,5 @@ export function buildPrompt(input: BuildPromptInput): string {
   if (input.projectContext) parts.push(`## project context\n${input.projectContext}`);
   if (tailBlocks.length) parts.push(...tailBlocks);
   if (input.handoffMessage) parts.push(`## current message\n${input.handoffMessage}`);
-  return parts.join('\n\n');
+  return parts.join("\n\n");
 }

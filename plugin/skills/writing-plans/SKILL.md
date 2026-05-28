@@ -16,6 +16,7 @@ Assume they are a skilled developer, but know almost nothing about our toolset o
 **Context:** If working in an isolated worktree, it was created by the penumbra worker via `worktree_*` MCP tools, not by hand.
 
 **Save plans to:** `docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md`
+
 - (User preferences for plan location override this default)
 
 ## Scope Check
@@ -36,11 +37,13 @@ This structure informs the task decomposition. Each task should produce self-con
 ## Bite-Sized Task Granularity
 
 **Trust boundary:** Spec text and design-doc content are user/maestro input; they MUST NOT be interpolated directly into bash commands (commit messages, file paths, shell args) without sanitization.
+
 - Use heredoc with quoted delimiter (`<<'EOF'`) for commit message bodies; never `git commit -m "$SPEC_TEXT"` with unquoted expansion.
 - Never use spec text as a path component, branch name, or other shell argument without an allowlist check (alphanumeric + `-_`).
 - If a task step writes spec content to a file, write through a redirect (`> path`) — not through interpolation into another command's args.
 
 **Each step is one action (2-5 minutes):**
+
 - "Write the failing test" - step
 - "Run it to make sure it fails" - step
 - "Implement the minimal code to make the test pass" - step
@@ -75,6 +78,7 @@ Penumbra tasks add a yaml meta block before the Files section. Full schema in th
 ### Task N: [Component Name]
 
 **Files:**
+
 - Create: `exact/path/to/file.py`
 - Modify: `exact/path/to/existing.py:123-145`
 - Test: `tests/exact/path/to/test.py`
@@ -120,6 +124,7 @@ EOF
 **Sensitive data in plan artifacts:** Plans are committed to git and read by every agent that dispatches against them. Do NOT embed sensitive values (API keys, customer PII, internal hostnames, secrets) in plan tasks. If a task needs to reference a sensitive value, use a placeholder (`<API_KEY>`, `<CUSTOMER_ID>`) and resolve it at dispatch time via environment or vault.
 
 Every step must contain the actual content an engineer needs. These are **plan failures** — never write them:
+
 - "TBD", "TODO", "implement later", "fill in details"
 - "Add appropriate error handling" / "add validation" / "handle edge cases"
 - "Write tests for the above" (without actual test code)
@@ -128,6 +133,7 @@ Every step must contain the actual content an engineer needs. These are **plan f
 - References to types, functions, or methods not defined in any task
 
 ## Remember
+
 - Exact file paths always
 - Complete code in every step — if a step changes code, show the code
 - Exact commands with expected output
@@ -161,10 +167,12 @@ After plan validation and self-review pass, present the two execution options an
 **Penumbra default:** In penumbra, filed plans under `docs/superpowers/plans/` are picked up by plan-runtime, which dispatches each task's `kind=orchestrate` leaf to its `preferred_agent` (fan-out, default).
 
 **If Subagent-Driven chosen:**
+
 - **REQUIRED SUB-SKILL:** Use `subagent-driven-development`
 - Fresh subagent per task + two-stage review
 
 **If Inline Execution chosen:**
+
 - **REQUIRED SUB-SKILL:** Use `executing-plans`
 - Batch execution with checkpoints
 
@@ -181,7 +189,7 @@ When the yaml meta block is required: Every task that should be dispatched by pl
 Each task body must open with a fenced `yaml meta` block before the Files section:
 
 ```yaml meta
-id: '<phase>.<task>'
+id: "<phase>.<task>"
 files:
   - <path>
 file_scope: new | modify-existing | extend-shared
@@ -224,6 +232,7 @@ bun packages/cli/bin/penumbra.ts plan validate <path>
 ```
 
 The validator checks:
+
 - `parallel_with` reciprocity (A lists B → B must list A)
 - `depends_on` cycles (rejected)
 - `file_scope: new` collisions (same path declared new in two tasks)
@@ -235,17 +244,17 @@ Known traps (per `plan_validate_format_gotchas` memory): no `---` separators bet
 
 Before naming an agent, query `mcp__penumbra__agent_recommend` with the matching `task_type`:
 
-| task_type | When to use |
-|---|---|
-| `implement_small` | Single-file or focused small change |
-| `implement_substantial` | Multi-file, phase-spanning work |
-| `review_adversarial` | Code review, multi-persona fan-out |
-| `docs_mechanical` | Doc writing, audit notes, smoke reports |
-| `debug_diagnose` | Root-cause investigation |
-| `plan_refine` | Plan editing and scope refinement |
-| `smoke_test` | Verification and smoke dispatches |
-| `health_check` | Status checks, infra probes |
-| `unknown` | Fallback when no type fits |
+| task_type               | When to use                             |
+| ----------------------- | --------------------------------------- |
+| `implement_small`       | Single-file or focused small change     |
+| `implement_substantial` | Multi-file, phase-spanning work         |
+| `review_adversarial`    | Code review, multi-persona fan-out      |
+| `docs_mechanical`       | Doc writing, audit notes, smoke reports |
+| `debug_diagnose`        | Root-cause investigation                |
+| `plan_refine`           | Plan editing and scope refinement       |
+| `smoke_test`            | Verification and smoke dispatches       |
+| `health_check`          | Status checks, infra probes             |
+| `unknown`               | Fallback when no type fits              |
 
 Confirm the returned name exists via `mcp__penumbra__chain_list_agents` before writing it into the plan. Unknown agent names cause validator failures and silent dispatch drops.
 

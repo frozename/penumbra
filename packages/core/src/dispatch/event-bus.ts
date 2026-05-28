@@ -1,6 +1,6 @@
-import type { DispatchEventInput } from '../services/dispatch-event-log.js';
+import type { DispatchEventInput } from "../services/dispatch-event-log.js";
 
-export type DispatchEvent = Omit<DispatchEventInput, 'worker_id' | 'meta'> & {
+export type DispatchEvent = Omit<DispatchEventInput, "worker_id" | "meta"> & {
   worker_id: string | null;
   meta: Record<string, unknown> | null;
 };
@@ -27,7 +27,9 @@ export class DispatchEventBus {
     }
   }
 
-  subscribe(predicate: (event: DispatchEvent) => boolean = () => true): AsyncIterableIterator<DispatchEvent> {
+  subscribe(
+    predicate: (event: DispatchEvent) => boolean = () => true,
+  ): AsyncIterableIterator<DispatchEvent> {
     const subscriber: DispatchSubscriber = {
       closed: false,
       predicate,

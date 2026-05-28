@@ -1,4 +1,4 @@
-import type { T0EventInput } from '@penumbra/core';
+import type { T0EventInput } from "@penumbra/core";
 
 export interface ChatMessage {
   role: string;
@@ -6,8 +6,8 @@ export interface ChatMessage {
 }
 
 export type ChatMessageContentPart =
-  | { type: 'text'; text: string }
-  | { type: 'image_url'; image_url: unknown }
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: unknown }
   | { type: string; [k: string]: unknown };
 
 export interface ChatResponseLike {
@@ -33,19 +33,19 @@ export interface BuildResponseInput extends BuildPromptInput {
   completionTs: number;
 }
 
-const ROUTE = '/v1/chat/completions';
+const ROUTE = "/v1/chat/completions";
 
 export function buildPromptEvent(input: BuildPromptInput): T0EventInput {
   return {
     ts: new Date(input.captureStartTs).toISOString(),
-    source: 'sirius-middleware',
+    source: "sirius-middleware",
     source_detail: ROUTE,
     project_id: input.projectId,
     user_id: input.userId,
     machine_id: input.machineId,
     session_id: input.requestId,
-    event_type: 'agent-prompt',
-    lane: 'unknown',
+    event_type: "agent-prompt",
+    lane: "unknown",
     provider: null,
     model: input.model,
     tokens_in: null,
@@ -62,18 +62,18 @@ export function buildResponseEvent(input: BuildResponseInput): T0EventInput {
   const usage = input.response.usage ?? {};
   return {
     ts: new Date(input.completionTs).toISOString(),
-    source: 'sirius-middleware',
+    source: "sirius-middleware",
     source_detail: ROUTE,
     project_id: input.projectId,
     user_id: input.userId,
     machine_id: input.machineId,
     session_id: input.requestId,
-    event_type: 'agent-response',
-    lane: 'unknown',
+    event_type: "agent-response",
+    lane: "unknown",
     provider: input.response.provider ?? null,
     model: input.model,
-    tokens_in: typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : null,
-    tokens_out: typeof usage.completion_tokens === 'number' ? usage.completion_tokens : null,
+    tokens_in: typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : null,
+    tokens_out: typeof usage.completion_tokens === "number" ? usage.completion_tokens : null,
     cost_usd: null,
     latency_ms: input.completionTs - input.captureStartTs,
     request_id: input.requestId,
@@ -88,25 +88,25 @@ export function buildResponseEvent(input: BuildResponseInput): T0EventInput {
 export function extractUserMessageText(messages: ChatMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
-    if (!m || m.role !== 'user') continue;
+    if (!m || m.role !== "user") continue;
     const c = m.content;
-    if (typeof c === 'string') return c;
+    if (typeof c === "string") return c;
     if (Array.isArray(c)) {
       const parts: string[] = [];
       for (const part of c) {
-        if (part && typeof part === 'object') {
-          if (part.type === 'text' && typeof (part as { text?: unknown }).text === 'string') {
+        if (part && typeof part === "object") {
+          if (part.type === "text" && typeof (part as { text?: unknown }).text === "string") {
             parts.push((part as { text: string }).text);
-          } else if (part.type === 'image_url') {
-            parts.push('[image]');
+          } else if (part.type === "image_url") {
+            parts.push("[image]");
           } else {
-            parts.push('[binary]');
+            parts.push("[binary]");
           }
         }
       }
-      return parts.join(' ');
+      return parts.join(" ");
     }
-    return '';
+    return "";
   }
-  return '';
+  return "";
 }

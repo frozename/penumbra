@@ -1,18 +1,18 @@
-import { expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import type { AgentDescriptor, ChainStartRequest } from '@penumbra/core';
+import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import type { AgentDescriptor, ChainStartRequest } from "@penumbra/core";
 import {
   loadSqliteVec,
   MaestroSessionWriter,
   migrate,
   TaskEventBus,
   TaskWriter,
-} from '@penumbra/core';
-import { orchestrateOneTask } from '../../src/maestro/orchestrate-one-task.js';
+} from "@penumbra/core";
+import { orchestrateOneTask } from "../../src/maestro/orchestrate-one-task.js";
 
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {}
 
@@ -23,42 +23,46 @@ const DEFAULT_BOUNDS = {
 };
 
 const MAESTRO_AGENT: AgentDescriptor = {
-  name: 'claude-acp-sonnet',
+  name: "claude-acp-sonnet",
   maestro_capable: true,
-  tags: ['typescript'],
-  tier: 'premium',
+  tags: ["typescript"],
+  tier: "premium",
 };
 
 const SECOND_AGENT: AgentDescriptor = {
-  name: 'codex-acp-fast',
+  name: "codex-acp-fast",
   maestro_capable: true,
-  tags: ['typescript'],
-  tier: 'standard',
+  tags: ["typescript"],
+  tier: "standard",
 };
 
 function setupDb(): Database {
-  const db = new Database(':memory:');
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   return db;
 }
 
-test('orchestrateOneTask dispatches and creates session when no pre-bound session exists', async () => {
+test("orchestrateOneTask dispatches and creates session when no pre-bound session exists", async () => {
   const db = setupDb();
   const bus = new TaskEventBus();
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
     resolveAgent: (name) =>
-      (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : name === SECOND_AGENT.name ? SECOND_AGENT : undefined),
+      name === MAESTRO_AGENT.name
+        ? MAESTRO_AGENT
+        : name === SECOND_AGENT.name
+          ? SECOND_AGENT
+          : undefined,
   });
 
   const { task_id } = taskWriter.file({
-    prompt: 'Ship task 3.2',
-    kind: 'orchestrate',
+    prompt: "Ship task 3.2",
+    kind: "orchestrate",
     eligibility: { allow_agents: [MAESTRO_AGENT.name] },
-    created_by_kind: 'human',
-    created_by_id: 'cli',
+    created_by_kind: "human",
+    created_by_id: "cli",
   });
 
   const chainStartCalls: ChainStartRequest[] = [];
@@ -68,53 +72,61 @@ test('orchestrateOneTask dispatches and creates session when no pre-bound sessio
     taskWriter,
     chainStart: async (req) => {
       chainStartCalls.push(req);
-      return { handoff_id: 'handoff-1', conversation_id: 'conv-1' };
+      return { handoff_id: "handoff-1", conversation_id: "conv-1" };
     },
     resolveAgent: (name) =>
-      (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : name === SECOND_AGENT.name ? SECOND_AGENT : undefined),
+      name === MAESTRO_AGENT.name
+        ? MAESTRO_AGENT
+        : name === SECOND_AGENT.name
+          ? SECOND_AGENT
+          : undefined,
     defaults: DEFAULT_BOUNDS,
   });
 
-  expect(result.status).toBe('dispatched');
-  if (result.status !== 'dispatched') throw new Error('expected dispatched result');
+  expect(result.status).toBe("dispatched");
+  if (result.status !== "dispatched") throw new Error("expected dispatched result");
   expect(result.agent_name).toBe(MAESTRO_AGENT.name);
-  expect(result.chain_handoff_id).toBe('handoff-1');
-  expect(result.conversation_id).toBe('conv-1');
+  expect(result.chain_handoff_id).toBe("handoff-1");
+  expect(result.conversation_id).toBe("conv-1");
   expect(result.session.task_id).toBe(task_id);
 
   expect(chainStartCalls).toHaveLength(1);
   expect(chainStartCalls[0]).toMatchObject({
     initial_agent: MAESTRO_AGENT.name,
-    task_type: 'implement_substantial',
+    task_type: "implement_substantial",
     use_worktree: true,
-    trust_mode: 'all',
+    trust_mode: "all",
   });
 
   const session = sessions.get(task_id);
-  expect(session?.chain_handoff_id).toBe('handoff-1');
+  expect(session?.chain_handoff_id).toBe("handoff-1");
   expect(session?.agent_id).toBe(MAESTRO_AGENT.name);
 
   const task = taskWriter.get(task_id);
-  expect(task.status).toBe('leased');
+  expect(task.status).toBe("leased");
   db.close();
 });
 
-test('orchestrateOneTask dispatches a pre-bound session using session.agent_id', async () => {
+test("orchestrateOneTask dispatches a pre-bound session using session.agent_id", async () => {
   const db = setupDb();
   const bus = new TaskEventBus();
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
     resolveAgent: (name) =>
-      (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : name === SECOND_AGENT.name ? SECOND_AGENT : undefined),
+      name === MAESTRO_AGENT.name
+        ? MAESTRO_AGENT
+        : name === SECOND_AGENT.name
+          ? SECOND_AGENT
+          : undefined,
   });
 
   const { task_id } = taskWriter.file({
-    prompt: 'Ship prebound task',
-    kind: 'orchestrate',
+    prompt: "Ship prebound task",
+    kind: "orchestrate",
     eligibility: { allow_agents: [SECOND_AGENT.name] },
-    created_by_kind: 'human',
-    created_by_id: 'cli',
+    created_by_kind: "human",
+    created_by_id: "cli",
   });
   sessions.start({
     task_id,
@@ -131,18 +143,22 @@ test('orchestrateOneTask dispatches a pre-bound session using session.agent_id',
     taskWriter,
     chainStart: async (req) => {
       chainStartCalls.push(req);
-      return { handoff_id: 'handoff-prebound', conversation_id: 'conv-prebound' };
+      return { handoff_id: "handoff-prebound", conversation_id: "conv-prebound" };
     },
     resolveAgent: (name) =>
-      (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : name === SECOND_AGENT.name ? SECOND_AGENT : undefined),
+      name === MAESTRO_AGENT.name
+        ? MAESTRO_AGENT
+        : name === SECOND_AGENT.name
+          ? SECOND_AGENT
+          : undefined,
     defaults: DEFAULT_BOUNDS,
   });
 
-  expect(result.status).toBe('dispatched');
-  if (result.status !== 'dispatched') throw new Error('expected dispatched result');
+  expect(result.status).toBe("dispatched");
+  if (result.status !== "dispatched") throw new Error("expected dispatched result");
   expect(result.agent_name).toBe(MAESTRO_AGENT.name);
-  expect(result.chain_handoff_id).toBe('handoff-prebound');
-  expect(result.session.chain_handoff_id).toBe('handoff-prebound');
+  expect(result.chain_handoff_id).toBe("handoff-prebound");
+  expect(result.session.chain_handoff_id).toBe("handoff-prebound");
   expect(result.session.wall_clock_budget_ms).toBe(120_000);
   expect(result.session.cost_budget_cents).toBe(20);
   expect(result.session.sub_dispatch_budget).toBe(2);
@@ -151,32 +167,35 @@ test('orchestrateOneTask dispatches a pre-bound session using session.agent_id',
   db.close();
 });
 
-test('orchestrateOneTask fails with unknown_agent when selected agent does not resolve', async () => {
+test("orchestrateOneTask fails with unknown_agent when selected agent does not resolve", async () => {
   const db = setupDb();
   const taskWriter = new TaskWriter(db, {
     resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
   });
   const sessions = new MaestroSessionWriter({ db });
   const { task_id } = taskWriter.file({
-    prompt: 'unknown agent task',
-    kind: 'orchestrate',
+    prompt: "unknown agent task",
+    kind: "orchestrate",
     eligibility: { allow_agents: [MAESTRO_AGENT.name] },
-    created_by_kind: 'human',
-    created_by_id: 'cli',
+    created_by_kind: "human",
+    created_by_id: "cli",
   });
 
   const result = await orchestrateOneTask(task_id, {
     db,
     sessions,
     taskWriter,
-    chainStart: async () => ({ handoff_id: 'should-not-happen', conversation_id: 'should-not-happen' }),
+    chainStart: async () => ({
+      handoff_id: "should-not-happen",
+      conversation_id: "should-not-happen",
+    }),
     resolveAgent: () => undefined,
     defaults: DEFAULT_BOUNDS,
   });
 
   expect(result).toEqual({
-    status: 'failed',
-    error: 'unknown_agent',
+    status: "failed",
+    error: "unknown_agent",
     agent_name: MAESTRO_AGENT.name,
   });
   expect(sessions.get(task_id)).toBeNull();

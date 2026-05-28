@@ -1,9 +1,9 @@
-import { Database } from 'bun:sqlite';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { applyRuntimePragmas, loadSqliteVec, migrate, systemUuid, type Uuid } from '@penumbra/core';
-import { AGENTCHAT_TEMPLATE } from './init-agentchat-template.js';
+import { Database } from "bun:sqlite";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { applyRuntimePragmas, loadSqliteVec, migrate, systemUuid, type Uuid } from "@penumbra/core";
+import { AGENTCHAT_TEMPLATE } from "./init-agentchat-template.js";
 
 export interface RunInitOpts {
   storageRoot: string;
@@ -16,12 +16,12 @@ export async function runInit(opts: RunInitOpts): Promise<number> {
   const uuid = opts.uuid ?? systemUuid;
   mkdirSync(opts.storageRoot, { recursive: true });
 
-  const tokenPath = join(opts.storageRoot, 'token');
+  const tokenPath = join(opts.storageRoot, "token");
   if (!existsSync(tokenPath)) {
     writeFileSync(tokenPath, `${uuid()}\n`, { mode: 0o600 });
   }
 
-  const dbPath = join(opts.storageRoot, 'db.sqlite');
+  const dbPath = join(opts.storageRoot, "db.sqlite");
   const db = new Database(dbPath, { create: true });
   try {
     loadSqliteVec(db);
@@ -31,7 +31,8 @@ export async function runInit(opts: RunInitOpts): Promise<number> {
     db.close();
   }
 
-  const agentchatPath = process.env.AGENTCHAT_CONFIG ?? join(homedir(), '.config/agentchat/agentchat.yaml');
+  const agentchatPath =
+    process.env.AGENTCHAT_CONFIG ?? join(homedir(), ".config/agentchat/agentchat.yaml");
   if (existsSync(agentchatPath)) {
     if (opts.forceAgentchat) {
       mkdirSync(dirname(agentchatPath), { recursive: true });

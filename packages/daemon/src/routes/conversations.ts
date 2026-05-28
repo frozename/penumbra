@@ -1,5 +1,5 @@
-import type { Services } from '@penumbra/core';
-import { json } from './_helpers.js';
+import type { Services } from "@penumbra/core";
+import { json } from "./_helpers.js";
 
 /**
  * POST /conversations/:id/cancel
@@ -26,14 +26,14 @@ export async function conversationsCancelRoute(
   // 2. Broadcast to live workers
   // We try to find a specific dispatched handoff to include in the cancel event
   const active = services.handoffReader.listByStatus({
-    statuses: ['dispatched'],
+    statuses: ["dispatched"],
     conversation_id,
   });
 
   if (active.length > 0) {
     for (const handoff of active) {
       services.workerControl.emit({
-        type: 'cancel',
+        type: "cancel",
         conversation_id,
         handoff_id: handoff.handoff_id,
       });
@@ -45,12 +45,12 @@ export async function conversationsCancelRoute(
     // However, the schema REQUIRES handoff_id.
     // If no dispatched, we can pick the most recent approved/pending if we want to be proactive.
     const eligible = services.handoffReader.listByStatus({
-      statuses: ['approved', 'redirected', 'pending'],
+      statuses: ["approved", "redirected", "pending"],
       conversation_id,
     });
     if (eligible.length > 0) {
       services.workerControl.emit({
-        type: 'cancel',
+        type: "cancel",
         conversation_id,
         handoff_id: eligible[eligible.length - 1]!.handoff_id,
       });
@@ -59,4 +59,3 @@ export async function conversationsCancelRoute(
 
   return json({ ok: true, changed });
 }
-

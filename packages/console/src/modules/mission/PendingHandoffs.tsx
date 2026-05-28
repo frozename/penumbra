@@ -37,10 +37,7 @@ function previewMessage(message: string): string {
 }
 
 export function PendingHandoffs(props: PendingHandoffsProps = {}): JSX.Element {
-  const client = useMemo(
-    () => props.client ?? makeDefaultClient(),
-    [props.client],
-  );
+  const client = useMemo(() => props.client ?? makeDefaultClient(), [props.client]);
   const queryClient = useQueryClient();
 
   const query = useQuery({
@@ -79,11 +76,7 @@ interface PendingHandoffRowProps {
   queryClient: QueryClient;
 }
 
-function PendingHandoffRow({
-  row,
-  client,
-  queryClient,
-}: PendingHandoffRowProps): JSX.Element {
+function PendingHandoffRow({ row, client, queryClient }: PendingHandoffRowProps): JSX.Element {
   const [busy, setBusy] = useState<"approve" | "deny" | null>(null);
   const [denying, setDenying] = useState(false);
   const [reason, setReason] = useState("");
@@ -150,10 +143,7 @@ function PendingHandoffRow({
         }}
       >
         <span className="dot dot-warn dot-live" />
-        <span
-          className="mono"
-          style={{ fontSize: 9.5, color: "var(--color-text-tertiary)" }}
-        >
+        <span className="mono" style={{ fontSize: 9.5, color: "var(--color-text-tertiary)" }}>
           {fmtAgo(filedAt)}
         </span>
       </div>
@@ -168,17 +158,11 @@ function PendingHandoffRow({
             flexWrap: "wrap",
           }}
         >
-          <span
-            className="mono"
-            style={{ fontSize: 11, color: "var(--color-text-secondary)" }}
-          >
+          <span className="mono" style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
             {row.from_agent}
           </span>
           <span className="t-ghost mono">→</span>
-          <span
-            className="mono"
-            style={{ fontSize: 11, color: "var(--color-brand)" }}
-          >
+          <span className="mono" style={{ fontSize: 11, color: "var(--color-brand)" }}>
             {row.to_agent}
           </span>
           {row.to_role && (
@@ -292,12 +276,7 @@ function PendingHandoffRow({
           >
             Deny
           </Button>
-          <Button
-            variant="ok"
-            onClick={onApprove}
-            disabled={disabled}
-            style={{ fontSize: 11 }}
-          >
+          <Button variant="ok" onClick={onApprove} disabled={disabled} style={{ fontSize: 11 }}>
             Approve
           </Button>
         </div>

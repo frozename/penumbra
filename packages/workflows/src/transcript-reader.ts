@@ -1,6 +1,6 @@
-import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 export type TranscriptInfo = {
   sessionId: string;
@@ -19,7 +19,7 @@ export type FindTranscriptOpts = {
 const TOKENS_PER_CHAR = 0.25;
 
 function dirNameForCwd(cwd: string): string {
-  return cwd.replace(/\//g, '-');
+  return cwd.replace(/\//g, "-");
 }
 
 function estimateTokensFromJsonlLine(line: string): number {
@@ -30,29 +30,29 @@ function estimateTokensFromJsonlLine(line: string): number {
   } catch {
     return 0;
   }
-  if (!parsed || typeof parsed !== 'object') return 0;
+  if (!parsed || typeof parsed !== "object") return 0;
   const obj = parsed as { message?: { role?: string; content?: unknown } };
   const role = obj.message?.role;
-  if (role !== 'user' && role !== 'assistant') return 0;
+  if (role !== "user" && role !== "assistant") return 0;
   const content = obj.message?.content;
-  if (typeof content === 'string') return Math.ceil(content.length * TOKENS_PER_CHAR);
+  if (typeof content === "string") return Math.ceil(content.length * TOKENS_PER_CHAR);
   if (!Array.isArray(content)) return 0;
   let total = 0;
   for (const block of content) {
     if (
       block &&
-      typeof block === 'object' &&
-      (block as { type?: unknown }).type === 'text' &&
-      typeof (block as { text?: unknown }).text === 'string'
+      typeof block === "object" &&
+      (block as { type?: unknown }).type === "text" &&
+      typeof (block as { text?: unknown }).text === "string"
     ) {
-      total += Math.ceil(((block as { text: string }).text).length * TOKENS_PER_CHAR);
+      total += Math.ceil((block as { text: string }).text.length * TOKENS_PER_CHAR);
     }
   }
   return total;
 }
 
 export function findActiveTranscriptForCwd(opts: FindTranscriptOpts): TranscriptInfo | null {
-  const root = opts.claudeProjectsRoot ?? join(homedir(), '.claude', 'projects');
+  const root = opts.claudeProjectsRoot ?? join(homedir(), ".claude", "projects");
   if (!existsSync(root)) return null;
   const subdir = join(root, dirNameForCwd(opts.cwd));
   if (!existsSync(subdir)) return null;
@@ -62,7 +62,7 @@ export function findActiveTranscriptForCwd(opts: FindTranscriptOpts): Transcript
   } catch {
     return null;
   }
-  const jsonl = entries.filter((e) => e.endsWith('.jsonl'));
+  const jsonl = entries.filter((e) => e.endsWith(".jsonl"));
   if (jsonl.length === 0) return null;
 
   let bestPath: string | null = null;
@@ -86,12 +86,15 @@ export function findActiveTranscriptForCwd(opts: FindTranscriptOpts): Transcript
   const limit = opts.staleAfterMin ?? 30;
   if (stalenessMin > limit) return null;
 
-  const sessionId = bestPath.split('/').pop()!.replace(/\.jsonl$/, '');
+  const sessionId = bestPath
+    .split("/")
+    .pop()!
+    .replace(/\.jsonl$/, "");
 
   let totalTokens = 0;
   try {
-    const text = readFileSync(bestPath, 'utf8');
-    for (const line of text.split('\n')) {
+    const text = readFileSync(bestPath, "utf8");
+    for (const line of text.split("\n")) {
       totalTokens += estimateTokensFromJsonlLine(line);
     }
   } catch {

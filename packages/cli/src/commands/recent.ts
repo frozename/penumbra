@@ -1,4 +1,4 @@
-import { Database } from 'bun:sqlite';
+import { Database } from "bun:sqlite";
 
 export interface RunRecentOpts {
   dbPath: string;
@@ -27,7 +27,7 @@ export function runRecent(opts: RunRecentOpts): RecentRow[] {
              tokens_in_total, tokens_out_total,
              first_prompt_excerpt, last_response_excerpt
       FROM t1_rollups
-      ${opts.project ? 'WHERE project_id = ?' : ''}
+      ${opts.project ? "WHERE project_id = ?" : ""}
       ORDER BY COALESCE(ended_at, started_at) DESC
       LIMIT ?`;
     return opts.project

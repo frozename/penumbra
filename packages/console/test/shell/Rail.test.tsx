@@ -92,9 +92,7 @@ describe("Rail", () => {
         <Rail activeModule="mission" onSelect={onSelect} />
       </Wrapper>,
     );
-    const chains = container.querySelector(
-      'button[title="Chains"]',
-    ) as HTMLButtonElement | null;
+    const chains = container.querySelector('button[title="Chains"]') as HTMLButtonElement | null;
 
     expect(chains).not.toBeNull();
     if (!chains) return;
@@ -129,9 +127,7 @@ describe("Rail", () => {
         </MemoryRouter>
       </Wrapper>,
     );
-    const chains = container.querySelector(
-      'button[title="Chains"]',
-    ) as HTMLButtonElement | null;
+    const chains = container.querySelector('button[title="Chains"]') as HTMLButtonElement | null;
 
     expect(chains).not.toBeNull();
     if (!chains) return;

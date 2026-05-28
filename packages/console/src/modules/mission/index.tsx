@@ -52,8 +52,7 @@ export function MissionControl(): JSX.Element {
         <div className="glow-bg" />
         <div style={{ position: "relative", zIndex: 1 }}>
           <h1>
-            Mission control{" "}
-            <em>· {hasRealSession ? sessionData.project.name : "no project"}</em>
+            Mission control <em>· {hasRealSession ? sessionData.project.name : "no project"}</em>
           </h1>
           <p className="lede">
             <em className="brand">{liveChains}</em> chains in flight ·{" "}
@@ -68,14 +67,11 @@ export function MissionControl(): JSX.Element {
             . Maestro session {hasRealSession ? sessionData.id : "no-session"}, {elapsed} in.
           </p>
           <div className="heads-row">
+            <span className="chip">session · {hasRealSession ? sessionData.id : "no-session"}</span>
+            <span className="chip">project · {hasRealSession ? sessionData.project.id : "—"}</span>
             <span className="chip">
-              session · {hasRealSession ? sessionData.id : "no-session"}
-            </span>
-            <span className="chip">
-              project · {hasRealSession ? sessionData.project.id : "—"}
-            </span>
-            <span className="chip">
-              budget · {hasRealSession ? sessionData.budget.current : 0}/{hasRealSession ? sessionData.budget.max_concurrent : 0} concurrent
+              budget · {hasRealSession ? sessionData.budget.current : 0}/
+              {hasRealSession ? sessionData.budget.max_concurrent : 0} concurrent
             </span>
             <span className="chip">dispatched · {hasRealSession ? sessionData.dispatched : 0}</span>
             <span className="chip" style={{ color: "var(--color-ok)" }}>

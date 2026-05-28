@@ -1,17 +1,17 @@
-import { z } from 'zod';
-import { toTextContent } from '@nova/mcp-shared';
-import type { DaemonClient } from '../daemon-client.js';
+import { z } from "zod";
+import { toTextContent } from "@nova/mcp-shared";
+import type { DaemonClient } from "../daemon-client.js";
 
 export const AgentRouteForInputSchema = z.object({
   role: z.string().min(1),
   window_days: z.coerce.number().int().positive().optional(),
   min_samples: z.coerce.number().int().positive().optional(),
-  agent_kind: z.enum(['coding', 'long_lived']).optional(),
+  agent_kind: z.enum(["coding", "long_lived"]).optional(),
 });
 
 export const AgentRouteForInputShape = AgentRouteForInputSchema.shape;
 
-export function agentRouteForHandler(daemon: Pick<DaemonClient, 'agentRouteFor'>) {
+export function agentRouteForHandler(daemon: Pick<DaemonClient, "agentRouteFor">) {
   return async (input: unknown) => {
     const parsed = AgentRouteForInputSchema.parse(input ?? {});
     const out = await daemon.agentRouteFor({

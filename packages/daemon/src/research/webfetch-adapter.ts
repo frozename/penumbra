@@ -1,11 +1,11 @@
-import type { WebResearchAdapter, WebResearchResult } from '../../../core/src/research/types.js';
+import type { WebResearchAdapter, WebResearchResult } from "../../../core/src/research/types.js";
 
 function htmlToMarkdown(html: string): string {
   return html
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
@@ -18,7 +18,9 @@ export class WebFetchAdapter implements WebResearchAdapter {
     allowed_domains?: string[] | null;
   }): Promise<WebResearchResult[]> {
     if (args.allowed_domains && args.allowed_domains.length > 0) {
-      const allowed = args.allowed_domains.some((d) => "duckduckgo.com" === d || "duckduckgo.com".endsWith("." + d));
+      const allowed = args.allowed_domains.some(
+        (d) => "duckduckgo.com" === d || "duckduckgo.com".endsWith("." + d),
+      );
       if (!allowed) {
         // Known limitation: WebFetch only outputs DDG URL, so if DDG is not allowed, return empty.
         return [];
@@ -29,9 +31,9 @@ export class WebFetchAdapter implements WebResearchAdapter {
       {
         url: searchUrl,
         title: `Search: ${args.query}`,
-        markdown: '',
+        markdown: "",
         fetched_at: new Date().toISOString(),
-        source_provider: 'webfetch',
+        source_provider: "webfetch",
         source_billed_usd: 0,
       },
     ];
@@ -43,10 +45,10 @@ export class WebFetchAdapter implements WebResearchAdapter {
     const markdown = htmlToMarkdown(html);
     return {
       url: args.url,
-      title: '',
+      title: "",
       markdown,
       fetched_at: new Date().toISOString(),
-      source_provider: 'webfetch',
+      source_provider: "webfetch",
       source_billed_usd: 0,
     };
   }

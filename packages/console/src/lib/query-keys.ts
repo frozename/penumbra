@@ -33,9 +33,6 @@ export function usageQuotaStatus(): readonly ["usage", "quota_status"] {
 }
 
 /** Subscription pressure. */
-export function usageSubscriptionPressure(): readonly [
-  "usage",
-  "subscription_pressure",
-] {
+export function usageSubscriptionPressure(): readonly ["usage", "subscription_pressure"] {
   return ["usage", "subscription_pressure"] as const;
 }

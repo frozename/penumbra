@@ -1,6 +1,6 @@
-import { readFile } from 'node:fs/promises';
-import YAML from 'yaml';
-import { PlanHeaderSchema, TaskMetaSchema, type PlanHeader, type TaskMeta } from './schema.js';
+import { readFile } from "node:fs/promises";
+import YAML from "yaml";
+import { PlanHeaderSchema, TaskMetaSchema, type PlanHeader, type TaskMeta } from "./schema.js";
 
 export type ParseError = { line: number; reason: string };
 export type ParseResult = { header?: PlanHeader; tasks: TaskMeta[]; errors: ParseError[] };
@@ -20,7 +20,7 @@ export function parsePlanMeta(markdown: string): ParseResult {
   const lines = markdown.split(/\r?\n/);
   let currentBody: string[] | null = null;
   let currentLine = 0;
-  let currentKind: 'task' | 'header' | null = null;
+  let currentKind: "task" | "header" | null = null;
   let pendingTaskHeading: string | null = null;
   let currentProseTaskIndex: number | null = null;
   let currentProseLines: string[] = [];
@@ -31,7 +31,7 @@ export function parsePlanMeta(markdown: string): ParseResult {
       return;
     }
 
-    const prose = currentProseLines.join('\n').trim();
+    const prose = currentProseLines.join("\n").trim();
     if (prose.length > 0) {
       const task = tasks[currentProseTaskIndex];
       if (task) {
@@ -49,14 +49,14 @@ export function parsePlanMeta(markdown: string): ParseResult {
 
     let parsed: unknown;
     try {
-      parsed = YAML.parse(currentBody.join('\n'));
+      parsed = YAML.parse(currentBody.join("\n"));
     } catch (error) {
       errors.push({ line: currentLine, reason: errorReason(error) });
       currentBody = null;
       return;
     }
 
-    if (currentKind === 'header') {
+    if (currentKind === "header") {
       const result = PlanHeaderSchema.safeParse(parsed);
       if (result.success) {
         header = result.data;
@@ -69,7 +69,7 @@ export function parsePlanMeta(markdown: string): ParseResult {
     if (!result.success) {
       errors.push({
         line: currentLine,
-        reason: result.error.issues.map((issue) => issue.message).join('; '),
+        reason: result.error.issues.map((issue) => issue.message).join("; "),
       });
       currentBody = null;
       return;
@@ -86,20 +86,23 @@ export function parsePlanMeta(markdown: string): ParseResult {
   };
 
   for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? '';
-    if (line.startsWith('### ')) {
+    const line = lines[index] ?? "";
+    if (line.startsWith("### ")) {
       finalizeCurrentProse();
       pendingTaskHeading = line.slice(4).trim();
       continue;
     }
 
-    if (line.startsWith('## ')) {
+    if (line.startsWith("## ")) {
       finalizeCurrentProse();
       pendingTaskHeading = null;
     }
 
     if (currentBody !== null) {
-      if ((currentKind === 'task' && line === '```') || (currentKind === 'header' && line === '---')) {
+      if (
+        (currentKind === "task" && line === "```") ||
+        (currentKind === "header" && line === "---")
+      ) {
         flushBlock();
       } else {
         currentBody.push(line);
@@ -107,16 +110,16 @@ export function parsePlanMeta(markdown: string): ParseResult {
       continue;
     }
 
-    if (!header && line === '---') {
+    if (!header && line === "---") {
       currentLine = index + 1;
-      currentKind = 'header';
+      currentKind = "header";
       currentBody = [];
       continue;
     }
 
-    if (line === '```yaml meta') {
+    if (line === "```yaml meta") {
       currentLine = index + 1;
-      currentKind = 'task';
+      currentKind = "task";
       currentBody = [];
       continue;
     }
@@ -132,5 +135,5 @@ export function parsePlanMeta(markdown: string): ParseResult {
 }
 
 export async function parsePlanMetaFile(path: string): Promise<ParseResult> {
-  return parsePlanMeta(await readFile(path, 'utf8'));
+  return parsePlanMeta(await readFile(path, "utf8"));
 }

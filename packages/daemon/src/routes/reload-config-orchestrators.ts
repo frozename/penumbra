@@ -1,44 +1,44 @@
-import { join } from 'node:path';
-import { loadShellConfig } from '@penumbra/agentchat/worker/shell-config';
-import { reloadAgentChatConfig } from '@penumbra/config';
+import { join } from "node:path";
+import { loadShellConfig } from "@penumbra/agentchat/worker/shell-config";
+import { reloadAgentChatConfig } from "@penumbra/config";
 import {
   defaultProjectRegistryPath,
   type ProjectRegistry,
   loadProjectRegistry,
   type Services,
-} from '@penumbra/core';
-import { buildRegistry as buildWorkflowRegistry } from '@penumbra/workflows';
+} from "@penumbra/core";
+import { buildRegistry as buildWorkflowRegistry } from "@penumbra/workflows";
 import {
   formatAgentChatConfigError,
   loadAgentChatConfig,
   loadAgentRoutingFromConfig,
   resolveAgentChatConfigPath,
-} from '../agentchat-config.js';
-import { loadExtraWorkersConfig, type ExtraWorkersConfig } from '../workers/config.js';
-import type { ReconcileSummary } from '../workers/supervisor.js';
-import type { DaemonServices } from '../serve.js';
+} from "../agentchat-config.js";
+import { loadExtraWorkersConfig, type ExtraWorkersConfig } from "../workers/config.js";
+import type { ReconcileSummary } from "../workers/supervisor.js";
+import type { DaemonServices } from "../serve.js";
 
 export type ReloadSubsystemName =
-  | 'agentchat_config'
-  | 'workflow_and_project_registry'
-  | 'long_lived_reactor'
-  | 'extra_workers';
+  | "agentchat_config"
+  | "workflow_and_project_registry"
+  | "long_lived_reactor"
+  | "extra_workers";
 
-export type ReloadSubsystemStatus = 'reloaded' | 'failed' | 'absent';
+export type ReloadSubsystemStatus = "reloaded" | "failed" | "absent";
 
 type AgentChatConfigFailure = {
-  subsystem: 'agentchat_config';
-  status: 'failed';
+  subsystem: "agentchat_config";
+  status: "failed";
   error: string;
   meta: {
-    reason: 'missing_config' | 'invalid_config';
+    reason: "missing_config" | "invalid_config";
     config_path: string;
   };
 };
 
 type AgentChatConfigReloaded = {
-  subsystem: 'agentchat_config';
-  status: 'reloaded';
+  subsystem: "agentchat_config";
+  status: "reloaded";
   error?: never;
   meta: {
     config_path: string;
@@ -48,8 +48,8 @@ type AgentChatConfigReloaded = {
 };
 
 type WorkflowAndProjectRegistryReloaded = {
-  subsystem: 'workflow_and_project_registry';
-  status: 'reloaded';
+  subsystem: "workflow_and_project_registry";
+  status: "reloaded";
   error?: never;
   meta: {
     workflow_count: number;
@@ -62,8 +62,8 @@ type WorkflowAndProjectRegistryReloaded = {
 };
 
 type WorkflowAndProjectRegistryFailed = {
-  subsystem: 'workflow_and_project_registry';
-  status: 'failed';
+  subsystem: "workflow_and_project_registry";
+  status: "failed";
   error: string;
   meta: {
     playbooks_dir: string;
@@ -73,29 +73,29 @@ type WorkflowAndProjectRegistryFailed = {
 };
 
 type LongLivedReactorReloaded = {
-  subsystem: 'long_lived_reactor';
-  status: 'reloaded';
+  subsystem: "long_lived_reactor";
+  status: "reloaded";
   error?: never;
   meta?: never;
 };
 
 type LongLivedReactorAbsent = {
-  subsystem: 'long_lived_reactor';
-  status: 'absent';
+  subsystem: "long_lived_reactor";
+  status: "absent";
   error?: never;
   meta?: never;
 };
 
 type LongLivedReactorFailed = {
-  subsystem: 'long_lived_reactor';
-  status: 'failed';
+  subsystem: "long_lived_reactor";
+  status: "failed";
   error: string;
   meta?: never;
 };
 
 type ExtraWorkersReloaded = {
-  subsystem: 'extra_workers';
-  status: 'reloaded';
+  subsystem: "extra_workers";
+  status: "reloaded";
   error?: never;
   meta: {
     config: ExtraWorkersConfig;
@@ -104,8 +104,8 @@ type ExtraWorkersReloaded = {
 };
 
 type ExtraWorkersFailed = {
-  subsystem: 'extra_workers';
-  status: 'failed';
+  subsystem: "extra_workers";
+  status: "failed";
   error: string;
   meta?: {
     config?: ExtraWorkersConfig;
@@ -113,8 +113,8 @@ type ExtraWorkersFailed = {
 };
 
 type ExtraWorkersAbsent = {
-  subsystem: 'extra_workers';
-  status: 'absent';
+  subsystem: "extra_workers";
+  status: "absent";
   error?: never;
   meta: {
     config: ExtraWorkersConfig;
@@ -134,9 +134,17 @@ export type ReloadSubsystemEntry =
   | ExtraWorkersAbsent;
 
 export type AgentChatConfigReloadResult = AgentChatConfigFailure | AgentChatConfigReloaded;
-export type WorkflowProjectReloadResult = WorkflowAndProjectRegistryReloaded | WorkflowAndProjectRegistryFailed;
-export type LongLivedReactorReloadResult = LongLivedReactorReloaded | LongLivedReactorFailed | LongLivedReactorAbsent;
-export type ExtraWorkersReloadResult = ExtraWorkersReloaded | ExtraWorkersFailed | ExtraWorkersAbsent;
+export type WorkflowProjectReloadResult =
+  | WorkflowAndProjectRegistryReloaded
+  | WorkflowAndProjectRegistryFailed;
+export type LongLivedReactorReloadResult =
+  | LongLivedReactorReloaded
+  | LongLivedReactorFailed
+  | LongLivedReactorAbsent;
+export type ExtraWorkersReloadResult =
+  | ExtraWorkersReloaded
+  | ExtraWorkersFailed
+  | ExtraWorkersAbsent;
 
 interface WorkflowDirs {
   playbooksDir: string;
@@ -147,12 +155,14 @@ function resolveWorkflowDirs(services: Services): WorkflowDirs {
   if (services.workflowDirs) return services.workflowDirs;
   const cwd = process.cwd();
   return {
-    playbooksDir: join(cwd, 'plugin/playbooks'),
-    workflowsDir: join(cwd, 'plugin/workflows'),
+    playbooksDir: join(cwd, "plugin/playbooks"),
+    workflowsDir: join(cwd, "plugin/workflows"),
   };
 }
 
-export async function reloadAgentChatConfigSubsystem(services: DaemonServices): Promise<AgentChatConfigReloadResult> {
+export async function reloadAgentChatConfigSubsystem(
+  services: DaemonServices,
+): Promise<AgentChatConfigReloadResult> {
   const configPath = resolveAgentChatConfigPath(process.env);
 
   try {
@@ -172,8 +182,8 @@ export async function reloadAgentChatConfigSubsystem(services: DaemonServices): 
     services.agentchatConfig = cfg as any;
     services.shellConfig = loadShellConfig({ agentchat: cfg as any });
     return {
-      subsystem: 'agentchat_config',
-      status: 'reloaded',
+      subsystem: "agentchat_config",
+      status: "reloaded",
       meta: {
         config_path: configPath,
         prev_count: prevCount,
@@ -182,10 +192,10 @@ export async function reloadAgentChatConfigSubsystem(services: DaemonServices): 
     };
   } catch (err: unknown) {
     const formatted = formatAgentChatConfigError(err);
-    const reason = /not found/i.test(formatted) ? 'missing_config' : 'invalid_config';
+    const reason = /not found/i.test(formatted) ? "missing_config" : "invalid_config";
     return {
-      subsystem: 'agentchat_config',
-      status: 'failed',
+      subsystem: "agentchat_config",
+      status: "failed",
       error: formatted,
       meta: { reason, config_path: configPath },
     };
@@ -203,8 +213,8 @@ export async function reloadWorkflowAndProjectRegistrySubsystem(
     const projectRegistry = loadProjectRegistry(projectRegistryPath);
     services.projectRegistry = projectRegistry;
     return {
-      subsystem: 'workflow_and_project_registry',
-      status: 'reloaded',
+      subsystem: "workflow_and_project_registry",
+      status: "reloaded",
       meta: {
         workflow_count: workflowRegistry.list().length,
         project_registry_count: projectRegistry.list().length,
@@ -217,8 +227,8 @@ export async function reloadWorkflowAndProjectRegistrySubsystem(
   } catch (err: unknown) {
     const error = err instanceof Error ? err.message : String(err);
     return {
-      subsystem: 'workflow_and_project_registry',
-      status: 'failed',
+      subsystem: "workflow_and_project_registry",
+      status: "failed",
       error,
       meta: {
         playbooks_dir: dirs.playbooksDir,
@@ -229,17 +239,19 @@ export async function reloadWorkflowAndProjectRegistrySubsystem(
   }
 }
 
-export async function reloadLongLivedReactorSubsystem(services: DaemonServices): Promise<LongLivedReactorReloadResult> {
+export async function reloadLongLivedReactorSubsystem(
+  services: DaemonServices,
+): Promise<LongLivedReactorReloadResult> {
   if (!services.longLivedReactor) {
-    return { subsystem: 'long_lived_reactor', status: 'absent' };
+    return { subsystem: "long_lived_reactor", status: "absent" };
   }
   try {
     await services.longLivedReactor.reload();
-    return { subsystem: 'long_lived_reactor', status: 'reloaded' };
+    return { subsystem: "long_lived_reactor", status: "reloaded" };
   } catch (error: unknown) {
     const reactorError = error instanceof Error ? error.message : String(error);
-    services.log.warn({ error: reactorError }, 'long-lived-reactor-reload-failed');
-    return { subsystem: 'long_lived_reactor', status: 'failed', error: reactorError };
+    services.log.warn({ error: reactorError }, "long-lived-reactor-reload-failed");
+    return { subsystem: "long_lived_reactor", status: "failed", error: reactorError };
   }
 }
 
@@ -259,19 +271,19 @@ export async function reloadExtraWorkersSubsystem(
       {
         error: err,
       },
-      'extra-worker-reload-failed',
+      "extra-worker-reload-failed",
     );
     return {
-      subsystem: 'extra_workers',
-      status: 'failed',
+      subsystem: "extra_workers",
+      status: "failed",
       error: err,
     };
   }
 
   if (!services.extraWorkerSupervisor) {
     return {
-      subsystem: 'extra_workers',
-      status: 'absent',
+      subsystem: "extra_workers",
+      status: "absent",
       meta: { config },
     };
   }
@@ -279,8 +291,8 @@ export async function reloadExtraWorkersSubsystem(
   try {
     const summary = await services.extraWorkerSupervisor.reconcile(config.extras);
     return {
-      subsystem: 'extra_workers',
-      status: 'reloaded',
+      subsystem: "extra_workers",
+      status: "reloaded",
       meta: { config, summary },
     };
   } catch (error: unknown) {
@@ -289,11 +301,11 @@ export async function reloadExtraWorkersSubsystem(
       {
         error: err,
       },
-      'extra-worker-reload-failed',
+      "extra-worker-reload-failed",
     );
     return {
-      subsystem: 'extra_workers',
-      status: 'failed',
+      subsystem: "extra_workers",
+      status: "failed",
       error: err,
       meta: { config },
     };

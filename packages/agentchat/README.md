@@ -11,6 +11,7 @@ to approve handoffs.
    penumbra init && penumbra start
    ```
 2. Write `~/.config/agentchat/agentchat.yaml`:
+
    ```yaml
    agents:
      - name: claude
@@ -38,6 +39,7 @@ to approve handoffs.
      executor: gemini
      reviewer: codex
    ```
+
 3. Run a conversation:
    ```
    agentchat new my-project
@@ -65,10 +67,10 @@ Use this when dispatching to local models served via `openai-compat-http` (e.g. 
 
 Three modes for handling agent-to-agent handoffs:
 
-| flag | trust model | use when |
-|---|---|---|
-| (none) | manual approval at every handoff | default; you want to review each step |
-| `--auto` | trust everything for this session | one-off chains; quick exploration |
+| flag      | trust model                                      | use when                                                   |
+| --------- | ------------------------------------------------ | ---------------------------------------------------------- |
+| (none)    | manual approval at every handoff                 | default; you want to review each step                      |
+| `--auto`  | trust everything for this session                | one-off chains; quick exploration                          |
 | `--trust` | per-edge whitelist via `auto_approve_to` in YAML | production-shaped use; you've decided which edges are safe |
 
 Both `--auto` and `--trust` use the chain loop and respect:
@@ -102,13 +104,13 @@ agents:
     adapter: claude-cli
     options: { command: claude, args: ["-p"], pass_via: argv }
     roles: [planner]
-    auto_approve_to: [executor, reviewer]   # planner may auto-handoff to either
+    auto_approve_to: [executor, reviewer] # planner may auto-handoff to either
 
   - name: executor
     adapter: gemini-cli
     options: { command: gemini, args: ["-p"], pass_via: argv }
     roles: [executor]
-    auto_approve_to: [reviewer]              # executor only auto-handoffs to reviewer
+    auto_approve_to: [reviewer] # executor only auto-handoffs to reviewer
 ```
 
 Run with `agentchat new --trust`. When a handoff targets an agent NOT in
@@ -172,16 +174,16 @@ share the same option shape:
 
 ```yaml
 options:
-  command: codex                              # required: binary on $PATH
-  args: ["exec"]                              # extra argv flags
-  pass_via: argv                              # 'stdin' (default) | 'argv'
+  command: codex # required: binary on $PATH
+  args: ["exec"] # extra argv flags
+  pass_via: argv # 'stdin' (default) | 'argv'
   cwd: /optional/working/dir
-  env:                                        # extra env vars for the spawn
+  env: # extra env vars for the spawn
     SOME_VAR: hello
   unset_env: [OPENAI_BASE_URL, OPENAI_API_KEY] # vars to drop from inherited env
-  strip_patterns:                             # regex patterns; matching lines removed
-    - '^Hook system message:'
-    - '^Created execution plan for'
+  strip_patterns: # regex patterns; matching lines removed
+    - "^Hook system message:"
+    - "^Created execution plan for"
 ```
 
 **`pass_via`** — `stdin` writes the prompt to the spawned process's
@@ -208,15 +210,15 @@ Targets any server speaking the OpenAI Chat Completions schema
 
 ```yaml
 options:
-  baseUrl: https://192.168.68.76:7843/v1     # required; trailing /v1 expected
-  apiKey: ll_agt_…                           # required; or use api_key_env
-  api_key_env: LLAMACTL_TOKEN_LOCAL          # alternative: env var name
-  model: gemma-4-E4B-it-GGUF/...             # required; sent as `model` field
-  maxTokens: 8192                            # default 1024
-  caPath: /tmp/llamactl-mac-mini-ca.pem      # PEM file with extra trusted CAs
-  systemPrompt: |                            # prepended as {role: 'system'} message
+  baseUrl: https://192.168.68.76:7843/v1 # required; trailing /v1 expected
+  apiKey: ll_agt_… # required; or use api_key_env
+  api_key_env: LLAMACTL_TOKEN_LOCAL # alternative: env var name
+  model: gemma-4-E4B-it-GGUF/... # required; sent as `model` field
+  maxTokens: 8192 # default 1024
+  caPath: /tmp/llamactl-mac-mini-ca.pem # PEM file with extra trusted CAs
+  systemPrompt: | # prepended as {role: 'system'} message
     You are a planner. End replies with @executor <task>.
-  extraBody:                                 # arbitrary fields merged into request body
+  extraBody: # arbitrary fields merged into request body
     chat_template_kwargs:
       enable_thinking: false
 ```

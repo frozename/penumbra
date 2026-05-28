@@ -66,6 +66,7 @@ Shipped workflows include `adversarial-review` (fans a diff across 8 reviewer pe
 Schedule an agent to tick every 10 minutes. It carries persistent working memory across ticks, has its own MCP allowlist + approval gate, and gets auto-recovered when something breaks (circuit breaker + `long_lived.resume`).
 
 Built-ins:
+
 - `home-mgmt` — Home Assistant monitor. Pulses entity state, flags anomalies, requests config changes via the approval gate.
 - `task-refiner-primary` + `task-refiner-escalation` — promote pending task drafts into the work queue.
 

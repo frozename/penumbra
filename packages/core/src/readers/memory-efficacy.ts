@@ -1,8 +1,8 @@
-import type { Database } from 'bun:sqlite';
-import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import type { JudgeChatFn } from '../services/judge-chat.js';
-import { type Finding, classifyFindings } from '../services/memory-efficacy-classifier.js';
+import type { Database } from "bun:sqlite";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import type { JudgeChatFn } from "../services/judge-chat.js";
+import { type Finding, classifyFindings } from "../services/memory-efficacy-classifier.js";
 
 export interface MemoryEfficacyRecent {
   total: number;
@@ -25,16 +25,16 @@ export function getMemoryEfficacyRecent(
   db: Database,
   opts?: { sinceISO?: string; limit?: number; includeRaw?: boolean },
 ): MemoryEfficacyRecent {
-  const since = new Date(opts?.sinceISO ?? new Date(Date.now() - 14 * 86_400_000).toISOString()).toISOString();
+  const since = new Date(
+    opts?.sinceISO ?? new Date(Date.now() - 14 * 86_400_000).toISOString(),
+  ).toISOString();
   const limit = opts?.limit ?? 20;
 
   const counts = db
     .query<
       { classification: string; cnt: number },
       [string]
-    >(
-      `SELECT classification, COUNT(*) AS cnt FROM memory_efficacy_cache WHERE ts >= ? GROUP BY classification`,
-    )
+    >(`SELECT classification, COUNT(*) AS cnt FROM memory_efficacy_cache WHERE ts >= ? GROUP BY classification`)
     .all(since);
 
   const byClass: Record<string, number> = {
@@ -50,7 +50,13 @@ export function getMemoryEfficacyRecent(
   const recent = opts?.includeRaw
     ? db
         .query<
-          { ts: string; finding_text: string; classification: string; severity: string | null; raw_response_json: string | null },
+          {
+            ts: string;
+            finding_text: string;
+            classification: string;
+            severity: string | null;
+            raw_response_json: string | null;
+          },
           [string, number]
         >(
           `SELECT ts, finding_text, classification, severity, raw_response_json
@@ -82,16 +88,16 @@ export function getMemoryEfficacyRecent(
 
   return {
     total: Object.values(byClass).reduce((a, b) => a + b, 0),
-    by_class: byClass as MemoryEfficacyRecent['by_class'],
+    by_class: byClass as MemoryEfficacyRecent["by_class"],
     recent,
   };
 }
 
 function hashFinding(synthesisPath: string, index: number, text: string): string {
   const input = `${synthesisPath}|${index}|${text}`;
-  const hasher = new Bun.CryptoHasher('sha256');
+  const hasher = new Bun.CryptoHasher("sha256");
   hasher.update(input);
-  return hasher.digest('hex').slice(0, 32);
+  return hasher.digest("hex").slice(0, 32);
 }
 
 interface ParsedFinding {
@@ -100,17 +106,22 @@ interface ParsedFinding {
   index: number;
 }
 
-async function parseFindings(synthesisPath: string): Promise<{ ts: string; findings: ParsedFinding[] } | null> {
+async function parseFindings(
+  synthesisPath: string,
+): Promise<{ ts: string; findings: ParsedFinding[] } | null> {
   let content: string;
   try {
-    content = await readFile(synthesisPath, 'utf8');
+    content = await readFile(synthesisPath, "utf8");
   } catch {
     return null;
   }
 
   const tsMatch = synthesisPath.match(/\/(\d{4}-\d{2}-\d{2}T\d{2}[-:]\d{2}[-:]\d{2})\//);
   const ts = tsMatch
-    ? tsMatch[1]!.replace(/^(\d{4})-(\d{2})-(\d{2})T(\d{2})[-:](\d{2})[-:](\d{2})$/, '$1-$2-$3T$4:$5:$6Z')
+    ? tsMatch[1]!.replace(
+        /^(\d{4})-(\d{2})-(\d{2})T(\d{2})[-:](\d{2})[-:](\d{2})$/,
+        "$1-$2-$3T$4:$5:$6Z",
+      )
     : new Date().toISOString();
 
   const findingsSection = content.match(
@@ -119,7 +130,7 @@ async function parseFindings(synthesisPath: string): Promise<{ ts: string; findi
   if (!findingsSection) return null;
 
   const sectionText = findingsSection[1]!;
-  const lines = sectionText.split('\n');
+  const lines = sectionText.split("\n");
 
   const findings: ParsedFinding[] = [];
   let index = 0;
@@ -134,7 +145,7 @@ async function parseFindings(synthesisPath: string): Promise<{ ts: string; findi
     let severity: string | null;
     if (match) {
       severity = match[2] ?? null;
-      text = `${match[3] ?? ''}${match[4] ? ' ' + match[4] : ''}`.trim().slice(0, 200);
+      text = `${match[3] ?? ""}${match[4] ? " " + match[4] : ""}`.trim().slice(0, 200);
     } else {
       match = line.match(BRACKET_LINE_RE);
       if (!match) continue;
@@ -216,11 +227,9 @@ export async function buildMemoryEfficacyCache(
     return { scanned: 0, classified: 0, skipped: 0 };
   }
 
-  const sinceCutoff = new Date(opts.sinceISO ?? '1970-01-01T00:00:00Z').toISOString();
+  const sinceCutoff = new Date(opts.sinceISO ?? "1970-01-01T00:00:00Z").toISOString();
 
-  const getIdStmt = db.prepare(
-    `SELECT 1 FROM memory_efficacy_cache WHERE finding_id = ? LIMIT 1`,
-  );
+  const getIdStmt = db.prepare(`SELECT 1 FROM memory_efficacy_cache WHERE finding_id = ? LIMIT 1`);
   const insertStmt = db.prepare(
     `INSERT OR IGNORE INTO memory_efficacy_cache (
       finding_id, synthesis_path, ts, finding_index, finding_text,
@@ -233,11 +242,11 @@ export async function buildMemoryEfficacyCache(
   for (const entry of entries) {
     const dirTs = entry.replace(
       /^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})$/,
-      '$1-$2-$3T$4:$5:$6Z',
+      "$1-$2-$3T$4:$5:$6Z",
     );
     if (dirTs < sinceCutoff) continue;
 
-    const synthesisPath = join(opts.reviewsDir, entry, 'synthesis.md');
+    const synthesisPath = join(opts.reviewsDir, entry, "synthesis.md");
     const parsed = await parseFindings(synthesisPath);
     if (!parsed) continue;
 
@@ -274,19 +283,23 @@ export async function buildMemoryEfficacyCache(
     classifications: Awaited<ReturnType<typeof classifyFindings>>;
   }
 
-  const batchResults = await mapWithConcurrency(batches, concurrency, async (batch): Promise<BatchResult> => {
-    const batchFindings = batch.map((e) => ({
-      ...e.finding,
-      findingId: e.findingId,
-    }));
+  const batchResults = await mapWithConcurrency(
+    batches,
+    concurrency,
+    async (batch): Promise<BatchResult> => {
+      const batchFindings = batch.map((e) => ({
+        ...e.finding,
+        findingId: e.findingId,
+      }));
 
-    const classifications = await classifyFindings(batchFindings, {
-      judgeChat: opts.judgeChat,
-      model: opts.model,
-    });
+      const classifications = await classifyFindings(batchFindings, {
+        judgeChat: opts.judgeChat,
+        model: opts.model,
+      });
 
-    return { batch, classifications };
-  });
+      return { batch, classifications };
+    },
+  );
 
   for (const { batch, classifications } of batchResults) {
     const clsByFindingId = new Map<string, (typeof classifications)[number]>();

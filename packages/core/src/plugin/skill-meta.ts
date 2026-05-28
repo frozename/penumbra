@@ -1,6 +1,6 @@
-import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
-import { parse as parseYaml } from 'yaml';
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { parse as parseYaml } from "yaml";
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
 
@@ -19,14 +19,14 @@ export function loadSkillFiles(rootDir: string): SkillFile[] {
     const dir = join(rootDir, entry);
     if (!statSync(dir).isDirectory()) continue;
 
-    const path = join(dir, 'SKILL.md');
+    const path = join(dir, "SKILL.md");
     try {
       if (!statSync(path).isFile()) continue;
     } catch {
       continue;
     }
 
-    const text = readFileSync(path, 'utf8');
+    const text = readFileSync(path, "utf8");
     const match = text.match(FRONTMATTER_RE);
     if (!match) {
       throw new Error(`skill ${path}: missing or malformed frontmatter`);
@@ -38,14 +38,16 @@ export function loadSkillFiles(rootDir: string): SkillFile[] {
     const name = parsed.name;
     const description = parsed.description;
 
-    if (typeof name !== 'string') {
+    if (typeof name !== "string") {
       throw new Error(`skill ${path}: missing or invalid name`);
     }
-    if (typeof description !== 'string') {
+    if (typeof description !== "string") {
       throw new Error(`skill ${path}: missing or invalid description`);
     }
     if (name !== entry) {
-      throw new Error(`skill ${path}: frontmatter name "${name}" does not match directory "${entry}"`);
+      throw new Error(
+        `skill ${path}: frontmatter name "${name}" does not match directory "${entry}"`,
+      );
     }
 
     skills.push({

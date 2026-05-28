@@ -32,7 +32,7 @@ export interface AcpToolResult {
 }
 
 export interface AcpMessagePart {
-  type: 'text' | 'tool_call' | 'tool_result';
+  type: "text" | "tool_call" | "tool_result";
   text?: string;
   tool_call?: AcpToolCall;
   tool_result?: AcpToolResult;
@@ -47,21 +47,21 @@ export interface AcpMessageRequest {
 }
 
 export type AcpEvent =
-  | { type: 'session.status'; status: string }
-  | { type: 'lsp.updated'; data: unknown }
-  | { type: 'message.part.updated'; messageID: string; part: AcpMessagePart }
-  | { type: 'message.part.delta'; messageID: string; partIndex: number; delta: string }
+  | { type: "session.status"; status: string }
+  | { type: "lsp.updated"; data: unknown }
+  | { type: "message.part.updated"; messageID: string; part: AcpMessagePart }
+  | { type: "message.part.delta"; messageID: string; partIndex: number; delta: string }
   | {
-      type: 'tool.call.requested';
+      type: "tool.call.requested";
       callID: string;
       tool: string;
       arguments: Record<string, unknown>;
     }
-  | { type: 'permission.request'; requestID: string; permission: unknown }
-  | { type: 'done' };
+  | { type: "permission.request"; requestID: string; permission: unknown }
+  | { type: "done" };
 
 export interface AcpPermissionReply {
-  reply: 'allow' | 'deny';
+  reply: "allow" | "deny";
   message?: string;
 }
 
@@ -95,14 +95,14 @@ export interface McpServerStdio {
 }
 
 export interface McpServerHttp {
-  type: 'http';
+  type: "http";
   name: string;
   url: string;
   headers: HttpHeader[];
 }
 
 export interface McpServerSse {
-  type: 'sse';
+  type: "sse";
   name: string;
   url: string;
   headers: HttpHeader[];

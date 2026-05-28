@@ -13,7 +13,7 @@ export interface SandboxConfig {
 }
 
 export const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
-  path: '/usr/bin:/bin',
+  path: "/usr/bin:/bin",
   timeoutMs: 30_000,
   outputMaxBytes: 1_048_576,
   maxConcurrent: 3,

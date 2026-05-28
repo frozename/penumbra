@@ -1,7 +1,7 @@
-import { getConfig } from '@penumbra/config';
-import type { AgentChatConfig, NotificationConfig } from '../config/types.js';
+import { getConfig } from "@penumbra/config";
+import type { AgentChatConfig, NotificationConfig } from "../config/types.js";
 
-export type PromptPolicy = 'never' | 'summary' | 'always';
+export type PromptPolicy = "never" | "summary" | "always";
 
 export interface RuntimeNotificationEventConfig {
   dispatch_start: boolean;
@@ -32,16 +32,14 @@ export const DEFAULT_NOTIFICATION_EVENTS: RuntimeNotificationEventConfig = {
 };
 
 export interface RuntimeDiscordWebhookChannelConfig {
-  kind: 'discord_webhook';
+  kind: "discord_webhook";
   defaultWebhookUrl?: string;
   defaultWebhookUrlEnv: string;
 }
 
 export interface RuntimeNotificationChannelConfig {
   discord?: RuntimeDiscordWebhookChannelConfig;
-  [channelName: string]:
-    | RuntimeDiscordWebhookChannelConfig
-    | undefined;
+  [channelName: string]: RuntimeDiscordWebhookChannelConfig | undefined;
 }
 
 export interface RuntimeNotificationProjectRoute {
@@ -72,7 +70,7 @@ export interface RuntimeNotificationConfig {
   summaries: {
     costQuota: {
       enabled: boolean;
-      interval: 'hourly' | 'daily';
+      interval: "hourly" | "daily";
       channel: string;
     };
   };
@@ -88,8 +86,8 @@ function resolvePromptPolicy(opts: {
   includePromptEnv: boolean;
 }): PromptPolicy {
   if (opts.cfg?.prompt_policy) return opts.cfg.prompt_policy;
-  if (opts.includePromptEnv) return 'always';
-  return 'never';
+  if (opts.includePromptEnv) return "always";
+  return "never";
 }
 
 function normalizeChannels(
@@ -98,23 +96,24 @@ function normalizeChannels(
 ): RuntimeNotificationChannelConfig {
   const configuredChannels = cfg?.channels ?? {};
   const entries = Object.entries(configuredChannels);
-  const sourceEntries = entries.length > 0
-    ? entries
-    : [
-        [
-          'discord',
-          {
-            kind: 'discord_webhook' as const,
-            default_webhook_url_env: 'PENUMBRA_DISCORD_WEBHOOK_URL',
-          },
-        ],
-      ];
+  const sourceEntries =
+    entries.length > 0
+      ? entries
+      : [
+          [
+            "discord",
+            {
+              kind: "discord_webhook" as const,
+              default_webhook_url_env: "PENUMBRA_DISCORD_WEBHOOK_URL",
+            },
+          ],
+        ];
 
   const channels: RuntimeNotificationChannelConfig = {};
   for (const [name, channel] of sourceEntries) {
-    if (channel.kind !== 'discord_webhook') continue;
+    if (channel.kind !== "discord_webhook") continue;
     channels[name] = {
-      kind: 'discord_webhook',
+      kind: "discord_webhook",
       defaultWebhookUrl: env[channel.default_webhook_url_env],
       defaultWebhookUrlEnv: channel.default_webhook_url_env,
     };
@@ -143,8 +142,10 @@ function hasAnyWebhook(config: {
   channels: RuntimeNotificationChannelConfig;
   routes: Record<string, RuntimeNotificationProjectRoute>;
 }): boolean {
-  return Object.values(config.channels).some((channel) => Boolean(channel?.defaultWebhookUrl))
-    || Object.values(config.routes).some((route) => Boolean(route.webhookUrl));
+  return (
+    Object.values(config.channels).some((channel) => Boolean(channel?.defaultWebhookUrl)) ||
+    Object.values(config.routes).some((route) => Boolean(route.webhookUrl))
+  );
 }
 
 export function loadNotificationConfig(
@@ -182,8 +183,8 @@ export function loadNotificationConfig(
     summaries: {
       costQuota: {
         enabled: cfg?.summaries?.cost_quota?.enabled ?? true,
-        interval: cfg?.summaries?.cost_quota?.interval ?? 'daily',
-        channel: cfg?.summaries?.cost_quota?.channel ?? 'discord',
+        interval: cfg?.summaries?.cost_quota?.interval ?? "daily",
+        channel: cfg?.summaries?.cost_quota?.channel ?? "discord",
       },
     },
   };

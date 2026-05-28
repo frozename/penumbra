@@ -17,7 +17,7 @@ The workflow composes a markdown section from live maestro-scoped memories in `t
 
 - [title](slug) — hook
 - [title](slug) — hook
-...
+  ...
 ```
 
 Rows are filtered to direct-origin, unretired entries where `slug` and `hook` are set and

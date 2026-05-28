@@ -1,5 +1,5 @@
-import { PenumbraHttpError } from '../penumbra-client.js';
-import type { DispatchEventInput } from '@penumbra/core';
+import { PenumbraHttpError } from "../penumbra-client.js";
+import type { DispatchEventInput } from "@penumbra/core";
 
 export interface ControlListenerLogger {
   warn(obj: Record<string, unknown>, msg: string): void;
@@ -46,17 +46,19 @@ const CONTROL_LISTENER_STREAM_ERR_THROTTLE_MS = 60_000;
 
 export function handleControlEvent(
   event: WorkerControlEvent,
-  opts: Pick<ControlListenerOpts, 'dispatcher' | 'onEvent' | 'workerId'> & { log?: ControlListenerLogger },
+  opts: Pick<ControlListenerOpts, "dispatcher" | "onEvent" | "workerId"> & {
+    log?: ControlListenerLogger;
+  },
 ): void {
-  if (event.type === 'cancel') {
+  if (event.type === "cancel") {
     if (!event.conversation_id || !event.handoff_id) {
       opts.log?.warn(
         {
-          event: 'control_event_malformed',
-          type: 'cancel',
+          event: "control_event_malformed",
+          type: "cancel",
           payload: event,
         },
-        'malformed cancel control event',
+        "malformed cancel control event",
       );
       return;
     }
@@ -65,15 +67,15 @@ export function handleControlEvent(
     opts.onEvent?.({
       handoff_id,
       worker_id: opts.workerId,
-      source: 'worker',
-      kind: 'cancel.received',
+      source: "worker",
+      kind: "cancel.received",
       ts: new Date().toISOString(),
-      meta: { source: 'sse' },
+      meta: { source: "sse" },
     });
     opts.dispatcher.cancel(conversation_id, handoff_id);
     return;
   }
-  if (event.type === 'ping') {
+  if (event.type === "ping") {
     if (event.worker_id !== opts.workerId) return;
     if (!event.worker_id || !event.probe_id) return;
     void opts.client.sendProbeAck(event.worker_id, event.probe_id).catch(() => {});
@@ -99,7 +101,7 @@ export async function runWorkerControlListener(opts: ControlListenerOpts): Promi
     if (suppressedCount > 0) obj.suppressedCount = suppressedCount;
     suppressedCount = 0;
     lastLoggedAtMs = ts;
-    opts.log.warn(obj, 'control listener stream error; reconnecting in 5s');
+    opts.log.warn(obj, "control listener stream error; reconnecting in 5s");
   };
 
   while (!opts.signal.aborted) {
@@ -115,7 +117,10 @@ export async function runWorkerControlListener(opts: ControlListenerOpts): Promi
 
       const status = err instanceof PenumbraHttpError ? err.status : null;
       if (status === 401 || status === 403 || status === 404) {
-        opts.log.error({ status, err: String(err) }, 'control listener permanent failure; giving up');
+        opts.log.error(
+          { status, err: String(err) },
+          "control listener permanent failure; giving up",
+        );
         return;
       }
 

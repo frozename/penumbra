@@ -1,5 +1,5 @@
-import type { Database } from 'bun:sqlite';
-import { type MaestroSessionWriter } from '@penumbra/core';
+import type { Database } from "bun:sqlite";
+import { type MaestroSessionWriter } from "@penumbra/core";
 
 export function enforceMaestroBudget(opts: {
   db: Database;
@@ -8,15 +8,15 @@ export function enforceMaestroBudget(opts: {
 }):
   | { ok: true }
   | {
-    ok: false;
-    status: 429;
-    body: {
-      error: 'BudgetExceeded';
-      axis: 'sub_dispatches';
-      limit: number;
-      observed: number;
-    };
-  } {
+      ok: false;
+      status: 429;
+      body: {
+        error: "BudgetExceeded";
+        axis: "sub_dispatches";
+        limit: number;
+        observed: number;
+      };
+    } {
   void opts.db;
   const parentHandoffId = opts.parent_handoff_id?.trim();
   if (!parentHandoffId) {
@@ -33,8 +33,8 @@ export function enforceMaestroBudget(opts: {
       ok: false,
       status: 429,
       body: {
-        error: 'BudgetExceeded',
-        axis: 'sub_dispatches',
+        error: "BudgetExceeded",
+        axis: "sub_dispatches",
         limit: session.sub_dispatch_budget,
         observed: session.sub_dispatches_consumed,
       },

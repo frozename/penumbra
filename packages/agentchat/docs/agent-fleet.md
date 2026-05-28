@@ -6,50 +6,50 @@ Operating reference for picking the right agent for a task. Calibration data and
 
 Each model is evaluated on:
 
-| Task | Tests |
-|---|---|
-| T4 | long-context retrieval (READ from a 250-line file, return one integer) |
-| T5 | multi-step reasoning (predict behavior of a lock + semaphore under contention) |
-| T6 | format under tension (clean file: must answer `NO_BUGS` and resist nit-drift) |
-| T7 | precision counting (exact occurrence count of a string) |
-| T8 | disambiguation (mutex / semaphore / both — pick one word) |
+| Task | Tests                                                                          |
+| ---- | ------------------------------------------------------------------------------ |
+| T4   | long-context retrieval (READ from a 250-line file, return one integer)         |
+| T5   | multi-step reasoning (predict behavior of a lock + semaphore under contention) |
+| T6   | format under tension (clean file: must answer `NO_BUGS` and resist nit-drift)  |
+| T7   | precision counting (exact occurrence count of a string)                        |
+| T8   | disambiguation (mutex / semaphore / both — pick one word)                      |
 
 ## Results (2026-04-27)
 
-| Model | Active params | Type | T4 | T5 | T6 | T7 | T8 | Net |
-|---|---|---|---|---|---|---|---|---|
-| Gemma 4 E4B (mac-mini) | 4B | dense | ✓ | ✓ | ✓ | ✓ | ✓ | **5/5** |
-| Qwen 3.5 4B Q4_K_XL | 4B | dense | ✓ | ✓ | ✓ | ✓ | ✓ | **5/5** |
-| Gemma 4 26B-A4B Q4_K_XL | 4B active | MoE A4B | ✓ | ✓ | ✓ | ✓ | ✓ | **5/5** |
-| Gemma 4 31B Q4_K_XL | 31B | dense | pedantic | ✓ | ✓ | ✓ | ✓ | **5/5** |
-| Qwen 3.5 27B Q5_K_XL | 27B | dense | ✓ | ✓ | ✓ | ✓ | ✓ | **5/5** |
-| Qwen 3.6 27B Q4_K_XL | 27B | dense | ✓ | ✓ | ✓ | ✗ 3 | ✓ | **4/5** |
-| Qwen 3.6 35B-A3B Q4_K_M | 3B active | MoE A3B | ✓ | ✗ logic backwards | ✓ | ✗ 3 | ✓ | **3/5** |
-| Qwen 3.6 35B-A3B Q4_K_XL | 3B active | MoE A3B | ✓ | ✗ logic backwards | ✓ | ✗ 3 | ✓ | **3/5** |
-| Qwen3-Coder-30B-A3B Q4_K_XL (local) | 3B active | MoE A3B (coder) | ✓ | ✗ logic backwards | ✓ | ✓ | ✓ | **4/5** |
-| nv-llama4-maverick (NVIDIA) | 17B/128E | MoE | ✓ | ✓ | ✓ | ✓ | ✓ | **5/5** |
-| nv-qwen3-coder-480b (NVIDIA) | 35B active | MoE A35B (coder) | ✓ | ✓ | ✓ | ✓ | ✓ | **5/5** |
-| nv-llama-3.1-8b (NVIDIA) | 8B | dense | ✓ | ✓ | ✗ false-positive | rate-limited | ✗ "semaphore" | **2/5** |
-| nv-deepseek-v4-pro (NVIDIA) | — | — | rate-limited | ✓ | rate-limited | ✓ | rate-limited | times-out at >2KB prompts |
-| nv-nemotron-super-49b (NVIDIA) | 49B | dense (reasoning) | format-fail | format-fail | format-fail | format-fail | format-fail | leaks chain-of-thought into content |
-| nv-glm-4-7 (NVIDIA) | — | — | ✓ | ✓ | ✓ | ✗ over-counts | ✓ | **4/5** — 948ms; precision-counting weakness shared across this cohort |
-| nv-minimax-m2-7 (NVIDIA) | — | — | timeout | timeout | timeout | timeout | timeout | timeout — bench-2 not currently runnable on free tier |
-| nv-kimi-k2 (NVIDIA) | — | — | ✓ | ✓ | ✓ | ✗ over-counts | ✓ | **4/5** — 575ms; fastest of the new cohort, same T7 weakness |
-| nv-deepseek-3-2 (NVIDIA) | — | — | ✓ | ✓ | ✓ | ✗ over-counts | ✓ | **4/5** — 12423ms; slow but correct, same T7 weakness |
-| nv-step-3-5-flash (NVIDIA) | — | — | format-fail | ⚠️ | format-fail | format-fail | format-fail | **0/5** — 1286ms; format failures, not viable for bench-2-shape |
-| nv-deepseek-3-1-terminus (NVIDIA) | — | — | timeout | timeout | timeout | timeout | timeout | timeout — needs >180s per-agent budget (smoke worked but bench prompts run longer) |
-| groq-llama4-scout (Groq) | 17B/16E | MoE | ✓ | ✓ | ✓ | ✓ | ✓ | **5/5** — smallest 5/5 cloud yet |
-| groq-llama-3.3-70b (Groq) | 70B | dense | ✓ | ✓ | ✓ | ✗ "5" | ✓ | **4/5** — over-counts on T7 |
-| groq-llama-3.1-8b (Groq) | 8B | dense | ✓ | partial | ✗ false-positive | ✓ | rate-limited | **~2.5/5** — same pathology as NV's 8B |
-| groq-gpt-oss-120b (Groq) | 120B | reasoning | budget-exhausted | budget-exhausted | budget-exhausted | budget-exhausted | ✓ "both" | reasoning preamble eats tight max_tokens; needs ≥4K budget |
-| groq-qwen3-32b (Groq) | 32B | dense (thinking) | think-leak | think-leak | think-leak | rate-limited | rate-limited | **0/5** — Groq rejects `enable_thinking:false`, raw `<think>` blocks |
-| @gemini-flash (CLI, gemini-3-flash-preview) | — | flash | ✓ | ✓ | ✓ | ✓ | ✓ | **5/5** — surprise pure win for the cheap tier; via agentchat dispatch (12-65s/task) |
-| @codex-frontier (CLI, gpt-5.2) | — | dense | ✓ | ✓ | ✗ flagged `--attach -file.txt` edge | ✓ | ✓ | **4/5** — T6 disagreement on logical-bug vs argv-convention (real edge case) |
-| @codex-mini (CLI, gpt-5.4-mini) | — | mini | ✓ | ✓ | ✗ same `--attach` edge as codex-frontier | ✓ | ✓ | **4/5** — same T6 pattern; fastest of the codex tier (4-33s/task) |
-| @gemini-pro-direct (HTTP, gemini-3.1-pro-preview) | — | dense | empty | empty | empty | empty | empty | **BROKEN (0/5)** — catastrophic failure even after maxTokens=8192. |
-| @gemini-flash-direct (HTTP, gemini-3-flash-preview, `thinking_budget:0`) | — | flash | ✓ | ✓ | ✓ NO_BUGS | ✓ | ✓ | **5/5 — at ~1s/task**. With `--extra-body-json '{"extra_body":{"google":{"thinking_config":{"thinking_budget":0}}}}'`, flash matches its CLI sibling's score but ~10× faster (sub-second vs 12-65s). |
+| Model                                                                    | Active params | Type              | T4               | T5                | T6                                       | T7               | T8            | Net                                                                                                                                                                                                  |
+| ------------------------------------------------------------------------ | ------------- | ----------------- | ---------------- | ----------------- | ---------------------------------------- | ---------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Gemma 4 E4B (mac-mini)                                                   | 4B            | dense             | ✓                | ✓                 | ✓                                        | ✓                | ✓             | **5/5**                                                                                                                                                                                              |
+| Qwen 3.5 4B Q4_K_XL                                                      | 4B            | dense             | ✓                | ✓                 | ✓                                        | ✓                | ✓             | **5/5**                                                                                                                                                                                              |
+| Gemma 4 26B-A4B Q4_K_XL                                                  | 4B active     | MoE A4B           | ✓                | ✓                 | ✓                                        | ✓                | ✓             | **5/5**                                                                                                                                                                                              |
+| Gemma 4 31B Q4_K_XL                                                      | 31B           | dense             | pedantic         | ✓                 | ✓                                        | ✓                | ✓             | **5/5**                                                                                                                                                                                              |
+| Qwen 3.5 27B Q5_K_XL                                                     | 27B           | dense             | ✓                | ✓                 | ✓                                        | ✓                | ✓             | **5/5**                                                                                                                                                                                              |
+| Qwen 3.6 27B Q4_K_XL                                                     | 27B           | dense             | ✓                | ✓                 | ✓                                        | ✗ 3              | ✓             | **4/5**                                                                                                                                                                                              |
+| Qwen 3.6 35B-A3B Q4_K_M                                                  | 3B active     | MoE A3B           | ✓                | ✗ logic backwards | ✓                                        | ✗ 3              | ✓             | **3/5**                                                                                                                                                                                              |
+| Qwen 3.6 35B-A3B Q4_K_XL                                                 | 3B active     | MoE A3B           | ✓                | ✗ logic backwards | ✓                                        | ✗ 3              | ✓             | **3/5**                                                                                                                                                                                              |
+| Qwen3-Coder-30B-A3B Q4_K_XL (local)                                      | 3B active     | MoE A3B (coder)   | ✓                | ✗ logic backwards | ✓                                        | ✓                | ✓             | **4/5**                                                                                                                                                                                              |
+| nv-llama4-maverick (NVIDIA)                                              | 17B/128E      | MoE               | ✓                | ✓                 | ✓                                        | ✓                | ✓             | **5/5**                                                                                                                                                                                              |
+| nv-qwen3-coder-480b (NVIDIA)                                             | 35B active    | MoE A35B (coder)  | ✓                | ✓                 | ✓                                        | ✓                | ✓             | **5/5**                                                                                                                                                                                              |
+| nv-llama-3.1-8b (NVIDIA)                                                 | 8B            | dense             | ✓                | ✓                 | ✗ false-positive                         | rate-limited     | ✗ "semaphore" | **2/5**                                                                                                                                                                                              |
+| nv-deepseek-v4-pro (NVIDIA)                                              | —             | —                 | rate-limited     | ✓                 | rate-limited                             | ✓                | rate-limited  | times-out at >2KB prompts                                                                                                                                                                            |
+| nv-nemotron-super-49b (NVIDIA)                                           | 49B           | dense (reasoning) | format-fail      | format-fail       | format-fail                              | format-fail      | format-fail   | leaks chain-of-thought into content                                                                                                                                                                  |
+| nv-glm-4-7 (NVIDIA)                                                      | —             | —                 | ✓                | ✓                 | ✓                                        | ✗ over-counts    | ✓             | **4/5** — 948ms; precision-counting weakness shared across this cohort                                                                                                                               |
+| nv-minimax-m2-7 (NVIDIA)                                                 | —             | —                 | timeout          | timeout           | timeout                                  | timeout          | timeout       | timeout — bench-2 not currently runnable on free tier                                                                                                                                                |
+| nv-kimi-k2 (NVIDIA)                                                      | —             | —                 | ✓                | ✓                 | ✓                                        | ✗ over-counts    | ✓             | **4/5** — 575ms; fastest of the new cohort, same T7 weakness                                                                                                                                         |
+| nv-deepseek-3-2 (NVIDIA)                                                 | —             | —                 | ✓                | ✓                 | ✓                                        | ✗ over-counts    | ✓             | **4/5** — 12423ms; slow but correct, same T7 weakness                                                                                                                                                |
+| nv-step-3-5-flash (NVIDIA)                                               | —             | —                 | format-fail      | ⚠️                | format-fail                              | format-fail      | format-fail   | **0/5** — 1286ms; format failures, not viable for bench-2-shape                                                                                                                                      |
+| nv-deepseek-3-1-terminus (NVIDIA)                                        | —             | —                 | timeout          | timeout           | timeout                                  | timeout          | timeout       | timeout — needs >180s per-agent budget (smoke worked but bench prompts run longer)                                                                                                                   |
+| groq-llama4-scout (Groq)                                                 | 17B/16E       | MoE               | ✓                | ✓                 | ✓                                        | ✓                | ✓             | **5/5** — smallest 5/5 cloud yet                                                                                                                                                                     |
+| groq-llama-3.3-70b (Groq)                                                | 70B           | dense             | ✓                | ✓                 | ✓                                        | ✗ "5"            | ✓             | **4/5** — over-counts on T7                                                                                                                                                                          |
+| groq-llama-3.1-8b (Groq)                                                 | 8B            | dense             | ✓                | partial           | ✗ false-positive                         | ✓                | rate-limited  | **~2.5/5** — same pathology as NV's 8B                                                                                                                                                               |
+| groq-gpt-oss-120b (Groq)                                                 | 120B          | reasoning         | budget-exhausted | budget-exhausted  | budget-exhausted                         | budget-exhausted | ✓ "both"      | reasoning preamble eats tight max_tokens; needs ≥4K budget                                                                                                                                           |
+| groq-qwen3-32b (Groq)                                                    | 32B           | dense (thinking)  | think-leak       | think-leak        | think-leak                               | rate-limited     | rate-limited  | **0/5** — Groq rejects `enable_thinking:false`, raw `<think>` blocks                                                                                                                                 |
+| @gemini-flash (CLI, gemini-3-flash-preview)                              | —             | flash             | ✓                | ✓                 | ✓                                        | ✓                | ✓             | **5/5** — surprise pure win for the cheap tier; via agentchat dispatch (12-65s/task)                                                                                                                 |
+| @codex-frontier (CLI, gpt-5.2)                                           | —             | dense             | ✓                | ✓                 | ✗ flagged `--attach -file.txt` edge      | ✓                | ✓             | **4/5** — T6 disagreement on logical-bug vs argv-convention (real edge case)                                                                                                                         |
+| @codex-mini (CLI, gpt-5.4-mini)                                          | —             | mini              | ✓                | ✓                 | ✗ same `--attach` edge as codex-frontier | ✓                | ✓             | **4/5** — same T6 pattern; fastest of the codex tier (4-33s/task)                                                                                                                                    |
+| @gemini-pro-direct (HTTP, gemini-3.1-pro-preview)                        | —             | dense             | empty            | empty             | empty                                    | empty            | empty         | **BROKEN (0/5)** — catastrophic failure even after maxTokens=8192.                                                                                                                                   |
+| @gemini-flash-direct (HTTP, gemini-3-flash-preview, `thinking_budget:0`) | —             | flash             | ✓                | ✓                 | ✓ NO_BUGS                                | ✓                | ✓             | **5/5 — at ~1s/task**. With `--extra-body-json '{"extra_body":{"google":{"thinking_config":{"thinking_budget":0}}}}'`, flash matches its CLI sibling's score but ~10× faster (sub-second vs 12-65s). |
 
-T4 was poorly specified — README only *shows* `--concurrency 4` in an example, never *states* the default. Smaller Gemmas inferred from context (practical); Gemma 4 31B refused (pedantic). Both are defensible.
+T4 was poorly specified — README only _shows_ `--concurrency 4` in an example, never _states_ the default. Smaller Gemmas inferred from context (practical); Gemma 4 31B refused (pedantic). Both are defensible.
 
 ## Architecture pattern
 
@@ -59,21 +59,21 @@ Dense models — across every size and series tested (4B → 31B) — are reliab
 
 ## Sweet-spot pairings
 
-| Task profile | Pick |
-|---|---|
-| Quick extraction / yes-no / format-strict (low cost) | mac-mini Gemma 4 E4B (`@planner` or `@executor`) — **5/5** (restored after bench-fleet caPath fix) |
-| Code review / multi-step reasoning / focused single-file dives | local Gemma 4 26B-A4B MoE (`@local-gemma26`) |
-| Pedantic literal-vs-implied (e.g. spec compliance check) | local Gemma 4 31B dense (`@local-gemma31`, swap required) |
-| Tier 1 Recommended: Frontier general / vision | `@nv-llama4-maverick` (NVIDIA, free-tier ~40 rpm, 5/5 sub-500ms) |
-| Frontier coder (cloud) | `@nv-qwen3-coder-480b` (NVIDIA — clears the A3B blind spot) |
-| Fast cloud cohort 4/5 | `@nv-kimi-k2` (NVIDIA free tier; fastest of the new cohort) |
-| Tier 1 Recommended: Fast cloud general | `@groq-llama4-scout` (Groq, smallest 5/5 cloud yet, sub-500ms) |
-| Cloud 70B-dense general | `@groq-llama-3.3-70b` (Groq, 4/5 — only T7 precision miss) |
-| Cheap CLI agent (file-write capable) | `@gemini-flash` — 5/5 on bench-2, cheapest 5/5 of any agent tested. Use as workhorse for file-writing tasks where @gemini's pro tier is overkill. |
-| Heavier CLI agent for deep coding | `@codex-frontier` (gpt-5.2) — 4/5; pick over `@codex` for multi-step refactors. The codex-tagged tier (gpt-5.2-codex etc) needs an OpenAI API key — see quirk on agent. |
-| Fast stateless dispatch — cheapest 5/5 in the fleet | `@gemini-flash-direct` (with `--extra-body-json '{"extra_body":{"google":{"thinking_config":{"thinking_budget":0}}}}')` — 5/5 on bench-2 at ~1s/task via Google AI Studio HTTP. Beats every other 5/5 in the fleet on speed + cost when no file/shell tools are needed. |
-| Qwen-lineage perspective on reasoning | `@local-qwen35-27b` (legacy dense, swap required) |
-| Lightweight local fallback | `@local-qwen35-4b` (swap required) |
+| Task profile                                                   | Pick                                                                                                                                                                                                                                                                    |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Quick extraction / yes-no / format-strict (low cost)           | mac-mini Gemma 4 E4B (`@planner` or `@executor`) — **5/5** (restored after bench-fleet caPath fix)                                                                                                                                                                      |
+| Code review / multi-step reasoning / focused single-file dives | local Gemma 4 26B-A4B MoE (`@local-gemma26`)                                                                                                                                                                                                                            |
+| Pedantic literal-vs-implied (e.g. spec compliance check)       | local Gemma 4 31B dense (`@local-gemma31`, swap required)                                                                                                                                                                                                               |
+| Tier 1 Recommended: Frontier general / vision                  | `@nv-llama4-maverick` (NVIDIA, free-tier ~40 rpm, 5/5 sub-500ms)                                                                                                                                                                                                        |
+| Frontier coder (cloud)                                         | `@nv-qwen3-coder-480b` (NVIDIA — clears the A3B blind spot)                                                                                                                                                                                                             |
+| Fast cloud cohort 4/5                                          | `@nv-kimi-k2` (NVIDIA free tier; fastest of the new cohort)                                                                                                                                                                                                             |
+| Tier 1 Recommended: Fast cloud general                         | `@groq-llama4-scout` (Groq, smallest 5/5 cloud yet, sub-500ms)                                                                                                                                                                                                          |
+| Cloud 70B-dense general                                        | `@groq-llama-3.3-70b` (Groq, 4/5 — only T7 precision miss)                                                                                                                                                                                                              |
+| Cheap CLI agent (file-write capable)                           | `@gemini-flash` — 5/5 on bench-2, cheapest 5/5 of any agent tested. Use as workhorse for file-writing tasks where @gemini's pro tier is overkill.                                                                                                                       |
+| Heavier CLI agent for deep coding                              | `@codex-frontier` (gpt-5.2) — 4/5; pick over `@codex` for multi-step refactors. The codex-tagged tier (gpt-5.2-codex etc) needs an OpenAI API key — see quirk on agent.                                                                                                 |
+| Fast stateless dispatch — cheapest 5/5 in the fleet            | `@gemini-flash-direct` (with `--extra-body-json '{"extra_body":{"google":{"thinking_config":{"thinking_budget":0}}}}')` — 5/5 on bench-2 at ~1s/task via Google AI Studio HTTP. Beats every other 5/5 in the fleet on speed + cost when no file/shell tools are needed. |
+| Qwen-lineage perspective on reasoning                          | `@local-qwen35-27b` (legacy dense, swap required)                                                                                                                                                                                                                       |
+| Lightweight local fallback                                     | `@local-qwen35-4b` (swap required)                                                                                                                                                                                                                                      |
 
 ## ACP Promotion Gate
 
@@ -92,12 +92,12 @@ Promotion-ready means every required scenario passes with `trustworthy: true`, `
 
 ### Latest ACP promotion outcome (2026-05-02)
 
-| Agent | Scenarios | Result | Average latency | Routing note |
-|---|---|---|---|---|
-| `codex-acp` | write_worktree_file, terminal_verify, review_no_edit | 3/3, promotion-ready on tool slice | 23.7s | Prefer for ACP promotion experiments. Use narrow route or role trials before any broad default change. |
-| `codex-mini` | same baseline slice | 3/3 | 23.3s | Baseline remains competitive; ACP promotion should beat this on reliability or tool evidence, not just latency. |
-| `gemini` | same baseline slice | 3/3 after Gemini CLI config fix | 133.0s | Functional but materially slower on this slice. |
-| `gemini-acp-pro` | write_worktree_file, terminal_verify, review_no_edit | Not promotion-ready for reviewer routing | n/a | Passes write/terminal, fails review_no_edit. Keep available for write/terminal experiments; do not route reviewer work here yet. |
+| Agent            | Scenarios                                            | Result                                   | Average latency | Routing note                                                                                                                     |
+| ---------------- | ---------------------------------------------------- | ---------------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `codex-acp`      | write_worktree_file, terminal_verify, review_no_edit | 3/3, promotion-ready on tool slice       | 23.7s           | Prefer for ACP promotion experiments. Use narrow route or role trials before any broad default change.                           |
+| `codex-mini`     | same baseline slice                                  | 3/3                                      | 23.3s           | Baseline remains competitive; ACP promotion should beat this on reliability or tool evidence, not just latency.                  |
+| `gemini`         | same baseline slice                                  | 3/3 after Gemini CLI config fix          | 133.0s          | Functional but materially slower on this slice.                                                                                  |
+| `gemini-acp-pro` | write_worktree_file, terminal_verify, review_no_edit | Not promotion-ready for reviewer routing | n/a             | Passes write/terminal, fails review_no_edit. Keep available for write/terminal experiments; do not route reviewer work here yet. |
 
 ## AVOID for our profile
 
@@ -181,7 +181,7 @@ The agentchat config (`~/.config/agentchat/agentchat.yaml`) carries a `quirks` f
 - **`@codex-mini` and `@codex-frontier` share a T6 false-positive bias** — both flagged the same `--attach -file.txt` argv edge case as a "logical bug" where ground truth says NO_BUGS. Not a hallucination (consistent finding across two independent runs); rather a calibration disagreement on bug-vs-convention. The codex review prompted a real fix in commit f467c86 (`@gemini-flash` chose option A: `existsSync` check) — so the codex bias was actually a true positive, just uncovered by a strong gut. (Observed 2026-04-27, fixed same day.)
 - **Google AI Studio direct-HTTP gemini-3.x** emits thinking tokens via the OpenAI-compat endpoint that consume `max_tokens`. Two settled patterns:
   - `gemini-3-flash-preview`: pass `extra_body.google.thinking_config.thinking_budget=0` (via bench.ts `--extra-body-json` OR yaml `options.extraBody`). Disables thinking entirely. **5/5 on bench-2, ~1s/task.**
-  - `gemini-3.1-pro-preview`: any explicit thinking_budget returns empty content; only default `-1` (dynamic) produces output. Workaround for chat dispatch is to bump yaml `maxTokens` to 8192 so thinking + answer both fit. Bench-2 calibration still blocked because the harness uses tight per-task budgets (8/100/60/8/8) — would need a `--max-tokens-multiplier` flag.  (Observed 2026-04-27.)
+  - `gemini-3.1-pro-preview`: any explicit thinking_budget returns empty content; only default `-1` (dynamic) produces output. Workaround for chat dispatch is to bump yaml `maxTokens` to 8192 so thinking + answer both fit. Bench-2 calibration still blocked because the harness uses tight per-task budgets (8/100/60/8/8) — would need a `--max-tokens-multiplier` flag. (Observed 2026-04-27.)
 - **NVIDIA NIM cloud agents** are capped ~40 rpm on free tier — serialize calls when running batches. `/v1/models` is publicly readable without auth, useful for catalog browsing.
 - **Groq cloud agents** strictly reject unknown body fields (`chat_template_kwargs`, etc.). The `openai-compat-http` adapter is fine; the bench harness needs `--strict-openai`. Free-tier rate limits hit faster on the small/fast tiers (8B, 32B) — bench's 5 sequential tasks can trip the 5th call.
 
@@ -197,6 +197,7 @@ Penumbra captures token usage and provider rate limits via two parallel paths:
   - **Claude statusLine** (when `penumbra hooks install --claude` is run) → `rate-limit-snapshot` for five_hour + seven_day windows
 
 Surfaces:
+
 - MCP: `cost.recent`, `cost.quota_status`
 - HTTP: `GET /usage/recent`, `GET /usage/quota_status` (bearer-token auth)
 - CLI: `penumbra cost recent`, `penumbra cost quota`, `penumbra hooks install/uninstall/status`
@@ -239,22 +240,23 @@ The OTLP receiver now accepts both `application/json` and `application/x-protobu
 
 Per-tool log handlers in `packages/core/src/otlp/normalize.ts` `LOG_HANDLERS` registry:
 
-| `event.name` | Handler | Provider | Tokens source |
-|---|---|---|---|
-| `gen_ai.client.inference.operation.details` | `handleGenAiInferenceLog` (Phase 3c) | derived from `gen_ai.provider.name` (e.g. `gcp.vertex_ai` → `google`) | `gen_ai.usage.input_tokens` / `gen_ai.usage.output_tokens` |
-| `codex.sse_event` (kind=`response.completed`) | `handleCodexSseEvent` | `openai` (from `service.name = "codex-cli"`) | `input_token_count` / `output_token_count` |
-| `claude_code.api_request` | `handleClaudeCodeApiRequest` | `anthropic` (from `service.name = "claude-code"`) | `input_tokens` / `output_tokens`; `cost_usd` provided directly |
+| `event.name`                                  | Handler                              | Provider                                                              | Tokens source                                                  |
+| --------------------------------------------- | ------------------------------------ | --------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `gen_ai.client.inference.operation.details`   | `handleGenAiInferenceLog` (Phase 3c) | derived from `gen_ai.provider.name` (e.g. `gcp.vertex_ai` → `google`) | `gen_ai.usage.input_tokens` / `gen_ai.usage.output_tokens`     |
+| `codex.sse_event` (kind=`response.completed`) | `handleCodexSseEvent`                | `openai` (from `service.name = "codex-cli"`)                          | `input_token_count` / `output_token_count`                     |
+| `claude_code.api_request`                     | `handleClaudeCodeApiRequest`         | `anthropic` (from `service.name = "claude-code"`)                     | `input_tokens` / `output_tokens`; `cost_usd` provided directly |
 
 Robustness:
+
 - Parse failures return HTTP 200 (with `parse_error` in the body) so OTLP exporters don't retry-loop
 - Deprecated proto2 group wire types (3, 4) are silently skipped — codex's trace exports include these from older proto schemas in transitive deps
 
 Hooks UX (different per tool because their config schemas differ):
 
-| Tool | Subcommand | Writes to | Notes |
-|---|---|---|---|
-| gemini-cli | `--gemini-otel` | `~/.gemini/settings.json` (top-level `telemetry` object) | endpoint as URL with no path |
-| codex | `--codex-otel` | `~/.codex/config.toml` (managed `[otel]` block with marker comments) | endpoint MUST include `/v1/logs` (codex doesn't append paths) |
+| Tool        | Subcommand      | Writes to                                                             | Notes                                                               |
+| ----------- | --------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| gemini-cli  | `--gemini-otel` | `~/.gemini/settings.json` (top-level `telemetry` object)              | endpoint as URL with no path                                        |
+| codex       | `--codex-otel`  | `~/.codex/config.toml` (managed `[otel]` block with marker comments)  | endpoint MUST include `/v1/logs` (codex doesn't append paths)       |
 | claude-code | `--claude-otel` | `~/.claude/settings.json` (top-level `env` object with `OTEL_*` keys) | endpoint as URL with no path; claude-code appends `/v1/logs` itself |
 
 Operator reruns the relevant `--<tool>-otel` install after every daemon restart (port changes).

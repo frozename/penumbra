@@ -1,16 +1,16 @@
-import { z } from 'zod';
-import { AgentTaskTypeSchema } from './agent-performance.js';
-import { SafeProjectIdSchema } from './project-id.js';
+import { z } from "zod";
+import { AgentTaskTypeSchema } from "./agent-performance.js";
+import { SafeProjectIdSchema } from "./project-id.js";
 
 export const HandoffStatusSchema = z.enum([
-  'pending',
-  'approved',
-  'redirected',
-  'rejected',
-  'dispatched',
-  'completed',
-  'failed',
-  'expired',
+  "pending",
+  "approved",
+  "redirected",
+  "rejected",
+  "dispatched",
+  "completed",
+  "failed",
+  "expired",
 ]);
 export type HandoffStatus = z.infer<typeof HandoffStatusSchema>;
 
@@ -30,15 +30,12 @@ export const HandoffRowSchema = z.object({
   resolution_reason: z.string().nullable(),
   triggered_by_event_id: z.string().nullable(),
   chain_max_hops: z.number().int().nullable(),
-  chain_trust_mode: z.enum(['all', 'config']).nullable(),
+  chain_trust_mode: z.enum(["all", "config"]).nullable(),
   chain_task_type: AgentTaskTypeSchema.nullable(),
-  dispatch_kind: z.enum(['long_lived_tick', 'workflow']).nullable().optional(),
+  dispatch_kind: z.enum(["long_lived_tick", "workflow"]).nullable().optional(),
   long_lived_agent_id: z.string().nullable().optional(),
   long_lived_tick_id: z.string().nullable().optional(),
-  use_worktree: z.preprocess(
-    (v) => (v === 1 ? true : v === 0 ? false : v),
-    z.boolean().nullable(),
-  ),
+  use_worktree: z.preprocess((v) => (v === 1 ? true : v === 0 ? false : v), z.boolean().nullable()),
   open_pr_on_review: z.preprocess(
     (v) => (v === 1 ? true : v === 0 ? false : v),
     z.boolean().nullable().optional(),
@@ -84,8 +81,7 @@ export const ApproveHandoffRequestSchema = z
     reason: z.string().optional(),
     resolved_by: z.string().min(1).optional(),
   })
-  .refine(
-    (v) => !(v.redirect_to && v.reject === true),
-    { message: 'redirect_to and reject are mutually exclusive' },
-  );
+  .refine((v) => !(v.redirect_to && v.reject === true), {
+    message: "redirect_to and reject are mutually exclusive",
+  });
 export type ApproveHandoffRequest = z.infer<typeof ApproveHandoffRequestSchema>;

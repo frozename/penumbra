@@ -1,4 +1,10 @@
-import { inferAgentTaskTypeForRole, routeAgent, type AgentTaskType, type RoleRoute, type Services } from '@penumbra/core';
+import {
+  inferAgentTaskTypeForRole,
+  routeAgent,
+  type AgentTaskType,
+  type RoleRoute,
+  type Services,
+} from "@penumbra/core";
 
 /**
  * Resolve a role to a concrete agent via routeAgent's 'single' detail mode.
@@ -17,7 +23,7 @@ export function resolveSingleRoute(
   const resolvedTaskType = taskType ?? inferAgentTaskTypeForRole(message, role);
   const out = routeAgent({
     db: services.db,
-    detail: 'single',
+    detail: "single",
     role,
     message,
     taskType: resolvedTaskType,
@@ -27,5 +33,5 @@ export function resolveSingleRoute(
     defaultRoles: agentRouting.default_roles,
     now: services.clock(),
   });
-  return out.detail === 'single' ? out.route : null;
+  return out.detail === "single" ? out.route : null;
 }

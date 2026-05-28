@@ -1,16 +1,16 @@
-import { expect, test, mock } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { loadSqliteVec, migrate, type Services } from '@penumbra/core';
-import { TestEmbedder } from '@penumbra/core/testing';
-import { longLivedMcpCallRoute } from '../../src/routes/long-lived-mcp.js';
+import { expect, test, mock } from "bun:test";
+import { Database } from "bun:sqlite";
+import { loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
+import { longLivedMcpCallRoute } from "../../src/routes/long-lived-mcp.js";
 
 function makeServices(db: Database): Services {
   return {
     db,
     settings: {},
-    storageRoot: '/tmp/penumbra-test',
+    storageRoot: "/tmp/penumbra-test",
     dbMeta: {} as any,
-    machineId: { get: () => 'machine-test' } as any,
+    machineId: { get: () => "machine-test" } as any,
     projectCache: {} as any,
     redactor: {} as any,
     t0Writer: {} as any,
@@ -31,7 +31,7 @@ function makeServices(db: Database): Services {
     supervisor: {} as any,
     pidRegistry: {} as any,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date('2026-05-11T00:00:00.000Z'),
+    clock: () => new Date("2026-05-11T00:00:00.000Z"),
     uuid: (() => {
       let n = 0;
       return () => `evt-${++n}`;
@@ -54,7 +54,7 @@ function withToken<T>(token: string, fn: () => Promise<T>): Promise<T> {
   });
 }
 
-function authHeaders(token = 'tok'): HeadersInit {
+function authHeaders(token = "tok"): HeadersInit {
   return { authorization: `Bearer ${token}` };
 }
 
@@ -68,22 +68,22 @@ function seedRunningIdentity(db: Database): void {
       last_tick_outcome, last_intent_summary, retired_at, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    'agent-1',
-    'Agent 1',
-    'active',
+    "agent-1",
+    "Agent 1",
+    "active",
     null,
     0,
     3,
     null,
-    '[]',
-    '[]',
-    '[]',
-    '{}',
+    "[]",
+    "[]",
+    "[]",
+    "{}",
     null,
     null,
     null,
-    '{}',
-    'brief',
+    "{}",
+    "brief",
     null,
     null,
     null,
@@ -97,137 +97,162 @@ function seedRunningIdentity(db: Database): void {
       id, agent_id, chain_id, trigger_kind, trigger_payload_json, intent_summary, started_at,
       completed_at, outcome, cost_cents, error_summary, working_memory_diff_json
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run('tick-1', 'agent-1', null, 'manual', null, null, 1, null, null, null, null, null);
+  ).run("tick-1", "agent-1", null, "manual", null, null, 1, null, null, null, null, null);
 }
 
-test('POST /long-lived/mcp/call returns 400 for malformed body', async () => {
-  await withToken('tok', async () => {
-    const db = new Database(':memory:');
+test("POST /long-lived/mcp/call returns 400 for malformed body", async () => {
+  await withToken("tok", async () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     const services = makeServices(db);
-    const res = await longLivedMcpCallRoute(new Request('http://x/long-lived/mcp/call', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ agent_id: 'agent-1', tick_id: 'tick-1', tool: 'bad-tool' }),
-    }), services);
+    const res = await longLivedMcpCallRoute(
+      new Request("http://x/long-lived/mcp/call", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ agent_id: "agent-1", tick_id: "tick-1", tool: "bad-tool" }),
+      }),
+      services,
+    );
     expect(res.status).toBe(400);
   });
 });
 
-test('POST /long-lived/mcp/call accepts dotted tool ids like ha:light.toggle', async () => {
-  await withToken('tok', async () => {
-    const db = new Database(':memory:');
+test("POST /long-lived/mcp/call accepts dotted tool ids like ha:light.toggle", async () => {
+  await withToken("tok", async () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     seedRunningIdentity(db);
-    const handleCall = mock(async () => ({ kind: 'executed', result: 'ok', tier: 1 as const }));
+    const handleCall = mock(async () => ({ kind: "executed", result: "ok", tier: 1 as const }));
     const services = makeServices(db);
     services.actionGate = { handleCall } as any;
 
-    const res = await longLivedMcpCallRoute(new Request('http://x/long-lived/mcp/call', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ agent_id: 'agent-1', tick_id: 'tick-1', tool: 'ha:light.toggle' }),
-    }), services);
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ action_status: 'executed', result: 'ok' });
-  });
-});
-
-test('POST /long-lived/mcp/call normalizes dot and colon tool ids before action gate dispatch', async () => {
-  await withToken('tok', async () => {
-    const db = new Database(':memory:');
-    loadSqliteVec(db);
-    migrate(db, { embeddingDim: 384 });
-    seedRunningIdentity(db);
-    const handleCall = mock(async (req: any) => ({ kind: 'executed', result: req.tool, tier: 1 as const }));
-    const services = makeServices(db);
-    services.actionGate = { handleCall } as any;
-
-    const dotRes = await longLivedMcpCallRoute(new Request('http://x/long-lived/mcp/call', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ agent_id: 'agent-1', tick_id: 'tick-1', tool: 'ha.ha_get_state' }),
-    }), services);
-    expect(dotRes.status).toBe(200);
-    expect(await dotRes.json()).toEqual({ action_status: 'executed', result: 'ha:ha_get_state' });
-
-    const colonRes = await longLivedMcpCallRoute(new Request('http://x/long-lived/mcp/call', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ agent_id: 'agent-1', tick_id: 'tick-1', tool: 'ha:ha_get_state' }),
-    }), services);
-    expect(colonRes.status).toBe(200);
-    expect(await colonRes.json()).toEqual({ action_status: 'executed', result: 'ha:ha_get_state' });
-    expect(handleCall).toHaveBeenCalledTimes(2);
-    expect(handleCall.mock.calls.map((call) => call[0].tool)).toEqual(['ha:ha_get_state', 'ha:ha_get_state']);
-  });
-});
-
-test('POST /long-lived/mcp/call accepts _meta and forwards it to action gate', async () => {
-  await withToken('tok', async () => {
-    const db = new Database(':memory:');
-    loadSqliteVec(db);
-    migrate(db, { embeddingDim: 384 });
-    seedRunningIdentity(db);
-    const handleCall = mock(async (req: any) => ({ kind: 'executed', result: req._meta, tier: 1 as const }));
-    const services = makeServices(db);
-    services.actionGate = { handleCall } as any;
-
-    const res = await longLivedMcpCallRoute(new Request('http://x/long-lived/mcp/call', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({
-        agent_id: 'agent-1',
-        tick_id: 'tick-1',
-        tool: 'ha.ha_get_state',
-        _meta: { origin: 'claude-code', trace: 't-1' },
+    const res = await longLivedMcpCallRoute(
+      new Request("http://x/long-lived/mcp/call", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ agent_id: "agent-1", tick_id: "tick-1", tool: "ha:light.toggle" }),
       }),
-    }), services);
+      services,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ action_status: "executed", result: "ok" });
+  });
+});
+
+test("POST /long-lived/mcp/call normalizes dot and colon tool ids before action gate dispatch", async () => {
+  await withToken("tok", async () => {
+    const db = new Database(":memory:");
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+    seedRunningIdentity(db);
+    const handleCall = mock(async (req: any) => ({
+      kind: "executed",
+      result: req.tool,
+      tier: 1 as const,
+    }));
+    const services = makeServices(db);
+    services.actionGate = { handleCall } as any;
+
+    const dotRes = await longLivedMcpCallRoute(
+      new Request("http://x/long-lived/mcp/call", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ agent_id: "agent-1", tick_id: "tick-1", tool: "ha.ha_get_state" }),
+      }),
+      services,
+    );
+    expect(dotRes.status).toBe(200);
+    expect(await dotRes.json()).toEqual({ action_status: "executed", result: "ha:ha_get_state" });
+
+    const colonRes = await longLivedMcpCallRoute(
+      new Request("http://x/long-lived/mcp/call", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ agent_id: "agent-1", tick_id: "tick-1", tool: "ha:ha_get_state" }),
+      }),
+      services,
+    );
+    expect(colonRes.status).toBe(200);
+    expect(await colonRes.json()).toEqual({ action_status: "executed", result: "ha:ha_get_state" });
+    expect(handleCall).toHaveBeenCalledTimes(2);
+    expect(handleCall.mock.calls.map((call) => call[0].tool)).toEqual([
+      "ha:ha_get_state",
+      "ha:ha_get_state",
+    ]);
+  });
+});
+
+test("POST /long-lived/mcp/call accepts _meta and forwards it to action gate", async () => {
+  await withToken("tok", async () => {
+    const db = new Database(":memory:");
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+    seedRunningIdentity(db);
+    const handleCall = mock(async (req: any) => ({
+      kind: "executed",
+      result: req._meta,
+      tier: 1 as const,
+    }));
+    const services = makeServices(db);
+    services.actionGate = { handleCall } as any;
+
+    const res = await longLivedMcpCallRoute(
+      new Request("http://x/long-lived/mcp/call", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          agent_id: "agent-1",
+          tick_id: "tick-1",
+          tool: "ha.ha_get_state",
+          _meta: { origin: "claude-code", trace: "t-1" },
+        }),
+      }),
+      services,
+    );
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
-      action_status: 'executed',
-      result: { origin: 'claude-code', trace: 't-1' },
+      action_status: "executed",
+      result: { origin: "claude-code", trace: "t-1" },
     });
     expect(handleCall).toHaveBeenCalledWith({
-      agent_id: 'agent-1',
-      tick_id: 'tick-1',
-      tool: 'ha:ha_get_state',
+      agent_id: "agent-1",
+      tick_id: "tick-1",
+      tool: "ha:ha_get_state",
       args: {},
-      _meta: { origin: 'claude-code', trace: 't-1' },
+      _meta: { origin: "claude-code", trace: "t-1" },
     });
   });
 });
 
-test('POST /long-lived/mcp/call rejects invalid _meta payloads', async () => {
-  await withToken('tok', async () => {
-    const db = new Database(':memory:');
+test("POST /long-lived/mcp/call rejects invalid _meta payloads", async () => {
+  await withToken("tok", async () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     seedRunningIdentity(db);
-    const handleCall = mock(async () => ({ kind: 'executed', result: 'ok', tier: 1 as const }));
+    const handleCall = mock(async () => ({ kind: "executed", result: "ok", tier: 1 as const }));
     const services = makeServices(db);
     services.actionGate = { handleCall } as any;
 
-    const invalidBodies = [
-      { _meta: 'bad' },
-      { _meta: 42 },
-      { _meta: ['bad'] },
-    ];
+    const invalidBodies = [{ _meta: "bad" }, { _meta: 42 }, { _meta: ["bad"] }];
 
     for (const invalid of invalidBodies) {
-      const res = await longLivedMcpCallRoute(new Request('http://x/long-lived/mcp/call', {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({
-          agent_id: 'agent-1',
-          tick_id: 'tick-1',
-          tool: 'ha:state_get',
-          ...invalid,
+      const res = await longLivedMcpCallRoute(
+        new Request("http://x/long-lived/mcp/call", {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify({
+            agent_id: "agent-1",
+            tick_id: "tick-1",
+            tool: "ha:state_get",
+            ...invalid,
+          }),
         }),
-      }), services);
+        services,
+      );
       expect(res.status).toBe(400);
     }
 
@@ -235,220 +260,264 @@ test('POST /long-lived/mcp/call rejects invalid _meta payloads', async () => {
   });
 });
 
-test('route rejects _meta > 2048 UTF-8 bytes with 400 meta_too_large', async () => {
-  await withToken('tok', async () => {
-    const db = new Database(':memory:');
+test("route rejects _meta > 2048 UTF-8 bytes with 400 meta_too_large", async () => {
+  await withToken("tok", async () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     seedRunningIdentity(db);
-    const handleCall = mock(async () => ({ kind: 'executed', result: 'ok', tier: 1 as const }));
+    const handleCall = mock(async () => ({ kind: "executed", result: "ok", tier: 1 as const }));
     const services = makeServices(db);
     services.actionGate = { handleCall } as any;
 
-    const res = await longLivedMcpCallRoute(new Request('http://x/long-lived/mcp/call', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({
-        agent_id: 'agent-1',
-        tick_id: 'tick-1',
-        tool: 'ha:state_get',
-        _meta: { origin: 'claude-code', blob: '😀'.repeat(600) },
+    const res = await longLivedMcpCallRoute(
+      new Request("http://x/long-lived/mcp/call", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          agent_id: "agent-1",
+          tick_id: "tick-1",
+          tool: "ha:state_get",
+          _meta: { origin: "claude-code", blob: "😀".repeat(600) },
+        }),
       }),
-    }), services);
+      services,
+    );
 
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: 'meta_too_large' });
+    expect(await res.json()).toEqual({ error: "meta_too_large" });
     expect(handleCall).not.toHaveBeenCalled();
   });
 });
 
-test('POST /long-lived/mcp/call forwards _meta as undefined when omitted', async () => {
-  await withToken('tok', async () => {
-    const db = new Database(':memory:');
+test("POST /long-lived/mcp/call forwards _meta as undefined when omitted", async () => {
+  await withToken("tok", async () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     seedRunningIdentity(db);
-    const handleCall = mock(async () => ({ kind: 'executed', result: 'ok', tier: 1 as const }));
+    const handleCall = mock(async () => ({ kind: "executed", result: "ok", tier: 1 as const }));
     const services = makeServices(db);
     services.actionGate = { handleCall } as any;
 
-    const res = await longLivedMcpCallRoute(new Request('http://x/long-lived/mcp/call', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ agent_id: 'agent-1', tick_id: 'tick-1', tool: 'ha:state_get' }),
-    }), services);
+    const res = await longLivedMcpCallRoute(
+      new Request("http://x/long-lived/mcp/call", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ agent_id: "agent-1", tick_id: "tick-1", tool: "ha:state_get" }),
+      }),
+      services,
+    );
 
     expect(res.status).toBe(200);
     expect(handleCall).toHaveBeenCalledWith({
-      agent_id: 'agent-1',
-      tick_id: 'tick-1',
-      tool: 'ha:state_get',
+      agent_id: "agent-1",
+      tick_id: "tick-1",
+      tool: "ha:state_get",
       args: {},
       _meta: undefined,
     });
   });
 });
 
-test('POST /long-lived/mcp/call rejects payloads larger than 1 MiB', async () => {
-  await withToken('tok', async () => {
-    const db = new Database(':memory:');
+test("POST /long-lived/mcp/call rejects payloads larger than 1 MiB", async () => {
+  await withToken("tok", async () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     seedRunningIdentity(db);
     const services = makeServices(db);
-    const res = await longLivedMcpCallRoute(new Request('http://x/long-lived/mcp/call', {
-      method: 'POST',
-      headers: {
-        ...authHeaders(),
-        'content-length': '2000000',
-      },
-      body: JSON.stringify({ agent_id: 'agent-1', tick_id: 'tick-1', tool: 'ha:state_get' }),
-    }), services);
+    const res = await longLivedMcpCallRoute(
+      new Request("http://x/long-lived/mcp/call", {
+        method: "POST",
+        headers: {
+          ...authHeaders(),
+          "content-length": "2000000",
+        },
+        body: JSON.stringify({ agent_id: "agent-1", tick_id: "tick-1", tool: "ha:state_get" }),
+      }),
+      services,
+    );
     expect(res.status).toBe(413);
-    expect(await res.json()).toEqual({ error: 'payload_too_large' });
+    expect(await res.json()).toEqual({ error: "payload_too_large" });
   });
 });
 
-test('POST /long-lived/mcp/call returns 403 when identity does not match', async () => {
-  await withToken('tok', async () => {
-    const db = new Database(':memory:');
+test("POST /long-lived/mcp/call returns 403 when identity does not match", async () => {
+  await withToken("tok", async () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     const services = makeServices(db);
-    const res = await longLivedMcpCallRoute(new Request('http://x/long-lived/mcp/call', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ agent_id: 'agent-1', tick_id: 'tick-1', tool: 'ha:state_get' }),
-    }), services);
+    const res = await longLivedMcpCallRoute(
+      new Request("http://x/long-lived/mcp/call", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ agent_id: "agent-1", tick_id: "tick-1", tool: "ha:state_get" }),
+      }),
+      services,
+    );
     expect(res.status).toBe(403);
   });
 });
 
-test('POST /long-lived/mcp/call returns 503 when the action gate is missing', async () => {
-  await withToken('tok', async () => {
-    const db = new Database(':memory:');
+test("POST /long-lived/mcp/call returns 503 when the action gate is missing", async () => {
+  await withToken("tok", async () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     seedRunningIdentity(db);
     const services = makeServices(db);
-    const res = await longLivedMcpCallRoute(new Request('http://x/long-lived/mcp/call', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ agent_id: 'agent-1', tick_id: 'tick-1', tool: 'ha:state_get' }),
-    }), services);
+    const res = await longLivedMcpCallRoute(
+      new Request("http://x/long-lived/mcp/call", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ agent_id: "agent-1", tick_id: "tick-1", tool: "ha:state_get" }),
+      }),
+      services,
+    );
     expect(res.status).toBe(503);
   });
 });
 
-test('POST /long-lived/mcp/call normalizes executed gate results', async () => {
-  await withToken('tok', async () => {
-    const db = new Database(':memory:');
+test("POST /long-lived/mcp/call normalizes executed gate results", async () => {
+  await withToken("tok", async () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     seedRunningIdentity(db);
-    const handleCall = mock(async () => ({ kind: 'executed', result: { x: 1 }, tier: 1 as const }));
+    const handleCall = mock(async () => ({ kind: "executed", result: { x: 1 }, tier: 1 as const }));
     const services = makeServices(db);
     services.actionGate = { handleCall } as any;
 
-    const res = await longLivedMcpCallRoute(new Request('http://x/long-lived/mcp/call', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ agent_id: 'agent-1', tick_id: 'tick-1', tool: 'ha:state_get' }),
-    }), services);
+    const res = await longLivedMcpCallRoute(
+      new Request("http://x/long-lived/mcp/call", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ agent_id: "agent-1", tick_id: "tick-1", tool: "ha:state_get" }),
+      }),
+      services,
+    );
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ action_status: 'executed', result: { x: 1 } });
+    expect(await res.json()).toEqual({ action_status: "executed", result: { x: 1 } });
   });
 });
 
-test('POST /long-lived/mcp/call normalizes queued gate results', async () => {
-  await withToken('tok', async () => {
-    const db = new Database(':memory:');
+test("POST /long-lived/mcp/call normalizes queued gate results", async () => {
+  await withToken("tok", async () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     seedRunningIdentity(db);
-    const handleCall = mock(async () => ({ kind: 'queued', pending_action_id: 'abc' }));
+    const handleCall = mock(async () => ({ kind: "queued", pending_action_id: "abc" }));
     const services = makeServices(db);
     services.actionGate = { handleCall } as any;
 
-    const res = await longLivedMcpCallRoute(new Request('http://x/long-lived/mcp/call', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ agent_id: 'agent-1', tick_id: 'tick-1', tool: 'ha:state_get' }),
-    }), services);
+    const res = await longLivedMcpCallRoute(
+      new Request("http://x/long-lived/mcp/call", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ agent_id: "agent-1", tick_id: "tick-1", tool: "ha:state_get" }),
+      }),
+      services,
+    );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
-      action_status: 'queued',
-      pending_action_id: 'abc',
-      message: 'Action requires operator approval. Record an open_thread referencing pending_action_id.',
+      action_status: "queued",
+      pending_action_id: "abc",
+      message:
+        "Action requires operator approval. Record an open_thread referencing pending_action_id.",
     });
   });
 });
 
-test('POST /long-lived/mcp/call normalizes rejected gate results without details', async () => {
-  await withToken('tok', async () => {
-    const db = new Database(':memory:');
+test("POST /long-lived/mcp/call normalizes rejected gate results without details", async () => {
+  await withToken("tok", async () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     seedRunningIdentity(db);
-    const handleCall = mock(async () => ({ kind: 'rejected', error: 'not_in_allowlist' }));
+    const handleCall = mock(async () => ({ kind: "rejected", error: "not_in_allowlist" }));
     const services = makeServices(db);
     services.actionGate = { handleCall } as any;
 
-    const res = await longLivedMcpCallRoute(new Request('http://x/long-lived/mcp/call', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ agent_id: 'agent-1', tick_id: 'tick-1', tool: 'ha:state_get' }),
-    }), services);
+    const res = await longLivedMcpCallRoute(
+      new Request("http://x/long-lived/mcp/call", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ agent_id: "agent-1", tick_id: "tick-1", tool: "ha:state_get" }),
+      }),
+      services,
+    );
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ action_status: 'rejected', error: 'not_in_allowlist' });
+    expect(await res.json()).toEqual({ action_status: "rejected", error: "not_in_allowlist" });
   });
 });
 
-test('POST /long-lived/mcp/call normalizes rejected gate results with details', async () => {
-  await withToken('tok', async () => {
-    const db = new Database(':memory:');
+test("POST /long-lived/mcp/call normalizes rejected gate results with details", async () => {
+  await withToken("tok", async () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     seedRunningIdentity(db);
-    const handleCall = mock(async () => ({ kind: 'rejected', error: 'mcp_call_timeout', details: { timeout_ms: 30000 } }));
+    const handleCall = mock(async () => ({
+      kind: "rejected",
+      error: "mcp_call_timeout",
+      details: { timeout_ms: 30000 },
+    }));
     const services = makeServices(db);
     services.actionGate = { handleCall } as any;
 
-    const res = await longLivedMcpCallRoute(new Request('http://x/long-lived/mcp/call', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ agent_id: 'agent-1', tick_id: 'tick-1', tool: 'ha:state_get' }),
-    }), services);
+    const res = await longLivedMcpCallRoute(
+      new Request("http://x/long-lived/mcp/call", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ agent_id: "agent-1", tick_id: "tick-1", tool: "ha:state_get" }),
+      }),
+      services,
+    );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
-      action_status: 'rejected',
-      error: 'mcp_call_timeout',
+      action_status: "rejected",
+      error: "mcp_call_timeout",
       details: { timeout_ms: 30000 },
     });
   });
 });
 
-test('POST /long-lived/mcp/call accepts a verified running identity', async () => {
-  await withToken('tok', async () => {
-    const db = new Database(':memory:');
+test("POST /long-lived/mcp/call accepts a verified running identity", async () => {
+  await withToken("tok", async () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     seedRunningIdentity(db);
-    const handleCall = mock(async () => ({ kind: 'executed', result: { ok: true }, tier: 1 as const }));
+    const handleCall = mock(async () => ({
+      kind: "executed",
+      result: { ok: true },
+      tier: 1 as const,
+    }));
     const services = makeServices(db);
     services.actionGate = { handleCall } as any;
 
-    const res = await longLivedMcpCallRoute(new Request('http://x/long-lived/mcp/call', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ agent_id: 'agent-1', tick_id: 'tick-1', tool: 'ha:state_get', args: { a: 1 } }),
-    }), services);
+    const res = await longLivedMcpCallRoute(
+      new Request("http://x/long-lived/mcp/call", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          agent_id: "agent-1",
+          tick_id: "tick-1",
+          tool: "ha:state_get",
+          args: { a: 1 },
+        }),
+      }),
+      services,
+    );
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ action_status: 'executed', result: { ok: true } });
+    expect(await res.json()).toEqual({ action_status: "executed", result: { ok: true } });
     expect(handleCall).toHaveBeenCalledWith({
-      agent_id: 'agent-1',
-      tick_id: 'tick-1',
-      tool: 'ha:state_get',
+      agent_id: "agent-1",
+      tick_id: "tick-1",
+      tool: "ha:state_get",
       args: { a: 1 },
     });
   });

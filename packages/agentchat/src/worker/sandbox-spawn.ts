@@ -18,21 +18,21 @@ export interface SpawnSandboxedResult {
   durationMs: number;
   argv: string[];
   envKeys: string[];
-  killReason?: 'timeout' | 'output_overflow' | 'cancelled';
+  killReason?: "timeout" | "output_overflow" | "cancelled";
 }
 
-const PASS_THROUGH_ENV_KEYS = ['LANG', 'LC_ALL'];
+const PASS_THROUGH_ENV_KEYS = ["LANG", "LC_ALL"];
 
 export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSandboxedResult> {
-  if (!opts.argv && !opts.cmd) throw new Error('spawnSandboxed: argv or cmd required');
+  if (!opts.argv && !opts.cmd) throw new Error("spawnSandboxed: argv or cmd required");
 
-  const argv = opts.argv ?? ['bash', '-c', opts.cmd ?? ''];
+  const argv = opts.argv ?? ["bash", "-c", opts.cmd ?? ""];
 
   const env: Record<string, string> = {
-    PATH: opts.path ?? '/usr/bin:/bin',
+    PATH: opts.path ?? "/usr/bin:/bin",
     HOME: opts.cwd,
-    CI: 'true',
-    TERM: 'dumb',
+    CI: "true",
+    TERM: "dumb",
   };
   for (const key of PASS_THROUGH_ENV_KEYS) {
     const v = process.env[key];
@@ -46,16 +46,16 @@ export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSan
     proc = Bun.spawn(argv, {
       cwd: opts.cwd,
       env,
-      stdin: 'ignore',
-      stdout: 'pipe',
-      stderr: 'pipe',
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
     });
   } catch (err: any) {
-    if (err?.code === 'ENOENT' || /Executable not found/i.test(String(err?.message ?? err))) {
+    if (err?.code === "ENOENT" || /Executable not found/i.test(String(err?.message ?? err))) {
       return {
         exitCode: 127,
         signal: null,
-        output: '',
+        output: "",
         truncated: false,
         durationMs: Math.round(performance.now() - start),
         argv,
@@ -65,22 +65,28 @@ export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSan
     throw err;
   }
 
-  let buf = '';
+  let buf = "";
   let truncated = false;
-  let killReason: SpawnSandboxedResult['killReason'];
+  let killReason: SpawnSandboxedResult["killReason"];
 
   const ingest = (chunk: string) => {
     if (truncated) return;
-    const currentBytes = Buffer.byteLength(buf, 'utf8');
-    const chunkBytes = Buffer.byteLength(chunk, 'utf8');
+    const currentBytes = Buffer.byteLength(buf, "utf8");
+    const chunkBytes = Buffer.byteLength(chunk, "utf8");
     if (currentBytes + chunkBytes > opts.outputMaxBytes) {
       const remaining = opts.outputMaxBytes - currentBytes;
       buf += chunk.slice(0, Math.max(0, remaining));
       truncated = true;
-      killReason = 'output_overflow';
+      killReason = "output_overflow";
       if (proc) {
-        try { proc.kill('SIGTERM'); } catch {}
-        setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 2000);
+        try {
+          proc.kill("SIGTERM");
+        } catch {}
+        setTimeout(() => {
+          try {
+            proc.kill("SIGKILL");
+          } catch {}
+        }, 2000);
       }
       return;
     }
@@ -100,31 +106,45 @@ export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSan
       const tail = dec.decode();
       if (tail) ingest(tail);
     } finally {
-      try { reader.releaseLock(); } catch {}
+      try {
+        reader.releaseLock();
+      } catch {}
     }
   };
 
   const timeoutHandle = setTimeout(() => {
     if (proc?.exitCode !== null) return;
-    killReason ??= 'timeout';
+    killReason ??= "timeout";
     if (proc) {
-      try { proc.kill('SIGTERM'); } catch {}
-      setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 2000);
+      try {
+        proc.kill("SIGTERM");
+      } catch {}
+      setTimeout(() => {
+        try {
+          proc.kill("SIGKILL");
+        } catch {}
+      }, 2000);
     }
   }, opts.timeoutMs);
 
   const onAbort = () => {
     if (proc?.exitCode !== null) return;
-    killReason ??= 'cancelled';
+    killReason ??= "cancelled";
     if (proc) {
-      try { proc.kill('SIGTERM'); } catch {}
-      setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 2000);
+      try {
+        proc.kill("SIGTERM");
+      } catch {}
+      setTimeout(() => {
+        try {
+          proc.kill("SIGKILL");
+        } catch {}
+      }, 2000);
     }
   };
 
   if (opts.signal) {
     if (opts.signal.aborted) onAbort();
-    else opts.signal.addEventListener('abort', onAbort, { once: true });
+    else opts.signal.addEventListener("abort", onAbort, { once: true });
   }
 
   try {
@@ -135,7 +155,7 @@ export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSan
     await proc.exited;
   } finally {
     clearTimeout(timeoutHandle);
-    if (opts.signal) opts.signal.removeEventListener('abort', onAbort);
+    if (opts.signal) opts.signal.removeEventListener("abort", onAbort);
   }
 
   const durationMs = Math.round(performance.now() - start);

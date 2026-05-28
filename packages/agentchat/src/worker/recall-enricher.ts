@@ -1,6 +1,6 @@
-import type { Logger } from '@penumbra/core';
-import type { RecallContextConfig } from '../config/types.js';
-import type { PenumbraClient } from '../penumbra-client.js';
+import type { Logger } from "@penumbra/core";
+import type { RecallContextConfig } from "../config/types.js";
+import type { PenumbraClient } from "../penumbra-client.js";
 
 const QUERY_MAX_CHARS = 500;
 const RECALL_TIMEOUT_MS = 5000;
@@ -19,7 +19,7 @@ export interface EnrichOpts {
 }
 
 export interface RecallEnricherDeps {
-  client: Pick<PenumbraClient, 'recall' | 'corpusQuery'>;
+  client: Pick<PenumbraClient, "recall" | "corpusQuery">;
   log: Logger;
   /** Override for tests; defaults to AbortSignal.timeout(RECALL_TIMEOUT_MS). */
   timeoutMs?: number;
@@ -47,9 +47,10 @@ export class RecallEnricher {
     const query = opts.message.slice(0, QUERY_MAX_CHARS).trim();
     if (!query) return opts.message;
 
-    const items = typeof opts.config.scope === 'string' && opts.config.scope.startsWith('corpus:')
-      ? await this.queryCorpus(query, opts)
-      : await this.queryRecall(query, opts);
+    const items =
+      typeof opts.config.scope === "string" && opts.config.scope.startsWith("corpus:")
+        ? await this.queryCorpus(query, opts)
+        : await this.queryRecall(query, opts);
 
     if (!items || items.length === 0) return opts.message;
 
@@ -58,39 +59,46 @@ export class RecallEnricher {
   }
 
   private async queryRecall(query: string, opts: EnrichOpts): Promise<PreambleItem[] | null> {
-    const projectFilter = opts.config.scope === 'project' && opts.projectId
-      ? opts.projectId
-      : null;
+    const projectFilter = opts.config.scope === "project" && opts.projectId ? opts.projectId : null;
     try {
-      const response = await this.withTimeout(this.deps.client.recall({
-        query,
-        project_id: projectFilter,
-        limit: opts.config.k,
-        min_score: 0,
+      const response = await this.withTimeout(
+        this.deps.client.recall({
+          query,
+          project_id: projectFilter,
+          limit: opts.config.k,
+          min_score: 0,
+        }),
+      );
+      return response.results.map((r) => ({
+        tier: r.tier,
+        score: r.score,
+        ts: r.ts,
+        body: r.body,
       }));
-      return response.results.map((r) => ({ tier: r.tier, score: r.score, ts: r.ts, body: r.body }));
     } catch (err) {
       this.deps.log.warn(
         { err: err instanceof Error ? err.message : String(err) },
-        'recall enrichment skipped (soft-fail)',
+        "recall enrichment skipped (soft-fail)",
       );
       return null;
     }
   }
 
   private async queryCorpus(query: string, opts: EnrichOpts): Promise<PreambleItem[] | null> {
-    const corpusName = (opts.config.scope as string).slice('corpus:'.length);
+    const corpusName = (opts.config.scope as string).slice("corpus:".length);
     try {
-      const response = await this.withTimeout(this.deps.client.corpusQuery({
-        name: corpusName,
-        query,
-        limit: opts.config.k,
-      }));
-      return response.hits.map((h) => ({ tier: 'corpus', score: h.score, ts: h.ts, body: h.body }));
+      const response = await this.withTimeout(
+        this.deps.client.corpusQuery({
+          name: corpusName,
+          query,
+          limit: opts.config.k,
+        }),
+      );
+      return response.hits.map((h) => ({ tier: "corpus", score: h.score, ts: h.ts, body: h.body }));
     } catch (err) {
       this.deps.log.warn(
         { err: err instanceof Error ? err.message : String(err), corpus: corpusName },
-        'corpus recall enrichment skipped (soft-fail)',
+        "corpus recall enrichment skipped (soft-fail)",
       );
       return null;
     }
@@ -99,7 +107,10 @@ export class RecallEnricher {
   private withTimeout<T>(promise: Promise<T>): Promise<T> {
     const timeoutMs = this.deps.timeoutMs ?? RECALL_TIMEOUT_MS;
     const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`recall timed out after ${timeoutMs}ms`)), timeoutMs).unref?.(),
+      setTimeout(
+        () => reject(new Error(`recall timed out after ${timeoutMs}ms`)),
+        timeoutMs,
+      ).unref?.(),
     );
     return Promise.race([promise, timeoutPromise]);
   }
@@ -108,18 +119,17 @@ export class RecallEnricher {
 function formatPreamble(items: PreambleItem[], maxCharsPerResult: number): string {
   const rendered = items
     .map((r, i) => {
-      const truncated = r.body.length > maxCharsPerResult
-        ? r.body.slice(0, maxCharsPerResult) + '…'
-        : r.body;
+      const truncated =
+        r.body.length > maxCharsPerResult ? r.body.slice(0, maxCharsPerResult) + "…" : r.body;
       const meta = `[#${i + 1} tier=${r.tier} score=${r.score.toFixed(3)} ts=${r.ts}]`;
       return `${meta}\n${truncated}`;
     })
-    .join('\n\n');
+    .join("\n\n");
   return [
-    '<recent-relevant-context>',
-    'The following snippets were recalled from past observations that are semantically related to your task. They may inform your approach but are not authoritative — verify against current code before acting on any specific claim.',
-    '',
+    "<recent-relevant-context>",
+    "The following snippets were recalled from past observations that are semantically related to your task. They may inform your approach but are not authoritative — verify against current code before acting on any specific claim.",
+    "",
     rendered,
-    '</recent-relevant-context>',
-  ].join('\n');
+    "</recent-relevant-context>",
+  ].join("\n");
 }

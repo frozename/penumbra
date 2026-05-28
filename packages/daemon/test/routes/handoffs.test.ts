@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { expect, test } from "bun:test";
 import {
   handoffsCreateRoute,
   handoffsListPendingRoute,
@@ -7,19 +7,31 @@ import {
   handoffsCompleteRoute,
   handoffsFailRoute,
   handoffsGetRoute,
-} from '../../src/routes/handoffs.js';
-import { ProjectRegistry, type Services, migrate, loadSqliteVec, buildServices, HandoffWriter, HandoffReader, AgentPerformanceWriter, DispatchEventLog } from '@penumbra/core';
-import { TestEmbedder } from '@penumbra/core/testing';
-import { Database } from 'bun:sqlite';
-import { reconcileLongLivedAgents } from '../../src/long-lived/reconciler.js';
-import { createDaemonFetchHandler } from '../../src/serve.js';
-import { registerWorkerForTest } from '../../test-utils.js';
+} from "../../src/routes/handoffs.js";
+import {
+  ProjectRegistry,
+  type Services,
+  migrate,
+  loadSqliteVec,
+  buildServices,
+  HandoffWriter,
+  HandoffReader,
+  AgentPerformanceWriter,
+  DispatchEventLog,
+} from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { reconcileLongLivedAgents } from "../../src/long-lived/reconciler.js";
+import { createDaemonFetchHandler } from "../../src/serve.js";
+import { registerWorkerForTest } from "../../test-utils.js";
 
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch { /* already loaded */ }
+} catch {
+  /* already loaded */
+}
 
 function makeServices(db: Database): Services {
   const writer = new HandoffWriter({ db });
@@ -29,214 +41,238 @@ function makeServices(db: Database): Services {
     handoffWriter: writer,
     handoffReader: reader,
     dispatchEventLog: new DispatchEventLog(db),
-    machineId: { get: () => 'machine-test' },
-    uuid: (() => { let n = 0; return () => `evt-${++n}`; })(),
-    clock: () => new Date('2026-04-25T20:00:00.000Z'),
+    machineId: { get: () => "machine-test" },
+    uuid: (() => {
+      let n = 0;
+      return () => `evt-${++n}`;
+    })(),
+    clock: () => new Date("2026-04-25T20:00:00.000Z"),
     t0Writer: { write: () => {} },
     redactor: { redact: (s: unknown) => s },
     log: { info: () => {}, warn: () => {} },
   } as unknown as Services;
 }
 
-function seedPerformance(db: Database, input: {
-  performance_id: string;
-  handoff_id: string;
-  agent_name: string;
-  outcome: 'merged' | 'failed';
-}) {
+function seedPerformance(
+  db: Database,
+  input: {
+    performance_id: string;
+    handoff_id: string;
+    agent_name: string;
+    outcome: "merged" | "failed";
+  },
+) {
   new AgentPerformanceWriter(db).upsert({
     performance_id: input.performance_id,
-    ts: '2026-04-25T19:00:00.000Z',
+    ts: "2026-04-25T19:00:00.000Z",
     handoff_id: input.handoff_id,
-    conversation_id: 'conv-ledger',
+    conversation_id: "conv-ledger",
     project_id: null,
     agent_name: input.agent_name,
-    task_type: 'implement_small',
+    task_type: "implement_small",
     outcome: input.outcome,
-    rounds: input.outcome === 'merged' ? 1 : 4,
-    smoke_pass: input.outcome === 'merged' ? 'y' : 'n',
+    rounds: input.outcome === "merged" ? 1 : 4,
+    smoke_pass: input.outcome === "merged" ? "y" : "n",
     reviewer_findings: null,
     maestro_score: 5,
     cost_usd: null,
     tokens_used: null,
     latency_ms: null,
-    source: 'manual_seed',
+    source: "manual_seed",
     notes: null,
-    metadata_json: '{}',
+    metadata_json: "{}",
   });
 }
 
-test('POST /handoffs creates a pending handoff and returns the id', async () => {
-  const db = new Database(':memory:');
+test("POST /handoffs creates a pending handoff and returns the id", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
 
-  const req = new Request('http://x/handoffs', {
-    method: 'POST',
+  const req = new Request("http://x/handoffs", {
+    method: "POST",
     body: JSON.stringify({
-      from: 'claude',
-      to: 'gemini',
-      to_role: 'executor',
-      message: 'go',
-      conversation_id: 'conv-7',
-      project_id: 'auth-svc',
-      triggered_by_event_id: 'evt-source-1',
+      from: "claude",
+      to: "gemini",
+      to_role: "executor",
+      message: "go",
+      conversation_id: "conv-7",
+      project_id: "auth-svc",
+      triggered_by_event_id: "evt-source-1",
     }),
   });
   const res = await handoffsCreateRoute(req, services);
   expect(res.status).toBe(200);
   const body = await res.json();
-  expect(body.status).toBe('pending');
-  expect(typeof body.handoff_id).toBe('string');
+  expect(body.status).toBe("pending");
+  expect(typeof body.handoff_id).toBe("string");
 
-  const row = db.query<{ status: string }, [string]>(
-    'SELECT status FROM handoffs WHERE handoff_id=?',
-  ).get(body.handoff_id);
-  expect(row?.status).toBe('pending');
+  const row = db
+    .query<{ status: string }, [string]>("SELECT status FROM handoffs WHERE handoff_id=?")
+    .get(body.handoff_id);
+  expect(row?.status).toBe("pending");
 });
 
-test('POST /handoffs routes role targets through the ledger', async () => {
-  const db = new Database(':memory:');
+test("POST /handoffs routes role targets through the ledger", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  services.agentRegistry = ['gemini', 'codex-mini'];
+  services.agentRegistry = ["gemini", "codex-mini"];
   services.agentRouting = {
     agents: [
-      { name: 'gemini', roles: ['executor'] },
-      { name: 'codex-mini', roles: ['executor'] },
+      { name: "gemini", roles: ["executor"] },
+      { name: "codex-mini", roles: ["executor"] },
     ],
-    default_roles: { executor: 'gemini' },
+    default_roles: { executor: "gemini" },
   };
   seedPerformance(db, {
-    performance_id: 'p-good',
-    handoff_id: 'h-good',
-    agent_name: 'codex-mini',
-    outcome: 'merged',
+    performance_id: "p-good",
+    handoff_id: "h-good",
+    agent_name: "codex-mini",
+    outcome: "merged",
   });
   seedPerformance(db, {
-    performance_id: 'p-bad',
-    handoff_id: 'h-bad',
-    agent_name: 'gemini',
-    outcome: 'failed',
+    performance_id: "p-bad",
+    handoff_id: "h-bad",
+    agent_name: "gemini",
+    outcome: "failed",
   });
 
-  const res = await handoffsCreateRoute(new Request('http://x/handoffs', {
-    method: 'POST',
-    body: JSON.stringify({
-      from: 'planner',
-      to: 'gemini',
-      to_role: 'executor',
-      message: 'Task type: implement_small\n\nimplement the tiny change',
-      conversation_id: 'conv-7',
-      project_id: null,
-      triggered_by_event_id: 'evt-source-1',
+  const res = await handoffsCreateRoute(
+    new Request("http://x/handoffs", {
+      method: "POST",
+      body: JSON.stringify({
+        from: "planner",
+        to: "gemini",
+        to_role: "executor",
+        message: "Task type: implement_small\n\nimplement the tiny change",
+        conversation_id: "conv-7",
+        project_id: null,
+        triggered_by_event_id: "evt-source-1",
+      }),
     }),
-  }), services);
+    services,
+  );
 
   expect(res.status).toBe(200);
   const body = await res.json();
-  expect(body.routed_agent).toBe('codex-mini');
-  expect(body.routed_role).toBe('executor');
-  expect(body.routing_task_type).toBe('implement_small');
+  expect(body.routed_agent).toBe("codex-mini");
+  expect(body.routed_role).toBe("executor");
+  expect(body.routing_task_type).toBe("implement_small");
 
-  const row = db.query<{ to_agent: string; to_role: string | null; chain_task_type: string | null }, [string]>(
-    'SELECT to_agent, to_role, chain_task_type FROM handoffs WHERE handoff_id=?',
-  ).get(body.handoff_id);
+  const row = db
+    .query<
+      { to_agent: string; to_role: string | null; chain_task_type: string | null },
+      [string]
+    >("SELECT to_agent, to_role, chain_task_type FROM handoffs WHERE handoff_id=?")
+    .get(body.handoff_id);
   expect(row).toEqual({
-    to_agent: 'codex-mini',
-    to_role: 'executor',
-    chain_task_type: 'implement_small',
+    to_agent: "codex-mini",
+    to_role: "executor",
+    chain_task_type: "implement_small",
   });
 });
 
-test('POST /handoffs honors ranked-first exploration policy for role routing', async () => {
-  const db = new Database(':memory:');
+test("POST /handoffs honors ranked-first exploration policy for role routing", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  services.agentRegistry = ['gemini', 'codex-mini'];
+  services.agentRegistry = ["gemini", "codex-mini"];
   services.agentRouting = {
     agents: [
-      { name: 'gemini', roles: ['executor'] },
-      { name: 'codex-mini', roles: ['executor'] },
+      { name: "gemini", roles: ["executor"] },
+      { name: "codex-mini", roles: ["executor"] },
     ],
-    default_roles: { executor: 'gemini' },
-    role_exploration_policy: 'ranked-first',
+    default_roles: { executor: "gemini" },
+    role_exploration_policy: "ranked-first",
   };
   seedPerformance(db, {
-    performance_id: 'p-good',
-    handoff_id: 'h-good',
-    agent_name: 'gemini',
-    outcome: 'merged',
+    performance_id: "p-good",
+    handoff_id: "h-good",
+    agent_name: "gemini",
+    outcome: "merged",
   });
 
-  const res = await handoffsCreateRoute(new Request('http://x/handoffs', {
-    method: 'POST',
-    body: JSON.stringify({
-      from: 'planner',
-      to: 'gemini',
-      to_role: 'executor',
-      message: 'Task type: implement_small\n\nimplement the tiny change',
-      conversation_id: 'conv-7',
-      project_id: null,
-      triggered_by_event_id: 'evt-source-1',
+  const res = await handoffsCreateRoute(
+    new Request("http://x/handoffs", {
+      method: "POST",
+      body: JSON.stringify({
+        from: "planner",
+        to: "gemini",
+        to_role: "executor",
+        message: "Task type: implement_small\n\nimplement the tiny change",
+        conversation_id: "conv-7",
+        project_id: null,
+        triggered_by_event_id: "evt-source-1",
+      }),
     }),
-  }), services);
+    services,
+  );
 
   expect(res.status).toBe(200);
   const body = await res.json();
-  expect(body.routed_agent).toBe('gemini');
-  expect(body.routed_role).toBe('executor');
+  expect(body.routed_agent).toBe("gemini");
+  expect(body.routed_role).toBe("executor");
 
-  const row = db.query<{ to_agent: string; to_role: string | null }, [string]>(
-    'SELECT to_agent, to_role FROM handoffs WHERE handoff_id=?',
-  ).get(body.handoff_id);
+  const row = db
+    .query<
+      { to_agent: string; to_role: string | null },
+      [string]
+    >("SELECT to_agent, to_role FROM handoffs WHERE handoff_id=?")
+    .get(body.handoff_id);
   expect(row).toEqual({
-    to_agent: 'gemini',
-    to_role: 'executor',
+    to_agent: "gemini",
+    to_role: "executor",
   });
 });
 
-test('POST /handoffs returns 400 for invalid body', async () => {
-  const db = new Database(':memory:');
+test("POST /handoffs returns 400 for invalid body", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const req = new Request('http://x/handoffs', {
-    method: 'POST',
-    body: JSON.stringify({ from: 'claude' }),
+  const req = new Request("http://x/handoffs", {
+    method: "POST",
+    body: JSON.stringify({ from: "claude" }),
   });
   const res = await handoffsCreateRoute(req, services);
   expect(res.status).toBe(400);
 });
 
-test('GET /handoffs/pending returns pending handoffs', async () => {
-  const db = new Database(':memory:');
+test("GET /handoffs/pending returns pending handoffs", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
   // seed via the create route
-  await handoffsCreateRoute(new Request('http://x/handoffs', {
-    method: 'POST',
-    body: JSON.stringify({
-      from: 'claude', to: 'gemini', to_role: 'executor', message: 'go',
-      conversation_id: 'c-1', project_id: 'auth-svc', triggered_by_event_id: 'e',
+  await handoffsCreateRoute(
+    new Request("http://x/handoffs", {
+      method: "POST",
+      body: JSON.stringify({
+        from: "claude",
+        to: "gemini",
+        to_role: "executor",
+        message: "go",
+        conversation_id: "c-1",
+        project_id: "auth-svc",
+        triggered_by_event_id: "e",
+      }),
     }),
-  }), services);
-
-  const res = await handoffsListPendingRoute(
-    new Request('http://x/handoffs/pending'), services,
+    services,
   );
+
+  const res = await handoffsListPendingRoute(new Request("http://x/handoffs/pending"), services);
   expect(res.status).toBe(200);
   const body = await res.json();
   expect(body.handoffs.length).toBe(1);
-  expect(body.handoffs[0].status).toBe('pending');
+  expect(body.handoffs[0].status).toBe("pending");
 });
 
-test('GET /handoffs/latest returns 400 if conversation_id is missing', async () => {
-  const db = new Database(':memory:');
+test("GET /handoffs/latest returns 400 if conversation_id is missing", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
@@ -244,48 +280,79 @@ test('GET /handoffs/latest returns 400 if conversation_id is missing', async () 
   expect(res.status).toBe(400);
 });
 
-test('GET /handoffs/latest returns 404 if no handoffs exist for conversation', async () => {
-  const db = new Database(':memory:');
+test("GET /handoffs/latest returns 404 if no handoffs exist for conversation", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const res = await handoffsLatestRoute(new Request(`http://x/handoffs/latest?conversation_id=c-latest-404`), services);
+  const res = await handoffsLatestRoute(
+    new Request(`http://x/handoffs/latest?conversation_id=c-latest-404`),
+    services,
+  );
   expect(res.status).toBe(404);
 });
 
-test('GET /handoffs/latest returns the most recent handoff for a conversation', async () => {
-  const db = new Database(':memory:');
+test("GET /handoffs/latest returns the most recent handoff for a conversation", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  
+
   services.handoffWriter.createApproved({
-    handoff_id: 'h1', ts: '2026-04-26T12:00:00Z', project_id: 'p1', conversation_id: 'c-latest-200',
-    from: 'user', to: 'agent', to_role: null, message: 'hi', triggered_by_event_id: 'e1',
-    resolved_by: 'system', resolved_at: '2026-04-26T12:00:00Z', chain_max_hops: null, chain_trust_mode: null,
+    handoff_id: "h1",
+    ts: "2026-04-26T12:00:00Z",
+    project_id: "p1",
+    conversation_id: "c-latest-200",
+    from: "user",
+    to: "agent",
+    to_role: null,
+    message: "hi",
+    triggered_by_event_id: "e1",
+    resolved_by: "system",
+    resolved_at: "2026-04-26T12:00:00Z",
+    chain_max_hops: null,
+    chain_trust_mode: null,
   });
   services.handoffWriter.createApproved({
-    handoff_id: 'h2', ts: '2026-04-26T12:05:00Z', project_id: 'p1', conversation_id: 'c-latest-200',
-    from: 'user', to: 'agent2', to_role: null, message: 'hi again', triggered_by_event_id: 'e2',
-    resolved_by: 'system', resolved_at: '2026-04-26T12:05:00Z', chain_max_hops: null, chain_trust_mode: null,
+    handoff_id: "h2",
+    ts: "2026-04-26T12:05:00Z",
+    project_id: "p1",
+    conversation_id: "c-latest-200",
+    from: "user",
+    to: "agent2",
+    to_role: null,
+    message: "hi again",
+    triggered_by_event_id: "e2",
+    resolved_by: "system",
+    resolved_at: "2026-04-26T12:05:00Z",
+    chain_max_hops: null,
+    chain_trust_mode: null,
   });
 
-  const res = await handoffsLatestRoute(new Request(`http://x/handoffs/latest?conversation_id=c-latest-200`), services);
+  const res = await handoffsLatestRoute(
+    new Request(`http://x/handoffs/latest?conversation_id=c-latest-200`),
+    services,
+  );
   expect(res.status).toBe(200);
   const body = await res.json();
-  expect(body.handoff.handoff_id).toBe('h2');
+  expect(body.handoff.handoff_id).toBe("h2");
 });
 
-test('POST /handoffs/:id/approve flips to approved', async () => {
-  const db = new Database(':memory:');
+test("POST /handoffs/:id/approve flips to approved", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const createReq = new Request('http://x/handoffs', {
-    method: 'POST',
+  const createReq = new Request("http://x/handoffs", {
+    method: "POST",
     body: JSON.stringify({
-      from: 'claude', to: 'gemini', to_role: 'executor', message: 'go',
-      conversation_id: 'c-1', project_id: 'auth-svc', triggered_by_event_id: 'e',
+      from: "claude",
+      to: "gemini",
+      to_role: "executor",
+      message: "go",
+      conversation_id: "c-1",
+      project_id: "auth-svc",
+      triggered_by_event_id: "e",
     }),
   });
   const createRes = await handoffsCreateRoute(createReq, services);
@@ -293,49 +360,70 @@ test('POST /handoffs/:id/approve flips to approved', async () => {
   const id = create.handoff_id;
 
   const res = await handoffsApproveRoute(
-    new Request(`http://x/handoffs/${id}/approve`, { method: 'POST', body: '{}' }),
-    id, services,
+    new Request(`http://x/handoffs/${id}/approve`, { method: "POST", body: "{}" }),
+    id,
+    services,
   );
   expect(res.status).toBe(200);
   const body = await res.json();
-  expect(body.status).toBe('approved');
+  expect(body.status).toBe("approved");
 });
 
-test('POST /handoffs/:id/approve returns 409 if already resolved', async () => {
-  const db = new Database(':memory:');
+test("POST /handoffs/:id/approve returns 409 if already resolved", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const createReq = new Request('http://x/handoffs', {
-    method: 'POST',
+  const createReq = new Request("http://x/handoffs", {
+    method: "POST",
     body: JSON.stringify({
-      from: 'claude', to: 'gemini', to_role: 'executor', message: 'go',
-      conversation_id: 'c-1', project_id: 'auth-svc', triggered_by_event_id: 'e',
+      from: "claude",
+      to: "gemini",
+      to_role: "executor",
+      message: "go",
+      conversation_id: "c-1",
+      project_id: "auth-svc",
+      triggered_by_event_id: "e",
     }),
   });
   const createRes = await handoffsCreateRoute(createReq, services);
   const create = await createRes.json();
   const id = create.handoff_id;
 
-  await handoffsApproveRoute(new Request(`http://x/handoffs/${id}/approve`, {
-    method: 'POST', body: '{}',
-  }), id, services);
-  const second = await handoffsApproveRoute(new Request(`http://x/handoffs/${id}/approve`, {
-    method: 'POST', body: '{}',
-  }), id, services);
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${id}/approve`, {
+      method: "POST",
+      body: "{}",
+    }),
+    id,
+    services,
+  );
+  const second = await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${id}/approve`, {
+      method: "POST",
+      body: "{}",
+    }),
+    id,
+    services,
+  );
   expect(second.status).toBe(409);
 });
 
-test('POST /handoffs/:id/approve accepts optional resolved_by override', async () => {
-  const db = new Database(':memory:');
+test("POST /handoffs/:id/approve accepts optional resolved_by override", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const createReq = new Request('http://x/handoffs', {
-    method: 'POST',
+  const createReq = new Request("http://x/handoffs", {
+    method: "POST",
     body: JSON.stringify({
-      from: 'claude', to: 'gemini', to_role: 'executor', message: 'go',
-      conversation_id: 'c-1', project_id: 'auth-svc', triggered_by_event_id: 'e',
+      from: "claude",
+      to: "gemini",
+      to_role: "executor",
+      message: "go",
+      conversation_id: "c-1",
+      project_id: "auth-svc",
+      triggered_by_event_id: "e",
     }),
   });
   const createRes = await handoffsCreateRoute(createReq, services);
@@ -344,235 +432,475 @@ test('POST /handoffs/:id/approve accepts optional resolved_by override', async (
 
   const res = await handoffsApproveRoute(
     new Request(`http://x/handoffs/${id}/approve`, {
-      method: 'POST',
-      body: JSON.stringify({ resolved_by: 'auto' }),
+      method: "POST",
+      body: JSON.stringify({ resolved_by: "auto" }),
     }),
-    id, services,
+    id,
+    services,
   );
   expect(res.status).toBe(200);
 
-  const row = db.query<{ resolved_by: string | null }, [string]>(
-    'SELECT resolved_by FROM handoffs WHERE handoff_id=?',
-  ).get(id);
-  expect(row?.resolved_by).toBe('auto');
+  const row = db
+    .query<
+      { resolved_by: string | null },
+      [string]
+    >("SELECT resolved_by FROM handoffs WHERE handoff_id=?")
+    .get(id);
+  expect(row?.resolved_by).toBe("auto");
 });
 
-test('GET /handoffs?status=approved returns only approved rows', async () => {
-  const db = new Database(':memory:');
+test("GET /handoffs?status=approved returns only approved rows", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
 
   // seed two handoffs
-  await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'm1', conversation_id: 'c1', triggered_by_event_id: 'e1' }) }), services);
-  const created2 = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'm2', conversation_id: 'c1', triggered_by_event_id: 'e2' }) }), services)).json();
-  await handoffsApproveRoute(new Request(`http://x/handoffs/${created2.handoff_id}/approve`, { method: 'POST', body: '{}' }),
-    created2.handoff_id, services);
+  await handoffsCreateRoute(
+    new Request("http://x/handoffs", {
+      method: "POST",
+      body: JSON.stringify({
+        from: "a",
+        to: "b",
+        message: "m1",
+        conversation_id: "c1",
+        triggered_by_event_id: "e1",
+      }),
+    }),
+    services,
+  );
+  const created2 = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "m2",
+          conversation_id: "c1",
+          triggered_by_event_id: "e2",
+        }),
+      }),
+      services,
+    )
+  ).json();
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${created2.handoff_id}/approve`, { method: "POST", body: "{}" }),
+    created2.handoff_id,
+    services,
+  );
 
   const res = await handoffsListPendingRoute(
-    new Request(`http://x/handoffs?status=approved`), services,
+    new Request(`http://x/handoffs?status=approved`),
+    services,
   );
   expect(res.status).toBe(200);
   const body = await res.json();
   expect(body.handoffs.length).toBe(1);
   expect(body.handoffs[0].handoff_id).toBe(created2.handoff_id);
-  expect(body.handoffs[0].status).toBe('approved');
+  expect(body.handoffs[0].status).toBe("approved");
 });
 
-test('GET /handoffs?status=approved&project_id filters by project_id', async () => {
-  const db = new Database(':memory:');
+test("GET /handoffs?status=approved&project_id filters by project_id", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  services.projectRegistry = new ProjectRegistry(new Map([
-    ['proj-a', { project_id: 'proj-a', root_path: '/tmp/proj-a' }],
-    ['proj-b', { project_id: 'proj-b', root_path: '/tmp/proj-b' }],
-  ]));
+  services.projectRegistry = new ProjectRegistry(
+    new Map([
+      ["proj-a", { project_id: "proj-a", root_path: "/tmp/proj-a" }],
+      ["proj-b", { project_id: "proj-b", root_path: "/tmp/proj-b" }],
+    ]),
+  );
 
-  const created1 = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'alpha', conversation_id: 'c1', project_id: 'proj-a', triggered_by_event_id: 'e1' }) }), services)).json();
-  const created2 = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'beta', conversation_id: 'c1', project_id: 'proj-b', triggered_by_event_id: 'e2' }) }), services)).json();
-  await handoffsApproveRoute(new Request(`http://x/handoffs/${created1.handoff_id}/approve`, { method: 'POST', body: '{}' }),
-    created1.handoff_id, services);
-  await handoffsApproveRoute(new Request(`http://x/handoffs/${created2.handoff_id}/approve`, { method: 'POST', body: '{}' }),
-    created2.handoff_id, services);
+  const created1 = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "alpha",
+          conversation_id: "c1",
+          project_id: "proj-a",
+          triggered_by_event_id: "e1",
+        }),
+      }),
+      services,
+    )
+  ).json();
+  const created2 = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "beta",
+          conversation_id: "c1",
+          project_id: "proj-b",
+          triggered_by_event_id: "e2",
+        }),
+      }),
+      services,
+    )
+  ).json();
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${created1.handoff_id}/approve`, { method: "POST", body: "{}" }),
+    created1.handoff_id,
+    services,
+  );
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${created2.handoff_id}/approve`, { method: "POST", body: "{}" }),
+    created2.handoff_id,
+    services,
+  );
 
   const res = await handoffsListPendingRoute(
-    new Request('http://x/handoffs?status=approved&project_id=proj-a'),
+    new Request("http://x/handoffs?status=approved&project_id=proj-a"),
     services,
   );
   expect(res.status).toBe(200);
   const body = await res.json();
   expect(body.handoffs.length).toBe(1);
-  expect(body.handoffs[0].project_id).toBe('proj-a');
+  expect(body.handoffs[0].project_id).toBe("proj-a");
 });
 
-test('GET /handoffs?status=approved for hard worker with no project_id is limited to worker scope', async () => {
+test("GET /handoffs?status=approved for hard worker with no project_id is limited to worker scope", async () => {
   const { services, db } = buildClaimTestServices();
-  const TOKEN = 'test-token';
+  const TOKEN = "test-token";
   const fetchHandler = createDaemonFetchHandler({ services, token: TOKEN });
-  services.projectRegistry = new ProjectRegistry(new Map([
-    ['proj-a', { project_id: 'proj-a', root_path: '/tmp/proj-a' }],
-    ['proj-b', { project_id: 'proj-b', root_path: '/tmp/proj-b' }],
-  ]));
+  services.projectRegistry = new ProjectRegistry(
+    new Map([
+      ["proj-a", { project_id: "proj-a", root_path: "/tmp/proj-a" }],
+      ["proj-b", { project_id: "proj-b", root_path: "/tmp/proj-b" }],
+    ]),
+  );
   (services as any).workerAuthz = new Map([
-    ['worker-hard-projA', { project_id: 'proj-a', isolation: 'hard' }],
+    ["worker-hard-projA", { project_id: "proj-a", isolation: "hard" }],
   ]);
 
-  const createdA = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'alpha', conversation_id: 'c1', project_id: 'proj-a', triggered_by_event_id: 'e1' }) }), services)).json();
-  const createdB = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'beta', conversation_id: 'c1', project_id: 'proj-b', triggered_by_event_id: 'e2' }) }), services)).json();
-  await handoffsApproveRoute(new Request(`http://x/handoffs/${createdA.handoff_id}/approve`, { method: 'POST', body: '{}' }),
-    createdA.handoff_id, services);
-  await handoffsApproveRoute(new Request(`http://x/handoffs/${createdB.handoff_id}/approve`, { method: 'POST', body: '{}' }),
-    createdB.handoff_id, services);
+  const createdA = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "alpha",
+          conversation_id: "c1",
+          project_id: "proj-a",
+          triggered_by_event_id: "e1",
+        }),
+      }),
+      services,
+    )
+  ).json();
+  const createdB = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "beta",
+          conversation_id: "c1",
+          project_id: "proj-b",
+          triggered_by_event_id: "e2",
+        }),
+      }),
+      services,
+    )
+  ).json();
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${createdA.handoff_id}/approve`, { method: "POST", body: "{}" }),
+    createdA.handoff_id,
+    services,
+  );
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${createdB.handoff_id}/approve`, { method: "POST", body: "{}" }),
+    createdB.handoff_id,
+    services,
+  );
 
   const { worker_token } = await registerWorkerForTest({
-    baseUrl: 'http://x',
+    baseUrl: "http://x",
     sharedBearer: TOKEN,
-    worker_id: 'worker-hard-projA',
+    worker_id: "worker-hard-projA",
     fetcher: makeFetcher(fetchHandler),
   });
 
-  const res = await fetchHandler(new Request(`http://x/handoffs?status=approved`, {
-    headers: { authorization: `Bearer ${worker_token}` },
-  }));
+  const res = await fetchHandler(
+    new Request(`http://x/handoffs?status=approved`, {
+      headers: { authorization: `Bearer ${worker_token}` },
+    }),
+  );
   expect(res.status).toBe(200);
   const body = await res.json();
   expect(body.handoffs).toHaveLength(1);
-  expect(body.handoffs[0].project_id).toBe('proj-a');
+  expect(body.handoffs[0].project_id).toBe("proj-a");
 
-  const approvedRows = db.query<{ count: number }, [string]>('SELECT COUNT(*) AS count FROM handoffs WHERE status=?').get('approved');
+  const approvedRows = db
+    .query<{ count: number }, [string]>("SELECT COUNT(*) AS count FROM handoffs WHERE status=?")
+    .get("approved");
   expect(approvedRows?.count).toBe(2);
 });
 
-test('GET /handoffs?status=approved&project_id=proj-b for hard worker yields project_mismatch', async () => {
+test("GET /handoffs?status=approved&project_id=proj-b for hard worker yields project_mismatch", async () => {
   const { services } = buildClaimTestServices();
-  const TOKEN = 'test-token';
+  const TOKEN = "test-token";
   const fetchHandler = createDaemonFetchHandler({ services, token: TOKEN });
-  services.projectRegistry = new ProjectRegistry(new Map([
-    ['proj-a', { project_id: 'proj-a', root_path: '/tmp/proj-a' }],
-    ['proj-b', { project_id: 'proj-b', root_path: '/tmp/proj-b' }],
-  ]));
+  services.projectRegistry = new ProjectRegistry(
+    new Map([
+      ["proj-a", { project_id: "proj-a", root_path: "/tmp/proj-a" }],
+      ["proj-b", { project_id: "proj-b", root_path: "/tmp/proj-b" }],
+    ]),
+  );
   (services as any).workerAuthz = new Map([
-    ['worker-hard-projA', { project_id: 'proj-a', isolation: 'hard' }],
+    ["worker-hard-projA", { project_id: "proj-a", isolation: "hard" }],
   ]);
 
-  const created = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'alpha', conversation_id: 'c1', project_id: 'proj-a', triggered_by_event_id: 'e1' }) }), services)).json();
-  await handoffsApproveRoute(new Request(`http://x/handoffs/${created.handoff_id}/approve`, { method: 'POST', body: '{}' }),
-    created.handoff_id, services);
+  const created = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "alpha",
+          conversation_id: "c1",
+          project_id: "proj-a",
+          triggered_by_event_id: "e1",
+        }),
+      }),
+      services,
+    )
+  ).json();
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${created.handoff_id}/approve`, { method: "POST", body: "{}" }),
+    created.handoff_id,
+    services,
+  );
 
   const { worker_token } = await registerWorkerForTest({
-    baseUrl: 'http://x',
+    baseUrl: "http://x",
     sharedBearer: TOKEN,
-    worker_id: 'worker-hard-projA',
+    worker_id: "worker-hard-projA",
     fetcher: makeFetcher(fetchHandler),
   });
 
-  const res = await fetchHandler(new Request(`http://x/handoffs?status=approved&project_id=proj-b`, {
-    headers: { authorization: `Bearer ${worker_token}` },
-  }));
+  const res = await fetchHandler(
+    new Request(`http://x/handoffs?status=approved&project_id=proj-b`, {
+      headers: { authorization: `Bearer ${worker_token}` },
+    }),
+  );
   expect(res.status).toBe(403);
   const body = await res.json();
-  expect(body.error.code).toBe('project_mismatch');
+  expect(body.error.code).toBe("project_mismatch");
 });
 
-test('GET /handoffs?status=approved for sticky worker without project_id remains unscoped', async () => {
+test("GET /handoffs?status=approved for sticky worker without project_id remains unscoped", async () => {
   const { services } = buildClaimTestServices();
-  const TOKEN = 'test-token';
+  const TOKEN = "test-token";
   const fetchHandler = createDaemonFetchHandler({ services, token: TOKEN });
-  services.projectRegistry = new ProjectRegistry(new Map([
-    ['proj-a', { project_id: 'proj-a', root_path: '/tmp/proj-a' }],
-    ['proj-b', { project_id: 'proj-b', root_path: '/tmp/proj-b' }],
-  ]));
+  services.projectRegistry = new ProjectRegistry(
+    new Map([
+      ["proj-a", { project_id: "proj-a", root_path: "/tmp/proj-a" }],
+      ["proj-b", { project_id: "proj-b", root_path: "/tmp/proj-b" }],
+    ]),
+  );
   (services as any).workerAuthz = new Map([
-    ['worker-sticky-projA', { project_id: 'proj-a', isolation: 'sticky' }],
+    ["worker-sticky-projA", { project_id: "proj-a", isolation: "sticky" }],
   ]);
 
-  const createdA = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'alpha', conversation_id: 'c1', project_id: 'proj-a', triggered_by_event_id: 'e1' }) }), services)).json();
-  const createdB = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'beta', conversation_id: 'c1', project_id: 'proj-b', triggered_by_event_id: 'e2' }) }), services)).json();
-  await handoffsApproveRoute(new Request(`http://x/handoffs/${createdA.handoff_id}/approve`, { method: 'POST', body: '{}' }),
-    createdA.handoff_id, services);
-  await handoffsApproveRoute(new Request(`http://x/handoffs/${createdB.handoff_id}/approve`, { method: 'POST', body: '{}' }),
-    createdB.handoff_id, services);
+  const createdA = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "alpha",
+          conversation_id: "c1",
+          project_id: "proj-a",
+          triggered_by_event_id: "e1",
+        }),
+      }),
+      services,
+    )
+  ).json();
+  const createdB = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "beta",
+          conversation_id: "c1",
+          project_id: "proj-b",
+          triggered_by_event_id: "e2",
+        }),
+      }),
+      services,
+    )
+  ).json();
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${createdA.handoff_id}/approve`, { method: "POST", body: "{}" }),
+    createdA.handoff_id,
+    services,
+  );
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${createdB.handoff_id}/approve`, { method: "POST", body: "{}" }),
+    createdB.handoff_id,
+    services,
+  );
 
   const { worker_token } = await registerWorkerForTest({
-    baseUrl: 'http://x',
+    baseUrl: "http://x",
     sharedBearer: TOKEN,
-    worker_id: 'worker-sticky-projA',
+    worker_id: "worker-sticky-projA",
     fetcher: makeFetcher(fetchHandler),
   });
 
-  const res = await fetchHandler(new Request(`http://x/handoffs?status=approved`, {
-    headers: { authorization: `Bearer ${worker_token}` },
-  }));
+  const res = await fetchHandler(
+    new Request(`http://x/handoffs?status=approved`, {
+      headers: { authorization: `Bearer ${worker_token}` },
+    }),
+  );
   expect(res.status).toBe(200);
   const body = await res.json();
   expect(body.handoffs).toHaveLength(2);
 });
 
-test('GET /handoffs?status=approved for unknown worker token is unscoped', async () => {
+test("GET /handoffs?status=approved for unknown worker token is unscoped", async () => {
   const { services, db } = buildClaimTestServices();
-  const TOKEN = 'test-token';
+  const TOKEN = "test-token";
   const fetchHandler = createDaemonFetchHandler({ services, token: TOKEN });
-  services.projectRegistry = new ProjectRegistry(new Map([
-    ['proj-a', { project_id: 'proj-a', root_path: '/tmp/proj-a' }],
-    ['proj-b', { project_id: 'proj-b', root_path: '/tmp/proj-b' }],
-  ]));
+  services.projectRegistry = new ProjectRegistry(
+    new Map([
+      ["proj-a", { project_id: "proj-a", root_path: "/tmp/proj-a" }],
+      ["proj-b", { project_id: "proj-b", root_path: "/tmp/proj-b" }],
+    ]),
+  );
   (services as any).workerAuthz = new Map([
-    ['worker-hard-projA', { project_id: 'proj-a', isolation: 'hard' }],
+    ["worker-hard-projA", { project_id: "proj-a", isolation: "hard" }],
   ]);
 
-  const createdA = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'alpha', conversation_id: 'c1', project_id: 'proj-a', triggered_by_event_id: 'e1' }) }), services)).json();
-  const createdB = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'beta', conversation_id: 'c1', project_id: 'proj-b', triggered_by_event_id: 'e2' }) }), services)).json();
-  await handoffsApproveRoute(new Request(`http://x/handoffs/${createdA.handoff_id}/approve`, { method: 'POST', body: '{}' }),
-    createdA.handoff_id, services);
-  await handoffsApproveRoute(new Request(`http://x/handoffs/${createdB.handoff_id}/approve`, { method: 'POST', body: '{}' }),
-    createdB.handoff_id, services);
+  const createdA = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "alpha",
+          conversation_id: "c1",
+          project_id: "proj-a",
+          triggered_by_event_id: "e1",
+        }),
+      }),
+      services,
+    )
+  ).json();
+  const createdB = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "beta",
+          conversation_id: "c1",
+          project_id: "proj-b",
+          triggered_by_event_id: "e2",
+        }),
+      }),
+      services,
+    )
+  ).json();
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${createdA.handoff_id}/approve`, { method: "POST", body: "{}" }),
+    createdA.handoff_id,
+    services,
+  );
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${createdB.handoff_id}/approve`, { method: "POST", body: "{}" }),
+    createdB.handoff_id,
+    services,
+  );
 
   const { worker_token } = await registerWorkerForTest({
-    baseUrl: 'http://x',
+    baseUrl: "http://x",
     sharedBearer: TOKEN,
-    worker_id: 'unknown-worker',
+    worker_id: "unknown-worker",
     fetcher: makeFetcher(fetchHandler),
   });
 
-  const res = await fetchHandler(new Request(`http://x/handoffs?status=approved`, {
-    headers: { authorization: `Bearer ${worker_token}` },
-  }));
+  const res = await fetchHandler(
+    new Request(`http://x/handoffs?status=approved`, {
+      headers: { authorization: `Bearer ${worker_token}` },
+    }),
+  );
   expect(res.status).toBe(200);
   const body = await res.json();
   expect(body.handoffs).toHaveLength(2);
 
-  const approvedRows = db.query<{ count: number }, [string]>('SELECT COUNT(*) AS count FROM handoffs WHERE status=?').get('approved');
+  const approvedRows = db
+    .query<{ count: number }, [string]>("SELECT COUNT(*) AS count FROM handoffs WHERE status=?")
+    .get("approved");
   expect(approvedRows?.count).toBe(2);
 });
 
-test('GET /handoffs?status=approved&project_id=__null__ returns only null-scoped rows', async () => {
-  const db = new Database(':memory:');
+test("GET /handoffs?status=approved&project_id=__null__ returns only null-scoped rows", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const created1 = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'alpha', conversation_id: 'c1', project_id: 'proj-a', triggered_by_event_id: 'e1' }) }), services)).json();
-  const created2 = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'null', conversation_id: 'c1', triggered_by_event_id: 'e2' }) }), services)).json();
-  await handoffsApproveRoute(new Request(`http://x/handoffs/${created1.handoff_id}/approve`, { method: 'POST', body: '{}' }),
-    created1.handoff_id, services);
-  await handoffsApproveRoute(new Request(`http://x/handoffs/${created2.handoff_id}/approve`, { method: 'POST', body: '{}' }),
-    created2.handoff_id, services);
+  const created1 = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "alpha",
+          conversation_id: "c1",
+          project_id: "proj-a",
+          triggered_by_event_id: "e1",
+        }),
+      }),
+      services,
+    )
+  ).json();
+  const created2 = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "null",
+          conversation_id: "c1",
+          triggered_by_event_id: "e2",
+        }),
+      }),
+      services,
+    )
+  ).json();
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${created1.handoff_id}/approve`, { method: "POST", body: "{}" }),
+    created1.handoff_id,
+    services,
+  );
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${created2.handoff_id}/approve`, { method: "POST", body: "{}" }),
+    created2.handoff_id,
+    services,
+  );
 
   const res = await handoffsListPendingRoute(
-    new Request('http://x/handoffs?status=approved&project_id=__null__'),
+    new Request("http://x/handoffs?status=approved&project_id=__null__"),
     services,
   );
   expect(res.status).toBe(200);
@@ -581,22 +909,55 @@ test('GET /handoffs?status=approved&project_id=__null__ returns only null-scoped
   expect(body.handoffs[0].project_id).toBeNull();
 });
 
-test('GET /handoffs?status=approved&project_scope=global returns only null-scoped rows', async () => {
-  const db = new Database(':memory:');
+test("GET /handoffs?status=approved&project_scope=global returns only null-scoped rows", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const created1 = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'alpha', conversation_id: 'c1', project_id: 'proj-a', triggered_by_event_id: 'e1' }) }), services)).json();
-  const created2 = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'null', conversation_id: 'c1', triggered_by_event_id: 'e2' }) }), services)).json();
-  await handoffsApproveRoute(new Request(`http://x/handoffs/${created1.handoff_id}/approve`, { method: 'POST', body: '{}' }),
-    created1.handoff_id, services);
-  await handoffsApproveRoute(new Request(`http://x/handoffs/${created2.handoff_id}/approve`, { method: 'POST', body: '{}' }),
-    created2.handoff_id, services);
+  const created1 = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "alpha",
+          conversation_id: "c1",
+          project_id: "proj-a",
+          triggered_by_event_id: "e1",
+        }),
+      }),
+      services,
+    )
+  ).json();
+  const created2 = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "null",
+          conversation_id: "c1",
+          triggered_by_event_id: "e2",
+        }),
+      }),
+      services,
+    )
+  ).json();
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${created1.handoff_id}/approve`, { method: "POST", body: "{}" }),
+    created1.handoff_id,
+    services,
+  );
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${created2.handoff_id}/approve`, { method: "POST", body: "{}" }),
+    created2.handoff_id,
+    services,
+  );
 
   const res = await handoffsListPendingRoute(
-    new Request('http://x/handoffs?status=approved&project_scope=global'),
+    new Request("http://x/handoffs?status=approved&project_scope=global"),
     services,
   );
   expect(res.status).toBe(200);
@@ -605,8 +966,8 @@ test('GET /handoffs?status=approved&project_scope=global returns only null-scope
   expect(body.handoffs[0].project_id).toBeNull();
 });
 
-test('GET /handoffs?status=approved&project_id=__null__ logs deprecated sentinel warning', async () => {
-  const db = new Database(':memory:');
+test("GET /handoffs?status=approved&project_id=__null__ logs deprecated sentinel warning", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db) as any;
@@ -617,17 +978,50 @@ test('GET /handoffs?status=approved&project_id=__null__ logs deprecated sentinel
     warn: (...args: unknown[]) => warns.push(args),
   };
 
-  const created1 = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'alpha', conversation_id: 'c1', project_id: 'proj-a', triggered_by_event_id: 'e1' }) }), services)).json();
-  const created2 = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'null', conversation_id: 'c1', triggered_by_event_id: 'e2' }) }), services)).json();
-  await handoffsApproveRoute(new Request(`http://x/handoffs/${created1.handoff_id}/approve`, { method: 'POST', body: '{}' }),
-    created1.handoff_id, services);
-  await handoffsApproveRoute(new Request(`http://x/handoffs/${created2.handoff_id}/approve`, { method: 'POST', body: '{}' }),
-    created2.handoff_id, services);
+  const created1 = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "alpha",
+          conversation_id: "c1",
+          project_id: "proj-a",
+          triggered_by_event_id: "e1",
+        }),
+      }),
+      services,
+    )
+  ).json();
+  const created2 = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "null",
+          conversation_id: "c1",
+          triggered_by_event_id: "e2",
+        }),
+      }),
+      services,
+    )
+  ).json();
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${created1.handoff_id}/approve`, { method: "POST", body: "{}" }),
+    created1.handoff_id,
+    services,
+  );
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${created2.handoff_id}/approve`, { method: "POST", body: "{}" }),
+    created2.handoff_id,
+    services,
+  );
 
   const res = await handoffsListPendingRoute(
-    new Request('http://x/handoffs?status=approved&project_id=__null__'),
+    new Request("http://x/handoffs?status=approved&project_id=__null__"),
     services,
   );
   expect(res.status).toBe(200);
@@ -635,50 +1029,50 @@ test('GET /handoffs?status=approved&project_id=__null__ logs deprecated sentinel
   expect(body.handoffs.length).toBe(1);
   expect(warns).toContainEqual([
     {
-      event: 'deprecated_null_sentinel',
-      recommend: 'project_scope=global',
+      event: "deprecated_null_sentinel",
+      recommend: "project_scope=global",
     },
-    'deprecated null project_id sentinel; prefer project_scope=global',
+    "deprecated null project_id sentinel; prefer project_scope=global",
   ]);
 });
 
-test('GET /handoffs?status=approved&project_id=proj-a&project_scope=global returns 400', async () => {
+test("GET /handoffs?status=approved&project_id=proj-a&project_scope=global returns 400", async () => {
   const res = await handoffsListPendingRoute(
-    new Request('http://x/handoffs?status=approved&project_id=proj-a&project_scope=global'),
-    makeServices(new Database(':memory:')),
+    new Request("http://x/handoffs?status=approved&project_id=proj-a&project_scope=global"),
+    makeServices(new Database(":memory:")),
   );
   expect(res.status).toBe(400);
   const body = await res.json();
-  expect(body.error.code).toBe('validation_error');
+  expect(body.error.code).toBe("validation_error");
 });
 
-test('GET /handoffs?status=approved rejects unknown project_id when registry exists', async () => {
-  const db = new Database(':memory:');
+test("GET /handoffs?status=approved rejects unknown project_id when registry exists", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  services.projectRegistry = new ProjectRegistry(new Map([
-    ['proj-a', { project_id: 'proj-a', root_path: '/tmp/proj-a' }],
-  ]));
+  services.projectRegistry = new ProjectRegistry(
+    new Map([["proj-a", { project_id: "proj-a", root_path: "/tmp/proj-a" }]]),
+  );
 
   const res = await handoffsListPendingRoute(
-    new Request('http://x/handoffs?status=approved&project_id=proj-b'),
+    new Request("http://x/handoffs?status=approved&project_id=proj-b"),
     services,
   );
   expect(res.status).toBe(400);
   const body = await res.json();
-  expect(body.error.code).toBe('unknown_project');
-  expect(body.error.project_id).toBe('proj-b');
+  expect(body.error.code).toBe("unknown_project");
+  expect(body.error.project_id).toBe("proj-b");
 });
 
-test('GET /handoffs?status=approved accepts unknown project_id when registry is absent', async () => {
-  const db = new Database(':memory:');
+test("GET /handoffs?status=approved accepts unknown project_id when registry is absent", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
 
   const res = await handoffsListPendingRoute(
-    new Request('http://x/handoffs?status=approved&project_id=proj-b'),
+    new Request("http://x/handoffs?status=approved&project_id=proj-b"),
     services,
   );
   expect(res.status).toBe(200);
@@ -686,56 +1080,96 @@ test('GET /handoffs?status=approved accepts unknown project_id when registry is 
   expect(body.handoffs).toEqual([]);
 });
 
-test('GET /handoffs?status=pending,approved returns both', async () => {
-  const db = new Database(':memory:');
+test("GET /handoffs?status=pending,approved returns both", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
 
-  const c1 = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'm1', conversation_id: 'c1', triggered_by_event_id: 'e1' }) }), services)).json();
-  const c2 = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'm2', conversation_id: 'c1', triggered_by_event_id: 'e2' }) }), services)).json();
-  await handoffsApproveRoute(new Request(`http://x/handoffs/${c2.handoff_id}/approve`, { method: 'POST', body: '{}' }),
-    c2.handoff_id, services);
+  const c1 = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "m1",
+          conversation_id: "c1",
+          triggered_by_event_id: "e1",
+        }),
+      }),
+      services,
+    )
+  ).json();
+  const c2 = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "m2",
+          conversation_id: "c1",
+          triggered_by_event_id: "e2",
+        }),
+      }),
+      services,
+    )
+  ).json();
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${c2.handoff_id}/approve`, { method: "POST", body: "{}" }),
+    c2.handoff_id,
+    services,
+  );
 
   const res = await handoffsListPendingRoute(
-    new Request(`http://x/handoffs?status=pending,approved`), services,
+    new Request(`http://x/handoffs?status=pending,approved`),
+    services,
   );
   const body = await res.json();
   const ids = body.handoffs.map((h: any) => h.handoff_id).sort();
   expect(ids).toEqual([c1.handoff_id, c2.handoff_id].sort());
 });
 
-test('GET /handoffs without status param defaults to pending (back-compat)', async () => {
-  const db = new Database(':memory:');
+test("GET /handoffs without status param defaults to pending (back-compat)", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'm', conversation_id: 'c1', triggered_by_event_id: 'e1' }) }), services);
-
-  const res = await handoffsListPendingRoute(
-    new Request(`http://x/handoffs`), services,
+  await handoffsCreateRoute(
+    new Request("http://x/handoffs", {
+      method: "POST",
+      body: JSON.stringify({
+        from: "a",
+        to: "b",
+        message: "m",
+        conversation_id: "c1",
+        triggered_by_event_id: "e1",
+      }),
+    }),
+    services,
   );
+
+  const res = await handoffsListPendingRoute(new Request(`http://x/handoffs`), services);
   const body = await res.json();
   expect(body.handoffs.length).toBe(1);
-  expect(body.handoffs[0].status).toBe('pending');
+  expect(body.handoffs[0].status).toBe("pending");
 });
 
-test('GET /handoffs?status=garbage returns 400', async () => {
-  const db = new Database(':memory:');
+test("GET /handoffs?status=garbage returns 400", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
   const res = await handoffsListPendingRoute(
-    new Request(`http://x/handoffs?status=garbage`), services,
+    new Request(`http://x/handoffs?status=garbage`),
+    services,
   );
   expect(res.status).toBe(400);
 });
 
-test('GET /handoffs?status=completed&since returns completed count since timestamp', async () => {
-  const db = new Database(':memory:');
+test("GET /handoffs?status=completed&since returns completed count since timestamp", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
@@ -743,12 +1177,12 @@ test('GET /handoffs?status=completed&since returns completed count since timesta
     INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status, resolved_at)
     VALUES (?, ?, 'c1', 'a', 'b', 'm', 'completed', ?)
   `);
-  insert.run('recent-resolved', '2026-04-25T18:00:00.000Z', '2026-04-25T19:30:00.000Z');
-  insert.run('old-resolved', '2026-04-25T18:00:00.000Z', '2026-04-25T18:30:00.000Z');
-  insert.run('legacy-recent', '2026-04-25T19:15:00.000Z', null);
+  insert.run("recent-resolved", "2026-04-25T18:00:00.000Z", "2026-04-25T19:30:00.000Z");
+  insert.run("old-resolved", "2026-04-25T18:00:00.000Z", "2026-04-25T18:30:00.000Z");
+  insert.run("legacy-recent", "2026-04-25T19:15:00.000Z", null);
 
   const res = await handoffsListPendingRoute(
-    new Request('http://x/handoffs?status=completed&since=2026-04-25T19%3A00%3A00.000Z'),
+    new Request("http://x/handoffs?status=completed&since=2026-04-25T19%3A00%3A00.000Z"),
     services,
   );
   expect(res.status).toBe(200);
@@ -757,53 +1191,77 @@ test('GET /handoffs?status=completed&since returns completed count since timesta
 });
 
 async function seedApproveClaim(services: Services): Promise<string> {
-  const create = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'm', conversation_id: 'c1', triggered_by_event_id: 'e1' }) }), services)).json();
-  await handoffsApproveRoute(new Request(`http://x/handoffs/${create.handoff_id}/approve`, { method: 'POST', body: '{}' }),
-    create.handoff_id, services);
-  services.handoffWriter.claimDispatch(create.handoff_id, 'test-worker');
+  const create = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "m",
+          conversation_id: "c1",
+          triggered_by_event_id: "e1",
+        }),
+      }),
+      services,
+    )
+  ).json();
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${create.handoff_id}/approve`, { method: "POST", body: "{}" }),
+    create.handoff_id,
+    services,
+  );
+  services.handoffWriter.claimDispatch(create.handoff_id, "test-worker");
   return create.handoff_id;
 }
 
-function seedLongLivedAgentAndTick(db: Database, opts: { agent_id: string; tick_id: string; chain_id: string }): void {
-  reconcileLongLivedAgents(db, [{
-    name: opts.agent_id,
-    long_lived: true,
-    long_lived_config: {
-      schedule_cron: '*/15 * * * *',
-      subscriptions: [],
-      mcp_allowlist: [],
-      bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
-      circuit_breaker_threshold: 3,
-      standing_brief: 'x',
-    },
-  } as any], { now: 1 });
-  db.query('INSERT INTO long_lived_ticks (id, agent_id, chain_id, trigger_kind, started_at) VALUES (?, ?, ?, ?, ?)').run(
-    opts.tick_id,
-    opts.agent_id,
-    opts.chain_id,
-    'manual',
-    1,
+function seedLongLivedAgentAndTick(
+  db: Database,
+  opts: { agent_id: string; tick_id: string; chain_id: string },
+): void {
+  reconcileLongLivedAgents(
+    db,
+    [
+      {
+        name: opts.agent_id,
+        long_lived: true,
+        long_lived_config: {
+          schedule_cron: "*/15 * * * *",
+          subscriptions: [],
+          mcp_allowlist: [],
+          bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
+          circuit_breaker_threshold: 3,
+          standing_brief: "x",
+        },
+      } as any,
+    ],
+    { now: 1 },
   );
+  db.query(
+    "INSERT INTO long_lived_ticks (id, agent_id, chain_id, trigger_kind, started_at) VALUES (?, ?, ?, ?, ?)",
+  ).run(opts.tick_id, opts.agent_id, opts.chain_id, "manual", 1);
 }
 
-function seedLongLivedDispatchedHandoff(services: Services, opts: { handoff_id: string; agent_id: string; tick_id: string }): string {
+function seedLongLivedDispatchedHandoff(
+  services: Services,
+  opts: { handoff_id: string; agent_id: string; tick_id: string },
+): string {
   services.handoffWriter.createApproved({
     handoff_id: opts.handoff_id,
-    ts: '2026-04-25T20:00:00.000Z',
+    ts: "2026-04-25T20:00:00.000Z",
     project_id: null,
     conversation_id: `conv-${opts.handoff_id}`,
-    from: 'a',
-    to: 'b',
+    from: "a",
+    to: "b",
     to_role: null,
-    message: 'm',
-    triggered_by_event_id: 'e1',
-    resolved_by: 'machine-test',
-    resolved_at: '2026-04-25T20:00:00.000Z',
+    message: "m",
+    triggered_by_event_id: "e1",
+    resolved_by: "machine-test",
+    resolved_at: "2026-04-25T20:00:00.000Z",
     chain_max_hops: null,
     chain_trust_mode: null,
     chain_task_type: null,
-    dispatch_kind: 'long_lived_tick',
+    dispatch_kind: "long_lived_tick",
     long_lived_agent_id: opts.agent_id,
     long_lived_tick_id: opts.tick_id,
     use_worktree: null,
@@ -811,7 +1269,7 @@ function seedLongLivedDispatchedHandoff(services: Services, opts: { handoff_id: 
     parent_handoff_id: null,
     branch_base: null,
   });
-  services.handoffWriter.claimDispatch(opts.handoff_id, 'test-worker');
+  services.handoffWriter.claimDispatch(opts.handoff_id, "test-worker");
   return opts.handoff_id;
 }
 
@@ -825,215 +1283,313 @@ function seedDispatchCostRows(db: Database, conversation_id: string, costs: numb
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       `perf-${conversation_id}-${index + 1}`,
-      '2026-04-25T20:00:01.000Z',
+      "2026-04-25T20:00:01.000Z",
       `handoff-${conversation_id}-${index + 1}`,
       conversation_id,
       null,
-      'worker-a',
-      'implement_small',
-      'merged',
+      "worker-a",
+      "implement_small",
+      "merged",
       1,
-      'y',
+      "y",
       null,
       5,
       cost_usd,
       null,
       null,
-      'dispatch',
+      "dispatch",
       null,
       null,
-      '{}',
+      "{}",
     );
   });
 }
 
-test('POST /handoffs/<id>/complete flips dispatched → completed', async () => {
-  const db = new Database(':memory:');
+test("POST /handoffs/<id>/complete flips dispatched → completed", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
   const id = await seedApproveClaim(services);
 
-  const res = await handoffsCompleteRoute(new Request('http://x', { method: 'POST' }), id, services);
+  const res = await handoffsCompleteRoute(
+    new Request("http://x", { method: "POST" }),
+    id,
+    services,
+  );
   expect(res.status).toBe(200);
   const body = await res.json();
-  expect(body).toEqual({ handoff_id: id, status: 'completed' });
-  const row = db.query<{ status: string }, [string]>(`SELECT status FROM handoffs WHERE handoff_id=?`).get(id);
-  expect(row?.status).toBe('completed');
+  expect(body).toEqual({ handoff_id: id, status: "completed" });
+  const row = db
+    .query<{ status: string }, [string]>(`SELECT status FROM handoffs WHERE handoff_id=?`)
+    .get(id);
+  expect(row?.status).toBe("completed");
 });
 
-test('POST /handoffs/<id>/complete tears down long-lived tick as success', async () => {
-  const db = new Database(':memory:');
+test("POST /handoffs/<id>/complete tears down long-lived tick as success", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  seedLongLivedAgentAndTick(db, { agent_id: 'agent-1', tick_id: 'tick-1', chain_id: 'conv-1' });
+  seedLongLivedAgentAndTick(db, { agent_id: "agent-1", tick_id: "tick-1", chain_id: "conv-1" });
   const id = seedLongLivedDispatchedHandoff(services, {
-    handoff_id: 'h-long-complete',
-    agent_id: 'agent-1',
-    tick_id: 'tick-1',
+    handoff_id: "h-long-complete",
+    agent_id: "agent-1",
+    tick_id: "tick-1",
   });
 
-  const res = await handoffsCompleteRoute(new Request('http://x', { method: 'POST' }), id, services);
+  const res = await handoffsCompleteRoute(
+    new Request("http://x", { method: "POST" }),
+    id,
+    services,
+  );
   expect(res.status).toBe(200);
 
-  const tick = db.query<{ outcome: string | null }, [string]>(
-    'SELECT outcome FROM long_lived_ticks WHERE id=?',
-  ).get('tick-1');
-  expect(tick?.outcome).toBe('success');
+  const tick = db
+    .query<{ outcome: string | null }, [string]>("SELECT outcome FROM long_lived_ticks WHERE id=?")
+    .get("tick-1");
+  expect(tick?.outcome).toBe("success");
 });
 
-test('POST /handoffs/<id>/complete stamps cost_cents from dispatch performance rows', async () => {
-  const db = new Database(':memory:');
+test("POST /handoffs/<id>/complete stamps cost_cents from dispatch performance rows", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  seedLongLivedAgentAndTick(db, { agent_id: 'agent-cost', tick_id: 'tick-cost', chain_id: 'conv-cost' });
-  const id = seedLongLivedDispatchedHandoff(services, {
-    handoff_id: 'h-long-cost',
-    agent_id: 'agent-cost',
-    tick_id: 'tick-cost',
+  seedLongLivedAgentAndTick(db, {
+    agent_id: "agent-cost",
+    tick_id: "tick-cost",
+    chain_id: "conv-cost",
   });
-  seedDispatchCostRows(db, 'conv-cost', [0.012]);
+  const id = seedLongLivedDispatchedHandoff(services, {
+    handoff_id: "h-long-cost",
+    agent_id: "agent-cost",
+    tick_id: "tick-cost",
+  });
+  seedDispatchCostRows(db, "conv-cost", [0.012]);
 
-  const res = await handoffsCompleteRoute(new Request('http://x', { method: 'POST' }), id, services);
+  const res = await handoffsCompleteRoute(
+    new Request("http://x", { method: "POST" }),
+    id,
+    services,
+  );
   expect(res.status).toBe(200);
 
-  const tick = db.query<{ outcome: string | null; cost_cents: number | null }, [string]>(
-    'SELECT outcome, cost_cents FROM long_lived_ticks WHERE id=?',
-  ).get('tick-cost');
+  const tick = db
+    .query<
+      { outcome: string | null; cost_cents: number | null },
+      [string]
+    >("SELECT outcome, cost_cents FROM long_lived_ticks WHERE id=?")
+    .get("tick-cost");
   expect(tick).toEqual({
-    outcome: 'success',
+    outcome: "success",
     cost_cents: 1,
   });
 });
 
-test('POST /handoffs/<id>/fail leaves cost_cents null when dispatch performance rows are not ready yet', async () => {
-  const db = new Database(':memory:');
+test("POST /handoffs/<id>/fail leaves cost_cents null when dispatch performance rows are not ready yet", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  seedLongLivedAgentAndTick(db, { agent_id: 'agent-race', tick_id: 'tick-race', chain_id: 'conv-race' });
+  seedLongLivedAgentAndTick(db, {
+    agent_id: "agent-race",
+    tick_id: "tick-race",
+    chain_id: "conv-race",
+  });
   const id = seedLongLivedDispatchedHandoff(services, {
-    handoff_id: 'h-long-race',
-    agent_id: 'agent-race',
-    tick_id: 'tick-race',
+    handoff_id: "h-long-race",
+    agent_id: "agent-race",
+    tick_id: "tick-race",
   });
 
-  const res = await handoffsFailRoute(new Request('http://x', {
-    method: 'POST',
-    body: JSON.stringify({ reason: 'long-lived failure' }),
-  }), id, services);
+  const res = await handoffsFailRoute(
+    new Request("http://x", {
+      method: "POST",
+      body: JSON.stringify({ reason: "long-lived failure" }),
+    }),
+    id,
+    services,
+  );
 
   expect(res.status).toBe(200);
-  const tick = db.query<{ outcome: string | null; cost_cents: number | null }, [string]>(
-    'SELECT outcome, cost_cents FROM long_lived_ticks WHERE id=?',
-  ).get('tick-race');
+  const tick = db
+    .query<
+      { outcome: string | null; cost_cents: number | null },
+      [string]
+    >("SELECT outcome, cost_cents FROM long_lived_ticks WHERE id=?")
+    .get("tick-race");
   expect(tick).toEqual({
-    outcome: 'failed',
+    outcome: "failed",
     cost_cents: null,
   });
 });
 
-test('POST /handoffs/<id>/complete cancel path tears down long-lived tick as failed', async () => {
-  const db = new Database(':memory:');
+test("POST /handoffs/<id>/complete cancel path tears down long-lived tick as failed", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  seedLongLivedAgentAndTick(db, { agent_id: 'agent-cancel', tick_id: 'tick-cancel', chain_id: 'conv-cancel' });
-  const id = seedLongLivedDispatchedHandoff(services, {
-    handoff_id: 'h-long-cancel',
-    agent_id: 'agent-cancel',
-    tick_id: 'tick-cancel',
+  seedLongLivedAgentAndTick(db, {
+    agent_id: "agent-cancel",
+    tick_id: "tick-cancel",
+    chain_id: "conv-cancel",
   });
-  db.query('UPDATE handoffs SET cancel_requested_at=? WHERE handoff_id=?').run('2026-04-25T20:01:00.000Z', id);
+  const id = seedLongLivedDispatchedHandoff(services, {
+    handoff_id: "h-long-cancel",
+    agent_id: "agent-cancel",
+    tick_id: "tick-cancel",
+  });
+  db.query("UPDATE handoffs SET cancel_requested_at=? WHERE handoff_id=?").run(
+    "2026-04-25T20:01:00.000Z",
+    id,
+  );
 
-  const res = await handoffsCompleteRoute(new Request('http://x', { method: 'POST' }), id, services);
+  const res = await handoffsCompleteRoute(
+    new Request("http://x", { method: "POST" }),
+    id,
+    services,
+  );
   expect(res.status).toBe(200);
   const body = await res.json();
-  expect(body).toEqual({ handoff_id: id, status: 'failed', reason: 'cancelled' });
+  expect(body).toEqual({ handoff_id: id, status: "failed", reason: "cancelled" });
 
-  const tick = db.query<{ outcome: string | null; completed_at: number | null }, [string]>(
-    'SELECT outcome, completed_at FROM long_lived_ticks WHERE id=?',
-  ).get('tick-cancel');
-  expect(tick?.outcome).toBe('failed');
+  const tick = db
+    .query<
+      { outcome: string | null; completed_at: number | null },
+      [string]
+    >("SELECT outcome, completed_at FROM long_lived_ticks WHERE id=?")
+    .get("tick-cancel");
+  expect(tick?.outcome).toBe("failed");
   expect(tick?.completed_at).not.toBeNull();
 });
 
-test('POST /handoffs/<id>/complete for non-long-lived handoff leaves long-lived ticks untouched', async () => {
-  const db = new Database(':memory:');
+test("POST /handoffs/<id>/complete for non-long-lived handoff leaves long-lived ticks untouched", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  seedLongLivedAgentAndTick(db, { agent_id: 'agent-2', tick_id: 'tick-2', chain_id: 'conv-2' });
+  seedLongLivedAgentAndTick(db, { agent_id: "agent-2", tick_id: "tick-2", chain_id: "conv-2" });
   const id = await seedApproveClaim(services);
 
-  const res = await handoffsCompleteRoute(new Request('http://x', { method: 'POST' }), id, services);
+  const res = await handoffsCompleteRoute(
+    new Request("http://x", { method: "POST" }),
+    id,
+    services,
+  );
   expect(res.status).toBe(200);
 
-  const tick = db.query<{ outcome: string | null }, [string]>(
-    'SELECT outcome FROM long_lived_ticks WHERE id=?',
-  ).get('tick-2');
+  const tick = db
+    .query<{ outcome: string | null }, [string]>("SELECT outcome FROM long_lived_ticks WHERE id=?")
+    .get("tick-2");
   expect(tick?.outcome).toBeNull();
 });
 
-test('POST /handoffs/<id>/complete returns success when long-lived teardown throws', async () => {
-  const db = new Database(':memory:');
+test("POST /handoffs/<id>/complete returns success when long-lived teardown throws", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  seedLongLivedAgentAndTick(db, { agent_id: 'agent-throw', tick_id: 'tick-throw', chain_id: 'conv-throw' });
+  seedLongLivedAgentAndTick(db, {
+    agent_id: "agent-throw",
+    tick_id: "tick-throw",
+    chain_id: "conv-throw",
+  });
   const id = seedLongLivedDispatchedHandoff(services, {
-    handoff_id: 'h-long-throw',
-    agent_id: 'agent-throw',
-    tick_id: 'tick-throw',
+    handoff_id: "h-long-throw",
+    agent_id: "agent-throw",
+    tick_id: "tick-throw",
   });
 
   const originalTransaction = db.transaction.bind(db);
   let injected = false;
-  db.transaction = ((fn: () => void) => originalTransaction(() => {
-    fn();
-    if (!injected) {
-      injected = true;
-      throw new Error('teardown boom');
-    }
-  })) as typeof db.transaction;
+  db.transaction = ((fn: () => void) =>
+    originalTransaction(() => {
+      fn();
+      if (!injected) {
+        injected = true;
+        throw new Error("teardown boom");
+      }
+    })) as typeof db.transaction;
 
-  const res = await handoffsCompleteRoute(new Request('http://x', { method: 'POST' }), id, services);
+  const res = await handoffsCompleteRoute(
+    new Request("http://x", { method: "POST" }),
+    id,
+    services,
+  );
   expect(res.status).toBe(200);
   const body = await res.json();
-  expect(body).toEqual({ handoff_id: id, status: 'completed' });
+  expect(body).toEqual({ handoff_id: id, status: "completed" });
 
-  const handoff = db.query<{ status: string }, [string]>('SELECT status FROM handoffs WHERE handoff_id=?').get(id);
-  expect(handoff?.status).toBe('completed');
+  const handoff = db
+    .query<{ status: string }, [string]>("SELECT status FROM handoffs WHERE handoff_id=?")
+    .get(id);
+  expect(handoff?.status).toBe("completed");
 });
 
-test('POST /handoffs/<id>/complete on a pending handoff returns 409', async () => {
-  const db = new Database(':memory:');
+test("POST /handoffs/<id>/complete on a pending handoff returns 409", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const create = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'm', conversation_id: 'c1', triggered_by_event_id: 'e1' }) }), services)).json();
+  const create = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "m",
+          conversation_id: "c1",
+          triggered_by_event_id: "e1",
+        }),
+      }),
+      services,
+    )
+  ).json();
 
-  const res = await handoffsCompleteRoute(new Request('http://x', { method: 'POST' }), create.handoff_id, services);
+  const res = await handoffsCompleteRoute(
+    new Request("http://x", { method: "POST" }),
+    create.handoff_id,
+    services,
+  );
   expect(res.status).toBe(409);
 });
 
-test('POST /handoffs/<id>/complete on unknown id returns 404', async () => {
-  const db = new Database(':memory:');
+test("POST /handoffs/<id>/complete on unknown id returns 404", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const res = await handoffsCompleteRoute(new Request('http://x', { method: 'POST' }), 'h-nope', services);
+  const res = await handoffsCompleteRoute(
+    new Request("http://x", { method: "POST" }),
+    "h-nope",
+    services,
+  );
   expect(res.status).toBe(404);
 });
 
 async function seedAndApprove(services: Services): Promise<string> {
-  const create = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'm', conversation_id: 'c1', triggered_by_event_id: 'e1' }) }), services)).json();
-  await handoffsApproveRoute(new Request(`http://x/handoffs/${create.handoff_id}/approve`, { method: 'POST', body: '{}' }),
-    create.handoff_id, services);
+  const create = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "m",
+          conversation_id: "c1",
+          triggered_by_event_id: "e1",
+        }),
+      }),
+      services,
+    )
+  ).json();
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${create.handoff_id}/approve`, { method: "POST", body: "{}" }),
+    create.handoff_id,
+    services,
+  );
   return create.handoff_id;
 }
 
@@ -1043,267 +1599,367 @@ function makeFetcher(handler: (req: Request) => Promise<Response>): typeof fetch
 }
 
 function buildClaimTestServices(): { services: Services; db: Database } {
-  const db = new Database(':memory:');
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = buildServices({
     env: {},
     input: {},
-    storageRoot: '/tmp/handoffs-claim-test',
+    storageRoot: "/tmp/handoffs-claim-test",
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date('2026-04-25T20:00:00Z'),
-    uuid: (() => { let n = 0; return () => `e-${++n}`; })(),
+    clock: () => new Date("2026-04-25T20:00:00Z"),
+    uuid: (() => {
+      let n = 0;
+      return () => `e-${++n}`;
+    })(),
   });
   return { services, db };
 }
 
-test('POST /handoffs/<id>/claim flips approved → dispatched and returns 200', async () => {
+test("POST /handoffs/<id>/claim flips approved → dispatched and returns 200", async () => {
   const { services, db } = buildClaimTestServices();
-  const TOKEN = 'test-token';
+  const TOKEN = "test-token";
   const fetchHandler = createDaemonFetchHandler({ services, token: TOKEN });
   const id = await seedAndApprove(services);
   const { worker_token } = await registerWorkerForTest({
-    baseUrl: 'http://x', sharedBearer: TOKEN, worker_id: 'test-worker',
+    baseUrl: "http://x",
+    sharedBearer: TOKEN,
+    worker_id: "test-worker",
     fetcher: makeFetcher(fetchHandler),
   });
 
-  const res = await fetchHandler(new Request(`http://x/handoffs/${id}/claim`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${worker_token}` },
-    body: JSON.stringify({ worker_id: 'test-worker' }),
-  }));
+  const res = await fetchHandler(
+    new Request(`http://x/handoffs/${id}/claim`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "test-worker" }),
+    }),
+  );
   expect(res.status).toBe(200);
   const body = await res.json();
-  expect(body).toEqual({ handoff_id: id, status: 'dispatched' });
-  const row = db.query<{ status: string }, [string]>(`SELECT status FROM handoffs WHERE handoff_id=?`).get(id);
-  expect(row?.status).toBe('dispatched');
+  expect(body).toEqual({ handoff_id: id, status: "dispatched" });
+  const row = db
+    .query<{ status: string }, [string]>(`SELECT status FROM handoffs WHERE handoff_id=?`)
+    .get(id);
+  expect(row?.status).toBe("dispatched");
 });
 
-test('POST /handoffs/<id>/claim a second time returns 409 with current_status', async () => {
+test("POST /handoffs/<id>/claim a second time returns 409 with current_status", async () => {
   const { services } = buildClaimTestServices();
-  const TOKEN = 'test-token';
+  const TOKEN = "test-token";
   const fetchHandler = createDaemonFetchHandler({ services, token: TOKEN });
   const id = await seedAndApprove(services);
   const { worker_token } = await registerWorkerForTest({
-    baseUrl: 'http://x', sharedBearer: TOKEN, worker_id: 'test-worker',
+    baseUrl: "http://x",
+    sharedBearer: TOKEN,
+    worker_id: "test-worker",
     fetcher: makeFetcher(fetchHandler),
   });
-  const claimReq = () => fetchHandler(new Request(`http://x/handoffs/${id}/claim`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${worker_token}` },
-    body: JSON.stringify({ worker_id: 'test-worker' }),
-  }));
+  const claimReq = () =>
+    fetchHandler(
+      new Request(`http://x/handoffs/${id}/claim`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${worker_token}` },
+        body: JSON.stringify({ worker_id: "test-worker" }),
+      }),
+    );
 
   await claimReq();
   const second = await claimReq();
   expect(second.status).toBe(409);
   const body = await second.json();
-  expect(body.current_status).toBe('dispatched');
+  expect(body.current_status).toBe("dispatched");
 });
 
-test('POST /handoffs/<id>/claim on unknown id returns 404', async () => {
+test("POST /handoffs/<id>/claim on unknown id returns 404", async () => {
   const { services } = buildClaimTestServices();
-  const TOKEN = 'test-token';
+  const TOKEN = "test-token";
   const fetchHandler = createDaemonFetchHandler({ services, token: TOKEN });
   const { worker_token } = await registerWorkerForTest({
-    baseUrl: 'http://x', sharedBearer: TOKEN, worker_id: 'test-worker',
+    baseUrl: "http://x",
+    sharedBearer: TOKEN,
+    worker_id: "test-worker",
     fetcher: makeFetcher(fetchHandler),
   });
 
-  const res = await fetchHandler(new Request('http://x/handoffs/h-nope/claim', {
-    method: 'POST',
-    headers: { authorization: `Bearer ${worker_token}` },
-    body: JSON.stringify({ worker_id: 'test-worker' }),
-  }));
+  const res = await fetchHandler(
+    new Request("http://x/handoffs/h-nope/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "test-worker" }),
+    }),
+  );
   expect(res.status).toBe(404);
 });
 
-test('POST /handoffs/<id>/claim on a pending handoff returns 409 (not approved)', async () => {
+test("POST /handoffs/<id>/claim on a pending handoff returns 409 (not approved)", async () => {
   const { services } = buildClaimTestServices();
-  const TOKEN = 'test-token';
+  const TOKEN = "test-token";
   const fetchHandler = createDaemonFetchHandler({ services, token: TOKEN });
-  const create = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'm', conversation_id: 'c1', triggered_by_event_id: 'e1' }) }), services)).json();
+  const create = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "m",
+          conversation_id: "c1",
+          triggered_by_event_id: "e1",
+        }),
+      }),
+      services,
+    )
+  ).json();
   const { worker_token } = await registerWorkerForTest({
-    baseUrl: 'http://x', sharedBearer: TOKEN, worker_id: 'test-worker',
+    baseUrl: "http://x",
+    sharedBearer: TOKEN,
+    worker_id: "test-worker",
     fetcher: makeFetcher(fetchHandler),
   });
 
-  const res = await fetchHandler(new Request(`http://x/handoffs/${create.handoff_id}/claim`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${worker_token}` },
-    body: JSON.stringify({ worker_id: 'test-worker' }),
-  }));
+  const res = await fetchHandler(
+    new Request(`http://x/handoffs/${create.handoff_id}/claim`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "test-worker" }),
+    }),
+  );
   expect(res.status).toBe(409);
 });
 
-test('POST /handoffs/<id>/fail flips pending → failed', async () => {
-  const db = new Database(':memory:');
+test("POST /handoffs/<id>/fail flips pending → failed", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const create = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'm', conversation_id: 'c1', triggered_by_event_id: 'e1' }) }), services)).json();
+  const create = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "m",
+          conversation_id: "c1",
+          triggered_by_event_id: "e1",
+        }),
+      }),
+      services,
+    )
+  ).json();
 
-  const res = await handoffsFailRoute(new Request('http://x', {
-    method: 'POST',
-    body: JSON.stringify({ reason: 'testing failure' }),
-  }), create.handoff_id, services);
+  const res = await handoffsFailRoute(
+    new Request("http://x", {
+      method: "POST",
+      body: JSON.stringify({ reason: "testing failure" }),
+    }),
+    create.handoff_id,
+    services,
+  );
 
   expect(res.status).toBe(200);
   const body = await res.json();
-  expect(body).toEqual({ handoff_id: create.handoff_id, status: 'failed' });
-  
-  const row = db.query<{ status: string; resolution_reason: string | null }, [string]>(
-    'SELECT status, resolution_reason FROM handoffs WHERE handoff_id=?',
-  ).get(create.handoff_id);
-  expect(row?.status).toBe('failed');
-  expect(row?.resolution_reason).toBe('testing failure');
+  expect(body).toEqual({ handoff_id: create.handoff_id, status: "failed" });
+
+  const row = db
+    .query<
+      { status: string; resolution_reason: string | null },
+      [string]
+    >("SELECT status, resolution_reason FROM handoffs WHERE handoff_id=?")
+    .get(create.handoff_id);
+  expect(row?.status).toBe("failed");
+  expect(row?.resolution_reason).toBe("testing failure");
 });
 
-test('POST /handoffs/<id>/fail tears down long-lived tick as failed', async () => {
-  const db = new Database(':memory:');
+test("POST /handoffs/<id>/fail tears down long-lived tick as failed", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  seedLongLivedAgentAndTick(db, { agent_id: 'agent-3', tick_id: 'tick-3' });
+  seedLongLivedAgentAndTick(db, { agent_id: "agent-3", tick_id: "tick-3" });
   const id = seedLongLivedDispatchedHandoff(services, {
-    handoff_id: 'h-long-fail',
-    agent_id: 'agent-3',
-    tick_id: 'tick-3',
+    handoff_id: "h-long-fail",
+    agent_id: "agent-3",
+    tick_id: "tick-3",
   });
 
-  const res = await handoffsFailRoute(new Request('http://x', {
-    method: 'POST',
-    body: JSON.stringify({ reason: 'long-lived failure' }),
-  }), id, services);
+  const res = await handoffsFailRoute(
+    new Request("http://x", {
+      method: "POST",
+      body: JSON.stringify({ reason: "long-lived failure" }),
+    }),
+    id,
+    services,
+  );
 
   expect(res.status).toBe(200);
-  const tick = db.query<{ outcome: string | null }, [string]>(
-    'SELECT outcome FROM long_lived_ticks WHERE id=?',
-  ).get('tick-3');
-  expect(tick?.outcome).toBe('failed');
+  const tick = db
+    .query<{ outcome: string | null }, [string]>("SELECT outcome FROM long_lived_ticks WHERE id=?")
+    .get("tick-3");
+  expect(tick?.outcome).toBe("failed");
 });
 
-test('POST /handoffs/:id/approve reject path tears down long-lived tick as failed', async () => {
-  const db = new Database(':memory:');
+test("POST /handoffs/:id/approve reject path tears down long-lived tick as failed", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  seedLongLivedAgentAndTick(db, { agent_id: 'agent-reject', tick_id: 'tick-reject' });
-  const create = await (await handoffsCreateRoute(new Request('http://x/handoffs', {
-    method: 'POST',
-    body: JSON.stringify({
-      from: 'a',
-      to: 'b',
-      message: 'm',
-      conversation_id: 'c-reject',
-      triggered_by_event_id: 'e1',
-    }),
-  }), services)).json();
+  seedLongLivedAgentAndTick(db, { agent_id: "agent-reject", tick_id: "tick-reject" });
+  const create = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "m",
+          conversation_id: "c-reject",
+          triggered_by_event_id: "e1",
+        }),
+      }),
+      services,
+    )
+  ).json();
   db.query(
-    'UPDATE handoffs SET dispatch_kind=?, long_lived_agent_id=?, long_lived_tick_id=? WHERE handoff_id=?',
-  ).run('long_lived_tick', 'agent-reject', 'tick-reject', create.handoff_id);
+    "UPDATE handoffs SET dispatch_kind=?, long_lived_agent_id=?, long_lived_tick_id=? WHERE handoff_id=?",
+  ).run("long_lived_tick", "agent-reject", "tick-reject", create.handoff_id);
 
   const res = await handoffsApproveRoute(
     new Request(`http://x/handoffs/${create.handoff_id}/approve`, {
-      method: 'POST',
-      body: JSON.stringify({ reject: true, reason: 'nope', resolved_by: 'operator-1' }),
+      method: "POST",
+      body: JSON.stringify({ reject: true, reason: "nope", resolved_by: "operator-1" }),
     }),
     create.handoff_id,
     services,
   );
   expect(res.status).toBe(200);
   const body = await res.json();
-  expect(body).toEqual({ handoff_id: create.handoff_id, status: 'rejected' });
+  expect(body).toEqual({ handoff_id: create.handoff_id, status: "rejected" });
 
-  const tick = db.query<{ outcome: string | null; completed_at: number | null }, [string]>(
-    'SELECT outcome, completed_at FROM long_lived_ticks WHERE id=?',
-  ).get('tick-reject');
-  expect(tick?.outcome).toBe('failed');
+  const tick = db
+    .query<
+      { outcome: string | null; completed_at: number | null },
+      [string]
+    >("SELECT outcome, completed_at FROM long_lived_ticks WHERE id=?")
+    .get("tick-reject");
+  expect(tick?.outcome).toBe("failed");
   expect(tick?.completed_at).not.toBeNull();
 });
 
-test('POST /handoffs/<id>/fail returns 400 for missing/empty reason', async () => {
-  const db = new Database(':memory:');
+test("POST /handoffs/<id>/fail returns 400 for missing/empty reason", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  
-  const res = await handoffsFailRoute(new Request('http://x', {
-    method: 'POST',
-    body: JSON.stringify({ reason: '' }),
-  }), 'some-id', services);
+
+  const res = await handoffsFailRoute(
+    new Request("http://x", {
+      method: "POST",
+      body: JSON.stringify({ reason: "" }),
+    }),
+    "some-id",
+    services,
+  );
   expect(res.status).toBe(400);
 
-  const res2 = await handoffsFailRoute(new Request('http://x', {
-    method: 'POST',
-    body: JSON.stringify({}),
-  }), 'some-id', services);
+  const res2 = await handoffsFailRoute(
+    new Request("http://x", {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+    "some-id",
+    services,
+  );
   expect(res2.status).toBe(400);
 });
 
-test('POST /handoffs/<id>/fail returns 404 for unknown id', async () => {
-  const db = new Database(':memory:');
+test("POST /handoffs/<id>/fail returns 404 for unknown id", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  
-  const res = await handoffsFailRoute(new Request('http://x', {
-    method: 'POST',
-    body: JSON.stringify({ reason: 'oops' }),
-  }), 'h-nope', services);
+
+  const res = await handoffsFailRoute(
+    new Request("http://x", {
+      method: "POST",
+      body: JSON.stringify({ reason: "oops" }),
+    }),
+    "h-nope",
+    services,
+  );
   expect(res.status).toBe(404);
 });
 
-test('POST /handoffs/<id>/fail returns 409 if already terminal', async () => {
-  const db = new Database(':memory:');
+test("POST /handoffs/<id>/fail returns 409 if already terminal", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
   const id = await seedApproveClaim(services);
-  await handoffsCompleteRoute(new Request('http://x', { method: 'POST' }), id, services);
+  await handoffsCompleteRoute(new Request("http://x", { method: "POST" }), id, services);
 
-  const res = await handoffsFailRoute(new Request('http://x', {
-    method: 'POST',
-    body: JSON.stringify({ reason: 'too late' }),
-  }), id, services);
-  
+  const res = await handoffsFailRoute(
+    new Request("http://x", {
+      method: "POST",
+      body: JSON.stringify({ reason: "too late" }),
+    }),
+    id,
+    services,
+  );
+
   expect(res.status).toBe(409);
   const body = await res.json();
-  expect(body.current_status).toBe('completed');
+  expect(body.current_status).toBe("completed");
 });
 
-test('GET /handoffs/<id> returns the handoff row', async () => {
-  const db = new Database(':memory:');
+test("GET /handoffs/<id> returns the handoff row", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const create = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
-    body: JSON.stringify({ from: 'a', to: 'b', message: 'm', conversation_id: 'c1', triggered_by_event_id: 'e1' }) }), services)).json();
+  const create = await (
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "m",
+          conversation_id: "c1",
+          triggered_by_event_id: "e1",
+        }),
+      }),
+      services,
+    )
+  ).json();
 
-  const res = await handoffsGetRoute(new Request(`http://x/handoffs/${create.handoff_id}`), create.handoff_id, services);
+  const res = await handoffsGetRoute(
+    new Request(`http://x/handoffs/${create.handoff_id}`),
+    create.handoff_id,
+    services,
+  );
   expect(res.status).toBe(200);
   const body = await res.json();
   expect(body.handoff.handoff_id).toBe(create.handoff_id);
-  expect(body.handoff.status).toBe('pending');
+  expect(body.handoff.status).toBe("pending");
 });
 
-test('GET /handoffs/<id> returns 404 for unknown id', async () => {
-  const db = new Database(':memory:');
+test("GET /handoffs/<id> returns 404 for unknown id", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const res = await handoffsGetRoute(new Request('http://x/handoffs/h-nope'), 'h-nope', services);
+  const res = await handoffsGetRoute(new Request("http://x/handoffs/h-nope"), "h-nope", services);
   expect(res.status).toBe(404);
   const body = await res.json();
-  expect(body.error.code).toBe('not_found');
+  expect(body.error.code).toBe("not_found");
 });
 
 // GH #118 — ?since= offset normalization
-test('GET /handoffs?status=completed&since= returns same count for UTC and offset-equivalent timestamps', async () => {
-  const db = new Database(':memory:');
+test("GET /handoffs?status=completed&since= returns same count for UTC and offset-equivalent timestamps", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
@@ -1313,24 +1969,24 @@ test('GET /handoffs?status=completed&since= returns same count for UTC and offse
     `INSERT INTO handoffs
        (handoff_id, ts, project_id, conversation_id, from_agent, to_agent, message, status)
      VALUES (?, ?, NULL, 'conv-since', 'a', 'b', 'msg', 'completed')`,
-    ['h-since-1', '2026-04-25T20:00:00.000Z'],
+    ["h-since-1", "2026-04-25T20:00:00.000Z"],
   );
 
   // 1 minute before the handoff — expressed as plain UTC
   const resUtc = await handoffsListPendingRoute(
-    new Request('http://x/handoffs?status=completed&since=2026-04-25T19%3A59%3A00Z'),
+    new Request("http://x/handoffs?status=completed&since=2026-04-25T19%3A59%3A00Z"),
     services,
   );
   expect(resUtc.status).toBe(200);
-  const utcBody = await resUtc.json() as { done: number };
+  const utcBody = (await resUtc.json()) as { done: number };
 
   // Same instant expressed with a +05:00 offset (string form looks like a later date)
   const resOffset = await handoffsListPendingRoute(
-    new Request('http://x/handoffs?status=completed&since=2026-04-26T00%3A59%3A00%2B05%3A00'),
+    new Request("http://x/handoffs?status=completed&since=2026-04-26T00%3A59%3A00%2B05%3A00"),
     services,
   );
   expect(resOffset.status).toBe(200);
-  const offsetBody = await resOffset.json() as { done: number };
+  const offsetBody = (await resOffset.json()) as { done: number };
 
   expect(utcBody.done).toBe(1);
   expect(offsetBody.done).toBe(utcBody.done);

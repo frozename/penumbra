@@ -1,14 +1,16 @@
-import { MaestroSessionRecord } from '@penumbra/core';
-import { toTextContent } from '@nova/mcp-shared';
-import { z } from 'zod';
-import { DaemonHttpError, type DaemonClient } from '../daemon-client.js';
+import { MaestroSessionRecord } from "@penumbra/core";
+import { toTextContent } from "@nova/mcp-shared";
+import { z } from "zod";
+import { DaemonHttpError, type DaemonClient } from "../daemon-client.js";
 
-export const MaestroSessionGetInputSchema = z.object({
-  task_id: z.string().min(1),
-}).strict();
+export const MaestroSessionGetInputSchema = z
+  .object({
+    task_id: z.string().min(1),
+  })
+  .strict();
 export const MaestroSessionGetInputShape = MaestroSessionGetInputSchema.shape;
 
-export function maestroSessionGetHandler(daemon: Pick<DaemonClient, 'maestroSessionGet'>) {
+export function maestroSessionGetHandler(daemon: Pick<DaemonClient, "maestroSessionGet">) {
   return async (input: unknown) => {
     const parsed = MaestroSessionGetInputSchema.parse(input ?? {});
     try {

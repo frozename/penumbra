@@ -1,22 +1,17 @@
-import * as fs from 'node:fs/promises';
-import * as os from 'node:os';
-import * as path from 'node:path';
-import type {
-  McpServer,
-  McpServerHttp,
-  McpServerSse,
-  McpServerStdio,
-} from './acp-types.js';
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import type { McpServer, McpServerHttp, McpServerSse, McpServerStdio } from "./acp-types.js";
 
 interface OpencodeLocalMcpConfig {
-  type: 'local';
+  type: "local";
   command: string[];
   environment: Record<string, string>;
   enabled: true;
 }
 
 function isRemoteServer(server: McpServer): server is McpServerHttp | McpServerSse {
-  return 'type' in server;
+  return "type" in server;
 }
 
 export function translateAcpMcpServerToOpencode(server: McpServer): OpencodeLocalMcpConfig {
@@ -33,7 +28,7 @@ export function translateAcpMcpServerToOpencode(server: McpServer): OpencodeLoca
   }
 
   return {
-    type: 'local',
+    type: "local",
     command: [stdio.command, ...(stdio.args ?? [])],
     environment,
     enabled: true,
@@ -42,7 +37,7 @@ export function translateAcpMcpServerToOpencode(server: McpServer): OpencodeLoca
 
 export async function prepareOpencodeMcpConfigDir(
   servers: McpServer[],
-  userConfigPath = path.join(os.homedir(), '.config', 'opencode', 'config.json'),
+  userConfigPath = path.join(os.homedir(), ".config", "opencode", "config.json"),
 ): Promise<{ xdgConfigHome: string; cleanup: () => Promise<void> }> {
   const mcp: Record<string, OpencodeLocalMcpConfig> = {};
   for (const server of servers) {
@@ -50,17 +45,17 @@ export async function prepareOpencodeMcpConfigDir(
   }
 
   const config: Record<string, unknown> = {
-    $schema: 'https://opencode.ai/config.json',
+    $schema: "https://opencode.ai/config.json",
     mcp,
   };
 
   try {
-    const userConfigText = await fs.readFile(userConfigPath, 'utf8');
+    const userConfigText = await fs.readFile(userConfigPath, "utf8");
     const userConfig = JSON.parse(userConfigText) as Record<string, unknown>;
-    if (userConfig && typeof userConfig === 'object') {
+    if (userConfig && typeof userConfig === "object") {
       if (
         userConfig.provider !== null &&
-        typeof userConfig.provider === 'object' &&
+        typeof userConfig.provider === "object" &&
         !Array.isArray(userConfig.provider)
       ) {
         config.provider = userConfig.provider;
@@ -70,21 +65,21 @@ export async function prepareOpencodeMcpConfigDir(
       }
       if (
         userConfig.keybinds !== null &&
-        typeof userConfig.keybinds === 'object' &&
+        typeof userConfig.keybinds === "object" &&
         !Array.isArray(userConfig.keybinds)
       ) {
         config.keybinds = userConfig.keybinds;
       }
     }
   } catch (err) {
-    if (!(err instanceof Error) || (err as NodeJS.ErrnoException).code !== 'ENOENT') {
+    if (!(err instanceof Error) || (err as NodeJS.ErrnoException).code !== "ENOENT") {
       console.warn(
         `opencode-mcp-config: failed to read user config at ${userConfigPath}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
 
-  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'penumbra-oc-mcp-'));
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "penumbra-oc-mcp-"));
   let cleaned = false;
   const cleanup = async () => {
     if (cleaned) return;
@@ -93,12 +88,12 @@ export async function prepareOpencodeMcpConfigDir(
   };
 
   try {
-    const opencodeDir = path.join(tmpRoot, 'opencode');
+    const opencodeDir = path.join(tmpRoot, "opencode");
     await fs.mkdir(opencodeDir, { recursive: true });
     await fs.writeFile(
-      path.join(opencodeDir, 'config.json'),
+      path.join(opencodeDir, "config.json"),
       `${JSON.stringify(config, null, 2)}\n`,
-      'utf8',
+      "utf8",
     );
     return { xdgConfigHome: tmpRoot, cleanup };
   } catch (err) {

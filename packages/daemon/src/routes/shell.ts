@@ -1,7 +1,7 @@
-import type { Services } from '@penumbra/core';
-import { z } from 'zod';
+import type { Services } from "@penumbra/core";
+import { z } from "zod";
 
-import { json } from './_helpers.js';
+import { json } from "./_helpers.js";
 const ShellRunInputSchema = z.object({
   handoff_id: z.string().min(1),
   agent_name: z.string().min(1),
@@ -41,20 +41,23 @@ function clearApproved(handoffId: string, sessionId?: string): void {
   if (sessions && sessions.size === 0) approvedSessions.delete(handoffId);
 }
 
-async function requestPermission(services: Services, input: {
-  handoffId: string;
-  agentName: string;
-  toolName: 'shell_run' | 'shell_run.dangerous';
-  context: Record<string, unknown>;
-}): Promise<'approve' | 'reject'> {
+async function requestPermission(
+  services: Services,
+  input: {
+    handoffId: string;
+    agentName: string;
+    toolName: "shell_run" | "shell_run.dangerous";
+    context: Record<string, unknown>;
+  },
+): Promise<"approve" | "reject"> {
   const agentchatConfig = (services as any).agentchatConfig;
   const permissionService = (services as any).permissionService;
   const cfg = agentchatConfig?.agents?.find((agent: any) => agent.name === input.agentName);
-  if (input.toolName === 'shell_run' && cfg?.auto_approve_to?.includes('shell_run')) {
-    return 'approve';
+  if (input.toolName === "shell_run" && cfg?.auto_approve_to?.includes("shell_run")) {
+    return "approve";
   }
   if (!permissionService?.requestPermission) {
-    return 'reject';
+    return "reject";
   }
 
   const decision = await permissionService.requestPermission({
@@ -63,7 +66,7 @@ async function requestPermission(services: Services, input: {
     tool_name: input.toolName,
     context: input.context,
   });
-  return decision.approved ? 'approve' : 'reject';
+  return decision.approved ? "approve" : "reject";
 }
 
 async function safeJson(req: Request): Promise<unknown | null> {
@@ -74,15 +77,18 @@ async function safeJson(req: Request): Promise<unknown | null> {
   }
 }
 
-function recordShellEvent(services: Services, event: {
-  handoff_id: string;
-  kind: 'shell.session.open' | 'shell.run' | 'shell.session.close';
-  meta: Record<string, unknown>;
-}): void {
+function recordShellEvent(
+  services: Services,
+  event: {
+    handoff_id: string;
+    kind: "shell.session.open" | "shell.run" | "shell.session.close";
+    meta: Record<string, unknown>;
+  },
+): void {
   services.dispatchEventLog.record({
     handoff_id: event.handoff_id,
     worker_id: null,
-    source: 'daemon',
+    source: "daemon",
     kind: event.kind,
     ts: new Date().toISOString(),
     meta: event.meta,
@@ -93,29 +99,29 @@ export async function shellRunRoute(req: Request, services: Services): Promise<R
   const shellSessionPool = (services as any).shellSessionPool;
   const shellConfig = (services as any).shellConfig;
   if (!shellSessionPool) {
-    return json({ error: { code: 'shell_disabled' } }, 503);
+    return json({ error: { code: "shell_disabled" } }, 503);
   }
 
   const body = await safeJson(req);
   if (body === null) {
-    return json({ error: { code: 'invalid_json' } }, 400);
+    return json({ error: { code: "invalid_json" } }, 400);
   }
 
   const parsed = ShellRunInputSchema.safeParse(body);
   if (!parsed.success) {
-    return json({ error: { code: 'invalid_params', issues: parsed.error.issues } }, 400);
+    return json({ error: { code: "invalid_params", issues: parsed.error.issues } }, 400);
   }
 
   const handoff = services.handoffReader.get(parsed.data.handoff_id);
   if (!handoff) {
-    return json({ error: { code: 'handoff_not_found' } }, 404);
+    return json({ error: { code: "handoff_not_found" } }, 404);
   }
-  const TERMINAL_STATUSES = new Set(['completed', 'failed', 'rejected', 'expired']);
+  const TERMINAL_STATUSES = new Set(["completed", "failed", "rejected", "expired"]);
   if (TERMINAL_STATUSES.has(handoff.status)) {
-    return json({ error: { code: 'handoff_terminal', status: handoff.status } }, 409);
+    return json({ error: { code: "handoff_terminal", status: handoff.status } }, 409);
   }
   if (handoff.to_agent !== parsed.data.agent_name) {
-    return json({ error: { code: 'agent_mismatch', expected: handoff.to_agent } }, 403);
+    return json({ error: { code: "agent_mismatch", expected: handoff.to_agent } }, 403);
   }
 
   const { handoff_id, agent_name, session_id, command, cwd, env, pty, stdin } = parsed.data;
@@ -134,7 +140,7 @@ export async function shellRunRoute(req: Request, services: Services): Promise<R
       resolvedSessionId = created.sessionId;
       recordShellEvent(services, {
         handoff_id,
-        kind: 'shell.session.open',
+        kind: "shell.session.open",
         meta: {
           session_id: resolvedSessionId,
           cwd: cwd ?? null,
@@ -142,10 +148,10 @@ export async function shellRunRoute(req: Request, services: Services): Promise<R
         },
       });
     } catch (error) {
-      if (String(error).includes('max sessions')) {
-        return json({ error: { code: 'max_sessions_exceeded' } }, 429);
+      if (String(error).includes("max sessions")) {
+        return json({ error: { code: "max_sessions_exceeded" } }, 429);
       }
-      return json({ error: { code: 'session_create_failed' } }, 500);
+      return json({ error: { code: "session_create_failed" } }, 500);
     }
   }
 
@@ -153,7 +159,7 @@ export async function shellRunRoute(req: Request, services: Services): Promise<R
     const decision = await requestPermission(services, {
       handoffId: handoff_id,
       agentName: agent_name,
-      toolName: 'shell_run',
+      toolName: "shell_run",
       context: {
         session_id: resolvedSessionId,
         cwd,
@@ -161,7 +167,7 @@ export async function shellRunRoute(req: Request, services: Services): Promise<R
         initial_command: command.slice(0, 200),
       },
     });
-    if (decision === 'reject') {
+    if (decision === "reject") {
       await shellSessionPool.closeSession({
         handoffId: handoff_id,
         sessionId: resolvedSessionId!,
@@ -170,8 +176,8 @@ export async function shellRunRoute(req: Request, services: Services): Promise<R
       return json({
         session_id: resolvedSessionId,
         exit_code: -2,
-        stdout: '',
-        stderr: 'permission denied: shell_run',
+        stdout: "",
+        stderr: "permission denied: shell_run",
         truncated: false,
       });
     }
@@ -179,25 +185,27 @@ export async function shellRunRoute(req: Request, services: Services): Promise<R
   }
 
   const dangerousPatterns = shellConfig?.dangerousCommandsForAgent?.(agent_name) ?? [];
-  const normalizedCommand = command.replace(/\s+/g, ' ');
-  const matchedPatterns = dangerousPatterns.filter((pattern: string) => new RegExp(pattern).test(normalizedCommand));
+  const normalizedCommand = command.replace(/\s+/g, " ");
+  const matchedPatterns = dangerousPatterns.filter((pattern: string) =>
+    new RegExp(pattern).test(normalizedCommand),
+  );
   if (matchedPatterns.length > 0) {
     const decision = await requestPermission(services, {
       handoffId: handoff_id,
       agentName: agent_name,
-      toolName: 'shell_run.dangerous',
+      toolName: "shell_run.dangerous",
       context: {
         session_id: resolvedSessionId,
         command: command.slice(0, 1024),
         matched_patterns: matchedPatterns,
       },
     });
-    if (decision === 'reject') {
+    if (decision === "reject") {
       return json({
         session_id: resolvedSessionId,
         exit_code: -2,
-        stdout: '',
-        stderr: `permission denied: shell_run.dangerous (matched ${matchedPatterns.join(', ')})`,
+        stdout: "",
+        stderr: `permission denied: shell_run.dangerous (matched ${matchedPatterns.join(", ")})`,
         truncated: false,
       });
     }
@@ -215,7 +223,7 @@ export async function shellRunRoute(req: Request, services: Services): Promise<R
   if (result.exit_code !== -2) {
     recordShellEvent(services, {
       handoff_id,
-      kind: 'shell.run',
+      kind: "shell.run",
       meta: {
         session_id: resolvedSessionId,
         command: command.slice(0, 1024),
@@ -231,26 +239,26 @@ export async function shellRunRoute(req: Request, services: Services): Promise<R
 export async function shellCloseRoute(req: Request, services: Services): Promise<Response> {
   const shellSessionPool = (services as any).shellSessionPool;
   if (!shellSessionPool) {
-    return json({ error: { code: 'shell_disabled' } }, 503);
+    return json({ error: { code: "shell_disabled" } }, 503);
   }
 
   const body = await safeJson(req);
   if (body === null) {
-    return json({ error: { code: 'invalid_json' } }, 400);
+    return json({ error: { code: "invalid_json" } }, 400);
   }
 
   const parsed = ShellCloseInputSchema.safeParse(body);
   if (!parsed.success) {
-    return json({ error: { code: 'invalid_params', issues: parsed.error.issues } }, 400);
+    return json({ error: { code: "invalid_params", issues: parsed.error.issues } }, 400);
   }
 
   const closeHandoff = services.handoffReader.get(parsed.data.handoff_id);
   if (!closeHandoff) {
-    return json({ error: { code: 'handoff_not_found' } }, 404);
+    return json({ error: { code: "handoff_not_found" } }, 404);
   }
-  const TERMINAL_STATUSES_CLOSE = new Set(['completed', 'failed', 'rejected', 'expired']);
+  const TERMINAL_STATUSES_CLOSE = new Set(["completed", "failed", "rejected", "expired"]);
   if (TERMINAL_STATUSES_CLOSE.has(closeHandoff.status)) {
-    return json({ error: { code: 'handoff_terminal', status: closeHandoff.status } }, 409);
+    return json({ error: { code: "handoff_terminal", status: closeHandoff.status } }, 409);
   }
 
   const result = await shellSessionPool.closeSession({
@@ -259,8 +267,8 @@ export async function shellCloseRoute(req: Request, services: Services): Promise
   });
   recordShellEvent(services, {
     handoff_id: parsed.data.handoff_id,
-    kind: 'shell.session.close',
-    meta: { session_id: parsed.data.session_id, reason: 'explicit' },
+    kind: "shell.session.close",
+    meta: { session_id: parsed.data.session_id, reason: "explicit" },
   });
   clearApproved(parsed.data.handoff_id, parsed.data.session_id);
   return json(result);
@@ -269,17 +277,17 @@ export async function shellCloseRoute(req: Request, services: Services): Promise
 export async function shellListRoute(req: Request, services: Services): Promise<Response> {
   const shellSessionPool = (services as any).shellSessionPool;
   if (!shellSessionPool) {
-    return json({ error: { code: 'shell_disabled' } }, 503);
+    return json({ error: { code: "shell_disabled" } }, 503);
   }
 
-  const handoffId = new URL(req.url).searchParams.get('handoff_id');
+  const handoffId = new URL(req.url).searchParams.get("handoff_id");
   if (!handoffId) {
-    return json({ error: { code: 'missing_handoff_id' } }, 400);
+    return json({ error: { code: "missing_handoff_id" } }, 400);
   }
 
   const listHandoff = services.handoffReader.get(handoffId);
   if (!listHandoff) {
-    return json({ error: { code: 'handoff_not_found' } }, 404);
+    return json({ error: { code: "handoff_not_found" } }, 404);
   }
 
   return json({ sessions: shellSessionPool.listSessions(handoffId) });

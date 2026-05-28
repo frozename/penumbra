@@ -1,4 +1,4 @@
-import { Database } from 'bun:sqlite';
+import { Database } from "bun:sqlite";
 
 export interface RunTailOpts {
   dbPath: string;
@@ -26,7 +26,7 @@ export function runTail(opts: RunTailOpts): TailRow[] {
       SELECT ts, event_type, source, project_id, session_id, model,
              tokens_in, tokens_out, latency_ms, payload_summary
       FROM t0_events
-      ${opts.project ? 'WHERE project_id = ?' : ''}
+      ${opts.project ? "WHERE project_id = ?" : ""}
       ORDER BY ts DESC
       LIMIT ?`;
     const rows = opts.project

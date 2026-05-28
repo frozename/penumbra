@@ -1,11 +1,11 @@
-import type { Database } from 'bun:sqlite';
+import type { Database } from "bun:sqlite";
 import {
   DEFAULT_AGENT_KIND,
   inferAgentTaskTypeForRole,
   type AgentKind,
   type AgentRankOutput,
   type AgentTaskType,
-} from '../schemas/agent-performance.js';
+} from "../schemas/agent-performance.js";
 
 type AgentRoutePressureSnapshot = {
   snapshots: Array<{
@@ -26,11 +26,11 @@ type AgentRouteAgentchatConfig = {
     roles: string[];
     subscription_provider?: string;
     api_provider?: string;
-    pricing_mode?: 'api' | 'subscription';
+    pricing_mode?: "api" | "subscription";
   }>;
 };
 
-export type DetailMode = 'rank' | 'summary' | 'single';
+export type DetailMode = "rank" | "summary" | "single";
 
 export type RoleRoute = {
   agent: string;
@@ -61,20 +61,20 @@ export interface RouteAgentInput {
   agentKind?: AgentKind;
   riskClass?: string;
   agentchatConfig?: AgentRouteAgentchatConfig;
-  roleExplorationPolicy?: 'unsampled-first' | 'ranked-first';
+  roleExplorationPolicy?: "unsampled-first" | "ranked-first";
   defaultRoles?: Record<string, string>;
   agentRegistry?: string[] | null;
   applyPressure?: {
-    snapshots: AgentRoutePressureSnapshot['snapshots'];
+    snapshots: AgentRoutePressureSnapshot["snapshots"];
     warnings?: unknown[];
   };
   now?: Date;
 }
 
 export type RouteAgentOutput =
-  | { detail: 'rank'; candidates: AgentRankOutput }
-  | { detail: 'summary'; recommendations: AgentRecommendation[] }
-  | { detail: 'single'; route: RoleRoute | null };
+  | { detail: "rank"; candidates: AgentRankOutput }
+  | { detail: "summary"; recommendations: AgentRecommendation[] }
+  | { detail: "single"; route: RoleRoute | null };
 
 interface PerformanceRow {
   agent_name: string;
@@ -121,54 +121,54 @@ function clamp01(value: number): number {
 
 function outcomeValue(outcome: string): number {
   switch (outcome) {
-    case 'merged':
-    case 'pr_opened':
+    case "merged":
+    case "pr_opened":
       return 1;
-    case 'merged_with_concerns':
+    case "merged_with_concerns":
       return 0.85;
-    case 'partial':
+    case "partial":
       return 0.35;
-    case 'rejected':
+    case "rejected":
       return 0.2;
-    case 'failed':
-    case 'typecheck_failed':
-    case 'test_failed':
-    case 'pr_creation_failed':
+    case "failed":
+    case "typecheck_failed":
+    case "test_failed":
+    case "pr_creation_failed":
       return 0;
-    case 'no_changes':
-    case 'bypassed':
+    case "no_changes":
+    case "bypassed":
       return 0.5;
     default:
       return 0;
   }
 }
 
-function outcomeBucket(outcome: string): 'success' | 'failure' | 'neutral' {
+function outcomeBucket(outcome: string): "success" | "failure" | "neutral" {
   switch (outcome) {
-    case 'merged':
-    case 'pr_opened':
-    case 'merged_with_concerns':
-      return 'success';
-    case 'partial':
-    case 'rejected':
-    case 'failed':
-    case 'typecheck_failed':
-    case 'test_failed':
-    case 'pr_creation_failed':
-      return 'failure';
-    case 'no_changes':
-    case 'bypassed':
-      return 'neutral';
+    case "merged":
+    case "pr_opened":
+    case "merged_with_concerns":
+      return "success";
+    case "partial":
+    case "rejected":
+    case "failed":
+    case "typecheck_failed":
+    case "test_failed":
+    case "pr_creation_failed":
+      return "failure";
+    case "no_changes":
+    case "bypassed":
+      return "neutral";
     default:
-      return 'failure';
+      return "failure";
   }
 }
 
 function smokeValue(smoke: string | null): number {
-  if (smoke === 'y') return 1;
-  if (smoke === 'partial') return 0.5;
-  if (smoke === 'n/a') return 0.5;
-  if (smoke === 'n') return 0;
+  if (smoke === "y") return 1;
+  if (smoke === "partial") return 0.5;
+  if (smoke === "n/a") return 0.5;
+  if (smoke === "n") return 0;
   return 0.5;
 }
 
@@ -196,13 +196,13 @@ function summarizeAgent(agentName: string, rows: PerformanceRow[]): CandidateSum
   for (const row of rows) {
     if (row.ts > lastOutcomeAt) lastOutcomeAt = row.ts;
     const outcomeBucketValue = outcomeBucket(row.outcome);
-    if (outcomeBucketValue === 'success') successes++;
-    else if (outcomeBucketValue === 'neutral') neutral++;
+    if (outcomeBucketValue === "success") successes++;
+    else if (outcomeBucketValue === "neutral") neutral++;
     else failures++;
 
     outcomeScoreSum += outcomeValue(row.outcome);
 
-    if (outcomeBucketValue === 'success' && row.cost_usd != null) {
+    if (outcomeBucketValue === "success" && row.cost_usd != null) {
       successCostSum += row.cost_usd;
       successCostCount++;
     }
@@ -269,7 +269,10 @@ function summarizeAgent(agentName: string, rows: PerformanceRow[]): CandidateSum
   };
 }
 
-function scoreCandidate(c: CandidateSummary, opts: { includeCost: boolean; minCost: number | null; maxCost: number | null }): number {
+function scoreCandidate(
+  c: CandidateSummary,
+  opts: { includeCost: boolean; minCost: number | null; maxCost: number | null },
+): number {
   let raw: number;
   if (opts.includeCost) {
     let cost_score: number;
@@ -280,28 +283,51 @@ function scoreCandidate(c: CandidateSummary, opts: { includeCost: boolean; minCo
     } else {
       cost_score = clamp01((opts.maxCost - c.cost_per_success_usd) / (opts.maxCost - opts.minCost));
     }
-    raw = 0.30 * c._outcome_score + 0.20 * c._rounds_score + 0.20 * c._smoke_score + 0.15 * c._reviewer_score + 0.10 * c._maestro_score + 0.05 * cost_score;
+    raw =
+      0.3 * c._outcome_score +
+      0.2 * c._rounds_score +
+      0.2 * c._smoke_score +
+      0.15 * c._reviewer_score +
+      0.1 * c._maestro_score +
+      0.05 * cost_score;
   } else {
-    raw = 0.32 * c._outcome_score + 0.22 * c._rounds_score + 0.22 * c._smoke_score + 0.16 * c._reviewer_score + 0.08 * c._maestro_score;
+    raw =
+      0.32 * c._outcome_score +
+      0.22 * c._rounds_score +
+      0.22 * c._smoke_score +
+      0.16 * c._reviewer_score +
+      0.08 * c._maestro_score;
   }
   return clamp01(Math.round(raw * 10000) / 10000);
 }
 
-function resolveProvider(agent: NonNullable<AgentRouteAgentchatConfig['agents']>[number]): string | null {
-  if (agent.pricing_mode === 'subscription') return agent.subscription_provider ?? null;
+function resolveProvider(
+  agent: NonNullable<AgentRouteAgentchatConfig["agents"]>[number],
+): string | null {
+  if (agent.pricing_mode === "subscription") return agent.subscription_provider ?? null;
   return agent.api_provider ?? agent.subscription_provider ?? null;
 }
 
-function isOverPressure(provider: string, pressureSnapshot?: RouteAgentInput['applyPressure']): boolean {
+function isOverPressure(
+  provider: string,
+  pressureSnapshot?: RouteAgentInput["applyPressure"],
+): boolean {
   if (!pressureSnapshot) return false;
-  return pressureSnapshot.snapshots.some((snapshot) => snapshot.provider === provider && (snapshot.used_pct >= 0.9 || snapshot.source_kind === 'cooldown'));
+  return pressureSnapshot.snapshots.some(
+    (snapshot) =>
+      snapshot.provider === provider &&
+      (snapshot.used_pct >= 0.9 || snapshot.source_kind === "cooldown"),
+  );
 }
 
 function getAllowedAgents(input: RouteAgentInput): string[] | null {
   const role = input.role;
-  const roleAgents = role && input.agentchatConfig?.agents
-    ? input.agentchatConfig.agents.filter((agent) => agent.roles.includes(role)).map((agent) => agent.name)
-    : null;
+  const roleAgents =
+    role && input.agentchatConfig?.agents
+      ? input.agentchatConfig.agents
+          .filter((agent) => agent.roles.includes(role))
+          .map((agent) => agent.name)
+      : null;
   const registryAgents = input.agentRegistry ? input.agentRegistry : null;
 
   if (roleAgents == null && registryAgents == null) return null;
@@ -311,21 +337,39 @@ function getAllowedAgents(input: RouteAgentInput): string[] | null {
   return roleAgents.filter((name) => registrySet.has(name));
 }
 
-function queryRows(db: Database, taskType: string, agentKind: string, allowedAgents: string[] | null): PerformanceRow[] {
-  const rows = db.query<PerformanceRow, [string, string]>(
-    `SELECT agent_name, task_type, outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, latency_ms, ts, agent_kind, trust_score
+function queryRows(
+  db: Database,
+  taskType: string,
+  agentKind: string,
+  allowedAgents: string[] | null,
+): PerformanceRow[] {
+  const rows = db
+    .query<PerformanceRow, [string, string]>(
+      `SELECT agent_name, task_type, outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, latency_ms, ts, agent_kind, trust_score
      FROM agent_performance
      WHERE task_type = ? AND COALESCE(agent_kind, '${DEFAULT_AGENT_KIND}') = ?
      ORDER BY ts DESC`,
-  ).all(taskType, agentKind);
-  return allowedAgents == null ? rows : rows.filter((row) => allowedAgents.includes(row.agent_name));
+    )
+    .all(taskType, agentKind);
+  return allowedAgents == null
+    ? rows
+    : rows.filter((row) => allowedAgents.includes(row.agent_name));
 }
 
-function buildRank(db: Database, input: RouteAgentInput, taskType: AgentTaskType, allowedAgents: string[] | null): AgentRankOutput {
+function buildRank(
+  db: Database,
+  input: RouteAgentInput,
+  taskType: AgentTaskType,
+  allowedAgents: string[] | null,
+): AgentRankOutput {
   const now = input.now ?? new Date();
   const agentKind = input.agentKind ?? DEFAULT_AGENT_KIND;
-  const rows = queryRows(db, taskType, agentKind, allowedAgents).filter((row) => input.since ? row.ts >= new Date(input.since).toISOString() : true);
-  const visibleRows = input.includeNeutral ? rows : rows.filter((row) => outcomeBucket(row.outcome) !== 'neutral');
+  const rows = queryRows(db, taskType, agentKind, allowedAgents).filter((row) =>
+    input.since ? row.ts >= new Date(input.since).toISOString() : true,
+  );
+  const visibleRows = input.includeNeutral
+    ? rows
+    : rows.filter((row) => outcomeBucket(row.outcome) !== "neutral");
   const byAgent = new Map<string, PerformanceRow[]>();
   for (const row of visibleRows) {
     const list = byAgent.get(row.agent_name) ?? [];
@@ -335,12 +379,17 @@ function buildRank(db: Database, input: RouteAgentInput, taskType: AgentTaskType
   const summaries = Array.from(byAgent.entries())
     .map(([agentName, agentRows]) => summarizeAgent(agentName, agentRows))
     .filter((c) => c.samples >= (input.minSamples ?? 1));
-  const costs = input.includeCost ? summaries.map((s) => s.cost_per_success_usd).filter((v): v is number => v != null) : [];
+  const costs = input.includeCost
+    ? summaries.map((s) => s.cost_per_success_usd).filter((v): v is number => v != null)
+    : [];
   const minCost = costs.length > 0 ? Math.min(...costs) : null;
   const maxCost = costs.length > 0 ? Math.max(...costs) : null;
   return {
     task_type: taskType,
-    window: { from: input.since ? new Date(input.since).toISOString() : null, to: now.toISOString() },
+    window: {
+      from: input.since ? new Date(input.since).toISOString() : null,
+      to: now.toISOString(),
+    },
     candidates: summaries
       .map((s) => ({
         agent_name: s.agent_name,
@@ -357,25 +406,48 @@ function buildRank(db: Database, input: RouteAgentInput, taskType: AgentTaskType
         last_outcome_at: s.last_outcome_at,
         score: scoreCandidate(s, { includeCost: input.includeCost ?? false, minCost, maxCost }),
       }))
-      .sort((a, b) => b.score - a.score || b.success_rate - a.success_rate || a.agent_name.localeCompare(b.agent_name)),
+      .sort(
+        (a, b) =>
+          b.score - a.score ||
+          b.success_rate - a.success_rate ||
+          a.agent_name.localeCompare(b.agent_name),
+      ),
   };
 }
 
-function buildRecommendations(db: Database, input: RouteAgentInput, taskType: string, allowedAgents: string[] | null): AgentRecommendation[] {
+function buildRecommendations(
+  db: Database,
+  input: RouteAgentInput,
+  taskType: string,
+  allowedAgents: string[] | null,
+): AgentRecommendation[] {
   const windowDays = input.windowDays ?? 7;
   const now = input.now ?? new Date();
   const cutoff = new Date(now.getTime() - windowDays * 24 * 60 * 60 * 1000).toISOString();
   const agentKind = input.agentKind ?? DEFAULT_AGENT_KIND;
   // riskClass is accepted on the input shape for forward-compat; not yet consumed by ranking.
   void input.riskClass;
-  const rows = db.query<{ agent_name: string; task_type: string; samples: number; successes: number; avg_latency_ms: number | null; last_observed_at: string }, [string, string, string]>(
-    `SELECT agent_name, task_type, COUNT(*) AS samples, SUM(CASE WHEN ${SUCCESS_PREDICATE} THEN 1 ELSE 0 END) AS successes, AVG(latency_ms) AS avg_latency_ms, MAX(ts) AS last_observed_at
+  const rows = db
+    .query<
+      {
+        agent_name: string;
+        task_type: string;
+        samples: number;
+        successes: number;
+        avg_latency_ms: number | null;
+        last_observed_at: string;
+      },
+      [string, string, string]
+    >(
+      `SELECT agent_name, task_type, COUNT(*) AS samples, SUM(CASE WHEN ${SUCCESS_PREDICATE} THEN 1 ELSE 0 END) AS successes, AVG(latency_ms) AS avg_latency_ms, MAX(ts) AS last_observed_at
      FROM agent_performance
      WHERE task_type = ? AND ts >= ? AND COALESCE(agent_kind, '${DEFAULT_AGENT_KIND}') = ?
      GROUP BY agent_name
      ORDER BY (CAST(SUM(CASE WHEN ${SUCCESS_PREDICATE} THEN 1 ELSE 0 END) AS REAL) / COUNT(*)) DESC, (AVG(latency_ms) IS NULL) ASC, AVG(latency_ms) ASC`,
-  ).all(taskType, cutoff, agentKind);
-  const filtered = allowedAgents == null ? rows : rows.filter((row) => allowedAgents.includes(row.agent_name));
+    )
+    .all(taskType, cutoff, agentKind);
+  const filtered =
+    allowedAgents == null ? rows : rows.filter((row) => allowedAgents.includes(row.agent_name));
   return filtered.map((r) => ({
     agent_name: r.agent_name,
     task_type: r.task_type,
@@ -391,38 +463,62 @@ function chooseSingle(input: RouteAgentInput, allowedAgents: string[] | null): R
   const roleAgents = allowedAgents ?? [];
   if (roleAgents.length === 0) return null;
 
-  const taskType = input.taskType ?? inferAgentTaskTypeForRole(input.message ?? '', input.role);
+  const taskType = input.taskType ?? inferAgentTaskTypeForRole(input.message ?? "", input.role);
   const ranked = buildRank(input.db, input, taskType, allowedAgents);
   const roleAgentSet = new Set(roleAgents);
   const sampledAgents = new Set(ranked.candidates.map((candidate) => candidate.agent_name));
   const defaultAgent = input.defaultRoles?.[input.role];
-  const unsampledAlternate = roleAgents.find((agent) => agent !== defaultAgent && !sampledAgents.has(agent));
+  const unsampledAlternate = roleAgents.find(
+    (agent) => agent !== defaultAgent && !sampledAgents.has(agent),
+  );
   const unsampledAgent = roleAgents.find((agent) => !sampledAgents.has(agent));
   const rankedAgent = ranked.candidates.find((candidate) => roleAgentSet.has(candidate.agent_name));
 
-  const candidateOrder = input.roleExplorationPolicy === 'ranked-first'
-    ? [rankedAgent?.agent_name ?? null, defaultAgent ?? null, unsampledAlternate ?? null, unsampledAgent ?? null, roleAgents[0] ?? null]
-    : [unsampledAlternate ?? null, unsampledAgent ?? null, rankedAgent?.agent_name ?? null, defaultAgent ?? null, roleAgents[0] ?? null];
+  const candidateOrder =
+    input.roleExplorationPolicy === "ranked-first"
+      ? [
+          rankedAgent?.agent_name ?? null,
+          defaultAgent ?? null,
+          unsampledAlternate ?? null,
+          unsampledAgent ?? null,
+          roleAgents[0] ?? null,
+        ]
+      : [
+          unsampledAlternate ?? null,
+          unsampledAgent ?? null,
+          rankedAgent?.agent_name ?? null,
+          defaultAgent ?? null,
+          roleAgents[0] ?? null,
+        ];
 
-  const filteredAgent = candidateOrder.find((agentName): agentName is string => {
-    if (!agentName || !roleAgentSet.has(agentName)) return false;
-    if (!input.applyPressure) return true;
-    const agent = input.agentchatConfig?.agents.find((candidate) => candidate.name === agentName);
-    const provider = agent ? resolveProvider(agent) : null;
-    return !provider || !isOverPressure(provider, input.applyPressure);
-  }) ?? null;
+  const filteredAgent =
+    candidateOrder.find((agentName): agentName is string => {
+      if (!agentName || !roleAgentSet.has(agentName)) return false;
+      if (!input.applyPressure) return true;
+      const agent = input.agentchatConfig?.agents.find((candidate) => candidate.name === agentName);
+      const provider = agent ? resolveProvider(agent) : null;
+      return !provider || !isOverPressure(provider, input.applyPressure);
+    }) ?? null;
 
   return filteredAgent ? { agent: filteredAgent, role: input.role, taskType } : null;
 }
 
 export function routeAgent(input: RouteAgentInput): RouteAgentOutput {
   const allowedAgents = getAllowedAgents(input);
-  const taskType = input.taskType ?? (input.role ? inferAgentTaskTypeForRole(input.message ?? '', input.role) : undefined);
-  if (input.detail === 'rank') {
-    return { detail: 'rank', candidates: buildRank(input.db, input, taskType ?? 'unknown', allowedAgents) };
+  const taskType =
+    input.taskType ??
+    (input.role ? inferAgentTaskTypeForRole(input.message ?? "", input.role) : undefined);
+  if (input.detail === "rank") {
+    return {
+      detail: "rank",
+      candidates: buildRank(input.db, input, taskType ?? "unknown", allowedAgents),
+    };
   }
-  if (input.detail === 'summary') {
-    return { detail: 'summary', recommendations: buildRecommendations(input.db, input, taskType ?? 'unknown', allowedAgents) };
+  if (input.detail === "summary") {
+    return {
+      detail: "summary",
+      recommendations: buildRecommendations(input.db, input, taskType ?? "unknown", allowedAgents),
+    };
   }
-  return { detail: 'single', route: chooseSingle(input, allowedAgents) };
+  return { detail: "single", route: chooseSingle(input, allowedAgents) };
 }

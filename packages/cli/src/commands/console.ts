@@ -1,9 +1,9 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
-import { homedir } from 'node:os';
-import { dirname, join, normalize, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { existsSync, readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { homedir } from "node:os";
+import { dirname, join, normalize, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export interface PrepareConsoleServerOpts {
   port?: number;
@@ -42,27 +42,27 @@ interface DaemonBootstrapSnapshot {
 class ConsoleCommandError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'ConsoleCommandError';
+    this.name = "ConsoleCommandError";
   }
 }
 
-const SESSION_COOKIE = 'penumbra_session';
+const SESSION_COOKIE = "penumbra_session";
 
 const HOP_BY_HOP = new Set([
-  'connection',
-  'keep-alive',
-  'proxy-authenticate',
-  'proxy-authorization',
-  'te',
-  'trailer',
-  'transfer-encoding',
-  'upgrade',
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
 ]);
 
 const SECURITY_HEADERS: Record<string, string> = {
-  'X-Frame-Options': 'DENY',
-  'X-Content-Type-Options': 'nosniff',
-  'Referrer-Policy': 'no-referrer',
+  "X-Frame-Options": "DENY",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
 };
 
 function applySecurityHeaders(h: Headers): void {
@@ -74,23 +74,23 @@ function applySecurityHeaders(h: Headers): void {
 function resolveStorageRoot(explicit?: string): string {
   if (explicit) return explicit;
   if (process.env.PENUMBRA_STORAGE_ROOT) return process.env.PENUMBRA_STORAGE_ROOT;
-  return join(homedir(), '.penumbra');
+  return join(homedir(), ".penumbra");
 }
 
 function readDaemonBootstrap(storageRoot: string): DaemonBootstrapSnapshot {
-  const tokenPath = join(storageRoot, 'token');
+  const tokenPath = join(storageRoot, "token");
   if (!existsSync(tokenPath)) {
     throw new ConsoleCommandError(`no token found at ${tokenPath}; run \`penumbra init\` first`);
   }
-  const portPath = join(storageRoot, 'port');
+  const portPath = join(storageRoot, "port");
   if (!existsSync(portPath)) {
     throw new ConsoleCommandError(`no daemon port at ${portPath}; run \`penumbra start\` first`);
   }
-  const token = readFileSync(tokenPath, 'utf8').trim();
+  const token = readFileSync(tokenPath, "utf8").trim();
   if (!token) {
     throw new ConsoleCommandError(`empty token at ${tokenPath}; run \`penumbra init\` first`);
   }
-  const portRaw = readFileSync(portPath, 'utf8').trim();
+  const portRaw = readFileSync(portPath, "utf8").trim();
   const port = Number(portRaw);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new ConsoleCommandError(`invalid daemon port in ${portPath}: ${portRaw}`);
@@ -140,12 +140,14 @@ class FileDaemonBootstrap implements DaemonBootstrap {
 function findRepoRoot(start: string): string | null {
   let cur = start;
   for (let i = 0; i < 12; i++) {
-    const pkgPath = join(cur, 'package.json');
+    const pkgPath = join(cur, "package.json");
     if (existsSync(pkgPath)) {
       try {
-        const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { name?: string };
-        if (pkg.name === 'penumbra') return cur;
-      } catch { /* fall through */ }
+        const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { name?: string };
+        if (pkg.name === "penumbra") return cur;
+      } catch {
+        /* fall through */
+      }
     }
     const parent = dirname(cur);
     if (parent === cur) break;
@@ -159,21 +161,21 @@ function resolveDistPath(explicit: string | undefined): string {
   if (process.env.PENUMBRA_CONSOLE_DIST) return resolve(process.env.PENUMBRA_CONSOLE_DIST);
   const argvPath = process.argv[1];
   if (argvPath) {
-    const adjacent = join(dirname(argvPath), 'console-dist');
-    if (existsSync(join(adjacent, 'index.html'))) return adjacent;
+    const adjacent = join(dirname(argvPath), "console-dist");
+    if (existsSync(join(adjacent, "index.html"))) return adjacent;
   }
   const here = dirname(fileURLToPath(import.meta.url));
   const repoRoot = findRepoRoot(here);
   if (!repoRoot) {
     throw new ConsoleCommandError(
-      'could not locate console assets: pass distPath, set PENUMBRA_CONSOLE_DIST, or run from a penumbra checkout',
+      "could not locate console assets: pass distPath, set PENUMBRA_CONSOLE_DIST, or run from a penumbra checkout",
     );
   }
-  return join(repoRoot, 'packages/console/dist');
+  return join(repoRoot, "packages/console/dist");
 }
 
 function ensureDistReady(distPath: string): void {
-  const indexPath = join(distPath, 'index.html');
+  const indexPath = join(distPath, "index.html");
   if (!existsSync(distPath) || !existsSync(indexPath)) {
     throw new ConsoleCommandError(
       `Console assets not found at ${distPath}.\nRun \`bun --cwd packages/console run build\` first.`,
@@ -182,8 +184,8 @@ function ensureDistReady(distPath: string): void {
 }
 
 function safeJoin(root: string, requested: string): string | null {
-  let rel = requested.replace(/\\/g, '/');
-  if (rel.startsWith('/')) rel = rel.slice(1);
+  let rel = requested.replace(/\\/g, "/");
+  if (rel.startsWith("/")) rel = rel.slice(1);
   const candidate = normalize(join(root, rel));
   const rootNorm = normalize(root);
   if (candidate !== rootNorm && !candidate.startsWith(rootNorm + sep)) {
@@ -195,8 +197,8 @@ function safeJoin(root: string, requested: string): string | null {
 function parseCookies(header: string | null): Map<string, string> {
   const out = new Map<string, string>();
   if (!header) return out;
-  for (const part of header.split(';')) {
-    const eq = part.indexOf('=');
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
     if (eq < 0) continue;
     const k = part.slice(0, eq).trim();
     const v = part.slice(eq + 1).trim();
@@ -210,8 +212,8 @@ function filterUpstreamHeaders(upstream: Headers): Headers {
   upstream.forEach((value, key) => {
     const lk = key.toLowerCase();
     if (HOP_BY_HOP.has(lk)) return;
-    if (lk === 'set-cookie') return;
-    if (lk === 'authorization') return;
+    if (lk === "set-cookie") return;
+    if (lk === "authorization") return;
     out.set(key, value);
   });
   applySecurityHeaders(out);
@@ -219,35 +221,39 @@ function filterUpstreamHeaders(upstream: Headers): Headers {
 }
 
 function setProxyVary(headers: Headers): void {
-  headers.set('Vary', 'Origin, Sec-Fetch-Site');
+  headers.set("Vary", "Origin, Sec-Fetch-Site");
 }
 
 function isMutatingMethod(method: string): boolean {
-  return method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE';
+  return method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE";
 }
 
-function makeUpstreamRequestInit(req: Request, token: string, body: ArrayBuffer | undefined): RequestInit {
+function makeUpstreamRequestInit(
+  req: Request,
+  token: string,
+  body: ArrayBuffer | undefined,
+): RequestInit {
   const fwdHeaders = new Headers();
   req.headers.forEach((value, key) => {
     const lk = key.toLowerCase();
     if (HOP_BY_HOP.has(lk)) return;
-    if (lk === 'cookie') return;
-    if (lk === 'host') return;
-    if (lk === 'authorization') return;
-    if (lk === 'content-length') return;
+    if (lk === "cookie") return;
+    if (lk === "host") return;
+    if (lk === "authorization") return;
+    if (lk === "content-length") return;
     fwdHeaders.set(key, value);
   });
-  fwdHeaders.set('Authorization', `Bearer ${token}`);
+  fwdHeaders.set("Authorization", `Bearer ${token}`);
 
   const init: RequestInit = {
     method: req.method,
     headers: fwdHeaders,
-    redirect: 'manual',
+    redirect: "manual",
   };
   if (body !== undefined) {
     init.body = body;
     // Bun/undici streaming requires this to allow request bodies to flow.
-    (init as RequestInit & { duplex?: string }).duplex = 'half';
+    (init as RequestInit & { duplex?: string }).duplex = "half";
   }
   return init;
 }
@@ -258,7 +264,7 @@ async function fetchUpstream(
   daemon: DaemonBootstrap,
   body: ArrayBuffer | undefined,
 ): Promise<{ upstream: Response | null; error: Error | null }> {
-  const targetUrl = `http://127.0.0.1:${daemon.port()}${targetPath || '/'}`;
+  const targetUrl = `http://127.0.0.1:${daemon.port()}${targetPath || "/"}`;
   const init = makeUpstreamRequestInit(req, daemon.token(), body);
   try {
     const upstream = await fetch(targetUrl, init);
@@ -275,28 +281,25 @@ function strictIndexCsp(html: string): string {
   );
 }
 
-async function proxyToDaemon(
-  req: Request,
-  url: URL,
-  daemon: DaemonBootstrap,
-): Promise<Response> {
-  const targetPath = url.pathname.replace(/^\/api/, '') + url.search;
-  const body = req.method !== 'GET' && req.method !== 'HEAD' ? await req.arrayBuffer() : undefined;
+async function proxyToDaemon(req: Request, url: URL, daemon: DaemonBootstrap): Promise<Response> {
+  const targetPath = url.pathname.replace(/^\/api/, "") + url.search;
+  const body = req.method !== "GET" && req.method !== "HEAD" ? await req.arrayBuffer() : undefined;
 
   let attempt = await fetchUpstream(req, targetPath, daemon, body);
   const shouldRetry =
-    attempt.error !== null
-    || (attempt.upstream !== null && (attempt.upstream.status === 401 || attempt.upstream.status === 403));
+    attempt.error !== null ||
+    (attempt.upstream !== null &&
+      (attempt.upstream.status === 401 || attempt.upstream.status === 403));
   if (shouldRetry && daemon.refresh()) {
     attempt = await fetchUpstream(req, targetPath, daemon, body);
   }
 
   if (attempt.error) {
-    const headers = new Headers({ 'content-type': 'application/json' });
+    const headers = new Headers({ "content-type": "application/json" });
     applySecurityHeaders(headers);
     setProxyVary(headers);
     return new Response(
-      JSON.stringify({ error: 'upstream_unreachable', message: attempt.error.message }),
+      JSON.stringify({ error: "upstream_unreachable", message: attempt.error.message }),
       { status: 502, headers },
     );
   }
@@ -311,7 +314,7 @@ async function proxyToDaemon(
 }
 
 function jsonError(status: number, body: unknown): Response {
-  const headers = new Headers({ 'content-type': 'application/json' });
+  const headers = new Headers({ "content-type": "application/json" });
   applySecurityHeaders(headers);
   return new Response(JSON.stringify(body), { status, headers });
 }
@@ -324,26 +327,26 @@ export async function prepareConsoleServer(
   const distPath = resolveDistPath(opts.distPath);
   ensureDistReady(distPath);
   const distNorm = normalize(distPath);
-  const sessionNonce = randomBytes(32).toString('hex');
+  const sessionNonce = randomBytes(32).toString("hex");
   let cachedStrictIndex: string | null = null;
 
   const server = Bun.serve({
-    hostname: '127.0.0.1',
+    hostname: "127.0.0.1",
     port: opts.port ?? 0,
     async fetch(req) {
       const url = new URL(req.url);
 
-      if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
-        const cookies = parseCookies(req.headers.get('cookie'));
+      if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
+        const cookies = parseCookies(req.headers.get("cookie"));
         if (cookies.get(SESSION_COOKIE) !== sessionNonce) {
-          return jsonError(401, { error: 'invalid_session' });
+          return jsonError(401, { error: "invalid_session" });
         }
         if (isMutatingMethod(req.method)) {
-          const secFetchSite = req.headers.get('sec-fetch-site');
-          const requestOrigin = req.headers.get('origin');
+          const secFetchSite = req.headers.get("sec-fetch-site");
+          const requestOrigin = req.headers.get("origin");
           const expectedOrigin = `${url.protocol}//${url.host}`;
-          if (secFetchSite !== 'same-origin' || requestOrigin !== expectedOrigin) {
-            const res = jsonError(403, { error: 'cross_site_request_forbidden' });
+          if (secFetchSite !== "same-origin" || requestOrigin !== expectedOrigin) {
+            const res = jsonError(403, { error: "cross_site_request_forbidden" });
             setProxyVary(res.headers);
             return res;
           }
@@ -351,28 +354,28 @@ export async function prepareConsoleServer(
         return proxyToDaemon(req, url, daemon);
       }
 
-      const requested = url.pathname === '/' ? '/index.html' : url.pathname;
+      const requested = url.pathname === "/" ? "/index.html" : url.pathname;
       const file = safeJoin(distNorm, requested);
       if (!file) {
-        const headers = new Headers({ 'content-type': 'text/plain' });
+        const headers = new Headers({ "content-type": "text/plain" });
         applySecurityHeaders(headers);
-        return new Response('forbidden', { status: 403, headers });
+        return new Response("forbidden", { status: 403, headers });
       }
-      const isIndex = file === join(distNorm, 'index.html');
+      const isIndex = file === join(distNorm, "index.html");
       if (!isIndex && !existsSync(file)) {
-        const headers = new Headers({ 'content-type': 'text/plain' });
+        const headers = new Headers({ "content-type": "text/plain" });
         applySecurityHeaders(headers);
-        return new Response('not found', { status: 404, headers });
+        return new Response("not found", { status: 404, headers });
       }
 
       if (isIndex) {
         if (cachedStrictIndex === null) {
-          cachedStrictIndex = strictIndexCsp(readFileSync(file, 'utf8'));
+          cachedStrictIndex = strictIndexCsp(readFileSync(file, "utf8"));
         }
         const headers = new Headers({
-          'content-type': 'text/html; charset=utf-8',
-          'cache-control': 'no-store',
-          'set-cookie': `${SESSION_COOKIE}=${sessionNonce}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400`,
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": "no-store",
+          "set-cookie": `${SESSION_COOKIE}=${sessionNonce}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400`,
         });
         applySecurityHeaders(headers);
         return new Response(cachedStrictIndex, { headers });
@@ -384,7 +387,7 @@ export async function prepareConsoleServer(
     },
   });
 
-  const port = server.port ?? (opts.port ?? 0);
+  const port = server.port ?? opts.port ?? 0;
   const url = `http://127.0.0.1:${port}`;
   return {
     port,
@@ -399,20 +402,20 @@ export async function prepareConsoleServer(
 function openBrowser(url: string, stderr: (line: string) => void): void {
   let cmd: string;
   let args: string[];
-  if (process.platform === 'darwin') {
-    cmd = 'open';
+  if (process.platform === "darwin") {
+    cmd = "open";
     args = [url];
-  } else if (process.platform === 'win32') {
-    cmd = 'cmd';
-    args = ['/c', 'start', '', url];
+  } else if (process.platform === "win32") {
+    cmd = "cmd";
+    args = ["/c", "start", "", url];
   } else {
-    cmd = 'xdg-open';
+    cmd = "xdg-open";
     args = [url];
   }
   try {
-    const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
+    const child = spawn(cmd, args, { stdio: "ignore", detached: true });
     child.unref();
-    child.on('error', (err) => {
+    child.on("error", (err) => {
       stderr(`Could not open browser automatically. Visit ${url} manually. (${err.message})`);
     });
   } catch (err) {
@@ -456,8 +459,8 @@ export async function runConsole(opts: PrepareConsoleServerOpts): Promise<{ exit
       await prepared.stop();
       resolveSignal();
     };
-    process.once('SIGINT', stop);
-    process.once('SIGTERM', stop);
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
   });
   return { exitCode: 0 };
 }

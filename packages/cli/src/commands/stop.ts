@@ -1,6 +1,6 @@
-import { existsSync, readFileSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
-import type { DaemonHandle } from '../../../daemon/src/serve.js';
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import type { DaemonHandle } from "../../../daemon/src/serve.js";
 
 export interface RunStopOpts {
   storageRoot: string;
@@ -8,15 +8,19 @@ export interface RunStopOpts {
 }
 
 export async function runStop(opts: RunStopOpts): Promise<number> {
-  const pidPath = join(opts.storageRoot, 'pid');
-  const portPath = join(opts.storageRoot, 'port');
+  const pidPath = join(opts.storageRoot, "pid");
+  const portPath = join(opts.storageRoot, "port");
   try {
     opts.handle?.stop();
   } finally {
     if (!opts.handle && existsSync(pidPath)) {
-      const pid = Number(readFileSync(pidPath, 'utf8'));
+      const pid = Number(readFileSync(pidPath, "utf8"));
       if (Number.isInteger(pid) && pid > 0) {
-        try { process.kill(pid, 'SIGTERM'); } catch { /* noop */ }
+        try {
+          process.kill(pid, "SIGTERM");
+        } catch {
+          /* noop */
+        }
       }
     }
     for (const p of [portPath, pidPath]) {

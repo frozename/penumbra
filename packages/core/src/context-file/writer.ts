@@ -1,7 +1,7 @@
-import { Database } from 'bun:sqlite';
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { assertSafeProjectId } from '../schemas/project-id.js';
+import { Database } from "bun:sqlite";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { assertSafeProjectId } from "../schemas/project-id.js";
 
 export interface ContextFileWriterOpts {
   db: Database;
@@ -55,40 +55,43 @@ export class ContextFileWriter {
       .all(projectId, this.opts.topK);
 
     const parts: string[] = [];
-    parts.push('---');
+    parts.push("---");
     parts.push(`generated_at: ${JSON.stringify(new Date().toISOString())}`);
     parts.push(`project_id: ${JSON.stringify(projectId)}`);
     parts.push(`t1_count: ${rollups.length}`);
     parts.push(`t2_count: ${memories.length}`);
-    parts.push('---');
-    parts.push('');
+    parts.push("---");
+    parts.push("");
 
     if (rollups.length === 0 && memories.length === 0) {
-      parts.push('## no memories yet');
-      parts.push('');
-      parts.push('Observations have not been rolled up for this project. Use the tool for a few sessions and memories will populate here.');
+      parts.push("## no memories yet");
+      parts.push("");
+      parts.push(
+        "Observations have not been rolled up for this project. Use the tool for a few sessions and memories will populate here.",
+      );
     } else {
       if (memories.length > 0) {
-        parts.push('## Cross-session memories');
+        parts.push("## Cross-session memories");
         for (const m of memories) parts.push(`### ${m.title}\n\n${m.body}\n`);
       }
       if (rollups.length > 0) {
-        parts.push('## Recent sessions');
+        parts.push("## Recent sessions");
         for (const r of rollups) {
-          parts.push(`### ${r.started_at} → ${r.ended_at ?? 'ongoing'}`);
+          parts.push(`### ${r.started_at} → ${r.ended_at ?? "ongoing"}`);
           if (r.first_prompt_excerpt) parts.push(`- **First prompt:** ${r.first_prompt_excerpt}`);
-          if (r.last_response_excerpt) parts.push(`- **Last response:** ${r.last_response_excerpt}`);
+          if (r.last_response_excerpt)
+            parts.push(`- **Last response:** ${r.last_response_excerpt}`);
           if (r.tool_calls_summary) parts.push(`- **Tools:** ${r.tool_calls_summary}`);
-          parts.push('');
+          parts.push("");
         }
       }
     }
 
-    const dir = join(this.opts.storageRoot, 'context', projectId);
+    const dir = join(this.opts.storageRoot, "context", projectId);
     mkdirSync(dir, { recursive: true });
     const tmp = join(dir, `latest.md.${process.pid}.tmp`);
-    const final = join(dir, 'latest.md');
-    writeFileSync(tmp, parts.join('\n') + '\n', { mode: 0o644 });
+    const final = join(dir, "latest.md");
+    writeFileSync(tmp, parts.join("\n") + "\n", { mode: 0o644 });
     renameSync(tmp, final);
   }
 }

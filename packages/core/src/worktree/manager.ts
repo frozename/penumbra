@@ -1,11 +1,11 @@
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { promisify } from 'node:util';
-import { exec as execCb } from 'node:child_process';
-import { createLogger, type Logger } from '../logger.js';
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { promisify } from "node:util";
+import { exec as execCb } from "node:child_process";
+import { createLogger, type Logger } from "../logger.js";
 
 const exec = promisify(execCb);
-const NOOP_LOG = createLogger({ component: 'worktree-manager', level: 'silent' });
+const NOOP_LOG = createLogger({ component: "worktree-manager", level: "silent" });
 
 export interface WorktreeHandle {
   handoffId: string;
@@ -13,7 +13,7 @@ export interface WorktreeHandle {
   branchName: string;
   storageRoot: string;
   createdAt: string;
-  status: 'created' | 'merged' | 'failed' | 'expired';
+  status: "created" | "merged" | "failed" | "expired";
   projectId?: string;
 }
 
@@ -42,7 +42,7 @@ export class WorktreeManager {
     this.rootDir =
       opts?.rootDir ||
       process.env.PENUMBRA_WORKTREE_ROOT ||
-      '/Volumes/WorkSSD/repos/penumbra-worktrees/';
+      "/Volumes/WorkSSD/repos/penumbra-worktrees/";
     this.mainRepoDir = opts?.mainRepoDir || process.cwd();
     this.log = opts?.log ?? NOOP_LOG;
     this.resolveProjectRoot = opts?.resolveProjectRoot;
@@ -82,9 +82,9 @@ export class WorktreeManager {
         const wtPath = path.join(this.rootDir, handoffId);
 
         // A valid git worktree has a .git file (not directory) containing `gitdir: ...`
-        if (fs.existsSync(path.join(wtPath, '.git'))) {
+        if (fs.existsSync(path.join(wtPath, ".git"))) {
           const branchName = `agent/${handoffId}`;
-          const storageRoot = path.join(wtPath, '.test-storage');
+          const storageRoot = path.join(wtPath, ".test-storage");
 
           let createdAt = new Date().toISOString();
           try {
@@ -100,7 +100,7 @@ export class WorktreeManager {
             branchName,
             storageRoot,
             createdAt,
-            status: 'created',
+            status: "created",
           });
           mirrorNodeModuleSymlinks(this.mainRepoDir, wtPath, this.log);
         }
@@ -108,10 +108,7 @@ export class WorktreeManager {
     }
   }
 
-  async createWorktree(
-    handoffId: string,
-    opts?: CreateOpts
-  ): Promise<WorktreeHandle> {
+  async createWorktree(handoffId: string, opts?: CreateOpts): Promise<WorktreeHandle> {
     if (this.worktrees.has(handoffId)) {
       throw new Error(`Worktree for handoff ${handoffId} already exists`);
     }
@@ -133,7 +130,7 @@ export class WorktreeManager {
 
     const wtPath = path.join(base, handoffId);
     const branchName = `agent/${handoffId}`;
-    const baseRef = opts?.baseRef || 'HEAD';
+    const baseRef = opts?.baseRef || "HEAD";
 
     try {
       // 1. Add detached worktree
@@ -152,15 +149,15 @@ export class WorktreeManager {
       mirrorNodeModuleSymlinks(repoRoot, wtPath, this.log);
 
       // 4. Copy bun.lock (do not symlink to avoid dirty git state)
-      const mainBunLock = path.join(repoRoot, 'bun.lock');
-      const wtBunLock = path.join(wtPath, 'bun.lock');
+      const mainBunLock = path.join(repoRoot, "bun.lock");
+      const wtBunLock = path.join(wtPath, "bun.lock");
       if (fs.existsSync(mainBunLock)) {
         fs.rmSync(wtBunLock, { force: true });
         fs.copyFileSync(mainBunLock, wtBunLock);
       }
 
       // 5. Create .test-storage/ dir
-      const storageRoot = path.join(wtPath, '.test-storage');
+      const storageRoot = path.join(wtPath, ".test-storage");
       fs.mkdirSync(storageRoot, { recursive: true });
 
       const handle: WorktreeHandle = {
@@ -169,7 +166,7 @@ export class WorktreeManager {
         branchName,
         storageRoot,
         createdAt: new Date().toISOString(),
-        status: 'created',
+        status: "created",
         projectId: project_id,
       };
 
@@ -196,7 +193,7 @@ export class WorktreeManager {
     opts?: { project_id?: string },
   ): Promise<string> {
     if (ancestorRefs.length === 0) {
-      throw new Error('stageMergedBase: empty ancestorRefs');
+      throw new Error("stageMergedBase: empty ancestorRefs");
     }
     if (ancestorRefs.length === 1) return ancestorRefs[0]!;
 
@@ -239,9 +236,9 @@ export class WorktreeManager {
     // lookups consistent across processes.
     const base = this.baseFor(project_id);
     const wtPath = path.join(base, handoffId);
-    if (!fs.existsSync(path.join(wtPath, '.git'))) return null;
+    if (!fs.existsSync(path.join(wtPath, ".git"))) return null;
     const branchName = `agent/${handoffId}`;
-    const storageRoot = path.join(wtPath, '.test-storage');
+    const storageRoot = path.join(wtPath, ".test-storage");
     let createdAt = new Date().toISOString();
     try {
       createdAt = fs.statSync(wtPath).birthtime.toISOString();
@@ -254,7 +251,7 @@ export class WorktreeManager {
       branchName,
       storageRoot,
       createdAt,
-      status: 'created',
+      status: "created",
       projectId: project_id,
     };
     this.worktrees.set(handoffId, handle);
@@ -265,11 +262,7 @@ export class WorktreeManager {
     return Array.from(this.worktrees.values());
   }
 
-  async teardownWorktree(
-    handoffId: string,
-    force?: boolean,
-    project_id?: string
-  ): Promise<void> {
+  async teardownWorktree(handoffId: string, force?: boolean, project_id?: string): Promise<void> {
     const handle = this.worktrees.get(handoffId);
     const effectiveProjectId = handle?.projectId ?? project_id;
     const repoRoot = this.repoRootFor(effectiveProjectId);
@@ -279,26 +272,26 @@ export class WorktreeManager {
       const base = this.baseFor(effectiveProjectId);
       const wtPath = path.join(base, handoffId);
       if (fs.existsSync(wtPath)) {
-         const forceFlag = force ? '--force' : '';
-         await exec(`git worktree remove ${forceFlag} "${wtPath}"`, {
-            cwd: repoRoot,
-          }).catch(() => {});
+        const forceFlag = force ? "--force" : "";
+        await exec(`git worktree remove ${forceFlag} "${wtPath}"`, {
+          cwd: repoRoot,
+        }).catch(() => {});
       }
       return;
     }
 
-    const forceFlag = force ? '--force' : '';
+    const forceFlag = force ? "--force" : "";
 
     if (!force) {
       // Remove framework-injected files so git doesn't complain about modified/untracked files
-      const wtBunLock = path.join(handle.path, 'bun.lock');
+      const wtBunLock = path.join(handle.path, "bun.lock");
       if (fs.existsSync(wtBunLock)) {
         fs.rmSync(wtBunLock, { force: true });
         // bun.lock is git-tracked here, so restore the tracked copy before
         // `git worktree remove` checks for local modifications.
         await exec(`git -C "${handle.path}" checkout bun.lock`).catch(() => {});
       }
-      const storageRoot = path.join(handle.path, '.test-storage');
+      const storageRoot = path.join(handle.path, ".test-storage");
       if (fs.existsSync(storageRoot)) {
         fs.rmSync(storageRoot, { recursive: true, force: true });
       }
@@ -333,30 +326,26 @@ function mirrorNodeModuleSymlinks(mainRoot: string, wtRoot: string, log: Logger 
     return;
   }
 
-  const topMain = path.join(mainRoot, 'node_modules');
-  const topWt = path.join(wtRoot, 'node_modules');
+  const topMain = path.join(mainRoot, "node_modules");
+  const topWt = path.join(wtRoot, "node_modules");
   if (fs.existsSync(topMain)) {
     mirrorSingleNodeModules(topMain, topWt, log);
   }
 
   for (const relDir of getWorkspaceDirsWithNodeModules(mainRoot, log)) {
     mirrorSingleNodeModules(
-      path.join(mainRoot, relDir, 'node_modules'),
-      path.join(wtRoot, relDir, 'node_modules'),
-      log
+      path.join(mainRoot, relDir, "node_modules"),
+      path.join(wtRoot, relDir, "node_modules"),
+      log,
     );
   }
 }
 
-function removeNodeModuleSymlinks(
-  mainRoot: string,
-  wtRoot: string,
-  log: Logger = NOOP_LOG
-): void {
-  tryRemoveNodeModules(path.join(wtRoot, 'node_modules'), log);
+function removeNodeModuleSymlinks(mainRoot: string, wtRoot: string, log: Logger = NOOP_LOG): void {
+  tryRemoveNodeModules(path.join(wtRoot, "node_modules"), log);
 
   for (const relDir of getWorkspaceDirsWithNodeModules(mainRoot, log)) {
-    tryRemoveNodeModules(path.join(wtRoot, relDir, 'node_modules'), log);
+    tryRemoveNodeModules(path.join(wtRoot, relDir, "node_modules"), log);
   }
 }
 
@@ -364,15 +353,15 @@ function mirrorSingleNodeModules(mainNm: string, wtNm: string, log: Logger): voi
   try {
     fs.rmSync(wtNm, { recursive: true, force: true });
   } catch (err) {
-    logCaughtError(log, 'failed to remove existing worktree node_modules', err, { path: wtNm });
+    logCaughtError(log, "failed to remove existing worktree node_modules", err, { path: wtNm });
     return;
   }
 
   try {
     fs.mkdirSync(path.dirname(wtNm), { recursive: true });
-    fs.symlinkSync(mainNm, wtNm, 'dir');
+    fs.symlinkSync(mainNm, wtNm, "dir");
   } catch (err) {
-    logCaughtError(log, 'failed to mirror worktree node_modules symlink', err, {
+    logCaughtError(log, "failed to mirror worktree node_modules symlink", err, {
       path: wtNm,
       target: mainNm,
     });
@@ -381,10 +370,13 @@ function mirrorSingleNodeModules(mainNm: string, wtNm: string, log: Logger): voi
 
   try {
     if (fs.readlinkSync(wtNm) !== mainNm) {
-      log.warn({ path: wtNm, target: mainNm }, 'mirrored worktree node_modules symlink target mismatch');
+      log.warn(
+        { path: wtNm, target: mainNm },
+        "mirrored worktree node_modules symlink target mismatch",
+      );
     }
   } catch (err) {
-    logCaughtError(log, 'failed to verify mirrored worktree node_modules symlink', err, {
+    logCaughtError(log, "failed to verify mirrored worktree node_modules symlink", err, {
       path: wtNm,
       target: mainNm,
     });
@@ -399,19 +391,19 @@ function tryRemoveNodeModules(targetPath: string, log: Logger): void {
     }
   } catch (err) {
     if (isMissingError(err)) return;
-    logCaughtError(log, 'failed to remove mirrored worktree node_modules', err, {
+    logCaughtError(log, "failed to remove mirrored worktree node_modules", err, {
       path: targetPath,
     });
   }
 }
 
 function getWorkspaceDirsWithNodeModules(mainRoot: string, log: Logger): string[] {
-  const packageJsonPath = path.join(mainRoot, 'package.json');
+  const packageJsonPath = path.join(mainRoot, "package.json");
   let rawPackageJson: string;
   try {
-    rawPackageJson = fs.readFileSync(packageJsonPath, 'utf8');
+    rawPackageJson = fs.readFileSync(packageJsonPath, "utf8");
   } catch (err) {
-    logCaughtError(log, 'failed to read main repo package.json for workspaces', err, {
+    logCaughtError(log, "failed to read main repo package.json for workspaces", err, {
       path: packageJsonPath,
     });
     return [];
@@ -421,7 +413,7 @@ function getWorkspaceDirsWithNodeModules(mainRoot: string, log: Logger): string[
   try {
     parsed = JSON.parse(rawPackageJson);
   } catch (err) {
-    logCaughtError(log, 'failed to parse main repo package.json for workspaces', err, {
+    logCaughtError(log, "failed to parse main repo package.json for workspaces", err, {
       path: packageJsonPath,
     });
     return [];
@@ -430,7 +422,7 @@ function getWorkspaceDirsWithNodeModules(mainRoot: string, log: Logger): string[
   const matches = new Set<string>();
   for (const pattern of extractWorkspacePatterns(parsed)) {
     for (const relDir of expandWorkspacePattern(mainRoot, pattern, log)) {
-      if (fs.existsSync(path.join(mainRoot, relDir, 'node_modules'))) {
+      if (fs.existsSync(path.join(mainRoot, relDir, "node_modules"))) {
         matches.add(relDir);
       }
     }
@@ -439,19 +431,19 @@ function getWorkspaceDirsWithNodeModules(mainRoot: string, log: Logger): string[
 }
 
 function extractWorkspacePatterns(parsedPackageJson: unknown): string[] {
-  if (!parsedPackageJson || typeof parsedPackageJson !== 'object') {
+  if (!parsedPackageJson || typeof parsedPackageJson !== "object") {
     return [];
   }
 
   const workspaces = (parsedPackageJson as { workspaces?: unknown }).workspaces;
   if (Array.isArray(workspaces)) {
-    return workspaces.filter((pattern): pattern is string => typeof pattern === 'string');
+    return workspaces.filter((pattern): pattern is string => typeof pattern === "string");
   }
 
-  if (workspaces && typeof workspaces === 'object') {
+  if (workspaces && typeof workspaces === "object") {
     const packages = (workspaces as { packages?: unknown }).packages;
     if (Array.isArray(packages)) {
-      return packages.filter((pattern): pattern is string => typeof pattern === 'string');
+      return packages.filter((pattern): pattern is string => typeof pattern === "string");
     }
   }
 
@@ -459,7 +451,7 @@ function extractWorkspacePatterns(parsedPackageJson: unknown): string[] {
 }
 
 function expandWorkspacePattern(mainRoot: string, pattern: string, log: Logger): string[] {
-  const segments = pattern.replace(/\\/g, '/').split('/').filter(Boolean);
+  const segments = pattern.replace(/\\/g, "/").split("/").filter(Boolean);
   const matches: string[] = [];
 
   const visit = (index: number, relDir: string) => {
@@ -469,7 +461,7 @@ function expandWorkspacePattern(mainRoot: string, pattern: string, log: Logger):
     }
 
     const segment = segments[index]!;
-    if (!segment.includes('*')) {
+    if (!segment.includes("*")) {
       const nextRel = relDir ? path.join(relDir, segment) : segment;
       const nextAbs = path.join(mainRoot, nextRel);
       try {
@@ -478,7 +470,7 @@ function expandWorkspacePattern(mainRoot: string, pattern: string, log: Logger):
         }
       } catch (err) {
         if (isMissingError(err)) return;
-        logCaughtError(log, 'failed to inspect workspace path while expanding workspaces', err, {
+        logCaughtError(log, "failed to inspect workspace path while expanding workspaces", err, {
           path: nextAbs,
           pattern,
         });
@@ -492,7 +484,7 @@ function expandWorkspacePattern(mainRoot: string, pattern: string, log: Logger):
       entries = fs.readdirSync(currentAbs, { withFileTypes: true });
     } catch (err) {
       if (isMissingError(err)) return;
-      logCaughtError(log, 'failed to read workspace parent while expanding workspaces', err, {
+      logCaughtError(log, "failed to read workspace parent while expanding workspaces", err, {
         path: currentAbs,
         pattern,
       });
@@ -508,17 +500,22 @@ function expandWorkspacePattern(mainRoot: string, pattern: string, log: Logger):
     }
   };
 
-  visit(0, '');
+  visit(0, "");
   return matches;
 }
 
 function globSegmentToRegExp(segment: string): RegExp {
-  const escaped = segment.replace(/[|\\{}()[\]^$+?.]/g, '\\$&').replace(/\*/g, '.*');
+  const escaped = segment.replace(/[|\\{}()[\]^$+?.]/g, "\\$&").replace(/\*/g, ".*");
   return new RegExp(`^${escaped}$`);
 }
 
 function isMissingError(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && 'code' in err && (err as { code?: string }).code === 'ENOENT';
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code?: string }).code === "ENOENT"
+  );
 }
 
 function resolveExistingPath(targetPath: string): string {
@@ -533,7 +530,7 @@ function logCaughtError(
   log: Logger,
   message: string,
   err: unknown,
-  context: Record<string, unknown>
+  context: Record<string, unknown>,
 ): void {
   log.warn({ ...context, err }, message);
 }

@@ -1,19 +1,17 @@
-import { Database } from 'bun:sqlite';
+import { Database } from "bun:sqlite";
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {
   // already loaded in this process
 }
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import {
-  buildServices, loadSqliteVec, migrate, type Services,
-} from '@penumbra/core';
-import { TestEmbedder } from '@penumbra/core/testing';
-import { serve, type DaemonHandle } from '../src/serve.js';
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
+import { serve, type DaemonHandle } from "../src/serve.js";
 
 export interface TempDaemon {
   services: Services;
@@ -25,8 +23,8 @@ export interface TempDaemon {
 }
 
 export function makeTempDaemon(opts: { token?: string } = {}): TempDaemon {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-daemon-'));
-  const db = new Database(':memory:');
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-daemon-"));
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = buildServices({
@@ -35,17 +33,19 @@ export function makeTempDaemon(opts: { token?: string } = {}): TempDaemon {
     storageRoot: dir,
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date('2026-04-23T12:00:00Z'),
+    clock: () => new Date("2026-04-23T12:00:00Z"),
     uuid: (() => {
       let n = 0;
-      return () => `00000000-0000-4000-8000-${String(++n).padStart(12, '0')}`;
+      return () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`;
     })(),
   });
-  const token = opts.token ?? 'test-token';
+  const token = opts.token ?? "test-token";
   const port = nextTestPort();
   const handle = serve({ services, token, port });
   return {
-    services, handle, token,
+    services,
+    handle,
+    token,
     url: `http://localhost:${handle.port}`,
     dir,
     stop() {

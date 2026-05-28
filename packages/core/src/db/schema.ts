@@ -1,13 +1,10 @@
-import { Database } from 'bun:sqlite';
+import { Database } from "bun:sqlite";
 
 export const SCHEMA_VERSION = 29;
 
-export function applySchema(
-  db: Database,
-  opts: { embeddingDim?: number } = {},
-): void {
+export function applySchema(db: Database, opts: { embeddingDim?: number } = {}): void {
   const dim = opts.embeddingDim ?? 384;
-  db.exec('BEGIN');
+  db.exec("BEGIN");
   try {
     db.exec(`
       CREATE TABLE IF NOT EXISTS db_meta (
@@ -537,11 +534,9 @@ export function applySchema(
         VALUES (new.rowid, new.first_prompt_excerpt, new.last_response_excerpt, new.tool_calls_summary);
       END;
     `);
-    const taskColumns = db
-      .query<{ name: string }, []>('PRAGMA table_info(tasks)')
-      .all();
-    if (!taskColumns.some((column) => column.name === 'project_id')) {
-      db.exec('ALTER TABLE tasks ADD COLUMN project_id TEXT');
+    const taskColumns = db.query<{ name: string }, []>("PRAGMA table_info(tasks)").all();
+    if (!taskColumns.some((column) => column.name === "project_id")) {
+      db.exec("ALTER TABLE tasks ADD COLUMN project_id TEXT");
     }
 
     // t2_fts — multi-field FTS over the title/body and the new typed metadata.
@@ -588,99 +583,117 @@ export function applySchema(
     // landed. CREATE TABLE IF NOT EXISTS is a no-op on existing databases, so
     // these run as ALTER TABLE on every apply. SQLite raises "duplicate column"
     // when the column is already present; swallow that and continue.
-    addColumnIfMissing(db, 'handoffs', 'chain_max_hops', 'INTEGER');
-    addColumnIfMissing(db, 'handoffs', 'chain_trust_mode', 'TEXT');
-    addColumnIfMissing(db, 'handoffs', 'chain_task_type', 'TEXT');
-    addColumnIfMissing(db, 'handoffs', 'dispatch_kind', 'TEXT');
-    addColumnIfMissing(db, 'handoffs', 'long_lived_agent_id', 'TEXT');
-    addColumnIfMissing(db, 'handoffs', 'long_lived_tick_id', 'TEXT');
-    addColumnIfMissing(db, 'handoffs', 'use_worktree', 'INTEGER');
-    addColumnIfMissing(db, 'handoffs', 'open_pr_on_review', 'INTEGER');
-    addColumnIfMissing(db, 'handoffs', 'branch_base', 'TEXT');
-    addColumnIfMissing(db, 'handoffs', 'resolution_reason', 'TEXT');
-    addColumnIfMissing(db, 'handoffs', 'error_message', 'TEXT');
-    addColumnIfMissing(db, 'handoffs', 'cancel_requested_at', 'TEXT');
-    addColumnIfMissing(db, 'handoffs', 'worker_id', 'TEXT');
-    addColumnIfMissing(db, 'handoffs', 'parent_handoff_id', 'TEXT');
-    addColumnIfMissing(db, 'handoffs', 'root_handoff_id', 'TEXT');
-    addColumnIfMissing(db, 'handoffs', 'dispatch_attempts', 'INTEGER NOT NULL DEFAULT 0');
-    addColumnIfMissing(db, 'handoffs', 'max_dispatch_attempts', 'INTEGER NOT NULL DEFAULT 3');
-    addColumnIfMissing(db, 'handoffs', 'last_dispatch_started_at', 'TEXT');
-    addColumnIfMissing(db, 'handoffs', 'workflow_run_id', 'TEXT');
-    db.exec(`CREATE INDEX IF NOT EXISTS handoffs_status_worker_ts ON handoffs(status, worker_id, ts);`);
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_handoffs_root_status ON handoffs(status, root_handoff_id);`);
-    db.exec(`CREATE INDEX IF NOT EXISTS handoffs_root_by_conv ON handoffs(conversation_id, ts) WHERE parent_handoff_id IS NULL;`);
+    addColumnIfMissing(db, "handoffs", "chain_max_hops", "INTEGER");
+    addColumnIfMissing(db, "handoffs", "chain_trust_mode", "TEXT");
+    addColumnIfMissing(db, "handoffs", "chain_task_type", "TEXT");
+    addColumnIfMissing(db, "handoffs", "dispatch_kind", "TEXT");
+    addColumnIfMissing(db, "handoffs", "long_lived_agent_id", "TEXT");
+    addColumnIfMissing(db, "handoffs", "long_lived_tick_id", "TEXT");
+    addColumnIfMissing(db, "handoffs", "use_worktree", "INTEGER");
+    addColumnIfMissing(db, "handoffs", "open_pr_on_review", "INTEGER");
+    addColumnIfMissing(db, "handoffs", "branch_base", "TEXT");
+    addColumnIfMissing(db, "handoffs", "resolution_reason", "TEXT");
+    addColumnIfMissing(db, "handoffs", "error_message", "TEXT");
+    addColumnIfMissing(db, "handoffs", "cancel_requested_at", "TEXT");
+    addColumnIfMissing(db, "handoffs", "worker_id", "TEXT");
+    addColumnIfMissing(db, "handoffs", "parent_handoff_id", "TEXT");
+    addColumnIfMissing(db, "handoffs", "root_handoff_id", "TEXT");
+    addColumnIfMissing(db, "handoffs", "dispatch_attempts", "INTEGER NOT NULL DEFAULT 0");
+    addColumnIfMissing(db, "handoffs", "max_dispatch_attempts", "INTEGER NOT NULL DEFAULT 3");
+    addColumnIfMissing(db, "handoffs", "last_dispatch_started_at", "TEXT");
+    addColumnIfMissing(db, "handoffs", "workflow_run_id", "TEXT");
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS handoffs_status_worker_ts ON handoffs(status, worker_id, ts);`,
+    );
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_handoffs_root_status ON handoffs(status, root_handoff_id);`,
+    );
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS handoffs_root_by_conv ON handoffs(conversation_id, ts) WHERE parent_handoff_id IS NULL;`,
+    );
     backfillHandoffRoots(db);
 
-    addColumnIfMissing(db, 'tasks', 'branch_base', 'TEXT');
-    addColumnIfMissing(db, 'tasks', 'gh_issue_number', 'INTEGER');
-    addColumnIfMissing(db, 'tasks', 'gh_issue_repo', 'TEXT');
-    addColumnIfMissing(db, 'tasks', 'gh_last_comment_id', 'TEXT');
-    addColumnIfMissing(db, 'tasks', 'gh_comments_synced_at', 'INTEGER');
-    addColumnIfMissing(db, 'tasks', 'gh_create_status', 'TEXT');
-    addColumnIfMissing(db, 'tasks', 'gh_create_error', 'TEXT');
-    db.exec(`CREATE INDEX IF NOT EXISTS tasks_by_gh ON tasks(gh_issue_repo, gh_issue_number) WHERE gh_issue_number IS NOT NULL;`);
+    addColumnIfMissing(db, "tasks", "branch_base", "TEXT");
+    addColumnIfMissing(db, "tasks", "gh_issue_number", "INTEGER");
+    addColumnIfMissing(db, "tasks", "gh_issue_repo", "TEXT");
+    addColumnIfMissing(db, "tasks", "gh_last_comment_id", "TEXT");
+    addColumnIfMissing(db, "tasks", "gh_comments_synced_at", "INTEGER");
+    addColumnIfMissing(db, "tasks", "gh_create_status", "TEXT");
+    addColumnIfMissing(db, "tasks", "gh_create_error", "TEXT");
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS tasks_by_gh ON tasks(gh_issue_repo, gh_issue_number) WHERE gh_issue_number IS NOT NULL;`,
+    );
 
     // Additive migration for agent reliability evidence captured after the
     // original performance ledger shipped.
-    addColumnIfMissing(db, 'agent_performance', 'reliability_status', 'TEXT');
-    addColumnIfMissing(db, 'agent_performance', 'failure_class', 'TEXT');
-    addColumnIfMissing(db, 'agent_performance', 'artifact_present', 'TEXT');
-    addColumnIfMissing(db, 'agent_performance', 'verification_present', 'TEXT');
-    addColumnIfMissing(db, 'agent_performance', 'maestro_takeover_required', 'TEXT');
-    addColumnIfMissing(db, 'agent_performance', 'empty_response', 'TEXT');
-    addColumnIfMissing(db, 'agent_performance', 'worktree_changed', 'TEXT');
-    addColumnIfMissing(db, 'agent_performance', 'reconcile_status', 'TEXT');
-    addColumnIfMissing(db, 'agent_performance', 'environment_failure', 'TEXT');
-    addColumnIfMissing(db, 'agent_performance', 'trust_score', 'REAL');
-    addColumnIfMissing(db, 'agent_performance', 'agent_kind', 'TEXT');
-    addColumnIfMissing(db, 'agent_performance', 'gate_outcome', 'TEXT');
+    addColumnIfMissing(db, "agent_performance", "reliability_status", "TEXT");
+    addColumnIfMissing(db, "agent_performance", "failure_class", "TEXT");
+    addColumnIfMissing(db, "agent_performance", "artifact_present", "TEXT");
+    addColumnIfMissing(db, "agent_performance", "verification_present", "TEXT");
+    addColumnIfMissing(db, "agent_performance", "maestro_takeover_required", "TEXT");
+    addColumnIfMissing(db, "agent_performance", "empty_response", "TEXT");
+    addColumnIfMissing(db, "agent_performance", "worktree_changed", "TEXT");
+    addColumnIfMissing(db, "agent_performance", "reconcile_status", "TEXT");
+    addColumnIfMissing(db, "agent_performance", "environment_failure", "TEXT");
+    addColumnIfMissing(db, "agent_performance", "trust_score", "REAL");
+    addColumnIfMissing(db, "agent_performance", "agent_kind", "TEXT");
+    addColumnIfMissing(db, "agent_performance", "gate_outcome", "TEXT");
 
-    addColumnIfMissing(db, 'workflow_stats', 'refresh_runs', 'INTEGER NOT NULL DEFAULT 0');
-    addColumnIfMissing(db, 'workflow_stats', 'intentional_runs', 'INTEGER NOT NULL DEFAULT 0');
-    addColumnIfMissing(db, 'workflow_runs', 'result_spill_path', 'TEXT');
-    addColumnIfMissing(db, 'workflow_runs', 'error_spill_path', 'TEXT');
-    addColumnIfMissing(db, 'workflow_runs', 'expires_at', 'INTEGER NOT NULL DEFAULT 0');
-    db.exec(`CREATE INDEX IF NOT EXISTS workflow_runs_project_id ON workflow_runs(project_id, status, started_at DESC);`);
+    addColumnIfMissing(db, "workflow_stats", "refresh_runs", "INTEGER NOT NULL DEFAULT 0");
+    addColumnIfMissing(db, "workflow_stats", "intentional_runs", "INTEGER NOT NULL DEFAULT 0");
+    addColumnIfMissing(db, "workflow_runs", "result_spill_path", "TEXT");
+    addColumnIfMissing(db, "workflow_runs", "error_spill_path", "TEXT");
+    addColumnIfMissing(db, "workflow_runs", "expires_at", "INTEGER NOT NULL DEFAULT 0");
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS workflow_runs_project_id ON workflow_runs(project_id, status, started_at DESC);`,
+    );
     db.exec(`CREATE INDEX IF NOT EXISTS workflow_runs_expires_at ON workflow_runs(expires_at);`);
     ensureNullableMaestroSessionChainHandoffId(db);
 
     // Origin tagging — categorical session lineage so recall can filter
     // out dispatched-agent transcripts without brittle deny-list patterns.
     // Values: 'maestro' | 'dispatch' | 'unknown' | NULL (legacy rows treated as unknown).
-    addColumnIfMissing(db, 't0_events', 'origin', 'TEXT');
-    addColumnIfMissing(db, 't1_rollups', 'origin', 'TEXT');
-    addColumnIfMissing(db, 't2_memories', 'origin', 'TEXT');
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_t2_origin ON t2_memories(origin) WHERE origin IS NOT NULL`);
+    addColumnIfMissing(db, "t0_events", "origin", "TEXT");
+    addColumnIfMissing(db, "t1_rollups", "origin", "TEXT");
+    addColumnIfMissing(db, "t2_memories", "origin", "TEXT");
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_t2_origin ON t2_memories(origin) WHERE origin IS NOT NULL`,
+    );
 
     // Additive migration for t1_rollups
-    addColumnIfMissing(db, 't1_rollups', 't2_promoted_at', 'TEXT');
-    addColumnIfMissing(db, 't1_rollups', 'failed_promotion_attempts', 'INTEGER NOT NULL DEFAULT 0');
+    addColumnIfMissing(db, "t1_rollups", "t2_promoted_at", "TEXT");
+    addColumnIfMissing(db, "t1_rollups", "failed_promotion_attempts", "INTEGER NOT NULL DEFAULT 0");
 
     // Index for t2 promotion polling
-    db.exec(`CREATE INDEX IF NOT EXISTS t1_unpromoted_idx ON t1_rollups(ended_at) WHERE t2_promoted_at IS NULL`);
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS t1_unpromoted_idx ON t1_rollups(ended_at) WHERE t2_promoted_at IS NULL`,
+    );
 
     // Additive migration for t2_memories — promote opaque metadata to first-class
     // columns so recall can filter without parsing JSON.
-    addColumnIfMissing(db, 't2_memories', 'slug', 'TEXT');
-    addColumnIfMissing(db, 't2_memories', 'hook', 'TEXT');
-    addColumnIfMissing(db, 't2_memories', 'sub_kind', 'TEXT');
-    addColumnIfMissing(db, 't2_memories', 'cc_kind', 'TEXT');
-    addColumnIfMissing(db, 't2_memories', 'obs_type', 'TEXT');
-    addColumnIfMissing(db, 't2_memories', 'concepts', 'TEXT'); // JSON array, FTS-indexed below
-    addColumnIfMissing(db, 't2_memories', 'severity', 'TEXT'); // 'info' | 'warn' | 'error' | NULL
-    addColumnIfMissing(db, 't2_memories', 'file_paths', 'TEXT'); // JSON array of repo-relative paths
-    addColumnIfMissing(db, 't2_memories', 'last_verified_at', 'TEXT');
-    addColumnIfMissing(db, 't2_memories', 'last_verified_by', 'TEXT');
-    addColumnIfMissing(db, 't2_memories', 'last_verified_actor', 'TEXT');
-    addColumnIfMissing(db, 't2_memories', 'last_verified_reason', 'TEXT');
-    addColumnIfMissing(db, 't2_memories', 'last_verified_session_id', 'TEXT');
-    addColumnIfMissing(db, 't2_memory_verification_events', 'basis', 'TEXT');
-    addColumnIfMissing(db, 't2_memory_verification_events', 'basis_type', 'TEXT');
-    addColumnIfMissing(db, 't2_memory_verification_events', 'basis_detail', 'TEXT');
-    addColumnIfMissing(db, 't2_memory_verification_events', 'authorized_by_handoff', 'TEXT');
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_t2_obs_type ON t2_memories(obs_type) WHERE obs_type IS NOT NULL`);
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_t2_severity ON t2_memories(severity) WHERE severity IS NOT NULL`);
+    addColumnIfMissing(db, "t2_memories", "slug", "TEXT");
+    addColumnIfMissing(db, "t2_memories", "hook", "TEXT");
+    addColumnIfMissing(db, "t2_memories", "sub_kind", "TEXT");
+    addColumnIfMissing(db, "t2_memories", "cc_kind", "TEXT");
+    addColumnIfMissing(db, "t2_memories", "obs_type", "TEXT");
+    addColumnIfMissing(db, "t2_memories", "concepts", "TEXT"); // JSON array, FTS-indexed below
+    addColumnIfMissing(db, "t2_memories", "severity", "TEXT"); // 'info' | 'warn' | 'error' | NULL
+    addColumnIfMissing(db, "t2_memories", "file_paths", "TEXT"); // JSON array of repo-relative paths
+    addColumnIfMissing(db, "t2_memories", "last_verified_at", "TEXT");
+    addColumnIfMissing(db, "t2_memories", "last_verified_by", "TEXT");
+    addColumnIfMissing(db, "t2_memories", "last_verified_actor", "TEXT");
+    addColumnIfMissing(db, "t2_memories", "last_verified_reason", "TEXT");
+    addColumnIfMissing(db, "t2_memories", "last_verified_session_id", "TEXT");
+    addColumnIfMissing(db, "t2_memory_verification_events", "basis", "TEXT");
+    addColumnIfMissing(db, "t2_memory_verification_events", "basis_type", "TEXT");
+    addColumnIfMissing(db, "t2_memory_verification_events", "basis_detail", "TEXT");
+    addColumnIfMissing(db, "t2_memory_verification_events", "authorized_by_handoff", "TEXT");
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_t2_obs_type ON t2_memories(obs_type) WHERE obs_type IS NOT NULL`,
+    );
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_t2_severity ON t2_memories(severity) WHERE severity IS NOT NULL`,
+    );
     db.exec(`CREATE INDEX IF NOT EXISTS t2_memory_verification_events_basis_type
       ON t2_memory_verification_events(basis_type)
       WHERE basis_type IS NOT NULL`);
@@ -829,14 +842,14 @@ export function applySchema(
     // the table lives inside this second db.exec block, so addColumnIfMissing
     // calls placed in the earlier migration cluster (~line 515) would ALTER a
     // table that does not yet exist on a fresh DB.
-    addColumnIfMissing(db, 'long_lived_agents', 'snapshot_tool', 'TEXT');
-    addColumnIfMissing(db, 'long_lived_agents', 'require_snapshot', 'INTEGER NOT NULL DEFAULT 0');
-    addColumnIfMissing(db, 'long_lived_agents', 'project_id', 'TEXT');
-    addColumnIfMissing(db, 'long_lived_pending_actions', 'meta_json', 'TEXT');
-    addColumnIfMissing(db, 'memory_efficacy_jobs', 'claimed_at', 'TEXT');
-    addColumnIfMissing(db, 'memory_efficacy_jobs', 'claimed_by', 'TEXT');
-    addColumnIfMissing(db, 'memory_efficacy_jobs', 'heartbeat_at', 'TEXT');
-    addColumnIfMissing(db, 'memory_efficacy_jobs', 'lease_expires_at', 'TEXT');
+    addColumnIfMissing(db, "long_lived_agents", "snapshot_tool", "TEXT");
+    addColumnIfMissing(db, "long_lived_agents", "require_snapshot", "INTEGER NOT NULL DEFAULT 0");
+    addColumnIfMissing(db, "long_lived_agents", "project_id", "TEXT");
+    addColumnIfMissing(db, "long_lived_pending_actions", "meta_json", "TEXT");
+    addColumnIfMissing(db, "memory_efficacy_jobs", "claimed_at", "TEXT");
+    addColumnIfMissing(db, "memory_efficacy_jobs", "claimed_by", "TEXT");
+    addColumnIfMissing(db, "memory_efficacy_jobs", "heartbeat_at", "TEXT");
+    addColumnIfMissing(db, "memory_efficacy_jobs", "lease_expires_at", "TEXT");
     db.exec(`UPDATE memory_efficacy_jobs SET status = 'queued' WHERE status = 'pending'`);
 
     db.exec(`
@@ -974,29 +987,24 @@ export function applySchema(
       );
     `);
 
-    addColumnIfMissing(
-      db,
-      'dream_research_cache',
-      'is_negative',
-      'INTEGER NOT NULL DEFAULT 0',
-    );
+    addColumnIfMissing(db, "dream_research_cache", "is_negative", "INTEGER NOT NULL DEFAULT 0");
     migrateDreamQueryRewritesToModelScopedKeys(db);
     db.exec(
       `CREATE INDEX IF NOT EXISTS idx_dream_research_cache_negative ON dream_research_cache(cache_key) WHERE is_negative = 1`,
     );
 
-    addColumnIfMissing(db, 't1_rollups', 'claimed_at', 'INTEGER');
-    addColumnIfMissing(db, 't1_rollups', 'claimed_by_cycle', 'TEXT');
-    addColumnIfMissing(db, 't1_rollups', 'embedding_model_version', 'TEXT');
-    addColumnIfMissing(db, 't2_memories', 'embedding_model_version', 'TEXT');
-    addColumnIfMissing(db, 't2_memories', 'retired_at', 'INTEGER');
+    addColumnIfMissing(db, "t1_rollups", "claimed_at", "INTEGER");
+    addColumnIfMissing(db, "t1_rollups", "claimed_by_cycle", "TEXT");
+    addColumnIfMissing(db, "t1_rollups", "embedding_model_version", "TEXT");
+    addColumnIfMissing(db, "t2_memories", "embedding_model_version", "TEXT");
+    addColumnIfMissing(db, "t2_memories", "retired_at", "INTEGER");
     // Phase 1b: replace the original retired-filtered partial index with a UNIQUE
     // partial index. Slug must be globally unique among populated rows (including
     // retired) so re-imports UPSERT against a stable target and don't conflict
     // with previously-retired entries of the same slug.
     db.exec(`DROP INDEX IF EXISTS idx_t2_memories_slug`);
     db.exec(`DROP INDEX IF EXISTS idx_t2_slug`);
-    addColumnIfMissing(db, 'memory_links', 'raw_slug', 'TEXT');
+    addColumnIfMissing(db, "memory_links", "raw_slug", "TEXT");
     db.exec(
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_t2_slug ON t2_memories(COALESCE(project_id, '__none__'), slug) WHERE slug IS NOT NULL`,
     );
@@ -1012,9 +1020,10 @@ export function applySchema(
     // doesn't support ALTER COLUMN, so we recreate the table. Nothing references
     // memory_links by FK, so the rename is safe inside the existing transaction.
     const dstIdNotNull = db
-      .query<{ notnull: number }, []>(
-        `SELECT "notnull" FROM pragma_table_info('memory_links') WHERE name='dst_id'`,
-      )
+      .query<
+        { notnull: number },
+        []
+      >(`SELECT "notnull" FROM pragma_table_info('memory_links') WHERE name='dst_id'`)
       .get();
     if (dstIdNotNull && dstIdNotNull.notnull === 1) {
       db.exec(`
@@ -1038,8 +1047,12 @@ export function applySchema(
       db.exec(`INSERT INTO memory_links_new SELECT * FROM memory_links`);
       db.exec(`DROP TABLE memory_links`);
       db.exec(`ALTER TABLE memory_links_new RENAME TO memory_links`);
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_links_src ON memory_links(src_id) WHERE retired_at IS NULL`);
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_links_dst ON memory_links(dst_id) WHERE retired_at IS NULL`);
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_memory_links_src ON memory_links(src_id) WHERE retired_at IS NULL`,
+      );
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_memory_links_dst ON memory_links(dst_id) WHERE retired_at IS NULL`,
+      );
       db.exec(`
         CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_links_unresolved
         ON memory_links(src_id, link_type, raw_slug)
@@ -1056,18 +1069,19 @@ export function applySchema(
         AND raw_slug != lower(raw_slug)
     `);
 
-    db.exec('COMMIT');
+    db.exec("COMMIT");
   } catch (err) {
-    db.exec('ROLLBACK');
+    db.exec("ROLLBACK");
     throw err;
   }
 }
 
 function backfillHandoffRoots(db: Database): void {
   const allRows = db
-    .query<{ handoff_id: string; parent_handoff_id: string | null; root_handoff_id: string | null }, []>(
-      `SELECT handoff_id, parent_handoff_id, root_handoff_id FROM handoffs`,
-    )
+    .query<
+      { handoff_id: string; parent_handoff_id: string | null; root_handoff_id: string | null },
+      []
+    >(`SELECT handoff_id, parent_handoff_id, root_handoff_id FROM handoffs`)
     .all();
 
   const parentMap = new Map<string, string | null>();
@@ -1095,7 +1109,7 @@ function backfillHandoffRoots(db: Database): void {
     const visited: string[] = [row.handoff_id];
     let cursor: string | null = row.parent_handoff_id;
     let resolvedRoot: string | null = null;
-    let fallback: 'depth' | 'orphan' | null = null;
+    let fallback: "depth" | "orphan" | null = null;
 
     while (true) {
       if (cursor == null) {
@@ -1108,25 +1122,25 @@ function backfillHandoffRoots(db: Database): void {
         break;
       }
       if (!parentMap.has(cursor)) {
-        fallback = 'orphan';
+        fallback = "orphan";
         break;
       }
       if (visited.length >= MAX_DEPTH) {
-        fallback = 'depth';
+        fallback = "depth";
         break;
       }
       visited.push(cursor);
       cursor = parentMap.get(cursor) ?? null;
     }
 
-    if (fallback === 'orphan') {
-      console.warn('[handoff-root-backfill] orphaned parent fallback: ' + row.handoff_id);
+    if (fallback === "orphan") {
+      console.warn("[handoff-root-backfill] orphaned parent fallback: " + row.handoff_id);
       updates.push([row.handoff_id, row.handoff_id]);
       rootMap.set(row.handoff_id, row.handoff_id);
       continue;
     }
-    if (fallback === 'depth') {
-      console.warn('[handoff-root-backfill] depth-cap fallback: ' + row.handoff_id);
+    if (fallback === "depth") {
+      console.warn("[handoff-root-backfill] depth-cap fallback: " + row.handoff_id);
       updates.push([row.handoff_id, row.handoff_id]);
       rootMap.set(row.handoff_id, row.handoff_id);
       continue;
@@ -1148,14 +1162,17 @@ function backfillHandoffRoots(db: Database): void {
 
 export function addColumnIfMissing(db: Database, table: string, name: string, type: string): void {
   const exists = db
-    .query<{ count: number }, [string, string]>(`SELECT COUNT(*) as count FROM pragma_table_info(?) WHERE name=?`)
+    .query<
+      { count: number },
+      [string, string]
+    >(`SELECT COUNT(*) as count FROM pragma_table_info(?) WHERE name=?`)
     .get(table, name);
   if (exists && exists.count > 0) return;
   try {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (!message.includes('duplicate column name')) {
+    if (!message.includes("duplicate column name")) {
       throw err;
     }
   }
@@ -1165,15 +1182,15 @@ function migrateDreamQueryRewritesToModelScopedKeys(db: Database): void {
   const columns = db.query<{ name: string }, []>(`PRAGMA table_info(dream_query_rewrites)`).all();
   if (columns.length === 0) return;
 
-  const hasReason = columns.some((column) => column.name === 'reason');
-  const hasSkipReason = columns.some((column) => column.name === 'skip_reason');
-  const hasModel = columns.some((column) => column.name === 'model');
+  const hasReason = columns.some((column) => column.name === "reason");
+  const hasSkipReason = columns.some((column) => column.name === "skip_reason");
+  const hasModel = columns.some((column) => column.name === "model");
 
-  const uniqueIndexes = db.query<{ name: string; unique: number }, []>(
-    `PRAGMA index_list('dream_query_rewrites')`,
-  ).all();
+  const uniqueIndexes = db
+    .query<{ name: string; unique: number }, []>(`PRAGMA index_list('dream_query_rewrites')`)
+    .all();
   const hasModelScopedUnique = uniqueIndexes.some((index) => {
-    if (index.name == null || index.name === 'sqlite_autoindex_dream_query_rewrites_1') {
+    if (index.name == null || index.name === "sqlite_autoindex_dream_query_rewrites_1") {
       return false;
     }
     if (index.unique !== 1) {
@@ -1182,10 +1199,12 @@ function migrateDreamQueryRewritesToModelScopedKeys(db: Database): void {
     const indexInfo = db.query<{ name: string }, []>(`PRAGMA index_info("${index.name}")`).all();
     if (indexInfo.length !== 3) return false;
     const indexCols = indexInfo.map((column) => column.name);
-    return indexCols[0] === 't2_memory_id' &&
-      indexCols[1] === 'memory_updated_at_ms' &&
-      indexCols[2] === 'model' &&
-      index.name.includes('dream_query_rewrites');
+    return (
+      indexCols[0] === "t2_memory_id" &&
+      indexCols[1] === "memory_updated_at_ms" &&
+      indexCols[2] === "model" &&
+      index.name.includes("dream_query_rewrites")
+    );
   });
 
   if (hasReason && hasModel && hasModelScopedUnique) {
@@ -1193,10 +1212,14 @@ function migrateDreamQueryRewritesToModelScopedKeys(db: Database): void {
   }
 
   const reasonSource = hasReason
-    ? (hasSkipReason ? 'COALESCE(reason, skip_reason)' : 'reason')
-    : hasSkipReason ? 'skip_reason' : 'NULL';
+    ? hasSkipReason
+      ? "COALESCE(reason, skip_reason)"
+      : "reason"
+    : hasSkipReason
+      ? "skip_reason"
+      : "NULL";
 
-  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec("PRAGMA foreign_keys = OFF");
   db.exec(`ALTER TABLE dream_query_rewrites RENAME TO dream_query_rewrites_v27`);
   db.exec(`
     CREATE TABLE dream_query_rewrites (
@@ -1235,7 +1258,7 @@ function migrateDreamQueryRewritesToModelScopedKeys(db: Database): void {
   db.exec(`DROP INDEX IF EXISTS idx_dream_query_rewrites_t2_memory_id`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_dream_query_rewrites_t2_memory_id
     ON dream_query_rewrites(t2_memory_id)`);
-  db.exec('PRAGMA foreign_keys = ON');
+  db.exec("PRAGMA foreign_keys = ON");
 }
 
 export function runStartupZombieSweep(db: Database): void {
@@ -1253,7 +1276,7 @@ function ensureNullableMaestroSessionChainHandoffId(db: Database): void {
   const columns = db
     .query<{ name: string; notnull: number }, []>(`PRAGMA table_info('maestro_sessions')`)
     .all();
-  const chainHandoffCol = columns.find((column) => column.name === 'chain_handoff_id');
+  const chainHandoffCol = columns.find((column) => column.name === "chain_handoff_id");
   if (!chainHandoffCol || chainHandoffCol.notnull === 0) {
     return;
   }
@@ -1291,6 +1314,10 @@ function ensureNullableMaestroSessionChainHandoffId(db: Database): void {
     FROM maestro_sessions__legacy_notnull_chain;
   `);
   db.exec(`DROP TABLE maestro_sessions__legacy_notnull_chain`);
-  db.exec(`CREATE INDEX IF NOT EXISTS maestro_sessions_chain_handoff_id ON maestro_sessions(chain_handoff_id);`);
-  db.exec(`CREATE INDEX IF NOT EXISTS maestro_sessions_terminated_at ON maestro_sessions(terminated_at);`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS maestro_sessions_chain_handoff_id ON maestro_sessions(chain_handoff_id);`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS maestro_sessions_terminated_at ON maestro_sessions(terminated_at);`,
+  );
 }

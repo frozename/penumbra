@@ -1,6 +1,6 @@
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import type { Registry } from './registry.js';
+import { writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import type { Registry } from "./registry.js";
 
 const SLASH_COMMAND_TEMPLATE = (name: string, description: string) => `---
 description: ${description}
@@ -22,9 +22,9 @@ export function writeSlashCommands(reg: Registry, commandsDir: string): string[]
   const written: string[] = [];
   for (const spec of reg.list()) {
     for (const t of spec.triggers) {
-      if (t.kind !== 'slash') continue;
+      if (t.kind !== "slash") continue;
       const path = join(commandsDir, `${t.command}.md`);
-      writeFileSync(path, SLASH_COMMAND_TEMPLATE(spec.name, spec.description), 'utf8');
+      writeFileSync(path, SLASH_COMMAND_TEMPLATE(spec.name, spec.description), "utf8");
       written.push(path);
       break;
     }

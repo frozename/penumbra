@@ -1,5 +1,5 @@
-import type { WorktreeManager, WorktreeHandle } from '@penumbra/core';
-import type { AgentChatConfig } from '../config/types.js';
+import type { WorktreeManager, WorktreeHandle } from "@penumbra/core";
+import type { AgentChatConfig } from "../config/types.js";
 
 export interface WorktreePromptRewrite {
   mainRepoPath: string;
@@ -47,21 +47,25 @@ export async function applyWorktreeOverride(
   // (fs.glob, fs.grep) fail with `not_found` even when the dispatch asked
   // for isolation. Surfaced by the Phase 1b.2 smoke test.
   const isWorktreeCapableAdapter =
-    targetAgent && ['claude-cli', 'gemini-cli', 'codex-cli', 'opencode-cli', 'stdio-acp', 'opencode-acp'].includes(targetAgent.adapter);
+    targetAgent &&
+    ["claude-cli", "gemini-cli", "codex-cli", "opencode-cli", "stdio-acp", "opencode-acp"].includes(
+      targetAgent.adapter,
+    );
 
   if (useWorktree && isWorktreeCapableAdapter) {
     try {
       const handle = await worktreeManager.createWorktree(handoff.handoff_id as string, {
-        baseRef: typeof handoff.branch_base === 'string' && handoff.branch_base.length > 0
-          ? handoff.branch_base
-          : undefined,
+        baseRef:
+          typeof handoff.branch_base === "string" && handoff.branch_base.length > 0
+            ? handoff.branch_base
+            : undefined,
         project_id: handoff.project_id ?? undefined,
       });
       const guardText =
-        'This dispatch is isolated to the assigned worktree only.\n' +
+        "This dispatch is isolated to the assigned worktree only.\n" +
         `Work only in: ${handle.path}\n` +
-        'Do not read, edit, or commit in the shared main checkout.\n\n' +
-        'When running pytest, pip, or any Python tool inside a git worktree, prepend `PYTHONPATH=$PWD` to the command. ' +
+        "Do not read, edit, or commit in the shared main checkout.\n\n" +
+        "When running pytest, pip, or any Python tool inside a git worktree, prepend `PYTHONPATH=$PWD` to the command. " +
         "A sibling checkout's .venv can otherwise shadow the worktree's source and make tests run against stale code. " +
         'If behavior looks wrong, verify imports with: python3 -c "import <pkg>; print(<pkg>.__file__)".';
       const overrideConfig: AgentChatConfig = {
@@ -92,16 +96,18 @@ export async function applyWorktreeOverride(
       };
     } catch (err) {
       throw new Error(
-        'worktree creation failed for ' +
+        "worktree creation failed for " +
           String(handoff.handoff_id) +
-          ': ' +
+          ": " +
           (err instanceof Error ? err.message : String(err)),
-        { cause: err instanceof Error ? err : new Error(String(err)) }
+        { cause: err instanceof Error ? err : new Error(String(err)) },
       );
     }
   }
 
-  const projectRoot = (worktreeManager as { projectRootFor?: (project_id?: string) => string | undefined }).projectRootFor?.(handoff.project_id);
+  const projectRoot = (
+    worktreeManager as { projectRootFor?: (project_id?: string) => string | undefined }
+  ).projectRootFor?.(handoff.project_id);
   if (projectRoot && targetAgent) {
     const overrideConfig: AgentChatConfig = {
       ...config,

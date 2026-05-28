@@ -7,6 +7,11 @@
     "exactOptionalPropertyTypes": true,
     "noPropertyAccessFromIndexSignature": true
   },
-  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "eslint.config.mjs", "scripts/**/*.ts"],
+  "include": [
+    "packages/*/src/**/*.ts",
+    "packages/*/test/**/*.ts",
+    "eslint.config.mjs",
+    "scripts/**/*.ts"
+  ],
   "exclude": ["node_modules", "**/dist", "coverage", ".penumbra"]
 }

@@ -1,17 +1,17 @@
-import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
-import * as fs from 'node:fs';
-import * as os from 'node:os';
-import * as path from 'node:path';
-import { createWorkerWorktreeManager } from '../../src/worker/worktree-manager.js';
+import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { createWorkerWorktreeManager } from "../../src/worker/worktree-manager.js";
 
-describe('createWorkerWorktreeManager', () => {
+describe("createWorkerWorktreeManager", () => {
   const originalEnv = process.env.PENUMBRA_PROJECTS_YAML;
   let tempRoot: string;
   let registryRoot: string;
 
   beforeEach(() => {
-    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'penumbra-worker-wtm-'));
-    registryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'penumbra-worker-registry-'));
+    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-worker-wtm-"));
+    registryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-worker-registry-"));
   });
 
   afterEach(() => {
@@ -20,44 +20,43 @@ describe('createWorkerWorktreeManager', () => {
     fs.rmSync(registryRoot, { recursive: true, force: true });
   });
 
-  it('resolves sibling project roots from the project registry', () => {
-    const siblingRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sibling-worker-'));
-    const projectsYaml = path.join(registryRoot, 'projects.yaml');
+  it("resolves sibling project roots from the project registry", () => {
+    const siblingRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sibling-worker-"));
+    const projectsYaml = path.join(registryRoot, "projects.yaml");
     fs.writeFileSync(
       projectsYaml,
-      [
-        'projects:',
-        '  - project_id: sibling',
-        `    root_path: ${siblingRoot}`,
-        '',
-      ].join('\n'),
+      ["projects:", "  - project_id: sibling", `    root_path: ${siblingRoot}`, ""].join("\n"),
     );
     process.env.PENUMBRA_PROJECTS_YAML = projectsYaml;
 
     const manager = createWorkerWorktreeManager({ rootDir: tempRoot, mainRepoDir: process.cwd() });
 
-    expect((manager as unknown as { baseFor(project_id?: string): string }).baseFor('sibling')).toBe(
-      `${siblingRoot}-worktrees`,
-    );
+    expect(
+      (manager as unknown as { baseFor(project_id?: string): string }).baseFor("sibling"),
+    ).toBe(`${siblingRoot}-worktrees`);
   });
 
-  it('falls back to the default root when the registry is empty', () => {
-    const projectsYaml = path.join(registryRoot, 'projects.yaml');
-    fs.writeFileSync(projectsYaml, 'projects:\n');
+  it("falls back to the default root when the registry is empty", () => {
+    const projectsYaml = path.join(registryRoot, "projects.yaml");
+    fs.writeFileSync(projectsYaml, "projects:\n");
     process.env.PENUMBRA_PROJECTS_YAML = projectsYaml;
 
     const manager = createWorkerWorktreeManager({ rootDir: tempRoot, mainRepoDir: process.cwd() });
 
-    expect((manager as unknown as { baseFor(project_id?: string): string }).baseFor('sibling')).toBe(tempRoot);
+    expect(
+      (manager as unknown as { baseFor(project_id?: string): string }).baseFor("sibling"),
+    ).toBe(tempRoot);
   });
 
-  it('falls back to the default root when the registry path is invalid', () => {
-    process.env.PENUMBRA_PROJECTS_YAML = path.join(registryRoot, 'missing.yaml');
-    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+  it("falls back to the default root when the registry path is invalid", () => {
+    process.env.PENUMBRA_PROJECTS_YAML = path.join(registryRoot, "missing.yaml");
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
 
     const manager = createWorkerWorktreeManager({ rootDir: tempRoot, mainRepoDir: process.cwd() });
 
-    expect((manager as unknown as { baseFor(project_id?: string): string }).baseFor('sibling')).toBe(tempRoot);
+    expect(
+      (manager as unknown as { baseFor(project_id?: string): string }).baseFor("sibling"),
+    ).toBe(tempRoot);
     expect(warn).toHaveBeenCalled();
   });
 });

@@ -1,26 +1,30 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import type { Subprocess, SpawnOptions } from 'bun';
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import type { Subprocess, SpawnOptions } from "bun";
 
-export type BunSubprocess = Subprocess<'pipe', 'pipe', 'pipe'>;
+export type BunSubprocess = Subprocess<"pipe", "pipe", "pipe">;
 
 const REPO_ROOT = (() => {
   // Resolve the repo root from this file's location:
   // packages/e2e/test/helpers/spawn-bin.ts → ../../../../
-  const here = new URL('.', import.meta.url).pathname;
-  return join(here, '..', '..', '..', '..');
+  const here = new URL(".", import.meta.url).pathname;
+  return join(here, "..", "..", "..", "..");
 })();
 
 /** Absolute path to the penumbra CLI bin. */
-export const PENUMBRA_BIN = join(REPO_ROOT, 'packages/cli/bin/penumbra.ts');
+export const PENUMBRA_BIN = join(REPO_ROOT, "packages/cli/bin/penumbra.ts");
 /** Absolute path to the penumbra-mcp stdio bin. */
-export const PENUMBRA_MCP_BIN = join(REPO_ROOT, 'packages/mcp/bin/penumbra-mcp.ts');
+export const PENUMBRA_MCP_BIN = join(REPO_ROOT, "packages/mcp/bin/penumbra-mcp.ts");
 
 const childRegistry = new Set<BunSubprocess>();
 
-process.on('exit', () => {
+process.on("exit", () => {
   for (const c of childRegistry) {
-    try { c.kill(); } catch { /* already dead */ }
+    try {
+      c.kill();
+    } catch {
+      /* already dead */
+    }
   }
 });
 
@@ -28,15 +32,12 @@ process.on('exit', () => {
  * Spawn `bun <args>` with all stdio piped. Tracks the child for emergency
  * cleanup on test-process exit.
  */
-export function spawnBun(
-  args: string[],
-  env?: Record<string, string | undefined>,
-): BunSubprocess {
-  const opts: SpawnOptions.SpawnOptions<'pipe', 'pipe', 'pipe'> & { cmd: string[] } = {
-    cmd: ['bun', ...args],
-    stdin: 'pipe',
-    stdout: 'pipe',
-    stderr: 'pipe',
+export function spawnBun(args: string[], env?: Record<string, string | undefined>): BunSubprocess {
+  const opts: SpawnOptions.SpawnOptions<"pipe", "pipe", "pipe"> & { cmd: string[] } = {
+    cmd: ["bun", ...args],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
   };
   if (env) opts.env = { ...process.env, ...env } as Record<string, string>;
   const proc = Bun.spawn(opts) as BunSubprocess;
@@ -77,11 +78,11 @@ export function spawnPenumbraMcp(
  * Polls every 100ms up to `timeoutMs`. Resolves with the port number.
  */
 export async function waitForPortFile(dir: string, timeoutMs = 5000): Promise<number> {
-  const portPath = join(dir, 'port');
+  const portPath = join(dir, "port");
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (existsSync(portPath)) {
-      const raw = readFileSync(portPath, 'utf8').trim();
+      const raw = readFileSync(portPath, "utf8").trim();
       const port = Number(raw);
       if (Number.isInteger(port) && port > 0 && port < 65536) return port;
     }
@@ -121,7 +122,9 @@ export function drainOutput(proc: BunSubprocess): void {
         const { done } = await reader.read();
         if (done) break;
       }
-    } catch { /* subprocess died, that's fine */ }
+    } catch {
+      /* subprocess died, that's fine */
+    }
   })();
   void (async () => {
     try {
@@ -130,24 +133,31 @@ export function drainOutput(proc: BunSubprocess): void {
         const { done } = await reader.read();
         if (done) break;
       }
-    } catch { /* subprocess died, that's fine */ }
+    } catch {
+      /* subprocess died, that's fine */
+    }
   })();
 }
 
 /**
  * Send SIGTERM to a child, give it `gracefulMs` to exit, then SIGKILL.
  */
-export async function killGracefully(
-  proc: BunSubprocess,
-  gracefulMs = 2000,
-): Promise<number> {
-  try { proc.kill('SIGTERM'); } catch { /* already dead */ }
-  const timeout = new Promise<'timeout'>((resolve) =>
-    setTimeout(() => resolve('timeout'), gracefulMs),
+export async function killGracefully(proc: BunSubprocess, gracefulMs = 2000): Promise<number> {
+  try {
+    proc.kill("SIGTERM");
+  } catch {
+    /* already dead */
+  }
+  const timeout = new Promise<"timeout">((resolve) =>
+    setTimeout(() => resolve("timeout"), gracefulMs),
   );
   const result = await Promise.race([proc.exited, timeout]);
-  if (result === 'timeout') {
-    try { proc.kill('SIGKILL'); } catch { /* already dead */ }
+  if (result === "timeout") {
+    try {
+      proc.kill("SIGKILL");
+    } catch {
+      /* already dead */
+    }
     await proc.exited;
   }
   childRegistry.delete(proc);

@@ -1,6 +1,6 @@
-import type { Database } from 'bun:sqlite';
-import { listLongLivedPendingActionsForAgent } from '@penumbra/core/long-lived/self-reader';
-import { verifyRunningIdentity } from '../long-lived-context.js';
+import type { Database } from "bun:sqlite";
+import { listLongLivedPendingActionsForAgent } from "@penumbra/core/long-lived/self-reader";
+import { verifyRunningIdentity } from "../long-lived-context.js";
 
 export async function handleLongLivedSelfPendingActions(
   db: Database,

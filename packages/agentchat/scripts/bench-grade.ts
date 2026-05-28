@@ -1,9 +1,9 @@
-import { readFileSync, existsSync } from 'node:fs';
-import { resolve, join } from 'node:path';
-import { homedir } from 'node:os';
-import { load as parseYaml } from 'js-yaml';
-import { z } from 'zod';
-import { BENCH_TASKS } from './bench-prompts.js';
+import { readFileSync, existsSync } from "node:fs";
+import { resolve, join } from "node:path";
+import { homedir } from "node:os";
+import { load as parseYaml } from "js-yaml";
+import { z } from "zod";
+import { BENCH_TASKS } from "./bench-prompts.js";
 
 /**
  * bench-grade.ts
@@ -47,22 +47,35 @@ const T2MemoryExtractionSchema = z.object({
 });
 
 function stripCodeFence(s: string): string {
-  return s.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  return s
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "")
+    .trim();
 }
 
-export function gradeSchemaTask(task: (typeof BENCH_TASKS)[number], answer: string | undefined): { verdict: 'PASS' | 'PARTIAL' | 'FAIL'; detail: string } {
-  if (!answer) return { verdict: 'FAIL', detail: 'no answer' };
+export function gradeSchemaTask(
+  task: (typeof BENCH_TASKS)[number],
+  answer: string | undefined,
+): { verdict: "PASS" | "PARTIAL" | "FAIL"; detail: string } {
+  if (!answer) return { verdict: "FAIL", detail: "no answer" };
   const stripped = stripCodeFence(answer);
   let parsed: unknown;
   try {
     parsed = JSON.parse(stripped);
   } catch (e) {
-    return { verdict: 'FAIL', detail: `malformed JSON: ${e instanceof Error ? e.message : String(e)}` };
+    return {
+      verdict: "FAIL",
+      detail: `malformed JSON: ${e instanceof Error ? e.message : String(e)}`,
+    };
   }
 
   const result = z.array(T2MemoryExtractionSchema).safeParse(parsed);
   if (!result.success) {
-    return { verdict: 'FAIL', detail: `schema violation: ${result.error.issues.map(i => i.message).join('; ')}` };
+    return {
+      verdict: "FAIL",
+      detail: `schema violation: ${result.error.issues.map((i) => i.message).join("; ")}`,
+    };
   }
 
   const actual = result.data;
@@ -70,31 +83,33 @@ export function gradeSchemaTask(task: (typeof BENCH_TASKS)[number], answer: stri
 
   if (expected.length === 0) {
     return actual.length === 0
-      ? { verdict: 'PASS', detail: 'empty as expected' }
-      : { verdict: 'FAIL', detail: `expected empty, got ${actual.length} extractions` };
+      ? { verdict: "PASS", detail: "empty as expected" }
+      : { verdict: "FAIL", detail: `expected empty, got ${actual.length} extractions` };
   }
 
   let matched = 0;
   for (const exp of expected) {
-    const hit = actual.some(a =>
-      a.title.toLowerCase().includes(exp.title_substr.toLowerCase()) &&
-      a.body.toLowerCase().includes(exp.body_substr.toLowerCase()) &&
-      a.kind === exp.kind
+    const hit = actual.some(
+      (a) =>
+        a.title.toLowerCase().includes(exp.title_substr.toLowerCase()) &&
+        a.body.toLowerCase().includes(exp.body_substr.toLowerCase()) &&
+        a.kind === exp.kind,
     );
     if (hit) matched++;
   }
 
-  if (matched === expected.length) return { verdict: 'PASS', detail: `${matched}/${expected.length} matched` };
-  if (matched > 0) return { verdict: 'PARTIAL', detail: `${matched}/${expected.length} matched` };
-  return { verdict: 'FAIL', detail: '0 expected extractions found' };
+  if (matched === expected.length)
+    return { verdict: "PASS", detail: `${matched}/${expected.length} matched` };
+  if (matched > 0) return { verdict: "PARTIAL", detail: `${matched}/${expected.length} matched` };
+  return { verdict: "FAIL", detail: "0 expected extractions found" };
 }
 
 export async function gradeResults(opts: GradeResultsOpts): Promise<GradeResult[]> {
-  const groundTruthMap = new Map(BENCH_TASKS.map(t => [t.id, t.groundTruth]));
+  const groundTruthMap = new Map(BENCH_TASKS.map((t) => [t.id, t.groundTruth]));
   const fetcher = opts.fetch ?? fetch;
 
   const promises = opts.results.map(async (entry): Promise<GradeResult> => {
-    const task = BENCH_TASKS.find(t => t.id === entry.task);
+    const task = BENCH_TASKS.find((t) => t.id === entry.task);
     if (!task) {
       throw new Error(`unknown task ID: ${entry.task}`);
     }
@@ -103,7 +118,7 @@ export async function gradeResults(opts: GradeResultsOpts): Promise<GradeResult[
       throw new Error(`unknown task ID: ${entry.task}`);
     }
 
-    if (task.schema === 'T2MemoryExtraction[]') {
+    if (task.schema === "T2MemoryExtraction[]") {
       const schemaVerdict = gradeSchemaTask(task, entry.answer);
       return {
         task: entry.task,
@@ -119,38 +134,40 @@ GROUND TRUTH:
 ${groundTruth}
 
 MODEL ANSWER:
-${entry.answer ?? '(no answer)'}`;
+${entry.answer ?? "(no answer)"}`;
 
-    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    const headers: Record<string, string> = { "content-type": "application/json" };
     if (opts.authToken) headers.authorization = `Bearer ${opts.authToken}`;
 
     const body = JSON.stringify({
       model: opts.model,
       temperature: 0,
-      messages: [{ role: 'user', content: prompt }],
+      messages: [{ role: "user", content: prompt }],
     });
 
     const init: any = {
-      method: 'POST',
+      method: "POST",
       headers,
       body,
-      signal: opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
+      signal: opts.signal
+        ? AbortSignal.any([opts.signal, AbortSignal.timeout(60_000)])
+        : AbortSignal.timeout(60_000),
     };
 
     if (opts.caPath && existsSync(opts.caPath)) {
-      init.tls = { ca: readFileSync(opts.caPath, 'utf8') };
+      init.tls = { ca: readFileSync(opts.caPath, "utf8") };
     }
 
     try {
-      const res = await fetcher(`${opts.url.replace(/\/$/, '')}/chat/completions`, init);
+      const res = await fetcher(`${opts.url.replace(/\/$/, "")}/chat/completions`, init);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json: any = await res.json();
-      const verdict = (json.choices?.[0]?.message?.content || 'FAIL').trim().toUpperCase();
+      const verdict = (json.choices?.[0]?.message?.content || "FAIL").trim().toUpperCase();
 
       // Sanitize verdict to strictly PASS/FAIL/PARTIAL
-      let finalVerdict = 'FAIL';
-      if (verdict.includes('PASS')) finalVerdict = 'PASS';
-      else if (verdict.includes('PARTIAL')) finalVerdict = 'PARTIAL';
+      let finalVerdict = "FAIL";
+      if (verdict.includes("PASS")) finalVerdict = "PASS";
+      else if (verdict.includes("PARTIAL")) finalVerdict = "PARTIAL";
 
       return {
         task: entry.task,
@@ -176,8 +193,8 @@ async function runGrade(opts: GradeOpts): Promise<GradeResult[]> {
     throw new Error(`input file not found: ${opts.inputPath}`);
   }
 
-  const lines = readFileSync(opts.inputPath, 'utf8').trim().split('\n');
-  const results = lines.filter(l => l.trim()).map(l => JSON.parse(l));
+  const lines = readFileSync(opts.inputPath, "utf8").trim().split("\n");
+  const results = lines.filter((l) => l.trim()).map((l) => JSON.parse(l));
 
   return gradeResults({
     results,
@@ -190,11 +207,11 @@ async function runGrade(opts: GradeOpts): Promise<GradeResult[]> {
 }
 
 function getApiKeyFromConfig(): string | undefined {
-  const configPath = join(homedir(), '.config', 'agentchat', 'agentchat.yaml');
+  const configPath = join(homedir(), ".config", "agentchat", "agentchat.yaml");
   if (existsSync(configPath)) {
     try {
-      const config = parseYaml(readFileSync(configPath, 'utf8')) as any;
-      const executor = config?.agents?.find?.((a: any) => a?.name === 'executor');
+      const config = parseYaml(readFileSync(configPath, "utf8")) as any;
+      const executor = config?.agents?.find?.((a: any) => a?.name === "executor");
       return executor?.options?.apiKey;
     } catch {
       return undefined;
@@ -211,16 +228,18 @@ if (import.meta.main) {
     return undefined;
   };
 
-  const inputPath = flag('input') || argv[0];
-  if (!inputPath || inputPath.startsWith('--')) {
-    console.error('usage: bun bench-grade.ts --input <jsonl-path> [--url <url>] [--model <model>] [--auth-token <token>] [--auth-cert <path>]');
+  const inputPath = flag("input") || argv[0];
+  if (!inputPath || inputPath.startsWith("--")) {
+    console.error(
+      "usage: bun bench-grade.ts --input <jsonl-path> [--url <url>] [--model <model>] [--auth-token <token>] [--auth-cert <path>]",
+    );
     process.exit(1);
   }
 
-  const url = flag('url') || 'https://192.168.68.76:7843/v1';
-  const model = flag('model') || 'gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf';
-  const authToken = flag('auth-token') || getApiKeyFromConfig();
-  const caPath = flag('auth-cert') || '/tmp/llamactl-mac-mini-ca.pem';
+  const url = flag("url") || "https://192.168.68.76:7843/v1";
+  const model = flag("model") || "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf";
+  const authToken = flag("auth-token") || getApiKeyFromConfig();
+  const caPath = flag("auth-cert") || "/tmp/llamactl-mac-mini-ca.pem";
 
   const results = await runGrade({ inputPath, url, model, authToken, caPath });
   for (const r of results) {

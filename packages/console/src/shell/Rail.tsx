@@ -46,9 +46,7 @@ function RailButtons({
           onClick={() => onSelect(n.id)}
           title={n.label}
         >
-          <span style={{ fontSize: 16, fontFamily: "var(--font-mono)" }}>
-            {n.icon}
-          </span>
+          <span style={{ fontSize: 16, fontFamily: "var(--font-mono)" }}>{n.icon}</span>
           <span className="lbl">{n.label}</span>
           {n.id === "mission" && pendingCount > 0 && (
             <span className="pip warn">{pendingCount}</span>
@@ -81,11 +79,7 @@ function RailWithNavigation({
   };
 
   return (
-    <RailButtons
-      activeModule={activeModule}
-      onSelect={handleSelect}
-      pendingCount={pendingCount}
-    />
+    <RailButtons activeModule={activeModule} onSelect={handleSelect} pendingCount={pendingCount} />
   );
 }
 
@@ -103,7 +97,5 @@ export function Rail(props: RailProps): JSX.Element {
     );
   }
 
-  return (
-    <RailWithNavigation activeModule={activeModule} pendingCount={pendingCount} />
-  );
+  return <RailWithNavigation activeModule={activeModule} pendingCount={pendingCount} />;
 }

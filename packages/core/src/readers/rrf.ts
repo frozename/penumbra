@@ -128,4 +128,3 @@ export function fuseRRF<T>(
   const capped = limit === undefined ? fused : fused.slice(0, limit);
   return capped.map(({ firstListIndex: _a, firstRank: _b, ...rest }) => rest);
 }
-

@@ -9,10 +9,10 @@ import type {
   RecentCostOutput,
   T0EventInput,
   RecallResult,
-} from '@penumbra/core';
-import { RecallRequestSchema } from '@penumbra/core';
-import type { ChainStartResult } from './format-summary.js';
-import type { z } from 'zod';
+} from "@penumbra/core";
+import { RecallRequestSchema } from "@penumbra/core";
+import type { ChainStartResult } from "./format-summary.js";
+import type { z } from "zod";
 type RecallInput = z.input<typeof RecallRequestSchema>;
 
 export interface StaticDaemonClientOpts {
@@ -38,87 +38,102 @@ export class DaemonClient {
   private readonly resolve: () => { baseUrl: string; token: string };
 
   constructor(opts: DaemonClientOpts) {
-    if ('resolve' in opts) {
+    if ("resolve" in opts) {
       this.resolve = () => {
         const cfg = opts.resolve();
-        return { baseUrl: cfg.baseUrl.replace(/\/$/, ''), token: cfg.token };
+        return { baseUrl: cfg.baseUrl.replace(/\/$/, ""), token: cfg.token };
       };
     } else {
-      const cached = { baseUrl: opts.baseUrl.replace(/\/$/, ''), token: opts.token };
+      const cached = { baseUrl: opts.baseUrl.replace(/\/$/, ""), token: opts.token };
       this.resolve = () => cached;
     }
   }
 
   async observe(event: T0EventInput): Promise<{ event_id: string }> {
-    return this.post('/observations', event);
+    return this.post("/observations", event);
   }
 
-  async taskDraftsPending(req: { latest_event_type: 'task_draft' | 'task_draft_escalation'; project_id: string; limit?: number }): Promise<{ drafts: unknown[] }> {
+  async taskDraftsPending(req: {
+    latest_event_type: "task_draft" | "task_draft_escalation";
+    project_id: string;
+    limit?: number;
+  }): Promise<{ drafts: unknown[] }> {
     const params = new URLSearchParams();
-    params.set('latest_event_type', req.latest_event_type);
-    params.set('project_id', req.project_id);
-    if (req.limit != null) params.set('limit', String(req.limit));
+    params.set("latest_event_type", req.latest_event_type);
+    params.set("project_id", req.project_id);
+    if (req.limit != null) params.set("limit", String(req.limit));
     return this.get(`/task-drafts/pending?${params.toString()}`) as Promise<{ drafts: unknown[] }>;
   }
 
-  async taskDraftsPendingEscalations(req: { project_id: string; limit?: number }): Promise<{ escalations: unknown[] }> {
+  async taskDraftsPendingEscalations(req: {
+    project_id: string;
+    limit?: number;
+  }): Promise<{ escalations: unknown[] }> {
     const params = new URLSearchParams();
-    params.set('project_id', req.project_id);
-    if (req.limit != null) params.set('limit', String(req.limit));
-    return this.get(`/task-drafts/pending-escalations?${params.toString()}`) as Promise<{ escalations: unknown[] }>;
+    params.set("project_id", req.project_id);
+    if (req.limit != null) params.set("limit", String(req.limit));
+    return this.get(`/task-drafts/pending-escalations?${params.toString()}`) as Promise<{
+      escalations: unknown[];
+    }>;
   }
 
   async recall(req: RecallInput): Promise<{ results: RecallResult[] }> {
-    return this.post('/recall', req);
+    return this.post("/recall", req);
   }
 
   async memorySearch(req: unknown): Promise<unknown> {
-    return this.post('/memory/search', req);
+    return this.post("/memory/search", req);
   }
 
   async memoryVerify(req: unknown): Promise<unknown> {
-    return this.post('/memory/verify', req);
+    return this.post("/memory/verify", req);
   }
   async memoryWriteT2(req: unknown): Promise<unknown> {
-    return this.post('/memory/write', req);
+    return this.post("/memory/write", req);
   }
   async memoryVerifyAuthorize(req: unknown): Promise<unknown> {
-    return this.post('/memory-verify/authorize', req);
+    return this.post("/memory-verify/authorize", req);
   }
 
   async memoryVerificationEvents(req: { memory_id: string; limit?: number }): Promise<unknown> {
     const params = new URLSearchParams();
-    if (req.limit != null) params.set('limit', String(req.limit));
+    if (req.limit != null) params.set("limit", String(req.limit));
     const qs = params.toString();
-    return this.get(`/memory/${encodeURIComponent(req.memory_id)}/verification_events${qs ? `?${qs}` : ''}`);
+    return this.get(
+      `/memory/${encodeURIComponent(req.memory_id)}/verification_events${qs ? `?${qs}` : ""}`,
+    );
   }
 
   async memoryTimeline(req: unknown): Promise<unknown> {
-    return this.post('/memory/timeline', req);
+    return this.post("/memory/timeline", req);
   }
 
   async memoryGet(req: unknown): Promise<unknown> {
-    return this.post('/memory/get', req);
+    return this.post("/memory/get", req);
   }
 
   async corpusBuild(req: unknown): Promise<unknown> {
-    return this.post('/memory/corpus/build', req);
+    return this.post("/memory/corpus/build", req);
   }
 
   async corpusQuery(req: unknown): Promise<unknown> {
-    return this.post('/memory/corpus/query', req);
+    return this.post("/memory/corpus/query", req);
   }
 
   async corpusList(): Promise<unknown> {
-    return this.post('/memory/corpus/list', {});
+    return this.post("/memory/corpus/list", {});
   }
 
-  async memoryEfficacyRecent(req: { since?: string; limit?: number; include_raw?: boolean }): Promise<unknown> {
-    return this.post('/memory/efficacy/recent', req);
+  async memoryEfficacyRecent(req: {
+    since?: string;
+    limit?: number;
+    include_raw?: boolean;
+  }): Promise<unknown> {
+    return this.post("/memory/efficacy/recent", req);
   }
 
   async memoryEfficacyRebuild(req: { since?: string; source?: string }): Promise<unknown> {
-    return this.post('/memory/efficacy/rebuild', req);
+    return this.post("/memory/efficacy/rebuild", req);
   }
 
   async memoryEfficacyJobStatus(req: { job_id: string }): Promise<unknown> {
@@ -127,22 +142,22 @@ export class DaemonClient {
 
   async memoryEfficacyJobs(req: { limit?: number; status?: string }): Promise<unknown> {
     const params = new URLSearchParams();
-    if (req.limit) params.set('limit', String(req.limit));
-    if (req.status) params.set('status', req.status);
+    if (req.limit) params.set("limit", String(req.limit));
+    if (req.status) params.set("status", req.status);
     const qs = params.toString();
-    return this.get(qs ? `/memory/efficacy/jobs?${qs}` : '/memory/efficacy/jobs');
+    return this.get(qs ? `/memory/efficacy/jobs?${qs}` : "/memory/efficacy/jobs");
   }
 
   async qualityStatus(req: { window_hours?: number; min_samples?: number }): Promise<unknown> {
     const params = new URLSearchParams();
-    if (req.window_hours != null) params.set('window_hours', String(req.window_hours));
-    if (req.min_samples != null) params.set('min_samples', String(req.min_samples));
+    if (req.window_hours != null) params.set("window_hours", String(req.window_hours));
+    if (req.min_samples != null) params.set("min_samples", String(req.min_samples));
     const qs = params.toString();
-    return this.get(qs ? `/quality/status?${qs}` : '/quality/status');
+    return this.get(qs ? `/quality/status?${qs}` : "/quality/status");
   }
 
   async workflowList(): Promise<unknown> {
-    return this.get('/workflows/list');
+    return this.get("/workflows/list");
   }
 
   async workflowRun(input: {
@@ -152,19 +167,19 @@ export class DaemonClient {
     args?: Record<string, unknown>;
     wait?: boolean;
   }): Promise<unknown> {
-    return this.post('/workflows/run', input);
+    return this.post("/workflows/run", input);
   }
 
   async workflowStatus(input: { workflow_run_id: string }): Promise<unknown> {
-    return this.post('/workflows/status', input);
+    return this.post("/workflows/status", input);
   }
 
   async workflowWait(input: { workflow_run_id: string; timeout_ms?: number }): Promise<unknown> {
-    return this.post('/workflows/wait', input);
+    return this.post("/workflows/wait", input);
   }
 
   async workflowSuggest(input: { now?: string }): Promise<unknown> {
-    return this.post('/workflows/suggest', input);
+    return this.post("/workflows/suggest", input);
   }
 
   async workflowHistory(input: { name: string }): Promise<unknown> {
@@ -172,31 +187,37 @@ export class DaemonClient {
   }
 
   async planStart(req: { file_path: string }): Promise<{ plan_id: string; status: string }> {
-    return this.post('/plans', req);
+    return this.post("/plans", req);
   }
 
   async planList(req: { status?: string } = {}): Promise<{ plans: PlanRecord[] }> {
-    const qs = req.status ? `?status=${encodeURIComponent(req.status)}` : '';
+    const qs = req.status ? `?status=${encodeURIComponent(req.status)}` : "";
     return this.get(`/plans${qs}`);
   }
 
-  async planStatus(req: { plan_id: string }): Promise<{ plan: PlanRecord; tasks: PlanTaskRecord[] }> {
+  async planStatus(req: {
+    plan_id: string;
+  }): Promise<{ plan: PlanRecord; tasks: PlanTaskRecord[] }> {
     return this.get(`/plans/${encodeURIComponent(req.plan_id)}`);
   }
 
-  async planCancel(req: { plan_id: string }): Promise<{ plan_id: string; status: string; cancelled_running_count?: number }> {
+  async planCancel(req: {
+    plan_id: string;
+  }): Promise<{ plan_id: string; status: string; cancelled_running_count?: number }> {
     return this.post(`/plans/${encodeURIComponent(req.plan_id)}/cancel`, {});
   }
 
   async recallStatus(): Promise<unknown> {
-    return this.get('/memory/status');
+    return this.get("/memory/status");
   }
 
   async longLivedList(): Promise<unknown> {
-    return this.get('/long-lived');
+    return this.get("/long-lived");
   }
 
-  async getFederationTools(agentId: string): Promise<{ tools: Array<{ name: string; description?: string; inputSchema?: unknown }> }> {
+  async getFederationTools(
+    agentId: string,
+  ): Promise<{ tools: Array<{ name: string; description?: string; inputSchema?: unknown }> }> {
     return this.get(`/long-lived/agents/${encodeURIComponent(agentId)}/federation-tools`);
   }
 
@@ -207,7 +228,7 @@ export class DaemonClient {
     args: unknown;
     _meta?: Record<string, unknown>;
   }): Promise<unknown> {
-    return this.post('/long-lived/mcp/call', req);
+    return this.post("/long-lived/mcp/call", req);
   }
 
   async longLivedGet(id: string): Promise<unknown> {
@@ -239,11 +260,11 @@ export class DaemonClient {
   }
 
   async dispatchRefine(message: string): Promise<{ refined: string }> {
-    return this.post('/dispatch/refine', { message }) as Promise<{ refined: string }>;
+    return this.post("/dispatch/refine", { message }) as Promise<{ refined: string }>;
   }
 
   async longLivedPendingActions(id: string, status?: string | null): Promise<unknown> {
-    const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+    const qs = status ? `?status=${encodeURIComponent(status)}` : "";
     return this.get(`/long-lived/${encodeURIComponent(id)}/pending-actions${qs}`);
   }
 
@@ -254,7 +275,11 @@ export class DaemonClient {
     );
   }
 
-  async longLivedRejectAction(action_id: string, reason?: string, decided_by?: string): Promise<unknown> {
+  async longLivedRejectAction(
+    action_id: string,
+    reason?: string,
+    decided_by?: string,
+  ): Promise<unknown> {
     return this.post(
       `/long-lived/pending-actions/${encodeURIComponent(action_id)}/reject`,
       decided_by === undefined && reason === undefined ? {} : { reason, decided_by },
@@ -267,77 +292,109 @@ export class DaemonClient {
 
   async longLivedAudit(id: string, since?: number, limit?: number): Promise<unknown> {
     const qs = new URLSearchParams();
-    if (since != null) qs.set('since', String(since));
-    if (limit != null) qs.set('limit', String(limit));
+    if (since != null) qs.set("since", String(since));
+    if (limit != null) qs.set("limit", String(limit));
     const q = qs.toString();
-    return this.get(q ? `/long-lived/${encodeURIComponent(id)}/audit?${q}` : `/long-lived/${encodeURIComponent(id)}/audit`);
+    return this.get(
+      q
+        ? `/long-lived/${encodeURIComponent(id)}/audit?${q}`
+        : `/long-lived/${encodeURIComponent(id)}/audit`,
+    );
   }
 
   async longLivedTicks(id: string, since?: number, limit?: number): Promise<unknown> {
     const qs = new URLSearchParams();
-    if (since != null) qs.set('since', String(since));
-    if (limit != null) qs.set('limit', String(limit));
+    if (since != null) qs.set("since", String(since));
+    if (limit != null) qs.set("limit", String(limit));
     const q = qs.toString();
-    return this.get(q ? `/long-lived/${encodeURIComponent(id)}/ticks?${q}` : `/long-lived/${encodeURIComponent(id)}/ticks`);
+    return this.get(
+      q
+        ? `/long-lived/${encodeURIComponent(id)}/ticks?${q}`
+        : `/long-lived/${encodeURIComponent(id)}/ticks`,
+    );
   }
 
   async costRecent(req: { since?: string; project_id?: string | null }): Promise<RecentCostOutput> {
     const qs = new URLSearchParams();
-    if (req.since) qs.set('since', req.since);
-    if (req.project_id != null) qs.set('project_id', req.project_id);
+    if (req.since) qs.set("since", req.since);
+    if (req.project_id != null) qs.set("project_id", req.project_id);
     const q = qs.toString();
-    return this.get(q ? `/usage/recent?${q}` : '/usage/recent');
+    return this.get(q ? `/usage/recent?${q}` : "/usage/recent");
   }
 
   async costQuotaStatus(req: { since?: string }): Promise<QuotaStatusOutput> {
-    const qs = req.since ? `?since=${encodeURIComponent(req.since)}` : '';
+    const qs = req.since ? `?since=${encodeURIComponent(req.since)}` : "";
     return this.get(`/usage/quota_status${qs}`);
   }
 
-  async subscriptionPressureStatus(req: { provider?: string; stale_after_seconds?: number }): Promise<PressureResult> {
+  async subscriptionPressureStatus(req: {
+    provider?: string;
+    stale_after_seconds?: number;
+  }): Promise<PressureResult> {
     const qs = new URLSearchParams();
-    if (req.provider) qs.set('provider', req.provider);
-    if (req.stale_after_seconds != null) qs.set('stale_after_seconds', String(req.stale_after_seconds));
+    if (req.provider) qs.set("provider", req.provider);
+    if (req.stale_after_seconds != null)
+      qs.set("stale_after_seconds", String(req.stale_after_seconds));
     const q = qs.toString();
-    return this.get(q ? `/usage/subscription_pressure?${q}` : '/usage/subscription_pressure');
+    return this.get(q ? `/usage/subscription_pressure?${q}` : "/usage/subscription_pressure");
   }
 
-  async agentRank(req: { task_type: string; since?: string; min_samples?: number; agent_kind?: 'coding' | 'long_lived'; include_neutral?: boolean; include_cost?: boolean }): Promise<AgentRankOutput> {
+  async agentRank(req: {
+    task_type: string;
+    since?: string;
+    min_samples?: number;
+    agent_kind?: "coding" | "long_lived";
+    include_neutral?: boolean;
+    include_cost?: boolean;
+  }): Promise<AgentRankOutput> {
     const qs = new URLSearchParams();
-    qs.set('task_type', req.task_type);
-    if (req.since) qs.set('since', req.since);
-    if (req.min_samples != null) qs.set('min_samples', String(req.min_samples));
-    if (req.agent_kind) qs.set('agent_kind', req.agent_kind);
-    if (req.include_neutral != null) qs.set('include_neutral', String(req.include_neutral));
-    if (req.include_cost != null) qs.set('include_cost', String(req.include_cost));
+    qs.set("task_type", req.task_type);
+    if (req.since) qs.set("since", req.since);
+    if (req.min_samples != null) qs.set("min_samples", String(req.min_samples));
+    if (req.agent_kind) qs.set("agent_kind", req.agent_kind);
+    if (req.include_neutral != null) qs.set("include_neutral", String(req.include_neutral));
+    if (req.include_cost != null) qs.set("include_cost", String(req.include_cost));
     return this.get(`/agents/rank?${qs.toString()}`);
   }
 
-  async agentRecommend(req: { task_type?: string; workload?: string; risk_class?: string; window_days?: number; agent_kind?: 'coding' | 'long_lived' }): Promise<unknown> {
+  async agentRecommend(req: {
+    task_type?: string;
+    workload?: string;
+    risk_class?: string;
+    window_days?: number;
+    agent_kind?: "coding" | "long_lived";
+  }): Promise<unknown> {
     const qs = new URLSearchParams();
-    if (req.task_type) qs.set('task_type', req.task_type);
-    if (req.workload) qs.set('workload', req.workload);
-    if (req.risk_class) qs.set('risk_class', req.risk_class);
-    if (req.window_days != null) qs.set('window_days', String(req.window_days));
-    if (req.agent_kind) qs.set('agent_kind', req.agent_kind);
+    if (req.task_type) qs.set("task_type", req.task_type);
+    if (req.workload) qs.set("workload", req.workload);
+    if (req.risk_class) qs.set("risk_class", req.risk_class);
+    if (req.window_days != null) qs.set("window_days", String(req.window_days));
+    if (req.agent_kind) qs.set("agent_kind", req.agent_kind);
     return this.get(`/agents/recommend?${qs.toString()}`);
   }
 
-  async agentRouteFor(req: { role: string; window_days?: number; min_samples?: number; agent_kind?: 'coding' | 'long_lived' }): Promise<unknown> {
+  async agentRouteFor(req: {
+    role: string;
+    window_days?: number;
+    min_samples?: number;
+    agent_kind?: "coding" | "long_lived";
+  }): Promise<unknown> {
     const qs = new URLSearchParams();
-    qs.set('role', req.role);
-    if (req.window_days != null) qs.set('window_days', String(req.window_days));
-    if (req.min_samples != null) qs.set('min_samples', String(req.min_samples));
-    if (req.agent_kind) qs.set('agent_kind', req.agent_kind);
+    qs.set("role", req.role);
+    if (req.window_days != null) qs.set("window_days", String(req.window_days));
+    if (req.min_samples != null) qs.set("min_samples", String(req.min_samples));
+    if (req.agent_kind) qs.set("agent_kind", req.agent_kind);
     return this.get(`/agents/route_for?${qs.toString()}`);
   }
 
   async endSession(sessionId: string): Promise<{ ok: true }> {
-    return this.post('/sessions/end', { session_id: sessionId });
+    return this.post("/sessions/end", { session_id: sessionId });
   }
 
   async listPendingHandoffs(opts: { conversation_id?: string } = {}): Promise<{ handoffs: any[] }> {
-    const qs = opts.conversation_id ? `?conversation_id=${encodeURIComponent(opts.conversation_id)}` : '';
+    const qs = opts.conversation_id
+      ? `?conversation_id=${encodeURIComponent(opts.conversation_id)}`
+      : "";
     return this.get(`/handoffs/pending${qs}`);
   }
 
@@ -360,41 +417,42 @@ export class DaemonClient {
   async dispatchLand(input: {
     handoff_id: string;
     commit_message: string;
-    mode?: 'squash' | 'ff';
+    mode?: "squash" | "ff";
     delete_branch?: boolean;
     force?: boolean;
   }): Promise<unknown> {
     const { baseUrl, token } = this.resolve();
     const res = await fetch(`${baseUrl}/dispatch/land`, {
-      method: 'POST',
+      method: "POST",
       headers: {
         ...this.authHeaders(token),
-        'content-type': 'application/json',
+        "content-type": "application/json",
       },
       body: JSON.stringify(input),
     });
-    if (!res.ok && res.status !== 202) throw await daemonHttpError('/dispatch/land', res);
+    if (!res.ok && res.status !== 202) throw await daemonHttpError("/dispatch/land", res);
     if (res.status !== 202) {
       return await res.json();
     }
-    const accepted = await res.json() as { task_id?: string };
+    const accepted = (await res.json()) as { task_id?: string };
     const taskId = accepted.task_id;
     if (!taskId) {
-      throw new Error('dispatch land accepted without task_id');
+      throw new Error("dispatch land accepted without task_id");
     }
     for (let i = 0; i < 300; i += 1) {
       await Bun.sleep(200);
       const taskRes = await fetch(`${baseUrl}/dispatch/land/${encodeURIComponent(taskId)}`, {
         headers: this.authHeaders(token),
       });
-      if (!taskRes.ok) throw await daemonHttpError(`/dispatch/land/${encodeURIComponent(taskId)}`, taskRes);
-      const body = await taskRes.json() as {
+      if (!taskRes.ok)
+        throw await daemonHttpError(`/dispatch/land/${encodeURIComponent(taskId)}`, taskRes);
+      const body = (await taskRes.json()) as {
         status?: string;
         result?: unknown;
         error?: unknown;
       };
-      if (body.status === 'done') return body.result;
-      if (body.status === 'failed') return { error: body.error ?? { code: 'unknown' } };
+      if (body.status === "done") return body.result;
+      if (body.status === "failed") return { error: body.error ?? { code: "unknown" } };
     }
     throw new Error(`dispatch land task timed out: ${taskId}`);
   }
@@ -407,7 +465,10 @@ export class DaemonClient {
     started_at: string | null;
     resolved_at: string | null;
     latency_seconds: number | null;
-    reliability: Pick<DispatchReliabilityReport, 'status' | 'trustworthy' | 'recommended_action' | 'summary'>;
+    reliability: Pick<
+      DispatchReliabilityReport,
+      "status" | "trustworthy" | "recommended_action" | "summary"
+    >;
   }> {
     const { baseUrl, token } = this.resolve();
     const res = await fetch(`${baseUrl}/handoffs/${encodeURIComponent(handoff_id)}/status`, {
@@ -416,7 +477,8 @@ export class DaemonClient {
     if (res.status === 404) {
       throw new Error(`handoff not found: ${handoff_id}`);
     }
-    if (!res.ok) throw await daemonHttpError(`/handoffs/${encodeURIComponent(handoff_id)}/status`, res);
+    if (!res.ok)
+      throw await daemonHttpError(`/handoffs/${encodeURIComponent(handoff_id)}/status`, res);
     return (await res.json()) as {
       handoff_id: string;
       status: string;
@@ -425,65 +487,87 @@ export class DaemonClient {
       started_at: string | null;
       resolved_at: string | null;
       latency_seconds: number | null;
-      reliability: Pick<DispatchReliabilityReport, 'status' | 'trustworthy' | 'recommended_action' | 'summary'>;
+      reliability: Pick<
+        DispatchReliabilityReport,
+        "status" | "trustworthy" | "recommended_action" | "summary"
+      >;
     };
   }
 
-  async approveHandoff(handoff_id: string, body: { redirect_to?: string; reject?: boolean; reason?: string } = {}): Promise<{ handoff_id: string; status: string }> {
+  async approveHandoff(
+    handoff_id: string,
+    body: { redirect_to?: string; reject?: boolean; reason?: string } = {},
+  ): Promise<{ handoff_id: string; status: string }> {
     return this.post(`/handoffs/${handoff_id}/approve`, body);
   }
 
   async startChain(body: {
-    initial_agent: string; message: string;
-    conversation_id?: string; project_id?: string | null;
-    max_hops?: number; trust_mode?: 'all' | 'config';
+    initial_agent: string;
+    message: string;
+    conversation_id?: string;
+    project_id?: string | null;
+    max_hops?: number;
+    trust_mode?: "all" | "config";
     use_worktree?: boolean;
     task_type?: string;
     parent_handoff_id?: string;
-    dispatch_kind?: 'long_lived_tick' | 'workflow';
+    dispatch_kind?: "long_lived_tick" | "workflow";
     long_lived_agent_id?: string;
     long_lived_tick_id?: string;
     branch_base?: string;
     open_pr_on_review?: boolean;
   }): Promise<ChainStartResult> {
-    return this.post('/chains/start', body);
+    return this.post("/chains/start", body);
   }
 
   async sendChainMessage(body: { handoff_id: string; content: string }): Promise<{ ok: true }> {
-    return this.post(`/chains/${encodeURIComponent(body.handoff_id)}/messages`, { content: body.content });
+    return this.post(`/chains/${encodeURIComponent(body.handoff_id)}/messages`, {
+      content: body.content,
+    });
   }
 
   async listWorktrees(): Promise<{ worktrees: any[] }> {
-    return this.get('/worktrees');
+    return this.get("/worktrees");
   }
 
-  async inspectWorktree(handoff_id: string): Promise<{ worktree: any; diff_against_main: string; branch_log: string }> {
+  async inspectWorktree(
+    handoff_id: string,
+  ): Promise<{ worktree: any; diff_against_main: string; branch_log: string }> {
     return this.get(`/worktrees/${encodeURIComponent(handoff_id)}`);
   }
 
-  async globInWorktree(handoff_id: string, args: {
-    pattern: string;
-    path?: string | null;
-    max_results?: number | null;
-    include_ignored?: boolean | null;
-  }): Promise<{ results: string[]; truncated: boolean }> {
+  async globInWorktree(
+    handoff_id: string,
+    args: {
+      pattern: string;
+      path?: string | null;
+      max_results?: number | null;
+      include_ignored?: boolean | null;
+    },
+  ): Promise<{ results: string[]; truncated: boolean }> {
     return this.post(`/worktrees/${encodeURIComponent(handoff_id)}/glob`, args);
   }
 
-  async grepInWorktree(handoff_id: string, args: {
-    pattern: string;
-    path?: string | null;
-    glob?: string | null;
-    output_mode?: 'content' | 'files_with_matches';
-    case_insensitive?: boolean | null;
-    include_ignored?: boolean | null;
-    max_results?: number | null;
-  }): Promise<{ results: any[] | string[]; truncated: boolean }> {
+  async grepInWorktree(
+    handoff_id: string,
+    args: {
+      pattern: string;
+      path?: string | null;
+      glob?: string | null;
+      output_mode?: "content" | "files_with_matches";
+      case_insensitive?: boolean | null;
+      include_ignored?: boolean | null;
+      max_results?: number | null;
+    },
+  ): Promise<{ results: any[] | string[]; truncated: boolean }> {
     return this.post(`/worktrees/${encodeURIComponent(handoff_id)}/grep`, args);
   }
 
-  async cleanupWorktree(handoff_id: string, force?: boolean): Promise<{ status: 'torn_down' | 'not_found' }> {
-    const qs = force ? '?force=true' : '';
+  async cleanupWorktree(
+    handoff_id: string,
+    force?: boolean,
+  ): Promise<{ status: "torn_down" | "not_found" }> {
+    const qs = force ? "?force=true" : "";
     return this.post(`/worktrees/${encodeURIComponent(handoff_id)}/cleanup${qs}`, {});
   }
 
@@ -492,10 +576,15 @@ export class DaemonClient {
   }
 
   async listChainHistory(conversation_id: string, limit: number = 50): Promise<{ history: any[] }> {
-    return this.get(`/chains/history?conversation_id=${encodeURIComponent(conversation_id)}&limit=${limit}`);
+    return this.get(
+      `/chains/history?conversation_id=${encodeURIComponent(conversation_id)}&limit=${limit}`,
+    );
   }
 
-  async getChainMessages(conversation_id: string, types?: string[]): Promise<{
+  async getChainMessages(
+    conversation_id: string,
+    types?: string[],
+  ): Promise<{
     events: {
       event_id: string;
       ts: string;
@@ -504,20 +593,24 @@ export class DaemonClient {
       source_detail: string | null;
       user_id: string | null;
       payload: unknown;
-    }[]
+    }[];
   }> {
     let url = `/chains/messages?conversation_id=${encodeURIComponent(conversation_id)}`;
     if (types && types.length > 0) {
-      url += `&types=${encodeURIComponent(types.join(','))}`;
+      url += `&types=${encodeURIComponent(types.join(","))}`;
     }
     return this.get(url);
   }
 
   async getChainResponses(
     conversation_id: string,
-    which: 'final' | 'all' = 'final',
-  ): Promise<{ responses: { agent: string, text: string, error?: { message: string }, ts: string }[] }> {
-    return this.get(`/chains/responses?conversation_id=${encodeURIComponent(conversation_id)}&which=${which}`);
+    which: "final" | "all" = "final",
+  ): Promise<{
+    responses: { agent: string; text: string; error?: { message: string }; ts: string }[];
+  }> {
+    return this.get(
+      `/chains/responses?conversation_id=${encodeURIComponent(conversation_id)}&which=${which}`,
+    );
   }
 
   async reloadConfig(): Promise<{
@@ -525,18 +618,20 @@ export class DaemonClient {
     agent_count: number;
     workflow_count?: number;
     project_registry_count?: number;
-    reactor_status?: 'reloaded' | 'absent' | 'failed';
+    reactor_status?: "reloaded" | "absent" | "failed";
     reactor_error?: string;
-    worker_extras?: {
-      started: string[];
-      restarted: string[];
-      stopped: string[];
-      skipped: string[];
-      errors: Array<{ worker_id: string; message: string }>;
-    } | { error: string };
+    worker_extras?:
+      | {
+          started: string[];
+          restarted: string[];
+          stopped: string[];
+          skipped: string[];
+          errors: Array<{ worker_id: string; message: string }>;
+        }
+      | { error: string };
     reloaded_at: string;
   }> {
-    return this.post('/agentchat/reload', {});
+    return this.post("/agentchat/reload", {});
   }
 
   async reconcilerSweepOrphanPrs(input: { dry_run?: boolean; max_close?: number }): Promise<{
@@ -555,40 +650,51 @@ export class DaemonClient {
       main_sha?: string;
     }>;
   }> {
-    return this.post('/reconciler/sweep-orphan-prs', input);
+    return this.post("/reconciler/sweep-orphan-prs", input);
   }
 
-  async reconcilerVerdicts(input: {
-    since?: string;
-    limit?: number;
-    only_unverified?: boolean;
-  } = {}): Promise<unknown> {
+  async reconcilerVerdicts(
+    input: {
+      since?: string;
+      limit?: number;
+      only_unverified?: boolean;
+    } = {},
+  ): Promise<unknown> {
     const qs = new URLSearchParams();
-    if (input.since) qs.set('since', input.since);
-    if (input.limit != null) qs.set('limit', String(input.limit));
-    if (input.only_unverified != null) qs.set('only_unverified', String(input.only_unverified));
+    if (input.since) qs.set("since", input.since);
+    if (input.limit != null) qs.set("limit", String(input.limit));
+    if (input.only_unverified != null) qs.set("only_unverified", String(input.only_unverified));
     const q = qs.toString();
-    return this.get(q ? `/reconciler/verdicts?${q}` : '/reconciler/verdicts');
+    return this.get(q ? `/reconciler/verdicts?${q}` : "/reconciler/verdicts");
   }
 
   async listChainAgents(): Promise<{ agents: { name: string }[] }> {
-    return this.get('/chains/agents');
+    return this.get("/chains/agents");
   }
 
-  async listPermissions(opts: { status?: string; conversation_id?: string; parent_handoff_id?: string } = {}): Promise<{ permissions: any[] }> {
+  async listPermissions(
+    opts: { status?: string; conversation_id?: string; parent_handoff_id?: string } = {},
+  ): Promise<{ permissions: any[] }> {
     const qs = new URLSearchParams();
-    if (opts.status) qs.set('status', opts.status);
-    if (opts.conversation_id) qs.set('conversation_id', opts.conversation_id);
-    if (opts.parent_handoff_id) qs.set('parent_handoff_id', opts.parent_handoff_id);
+    if (opts.status) qs.set("status", opts.status);
+    if (opts.conversation_id) qs.set("conversation_id", opts.conversation_id);
+    if (opts.parent_handoff_id) qs.set("parent_handoff_id", opts.parent_handoff_id);
     const q = qs.toString();
-    return this.get(q ? `/permissions?${q}` : '/permissions');
+    return this.get(q ? `/permissions?${q}` : "/permissions");
   }
 
   async getPermission(permission_id: string): Promise<{ permission: any }> {
     return this.get(`/permissions/${encodeURIComponent(permission_id)}`);
   }
 
-  async approvePermission(permission_id: string, body: { decision: 'approve' | 'reject'; remember?: 'this_call' | 'this_dispatch'; reason?: string }): Promise<{ permission_id: string; status: string; decided_at: string }> {
+  async approvePermission(
+    permission_id: string,
+    body: {
+      decision: "approve" | "reject";
+      remember?: "this_call" | "this_dispatch";
+      reason?: string;
+    },
+  ): Promise<{ permission_id: string; status: string; decided_at: string }> {
     return this.post(`/permissions/${encodeURIComponent(permission_id)}/decide`, body);
   }
 
@@ -602,17 +708,29 @@ export class DaemonClient {
     pty?: boolean;
     timeout_ms?: number;
     stdin?: string;
-  }): Promise<{ session_id: string; exit_code: number; stdout: string; stderr: string; truncated: boolean }> {
-    return this.post('/shell/run', req);
+  }): Promise<{
+    session_id: string;
+    exit_code: number;
+    stdout: string;
+    stderr: string;
+    truncated: boolean;
+  }> {
+    return this.post("/shell/run", req);
   }
 
   async shellClose(req: { handoff_id: string; session_id: string }): Promise<{ closed: boolean }> {
-    return this.post('/shell/close', req);
+    return this.post("/shell/close", req);
   }
 
-  async shellList(req: {
-    handoff_id: string;
-  }): Promise<{ sessions: Array<{ session_id: string; created_at: string; last_used_at: string; cwd: string; pty: boolean }> }> {
+  async shellList(req: { handoff_id: string }): Promise<{
+    sessions: Array<{
+      session_id: string;
+      created_at: string;
+      last_used_at: string;
+      cwd: string;
+      pty: boolean;
+    }>;
+  }> {
     return this.get(`/shell/list?handoff_id=${encodeURIComponent(req.handoff_id)}`);
   }
 
@@ -621,13 +739,13 @@ export class DaemonClient {
     opts: { origin?: string } = {},
   ): Promise<{
     task_id: string;
-    gh_create_status?: 'queued' | 'pending' | 'created' | 'failed';
+    gh_create_status?: "queued" | "pending" | "created" | "failed";
     gh_create_error?: string | null;
     gh_issue_url?: string;
     gh_issue_number?: number;
     gh_issue_repo?: string;
   }> {
-    return this.post('/tasks', input, this.originHeader(opts.origin));
+    return this.post("/tasks", input, this.originHeader(opts.origin));
   }
 
   async taskList(filters: {
@@ -640,24 +758,29 @@ export class DaemonClient {
     offset?: number;
   }): Promise<{ tasks: unknown[] }> {
     const qs = new URLSearchParams();
-    if (filters.status) qs.set('status', filters.status);
-    if (filters.kind) qs.set('kind', filters.kind);
-    if (filters.eligible_for) qs.set('eligible_for', filters.eligible_for);
-    if (filters.parent_task_id) qs.set('parent_task_id', filters.parent_task_id);
-    if (filters.origin) qs.set('origin', filters.origin);
-    if (filters.limit != null) qs.set('limit', String(filters.limit));
-    if (filters.offset != null) qs.set('offset', String(filters.offset));
+    if (filters.status) qs.set("status", filters.status);
+    if (filters.kind) qs.set("kind", filters.kind);
+    if (filters.eligible_for) qs.set("eligible_for", filters.eligible_for);
+    if (filters.parent_task_id) qs.set("parent_task_id", filters.parent_task_id);
+    if (filters.origin) qs.set("origin", filters.origin);
+    if (filters.limit != null) qs.set("limit", String(filters.limit));
+    if (filters.offset != null) qs.set("offset", String(filters.offset));
     const q = qs.toString();
-    return this.get(q ? `/tasks?${q}` : '/tasks');
+    return this.get(q ? `/tasks?${q}` : "/tasks");
   }
 
-  async taskGet(task_id: string, opts: { include?: Array<'lease' | 'events' | 'descendants'> } = {}): Promise<unknown> {
+  async taskGet(
+    task_id: string,
+    opts: { include?: Array<"lease" | "events" | "descendants"> } = {},
+  ): Promise<unknown> {
     const qs = new URLSearchParams();
     if (opts.include && opts.include.length > 0) {
-      qs.set('include', opts.include.join(','));
+      qs.set("include", opts.include.join(","));
     }
     const q = qs.toString();
-    return this.get(q ? `/tasks/${encodeURIComponent(task_id)}?${q}` : `/tasks/${encodeURIComponent(task_id)}`);
+    return this.get(
+      q ? `/tasks/${encodeURIComponent(task_id)}?${q}` : `/tasks/${encodeURIComponent(task_id)}`,
+    );
   }
 
   async maestroSessionGet(task_id: string): Promise<MaestroSessionRecord> {
@@ -672,7 +795,7 @@ export class DaemonClient {
     cost_budget_cents: number;
     sub_dispatch_budget: number;
   }): Promise<MaestroSessionRecord> {
-    return this.post('/maestro/sessions', input);
+    return this.post("/maestro/sessions", input);
   }
 
   async maestroSessionStartAdhoc(input: {
@@ -683,13 +806,13 @@ export class DaemonClient {
     sub_dispatch_budget: number;
     project_id?: string | null;
   }): Promise<{
-    status: 'dispatched';
+    status: "dispatched";
     agent_name: string;
     chain_handoff_id: string;
     conversation_id: string;
     session: MaestroSessionRecord;
   }> {
-    return this.post('/maestro/sessions/adhoc', input);
+    return this.post("/maestro/sessions/adhoc", input);
   }
 
   async maestroCapabilities(): Promise<{
@@ -701,7 +824,7 @@ export class DaemonClient {
     task_types: string[];
     workflows: string[];
   }> {
-    return this.get('/maestro/capabilities');
+    return this.get("/maestro/capabilities");
   }
 
   async taskNext(
@@ -717,16 +840,16 @@ export class DaemonClient {
   } | null> {
     const { baseUrl, token } = this.resolve();
     const res = await fetch(`${baseUrl}/tasks/lease`, {
-      method: 'POST',
+      method: "POST",
       headers: {
         ...this.authHeaders(token),
         ...this.originHeader(opts.origin),
-        'content-type': 'application/json',
+        "content-type": "application/json",
       },
       body: JSON.stringify(input),
     });
     if (res.status === 204) return null;
-    if (!res.ok) throw await daemonHttpError('/tasks/lease', res);
+    if (!res.ok) throw await daemonHttpError("/tasks/lease", res);
     return (await res.json()) as {
       task_id: string;
       prompt: string;
@@ -764,36 +887,32 @@ export class DaemonClient {
     return this.post(`/tasks/${encodeURIComponent(task_id)}/fail`, input);
   }
 
-  async taskCancel(
-    task_id: string,
-    input: { reason?: string },
-  ): Promise<{ status: string }> {
+  async taskCancel(task_id: string, input: { reason?: string }): Promise<{ status: string }> {
     return this.post(`/tasks/${encodeURIComponent(task_id)}/cancel`, input);
   }
 
   async taskLinkGh(
     task_id: string,
     input: { repo: string; issue_number: number },
-  ): Promise<{ task_id: string; gh_issue_url: string; gh_state: string; last_sync_ts: string | null; gh_sync_status?: string }> {
+  ): Promise<{
+    task_id: string;
+    gh_issue_url: string;
+    gh_state: string;
+    last_sync_ts: string | null;
+    gh_sync_status?: string;
+  }> {
     return this.post(`/tasks/${encodeURIComponent(task_id)}/link-gh`, input);
   }
 
-  async taskUnlinkGh(
-    task_id: string,
-  ): Promise<{ ok: true }> {
+  async taskUnlinkGh(task_id: string): Promise<{ ok: true }> {
     return this.post(`/tasks/${encodeURIComponent(task_id)}/unlink-gh`, {});
   }
 
-  async taskCommentGh(
-    task_id: string,
-    input: { body: string },
-  ): Promise<{ comment_url: string }> {
+  async taskCommentGh(task_id: string, input: { body: string }): Promise<{ comment_url: string }> {
     return this.post(`/tasks/${encodeURIComponent(task_id)}/comment-gh`, input);
   }
 
-  async taskSyncGhNow(
-    input: { task_id?: string } = {},
-  ): Promise<{
+  async taskSyncGhNow(input: { task_id?: string } = {}): Promise<{
     linked: number;
     pushed: number;
     pulled: number;
@@ -801,24 +920,30 @@ export class DaemonClient {
     skipped: boolean;
     results: unknown[];
   }> {
-    return this.post('/tasks/sync-gh-now', input);
+    return this.post("/tasks/sync-gh-now", input);
   }
 
   private async get<T>(path: string, extraHeaders: Record<string, string> = {}): Promise<T> {
     const { baseUrl, token } = this.resolve();
-    const res = await fetch(`${baseUrl}${path}`, { headers: { ...this.authHeaders(token), ...extraHeaders } });
+    const res = await fetch(`${baseUrl}${path}`, {
+      headers: { ...this.authHeaders(token), ...extraHeaders },
+    });
     if (!res.ok) throw await daemonHttpError(path, res);
     return (await res.json()) as T;
   }
 
-  private async post<T>(path: string, body: unknown, extraHeaders: Record<string, string> = {}): Promise<T> {
+  private async post<T>(
+    path: string,
+    body: unknown,
+    extraHeaders: Record<string, string> = {},
+  ): Promise<T> {
     const { baseUrl, token } = this.resolve();
     const res = await fetch(`${baseUrl}${path}`, {
-      method: 'POST',
+      method: "POST",
       headers: {
         ...this.authHeaders(token),
         ...extraHeaders,
-        'content-type': 'application/json',
+        "content-type": "application/json",
       },
       body: JSON.stringify(body),
     });
@@ -826,15 +951,21 @@ export class DaemonClient {
     return (await res.json()) as T;
   }
 
-  async getCuratorPatterns(req: { status?: 'queued' | 'approved' | 'rejected' | 'all' }): Promise<unknown> {
+  async getCuratorPatterns(req: {
+    status?: "queued" | "approved" | "rejected" | "all";
+  }): Promise<unknown> {
     const params = new URLSearchParams();
-    if (req.status != null) params.set('status', req.status);
+    if (req.status != null) params.set("status", req.status);
     const qs = params.toString();
-    return this.get(qs ? `/curator/patterns?${qs}` : '/curator/patterns');
+    return this.get(qs ? `/curator/patterns?${qs}` : "/curator/patterns");
   }
 
-  async postCuratorPatterns(req: { pattern: string; reason: string; proposed_by?: string }): Promise<unknown> {
-    return this.post('/curator/patterns', req);
+  async postCuratorPatterns(req: {
+    pattern: string;
+    reason: string;
+    proposed_by?: string;
+  }): Promise<unknown> {
+    return this.post("/curator/patterns", req);
   }
 
   async postCuratorPatternApprove(req: { pattern_id: string }): Promise<unknown> {
@@ -845,24 +976,27 @@ export class DaemonClient {
     return this.post(`/curator/patterns/${encodeURIComponent(req.pattern_id)}/disable`, {});
   }
 
-  async memoryDreamActionRevert(req: { action_id: string; cascade?: 'none' | 'force' }): Promise<unknown> {
-    return this.post('/dreaming/revert', req);
+  async memoryDreamActionRevert(req: {
+    action_id: string;
+    cascade?: "none" | "force";
+  }): Promise<unknown> {
+    return this.post("/dreaming/revert", req);
   }
 
   async dreamingHealth(): Promise<unknown> {
-    return this.get('/dreaming/health');
+    return this.get("/dreaming/health");
   }
 
   async listPendingDreamActions(req: { limit?: number }): Promise<unknown> {
     const params = new URLSearchParams();
-    if (req.limit != null) params.set('limit', String(req.limit));
+    if (req.limit != null) params.set("limit", String(req.limit));
     const qs = params.toString();
-    return this.get(qs ? `/dreaming/pending-actions?${qs}` : '/dreaming/pending-actions');
+    return this.get(qs ? `/dreaming/pending-actions?${qs}` : "/dreaming/pending-actions");
   }
 
   private originHeader(origin?: string): Record<string, string> {
     if (!origin) return {};
-    return { 'x-penumbra-origin': origin };
+    return { "x-penumbra-origin": origin };
   }
 
   private authHeaders(token: string): Record<string, string> {

@@ -6,6 +6,7 @@ Use this template when dispatching a spec document reviewer subagent.
 
 **Path constraint:** `[SPEC_FILE_PATH]` MUST be a relative path under
 `docs/superpowers/specs/` ending in `.md`. Reject any path that:
+
 - starts with `/` (absolute path)
 - contains `..` (path traversal)
 - resolves outside `docs/superpowers/specs/*.md`

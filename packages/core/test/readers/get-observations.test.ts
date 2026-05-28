@@ -1,26 +1,26 @@
-import { describe, expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
-import { migrate } from '../../src/db/migrations.js';
-import { getObservations } from '../../src/readers/get-observations.js';
+import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { migrate } from "../../src/db/migrations.js";
+import { getObservations } from "../../src/readers/get-observations.js";
 
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {
   // already loaded
 }
 
 function freshDb() {
-  const db = new Database(':memory:');
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 4 });
   return db;
 }
 
-describe('getObservations', () => {
-  test('hydrates t2 rows by id with all known fields', () => {
+describe("getObservations", () => {
+  test("hydrates t2 rows by id with all known fields", () => {
     const db = freshDb();
     db.run(
       `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids,
@@ -31,23 +31,23 @@ describe('getObservations', () => {
                '2026-05-03', '2026-05-03', '2026-05-04T01:02:03.000Z', 'maestro',
                'spot check', 'sess-1', 'feature', '["acp"]', '["agentchat.yaml"]')`,
     );
-    const out = getObservations(db, { ids: ['m1', 'missing'] });
+    const out = getObservations(db, { ids: ["m1", "missing"] });
     expect(out).toHaveLength(1);
-    expect(out[0]!.id).toBe('m1');
-    expect(out[0]!.obs_type).toBe('feature');
+    expect(out[0]!.id).toBe("m1");
+    expect(out[0]!.obs_type).toBe("feature");
     expect(out[0]!).toMatchObject({
-      last_verified_at: '2026-05-04T01:02:03.000Z',
-      last_verified_by: 'maestro',
-      last_verified_reason: 'spot check',
-      last_verified_session_id: 'sess-1',
+      last_verified_at: "2026-05-04T01:02:03.000Z",
+      last_verified_by: "maestro",
+      last_verified_reason: "spot check",
+      last_verified_session_id: "sess-1",
     });
-    expect(out[0]!.concepts).toEqual(['acp']);
-    expect(out[0]!.file_paths).toEqual(['agentchat.yaml']);
+    expect(out[0]!.concepts).toEqual(["acp"]);
+    expect(out[0]!.file_paths).toEqual(["agentchat.yaml"]);
   });
 
-  test('surfaces freshness metadata for fresh and stale observations', () => {
+  test("surfaces freshness metadata for fresh and stale observations", () => {
     const db = freshDb();
-    const now = new Date('2026-05-12T12:00:00.000Z');
+    const now = new Date("2026-05-12T12:00:00.000Z");
     const freshCreatedAt = new Date(now.getTime() - 3 * 86_400_000).toISOString();
     const staleCreatedAt = new Date(now.getTime() - 200 * 86_400_000).toISOString();
 
@@ -68,21 +68,21 @@ describe('getObservations', () => {
       [staleCreatedAt, staleCreatedAt, staleCreatedAt, staleCreatedAt],
     );
 
-    const out = getObservations(db, { ids: ['fresh', 'stale'] });
+    const out = getObservations(db, { ids: ["fresh", "stale"] });
     expect(out).toHaveLength(2);
     expect(out[0]).toMatchObject({
-      id: 'fresh',
+      id: "fresh",
       age_days: expect.any(Number),
       stale: false,
     });
     expect(out[1]).toMatchObject({
-      id: 'stale',
+      id: "stale",
       age_days: expect.any(Number),
       stale: true,
     });
   });
 
-  test('respects requested order', () => {
+  test("respects requested order", () => {
     const db = freshDb();
     const insert = (id: string) =>
       db.run(
@@ -93,14 +93,14 @@ describe('getObservations', () => {
                  '2026-05-03', '2026-05-03')`,
         [id],
       );
-    insert('a');
-    insert('b');
-    insert('c');
-    const out = getObservations(db, { ids: ['c', 'a', 'b'] });
-    expect(out.map((r) => r.id)).toEqual(['c', 'a', 'b']);
+    insert("a");
+    insert("b");
+    insert("c");
+    const out = getObservations(db, { ids: ["c", "a", "b"] });
+    expect(out.map((r) => r.id)).toEqual(["c", "a", "b"]);
   });
 
-  test('empty ids array returns []', () => {
+  test("empty ids array returns []", () => {
     const db = freshDb();
     const out = getObservations(db, { ids: [] });
     expect(out).toEqual([]);

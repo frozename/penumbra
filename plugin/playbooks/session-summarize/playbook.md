@@ -30,6 +30,7 @@ output:
 run:
   kind: markdown-template
 ---
+
 # Session summary — {{date}} {{period}}
 
 Project: `{{project}}`. Session started: `{{session_start}}`.
@@ -39,8 +40,9 @@ Project: `{{project}}`. Session started: `{{session_start}}`.
 Recent t2 observations (promoted from this session's t0 events). Conventional-commit prefix on the matching commits below tells you whether each item was built (`feat:`), fixed (`fix:`), or refactored (`refactor:`).
 
 {{#each recall.memory_search}}
+
 - **{{title}}** — {{snippet}}
-{{/each}}
+  {{/each}}
 
 ## Commits this session
 
@@ -51,14 +53,16 @@ Recent t2 observations (promoted from this session's t0 events). Conventional-co
 ## Dispatch events
 
 {{#each recall.dispatch_events}}
+
 - {{ts}} `{{kind}}` handoff `{{handoff_id}}`
-{{/each}}
+  {{/each}}
 
 ## Pending follow-ups
 
 {{#each recall.handoff_list_pending}}
+
 - `{{handoff_id}}` ({{status}}) — {{message}}
-{{/each}}
+  {{/each}}
 
 ## Diff against main
 

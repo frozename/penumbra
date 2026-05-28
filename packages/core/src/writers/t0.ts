@@ -1,5 +1,5 @@
-import { Database } from 'bun:sqlite';
-import type { T0Event } from '../schemas/event.js';
+import { Database } from "bun:sqlite";
+import type { T0Event } from "../schemas/event.js";
 
 export class T0Writer {
   private readonly insert;
@@ -22,10 +22,27 @@ export class T0Writer {
 
   write(e: T0Event): void {
     this.insert.run(
-      e.event_id, e.ts, e.ingest_ts, e.source, e.source_detail, e.project_id,
-      e.user_id, e.machine_id, e.session_id, e.event_type, e.lane,
-      e.provider, e.model, e.tokens_in, e.tokens_out, e.cost_usd, e.latency_ms,
-      e.request_id, JSON.stringify(e.payload_json), e.payload_summary, e.origin ?? null,
+      e.event_id,
+      e.ts,
+      e.ingest_ts,
+      e.source,
+      e.source_detail,
+      e.project_id,
+      e.user_id,
+      e.machine_id,
+      e.session_id,
+      e.event_type,
+      e.lane,
+      e.provider,
+      e.model,
+      e.tokens_in,
+      e.tokens_out,
+      e.cost_usd,
+      e.latency_ms,
+      e.request_id,
+      JSON.stringify(e.payload_json),
+      e.payload_summary,
+      e.origin ?? null,
     );
   }
 }

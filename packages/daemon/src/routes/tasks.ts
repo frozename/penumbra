@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from "zod";
 import {
   FileTaskInputSchema,
   TaskStatusSchema,
@@ -20,41 +20,51 @@ import {
   type Services,
   TaskDraftPromotedPayloadSchema,
   getGithubRepo,
-} from '@penumbra/core';
-import type { GhTaskSyncService, GhTaskSyncSummary } from '../sweepers/gh-task-sync.js';
-import { bodyJson, json } from './_helpers.js';
-const TaskIncludeSchema = z.enum(['lease', 'events', 'descendants']);
+} from "@penumbra/core";
+import type { GhTaskSyncService, GhTaskSyncSummary } from "../sweepers/gh-task-sync.js";
+import { bodyJson, json } from "./_helpers.js";
+const TaskIncludeSchema = z.enum(["lease", "events", "descendants"]);
 
-const ListTasksQuerySchema = z.object({
-  status: TaskStatusSchema.optional(),
-  kind: TaskKindSchema.optional(),
-  eligible_for: z.string().min(1).optional(),
-  parent_task_id: z.string().min(1).optional(),
-  origin: z.string().min(1).optional(),
-  limit: z.coerce.number().int().positive().max(500).optional(),
-  offset: z.coerce.number().int().nonnegative().optional(),
-}).strict();
+const ListTasksQuerySchema = z
+  .object({
+    status: TaskStatusSchema.optional(),
+    kind: TaskKindSchema.optional(),
+    eligible_for: z.string().min(1).optional(),
+    parent_task_id: z.string().min(1).optional(),
+    origin: z.string().min(1).optional(),
+    limit: z.coerce.number().int().positive().max(500).optional(),
+    offset: z.coerce.number().int().nonnegative().optional(),
+  })
+  .strict();
 
-const LeaseTaskRequestSchema = z.object({
-  agent_id: z.string().min(1),
-  tags: z.array(z.string()).optional(),
-  max_cost_cents: z.number().nonnegative().optional(),
-}).strict();
+const LeaseTaskRequestSchema = z
+  .object({
+    agent_id: z.string().min(1),
+    tags: z.array(z.string()).optional(),
+    max_cost_cents: z.number().nonnegative().optional(),
+  })
+  .strict();
 
 const HeartbeatTaskRequestSchema = HeartbeatTaskInputSchema.omit({ task_id: true });
 const CompleteTaskRequestSchema = CompleteTaskInputSchema.omit({ task_id: true });
 const FailTaskRequestSchema = FailTaskInputSchema.omit({ task_id: true });
 const CancelTaskRequestSchema = CancelTaskInputSchema.omit({ task_id: true });
-const LinkGhRequestSchema = z.object({
-  repo: z.string().min(1),
-  issue_number: z.number().int().positive(),
-}).strict();
-const SyncGhRequestSchema = z.object({
-  task_id: z.string().min(1).optional(),
-}).strict();
-const CommentGhRequestSchema = z.object({
-  body: z.string().min(1),
-}).strict();
+const LinkGhRequestSchema = z
+  .object({
+    repo: z.string().min(1),
+    issue_number: z.number().int().positive(),
+  })
+  .strict();
+const SyncGhRequestSchema = z
+  .object({
+    task_id: z.string().min(1).optional(),
+  })
+  .strict();
+const CommentGhRequestSchema = z
+  .object({
+    body: z.string().min(1),
+  })
+  .strict();
 const DRAFT_ORIGIN_RE = /^draft:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function noContent(): Response {
@@ -62,39 +72,42 @@ function noContent(): Response {
 }
 
 function invalidInput(details: unknown): Response {
-  return json({ error: 'invalid_input', details }, 400);
+  return json({ error: "invalid_input", details }, 400);
 }
 
 function mapTaskError(err: unknown): Response {
   if (err instanceof TaskNotFound) {
-    return json({ error: 'task_not_found', task_id: err.task_id }, 404);
+    return json({ error: "task_not_found", task_id: err.task_id }, 404);
   }
   if (
-    err instanceof InvalidTaskStatus
-    || err instanceof LeaseInvalid
-    || err instanceof LeaseConflict
-    || err instanceof MissingReviewVerdict
-    || err instanceof UnexpectedReviewVerdict
-    || err instanceof ReviewParentInvalidState
+    err instanceof InvalidTaskStatus ||
+    err instanceof LeaseInvalid ||
+    err instanceof LeaseConflict ||
+    err instanceof MissingReviewVerdict ||
+    err instanceof UnexpectedReviewVerdict ||
+    err instanceof ReviewParentInvalidState
   ) {
     return json({ error: err.name, message: err.message }, 409);
   }
   if (err instanceof EmitCapExceeded) {
-    return json({
-      error: err.name,
-      scope: err.scope,
-      limit: err.limit,
-      observed: err.observed,
-    }, 429);
+    return json(
+      {
+        error: err.name,
+        scope: err.scope,
+        limit: err.limit,
+        observed: err.observed,
+      },
+      429,
+    );
   }
   throw err;
 }
 
 function parseIncludeParam(url: URL): TaskInclude[] | Response {
-  const includeParam = url.searchParams.get('include');
+  const includeParam = url.searchParams.get("include");
   if (!includeParam) return [];
   const items = includeParam
-    .split(',')
+    .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
   const parsed = z.array(TaskIncludeSchema).safeParse(items);
@@ -120,33 +133,33 @@ function queueTaskStatusSync(
 export async function tasksFileRoute(
   req: Request,
   writer: TaskWriter,
-  services: Pick<Services, 'projectRegistry' | 't0Writer' | 'uuid' | 'clock' | 'machineId' | 'log'>,
+  services: Pick<Services, "projectRegistry" | "t0Writer" | "uuid" | "clock" | "machineId" | "log">,
   ghSync?: GhTaskSyncService,
 ): Promise<Response> {
   const raw = await bodyJson(req);
-  if (raw === null) return invalidInput([{ message: 'request body was not valid JSON' }]);
+  if (raw === null) return invalidInput([{ message: "request body was not valid JSON" }]);
 
   const parsed = FileTaskInputSchema.safeParse(raw);
   if (!parsed.success) return invalidInput(parsed.error.issues);
 
-  const originHeader = req.headers.get('x-penumbra-origin');
-  const input = originHeader
-    ? { ...parsed.data, origin: originHeader }
-    : parsed.data;
+  const originHeader = req.headers.get("x-penumbra-origin");
+  const input = originHeader ? { ...parsed.data, origin: originHeader } : parsed.data;
   const origin = input.origin;
-  if (typeof origin === 'string' && origin.startsWith('draft:') && !DRAFT_ORIGIN_RE.test(origin)) {
-    return invalidInput([{ message: 'origin: draft:<uuid> requires a valid UUID suffix', path: ['origin'] }]);
+  if (typeof origin === "string" && origin.startsWith("draft:") && !DRAFT_ORIGIN_RE.test(origin)) {
+    return invalidInput([
+      { message: "origin: draft:<uuid> requires a valid UUID suffix", path: ["origin"] },
+    ]);
   }
-  const isRefinerPromotion = typeof origin === 'string' && DRAFT_ORIGIN_RE.test(origin);
+  const isRefinerPromotion = typeof origin === "string" && DRAFT_ORIGIN_RE.test(origin);
   const inputWithDefaults =
     isRefinerPromotion && !input.gh_create
       ? {
           ...input,
-          gh_create: { labels: ['task-draft', 'refiner-promoted'] },
+          gh_create: { labels: ["task-draft", "refiner-promoted"] },
         }
       : input;
 
-  let task_id = '';
+  let task_id = "";
   try {
     const result = writer.file(inputWithDefaults);
     task_id = result.task_id;
@@ -155,7 +168,7 @@ export async function tasksFileRoute(
   }
 
   if (isRefinerPromotion) {
-    const draftId = origin.slice('draft:'.length).toLowerCase();
+    const draftId = origin.slice("draft:".length).toLowerCase();
     try {
       const payload = TaskDraftPromotedPayloadSchema.parse({
         draft_id: draftId,
@@ -166,14 +179,14 @@ export async function tasksFileRoute(
         event_id: services.uuid(),
         ts: now,
         ingest_ts: now,
-        source: 'daemon',
-        source_detail: 'task_file:refiner_promoted',
+        source: "daemon",
+        source_detail: "task_file:refiner_promoted",
         project_id: input.project_id ?? null,
         user_id: services.machineId.get(),
         machine_id: services.machineId.get(),
         session_id: null,
-        event_type: 'task_draft_promoted',
-        lane: 'unknown',
+        event_type: "task_draft_promoted",
+        lane: "unknown",
         provider: null,
         model: null,
         tokens_in: null,
@@ -186,7 +199,10 @@ export async function tasksFileRoute(
         origin: null,
       });
     } catch (err) {
-      services.log?.warn?.({ err: String(err), task_id, draft_id: draftId }, 'task_file: failed to emit task_draft_promoted');
+      services.log?.warn?.(
+        { err: String(err), task_id, draft_id: draftId },
+        "task_file: failed to emit task_draft_promoted",
+      );
     }
   }
 
@@ -203,17 +219,28 @@ export async function tasksFileRoute(
     }
   }
   if (!effectiveRepo) {
-    writer.setGhCreateStatus(task_id, 'failed', 'gh_create.repo missing and project_registry has no gh_repo for project_id');
-    return json({
+    writer.setGhCreateStatus(
       task_id,
-      gh_create_status: 'failed',
-      gh_create_error: 'gh_create.repo missing and project_registry has no gh_repo for project_id',
-    }, 201);
+      "failed",
+      "gh_create.repo missing and project_registry has no gh_repo for project_id",
+    );
+    return json(
+      {
+        task_id,
+        gh_create_status: "failed",
+        gh_create_error:
+          "gh_create.repo missing and project_registry has no gh_repo for project_id",
+      },
+      201,
+    );
   }
 
   if (!ghSync) {
-    writer.setGhCreateStatus(task_id, 'failed', 'github sync service unavailable');
-    return json({ task_id, gh_create_status: 'failed', gh_create_error: 'github sync service unavailable' }, 201);
+    writer.setGhCreateStatus(task_id, "failed", "github sync service unavailable");
+    return json(
+      { task_id, gh_create_status: "failed", gh_create_error: "github sync service unavailable" },
+      201,
+    );
   }
 
   const issueTitle = inputWithDefaults.gh_create.title ?? firstLine(inputWithDefaults.prompt);
@@ -226,23 +253,26 @@ export async function tasksFileRoute(
     labels: inputWithDefaults.gh_create.labels,
     assignees: inputWithDefaults.gh_create.assignees,
   });
-  return json({
-    task_id,
-    gh_create_status: 'queued',
-    gh_create_error: null,
-  }, 201);
+  return json(
+    {
+      task_id,
+      gh_create_status: "queued",
+      gh_create_error: null,
+    },
+    201,
+  );
 }
 
 export async function tasksListRoute(req: Request, writer: TaskWriter): Promise<Response> {
   const url = new URL(req.url);
   const parsed = ListTasksQuerySchema.safeParse({
-    status: url.searchParams.get('status') ?? undefined,
-    kind: url.searchParams.get('kind') ?? undefined,
-    eligible_for: url.searchParams.get('eligible_for') ?? undefined,
-    parent_task_id: url.searchParams.get('parent_task_id') ?? undefined,
-    origin: url.searchParams.get('origin') ?? undefined,
-    limit: url.searchParams.get('limit') ?? undefined,
-    offset: url.searchParams.get('offset') ?? undefined,
+    status: url.searchParams.get("status") ?? undefined,
+    kind: url.searchParams.get("kind") ?? undefined,
+    eligible_for: url.searchParams.get("eligible_for") ?? undefined,
+    parent_task_id: url.searchParams.get("parent_task_id") ?? undefined,
+    origin: url.searchParams.get("origin") ?? undefined,
+    limit: url.searchParams.get("limit") ?? undefined,
+    offset: url.searchParams.get("offset") ?? undefined,
   });
   if (!parsed.success) return invalidInput(parsed.error.issues);
 
@@ -254,7 +284,11 @@ export async function tasksListRoute(req: Request, writer: TaskWriter): Promise<
   }
 }
 
-export async function tasksGetRoute(req: Request, task_id: string, writer: TaskWriter): Promise<Response> {
+export async function tasksGetRoute(
+  req: Request,
+  task_id: string,
+  writer: TaskWriter,
+): Promise<Response> {
   const url = new URL(req.url);
   const include = parseIncludeParam(url);
   if (include instanceof Response) return include;
@@ -274,7 +308,7 @@ export async function tasksCancelRoute(
   ghSync?: GhTaskSyncService,
 ): Promise<Response> {
   const raw = await bodyJson(req);
-  if (raw === null) return invalidInput([{ message: 'request body was not valid JSON' }]);
+  if (raw === null) return invalidInput([{ message: "request body was not valid JSON" }]);
 
   const parsed = CancelTaskRequestSchema.safeParse(raw);
   if (!parsed.success) return invalidInput(parsed.error.issues);
@@ -296,7 +330,7 @@ export async function tasksLinkGhRoute(
   ghSync: GhTaskSyncService,
 ): Promise<Response> {
   const raw = await bodyJson(req);
-  if (raw === null) return invalidInput([{ message: 'request body was not valid JSON' }]);
+  if (raw === null) return invalidInput([{ message: "request body was not valid JSON" }]);
 
   const parsed = LinkGhRequestSchema.safeParse(raw);
   if (!parsed.success) return invalidInput(parsed.error.issues);
@@ -307,9 +341,9 @@ export async function tasksLinkGhRoute(
     return json({
       task_id,
       gh_issue_url: buildGhIssueUrl(parsed.data.repo, parsed.data.issue_number),
-      gh_state: 'queued',
+      gh_state: "queued",
       last_sync_ts: null,
-      gh_sync_status: 'queued',
+      gh_sync_status: "queued",
     });
   } catch (err) {
     return mapTaskError(err);
@@ -334,7 +368,7 @@ export async function tasksSyncGhNowRoute(
   ghSync: GhTaskSyncService,
 ): Promise<Response> {
   const raw = await bodyJson(req);
-  if (raw === null) return invalidInput([{ message: 'request body was not valid JSON' }]);
+  if (raw === null) return invalidInput([{ message: "request body was not valid JSON" }]);
 
   const parsed = SyncGhRequestSchema.safeParse(raw);
   if (!parsed.success) return invalidInput(parsed.error.issues);
@@ -353,9 +387,9 @@ export async function tasksSyncGhNowRoute(
     }
     const summary: GhTaskSyncSummary = {
       linked: 1,
-      pushed: result.action === 'pushed' ? 1 : 0,
-      pulled: result.action === 'pulled' ? 1 : 0,
-      errored: result.action === 'error' ? 1 : 0,
+      pushed: result.action === "pushed" ? 1 : 0,
+      pulled: result.action === "pulled" ? 1 : 0,
+      errored: result.action === "error" ? 1 : 0,
       skipped: false,
       results: [result],
     };
@@ -371,7 +405,7 @@ export async function tasksLeaseRoute(
   ghSync?: GhTaskSyncService,
 ): Promise<Response> {
   const raw = await bodyJson(req);
-  if (raw === null) return invalidInput([{ message: 'request body was not valid JSON' }]);
+  if (raw === null) return invalidInput([{ message: "request body was not valid JSON" }]);
 
   const parsed = LeaseTaskRequestSchema.safeParse(raw);
   if (!parsed.success) return invalidInput(parsed.error.issues);
@@ -382,16 +416,20 @@ export async function tasksLeaseRoute(
       // TODO(task 4.1): distinguish NotPreferred from empty queue when writer exposes it.
       return noContent();
     }
-    queueTaskStatusSync(writer, leased.task_id, ghSync, 'pending', 'leased');
+    queueTaskStatusSync(writer, leased.task_id, ghSync, "pending", "leased");
     return json(leased);
   } catch (err) {
     return mapTaskError(err);
   }
 }
 
-export async function tasksHeartbeatRoute(req: Request, task_id: string, writer: TaskWriter): Promise<Response> {
+export async function tasksHeartbeatRoute(
+  req: Request,
+  task_id: string,
+  writer: TaskWriter,
+): Promise<Response> {
   const raw = await bodyJson(req);
-  if (raw === null) return invalidInput([{ message: 'request body was not valid JSON' }]);
+  if (raw === null) return invalidInput([{ message: "request body was not valid JSON" }]);
 
   const parsed = HeartbeatTaskRequestSchema.safeParse(raw);
   if (!parsed.success) return invalidInput(parsed.error.issues);
@@ -411,7 +449,7 @@ export async function tasksCompleteRoute(
   ghSync?: GhTaskSyncService,
 ): Promise<Response> {
   const raw = await bodyJson(req);
-  if (raw === null) return invalidInput([{ message: 'request body was not valid JSON' }]);
+  if (raw === null) return invalidInput([{ message: "request body was not valid JSON" }]);
 
   const parsed = CompleteTaskRequestSchema.safeParse(raw);
   if (!parsed.success) return invalidInput(parsed.error.issues);
@@ -439,7 +477,7 @@ export async function tasksFailRoute(
   ghSync?: GhTaskSyncService,
 ): Promise<Response> {
   const raw = await bodyJson(req);
-  if (raw === null) return invalidInput([{ message: 'request body was not valid JSON' }]);
+  if (raw === null) return invalidInput([{ message: "request body was not valid JSON" }]);
 
   const parsed = FailTaskRequestSchema.safeParse(raw);
   if (!parsed.success) return invalidInput(parsed.error.issues);
@@ -466,7 +504,7 @@ export async function tasksCommentGhRoute(
   ghSync: GhTaskSyncService,
 ): Promise<Response> {
   const raw = await bodyJson(req);
-  if (raw === null) return invalidInput([{ message: 'request body was not valid JSON' }]);
+  if (raw === null) return invalidInput([{ message: "request body was not valid JSON" }]);
 
   const parsed = CommentGhRequestSchema.safeParse(raw);
   if (!parsed.success) return invalidInput(parsed.error.issues);
@@ -474,13 +512,17 @@ export async function tasksCommentGhRoute(
   try {
     const out = await ghSync.postManualComment(task_id, parsed.data.body);
     if (!out) {
-      return json({ error: 'task_not_linked_gh', task_id }, 409);
+      return json({ error: "task_not_linked_gh", task_id }, 409);
     }
     return json(out);
   } catch (err) {
     const msg = errorMessage(err).toLowerCase();
-    if (msg.includes('github client unavailable') || msg.includes('no such file or directory') || msg.includes('command not found')) {
-      return json({ error: 'github_client_unavailable' }, 503);
+    if (
+      msg.includes("github client unavailable") ||
+      msg.includes("no such file or directory") ||
+      msg.includes("command not found")
+    ) {
+      return json({ error: "github_client_unavailable" }, 503);
     }
     return mapTaskError(err);
   }
@@ -491,7 +533,7 @@ function buildGhIssueUrl(repo: string, issue_number: number): string {
 }
 
 function firstLine(text: string): string {
-  const line = text.split('\n')[0]?.trim();
+  const line = text.split("\n")[0]?.trim();
   return line && line.length > 0 ? line : text;
 }
 

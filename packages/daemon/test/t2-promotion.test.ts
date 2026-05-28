@@ -1,11 +1,11 @@
-import { afterAll, beforeAll, expect, spyOn, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { makeTempDaemon } from './helpers.js';
-import { createT2PromotionWorker } from '../src/workers/t2-promotion.js';
-import { stripJsonFence } from '../src/workers/t2-promotion.js';
-import { wrapJudgeWithChunking } from '../src/workers/t2-promotion.js';
+import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { makeTempDaemon } from "./helpers.js";
+import { createT2PromotionWorker } from "../src/workers/t2-promotion.js";
+import { stripJsonFence } from "../src/workers/t2-promotion.js";
+import { wrapJudgeWithChunking } from "../src/workers/t2-promotion.js";
 
 // Pin PENUMBRA_CONFIG_DIR to a safe fixture config dir so the serve-internal
 // t2-promotion worker created by makeTempDaemon() is always a no-op (dummy agent
@@ -15,20 +15,20 @@ import { wrapJudgeWithChunking } from '../src/workers/t2-promotion.js';
 let _fixtureDir: string;
 const _savedEnv: Record<string, string | undefined> = {};
 beforeAll(() => {
-  _fixtureDir = mkdtempSync(join(tmpdir(), 'penumbra-t2-fixture-'));
+  _fixtureDir = mkdtempSync(join(tmpdir(), "penumbra-t2-fixture-"));
   writeFileSync(
-    join(_fixtureDir, 'agents.yaml'),
+    join(_fixtureDir, "agents.yaml"),
     [
-      'agents:',
-      '  - name: dummy-judge',
-      '    pricing_mode: api',
-      '    adapter: openai-compat-http',
-      '    roles: [memory-refiner]',
-      '',
-    ].join('\n'),
+      "agents:",
+      "  - name: dummy-judge",
+      "    pricing_mode: api",
+      "    adapter: openai-compat-http",
+      "    roles: [memory-refiner]",
+      "",
+    ].join("\n"),
   );
-  writeFileSync(join(_fixtureDir, 'routing.yaml'), 'default_roles: {}\n');
-  writeFileSync(join(_fixtureDir, 'quotas.yaml'), 'providers: []\n');
+  writeFileSync(join(_fixtureDir, "routing.yaml"), "default_roles: {}\n");
+  writeFileSync(join(_fixtureDir, "quotas.yaml"), "providers: []\n");
   _savedEnv.agentchat = process.env.PENUMBRA_CONFIG_DIR;
   _savedEnv.sirius = process.env.PENUMBRA_SIRIUS_BASE_URL;
   _savedEnv.sirius2 = process.env.SIRIUS_URL;
@@ -44,65 +44,63 @@ afterAll(() => {
   rmSync(_fixtureDir, { recursive: true, force: true });
 });
 
-test('stripJsonFence strips think tags before plain JSON', () => {
+test("stripJsonFence strips think tags before plain JSON", () => {
   expect(stripJsonFence('<think>foo</think>{"memories":[]}')).toBe('{"memories":[]}');
 });
 
-test('stripJsonFence strips multiline think tags before plain JSON', () => {
+test("stripJsonFence strips multiline think tags before plain JSON", () => {
   expect(stripJsonFence('<think>multi\nline</think>{"memories":[]}')).toBe('{"memories":[]}');
 });
 
-test('stripJsonFence strips think tags before a fenced JSON block', () => {
+test("stripJsonFence strips think tags before a fenced JSON block", () => {
   expect(stripJsonFence('<think>foo</think>```json\n{"memories":[]}\n```')).toBe('{"memories":[]}');
 });
 
-test('stripJsonFence leaves plain JSON unchanged', () => {
+test("stripJsonFence leaves plain JSON unchanged", () => {
   expect(stripJsonFence('{"memories":[]}')).toBe('{"memories":[]}');
 });
 
-test('stripJsonFence strips literal ESC[Nm sequences before JSON', () => {
+test("stripJsonFence strips literal ESC[Nm sequences before JSON", () => {
   expect(stripJsonFence('\x1b[2m{"memories":[]}')).toBe('{"memories":[]}');
 });
 
-test('stripJsonFence strips bare bracket CSI sequences', () => {
+test("stripJsonFence strips bare bracket CSI sequences", () => {
   expect(stripJsonFence('[2m{"memories":[]}')).toBe('{"memories":[]}');
 });
 
-test('stripJsonFence preserves bracket-like substrings inside JSON values', () => {
+test("stripJsonFence preserves bracket-like substrings inside JSON values", () => {
   const parsed = JSON.parse(
-    stripJsonFence('{"memories":[{"title":"see [2 lines below]","body":"x","kind":"fact"}]}')
+    stripJsonFence('{"memories":[{"title":"see [2 lines below]","body":"x","kind":"fact"}]}'),
   ) as { memories: Array<{ title: string }> };
 
-  expect(parsed.memories[0]!.title).toBe('see [2 lines below]');
+  expect(parsed.memories[0]!.title).toBe("see [2 lines below]");
 });
 
-test('stripJsonFence extracts JSON wrapped in arbitrary tags (prompt-injected wrapper)', () => {
+test("stripJsonFence extracts JSON wrapped in arbitrary tags (prompt-injected wrapper)", () => {
   // Surfaced by claude-mem transcripts that instruct responses be wrapped in <summary>...</summary>.
   // Granite faithfully follows the injected instruction and wraps the JSON; we recover by extracting
   // the {...} span instead of failing on the leading tag.
   expect(
-    stripJsonFence('<summary>\n{"memories":[{"title":"x","body":"y","kind":"fact"}]}\n</summary>')
+    stripJsonFence('<summary>\n{"memories":[{"title":"x","body":"y","kind":"fact"}]}\n</summary>'),
   ).toBe('{"memories":[{"title":"x","body":"y","kind":"fact"}]}');
 });
 
-test('stripJsonFence handles unmatched leading tag with trailing prose', () => {
-  expect(
-    stripJsonFence('<observation>{"memories":[]}</observation>')
-  ).toBe('{"memories":[]}');
+test("stripJsonFence handles unmatched leading tag with trailing prose", () => {
+  expect(stripJsonFence('<observation>{"memories":[]}</observation>')).toBe('{"memories":[]}');
 });
 
 test('stripJsonFence coerces single-word "none"/"null" to empty memories', () => {
   // Granite-8B sometimes emits a literal "none" instead of {"memories":[]}
   // when it decides nothing should be extracted. The coercion lets the
   // caller treat that as a valid empty result.
-  expect(stripJsonFence('none')).toBe('{"memories":[]}');
-  expect(stripJsonFence('None.')).toBe('{"memories":[]}');
-  expect(stripJsonFence('null')).toBe('{"memories":[]}');
-  expect(stripJsonFence('N/A')).toBe('{"memories":[]}');
-  expect(stripJsonFence('nothing')).toBe('{"memories":[]}');
+  expect(stripJsonFence("none")).toBe('{"memories":[]}');
+  expect(stripJsonFence("None.")).toBe('{"memories":[]}');
+  expect(stripJsonFence("null")).toBe('{"memories":[]}');
+  expect(stripJsonFence("N/A")).toBe('{"memories":[]}');
+  expect(stripJsonFence("nothing")).toBe('{"memories":[]}');
 });
 
-test('wrapJudgeWithChunking passes small transcripts through unchanged', async () => {
+test("wrapJudgeWithChunking passes small transcripts through unchanged", async () => {
   const seen: string[] = [];
   const judge = wrapJudgeWithChunking({
     maxCharsPerChunk: 100,
@@ -112,12 +110,12 @@ test('wrapJudgeWithChunking passes small transcripts through unchanged', async (
     },
   });
 
-  const transcript = 'User: hello\n\nAssistant: world';
+  const transcript = "User: hello\n\nAssistant: world";
   await judge(transcript);
   expect(seen).toEqual([transcript]);
 });
 
-test('wrapJudgeWithChunking splits at event boundaries when transcript exceeds budget', async () => {
+test("wrapJudgeWithChunking splits at event boundaries when transcript exceeds budget", async () => {
   const seen: string[] = [];
   const judge = wrapJudgeWithChunking({
     maxCharsPerChunk: 32000,
@@ -129,40 +127,37 @@ test('wrapJudgeWithChunking splits at event boundaries when transcript exceeds b
 
   const event = (role: string, body: string) => `${role}: ${body}`;
   const transcript = Array.from({ length: 10 }, (_, i) =>
-    event(i % 2 === 0 ? 'User' : 'Assistant', 'x'.repeat(15000))
-  ).join('\n\n');
+    event(i % 2 === 0 ? "User" : "Assistant", "x".repeat(15000)),
+  ).join("\n\n");
 
   await judge(transcript);
   expect(seen.length).toBeGreaterThan(1);
   for (const chunk of seen) {
     expect(chunk.length).toBeLessThanOrEqual(32000);
-    expect(chunk.startsWith('User: ') || chunk.startsWith('Assistant: ')).toBe(true);
-    expect(chunk).not.toContain('x'.repeat(15000) + '\n\nx'.repeat(15000));
+    expect(chunk.startsWith("User: ") || chunk.startsWith("Assistant: ")).toBe(true);
+    expect(chunk).not.toContain("x".repeat(15000) + "\n\nx".repeat(15000));
   }
 });
 
-test('wrapJudgeWithChunking dedupes by title', async () => {
+test("wrapJudgeWithChunking dedupes by title", async () => {
   const judge = wrapJudgeWithChunking({
     maxCharsPerChunk: 20,
     judge: async (transcript) => {
-      if (transcript.includes('aaa')) {
-        return [{ title: 'Duplicate', body: 'one', kind: 'fact' }];
+      if (transcript.includes("aaa")) {
+        return [{ title: "Duplicate", body: "one", kind: "fact" }];
       }
-      return [{ title: 'duplicate', body: 'two', kind: 'fact' }];
+      return [{ title: "duplicate", body: "two", kind: "fact" }];
     },
   });
 
-  const transcript = [
-    'User: aaa',
-    'Assistant: bbb',
-    'User: ccc',
-    'Assistant: ddd',
-  ].join('\n\n');
+  const transcript = ["User: aaa", "Assistant: bbb", "User: ccc", "Assistant: ddd"].join("\n\n");
 
-  await expect(judge(transcript)).resolves.toEqual([{ title: 'Duplicate', body: 'one', kind: 'fact' }]);
+  await expect(judge(transcript)).resolves.toEqual([
+    { title: "Duplicate", body: "one", kind: "fact" },
+  ]);
 });
 
-test('wrapJudgeWithChunking collapses near-duplicates via embedding similarity (longer body wins)', async () => {
+test("wrapJudgeWithChunking collapses near-duplicates via embedding similarity (longer body wins)", async () => {
   // Two near-duplicate titles + bodies that map to nearly identical vectors;
   // a third semantically distinct memory survives untouched.
   const dim = 4;
@@ -170,12 +165,12 @@ test('wrapJudgeWithChunking collapses near-duplicates via embedding similarity (
   const dupeVecJittered = new Float32Array([0.99, 0.01, 0, 0]);
   const distinctVec = new Float32Array([0, 1, 0, 0]);
   const embedderMap = new Map<string, Float32Array>([
-    ['short body', dupeVec],
-    ['this is a longer body about the same thing', dupeVecJittered],
-    ['totally separate topic body', distinctVec],
+    ["short body", dupeVec],
+    ["this is a longer body about the same thing", dupeVecJittered],
+    ["totally separate topic body", distinctVec],
   ]);
   const embedder = {
-    name: 'fake',
+    name: "fake",
     dim,
     embed: async (texts: string[]) => texts.map((t) => embedderMap.get(t) ?? new Float32Array(dim)),
   };
@@ -184,33 +179,37 @@ test('wrapJudgeWithChunking collapses near-duplicates via embedding similarity (
     maxCharsPerChunk: 20,
     embedder,
     judge: async (transcript) => {
-      if (transcript.includes('aaa')) {
+      if (transcript.includes("aaa")) {
         return [
-          { title: 'thing A', body: 'short body', kind: 'fact' },
-          { title: 'distinct', body: 'totally separate topic body', kind: 'fact' },
+          { title: "thing A", body: "short body", kind: "fact" },
+          { title: "distinct", body: "totally separate topic body", kind: "fact" },
         ];
       }
-      return [{ title: 'thing B', body: 'this is a longer body about the same thing', kind: 'fact' }];
+      return [
+        { title: "thing B", body: "this is a longer body about the same thing", kind: "fact" },
+      ];
     },
   });
 
-  const transcript = ['User: aaa', 'Assistant: bbb', 'User: ccc', 'Assistant: ddd'].join('\n\n');
+  const transcript = ["User: aaa", "Assistant: bbb", "User: ccc", "Assistant: ddd"].join("\n\n");
   const out = await judge(transcript);
   // Two clusters: the near-dupe pair collapses to the longer-body rep, and the distinct one remains.
   expect(out.length).toBe(2);
   const bodies = out.map((m) => m.body).sort();
-  expect(bodies).toEqual(['this is a longer body about the same thing', 'totally separate topic body'].sort());
+  expect(bodies).toEqual(
+    ["this is a longer body about the same thing", "totally separate topic body"].sort(),
+  );
 });
 
-test('wrapJudgeWithChunking keeps semantically distinct memories under similarity threshold', async () => {
+test("wrapJudgeWithChunking keeps semantically distinct memories under similarity threshold", async () => {
   const dim = 3;
   const vecs = new Map<string, Float32Array>([
-    ['alpha body', new Float32Array([1, 0, 0])],
-    ['beta body', new Float32Array([0, 1, 0])],
-    ['gamma body', new Float32Array([0, 0, 1])],
+    ["alpha body", new Float32Array([1, 0, 0])],
+    ["beta body", new Float32Array([0, 1, 0])],
+    ["gamma body", new Float32Array([0, 0, 1])],
   ]);
   const embedder = {
-    name: 'fake',
+    name: "fake",
     dim,
     embed: async (texts: string[]) => texts.map((t) => vecs.get(t) ?? new Float32Array(dim)),
   };
@@ -222,113 +221,108 @@ test('wrapJudgeWithChunking keeps semantically distinct memories under similarit
       call++;
       if (call === 1) {
         return [
-          { title: 'A', body: 'alpha body', kind: 'fact' },
-          { title: 'B', body: 'beta body', kind: 'fact' },
+          { title: "A", body: "alpha body", kind: "fact" },
+          { title: "B", body: "beta body", kind: "fact" },
         ];
       }
-      return [{ title: 'C', body: 'gamma body', kind: 'fact' }];
+      return [{ title: "C", body: "gamma body", kind: "fact" }];
     },
   });
 
-  const transcript = ['User: aaa', 'Assistant: bbb', 'User: ccc', 'Assistant: ddd'].join('\n\n');
+  const transcript = ["User: aaa", "Assistant: bbb", "User: ccc", "Assistant: ddd"].join("\n\n");
   const out = await judge(transcript);
   expect(out.length).toBe(3);
-  expect(out.map((m) => m.title)).toEqual(['A', 'B', 'C']);
+  expect(out.map((m) => m.title)).toEqual(["A", "B", "C"]);
 });
 
-test('wrapJudgeWithChunking falls back to title-only dedupe when no embedder is provided', async () => {
+test("wrapJudgeWithChunking falls back to title-only dedupe when no embedder is provided", async () => {
   // Without an embedder the legacy title-match-only behavior applies; near-duplicate titles
   // that differ in casing collapse, but distinct titles survive even with similar bodies.
   const judge = wrapJudgeWithChunking({
     maxCharsPerChunk: 20,
     judge: async (transcript) => {
-      if (transcript.includes('aaa')) {
-        return [{ title: 'X', body: 'one body that talks about the same thing', kind: 'fact' }];
+      if (transcript.includes("aaa")) {
+        return [{ title: "X", body: "one body that talks about the same thing", kind: "fact" }];
       }
-      return [{ title: 'Y', body: 'one body that talks about the same thing', kind: 'fact' }];
+      return [{ title: "Y", body: "one body that talks about the same thing", kind: "fact" }];
     },
   });
 
-  const transcript = ['User: aaa', 'Assistant: bbb', 'User: ccc', 'Assistant: ddd'].join('\n\n');
+  const transcript = ["User: aaa", "Assistant: bbb", "User: ccc", "Assistant: ddd"].join("\n\n");
   const out = await judge(transcript);
   // No embedder ⇒ both survive even though bodies are identical.
   expect(out.length).toBe(2);
-  expect(out.map((m) => m.title)).toEqual(['X', 'Y']);
+  expect(out.map((m) => m.title)).toEqual(["X", "Y"]);
 });
 
-test('wrapJudgeWithChunking continues when one chunk fails', async () => {
+test("wrapJudgeWithChunking continues when one chunk fails", async () => {
   let call = 0;
   const judge = wrapJudgeWithChunking({
     maxCharsPerChunk: 60,
     judge: async (transcript) => {
       call++;
-      if (transcript.includes('c'.repeat(20))) throw new Error('chunk 2 failed');
-      return [{ title: `t${call}`, body: 'body', kind: 'fact' }];
+      if (transcript.includes("c".repeat(20))) throw new Error("chunk 2 failed");
+      return [{ title: `t${call}`, body: "body", kind: "fact" }];
     },
   });
 
   const transcript = [
-    'User: ' + 'a'.repeat(20),
-    'Assistant: ' + 'b'.repeat(20),
-    'User: ' + 'c'.repeat(20),
-    'Assistant: ' + 'd'.repeat(20),
-    'User: ' + 'e'.repeat(20),
-    'Assistant: ' + 'f'.repeat(20),
-  ].join('\n\n');
+    "User: " + "a".repeat(20),
+    "Assistant: " + "b".repeat(20),
+    "User: " + "c".repeat(20),
+    "Assistant: " + "d".repeat(20),
+    "User: " + "e".repeat(20),
+    "Assistant: " + "f".repeat(20),
+  ].join("\n\n");
 
   await expect(judge(transcript)).resolves.toEqual([
-    { title: 't1', body: 'body', kind: 'fact' },
-    { title: 't2', body: 'body', kind: 'fact' },
-    { title: 't4', body: 'body', kind: 'fact' },
-    { title: 't5', body: 'body', kind: 'fact' },
-    { title: 't6', body: 'body', kind: 'fact' },
+    { title: "t1", body: "body", kind: "fact" },
+    { title: "t2", body: "body", kind: "fact" },
+    { title: "t4", body: "body", kind: "fact" },
+    { title: "t5", body: "body", kind: "fact" },
+    { title: "t6", body: "body", kind: "fact" },
   ]);
 });
 
-test('wrapJudgeWithChunking preserves order of extractions across chunks', async () => {
+test("wrapJudgeWithChunking preserves order of extractions across chunks", async () => {
   let call = 0;
   const judge = wrapJudgeWithChunking({
     maxCharsPerChunk: 20,
     judge: async () => {
       call++;
       return call === 1
-        ? [{ title: 'A', body: 'body-a', kind: 'fact' }]
-        : [{ title: 'B', body: 'body-b', kind: 'fact' }];
+        ? [{ title: "A", body: "body-a", kind: "fact" }]
+        : [{ title: "B", body: "body-b", kind: "fact" }];
     },
   });
 
-  const transcript = [
-    'User: aaa',
-    'Assistant: bbb',
-    'User: ccc',
-    'Assistant: ddd',
-  ].join('\n\n');
+  const transcript = ["User: aaa", "Assistant: bbb", "User: ccc", "Assistant: ddd"].join("\n\n");
 
   await expect(judge(transcript)).resolves.toEqual([
-    { title: 'A', body: 'body-a', kind: 'fact' },
-    { title: 'B', body: 'body-b', kind: 'fact' },
+    { title: "A", body: "body-a", kind: "fact" },
+    { title: "B", body: "body-b", kind: "fact" },
   ]);
 });
 
-test('t2 promotion worker is a no-op when no LLM judge is configured (no PENUMBRA_SIRIUS_BASE_URL)', async () => {
+test("t2 promotion worker is a no-op when no LLM judge is configured (no PENUMBRA_SIRIUS_BASE_URL)", async () => {
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-agentchat-empty-'));
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-agentchat-empty-"));
   // Empty agents list so the pool path also returns null and the worker
   // falls all the way through to no-op.
   writeFileSync(
-    join(dir, 'agents.yaml'),
+    join(dir, "agents.yaml"),
     [
-      'agents:',
-      '  - name: dummy-judge',
-      '    pricing_mode: api',
-      '    adapter: openai-compat-http',
-      '    roles: [memory-refiner]',
-      '',
-    ].join('\n'),
+      "agents:",
+      "  - name: dummy-judge",
+      "    pricing_mode: api",
+      "    adapter: openai-compat-http",
+      "    roles: [memory-refiner]",
+      "",
+    ].join("\n"),
   );
-  writeFileSync(join(dir, 'routing.yaml'), 'default_roles: {}\n');
-  writeFileSync(join(dir, 'quotas.yaml'), 'providers: []\n');
+  writeFileSync(join(dir, "routing.yaml"), "default_roles: {}\n");
+  writeFileSync(join(dir, "quotas.yaml"), "providers: []\n");
   const oldEnv = {
     sirius: process.env.PENUMBRA_SIRIUS_BASE_URL,
     sirius2: process.env.SIRIUS_URL,
@@ -338,20 +332,25 @@ test('t2 promotion worker is a no-op when no LLM judge is configured (no PENUMBR
   delete process.env.SIRIUS_URL;
   process.env.PENUMBRA_CONFIG_DIR = dir;
   try {
-    const oldTs = '2026-04-20T00:00:00.000Z';
+    const oldTs = "2026-04-20T00:00:00.000Z";
     d.services.db.run(
       `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
        VALUES ('rno', 'p1', 'u1', 'sno', ?, ?, 5, '{}', '{}')`,
-      [oldTs, oldTs]
+      [oldTs, oldTs],
     );
-    d.services.clock = () => new Date('2026-04-27T10:00:00Z');
+    d.services.clock = () => new Date("2026-04-27T10:00:00Z");
 
     // No `llm` opt — exercises createDefaultLLMJudge which returns null when env unset.
     const worker = createT2PromotionWorker({ services: d.services, delayHours: 24 });
     await worker.tick();
 
     // Rollup is untouched: not promoted, no failure counter increment.
-    const row = d.services.db.query(`SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id='rno'`, []).get() as any;
+    const row = d.services.db
+      .query(
+        `SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id='rno'`,
+        [],
+      )
+      .get() as any;
     expect(row.t2_promoted_at).toBeNull();
     expect(row.failed_promotion_attempts).toBe(0);
   } finally {
@@ -364,16 +363,16 @@ test('t2 promotion worker is a no-op when no LLM judge is configured (no PENUMBR
   }
 });
 
-test('worker uses agentchat-based pool when memory-refiner agents exist', async () => {
+test("worker uses agentchat-based pool when memory-refiner agents exist", async () => {
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-agentchat-'));
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-agentchat-"));
   const oldConfig = process.env.PENUMBRA_CONFIG_DIR;
   const oldSirius = process.env.PENUMBRA_SIRIUS_BASE_URL;
   delete process.env.PENUMBRA_SIRIUS_BASE_URL;
   process.env.PENUMBRA_CONFIG_DIR = dir;
   writeFileSync(
-    join(dir, 'agents.yaml'),
+    join(dir, "agents.yaml"),
     `
 agents:
   - name: judge-a
@@ -390,12 +389,14 @@ agents:
     roles: [memory-refiner]
 `,
   );
-  writeFileSync(join(dir, 'routing.yaml'), 'default_roles: {}\n');
-  writeFileSync(join(dir, 'quotas.yaml'), 'providers: []\n');
-  const infoSpy = spyOn(d.services.log, 'info').mockImplementation(() => undefined as any);
+  writeFileSync(join(dir, "routing.yaml"), "default_roles: {}\n");
+  writeFileSync(join(dir, "quotas.yaml"), "providers: []\n");
+  const infoSpy = spyOn(d.services.log, "info").mockImplementation(() => undefined as any);
   try {
     createT2PromotionWorker({ services: d.services, delayHours: 24 });
-    expect(infoSpy.mock.calls.some((call) => String(call[1]).includes('judge pool configured'))).toBe(true);
+    expect(
+      infoSpy.mock.calls.some((call) => String(call[1]).includes("judge pool configured")),
+    ).toBe(true);
   } finally {
     infoSpy.mockRestore();
     if (oldConfig) process.env.PENUMBRA_CONFIG_DIR = oldConfig;
@@ -407,18 +408,18 @@ agents:
   }
 });
 
-test('worker falls back to single-judge env config when no memory-refiner agents', async () => {
+test("worker falls back to single-judge env config when no memory-refiner agents", async () => {
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-agentchat-'));
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-agentchat-"));
   const oldConfig = process.env.PENUMBRA_CONFIG_DIR;
   const oldSirius = process.env.PENUMBRA_SIRIUS_BASE_URL;
   const oldToken = process.env.PENUMBRA_SIRIUS_TOKEN;
   process.env.PENUMBRA_CONFIG_DIR = dir;
-  process.env.PENUMBRA_SIRIUS_BASE_URL = 'http://judge';
-  process.env.PENUMBRA_SIRIUS_TOKEN = 'token';
+  process.env.PENUMBRA_SIRIUS_BASE_URL = "http://judge";
+  process.env.PENUMBRA_SIRIUS_TOKEN = "token";
   writeFileSync(
-    join(dir, 'agents.yaml'),
+    join(dir, "agents.yaml"),
     `
 agents:
   - name: planner
@@ -429,12 +430,14 @@ agents:
     roles: [planner]
 `,
   );
-  writeFileSync(join(dir, 'routing.yaml'), 'default_roles: {}\n');
-  writeFileSync(join(dir, 'quotas.yaml'), 'providers: []\n');
-  const infoSpy = spyOn(d.services.log, 'info').mockImplementation(() => undefined as any);
+  writeFileSync(join(dir, "routing.yaml"), "default_roles: {}\n");
+  writeFileSync(join(dir, "quotas.yaml"), "providers: []\n");
+  const infoSpy = spyOn(d.services.log, "info").mockImplementation(() => undefined as any);
   try {
     createT2PromotionWorker({ services: d.services, delayHours: 24 });
-    expect(infoSpy.mock.calls.some((call) => String(call[1]).includes('LLM judge configured'))).toBe(true);
+    expect(
+      infoSpy.mock.calls.some((call) => String(call[1]).includes("LLM judge configured")),
+    ).toBe(true);
   } finally {
     infoSpy.mockRestore();
     if (oldConfig) process.env.PENUMBRA_CONFIG_DIR = oldConfig;
@@ -448,23 +451,23 @@ agents:
   }
 });
 
-test('t2 promotion worker short-circuits the cycle when judge is unreachable', async () => {
+test("t2 promotion worker short-circuits the cycle when judge is unreachable", async () => {
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
-  d.services.clock = () => new Date('2026-04-27T10:00:00Z');
+  d.services.clock = () => new Date("2026-04-27T10:00:00Z");
   try {
-    const oldTs = '2026-04-20T00:00:00.000Z';
+    const oldTs = "2026-04-20T00:00:00.000Z";
     // Three eligible rollups; first call should fail unreachable and remaining should be skipped.
-    for (const id of ['ru1', 'ru2', 'ru3']) {
+    for (const id of ["ru1", "ru2", "ru3"]) {
       d.services.db.run(
         `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
          VALUES (?, 'p1', 'u1', ?, ?, ?, 5, '{}', '{}')`,
-        [id, `s_${id}`, oldTs, oldTs]
+        [id, `s_${id}`, oldTs, oldTs],
       );
       d.services.db.run(
         `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
          VALUES (?, ?, ?, 'mcp', 'u1', 'm1', ?, 'agent-prompt', 'local', '{}', 'Session transcript for promotion test. The assistant worked through multiple software implementation tasks, reviewed and approved code changes, wrote and verified tests, and confirmed that multiple system components worked correctly in integration.')`,
-        [`e_${id}`, oldTs, oldTs, `s_${id}`]
+        [`e_${id}`, oldTs, oldTs, `s_${id}`],
       );
     }
 
@@ -474,310 +477,339 @@ test('t2 promotion worker short-circuits the cycle when judge is unreachable', a
       delayHours: 24,
       llm: async () => {
         callCount++;
-        throw new Error('fetch failed: ECONNREFUSED 127.0.0.1:3030');
+        throw new Error("fetch failed: ECONNREFUSED 127.0.0.1:3030");
       },
     });
 
     await worker.tick();
     // Only the first rollup attempt should hit the judge — remaining two are short-circuited.
     expect(callCount).toBe(1);
-  } finally { d.stop(); }
+  } finally {
+    d.stop();
+  }
 });
 
-test('t2 promotion worker skips on LLM failure but retries next tick', async () => {
+test("t2 promotion worker skips on LLM failure but retries next tick", async () => {
   const d = makeTempDaemon();
   // Fixed clock for deterministic eligibility
-  const now = new Date('2026-04-27T10:00:00Z');
+  const now = new Date("2026-04-27T10:00:00Z");
   d.services.clock = () => now;
   // Stop background workers to avoid interference
   d.services.supervisor.stopAll();
-  
+
   try {
-     // Seed a rollup that is eligible for promotion
-     const oldTs = '2026-04-20T00:00:00.000Z';
-     d.services.db.run(
-       `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
+    // Seed a rollup that is eligible for promotion
+    const oldTs = "2026-04-20T00:00:00.000Z";
+    d.services.db.run(
+      `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
         VALUES ('r1', 'p1', 'u1', 's1', ?, ?, 5, '{}', '{}')`,
-       [oldTs, oldTs]
-     );
-     // Add events so transcript is not empty
-     d.services.db.run(
-       `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+      [oldTs, oldTs],
+    );
+    // Add events so transcript is not empty
+    d.services.db.run(
+      `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
         VALUES ('e1', ?, ?, 'mcp', 'u1', 'm1', 's1', 'agent-prompt', 'local', '{}', 'Session transcript for promotion test. The assistant worked through multiple software implementation tasks, reviewed and approved code changes, wrote and verified tests, and confirmed that multiple system components worked correctly in integration.')`,
-       [oldTs, oldTs]
-     );
+      [oldTs, oldTs],
+    );
 
-     let callCount = 0;
-     const worker = createT2PromotionWorker({
-       services: d.services,
-       delayHours: 24,
-       llm: async () => {
-         callCount++;
-         throw new Error('LLM down');
-       }
-     });
+    let callCount = 0;
+    const worker = createT2PromotionWorker({
+      services: d.services,
+      delayHours: 24,
+      llm: async () => {
+        callCount++;
+        throw new Error("LLM down");
+      },
+    });
 
-     await worker.tick();
-     expect(callCount).toBe(1);
-     
-     // Should not be promoted
-     const promoted = d.services.db.query('SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id="r1"', []).get() as any;
-     expect(promoted.t2_promoted_at).toBeNull();
-     expect(promoted.failed_promotion_attempts).toBe(1);
+    await worker.tick();
+    expect(callCount).toBe(1);
 
-     // Retry
-     await worker.tick();
-     expect(callCount).toBe(2);
-     const promoted2 = d.services.db.query('SELECT failed_promotion_attempts FROM t1_rollups WHERE rollup_id="r1"', []).get() as any;
-     expect(promoted2.failed_promotion_attempts).toBe(2);
-  } finally { d.stop(); }
+    // Should not be promoted
+    const promoted = d.services.db
+      .query(
+        'SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id="r1"',
+        [],
+      )
+      .get() as any;
+    expect(promoted.t2_promoted_at).toBeNull();
+    expect(promoted.failed_promotion_attempts).toBe(1);
+
+    // Retry
+    await worker.tick();
+    expect(callCount).toBe(2);
+    const promoted2 = d.services.db
+      .query('SELECT failed_promotion_attempts FROM t1_rollups WHERE rollup_id="r1"', [])
+      .get() as any;
+    expect(promoted2.failed_promotion_attempts).toBe(2);
+  } finally {
+    d.stop();
+  }
 });
 
-test('t2 promotion worker promotes eligible rollups', async () => {
+test("t2 promotion worker promotes eligible rollups", async () => {
   const d = makeTempDaemon();
-  const now = new Date('2026-04-27T10:00:00Z');
+  const now = new Date("2026-04-27T10:00:00Z");
   d.services.clock = () => now;
   d.services.supervisor.stopAll();
 
   try {
-     const oldTs = '2026-04-20T00:00:00.000Z';
-     d.services.db.run(
-       `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
+    const oldTs = "2026-04-20T00:00:00.000Z";
+    d.services.db.run(
+      `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
         VALUES ('r1', 'p1', 'u1', 's1', ?, ?, 5, '{}', '{}')`,
-       [oldTs, oldTs]
-     );
-     // Add events so transcript is not empty
-     d.services.db.run(
-       `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+      [oldTs, oldTs],
+    );
+    // Add events so transcript is not empty
+    d.services.db.run(
+      `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
         VALUES ('e1', ?, ?, 'mcp', 'u1', 'm1', 's1', 'agent-prompt', 'local', '{}', 'Session transcript for promotion test. The assistant worked through multiple software implementation tasks, reviewed and approved code changes, wrote and verified tests, and confirmed that multiple system components worked correctly in integration.')`,
-       [oldTs, oldTs]
-     );
+      [oldTs, oldTs],
+    );
 
-     const worker = createT2PromotionWorker({
-       services: d.services,
-       delayHours: 24,
-       llm: async () => [
-         { title: 'Greet', body: 'User said hello', kind: 'fact' }
-       ]
-     });
+    const worker = createT2PromotionWorker({
+      services: d.services,
+      delayHours: 24,
+      llm: async () => [{ title: "Greet", body: "User said hello", kind: "fact" }],
+    });
 
-     await worker.tick();
-     
-     const count = d.services.db.query('SELECT COUNT(*) c FROM t2_memories', []).get() as any;
-     expect(count.c).toBe(1);
+    await worker.tick();
 
-     const promoted = d.services.db.query('SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id="r1"', []).get() as any;
-     expect(promoted.t2_promoted_at).not.toBeNull();
-     expect(promoted.failed_promotion_attempts).toBe(0);
-  } finally { d.stop(); }
+    const count = d.services.db.query("SELECT COUNT(*) c FROM t2_memories", []).get() as any;
+    expect(count.c).toBe(1);
+
+    const promoted = d.services.db
+      .query(
+        'SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id="r1"',
+        [],
+      )
+      .get() as any;
+    expect(promoted.t2_promoted_at).not.toBeNull();
+    expect(promoted.failed_promotion_attempts).toBe(0);
+  } finally {
+    d.stop();
+  }
 });
 
-test('t2 promotion worker handles empty transcripts by marking as promoted', async () => {
+test("t2 promotion worker handles empty transcripts by marking as promoted", async () => {
   const d = makeTempDaemon();
-  const now = new Date('2026-04-27T10:00:00Z');
+  const now = new Date("2026-04-27T10:00:00Z");
   d.services.clock = () => now;
   d.services.supervisor.stopAll();
 
   try {
-     const oldTs = '2026-04-20T00:00:00.000Z';
-     d.services.db.run(
-       `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
+    const oldTs = "2026-04-20T00:00:00.000Z";
+    d.services.db.run(
+      `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
         VALUES ('r1', 'p1', 'u1', 's1', ?, ?, 5, '{}', '{}')`,
-       [oldTs, oldTs]
-     );
-     // No events or only whitespace events
-     d.services.db.run(
-       `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+      [oldTs, oldTs],
+    );
+    // No events or only whitespace events
+    d.services.db.run(
+      `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
         VALUES ('e1', ?, ?, 'mcp', 'u1', 'm1', 's1', 'agent-prompt', 'local', '{}', '   ')`,
-       [oldTs, oldTs]
-     );
+      [oldTs, oldTs],
+    );
 
-     const worker = createT2PromotionWorker({
-       services: d.services,
-       delayHours: 24,
-       llm: async () => { throw new Error('Should not be called'); }
-     });
+    const worker = createT2PromotionWorker({
+      services: d.services,
+      delayHours: 24,
+      llm: async () => {
+        throw new Error("Should not be called");
+      },
+    });
 
-     await worker.tick();
-     
-     const count = d.services.db.query('SELECT COUNT(*) c FROM t2_memories', []).get() as any;
-     expect(count.c).toBe(0);
+    await worker.tick();
 
-     const promoted = d.services.db.query('SELECT t2_promoted_at FROM t1_rollups WHERE rollup_id="r1"', []).get() as any;
-     expect(promoted.t2_promoted_at).not.toBeNull();
-  } finally { d.stop(); }
+    const count = d.services.db.query("SELECT COUNT(*) c FROM t2_memories", []).get() as any;
+    expect(count.c).toBe(0);
+
+    const promoted = d.services.db
+      .query('SELECT t2_promoted_at FROM t1_rollups WHERE rollup_id="r1"', [])
+      .get() as any;
+    expect(promoted.t2_promoted_at).not.toBeNull();
+  } finally {
+    d.stop();
+  }
 });
 
-test('t2 promotion worker fails on malformed LLM response and increments counter', async () => {
+test("t2 promotion worker fails on malformed LLM response and increments counter", async () => {
   const d = makeTempDaemon();
-  const now = new Date('2026-04-27T10:00:00Z');
+  const now = new Date("2026-04-27T10:00:00Z");
   d.services.clock = () => now;
   d.services.supervisor.stopAll();
 
   try {
-     const oldTs = '2026-04-20T00:00:00.000Z';
-     d.services.db.run(
-       `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
+    const oldTs = "2026-04-20T00:00:00.000Z";
+    d.services.db.run(
+      `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
         VALUES ('r1', 'p1', 'u1', 's1', ?, ?, 5, '{}', '{}')`,
-       [oldTs, oldTs]
-     );
-     d.services.db.run(
-       `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+      [oldTs, oldTs],
+    );
+    d.services.db.run(
+      `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
         VALUES ('e1', ?, ?, 'mcp', 'u1', 'm1', 's1', 'agent-prompt', 'local', '{}', 'Session transcript for promotion test. The assistant worked through multiple software implementation tasks, reviewed and approved code changes, wrote and verified tests, and confirmed that multiple system components worked correctly in integration.')`,
-       [oldTs, oldTs]
-     );
+      [oldTs, oldTs],
+    );
 
-     const worker = createT2PromotionWorker({
-       services: d.services,
-       delayHours: 24,
-       llm: async () => [
-         { title: '', body: 'missing title', kind: 'fact' } as any // title empty fails min(1)
-       ]
-     });
+    const worker = createT2PromotionWorker({
+      services: d.services,
+      delayHours: 24,
+      llm: async () => [
+        { title: "", body: "missing title", kind: "fact" } as any, // title empty fails min(1)
+      ],
+    });
 
-     await worker.tick();
-     
-     const count = d.services.db.query('SELECT COUNT(*) c FROM t2_memories', []).get() as any;
-     expect(count.c).toBe(0);
+    await worker.tick();
 
-     const promoted = d.services.db.query('SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id="r1"', []).get() as any;
-     expect(promoted.t2_promoted_at).toBeNull();
-     expect(promoted.failed_promotion_attempts).toBe(1);
-  } finally { d.stop(); }
+    const count = d.services.db.query("SELECT COUNT(*) c FROM t2_memories", []).get() as any;
+    expect(count.c).toBe(0);
+
+    const promoted = d.services.db
+      .query(
+        'SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id="r1"',
+        [],
+      )
+      .get() as any;
+    expect(promoted.t2_promoted_at).toBeNull();
+    expect(promoted.failed_promotion_attempts).toBe(1);
+  } finally {
+    d.stop();
+  }
 });
 
-test('t2 promotion worker stops retrying after limit', async () => {
+test("t2 promotion worker stops retrying after limit", async () => {
   const d = makeTempDaemon();
-  const now = new Date('2026-04-27T10:00:00Z');
+  const now = new Date("2026-04-27T10:00:00Z");
   d.services.clock = () => now;
   d.services.supervisor.stopAll();
 
   try {
-     const oldTs = '2026-04-20T00:00:00.000Z';
-     d.services.db.run(
-       `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json, failed_promotion_attempts)
+    const oldTs = "2026-04-20T00:00:00.000Z";
+    d.services.db.run(
+      `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json, failed_promotion_attempts)
         VALUES ('r1', 'p1', 'u1', 's1', ?, ?, 1, '{}', '{}', 5)`,
-       [oldTs, oldTs]
-     );
-     d.services.db.run(
-       `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+      [oldTs, oldTs],
+    );
+    d.services.db.run(
+      `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
         VALUES ('e1', ?, ?, 'mcp', 'u1', 'm1', 's1', 'agent-prompt', 'local', '{}', 'Session transcript for promotion test. The assistant worked through multiple software implementation tasks, reviewed and approved code changes, wrote and verified tests, and confirmed that multiple system components worked correctly in integration.')`,
-       [oldTs, oldTs]
-     );
+      [oldTs, oldTs],
+    );
 
-     let callCount = 0;
-     const worker = createT2PromotionWorker({
-       services: d.services,
-       delayHours: 24,
-       llm: async () => {
-         callCount++;
-         return [];
-       }
-     });
+    let callCount = 0;
+    const worker = createT2PromotionWorker({
+      services: d.services,
+      delayHours: 24,
+      llm: async () => {
+        callCount++;
+        return [];
+      },
+    });
 
-     await worker.tick();
-     // Should skip because attempts=5
-     expect(callCount).toBe(0);
-  } finally { d.stop(); }
+    await worker.tick();
+    // Should skip because attempts=5
+    expect(callCount).toBe(0);
+  } finally {
+    d.stop();
+  }
 });
 
-test('t2 promotion worker re-reads MEMORY_PROMOTION_MIN_EVENTS per tick', async () => {
+test("t2 promotion worker re-reads MEMORY_PROMOTION_MIN_EVENTS per tick", async () => {
   const d = makeTempDaemon();
-  const now = new Date('2026-04-27T10:00:00Z');
+  const now = new Date("2026-04-27T10:00:00Z");
   d.services.clock = () => now;
   d.services.supervisor.stopAll();
 
   try {
-     const oldTs = '2026-04-20T00:00:00.000Z';
-     // Rollup with 3 events
-     d.services.db.run(
-       `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
+    const oldTs = "2026-04-20T00:00:00.000Z";
+    // Rollup with 3 events
+    d.services.db.run(
+      `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
         VALUES ('r1', 'p1', 'u1', 's1', ?, ?, 3, '{}', '{}')`,
-       [oldTs, oldTs]
-     );
-     d.services.db.run(
-       `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+      [oldTs, oldTs],
+    );
+    d.services.db.run(
+      `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
         VALUES ('e1', ?, ?, 'mcp', 'u1', 'm1', 's1', 'agent-prompt', 'local', '{}', 'Session transcript for promotion test. The assistant worked through multiple software implementation tasks, reviewed and approved code changes, wrote and verified tests, and confirmed that multiple system components worked correctly in integration.')`,
-       [oldTs, oldTs]
-     );
+      [oldTs, oldTs],
+    );
 
-     let callCount = 0;
-     const worker = createT2PromotionWorker({
-       services: d.services,
-       delayHours: 24,
-       llm: async () => {
-         callCount++;
-         return [{ title: 'Fact', body: 'Fact', kind: 'fact' }];
-       }
-     });
+    let callCount = 0;
+    const worker = createT2PromotionWorker({
+      services: d.services,
+      delayHours: 24,
+      llm: async () => {
+        callCount++;
+        return [{ title: "Fact", body: "Fact", kind: "fact" }];
+      },
+    });
 
-     // 1. First tick - default behavior (minEvents=5), r1 has 3, should be skipped
-     await worker.tick();
-     expect(callCount).toBe(0);
+    // 1. First tick - default behavior (minEvents=5), r1 has 3, should be skipped
+    await worker.tick();
+    expect(callCount).toBe(0);
 
-     // 2. Set env to 2 - r1 (n_events=3) should now be eligible
-     process.env.MEMORY_PROMOTION_MIN_EVENTS = '2';
-     await worker.tick();
-     expect(callCount).toBe(1);
-     
-     const count = d.services.db.query('SELECT COUNT(*) c FROM t2_memories', []).get() as any;
-     expect(count.c).toBe(1);
+    // 2. Set env to 2 - r1 (n_events=3) should now be eligible
+    process.env.MEMORY_PROMOTION_MIN_EVENTS = "2";
+    await worker.tick();
+    expect(callCount).toBe(1);
 
-     // 3. Unset env - back to 5. (Already promoted so it wouldn't be picked up anyway, but let's add r2)
-     delete process.env.MEMORY_PROMOTION_MIN_EVENTS;
-     d.services.db.run(
-       `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
+    const count = d.services.db.query("SELECT COUNT(*) c FROM t2_memories", []).get() as any;
+    expect(count.c).toBe(1);
+
+    // 3. Unset env - back to 5. (Already promoted so it wouldn't be picked up anyway, but let's add r2)
+    delete process.env.MEMORY_PROMOTION_MIN_EVENTS;
+    d.services.db.run(
+      `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
         VALUES ('r2', 'p1', 'u1', 's2', ?, ?, 3, '{}', '{}')`,
-       [oldTs, oldTs]
-     );
-     d.services.db.run(
-       `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+      [oldTs, oldTs],
+    );
+    d.services.db.run(
+      `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
         VALUES ('e2', ?, ?, 'mcp', 'u1', 'm1', 's2', 'agent-prompt', 'local', '{}', 'Session transcript for promotion test second entry. Additional implementation work was completed. More tests were written and confirmed passing. Integration verification process was completed successfully and all requirements were satisfied.')`,
-       [oldTs, oldTs]
-     );
-     await worker.tick();
-     expect(callCount).toBe(1); // Still 1, r2 skipped
-
+      [oldTs, oldTs],
+    );
+    await worker.tick();
+    expect(callCount).toBe(1); // Still 1, r2 skipped
   } finally {
     delete process.env.MEMORY_PROMOTION_MIN_EVENTS;
     d.stop();
   }
 });
 
-test('t2 promotion worker opts take precedence over MEMORY_PROMOTION_MIN_EVENTS env', async () => {
+test("t2 promotion worker opts take precedence over MEMORY_PROMOTION_MIN_EVENTS env", async () => {
   const d = makeTempDaemon();
-  const now = new Date('2026-04-27T10:00:00Z');
+  const now = new Date("2026-04-27T10:00:00Z");
   d.services.clock = () => now;
   d.services.supervisor.stopAll();
 
   try {
-     const oldTs = '2026-04-20T00:00:00.000Z';
-     // Rollup with 3 events
-     d.services.db.run(
-       `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
+    const oldTs = "2026-04-20T00:00:00.000Z";
+    // Rollup with 3 events
+    d.services.db.run(
+      `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
         VALUES ('r1', 'p1', 'u1', 's1', ?, ?, 3, '{}', '{}')`,
-       [oldTs, oldTs]
-     );
-     d.services.db.run(
-       `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+      [oldTs, oldTs],
+    );
+    d.services.db.run(
+      `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
         VALUES ('e1', ?, ?, 'mcp', 'u1', 'm1', 's1', 'agent-prompt', 'local', '{}', 'Session transcript for promotion test. The assistant worked through multiple software implementation tasks, reviewed and approved code changes, wrote and verified tests, and confirmed that multiple system components worked correctly in integration.')`,
-       [oldTs, oldTs]
-     );
+      [oldTs, oldTs],
+    );
 
-     process.env.MEMORY_PROMOTION_MIN_EVENTS = '2';
-     // Opts set to 5 should win over env=2
-     const worker = createT2PromotionWorker({
-       services: d.services,
-       delayHours: 24,
-       minEvents: 5,
-       llm: async () => [{ title: 'Fact', body: 'Fact', kind: 'fact' }]
-     });
+    process.env.MEMORY_PROMOTION_MIN_EVENTS = "2";
+    // Opts set to 5 should win over env=2
+    const worker = createT2PromotionWorker({
+      services: d.services,
+      delayHours: 24,
+      minEvents: 5,
+      llm: async () => [{ title: "Fact", body: "Fact", kind: "fact" }],
+    });
 
-     await worker.tick();
-     // Should skip because opts.minEvents=5 wins
-     const count = d.services.db.query('SELECT COUNT(*) c FROM t2_memories', []).get() as any;
-     expect(count.c).toBe(0);
-
+    await worker.tick();
+    // Should skip because opts.minEvents=5 wins
+    const count = d.services.db.query("SELECT COUNT(*) c FROM t2_memories", []).get() as any;
+    expect(count.c).toBe(0);
   } finally {
     delete process.env.MEMORY_PROMOTION_MIN_EVENTS;
     d.stop();

@@ -17,8 +17,12 @@ export interface PlanRenderInput {
 export function renderPlanTree(input: PlanRenderInput): string {
   const lines: string[] = [];
   lines.push(`plan ${input.plan.plan_id} (status: ${input.plan.status})`);
-  for (const task of [...input.tasks].sort((a, b) => a.task_meta_id.localeCompare(b.task_meta_id))) {
-    lines.push(`  [${task.status}] ${task.task_meta_id} · project=${task.project_id} · board=${task.task_id_in_board ?? '-'}`);
+  for (const task of [...input.tasks].sort((a, b) =>
+    a.task_meta_id.localeCompare(b.task_meta_id),
+  )) {
+    lines.push(
+      `  [${task.status}] ${task.task_meta_id} · project=${task.project_id} · board=${task.task_id_in_board ?? "-"}`,
+    );
   }
-  return lines.join('\n');
+  return lines.join("\n");
 }

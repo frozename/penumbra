@@ -41,6 +41,7 @@ If args are ambiguous, ask before dispatching. Fan-out is expensive.
 ## Parsing user input
 
 The user may type any of:
+
 - `/adversarial-plan` — ask for a topic or spec path if neither is obvious
 - `/adversarial-plan <free-text topic>` — plan the topic directly
 - `/adversarial-plan docs/specs/foo.md` — inline that spec file

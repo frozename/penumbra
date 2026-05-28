@@ -1,5 +1,5 @@
-import type { AgentDescriptor } from '@penumbra/core';
-import type { AgentChatConfig } from './config/types.js';
+import type { AgentDescriptor } from "@penumbra/core";
+import type { AgentChatConfig } from "./config/types.js";
 
 export function getAgentDescriptor(
   name: string,

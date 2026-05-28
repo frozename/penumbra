@@ -1,4 +1,4 @@
-import type { AgentDescriptor } from './eligibility.js';
+import type { AgentDescriptor } from "./eligibility.js";
 
 export type AgentRankRow = {
   agent_name: string;

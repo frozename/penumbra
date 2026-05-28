@@ -1,4 +1,4 @@
-import type { AgentChatConfig } from '../config/types.js';
+import type { AgentChatConfig } from "../config/types.js";
 
 export interface RuntimeThoughtCaptureConfig {
   maxTextBytes: number;
@@ -54,16 +54,19 @@ export function loadThoughtsConfig(input: { agentchat: AgentChatConfig }): Runti
   const analyzeRequested = enabled && t?.analyze?.enabled === true;
   const digest: RuntimeThoughtDigestConfig = {
     enabled: analyzeRequested && t?.analyze?.digest?.enabled === true,
-    agent: t?.analyze?.digest?.agent ?? 'local-gemma26',
+    agent: t?.analyze?.digest?.agent ?? "local-gemma26",
     maxInputChars: t?.analyze?.digest?.max_input_chars ?? 50000,
     timeoutMs: t?.analyze?.digest?.timeout_ms ?? 60000,
   };
   const signals: RuntimeThoughtSignalsConfig = {
     enabled: analyzeRequested && t?.analyze?.signals?.enabled === true,
-    agent: t?.analyze?.signals?.agent ?? 'local-gemma26',
+    agent: t?.analyze?.signals?.agent ?? "local-gemma26",
     timeoutMs: t?.analyze?.signals?.timeout_ms ?? 60000,
     maxInputChars: t?.analyze?.signals?.max_input_chars ?? null,
-    definitions: (t?.analyze?.signals?.definitions ?? []).map((d) => ({ name: d.name, prompt: d.prompt })),
+    definitions: (t?.analyze?.signals?.definitions ?? []).map((d) => ({
+      name: d.name,
+      prompt: d.prompt,
+    })),
   };
 
   return {
@@ -71,7 +74,7 @@ export function loadThoughtsConfig(input: { agentchat: AgentChatConfig }): Runti
     capture,
     analyze: {
       enabled: analyzeRequested,
-      onlyWhen: t?.analyze?.only_when ?? ['pr_opened', 'test_failed', 'typecheck_failed'],
+      onlyWhen: t?.analyze?.only_when ?? ["pr_opened", "test_failed", "typecheck_failed"],
       digest,
       signals,
     },

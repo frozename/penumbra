@@ -1,5 +1,5 @@
-export type GhIssueState = 'OPEN' | 'CLOSED';
-export type GhIssueStateReason = 'COMPLETED' | 'NOT_PLANNED' | null;
+export type GhIssueState = "OPEN" | "CLOSED";
+export type GhIssueStateReason = "COMPLETED" | "NOT_PLANNED" | null;
 
 export interface GhIssueView {
   number: number;
@@ -47,10 +47,14 @@ export interface GhIssueComment {
 export interface GhClient {
   createIssue(input: GhCreateIssueInput): Promise<{ number: number; url: string }>;
   viewIssue(repo: string, issueNumber: number): Promise<GhIssueView>;
-  closeIssue(repo: string, issueNumber: number, reason: 'completed' | 'not planned'): Promise<void>;
+  closeIssue(repo: string, issueNumber: number, reason: "completed" | "not planned"): Promise<void>;
   reopenIssue(repo: string, issueNumber: number): Promise<void>;
   commentIssue(repo: string, issueNumber: number, body: string): Promise<{ comment_url: string }>;
-  listComments(repo: string, issueNumber: number, opts?: { since?: string }): Promise<GhIssueComment[]>;
+  listComments(
+    repo: string,
+    issueNumber: number,
+    opts?: { since?: string },
+  ): Promise<GhIssueComment[]>;
   getAuthenticatedLogin?(): Promise<string | null>;
   listOpenPullRequests?(): Promise<GhOpenPullRequest[]>;
   listOpenPullRequestsByHead?(headRefName: string): Promise<GhPullRequestLite[]>;
@@ -66,23 +70,23 @@ interface GhExecResult {
 export type GhExec = (args: string[]) => Promise<GhExecResult>;
 
 function normalizeState(value: string): GhIssueState {
-  return value.toUpperCase() === 'CLOSED' ? 'CLOSED' : 'OPEN';
+  return value.toUpperCase() === "CLOSED" ? "CLOSED" : "OPEN";
 }
 
 function normalizeReason(value: unknown): GhIssueStateReason {
-  if (typeof value !== 'string') return null;
+  if (typeof value !== "string") return null;
   const upper = value.toUpperCase();
-  if (upper === 'COMPLETED') return 'COMPLETED';
-  if (upper === 'NOT_PLANNED') return 'NOT_PLANNED';
+  if (upper === "COMPLETED") return "COMPLETED";
+  if (upper === "NOT_PLANNED") return "NOT_PLANNED";
   return null;
 }
 
 async function defaultExec(args: string[], cwd?: string): Promise<GhExecResult> {
   const proc = Bun.spawnSync({
-    cmd: ['gh', ...args],
+    cmd: ["gh", ...args],
     cwd,
-    stdout: 'pipe',
-    stderr: 'pipe',
+    stdout: "pipe",
+    stderr: "pipe",
   });
   return {
     stdout: proc.stdout.toString(),
@@ -95,7 +99,9 @@ async function runOrThrow(exec: GhExec, args: string[]): Promise<string> {
   const out = await exec(args);
   if (out.exitCode !== 0) {
     const stderr = out.stderr.trim();
-    throw new Error(stderr ? `gh ${args.join(' ')} failed: ${stderr}` : `gh ${args.join(' ')} failed`);
+    throw new Error(
+      stderr ? `gh ${args.join(" ")} failed: ${stderr}` : `gh ${args.join(" ")} failed`,
+    );
   }
   return out.stdout.trim();
 }
@@ -128,14 +134,14 @@ function extractUnknownLabels(stderr: string): string[] {
 }
 
 function parseGhIssueComments(text: string): GhIssueComment[] {
-  const parsed = JSON.parse(text || '[]') as unknown;
+  const parsed = JSON.parse(text || "[]") as unknown;
   const pages = Array.isArray(parsed) ? parsed : [parsed];
   const comments: GhIssueComment[] = [];
 
   for (const page of pages) {
     if (!Array.isArray(page)) continue;
     for (const item of page) {
-      if (!item || typeof item !== 'object') continue;
+      if (!item || typeof item !== "object") continue;
       const row = item as {
         id?: unknown;
         user?: { login?: unknown };
@@ -145,15 +151,16 @@ function parseGhIssueComments(text: string): GhIssueComment[] {
         url?: unknown;
       };
       comments.push({
-        id: String(row.id ?? ''),
-        author_login: typeof row.user?.login === 'string' ? row.user.login : '',
-        body: typeof row.body === 'string' ? row.body : '',
-        created_at: typeof row.created_at === 'string' ? row.created_at : '',
-        url: typeof row.html_url === 'string'
-          ? row.html_url
-          : typeof row.url === 'string'
-            ? row.url
-            : '',
+        id: String(row.id ?? ""),
+        author_login: typeof row.user?.login === "string" ? row.user.login : "",
+        body: typeof row.body === "string" ? row.body : "",
+        created_at: typeof row.created_at === "string" ? row.created_at : "",
+        url:
+          typeof row.html_url === "string"
+            ? row.html_url
+            : typeof row.url === "string"
+              ? row.url
+              : "",
       });
     }
   }
@@ -165,22 +172,15 @@ export function createGhCliClient(opts: { exec?: GhExec; repoDir?: string } = {}
   const exec = opts.exec ?? ((args) => defaultExec(args, opts.repoDir));
   return {
     async createIssue(input: GhCreateIssueInput): Promise<{ number: number; url: string }> {
-      const baseArgs = [
-        'issue',
-        'create',
-        '--repo',
-        input.repo,
-        '--title',
-        input.title,
-      ];
+      const baseArgs = ["issue", "create", "--repo", input.repo, "--title", input.title];
       if (input.body != null) {
-        baseArgs.push('--body', input.body);
+        baseArgs.push("--body", input.body);
       }
       for (const label of input.labels ?? []) {
-        baseArgs.push('--label', label);
+        baseArgs.push("--label", label);
       }
       for (const assignee of input.assignees ?? []) {
-        baseArgs.push('--assignee', assignee);
+        baseArgs.push("--assignee", assignee);
       }
       const out = await runCreateIssueWithLabelRetry(exec, baseArgs, input.repo);
       const parsed = parseIssueUrlFromOutput(out);
@@ -192,13 +192,13 @@ export function createGhCliClient(opts: { exec?: GhExec; repoDir?: string } = {}
 
     async viewIssue(repo: string, issueNumber: number): Promise<GhIssueView> {
       const text = await runOrThrow(exec, [
-        'issue',
-        'view',
+        "issue",
+        "view",
         String(issueNumber),
-        '--repo',
+        "--repo",
         repo,
-        '--json',
-        'number,state,stateReason,updatedAt,title,url',
+        "--json",
+        "number,state,stateReason,updatedAt,title,url",
       ]);
       const parsed = JSON.parse(text) as {
         number: number;
@@ -218,113 +218,112 @@ export function createGhCliClient(opts: { exec?: GhExec; repoDir?: string } = {}
       };
     },
 
-    async closeIssue(repo: string, issueNumber: number, reason: 'completed' | 'not planned'): Promise<void> {
+    async closeIssue(
+      repo: string,
+      issueNumber: number,
+      reason: "completed" | "not planned",
+    ): Promise<void> {
       await runOrThrow(exec, [
-        'issue',
-        'close',
+        "issue",
+        "close",
         String(issueNumber),
-        '--repo',
+        "--repo",
         repo,
-        '--reason',
+        "--reason",
         reason,
       ]);
     },
 
     async reopenIssue(repo: string, issueNumber: number): Promise<void> {
-      await runOrThrow(exec, [
-        'issue',
-        'reopen',
-        String(issueNumber),
-        '--repo',
-        repo,
-      ]);
+      await runOrThrow(exec, ["issue", "reopen", String(issueNumber), "--repo", repo]);
     },
 
-    async commentIssue(repo: string, issueNumber: number, body: string): Promise<{ comment_url: string }> {
+    async commentIssue(
+      repo: string,
+      issueNumber: number,
+      body: string,
+    ): Promise<{ comment_url: string }> {
       const text = await runOrThrow(exec, [
-        'issue',
-        'comment',
+        "issue",
+        "comment",
         String(issueNumber),
-        '--repo',
+        "--repo",
         repo,
-        '--body',
+        "--body",
         body,
       ]);
       const comment_url = extractFirstUrl(text);
       if (!comment_url) {
-        throw new Error(`gh issue comment ${issueNumber} --repo ${repo} did not return a comment URL`);
+        throw new Error(
+          `gh issue comment ${issueNumber} --repo ${repo} did not return a comment URL`,
+        );
       }
       return { comment_url };
     },
 
-    async listComments(repo: string, issueNumber: number, opts?: { since?: string }): Promise<GhIssueComment[]> {
-      const sinceQuery = opts?.since ? `?since=${encodeURIComponent(opts.since)}` : '';
+    async listComments(
+      repo: string,
+      issueNumber: number,
+      opts?: { since?: string },
+    ): Promise<GhIssueComment[]> {
+      const sinceQuery = opts?.since ? `?since=${encodeURIComponent(opts.since)}` : "";
       const text = await runOrThrow(exec, [
-        'api',
+        "api",
         `repos/${repo}/issues/${issueNumber}/comments${sinceQuery}`,
-        '--paginate',
-        '--slurp',
+        "--paginate",
+        "--slurp",
       ]);
       return parseGhIssueComments(text);
     },
 
     async getAuthenticatedLogin(): Promise<string | null> {
-      const text = await runOrThrow(exec, [
-        'api',
-        'user',
-        '--jq',
-        '.login',
-      ]);
+      const text = await runOrThrow(exec, ["api", "user", "--jq", ".login"]);
       const login = text.trim();
       return login.length > 0 ? login : null;
     },
 
     async listOpenPullRequests(): Promise<GhOpenPullRequest[]> {
       const text = await runOrThrow(exec, [
-        'pr',
-        'list',
-        '--state',
-        'open',
-        '--json',
-        'number,title,headRefName,headRefOid,updatedAt',
-        '--limit',
-        '500',
+        "pr",
+        "list",
+        "--state",
+        "open",
+        "--json",
+        "number,title,headRefName,headRefOid,updatedAt",
+        "--limit",
+        "500",
       ]);
-      return JSON.parse(text || '[]') as GhOpenPullRequest[];
+      return JSON.parse(text || "[]") as GhOpenPullRequest[];
     },
 
     async listOpenPullRequestsByHead(headRefName: string): Promise<GhPullRequestLite[]> {
       const text = await runOrThrow(exec, [
-        'pr',
-        'list',
-        '--head',
+        "pr",
+        "list",
+        "--head",
         headRefName,
-        '--state',
-        'open',
-        '--json',
-        'number',
+        "--state",
+        "open",
+        "--json",
+        "number",
       ]);
       const parsed = JSON.parse(text) as Array<{ number: number }>;
       return parsed.map((row) => ({ number: row.number }));
     },
 
     async closePullRequest(input: GhClosePullRequestInput): Promise<void> {
-      const args = [
-        'pr',
-        'close',
-        String(input.number),
-        '--comment',
-        input.comment,
-      ];
-      if (input.deleteBranch) args.push('--delete-branch');
-      await runOrThrow(exec, [
-        ...args,
-      ]);
+      const args = ["pr", "close", String(input.number), "--comment", input.comment];
+      if (input.deleteBranch) args.push("--delete-branch");
+      await runOrThrow(exec, [...args]);
     },
   };
 }
 
-async function runCreateIssueWithLabelRetry(exec: GhExec, args: string[], repo: string): Promise<string> {
+async function runCreateIssueWithLabelRetry(
+  exec: GhExec,
+  args: string[],
+  repo: string,
+): Promise<string> {
   try {
     return await runOrThrow(exec, args);
   } catch (error) {
@@ -332,7 +331,9 @@ async function runCreateIssueWithLabelRetry(exec: GhExec, args: string[], repo: 
     const unknownLabels = extractUnknownLabels(error.message);
     if (unknownLabels.length === 0) throw error;
 
-    console.warn(`gh-client: dropping unknown labels: ${JSON.stringify(unknownLabels)} for repo=${repo}`);
+    console.warn(
+      `gh-client: dropping unknown labels: ${JSON.stringify(unknownLabels)} for repo=${repo}`,
+    );
     const filteredArgs = filterIssueCreateLabels(args, new Set(unknownLabels));
     return await runOrThrow(exec, filteredArgs);
   }
@@ -344,7 +345,7 @@ function filterIssueCreateLabels(args: string[], labelsToDrop: Set<string>): str
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     const nextArg = args[i + 1];
-    if (arg === '--label' && nextArg != null && labelsToDrop.has(nextArg)) {
+    if (arg === "--label" && nextArg != null && labelsToDrop.has(nextArg)) {
       i += 1;
       continue;
     }

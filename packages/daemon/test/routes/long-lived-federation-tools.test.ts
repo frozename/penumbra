@@ -1,16 +1,16 @@
-import { expect, mock, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { loadSqliteVec, migrate, type Services } from '@penumbra/core';
-import { TestEmbedder } from '@penumbra/core/testing';
-import { longLivedFederationToolsRoute } from '../../src/routes/long-lived-federation-tools.js';
+import { expect, mock, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
+import { longLivedFederationToolsRoute } from "../../src/routes/long-lived-federation-tools.js";
 
 function makeServices(db: Database): Services {
   return {
     db,
     settings: {},
-    storageRoot: '/tmp/penumbra-test',
+    storageRoot: "/tmp/penumbra-test",
     dbMeta: {} as any,
-    machineId: { get: () => 'machine-test' } as any,
+    machineId: { get: () => "machine-test" } as any,
     projectCache: {} as any,
     redactor: {} as any,
     t0Writer: {} as any,
@@ -31,7 +31,7 @@ function makeServices(db: Database): Services {
     supervisor: {} as any,
     pidRegistry: {} as any,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date('2026-05-11T00:00:00.000Z'),
+    clock: () => new Date("2026-05-11T00:00:00.000Z"),
     uuid: (() => {
       let n = 0;
       return () => `evt-${++n}`;
@@ -55,22 +55,22 @@ function seedAgent(db: Database, allowlist: string[]): void {
       last_tick_outcome, last_intent_summary, retired_at, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    'agent-1',
-    'Agent 1',
-    'active',
+    "agent-1",
+    "Agent 1",
+    "active",
     null,
     0,
     3,
     null,
-    '[]',
+    "[]",
     JSON.stringify(allowlist),
-    '[]',
-    '{}',
+    "[]",
+    "{}",
     null,
     null,
     null,
-    '{}',
-    'brief',
+    "{}",
+    "brief",
     null,
     null,
     null,
@@ -81,131 +81,159 @@ function seedAgent(db: Database, allowlist: string[]): void {
   );
 }
 
-test('GET /long-lived/agents/:id/federation-tools returns 404 for unknown agent', async () => {
-  const db = new Database(':memory:');
+test("GET /long-lived/agents/:id/federation-tools returns 404 for unknown agent", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const res = await longLivedFederationToolsRoute(new Request('http://x/long-lived/agents/missing/federation-tools'), services, 'missing');
+  const res = await longLivedFederationToolsRoute(
+    new Request("http://x/long-lived/agents/missing/federation-tools"),
+    services,
+    "missing",
+  );
   expect(res.status).toBe(404);
-  expect(await res.json()).toEqual({ error: 'agent_not_found' });
+  expect(await res.json()).toEqual({ error: "agent_not_found" });
 });
 
-test('GET /long-lived/agents/:id/federation-tools returns empty tools without mcpPool', async () => {
-  const db = new Database(':memory:');
+test("GET /long-lived/agents/:id/federation-tools returns empty tools without mcpPool", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
-  seedAgent(db, ['ha:state_get']);
+  seedAgent(db, ["ha:state_get"]);
   const services = makeServices(db);
-  const res = await longLivedFederationToolsRoute(new Request('http://x/long-lived/agents/agent-1/federation-tools'), services, 'agent-1');
+  const res = await longLivedFederationToolsRoute(
+    new Request("http://x/long-lived/agents/agent-1/federation-tools"),
+    services,
+    "agent-1",
+  );
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({ tools: [] });
 });
 
-test('GET /long-lived/agents/:id/federation-tools filters a single server', async () => {
-  const db = new Database(':memory:');
+test("GET /long-lived/agents/:id/federation-tools filters a single server", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
-  seedAgent(db, ['ha:state_get', 'ha:state_set']);
-  const listTools = mock(async () => ([
-    { name: 'state_get', description: 'get state' },
-    { name: 'state_set', description: 'set state' },
-    { name: 'ignored', description: 'nope' },
-  ]));
+  seedAgent(db, ["ha:state_get", "ha:state_set"]);
+  const listTools = mock(async () => [
+    { name: "state_get", description: "get state" },
+    { name: "state_set", description: "set state" },
+    { name: "ignored", description: "nope" },
+  ]);
   const services = makeServices(db);
   services.mcpPool = { listTools } as any;
-  const res = await longLivedFederationToolsRoute(new Request('http://x/long-lived/agents/agent-1/federation-tools'), services, 'agent-1');
+  const res = await longLivedFederationToolsRoute(
+    new Request("http://x/long-lived/agents/agent-1/federation-tools"),
+    services,
+    "agent-1",
+  );
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({
     tools: [
-      { name: 'ha.state_get', description: 'get state', inputSchema: undefined },
-      { name: 'ha.state_set', description: 'set state', inputSchema: undefined },
+      { name: "ha.state_get", description: "get state", inputSchema: undefined },
+      { name: "ha.state_set", description: "set state", inputSchema: undefined },
     ],
   });
 });
 
-test('GET /long-lived/agents/:id/federation-tools skips builtin penumbra allowlist entries', async () => {
-  const db = new Database(':memory:');
+test("GET /long-lived/agents/:id/federation-tools skips builtin penumbra allowlist entries", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
-  seedAgent(db, ['penumbra:chain_start', 'ha:ha_pulse']);
+  seedAgent(db, ["penumbra:chain_start", "ha:ha_pulse"]);
   const listTools = mock(async (server: string) => {
-    if (server === 'ha') return [{ name: 'ha_pulse', description: 'pulse' }];
+    if (server === "ha") return [{ name: "ha_pulse", description: "pulse" }];
     throw new Error(`unexpected listTools call for ${server}`);
   });
   const services = makeServices(db);
   services.mcpPool = { listTools } as any;
-  const res = await longLivedFederationToolsRoute(new Request('http://x/long-lived/agents/agent-1/federation-tools'), services, 'agent-1');
+  const res = await longLivedFederationToolsRoute(
+    new Request("http://x/long-lived/agents/agent-1/federation-tools"),
+    services,
+    "agent-1",
+  );
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({
-    tools: [{ name: 'ha.ha_pulse', description: 'pulse', inputSchema: undefined }],
+    tools: [{ name: "ha.ha_pulse", description: "pulse", inputSchema: undefined }],
   });
-  expect(listTools).not.toHaveBeenCalledWith('penumbra');
+  expect(listTools).not.toHaveBeenCalledWith("penumbra");
   expect(listTools).toHaveBeenCalledTimes(1);
 });
 
-test('GET /long-lived/agents/:id/federation-tools matches glob allowlist entries', async () => {
-  const db = new Database(':memory:');
+test("GET /long-lived/agents/:id/federation-tools matches glob allowlist entries", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
-  seedAgent(db, ['ha:ha_*']);
-  const listTools = mock(async () => ([
-    { name: 'ha_get_state', description: 'get state' },
-    { name: 'ha_call_service', description: 'call service' },
-  ]));
+  seedAgent(db, ["ha:ha_*"]);
+  const listTools = mock(async () => [
+    { name: "ha_get_state", description: "get state" },
+    { name: "ha_call_service", description: "call service" },
+  ]);
   const services = makeServices(db);
   services.mcpPool = { listTools } as any;
-  const res = await longLivedFederationToolsRoute(new Request('http://x/long-lived/agents/agent-1/federation-tools'), services, 'agent-1');
+  const res = await longLivedFederationToolsRoute(
+    new Request("http://x/long-lived/agents/agent-1/federation-tools"),
+    services,
+    "agent-1",
+  );
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({
     tools: [
-      { name: 'ha.ha_get_state', description: 'get state', inputSchema: undefined },
-      { name: 'ha.ha_call_service', description: 'call service', inputSchema: undefined },
+      { name: "ha.ha_get_state", description: "get state", inputSchema: undefined },
+      { name: "ha.ha_call_service", description: "call service", inputSchema: undefined },
     ],
   });
 });
 
-test('GET /long-lived/agents/:id/federation-tools accepts mixed legacy and canonical allowlist entries', async () => {
-  const db = new Database(':memory:');
+test("GET /long-lived/agents/:id/federation-tools accepts mixed legacy and canonical allowlist entries", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
-  seedAgent(db, ['ha:state_get', 'ha.state_set']);
-  const listTools = mock(async () => ([
-    { name: 'state_get', description: 'get state' },
-    { name: 'state_set', description: 'set state' },
-  ]));
+  seedAgent(db, ["ha:state_get", "ha.state_set"]);
+  const listTools = mock(async () => [
+    { name: "state_get", description: "get state" },
+    { name: "state_set", description: "set state" },
+  ]);
   const services = makeServices(db);
   services.mcpPool = { listTools } as any;
-  const res = await longLivedFederationToolsRoute(new Request('http://x/long-lived/agents/agent-1/federation-tools'), services, 'agent-1');
+  const res = await longLivedFederationToolsRoute(
+    new Request("http://x/long-lived/agents/agent-1/federation-tools"),
+    services,
+    "agent-1",
+  );
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({
     tools: [
-      { name: 'ha.state_get', description: 'get state', inputSchema: undefined },
-      { name: 'ha.state_set', description: 'set state', inputSchema: undefined },
+      { name: "ha.state_get", description: "get state", inputSchema: undefined },
+      { name: "ha.state_set", description: "set state", inputSchema: undefined },
     ],
   });
 });
 
-test('GET /long-lived/agents/:id/federation-tools warns and skips malformed allowlist entries', async () => {
-  const db = new Database(':memory:');
+test("GET /long-lived/agents/:id/federation-tools warns and skips malformed allowlist entries", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
-  seedAgent(db, ['invalid-no-colon', 'ha:state_get']);
+  seedAgent(db, ["invalid-no-colon", "ha:state_get"]);
   const warn = mock(() => {});
-  const listTools = mock(async () => ([{ name: 'state_get' }]));
+  const listTools = mock(async () => [{ name: "state_get" }]);
   const services = makeServices(db);
   services.log = { info: () => {}, warn, error: () => {} } as any;
   services.mcpPool = { listTools } as any;
-  const res = await longLivedFederationToolsRoute(new Request('http://x/long-lived/agents/agent-1/federation-tools'), services, 'agent-1');
+  const res = await longLivedFederationToolsRoute(
+    new Request("http://x/long-lived/agents/agent-1/federation-tools"),
+    services,
+    "agent-1",
+  );
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({
-    tools: [{ name: 'ha.state_get', description: undefined, inputSchema: undefined }],
+    tools: [{ name: "ha.state_get", description: undefined, inputSchema: undefined }],
   });
   expect(warn).toHaveBeenCalled();
 });
 
-test('GET /long-lived/agents/:id/federation-tools returns empty tools for malformed json', async () => {
-  const db = new Database(':memory:');
+test("GET /long-lived/agents/:id/federation-tools returns empty tools for malformed json", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   db.query(
@@ -217,22 +245,22 @@ test('GET /long-lived/agents/:id/federation-tools returns empty tools for malfor
       last_tick_outcome, last_intent_summary, retired_at, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    'agent-1',
-    'Agent 1',
-    'active',
+    "agent-1",
+    "Agent 1",
+    "active",
     null,
     0,
     3,
     null,
-    '[]',
-    'not valid json',
-    '[]',
-    '{}',
+    "[]",
+    "not valid json",
+    "[]",
+    "{}",
     null,
     null,
     null,
-    '{}',
-    'brief',
+    "{}",
+    "brief",
     null,
     null,
     null,
@@ -244,49 +272,61 @@ test('GET /long-lived/agents/:id/federation-tools returns empty tools for malfor
   const warn = mock(() => {});
   const services = makeServices(db);
   services.log = { info: () => {}, warn, error: () => {} } as any;
-  services.mcpPool = { listTools: mock(async () => { throw new Error('should not call'); }) } as any;
-  const res = await longLivedFederationToolsRoute(new Request('http://x/long-lived/agents/agent-1/federation-tools'), services, 'agent-1');
+  services.mcpPool = {
+    listTools: mock(async () => {
+      throw new Error("should not call");
+    }),
+  } as any;
+  const res = await longLivedFederationToolsRoute(
+    new Request("http://x/long-lived/agents/agent-1/federation-tools"),
+    services,
+    "agent-1",
+  );
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({ tools: [] });
   expect(warn).toHaveBeenCalled();
 });
 
-test('GET /long-lived/agents/:id/federation-tools merges multiple servers and skips list failures', async () => {
-  const db = new Database(':memory:');
+test("GET /long-lived/agents/:id/federation-tools merges multiple servers and skips list failures", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
-  seedAgent(db, ['ha:state_get', 'x:do_it', 'y:run']);
+  seedAgent(db, ["ha:state_get", "x:do_it", "y:run"]);
   const warn = mock(() => {});
   const listTools = mock(async (server: string) => {
-    if (server === 'ha') return [{ name: 'state_get' }, { name: 'state_set' }];
-    if (server === 'x') throw new Error('boom');
-    return [{ name: 'run' }];
+    if (server === "ha") return [{ name: "state_get" }, { name: "state_set" }];
+    if (server === "x") throw new Error("boom");
+    return [{ name: "run" }];
   });
   const services = makeServices(db);
   services.log = { info: () => {}, warn, error: () => {} } as any;
   services.mcpPool = { listTools } as any;
-  const res = await longLivedFederationToolsRoute(new Request('http://x/long-lived/agents/agent-1/federation-tools'), services, 'agent-1');
+  const res = await longLivedFederationToolsRoute(
+    new Request("http://x/long-lived/agents/agent-1/federation-tools"),
+    services,
+    "agent-1",
+  );
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({
     tools: [
-      { name: 'ha.state_get', description: undefined, inputSchema: undefined },
-      { name: 'y.run', description: undefined, inputSchema: undefined },
+      { name: "ha.state_get", description: undefined, inputSchema: undefined },
+      { name: "y.run", description: undefined, inputSchema: undefined },
     ],
   });
   expect(warn).toHaveBeenCalled();
 });
 
-test('GET /long-lived/agents/:id/federation-tools waits for a cold-start federation init before listing tools', async () => {
-  const db = new Database(':memory:');
+test("GET /long-lived/agents/:id/federation-tools waits for a cold-start federation init before listing tools", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
-  seedAgent(db, ['ha:state_get']);
+  seedAgent(db, ["ha:state_get"]);
 
   let initResolve!: () => void;
   const initPromise = new Promise<void>((resolve) => {
     initResolve = resolve;
   });
-  const listTools = mock(async () => ([{ name: 'state_get', description: 'get state' }]));
+  const listTools = mock(async () => [{ name: "state_get", description: "get state" }]);
   const warn = mock(() => {});
   const services = makeServices(db);
   services.log = { info: () => {}, warn, error: () => {} } as any;
@@ -297,7 +337,11 @@ test('GET /long-lived/agents/:id/federation-tools waits for a cold-start federat
   } as any;
 
   const startedAt = Date.now();
-  const resPromise = longLivedFederationToolsRoute(new Request('http://x/long-lived/agents/agent-1/federation-tools'), services, 'agent-1');
+  const resPromise = longLivedFederationToolsRoute(
+    new Request("http://x/long-lived/agents/agent-1/federation-tools"),
+    services,
+    "agent-1",
+  );
   await Bun.sleep(50);
   initResolve();
   const res = await resPromise;
@@ -305,20 +349,22 @@ test('GET /long-lived/agents/:id/federation-tools waits for a cold-start federat
 
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({
-    tools: [{ name: 'ha.state_get', description: 'get state', inputSchema: undefined }],
+    tools: [{ name: "ha.state_get", description: "get state", inputSchema: undefined }],
   });
   expect(listTools).toHaveBeenCalledTimes(1);
   expect(warn).not.toHaveBeenCalled();
   expect(elapsedMs).toBeGreaterThanOrEqual(50);
 });
 
-test('GET /long-lived/agents/:id/federation-tools emits the warn after bounded wait when federation stays unhealthy', async () => {
-  const db = new Database(':memory:');
+test("GET /long-lived/agents/:id/federation-tools emits the warn after bounded wait when federation stays unhealthy", async () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
-  seedAgent(db, ['ha:state_get']);
+  seedAgent(db, ["ha:state_get"]);
 
-  const listTools = mock(async () => { throw new Error('mcp_unavailable'); });
+  const listTools = mock(async () => {
+    throw new Error("mcp_unavailable");
+  });
   const warn = mock(() => {});
   const services = makeServices(db);
   services.log = { info: () => {}, warn, error: () => {} } as any;
@@ -329,7 +375,11 @@ test('GET /long-lived/agents/:id/federation-tools emits the warn after bounded w
   } as any;
 
   const startedAt = Date.now();
-  const res = await longLivedFederationToolsRoute(new Request('http://x/long-lived/agents/agent-1/federation-tools'), services, 'agent-1');
+  const res = await longLivedFederationToolsRoute(
+    new Request("http://x/long-lived/agents/agent-1/federation-tools"),
+    services,
+    "agent-1",
+  );
   const elapsedMs = Date.now() - startedAt;
 
   expect(res.status).toBe(200);

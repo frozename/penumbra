@@ -1,12 +1,12 @@
-import { z } from 'zod';
-import { toTextContent } from '@nova/mcp-shared';
-import type { DaemonClient } from '../daemon-client.js';
+import { z } from "zod";
+import { toTextContent } from "@nova/mcp-shared";
+import type { DaemonClient } from "../daemon-client.js";
 
 export const MemoryCuratorPatternsListInputShape = {
   status: z
-    .enum(['queued', 'approved', 'rejected', 'all'])
+    .enum(["queued", "approved", "rejected", "all"])
     .optional()
-    .describe('Filter by status (default: approved)'),
+    .describe("Filter by status (default: approved)"),
 };
 
 const Schema = z.object(MemoryCuratorPatternsListInputShape);

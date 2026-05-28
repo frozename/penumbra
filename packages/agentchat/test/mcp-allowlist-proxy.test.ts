@@ -55,7 +55,11 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  try { rmSync(FIXTURE_PATH); } catch { /* ignore */ }
+  try {
+    rmSync(FIXTURE_PATH);
+  } catch {
+    /* ignore */
+  }
 });
 
 interface Proxy {
@@ -115,7 +119,13 @@ function spawnProxy(allowlist: string, extraEnv: Record<string, string> = {}): P
     return msg as unknown[];
   };
 
-  const kill = () => { try { proc.kill("SIGTERM"); } catch { /* ignore */ } };
+  const kill = () => {
+    try {
+      proc.kill("SIGTERM");
+    } catch {
+      /* ignore */
+    }
+  };
 
   return { write, readNext, readBatch, kill };
 }
@@ -140,7 +150,12 @@ test("tools/list filtered: upstream returns 5 tools; allowlist 2; client sees 2"
 test("tools/call allowed: call passes through; response returns to client", async () => {
   const p = spawnProxy("alpha,beta");
   try {
-    p.write({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "alpha", arguments: {} } });
+    p.write({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "alpha", arguments: {} },
+    });
     const resp = await p.readNext();
     expect(resp["id"]).toBe(2);
     const result = resp["result"] as Record<string, unknown>;
@@ -155,7 +170,12 @@ test("tools/call rejected: non-allowlisted tool gets -32601; upstream never rece
   const callLog = join(tmpdir(), `call-log-${Date.now()}.txt`);
   const p = spawnProxy("alpha,beta", { CALL_LOG: callLog });
   try {
-    p.write({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "gamma", arguments: {} } });
+    p.write({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: { name: "gamma", arguments: {} },
+    });
     const resp = await p.readNext();
     expect(resp["id"]).toBe(3);
     const error = resp["error"] as Record<string, unknown>;
@@ -166,7 +186,11 @@ test("tools/call rejected: non-allowlisted tool gets -32601; upstream never rece
     expect(logged).toBe("");
   } finally {
     p.kill();
-    try { rmSync(callLog); } catch { /* ignore */ }
+    try {
+      rmSync(callLog);
+    } catch {
+      /* ignore */
+    }
   }
 });
 
@@ -189,7 +213,11 @@ test("batch tools/call mixed allowlist: rejects forbidden call and forwards allo
     expect(logged).toBe("");
   } finally {
     p.kill();
-    try { rmSync(callLog); } catch { /* ignore */ }
+    try {
+      rmSync(callLog);
+    } catch {
+      /* ignore */
+    }
   }
 });
 
@@ -212,7 +240,11 @@ test("batch tools/call all forbidden: rejects whole batch and never forwards ups
     expect(logged).toBe("");
   } finally {
     p.kill();
-    try { rmSync(callLog); } catch { /* ignore */ }
+    try {
+      rmSync(callLog);
+    } catch {
+      /* ignore */
+    }
   }
 });
 
@@ -257,8 +289,14 @@ test("passthrough: non-tool methods (initialize, ping) pass verbatim", async () 
   const p = spawnProxy("alpha");
   try {
     p.write({
-      jsonrpc: "2.0", id: 10, method: "initialize",
-      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test", version: "0" } },
+      jsonrpc: "2.0",
+      id: 10,
+      method: "initialize",
+      params: {
+        protocolVersion: "2024-11-05",
+        capabilities: {},
+        clientInfo: { name: "test", version: "0" },
+      },
     });
     const resp = await p.readNext();
     expect(resp["id"]).toBe(10);
@@ -297,7 +335,10 @@ test("parseShellArgs: quoted multi-arg with extra whitespace", () => {
 
 test("parseShellArgs: single-quoted arg preserves interior spaces", () => {
   expect(parseShellArgs("uvx --from '/some/path with spaces' ha-mcp")).toEqual([
-    "uvx", "--from", "/some/path with spaces", "ha-mcp",
+    "uvx",
+    "--from",
+    "/some/path with spaces",
+    "ha-mcp",
   ]);
 });
 

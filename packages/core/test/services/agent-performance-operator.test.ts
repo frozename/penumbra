@@ -1,196 +1,227 @@
-import { Database } from 'bun:sqlite';
-import { describe, expect, test } from 'bun:test';
-import { loadSqliteVec, migrate } from '../../src/index.js';
-import { aggregateHandoffUsage, captureAgentPerformanceFromDispatch } from '../../src/services/agent-performance-capture.js';
-import { routeAgent } from '../../src/services/agent-routing.js';
-import type { AgentRankOutput } from '../../src/schemas/agent-performance.js';
-import { recordOperatorAgentPerformance } from '../../src/services/agent-performance-operator.js';
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
+import { loadSqliteVec, migrate } from "../../src/index.js";
+import {
+  aggregateHandoffUsage,
+  captureAgentPerformanceFromDispatch,
+} from "../../src/services/agent-performance-capture.js";
+import { routeAgent } from "../../src/services/agent-routing.js";
+import type { AgentRankOutput } from "../../src/schemas/agent-performance.js";
+import { recordOperatorAgentPerformance } from "../../src/services/agent-performance-operator.js";
 
 function rankAgentsViaRoute(input: Parameters<typeof routeAgent>[0]): AgentRankOutput {
-  const out = routeAgent({ ...input, detail: 'rank' });
-  if (out.detail !== 'rank') throw new Error(`routeAgent returned detail="${out.detail}", expected "rank"`);
+  const out = routeAgent({ ...input, detail: "rank" });
+  if (out.detail !== "rank")
+    throw new Error(`routeAgent returned detail="${out.detail}", expected "rank"`);
   return out.candidates;
 }
 
-describe('recordOperatorAgentPerformance', () => {
-  test('builds an enriched row from a handoff and explicit operator fields', () => {
-    const db = new Database(':memory:');
+describe("recordOperatorAgentPerformance", () => {
+  test("builds an enriched row from a handoff and explicit operator fields", () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
-    db.query(`
+    db.query(
+      `
       INSERT INTO handoffs (
         handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message,
         status, resolved_by, resolved_at, redirected_to, resolution_reason, triggered_by_event_id
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      'h1',
-      '2026-05-01T10:00:00.000Z',
-      'penumbra',
-      'c1',
-      'maestro',
-      'codex-mini',
+    `,
+    ).run(
+      "h1",
+      "2026-05-01T10:00:00.000Z",
+      "penumbra",
+      "c1",
+      "maestro",
+      "codex-mini",
       null,
-      'Task type: implement_substantial',
-      'completed',
-      'worker',
-      '2026-05-01T10:08:00.000Z',
+      "Task type: implement_substantial",
+      "completed",
+      "worker",
+      "2026-05-01T10:08:00.000Z",
       null,
-      'done',
-      'event-1',
+      "done",
+      "event-1",
     );
 
     const row = recordOperatorAgentPerformance({
       db,
-      uuid: () => 'perf-operator-1',
-      clock: () => new Date('2026-05-01T10:09:00.000Z'),
+      uuid: () => "perf-operator-1",
+      clock: () => new Date("2026-05-01T10:09:00.000Z"),
       input: {
-        handoff_id: 'h1',
-        task_type: 'implement_substantial',
-        outcome: 'merged',
+        handoff_id: "h1",
+        task_type: "implement_substantial",
+        outcome: "merged",
         rounds: 1,
-        smoke_pass: 'y',
+        smoke_pass: "y",
         reviewer_findings: 0,
         maestro_score: 5,
-        notes: 'Clean first-shot implementation.',
+        notes: "Clean first-shot implementation.",
       },
     });
 
-    expect(row.agent_name).toBe('codex-mini');
+    expect(row.agent_name).toBe("codex-mini");
     expect(row.latency_ms).toBe(8 * 60_000);
-    expect(row.source).toBe('operator');
-    expect(row.notes).toBe('Clean first-shot implementation.');
+    expect(row.source).toBe("operator");
+    expect(row.notes).toBe("Clean first-shot implementation.");
   });
 
-  test('recordOperatorAgentPerformance throws when the handoff is not found', () => {
-    const db = new Database(':memory:');
+  test("recordOperatorAgentPerformance throws when the handoff is not found", () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
 
-    expect(() => recordOperatorAgentPerformance({
-      db,
-      uuid: () => 'perf-missing',
-      clock: () => new Date('2026-05-01T10:09:00.000Z'),
-      input: {
-        handoff_id: 'missing',
-        task_type: 'implement_substantial',
-        outcome: 'merged',
-      },
-    })).toThrow('handoff not found: missing');
+    expect(() =>
+      recordOperatorAgentPerformance({
+        db,
+        uuid: () => "perf-missing",
+        clock: () => new Date("2026-05-01T10:09:00.000Z"),
+        input: {
+          handoff_id: "missing",
+          task_type: "implement_substantial",
+          outcome: "merged",
+        },
+      }),
+    ).toThrow("handoff not found: missing");
   });
 
-  test('recordOperatorAgentPerformance writes the row to agent_performance and rank reader picks it up', () => {
-    const db = new Database(':memory:');
+  test("recordOperatorAgentPerformance writes the row to agent_performance and rank reader picks it up", () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
-    db.query(`
+    db.query(
+      `
       INSERT INTO handoffs (
         handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message,
         status, resolved_by, resolved_at, redirected_to, resolution_reason, triggered_by_event_id
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      'h-rank',
-      '2026-05-01T10:00:00.000Z',
-      'penumbra',
-      'c-rank',
-      'maestro',
-      'codex-mini',
-      'executor',
-      'Task type: implement_substantial',
-      'completed',
-      'worker',
-      '2026-05-01T10:08:00.000Z',
+    `,
+    ).run(
+      "h-rank",
+      "2026-05-01T10:00:00.000Z",
+      "penumbra",
+      "c-rank",
+      "maestro",
+      "codex-mini",
+      "executor",
+      "Task type: implement_substantial",
+      "completed",
+      "worker",
+      "2026-05-01T10:08:00.000Z",
       null,
-      'done',
-      'event-rank',
+      "done",
+      "event-rank",
     );
 
     const row = recordOperatorAgentPerformance({
       db,
-      uuid: () => 'perf-rank-1',
-      clock: () => new Date('2026-05-01T10:09:00.000Z'),
+      uuid: () => "perf-rank-1",
+      clock: () => new Date("2026-05-01T10:09:00.000Z"),
       input: {
-        handoff_id: 'h-rank',
-        task_type: 'implement_substantial',
-        outcome: 'merged',
+        handoff_id: "h-rank",
+        task_type: "implement_substantial",
+        outcome: "merged",
         rounds: 1,
-        smoke_pass: 'y',
+        smoke_pass: "y",
         reviewer_findings: 0,
         maestro_score: 5,
         cost_usd: 0.4,
-        notes: 'Clean first-shot implementation.',
+        notes: "Clean first-shot implementation.",
       },
     });
 
-    const persisted = db.query<{ handoff_id: string; source: string }, [string]>(
-      'SELECT handoff_id, source FROM agent_performance WHERE handoff_id=?',
-    ).get('h-rank');
-    expect(persisted).toEqual({ handoff_id: 'h-rank', source: 'operator' });
+    const persisted = db
+      .query<
+        { handoff_id: string; source: string },
+        [string]
+      >("SELECT handoff_id, source FROM agent_performance WHERE handoff_id=?")
+      .get("h-rank");
+    expect(persisted).toEqual({ handoff_id: "h-rank", source: "operator" });
 
     const ranked = rankAgentsViaRoute({
       db,
-      taskType: 'implement_substantial',
+      taskType: "implement_substantial",
       minSamples: 1,
       includeNeutral: true,
-      now: new Date('2026-05-01T12:00:00.000Z'),
+      now: new Date("2026-05-01T12:00:00.000Z"),
     });
 
-    expect(row.performance_id).toBe('perf-rank-1');
-    expect(ranked.candidates.some((candidate) => candidate.agent_name === 'codex-mini')).toBe(true);
+    expect(row.performance_id).toBe("perf-rank-1");
+    expect(ranked.candidates.some((candidate) => candidate.agent_name === "codex-mini")).toBe(true);
   });
 
-  test('recordOperatorAgentPerformance reuses capture usage aggregation for cost and tokens', () => {
-    const db = new Database(':memory:');
+  test("recordOperatorAgentPerformance reuses capture usage aggregation for cost and tokens", () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
-    db.query(`
+    db.query(
+      `
       INSERT INTO handoffs (
         handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message,
         status, resolved_by, resolved_at, redirected_to, resolution_reason, triggered_by_event_id
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      'h-usage',
-      '2026-05-01T10:00:00.000Z',
-      'penumbra',
-      'c-usage',
-      'maestro',
-      'codex-mini',
-      'executor',
-      'Task type: implement_substantial',
-      'completed',
-      'worker',
-      '2026-05-01T10:08:00.000Z',
+    `,
+    ).run(
+      "h-usage",
+      "2026-05-01T10:00:00.000Z",
+      "penumbra",
+      "c-usage",
+      "maestro",
+      "codex-mini",
+      "executor",
+      "Task type: implement_substantial",
+      "completed",
+      "worker",
+      "2026-05-01T10:08:00.000Z",
       null,
-      'done',
-      'event-usage',
+      "done",
+      "event-usage",
     );
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO t0_events (event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, provider, model, cost_usd, payload_json)
       VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'usage-update', 'cli-subscription', 'anthropic', 'claude', ?, ?)
-    `).run('u-1', '2026-05-01T10:01:00.000Z', '2026-05-01T10:01:00.000Z', 0.10, JSON.stringify({ handoff_id: 'h-usage', used: 100 }));
-    db.prepare(`
+    `,
+    ).run(
+      "u-1",
+      "2026-05-01T10:01:00.000Z",
+      "2026-05-01T10:01:00.000Z",
+      0.1,
+      JSON.stringify({ handoff_id: "h-usage", used: 100 }),
+    );
+    db.prepare(
+      `
       INSERT INTO t0_events (event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, provider, model, cost_usd, payload_json)
       VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'usage-update', 'cli-subscription', 'anthropic', 'claude', ?, ?)
-    `).run('u-2', '2026-05-01T10:01:30.000Z', '2026-05-01T10:01:30.000Z', 0.25, JSON.stringify({ handoff_id: 'h-usage', used: 250 }));
+    `,
+    ).run(
+      "u-2",
+      "2026-05-01T10:01:30.000Z",
+      "2026-05-01T10:01:30.000Z",
+      0.25,
+      JSON.stringify({ handoff_id: "h-usage", used: 250 }),
+    );
 
     const operatorRow = recordOperatorAgentPerformance({
       db,
-      uuid: () => 'perf-usage',
-      clock: () => new Date('2026-05-01T10:09:00.000Z'),
+      uuid: () => "perf-usage",
+      clock: () => new Date("2026-05-01T10:09:00.000Z"),
       input: {
-        handoff_id: 'h-usage',
-        task_type: 'implement_substantial',
-        outcome: 'merged',
+        handoff_id: "h-usage",
+        task_type: "implement_substantial",
+        outcome: "merged",
       },
     });
 
-    const usage = aggregateHandoffUsage(db, 'h-usage');
+    const usage = aggregateHandoffUsage(db, "h-usage");
     const dispatchRow = captureAgentPerformanceFromDispatch({
       db,
-      uuid: () => 'perf-dispatch-usage',
-      clock: () => new Date('2026-05-01T10:09:00.000Z'),
+      uuid: () => "perf-dispatch-usage",
+      clock: () => new Date("2026-05-01T10:09:00.000Z"),
       input: {
-        handoff_id: 'h-usage',
-        reason: 'completed',
+        handoff_id: "h-usage",
+        reason: "completed",
       },
     });
 

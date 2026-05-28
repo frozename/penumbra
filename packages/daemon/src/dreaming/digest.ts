@@ -1,6 +1,6 @@
-import type { Database } from 'bun:sqlite';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import type { Database } from "bun:sqlite";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 export interface DreamActionRow {
   action_id: string;
@@ -30,7 +30,9 @@ export function listPendingDreamActionsQuery(
 ): ListPendingDreamActionsResult {
   const limit = Math.min(opts.limit ?? 100, 500);
 
-  const actions = db.prepare(`
+  const actions = db
+    .prepare(
+      `
     SELECT
       da.action_id,
       da.cycle_id,
@@ -46,12 +48,14 @@ export function listPendingDreamActionsQuery(
     WHERE da.status IN ('queued', 'approved')
     ORDER BY dc.started_at ASC
     LIMIT ?
-  `).all(limit) as DreamActionRow[];
+  `,
+    )
+    .all(limit) as DreamActionRow[];
 
   const total = (
-    db.prepare(
-      `SELECT COUNT(*) AS n FROM dream_actions WHERE status IN ('queued', 'approved')`,
-    ).get() as { n: number }
+    db
+      .prepare(`SELECT COUNT(*) AS n FROM dream_actions WHERE status IN ('queued', 'approved')`)
+      .get() as { n: number }
   ).n;
 
   let oldest_pending_age_hours = 0;
@@ -69,7 +73,9 @@ export async function writeDailyDigest(db: Database, outDir: string): Promise<st
   const todayStart = getTodayStartMs();
   const todayEnd = todayStart + 24 * 60 * 60 * 1000;
 
-  const actions = db.prepare(`
+  const actions = db
+    .prepare(
+      `
     SELECT
       da.action_id,
       da.cycle_id,
@@ -85,7 +91,9 @@ export async function writeDailyDigest(db: Database, outDir: string): Promise<st
     WHERE da.status IN ('queued', 'approved')
       AND dc.started_at >= ? AND dc.started_at < ?
     ORDER BY dc.started_at ASC
-  `).all(todayStart, todayEnd) as DreamActionRow[];
+  `,
+    )
+    .all(todayStart, todayEnd) as DreamActionRow[];
 
   const dateStr = formatDate(new Date());
   const filename = `dream-digest-${dateStr}.md`;
@@ -93,16 +101,16 @@ export async function writeDailyDigest(db: Database, outDir: string): Promise<st
 
   const lines: string[] = [
     `# Dream Digest — ${dateStr}`,
-    '',
+    "",
     `**Pending actions today: ${actions.length}**`,
-    '',
+    "",
   ];
 
   if (actions.length > 0) {
-    lines.push('| Phase | Type | Confidence | Status | Untrusted | Targets |');
-    lines.push('|-------|------|-----------|--------|-----------|---------|');
+    lines.push("| Phase | Type | Confidence | Status | Untrusted | Targets |");
+    lines.push("|-------|------|-----------|--------|-----------|---------|");
     for (const a of actions) {
-      const trustTag = a.untrusted_source ? ' **[UNTRUSTED]**' : '';
+      const trustTag = a.untrusted_source ? " **[UNTRUSTED]**" : "";
       let targets: string[] = [];
       try {
         targets = JSON.parse(a.target_ids);
@@ -110,14 +118,14 @@ export async function writeDailyDigest(db: Database, outDir: string): Promise<st
         // malformed target_ids
       }
       lines.push(
-        `| ${a.phase} | ${a.action_type}${trustTag} | ${a.confidence.toFixed(2)} | ${a.status} | ${a.untrusted_source ? 'yes' : 'no'} | ${targets.join(', ')} |`,
+        `| ${a.phase} | ${a.action_type}${trustTag} | ${a.confidence.toFixed(2)} | ${a.status} | ${a.untrusted_source ? "yes" : "no"} | ${targets.join(", ")} |`,
       );
     }
-    lines.push('');
+    lines.push("");
   }
 
   await mkdir(outDir, { recursive: true });
-  await writeFile(filepath, lines.join('\n'), 'utf8');
+  await writeFile(filepath, lines.join("\n"), "utf8");
 
   return filepath;
 }
@@ -135,12 +143,12 @@ export function startDailyDigestCron(deps: {
     try {
       await writeDailyDigest(deps.db, deps.outDir);
     } catch (err) {
-      deps.log?.warn?.({ err: String(err) }, 'dreaming: daily digest failed');
+      deps.log?.warn?.({ err: String(err) }, "dreaming: daily digest failed");
     }
   };
 
   const timer = setInterval(run, DAY_MS);
-  if (typeof (timer as any).unref === 'function') (timer as any).unref();
+  if (typeof (timer as any).unref === "function") (timer as any).unref();
 
   return () => {
     stopped = true;
@@ -155,7 +163,7 @@ function getTodayStartMs(): number {
 
 function formatDate(d: Date): string {
   const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }

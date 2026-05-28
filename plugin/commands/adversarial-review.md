@@ -40,6 +40,7 @@ mcp__penumbra__workflow_run({
 ## Parsing user input
 
 The user may type any of:
+
 - `/adversarial-review` — defaults
 - `/adversarial-review HEAD~3..HEAD` — range; pass as target_ref / base_ref
 - `/adversarial-review --personas arch,security` — comma-list; pass as `personas` array
@@ -58,7 +59,7 @@ The result shape is:
   "out_dir": "/abs/path/.penumbra/reviews/2026-05-08T07-30-00/",
   "personas": [
     { "name": "architect", "status": "completed", "conversation_id": "...", "findings_count": 3 },
-    { "name": "security",  "status": "completed", "conversation_id": "...", "findings_count": 7 }
+    { "name": "security", "status": "completed", "conversation_id": "...", "findings_count": 7 }
   ],
   "synthesis_path": "/abs/path/.penumbra/reviews/.../synthesis.md",
   "synthesizer_status": "completed"

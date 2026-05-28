@@ -1,23 +1,23 @@
 export type ActingOnKind =
-  | 'handoff'
-  | 'conversation'
-  | 'task'
-  | 'plan'
-  | 'long_lived_agent'
-  | 'long_lived_tick'
-  | 'permission'
-  | 'worktree'
-  | 'maestro_session';
+  | "handoff"
+  | "conversation"
+  | "task"
+  | "plan"
+  | "long_lived_agent"
+  | "long_lived_tick"
+  | "permission"
+  | "worktree"
+  | "maestro_session";
 
 export const DEFAULT_ID_KIND_MAP: Record<string, ActingOnKind> = {
-  handoff_id: 'handoff',
-  conversation_id: 'conversation',
-  task_id: 'task',
-  plan_id: 'plan',
-  long_lived_agent_id: 'long_lived_agent',
-  long_lived_tick_id: 'long_lived_tick',
-  permission_id: 'permission',
-  worktree_id: 'worktree',
+  handoff_id: "handoff",
+  conversation_id: "conversation",
+  task_id: "task",
+  plan_id: "plan",
+  long_lived_agent_id: "long_lived_agent",
+  long_lived_tick_id: "long_lived_tick",
+  permission_id: "permission",
+  worktree_id: "worktree",
 };
 
 export type ActingOn = { kind: ActingOnKind; id: string };
@@ -33,8 +33,10 @@ export function withActingOnEnvelope<I, O>(
     const actingOn = extractActingOn(input, idKindMap);
     if (!actingOn) return result;
     if (!isPlainObject(result)) return result;
-    if ('acting_on' in (result as Record<string, unknown>)) return result;
-    return { acting_on: actingOn, ...(result as Record<string, unknown>) } as O & { acting_on: ActingOn };
+    if ("acting_on" in (result as Record<string, unknown>)) return result;
+    return { acting_on: actingOn, ...(result as Record<string, unknown>) } as O & {
+      acting_on: ActingOn;
+    };
   };
 }
 
@@ -42,7 +44,7 @@ function extractActingOn(input: unknown, map: Record<string, ActingOnKind>): Act
   if (!isPlainObject(input)) return null;
   for (const [field, kind] of Object.entries(map)) {
     const value = input[field];
-    if (typeof value === 'string' && value.length > 0) {
+    if (typeof value === "string" && value.length > 0) {
       return { kind, id: value };
     }
   }
@@ -50,7 +52,7 @@ function extractActingOn(input: unknown, map: Record<string, ActingOnKind>): Act
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (value === null || typeof value !== 'object') return false;
+  if (value === null || typeof value !== "object") return false;
   const proto = Object.getPrototypeOf(value);
   return proto === Object.prototype || proto === null;
 }

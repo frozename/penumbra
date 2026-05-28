@@ -1,7 +1,7 @@
-import { spawn, type ChildProcess } from 'node:child_process';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { startE2EHarness, type E2EHarness } from './harness';
+import { spawn, type ChildProcess } from "node:child_process";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { startE2EHarness, type E2EHarness } from "./harness";
 
 export interface E2EFixture {
   harness: E2EHarness;
@@ -10,7 +10,7 @@ export interface E2EFixture {
 
 const here = dirname(fileURLToPath(import.meta.url));
 // Resolved via import.meta so e2e works regardless of where playwright is invoked from.
-const consolePackageDir = resolve(here, '..');
+const consolePackageDir = resolve(here, "..");
 
 export async function bootFixture(opts?: {
   preSeed?: (harness: E2EHarness) => void;
@@ -18,17 +18,17 @@ export async function bootFixture(opts?: {
   const harness = await startE2EHarness();
   opts?.preSeed?.(harness);
 
-  const viteProcess = spawn('bun', ['run', 'dev', '--', '--host', '127.0.0.1', '--force'], {
+  const viteProcess = spawn("bun", ["run", "dev", "--", "--host", "127.0.0.1", "--force"], {
     cwd: consolePackageDir,
     env: {
       ...process.env,
       PENUMBRA_TOKEN: harness.token,
       PENUMBRA_DAEMON_URL: harness.baseUrl,
     },
-    stdio: 'pipe',
+    stdio: "pipe",
   });
 
-  await waitForReady('http://127.0.0.1:5176/', 30_000);
+  await waitForReady("http://127.0.0.1:5176/", 30_000);
 
   return { harness, viteProcess };
 }

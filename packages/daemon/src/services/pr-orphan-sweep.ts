@@ -1,11 +1,11 @@
-import type { Services } from '@penumbra/core';
+import type { Services } from "@penumbra/core";
 import {
   createGitCliClient,
   runPrOrphanSweep,
   type GhClient as PrOrphanGhClient,
   type PrSweepResult,
-} from '../sweepers/pr-orphan-sweeper.js';
-import { createGhCliClient } from './gh-client.js';
+} from "../sweepers/pr-orphan-sweeper.js";
+import { createGhCliClient } from "./gh-client.js";
 
 export async function runPrOrphanSweepForDaemon(input: {
   services: Services;

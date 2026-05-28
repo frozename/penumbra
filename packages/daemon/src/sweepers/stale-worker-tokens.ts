@@ -1,5 +1,5 @@
-import type { Database } from 'bun:sqlite';
-import type { Logger } from '@penumbra/core';
+import type { Database } from "bun:sqlite";
+import type { Logger } from "@penumbra/core";
 
 export interface StaleWorkerTokensSweepOpts {
   db: Database;
@@ -26,19 +26,19 @@ export function runStaleWorkerTokensSweep(
 
   opts.db.run(
     "UPDATE worker_tokens SET revoked_at = ? WHERE last_seen_at < ? AND revoked_at IS NULL",
-    [nowMs, cutoff]
+    [nowMs, cutoff],
   );
-  
-  const revoked = opts.db.query<{ c: number }, []> ("SELECT changes() AS c").get();
+
+  const revoked = opts.db.query<{ c: number }, []>("SELECT changes() AS c").get();
   const revokedCount = revoked?.c ?? 0;
 
   if (revokedCount > 0) {
-    opts.log?.info?.({ revokedCount, cutoff }, 'worker-tokens.stale-sweep revoked');
+    opts.log?.info?.({ revokedCount, cutoff }, "worker-tokens.stale-sweep revoked");
   }
   return { revokedCount };
 }
 
-export const DEFAULT_INTERVAL_MS = 30 * 60 * 1000;       // 30 minutes
+export const DEFAULT_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 export const DEFAULT_STALE_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 export function startStaleWorkerTokensSweeper(
@@ -59,9 +59,9 @@ export function startStaleWorkerTokensSweeper(
     try {
       runStaleWorkerTokensSweep(runOpts, now);
     } catch (err) {
-      opts.log?.warn?.({ err: String(err) }, 'stale-worker-tokens sweep failed');
+      opts.log?.warn?.({ err: String(err) }, "stale-worker-tokens sweep failed");
     }
   }, intervalMs);
-  if (typeof (timer as any).unref === 'function') (timer as any).unref();
+  if (typeof (timer as any).unref === "function") (timer as any).unref();
   return () => clearInterval(timer);
 }

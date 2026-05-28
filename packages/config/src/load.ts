@@ -1,6 +1,6 @@
-import { ENV_REGISTRY, parseEnv, type EnvConfig } from './env.js';
+import { ENV_REGISTRY, parseEnv, type EnvConfig } from "./env.js";
 
-export type ConfigSource = 'explicit' | 'default';
+export type ConfigSource = "explicit" | "default";
 
 export interface ConfigBundle {
   env: EnvConfig;
@@ -15,7 +15,7 @@ function buildSources(env: NodeJS.ProcessEnv): Readonly<Record<string, ConfigSou
     // Classify by key presence in the raw env, not by truthiness. An operator
     // who exports KEY='' has explicitly opted out of the default; we must
     // surface that as 'explicit' so provenance reflects intent.
-    sources[key] = key in env ? 'explicit' : 'default';
+    sources[key] = key in env ? "explicit" : "default";
   }
   return Object.freeze(sources);
 }

@@ -1,8 +1,8 @@
-import type { PromptPolicy, RuntimeNotificationConfig } from './notification-config.js';
+import type { PromptPolicy, RuntimeNotificationConfig } from "./notification-config.js";
 
 export interface NotificationRouteResolution {
   channelName: string;
-  channelKind: 'discord_webhook';
+  channelKind: "discord_webhook";
   webhookUrl: string;
   routeKey: string;
   promptPolicy: PromptPolicy;
@@ -37,7 +37,7 @@ function resolvePromptPolicy(opts: {
   includePrompt?: boolean;
 }): PromptPolicy {
   if (opts.routePromptPolicy) return opts.routePromptPolicy;
-  if (opts.includePrompt) return 'always';
+  if (opts.includePrompt) return "always";
   return opts.globalPromptPolicy;
 }
 
@@ -45,7 +45,7 @@ function resolveIdentity(input: {
   env: Record<string, string | undefined>;
   agentKey?: string;
   config: RuntimeNotificationConfig;
-}): NotificationRouteResolution['identity'] {
+}): NotificationRouteResolution["identity"] {
   if (!input.agentKey) return undefined;
 
   const identity = input.config.identities.agents[input.agentKey];
@@ -68,18 +68,19 @@ export function resolveNotificationRoute(
 ): NotificationRouteResolution | null {
   if (!input.config.enabled) return null;
 
-  const route = input.projectId
-    ? input.config.routes.projects[input.projectId]
-    : undefined;
-  const channelName = route?.channel ?? 'discord';
+  const route = input.projectId ? input.config.routes.projects[input.projectId] : undefined;
+  const channelName = route?.channel ?? "discord";
   const channel = input.config.channels[channelName];
-  if (!channel || channel.kind !== 'discord_webhook') return null;
+  if (!channel || channel.kind !== "discord_webhook") return null;
 
-  const routeWebhookUrl = route?.webhookUrl ?? (route?.webhookUrlEnv ? input.env[route.webhookUrlEnv] : undefined);
-  const webhookUrl = routeWebhookUrl ?? resolveWebhookUrl({
-    env: input.env,
-    defaultWebhookUrl: channel.defaultWebhookUrl,
-  });
+  const routeWebhookUrl =
+    route?.webhookUrl ?? (route?.webhookUrlEnv ? input.env[route.webhookUrlEnv] : undefined);
+  const webhookUrl =
+    routeWebhookUrl ??
+    resolveWebhookUrl({
+      env: input.env,
+      defaultWebhookUrl: channel.defaultWebhookUrl,
+    });
 
   if (!webhookUrl) return null;
 
@@ -87,7 +88,10 @@ export function resolveNotificationRoute(
     channelName,
     channelKind: channel.kind,
     webhookUrl,
-    routeKey: route && (routeWebhookUrl || channelName !== 'discord') ? `project:${input.projectId}` : 'default',
+    routeKey:
+      route && (routeWebhookUrl || channelName !== "discord")
+        ? `project:${input.projectId}`
+        : "default",
     promptPolicy: resolvePromptPolicy({
       globalPromptPolicy: input.config.promptPolicy,
       routePromptPolicy: route?.promptPolicy,

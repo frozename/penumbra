@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import type { T2MemoryExtraction } from '@penumbra/core';
+import { readFileSync } from "node:fs";
+import type { T2MemoryExtraction } from "@penumbra/core";
 
 export interface JudgeEntry {
   name: string;
@@ -42,17 +42,21 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
         ...judge,
         failCount: 0,
         unhealthy: false,
-        caPem: judge.caPath ? readFileSync(judge.caPath, 'utf8') : undefined,
+        caPem: judge.caPath ? readFileSync(judge.caPath, "utf8") : undefined,
       });
     } catch (err) {
       opts.log.warn(
-        { judge: judge.name, caPath: judge.caPath, err: err instanceof Error ? err.message : String(err) },
-        't2 promotion: judge init failed',
+        {
+          judge: judge.name,
+          caPath: judge.caPath,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "t2 promotion: judge init failed",
       );
     }
   }
   if (judges.length === 0) {
-    throw new Error('no_judges_available');
+    throw new Error("no_judges_available");
   }
   let nextIndex = 0;
 
@@ -64,20 +68,22 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
   }
 
   async function invokeJudge(judge: JudgeState, prompt: string): Promise<T2MemoryExtraction[]> {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (judge.apiKey) headers.Authorization = `Bearer ${judge.apiKey}`;
     // Agentchat convention: options.baseUrl is the full OpenAI-compat base
     // path (typically ending in "/v1"). Append /chat/completions to that.
     // Tolerate baseUrls without /v1 by adding it when missing.
-    const trimmed = judge.baseUrl.replace(/\/+$/, '');
-    const url = trimmed.endsWith('/v1') ? `${trimmed}/chat/completions` : `${trimmed}/v1/chat/completions`;
+    const trimmed = judge.baseUrl.replace(/\/+$/, "");
+    const url = trimmed.endsWith("/v1")
+      ? `${trimmed}/chat/completions`
+      : `${trimmed}/v1/chat/completions`;
     const init: any = {
-      method: 'POST',
+      method: "POST",
       headers,
       body: JSON.stringify({
         model: judge.model,
-        messages: [{ role: 'user', content: prompt }],
-        response_format: { type: 'json_object' },
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
         max_tokens: maxTokens,
         temperature: 0,
       }),
@@ -87,7 +93,7 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
     if (!res.ok) {
       throw new Error(`judge ${judge.name} returned ${res.status}: ${await res.text()}`);
     }
-    const json = await res.json() as any;
+    const json = (await res.json()) as any;
     const content = json.choices[0]?.message?.content;
     if (!content) return [];
     return opts.parseResponse(content);
@@ -95,7 +101,7 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
 
   return {
     async invoke(transcript: string): Promise<T2MemoryExtraction[]> {
-      if (judges.length === 0) throw new Error('all judges unhealthy this tick');
+      if (judges.length === 0) throw new Error("all judges unhealthy this tick");
       const prompt = opts.promptBuilder(transcript);
       let lastError: unknown;
       // Snapshot the starting index for this invoke so failures don't disrupt
@@ -113,13 +119,16 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
         } catch (err) {
           lastError = err;
           markFailure(judge);
-          opts.log.warn({ judge: judge.name, err: err instanceof Error ? err.message : String(err) }, 't2 promotion: judge failed');
+          opts.log.warn(
+            { judge: judge.name, err: err instanceof Error ? err.message : String(err) },
+            "t2 promotion: judge failed",
+          );
         }
       }
       if (judges.every((judge) => judge.unhealthy)) {
-        throw new Error('all judges unhealthy this tick');
+        throw new Error("all judges unhealthy this tick");
       }
-      throw lastError instanceof Error ? lastError : new Error('judge invocation failed');
+      throw lastError instanceof Error ? lastError : new Error("judge invocation failed");
     },
     resetTickHealth(): void {
       for (const judge of judges) {

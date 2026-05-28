@@ -1,11 +1,11 @@
-import type { Services } from '@penumbra/core';
+import type { Services } from "@penumbra/core";
 
 /**
  * GET /worker/control
  * SSE endpoint for worker control events (e.g. cancellations).
  * Immediately flushes active cancellations upon connection for durable sync.
  */
-import { json } from './_helpers.js';
+import { json } from "./_helpers.js";
 export async function workerControlRoute(_req: Request, services: Services): Promise<Response> {
   let off: (() => void) | null = null;
   let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
@@ -21,7 +21,7 @@ export async function workerControlRoute(_req: Request, services: Services): Pro
       for (const { conversation_id, handoff_id } of pending) {
         controller.enqueue(
           encoder.encode(
-            `event: control\ndata: ${JSON.stringify({ type: 'cancel', conversation_id, handoff_id })}\n\n`,
+            `event: control\ndata: ${JSON.stringify({ type: "cancel", conversation_id, handoff_id })}\n\n`,
           ),
         );
       }
@@ -29,9 +29,7 @@ export async function workerControlRoute(_req: Request, services: Services): Pro
       // 2. Subscribe to live events
       off = services.workerControl.subscribe((event) => {
         try {
-          controller.enqueue(
-            encoder.encode(`event: control\ndata: ${JSON.stringify(event)}\n\n`),
-          );
+          controller.enqueue(encoder.encode(`event: control\ndata: ${JSON.stringify(event)}\n\n`));
         } catch {
           // controller closed; unsubscribe defensively
           off?.();
@@ -42,11 +40,11 @@ export async function workerControlRoute(_req: Request, services: Services): Pro
       });
 
       // Initial comment so clients know the connection is live
-      controller.enqueue(encoder.encode(': ok\n\n'));
+      controller.enqueue(encoder.encode(": ok\n\n"));
 
       keepaliveTimer = setInterval(() => {
         try {
-          controller.enqueue(encoder.encode(': keepalive\n\n'));
+          controller.enqueue(encoder.encode(": keepalive\n\n"));
         } catch {
           try {
             off?.();
@@ -74,9 +72,9 @@ export async function workerControlRoute(_req: Request, services: Services): Pro
   return new Response(stream, {
     status: 200,
     headers: {
-      'content-type': 'text/event-stream',
-      'cache-control': 'no-cache',
-      connection: 'keep-alive',
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
     },
   });
 }

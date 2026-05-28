@@ -1,6 +1,6 @@
-import type { Database } from 'bun:sqlite';
-import { TaskWriter } from './writer.js';
-import type { AgentDescriptor } from './eligibility.js';
+import type { Database } from "bun:sqlite";
+import { TaskWriter } from "./writer.js";
+import type { AgentDescriptor } from "./eligibility.js";
 
 /**
  * Read-only facade over `TaskWriter`. Lets callers (HTTP routes, MCP tools,
@@ -9,8 +9,8 @@ import type { AgentDescriptor } from './eligibility.js';
  * silent live-fire.
  */
 export class TaskReader {
-  readonly get: TaskWriter['get'];
-  readonly list: TaskWriter['list'];
+  readonly get: TaskWriter["get"];
+  readonly list: TaskWriter["list"];
 
   constructor(
     db: Database,

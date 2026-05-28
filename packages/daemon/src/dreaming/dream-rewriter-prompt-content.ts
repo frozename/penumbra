@@ -1,8 +1,8 @@
-import { z } from 'zod';
+import { z } from "zod";
 
-export const REWRITE_RESPONSE_SCHEMA = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('query'), query: z.string().min(1) }),
-  z.object({ kind: z.literal('skip'), reason: z.string().min(1) }),
+export const REWRITE_RESPONSE_SCHEMA = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("query"), query: z.string().min(1) }),
+  z.object({ kind: z.literal("skip"), reason: z.string().min(1) }),
 ]);
 
 export type RewriteResponse = z.infer<typeof REWRITE_RESPONSE_SCHEMA>;
@@ -42,70 +42,70 @@ export interface FewShotExample {
 export const FEW_SHOT_EXAMPLES: FewShotExample[] = [
   {
     input: {
-      title: 'Test-driven development workflow for engine registry',
+      title: "Test-driven development workflow for engine registry",
       body_first_200:
-        'Postmortem notes described how we added new registries and kept behavior stable by writing tests first. Team was coordinating API shape, validation order, and migration safety before merge.',
+        "Postmortem notes described how we added new registries and kept behavior stable by writing tests first. Team was coordinating API shape, validation order, and migration safety before merge.",
     },
     output: {
-      kind: 'skip',
+      kind: "skip",
       reason:
-        'engine registry is internal codebase nomenclature; generic methodology paired with internal-object noun has no public corpus',
+        "engine registry is internal codebase nomenclature; generic methodology paired with internal-object noun has no public corpus",
     },
   },
   {
     input: {
-      title: 'Cross-repo dispatch_land fix: resolve repoDir from handoff.project_id',
+      title: "Cross-repo dispatch_land fix: resolve repoDir from handoff.project_id",
       body_first_200:
-        'A bug in dispatch handling across repositories required resolving repoDir based on handoff.project_id to avoid routing into stale folders and inconsistent path selection.',
+        "A bug in dispatch handling across repositories required resolving repoDir based on handoff.project_id to avoid routing into stale folders and inconsistent path selection.",
     },
     output: {
-      kind: 'skip',
+      kind: "skip",
       reason:
-        'internal handler names and internal handoff state (dispatch_land, handoff.project_id) have no public referent',
+        "internal handler names and internal handoff state (dispatch_land, handoff.project_id) have no public referent",
     },
   },
   {
     input: {
-      title: 'Split behavior change',
+      title: "Split behavior change",
       body_first_200:
-        'A short note about changing a branching decision with no attached design rationale or external references.',
+        "A short note about changing a branching decision with no attached design rationale or external references.",
     },
     output: {
-      kind: 'skip',
-      reason: 'too vague — no specific concept to search',
+      kind: "skip",
+      reason: "too vague — no specific concept to search",
     },
   },
   {
     input: {
-      title: 'Concurrent boot flow assertions',
+      title: "Concurrent boot flow assertions",
       body_first_200:
-        'Capture boot ordering assertions around startup events and queue hydration while multiple services come up in parallel.',
+        "Capture boot ordering assertions around startup events and queue hydration while multiple services come up in parallel.",
     },
     output: {
-      kind: 'query',
-      query: 'concurrent boot flow assertions startup ordering nodejs',
+      kind: "query",
+      query: "concurrent boot flow assertions startup ordering nodejs",
     },
   },
   {
     input: {
-      title: 'handoffWriter::createTempHandoffRow',
+      title: "handoffWriter::createTempHandoffRow",
       body_first_200:
-        'Internal helper name was used as a heading while debugging; no context described the underlying concept for outside readers.',
+        "Internal helper name was used as a heading while debugging; no context described the underlying concept for outside readers.",
     },
     output: {
-      kind: 'skip',
-      reason: 'pure code identifier',
+      kind: "skip",
+      reason: "pure code identifier",
     },
   },
   {
     input: {
-      title: 'SQLite WAL mode performance at high write throughput',
+      title: "SQLite WAL mode performance at high write throughput",
       body_first_200:
-        'Observed checkpoint lag and fsync jitter after enabling WAL; tuning checkpoints and page size made the test and metrics profile repeatable.',
+        "Observed checkpoint lag and fsync jitter after enabling WAL; tuning checkpoints and page size made the test and metrics profile repeatable.",
     },
     output: {
-      kind: 'query',
-      query: 'SQLite WAL mode performance high write throughput',
+      kind: "query",
+      query: "SQLite WAL mode performance high write throughput",
     },
   },
 ];

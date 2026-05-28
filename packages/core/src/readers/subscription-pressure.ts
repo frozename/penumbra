@@ -1,4 +1,4 @@
-import type { Database } from 'bun:sqlite';
+import type { Database } from "bun:sqlite";
 
 export interface PressureSnapshot {
   provider: string;
@@ -11,7 +11,7 @@ export interface PressureSnapshot {
 }
 
 export interface PressureWarning {
-  code: 'stale_snapshot';
+  code: "stale_snapshot";
   provider: string;
   window_label: string;
   age_seconds: number;
@@ -41,20 +41,30 @@ export function readSubscriptionPressure(
 ): PressureResult {
   const now = opts.now ?? (() => new Date());
   const staleAfterSeconds = opts.stale_after_seconds ?? 1800;
-  const rows = (opts.provider
-    ? db.prepare(`
+  const rows = (
+    opts.provider
+      ? db
+          .prepare(
+            `
         SELECT ts, provider, payload_json
         FROM t0_events
         WHERE event_type = 'rate-limit-snapshot'
           AND provider = ?
         ORDER BY ts DESC
-      `).all(opts.provider)
-    : db.prepare(`
+      `,
+          )
+          .all(opts.provider)
+      : db
+          .prepare(
+            `
         SELECT ts, provider, payload_json
         FROM t0_events
         WHERE event_type = 'rate-limit-snapshot'
         ORDER BY ts DESC
-      `).all()) as SnapshotRow[];
+      `,
+          )
+          .all()
+  ) as SnapshotRow[];
 
   const latestByGroup = new Map<string, PressureSnapshot>();
   const warnings: PressureWarning[] = [];
@@ -68,7 +78,7 @@ export function readSubscriptionPressure(
       resets_at: number | null;
       source_kind: string;
     };
-    const key = `${row.provider}\u0000${payload.window_label}\u0000${payload.model ?? ''}`;
+    const key = `${row.provider}\u0000${payload.window_label}\u0000${payload.model ?? ""}`;
     if (latestByGroup.has(key)) continue;
 
     const snapshot: PressureSnapshot = {
@@ -85,7 +95,7 @@ export function readSubscriptionPressure(
     const ageSeconds = (nowMs - new Date(row.ts).getTime()) / 1000;
     if (ageSeconds > staleAfterSeconds) {
       warnings.push({
-        code: 'stale_snapshot',
+        code: "stale_snapshot",
         provider: row.provider,
         window_label: payload.window_label,
         age_seconds: Math.floor(ageSeconds),

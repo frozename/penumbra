@@ -1,5 +1,5 @@
-import { z } from 'zod';
-import { SafeProjectIdSchema } from './project-id.js';
+import { z } from "zod";
+import { SafeProjectIdSchema } from "./project-id.js";
 
 export const T1RollupSchema = z.object({
   rollup_id: z.string(),

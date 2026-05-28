@@ -1,4 +1,4 @@
-import { Glob } from 'bun';
+import { Glob } from "bun";
 
 export type FsGlobInput = { cwd: string; args: { pattern: string } };
 export type FsGlobOutput = { matches: string[]; warnings: string[] };

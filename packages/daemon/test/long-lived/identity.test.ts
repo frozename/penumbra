@@ -1,16 +1,16 @@
-import { expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { loadSqliteVec, migrate } from '@penumbra/core';
-import { verifyRunningIdentity } from '../../src/long-lived/identity.js';
+import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { loadSqliteVec, migrate } from "@penumbra/core";
+import { verifyRunningIdentity } from "../../src/long-lived/identity.js";
 
 function makeDb(): Database {
-  const db = new Database(':memory:');
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   return db;
 }
 
-test('verifyRunningIdentity returns true for a running tick', () => {
+test("verifyRunningIdentity returns true for a running tick", () => {
   const db = makeDb();
   db.query(
     `INSERT INTO long_lived_agents (
@@ -21,22 +21,22 @@ test('verifyRunningIdentity returns true for a running tick', () => {
       last_tick_outcome, last_intent_summary, retired_at, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    'agent-1',
-    'Agent 1',
-    'active',
+    "agent-1",
+    "Agent 1",
+    "active",
     null,
     0,
     3,
     null,
-    '[]',
-    '[]',
-    '[]',
-    '{}',
+    "[]",
+    "[]",
+    "[]",
+    "{}",
     null,
     null,
     null,
-    '{}',
-    'brief',
+    "{}",
+    "brief",
     null,
     null,
     null,
@@ -50,12 +50,12 @@ test('verifyRunningIdentity returns true for a running tick', () => {
       id, agent_id, chain_id, trigger_kind, trigger_payload_json, intent_summary, started_at,
       completed_at, outcome, cost_cents, error_summary, working_memory_diff_json
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run('tick-1', 'agent-1', null, 'manual', null, null, 1, null, null, null, null, null);
+  ).run("tick-1", "agent-1", null, "manual", null, null, 1, null, null, null, null, null);
 
-  expect(verifyRunningIdentity(db, 'agent-1', 'tick-1')).toBe(true);
+  expect(verifyRunningIdentity(db, "agent-1", "tick-1")).toBe(true);
 });
 
-test('verifyRunningIdentity returns false for a completed tick', () => {
+test("verifyRunningIdentity returns false for a completed tick", () => {
   const db = makeDb();
   db.query(
     `INSERT INTO long_lived_agents (
@@ -66,22 +66,22 @@ test('verifyRunningIdentity returns false for a completed tick', () => {
       last_tick_outcome, last_intent_summary, retired_at, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    'agent-1',
-    'Agent 1',
-    'active',
+    "agent-1",
+    "Agent 1",
+    "active",
     null,
     0,
     3,
     null,
-    '[]',
-    '[]',
-    '[]',
-    '{}',
+    "[]",
+    "[]",
+    "[]",
+    "{}",
     null,
     null,
     null,
-    '{}',
-    'brief',
+    "{}",
+    "brief",
     null,
     null,
     null,
@@ -95,12 +95,12 @@ test('verifyRunningIdentity returns false for a completed tick', () => {
       id, agent_id, chain_id, trigger_kind, trigger_payload_json, intent_summary, started_at,
       completed_at, outcome, cost_cents, error_summary, working_memory_diff_json
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run('tick-1', 'agent-1', null, 'manual', null, null, 1, 2, null, null, null, null);
+  ).run("tick-1", "agent-1", null, "manual", null, null, 1, 2, null, null, null, null);
 
-  expect(verifyRunningIdentity(db, 'agent-1', 'tick-1')).toBe(false);
+  expect(verifyRunningIdentity(db, "agent-1", "tick-1")).toBe(false);
 });
 
-test('verifyRunningIdentity returns false when the agent does not match', () => {
+test("verifyRunningIdentity returns false when the agent does not match", () => {
   const db = makeDb();
   db.query(
     `INSERT INTO long_lived_agents (
@@ -111,22 +111,22 @@ test('verifyRunningIdentity returns false when the agent does not match', () => 
       last_tick_outcome, last_intent_summary, retired_at, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    'agent-1',
-    'Agent 1',
-    'active',
+    "agent-1",
+    "Agent 1",
+    "active",
     null,
     0,
     3,
     null,
-    '[]',
-    '[]',
-    '[]',
-    '{}',
+    "[]",
+    "[]",
+    "[]",
+    "{}",
     null,
     null,
     null,
-    '{}',
-    'brief',
+    "{}",
+    "brief",
     null,
     null,
     null,
@@ -140,13 +140,13 @@ test('verifyRunningIdentity returns false when the agent does not match', () => 
       id, agent_id, chain_id, trigger_kind, trigger_payload_json, intent_summary, started_at,
       completed_at, outcome, cost_cents, error_summary, working_memory_diff_json
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run('tick-1', 'agent-1', null, 'manual', null, null, 1, null, null, null, null, null);
+  ).run("tick-1", "agent-1", null, "manual", null, null, 1, null, null, null, null, null);
 
-  expect(verifyRunningIdentity(db, 'agent-2', 'tick-1')).toBe(false);
+  expect(verifyRunningIdentity(db, "agent-2", "tick-1")).toBe(false);
 });
 
-test('verifyRunningIdentity returns false for an unknown tick', () => {
+test("verifyRunningIdentity returns false for an unknown tick", () => {
   const db = makeDb();
 
-  expect(verifyRunningIdentity(db, 'agent-1', 'missing')).toBe(false);
+  expect(verifyRunningIdentity(db, "agent-1", "missing")).toBe(false);
 });

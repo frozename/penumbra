@@ -22,18 +22,18 @@ export class ProtoReader {
     let shift = 0;
     let byte: number;
     do {
-      if (this.pos >= this.buf.length) throw new Error('protobuf: truncated varint');
+      if (this.pos >= this.buf.length) throw new Error("protobuf: truncated varint");
       byte = this.buf[this.pos++]!;
       result += (byte & 0x7f) * Math.pow(2, shift);
       shift += 7;
-      if (shift > 63) throw new Error('protobuf: varint too long');
+      if (shift > 63) throw new Error("protobuf: varint too long");
     } while ((byte & 0x80) !== 0);
     return result;
   }
 
   /** Read fixed64 as a JS number (loses precision beyond 2^53). */
   readFixed64(): number {
-    if (this.pos + 8 > this.buf.length) throw new Error('protobuf: truncated fixed64');
+    if (this.pos + 8 > this.buf.length) throw new Error("protobuf: truncated fixed64");
     const lo =
       (this.buf[this.pos]! |
         (this.buf[this.pos + 1]! << 8) |
@@ -51,7 +51,7 @@ export class ProtoReader {
   }
 
   readDouble64(): number {
-    if (this.pos + 8 > this.buf.length) throw new Error('protobuf: truncated fixed64');
+    if (this.pos + 8 > this.buf.length) throw new Error("protobuf: truncated fixed64");
     const view = new DataView(this.buf.buffer, this.buf.byteOffset + this.pos, 8);
     const value = view.getFloat64(0, true);
     this.pos += 8;
@@ -60,7 +60,7 @@ export class ProtoReader {
 
   /** Read fixed64 as a string of decimal digits (preserves precision past 2^53). */
   readFixed64AsString(): string {
-    if (this.pos + 8 > this.buf.length) throw new Error('protobuf: truncated fixed64');
+    if (this.pos + 8 > this.buf.length) throw new Error("protobuf: truncated fixed64");
     let lo = BigInt(0);
     let hi = BigInt(0);
     for (let i = 0; i < 4; i++) lo |= BigInt(this.buf[this.pos + i]!) << BigInt(8 * i);
@@ -71,14 +71,14 @@ export class ProtoReader {
 
   readLengthDelimited(): Uint8Array {
     const len = this.readVarint();
-    if (this.pos + len > this.buf.length) throw new Error('protobuf: truncated length-delimited');
+    if (this.pos + len > this.buf.length) throw new Error("protobuf: truncated length-delimited");
     const slice = this.buf.subarray(this.pos, this.pos + len);
     this.pos += len;
     return slice;
   }
 
   readString(): string {
-    return new TextDecoder('utf-8').decode(this.readLengthDelimited());
+    return new TextDecoder("utf-8").decode(this.readLengthDelimited());
   }
 
   /**
@@ -129,7 +129,7 @@ export class ProtoReader {
   }
 }
 
-import type { ParsedLogRecord } from './types.js';
+import type { ParsedLogRecord } from "./types.js";
 
 type AttrValue = unknown;
 
@@ -139,10 +139,14 @@ function readAnyValue(bytes: Uint8Array): AttrValue {
     const tag = r.readTag();
     if (!tag) break;
     switch (tag.fieldNumber) {
-      case 1: return r.readString();
-      case 2: return r.readVarint() !== 0;
-      case 3: return r.readVarint();
-      case 4: return r.readDouble64();
+      case 1:
+        return r.readString();
+      case 2:
+        return r.readVarint() !== 0;
+      case 3:
+        return r.readVarint();
+      case 4:
+        return r.readDouble64();
       case 5: {
         const arrayBytes = r.readLengthDelimited();
         const out: AttrValue[] = [];
@@ -174,8 +178,10 @@ function readAnyValue(bytes: Uint8Array): AttrValue {
         }
         return out;
       }
-      case 7: return r.readLengthDelimited();
-      default: r.skipField(tag.wireType);
+      case 7:
+        return r.readLengthDelimited();
+      default:
+        r.skipField(tag.wireType);
     }
   }
   return null;
@@ -183,13 +189,14 @@ function readAnyValue(bytes: Uint8Array): AttrValue {
 
 function readKeyValue(bytes: Uint8Array): [string, AttrValue] {
   const r = new ProtoReader(bytes);
-  let key = '';
+  let key = "";
   let value: AttrValue = null;
   while (!r.eof) {
     const tag = r.readTag();
     if (!tag) break;
     if (tag.fieldNumber === 1 && tag.wireType === 2) key = r.readString();
-    else if (tag.fieldNumber === 2 && tag.wireType === 2) value = readAnyValue(r.readLengthDelimited());
+    else if (tag.fieldNumber === 2 && tag.wireType === 2)
+      value = readAnyValue(r.readLengthDelimited());
     else r.skipField(tag.wireType);
   }
   return [key, value];
@@ -228,7 +235,11 @@ function readResource(bytes: Uint8Array): Record<string, AttrValue> {
   return readAttributes(attrs);
 }
 
-function readLogRecord(bytes: Uint8Array, resourceAttrs: Record<string, AttrValue>, scopeName: string | null): ParsedLogRecord {
+function readLogRecord(
+  bytes: Uint8Array,
+  resourceAttrs: Record<string, AttrValue>,
+  scopeName: string | null,
+): ParsedLogRecord {
   const r = new ProtoReader(bytes);
   let timeUnixNano: string | null = null;
   let body: string | null = null;
@@ -239,9 +250,8 @@ function readLogRecord(bytes: Uint8Array, resourceAttrs: Record<string, AttrValu
     if (tag.fieldNumber === 1 && tag.wireType === 1) timeUnixNano = r.readFixed64AsString();
     else if (tag.fieldNumber === 5 && tag.wireType === 2) {
       const v = readAnyValue(r.readLengthDelimited());
-      body = typeof v === 'string' ? v : null;
-    }
-    else if (tag.fieldNumber === 6 && tag.wireType === 2) attrBytes.push(r.readLengthDelimited());
+      body = typeof v === "string" ? v : null;
+    } else if (tag.fieldNumber === 6 && tag.wireType === 2) attrBytes.push(r.readLengthDelimited());
     else r.skipField(tag.wireType);
   }
   return {
@@ -253,18 +263,21 @@ function readLogRecord(bytes: Uint8Array, resourceAttrs: Record<string, AttrValu
   };
 }
 
-function readScopeLogs(bytes: Uint8Array, resourceAttrs: Record<string, AttrValue>): ParsedLogRecord[] {
+function readScopeLogs(
+  bytes: Uint8Array,
+  resourceAttrs: Record<string, AttrValue>,
+): ParsedLogRecord[] {
   const r = new ProtoReader(bytes);
   let scopeName: string | null = null;
   const records: ParsedLogRecord[] = [];
   while (!r.eof) {
     const tag = r.readTag();
     if (!tag) break;
-    if (tag.fieldNumber === 1 && tag.wireType === 2) scopeName = readScope(r.readLengthDelimited()).name;
+    if (tag.fieldNumber === 1 && tag.wireType === 2)
+      scopeName = readScope(r.readLengthDelimited()).name;
     else if (tag.fieldNumber === 2 && tag.wireType === 2) {
       records.push(readLogRecord(r.readLengthDelimited(), resourceAttrs, scopeName));
-    }
-    else r.skipField(tag.wireType);
+    } else r.skipField(tag.wireType);
   }
   return records;
 }
@@ -276,8 +289,10 @@ function readResourceLogs(bytes: Uint8Array): ParsedLogRecord[] {
   while (!r.eof) {
     const tag = r.readTag();
     if (!tag) break;
-    if (tag.fieldNumber === 1 && tag.wireType === 2) resourceAttrs = readResource(r.readLengthDelimited());
-    else if (tag.fieldNumber === 2 && tag.wireType === 2) out.push(...readScopeLogs(r.readLengthDelimited(), resourceAttrs));
+    if (tag.fieldNumber === 1 && tag.wireType === 2)
+      resourceAttrs = readResource(r.readLengthDelimited());
+    else if (tag.fieldNumber === 2 && tag.wireType === 2)
+      out.push(...readScopeLogs(r.readLengthDelimited(), resourceAttrs));
     else r.skipField(tag.wireType);
   }
   return out;
@@ -290,7 +305,8 @@ export function parseOtlpLogsProtobuf(bytes: Uint8Array): ParsedLogRecord[] {
   while (!r.eof) {
     const tag = r.readTag();
     if (!tag) break;
-    if (tag.fieldNumber === 1 && tag.wireType === 2) out.push(...readResourceLogs(r.readLengthDelimited()));
+    if (tag.fieldNumber === 1 && tag.wireType === 2)
+      out.push(...readResourceLogs(r.readLengthDelimited()));
     else r.skipField(tag.wireType);
   }
   return out;

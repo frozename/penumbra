@@ -1,20 +1,26 @@
-import type { Services } from '@penumbra/core';
-import { normalize, T0EventInputSchema } from '@penumbra/core';
-import { json } from './_helpers.js';
+import type { Services } from "@penumbra/core";
+import { normalize, T0EventInputSchema } from "@penumbra/core";
+import { json } from "./_helpers.js";
 export async function observationsRoute(req: Request, services: Services): Promise<Response> {
   const raw = await safeJson(req);
   if (raw === null) {
-    return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400);
+    return json(
+      { error: { code: "invalid_json", message: "request body was not valid JSON" } },
+      400,
+    );
   }
   const parsed = T0EventInputSchema.safeParse(raw);
   if (!parsed.success) {
-    return json({
-      error: {
-        code: 'validation_error',
-        message: 'body failed schema validation',
-        field_errors: parsed.error.issues.map((i) => ({ path: i.path, message: i.message })),
+    return json(
+      {
+        error: {
+          code: "validation_error",
+          message: "body failed schema validation",
+          field_errors: parsed.error.issues.map((i) => ({ path: i.path, message: i.message })),
+        },
       },
-    }, 400);
+      400,
+    );
   }
   const ctx = {
     userId: services.machineId.get(),
@@ -29,6 +35,9 @@ export async function observationsRoute(req: Request, services: Services): Promi
 }
 
 async function safeJson(req: Request): Promise<unknown | null> {
-  try { return await req.json(); } catch { return null; }
+  try {
+    return await req.json();
+  } catch {
+    return null;
+  }
 }
-

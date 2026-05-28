@@ -1,8 +1,8 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { z } from 'zod';
-import type { DaemonClient } from '../daemon-client.js';
-import { instrumentHandler } from '../instrumentation.js';
-import { getLongLivedRuntimeContext } from '../long-lived-context.js';
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+import type { DaemonClient } from "../daemon-client.js";
+import { instrumentHandler } from "../instrumentation.js";
+import { getLongLivedRuntimeContext } from "../long-lived-context.js";
 
 interface VirtualToolDef {
   name: string;
@@ -43,7 +43,7 @@ export const MAX_META_BYTES = 2048;
 let oversizedDropCount = 0;
 
 function asMetaRecord(value: unknown): Record<string, unknown> | undefined {
-  if (typeof value !== 'object' || value == null || Array.isArray(value)) return undefined;
+  if (typeof value !== "object" || value == null || Array.isArray(value)) return undefined;
   // asMetaRecord validates the TOP-LEVEL prototype only. Nested values may
   // still carry unusual prototypes; safety relies on JSON round-trip when
   // the payload reaches the wire. Consumers that observe `_meta` without
@@ -55,15 +55,19 @@ function asMetaRecord(value: unknown): Record<string, unknown> | undefined {
 
 function envelope(body: object, isError = false) {
   return {
-    content: [{
-      type: 'text',
-      text: JSON.stringify(body),
-    }],
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(body),
+      },
+    ],
     ...(isError ? { isError: true } : {}),
   };
 }
 
-export async function registerFederatedTools(opts: RegisterFederatedToolsOpts): Promise<RegisterFederatedToolsResult> {
+export async function registerFederatedTools(
+  opts: RegisterFederatedToolsOpts,
+): Promise<RegisterFederatedToolsResult> {
   const ctx = getLongLivedRuntimeContext();
   const agentId = opts.agentId ?? ctx.running_agent_id;
   const tickId = opts.tickId ?? ctx.running_tick_id;
@@ -73,7 +77,10 @@ export async function registerFederatedTools(opts: RegisterFederatedToolsOpts): 
   try {
     federationResponse = await opts.daemon.getFederationTools(agentId);
   } catch (err) {
-    console.warn('[federation] failed to fetch federation tools:', String((err as Error)?.message ?? err));
+    console.warn(
+      "[federation] failed to fetch federation tools:",
+      String((err as Error)?.message ?? err),
+    );
     return { registered: [], skipped: [] };
   }
 
@@ -87,18 +94,21 @@ export async function registerFederatedTools(opts: RegisterFederatedToolsOpts): 
     try {
       const proxyHandler = async (args: unknown, extra: unknown): Promise<unknown> => {
         try {
-          const wireToolName = tool.name.replace(/^([^.:]+)\./, '$1:');
+          const wireToolName = tool.name.replace(/^([^.:]+)\./, "$1:");
           let _meta = asMetaRecord((extra as { _meta?: unknown } | null | undefined)?._meta);
           if (_meta) {
             let metaBytes = 0;
             try {
-              metaBytes = Buffer.byteLength(JSON.stringify(_meta) ?? '', 'utf8');
+              metaBytes = Buffer.byteLength(JSON.stringify(_meta) ?? "", "utf8");
             } catch {
               metaBytes = MAX_META_BYTES + 1;
             }
             if (metaBytes > MAX_META_BYTES) {
               oversizedDropCount += 1;
-              console.error('[federation] dropped oversized _meta', { bytes: metaBytes, total_drops: oversizedDropCount });
+              console.error("[federation] dropped oversized _meta", {
+                bytes: metaBytes,
+                total_drops: oversizedDropCount,
+              });
               _meta = undefined;
             }
           }
@@ -109,28 +119,41 @@ export async function registerFederatedTools(opts: RegisterFederatedToolsOpts): 
             args: args ?? {},
             ...(_meta ? { _meta } : {}),
           });
-          const body = result as { action_status?: string; result?: unknown; pending_action_id?: string; error?: string; details?: unknown; message?: string };
-          if (body.action_status === 'executed') {
+          const body = result as {
+            action_status?: string;
+            result?: unknown;
+            pending_action_id?: string;
+            error?: string;
+            details?: unknown;
+            message?: string;
+          };
+          if (body.action_status === "executed") {
             return body.result;
           }
-          if (body.action_status === 'queued') {
+          if (body.action_status === "queued") {
             return envelope({
-              action_status: 'queued',
+              action_status: "queued",
               pending_action_id: body.pending_action_id,
               message: body.message,
             });
           }
-          return envelope({
-            action_status: body.action_status ?? 'rejected',
-            error: body.error ?? 'unknown_error',
-            details: body.details,
-          }, true);
+          return envelope(
+            {
+              action_status: body.action_status ?? "rejected",
+              error: body.error ?? "unknown_error",
+              details: body.details,
+            },
+            true,
+          );
         } catch (err) {
-          return envelope({
-            action_status: 'rejected',
-            error: 'mcp_unavailable',
-            details: String((err as Error)?.message ?? err),
-          }, true);
+          return envelope(
+            {
+              action_status: "rejected",
+              error: "mcp_unavailable",
+              details: String((err as Error)?.message ?? err),
+            },
+            true,
+          );
         }
       };
       const instrumented = instrumentHandler(tool.name, proxyHandler as any, {

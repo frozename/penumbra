@@ -1,33 +1,33 @@
-import { describe, expect, it } from 'bun:test';
-import { resolveNotificationRoute } from '../../src/worker/notification-router.js';
+import { describe, expect, it } from "bun:test";
+import { resolveNotificationRoute } from "../../src/worker/notification-router.js";
 
-describe('resolveNotificationRoute', () => {
-  it('returns the project route when project_id matches exactly', () => {
+describe("resolveNotificationRoute", () => {
+  it("returns the project route when project_id matches exactly", () => {
     const resolved = resolveNotificationRoute({
       config: {
         enabled: true,
-        promptPolicy: 'never',
+        promptPolicy: "never",
         channels: {
           discord: {
-            kind: 'discord_webhook',
-            defaultWebhookUrl: 'https://discord.test/api/webhooks/default/token',
-            defaultWebhookUrlEnv: 'PENUMBRA_DISCORD_WEBHOOK_URL',
+            kind: "discord_webhook",
+            defaultWebhookUrl: "https://discord.test/api/webhooks/default/token",
+            defaultWebhookUrlEnv: "PENUMBRA_DISCORD_WEBHOOK_URL",
           },
         },
         routes: {
           projects: {
             penumbra: {
-              channel: 'discord',
-              webhookUrlEnv: 'PENUMBRA_DISCORD_PROJECT_PENUMBRA_WEBHOOK_URL',
-              promptPolicy: 'summary',
+              channel: "discord",
+              webhookUrlEnv: "PENUMBRA_DISCORD_PROJECT_PENUMBRA_WEBHOOK_URL",
+              promptPolicy: "summary",
             },
           },
         },
         identities: {
           agents: {
             codex: {
-              displayName: 'Penumbra / Codex',
-              avatarUrlEnv: 'PENUMBRA_DISCORD_AVATAR_CODEX_URL',
+              displayName: "Penumbra / Codex",
+              avatarUrlEnv: "PENUMBRA_DISCORD_AVATAR_CODEX_URL",
             },
           },
         },
@@ -47,53 +47,51 @@ describe('resolveNotificationRoute', () => {
         summaries: {
           costQuota: {
             enabled: true,
-            interval: 'daily',
-            channel: 'discord',
+            interval: "daily",
+            channel: "discord",
           },
         },
       },
       env: {
-        PENUMBRA_DISCORD_WEBHOOK_URL:
-          'https://discord.test/api/webhooks/default/token',
+        PENUMBRA_DISCORD_WEBHOOK_URL: "https://discord.test/api/webhooks/default/token",
         PENUMBRA_DISCORD_PROJECT_PENUMBRA_WEBHOOK_URL:
-          'https://discord.test/api/webhooks/project/token',
-        PENUMBRA_DISCORD_AVATAR_CODEX_URL:
-          'https://example.com/codex.png',
+          "https://discord.test/api/webhooks/project/token",
+        PENUMBRA_DISCORD_AVATAR_CODEX_URL: "https://example.com/codex.png",
       },
-      projectId: 'penumbra',
-      agentKey: 'codex',
+      projectId: "penumbra",
+      agentKey: "codex",
     });
 
     expect(resolved).toEqual({
-      channelName: 'discord',
-      channelKind: 'discord_webhook',
-      webhookUrl: 'https://discord.test/api/webhooks/project/token',
-      routeKey: 'project:penumbra',
-      promptPolicy: 'summary',
+      channelName: "discord",
+      channelKind: "discord_webhook",
+      webhookUrl: "https://discord.test/api/webhooks/project/token",
+      routeKey: "project:penumbra",
+      promptPolicy: "summary",
       identity: {
-        username: 'Penumbra / Codex',
-        avatar_url: 'https://example.com/codex.png',
+        username: "Penumbra / Codex",
+        avatar_url: "https://example.com/codex.png",
       },
     });
   });
 
-  it('falls back to the default webhook and route key for unknown projects', () => {
+  it("falls back to the default webhook and route key for unknown projects", () => {
     const resolved = resolveNotificationRoute({
       config: {
         enabled: true,
-        promptPolicy: 'always',
+        promptPolicy: "always",
         channels: {
           discord: {
-            kind: 'discord_webhook',
-            defaultWebhookUrl: 'https://discord.test/api/webhooks/default/token',
-            defaultWebhookUrlEnv: 'PENUMBRA_DISCORD_WEBHOOK_URL',
+            kind: "discord_webhook",
+            defaultWebhookUrl: "https://discord.test/api/webhooks/default/token",
+            defaultWebhookUrlEnv: "PENUMBRA_DISCORD_WEBHOOK_URL",
           },
         },
         routes: {
           projects: {
             penumbra: {
-              channel: 'discord',
-              webhookUrlEnv: 'PENUMBRA_DISCORD_PROJECT_PENUMBRA_WEBHOOK_URL',
+              channel: "discord",
+              webhookUrlEnv: "PENUMBRA_DISCORD_PROJECT_PENUMBRA_WEBHOOK_URL",
             },
           },
         },
@@ -114,45 +112,44 @@ describe('resolveNotificationRoute', () => {
         summaries: {
           costQuota: {
             enabled: true,
-            interval: 'daily',
-            channel: 'discord',
+            interval: "daily",
+            channel: "discord",
           },
         },
       },
       env: {
-        PENUMBRA_DISCORD_WEBHOOK_URL:
-          'https://discord.test/api/webhooks/default/token',
+        PENUMBRA_DISCORD_WEBHOOK_URL: "https://discord.test/api/webhooks/default/token",
       },
-      projectId: 'unknown-project',
+      projectId: "unknown-project",
     });
 
     expect(resolved).toEqual({
-      channelName: 'discord',
-      channelKind: 'discord_webhook',
-      webhookUrl: 'https://discord.test/api/webhooks/default/token',
-      routeKey: 'default',
-      promptPolicy: 'always',
+      channelName: "discord",
+      channelKind: "discord_webhook",
+      webhookUrl: "https://discord.test/api/webhooks/default/token",
+      routeKey: "default",
+      promptPolicy: "always",
     });
-    expect(resolved?.routeKey).toBe('default');
+    expect(resolved?.routeKey).toBe("default");
   });
 
-  it('prefers the project webhook over the default webhook', () => {
+  it("prefers the project webhook over the default webhook", () => {
     const resolved = resolveNotificationRoute({
       config: {
         enabled: true,
-        promptPolicy: 'never',
+        promptPolicy: "never",
         channels: {
           discord: {
-            kind: 'discord_webhook',
-            defaultWebhookUrl: 'https://discord.test/api/webhooks/default/token',
-            defaultWebhookUrlEnv: 'PENUMBRA_DISCORD_WEBHOOK_URL',
+            kind: "discord_webhook",
+            defaultWebhookUrl: "https://discord.test/api/webhooks/default/token",
+            defaultWebhookUrlEnv: "PENUMBRA_DISCORD_WEBHOOK_URL",
           },
         },
         routes: {
           projects: {
             penumbra: {
-              channel: 'discord',
-              webhookUrlEnv: 'PENUMBRA_DISCORD_PROJECT_PENUMBRA_WEBHOOK_URL',
+              channel: "discord",
+              webhookUrlEnv: "PENUMBRA_DISCORD_PROJECT_PENUMBRA_WEBHOOK_URL",
             },
           },
         },
@@ -173,46 +170,43 @@ describe('resolveNotificationRoute', () => {
         summaries: {
           costQuota: {
             enabled: true,
-            interval: 'daily',
-            channel: 'discord',
+            interval: "daily",
+            channel: "discord",
           },
         },
       },
       env: {
-        PENUMBRA_DISCORD_WEBHOOK_URL:
-          'https://discord.test/api/webhooks/default/token',
+        PENUMBRA_DISCORD_WEBHOOK_URL: "https://discord.test/api/webhooks/default/token",
         PENUMBRA_DISCORD_PROJECT_PENUMBRA_WEBHOOK_URL:
-          'https://discord.test/api/webhooks/project/token',
+          "https://discord.test/api/webhooks/project/token",
       },
-      projectId: 'penumbra',
+      projectId: "penumbra",
     });
 
-    expect(resolved?.webhookUrl).toBe(
-      'https://discord.test/api/webhooks/project/token',
-    );
-    expect(resolved?.routeKey).toBe('project:penumbra');
+    expect(resolved?.webhookUrl).toBe("https://discord.test/api/webhooks/project/token");
+    expect(resolved?.routeKey).toBe("project:penumbra");
   });
 
-  it('uses the channel selected by the exact project route', () => {
+  it("uses the channel selected by the exact project route", () => {
     const resolved = resolveNotificationRoute({
       config: {
         enabled: true,
-        promptPolicy: 'never',
+        promptPolicy: "never",
         channels: {
           discord: {
-            kind: 'discord_webhook',
-            defaultWebhookUrl: 'https://discord.test/api/webhooks/default/token',
-            defaultWebhookUrlEnv: 'PENUMBRA_DISCORD_WEBHOOK_URL',
+            kind: "discord_webhook",
+            defaultWebhookUrl: "https://discord.test/api/webhooks/default/token",
+            defaultWebhookUrlEnv: "PENUMBRA_DISCORD_WEBHOOK_URL",
           },
           alerts: {
-            kind: 'discord_webhook',
-            defaultWebhookUrl: 'https://discord.test/api/webhooks/alerts/token',
-            defaultWebhookUrlEnv: 'PENUMBRA_DISCORD_ALERTS_WEBHOOK_URL',
+            kind: "discord_webhook",
+            defaultWebhookUrl: "https://discord.test/api/webhooks/alerts/token",
+            defaultWebhookUrlEnv: "PENUMBRA_DISCORD_ALERTS_WEBHOOK_URL",
           },
         },
         routes: {
           projects: {
-            penumbra: { channel: 'alerts' },
+            penumbra: { channel: "alerts" },
           },
         },
         identities: { agents: {} },
@@ -232,37 +226,35 @@ describe('resolveNotificationRoute', () => {
         summaries: {
           costQuota: {
             enabled: true,
-            interval: 'daily',
-            channel: 'discord',
+            interval: "daily",
+            channel: "discord",
           },
         },
       },
       env: {},
-      projectId: 'penumbra',
+      projectId: "penumbra",
     });
 
-    expect(resolved?.channelName).toBe('alerts');
-    expect(resolved?.webhookUrl).toBe(
-      'https://discord.test/api/webhooks/alerts/token',
-    );
-    expect(resolved?.routeKey).toBe('project:penumbra');
+    expect(resolved?.channelName).toBe("alerts");
+    expect(resolved?.webhookUrl).toBe("https://discord.test/api/webhooks/alerts/token");
+    expect(resolved?.routeKey).toBe("project:penumbra");
   });
 
-  it('uses default route key when a matched project falls back to the default webhook', () => {
+  it("uses default route key when a matched project falls back to the default webhook", () => {
     const resolved = resolveNotificationRoute({
       config: {
         enabled: true,
-        promptPolicy: 'never',
+        promptPolicy: "never",
         channels: {
           discord: {
-            kind: 'discord_webhook',
-            defaultWebhookUrl: 'https://discord.test/api/webhooks/default/token',
-            defaultWebhookUrlEnv: 'PENUMBRA_DISCORD_WEBHOOK_URL',
+            kind: "discord_webhook",
+            defaultWebhookUrl: "https://discord.test/api/webhooks/default/token",
+            defaultWebhookUrlEnv: "PENUMBRA_DISCORD_WEBHOOK_URL",
           },
         },
         routes: {
           projects: {
-            penumbra: { channel: 'discord' },
+            penumbra: { channel: "discord" },
           },
         },
         identities: { agents: {} },
@@ -282,30 +274,28 @@ describe('resolveNotificationRoute', () => {
         summaries: {
           costQuota: {
             enabled: true,
-            interval: 'daily',
-            channel: 'discord',
+            interval: "daily",
+            channel: "discord",
           },
         },
       },
       env: {},
-      projectId: 'penumbra',
+      projectId: "penumbra",
     });
 
-    expect(resolved?.webhookUrl).toBe(
-      'https://discord.test/api/webhooks/default/token',
-    );
-    expect(resolved?.routeKey).toBe('default');
+    expect(resolved?.webhookUrl).toBe("https://discord.test/api/webhooks/default/token");
+    expect(resolved?.routeKey).toBe("default");
   });
 
-  it('returns null when notifications are disabled or no webhook resolves', () => {
+  it("returns null when notifications are disabled or no webhook resolves", () => {
     const disabled = resolveNotificationRoute({
       config: {
         enabled: false,
-        promptPolicy: 'never',
+        promptPolicy: "never",
         channels: {
           discord: {
-            kind: 'discord_webhook',
-            defaultWebhookUrlEnv: 'PENUMBRA_DISCORD_WEBHOOK_URL',
+            kind: "discord_webhook",
+            defaultWebhookUrlEnv: "PENUMBRA_DISCORD_WEBHOOK_URL",
           },
         },
         routes: { projects: {} },
@@ -326,30 +316,30 @@ describe('resolveNotificationRoute', () => {
         summaries: {
           costQuota: {
             enabled: true,
-            interval: 'daily',
-            channel: 'discord',
+            interval: "daily",
+            channel: "discord",
           },
         },
       },
       env: {},
-      projectId: 'penumbra',
+      projectId: "penumbra",
     });
 
     const unresolved = resolveNotificationRoute({
       config: {
         enabled: true,
-        promptPolicy: 'never',
+        promptPolicy: "never",
         channels: {
           discord: {
-            kind: 'discord_webhook',
-            defaultWebhookUrlEnv: 'PENUMBRA_DISCORD_WEBHOOK_URL',
+            kind: "discord_webhook",
+            defaultWebhookUrlEnv: "PENUMBRA_DISCORD_WEBHOOK_URL",
           },
         },
         routes: {
           projects: {
             penumbra: {
-              channel: 'discord',
-              webhookUrlEnv: 'PENUMBRA_DISCORD_PROJECT_PENUMBRA_WEBHOOK_URL',
+              channel: "discord",
+              webhookUrlEnv: "PENUMBRA_DISCORD_PROJECT_PENUMBRA_WEBHOOK_URL",
             },
           },
         },
@@ -370,36 +360,36 @@ describe('resolveNotificationRoute', () => {
         summaries: {
           costQuota: {
             enabled: true,
-            interval: 'daily',
-            channel: 'discord',
+            interval: "daily",
+            channel: "discord",
           },
         },
       },
       env: {},
-      projectId: 'penumbra',
+      projectId: "penumbra",
     });
 
     expect(disabled).toBeNull();
     expect(unresolved).toBeNull();
   });
 
-  it('only maps includePrompt to always when the route does not override promptPolicy', () => {
+  it("only maps includePrompt to always when the route does not override promptPolicy", () => {
     const resolved = resolveNotificationRoute({
       config: {
         enabled: true,
-        promptPolicy: 'summary',
+        promptPolicy: "summary",
         channels: {
           discord: {
-            kind: 'discord_webhook',
-            defaultWebhookUrl: 'https://discord.test/api/webhooks/default/token',
-            defaultWebhookUrlEnv: 'PENUMBRA_DISCORD_WEBHOOK_URL',
+            kind: "discord_webhook",
+            defaultWebhookUrl: "https://discord.test/api/webhooks/default/token",
+            defaultWebhookUrlEnv: "PENUMBRA_DISCORD_WEBHOOK_URL",
           },
         },
         routes: {
           projects: {
             penumbra: {
-              channel: 'discord',
-              webhookUrlEnv: 'PENUMBRA_DISCORD_PROJECT_PENUMBRA_WEBHOOK_URL',
+              channel: "discord",
+              webhookUrlEnv: "PENUMBRA_DISCORD_PROJECT_PENUMBRA_WEBHOOK_URL",
               includePrompt: true,
             },
           },
@@ -421,20 +411,19 @@ describe('resolveNotificationRoute', () => {
         summaries: {
           costQuota: {
             enabled: true,
-            interval: 'daily',
-            channel: 'discord',
+            interval: "daily",
+            channel: "discord",
           },
         },
       },
       env: {
-        PENUMBRA_DISCORD_WEBHOOK_URL:
-          'https://discord.test/api/webhooks/default/token',
+        PENUMBRA_DISCORD_WEBHOOK_URL: "https://discord.test/api/webhooks/default/token",
         PENUMBRA_DISCORD_PROJECT_PENUMBRA_WEBHOOK_URL:
-          'https://discord.test/api/webhooks/project/token',
+          "https://discord.test/api/webhooks/project/token",
       },
-      projectId: 'penumbra',
+      projectId: "penumbra",
     });
 
-    expect(resolved?.promptPolicy).toBe('always');
+    expect(resolved?.promptPolicy).toBe("always");
   });
 });

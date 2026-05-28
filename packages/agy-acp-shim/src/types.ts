@@ -1,5 +1,5 @@
 export interface ContentBlock {
-  type: 'text';
+  type: "text";
   text: string;
 }
 
@@ -33,7 +33,7 @@ export interface SessionPromptParams {
 }
 
 export interface SessionPromptResult {
-  stopReason: 'end_turn' | 'cancelled' | 'failed';
+  stopReason: "end_turn" | "cancelled" | "failed";
 }
 
 export interface SessionCancelParams {

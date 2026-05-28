@@ -5,14 +5,6 @@
   "author": { "name": "Alexandre Cordeiro" },
   "repository": "https://github.com/frozename/penumbra",
   "license": "MIT",
-  "keywords": [
-    "claude",
-    "claude-code",
-    "mcp",
-    "plugin",
-    "memory",
-    "agent-orchestration",
-    "acp"
-  ],
+  "keywords": ["claude", "claude-code", "mcp", "plugin", "memory", "agent-orchestration", "acp"],
   "homepage": "https://github.com/frozename/penumbra#readme"
 }

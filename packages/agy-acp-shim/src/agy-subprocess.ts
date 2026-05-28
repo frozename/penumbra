@@ -1,5 +1,5 @@
-import { spawn } from 'node:child_process';
-import { createInterface } from 'node:readline';
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
 
 export interface AgyHandle {
   exited: Promise<number | null>;
@@ -14,8 +14,8 @@ export function spawnAgy(opts: {
   signal?: AbortSignal;
 }): AgyHandle {
   const child = spawn(opts.binary, opts.args, {
-    stdio: ['pipe', 'pipe', 'pipe'],
-    detached: process.platform !== 'win32',
+    stdio: ["pipe", "pipe", "pipe"],
+    detached: process.platform !== "win32",
   });
 
   if (opts.prompt !== undefined && child.stdin) {
@@ -29,14 +29,14 @@ export function spawnAgy(opts: {
       input: child.stdout,
       terminal: false,
     });
-    rl.on('line', (line: string) => {
+    rl.on("line", (line: string) => {
       const trimmed = line.trim();
       if (!trimmed) return;
       opts.onLine(trimmed);
     });
   }
 
-  child.stderr?.on('data', (chunk: Buffer) => {
+  child.stderr?.on("data", (chunk: Buffer) => {
     try {
       process.stderr.write(chunk);
     } catch {
@@ -45,14 +45,14 @@ export function spawnAgy(opts: {
   });
 
   const exited = new Promise<number | null>((resolve) => {
-    child.on('exit', (code) => resolve(code));
-    child.on('error', () => resolve(null));
+    child.on("exit", (code) => resolve(code));
+    child.on("error", () => resolve(null));
   });
 
   const signalProcess = (signal: NodeJS.Signals) => {
     if (!child.pid) return;
     try {
-      if (process.platform !== 'win32') {
+      if (process.platform !== "win32") {
         process.kill(-child.pid, signal);
       } else {
         child.kill(signal);
@@ -63,17 +63,21 @@ export function spawnAgy(opts: {
   };
 
   const kill = () => {
-    signalProcess('SIGTERM');
+    signalProcess("SIGTERM");
     const timer = setTimeout(() => {
-      signalProcess('SIGKILL');
+      signalProcess("SIGKILL");
     }, 2000);
     timer.unref();
   };
 
   if (opts.signal) {
-    opts.signal.addEventListener('abort', () => {
-      kill();
-    }, { once: true });
+    opts.signal.addEventListener(
+      "abort",
+      () => {
+        kill();
+      },
+      { once: true },
+    );
   }
 
   return { exited, kill };

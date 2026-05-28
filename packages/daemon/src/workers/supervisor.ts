@@ -1,7 +1,7 @@
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join, resolve as pathResolve } from 'node:path';
-import { type Logger } from '@penumbra/core';
-import type { ExtraWorkerConfig } from './config.js';
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { join, resolve as pathResolve } from "node:path";
+import { type Logger } from "@penumbra/core";
+import type { ExtraWorkerConfig } from "./config.js";
 
 const STABLE_WORKER_LIFETIME_MS = 120_000;
 const BASE_RESTART_DELAY_MS = 1_000;
@@ -9,12 +9,12 @@ const MAX_RESTART_DELAY_MS = 60_000;
 const STOP_GRACE_MS = 10_000;
 const DEFAULT_WORKER_ENTRY = pathResolve(
   import.meta.dir,
-  '..',
-  '..',
-  '..',
-  'agentchat',
-  'bin',
-  'agentchat-worker.ts',
+  "..",
+  "..",
+  "..",
+  "agentchat",
+  "bin",
+  "agentchat-worker.ts",
 );
 if (!existsSync(DEFAULT_WORKER_ENTRY)) {
   throw new Error(`extra worker entry not found: ${DEFAULT_WORKER_ENTRY}`);
@@ -27,14 +27,14 @@ type ExtraWorkerSubprocess = {
   stdout?: ReadableStream<Uint8Array> | null;
   stderr?: ReadableStream<Uint8Array> | null;
   exited: Promise<number | { code: number; signal?: string }>;
-  kill(signal: 'SIGTERM' | 'SIGKILL'): void;
+  kill(signal: "SIGTERM" | "SIGKILL"): void;
 };
 
 type SpawnFunction = (
   args: string[],
   options: {
-    stdout: 'pipe';
-    stderr: 'pipe';
+    stdout: "pipe";
+    stderr: "pipe";
     env: Record<string, string | undefined>;
   },
 ) => ExtraWorkerSubprocess;
@@ -84,10 +84,10 @@ export class ExtraWorkerSupervisor {
     this.extras = opts.extras;
     this.storageRoot = opts.storageRoot;
     this.log = opts.log;
-    this.spawnWorkerProcess = opts.spawn ?? ((args, options) =>
-      Bun.spawn(args as any, options) as unknown as ExtraWorkerSubprocess
-    );
-    this.logDir = join(this.storageRoot, 'workers');
+    this.spawnWorkerProcess =
+      opts.spawn ??
+      ((args, options) => Bun.spawn(args as any, options) as unknown as ExtraWorkerSubprocess);
+    this.logDir = join(this.storageRoot, "workers");
     this.workerEntryPath = opts.workerEntryPath ?? DEFAULT_WORKER_ENTRY;
     this.onConfigChange = opts.onConfigChange;
   }
@@ -95,8 +95,8 @@ export class ExtraWorkerSupervisor {
   async start(): Promise<void> {
     if (this.stopped) return;
     if (this.started) return;
-    if (process.env.PENUMBRA_EXTRA_WORKERS_ENABLED === '0') {
-      this.log.warn('extra workers disabled by PENUMBRA_EXTRA_WORKERS_ENABLED=0');
+    if (process.env.PENUMBRA_EXTRA_WORKERS_ENABLED === "0") {
+      this.log.warn("extra workers disabled by PENUMBRA_EXTRA_WORKERS_ENABLED=0");
       this.started = true;
       return;
     }
@@ -108,11 +108,11 @@ export class ExtraWorkerSupervisor {
       } catch (err: unknown) {
         this.log.error(
           {
-            event: 'extra_worker_spawn_failed',
+            event: "extra_worker_spawn_failed",
             worker_id: extra.id,
             error: err instanceof Error ? err.message : String(err),
           },
-          'extra worker failed to spawn during start',
+          "extra worker failed to spawn during start",
         );
       }
     }
@@ -144,13 +144,21 @@ export class ExtraWorkerSupervisor {
     const prevGate = this.reconcileGate;
     if (this.reconcileInFlight) {
       const run = prevGate.then(() => this.reconcileUnlocked(nextExtras));
-      this.reconcileGate = run.then(() => undefined, () => undefined);
+      this.reconcileGate = run.then(
+        () => undefined,
+        () => undefined,
+      );
       return run;
     }
     this.reconcileInFlight = true;
     const run = this.reconcileUnlocked(nextExtras);
-    this.reconcileGate = run.then(() => undefined, () => undefined);
-    run.finally(() => { this.reconcileInFlight = false; });
+    this.reconcileGate = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    run.finally(() => {
+      this.reconcileInFlight = false;
+    });
     return run;
   }
 
@@ -243,23 +251,28 @@ export class ExtraWorkerSupervisor {
       } catch (err) {
         this.log.warn(
           {
-            event: 'restart_worker_by_id_failed',
+            event: "restart_worker_by_id_failed",
             worker_id: workerId,
             error: err instanceof Error ? err.message : String(err),
           },
-          'restartWorkerById failed',
+          "restartWorkerById failed",
         );
         return false;
       }
     });
-    this.reconcileGate = run.then(() => undefined, () => undefined);
+    this.reconcileGate = run.then(
+      () => undefined,
+      () => undefined,
+    );
     return run;
   }
 
   private isWorkerChanged(current: ExtraWorkerConfig, next: ExtraWorkerConfig): boolean {
-    return current.concurrency !== next.concurrency
-      || current.project_id !== next.project_id
-      || current.isolation !== next.isolation;
+    return (
+      current.concurrency !== next.concurrency ||
+      current.project_id !== next.project_id ||
+      current.isolation !== next.isolation
+    );
   }
 
   private async stopWorker(state: ExtraWorkerProcessState): Promise<void> {
@@ -272,10 +285,18 @@ export class ExtraWorkerSupervisor {
       state.pid = null;
       return;
     }
-    try { proc.kill('SIGTERM'); } catch { /* already exited */ }
+    try {
+      proc.kill("SIGTERM");
+    } catch {
+      /* already exited */
+    }
     const exited = await this.waitForExitOrTimeout(proc, STOP_GRACE_MS);
     if (exited) return;
-    try { proc.kill('SIGKILL'); } catch { /* already exited */ }
+    try {
+      proc.kill("SIGKILL");
+    } catch {
+      /* already exited */
+    }
     await proc.exited.catch(() => {});
     state.pid = null;
   }
@@ -303,24 +324,24 @@ export class ExtraWorkerSupervisor {
       proc: null,
     };
     const args = [
-      'bun',
+      "bun",
       this.workerEntryPath,
-      '--worker-id',
+      "--worker-id",
       extra.id,
-      '--concurrency',
+      "--concurrency",
       String(extra.concurrency),
-      '--storage-root',
+      "--storage-root",
       this.storageRoot,
     ];
 
     const proc = this.spawnWorkerProcess(args, {
-      stdout: 'pipe',
-      stderr: 'pipe',
+      stdout: "pipe",
+      stderr: "pipe",
       env: {
         ...process.env,
-        PENUMBRA_WORKER_PROJECT_ID: extra.project_id ?? '',
+        PENUMBRA_WORKER_PROJECT_ID: extra.project_id ?? "",
         PENUMBRA_WORKER_ISOLATION: extra.isolation,
-        PENUMBRA_BOOT_RECONCILE: '0',
+        PENUMBRA_BOOT_RECONCILE: "0",
         PENUMBRA_STORAGE_ROOT: this.storageRoot,
       },
     });
@@ -342,29 +363,31 @@ export class ExtraWorkerSupervisor {
     this.pipeStreamToLog(proc.stdout, logPath).catch((err) => {
       this.log.error(
         {
-          event: 'extra_worker_log_pipe_failed',
+          event: "extra_worker_log_pipe_failed",
           worker_id: extra.id,
           error: err instanceof Error ? err.message : String(err),
         },
-        'extra worker log pipe failed',
+        "extra worker log pipe failed",
       );
     });
     this.pipeStreamToLog(proc.stderr, logPath).catch((err) => {
       this.log.error(
         {
-          event: 'extra_worker_log_pipe_failed',
+          event: "extra_worker_log_pipe_failed",
           worker_id: extra.id,
           error: err instanceof Error ? err.message : String(err),
         },
-        'extra worker log pipe failed',
+        "extra worker log pipe failed",
       );
     });
 
-    void proc.exited.then(() => {
-      void this.onProcessExit(extra, proc, state);
-    }).catch(() => {
-      void this.onProcessExit(extra, proc, state);
-    });
+    void proc.exited
+      .then(() => {
+        void this.onProcessExit(extra, proc, state);
+      })
+      .catch(() => {
+        void this.onProcessExit(extra, proc, state);
+      });
   }
 
   private async onProcessExit(
@@ -396,17 +419,20 @@ export class ExtraWorkerSupervisor {
 
     this.log.warn(
       {
-        event: 'extra_worker_crashed',
+        event: "extra_worker_crashed",
         worker_id: extra.id,
         delay_ms: delay,
         code: proc.exitCode,
         signal: proc.signalCode ?? undefined,
       },
-      'extra worker crashed; scheduling restart',
+      "extra worker crashed; scheduling restart",
     );
   }
 
-  private async pipeStreamToLog(stream: ReadableStream<Uint8Array> | null | undefined, path: string): Promise<void> {
+  private async pipeStreamToLog(
+    stream: ReadableStream<Uint8Array> | null | undefined,
+    path: string,
+  ): Promise<void> {
     if (!stream) return;
     const reader = stream.getReader();
     while (true) {

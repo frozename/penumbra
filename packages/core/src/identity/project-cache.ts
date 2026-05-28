@@ -1,6 +1,6 @@
-import { Database } from 'bun:sqlite';
-import type { Clock } from '../utils/clock.js';
-import type { ProjectResolution } from './project-id.js';
+import { Database } from "bun:sqlite";
+import type { Clock } from "../utils/clock.js";
+import type { ProjectResolution } from "./project-id.js";
 
 export class ProjectCache {
   private readonly db: Database;
@@ -12,18 +12,19 @@ export class ProjectCache {
   }
 
   upsertFromResolution(resolution: ProjectResolution, path: string): void {
-    if (resolution.kind === 'quarantine') return;
+    if (resolution.kind === "quarantine") return;
     const existing = this.db
-      .query<{ first_seen_paths: string }, [string]>(
-        'SELECT first_seen_paths FROM projects WHERE project_id=?',
-      )
+      .query<
+        { first_seen_paths: string },
+        [string]
+      >("SELECT first_seen_paths FROM projects WHERE project_id=?")
       .get(resolution.project_id);
 
     if (existing) {
       const paths: string[] = JSON.parse(existing.first_seen_paths);
       if (!paths.includes(path)) {
         paths.push(path);
-        this.db.run('UPDATE projects SET first_seen_paths=? WHERE project_id=?', [
+        this.db.run("UPDATE projects SET first_seen_paths=? WHERE project_id=?", [
           JSON.stringify(paths),
           resolution.project_id,
         ]);
@@ -38,9 +39,9 @@ export class ProjectCache {
       [
         resolution.project_id,
         resolution.kind,
-        resolution.kind === 'git' ? resolution.git_remote : null,
-        resolution.kind === 'git' ? resolution.git_relpath_root : null,
-        resolution.kind === 'marker' ? resolution.marker_uuid : null,
+        resolution.kind === "git" ? resolution.git_remote : null,
+        resolution.kind === "git" ? resolution.git_relpath_root : null,
+        resolution.kind === "marker" ? resolution.marker_uuid : null,
         null,
         JSON.stringify([path]),
         now,

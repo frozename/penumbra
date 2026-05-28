@@ -1,37 +1,42 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 export const AgentTaskTypeSchema = z.enum([
-  'plan_refine',
-  'implement_small',
-  'implement_substantial',
-  'review_adversarial',
-  'docs_mechanical',
-  'debug_diagnose',
-  'smoke_test',
-  'health_check',
-  'unknown',
+  "plan_refine",
+  "implement_small",
+  "implement_substantial",
+  "review_adversarial",
+  "docs_mechanical",
+  "debug_diagnose",
+  "smoke_test",
+  "health_check",
+  "unknown",
 ]);
 
 export const AgentOutcomeSchema = z.enum([
-  'pr_opened',
-  'merged',
-  'merged_with_concerns',
-  'no_changes',
-  'typecheck_failed',
-  'test_failed',
-  'pr_creation_failed',
-  'rejected',
-  'failed',
-  'partial',
-  'bypassed',
+  "pr_opened",
+  "merged",
+  "merged_with_concerns",
+  "no_changes",
+  "typecheck_failed",
+  "test_failed",
+  "pr_creation_failed",
+  "rejected",
+  "failed",
+  "partial",
+  "bypassed",
 ]);
 
-export const AgentSmokePassSchema = z.enum(['y', 'n', 'partial', 'n/a']);
-export const AgentEvidenceFlagSchema = z.enum(['y', 'n', 'n/a']);
-export const AgentBooleanFlagSchema = z.enum(['y', 'n']);
-export const AgentPerformanceSourceSchema = z.enum(['reconciler', 'worker', 'manual_seed', 'operator']);
-export const AgentKindSchema = z.enum(['coding', 'long_lived']);
-export const DEFAULT_AGENT_KIND: AgentKind = 'coding';
+export const AgentSmokePassSchema = z.enum(["y", "n", "partial", "n/a"]);
+export const AgentEvidenceFlagSchema = z.enum(["y", "n", "n/a"]);
+export const AgentBooleanFlagSchema = z.enum(["y", "n"]);
+export const AgentPerformanceSourceSchema = z.enum([
+  "reconciler",
+  "worker",
+  "manual_seed",
+  "operator",
+]);
+export const AgentKindSchema = z.enum(["coding", "long_lived"]);
+export const DEFAULT_AGENT_KIND: AgentKind = "coding";
 
 export type AgentTaskType = z.infer<typeof AgentTaskTypeSchema>;
 export type AgentOutcome = z.infer<typeof AgentOutcomeSchema>;
@@ -76,54 +81,63 @@ export const AgentPerformanceRowSchema = z.object({
 export type AgentPerformanceRow = z.infer<typeof AgentPerformanceRowSchema>;
 
 const MergeResultStatusSchema = z.enum([
-  'pr_opened',
-  'pr_creation_failed',
-  'typecheck_failed',
-  'test_failed',
-  'merged',
-  'rebased',
-  'rebase_conflict',
-  'no_changes',
+  "pr_opened",
+  "pr_creation_failed",
+  "typecheck_failed",
+  "test_failed",
+  "merged",
+  "rebased",
+  "rebase_conflict",
+  "no_changes",
 ]);
 
 export const AgentPerformanceCaptureFromReconcilerSchema = z.object({
   handoff_id: z.string().min(1),
   task_type: AgentTaskTypeSchema.optional(),
-  result: z.object({
-    status: MergeResultStatusSchema,
-    pr_url: z.string().url().optional(),
-    regression_summary: z.string().optional(),
-    timed_out: z.boolean().optional(),
-  }).passthrough(),
+  result: z
+    .object({
+      status: MergeResultStatusSchema,
+      pr_url: z.string().url().optional(),
+      regression_summary: z.string().optional(),
+      timed_out: z.boolean().optional(),
+    })
+    .passthrough(),
 });
-export type AgentPerformanceCaptureFromReconciler = z.infer<typeof AgentPerformanceCaptureFromReconcilerSchema>;
+export type AgentPerformanceCaptureFromReconciler = z.infer<
+  typeof AgentPerformanceCaptureFromReconcilerSchema
+>;
 
 export const AgentPerformanceCaptureFromDispatchSchema = z.object({
   handoff_id: z.string().min(1),
   task_type: AgentTaskTypeSchema.optional(),
-  reason: z.enum(['completed', 'max_hops', 'cancelled', 'error']),
+  reason: z.enum(["completed", "max_hops", "cancelled", "error"]),
   // Optional snapshot from the worker's getWorktreeSnapshot probe at
   // dispatch.end time. Authoritative when present — preferred over reading
   // dispatch_events, since the events POST and the capture POST race and
   // the events row may not be visible yet.
   worktree_changed: z.boolean().nullable().optional(),
 });
-export type AgentPerformanceCaptureFromDispatch = z.infer<typeof AgentPerformanceCaptureFromDispatchSchema>;
+export type AgentPerformanceCaptureFromDispatch = z.infer<
+  typeof AgentPerformanceCaptureFromDispatchSchema
+>;
 
 export const AgentRankInputSchema = z.object({
   task_type: AgentTaskTypeSchema,
-  since: z.string().optional().describe('ISO 8601 datetime (UTC)').refine(
-    (v) => v === undefined || !Number.isNaN(Date.parse(v)),
-    { message: 'since must be a valid ISO 8601 datetime' },
-  ),
+  since: z
+    .string()
+    .optional()
+    .describe("ISO 8601 datetime (UTC)")
+    .refine((v) => v === undefined || !Number.isNaN(Date.parse(v)), {
+      message: "since must be a valid ISO 8601 datetime",
+    }),
   min_samples: z.coerce.number().int().min(1).default(1),
   agent_kind: AgentKindSchema.optional(),
   include_neutral: z.preprocess(
-    (v) => v === 'true' ? true : v === 'false' ? false : v,
+    (v) => (v === "true" ? true : v === "false" ? false : v),
     z.boolean().default(false),
   ),
   include_cost: z.preprocess(
-    (v) => v === 'true' ? true : v === 'false' ? false : v,
+    (v) => (v === "true" ? true : v === "false" ? false : v),
     z.boolean().default(false),
   ),
 });
@@ -140,14 +154,18 @@ export const RecordOperatorAgentPerformanceInputSchema = z.object({
   cost_usd: z.number().min(0).optional(),
   notes: z.string().optional(),
 });
-export type RecordOperatorAgentPerformanceInput = z.infer<typeof RecordOperatorAgentPerformanceInputSchema>;
+export type RecordOperatorAgentPerformanceInput = z.infer<
+  typeof RecordOperatorAgentPerformanceInputSchema
+>;
 
 export const AgentPerformanceMarkdownParseInputSchema = z.object({
   markdown: z.string(),
   sourcePath: z.string(),
   projectId: z.string().nullable().optional(),
 });
-export type AgentPerformanceMarkdownParseInput = z.infer<typeof AgentPerformanceMarkdownParseInputSchema>;
+export type AgentPerformanceMarkdownParseInput = z.infer<
+  typeof AgentPerformanceMarkdownParseInputSchema
+>;
 
 export const ImportMarkdownResultSchema = z.object({
   imported: z.number().int(),
@@ -158,43 +176,45 @@ export type ImportMarkdownResult = z.infer<typeof ImportMarkdownResultSchema>;
 export const AgentRankOutputSchema = z.object({
   task_type: AgentTaskTypeSchema,
   window: z.object({ from: z.string().nullable(), to: z.string() }),
-  candidates: z.array(z.object({
-    agent_name: z.string(),
-    samples: z.number().int(),
-    successes: z.number().int(),
-    failures: z.number().int(),
-    neutral: z.number().int(),
-    success_rate: z.number(),
-    avg_rounds: z.number().nullable(),
-    avg_latency_ms: z.number().nullable(),
-    cost_per_success_usd: z.number().nullable(),
-    avg_reviewer_findings: z.number().nullable(),
-    avg_trust_score: z.number().nullable(),
-    score: z.number(),
-    last_outcome_at: z.string(),
-  })),
+  candidates: z.array(
+    z.object({
+      agent_name: z.string(),
+      samples: z.number().int(),
+      successes: z.number().int(),
+      failures: z.number().int(),
+      neutral: z.number().int(),
+      success_rate: z.number(),
+      avg_rounds: z.number().nullable(),
+      avg_latency_ms: z.number().nullable(),
+      cost_per_success_usd: z.number().nullable(),
+      avg_reviewer_findings: z.number().nullable(),
+      avg_trust_score: z.number().nullable(),
+      score: z.number(),
+      last_outcome_at: z.string(),
+    }),
+  ),
 });
 export type AgentRankOutput = z.infer<typeof AgentRankOutputSchema>;
 
 export function mapMergeStatusToAgentOutcome(status: string): AgentOutcome {
   switch (status) {
-    case 'pr_opened':
-      return 'pr_opened';
-    case 'no_changes':
-      return 'no_changes';
-    case 'typecheck_failed':
-      return 'typecheck_failed';
-    case 'test_failed':
-      return 'test_failed';
-    case 'pr_creation_failed':
-      return 'pr_creation_failed';
-    case 'merged':
-    case 'rebased':
-      return 'merged';
-    case 'rebase_conflict':
-      return 'failed';
+    case "pr_opened":
+      return "pr_opened";
+    case "no_changes":
+      return "no_changes";
+    case "typecheck_failed":
+      return "typecheck_failed";
+    case "test_failed":
+      return "test_failed";
+    case "pr_creation_failed":
+      return "pr_creation_failed";
+    case "merged":
+    case "rebased":
+      return "merged";
+    case "rebase_conflict":
+      return "failed";
     default:
-      return 'failed';
+      return "failed";
   }
 }
 
@@ -203,22 +223,22 @@ export function mapDispatchReasonToAgentOutcome(
   signals: { silent_failure?: boolean; tool_failure_count?: number } = {},
 ): AgentOutcome {
   switch (reason) {
-    case 'completed':
+    case "completed":
       // A "completed" dispatch on an implementation task that produced no
       // worktree changes is a silent failure (the gemini hallucination
       // pattern: agent reports success, no files written). Score it as a
       // real failure so agent-rank deprioritises agents that exhibit this.
       // Without this, completed-but-empty dispatches score 0.5 (neutral).
-      if (signals.silent_failure) return 'failed';
-      return 'no_changes';
-    case 'max_hops':
-      return 'partial';
-    case 'cancelled':
-      return 'rejected';
-    case 'error':
-      return 'failed';
+      if (signals.silent_failure) return "failed";
+      return "no_changes";
+    case "max_hops":
+      return "partial";
+    case "cancelled":
+      return "rejected";
+    case "error":
+      return "failed";
     default:
-      return 'failed';
+      return "failed";
   }
 }
 
@@ -227,23 +247,27 @@ export function inferAgentTaskType(message: string, status?: string): AgentTaskT
   if (explicit && AgentTaskTypeSchema.safeParse(explicit[1]).success) {
     return explicit[1] as AgentTaskType;
   }
-  if (/Review-only task/i.test(message)) return 'review_adversarial';
-  if (/Implementation Plan|plan to execute/i.test(message)) return 'implement_substantial';
-  if (status === 'no_changes' && /Review-only task/i.test(message)) return 'review_adversarial';
-  return 'unknown';
+  if (/Review-only task/i.test(message)) return "review_adversarial";
+  if (/Implementation Plan|plan to execute/i.test(message)) return "implement_substantial";
+  if (status === "no_changes" && /Review-only task/i.test(message)) return "review_adversarial";
+  return "unknown";
 }
 
-export function inferAgentTaskTypeForRole(message: string, role: string | null | undefined, status?: string): AgentTaskType {
+export function inferAgentTaskTypeForRole(
+  message: string,
+  role: string | null | undefined,
+  status?: string,
+): AgentTaskType {
   const inferred = inferAgentTaskType(message, status);
-  if (inferred !== 'unknown') return inferred;
+  if (inferred !== "unknown") return inferred;
   switch (role) {
-    case 'planner':
-      return 'plan_refine';
-    case 'executor':
-      return 'implement_substantial';
-    case 'reviewer':
-      return 'review_adversarial';
+    case "planner":
+      return "plan_refine";
+    case "executor":
+      return "implement_substantial";
+    case "reviewer":
+      return "review_adversarial";
     default:
-      return 'unknown';
+      return "unknown";
   }
 }

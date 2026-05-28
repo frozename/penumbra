@@ -1,6 +1,6 @@
-import type { Services } from '@penumbra/core';
-import { classifyDispatchReliability } from '@penumbra/core';
-import { resolveSweeperSqlCutoffMs } from './stale-handoff-thresholds.js';
+import type { Services } from "@penumbra/core";
+import { classifyDispatchReliability } from "@penumbra/core";
+import { resolveSweeperSqlCutoffMs } from "./stale-handoff-thresholds.js";
 
 export interface StaleHandoffSweeperOpts {
   services: Services;
@@ -45,12 +45,12 @@ export function runStaleHandoffSweep(
   const configuredStaleAfterMs = opts.resolveStaleAfterMs ?? opts.staleAfterMs;
   if (opts.staleAfterMs !== undefined && opts.resolveStaleAfterMs === undefined) {
     opts.log?.warn?.(
-      { option: 'staleAfterMs' },
-      'staleAfterMs is deprecated; use resolveStaleAfterMs instead',
+      { option: "staleAfterMs" },
+      "staleAfterMs is deprecated; use resolveStaleAfterMs instead",
     );
   }
   const resolveStaleAfterMsForHandoff: (taskType: string | null) => number = (() => {
-    if (typeof configuredStaleAfterMs === 'function') return configuredStaleAfterMs;
+    if (typeof configuredStaleAfterMs === "function") return configuredStaleAfterMs;
     const staleAfterMs = configuredStaleAfterMs ?? DEFAULT_STALE_AFTER_MS;
     return () => staleAfterMs;
   })();
@@ -58,9 +58,10 @@ export function runStaleHandoffSweep(
   const sqlCutoffIso = new Date(nowMs - sqlCutoffMs).toISOString();
 
   const rows = services.db
-    .query<{ handoff_id: string }, [string]>(
-      `SELECT handoff_id FROM handoffs WHERE status='dispatched' AND ts < ?`,
-    )
+    .query<
+      { handoff_id: string },
+      [string]
+    >(`SELECT handoff_id FROM handoffs WHERE status='dispatched' AND ts < ?`)
     .all(sqlCutoffIso);
 
   const candidates: string[] = [];
@@ -80,9 +81,10 @@ export function runStaleHandoffSweep(
     candidates.push(handoff_id);
 
     const events = services.db
-      .query<{ kind: string; ts: string }, [string]>(
-        `SELECT kind, ts FROM dispatch_events WHERE handoff_id = ? ORDER BY ts ASC`,
-      )
+      .query<
+        { kind: string; ts: string },
+        [string]
+      >(`SELECT kind, ts FROM dispatch_events WHERE handoff_id = ? ORDER BY ts ASC`)
       .all(handoff_id);
 
     const report = classifyDispatchReliability({
@@ -107,34 +109,35 @@ export function runStaleHandoffSweep(
       activityIdleMs: opts.activityIdleMs,
     } as any);
 
-    if (report.status !== 'non_terminal_stale') continue;
+    if (report.status !== "non_terminal_stale") continue;
 
     // If a dispatch.end already exists, this is a "terminal-event-but-status-not-flipped"
     // bug, not a wedged dispatch. Leave it for a different recovery path.
-    if (events.some((event) => event.kind === 'dispatch.end')) continue;
+    if (events.some((event) => event.kind === "dispatch.end")) continue;
 
     const tsIso = nowDate.toISOString();
     services.db
-      .query<unknown, [string, string | null, string, string, string, string]>(
-        `INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json) VALUES (?, ?, ?, ?, ?, ?)`,
-      )
+      .query<
+        unknown,
+        [string, string | null, string, string, string, string]
+      >(`INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json) VALUES (?, ?, ?, ?, ?, ?)`)
       .run(
         handoff_id,
         null,
-        'sweeper',
-        'dispatch.end',
+        "sweeper",
+        "dispatch.end",
         tsIso,
         JSON.stringify({
-          status: 'failed',
-          reason: 'stale_force_resolve',
-          classifier_status: 'non_terminal_stale',
+          status: "failed",
+          reason: "stale_force_resolve",
+          classifier_status: "non_terminal_stale",
         }),
       );
 
     services.handoffWriter.markFailed(handoff_id, {
-      reason: 'stale_force_resolve',
+      reason: "stale_force_resolve",
       ts: tsIso,
-      resolved_by: 'stale-handoff-sweeper',
+      resolved_by: "stale-handoff-sweeper",
     });
 
     resolved.push(handoff_id);
@@ -154,9 +157,9 @@ export function startStaleHandoffSweeper(
     try {
       runStaleHandoffSweep(opts, state, now);
     } catch (err) {
-      opts.log?.warn?.({ err: String(err) }, 'stale-handoff sweep failed');
+      opts.log?.warn?.({ err: String(err) }, "stale-handoff sweep failed");
     }
   }, intervalMs);
-  if (typeof (timer as any).unref === 'function') (timer as any).unref();
+  if (typeof (timer as any).unref === "function") (timer as any).unref();
   return () => clearInterval(timer);
 }

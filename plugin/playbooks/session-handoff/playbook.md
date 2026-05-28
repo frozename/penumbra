@@ -60,6 +60,7 @@ output:
 run:
   kind: markdown-template
 ---
+
 # Maestro continuation prompt — {{date}} {{period}}
 
 > Paste this whole block into the next session as the kickoff message.
@@ -75,8 +76,9 @@ If `AGENTS.md` is present in this repo, follow it. Use Penumbra MCP for chain st
 ### Today's session memories
 
 {{#each recall.memory_search}}
+
 - `{{id}}` — {{title}}
-{{/each}}
+  {{/each}}
 
 ### Commits since midnight
 
@@ -102,16 +104,18 @@ If `AGENTS.md` is present in this repo, follow it. Use Penumbra MCP for chain st
 ### Dispatch summaries this session
 
 {{#each recall.dispatch_summaries}}
+
 - `{{handoff_id}}` → **{{agent}}** [{{outcome}}{{#if duration_seconds}}, {{duration_seconds}}s{{/if}}]{{#if failed_event_kinds}} — failures: {{failed_event_kinds}}{{/if}}
-{{/each}}
+  {{/each}}
 
 ### Pending handoffs
 
 {{#if recall.handoff_list_pending}}
 {{#each recall.handoff_list_pending}}
+
 - `{{handoff_id}}` ({{status}}) — {{message}}
-{{/each}}
-{{/if}}
+  {{/each}}
+  {{/if}}
 
 ## Next steps
 

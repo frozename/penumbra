@@ -1,23 +1,23 @@
-import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { loadSqliteVec } from '@penumbra/core';
-import { applySchema } from '@penumbra/core/db/schema';
-import { reconcileLongLivedAgents } from '@penumbra/daemon/long-lived/reconciler';
-import { openInvocationSink } from '../src/invocation-sink.js';
-import * as registry from '../src/invocation-sink-registry.js';
-import { buildServer } from '../src/server.js';
-import { TOOL_REGISTRY } from '../src/tools/registry.js';
+import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { Database } from "bun:sqlite";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { loadSqliteVec } from "@penumbra/core";
+import { applySchema } from "@penumbra/core/db/schema";
+import { reconcileLongLivedAgents } from "@penumbra/daemon/long-lived/reconciler";
+import { openInvocationSink } from "../src/invocation-sink.js";
+import * as registry from "../src/invocation-sink-registry.js";
+import { buildServer } from "../src/server.js";
+import { TOOL_REGISTRY } from "../src/tools/registry.js";
 
 const ENV_KEYS = [
-  'PENUMBRA_MCP_TOOL_ALLOWLIST',
-  'PENUMBRA_MCP_INVOCATION_LOG_ENABLED',
-  'PENUMBRA_LONG_LIVED_AGENT_ID',
-  'PENUMBRA_LONG_LIVED_TICK_ID',
-  'PENUMBRA_STORAGE_ROOT',
-  'XDG_STATE_HOME',
+  "PENUMBRA_MCP_TOOL_ALLOWLIST",
+  "PENUMBRA_MCP_INVOCATION_LOG_ENABLED",
+  "PENUMBRA_LONG_LIVED_AGENT_ID",
+  "PENUMBRA_LONG_LIVED_TICK_ID",
+  "PENUMBRA_STORAGE_ROOT",
+  "XDG_STATE_HOME",
 ] as const;
 
 const baselineEnv = new Map<string, string | undefined>(
@@ -37,66 +37,70 @@ afterEach(async () => {
   }
 });
 
-describe('buildServer tool registration', () => {
-  it('registers only allowlisted tools when PENUMBRA_MCP_TOOL_ALLOWLIST is set', async () => {
-    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = 'cost_recent,long_lived_self_state_get';
-    const server = await buildServer({ daemon: {} as any }) as any;
+describe("buildServer tool registration", () => {
+  it("registers only allowlisted tools when PENUMBRA_MCP_TOOL_ALLOWLIST is set", async () => {
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = "cost_recent,long_lived_self_state_get";
+    const server = (await buildServer({ daemon: {} as any })) as any;
     const names = Object.keys(server._registeredTools).sort();
-    expect(names).toEqual(['cost_recent', 'long_lived_self_state_get']);
+    expect(names).toEqual(["cost_recent", "long_lived_self_state_get"]);
   });
 
-  it('registers all tools when allowlist env is unset', async () => {
+  it("registers all tools when allowlist env is unset", async () => {
     delete process.env.PENUMBRA_MCP_TOOL_ALLOWLIST;
-    const server = await buildServer({ daemon: {} as any }) as any;
+    const server = (await buildServer({ daemon: {} as any })) as any;
     const names = Object.keys(server._registeredTools).sort();
     expect(names).toEqual(Object.keys(TOOL_REGISTRY).sort());
   });
 
-  it('canonicalizes mcp__penumbra__ wire-form prefixed ids in allowlist entries', async () => {
-    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = 'mcp__penumbra__cost_recent,mcp__penumbra__long_lived_self_state_get';
-    const server = await buildServer({ daemon: {} as any }) as any;
+  it("canonicalizes mcp__penumbra__ wire-form prefixed ids in allowlist entries", async () => {
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST =
+      "mcp__penumbra__cost_recent,mcp__penumbra__long_lived_self_state_get";
+    const server = (await buildServer({ daemon: {} as any })) as any;
     const names = Object.keys(server._registeredTools).sort();
-    expect(names).toEqual(['cost_recent', 'long_lived_self_state_get']);
+    expect(names).toEqual(["cost_recent", "long_lived_self_state_get"]);
   });
 
-  it('canonicalizes penumbra: short-form allowlist entries', async () => {
-    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = 'penumbra:cost_recent,penumbra:long_lived_self_state_get';
-    const server = await buildServer({ daemon: {} as any }) as any;
+  it("canonicalizes penumbra: short-form allowlist entries", async () => {
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST =
+      "penumbra:cost_recent,penumbra:long_lived_self_state_get";
+    const server = (await buildServer({ daemon: {} as any })) as any;
     const names = Object.keys(server._registeredTools).sort();
-    expect(names).toEqual(['cost_recent', 'long_lived_self_state_get']);
+    expect(names).toEqual(["cost_recent", "long_lived_self_state_get"]);
   });
 
-  it('passes through non-penumbra prefixed entries unchanged for federation matching', async () => {
-    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = 'ha.ha_get_state,ha.ha_call_service';
-    process.env.PENUMBRA_LONG_LIVED_AGENT_ID = 'agent-1';
-    process.env.PENUMBRA_LONG_LIVED_TICK_ID = 'tick-1';
-    const server = await buildServer({
+  it("passes through non-penumbra prefixed entries unchanged for federation matching", async () => {
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = "ha.ha_get_state,ha.ha_call_service";
+    process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
+    process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
+    const server = (await buildServer({
       daemon: {
-        getFederationTools: async () => ({ tools: [{ name: 'ha.ha_get_state' }, { name: 'ha.ha_call_service' }] }),
-        mcpCall: async () => ({ action_status: 'executed', result: {} }),
+        getFederationTools: async () => ({
+          tools: [{ name: "ha.ha_get_state" }, { name: "ha.ha_call_service" }],
+        }),
+        mcpCall: async () => ({ action_status: "executed", result: {} }),
       } as any,
-    }) as any;
+    })) as any;
     const names = Object.keys(server._registeredTools).sort();
-    expect(names).toContain('ha.ha_get_state');
-    expect(names).toContain('ha.ha_call_service');
+    expect(names).toContain("ha.ha_get_state");
+    expect(names).toContain("ha.ha_call_service");
   });
 
-  it('does not treat non-penumbra MCP-prefixed ids as valid allowlist entries', async () => {
-    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = 'mcp__sirius__cost_recent';
-    const server = await buildServer({ daemon: {} as any }) as any;
+  it("does not treat non-penumbra MCP-prefixed ids as valid allowlist entries", async () => {
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = "mcp__sirius__cost_recent";
+    const server = (await buildServer({ daemon: {} as any })) as any;
     const names = Object.keys(server._registeredTools).sort();
     expect(names).toEqual([]);
   });
 
-  it('fails closed for malformed allowlist tool ids', async () => {
-    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = 'mcp__penumbra_cost_recent,cost_recent';
-    const server = await buildServer({ daemon: {} as any }) as any;
+  it("fails closed for malformed allowlist tool ids", async () => {
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = "mcp__penumbra_cost_recent,cost_recent";
+    const server = (await buildServer({ daemon: {} as any })) as any;
     const names = Object.keys(server._registeredTools).sort();
-    expect(names).toEqual(['cost_recent']);
+    expect(names).toEqual(["cost_recent"]);
   });
 
-  it('emits federation registration health to stderr', async () => {
-    let line = '';
+  it("emits federation registration health to stderr", async () => {
+    let line = "";
     const error = mock((msg: string) => {
       line = msg;
     });
@@ -104,14 +108,14 @@ describe('buildServer tool registration', () => {
     console.error = error as any;
     try {
       const daemon = {
-        getFederationTools: async () => ({ tools: [{ name: 'ha_get_state' }] }),
-        mcpCall: async () => ({ action_status: 'rejected', error: 'unused' }),
+        getFederationTools: async () => ({ tools: [{ name: "ha_get_state" }] }),
+        mcpCall: async () => ({ action_status: "rejected", error: "unused" }),
       } as any;
       delete process.env.PENUMBRA_MCP_TOOL_ALLOWLIST;
       await buildServer({ daemon });
       expect(error).toHaveBeenCalledTimes(1);
       expect(JSON.parse(line)).toEqual({
-        event: 'federation.registered',
+        event: "federation.registered",
         registered_count: 0,
         skipped_count: 0,
         skipped: [],
@@ -121,42 +125,46 @@ describe('buildServer tool registration', () => {
     }
   });
 
-  it('long_lived_self_state_get resolves running agent from env context when called without args', async () => {
-    const storageRoot = mkdtempSync(join(tmpdir(), 'penumbra-mcp-server-test-'));
+  it("long_lived_self_state_get resolves running agent from env context when called without args", async () => {
+    const storageRoot = mkdtempSync(join(tmpdir(), "penumbra-mcp-server-test-"));
     try {
       process.env.PENUMBRA_STORAGE_ROOT = storageRoot;
-      process.env.PENUMBRA_LONG_LIVED_AGENT_ID = 'a1';
-      process.env.PENUMBRA_LONG_LIVED_TICK_ID = 'tick-1';
+      process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "a1";
+      process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
       delete process.env.PENUMBRA_MCP_TOOL_ALLOWLIST;
 
-      const db = new Database(join(storageRoot, 'db.sqlite'));
+      const db = new Database(join(storageRoot, "db.sqlite"));
       try {
         loadSqliteVec(db);
         applySchema(db, { embeddingDim: 384 });
         reconcileLongLivedAgents(
           db,
-          [{
-            name: 'a1',
-            long_lived: true,
-            long_lived_config: {
-              schedule_cron: '*/15 * * * *',
-              subscriptions: [],
-              mcp_allowlist: [],
-              bounds: { wall_clock_ms: 1, cost_cents: 1, max_sub_dispatches: 0 },
-              circuit_breaker_threshold: 3,
-              standing_brief: 'x',
-            },
-          } as any],
+          [
+            {
+              name: "a1",
+              long_lived: true,
+              long_lived_config: {
+                schedule_cron: "*/15 * * * *",
+                subscriptions: [],
+                mcp_allowlist: [],
+                bounds: { wall_clock_ms: 1, cost_cents: 1, max_sub_dispatches: 0 },
+                circuit_breaker_threshold: 3,
+                standing_brief: "x",
+              },
+            } as any,
+          ],
           { now: 1 },
         );
-        db.query("INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES ('tick-1', 'a1', 'manual', 1)").run();
+        db.query(
+          "INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES ('tick-1', 'a1', 'manual', 1)",
+        ).run();
       } finally {
         db.close();
       }
 
       const daemon = {
         getFederationTools: async () => ({ tools: [] }),
-        mcpCall: async () => ({ action_status: 'rejected', error: 'unused' }),
+        mcpCall: async () => ({ action_status: "rejected", error: "unused" }),
       } as any;
       await buildServer({ daemon });
       const handler = TOOL_REGISTRY.long_lived_self_state_get.makeHandler({} as any);
@@ -169,20 +177,20 @@ describe('buildServer tool registration', () => {
     }
   });
 
-  it('with invocation logging enabled, a registered tool produces exactly one JSONL row', async () => {
-    process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED = '1';
-    const stateRoot = mkdtempSync(join(tmpdir(), 'penumbra-mcp-log-state-'));
+  it("with invocation logging enabled, a registered tool produces exactly one JSONL row", async () => {
+    process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED = "1";
+    const stateRoot = mkdtempSync(join(tmpdir(), "penumbra-mcp-log-state-"));
     process.env.XDG_STATE_HOME = stateRoot;
-    const logPath = join(stateRoot, 'penumbra', 'mcp-invocations.jsonl');
+    const logPath = join(stateRoot, "penumbra", "mcp-invocations.jsonl");
     // Stub initSink so buildServer's real init doesn't open a second fd to logPath.
     // The test owns the real sink fixture and feeds it via the getSink spy.
-    spyOn(registry, 'initSink').mockResolvedValue({} as any);
+    spyOn(registry, "initSink").mockResolvedValue({} as any);
     const sink = openInvocationSink(logPath);
-    spyOn(registry, 'getSink').mockReturnValue(sink);
-    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = '__invocation_log_smoke_tool';
+    spyOn(registry, "getSink").mockReturnValue(sink);
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = "__invocation_log_smoke_tool";
     const original = (TOOL_REGISTRY as any).__invocation_log_smoke_tool;
     (TOOL_REGISTRY as any).__invocation_log_smoke_tool = {
-      descriptor: { description: 'invocation-log smoke fixture', inputSchema: {} },
+      descriptor: { description: "invocation-log smoke fixture", inputSchema: {} },
       makeHandler: () => async () => ({ ok: true }),
       readOnly: true,
     };
@@ -190,15 +198,16 @@ describe('buildServer tool registration', () => {
       // server._registeredTools is a private SDK field; tightly coupled to
       // @modelcontextprotocol/sdk internals. Acceptable for an integration smoke
       // until the SDK exposes a programmatic handler-invocation surface.
-      const server = await buildServer({ daemon: {} as any }) as any;
-      await server._registeredTools.__invocation_log_smoke_tool.handler({}, { _meta: { origin: 'test-suite' } });
+      const server = (await buildServer({ daemon: {} as any })) as any;
+      await server._registeredTools.__invocation_log_smoke_tool.handler(
+        {},
+        { _meta: { origin: "test-suite" } },
+      );
       await sink.close();
-      const text = readFileSync(logPath, 'utf8').trim();
-      const rows = text.length === 0
-        ? []
-        : text.split('\n').map((line) => JSON.parse(line));
+      const text = readFileSync(logPath, "utf8").trim();
+      const rows = text.length === 0 ? [] : text.split("\n").map((line) => JSON.parse(line));
       expect(rows).toHaveLength(1);
-      expect(rows[0].tool).toBe('__invocation_log_smoke_tool');
+      expect(rows[0].tool).toBe("__invocation_log_smoke_tool");
       expect(rows[0].ok).toBe(true);
     } finally {
       if (original === undefined) {
@@ -210,20 +219,23 @@ describe('buildServer tool registration', () => {
     }
   });
 
-  it('with invocation logging disabled, no sink interaction occurs', async () => {
+  it("with invocation logging disabled, no sink interaction occurs", async () => {
     delete process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED;
-    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = '__invocation_log_disabled_smoke_tool';
-    const initSinkSpy = spyOn(registry, 'initSink');
-    const getSinkSpy = spyOn(registry, 'getSink');
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = "__invocation_log_disabled_smoke_tool";
+    const initSinkSpy = spyOn(registry, "initSink");
+    const getSinkSpy = spyOn(registry, "getSink");
     const original = (TOOL_REGISTRY as any).__invocation_log_disabled_smoke_tool;
     (TOOL_REGISTRY as any).__invocation_log_disabled_smoke_tool = {
-      descriptor: { description: 'invocation-log disabled-smoke fixture', inputSchema: {} },
+      descriptor: { description: "invocation-log disabled-smoke fixture", inputSchema: {} },
       makeHandler: () => async () => ({ ok: true }),
       readOnly: true,
     };
     try {
-      const server = await buildServer({ daemon: {} as any }) as any;
-      await server._registeredTools.__invocation_log_disabled_smoke_tool.handler({}, { _meta: { origin: 'test-suite' } });
+      const server = (await buildServer({ daemon: {} as any })) as any;
+      await server._registeredTools.__invocation_log_disabled_smoke_tool.handler(
+        {},
+        { _meta: { origin: "test-suite" } },
+      );
       expect(initSinkSpy).not.toHaveBeenCalled();
       expect(getSinkSpy).not.toHaveBeenCalled();
     } finally {
@@ -235,14 +247,14 @@ describe('buildServer tool registration', () => {
     }
   });
 
-  it('buildServer is reentrant — second call with logging enabled does not throw', async () => {
-    process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED = '1';
-    spyOn(registry, 'initSink').mockResolvedValue({} as any);
-    spyOn(registry, 'closeSink').mockResolvedValue(undefined);
-    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = '__invocation_log_reentrant_tool';
+  it("buildServer is reentrant — second call with logging enabled does not throw", async () => {
+    process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED = "1";
+    spyOn(registry, "initSink").mockResolvedValue({} as any);
+    spyOn(registry, "closeSink").mockResolvedValue(undefined);
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = "__invocation_log_reentrant_tool";
     const original = (TOOL_REGISTRY as any).__invocation_log_reentrant_tool;
     (TOOL_REGISTRY as any).__invocation_log_reentrant_tool = {
-      descriptor: { description: 'reentrant smoke fixture', inputSchema: {} },
+      descriptor: { description: "reentrant smoke fixture", inputSchema: {} },
       makeHandler: () => async () => ({ ok: true }),
       readOnly: true,
     };

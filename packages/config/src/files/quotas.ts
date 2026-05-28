@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 /**
  * Schema for the quota-focused config split file.
@@ -7,7 +7,12 @@ import { z } from 'zod';
  */
 
 const PressureCapWindowSchema = z.union([
-  z.number().int().min(1).max(100).transform((refuse) => ({ warn: null as number | null, refuse })),
+  z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .transform((refuse) => ({ warn: null as number | null, refuse })),
   z
     .object({
       warn: z.number().int().min(1).max(100).nullable().optional(),
@@ -17,8 +22,8 @@ const PressureCapWindowSchema = z.union([
       if (data.warn !== null && data.warn !== undefined && data.warn >= data.refuse) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          path: ['warn'],
-          message: 'warn must be < refuse',
+          path: ["warn"],
+          message: "warn must be < refuse",
         });
       }
     })

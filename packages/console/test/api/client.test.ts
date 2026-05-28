@@ -1,16 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import {
-  DaemonClient,
-  type UsageQuotaResponse,
-} from "../../src/api/client";
+import { DaemonClient, type UsageQuotaResponse } from "../../src/api/client";
 import { DaemonContractError, DaemonHttpError } from "../../src/api/errors";
 
 type FetchCall = { url: string; init?: RequestInit };
 type FetchHandler = (url: string, init?: RequestInit) => Response | Promise<Response>;
 
 const calls: FetchCall[] = [];
-let handler: FetchHandler = () =>
-  new Response("not configured", { status: 500 });
+let handler: FetchHandler = () => new Response("not configured", { status: 500 });
 const originalFetch = globalThis.fetch;
 
 beforeEach(() => {
@@ -126,8 +122,7 @@ describe("DaemonClient", () => {
   });
 
   test("approveHandoff() with relative baseUrl builds correct POST URL", async () => {
-    handler = () =>
-      jsonResponse({ handoff_id: "h1", status: "rejected", redirected_to: null });
+    handler = () => jsonResponse({ handoff_id: "h1", status: "rejected", redirected_to: null });
     const client = makeClient({ baseUrl: "/api" });
     await client.approveHandoff("h1", { reject: true });
     expect(calls[0]!.url).toBe("/api/handoffs/h1/approve");
@@ -192,8 +187,7 @@ describe("DaemonClient", () => {
   });
 
   test("approveHandoff(id, { reject: true, reason }) POSTs JSON body", async () => {
-    handler = () =>
-      jsonResponse({ handoff_id: "h1", status: "rejected", redirected_to: null });
+    handler = () => jsonResponse({ handoff_id: "h1", status: "rejected", redirected_to: null });
     const client = makeClient();
     const result = await client.approveHandoff("h1", {
       reject: true,
@@ -231,8 +225,7 @@ describe("DaemonClient", () => {
   });
 
   test("approveHandoff maps camelCase opts to snake_case wire body", async () => {
-    handler = () =>
-      jsonResponse({ handoff_id: "h1", status: "redirected", redirected_to: "x" });
+    handler = () => jsonResponse({ handoff_id: "h1", status: "redirected", redirected_to: "x" });
     const client = makeClient();
     await client.approveHandoff("h1", {
       redirectTo: "x",

@@ -2,7 +2,8 @@
    Same token DNA as v1 but with serif display, warmer text hierarchy,
    and a few extra atmospheric variables. */
 
-:root, [data-theme='sirius'] {
+:root,
+[data-theme="sirius"] {
   --color-brand: #6366f1;
   --color-brand-subtle: #4f46e5;
   --color-brand-muted: rgba(99, 102, 241, 0.15);
@@ -14,11 +15,11 @@
   --color-surface-2: #1a1a20;
   --color-surface-3: #22222a;
   --color-surface-4: #2d2d38;
-  --color-surface-overlay: rgba(0,0,0,0.6);
+  --color-surface-overlay: rgba(0, 0, 0, 0.6);
 
-  --color-border: rgba(255,255,255,0.06);
-  --color-border-subtle: rgba(255,255,255,0.03);
-  --color-border-strong: rgba(255,255,255,0.12);
+  --color-border: rgba(255, 255, 255, 0.06);
+  --color-border-subtle: rgba(255, 255, 255, 0.03);
+  --color-border-strong: rgba(255, 255, 255, 0.12);
   --color-border-focus: var(--color-brand);
 
   --color-text: #ededf0;
@@ -33,44 +34,127 @@
   --color-info: #60a5fa;
 
   --glow-brand: radial-gradient(circle at 50% 50%, var(--color-brand-muted) 0%, transparent 60%);
-  --glow-ember: radial-gradient(circle at 50% 50%, rgba(245,158,11,0.12) 0%, transparent 60%);
+  --glow-ember: radial-gradient(circle at 50% 50%, rgba(245, 158, 11, 0.12) 0%, transparent 60%);
 
   color-scheme: dark;
 }
 
 :root {
-  --font-display: 'Instrument Serif', 'Cormorant Garamond', Georgia, serif;
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  --font-display: "Instrument Serif", "Cormorant Garamond", Georgia, serif;
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
 
-  --fs-11: 11px; --fs-12: 12px; --fs-13: 13px; --fs-14: 14px;
-  --fs-16: 16px; --fs-20: 20px; --fs-24: 24px; --fs-32: 32px;
-  --fs-48: 48px; --fs-72: 72px; --fs-96: 96px; --fs-128: 128px;
+  --fs-11: 11px;
+  --fs-12: 12px;
+  --fs-13: 13px;
+  --fs-14: 14px;
+  --fs-16: 16px;
+  --fs-20: 20px;
+  --fs-24: 24px;
+  --fs-32: 32px;
+  --fs-48: 48px;
+  --fs-72: 72px;
+  --fs-96: 96px;
+  --fs-128: 128px;
 
-  --s-1:4px; --s-2:8px; --s-3:12px; --s-4:16px; --s-5:20px; --s-6:24px;
-  --s-8:32px; --s-10:40px; --s-12:48px; --s-16:64px; --s-20:80px;
-  --s-24:96px; --s-32:128px; --s-40:160px; --s-48:192px;
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+  --s-12: 48px;
+  --s-16: 64px;
+  --s-20: 80px;
+  --s-24: 96px;
+  --s-32: 128px;
+  --s-40: 160px;
+  --s-48: 192px;
 
-  --r-sm:3px; --r-md:6px; --r-lg:10px; --r-xl:16px; --r-2xl:24px; --r-pill:999px;
+  --r-sm: 3px;
+  --r-md: 6px;
+  --r-lg: 10px;
+  --r-xl: 16px;
+  --r-2xl: 24px;
+  --r-pill: 999px;
 
-  --shadow-sm: 0 1px 2px rgba(0,0,0,0.20);
-  --shadow-md: 0 8px 24px rgba(0,0,0,0.32);
-  --shadow-lg: 0 20px 60px rgba(0,0,0,0.50);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.32);
+  --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.5);
 }
 
-*{box-sizing:border-box}
-html{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
-body{margin:0;font-family:var(--font-sans);font-size:var(--fs-14);line-height:1.55;color:var(--color-text);background:var(--color-surface-0);transition:background 600ms ease, color 600ms ease}
-body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.5 0'/></filter><rect width='200' height='200' filter='url(%23n)' opacity='0.5'/></svg>");opacity:0.025;mix-blend-mode:overlay}
-::selection{background:var(--color-brand);color:var(--color-brand-contrast)}
-::-webkit-scrollbar{width:8px;height:8px}
-::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:var(--color-surface-3);border-radius:4px}
-::-webkit-scrollbar-thumb:hover{background:var(--color-surface-4)}
+* {
+  box-sizing: border-box;
+}
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--fs-14);
+  line-height: 1.55;
+  color: var(--color-text);
+  background: var(--color-surface-0);
+  transition:
+    background 600ms ease,
+    color 600ms ease;
+}
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.5 0'/></filter><rect width='200' height='200' filter='url(%23n)' opacity='0.5'/></svg>");
+  opacity: 0.025;
+  mix-blend-mode: overlay;
+}
+::selection {
+  background: var(--color-brand);
+  color: var(--color-brand-contrast);
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-surface-3);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-surface-4);
+}
 
-.mono{font-family:var(--font-mono);font-feature-settings:'tnum';letter-spacing:-0.02em}
-.display{font-family:var(--font-display);font-weight:400;letter-spacing:-0.02em;line-height:0.95}
-.eyebrow{font-family:var(--font-mono);font-size:11px;text-transform:uppercase;letter-spacing:0.18em;color:var(--color-text-tertiary)}
-.eyebrow.brand{color:var(--color-brand)}
+.mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum";
+  letter-spacing: -0.02em;
+}
+.display {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 0.95;
+}
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--color-text-tertiary);
+}
+.eyebrow.brand {
+  color: var(--color-brand);
+}
 
-a{color:inherit;text-decoration:none}
+a {
+  color: inherit;
+  text-decoration: none;
+}

@@ -1,8 +1,8 @@
-import { readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import YAML from 'yaml';
+import { readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import YAML from "yaml";
 
-type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
+type TaskPriority = "low" | "normal" | "high" | "urgent";
 
 interface TaskRecord {
   id: string;
@@ -124,13 +124,13 @@ function defaultPrint(line: string): void {
 }
 
 function resolveDaemon(storageRoot: string): { baseUrl: string; token: string } {
-  const port = Number(readFileSync(join(storageRoot, 'port'), 'utf8').trim());
-  const token = readFileSync(join(storageRoot, 'token'), 'utf8').trim();
+  const port = Number(readFileSync(join(storageRoot, "port"), "utf8").trim());
+  const token = readFileSync(join(storageRoot, "token"), "utf8").trim();
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error(`penumbra task: invalid daemon port in ${join(storageRoot, 'port')}`);
+    throw new Error(`penumbra task: invalid daemon port in ${join(storageRoot, "port")}`);
   }
   if (!token) {
-    throw new Error(`penumbra task: empty daemon token in ${join(storageRoot, 'token')}`);
+    throw new Error(`penumbra task: empty daemon token in ${join(storageRoot, "token")}`);
   }
   return { baseUrl: `http://127.0.0.1:${port}`, token };
 }
@@ -142,11 +142,11 @@ function prettyTask(task: TaskRecord): string {
     `kind=${task.kind}`,
     `created_by=${task.created_by_kind}:${task.created_by_id}`,
     `prompt=${task.prompt}`,
-  ].join('\n');
+  ].join("\n");
 }
 
 function formatTimestamp(ts: number | null | undefined): string {
-  if (ts == null) return '—';
+  if (ts == null) return "—";
   return new Date(ts).toISOString();
 }
 
@@ -159,8 +159,12 @@ function formatMsMinutes(ms: number | null | undefined): string {
   return `${(safeMs / 60_000).toFixed(1)}m`;
 }
 
-function formatPercent(consumed: number | null | undefined, budget: number | null | undefined): number {
-  if (!Number.isFinite(consumed ?? NaN) || !Number.isFinite(budget ?? NaN) || (budget ?? 0) <= 0) return 0;
+function formatPercent(
+  consumed: number | null | undefined,
+  budget: number | null | undefined,
+): number {
+  if (!Number.isFinite(consumed ?? NaN) || !Number.isFinite(budget ?? NaN) || (budget ?? 0) <= 0)
+    return 0;
   return Math.round(((consumed ?? 0) / (budget ?? 1)) * 100);
 }
 
@@ -170,36 +174,49 @@ function formatDollars(cents: number | null | undefined): string {
 }
 
 function renderStatus(session: MaestroSessionResponse): string {
-  if (session.terminated_at == null) return 'running';
-  return `terminated:${session.termination_reason ?? 'unknown'}`;
+  if (session.terminated_at == null) return "running";
+  return `terminated:${session.termination_reason ?? "unknown"}`;
 }
 
 function prettyMaestroSession(session: MaestroSessionResponse): string {
-  const wallClockUsedMs = session.terminated_at == null ? Date.now() - session.started_at : session.terminated_at - session.started_at;
+  const wallClockUsedMs =
+    session.terminated_at == null
+      ? Date.now() - session.started_at
+      : session.terminated_at - session.started_at;
   const wallPct = formatPercent(wallClockUsedMs, session.wall_clock_budget_ms);
   const costPct = formatPercent(session.cost_consumed_cents, session.cost_budget_cents);
   const subPct = formatPercent(session.sub_dispatches_consumed, session.sub_dispatch_budget);
   return [
-    'Maestro session',
+    "Maestro session",
     `  agent:               ${session.agent_id}`,
-    `  chain:               ${session.chain_handoff_id ?? '—'}`,
+    `  chain:               ${session.chain_handoff_id ?? "—"}`,
     `  started:             ${formatTimestamp(session.started_at)} (${formatElapsedMinutes(session.started_at)}m ago)`,
     `  wall clock:          ${formatMsMinutes(wallClockUsedMs)} / ${formatMsMinutes(session.wall_clock_budget_ms)}  (${wallPct}%)`,
     `  cost:                ${formatDollars(session.cost_consumed_cents)} / ${formatDollars(session.cost_budget_cents)}  (${costPct}%)`,
     `  sub-dispatches:      ${session.sub_dispatches_consumed ?? 0} / ${session.sub_dispatch_budget}  (${subPct}%)`,
     `  warned at:           ${formatTimestamp(session.soft_warned_at)}`,
     `  status:              ${renderStatus(session)}`,
-  ].join('\n');
+  ].join("\n");
 }
 
-async function tryFetchMaestroSession(opts: { id: string; storageRoot: string; fetch?: typeof fetch; daemon: { baseUrl: string; token: string } | null }): Promise<MaestroSessionResponse | null> {
+async function tryFetchMaestroSession(opts: {
+  id: string;
+  storageRoot: string;
+  fetch?: typeof fetch;
+  daemon: { baseUrl: string; token: string } | null;
+}): Promise<MaestroSessionResponse | null> {
   try {
-    const res = await (opts.fetch ?? fetch)(opts.fetch ? `/maestro/sessions/${opts.id}` : `${opts.daemon!.baseUrl}/maestro/sessions/${opts.id}`, {
-      headers: opts.daemon ? { authorization: `Bearer ${opts.daemon.token}` } : undefined,
-    });
+    const res = await (opts.fetch ?? fetch)(
+      opts.fetch
+        ? `/maestro/sessions/${opts.id}`
+        : `${opts.daemon!.baseUrl}/maestro/sessions/${opts.id}`,
+      {
+        headers: opts.daemon ? { authorization: `Bearer ${opts.daemon.token}` } : undefined,
+      },
+    );
     if (res.status === 404) return null;
     if (!res.ok) return null;
-    return await res.json() as MaestroSessionResponse;
+    return (await res.json()) as MaestroSessionResponse;
   } catch {
     return null;
   }
@@ -207,29 +224,30 @@ async function tryFetchMaestroSession(opts: { id: string; storageRoot: string; f
 
 function buildNewTaskPayload(opts: RunTaskNewOpts): Record<string, unknown> {
   if (!opts.prompt) {
-    throw new Error('penumbra task new: --prompt is required when not using --from-file');
+    throw new Error("penumbra task new: --prompt is required when not using --from-file");
   }
-  if (opts.kind === 'orchestrate' && (opts.allow_agents ?? []).length === 0) {
-    throw new Error('penumbra task new: kind=orchestrate requires at least one --allow-agent');
+  if (opts.kind === "orchestrate" && (opts.allow_agents ?? []).length === 0) {
+    throw new Error("penumbra task new: kind=orchestrate requires at least one --allow-agent");
   }
   const eligibility: Record<string, unknown> = {};
   if ((opts.require_tags ?? []).length > 0) eligibility.required_tags = opts.require_tags;
   if (opts.min_tier) eligibility.min_tier = opts.min_tier;
   if ((opts.allow_agents ?? []).length > 0) eligibility.allow_agents = opts.allow_agents;
   const bounds: Record<string, unknown> = {};
-  if (opts.bounds_wall_clock_min != null) bounds.wall_clock_ms = opts.bounds_wall_clock_min * 60_000;
+  if (opts.bounds_wall_clock_min != null)
+    bounds.wall_clock_ms = opts.bounds_wall_clock_min * 60_000;
   if (opts.bounds_cost_cents != null) bounds.cost_cents = opts.bounds_cost_cents;
   if (opts.bounds_sub_dispatches != null) bounds.max_sub_dispatches = opts.bounds_sub_dispatches;
   const payload: Record<string, unknown> = {
     prompt: opts.prompt,
-    priority: opts.priority ?? 'normal',
+    priority: opts.priority ?? "normal",
     eligibility: Object.keys(eligibility).length > 0 ? eligibility : undefined,
     bounds: Object.keys(bounds).length > 0 ? bounds : undefined,
     requires_review: opts.require_review ?? false,
     acceptance_criteria: opts.acceptance,
-    created_by_kind: 'human',
-    created_by_id: 'cli',
-    kind: opts.kind ?? 'work',
+    created_by_kind: "human",
+    created_by_id: "cli",
+    kind: opts.kind ?? "work",
   };
   applyGhCreate(payload, opts);
   return payload;
@@ -255,20 +273,20 @@ export async function runTaskNew(opts: RunTaskNewOpts): Promise<void> {
     applyGhCreate(body, opts);
   }
   const daemon = opts.fetch ? null : resolveDaemon(opts.storageRoot);
-  const res = await (opts.fetch ?? fetch)(opts.fetch ? '/tasks' : `${daemon!.baseUrl}/tasks`, {
-    method: 'POST',
+  const res = await (opts.fetch ?? fetch)(opts.fetch ? "/tasks" : `${daemon!.baseUrl}/tasks`, {
+    method: "POST",
     headers: {
       ...(daemon ? { authorization: `Bearer ${daemon.token}` } : {}),
-      'content-type': 'application/json',
-      'x-penumbra-origin': 'cli',
+      "content-type": "application/json",
+      "x-penumbra-origin": "cli",
     },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`penumbra task new: daemon /tasks returned HTTP ${res.status}`);
-  const created = await res.json() as {
+  const created = (await res.json()) as {
     task_id: string;
     gh_issue_url?: string;
-    gh_create_status?: 'queued' | 'pending' | 'created' | 'failed';
+    gh_create_status?: "queued" | "pending" | "created" | "failed";
     gh_create_error?: string | null;
   };
   print(created.task_id);
@@ -286,21 +304,24 @@ export async function runTaskNew(opts: RunTaskNewOpts): Promise<void> {
 export async function runTaskList(opts: RunTaskListOpts): Promise<void> {
   const print = opts.print ?? defaultPrint;
   const params = new URLSearchParams();
-  if (opts.status) params.set('status', opts.status);
-  if (opts.kind) params.set('kind', opts.kind);
-  if (opts.mine) params.set('origin', 'cli');
+  if (opts.status) params.set("status", opts.status);
+  if (opts.kind) params.set("kind", opts.kind);
+  if (opts.mine) params.set("origin", "cli");
   const daemon = opts.fetch ? null : resolveDaemon(opts.storageRoot);
-  const res = await (opts.fetch ?? fetch)(opts.fetch ? `/tasks?${params}` : `${daemon!.baseUrl}/tasks?${params}`, {
-    headers: daemon ? { authorization: `Bearer ${daemon.token}` } : undefined,
-  });
+  const res = await (opts.fetch ?? fetch)(
+    opts.fetch ? `/tasks?${params}` : `${daemon!.baseUrl}/tasks?${params}`,
+    {
+      headers: daemon ? { authorization: `Bearer ${daemon.token}` } : undefined,
+    },
+  );
   if (!res.ok) throw new Error(`penumbra task list: daemon /tasks returned HTTP ${res.status}`);
-  const body = await res.json() as TaskListResponse;
+  const body = (await res.json()) as TaskListResponse;
   if (opts.json) {
     print(JSON.stringify(body, null, 2));
     return;
   }
   if (body.tasks.length === 0) {
-    print('(no tasks)');
+    print("(no tasks)");
     return;
   }
   for (const task of body.tasks) print(prettyTask(task));
@@ -309,133 +330,189 @@ export async function runTaskList(opts: RunTaskListOpts): Promise<void> {
 export async function runTaskShow(opts: RunTaskShowOpts): Promise<void> {
   const print = opts.print ?? defaultPrint;
   const daemon = opts.fetch ? null : resolveDaemon(opts.storageRoot);
-  const res = await (opts.fetch ?? fetch)(opts.fetch ? `/tasks/${opts.id}?include=lease,events` : `${daemon!.baseUrl}/tasks/${opts.id}?include=lease,events`, {
-    headers: daemon ? { authorization: `Bearer ${daemon.token}` } : undefined,
-  });
-  if (!res.ok) throw new Error(`penumbra task show: daemon /tasks/${opts.id} returned HTTP ${res.status}`);
-  const body = await res.json() as TaskShowResponse;
+  const res = await (opts.fetch ?? fetch)(
+    opts.fetch
+      ? `/tasks/${opts.id}?include=lease,events`
+      : `${daemon!.baseUrl}/tasks/${opts.id}?include=lease,events`,
+    {
+      headers: daemon ? { authorization: `Bearer ${daemon.token}` } : undefined,
+    },
+  );
+  if (!res.ok)
+    throw new Error(`penumbra task show: daemon /tasks/${opts.id} returned HTTP ${res.status}`);
+  const body = (await res.json()) as TaskShowResponse;
   if (opts.json) {
     print(JSON.stringify(body, null, 2));
     return;
   }
   print(prettyTask(body));
-  if (body.kind === 'orchestrate') {
-    const session = await tryFetchMaestroSession({ id: body.id, storageRoot: opts.storageRoot, fetch: opts.fetch, daemon });
+  if (body.kind === "orchestrate") {
+    const session = await tryFetchMaestroSession({
+      id: body.id,
+      storageRoot: opts.storageRoot,
+      fetch: opts.fetch,
+      daemon,
+    });
     if (session) print(prettyMaestroSession(session));
   }
 }
 
 export async function runTaskCancel(opts: RunTaskCancelOpts): Promise<void> {
   const daemon = opts.fetch ? null : resolveDaemon(opts.storageRoot);
-  const res = await (opts.fetch ?? fetch)(opts.fetch ? `/tasks/${opts.id}/cancel` : `${daemon!.baseUrl}/tasks/${opts.id}/cancel`, {
-    method: 'POST',
-    headers: {
-      ...(daemon ? { authorization: `Bearer ${daemon.token}` } : {}),
-      'content-type': 'application/json',
+  const res = await (opts.fetch ?? fetch)(
+    opts.fetch ? `/tasks/${opts.id}/cancel` : `${daemon!.baseUrl}/tasks/${opts.id}/cancel`,
+    {
+      method: "POST",
+      headers: {
+        ...(daemon ? { authorization: `Bearer ${daemon.token}` } : {}),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ reason: opts.reason }),
     },
-    body: JSON.stringify({ reason: opts.reason }),
-  });
-  if (!res.ok) throw new Error(`penumbra task cancel: daemon /tasks/${opts.id}/cancel returned HTTP ${res.status}`);
+  );
+  if (!res.ok)
+    throw new Error(
+      `penumbra task cancel: daemon /tasks/${opts.id}/cancel returned HTTP ${res.status}`,
+    );
 }
 
 export async function runTaskReview(opts: RunTaskReviewOpts): Promise<void> {
   const print = opts.print ?? defaultPrint;
   const daemon = opts.fetch ? null : resolveDaemon(opts.storageRoot);
-  const leaseRes = await (opts.fetch ?? fetch)(opts.fetch ? '/tasks/lease' : `${daemon!.baseUrl}/tasks/lease`, {
-    method: 'POST',
-    headers: {
-      ...(daemon ? { authorization: `Bearer ${daemon.token}` } : {}),
-      'content-type': 'application/json',
+  const leaseRes = await (opts.fetch ?? fetch)(
+    opts.fetch ? "/tasks/lease" : `${daemon!.baseUrl}/tasks/lease`,
+    {
+      method: "POST",
+      headers: {
+        ...(daemon ? { authorization: `Bearer ${daemon.token}` } : {}),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ agent_id: "cli-human" }),
     },
-    body: JSON.stringify({ agent_id: 'cli-human' }),
-  });
+  );
   if (leaseRes.status !== 200) {
     print(`task ${opts.id} is not claimable`);
     return;
   }
-  const lease = await leaseRes.json() as TaskLeaseResponse;
+  const lease = (await leaseRes.json()) as TaskLeaseResponse;
   if (lease.task_id !== opts.id) {
-    await (opts.fetch ?? fetch)(opts.fetch ? `/tasks/${lease.task_id}/cancel` : `${daemon!.baseUrl}/tasks/${lease.task_id}/cancel`, {
-      method: 'POST',
-      headers: {
-        ...(daemon ? { authorization: `Bearer ${daemon.token}` } : {}),
-        'content-type': 'application/json',
+    await (opts.fetch ?? fetch)(
+      opts.fetch
+        ? `/tasks/${lease.task_id}/cancel`
+        : `${daemon!.baseUrl}/tasks/${lease.task_id}/cancel`,
+      {
+        method: "POST",
+        headers: {
+          ...(daemon ? { authorization: `Bearer ${daemon.token}` } : {}),
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ reason: `claimed by review flow for ${opts.id}` }),
       },
-      body: JSON.stringify({ reason: `claimed by review flow for ${opts.id}` }),
-    });
+    );
     print(`task ${opts.id} is not claimable`);
     return;
   }
-  const taskRes = await (opts.fetch ?? fetch)(opts.fetch ? `/tasks/${opts.id}?include=lease,events` : `${daemon!.baseUrl}/tasks/${opts.id}?include=lease,events`, {
-    headers: daemon ? { authorization: `Bearer ${daemon.token}` } : undefined,
-  });
-  const task = await taskRes.json() as TaskShowResponse;
-  const editor = opts.editor ?? process.env.EDITOR ?? 'vi';
-  const tmpPath = join(process.env.TMPDIR ?? '/tmp', `penumbra-task-review-${opts.id}.yaml`);
+  const taskRes = await (opts.fetch ?? fetch)(
+    opts.fetch
+      ? `/tasks/${opts.id}?include=lease,events`
+      : `${daemon!.baseUrl}/tasks/${opts.id}?include=lease,events`,
+    {
+      headers: daemon ? { authorization: `Bearer ${daemon.token}` } : undefined,
+    },
+  );
+  const task = (await taskRes.json()) as TaskShowResponse;
+  const editor = opts.editor ?? process.env.EDITOR ?? "vi";
+  const tmpPath = join(process.env.TMPDIR ?? "/tmp", `penumbra-task-review-${opts.id}.yaml`);
   const scaffold = [
     `prompt: ${JSON.stringify(task.prompt)}`,
     `acceptance_criteria: ${JSON.stringify(task.acceptance_criteria)}`,
-    'passed: true',
-    'notes: |',
-    '  ',
-  ].join('\n');
+    "passed: true",
+    "notes: |",
+    "  ",
+  ].join("\n");
   await Bun.write(tmpPath, scaffold);
-  const proc = Bun.spawn({ cmd: [editor, tmpPath], stdin: 'inherit', stdout: 'inherit', stderr: 'inherit' });
+  const proc = Bun.spawn({
+    cmd: [editor, tmpPath],
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  });
   await proc.exited;
   const parsed = YAML.parse(await Bun.file(tmpPath).text()) as { passed?: boolean; notes?: string };
-  if (parsed?.passed !== true || typeof parsed?.notes !== 'string') {
-    throw new Error('penumbra task review: editor file must contain passed: true and notes');
+  if (parsed?.passed !== true || typeof parsed?.notes !== "string") {
+    throw new Error("penumbra task review: editor file must contain passed: true and notes");
   }
-  const completeRes = await (opts.fetch ?? fetch)(opts.fetch ? `/tasks/${opts.id}/complete` : `${daemon!.baseUrl}/tasks/${opts.id}/complete`, {
-    method: 'POST',
-    headers: {
-      ...(daemon ? { authorization: `Bearer ${daemon.token}` } : {}),
-      'content-type': 'application/json',
+  const completeRes = await (opts.fetch ?? fetch)(
+    opts.fetch ? `/tasks/${opts.id}/complete` : `${daemon!.baseUrl}/tasks/${opts.id}/complete`,
+    {
+      method: "POST",
+      headers: {
+        ...(daemon ? { authorization: `Bearer ${daemon.token}` } : {}),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        lease_id: lease.lease_id,
+        result_summary: "review completed",
+        review_verdict: { passed: parsed.passed, notes: parsed.notes },
+      }),
     },
-    body: JSON.stringify({
-      lease_id: lease.lease_id,
-      result_summary: 'review completed',
-      review_verdict: { passed: parsed.passed, notes: parsed.notes },
-    }),
-  });
-  if (!completeRes.ok) throw new Error(`penumbra task review: daemon /tasks/${opts.id}/complete returned HTTP ${completeRes.status}`);
+  );
+  if (!completeRes.ok)
+    throw new Error(
+      `penumbra task review: daemon /tasks/${opts.id}/complete returned HTTP ${completeRes.status}`,
+    );
   print(`reviewed ${opts.id}`);
 }
 
 export async function runTaskWatch(opts: RunTaskWatchOpts): Promise<void> {
   const print = opts.print ?? defaultPrint;
   const daemon = opts.fetch ? null : resolveDaemon(opts.storageRoot);
-  const res = await (opts.fetch ?? fetch)(opts.fetch ? '/tasks/events' : `${daemon!.baseUrl}/tasks/events`, {
-    headers: daemon ? { authorization: `Bearer ${daemon.token}` } : undefined,
-  });
-  if (!res.ok || !res.body) throw new Error(`penumbra task watch: daemon /tasks/events returned HTTP ${res.status}`);
+  const res = await (opts.fetch ?? fetch)(
+    opts.fetch ? "/tasks/events" : `${daemon!.baseUrl}/tasks/events`,
+    {
+      headers: daemon ? { authorization: `Bearer ${daemon.token}` } : undefined,
+    },
+  );
+  if (!res.ok || !res.body)
+    throw new Error(`penumbra task watch: daemon /tasks/events returned HTTP ${res.status}`);
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
-  let buf = '';
+  let buf = "";
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     buf += decoder.decode(value, { stream: true });
     let idx: number;
-    while ((idx = buf.indexOf('\n\n')) >= 0) {
+    while ((idx = buf.indexOf("\n\n")) >= 0) {
       const chunk = buf.slice(0, idx);
       buf = buf.slice(idx + 2);
-      const dataLine = chunk.split('\n').find((line) => line.startsWith('data: '));
+      const dataLine = chunk.split("\n").find((line) => line.startsWith("data: "));
       if (!dataLine) continue;
-      const event = JSON.parse(dataLine.slice(6)) as { kind: string; task_id: string; actor: string | null; ts: string };
-      if (event.kind === 'orchestrate_spawned') {
-        print(`[${event.ts}] orchestrate-spawned task=${event.task_id} agent=${(event as unknown as { agent: string }).agent} chain=${(event as unknown as { chain_handoff_id: string }).chain_handoff_id.slice(0, 8)}`);
+      const event = JSON.parse(dataLine.slice(6)) as {
+        kind: string;
+        task_id: string;
+        actor: string | null;
+        ts: string;
+      };
+      if (event.kind === "orchestrate_spawned") {
+        print(
+          `[${event.ts}] orchestrate-spawned task=${event.task_id} agent=${(event as unknown as { agent: string }).agent} chain=${(event as unknown as { chain_handoff_id: string }).chain_handoff_id.slice(0, 8)}`,
+        );
         continue;
       }
-      if (event.kind === 'orchestrate_warning') {
-        print(`[${event.ts}] orchestrate-warning task=${event.task_id} pct=${(event as unknown as { pct: number }).pct}%`);
+      if (event.kind === "orchestrate_warning") {
+        print(
+          `[${event.ts}] orchestrate-warning task=${event.task_id} pct=${(event as unknown as { pct: number }).pct}%`,
+        );
         continue;
       }
-      if (event.kind === 'orchestrate_terminated') {
-        print(`[${event.ts}] orchestrate-terminated task=${event.task_id} reason=${(event as unknown as { reason: string }).reason}`);
+      if (event.kind === "orchestrate_terminated") {
+        print(
+          `[${event.ts}] orchestrate-terminated task=${event.task_id} reason=${(event as unknown as { reason: string }).reason}`,
+        );
         continue;
       }
-      print(`[${event.ts}] ${event.kind} task=${event.task_id} actor=${event.actor ?? '-'}`);
+      print(`[${event.ts}] ${event.kind} task=${event.task_id} actor=${event.actor ?? "-"}`);
     }
   }
 }

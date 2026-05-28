@@ -33,11 +33,12 @@ function resetStores() {
 
 beforeEach(() => {
   resetStores();
-  globalThis.fetch = mock(async () =>
-    new Response(JSON.stringify({ status: "ok" }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    }),
+  globalThis.fetch = mock(
+    async () =>
+      new Response(JSON.stringify({ status: "ok" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
   ) as unknown as typeof fetch;
 });
 

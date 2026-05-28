@@ -1,6 +1,6 @@
-import { z } from 'zod';
-import { toTextContent } from '@nova/mcp-shared';
-import type { DaemonClient } from '../daemon-client.js';
+import { z } from "zod";
+import { toTextContent } from "@nova/mcp-shared";
+import type { DaemonClient } from "../daemon-client.js";
 
 export const MemoryWriteT2InputShape = {
   title: z.string().min(1),
@@ -14,7 +14,7 @@ export const MemoryWriteT2InputShape = {
 
 const MemoryWriteT2Schema = z.object(MemoryWriteT2InputShape).strict();
 
-export function memoryWriteT2Handler(daemon: Pick<DaemonClient, 'memoryWriteT2'>) {
+export function memoryWriteT2Handler(daemon: Pick<DaemonClient, "memoryWriteT2">) {
   return async (input: unknown) => {
     const parsed = MemoryWriteT2Schema.parse(input);
     return toTextContent(await daemon.memoryWriteT2(parsed));

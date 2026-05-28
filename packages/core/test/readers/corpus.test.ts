@@ -1,12 +1,13 @@
-import { describe, expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 try {
-  if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin")
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
 } catch {}
-import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
-import { migrate } from '../../src/db/migrations.js';
-import { TestEmbedder } from '../../src/embedder/test-embedder.js';
-import { buildCorpus, listCorpora, queryCorpus, removeCorpus } from '../../src/readers/corpus.js';
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { migrate } from "../../src/db/migrations.js";
+import { TestEmbedder } from "../../src/embedder/test-embedder.js";
+import { buildCorpus, listCorpora, queryCorpus, removeCorpus } from "../../src/readers/corpus.js";
 
 const insertT2 = (
   db: Database,
@@ -15,56 +16,61 @@ const insertT2 = (
 ) => {
   const obs_type = opts.obs_type ?? null;
   const concepts = opts.concepts ? JSON.stringify(opts.concepts) : null;
-  const body = opts.body ?? 'b';
+  const body = opts.body ?? "b";
   db.run(
     `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids, window_start, window_end, title, body, metadata_json, created_at, updated_at, obs_type, concepts)
      VALUES (?, 'u', 'rollup', '[]', '2026-05-03', '2026-05-03', 't', ?, '{}', '2026-05-03', '2026-05-03', ?, ?)`,
     [id, body, obs_type, concepts],
   );
   if (opts.vec) {
-    const rowid = db.query<{ rowid: number }, [string]>(`SELECT rowid FROM t2_memories WHERE memory_id=?`).get(id)!.rowid;
-    db.run(`INSERT INTO t2_vec(rowid, embedding) VALUES (?, ?)`, [rowid, new Float32Array(opts.vec)]);
+    const rowid = db
+      .query<{ rowid: number }, [string]>(`SELECT rowid FROM t2_memories WHERE memory_id=?`)
+      .get(id)!.rowid;
+    db.run(`INSERT INTO t2_vec(rowid, embedding) VALUES (?, ?)`, [
+      rowid,
+      new Float32Array(opts.vec),
+    ]);
   }
 };
 
-describe('corpus', () => {
-  test('buildCorpus selects t2 rows by filter and persists membership', async () => {
-    const db = new Database(':memory:');
+describe("corpus", () => {
+  test("buildCorpus selects t2 rows by filter and persists membership", async () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 4 });
-    insertT2(db, 'm1', { obs_type: 'feature', concepts: ['acp'] });
-    insertT2(db, 'm2', { obs_type: 'bugfix', concepts: ['acp'] });
-    insertT2(db, 'm3', { obs_type: 'feature', concepts: ['acp'] });
-    insertT2(db, 'm4', { obs_type: 'feature', concepts: ['mcp'] });
+    insertT2(db, "m1", { obs_type: "feature", concepts: ["acp"] });
+    insertT2(db, "m2", { obs_type: "bugfix", concepts: ["acp"] });
+    insertT2(db, "m3", { obs_type: "feature", concepts: ["acp"] });
+    insertT2(db, "m4", { obs_type: "feature", concepts: ["mcp"] });
 
     const result = await buildCorpus(db, new TestEmbedder({ dim: 4 }), {
-      name: 'acp-features',
-      description: 'Feature work on ACP',
-      filter: { obs_type: 'feature', concept: 'acp' },
+      name: "acp-features",
+      description: "Feature work on ACP",
+      filter: { obs_type: "feature", concept: "acp" },
     });
     expect(result.member_count).toBe(2);
 
     const list = listCorpora(db);
-    expect(list.find((c) => c.name === 'acp-features')?.member_count).toBe(2);
+    expect(list.find((c) => c.name === "acp-features")?.member_count).toBe(2);
   });
 
-  test('buildCorpus is idempotent on name (ON CONFLICT replaces members)', async () => {
-    const db = new Database(':memory:');
+  test("buildCorpus is idempotent on name (ON CONFLICT replaces members)", async () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 4 });
-    insertT2(db, 'm1', { obs_type: 'feature' });
-    insertT2(db, 'm2', { obs_type: 'feature' });
-    insertT2(db, 'm3', { obs_type: 'bugfix' });
+    insertT2(db, "m1", { obs_type: "feature" });
+    insertT2(db, "m2", { obs_type: "feature" });
+    insertT2(db, "m3", { obs_type: "bugfix" });
 
     const a = await buildCorpus(db, new TestEmbedder({ dim: 4 }), {
-      name: 'all-features',
-      filter: { obs_type: 'feature' },
+      name: "all-features",
+      filter: { obs_type: "feature" },
     });
     expect(a.member_count).toBe(2);
 
     const b = await buildCorpus(db, new TestEmbedder({ dim: 4 }), {
-      name: 'all-features',
-      filter: { obs_type: 'bugfix' },
+      name: "all-features",
+      filter: { obs_type: "bugfix" },
     });
     expect(b.member_count).toBe(1);
     expect(b.corpus_id).toBe(a.corpus_id);
@@ -73,52 +79,53 @@ describe('corpus', () => {
     expect(list[0]!.member_count).toBe(1);
   });
 
-  test('queryCorpus restricts vector rerank to members only', async () => {
-    const db = new Database(':memory:');
+  test("queryCorpus restricts vector rerank to members only", async () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 4 });
-    insertT2(db, 'm1', { obs_type: 'feature', body: 'codex acp wiring', vec: [1, 0, 0, 0] });
-    insertT2(db, 'm2', { obs_type: 'bugfix', body: 'codex acp crash', vec: [0.9, 0, 0, 0] });
-    insertT2(db, 'm3', { obs_type: 'feature', body: 'banana split', vec: [0, 1, 0, 0] });
+    insertT2(db, "m1", { obs_type: "feature", body: "codex acp wiring", vec: [1, 0, 0, 0] });
+    insertT2(db, "m2", { obs_type: "bugfix", body: "codex acp crash", vec: [0.9, 0, 0, 0] });
+    insertT2(db, "m3", { obs_type: "feature", body: "banana split", vec: [0, 1, 0, 0] });
 
     await buildCorpus(db, new TestEmbedder({ dim: 4 }), {
-      name: 'features-only',
-      filter: { obs_type: 'feature' },
+      name: "features-only",
+      filter: { obs_type: "feature" },
     });
     const out = await queryCorpus(db, new TestEmbedder({ dim: 4 }), {
-      name: 'features-only',
-      query: 'codex',
+      name: "features-only",
+      query: "codex",
       limit: 5,
     });
     const ids = out.map((h) => h.id).sort();
-    expect(ids).toEqual(['m1', 'm3']);
-    expect(out.find((h) => h.id === 'm2')).toBeUndefined();
+    expect(ids).toEqual(["m1", "m3"]);
+    expect(out.find((h) => h.id === "m2")).toBeUndefined();
   });
 
-  test('queryCorpus returns [] for unknown corpus name', async () => {
-    const db = new Database(':memory:');
+  test("queryCorpus returns [] for unknown corpus name", async () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 4 });
     const out = await queryCorpus(db, new TestEmbedder({ dim: 4 }), {
-      name: 'no-such-corpus',
-      query: 'whatever',
+      name: "no-such-corpus",
+      query: "whatever",
     });
     expect(out).toEqual([]);
   });
 
-  test('removeCorpus deletes the corpus and cascades members', async () => {
-    const db = new Database(':memory:');
+  test("removeCorpus deletes the corpus and cascades members", async () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 4 });
-    insertT2(db, 'm1', { obs_type: 'feature' });
+    insertT2(db, "m1", { obs_type: "feature" });
     await buildCorpus(db, new TestEmbedder({ dim: 4 }), {
-      name: 'tmp',
-      filter: { obs_type: 'feature' },
+      name: "tmp",
+      filter: { obs_type: "feature" },
     });
-    expect(removeCorpus(db, 'tmp')).toBe(true);
+    expect(removeCorpus(db, "tmp")).toBe(true);
     expect(listCorpora(db)).toHaveLength(0);
-    const memberCount = db.query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM corpus_members`).get()?.c ?? 0;
+    const memberCount =
+      db.query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM corpus_members`).get()?.c ?? 0;
     expect(memberCount).toBe(0);
-    expect(removeCorpus(db, 'tmp')).toBe(false);
+    expect(removeCorpus(db, "tmp")).toBe(false);
   });
 });

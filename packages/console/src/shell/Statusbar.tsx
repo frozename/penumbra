@@ -16,11 +16,7 @@ export function Statusbar(): JSX.Element {
   const health = useDaemonStore((s) => s.health);
   const port = resolvePort();
   const dotClass =
-    health === "ok"
-      ? "dot dot-ok"
-      : health === "down"
-        ? "dot dot-err"
-        : "dot dot-warn";
+    health === "ok" ? "dot dot-ok" : health === "down" ? "dot dot-err" : "dot dot-warn";
 
   return (
     <footer className="sb">

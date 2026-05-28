@@ -1,17 +1,17 @@
-import type { Meta, StoryObj } from '@storybook/react';
-import { Card, CardHead } from './Card';
-import { Button } from './Button';
+import type { Meta, StoryObj } from "@storybook/react";
+import { Card, CardHead } from "./Card";
+import { Button } from "./Button";
 
 const meta: Meta<typeof Card> = {
-  title: 'UI/Card',
+  title: "UI/Card",
   component: Card,
-  tags: ['autodocs'],
+  tags: ["autodocs"],
 };
 export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Empty: Story = {
-  args: { children: 'Card body content goes here.' },
+  args: { children: "Card body content goes here." },
 };
 
 export const WithHead: Story = {

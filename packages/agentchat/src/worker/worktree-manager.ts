@@ -1,9 +1,6 @@
-import { defaultProjectRegistryPath, loadProjectRegistry, WorktreeManager } from '@penumbra/core';
+import { defaultProjectRegistryPath, loadProjectRegistry, WorktreeManager } from "@penumbra/core";
 
-export function createWorkerWorktreeManager(options?: {
-  rootDir?: string;
-  mainRepoDir?: string;
-}) {
+export function createWorkerWorktreeManager(options?: { rootDir?: string; mainRepoDir?: string }) {
   let projectRegistry: ReturnType<typeof loadProjectRegistry> | undefined;
   try {
     const projectRegistryPath = process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath();
@@ -12,7 +9,8 @@ export function createWorkerWorktreeManager(options?: {
     console.warn(`agentchat-worker: failed to load project registry: ${err}`);
   }
 
-  const shouldResolveProjectRoot = projectRegistry !== undefined && projectRegistry.list().length > 0;
+  const shouldResolveProjectRoot =
+    projectRegistry !== undefined && projectRegistry.list().length > 0;
 
   return new WorktreeManager({
     rootDir: options?.rootDir,

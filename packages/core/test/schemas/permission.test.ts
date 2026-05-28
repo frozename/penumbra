@@ -1,112 +1,164 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it } from "bun:test";
 import {
   PermissionStatusSchema,
   PermissionRequestRowSchema,
   CreatePermissionRequestSchema,
   ApprovePermissionRequestSchema,
-} from '../../src/schemas/permission.js';
+} from "../../src/schemas/permission.js";
 
-describe('PermissionStatusSchema', () => {
-  it('accepts the four lifecycle states', () => {
-    for (const s of ['pending', 'approved', 'rejected', 'expired'] as const) {
+describe("PermissionStatusSchema", () => {
+  it("accepts the four lifecycle states", () => {
+    for (const s of ["pending", "approved", "rejected", "expired"] as const) {
       expect(() => PermissionStatusSchema.parse(s)).not.toThrow();
     }
   });
-  it('rejects unknown statuses', () => {
-    expect(() => PermissionStatusSchema.parse('cancelled')).toThrow();
+  it("rejects unknown statuses", () => {
+    expect(() => PermissionStatusSchema.parse("cancelled")).toThrow();
   });
 });
 
-describe('PermissionRequestRowSchema', () => {
-  it('parses a valid pending row', () => {
+describe("PermissionRequestRowSchema", () => {
+  it("parses a valid pending row", () => {
     const row = {
-      permission_id: 'perm-1',
-      parent_handoff_id: 'h-1',
-      conversation_id: 'conv-1',
-      agent_name: 'claude-acp-sonnet',
-      tool_name: 'fs.readTextFile',
+      permission_id: "perm-1",
+      parent_handoff_id: "h-1",
+      conversation_id: "conv-1",
+      agent_name: "claude-acp-sonnet",
+      tool_name: "fs.readTextFile",
       raw_input_json: '{"path":"src/foo.ts"}',
-      status: 'pending',
+      status: "pending",
       remember_scope: null,
       decision_reason: null,
       decided_by: null,
-      ttl_at: '2026-04-28T12:05:00.000Z',
-      created_at: '2026-04-28T12:00:00.000Z',
+      ttl_at: "2026-04-28T12:05:00.000Z",
+      created_at: "2026-04-28T12:00:00.000Z",
       decided_at: null,
     };
     expect(() => PermissionRequestRowSchema.parse(row)).not.toThrow();
   });
 });
 
-describe('CreatePermissionRequestSchema', () => {
-  it('requires all non-optional fields', () => {
+describe("CreatePermissionRequestSchema", () => {
+  it("requires all non-optional fields", () => {
     const ok = {
-      permission_id: 'perm-1',
-      parent_handoff_id: 'h-1',
-      conversation_id: 'conv-1',
-      agent_name: 'claude-acp-sonnet',
-      tool_name: 'fs.readTextFile',
-      raw_input: { path: 'src/foo.ts' },
+      permission_id: "perm-1",
+      parent_handoff_id: "h-1",
+      conversation_id: "conv-1",
+      agent_name: "claude-acp-sonnet",
+      tool_name: "fs.readTextFile",
+      raw_input: { path: "src/foo.ts" },
     };
     expect(() => CreatePermissionRequestSchema.parse(ok)).not.toThrow();
   });
-  it('rejects missing permission_id', () => {
-    expect(() => CreatePermissionRequestSchema.parse({
-      parent_handoff_id: 'h-1', conversation_id: 'c', agent_name: 'a', tool_name: 't', raw_input: {},
-    })).toThrow();
+  it("rejects missing permission_id", () => {
+    expect(() =>
+      CreatePermissionRequestSchema.parse({
+        parent_handoff_id: "h-1",
+        conversation_id: "c",
+        agent_name: "a",
+        tool_name: "t",
+        raw_input: {},
+      }),
+    ).toThrow();
   });
-  it('accepts optional ttl_seconds', () => {
-    expect(() => CreatePermissionRequestSchema.parse({
-      permission_id: 'perm-1', parent_handoff_id: 'h-1', conversation_id: 'c', agent_name: 'a', tool_name: 't', raw_input: {},
-      ttl_seconds: 600,
-    })).not.toThrow();
+  it("accepts optional ttl_seconds", () => {
+    expect(() =>
+      CreatePermissionRequestSchema.parse({
+        permission_id: "perm-1",
+        parent_handoff_id: "h-1",
+        conversation_id: "c",
+        agent_name: "a",
+        tool_name: "t",
+        raw_input: {},
+        ttl_seconds: 600,
+      }),
+    ).not.toThrow();
   });
 });
 
-describe('ApprovePermissionRequestSchema', () => {
-  it('requires decision', () => {
+describe("ApprovePermissionRequestSchema", () => {
+  it("requires decision", () => {
     expect(() => ApprovePermissionRequestSchema.parse({})).toThrow();
   });
-  it('accepts approve with this_dispatch remember', () => {
-    expect(() => ApprovePermissionRequestSchema.parse({
-      decision: 'approve', remember: 'this_dispatch',
-    })).not.toThrow();
+  it("accepts approve with this_dispatch remember", () => {
+    expect(() =>
+      ApprovePermissionRequestSchema.parse({
+        decision: "approve",
+        remember: "this_dispatch",
+      }),
+    ).not.toThrow();
   });
-  it('rejects an unknown remember scope', () => {
-    expect(() => ApprovePermissionRequestSchema.parse({
-      decision: 'approve', remember: 'forever',
-    })).toThrow();
+  it("rejects an unknown remember scope", () => {
+    expect(() =>
+      ApprovePermissionRequestSchema.parse({
+        decision: "approve",
+        remember: "forever",
+      }),
+    ).toThrow();
   });
 });
 
-describe('Schema min(1) constraints', () => {
-  it('CreatePermissionRequestSchema rejects empty permission_id', () => {
-    expect(() => CreatePermissionRequestSchema.parse({
-      permission_id: '', parent_handoff_id: 'h-1', conversation_id: 'c',
-      agent_name: 'a', tool_name: 't', raw_input: {},
-    })).toThrow();
+describe("Schema min(1) constraints", () => {
+  it("CreatePermissionRequestSchema rejects empty permission_id", () => {
+    expect(() =>
+      CreatePermissionRequestSchema.parse({
+        permission_id: "",
+        parent_handoff_id: "h-1",
+        conversation_id: "c",
+        agent_name: "a",
+        tool_name: "t",
+        raw_input: {},
+      }),
+    ).toThrow();
   });
-  it('CreatePermissionRequestSchema rejects empty parent_handoff_id', () => {
-    expect(() => CreatePermissionRequestSchema.parse({
-      permission_id: 'p-1', parent_handoff_id: '', conversation_id: 'c',
-      agent_name: 'a', tool_name: 't', raw_input: {},
-    })).toThrow();
+  it("CreatePermissionRequestSchema rejects empty parent_handoff_id", () => {
+    expect(() =>
+      CreatePermissionRequestSchema.parse({
+        permission_id: "p-1",
+        parent_handoff_id: "",
+        conversation_id: "c",
+        agent_name: "a",
+        tool_name: "t",
+        raw_input: {},
+      }),
+    ).toThrow();
   });
-  it('CreatePermissionRequestSchema rejects ttl_seconds=0 and negative values', () => {
-    expect(() => CreatePermissionRequestSchema.parse({
-      permission_id: 'p-1', parent_handoff_id: 'h-1', conversation_id: 'c',
-      agent_name: 'a', tool_name: 't', raw_input: {}, ttl_seconds: 0,
-    })).toThrow();
-    expect(() => CreatePermissionRequestSchema.parse({
-      permission_id: 'p-1', parent_handoff_id: 'h-1', conversation_id: 'c',
-      agent_name: 'a', tool_name: 't', raw_input: {}, ttl_seconds: -1,
-    })).toThrow();
-    expect(() => CreatePermissionRequestSchema.parse({
-      permission_id: 'p-1', parent_handoff_id: 'h-1', conversation_id: 'c',
-      agent_name: 'a', tool_name: 't', raw_input: {}, ttl_seconds: 1.5,
-    })).toThrow();
+  it("CreatePermissionRequestSchema rejects ttl_seconds=0 and negative values", () => {
+    expect(() =>
+      CreatePermissionRequestSchema.parse({
+        permission_id: "p-1",
+        parent_handoff_id: "h-1",
+        conversation_id: "c",
+        agent_name: "a",
+        tool_name: "t",
+        raw_input: {},
+        ttl_seconds: 0,
+      }),
+    ).toThrow();
+    expect(() =>
+      CreatePermissionRequestSchema.parse({
+        permission_id: "p-1",
+        parent_handoff_id: "h-1",
+        conversation_id: "c",
+        agent_name: "a",
+        tool_name: "t",
+        raw_input: {},
+        ttl_seconds: -1,
+      }),
+    ).toThrow();
+    expect(() =>
+      CreatePermissionRequestSchema.parse({
+        permission_id: "p-1",
+        parent_handoff_id: "h-1",
+        conversation_id: "c",
+        agent_name: "a",
+        tool_name: "t",
+        raw_input: {},
+        ttl_seconds: 1.5,
+      }),
+    ).toThrow();
   });
-  it('ApprovePermissionRequestSchema rejects unknown decision', () => {
-    expect(() => ApprovePermissionRequestSchema.parse({ decision: 'maybe' })).toThrow();
+  it("ApprovePermissionRequestSchema rejects unknown decision", () => {
+    expect(() => ApprovePermissionRequestSchema.parse({ decision: "maybe" })).toThrow();
   });
 });

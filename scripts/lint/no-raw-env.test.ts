@@ -34,10 +34,7 @@ describe("no-raw-env lint", () => {
     mkdirSync(join(fixtureRoot, "packages", "feature", "src"), {
       recursive: true,
     });
-    await Bun.write(
-      file,
-      "const token = process.env.PENUMBRA_TEST_TOKEN;\nconsole.log(token);\n",
-    );
+    await Bun.write(file, "const token = process.env.PENUMBRA_TEST_TOKEN;\nconsole.log(token);\n");
 
     const result = run("packages/**/*.ts");
 

@@ -1,12 +1,12 @@
-import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
-import { migrate } from '../../src/db/migrations.js';
-import { SCHEMA_VERSION } from '../../src/db/schema.js';
+import { afterEach, beforeEach, expect, mock, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { migrate } from "../../src/db/migrations.js";
+import { SCHEMA_VERSION } from "../../src/db/schema.js";
 
-if (process.platform === 'darwin') {
+if (process.platform === "darwin") {
   try {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   } catch {
     // already loaded by a sibling test file — no-op
   }
@@ -20,7 +20,7 @@ beforeEach(() => {
   warnings = [];
   originalWarn = console.warn;
   warnSpy = mock((...args: unknown[]) => {
-    warnings.push(args.map((a) => String(a)).join(' '));
+    warnings.push(args.map((a) => String(a)).join(" "));
   });
   console.warn = warnSpy as unknown as typeof console.warn;
 });
@@ -33,7 +33,7 @@ function insertHandoff(
   db: Database,
   handoffId: string,
   parentHandoffId: string | null,
-  status: string = 'pending',
+  status: string = "pending",
 ): void {
   db.run(
     `INSERT INTO handoffs (
@@ -42,12 +42,12 @@ function insertHandoff(
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
     [
       handoffId,
-      '2026-05-05T00:00:00Z',
-      'proj-1',
-      'conv-1',
-      'agent-a',
-      'agent-b',
-      'msg ' + handoffId,
+      "2026-05-05T00:00:00Z",
+      "proj-1",
+      "conv-1",
+      "agent-a",
+      "agent-b",
+      "msg " + handoffId,
       status,
       parentHandoffId,
     ],
@@ -56,73 +56,73 @@ function insertHandoff(
 
 function getRoots(db: Database): Map<string, string | null> {
   const rows = db
-    .query<{ handoff_id: string; root_handoff_id: string | null }, []>(
-      `SELECT handoff_id, root_handoff_id FROM handoffs`,
-    )
+    .query<
+      { handoff_id: string; root_handoff_id: string | null },
+      []
+    >(`SELECT handoff_id, root_handoff_id FROM handoffs`)
     .all();
   const map = new Map<string, string | null>();
   for (const r of rows) map.set(r.handoff_id, r.root_handoff_id);
   return map;
 }
 
-test('SCHEMA_VERSION matches current version', () => {
-  const db = new Database(':memory:');
+test("SCHEMA_VERSION matches current version", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const row = db
-    .query<{ value: string }, [string]>(
-      `SELECT value FROM db_meta WHERE key = ?`,
-    )
-    .get('schema_version');
+    .query<{ value: string }, [string]>(`SELECT value FROM db_meta WHERE key = ?`)
+    .get("schema_version");
   expect(row?.value).toBe(String(SCHEMA_VERSION));
   db.close();
 });
 
-test('idx_handoffs_root_status index is created', () => {
-  const db = new Database(':memory:');
+test("idx_handoffs_root_status index is created", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
   const idx = db
-    .query<{ name: string }, []>(
-      `SELECT name FROM sqlite_master WHERE type='index' AND name='idx_handoffs_root_status'`,
-    )
+    .query<
+      { name: string },
+      []
+    >(`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_handoffs_root_status'`)
     .all();
   expect(idx.length).toBe(1);
-  expect(idx[0]?.name).toBe('idx_handoffs_root_status');
+  expect(idx[0]?.name).toBe("idx_handoffs_root_status");
   db.close();
 });
 
-test('backfill resolves self-roots, parents, and grandchildren', () => {
-  const db = new Database(':memory:');
+test("backfill resolves self-roots, parents, and grandchildren", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
   // Pre-seed v11 state by inserting rows with NULL root_handoff_id.
-  insertHandoff(db, 'R1', null);
-  insertHandoff(db, 'C1', 'R1');
-  insertHandoff(db, 'G1', 'C1');
-  insertHandoff(db, 'R2', null);
+  insertHandoff(db, "R1", null);
+  insertHandoff(db, "C1", "R1");
+  insertHandoff(db, "G1", "C1");
+  insertHandoff(db, "R2", null);
 
   // Re-run migrate; backfill processes the NULL roots.
   migrate(db, { embeddingDim: 384 });
 
   const roots = getRoots(db);
-  expect(roots.get('R1')).toBe('R1');
-  expect(roots.get('C1')).toBe('R1');
-  expect(roots.get('G1')).toBe('R1');
-  expect(roots.get('R2')).toBe('R2');
+  expect(roots.get("R1")).toBe("R1");
+  expect(roots.get("C1")).toBe("R1");
+  expect(roots.get("G1")).toBe("R1");
+  expect(roots.get("R2")).toBe("R2");
   expect(warnings).toEqual([]);
   db.close();
 });
 
-test('backfill is idempotent on re-run', () => {
-  const db = new Database(':memory:');
+test("backfill is idempotent on re-run", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
-  insertHandoff(db, 'R1', null);
-  insertHandoff(db, 'C1', 'R1');
+  insertHandoff(db, "R1", null);
+  insertHandoff(db, "C1", "R1");
   migrate(db, { embeddingDim: 384 });
   const first = getRoots(db);
 
@@ -130,23 +130,24 @@ test('backfill is idempotent on re-run', () => {
   migrate(db, { embeddingDim: 384 });
   const second = getRoots(db);
 
-  expect(second.get('R1')).toBe(first.get('R1') ?? null);
-  expect(second.get('C1')).toBe(first.get('C1') ?? null);
-  expect(second.get('R1')).toBe('R1');
-  expect(second.get('C1')).toBe('R1');
+  expect(second.get("R1")).toBe(first.get("R1") ?? null);
+  expect(second.get("C1")).toBe(first.get("C1") ?? null);
+  expect(second.get("R1")).toBe("R1");
+  expect(second.get("C1")).toBe("R1");
 
   // Index still exists, no duplicate-index errors thrown.
   const idx = db
-    .query<{ name: string }, []>(
-      `SELECT name FROM sqlite_master WHERE type='index' AND name='idx_handoffs_root_status'`,
-    )
+    .query<
+      { name: string },
+      []
+    >(`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_handoffs_root_status'`)
     .all();
   expect(idx.length).toBe(1);
   db.close();
 });
 
-test('depth-cap fallback self-roots the deepest row with warning', () => {
-  const db = new Database(':memory:');
+test("depth-cap fallback self-roots the deepest row with warning", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
@@ -154,7 +155,7 @@ test('depth-cap fallback self-roots the deepest row with warning', () => {
   // Insert leaf-first so the leaf is processed before any ancestor's
   // root_handoff_id is memoized; with a 16-visit cap the leaf cannot
   // reach d0 within the limit and falls back to self-root.
-  const ids = Array.from({ length: 17 }, (_, i) => 'd' + i);
+  const ids = Array.from({ length: 17 }, (_, i) => "d" + i);
   for (let i = ids.length - 1; i >= 1; i--) {
     insertHandoff(db, ids[i]!, ids[i - 1]!);
   }
@@ -170,23 +171,25 @@ test('depth-cap fallback self-roots the deepest row with warning', () => {
   expect(roots.get(ids[15]!)).toBe(ids[0]);
   expect(roots.get(ids[1]!)).toBe(ids[0]);
 
-  expect(warnings.some((w) => w.includes('depth-cap fallback') && w.includes(ids[16]!))).toBe(true);
+  expect(warnings.some((w) => w.includes("depth-cap fallback") && w.includes(ids[16]!))).toBe(true);
   db.close();
 });
 
-test('orphaned-parent fallback self-roots with warning', () => {
-  const db = new Database(':memory:');
+test("orphaned-parent fallback self-roots with warning", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
   // A points at parent B, but B does not exist in the table.
-  insertHandoff(db, 'A', 'B-missing');
+  insertHandoff(db, "A", "B-missing");
 
   migrate(db, { embeddingDim: 384 });
 
   const roots = getRoots(db);
-  expect(roots.get('A')).toBe('A');
+  expect(roots.get("A")).toBe("A");
 
-  expect(warnings.some((w) => w.includes('orphaned parent fallback') && w.includes('A'))).toBe(true);
+  expect(warnings.some((w) => w.includes("orphaned parent fallback") && w.includes("A"))).toBe(
+    true,
+  );
   db.close();
 });

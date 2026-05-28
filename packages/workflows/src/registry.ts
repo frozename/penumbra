@@ -1,25 +1,25 @@
-import { readdirSync, statSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { readdirSync, statSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import type {
   BuildRegistryOpts,
   RegistryEntry as CoreRegistryEntry,
   RegistryError,
   WorkflowRegistry,
-} from '@penumbra/core';
-import type { WorkflowSpec, Trigger } from './schema.js';
-import { loadMarkdownPlaybook } from './loaders/markdown.js';
-import { loadTsWorkflow } from './loaders/ts.js';
+} from "@penumbra/core";
+import type { WorkflowSpec, Trigger } from "./schema.js";
+import { loadMarkdownPlaybook } from "./loaders/markdown.js";
+import { loadTsWorkflow } from "./loaders/ts.js";
 
 export type RegistryEntry<Spec = WorkflowSpec> = CoreRegistryEntry<Spec> & {
   inputSchema?: unknown;
 };
 
-export type Registry = Omit<WorkflowRegistry<WorkflowSpec, Trigger>, 'entries' | 'getEntry'> & {
+export type Registry = Omit<WorkflowRegistry<WorkflowSpec, Trigger>, "entries" | "getEntry"> & {
   entries(): RegistryEntry<WorkflowSpec>[];
   getEntry(name: string): RegistryEntry<WorkflowSpec> | undefined;
 };
 
-export type { BuildRegistryOpts, RegistryError } from '@penumbra/core';
+export type { BuildRegistryOpts, RegistryError } from "@penumbra/core";
 
 export async function buildRegistry(opts: BuildRegistryOpts): Promise<Registry> {
   const { playbooksDir, workflowsDir } = opts;
@@ -30,11 +30,11 @@ export async function buildRegistry(opts: BuildRegistryOpts): Promise<Registry> 
     for (const name of readdirSync(playbooksDir)) {
       const dir = join(playbooksDir, name);
       if (!statSync(dir).isDirectory()) continue;
-      const path = join(dir, 'playbook.md');
+      const path = join(dir, "playbook.md");
       if (!existsSync(path)) continue;
       try {
         const spec = loadMarkdownPlaybook(path);
-        entries.push({ spec, source: 'markdown', path });
+        entries.push({ spec, source: "markdown", path });
       } catch (err: any) {
         errors.push({ path, error: err?.message ?? String(err) });
       }
@@ -45,15 +45,15 @@ export async function buildRegistry(opts: BuildRegistryOpts): Promise<Registry> 
     for (const name of readdirSync(workflowsDir)) {
       const dir = join(workflowsDir, name);
       if (!statSync(dir).isDirectory()) continue;
-      const path = join(dir, 'workflow.ts');
+      const path = join(dir, "workflow.ts");
       if (!existsSync(path)) continue;
       try {
         const { spec, fn, inputSchema } = await loadTsWorkflow(path);
         entries.push({
           spec,
-          source: 'ts',
+          source: "ts",
           path,
-          fn: fn as CoreRegistryEntry<WorkflowSpec>['fn'],
+          fn: fn as CoreRegistryEntry<WorkflowSpec>["fn"],
           inputSchema,
         });
       } catch (err: any) {
@@ -95,10 +95,10 @@ export async function buildRegistry(opts: BuildRegistryOpts): Promise<Registry> 
 
 function matchesTrigger(t: Trigger, event: Trigger): boolean {
   if (t.kind !== event.kind) return false;
-  if (t.kind === 'slash' && event.kind === 'slash') return t.command === event.command;
-  if (t.kind === 'lifecycle' && event.kind === 'lifecycle') return t.event === event.event;
-  if (t.kind === 'state-threshold' && event.kind === 'state-threshold')
+  if (t.kind === "slash" && event.kind === "slash") return t.command === event.command;
+  if (t.kind === "lifecycle" && event.kind === "lifecycle") return t.event === event.event;
+  if (t.kind === "state-threshold" && event.kind === "state-threshold")
     return t.metric === event.metric && t.op === event.op && t.value === event.value;
-  if (t.kind === 'manual') return true;
+  if (t.kind === "manual") return true;
   return false;
 }

@@ -1,21 +1,26 @@
-import { describe, expect, mock, test } from 'bun:test';
-import type { DispatchEventInput } from '@penumbra/core';
-import { DispatchEventQueue } from '../../src/worker/event-queue.js';
+import { describe, expect, mock, test } from "bun:test";
+import type { DispatchEventInput } from "@penumbra/core";
+import { DispatchEventQueue } from "../../src/worker/event-queue.js";
 
 const sample: DispatchEventInput = {
-  handoff_id: 'h-1',
-  source: 'worker',
-  kind: 'dispatch.start',
-  ts: '2026-05-01T00:00:00.000Z',
+  handoff_id: "h-1",
+  source: "worker",
+  kind: "dispatch.start",
+  ts: "2026-05-01T00:00:00.000Z",
 };
 
-describe('DispatchEventQueue', () => {
-  test('flush drains queued events in batches', async () => {
+describe("DispatchEventQueue", () => {
+  test("flush drains queued events in batches", async () => {
     const send = mock(async (_events: DispatchEventInput[], _signal: AbortSignal) => {});
-    const queue = new DispatchEventQueue({ send, flushIntervalMs: 1000, maxBatch: 2, maxQueue: 10 });
+    const queue = new DispatchEventQueue({
+      send,
+      flushIntervalMs: 1000,
+      maxBatch: 2,
+      maxQueue: 10,
+    });
     queue.enqueue(sample);
-    queue.enqueue({ ...sample, kind: 'proc.spawn' });
-    queue.enqueue({ ...sample, kind: 'dispatch.end' });
+    queue.enqueue({ ...sample, kind: "proc.spawn" });
+    queue.enqueue({ ...sample, kind: "dispatch.end" });
 
     await queue.flush();
     expect(send).toHaveBeenCalledTimes(2);
@@ -24,27 +29,37 @@ describe('DispatchEventQueue', () => {
     await queue.stop();
   });
 
-  test('drops oldest events beyond maxQueue', async () => {
+  test("drops oldest events beyond maxQueue", async () => {
     const send = mock(async () => {});
-    const queue = new DispatchEventQueue({ send, flushIntervalMs: 1000, maxBatch: 50, maxQueue: 2 });
+    const queue = new DispatchEventQueue({
+      send,
+      flushIntervalMs: 1000,
+      maxBatch: 50,
+      maxQueue: 2,
+    });
     queue.enqueue(sample);
-    queue.enqueue({ ...sample, kind: 'proc.spawn' });
-    queue.enqueue({ ...sample, kind: 'dispatch.end' });
+    queue.enqueue({ ...sample, kind: "proc.spawn" });
+    queue.enqueue({ ...sample, kind: "dispatch.end" });
 
     expect(queue.droppedCount()).toBe(1);
     await queue.stop();
   });
 
-  test('stop flushes and clears the interval', async () => {
+  test("stop flushes and clears the interval", async () => {
     const send = mock(async () => {});
-    const queue = new DispatchEventQueue({ send, flushIntervalMs: 1000, maxBatch: 50, maxQueue: 10 });
+    const queue = new DispatchEventQueue({
+      send,
+      flushIntervalMs: 1000,
+      maxBatch: 50,
+      maxQueue: 10,
+    });
     queue.enqueue(sample);
 
     await queue.stop();
     expect(send).toHaveBeenCalledTimes(1);
   });
 
-  test('stop waits for an in-flight flush and drains events enqueued during it', async () => {
+  test("stop waits for an in-flight flush and drains events enqueued during it", async () => {
     const firstSendStarted = Promise.withResolvers<void>();
     const releaseFirstSend = Promise.withResolvers<void>();
     const send = mock(async (_events: DispatchEventInput[], _signal: AbortSignal) => {
@@ -53,12 +68,17 @@ describe('DispatchEventQueue', () => {
         await releaseFirstSend.promise;
       }
     });
-    const queue = new DispatchEventQueue({ send, flushIntervalMs: 1000, maxBatch: 1, maxQueue: 10 });
+    const queue = new DispatchEventQueue({
+      send,
+      flushIntervalMs: 1000,
+      maxBatch: 1,
+      maxQueue: 10,
+    });
     queue.enqueue(sample);
 
     void queue.flush();
     await firstSendStarted.promise;
-    queue.enqueue({ ...sample, kind: 'dispatch.end' });
+    queue.enqueue({ ...sample, kind: "dispatch.end" });
     const stopPromise = queue.stop();
 
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -68,10 +88,10 @@ describe('DispatchEventQueue', () => {
     await stopPromise;
 
     expect(send).toHaveBeenCalledTimes(2);
-    expect(send.mock.calls[1]![0][0].kind).toBe('dispatch.end');
+    expect(send.mock.calls[1]![0][0].kind).toBe("dispatch.end");
   });
 
-  test('flush rejects-and-recovers when send hangs beyond send_timeout_ms', async () => {
+  test("flush rejects-and-recovers when send hangs beyond send_timeout_ms", async () => {
     let capturedSignal: AbortSignal | undefined;
     let unblock!: () => void;
     let hangCount = 0;
@@ -95,7 +115,7 @@ describe('DispatchEventQueue', () => {
 
     queue.enqueue(sample);
     await queue.flush();
-    queue.enqueue({ ...sample, kind: 'proc.spawn' });
+    queue.enqueue({ ...sample, kind: "proc.spawn" });
     await queue.flush();
 
     expect(send).toHaveBeenCalledTimes(2);

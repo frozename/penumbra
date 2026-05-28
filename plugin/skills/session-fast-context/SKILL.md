@@ -23,6 +23,7 @@ At session start, the orchestrator is cold. Without a context prime, every respo
 If the user's first message is (or contains) a maestro continuation prompt with a numbered "First moves" / "Initial checks" / "First steps" block, execute the items in order **without per-item confirmation**. Batch independent tool calls in parallel inside a single message; sequence only the ones whose inputs depend on prior output.
 
 Pause to ask only when an item has:
+
 - User-visible blast radius (push, force-push, dispatch_land, restart hosted services, send a message externally, delete a branch).
 - Genuine ambiguity ("decide whether to X", "consider Y", "if you intend to Z").
 - Material cost (multi-persona fan-out, /ultrareview, large-model dispatch).

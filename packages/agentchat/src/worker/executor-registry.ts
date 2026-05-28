@@ -1,4 +1,4 @@
-import type { WriteToolsExecutor } from './write-tools-executor.js';
+import type { WriteToolsExecutor } from "./write-tools-executor.js";
 
 const registry = new Map<string, WriteToolsExecutor>();
 

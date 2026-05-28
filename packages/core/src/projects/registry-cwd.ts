@@ -1,11 +1,8 @@
-import { realpathSync } from 'node:fs';
-import { dirname } from 'node:path';
-import type { ProjectRegistry } from './registry.js';
+import { realpathSync } from "node:fs";
+import { dirname } from "node:path";
+import type { ProjectRegistry } from "./registry.js";
 
-export function findProjectIdByCwd(
-  registry: ProjectRegistry,
-  cwd: string,
-): string | undefined {
+export function findProjectIdByCwd(registry: ProjectRegistry, cwd: string): string | undefined {
   const entries = registry.list();
   if (entries.length === 0) return undefined;
 

@@ -2,10 +2,14 @@ import {
   ValuePatternRedactor,
   type ValuePatternRule,
   type ValueRedactionHit,
-} from '@penumbra/core';
-import { MAESTRO_STATIC_RULES, buildUnknownAgentRule, isFailClosed } from './maestro-output-rules.js';
+} from "@penumbra/core";
+import {
+  MAESTRO_STATIC_RULES,
+  buildUnknownAgentRule,
+  isFailClosed,
+} from "./maestro-output-rules.js";
 
-export type MaestroRedactionDecision = 'clean' | 'rewritten' | 'blocked' | 'bypassed';
+export type MaestroRedactionDecision = "clean" | "rewritten" | "blocked" | "bypassed";
 
 export type MaestroRedactionResult = {
   decision: MaestroRedactionDecision;
@@ -50,14 +54,14 @@ export class MaestroOutputRedactor {
   checkContent(text: string): MaestroRedactionResult {
     const { redacted, hits } = this.redactor.redactString(text);
     if (this.bypass) {
-      return { decision: 'bypassed', content: text, hits, bypassed: true };
+      return { decision: "bypassed", content: text, hits, bypassed: true };
     }
     if (hits.length === 0) {
-      return { decision: 'clean', content: redacted, hits, bypassed: false };
+      return { decision: "clean", content: redacted, hits, bypassed: false };
     }
     const blocked = hits.some((h) => isFailClosed(h.rule_id));
     return {
-      decision: blocked ? 'blocked' : 'rewritten',
+      decision: blocked ? "blocked" : "rewritten",
       content: redacted,
       hits,
       bypassed: false,
@@ -71,10 +75,7 @@ export class MaestroOutputRedactor {
     });
   }
 
-  checkAnyValue<T>(
-    value: T,
-    limits?: ValueWalkLimits,
-  ): MaestroRedactionResultObject {
+  checkAnyValue<T>(value: T, limits?: ValueWalkLimits): MaestroRedactionResultObject {
     const result = (this.redactor as any).redactValue(value, limits) as {
       redacted: T;
       hits: ValueRedactionHit[];
@@ -83,20 +84,20 @@ export class MaestroOutputRedactor {
     const { redacted, hits, rewritten } = result;
     const effectiveRewritten = rewritten ?? !Object.is(redacted, value);
     if (this.bypass) {
-      return { decision: 'bypassed', value, hits, bypassed: true };
+      return { decision: "bypassed", value, hits, bypassed: true };
     }
     if (hits.length === 0) {
-      return { decision: 'clean', value: redacted, hits, bypassed: false };
+      return { decision: "clean", value: redacted, hits, bypassed: false };
     }
     const blocked = hits.some((h) => isFailClosed(h.rule_id));
     if (blocked) {
-      return { decision: 'blocked', value, hits, bypassed: false };
+      return { decision: "blocked", value, hits, bypassed: false };
     }
     if (!effectiveRewritten) {
-      return { decision: 'clean', value: redacted, hits, bypassed: false };
+      return { decision: "clean", value: redacted, hits, bypassed: false };
     }
     return {
-      decision: 'rewritten',
+      decision: "rewritten",
       value: redacted,
       hits,
       bypassed: false,
@@ -112,9 +113,9 @@ export type BuildMaestroRedactorFromEnvOpts = {
 export function buildMaestroRedactorFromEnv(
   opts: BuildMaestroRedactorFromEnvOpts,
 ): MaestroOutputRedactor {
-  const raw = opts.env.PENUMBRA_MAESTRO_REDACTION_BYPASS ?? '';
+  const raw = opts.env.PENUMBRA_MAESTRO_REDACTION_BYPASS ?? "";
   const v = raw.toLowerCase();
-  const bypass = v === '1' || v === 'true' || v === 'yes';
+  const bypass = v === "1" || v === "true" || v === "yes";
   return new MaestroOutputRedactor({
     knownAgents: opts.knownAgents,
     bypass,

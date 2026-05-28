@@ -1,21 +1,26 @@
-import { Database } from 'bun:sqlite';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { Database } from "bun:sqlite";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   buildServices,
   loadSqliteVec,
   migrate,
   type DispatchEventInput,
   type Services,
-} from '@penumbra/core';
-import { TestEmbedder } from '@penumbra/core/testing';
-import { createDaemonFetchHandler, ShellSessionPool, OrphanHandoffRecoveryService, WatchdogService } from '@penumbra/daemon/test-utils';
-import { PenumbraClient } from '../../src/penumbra-client.js';
+} from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
+import {
+  createDaemonFetchHandler,
+  ShellSessionPool,
+  OrphanHandoffRecoveryService,
+  WatchdogService,
+} from "@penumbra/daemon/test-utils";
+import { PenumbraClient } from "../../src/penumbra-client.js";
 
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {}
 
@@ -23,8 +28,12 @@ export interface InProcessDaemonHarness {
   client: PenumbraClient;
   services: Services;
   postDispatchEvent(event: DispatchEventInput): Promise<void>;
-  getDispatchEvents(handoffId: string): Promise<Array<{ kind: string; meta?: Record<string, unknown> | null }>>;
-  dispatchTimeline(handoffId: string): Promise<{ events: Array<{ kind: string; meta?: Record<string, unknown> | null }> }>;
+  getDispatchEvents(
+    handoffId: string,
+  ): Promise<Array<{ kind: string; meta?: Record<string, unknown> | null }>>;
+  dispatchTimeline(
+    handoffId: string,
+  ): Promise<{ events: Array<{ kind: string; meta?: Record<string, unknown> | null }> }>;
   shellRun(input: {
     handoff_id: string;
     agent_name: string;
@@ -35,7 +44,13 @@ export interface InProcessDaemonHarness {
     pty?: boolean;
     timeout_ms?: number;
     stdin?: string;
-  }): Promise<{ session_id: string; exit_code: number; stdout: string; stderr: string; truncated: boolean }>;
+  }): Promise<{
+    session_id: string;
+    exit_code: number;
+    stdout: string;
+    stderr: string;
+    truncated: boolean;
+  }>;
   shellClose(input: { handoff_id: string; session_id: string }): Promise<{ closed: boolean }>;
   shellRunRaw(input: {
     handoff_id: string;
@@ -54,12 +69,14 @@ export interface InProcessDaemonHarness {
   stop(): Promise<void>;
 }
 
-export async function startInProcessDaemon(opts: {
-  shellEnabled?: boolean;
-  autoApprovePermissions?: boolean;
-} = {}): Promise<InProcessDaemonHarness> {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-agentchat-int-'));
-  const db = new Database(':memory:');
+export async function startInProcessDaemon(
+  opts: {
+    shellEnabled?: boolean;
+    autoApprovePermissions?: boolean;
+  } = {},
+): Promise<InProcessDaemonHarness> {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-agentchat-int-"));
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
@@ -70,10 +87,10 @@ export async function startInProcessDaemon(opts: {
     storageRoot: dir,
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date('2026-05-02T00:00:00Z'),
+    clock: () => new Date("2026-05-02T00:00:00Z"),
     uuid: () => `id-${++n}`,
   });
-  services.agentRegistry = ['claude-acp-sonnet', 'local-gemma26'];
+  services.agentRegistry = ["claude-acp-sonnet", "local-gemma26"];
   // Swap the stub watchdog from buildServices for a real WatchdogService so
   // markWorkerStale (used by orphan-recovery integration tests) can poke its
   // internal heartbeat map directly.
@@ -81,41 +98,41 @@ export async function startInProcessDaemon(opts: {
   services.watchdog.hasActiveWorker = () => true;
   (services as any).agentchatConfig = {
     agents: [
-      { name: 'claude-acp-sonnet', auto_approve_to: [] },
-      { name: 'local-gemma26', auto_approve_to: [] },
+      { name: "claude-acp-sonnet", auto_approve_to: [] },
+      { name: "local-gemma26", auto_approve_to: [] },
     ],
   };
 
   const shellSessionPool = opts.shellEnabled
     ? new ShellSessionPool({
-      config: {
-        enabled: true,
-        maxSessionsPerHandoff: 4,
-        maxConcurrentRunsPerSession: 1,
-        maxSessionIdleMs: 600000,
-        maxCommandDurationMs: 5000,
-        outputByteLimit: 16384,
-        redactOutput: true,
-        unsetEnv: [],
-        dangerousCommandsForAgent: () => ['sudo\\b'],
-        redactOutputForAgent: () => true,
-      },
-      uuid: (() => {
-        let sessionN = 0;
-        return () => `sess-${++sessionN}`;
-      })(),
-      handoffStatusReader: {
-        async getStatus(handoffId: string) {
-          return services.handoffReader.get(handoffId)?.status ?? null;
+        config: {
+          enabled: true,
+          maxSessionsPerHandoff: 4,
+          maxConcurrentRunsPerSession: 1,
+          maxSessionIdleMs: 600000,
+          maxCommandDurationMs: 5000,
+          outputByteLimit: 16384,
+          redactOutput: true,
+          unsetEnv: [],
+          dangerousCommandsForAgent: () => ["sudo\\b"],
+          redactOutputForAgent: () => true,
         },
-      },
-    })
+        uuid: (() => {
+          let sessionN = 0;
+          return () => `sess-${++sessionN}`;
+        })(),
+        handoffStatusReader: {
+          async getStatus(handoffId: string) {
+            return services.handoffReader.get(handoffId)?.status ?? null;
+          },
+        },
+      })
     : undefined;
   if (shellSessionPool) {
     (services as any).shellSessionPool = shellSessionPool;
     (services as any).shellConfig = {
       enabled: true,
-      dangerousCommandsForAgent: () => ['sudo\\b'],
+      dangerousCommandsForAgent: () => ["sudo\\b"],
     };
   }
   if (opts.autoApprovePermissions) {
@@ -126,15 +143,15 @@ export async function startInProcessDaemon(opts: {
     };
   }
 
-  const token = 'tok';
+  const token = "tok";
   const handler = createDaemonFetchHandler({ services, token });
   const fetchImpl: typeof fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const req = input instanceof Request ? input : new Request(String(input), init);
     return handler(req);
   }) as typeof fetch;
 
-  writeFileSync(join(dir, 'port'), '1');
-  writeFileSync(join(dir, 'token'), token);
+  writeFileSync(join(dir, "port"), "1");
+  writeFileSync(join(dir, "token"), token);
 
   const client = new PenumbraClient({ storageRoot: dir, fetch: fetchImpl });
 
@@ -154,11 +171,11 @@ export async function startInProcessDaemon(opts: {
       }>;
     },
     async shellRun(input) {
-      const response = await fetchImpl('http://x/shell/run', {
-        method: 'POST',
+      const response = await fetchImpl("http://x/shell/run", {
+        method: "POST",
         headers: {
           authorization: `Bearer ${token}`,
-          'content-type': 'application/json',
+          "content-type": "application/json",
         },
         body: JSON.stringify(input),
       });
@@ -171,22 +188,22 @@ export async function startInProcessDaemon(opts: {
       }>;
     },
     async shellClose(input) {
-      const response = await fetchImpl('http://x/shell/close', {
-        method: 'POST',
+      const response = await fetchImpl("http://x/shell/close", {
+        method: "POST",
         headers: {
           authorization: `Bearer ${token}`,
-          'content-type': 'application/json',
+          "content-type": "application/json",
         },
         body: JSON.stringify(input),
       });
       return response.json() as Promise<{ closed: boolean }>;
     },
     async shellRunRaw(input) {
-      return fetchImpl('http://x/shell/run', {
-        method: 'POST',
+      return fetchImpl("http://x/shell/run", {
+        method: "POST",
         headers: {
           authorization: `Bearer ${token}`,
-          'content-type': 'application/json',
+          "content-type": "application/json",
         },
         body: JSON.stringify(input),
       });
@@ -196,11 +213,18 @@ export async function startInProcessDaemon(opts: {
     },
     markWorkerStale(workerId) {
       // Force-age the worker's heartbeat so OrphanHandoffRecoveryService treats it as stale.
-      (services.watchdog as unknown as { lastHeartbeats: Map<string, number> }).lastHeartbeats.set(workerId, 0);
+      (services.watchdog as unknown as { lastHeartbeats: Map<string, number> }).lastHeartbeats.set(
+        workerId,
+        0,
+      );
     },
     triggerOrphanRecovery() {
       // staleMs=1 with the past-epoch heartbeat from markWorkerStale guarantees the worker shows stale.
-      const recovery = new OrphanHandoffRecoveryService(services, { intervalMs: 0, staleMs: 1, batchSize: 100 });
+      const recovery = new OrphanHandoffRecoveryService(services, {
+        intervalMs: 0,
+        staleMs: 1,
+        batchSize: 100,
+      });
       return recovery.runOnce();
     },
     async stop() {

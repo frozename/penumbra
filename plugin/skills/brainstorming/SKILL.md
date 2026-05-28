@@ -28,39 +28,39 @@ You MUST create a task for each of these items and complete them in order:
 Before proposing approaches, verbalize one of:
 
 A) **Not a measurement task.** This work is building / refactoring /
-   fixing without a metric-comparison or eval question. State this
-   explicitly, then proceed to clarifying questions.
+fixing without a metric-comparison or eval question. State this
+explicitly, then proceed to clarifying questions.
 
 B) **This work involves measuring, comparing, or evaluating something
-   via a metric.** Before drafting any approach:
+via a metric.** Before drafting any approach:
 
-   1. Identify the primary metric. Be specific — `table.column`,
-      computed expression, or operational definition. Vague targets
-      ("quality", "performance") are not yet metrics.
+1.  Identify the primary metric. Be specific — `table.column`,
+    computed expression, or operational definition. Vague targets
+    ("quality", "performance") are not yet metrics.
 
-   2. Run a variance / distribution query on the existing data source.
-      Quote the **aggregate** result (counts, ratios, unique-value count,
-      min/max bucket sizes). Do not paste raw rows or raw column values;
-      those can include PII, secrets, or other sensitive data that should
-      not appear in transcripts or memory. If the metric itself is sensitive
-      or could leak values, report only cardinality and bucketing.
-      Examples:
-      - SQL: `SELECT <metric>, COUNT(*) FROM <source> GROUP BY <metric>` where `<metric>` and `<source>` are statically-known identifiers (never interpolate user input as SQL identifiers). If `<metric>` contains sensitive values, use `SELECT COUNT(DISTINCT <metric>), MIN(cnt), MAX(cnt), AVG(cnt) FROM (SELECT <metric>, COUNT(*) AS cnt FROM <source> GROUP BY <metric>) t` and report only the aggregates.
-      - Code metric: summarize aggregate bucket sizes, unique-value counts,
-        and distribution summaries. Do not include raw values.
-      - External system: pull recent N data points and report only
-        frequency/count buckets or other aggregate-level distributions.
+2.  Run a variance / distribution query on the existing data source.
+    Quote the **aggregate** result (counts, ratios, unique-value count,
+    min/max bucket sizes). Do not paste raw rows or raw column values;
+    those can include PII, secrets, or other sensitive data that should
+    not appear in transcripts or memory. If the metric itself is sensitive
+    or could leak values, report only cardinality and bucketing.
+    Examples:
+    - SQL: `SELECT <metric>, COUNT(*) FROM <source> GROUP BY <metric>` where `<metric>` and `<source>` are statically-known identifiers (never interpolate user input as SQL identifiers). If `<metric>` contains sensitive values, use `SELECT COUNT(DISTINCT <metric>), MIN(cnt), MAX(cnt), AVG(cnt) FROM (SELECT <metric>, COUNT(*) AS cnt FROM <source> GROUP BY <metric>) t` and report only the aggregates.
+    - Code metric: summarize aggregate bucket sizes, unique-value counts,
+      and distribution summaries. Do not include raw values.
+    - External system: pull recent N data points and report only
+      frequency/count buckets or other aggregate-level distributions.
 
-   3. Decide based on the result:
-      - **Zero variance** (all rows equal value): the eval is
-        unmeasurable as posed. STOP. Reshape the question before
-        drafting any approach.
-      - **Heavily skewed variance**: one value dominates the distribution
-        (for example, the modal class accounts for the vast majority of
-        rows). Flag the imbalance; consider whether the imbalance itself
-        is the actual question, rather than the metric you proposed
-        measuring.
-      - **Healthy variance**: proceed to clarifying questions.
+3.  Decide based on the result:
+    - **Zero variance** (all rows equal value): the eval is
+      unmeasurable as posed. STOP. Reshape the question before
+      drafting any approach.
+    - **Heavily skewed variance**: one value dominates the distribution
+      (for example, the modal class accounts for the vast majority of
+      rows). Flag the imbalance; consider whether the imbalance itself
+      is the actual question, rather than the metric you proposed
+      measuring.
+    - **Healthy variance**: proceed to clarifying questions.
 
 Why this gate exists: an eval-plan drafted earlier in penumbra's history
 proposed measuring lane outcomes via `gate_outcome=passed`, which had

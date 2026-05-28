@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
-import { ExtraWorkerSupervisor } from '../../src/workers/supervisor.js';
-import type { ExtraWorkerConfig } from '../../src/workers/config.js';
+import { afterEach, beforeEach, describe, expect, test, vi } from "bun:test";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { isAbsolute, join } from "node:path";
+import { ExtraWorkerSupervisor } from "../../src/workers/supervisor.js";
+import type { ExtraWorkerConfig } from "../../src/workers/config.js";
 
 type FakeSubprocess = {
   pid: number;
@@ -12,7 +12,7 @@ type FakeSubprocess = {
   killCalls: string[];
   exited: Promise<number>;
   exit: (code: number, signal?: string | null) => void;
-  kill: (signal: 'SIGTERM' | 'SIGKILL') => void;
+  kill: (signal: "SIGTERM" | "SIGKILL") => void;
   stdout: null;
   stderr: null;
 };
@@ -29,8 +29,8 @@ type FakeReadableStream = {
 type SpawnCall = {
   args: string[];
   options: {
-    stdout: 'pipe' | 'inherit';
-    stderr: 'pipe' | 'inherit';
+    stdout: "pipe" | "inherit";
+    stderr: "pipe" | "inherit";
     env: Record<string, string | undefined>;
   };
 };
@@ -44,7 +44,7 @@ function flushPromises(): Promise<void> {
 
 beforeEach(() => {
   previousHome = process.env.HOME;
-  const home = mkdtempSync(join(tmpdir(), 'penumbra-extra-worker-supervisor-'));
+  const home = mkdtempSync(join(tmpdir(), "penumbra-extra-worker-supervisor-"));
   process.env.HOME = home;
   homes.push(home);
 });
@@ -74,12 +74,12 @@ function createFakeProcess(nextPid: () => number): FakeSubprocess {
       if (signal != null) proc.signalCode = signal;
       exit(code);
     },
-    kill: (signal: 'SIGTERM' | 'SIGKILL') => {
+    kill: (signal: "SIGTERM" | "SIGKILL") => {
       proc.killCalls.push(signal);
-      if (signal === 'SIGKILL' && proc.exitCode === null) {
+      if (signal === "SIGKILL" && proc.exitCode === null) {
         proc.exit(-9, signal);
       }
-      if (signal === 'SIGTERM') {
+      if (signal === "SIGTERM") {
         proc.signalCode = signal;
       }
     },
@@ -101,17 +101,17 @@ function createFailingStream(error: Error): FakeReadableStream {
 
 function createSupervisor(
   extras: ExtraWorkerConfig[],
-  onSpawn?: (args: string[], options: SpawnCall['options'], proc: FakeSubprocess) => void,
+  onSpawn?: (args: string[], options: SpawnCall["options"], proc: FakeSubprocess) => void,
   options?: {
     storageRoot?: string;
-    spawnImpl?: (args: string[], options: SpawnCall['options']) => FakeSubprocess;
+    spawnImpl?: (args: string[], options: SpawnCall["options"]) => FakeSubprocess;
   },
 ) {
   const spawnCalls: SpawnCall[] = [];
   const processes: FakeSubprocess[] = [];
   let pidSeq = 1;
   const spawnImpl = options?.spawnImpl ?? ((_args, _options) => createFakeProcess(() => pidSeq++));
-  const spawn = vi.fn((args: string[], options: SpawnCall['options']) => {
+  const spawn = vi.fn((args: string[], options: SpawnCall["options"]) => {
     const proc = spawnImpl(args, options);
     spawnCalls.push({ args, options });
     processes.push(proc);
@@ -131,7 +131,7 @@ function createSupervisor(
   };
   const supervisor = new ExtraWorkerSupervisor({
     extras,
-    storageRoot: options?.storageRoot ?? '/tmp/penumbra-storage',
+    storageRoot: options?.storageRoot ?? "/tmp/penumbra-storage",
     log,
     spawn,
   });
@@ -146,14 +146,14 @@ function createSupervisor(
   };
 }
 
-describe('extra worker supervisor', () => {
-  test('start() with one extra', async () => {
+describe("extra worker supervisor", () => {
+  test("start() with one extra", async () => {
     const { supervisor, spawnCalls } = createSupervisor([
       {
-        id: 'worker-a',
+        id: "worker-a",
         concurrency: 6,
-        isolation: 'hard',
-        project_id: 'proj-a',
+        isolation: "hard",
+        project_id: "proj-a",
       },
     ]);
 
@@ -163,35 +163,35 @@ describe('extra worker supervisor', () => {
     expect(isAbsolute(spawnCalls[0]!.args[1]!)).toBe(true);
     expect(existsSync(spawnCalls[0]!.args[1]!)).toBe(true);
     expect(spawnCalls[0]!.args).toEqual([
-      'bun',
+      "bun",
       spawnCalls[0]!.args[1]!,
-      '--worker-id',
-      'worker-a',
-      '--concurrency',
-      '6',
-      '--storage-root',
-      '/tmp/penumbra-storage',
+      "--worker-id",
+      "worker-a",
+      "--concurrency",
+      "6",
+      "--storage-root",
+      "/tmp/penumbra-storage",
     ]);
     expect(spawnCalls[0]!.options.env).toMatchObject({
-      PENUMBRA_WORKER_PROJECT_ID: 'proj-a',
-      PENUMBRA_WORKER_ISOLATION: 'hard',
-      PENUMBRA_BOOT_RECONCILE: '0',
-      PENUMBRA_STORAGE_ROOT: '/tmp/penumbra-storage',
+      PENUMBRA_WORKER_PROJECT_ID: "proj-a",
+      PENUMBRA_WORKER_ISOLATION: "hard",
+      PENUMBRA_BOOT_RECONCILE: "0",
+      PENUMBRA_STORAGE_ROOT: "/tmp/penumbra-storage",
     });
   });
 
-  test('multiple extras', async () => {
+  test("multiple extras", async () => {
     const { supervisor, spawnCalls, processes } = createSupervisor([
       {
-        id: 'worker-a',
+        id: "worker-a",
         concurrency: 2,
-        isolation: 'shared',
+        isolation: "shared",
       },
       {
-        id: 'worker-b',
+        id: "worker-b",
         concurrency: 4,
-        isolation: 'sticky',
-        project_id: 'proj-b',
+        isolation: "sticky",
+        project_id: "proj-b",
       },
     ]);
 
@@ -201,15 +201,15 @@ describe('extra worker supervisor', () => {
     expect(processes).toHaveLength(2);
     expect(processes[0]!.pid).not.toBe(processes[1]!.pid);
     const states = (supervisor as any).states as Map<string, { pid: number | null }>;
-    expect(states.get('worker-a')?.pid).toBe(processes[0]!.pid);
-    expect(states.get('worker-b')?.pid).toBe(processes[1]!.pid);
+    expect(states.get("worker-a")?.pid).toBe(processes[0]!.pid);
+    expect(states.get("worker-b")?.pid).toBe(processes[1]!.pid);
   });
 
-  test('crash restart with backoff', async () => {
+  test("crash restart with backoff", async () => {
     vi.useFakeTimers();
     try {
       const { supervisor, processes } = createSupervisor([
-        { id: 'worker-a', concurrency: 4, isolation: 'shared' },
+        { id: "worker-a", concurrency: 4, isolation: "shared" },
       ]);
       await supervisor.start();
 
@@ -234,11 +234,11 @@ describe('extra worker supervisor', () => {
     }
   });
 
-  test('backoff reset after stable lifetime', async () => {
+  test("backoff reset after stable lifetime", async () => {
     vi.useFakeTimers();
     try {
       const { supervisor, processes } = createSupervisor([
-        { id: 'worker-a', concurrency: 1, isolation: 'shared' },
+        { id: "worker-a", concurrency: 1, isolation: "shared" },
       ]);
       await supervisor.start();
 
@@ -264,15 +264,16 @@ describe('extra worker supervisor', () => {
     }
   });
 
-  test('backoff caps at 60000ms', async () => {
+  test("backoff caps at 60000ms", async () => {
     vi.useFakeTimers();
     try {
       const starts: number[] = [];
-      const { supervisor, processes } = createSupervisor([
-        { id: 'worker-a', concurrency: 1, isolation: 'shared' },
-      ], () => {
-        starts.push(Date.now());
-      });
+      const { supervisor, processes } = createSupervisor(
+        [{ id: "worker-a", concurrency: 1, isolation: "shared" }],
+        () => {
+          starts.push(Date.now());
+        },
+      );
 
       await supervisor.start();
       expect(starts).toHaveLength(1);
@@ -292,25 +293,27 @@ describe('extra worker supervisor', () => {
         expect(observedDelay).toBe(expectedDelay);
       }
       const observedDelays = starts.slice(1).map((t, i) => t - starts[i]!);
-      expect(observedDelays).toEqual([1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 60_000, 60_000, 60_000, 60_000]);
+      expect(observedDelays).toEqual([
+        1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 60_000, 60_000, 60_000, 60_000,
+      ]);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  test('stop() sends SIGTERM then SIGKILL when worker ignores SIGTERM', async () => {
+  test("stop() sends SIGTERM then SIGKILL when worker ignores SIGTERM", async () => {
     vi.useFakeTimers();
     try {
       const { supervisor, processes } = createSupervisor([
-        { id: 'worker-a', concurrency: 1, isolation: 'shared' },
+        { id: "worker-a", concurrency: 1, isolation: "shared" },
       ]);
       await supervisor.start();
       const stopPromise = supervisor.stop();
       await flushPromises();
-      expect(processes[0]!.killCalls).toContain('SIGTERM');
+      expect(processes[0]!.killCalls).toContain("SIGTERM");
       vi.advanceTimersByTime(10_000);
       await stopPromise;
-      expect(processes[0]!.killCalls).toContain('SIGKILL');
+      expect(processes[0]!.killCalls).toContain("SIGKILL");
       expect(processes).toHaveLength(1);
       vi.advanceTimersByTime(120_000);
       expect(processes).toHaveLength(1);
@@ -319,11 +322,11 @@ describe('extra worker supervisor', () => {
     }
   });
 
-  test('stop() skips signals when worker already exited', async () => {
+  test("stop() skips signals when worker already exited", async () => {
     vi.useFakeTimers();
     try {
       const { supervisor, processes } = createSupervisor([
-        { id: 'worker-a', concurrency: 1, isolation: 'shared' },
+        { id: "worker-a", concurrency: 1, isolation: "shared" },
       ]);
       await supervisor.start();
       processes[0]!.exit(1);
@@ -339,11 +342,11 @@ describe('extra worker supervisor', () => {
     }
   });
 
-  test('PENUMBRA_EXTRA_WORKERS_ENABLED=0 disables start and warns once', async () => {
+  test("PENUMBRA_EXTRA_WORKERS_ENABLED=0 disables start and warns once", async () => {
     const previous = process.env.PENUMBRA_EXTRA_WORKERS_ENABLED;
-    process.env.PENUMBRA_EXTRA_WORKERS_ENABLED = '0';
+    process.env.PENUMBRA_EXTRA_WORKERS_ENABLED = "0";
     const { supervisor, spawnCalls, warnSpy } = createSupervisor([
-      { id: 'worker-a', concurrency: 1, isolation: 'shared' },
+      { id: "worker-a", concurrency: 1, isolation: "shared" },
     ]);
     try {
       await supervisor.start();
@@ -354,11 +357,11 @@ describe('extra worker supervisor', () => {
     }
   });
 
-  test('stop() is idempotent', async () => {
+  test("stop() is idempotent", async () => {
     vi.useFakeTimers();
     try {
       const { supervisor, processes } = createSupervisor([
-        { id: 'worker-a', concurrency: 1, isolation: 'shared' },
+        { id: "worker-a", concurrency: 1, isolation: "shared" },
       ]);
       await supervisor.start();
       const stopPromise = supervisor.stop();
@@ -366,52 +369,59 @@ describe('extra worker supervisor', () => {
       await stopPromise;
       await supervisor.stop();
       const proc = processes[0]!;
-      expect(proc.killCalls.filter((signal) => signal === 'SIGTERM')).toHaveLength(1);
-      expect(proc.killCalls.filter((signal) => signal === 'SIGKILL')).toHaveLength(1);
+      expect(proc.killCalls.filter((signal) => signal === "SIGTERM")).toHaveLength(1);
+      expect(proc.killCalls.filter((signal) => signal === "SIGKILL")).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  test('empty extras starts without spawning', async () => {
+  test("empty extras starts without spawning", async () => {
     const { supervisor, spawnCalls } = createSupervisor([]);
     await supervisor.start();
     expect(spawnCalls).toHaveLength(0);
   });
 
-  test('pipeStreamToLog failures are logged and do not crash startup', async () => {
-    const { supervisor, log } = createSupervisor([
-      {
-        id: 'worker-a',
-        concurrency: 1,
-        isolation: 'shared',
+  test("pipeStreamToLog failures are logged and do not crash startup", async () => {
+    const { supervisor, log } = createSupervisor(
+      [
+        {
+          id: "worker-a",
+          concurrency: 1,
+          isolation: "shared",
+        },
+      ],
+      (_args, _options, proc) => {
+        (proc as unknown as { stdout: FakeReadableStream }).stdout = createFailingStream(
+          new Error("reader failure"),
+        );
+        (proc as unknown as { stderr: FakeReadableStream }).stderr = createFailingStream(
+          new Error("reader failure"),
+        );
       },
-    ], (_args, _options, proc) => {
-      (proc as unknown as { stdout: FakeReadableStream }).stdout = createFailingStream(new Error('reader failure'));
-      (proc as unknown as { stderr: FakeReadableStream }).stderr = createFailingStream(new Error('reader failure'));
-    });
+    );
 
     await supervisor.start();
     await flushPromises();
 
     expect(log.error).toHaveBeenCalledWith(
       expect.objectContaining({
-        event: 'extra_worker_log_pipe_failed',
-        worker_id: 'worker-a',
-        error: 'reader failure',
+        event: "extra_worker_log_pipe_failed",
+        worker_id: "worker-a",
+        error: "reader failure",
       }),
-      'extra worker log pipe failed',
+      "extra worker log pipe failed",
     );
   });
 
-  test('log directory uses storageRoot', async () => {
-    const storageRoot = '/tmp/penumbra-storage-log-dir';
+  test("log directory uses storageRoot", async () => {
+    const storageRoot = "/tmp/penumbra-storage-log-dir";
     const { supervisor } = createSupervisor(
       [
         {
-          id: 'worker-a',
+          id: "worker-a",
           concurrency: 2,
-          isolation: 'shared',
+          isolation: "shared",
         },
       ],
       undefined,
@@ -419,15 +429,15 @@ describe('extra worker supervisor', () => {
     );
 
     await supervisor.start();
-    expect((supervisor as { logDir: string }).logDir).toBe(join(storageRoot, 'workers'));
+    expect((supervisor as { logDir: string }).logDir).toBe(join(storageRoot, "workers"));
   });
 
-  test('reconcile() adds extra workers', async () => {
+  test("reconcile() adds extra workers", async () => {
     const { supervisor, spawnCalls } = createSupervisor([
       {
-        id: 'worker-a',
+        id: "worker-a",
         concurrency: 2,
-        isolation: 'shared',
+        isolation: "shared",
       },
     ]);
     await supervisor.start();
@@ -435,19 +445,19 @@ describe('extra worker supervisor', () => {
 
     const summary = await supervisor.reconcile([
       {
-        id: 'worker-a',
+        id: "worker-a",
         concurrency: 2,
-        isolation: 'shared',
+        isolation: "shared",
       },
       {
-        id: 'worker-b',
+        id: "worker-b",
         concurrency: 4,
-        isolation: 'hard',
+        isolation: "hard",
       },
     ]);
 
     expect(summary).toEqual({
-      started: ['worker-b'],
+      started: ["worker-b"],
       restarted: [],
       stopped: [],
       skipped: [],
@@ -456,24 +466,26 @@ describe('extra worker supervisor', () => {
     expect(spawnCalls).toHaveLength(2);
   });
 
-  test('reconcile() removes extra workers', async () => {
+  test("reconcile() removes extra workers", async () => {
     vi.useFakeTimers();
     try {
       const { supervisor, processes, spawnCalls } = createSupervisor([
-        { id: 'worker-a', concurrency: 2, isolation: 'shared' },
-        { id: 'worker-b', concurrency: 2, isolation: 'shared' },
+        { id: "worker-a", concurrency: 2, isolation: "shared" },
+        { id: "worker-b", concurrency: 2, isolation: "shared" },
       ]);
       await supervisor.start();
       expect(spawnCalls).toHaveLength(2);
 
-      const summaryPromise = supervisor.reconcile([{ id: 'worker-a', concurrency: 2, isolation: 'shared' }]);
+      const summaryPromise = supervisor.reconcile([
+        { id: "worker-a", concurrency: 2, isolation: "shared" },
+      ]);
       vi.advanceTimersByTime(10_000);
       await flushPromises();
       const summary = await summaryPromise;
       expect(summary).toEqual({
         started: [],
         restarted: [],
-        stopped: ['worker-b'],
+        stopped: ["worker-b"],
         skipped: [],
         errors: [],
       });
@@ -483,23 +495,25 @@ describe('extra worker supervisor', () => {
     }
   });
 
-  test('reconcile() restarts worker when concurrency changes', async () => {
+  test("reconcile() restarts worker when concurrency changes", async () => {
     vi.useFakeTimers();
     try {
       const { supervisor, processes, spawnCalls } = createSupervisor([
-        { id: 'worker-a', concurrency: 4, isolation: 'shared' },
+        { id: "worker-a", concurrency: 4, isolation: "shared" },
       ]);
       await supervisor.start();
       expect(spawnCalls).toHaveLength(1);
 
-      const summaryPromise = supervisor.reconcile([{ id: 'worker-a', concurrency: 8, isolation: 'shared' }]);
+      const summaryPromise = supervisor.reconcile([
+        { id: "worker-a", concurrency: 8, isolation: "shared" },
+      ]);
       vi.advanceTimersByTime(10_000);
       await flushPromises();
       const summary = await summaryPromise;
 
       expect(summary).toEqual({
         started: [],
-        restarted: ['worker-a'],
+        restarted: ["worker-a"],
         stopped: [],
         skipped: [],
         errors: [],
@@ -511,16 +525,16 @@ describe('extra worker supervisor', () => {
     }
   });
 
-  test('reconcile() restarts worker when project_id changes', async () => {
+  test("reconcile() restarts worker when project_id changes", async () => {
     vi.useFakeTimers();
     try {
       const { supervisor, spawnCalls } = createSupervisor([
-        { id: 'worker-a', concurrency: 4, isolation: 'shared' },
+        { id: "worker-a", concurrency: 4, isolation: "shared" },
       ]);
       await supervisor.start();
 
       const summaryPromise = supervisor.reconcile([
-        { id: 'worker-a', concurrency: 4, isolation: 'shared', project_id: 'project-a' },
+        { id: "worker-a", concurrency: 4, isolation: "shared", project_id: "project-a" },
       ]);
       vi.advanceTimersByTime(10_000);
       await flushPromises();
@@ -528,7 +542,7 @@ describe('extra worker supervisor', () => {
 
       expect(summary).toEqual({
         started: [],
-        restarted: ['worker-a'],
+        restarted: ["worker-a"],
         stopped: [],
         skipped: [],
         errors: [],
@@ -539,16 +553,16 @@ describe('extra worker supervisor', () => {
     }
   });
 
-  test('reconcile() restarts worker when isolation changes', async () => {
+  test("reconcile() restarts worker when isolation changes", async () => {
     vi.useFakeTimers();
     try {
       const { supervisor, spawnCalls } = createSupervisor([
-        { id: 'worker-a', concurrency: 4, isolation: 'hard' },
+        { id: "worker-a", concurrency: 4, isolation: "hard" },
       ]);
       await supervisor.start();
 
       const summaryPromise = supervisor.reconcile([
-        { id: 'worker-a', concurrency: 4, isolation: 'shared' },
+        { id: "worker-a", concurrency: 4, isolation: "shared" },
       ]);
       vi.advanceTimersByTime(10_000);
       await flushPromises();
@@ -556,7 +570,7 @@ describe('extra worker supervisor', () => {
 
       expect(summary).toEqual({
         started: [],
-        restarted: ['worker-a'],
+        restarted: ["worker-a"],
         stopped: [],
         skipped: [],
         errors: [],
@@ -567,16 +581,16 @@ describe('extra worker supervisor', () => {
     }
   });
 
-  test('reconcile() leaves unchanged extras untouched', async () => {
+  test("reconcile() leaves unchanged extras untouched", async () => {
     const { supervisor, spawnCalls } = createSupervisor([
-      { id: 'worker-a', concurrency: 4, isolation: 'shared' },
-      { id: 'worker-b', concurrency: 2, isolation: 'hard', project_id: 'project-b' },
+      { id: "worker-a", concurrency: 4, isolation: "shared" },
+      { id: "worker-b", concurrency: 2, isolation: "hard", project_id: "project-b" },
     ]);
     await supervisor.start();
 
     const summary = await supervisor.reconcile([
-      { id: 'worker-a', concurrency: 4, isolation: 'shared' },
-      { id: 'worker-b', concurrency: 2, isolation: 'hard', project_id: 'project-b' },
+      { id: "worker-a", concurrency: 4, isolation: "shared" },
+      { id: "worker-b", concurrency: 2, isolation: "hard", project_id: "project-b" },
     ]);
 
     expect(summary).toEqual({
@@ -589,44 +603,48 @@ describe('extra worker supervisor', () => {
     expect(spawnCalls).toHaveLength(2);
   });
 
-  test('reconcile() reports spawn errors and skips failed workers', async () => {
-    const { supervisor } = createSupervisor([
-      { id: 'worker-a', concurrency: 4, isolation: 'shared' },
-      { id: 'worker-b', concurrency: 2, isolation: 'hard' },
-    ], undefined, {
-      spawnImpl: (args) => {
-        const isWorkerB = args[3] === 'worker-b';
-        if (isWorkerB) {
-          throw new Error('failed spawn');
-        }
-        return createFakeProcess(() => 1);
+  test("reconcile() reports spawn errors and skips failed workers", async () => {
+    const { supervisor } = createSupervisor(
+      [
+        { id: "worker-a", concurrency: 4, isolation: "shared" },
+        { id: "worker-b", concurrency: 2, isolation: "hard" },
+      ],
+      undefined,
+      {
+        spawnImpl: (args) => {
+          const isWorkerB = args[3] === "worker-b";
+          if (isWorkerB) {
+            throw new Error("failed spawn");
+          }
+          return createFakeProcess(() => 1);
+        },
       },
-    });
+    );
     await supervisor.start();
 
     const summary = await supervisor.reconcile([
-      { id: 'worker-a', concurrency: 4, isolation: 'shared' },
-      { id: 'worker-b', concurrency: 2, isolation: 'hard' },
+      { id: "worker-a", concurrency: 4, isolation: "shared" },
+      { id: "worker-b", concurrency: 2, isolation: "hard" },
     ]);
     expect(summary).toEqual({
       started: [],
       restarted: [],
       stopped: [],
-      skipped: ['worker-b'],
-      errors: [{ worker_id: 'worker-b', message: 'failed spawn' }],
+      skipped: ["worker-b"],
+      errors: [{ worker_id: "worker-b", message: "failed spawn" }],
     });
   });
 
-  test('reconcile() serializes concurrent updates', async () => {
+  test("reconcile() serializes concurrent updates", async () => {
     const { supervisor, spawnCalls } = createSupervisor([
-      { id: 'worker-a', concurrency: 4, isolation: 'shared' },
+      { id: "worker-a", concurrency: 4, isolation: "shared" },
     ]);
     await supervisor.start();
     expect(spawnCalls).toHaveLength(1);
 
     vi.useFakeTimers();
-    const first = supervisor.reconcile([{ id: 'worker-a', concurrency: 8, isolation: 'shared' }]);
-    const second = supervisor.reconcile([{ id: 'worker-a', concurrency: 8, isolation: 'shared' }]);
+    const first = supervisor.reconcile([{ id: "worker-a", concurrency: 8, isolation: "shared" }]);
+    const second = supervisor.reconcile([{ id: "worker-a", concurrency: 8, isolation: "shared" }]);
     vi.advanceTimersByTime(10_000);
     await flushPromises();
     await first;
@@ -636,15 +654,15 @@ describe('extra worker supervisor', () => {
     expect(spawnCalls).toHaveLength(2);
   });
 
-  test('restartWorkerById returns false for unknown worker_id', async () => {
+  test("restartWorkerById returns false for unknown worker_id", async () => {
     vi.useFakeTimers();
     try {
       const { supervisor } = createSupervisor([
-        { id: 'worker-a', concurrency: 1, isolation: 'shared' },
+        { id: "worker-a", concurrency: 1, isolation: "shared" },
       ]);
       await supervisor.start();
 
-      const result = await supervisor.restartWorkerById('does-not-exist');
+      const result = await supervisor.restartWorkerById("does-not-exist");
 
       expect(result).toBe(false);
       const stopPromise = supervisor.stop();
@@ -656,16 +674,16 @@ describe('extra worker supervisor', () => {
     }
   });
 
-  test('restartWorkerById spawns a replacement process for a known worker', async () => {
+  test("restartWorkerById spawns a replacement process for a known worker", async () => {
     vi.useFakeTimers();
     try {
       const { supervisor, spawnCalls } = createSupervisor([
-        { id: 'worker-a', concurrency: 1, isolation: 'shared' },
+        { id: "worker-a", concurrency: 1, isolation: "shared" },
       ]);
       await supervisor.start();
       expect(spawnCalls).toHaveLength(1);
 
-      const restartPromise = supervisor.restartWorkerById('worker-a');
+      const restartPromise = supervisor.restartWorkerById("worker-a");
       await flushPromises();
       vi.advanceTimersByTime(10_000);
       await flushPromises();
@@ -678,21 +696,19 @@ describe('extra worker supervisor', () => {
     }
   });
 
-  test('restartWorkerById serializes with reconcile — no double spawn when reconcile does not change the worker', async () => {
+  test("restartWorkerById serializes with reconcile — no double spawn when reconcile does not change the worker", async () => {
     vi.useFakeTimers();
     try {
-      const extras: ExtraWorkerConfig[] = [
-        { id: 'alpha', concurrency: 4, isolation: 'shared' },
-      ];
+      const extras: ExtraWorkerConfig[] = [{ id: "alpha", concurrency: 4, isolation: "shared" }];
       const { supervisor, spawnCalls } = createSupervisor(extras);
       await supervisor.start();
       expect(spawnCalls).toHaveLength(1);
 
       const sameExtras: ExtraWorkerConfig[] = [
-        { id: 'alpha', concurrency: 4, isolation: 'shared' },
+        { id: "alpha", concurrency: 4, isolation: "shared" },
       ];
       const reconcileP = supervisor.reconcile(sameExtras);
-      const restartP = supervisor.restartWorkerById('alpha');
+      const restartP = supervisor.restartWorkerById("alpha");
       await flushPromises();
       vi.advanceTimersByTime(10_000);
       await flushPromises();
@@ -704,19 +720,19 @@ describe('extra worker supervisor', () => {
     }
   });
 
-  test('restartWorkerById returns false and does not throw when spawn fails', async () => {
+  test("restartWorkerById returns false and does not throw when spawn fails", async () => {
     const { supervisor } = createSupervisor(
-      [{ id: 'alpha', concurrency: 4, isolation: 'shared' }],
+      [{ id: "alpha", concurrency: 4, isolation: "shared" }],
       undefined,
       {
         spawnImpl: () => {
-          throw new Error('spawn exploded');
+          throw new Error("spawn exploded");
         },
       },
     );
     await supervisor.start();
 
-    const result = await supervisor.restartWorkerById('alpha');
+    const result = await supervisor.restartWorkerById("alpha");
 
     expect(result).toBe(false);
   });

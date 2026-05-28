@@ -60,9 +60,7 @@ function MissionSidebar(): JSX.Element {
         {chains.map((chain) => (
           <div key={chain.conversation_id} className="exp-row" onClick={() => {}}>
             <span className="dot dot-brand dot-live" style={{ flexShrink: 0 }} />
-            <span className="lbl">
-              {chain.to_agent || chain.conversation_id}
-            </span>
+            <span className="lbl">{chain.to_agent || chain.conversation_id}</span>
           </div>
         ))}
       </div>

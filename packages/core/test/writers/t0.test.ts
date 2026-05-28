@@ -1,36 +1,36 @@
-import { expect, test, beforeEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { expect, test, beforeEach } from "bun:test";
+import { Database } from "bun:sqlite";
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {
   // already loaded in this process
 }
-import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
-import { migrate } from '../../src/db/migrations.js';
-import { T0Writer } from '../../src/writers/t0.js';
-import { T0EventSchema } from '../../src/schemas/event.js';
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { migrate } from "../../src/db/migrations.js";
+import { T0Writer } from "../../src/writers/t0.js";
+import { T0EventSchema } from "../../src/schemas/event.js";
 
 let db: Database;
 beforeEach(() => {
-  db = new Database(':memory:');
+  db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 });
 
 const sample = T0EventSchema.parse({
-  event_id: 'e1',
-  ts: '2026-04-23T11:59:59.000Z',
-  ingest_ts: '2026-04-23T12:00:00.000Z',
-  source: 'mcp',
-  source_detail: 'claude-code',
+  event_id: "e1",
+  ts: "2026-04-23T11:59:59.000Z",
+  ingest_ts: "2026-04-23T12:00:00.000Z",
+  source: "mcp",
+  source_detail: "claude-code",
   project_id: null,
-  user_id: 'u',
-  machine_id: 'm',
-  session_id: 's',
-  event_type: 'agent-tool-use',
-  lane: 'local',
+  user_id: "u",
+  machine_id: "m",
+  session_id: "s",
+  event_type: "agent-tool-use",
+  lane: "local",
   provider: null,
   model: null,
   tokens_in: null,
@@ -38,46 +38,47 @@ const sample = T0EventSchema.parse({
   cost_usd: null,
   latency_ms: null,
   request_id: null,
-  payload_json: { tool: 'Read' },
-  payload_summary: 'Read src/x.ts',
-  origin: 'maestro',
+  payload_json: { tool: "Read" },
+  payload_summary: "Read src/x.ts",
+  origin: "maestro",
 });
 
-test('writes a row and is retrievable', () => {
+test("writes a row and is retrievable", () => {
   const w = new T0Writer(db);
   w.write(sample);
   const row = db
-    .query<{ event_id: string; payload_json: string; origin: string | null }, [string]>(
-      'SELECT event_id, payload_json, origin FROM t0_events WHERE event_id=?',
-    )
-    .get('e1');
-  expect(row?.event_id).toBe('e1');
-  expect(JSON.parse(row!.payload_json)).toEqual({ tool: 'Read' });
-  expect(row!.origin).toBe('maestro');
+    .query<
+      { event_id: string; payload_json: string; origin: string | null },
+      [string]
+    >("SELECT event_id, payload_json, origin FROM t0_events WHERE event_id=?")
+    .get("e1");
+  expect(row?.event_id).toBe("e1");
+  expect(JSON.parse(row!.payload_json)).toEqual({ tool: "Read" });
+  expect(row!.origin).toBe("maestro");
 });
 
-test('writes origin=dispatch round-trips', () => {
+test("writes origin=dispatch round-trips", () => {
   const w = new T0Writer(db);
-  const dispatchEvent = T0EventSchema.parse({ ...sample, event_id: 'e2', origin: 'dispatch' });
+  const dispatchEvent = T0EventSchema.parse({ ...sample, event_id: "e2", origin: "dispatch" });
   w.write(dispatchEvent);
   const row = db
-    .query<{ origin: string | null }, [string]>('SELECT origin FROM t0_events WHERE event_id=?')
-    .get('e2');
-  expect(row!.origin).toBe('dispatch');
+    .query<{ origin: string | null }, [string]>("SELECT origin FROM t0_events WHERE event_id=?")
+    .get("e2");
+  expect(row!.origin).toBe("dispatch");
 });
 
-test('writes origin=null when not set (legacy compat)', () => {
+test("writes origin=null when not set (legacy compat)", () => {
   const w = new T0Writer(db);
   // Bypass schema to simulate a legacy-shaped row (origin omitted)
-  const e = { ...sample, event_id: 'e3', origin: null } as any;
+  const e = { ...sample, event_id: "e3", origin: null } as any;
   w.write(e);
   const row = db
-    .query<{ origin: string | null }, [string]>('SELECT origin FROM t0_events WHERE event_id=?')
-    .get('e3');
+    .query<{ origin: string | null }, [string]>("SELECT origin FROM t0_events WHERE event_id=?")
+    .get("e3");
   expect(row!.origin).toBeNull();
 });
 
-test('insert of duplicate event_id fails loud', () => {
+test("insert of duplicate event_id fails loud", () => {
   const w = new T0Writer(db);
   w.write(sample);
   expect(() => w.write(sample)).toThrow();

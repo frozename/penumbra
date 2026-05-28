@@ -1,11 +1,11 @@
-import type { Services } from '@penumbra/core';
-import { T2Promotion, type T2MemoryExtraction, type Embedder } from '@penumbra/core';
-import type { AgentChatConfig } from '@penumbra/config';
-import { loadAgentChatConfig, resolveAgentChatConfigPath } from '../agentchat-config.js';
-import { createJudgePool, type JudgeEntry, type JudgePool } from './t2-judge-pool.js';
+import type { Services } from "@penumbra/core";
+import { T2Promotion, type T2MemoryExtraction, type Embedder } from "@penumbra/core";
+import type { AgentChatConfig } from "@penumbra/config";
+import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
+import { createJudgePool, type JudgeEntry, type JudgePool } from "./t2-judge-pool.js";
 
 export const T2_PROMPT_FILTER_RULE =
-  'If a memory could be retrieved later by `git log`, `grep`, `find`, or just reading the code, DO NOT extract it. Memory is for things that take judgment to discover, not things that are mechanically discoverable.';
+  "If a memory could be retrieved later by `git log`, `grep`, `find`, or just reading the code, DO NOT extract it. Memory is for things that take judgment to discover, not things that are mechanically discoverable.";
 
 export const T2_PROMOTION_PROMPT = `
 You are extracting durable knowledge from a session transcript for long-term memory used by future sessions, possibly weeks or months from now. Your bar is high: extract ONLY things that future-you would benefit from knowing, not things any tool can rediscover.
@@ -64,14 +64,15 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
   // default port on common dev setups and produced an unbounded stream of
   // "Sirius returned 404" warnings every cycle.
   let activePool: JudgePool | null = null;
-  const rawJudge = opts.llm
-    ?? createJudgePoolFromAgentchat(opts.services, (pool) => {
+  const rawJudge =
+    opts.llm ??
+    createJudgePoolFromAgentchat(opts.services, (pool) => {
       activePool = pool;
-    })
-    ?? createDefaultLLMJudge(opts.services);
+    }) ??
+    createDefaultLLMJudge(opts.services);
   if (!rawJudge) {
     opts.services.log.info(
-      'no PENUMBRA_SIRIUS_BASE_URL/SIRIUS_URL configured — t2 promotion worker disabled (set one to enable)',
+      "no PENUMBRA_SIRIUS_BASE_URL/SIRIUS_URL configured — t2 promotion worker disabled (set one to enable)",
     );
     return {
       async tick(): Promise<void> {
@@ -115,25 +116,36 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
         try {
           const count = await t2.promoteRollup(rollupId);
           if (count > 0) {
-            opts.services.log.info({ rollupId, count }, 't2 promotion: promoted session to memories');
+            opts.services.log.info(
+              { rollupId, count },
+              "t2 promotion: promoted session to memories",
+            );
           }
         } catch (err) {
           if (isJudgeUnreachable(err)) {
             opts.services.log.warn(
-              { err: err instanceof Error ? err.message : String(err), remaining: rollups.length - rollups.indexOf(rollupId) - 1 },
-              't2 promotion: LLM judge unreachable — skipping remaining rollups this cycle',
+              {
+                err: err instanceof Error ? err.message : String(err),
+                remaining: rollups.length - rollups.indexOf(rollupId) - 1,
+              },
+              "t2 promotion: LLM judge unreachable — skipping remaining rollups this cycle",
             );
             judgeUnreachable = true;
             continue;
           }
-          opts.services.log.warn({ rollupId, err }, 't2 promotion: failed to promote rollup, skipping');
+          opts.services.log.warn(
+            { rollupId, err },
+            "t2 promotion: failed to promote rollup, skipping",
+          );
         }
       }
     },
   };
 }
 
-export function wrapJudgeWithChunking(opts: ChunkedJudgeOpts): (transcript: string) => Promise<T2MemoryExtraction[]> {
+export function wrapJudgeWithChunking(
+  opts: ChunkedJudgeOpts,
+): (transcript: string) => Promise<T2MemoryExtraction[]> {
   const maxChars = opts.maxCharsPerChunk ?? 80_000;
   return async (transcript: string): Promise<T2MemoryExtraction[]> => {
     if (transcript.length <= maxChars) return opts.judge(transcript);
@@ -146,16 +158,19 @@ export function wrapJudgeWithChunking(opts: ChunkedJudgeOpts): (transcript: stri
       // Keep each event whole. If an individual event exceeds the budget, let
       // it stand alone rather than splitting mid-message.
       if (bufLen > 0 && bufLen + ev.length + 2 > maxChars) {
-        chunks.push(buf.join('\n\n'));
+        chunks.push(buf.join("\n\n"));
         buf = [];
         bufLen = 0;
       }
       buf.push(ev);
       bufLen += ev.length + 2;
     }
-    if (buf.length > 0) chunks.push(buf.join('\n\n'));
+    if (buf.length > 0) chunks.push(buf.join("\n\n"));
 
-    opts.log?.info?.({ chunks: chunks.length, totalChars: transcript.length, maxChars }, 't2 promotion: transcript chunked');
+    opts.log?.info?.(
+      { chunks: chunks.length, totalChars: transcript.length, maxChars },
+      "t2 promotion: transcript chunked",
+    );
 
     const allMemories: T2MemoryExtraction[] = [];
     for (const chunk of chunks) {
@@ -163,7 +178,10 @@ export function wrapJudgeWithChunking(opts: ChunkedJudgeOpts): (transcript: stri
         const memories = await opts.judge(chunk);
         for (const memory of memories) allMemories.push(memory);
       } catch (err) {
-        opts.log?.warn?.({ err: err instanceof Error ? err.message : String(err) }, 't2 promotion: chunk judge failed; continuing');
+        opts.log?.warn?.(
+          { err: err instanceof Error ? err.message : String(err) },
+          "t2 promotion: chunk judge failed; continuing",
+        );
       }
     }
 
@@ -178,7 +196,7 @@ export function wrapJudgeWithChunking(opts: ChunkedJudgeOpts): (transcript: stri
     } catch (err) {
       opts.log?.warn?.(
         { err: err instanceof Error ? err.message : String(err) },
-        't2 promotion: semantic dedupe failed; returning title-deduped memories',
+        "t2 promotion: semantic dedupe failed; returning title-deduped memories",
       );
       return titleDeduped;
     }
@@ -193,7 +211,7 @@ export function wrapJudgeWithChunking(opts: ChunkedJudgeOpts): (transcript: stri
  * Returns the input unchanged if no fence is detected.
  */
 function stripReasoningTags(content: string): string {
-  return content.replace(/<(think|reasoning)>[\s\S]*?<\/\1>\s*/gi, '');
+  return content.replace(/<(think|reasoning)>[\s\S]*?<\/\1>\s*/gi, "");
 }
 
 export function stripJsonFence(content: string): string {
@@ -207,16 +225,16 @@ export function stripJsonFence(content: string): string {
   // Strip ANSI CSI sequences before brace extraction so the JSON span matcher
   // sees clean braces even when a judge emits terminal control codes.
   const stripped = detagged
-    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
-    .replace(/(?:^|\s)\[[0-9;]+[A-Za-z]/g, ' ');
+    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")
+    .replace(/(?:^|\s)\[[0-9;]+[A-Za-z]/g, " ");
   const fenced = stripped.match(/^```(?:json|JSON)?\s*\n?([\s\S]*?)\n?```$/);
   if (fenced) return fenced[1]!.trim();
   // Fallback: when transcripts contain prompt-injected wrappers
   // (e.g. claude-mem's "wrap responses in <summary>...</summary>" instruction)
   // the model dutifully wraps the JSON in arbitrary tags. Extract the
   // outermost {...} span instead of failing on the leading tag.
-  const firstBrace = stripped.indexOf('{');
-  const lastBrace = stripped.lastIndexOf('}');
+  const firstBrace = stripped.indexOf("{");
+  const lastBrace = stripped.lastIndexOf("}");
   if (firstBrace >= 0 && lastBrace > firstBrace) {
     return stripped.slice(firstBrace, lastBrace + 1);
   }
@@ -231,7 +249,10 @@ function isJudgeUnreachable(err: unknown): boolean {
 }
 
 function splitTranscriptOnEventBoundaries(transcript: string): string[] {
-  const events = transcript.split(/\n\n(?=User: |Assistant: )/).map((e) => e.trim()).filter(Boolean);
+  const events = transcript
+    .split(/\n\n(?=User: |Assistant: )/)
+    .map((e) => e.trim())
+    .filter(Boolean);
   return events.length > 0 ? events : [transcript.trim()].filter(Boolean);
 }
 
@@ -325,26 +346,28 @@ function parseJudgeResponse(content: string): T2MemoryExtraction[] {
   return extractions;
 }
 
-function createDefaultLLMJudge(services: Services): ((transcript: string) => Promise<T2MemoryExtraction[]>) | null {
+function createDefaultLLMJudge(
+  services: Services,
+): ((transcript: string) => Promise<T2MemoryExtraction[]>) | null {
   const url = process.env.PENUMBRA_SIRIUS_BASE_URL || process.env.SIRIUS_URL;
   if (!url) return null;
-  const model = process.env.PENUMBRA_JUDGE_MODEL || process.env.PENUMBRA_SIRIUS_MODEL || 'gpt-4o';
-  const token = process.env.PENUMBRA_SIRIUS_TOKEN || '';
-  services.log.info({ url, model, hasToken: Boolean(token) }, 't2 promotion: LLM judge configured');
+  const model = process.env.PENUMBRA_JUDGE_MODEL || process.env.PENUMBRA_SIRIUS_MODEL || "gpt-4o";
+  const token = process.env.PENUMBRA_SIRIUS_TOKEN || "";
+  services.log.info({ url, model, hasToken: Boolean(token) }, "t2 promotion: LLM judge configured");
 
   return async (transcript: string): Promise<T2MemoryExtraction[]> => {
     try {
-      const prompt = T2_PROMOTION_PROMPT.replace('{{TRANSCRIPT}}', transcript);
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const prompt = T2_PROMOTION_PROMPT.replace("{{TRANSCRIPT}}", transcript);
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
 
       const res = await fetch(`${url}/v1/chat/completions`, {
-        method: 'POST',
+        method: "POST",
         headers,
         body: JSON.stringify({
           model,
-          messages: [{ role: 'user', content: prompt }],
-          response_format: { type: 'json_object' },
+          messages: [{ role: "user", content: prompt }],
+          response_format: { type: "json_object" },
           max_tokens: 16384,
           temperature: 0,
         }),
@@ -354,12 +377,12 @@ function createDefaultLLMJudge(services: Services): ((transcript: string) => Pro
         throw new Error(`Sirius returned ${res.status}: ${await res.text()}`);
       }
 
-      const json = await res.json() as any;
+      const json = (await res.json()) as any;
       const content = json.choices[0]?.message?.content;
       if (!content) return [];
       return parseJudgeResponse(content);
     } catch (err) {
-      services.log.error({ err }, 'LLM judge failed');
+      services.log.error({ err }, "LLM judge failed");
       throw err;
     }
   };
@@ -374,35 +397,42 @@ function createJudgePoolFromAgentchat(
   try {
     cfg = loadAgentChatConfig();
   } catch (err) {
-    services.log.warn({ err, configDir }, 't2 promotion: failed to load agentchat config for judge pool');
+    services.log.warn(
+      { err, configDir },
+      "t2 promotion: failed to load agentchat config for judge pool",
+    );
     return null;
   }
 
-  const roleTag = process.env.PENUMBRA_JUDGE_ROLE ?? 'memory-refiner';
-  const eligible = (cfg.agents ?? []).filter((agent) =>
-    agent.adapter === 'openai-compat-http' &&
-    Array.isArray(agent.roles) &&
-    agent.roles.includes(roleTag) &&
-    typeof agent.options?.baseUrl === 'string' &&
-    agent.options.baseUrl.length > 0,
+  const roleTag = process.env.PENUMBRA_JUDGE_ROLE ?? "memory-refiner";
+  const eligible = (cfg.agents ?? []).filter(
+    (agent) =>
+      agent.adapter === "openai-compat-http" &&
+      Array.isArray(agent.roles) &&
+      agent.roles.includes(roleTag) &&
+      typeof agent.options?.baseUrl === "string" &&
+      agent.options.baseUrl.length > 0,
   );
   if (eligible.length === 0) return null;
 
   const judges: JudgeEntry[] = eligible.map((agent) => ({
     name: agent.name,
     baseUrl: agent.options.baseUrl as string,
-    apiKey: (agent.options.apiKey as string) ?? '',
-    model: (agent.options.model as string) ?? 'local',
+    apiKey: (agent.options.apiKey as string) ?? "",
+    model: (agent.options.model as string) ?? "local",
     caPath: agent.options.caPath as string | undefined,
   }));
 
   const pool = createJudgePool({
     judges,
     log: services.log,
-    promptBuilder: (transcript) => T2_PROMOTION_PROMPT.replace('{{TRANSCRIPT}}', transcript),
+    promptBuilder: (transcript) => T2_PROMOTION_PROMPT.replace("{{TRANSCRIPT}}", transcript),
     parseResponse: parseJudgeResponse,
   });
   onPool(pool);
-  services.log.info({ count: judges.length, names: judges.map((j) => j.name) }, 't2 promotion: judge pool configured');
+  services.log.info(
+    { count: judges.length, names: judges.map((j) => j.name) },
+    "t2 promotion: judge pool configured",
+  );
   return async (transcript: string) => pool.invoke(transcript);
 }

@@ -1,8 +1,8 @@
-import { expect, test } from 'bun:test';
-import { existsSync, statSync } from 'node:fs';
-import { makeSandbox } from './sandbox.js';
+import { expect, test } from "bun:test";
+import { existsSync, statSync } from "node:fs";
+import { makeSandbox } from "./sandbox.js";
 
-test('makeSandbox creates an existing directory under the system tmp dir', () => {
+test("makeSandbox creates an existing directory under the system tmp dir", () => {
   const sb = makeSandbox();
   try {
     expect(existsSync(sb.dir)).toBe(true);
@@ -13,15 +13,15 @@ test('makeSandbox creates an existing directory under the system tmp dir', () =>
   }
 });
 
-test('makeSandbox.cleanup removes the directory', () => {
+test("makeSandbox.cleanup removes the directory", () => {
   const sb = makeSandbox();
   expect(existsSync(sb.dir)).toBe(true);
   sb.cleanup();
   expect(existsSync(sb.dir)).toBe(false);
 });
 
-test('makeSandbox accepts a custom prefix', () => {
-  const sb = makeSandbox('penumbra-custom-');
+test("makeSandbox accepts a custom prefix", () => {
+  const sb = makeSandbox("penumbra-custom-");
   try {
     expect(sb.dir).toMatch(/penumbra-custom-/);
   } finally {

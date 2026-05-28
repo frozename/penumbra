@@ -1,6 +1,6 @@
-import { readFileSync } from 'node:fs';
-import { loadAgentChatConfig, resolveAgentChatConfigPath } from '../agentchat-config.js';
-import type { JudgePool, JudgeVote } from './judge-pool.js';
+import { readFileSync } from "node:fs";
+import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
+import type { JudgePool, JudgeVote } from "./judge-pool.js";
 
 // Shared helper approach was considered but deferred: t2-judge-pool returns
 // T2MemoryExtraction[] while dreaming returns DreamingVoteRaw — the generic
@@ -38,17 +38,21 @@ Output ONLY valid JSON — no prose, no code fences, no wrapper tags:
 
 export function parseDreamingJudgeResponse(content: string): DreamingVoteRaw {
   try {
-    const stripped = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```[\s\S]*$/, '').trim();
+    const stripped = content
+      .trim()
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```[\s\S]*$/, "")
+      .trim();
     const match = stripped.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('no_json_object');
+    if (!match) throw new Error("no_json_object");
     const parsed = JSON.parse(match[0]) as Record<string, unknown>;
     return {
       promote: Boolean(parsed.promote),
-      confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0,
-      rationale: typeof parsed.rationale === 'string' ? parsed.rationale : '',
+      confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0,
+      rationale: typeof parsed.rationale === "string" ? parsed.rationale : "",
     };
   } catch {
-    return { promote: false, confidence: 0, rationale: 'parse_error' };
+    return { promote: false, confidence: 0, rationale: "parse_error" };
   }
 }
 
@@ -61,7 +65,7 @@ class DreamingJudgePoolImpl implements JudgePool {
     this.fetchImpl = fetchImpl ?? fetch;
     this.judges = judges.map((j) => ({
       ...j,
-      caPem: j.caPath ? readFileSync(j.caPath, 'utf8') : undefined,
+      caPem: j.caPath ? readFileSync(j.caPath, "utf8") : undefined,
     }));
   }
 
@@ -70,17 +74,19 @@ class DreamingJudgePoolImpl implements JudgePool {
   }
 
   private async callJudge(judge: DreamingJudgeState, prompt: string): Promise<DreamingVoteRaw> {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (judge.apiKey) headers['Authorization'] = `Bearer ${judge.apiKey}`;
-    const trimmed = judge.baseUrl.replace(/\/+$/, '');
-    const url = trimmed.endsWith('/v1') ? `${trimmed}/chat/completions` : `${trimmed}/v1/chat/completions`;
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (judge.apiKey) headers["Authorization"] = `Bearer ${judge.apiKey}`;
+    const trimmed = judge.baseUrl.replace(/\/+$/, "");
+    const url = trimmed.endsWith("/v1")
+      ? `${trimmed}/chat/completions`
+      : `${trimmed}/v1/chat/completions`;
     const init: RequestInit & { tls?: { ca: string } } = {
-      method: 'POST',
+      method: "POST",
       headers,
       body: JSON.stringify({
         model: judge.model,
-        messages: [{ role: 'user', content: prompt }],
-        response_format: { type: 'json_object' },
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
         max_tokens: 256,
         temperature: 0,
       }),
@@ -91,14 +97,14 @@ class DreamingJudgePoolImpl implements JudgePool {
       throw new Error(`dreaming judge ${judge.name} returned ${res.status}: ${await res.text()}`);
     }
     const json = (await res.json()) as any;
-    const content: string = json.choices?.[0]?.message?.content ?? '';
+    const content: string = json.choices?.[0]?.message?.content ?? "";
     return parseDreamingJudgeResponse(content);
   }
 
   async judge(args: {
     body: string;
-    kind: 'promote_t1' | 'link' | 'retire' | 'rewrite';
-  }): Promise<{ confidence: number; verdict: 'yes' | 'no' | 'unsure'; rationale?: string }> {
+    kind: "promote_t1" | "link" | "retire" | "rewrite";
+  }): Promise<{ confidence: number; verdict: "yes" | "no" | "unsure"; rationale?: string }> {
     const prompt = buildDreamingPromptBlock(args);
     const idx = this.nextIndex % this.judges.length;
     this.nextIndex = (idx + 1) % this.judges.length;
@@ -106,14 +112,14 @@ class DreamingJudgePoolImpl implements JudgePool {
     const raw = await this.callJudge(judge, prompt);
     return {
       confidence: raw.confidence,
-      verdict: raw.promote ? 'yes' : 'no',
+      verdict: raw.promote ? "yes" : "no",
       rationale: raw.rationale,
     };
   }
 
   async judgeAll(args: {
     body: string;
-    kind: 'promote_t1' | 'link' | 'retire' | 'rewrite';
+    kind: "promote_t1" | "link" | "retire" | "rewrite";
   }): Promise<JudgeVote[]> {
     const prompt = buildDreamingPromptBlock(args);
     return Promise.all(
@@ -122,7 +128,7 @@ class DreamingJudgePoolImpl implements JudgePool {
           const raw = await this.callJudge(judge, prompt);
           return { promote: raw.promote, confidence: raw.confidence, rationale: raw.rationale };
         } catch {
-          return { promote: false, confidence: 0, rationale: 'judge_error' };
+          return { promote: false, confidence: 0, rationale: "judge_error" };
         }
       }),
     );
@@ -145,18 +151,21 @@ export function createDreamingJudgePoolFromAgentchat(
   try {
     cfg = loadAgentChatConfig();
   } catch (err) {
-    services?.log?.warn({ err, configDir }, 'dreaming: failed to load agentchat config for judge pool');
+    services?.log?.warn(
+      { err, configDir },
+      "dreaming: failed to load agentchat config for judge pool",
+    );
     return null;
   }
 
-  const roleTag = process.env['PENUMBRA_DREAMING_JUDGE_ROLE'] ?? 'dreaming-judge';
+  const roleTag = process.env["PENUMBRA_DREAMING_JUDGE_ROLE"] ?? "dreaming-judge";
   const eligible = (cfg.agents ?? []).filter(
     (agent) =>
-      agent.adapter === 'openai-compat-http' &&
+      agent.adapter === "openai-compat-http" &&
       Array.isArray(agent.roles) &&
       agent.roles.includes(roleTag) &&
-      typeof agent.options?.['baseUrl'] === 'string' &&
-      (agent.options['baseUrl'] as string).length > 0,
+      typeof agent.options?.["baseUrl"] === "string" &&
+      (agent.options["baseUrl"] as string).length > 0,
   );
 
   // Require ≥2 agents: P1 auto-promote threshold is ceil(total*2/3) with
@@ -165,10 +174,10 @@ export function createDreamingJudgePoolFromAgentchat(
 
   const judges: DreamingJudgeEntry[] = eligible.map((agent) => ({
     name: agent.name,
-    baseUrl: agent.options['baseUrl'] as string,
-    apiKey: (agent.options['apiKey'] as string | undefined) ?? '',
-    model: (agent.options['model'] as string | undefined) ?? 'local',
-    caPath: agent.options['caPath'] as string | undefined,
+    baseUrl: agent.options["baseUrl"] as string,
+    apiKey: (agent.options["apiKey"] as string | undefined) ?? "",
+    model: (agent.options["model"] as string | undefined) ?? "local",
+    caPath: agent.options["caPath"] as string | undefined,
   }));
 
   return new DreamingJudgePoolImpl(judges, fetchImpl);

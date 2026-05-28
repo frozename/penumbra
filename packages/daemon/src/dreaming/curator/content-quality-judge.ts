@@ -10,15 +10,15 @@ export interface ContentQualityJudgeConfig {
 }
 
 const DEFAULT_TRUSTED_DOMAINS = [
-  'github.com',
-  'bun.sh',
-  'npmjs.com',
-  'nodejs.org',
-  'deno.land',
-  'en.wikipedia.org',
-  'docs.anthropic.com',
-  'modelcontextprotocol.io',
-  'sqlite.org',
+  "github.com",
+  "bun.sh",
+  "npmjs.com",
+  "nodejs.org",
+  "deno.land",
+  "en.wikipedia.org",
+  "docs.anthropic.com",
+  "modelcontextprotocol.io",
+  "sqlite.org",
 ];
 
 function clamp01(value: number): number {
@@ -37,7 +37,14 @@ function extractHostname(url: string): string | null {
 }
 
 function normalizeQueryTerms(query: string): string[] {
-  return Array.from(new Set(query.toLowerCase().split(/\s+/).filter((term) => term.trim().length > 0)));
+  return Array.from(
+    new Set(
+      query
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((term) => term.trim().length > 0),
+    ),
+  );
 }
 
 function countMarkdownLinks(markdown: string): number {
@@ -67,24 +74,27 @@ export class ContentQualityJudge {
     const matchedTerms = queryTerms.filter((term) => haystack.includes(term)).length;
     const relevance = queryTerms.length > 0 ? clamp01(matchedTerms / queryTerms.length) : 0;
     const depth = clamp01(result.markdown.length / 400);
-    const wordCount = result.markdown.trim().split(/\s+/).filter((word) => word.length > 0).length;
+    const wordCount = result.markdown
+      .trim()
+      .split(/\s+/)
+      .filter((word) => word.length > 0).length;
     const linkCount = countMarkdownLinks(result.markdown);
     const spamRatio = linkCount / Math.max(wordCount / 10, 1);
     const spamInverse = clamp01(1 - spamRatio);
 
-    const hostname = extractHostname(result.url)?.toLowerCase() ?? '';
-    const isTrustedDomain = hostname !== '' && this.trustedDomains.some((domain) => isParentOrSelfMatch(hostname, domain));
+    const hostname = extractHostname(result.url)?.toLowerCase() ?? "";
+    const isTrustedDomain =
+      hostname !== "" &&
+      this.trustedDomains.some((domain) => isParentOrSelfMatch(hostname, domain));
     const domainBonus = isTrustedDomain ? 1 : 0;
 
-    const score = clamp01(
-      0.45 * relevance + 0.25 * depth + 0.2 * spamInverse + 0.1 * domainBonus,
-    );
+    const score = clamp01(0.45 * relevance + 0.25 * depth + 0.2 * spamInverse + 0.1 * domainBonus);
 
     const reasons = [
       `relevance:${relevance.toFixed(2)}`,
       `depth:${depth.toFixed(2)}`,
       `spam:${spamInverse.toFixed(2)}`,
-      `domain:${isTrustedDomain ? 'trusted' : 'untrusted'}`,
+      `domain:${isTrustedDomain ? "trusted" : "untrusted"}`,
     ];
 
     return {

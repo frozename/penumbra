@@ -11,6 +11,7 @@ bun test packages/e2e
 ```
 
 The gated llamactl+sirius test skips unless:
+
 - `PENUMBRA_E2E_LLAMACTL=1`
 - `llamactl` is on PATH
 - The configured sirius `<baseUrl>/healthz` returns 200
@@ -65,9 +66,9 @@ The harness prints something like:
       "type": "stdio",
       "command": "bun",
       "args": ["/abs/path/to/packages/mcp/bin/penumbra-mcp.ts"],
-      "env": { "PENUMBRA_STORAGE_ROOT": "/tmp/penumbra-harness-XXXX" }
-    }
-  }
+      "env": { "PENUMBRA_STORAGE_ROOT": "/tmp/penumbra-harness-XXXX" },
+    },
+  },
 }
 ```
 

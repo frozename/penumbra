@@ -1,5 +1,9 @@
-import type { Subprocess } from 'bun';
-import { buildFramedCommand, parseFramedOutput, type ParseFramedOutputResult } from './shell-framing.js';
+import type { Subprocess } from "bun";
+import {
+  buildFramedCommand,
+  parseFramedOutput,
+  type ParseFramedOutputResult,
+} from "./shell-framing.js";
 
 export interface CreateSessionInput {
   handoffId: string;
@@ -52,14 +56,14 @@ export interface HandoffStatusReader {
 export class MaxSessionsPerHandoffError extends Error {
   constructor(limit: number) {
     super(`max sessions per handoff exceeded (limit ${limit})`);
-    this.name = 'MaxSessionsPerHandoffError';
+    this.name = "MaxSessionsPerHandoffError";
   }
 }
 
 interface SessionState {
   handoffId: string;
   sessionId: string;
-  proc: Subprocess<'pipe', 'pipe', 'pipe'>;
+  proc: Subprocess<"pipe", "pipe", "pipe">;
   launchEnv: Record<string, string>;
   cwd: string;
   pty: boolean;
@@ -81,29 +85,29 @@ const REDACTION_PATTERNS: RegExp[] = [
   /Bearer\s+[A-Za-z0-9._-]+/g,
 ];
 
-const COMMAND_TIMED_OUT = 'COMMAND_TIMED_OUT' as const;
-const COMMAND_CANCELLED = 'COMMAND_CANCELLED' as const;
-const TERMINAL_HANDOFF_STATUSES = new Set(['completed', 'failed', 'expired', 'cancelled']);
+const COMMAND_TIMED_OUT = "COMMAND_TIMED_OUT" as const;
+const COMMAND_CANCELLED = "COMMAND_CANCELLED" as const;
+const TERMINAL_HANDOFF_STATUSES = new Set(["completed", "failed", "expired", "cancelled"]);
 
 function redactCredentials(text: string): string {
   let out = text;
   for (const pattern of REDACTION_PATTERNS) {
-    out = out.replace(pattern, '[REDACTED]');
+    out = out.replace(pattern, "[REDACTED]");
   }
   return out;
 }
 
 function stripAnsiEscapes(text: string): string {
-  return text.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
+  return text.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "").replace(/\x1b\][^\x07]*\x07/g, "");
 }
 
 function truncateToByteLimit(text: string, limit: number): { text: string; truncated: boolean } {
-  if (Buffer.byteLength(text, 'utf8') <= limit) {
+  if (Buffer.byteLength(text, "utf8") <= limit) {
     return { text, truncated: false };
   }
 
   let end = text.length;
-  while (end > 0 && Buffer.byteLength(text.slice(0, end), 'utf8') > limit) {
+  while (end > 0 && Buffer.byteLength(text.slice(0, end), "utf8") > limit) {
     end -= 1;
   }
   return { text: text.slice(0, end), truncated: true };
@@ -161,8 +165,8 @@ export class ShellSessionPool {
       runQueue: Promise.resolve(),
       dead: false,
       replacing: false,
-      stdoutBuffer: '',
-      stderrBuffer: '',
+      stdoutBuffer: "",
+      stderrBuffer: "",
       waiters: new Set(),
     };
 
@@ -179,7 +183,7 @@ export class ShellSessionPool {
     const sessions = this.handoffs.get(input.handoffId);
     const state = sessions?.get(input.sessionId);
     if (!state || state.dead) {
-      return { exit_code: -1, stdout: '', stderr: 'session ended', truncated: false };
+      return { exit_code: -1, stdout: "", stderr: "session ended", truncated: false };
     }
 
     const next = state.runQueue.then(() => this.runCommandImpl(state, input));
@@ -187,7 +191,10 @@ export class ShellSessionPool {
     return next;
   }
 
-  async closeSession(input: { handoffId: string; sessionId: string }): Promise<{ closed: boolean }> {
+  async closeSession(input: {
+    handoffId: string;
+    sessionId: string;
+  }): Promise<{ closed: boolean }> {
     const sessions = this.handoffs.get(input.handoffId);
     const state = sessions?.get(input.sessionId);
     if (!state || state.dead) {
@@ -201,7 +208,7 @@ export class ShellSessionPool {
     await Promise.race([state.proc.exited, this.sleep(100)]);
     if (state.proc.exitCode === null) {
       try {
-        state.proc.kill('SIGKILL');
+        state.proc.kill("SIGKILL");
       } catch {}
     }
 
@@ -248,9 +255,12 @@ export class ShellSessionPool {
     }
   }
 
-  private async runCommandImpl(state: SessionState, input: RunCommandInput): Promise<RunCommandResult> {
+  private async runCommandImpl(
+    state: SessionState,
+    input: RunCommandInput,
+  ): Promise<RunCommandResult> {
     if (state.dead) {
-      return { exit_code: -1, stdout: '', stderr: 'session ended', truncated: false };
+      return { exit_code: -1, stdout: "", stderr: "session ended", truncated: false };
     }
 
     if (input.agentName) {
@@ -269,7 +279,14 @@ export class ShellSessionPool {
     state.proc.stdin.write(`${snippet}\n`);
 
     let timedOut = false;
-    const completion = this.waitForCommandCompletion(state, stdoutStart, stderrStart, startMarker, endMarker, () => timedOut);
+    const completion = this.waitForCommandCompletion(
+      state,
+      stdoutStart,
+      stderrStart,
+      startMarker,
+      endMarker,
+      () => timedOut,
+    );
     const result = await Promise.race([
       completion,
       this.sleep(this.deps.config.maxCommandDurationMs).then(() => {
@@ -280,35 +297,40 @@ export class ShellSessionPool {
 
     if (result === COMMAND_TIMED_OUT) {
       try {
-        state.proc.stdin.write('\u0003');
+        state.proc.stdin.write("\u0003");
       } catch {}
       try {
-        state.proc.stdin.write('\n');
+        state.proc.stdin.write("\n");
       } catch {}
       await this.replaceTimedOutProcess(state);
       this.resetBuffers(state);
       state.lastUsedAt = this.timestamp();
       return {
         exit_code: 124,
-        stdout: '',
-        stderr: 'shell_run: command timed out\n',
+        stdout: "",
+        stderr: "shell_run: command timed out\n",
         truncated: false,
       };
     }
 
     if (result === COMMAND_CANCELLED) {
       this.resetBuffers(state);
-      return { exit_code: 124, stdout: '', stderr: 'shell_run: command timed out\n', truncated: false };
+      return {
+        exit_code: 124,
+        stdout: "",
+        stderr: "shell_run: command timed out\n",
+        truncated: false,
+      };
     }
 
     if (result === null || state.dead) {
       this.resetBuffers(state);
-      return { exit_code: -1, stdout: '', stderr: 'session ended', truncated: false };
+      return { exit_code: -1, stdout: "", stderr: "session ended", truncated: false };
     }
 
     this.resetBuffers(state);
 
-    const agentName = input.agentName ?? state.agentName ?? '';
+    const agentName = input.agentName ?? state.agentName ?? "";
     let stdout = result.stdout;
     let stderr = result.stderr;
     if (state.pty) {
@@ -378,9 +400,9 @@ export class ShellSessionPool {
 
   private async pumpStream(
     state: SessionState,
-    proc: Subprocess<'pipe', 'pipe', 'pipe'>,
+    proc: Subprocess<"pipe", "pipe", "pipe">,
     stream: ReadableStream<Uint8Array>,
-    target: 'stdout' | 'stderr',
+    target: "stdout" | "stderr",
   ): Promise<void> {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
@@ -392,7 +414,7 @@ export class ShellSessionPool {
         const chunk = decoder.decode(value, { stream: true });
         if (!chunk) continue;
         if (state.proc !== proc || state.dead) continue;
-        if (target === 'stdout') {
+        if (target === "stdout") {
           state.stdoutBuffer += chunk;
         } else {
           state.stderrBuffer += chunk;
@@ -402,7 +424,7 @@ export class ShellSessionPool {
 
       const tail = decoder.decode();
       if (tail && state.proc === proc && !state.dead) {
-        if (target === 'stdout') {
+        if (target === "stdout") {
           state.stdoutBuffer += tail;
         } else {
           state.stderrBuffer += tail;
@@ -416,10 +438,14 @@ export class ShellSessionPool {
     }
   }
 
-  private buildChildEnv(handoffId: string, sessionId: string, env: Record<string, string>): Record<string, string> {
+  private buildChildEnv(
+    handoffId: string,
+    sessionId: string,
+    env: Record<string, string>,
+  ): Record<string, string> {
     const inherited: Record<string, string> = {};
     for (const [key, value] of Object.entries(process.env)) {
-      if (typeof value === 'string') {
+      if (typeof value === "string") {
         inherited[key] = value;
       }
     }
@@ -445,38 +471,42 @@ export class ShellSessionPool {
   }
 
   private resetBuffers(state: SessionState): void {
-    state.stdoutBuffer = '';
-    state.stderrBuffer = '';
+    state.stdoutBuffer = "";
+    state.stderrBuffer = "";
   }
 
-  private spawnShell(cwd: string, env: Record<string, string>, pty: boolean): Subprocess<'pipe', 'pipe', 'pipe'> {
+  private spawnShell(
+    cwd: string,
+    env: Record<string, string>,
+    pty: boolean,
+  ): Subprocess<"pipe", "pipe", "pipe"> {
     if (pty) {
       try {
-        return (Bun.spawn as any)(['bash', '--norc', '--noprofile', '-i'], {
+        return (Bun.spawn as any)(["bash", "--norc", "--noprofile", "-i"], {
           cwd,
           env,
-          stdin: 'pipe',
-          stdout: 'pipe',
-          stderr: 'pipe',
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "pipe",
           pty: true,
-        }) as Subprocess<'pipe', 'pipe', 'pipe'>;
+        }) as Subprocess<"pipe", "pipe", "pipe">;
       } catch (err) {
         throw new Error(`pty unavailable: ${String(err)}`);
       }
     }
 
-    return Bun.spawn(['bash', '--norc', '--noprofile', '-i'], {
+    return Bun.spawn(["bash", "--norc", "--noprofile", "-i"], {
       cwd,
       env,
-      stdin: 'pipe',
-      stdout: 'pipe',
-      stderr: 'pipe',
-    }) as Subprocess<'pipe', 'pipe', 'pipe'>;
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    }) as Subprocess<"pipe", "pipe", "pipe">;
   }
 
-  private attachProcess(state: SessionState, proc: Subprocess<'pipe', 'pipe', 'pipe'>): void {
-    void this.pumpStream(state, proc, proc.stdout as ReadableStream<Uint8Array>, 'stdout');
-    void this.pumpStream(state, proc, proc.stderr as ReadableStream<Uint8Array>, 'stderr');
+  private attachProcess(state: SessionState, proc: Subprocess<"pipe", "pipe", "pipe">): void {
+    void this.pumpStream(state, proc, proc.stdout as ReadableStream<Uint8Array>, "stdout");
+    void this.pumpStream(state, proc, proc.stderr as ReadableStream<Uint8Array>, "stderr");
     void proc.exited.finally(() => {
       if (state.replacing && state.proc === proc) return;
       if (state.proc !== proc) return;
@@ -496,12 +526,12 @@ export class ShellSessionPool {
     const oldProc = state.proc;
     state.replacing = true;
     try {
-      oldProc.kill('SIGTERM');
+      oldProc.kill("SIGTERM");
     } catch {}
     await Promise.race([oldProc.exited, this.sleep(100)]);
     if (oldProc.exitCode === null) {
       try {
-        oldProc.kill('SIGKILL');
+        oldProc.kill("SIGKILL");
       } catch {}
       await Promise.race([oldProc.exited, this.sleep(100)]);
     }
@@ -523,9 +553,9 @@ export class ShellSessionPool {
     }
   }
 
-  private terminateProcess(proc: Subprocess<'pipe', 'pipe', 'pipe'>): void {
+  private terminateProcess(proc: Subprocess<"pipe", "pipe", "pipe">): void {
     try {
-      proc.kill('SIGTERM');
+      proc.kill("SIGTERM");
     } catch {}
   }
 

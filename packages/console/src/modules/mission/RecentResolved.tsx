@@ -43,9 +43,7 @@ export function RecentResolved(): JSX.Element {
               borderBottom: "1px solid var(--color-border)",
             }}
           >
-            <span
-              className={`dot ${c.latest_status === "completed" ? "dot-ok" : "dot-err"}`}
-            />
+            <span className={`dot ${c.latest_status === "completed" ? "dot-ok" : "dot-err"}`} />
             <span
               className="mono"
               style={{

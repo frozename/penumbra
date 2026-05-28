@@ -1,7 +1,7 @@
-import { expect, test, mock } from 'bun:test';
-import { reconcilerSweepOrphanPrsHandler } from '../../src/tools/reconciler-sweep-orphan-prs.js';
+import { expect, test, mock } from "bun:test";
+import { reconcilerSweepOrphanPrsHandler } from "../../src/tools/reconciler-sweep-orphan-prs.js";
 
-test('reconciler.sweep_orphan_prs handler proxies to daemon and returns JSON text', async () => {
+test("reconciler.sweep_orphan_prs handler proxies to daemon and returns JSON text", async () => {
   const daemon: any = {
     reconcilerSweepOrphanPrs: mock(async () => ({
       scanned: 42,

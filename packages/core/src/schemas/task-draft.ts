@@ -1,12 +1,14 @@
-import { z } from 'zod';
-import { TaskDraftLifecycleEventType, TASK_DRAFT_LIFECYCLE_EVENT_TYPES } from './event.js';
+import { z } from "zod";
+import { TaskDraftLifecycleEventType, TASK_DRAFT_LIFECYCLE_EVENT_TYPES } from "./event.js";
 
-export const TaskDraftEvidenceSchema = z.object({
-  conv_ids: z.array(z.string()).optional(),
-  commits: z.array(z.string()).optional(),
-  files: z.array(z.string()).optional(),
-  session_id: z.string().optional(),
-}).partial();
+export const TaskDraftEvidenceSchema = z
+  .object({
+    conv_ids: z.array(z.string()).optional(),
+    commits: z.array(z.string()).optional(),
+    files: z.array(z.string()).optional(),
+    session_id: z.string().optional(),
+  })
+  .partial();
 
 export const TaskDraftProvenanceSchema = z.object({
   filing_path: z.string().min(1),
@@ -22,7 +24,7 @@ export const TaskDraftPayloadSchema = z.object({
   evidence: TaskDraftEvidenceSchema,
   auto_ok: z.boolean(),
   filed_by_agent: z.string().min(1),
-  filed_via: z.enum(['skill_inline', 'stop_hook']),
+  filed_via: z.enum(["skill_inline", "stop_hook"]),
   parent_draft_id: z.string().uuid().nullable(),
   provenance: TaskDraftProvenanceSchema.optional(),
 });
@@ -38,7 +40,13 @@ export const TaskDraftPromotedPayloadSchema = z.object({
 
 export const TaskDraftStalePayloadSchema = z.object({
   draft_id: z.string().uuid(),
-  stale_reason: z.enum(['path_removed', 'resolved_by', 'duplicate_of', 'ttl_expired', 'refining_stuck']),
+  stale_reason: z.enum([
+    "path_removed",
+    "resolved_by",
+    "duplicate_of",
+    "ttl_expired",
+    "refining_stuck",
+  ]),
   details: z.string().optional(),
 });
 
@@ -52,13 +60,23 @@ export const TaskDraftEscalationPayloadSchema = z.object({
   escalation_reason: z.string().min(1),
 });
 
-export const TaskDraftLifecyclePayloadSchema = z.discriminatedUnion('event_type', [
+export const TaskDraftLifecyclePayloadSchema = z.discriminatedUnion("event_type", [
   TaskDraftPayloadSchema.extend({ event_type: z.literal(TASK_DRAFT_LIFECYCLE_EVENT_TYPES[0]) }),
-  TaskDraftRefiningPayloadSchema.extend({ event_type: z.literal(TASK_DRAFT_LIFECYCLE_EVENT_TYPES[1]) }),
-  TaskDraftPromotedPayloadSchema.extend({ event_type: z.literal(TASK_DRAFT_LIFECYCLE_EVENT_TYPES[2]) }),
-  TaskDraftStalePayloadSchema.extend({ event_type: z.literal(TASK_DRAFT_LIFECYCLE_EVENT_TYPES[3]) }),
-  TaskDraftDuplicatePayloadSchema.extend({ event_type: z.literal(TASK_DRAFT_LIFECYCLE_EVENT_TYPES[4]) }),
-  TaskDraftEscalationPayloadSchema.extend({ event_type: z.literal(TASK_DRAFT_LIFECYCLE_EVENT_TYPES[5]) }),
+  TaskDraftRefiningPayloadSchema.extend({
+    event_type: z.literal(TASK_DRAFT_LIFECYCLE_EVENT_TYPES[1]),
+  }),
+  TaskDraftPromotedPayloadSchema.extend({
+    event_type: z.literal(TASK_DRAFT_LIFECYCLE_EVENT_TYPES[2]),
+  }),
+  TaskDraftStalePayloadSchema.extend({
+    event_type: z.literal(TASK_DRAFT_LIFECYCLE_EVENT_TYPES[3]),
+  }),
+  TaskDraftDuplicatePayloadSchema.extend({
+    event_type: z.literal(TASK_DRAFT_LIFECYCLE_EVENT_TYPES[4]),
+  }),
+  TaskDraftEscalationPayloadSchema.extend({
+    event_type: z.literal(TASK_DRAFT_LIFECYCLE_EVENT_TYPES[5]),
+  }),
 ]);
 
 export type TaskDraftProvenance = z.infer<typeof TaskDraftProvenanceSchema>;
@@ -87,7 +105,10 @@ const TASK_DRAFT_LIFECYCLE_DISPATCH_TABLE: Record<TaskDraftLifecycleEventType, z
   task_draft_escalation: TaskDraftEscalationPayloadSchema,
 };
 
-export function parseTaskDraftLifecyclePayload(eventType: TaskDraftLifecycleEventType, payload: unknown): ParsedTaskDraftLifecyclePayload {
+export function parseTaskDraftLifecyclePayload(
+  eventType: TaskDraftLifecycleEventType,
+  payload: unknown,
+): ParsedTaskDraftLifecyclePayload {
   const schema = TASK_DRAFT_LIFECYCLE_DISPATCH_TABLE[eventType];
   if (!schema) throw new Error(`Unsupported task draft lifecycle event type: ${eventType}`);
   return schema.parse(payload) as ParsedTaskDraftLifecyclePayload;

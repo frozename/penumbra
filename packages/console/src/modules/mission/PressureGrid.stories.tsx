@@ -1,9 +1,9 @@
-import type { Meta, StoryObj } from '@storybook/react';
-import { usageSubscriptionPressure } from '../../lib/query-keys';
-import { PressureGrid } from './PressureGrid';
+import type { Meta, StoryObj } from "@storybook/react";
+import { usageSubscriptionPressure } from "../../lib/query-keys";
+import { PressureGrid } from "./PressureGrid";
 
 const meta: Meta<typeof PressureGrid> = {
-  title: 'Mission/PressureGrid',
+  title: "Mission/PressureGrid",
   component: PressureGrid,
 };
 
@@ -14,8 +14,8 @@ const makeWindow = (usedPct: number, windowLabel: string) => ({
   used_pct: usedPct,
   warn_pct: 0.8,
   refuse_pct: 0.95,
-  provider: 'anthropic',
-  model: 'sonnet',
+  provider: "anthropic",
+  model: "sonnet",
   window_label: windowLabel,
 });
 
@@ -31,11 +31,7 @@ export const ThreeWindows: Story = {
       {
         key: usageSubscriptionPressure(),
         data: {
-          windows: [
-            makeWindow(0.5, '5h'),
-            makeWindow(0.85, '24h'),
-            makeWindow(0.97, '7d'),
-          ],
+          windows: [makeWindow(0.5, "5h"), makeWindow(0.85, "24h"), makeWindow(0.97, "7d")],
         },
       },
     ],

@@ -1,7 +1,7 @@
-import type { Database } from 'bun:sqlite';
-import { retireNonDirectMemory } from '@penumbra/core';
-import type { DreamConfig } from '../config.js';
-import { detectT2Ephemera } from './t2-ephemera-detector.js';
+import type { Database } from "bun:sqlite";
+import { retireNonDirectMemory } from "@penumbra/core";
+import type { DreamConfig } from "../config.js";
+import { detectT2Ephemera } from "./t2-ephemera-detector.js";
 
 function upsertCursor(db: Database, name: string, value: string): void {
   db.prepare(
@@ -14,7 +14,7 @@ function readCursor(db: Database): string {
   const cursorRow = db
     .prepare(`SELECT value FROM curator_cursors WHERE name='pc1_memory_id'`)
     .get() as { value: string } | undefined;
-  return cursorRow?.value ?? '';
+  return cursorRow?.value ?? "";
 }
 
 export async function runPC1Phase(
@@ -39,7 +39,12 @@ export async function runPC1Phase(
        WHERE retired_at IS NULL AND memory_id > ?
        ORDER BY memory_id ASC LIMIT ?`,
     )
-    .all(cursor, batchSize + 1) as Array<{ memory_id: string; title: string; body: string; kind: string }>;
+    .all(cursor, batchSize + 1) as Array<{
+    memory_id: string;
+    title: string;
+    body: string;
+    kind: string;
+  }>;
   const page = memories.slice(0, batchSize);
 
   for (const mem of page) {
@@ -64,7 +69,7 @@ export async function runPC1Phase(
         actionId,
         cycleId,
         verdict.confidence ?? 0.99,
-        retired ? 'auto_applied' : 'skipped_direct_origin',
+        retired ? "auto_applied" : "skipped_direct_origin",
         JSON.stringify([mem.memory_id]),
         JSON.stringify({ reason: verdict.reason, confidence: verdict.confidence }),
       );
@@ -74,13 +79,13 @@ export async function runPC1Phase(
   // F4: advance cursor; wrap to '' when batch exhausted
   if (page.length === 0) {
     const currentCursor = readCursor(db);
-    if (currentCursor !== '') {
-      upsertCursor(db, 'pc1_memory_id', '');
+    if (currentCursor !== "") {
+      upsertCursor(db, "pc1_memory_id", "");
     }
     return;
   }
 
   const lastId = page[page.length - 1]!.memory_id;
   const hasMore = memories.length > batchSize;
-  upsertCursor(db, 'pc1_memory_id', page.length < batchSize || !hasMore ? '' : lastId);
+  upsertCursor(db, "pc1_memory_id", page.length < batchSize || !hasMore ? "" : lastId);
 }

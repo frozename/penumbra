@@ -1,15 +1,15 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 export const WORKLOADS = [
-  'plan_refine',
-  'implement_small',
-  'implement_substantial',
-  'review_adversarial',
-  'docs_mechanical',
-  'debug_diagnose',
-  'smoke_test',
-  'health_check',
-  'unknown',
+  "plan_refine",
+  "implement_small",
+  "implement_substantial",
+  "review_adversarial",
+  "docs_mechanical",
+  "debug_diagnose",
+  "smoke_test",
+  "health_check",
+  "unknown",
 ] as const;
 
 export const WorkloadSchema = z

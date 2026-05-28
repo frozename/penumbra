@@ -1,5 +1,10 @@
-import type { Database } from 'bun:sqlite';
-import { computeAgeDays, staleThresholdDays, type GetObservationsRequest, type ObservationDetail } from '../schemas/recall.js';
+import type { Database } from "bun:sqlite";
+import {
+  computeAgeDays,
+  staleThresholdDays,
+  type GetObservationsRequest,
+  type ObservationDetail,
+} from "../schemas/recall.js";
 
 /**
  * Batch hydrate t2 memories by ID, preserving the requested order. Step 3 of
@@ -9,7 +14,7 @@ import { computeAgeDays, staleThresholdDays, type GetObservationsRequest, type O
 export function getObservations(db: Database, req: GetObservationsRequest): ObservationDetail[] {
   if (req.ids.length === 0) return [];
   const now = Date.now();
-  const placeholders = req.ids.map(() => '?').join(',');
+  const placeholders = req.ids.map(() => "?").join(",");
   type Row = {
     memory_id: string;
     created_at: string;
@@ -47,13 +52,13 @@ export function getObservations(db: Database, req: GetObservationsRequest): Obse
         return ageDays === null ? true : ageDays >= staleThresholdDays(r.obs_type);
       })(),
       id: r.memory_id,
-      tier: 't2',
+      tier: "t2",
       ts: r.created_at,
       project_id: r.project_id,
       obs_type: r.obs_type,
       severity: r.severity,
-      concepts: JSON.parse(r.concepts ?? '[]'),
-      file_paths: JSON.parse(r.file_paths ?? '[]'),
+      concepts: JSON.parse(r.concepts ?? "[]"),
+      file_paths: JSON.parse(r.file_paths ?? "[]"),
       title: r.title,
       body: r.body,
       last_verified_at: r.last_verified_at,

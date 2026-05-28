@@ -13,6 +13,7 @@ output:
 run:
   kind: markdown-template
 ---
+
 Reminder (post-edit advisory):
 
 The edit you just made was hand-implemented. For the next substantive change in this session, consider dispatching to an agent via `mcp__penumbra__chain_start`:

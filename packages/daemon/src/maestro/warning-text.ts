@@ -1,4 +1,4 @@
-import type { BoundsConsumed } from '@penumbra/core';
+import type { BoundsConsumed } from "@penumbra/core";
 
 interface WarningBudgets {
   wall_clock_budget_ms: number;

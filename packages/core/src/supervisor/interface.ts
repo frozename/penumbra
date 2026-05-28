@@ -1,4 +1,4 @@
-export type WorkerStatus = 'idle' | 'running' | 'stopped' | 'errored';
+export type WorkerStatus = "idle" | "running" | "stopped" | "errored";
 
 export interface WorkerDef {
   name: string;

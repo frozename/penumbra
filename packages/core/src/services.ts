@@ -1,41 +1,44 @@
-import { Database } from 'bun:sqlite';
-import { resolve as pathResolve } from 'node:path';
-import { type Settings, type SettingsInput, SettingsDefaults } from './settings.js';
-import { MachineId } from './identity/machine-id.js';
-import { ProjectCache } from './identity/project-cache.js';
-import { DbMeta } from './db/meta.js';
-import { DEFAULT_REDACTION_RULES, RegexRedactor } from './redaction/regex.js';
-import { T0Writer } from './writers/t0.js';
-import { HandoffWriter } from './writers/handoff.js';
-import { RecallReader } from './readers/recall.js';
-import { HandoffReader } from './readers/handoff.js';
-import { TaskDraftReader } from './readers/task-draft.js';
-import { ChainReader } from './readers/chain.js';
-import { InProcessSupervisor } from './supervisor/in-process.js';
-import type { WorkerSupervisor } from './supervisor/interface.js';
-import { PidRegistry } from './pid/registry.js';
-import { systemClock, type Clock } from './utils/clock.js';
-import { systemUuid, type Uuid } from './utils/uuid.js';
-import type { Embedder } from './embedder/interface.js';
-import { createLogger, type Logger } from './logger.js';
-import { HandoffEventBus } from './events/handoff-events.js';
-import type { HandoffRow } from './schemas/handoff.js';
-import { ConversationStreamBus } from './events/conversation-stream.js';
-import { WorkerControlBus } from './events/worker-control.js';
-import { WorktreeManager } from './worktree/manager.js';
-import { PermissionWriter } from './writers/permission.js';
-import { PermissionReader } from './readers/permission.js';
-import { PermissionEventBus } from './events/permission-events.js';
-import type { ProviderQuota } from './readers/cost-quota.js';
-import { DispatchEventLog } from './services/dispatch-event-log.js';
-import { DispatchEventBus } from './dispatch/event-bus.js';
-import type { ProjectRegistry } from './projects/registry.js';
-import type { WorkflowRegistry } from './workflows/registry-interface.js';
-import type { TaskCooldowns } from './tasks/cooldowns.js';
-import { MaestroSessionWriter } from './maestro/writer.js';
-import { TaskWriter } from './tasks/writer.js';
-import { PlanWriter } from './plans/writer.js';
-import { createSubscriptionPressureCache, type SubscriptionPressureCache } from './maestro/subscription-pressure-cache.js';
+import { Database } from "bun:sqlite";
+import { resolve as pathResolve } from "node:path";
+import { type Settings, type SettingsInput, SettingsDefaults } from "./settings.js";
+import { MachineId } from "./identity/machine-id.js";
+import { ProjectCache } from "./identity/project-cache.js";
+import { DbMeta } from "./db/meta.js";
+import { DEFAULT_REDACTION_RULES, RegexRedactor } from "./redaction/regex.js";
+import { T0Writer } from "./writers/t0.js";
+import { HandoffWriter } from "./writers/handoff.js";
+import { RecallReader } from "./readers/recall.js";
+import { HandoffReader } from "./readers/handoff.js";
+import { TaskDraftReader } from "./readers/task-draft.js";
+import { ChainReader } from "./readers/chain.js";
+import { InProcessSupervisor } from "./supervisor/in-process.js";
+import type { WorkerSupervisor } from "./supervisor/interface.js";
+import { PidRegistry } from "./pid/registry.js";
+import { systemClock, type Clock } from "./utils/clock.js";
+import { systemUuid, type Uuid } from "./utils/uuid.js";
+import type { Embedder } from "./embedder/interface.js";
+import { createLogger, type Logger } from "./logger.js";
+import { HandoffEventBus } from "./events/handoff-events.js";
+import type { HandoffRow } from "./schemas/handoff.js";
+import { ConversationStreamBus } from "./events/conversation-stream.js";
+import { WorkerControlBus } from "./events/worker-control.js";
+import { WorktreeManager } from "./worktree/manager.js";
+import { PermissionWriter } from "./writers/permission.js";
+import { PermissionReader } from "./readers/permission.js";
+import { PermissionEventBus } from "./events/permission-events.js";
+import type { ProviderQuota } from "./readers/cost-quota.js";
+import { DispatchEventLog } from "./services/dispatch-event-log.js";
+import { DispatchEventBus } from "./dispatch/event-bus.js";
+import type { ProjectRegistry } from "./projects/registry.js";
+import type { WorkflowRegistry } from "./workflows/registry-interface.js";
+import type { TaskCooldowns } from "./tasks/cooldowns.js";
+import { MaestroSessionWriter } from "./maestro/writer.js";
+import { TaskWriter } from "./tasks/writer.js";
+import { PlanWriter } from "./plans/writer.js";
+import {
+  createSubscriptionPressureCache,
+  type SubscriptionPressureCache,
+} from "./maestro/subscription-pressure-cache.js";
 
 export interface WorkflowRunInfo {
   workflow_name: string;
@@ -43,7 +46,7 @@ export interface WorkflowRunInfo {
   registered_at: number;
 }
 
-export type WorkflowRunStatus = 'running' | 'completed' | 'failed';
+export type WorkflowRunStatus = "running" | "completed" | "failed";
 
 export interface WorkflowRunRecord {
   status: WorkflowRunStatus;
@@ -61,14 +64,17 @@ export interface WorkflowRunsRegistry {
   recordError(workflowRunId: string, error: unknown): Promise<void>;
   getStatus(workflowRunId: string): Promise<WorkflowRunRecord | null>;
   waitForResult(workflowRunId: string, timeoutMs: number): Promise<WorkflowRunRecord | null>;
-  setPersistenceStatus(workflowRunId: string, status: 'pending' | 'persisted' | 'persistence_failed'): void;
+  setPersistenceStatus(
+    workflowRunId: string,
+    status: "pending" | "persisted" | "persistence_failed",
+  ): void;
   setExecutionRecord(workflowRunId: string, record: WorkflowRunRecord): void;
 }
 
 export interface AgentRoutingConfig {
   agents: Array<{ name: string; roles: string[] }>;
   default_roles: Record<string, string>;
-  role_exploration_policy?: 'unsampled-first' | 'ranked-first';
+  role_exploration_policy?: "unsampled-first" | "ranked-first";
 }
 
 export interface Watchdog {
@@ -128,8 +134,15 @@ export interface LongLivedReactorLike {
 }
 
 export interface McpPoolLike {
-  callTool(serverName: string, toolName: string, args: unknown, opts?: { timeoutMs?: number; _meta?: Record<string, unknown> }): Promise<unknown>;
-  listTools(serverName: string): Promise<Array<{ name: string; description?: string; inputSchema?: unknown }>>;
+  callTool(
+    serverName: string,
+    toolName: string,
+    args: unknown,
+    opts?: { timeoutMs?: number; _meta?: Record<string, unknown> },
+  ): Promise<unknown>;
+  listTools(
+    serverName: string,
+  ): Promise<Array<{ name: string; description?: string; inputSchema?: unknown }>>;
   getFederationHealth(): {
     registered: Array<{ server: string; tool: string; name: string }>;
     skipped: Array<{ server: string; tool: string; reason: string }>;
@@ -146,9 +159,9 @@ export interface ActionGateLike {
     _meta?: Record<string, unknown>;
     pending_action_id?: string;
   }): Promise<
-    | { kind: 'executed'; result: unknown; tier: 1 | 2 | 3; snapshot_id?: string }
-    | { kind: 'rejected'; error: string; details?: unknown }
-    | { kind: 'queued'; pending_action_id: string }
+    | { kind: "executed"; result: unknown; tier: 1 | 2 | 3; snapshot_id?: string }
+    | { kind: "rejected"; error: string; details?: unknown }
+    | { kind: "queued"; pending_action_id: string }
   >;
 }
 
@@ -218,7 +231,7 @@ export interface Services {
       subscription_provider?: string;
       subscription_model?: string;
       api_provider?: string;
-      pricing_mode?: 'api' | 'subscription';
+      pricing_mode?: "api" | "subscription";
     }>;
   };
   providerQuotas: ProviderQuota[];
@@ -263,7 +276,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
   const settings = SettingsDefaults.build({ env: opts.env, input: opts.input });
   const clock = opts.clock ?? systemClock;
   const uuid = opts.uuid ?? systemUuid;
-  const log = createLogger({ component: 'penumbra' });
+  const log = createLogger({ component: "penumbra" });
   const machineId = new MachineId({ storageRoot: opts.storageRoot, uuid });
   const handoffEvents = new HandoffEventBus();
   const permissionEvents = new PermissionEventBus();
@@ -271,8 +284,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
   const workerControl = new WorkerControlBus();
   const dispatchEvents = new DispatchEventBus();
   const shouldResolveProjectRoot =
-    opts.projectRegistry !== undefined &&
-    opts.projectRegistry.list().length > 0;
+    opts.projectRegistry !== undefined && opts.projectRegistry.list().length > 0;
   const worktreeManager = new WorktreeManager({
     rootDir: opts.worktreeRootDir,
     mainRepoDir: opts.mainRepoDir,
@@ -290,7 +302,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
   return {
     settings,
     storageRoot: opts.storageRoot,
-    reviewsDir: opts.reviewsDir ?? pathResolve(opts.storageRoot, '..', '.penumbra/reviews'),
+    reviewsDir: opts.reviewsDir ?? pathResolve(opts.storageRoot, "..", ".penumbra/reviews"),
     db: opts.db,
     dbMeta: new DbMeta(opts.db),
     machineId,
@@ -325,7 +337,10 @@ export function buildServices(opts: BuildServicesOpts): Services {
     agentRegistry: opts.agentRegistry ?? null,
     agentRouting: opts.agentRouting ?? null,
     providerQuotas: opts.providerQuotas ?? [],
-    subscriptionPressureCache: createSubscriptionPressureCache(opts.db, { intervalMs: 30_000, log }),
+    subscriptionPressureCache: createSubscriptionPressureCache(opts.db, {
+      intervalMs: 30_000,
+      log,
+    }),
     workflowRegistry: opts.workflowRegistry,
     workflowRuns: opts.workflowRuns,
     planWriter: new PlanWriter(opts.db, () => clock().getTime()),

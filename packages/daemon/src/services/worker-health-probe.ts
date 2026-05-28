@@ -1,6 +1,6 @@
-import type { Services } from '@penumbra/core';
+import type { Services } from "@penumbra/core";
 
-export type WorkerHealthSignalKind = 'miss_threshold_exceeded';
+export type WorkerHealthSignalKind = "miss_threshold_exceeded";
 
 export interface WorkerHealthSignal {
   kind: WorkerHealthSignalKind;
@@ -27,7 +27,7 @@ interface WorkerHealthProbeServices extends Services {
 export class WorkerHealthProbe {
   private readonly intervalMs: number;
   private readonly missThreshold: number;
-  private readonly log: Services['log'];
+  private readonly log: Services["log"];
   private readonly services: WorkerHealthProbeServices;
   private readonly controller: WorkerHealthController;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -40,7 +40,7 @@ export class WorkerHealthProbe {
     services: WorkerHealthProbeServices;
     intervalMs?: number;
     missThreshold?: number;
-    log: Services['log'];
+    log: Services["log"];
     controller: WorkerHealthController;
   }) {
     this.services = opts.services;
@@ -52,16 +52,16 @@ export class WorkerHealthProbe {
 
   start(): void {
     if (this.timer !== null) return;
-    if (process.env.PENUMBRA_WORKER_PROBE_ENABLED === '0') return;
+    if (process.env.PENUMBRA_WORKER_PROBE_ENABLED === "0") return;
     if (this.intervalMs <= 0) return;
     if (!this.services.extraWorkerSupervisor) {
-      this.log.warn('worker-health-probe-disabled-no-supervisor');
+      this.log.warn("worker-health-probe-disabled-no-supervisor");
       return;
     }
 
     this.timer = setInterval(() => {
       this.tick().catch((err) => {
-        this.log.error({ err }, 'worker health probe tick failed');
+        this.log.error({ err }, "worker health probe tick failed");
       });
     }, this.intervalMs);
   }
@@ -119,7 +119,7 @@ export class WorkerHealthProbe {
         if (misses >= this.missThreshold && !this.recoveredThisStreak.has(worker_id)) {
           this.recoveredThisStreak.add(worker_id);
           this.controller.onSignal({
-            kind: 'miss_threshold_exceeded',
+            kind: "miss_threshold_exceeded",
             worker_id,
             probe_id: probeId,
             misses,
@@ -136,7 +136,7 @@ export class WorkerHealthProbe {
       const probe_id = `${now}-${this.services.uuid()}-${++this.probeSeq}`;
       workerPending.set(probe_id, now);
       this.services.workerControl.emit({
-        type: 'ping',
+        type: "ping",
         worker_id,
         probe_id,
       });
@@ -149,15 +149,15 @@ export interface WorkerHealthControllerDeps {
     record(event: {
       handoff_id: string;
       worker_id: string;
-      source: 'daemon';
-      kind: 'extra_worker_wedge_evicted';
+      source: "daemon";
+      kind: "extra_worker_wedge_evicted";
       ts: string;
       meta: {
         worker_id: string;
         probe_id: string;
         misses: number;
         probe_interval_ms: number;
-        event: 'probe_timeout';
+        event: "probe_timeout";
       };
     }): void;
   };
@@ -173,21 +173,23 @@ export interface WorkerHealthControllerDeps {
   };
 }
 
-export function createWorkerHealthController(services: WorkerHealthControllerDeps): WorkerHealthController {
+export function createWorkerHealthController(
+  services: WorkerHealthControllerDeps,
+): WorkerHealthController {
   return {
     onSignal: (signal) => {
       const dispatchEvent = {
-        handoff_id: '',
+        handoff_id: "",
         worker_id: signal.worker_id,
-        source: 'daemon' as const,
-        kind: 'extra_worker_wedge_evicted' as const,
+        source: "daemon" as const,
+        kind: "extra_worker_wedge_evicted" as const,
         ts: new Date().toISOString(),
         meta: {
           worker_id: signal.worker_id,
           probe_id: signal.probe_id,
           misses: signal.misses,
           probe_interval_ms: signal.probe_interval_ms,
-          event: 'probe_timeout' as const,
+          event: "probe_timeout" as const,
         },
       };
       services.dispatchEventLog.record(dispatchEvent);

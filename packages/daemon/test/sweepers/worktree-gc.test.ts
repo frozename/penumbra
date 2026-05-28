@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import {
   type Services,
   migrate,
@@ -7,17 +7,17 @@ import {
   HandoffWriter,
   HandoffReader,
   type WorktreeHandle,
-} from '@penumbra/core';
-import { runWorktreeGcTick } from '../../src/sweepers/worktree-gc.js';
+} from "@penumbra/core";
+import { runWorktreeGcTick } from "../../src/sweepers/worktree-gc.js";
 
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {}
 
 function setupDb(): Database {
-  const db = new Database(':memory:');
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   return db;
@@ -33,8 +33,11 @@ function makeServices(
     handoffWriter: new HandoffWriter({ db }),
     handoffReader: new HandoffReader({ db }),
     t0Writer: { write: () => {} },
-    machineId: { get: () => 'machine-test' },
-    uuid: (() => { let n = 0; return () => `evt-${++n}`; })(),
+    machineId: { get: () => "machine-test" },
+    uuid: (() => {
+      let n = 0;
+      return () => `evt-${++n}`;
+    })(),
     clock: () => new Date(),
     log: { info: () => {}, warn: () => {} },
     worktreeManager: {
@@ -66,24 +69,26 @@ function makeHandle(handoffId: string): WorktreeHandle {
     path: `/tmp/worktrees/${handoffId}`,
     branchName: `agent/${handoffId}`,
     storageRoot: `/tmp/worktrees/${handoffId}/.test-storage`,
-    createdAt: '2026-05-01T00:00:00.000Z',
-    status: 'created',
+    createdAt: "2026-05-01T00:00:00.000Z",
+    status: "created",
   };
 }
 
 const GRACE_MS = 2 * 60 * 60_000; // 2h
-const NOW = new Date('2026-05-19T10:00:00.000Z');
+const NOW = new Date("2026-05-19T10:00:00.000Z");
 const NOW_FN = () => NOW;
 
-describe('runWorktreeGcTick', () => {
-  test('completed worktree resolved within grace is NOT removed', async () => {
+describe("runWorktreeGcTick", () => {
+  test("completed worktree resolved within grace is NOT removed", async () => {
     const db = setupDb();
     // resolved 1h ago — within 2h grace
     const resolvedAt = new Date(NOW.getTime() - 60 * 60_000).toISOString();
-    insertHandoff(db, 'h-recent', 'completed', resolvedAt);
+    insertHandoff(db, "h-recent", "completed", resolvedAt);
 
     const teardownCalls: string[] = [];
-    const svc = makeServices(db, [makeHandle('h-recent')], async (id) => { teardownCalls.push(id); });
+    const svc = makeServices(db, [makeHandle("h-recent")], async (id) => {
+      teardownCalls.push(id);
+    });
 
     const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
 
@@ -92,29 +97,33 @@ describe('runWorktreeGcTick', () => {
     expect(teardownCalls).toEqual([]);
   });
 
-  test('completed worktree resolved beyond grace IS removed', async () => {
+  test("completed worktree resolved beyond grace IS removed", async () => {
     const db = setupDb();
     // resolved 3h ago — beyond 2h grace
     const resolvedAt = new Date(NOW.getTime() - 3 * 60 * 60_000).toISOString();
-    insertHandoff(db, 'h-old', 'completed', resolvedAt);
+    insertHandoff(db, "h-old", "completed", resolvedAt);
 
     const teardownCalls: string[] = [];
-    const svc = makeServices(db, [makeHandle('h-old')], async (id) => { teardownCalls.push(id); });
+    const svc = makeServices(db, [makeHandle("h-old")], async (id) => {
+      teardownCalls.push(id);
+    });
 
     const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
 
-    expect(result.candidates).toEqual(['h-old']);
-    expect(result.removed).toEqual(['h-old']);
+    expect(result.candidates).toEqual(["h-old"]);
+    expect(result.removed).toEqual(["h-old"]);
     expect(result.failed).toEqual([]);
-    expect(teardownCalls).toEqual(['h-old']);
+    expect(teardownCalls).toEqual(["h-old"]);
   });
 
-  test('dispatched worktree (in-flight) is NOT removed', async () => {
+  test("dispatched worktree (in-flight) is NOT removed", async () => {
     const db = setupDb();
-    insertHandoff(db, 'h-live', 'dispatched', null);
+    insertHandoff(db, "h-live", "dispatched", null);
 
     const teardownCalls: string[] = [];
-    const svc = makeServices(db, [makeHandle('h-live')], async (id) => { teardownCalls.push(id); });
+    const svc = makeServices(db, [makeHandle("h-live")], async (id) => {
+      teardownCalls.push(id);
+    });
 
     const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
 
@@ -122,44 +131,47 @@ describe('runWorktreeGcTick', () => {
     expect(teardownCalls).toEqual([]);
   });
 
-  test('expired worktree resolved beyond grace IS removed', async () => {
+  test("expired worktree resolved beyond grace IS removed", async () => {
     const db = setupDb();
     const resolvedAt = new Date(NOW.getTime() - 4 * 60 * 60_000).toISOString();
-    insertHandoff(db, 'h-expired', 'expired', resolvedAt);
+    insertHandoff(db, "h-expired", "expired", resolvedAt);
 
     const teardownCalls: string[] = [];
-    const svc = makeServices(db, [makeHandle('h-expired')], async (id) => { teardownCalls.push(id); });
+    const svc = makeServices(db, [makeHandle("h-expired")], async (id) => {
+      teardownCalls.push(id);
+    });
 
     const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
 
-    expect(result.removed).toContain('h-expired');
-    expect(teardownCalls).toContain('h-expired');
+    expect(result.removed).toContain("h-expired");
+    expect(teardownCalls).toContain("h-expired");
   });
 
-  test('emits worktree.gc dispatch event with expected meta per removal', async () => {
+  test("emits worktree.gc dispatch event with expected meta per removal", async () => {
     const db = setupDb();
     const resolvedAt = new Date(NOW.getTime() - 3 * 60 * 60_000).toISOString();
-    insertHandoff(db, 'h-ev', 'completed', resolvedAt);
+    insertHandoff(db, "h-ev", "completed", resolvedAt);
 
-    const svc = makeServices(db, [makeHandle('h-ev')], async () => {});
+    const svc = makeServices(db, [makeHandle("h-ev")], async () => {});
 
     const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
 
-    expect(result.removed).toContain('h-ev');
+    expect(result.removed).toContain("h-ev");
 
     const row = db
-      .query<{ kind: string; meta_json: string }, [string]>(
-        `SELECT kind, meta_json FROM dispatch_events WHERE handoff_id = ? AND kind = 'worktree.gc'`,
-      )
-      .get('h-ev');
+      .query<
+        { kind: string; meta_json: string },
+        [string]
+      >(`SELECT kind, meta_json FROM dispatch_events WHERE handoff_id = ? AND kind = 'worktree.gc'`)
+      .get("h-ev");
 
     expect(row).toBeDefined();
-    expect(row?.kind).toBe('worktree.gc');
-    const meta = JSON.parse(row?.meta_json ?? '{}') as Record<string, unknown>;
-    expect(meta.handoff_id).toBe('h-ev');
-    expect(meta.branch_name).toBe('agent/h-ev');
-    expect(meta.status).toBe('completed');
-    expect(typeof meta.age_ms).toBe('number');
-    expect((meta.age_ms as number)).toBeGreaterThan(0);
+    expect(row?.kind).toBe("worktree.gc");
+    const meta = JSON.parse(row?.meta_json ?? "{}") as Record<string, unknown>;
+    expect(meta.handoff_id).toBe("h-ev");
+    expect(meta.branch_name).toBe("agent/h-ev");
+    expect(meta.status).toBe("completed");
+    expect(typeof meta.age_ms).toBe("number");
+    expect(meta.age_ms as number).toBeGreaterThan(0);
   });
 });

@@ -1,8 +1,13 @@
-import type { Clock } from '../utils/clock.js';
-import type { Uuid } from '../utils/uuid.js';
-import type { RegexRedactor } from '../redaction/regex.js';
-import { stripPrivacyTags } from '../redaction/privacy-tags.js';
-import { T0EventInputSchema, T0EventSchema, type T0Event, type T0EventInput } from '../schemas/event.js';
+import type { Clock } from "../utils/clock.js";
+import type { Uuid } from "../utils/uuid.js";
+import type { RegexRedactor } from "../redaction/regex.js";
+import { stripPrivacyTags } from "../redaction/privacy-tags.js";
+import {
+  T0EventInputSchema,
+  T0EventSchema,
+  type T0Event,
+  type T0EventInput,
+} from "../schemas/event.js";
 
 export interface NormalizeCtx {
   userId: string;
@@ -15,9 +20,10 @@ export interface NormalizeCtx {
 export function normalize(input: T0EventInput, ctx: NormalizeCtx): T0Event {
   const validated = T0EventInputSchema.parse(input);
   const redactedPayload = ctx.redactor.redact(validated.payload_json) as Record<string, unknown>;
-  const summary = validated.payload_summary === undefined || validated.payload_summary === null
-    ? null
-    : stripPrivacyTags(validated.payload_summary);
+  const summary =
+    validated.payload_summary === undefined || validated.payload_summary === null
+      ? null
+      : stripPrivacyTags(validated.payload_summary);
 
   const event: T0Event = {
     event_id: validated.event_id ?? ctx.uuid(),
@@ -40,7 +46,7 @@ export function normalize(input: T0EventInput, ctx: NormalizeCtx): T0Event {
     request_id: validated.request_id ?? null,
     payload_json: redactedPayload,
     payload_summary: summary,
-    origin: validated.origin ?? 'unknown',
+    origin: validated.origin ?? "unknown",
   };
   return T0EventSchema.parse(event);
 }

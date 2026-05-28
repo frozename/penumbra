@@ -1,9 +1,9 @@
-import type { Services } from '@penumbra/core';
-import { ConversationStreamEventSchema } from '@penumbra/core';
-import { json } from './_helpers.js';
+import type { Services } from "@penumbra/core";
+import { ConversationStreamEventSchema } from "@penumbra/core";
+import { json } from "./_helpers.js";
 const DEFAULT_TERMINAL_PROGRESS_CAP = 50;
 const TERMINAL_PROGRESS_CAP_TTL_MS = 60 * 60 * 1000;
-const NON_TERMINAL_HANDOFF_STATUSES = new Set(['pending', 'approved', 'redirected', 'dispatched']);
+const NON_TERMINAL_HANDOFF_STATUSES = new Set(["pending", "approved", "redirected", "dispatched"]);
 
 type TerminalProgressState = {
   count: number;
@@ -16,26 +16,39 @@ const terminalProgressState = new Map<string, TerminalProgressState>();
  * POST /handoffs/:id/progress
  * Invoked by workers to push buffered progress deltas or final hop results.
  */
-export async function handoffsProgressRoute(req: Request, handoff_id: string, services: Services): Promise<Response> {
+export async function handoffsProgressRoute(
+  req: Request,
+  handoff_id: string,
+  services: Services,
+): Promise<Response> {
   const raw = await safeJson(req);
   if (raw === null) {
-    return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400);
+    return json(
+      { error: { code: "invalid_json", message: "request body was not valid JSON" } },
+      400,
+    );
   }
 
   const parsed = ConversationStreamEventSchema.safeParse(raw);
   if (!parsed.success) {
-    return json({
-      error: {
-        code: 'validation_error',
-        message: 'body failed schema validation',
-        field_errors: parsed.error.issues.map((i) => ({ path: i.path, message: i.message })),
+    return json(
+      {
+        error: {
+          code: "validation_error",
+          message: "body failed schema validation",
+          field_errors: parsed.error.issues.map((i) => ({ path: i.path, message: i.message })),
+        },
       },
-    }, 400);
+      400,
+    );
   }
 
   const row = services.handoffReader.get(handoff_id);
   if (!row) {
-    return json({ error: { code: 'not_found', message: `handoff ${handoff_id} does not exist` } }, 404);
+    return json(
+      { error: { code: "not_found", message: `handoff ${handoff_id} does not exist` } },
+      404,
+    );
   }
 
   if (!NON_TERMINAL_HANDOFF_STATUSES.has(row.status)) {
@@ -52,7 +65,11 @@ export async function handoffsProgressRoute(req: Request, handoff_id: string, se
 }
 
 async function safeJson(req: Request): Promise<unknown | null> {
-  try { return await req.json(); } catch { return null; }
+  try {
+    return await req.json();
+  } catch {
+    return null;
+  }
 }
 
 function checkTerminalProgressCap(handoff_id: string, nowTs: number): Response | null {
@@ -63,12 +80,15 @@ function checkTerminalProgressCap(handoff_id: string, nowTs: number): Response |
   terminalProgressState.set(handoff_id, { count: next, last_ts: nowTs });
 
   if (next > cap) {
-    return json({
-      error: {
-        code: 'progress_cap_exceeded',
-        message: `terminal handoff ${handoff_id} exceeded the progress cap of ${cap}`,
+    return json(
+      {
+        error: {
+          code: "progress_cap_exceeded",
+          message: `terminal handoff ${handoff_id} exceeded the progress cap of ${cap}`,
+        },
       },
-    }, 429);
+      429,
+    );
   }
 
   return null;
@@ -85,11 +105,10 @@ function evictStaleTerminalProgressState(nowTs: number): void {
 
 function getTerminalProgressCap(): number {
   const raw = process.env.PENUMBRA_TERMINAL_PROGRESS_CAP;
-  if (raw === undefined || raw.trim() === '') {
+  if (raw === undefined || raw.trim() === "") {
     return DEFAULT_TERMINAL_PROGRESS_CAP;
   }
 
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_TERMINAL_PROGRESS_CAP;
 }
-

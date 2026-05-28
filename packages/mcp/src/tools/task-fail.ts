@@ -1,11 +1,11 @@
-import { toTextContent } from '@nova/mcp-shared';
-import { FailTaskInputSchema } from '@penumbra/core';
-import type { DaemonClient } from '../daemon-client.js';
+import { toTextContent } from "@nova/mcp-shared";
+import { FailTaskInputSchema } from "@penumbra/core";
+import type { DaemonClient } from "../daemon-client.js";
 
 export const TaskFailInputSchema = FailTaskInputSchema;
 export const TaskFailInputShape = TaskFailInputSchema.shape;
 
-export function taskFailHandler(daemon: Pick<DaemonClient, 'taskFail'>) {
+export function taskFailHandler(daemon: Pick<DaemonClient, "taskFail">) {
   return async (input: unknown) => {
     const parsed = TaskFailInputSchema.parse(input ?? {});
     const out = await daemon.taskFail(parsed.task_id, {

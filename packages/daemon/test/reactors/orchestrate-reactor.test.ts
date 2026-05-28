@@ -1,18 +1,18 @@
-import { afterEach, expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import type { AgentDescriptor, ChainStartRequest } from '@penumbra/core';
+import { afterEach, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import type { AgentDescriptor, ChainStartRequest } from "@penumbra/core";
 import {
   loadSqliteVec,
   MaestroSessionWriter,
   migrate,
   TaskEventBus,
   TaskWriter,
-} from '@penumbra/core';
-import { createOrchestrateReactor } from '../../src/reactors/orchestrate-reactor.js';
+} from "@penumbra/core";
+import { createOrchestrateReactor } from "../../src/reactors/orchestrate-reactor.js";
 
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {}
 
@@ -23,20 +23,22 @@ const DEFAULT_BOUNDS = {
 };
 
 const MAESTRO_AGENT: AgentDescriptor = {
-  name: 'claude-acp-sonnet',
+  name: "claude-acp-sonnet",
   maestro_capable: true,
-  tags: ['typescript'],
-  tier: 'premium',
+  tags: ["typescript"],
+  tier: "premium",
 };
 
 const SECOND_AGENT: AgentDescriptor = {
-  name: 'codex-acp-fast',
+  name: "codex-acp-fast",
   maestro_capable: true,
-  tags: ['typescript'],
-  tier: 'standard',
+  tags: ["typescript"],
+  tier: "standard",
 };
 
-function makeChainStartError(body: Record<string, unknown>): Error & { status: number; body: Record<string, unknown> } {
+function makeChainStartError(
+  body: Record<string, unknown>,
+): Error & { status: number; body: Record<string, unknown> } {
   const error = new Error(`chain_start failed (400): ${JSON.stringify(body)}`) as Error & {
     status: number;
     body: Record<string, unknown>;
@@ -47,7 +49,7 @@ function makeChainStartError(body: Record<string, unknown>): Error & { status: n
 }
 
 function setupDb(): Database {
-  const db = new Database(':memory:');
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   return db;
@@ -73,14 +75,18 @@ afterEach(() => {
   return Bun.sleep(5);
 });
 
-test('spawn happy path: creates session, leases task, calls chainStart, and records orchestrate_spawned', async () => {
+test("spawn happy path: creates session, leases task, calls chainStart, and records orchestrate_spawned", async () => {
   const db = setupDb();
   const bus = new TaskEventBus();
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
     resolveAgent: (name) =>
-      (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : name === SECOND_AGENT.name ? SECOND_AGENT : undefined),
+      name === MAESTRO_AGENT.name
+        ? MAESTRO_AGENT
+        : name === SECOND_AGENT.name
+          ? SECOND_AGENT
+          : undefined,
   });
 
   const chainStartCalls: ChainStartRequest[] = [];
@@ -91,20 +97,24 @@ test('spawn happy path: creates session, leases task, calls chainStart, and reco
     taskWriter,
     chainStart: async (req) => {
       chainStartCalls.push(req);
-      return { handoff_id: 'handoff-1', conversation_id: 'conv-1' };
+      return { handoff_id: "handoff-1", conversation_id: "conv-1" };
     },
     resolveAgent: (name) =>
-      (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : name === SECOND_AGENT.name ? SECOND_AGENT : undefined),
+      name === MAESTRO_AGENT.name
+        ? MAESTRO_AGENT
+        : name === SECOND_AGENT.name
+          ? SECOND_AGENT
+          : undefined,
     defaults: DEFAULT_BOUNDS,
   });
   reactor.start();
 
   const { task_id } = taskWriter.file({
-    prompt: 'Ship task 3.2',
-    kind: 'orchestrate',
+    prompt: "Ship task 3.2",
+    kind: "orchestrate",
     eligibility: { allow_agents: [MAESTRO_AGENT.name] },
-    created_by_kind: 'human',
-    created_by_id: 'cli',
+    created_by_kind: "human",
+    created_by_id: "cli",
   });
 
   await waitFor(() => {
@@ -118,33 +128,38 @@ test('spawn happy path: creates session, leases task, calls chainStart, and reco
   expect(session?.cost_budget_cents).toBe(DEFAULT_BOUNDS.cost_cents);
   expect(session?.sub_dispatch_budget).toBe(DEFAULT_BOUNDS.sub_dispatches);
   expect(session?.agent_id).toBe(MAESTRO_AGENT.name);
-  expect(session?.chain_handoff_id).toBe('handoff-1');
+  expect(session?.chain_handoff_id).toBe("handoff-1");
 
   expect(chainStartCalls).toHaveLength(1);
   expect(chainStartCalls[0]).toMatchObject({
     initial_agent: MAESTRO_AGENT.name,
-    task_type: 'implement_substantial',
+    task_type: "implement_substantial",
     use_worktree: true,
-    trust_mode: 'all',
+    trust_mode: "all",
   });
   expect(chainStartCalls[0]?.message).toContain(`autonomous orchestrator for task ${task_id}`);
 
   const task = taskWriter.get(task_id);
-  expect(task.status).toBe('leased');
+  expect(task.status).toBe("leased");
 
   const spawned = db
-    .query<{ payload_json: string | null }, [string]>(
-      `SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_spawned' ORDER BY id DESC LIMIT 1`,
-    )
+    .query<
+      { payload_json: string | null },
+      [string]
+    >(`SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_spawned' ORDER BY id DESC LIMIT 1`)
     .get(task_id);
   expect(spawned).toBeTruthy();
-  const payload = JSON.parse(spawned?.payload_json ?? '{}') as {
+  const payload = JSON.parse(spawned?.payload_json ?? "{}") as {
     session_task_id?: string;
     chain_handoff_id?: string;
-    bounds?: { wall_clock_budget_ms?: number; cost_budget_cents?: number; sub_dispatch_budget?: number };
+    bounds?: {
+      wall_clock_budget_ms?: number;
+      cost_budget_cents?: number;
+      sub_dispatch_budget?: number;
+    };
   };
   expect(payload.session_task_id).toBe(task_id);
-  expect(payload.chain_handoff_id).toBe('handoff-1');
+  expect(payload.chain_handoff_id).toBe("handoff-1");
   expect(payload.bounds).toEqual({
     wall_clock_budget_ms: DEFAULT_BOUNDS.wall_clock_ms,
     cost_budget_cents: DEFAULT_BOUNDS.cost_cents,
@@ -155,14 +170,18 @@ test('spawn happy path: creates session, leases task, calls chainStart, and reco
   db.close();
 });
 
-test('pre-bound session with null chain_handoff_id dispatches using session.agent_id', async () => {
+test("pre-bound session with null chain_handoff_id dispatches using session.agent_id", async () => {
   const db = setupDb();
   const bus = new TaskEventBus();
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
     resolveAgent: (name) =>
-      (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : name === SECOND_AGENT.name ? SECOND_AGENT : undefined),
+      name === MAESTRO_AGENT.name
+        ? MAESTRO_AGENT
+        : name === SECOND_AGENT.name
+          ? SECOND_AGENT
+          : undefined,
   });
 
   const chainStartCalls: ChainStartRequest[] = [];
@@ -173,20 +192,24 @@ test('pre-bound session with null chain_handoff_id dispatches using session.agen
     taskWriter,
     chainStart: async (req) => {
       chainStartCalls.push(req);
-      return { handoff_id: 'handoff-prebound', conversation_id: 'conv-prebound' };
+      return { handoff_id: "handoff-prebound", conversation_id: "conv-prebound" };
     },
     resolveAgent: (name) =>
-      (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : name === SECOND_AGENT.name ? SECOND_AGENT : undefined),
+      name === MAESTRO_AGENT.name
+        ? MAESTRO_AGENT
+        : name === SECOND_AGENT.name
+          ? SECOND_AGENT
+          : undefined,
     defaults: DEFAULT_BOUNDS,
   });
   reactor.start();
 
   const { task_id } = taskWriter.file({
-    prompt: 'Ship prebound task',
-    kind: 'orchestrate',
+    prompt: "Ship prebound task",
+    kind: "orchestrate",
     eligibility: { allow_agents: [SECOND_AGENT.name] },
-    created_by_kind: 'human',
-    created_by_id: 'cli',
+    created_by_kind: "human",
+    created_by_id: "cli",
   });
   sessions.start({
     task_id,
@@ -198,14 +221,14 @@ test('pre-bound session with null chain_handoff_id dispatches using session.agen
   bus.publish({
     task_id,
     at: Date.now(),
-    kind: 'filed',
+    kind: "filed",
     actor: null,
     payload: null,
   });
 
   await waitFor(() => {
     expect(chainStartCalls).toHaveLength(1);
-    expect(sessions.get(task_id)?.chain_handoff_id).toBe('handoff-prebound');
+    expect(sessions.get(task_id)?.chain_handoff_id).toBe("handoff-prebound");
   });
   expect(chainStartCalls[0]?.initial_agent).toBe(MAESTRO_AGENT.name);
 
@@ -213,14 +236,18 @@ test('pre-bound session with null chain_handoff_id dispatches using session.agen
   db.close();
 });
 
-test('pre-bound session with non-null chain_handoff_id short-circuits dispatch', async () => {
+test("pre-bound session with non-null chain_handoff_id short-circuits dispatch", async () => {
   const db = setupDb();
   const bus = new TaskEventBus();
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
     resolveAgent: (name) =>
-      (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : name === SECOND_AGENT.name ? SECOND_AGENT : undefined),
+      name === MAESTRO_AGENT.name
+        ? MAESTRO_AGENT
+        : name === SECOND_AGENT.name
+          ? SECOND_AGENT
+          : undefined,
   });
 
   const chainStartCalls: ChainStartRequest[] = [];
@@ -231,24 +258,28 @@ test('pre-bound session with non-null chain_handoff_id short-circuits dispatch',
     taskWriter,
     chainStart: async (req) => {
       chainStartCalls.push(req);
-      return { handoff_id: 'handoff-ignored', conversation_id: 'conv-ignored' };
+      return { handoff_id: "handoff-ignored", conversation_id: "conv-ignored" };
     },
     resolveAgent: (name) =>
-      (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : name === SECOND_AGENT.name ? SECOND_AGENT : undefined),
+      name === MAESTRO_AGENT.name
+        ? MAESTRO_AGENT
+        : name === SECOND_AGENT.name
+          ? SECOND_AGENT
+          : undefined,
     defaults: DEFAULT_BOUNDS,
   });
   reactor.start();
 
   const { task_id } = taskWriter.file({
-    prompt: 'Ship prebound-dispatched task',
-    kind: 'orchestrate',
+    prompt: "Ship prebound-dispatched task",
+    kind: "orchestrate",
     eligibility: { allow_agents: [SECOND_AGENT.name] },
-    created_by_kind: 'human',
-    created_by_id: 'cli',
+    created_by_kind: "human",
+    created_by_id: "cli",
   });
   sessions.start({
     task_id,
-    chain_handoff_id: 'handoff-already',
+    chain_handoff_id: "handoff-already",
     agent_id: MAESTRO_AGENT.name,
     wall_clock_budget_ms: 120_000,
     cost_budget_cents: 20,
@@ -257,20 +288,20 @@ test('pre-bound session with non-null chain_handoff_id short-circuits dispatch',
   bus.publish({
     task_id,
     at: Date.now(),
-    kind: 'filed',
+    kind: "filed",
     actor: null,
     payload: null,
   });
 
   await Bun.sleep(100);
   expect(chainStartCalls).toHaveLength(0);
-  expect(sessions.get(task_id)?.chain_handoff_id).toBe('handoff-already');
+  expect(sessions.get(task_id)?.chain_handoff_id).toBe("handoff-already");
 
   reactor.stop();
   db.close();
 });
 
-test('idempotent on event replay: duplicate filed event does not create duplicate session or chain start', async () => {
+test("idempotent on event replay: duplicate filed event does not create duplicate session or chain start", async () => {
   const db = setupDb();
   const bus = new TaskEventBus();
   const sessions = new MaestroSessionWriter({ db });
@@ -287,7 +318,7 @@ test('idempotent on event replay: duplicate filed event does not create duplicat
     taskWriter,
     chainStart: async (req) => {
       chainStartCalls.push(req);
-      return { handoff_id: 'handoff-1', conversation_id: 'conv-1' };
+      return { handoff_id: "handoff-1", conversation_id: "conv-1" };
     },
     resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
     defaults: DEFAULT_BOUNDS,
@@ -295,11 +326,11 @@ test('idempotent on event replay: duplicate filed event does not create duplicat
   reactor.start();
 
   const { task_id } = taskWriter.file({
-    prompt: 'Ship task 3.2',
-    kind: 'orchestrate',
+    prompt: "Ship task 3.2",
+    kind: "orchestrate",
     eligibility: { allow_agents: [MAESTRO_AGENT.name] },
-    created_by_kind: 'human',
-    created_by_id: 'cli',
+    created_by_kind: "human",
+    created_by_id: "cli",
   });
 
   await waitFor(() => {
@@ -307,16 +338,17 @@ test('idempotent on event replay: duplicate filed event does not create duplicat
   });
 
   const filed = db
-    .query<{ at: number; actor: string | null }, [string]>(
-      `SELECT at, actor FROM task_events WHERE task_id = ? AND kind = 'filed' ORDER BY id ASC LIMIT 1`,
-    )
+    .query<
+      { at: number; actor: string | null },
+      [string]
+    >(`SELECT at, actor FROM task_events WHERE task_id = ? AND kind = 'filed' ORDER BY id ASC LIMIT 1`)
     .get(task_id);
   expect(filed).toBeTruthy();
 
   bus.publish({
     task_id,
     at: filed?.at ?? Date.now(),
-    kind: 'filed',
+    kind: "filed",
     actor: filed?.actor ?? null,
     payload: null,
   });
@@ -325,7 +357,7 @@ test('idempotent on event replay: duplicate filed event does not create duplicat
 
   expect(chainStartCalls).toHaveLength(1);
   const count = db
-    .query<{ n: number }, [string]>('SELECT COUNT(*) AS n FROM maestro_sessions WHERE task_id = ?')
+    .query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM maestro_sessions WHERE task_id = ?")
     .get(task_id);
   expect(count?.n).toBe(1);
 
@@ -333,7 +365,7 @@ test('idempotent on event replay: duplicate filed event does not create duplicat
   db.close();
 });
 
-test('chainStart rejects: records orchestrate_terminated, no session, task remains pending', async () => {
+test("chainStart rejects: records orchestrate_terminated, no session, task remains pending", async () => {
   const db = setupDb();
   const bus = new TaskEventBus();
   const sessions = new MaestroSessionWriter({ db });
@@ -348,7 +380,7 @@ test('chainStart rejects: records orchestrate_terminated, no session, task remai
     sessions,
     taskWriter,
     chainStart: async () => {
-      throw new Error('boom');
+      throw new Error("boom");
     },
     resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
     defaults: DEFAULT_BOUNDS,
@@ -356,44 +388,49 @@ test('chainStart rejects: records orchestrate_terminated, no session, task remai
   reactor.start();
 
   const { task_id } = taskWriter.file({
-    prompt: 'Ship task 3.2',
-    kind: 'orchestrate',
+    prompt: "Ship task 3.2",
+    kind: "orchestrate",
     eligibility: { allow_agents: [MAESTRO_AGENT.name] },
-    created_by_kind: 'human',
-    created_by_id: 'cli',
+    created_by_kind: "human",
+    created_by_id: "cli",
   });
 
   await waitFor(() => {
     const terminated = db
-      .query<{ payload_json: string | null }, [string]>(
-        `SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_terminated' ORDER BY id DESC LIMIT 1`,
-      )
+      .query<
+        { payload_json: string | null },
+        [string]
+      >(`SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_terminated' ORDER BY id DESC LIMIT 1`)
       .get(task_id);
     expect(terminated).toBeTruthy();
   });
 
   expect(sessions.get(task_id)).toBeNull();
   const task = taskWriter.get(task_id);
-  expect(task.status).toBe('pending');
+  expect(task.status).toBe("pending");
 
   const terminated = db
-    .query<{ payload_json: string | null }, [string]>(
-      `SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_terminated' ORDER BY id DESC LIMIT 1`,
-    )
+    .query<
+      { payload_json: string | null },
+      [string]
+    >(`SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_terminated' ORDER BY id DESC LIMIT 1`)
     .get(task_id);
-  const payload = JSON.parse(terminated?.payload_json ?? '{}') as { reason?: string; error?: string };
-  expect(payload.reason).toBe('failed');
-  expect(payload.error).toContain('Error: boom');
+  const payload = JSON.parse(terminated?.payload_json ?? "{}") as {
+    reason?: string;
+    error?: string;
+  };
+  expect(payload.reason).toBe("failed");
+  expect(payload.error).toContain("Error: boom");
 
   reactor.stop();
   db.close();
 });
 
-test('subscription_pressure_capped with future earliest_resets_at records orchestrate_deferred', async () => {
+test("subscription_pressure_capped with future earliest_resets_at records orchestrate_deferred", async () => {
   const db = setupDb();
   const bus = new TaskEventBus();
   const sessions = new MaestroSessionWriter({ db });
-  const nowMs = new Date('2026-05-08T02:00:00Z').getTime();
+  const nowMs = new Date("2026-05-08T02:00:00Z").getTime();
   const taskWriter = new TaskWriter(db, {
     now: () => nowMs,
     bus,
@@ -408,9 +445,9 @@ test('subscription_pressure_capped with future earliest_resets_at records orches
     chainStart: async () => {
       throw makeChainStartError({
         error: {
-          code: 'subscription_pressure_capped',
-          provider: 'openai',
-          window_label: 'five_hour',
+          code: "subscription_pressure_capped",
+          provider: "openai",
+          window_label: "five_hour",
           earliest_resets_at: nowMs + 60_000,
         },
       });
@@ -422,33 +459,36 @@ test('subscription_pressure_capped with future earliest_resets_at records orches
   reactor.start();
 
   const { task_id } = taskWriter.file({
-    prompt: 'Ship task 3.2',
-    kind: 'orchestrate',
+    prompt: "Ship task 3.2",
+    kind: "orchestrate",
     eligibility: { allow_agents: [MAESTRO_AGENT.name] },
-    created_by_kind: 'human',
-    created_by_id: 'cli',
+    created_by_kind: "human",
+    created_by_id: "cli",
   });
 
   await waitFor(() => {
     const deferred = db
-      .query<{ payload_json: string | null }, [string]>(
-        `SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_deferred' ORDER BY id DESC LIMIT 1`,
-      )
+      .query<
+        { payload_json: string | null },
+        [string]
+      >(`SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_deferred' ORDER BY id DESC LIMIT 1`)
       .get(task_id);
     expect(deferred).toBeTruthy();
   });
 
   const deferred = db
-    .query<{ payload_json: string | null }, [string]>(
-      `SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_deferred' ORDER BY id DESC LIMIT 1`,
-    )
+    .query<
+      { payload_json: string | null },
+      [string]
+    >(`SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_deferred' ORDER BY id DESC LIMIT 1`)
     .get(task_id);
   const terminatedCount = db
-    .query<{ n: number }, [string]>(
-      `SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND kind = 'orchestrate_terminated'`,
-    )
+    .query<
+      { n: number },
+      [string]
+    >(`SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND kind = 'orchestrate_terminated'`)
     .get(task_id);
-  const payload = JSON.parse(deferred?.payload_json ?? '{}') as {
+  const payload = JSON.parse(deferred?.payload_json ?? "{}") as {
     reason?: string;
     resume_at_ms?: number;
     provider?: string;
@@ -457,17 +497,17 @@ test('subscription_pressure_capped with future earliest_resets_at records orches
   };
 
   expect(terminatedCount?.n ?? 0).toBe(0);
-  expect(payload.reason).toBe('subscription_pressure_capped');
+  expect(payload.reason).toBe("subscription_pressure_capped");
   expect(payload.resume_at_ms).toBe(nowMs + 60_000);
-  expect(payload.provider).toBe('openai');
-  expect(payload.window_label).toBe('five_hour');
+  expect(payload.provider).toBe("openai");
+  expect(payload.window_label).toBe("five_hour");
   expect(payload.original_error).toBeTruthy();
 
   reactor.stop();
   db.close();
 });
 
-test('subscription_pressure_capped with null earliest_resets_at records orchestrate_terminated', async () => {
+test("subscription_pressure_capped with null earliest_resets_at records orchestrate_terminated", async () => {
   const db = setupDb();
   const bus = new TaskEventBus();
   const sessions = new MaestroSessionWriter({ db });
@@ -484,9 +524,9 @@ test('subscription_pressure_capped with null earliest_resets_at records orchestr
     chainStart: async () => {
       throw makeChainStartError({
         error: {
-          code: 'subscription_pressure_capped',
-          provider: 'openai',
-          window_label: 'five_hour',
+          code: "subscription_pressure_capped",
+          provider: "openai",
+          window_label: "five_hour",
           earliest_resets_at: null,
         },
       });
@@ -497,26 +537,28 @@ test('subscription_pressure_capped with null earliest_resets_at records orchestr
   reactor.start();
 
   const { task_id } = taskWriter.file({
-    prompt: 'Ship task 3.2',
-    kind: 'orchestrate',
+    prompt: "Ship task 3.2",
+    kind: "orchestrate",
     eligibility: { allow_agents: [MAESTRO_AGENT.name] },
-    created_by_kind: 'human',
-    created_by_id: 'cli',
+    created_by_kind: "human",
+    created_by_id: "cli",
   });
 
   await waitFor(() => {
     const terminated = db
-      .query<{ payload_json: string | null }, [string]>(
-        `SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_terminated' ORDER BY id DESC LIMIT 1`,
-      )
+      .query<
+        { payload_json: string | null },
+        [string]
+      >(`SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_terminated' ORDER BY id DESC LIMIT 1`)
       .get(task_id);
     expect(terminated).toBeTruthy();
   });
 
   const deferredCount = db
-    .query<{ n: number }, [string]>(
-      `SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND kind = 'orchestrate_deferred'`,
-    )
+    .query<
+      { n: number },
+      [string]
+    >(`SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND kind = 'orchestrate_deferred'`)
     .get(task_id);
   expect(deferredCount?.n ?? 0).toBe(0);
 
@@ -524,7 +566,7 @@ test('subscription_pressure_capped with null earliest_resets_at records orchestr
   db.close();
 });
 
-test('per-task bounds override defaults', async () => {
+test("per-task bounds override defaults", async () => {
   const db = setupDb();
   const bus = new TaskEventBus();
   const sessions = new MaestroSessionWriter({ db });
@@ -538,19 +580,19 @@ test('per-task bounds override defaults', async () => {
     bus,
     sessions,
     taskWriter,
-    chainStart: async () => ({ handoff_id: 'handoff-2', conversation_id: 'conv-2' }),
+    chainStart: async () => ({ handoff_id: "handoff-2", conversation_id: "conv-2" }),
     resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
     defaults: DEFAULT_BOUNDS,
   });
   reactor.start();
 
   const { task_id } = taskWriter.file({
-    prompt: 'Ship task 3.2',
-    kind: 'orchestrate',
+    prompt: "Ship task 3.2",
+    kind: "orchestrate",
     bounds: { wall_clock_ms: 60_000 },
     eligibility: { allow_agents: [MAESTRO_AGENT.name] },
-    created_by_kind: 'human',
-    created_by_id: 'cli',
+    created_by_kind: "human",
+    created_by_id: "cli",
   });
 
   await waitFor(() => {
@@ -566,7 +608,7 @@ test('per-task bounds override defaults', async () => {
   db.close();
 });
 
-test('unknown agent in allow_agents: terminates without spawning', async () => {
+test("unknown agent in allow_agents: terminates without spawning", async () => {
   const db = setupDb();
   const bus = new TaskEventBus();
   const sessions = new MaestroSessionWriter({ db });
@@ -583,7 +625,7 @@ test('unknown agent in allow_agents: terminates without spawning', async () => {
     taskWriter,
     chainStart: async (req) => {
       chainStartCalls.push(req);
-      return { handoff_id: 'handoff-3', conversation_id: 'conv-3' };
+      return { handoff_id: "handoff-3", conversation_id: "conv-3" };
     },
     resolveAgent: () => undefined,
     defaults: DEFAULT_BOUNDS,
@@ -591,18 +633,19 @@ test('unknown agent in allow_agents: terminates without spawning', async () => {
   reactor.start();
 
   const { task_id } = taskWriter.file({
-    prompt: 'Ship task 3.2',
-    kind: 'orchestrate',
+    prompt: "Ship task 3.2",
+    kind: "orchestrate",
     eligibility: { allow_agents: [MAESTRO_AGENT.name] },
-    created_by_kind: 'human',
-    created_by_id: 'cli',
+    created_by_kind: "human",
+    created_by_id: "cli",
   });
 
   await waitFor(() => {
     const terminated = db
-      .query<{ payload_json: string | null }, [string]>(
-        `SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_terminated' ORDER BY id DESC LIMIT 1`,
-      )
+      .query<
+        { payload_json: string | null },
+        [string]
+      >(`SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_terminated' ORDER BY id DESC LIMIT 1`)
       .get(task_id);
     expect(terminated).toBeTruthy();
   });
@@ -611,20 +654,25 @@ test('unknown agent in allow_agents: terminates without spawning', async () => {
   expect(chainStartCalls).toHaveLength(0);
 
   const terminated = db
-    .query<{ payload_json: string | null }, [string]>(
-      `SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_terminated' ORDER BY id DESC LIMIT 1`,
-    )
+    .query<
+      { payload_json: string | null },
+      [string]
+    >(`SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_terminated' ORDER BY id DESC LIMIT 1`)
     .get(task_id);
-  const payload = JSON.parse(terminated?.payload_json ?? '{}') as { reason?: string; error?: string; agent_name?: string };
-  expect(payload.reason).toBe('failed');
-  expect(payload.error).toBe('unknown_agent');
+  const payload = JSON.parse(terminated?.payload_json ?? "{}") as {
+    reason?: string;
+    error?: string;
+    agent_name?: string;
+  };
+  expect(payload.reason).toBe("failed");
+  expect(payload.error).toBe("unknown_agent");
   expect(payload.agent_name).toBe(MAESTRO_AGENT.name);
 
   reactor.stop();
   db.close();
 });
 
-test('non-orchestrate task is ignored', async () => {
+test("non-orchestrate task is ignored", async () => {
   const db = setupDb();
   const bus = new TaskEventBus();
   const sessions = new MaestroSessionWriter({ db });
@@ -641,7 +689,7 @@ test('non-orchestrate task is ignored', async () => {
     taskWriter,
     chainStart: async (req) => {
       chainStartCalls.push(req);
-      return { handoff_id: 'handoff-4', conversation_id: 'conv-4' };
+      return { handoff_id: "handoff-4", conversation_id: "conv-4" };
     },
     resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
     defaults: DEFAULT_BOUNDS,
@@ -649,10 +697,10 @@ test('non-orchestrate task is ignored', async () => {
   reactor.start();
 
   const { task_id } = taskWriter.file({
-    prompt: 'regular work item',
-    kind: 'work',
-    created_by_kind: 'human',
-    created_by_id: 'cli',
+    prompt: "regular work item",
+    kind: "work",
+    created_by_kind: "human",
+    created_by_id: "cli",
   });
 
   await Bun.sleep(100);
@@ -661,9 +709,10 @@ test('non-orchestrate task is ignored', async () => {
   expect(chainStartCalls).toHaveLength(0);
 
   const spawnedCount = db
-    .query<{ n: number }, [string]>(
-      `SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND kind = 'orchestrate_spawned'`,
-    )
+    .query<
+      { n: number },
+      [string]
+    >(`SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND kind = 'orchestrate_spawned'`)
     .get(task_id);
   expect(spawnedCount?.n).toBe(0);
 

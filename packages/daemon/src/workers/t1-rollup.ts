@@ -1,5 +1,5 @@
-import type { Services } from '@penumbra/core';
-import { T1Rollup, ContextFileWriter } from '@penumbra/core';
+import type { Services } from "@penumbra/core";
+import { T1Rollup, ContextFileWriter } from "@penumbra/core";
 
 export interface RollupWorkerOpts {
   services: Services;
@@ -29,7 +29,7 @@ export function createRollupWorker(opts: RollupWorkerOpts) {
       const currentEnv = process.env.MEMORY_OVERWRITE_ON_REROLL;
       if (currentEnv !== lastEnv) {
         lastEnv = currentEnv;
-        cachedOverwrite = currentEnv === 'true';
+        cachedOverwrite = currentEnv === "true";
       }
       const overwrite = opts.overwriteOnReroll ?? cachedOverwrite;
 
@@ -39,14 +39,15 @@ export function createRollupWorker(opts: RollupWorkerOpts) {
           const id = await t1.rollupSession(sessionId, overwrite);
           if (id) {
             const projectRow = opts.services.db
-              .query<{ project_id: string | null }, [string]>(
-                'SELECT project_id FROM t1_rollups WHERE rollup_id=?',
-              )
+              .query<
+                { project_id: string | null },
+                [string]
+              >("SELECT project_id FROM t1_rollups WHERE rollup_id=?")
               .get(id);
             if (projectRow?.project_id) ctx.rewrite(projectRow.project_id);
           }
         } catch (err) {
-          opts.services.log.warn({ sessionId, err }, 'rollup worker: session failed, skipping');
+          opts.services.log.warn({ sessionId, err }, "rollup worker: session failed, skipping");
         }
       }
     },

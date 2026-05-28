@@ -1,6 +1,6 @@
-import type { Database } from 'bun:sqlite';
-import { readLongLivedAgentWorkingMemory } from '@penumbra/core/long-lived/self-reader';
-import { verifyRunningIdentity } from '../long-lived-context.js';
+import type { Database } from "bun:sqlite";
+import { readLongLivedAgentWorkingMemory } from "@penumbra/core/long-lived/self-reader";
+import { verifyRunningIdentity } from "../long-lived-context.js";
 
 export interface SelfStateGetContext {
   running_agent_id?: string;

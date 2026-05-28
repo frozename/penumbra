@@ -1,4 +1,4 @@
-import type { T0EventInput } from '@penumbra/core';
+import type { T0EventInput } from "@penumbra/core";
 
 export interface IPenumbraDaemonClient {
   observe(event: T0EventInput): Promise<void>;

@@ -1,7 +1,7 @@
-import { isMcpInvocationLogEnabled } from '@penumbra/config';
-import type { InvocationRow } from './invocation-sink.js';
-import { getSink } from './invocation-sink-registry.js';
-import { resolveToolOrigin } from './tool-origin.js';
+import { isMcpInvocationLogEnabled } from "@penumbra/config";
+import type { InvocationRow } from "./invocation-sink.js";
+import { getSink } from "./invocation-sink-registry.js";
+import { resolveToolOrigin } from "./tool-origin.js";
 
 interface WrapHandlerOptions {
   enabled?: boolean;
@@ -27,8 +27,8 @@ let warnedAboutMissingSink = false;
 function safeStringifyByteLength(value: unknown): number {
   try {
     const encoded = JSON.stringify(value);
-    if (typeof encoded !== 'string') return -1;
-    const byteLength = Buffer.byteLength(encoded, 'utf8');
+    if (typeof encoded !== "string") return -1;
+    const byteLength = Buffer.byteLength(encoded, "utf8");
     if (byteLength > MAX_MEASURED_BYTES) return -1;
     return byteLength;
   } catch {
@@ -37,13 +37,13 @@ function safeStringifyByteLength(value: unknown): number {
 }
 
 function errorClassName(error: unknown): string {
-  if (!(error instanceof Error)) return 'unknown';
+  if (!(error instanceof Error)) return "unknown";
   // Prefer explicit error.name when the user set one on the class; otherwise
   // fall back to the constructor name (which survives undefined .name but
   // gets mangled to a single letter under identifier minification).
-  const explicit = error.name && error.name !== 'Error' ? error.name : undefined;
-  const ctorName = typeof error.constructor?.name === 'string' ? error.constructor.name : undefined;
-  const chosen = explicit ?? ctorName ?? 'Error';
+  const explicit = error.name && error.name !== "Error" ? error.name : undefined;
+  const ctorName = typeof error.constructor?.name === "string" ? error.constructor.name : undefined;
+  const chosen = explicit ?? ctorName ?? "Error";
   return chosen.slice(0, ERROR_KIND_MAX_CHARS);
 }
 
@@ -53,9 +53,11 @@ function errorClassName(error: unknown): string {
  * proxies and native error-envelope tools both produce accurate telemetry.
  */
 function isMcpErrorEnvelope(result: unknown): boolean {
-  return typeof result === 'object'
-    && result !== null
-    && (result as { isError?: unknown }).isError === true;
+  return (
+    typeof result === "object" &&
+    result !== null &&
+    (result as { isError?: unknown }).isError === true
+  );
 }
 
 function safeWrite(row: InvocationRow): void {
@@ -67,7 +69,7 @@ function safeWrite(row: InvocationRow): void {
     // an operational miswire (flag on, sink not initialized) is observable.
     if (!warnedAboutMissingSink) {
       warnedAboutMissingSink = true;
-      console.error('[mcp:instrumentation] sink write failed; further failures suppressed', {
+      console.error("[mcp:instrumentation] sink write failed; further failures suppressed", {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -91,7 +93,7 @@ export function instrumentHandler(
   return async function wrappedHandler(args: unknown, extra: unknown): Promise<unknown> {
     const startedWall = new Date().toISOString();
     const startedAt = performance.now();
-    const origin = (resolveToolOrigin(extra) ?? 'unknown').slice(0, ORIGIN_MAX_CHARS);
+    const origin = (resolveToolOrigin(extra) ?? "unknown").slice(0, ORIGIN_MAX_CHARS);
     const argsBytes = safeStringifyByteLength(args);
 
     try {
@@ -106,7 +108,7 @@ export function instrumentHandler(
         result_bytes: safeStringifyByteLength(result),
         duration_ms: durationMs,
         ok: !isErrorEnvelope,
-        error_kind: isErrorEnvelope ? 'mcp_error_envelope' : null,
+        error_kind: isErrorEnvelope ? "mcp_error_envelope" : null,
       });
       return result;
     } catch (error) {
@@ -128,8 +130,8 @@ export function instrumentHandler(
 
 /** Test-only reset so the one-shot warning fires fresh in unrelated tests. */
 export function _resetWarnedForTest(): void {
-  if (process.env.NODE_ENV !== 'test') {
-    throw new Error('_resetWarnedForTest is test-only');
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error("_resetWarnedForTest is test-only");
   }
   warnedAboutMissingSink = false;
 }

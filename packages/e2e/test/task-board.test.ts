@@ -1,10 +1,10 @@
-import { expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { DaemonClient } from '@penumbra/mcp';
-import { connectInMemory } from '../../mcp/test/helpers.js';
-import { makeSandbox } from './helpers/sandbox.js';
+import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { DaemonClient } from "@penumbra/mcp";
+import { connectInMemory } from "../../mcp/test/helpers.js";
+import { makeSandbox } from "./helpers/sandbox.js";
 import {
   spawnPenumbra,
   waitForPortFile,
@@ -12,7 +12,7 @@ import {
   killGracefully,
   drainOutput,
   type BunSubprocess,
-} from './helpers/spawn-bin.js';
+} from "./helpers/spawn-bin.js";
 
 interface ToolResult {
   content: Array<{ type: string; text: string }>;
@@ -54,7 +54,11 @@ function parseToolResult<T>(out: unknown): T {
   return JSON.parse((out as ToolResult).content[0]!.text) as T;
 }
 
-async function callToolJson<T>(client: McpClient, name: string, args: Record<string, unknown>): Promise<T> {
+async function callToolJson<T>(
+  client: McpClient,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<T> {
   const out = await client.callTool({ name, arguments: args });
   return parseToolResult<T>(out);
 }
@@ -65,7 +69,7 @@ function readSseFrames(
 ): Promise<void> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
-  let buf = '';
+  let buf = "";
 
   return (async () => {
     try {
@@ -75,15 +79,15 @@ function readSseFrames(
         if (!value) continue;
         buf += decoder.decode(value, { stream: true });
 
-        let splitAt = buf.indexOf('\n\n');
+        let splitAt = buf.indexOf("\n\n");
         while (splitAt >= 0) {
           const frame = buf.slice(0, splitAt);
           buf = buf.slice(splitAt + 2);
-          const dataLine = frame.split('\n').find((line) => line.startsWith('data: '));
+          const dataLine = frame.split("\n").find((line) => line.startsWith("data: "));
           if (dataLine) {
             onEvent(JSON.parse(dataLine.slice(6)) as TaskEvent);
           }
-          splitAt = buf.indexOf('\n\n');
+          splitAt = buf.indexOf("\n\n");
         }
       }
     } finally {
@@ -106,109 +110,127 @@ async function waitForEvent(
   throw new Error(`timed out waiting for task event after ${timeoutMs}ms`);
 }
 
-async function waitForLedgerRows(dbPath: string): Promise<Array<{ agent_name: string; task_type: string; outcome: string }>> {
+async function waitForLedgerRows(
+  dbPath: string,
+): Promise<Array<{ agent_name: string; task_type: string; outcome: string }>> {
   const start = Date.now();
   while (Date.now() - start < 3000) {
     const db = new Database(dbPath, { readonly: true });
-    const rows = db.query<{ agent_name: string; task_type: string; outcome: string }, [string, string]>(
-      `SELECT agent_name, task_type, outcome
+    const rows = db
+      .query<{ agent_name: string; task_type: string; outcome: string }, [string, string]>(
+        `SELECT agent_name, task_type, outcome
        FROM agent_performance
        WHERE agent_name IN (?, ?)
        ORDER BY ts ASC, performance_id ASC`,
-    ).all('e2e-doer', 'e2e-reviewer');
+      )
+      .all("e2e-doer", "e2e-reviewer");
     db.close();
 
-    const hasDoer = rows.some((row) => row.agent_name === 'e2e-doer');
-    const hasReviewer = rows.some((row) => row.agent_name === 'e2e-reviewer');
+    const hasDoer = rows.some((row) => row.agent_name === "e2e-doer");
+    const hasReviewer = rows.some((row) => row.agent_name === "e2e-reviewer");
     if (hasDoer && hasReviewer) return rows;
     await Bun.sleep(20);
   }
 
   const db = new Database(dbPath, { readonly: true });
-  const rows = db.query<{ agent_name: string; task_type: string; outcome: string }, [string, string]>(
-    `SELECT agent_name, task_type, outcome
+  const rows = db
+    .query<{ agent_name: string; task_type: string; outcome: string }, [string, string]>(
+      `SELECT agent_name, task_type, outcome
      FROM agent_performance
      WHERE agent_name IN (?, ?)
      ORDER BY ts ASC, performance_id ASC`,
-  ).all('e2e-doer', 'e2e-reviewer');
+    )
+    .all("e2e-doer", "e2e-reviewer");
   db.close();
   return rows;
 }
 
-test('task board full-stack smoke: CLI + SSE + MCP + ledger', async () => {
+test("task board full-stack smoke: CLI + SSE + MCP + ledger", async () => {
   const sb = makeSandbox();
   let daemon: BunSubprocess | null = null;
   const abort = new AbortController();
   let streamDone: Promise<void> | null = null;
   let mcp: McpClient | null = null;
 
-  const agentchatConfigPath = join(sb.dir, 'agentchat.yaml');
-  const penumbraConfigDir = join(sb.dir, 'penumbra-config');
-  writeFileSync(agentchatConfigPath, [
-    'agents:',
-    '  - name: e2e-doer',
-    '    adapter: noop',
-    '    options: {}',
-    '    tier: oc',
-    '    tags: [implementation]',
-    '    cost_cents_per_run: 10',
-    '  - name: e2e-reviewer',
-    '    adapter: noop',
-    '    options: {}',
-    '    tier: premium',
-    '    tags: [review]',
-    '    cost_cents_per_run: 15',
-    'default_roles: {}',
-  ].join('\n'));
+  const agentchatConfigPath = join(sb.dir, "agentchat.yaml");
+  const penumbraConfigDir = join(sb.dir, "penumbra-config");
+  writeFileSync(
+    agentchatConfigPath,
+    [
+      "agents:",
+      "  - name: e2e-doer",
+      "    adapter: noop",
+      "    options: {}",
+      "    tier: oc",
+      "    tags: [implementation]",
+      "    cost_cents_per_run: 10",
+      "  - name: e2e-reviewer",
+      "    adapter: noop",
+      "    options: {}",
+      "    tier: premium",
+      "    tags: [review]",
+      "    cost_cents_per_run: 15",
+      "default_roles: {}",
+    ].join("\n"),
+  );
   mkdirSync(penumbraConfigDir, { recursive: true });
-  writeFileSync(join(penumbraConfigDir, 'agents.yaml'), [
-    'agents:',
-    '  - name: e2e-doer',
-    '    adapter: noop',
-    '    options: {}',
-    '    tier: oc',
-    '    tags: [implementation]',
-    '    cost_cents_per_run: 10',
-    '  - name: e2e-reviewer',
-    '    adapter: noop',
-    '    options: {}',
-    '    tier: premium',
-    '    tags: [review]',
-    '    cost_cents_per_run: 15',
-  ].join('\n'));
-  writeFileSync(join(penumbraConfigDir, 'routing.yaml'), 'default_roles: {}\n');
-  writeFileSync(join(penumbraConfigDir, 'quotas.yaml'), 'providers: []\n');
+  writeFileSync(
+    join(penumbraConfigDir, "agents.yaml"),
+    [
+      "agents:",
+      "  - name: e2e-doer",
+      "    adapter: noop",
+      "    options: {}",
+      "    tier: oc",
+      "    tags: [implementation]",
+      "    cost_cents_per_run: 10",
+      "  - name: e2e-reviewer",
+      "    adapter: noop",
+      "    options: {}",
+      "    tier: premium",
+      "    tags: [review]",
+      "    cost_cents_per_run: 15",
+    ].join("\n"),
+  );
+  writeFileSync(join(penumbraConfigDir, "routing.yaml"), "default_roles: {}\n");
+  writeFileSync(join(penumbraConfigDir, "quotas.yaml"), "providers: []\n");
 
   const env = {
     AGENTCHAT_CONFIG: agentchatConfigPath,
     PENUMBRA_CONFIG_DIR: penumbraConfigDir,
-    PENUMBRA_WORKTREE_ROOT: join(sb.dir, 'worktrees'),
+    PENUMBRA_WORKTREE_ROOT: join(sb.dir, "worktrees"),
   };
   mkdirSync(env.PENUMBRA_WORKTREE_ROOT, { recursive: true });
 
   try {
-    const init = await captureOutput(spawnPenumbra(['init'], sb.dir, env));
+    const init = await captureOutput(spawnPenumbra(["init"], sb.dir, env));
     expect(init.exitCode).toBe(0);
 
-    daemon = spawnPenumbra(['start'], sb.dir, env);
+    daemon = spawnPenumbra(["start"], sb.dir, env);
     drainOutput(daemon);
 
     const port = await waitForPortFile(sb.dir, 30_000);
     const baseUrl = `http://127.0.0.1:${port}`;
-    const token = readFileSync(join(sb.dir, 'token'), 'utf8').trim();
+    const token = readFileSync(join(sb.dir, "token"), "utf8").trim();
     expect(token.length).toBeGreaterThan(0);
 
-    const create = await captureOutput(spawnPenumbra([
-      'task',
-      'new',
-      '--prompt',
-      'smoke test',
-      '--priority',
-      'normal',
-      '--acceptance',
-      'criterion 1',
-      '--require-review',
-    ], sb.dir, env));
+    const create = await captureOutput(
+      spawnPenumbra(
+        [
+          "task",
+          "new",
+          "--prompt",
+          "smoke test",
+          "--priority",
+          "normal",
+          "--acceptance",
+          "criterion 1",
+          "--require-review",
+        ],
+        sb.dir,
+        env,
+      ),
+    );
     expect(create.exitCode).toBe(0);
 
     const taskId = create.stdout.trim();
@@ -219,7 +241,7 @@ test('task board full-stack smoke: CLI + SSE + MCP + ledger', async () => {
       signal: abort.signal,
     });
     expect(sseRes.status).toBe(200);
-    expect(sseRes.headers.get('content-type')).toContain('text/event-stream');
+    expect(sseRes.headers.get("content-type")).toContain("text/event-stream");
     expect(sseRes.body).toBeTruthy();
 
     const streamEvents: TaskEvent[] = [];
@@ -227,104 +249,128 @@ test('task board full-stack smoke: CLI + SSE + MCP + ledger', async () => {
       streamEvents.push(event);
     });
 
-    await waitForEvent(streamEvents, (event) => event.kind === 'filed' && event.task_id === taskId, 1000);
+    await waitForEvent(
+      streamEvents,
+      (event) => event.kind === "filed" && event.task_id === taskId,
+      1000,
+    );
 
     const daemonClient = new DaemonClient({ baseUrl, token });
     mcp = await connectInMemory(daemonClient);
 
-    const doerLease = await callToolJson<TaskNextResponse | null>(mcp, 'task.next', {
-      agent_id: 'e2e-doer',
+    const doerLease = await callToolJson<TaskNextResponse | null>(mcp, "task.next", {
+      agent_id: "e2e-doer",
     });
     expect(doerLease).not.toBeNull();
     expect(doerLease?.task_id).toBe(taskId);
-    expect(doerLease?.prompt).toBe('smoke test');
+    expect(doerLease?.prompt).toBe("smoke test");
 
-    const heartbeat = await callToolJson<{ expires_at: number }>(mcp, 'task.heartbeat', {
+    const heartbeat = await callToolJson<{ expires_at: number }>(mcp, "task.heartbeat", {
       task_id: taskId,
       lease_id: doerLease!.lease_id,
     });
     expect(heartbeat.expires_at).toBeGreaterThan(0);
 
-    const completed = await callToolJson<{ status: string }>(mcp, 'task.complete', {
+    const completed = await callToolJson<{ status: string }>(mcp, "task.complete", {
       task_id: taskId,
       lease_id: doerLease!.lease_id,
-      result_summary: 'smoke task completed',
-      result_artifacts: [{ type: 'commit', ref: 'abc123' }],
-      chain_id: 'chain-test-001',
+      result_summary: "smoke task completed",
+      result_artifacts: [{ type: "commit", ref: "abc123" }],
+      chain_id: "chain-test-001",
     });
-    expect(completed.status).toBe('done_pending_review');
+    expect(completed.status).toBe("done_pending_review");
 
-    const reviewList = await callToolJson<{ tasks: TaskListItem[] }>(mcp, 'task.list', {
-      kind: 'review',
+    const reviewList = await callToolJson<{ tasks: TaskListItem[] }>(mcp, "task.list", {
+      kind: "review",
       parent_task_id: taskId,
     });
     expect(reviewList.tasks).toHaveLength(1);
 
     const reviewTask = reviewList.tasks[0]!;
     expect(reviewTask.parent_task_id).toBe(taskId);
-    expect(reviewTask.kind).toBe('review');
-    expect(reviewTask.eligibility.deny_agents).toContain('e2e-doer');
+    expect(reviewTask.kind).toBe("review");
+    expect(reviewTask.eligibility.deny_agents).toContain("e2e-doer");
 
-    const reviewerLease = await callToolJson<TaskNextResponse | null>(mcp, 'task.next', {
-      agent_id: 'e2e-reviewer',
+    const reviewerLease = await callToolJson<TaskNextResponse | null>(mcp, "task.next", {
+      agent_id: "e2e-reviewer",
     });
     expect(reviewerLease).not.toBeNull();
     expect(reviewerLease?.task_id).toBe(reviewTask.id);
 
-    const reviewComplete = await callToolJson<{ status: string }>(mcp, 'task.complete', {
+    const reviewComplete = await callToolJson<{ status: string }>(mcp, "task.complete", {
       task_id: reviewTask.id,
       lease_id: reviewerLease!.lease_id,
-      result_summary: 'review done',
+      result_summary: "review done",
       review_verdict: {
         passed: true,
-        notes: 'criterion 1 met',
+        notes: "criterion 1 met",
       },
     });
-    expect(reviewComplete.status).toBe('done');
+    expect(reviewComplete.status).toBe("done");
 
-    const parent = await callToolJson<TaskGetResponse>(mcp, 'task.get', {
+    const parent = await callToolJson<TaskGetResponse>(mcp, "task.get", {
       task_id: taskId,
-      include: ['events'],
+      include: ["events"],
     });
-    expect(parent.status).toBe('done');
-    expect(parent.events?.some((event) => event.kind === 'review_passed')).toBe(true);
+    expect(parent.status).toBe("done");
+    expect(parent.events?.some((event) => event.kind === "review_passed")).toBe(true);
 
-    await waitForEvent(streamEvents, (event) => event.kind === 'review_passed' && event.task_id === taskId, 1000);
+    await waitForEvent(
+      streamEvents,
+      (event) => event.kind === "review_passed" && event.task_id === taskId,
+      1000,
+    );
 
-    const rows = await waitForLedgerRows(join(sb.dir, 'db.sqlite'));
-    expect(rows.some((row) => row.agent_name === 'e2e-doer' && row.task_type.startsWith('implement_') && row.outcome === 'merged')).toBe(true);
-    expect(rows.some((row) => row.agent_name === 'e2e-reviewer' && row.task_type === 'review_adversarial' && row.outcome === 'merged')).toBe(true);
+    const rows = await waitForLedgerRows(join(sb.dir, "db.sqlite"));
+    expect(
+      rows.some(
+        (row) =>
+          row.agent_name === "e2e-doer" &&
+          row.task_type.startsWith("implement_") &&
+          row.outcome === "merged",
+      ),
+    ).toBe(true);
+    expect(
+      rows.some(
+        (row) =>
+          row.agent_name === "e2e-reviewer" &&
+          row.task_type === "review_adversarial" &&
+          row.outcome === "merged",
+      ),
+    ).toBe(true);
 
-    const parentKinds = streamEvents.filter((event) => event.task_id === taskId).map((event) => event.kind);
-    expect(parentKinds).toEqual(expect.arrayContaining([
-      'filed',
-      'leased',
-      'heartbeat',
-      'completed',
-      'review_filed',
-      'review_passed',
-    ]));
+    const parentKinds = streamEvents
+      .filter((event) => event.task_id === taskId)
+      .map((event) => event.kind);
+    expect(parentKinds).toEqual(
+      expect.arrayContaining([
+        "filed",
+        "leased",
+        "heartbeat",
+        "completed",
+        "review_filed",
+        "review_passed",
+      ]),
+    );
 
-    const reviewKinds = streamEvents.filter((event) => event.task_id === reviewTask.id).map((event) => event.kind);
-    expect(reviewKinds).toEqual(expect.arrayContaining([
-      'filed',
-      'leased',
-      'completed',
-    ]));
+    const reviewKinds = streamEvents
+      .filter((event) => event.task_id === reviewTask.id)
+      .map((event) => event.kind);
+    expect(reviewKinds).toEqual(expect.arrayContaining(["filed", "leased", "completed"]));
 
     const kindSet = new Set(streamEvents.map((event) => event.kind));
-    expect(kindSet.has('filed')).toBe(true);
-    expect(kindSet.has('leased')).toBe(true);
-    expect(kindSet.has('heartbeat')).toBe(true);
-    expect(kindSet.has('completed')).toBe(true);
-    expect(kindSet.has('review_filed')).toBe(true);
-    expect(kindSet.has('review_passed')).toBe(true);
+    expect(kindSet.has("filed")).toBe(true);
+    expect(kindSet.has("leased")).toBe(true);
+    expect(kindSet.has("heartbeat")).toBe(true);
+    expect(kindSet.has("completed")).toBe(true);
+    expect(kindSet.has("review_filed")).toBe(true);
+    expect(kindSet.has("review_passed")).toBe(true);
   } finally {
     if (mcp) await mcp.close();
     abort.abort();
     if (streamDone) await streamDone.catch(() => {});
     if (daemon) {
-      await captureOutput(spawnPenumbra(['stop'], sb.dir, env));
+      await captureOutput(spawnPenumbra(["stop"], sb.dir, env));
       await killGracefully(daemon);
     }
     sb.cleanup();

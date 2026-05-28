@@ -1,5 +1,5 @@
-import { expect, test } from 'bun:test';
+import { expect, test } from "bun:test";
 
-test('agentchat package smoke', () => {
+test("agentchat package smoke", () => {
   expect(true).toBe(true);
 });

@@ -1,10 +1,10 @@
-import type { Meta, StoryObj } from '@storybook/react';
-import { PressureOrb, providerLabel } from './PressureOrb';
+import type { Meta, StoryObj } from "@storybook/react";
+import { PressureOrb, providerLabel } from "./PressureOrb";
 
 const meta: Meta<typeof PressureOrb> = {
-  title: 'UI/PressureOrb',
+  title: "UI/PressureOrb",
   component: PressureOrb,
-  tags: ['autodocs'],
+  tags: ["autodocs"],
 };
 export default meta;
 type Story = StoryObj<typeof meta>;
@@ -12,9 +12,9 @@ type Story = StoryObj<typeof meta>;
 const baseThresholds = {
   warn_pct: 0.8,
   refuse_pct: 0.95,
-  provider: 'anthropic',
-  model: 'claude-sonnet-4-6',
-  window_label: '5h',
+  provider: "anthropic",
+  model: "claude-sonnet-4-6",
+  window_label: "5h",
 };
 
 export const Ok: Story = {
@@ -34,8 +34,8 @@ export const OpenCodeProvider: Story = {
     p: {
       ...baseThresholds,
       used_pct: 0.3,
-      provider: 'opencode-go',
-      model: 'deepseek-v4-pro',
+      provider: "opencode-go",
+      model: "deepseek-v4-pro",
     },
   },
   render: (args) => {
@@ -44,7 +44,7 @@ export const OpenCodeProvider: Story = {
     return (
       <div>
         <PressureOrb p={p} />
-        <div style={{ marginTop: 8, fontSize: 12, fontFamily: 'monospace' }}>
+        <div style={{ marginTop: 8, fontSize: 12, fontFamily: "monospace" }}>
           providerLabel('opencode-go') = {JSON.stringify(label)}
         </div>
       </div>

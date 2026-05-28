@@ -18,8 +18,10 @@ output:
 run:
   kind: markdown-template
 ---
+
 Context for `{{file_path}}`:
 
 {{#each recall.memory_search}}
+
 - **{{title}}** — {{snippet}}
-{{/each}}
+  {{/each}}

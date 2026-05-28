@@ -10,11 +10,13 @@ End-of-session handoff. Two-step protocol — the workflow gives you raw skeleto
 PreCompact and Stop hooks already trigger this skill automatically, so you do not need to invoke it explicitly in those cases. Treat explicit invocation as the fallback for manual checkpointing.
 
 Use it explicitly when:
+
 - The user says "hand off", "wrap up", or "let's end here"
 - You are switching to a different project mid-session and want a clean checkpoint
 - You are about to take an experimental detour and want a known-good return point
 
 Skip it when:
+
 - Hooks have already produced a handoff this turn
 - The session is short and can be recovered from `git log` alone
 
@@ -25,14 +27,16 @@ mcp__penumbra__workflow_run({ "name": "session-handoff" })
 ```
 
 The workflow returns:
+
 - A composed prompt (git.log subjects, t2 memory titles, dispatch event timeline)
 - Artifacts written to `docs/notes/maestro-continuation-{date}-{period}.md` (skip-if-exists) and `~/.penumbra/pending-handoff.md` (overwrite)
 
 Treat the workflow's output as **scaffolding**, not the final note. It can aggregate facts but cannot tell the next maestro:
-- *Why* each commit was made (commit subjects ≠ commit context)
+
+- _Why_ each commit was made (commit subjects ≠ commit context)
 - Which dispatches were retries vs first-attempts, and why the first try failed
 - What was live-edited (yaml, settings) outside git
-- What was *decided to skip* and why
+- What was _decided to skip_ and why
 - What activation/restart state is live right now
 - What's queued for next session (open follow-ups with concrete first moves)
 

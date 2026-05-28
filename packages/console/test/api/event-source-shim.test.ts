@@ -280,7 +280,7 @@ describe("createSseSource", () => {
     await flushMicrotasks();
 
     expect(onErr).toHaveBeenCalledTimes(1);
-    const err = (onErr.mock.calls[0]![0]) as Error;
+    const err = onErr.mock.calls[0]![0] as Error;
     expect(err.message).toBe("sse_buffer_overflow");
     src.close();
   });
@@ -304,7 +304,7 @@ describe("createSseSource", () => {
     await flushMicrotasks();
 
     expect(onErr).toHaveBeenCalledTimes(1);
-    const err = (onErr.mock.calls[0]![0]) as Error;
+    const err = onErr.mock.calls[0]![0] as Error;
     expect(err.message).toBe("sse_buffer_overflow");
     src.close();
   });

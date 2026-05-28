@@ -1,5 +1,5 @@
-import { z } from 'zod';
-import type { JudgeChatFn } from './judge-chat.js';
+import { z } from "zod";
+import type { JudgeChatFn } from "./judge-chat.js";
 
 export interface Finding {
   text: string;
@@ -18,10 +18,10 @@ export interface Classification {
 const ClassificationSchema = z.object({
   findingId: z.string().min(1),
   classification: z.enum([
-    'missed_registration',
-    'recall_miss',
-    'memory_ignored',
-    'not_memory_related',
+    "missed_registration",
+    "recall_miss",
+    "memory_ignored",
+    "not_memory_related",
   ]),
   reason: z.string(),
 });
@@ -35,7 +35,7 @@ const CLASSIFIER_BATCH_SIZE = 5;
 
 function buildPrompt(findings: Finding[]): string {
   const lines = findings.map(
-    (f) => `${f.findingId}. ${f.severity ? `[${f.severity}] ` : ''}${f.text}`,
+    (f) => `${f.findingId}. ${f.severity ? `[${f.severity}] ` : ""}${f.text}`,
   );
   return `Classify each finding below into one of these memory-failure buckets:
 
@@ -65,7 +65,7 @@ Finding: A formatting bug wraps the recalled instruction in quotes, so the model
 Now classify this finding:
 
 Findings:
-${lines.join('\n')}`;
+${lines.join("\n")}`;
 }
 
 export async function classifyFindings(
@@ -80,27 +80,28 @@ export async function classifyFindings(
     const batch = findings.slice(i, i + CLASSIFIER_BATCH_SIZE);
     try {
       const prompt = buildPrompt(batch);
-      const raw = (await opts.judgeChat({
-        messages: [{ role: 'user', content: prompt }],
-        model: opts.model,
-      })).trim();
+      const raw = (
+        await opts.judgeChat({
+          messages: [{ role: "user", content: prompt }],
+          model: opts.model,
+        })
+      ).trim();
 
       const extracted = extractJsonArray(raw);
       const parsed = ResponseSchema.safeParse(JSON.parse(extracted));
       if (parsed.success) {
-        results.push(...parsed.data.map((row) => ({
-          ...row,
-          raw_response_json: raw,
-        })));
-      } else {
-        console.warn(
-          '[memory-efficacy-classifier] parse failure for batch',
-          parsed.error.issues,
+        results.push(
+          ...parsed.data.map((row) => ({
+            ...row,
+            raw_response_json: raw,
+          })),
         );
+      } else {
+        console.warn("[memory-efficacy-classifier] parse failure for batch", parsed.error.issues);
       }
     } catch (err) {
       console.warn(
-        '[memory-efficacy-classifier] batch failed',
+        "[memory-efficacy-classifier] batch failed",
         err instanceof Error ? err.message : String(err),
       );
     }
@@ -111,10 +112,10 @@ export async function classifyFindings(
 
 function extractJsonArray(raw: string): string {
   const trimmed = raw.trim();
-  if (trimmed.startsWith('[') && trimmed.endsWith(']')) return trimmed;
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed;
 
-  const start = trimmed.indexOf('[');
-  const end = trimmed.lastIndexOf(']');
+  const start = trimmed.indexOf("[");
+  const end = trimmed.lastIndexOf("]");
   if (start !== -1 && end !== -1 && end > start) {
     return trimmed.slice(start, end + 1);
   }

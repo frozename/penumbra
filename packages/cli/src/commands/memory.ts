@@ -1,12 +1,12 @@
-import { Database } from 'bun:sqlite';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
-import { parse as parseYaml } from 'yaml';
-import { parseWikiLinks } from '@penumbra/core';
+import { Database } from "bun:sqlite";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { parse as parseYaml } from "yaml";
+import { parseWikiLinks } from "@penumbra/core";
 
 const DEFAULT_DIGEST_LIMIT = 200;
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
-const CLAUDE_CODE_KINDS = new Set(['user', 'feedback', 'project', 'reference']);
+const CLAUDE_CODE_KINDS = new Set(["user", "feedback", "project", "reference"]);
 const APPLY_BATCH_SIZE = 8;
 
 interface MemoryDigestRow {
@@ -17,7 +17,7 @@ interface MemoryDigestRow {
 
 export interface MemoryImportSummaryRow {
   file: string;
-  status: 'would_write' | 'skipped' | 'error';
+  status: "would_write" | "skipped" | "error";
   reason?: string;
   slug?: string;
   title?: string;
@@ -35,7 +35,7 @@ export interface MemoryImportSummary {
   skipped: number;
   errors: number;
   rows: MemoryImportSummaryRow[];
-  error?: 'root_not_found';
+  error?: "root_not_found";
 }
 
 export interface RunMemoryImportOpts {
@@ -61,13 +61,18 @@ export interface RunMemoryDigestOpts {
 function resolveLimit(limit: number | undefined): number {
   const resolvedLimit = limit ?? DEFAULT_DIGEST_LIMIT;
   if (!Number.isInteger(resolvedLimit) || resolvedLimit < 1) {
-    throw new Error(`penumbra memory digest: --limit must be a positive integer (got: ${resolvedLimit})`);
+    throw new Error(
+      `penumbra memory digest: --limit must be a positive integer (got: ${resolvedLimit})`,
+    );
   }
   return resolvedLimit;
 }
 
 function slugify(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function resolveMemoryDaemon(opts: RunMemoryImportOpts): { baseUrl: string; token: string } {
@@ -76,13 +81,15 @@ function resolveMemoryDaemon(opts: RunMemoryImportOpts): { baseUrl: string; toke
   }
 
   if (!opts.storageRoot) {
-    throw new Error('penumbra memory import-from-claude-code: storageRoot or daemon credentials required for --apply');
+    throw new Error(
+      "penumbra memory import-from-claude-code: storageRoot or daemon credentials required for --apply",
+    );
   }
 
-  const portPath = join(opts.storageRoot, 'port');
-  const tokenPath = join(opts.storageRoot, 'token');
-  const rawPort = readFileSync(portPath, 'utf8').trim();
-  const token = readFileSync(tokenPath, 'utf8').trim();
+  const portPath = join(opts.storageRoot, "port");
+  const tokenPath = join(opts.storageRoot, "token");
+  const rawPort = readFileSync(portPath, "utf8").trim();
+  const token = readFileSync(tokenPath, "utf8").trim();
 
   if (!rawPort || Number.isNaN(Number(rawPort))) {
     throw new Error(`penumbra memory import-from-claude-code: invalid daemon port in ${portPath}`);
@@ -122,7 +129,7 @@ export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<Memory
       skipped: 0,
       errors: 0,
       rows: [],
-      error: 'root_not_found',
+      error: "root_not_found",
     };
   }
 
@@ -131,7 +138,10 @@ export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<Memory
 
   const print = opts.print ?? ((line: string) => process.stdout.write(line));
   const files = readdirSync(opts.root, { withFileTypes: true })
-    .map((entry) => ({ name: entry.name, isMarkdown: entry.isFile() && entry.name.endsWith('.md') }))
+    .map((entry) => ({
+      name: entry.name,
+      isMarkdown: entry.isFile() && entry.name.endsWith(".md"),
+    }))
     .filter((entry) => entry.isMarkdown)
     .map((entry) => entry.name)
     .sort();
@@ -146,14 +156,14 @@ export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<Memory
 
   for (const file of files) {
     const fullPath = join(opts.root, file);
-    const content = readFileSync(fullPath, 'utf8');
+    const content = readFileSync(fullPath, "utf8");
     const match = content.match(FRONTMATTER_RE);
 
     if (!match) {
       const summary: MemoryImportSummaryRow = {
         file,
-        status: 'skipped',
-        reason: 'no_frontmatter',
+        status: "skipped",
+        reason: "no_frontmatter",
         wiki_links: [],
       };
       print(`SKIP ${file}: no_frontmatter\n`);
@@ -162,30 +172,30 @@ export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<Memory
       continue;
     }
 
-    const rawFrontmatter = match[1] ?? '';
-    const parsedBody = (match[2] ?? '').trim();
+    const rawFrontmatter = match[1] ?? "";
+    const parsedBody = (match[2] ?? "").trim();
     let parsed: Record<string, unknown> | null = null;
     try {
       parsed = parseYaml(rawFrontmatter) as Record<string, unknown>;
     } catch (err) {
       const summary: MemoryImportSummaryRow = {
         file,
-        status: 'error',
-        reason: 'yaml_parse_failed',
+        status: "error",
+        reason: "yaml_parse_failed",
         wiki_links: [],
       };
-      const msg = err instanceof Error ? err.message.split('\n')[0] : String(err);
+      const msg = err instanceof Error ? err.message.split("\n")[0] : String(err);
       print(`ERROR ${file}: yaml_parse_failed (${msg})\n`);
       rows.push(summary);
       errors += 1;
       continue;
     }
 
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       const summary: MemoryImportSummaryRow = {
         file,
-        status: 'error',
-        reason: 'invalid_frontmatter',
+        status: "error",
+        reason: "invalid_frontmatter",
         wiki_links: [],
       };
       print(`ERROR ${file}: invalid_frontmatter\n`);
@@ -195,20 +205,20 @@ export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<Memory
     }
 
     const metadata = parsed.metadata as Record<string, unknown> | undefined;
-    const name = typeof parsed.name === 'string' ? parsed.name : undefined;
-    const description = typeof parsed.description === 'string' ? parsed.description : undefined;
+    const name = typeof parsed.name === "string" ? parsed.name : undefined;
+    const description = typeof parsed.description === "string" ? parsed.description : undefined;
     // Two frontmatter shapes in the wild: newer files put kind under
     // metadata.type (nested); older files put it at the top level as
     // `type: project`. Support both.
     const claudeCodeKind =
-      (metadata && typeof metadata.type === 'string' ? metadata.type : undefined) ??
-      (typeof parsed.type === 'string' ? parsed.type : undefined);
+      (metadata && typeof metadata.type === "string" ? metadata.type : undefined) ??
+      (typeof parsed.type === "string" ? parsed.type : undefined);
 
     if (!name || !description || !claudeCodeKind) {
       const summary: MemoryImportSummaryRow = {
         file,
-        status: 'skipped',
-        reason: 'missing_required_fields',
+        status: "skipped",
+        reason: "missing_required_fields",
         wiki_links: [],
       };
       print(`SKIP ${file}: missing_required_fields\n`);
@@ -220,8 +230,8 @@ export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<Memory
     if (!CLAUDE_CODE_KINDS.has(claudeCodeKind)) {
       const summary: MemoryImportSummaryRow = {
         file,
-        status: 'skipped',
-        reason: 'unsupported_cc_kind',
+        status: "skipped",
+        reason: "unsupported_cc_kind",
         wiki_links: [],
       };
       print(`SKIP ${file}: unsupported_cc_kind\n`);
@@ -237,8 +247,8 @@ export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<Memory
     if (!slug) {
       const summary: MemoryImportSummaryRow = {
         file,
-        status: 'error',
-        reason: 'empty_slug',
+        status: "error",
+        reason: "empty_slug",
         wiki_links: [],
       };
       print(`ERROR ${file}: empty_slug\n`);
@@ -250,7 +260,7 @@ export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<Memory
     const links = parseWikiLinks(parsedBody);
     const summary: MemoryImportSummaryRow = {
       file,
-      status: 'would_write',
+      status: "would_write",
       slug,
       title: name,
       hook: description,
@@ -282,10 +292,10 @@ export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<Memory
     const processApply = async (plan: ApplyPlan): Promise<void> => {
       try {
         const response = await fetcher(`${daemon!.baseUrl}/memory/write`, {
-          method: 'POST',
+          method: "POST",
           headers: {
             authorization: `Bearer ${daemon!.token}`,
-            'content-type': 'application/json',
+            "content-type": "application/json",
           },
           body: JSON.stringify({
             title: plan.title,
@@ -298,7 +308,7 @@ export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<Memory
         });
 
         if (!response.ok) {
-          plan.summary.status = 'error';
+          plan.summary.status = "error";
           plan.summary.reason = `apply_http_error:${response.status}`;
           errors += 1;
           print(`ERROR ${plan.file}: apply_http_error:${response.status}\n`);
@@ -306,9 +316,9 @@ export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<Memory
         }
 
         const body = (await response.json().catch(() => null)) as MemoryWriteResponse | null;
-        if (!body || typeof body.memory_id !== 'string' || typeof body.created !== 'boolean') {
-          plan.summary.status = 'error';
-          plan.summary.reason = 'apply_http_error:invalid_response';
+        if (!body || typeof body.memory_id !== "string" || typeof body.created !== "boolean") {
+          plan.summary.status = "error";
+          plan.summary.reason = "apply_http_error:invalid_response";
           errors += 1;
           print(`ERROR ${plan.file}: apply_http_error:invalid_response\n`);
           return;
@@ -320,7 +330,7 @@ export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<Memory
           updated += 1;
         }
       } catch (err) {
-        plan.summary.status = 'error';
+        plan.summary.status = "error";
         plan.summary.reason = `apply_http_error:${String(err instanceof Error ? err.message : err)}`;
         errors += 1;
         print(`ERROR ${plan.file}: apply_http_error\n`);
@@ -351,19 +361,23 @@ export function runMemoryDigest(opts: RunMemoryDigestOpts): number {
   const print = opts.print ?? ((line: string) => process.stdout.write(line));
   const shouldClose = !opts.db;
 
-  const db = opts.db ?? new Database(join(opts.storageRoot, 'db.sqlite'), { readonly: true });
+  const db = opts.db ?? new Database(join(opts.storageRoot, "db.sqlite"), { readonly: true });
   try {
-    const rows = db.query<MemoryDigestRow, [string, number]>(`
+    const rows = db
+      .query<MemoryDigestRow, [string, number]>(
+        `
       SELECT slug, title, hook
       FROM t2_memories
       WHERE origin = ?
         AND retired_at IS NULL
         AND slug IS NOT NULL
         AND hook IS NOT NULL
-        ${opts.maestro ? 'AND project_id IS NULL' : ''}
+        ${opts.maestro ? "AND project_id IS NULL" : ""}
       ORDER BY updated_at DESC
       LIMIT ?
-    `).all('direct', limit);
+    `,
+      )
+      .all("direct", limit);
 
     for (const row of rows) {
       print(`- [${row.title}](${row.slug}) — ${row.hook}\n`);

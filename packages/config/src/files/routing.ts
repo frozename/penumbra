@@ -1,5 +1,5 @@
-import { z } from 'zod';
-import { WORKLOADS, WorkloadSchema } from './workload.js';
+import { z } from "zod";
+import { WORKLOADS, WorkloadSchema } from "./workload.js";
 
 /**
  * Schema for the routing-focused config split file.
@@ -9,21 +9,23 @@ import { WORKLOADS, WorkloadSchema } from './workload.js';
 
 export const RoleRoutingConfigSchema = z
   .object({
-    exploration_policy: z.enum(['unsampled-first', 'ranked-first']).default('unsampled-first'),
+    exploration_policy: z.enum(["unsampled-first", "ranked-first"]).default("unsampled-first"),
   })
-  .default({ exploration_policy: 'unsampled-first' });
+  .default({ exploration_policy: "unsampled-first" });
 export type RoleRoutingConfig = z.infer<typeof RoleRoutingConfigSchema>;
 
-export const PersonaSchema = z.object({
-  preferred_agent: z.string().min(1),
-  bias: z.string().min(1),
-  system_prompt: z.string().min(1),
-  category_hints: z.array(z.string().min(1)).optional(),
-}).strict();
+export const PersonaSchema = z
+  .object({
+    preferred_agent: z.string().min(1),
+    bias: z.string().min(1),
+    system_prompt: z.string().min(1),
+    category_hints: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
 export type PersonaConfig = z.infer<typeof PersonaSchema>;
 
 const workloadShape = Object.fromEntries(
-  WORKLOADS.map((workload) => [workload, WorkloadSchema.optional()])
+  WORKLOADS.map((workload) => [workload, WorkloadSchema.optional()]),
 ) as {
   [K in (typeof WORKLOADS)[number]]: z.ZodOptional<typeof WorkloadSchema>;
 };
@@ -43,14 +45,14 @@ export const RoutingConfigSchema = z
     const workloads = value.workloads;
     if (!workloads) return;
 
-    for (const workloadName of ['plan_refine', 'review_adversarial'] as const) {
+    for (const workloadName of ["plan_refine", "review_adversarial"] as const) {
       const workload = workloads[workloadName];
       if (!workload?.eligible_agents) continue;
       for (const [index, personaKey] of workload.eligible_agents.entries()) {
         if (personas[personaKey]) continue;
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          path: ['workloads', workloadName, 'eligible_agents', index],
+          path: ["workloads", workloadName, "eligible_agents", index],
           message: `unknown persona '${personaKey}'; add personas.${personaKey} to routing.yaml`,
         });
       }

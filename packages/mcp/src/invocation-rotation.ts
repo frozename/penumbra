@@ -1,14 +1,8 @@
-import {
-  createReadStream,
-  createWriteStream,
-  existsSync,
-  readdirSync,
-  unlinkSync,
-} from 'node:fs';
-import { rename, unlink } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
-import { pipeline } from 'node:stream/promises';
-import { createGzip } from 'node:zlib';
+import { createReadStream, createWriteStream, existsSync, readdirSync, unlinkSync } from "node:fs";
+import { rename, unlink } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
+import { pipeline } from "node:stream/promises";
+import { createGzip } from "node:zlib";
 
 const ONE_DAY_MS = 86_400_000;
 const WARNED_TAGS = new Set<string>();
@@ -22,17 +16,15 @@ function utcDayStartMs(value: Date): number {
 }
 
 function deriveBasename(livePath: string): string {
-  return basename(livePath).replace(/\.jsonl$/, '');
+  return basename(livePath).replace(/\.jsonl$/, "");
 }
 
 export function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function rotationNameRe(basenameValue: string): RegExp {
-  return new RegExp(
-    `^${escapeRegExp(basenameValue)}\\.(\\d{4}-\\d{2}-\\d{2})\\.jsonl(?:\\.gz)?$`,
-  );
+  return new RegExp(`^${escapeRegExp(basenameValue)}\\.(\\d{4}-\\d{2}-\\d{2})\\.jsonl(?:\\.gz)?$`);
 }
 
 function warnOnce(tag: string, message: string, error: unknown): void {
@@ -74,7 +66,7 @@ export async function rotateIfNeeded(
       await unlink(stagedPath);
     } catch (unlinkError) {
       warnOnce(
-        'rotation-cleanup',
+        "rotation-cleanup",
         `failed to remove staged plaintext at ${stagedPath}`,
         unlinkError,
       );

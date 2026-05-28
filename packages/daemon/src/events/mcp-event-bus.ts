@@ -1,4 +1,4 @@
-import { createLogger } from '@penumbra/core';
+import { createLogger } from "@penumbra/core";
 
 export interface McpEvent {
   server: string;
@@ -15,7 +15,7 @@ export interface McpEventBus {
   clear(): void;
 }
 
-const log = createLogger({ component: 'daemon', level: 'silent' });
+const log = createLogger({ component: "daemon", level: "silent" });
 
 export function createMcpEventBus(): McpEventBus {
   const subs = new Map<string, Set<Handler>>();
@@ -29,7 +29,7 @@ export function createMcpEventBus(): McpEventBus {
         try {
           handler(evt);
         } catch (err) {
-          log.warn({ err, server: evt.server, event: evt.event }, 'mcp-event subscriber threw');
+          log.warn({ err, server: evt.server, event: evt.event }, "mcp-event subscriber threw");
         }
       }
     },

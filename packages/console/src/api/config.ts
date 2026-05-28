@@ -1,14 +1,14 @@
 export class BadDaemonUrlError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'BadDaemonUrlError';
+    this.name = "BadDaemonUrlError";
   }
 }
 
 export class MissingTokenError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'MissingTokenError';
+    this.name = "MissingTokenError";
   }
 }
 
@@ -31,10 +31,10 @@ export interface LoadDeps {
 function isLoopbackBaseUrl(raw: string): boolean {
   try {
     const u = new URL(raw);
-    if (u.protocol !== 'http:') return false;
-    if (u.hostname !== '127.0.0.1' && u.hostname !== 'localhost') return false;
+    if (u.protocol !== "http:") return false;
+    if (u.hostname !== "127.0.0.1" && u.hostname !== "localhost") return false;
     if (u.username || u.password) return false;
-    if (u.pathname !== '' && u.pathname !== '/') return false;
+    if (u.pathname !== "" && u.pathname !== "/") return false;
     if (u.search || u.hash) return false;
     return true;
   } catch {
@@ -43,7 +43,7 @@ function isLoopbackBaseUrl(raw: string): boolean {
 }
 
 function normalizeBaseUrl(raw: string): string {
-  return raw.endsWith('/') ? raw.slice(0, -1) : raw;
+  return raw.endsWith("/") ? raw.slice(0, -1) : raw;
 }
 
 /**
@@ -58,17 +58,17 @@ export function loadPenumbraConfig(deps?: LoadDeps): PenumbraConfig {
   const isDev = deps?.isDev ?? import.meta.env.DEV;
 
   if (!isDev) {
-    return { baseUrl: '/api', token: '' };
+    return { baseUrl: "/api", token: "" };
   }
 
-  const devUrl = deps?.devUrl ?? import.meta.env.PENUMBRA_DAEMON_URL ?? '';
-  const devToken = deps?.devToken ?? import.meta.env.PENUMBRA_TOKEN ?? '';
+  const devUrl = deps?.devUrl ?? import.meta.env.PENUMBRA_DAEMON_URL ?? "";
+  const devToken = deps?.devToken ?? import.meta.env.PENUMBRA_TOKEN ?? "";
 
   if (!isLoopbackBaseUrl(devUrl)) {
     throw new BadDaemonUrlError(`dev daemon URL must be loopback, got: ${devUrl}`);
   }
   if (!devToken) {
-    throw new MissingTokenError('PENUMBRA_TOKEN is required in dev mode');
+    throw new MissingTokenError("PENUMBRA_TOKEN is required in dev mode");
   }
   return { baseUrl: normalizeBaseUrl(devUrl), token: devToken };
 }

@@ -22,6 +22,7 @@ output:
 run:
   kind: markdown-template
 ---
+
 # Writing implementation plan — {{date}}
 
 You are creating a phased TDD implementation plan in {{project}}.
@@ -29,8 +30,9 @@ You are creating a phased TDD implementation plan in {{project}}.
 ## Existing plans (reference)
 
 {{#each recall.fs_glob}}
+
 - {{.}}
-{{/each}}
+  {{/each}}
 
 ## Known agents (registry)
 
@@ -69,19 +71,21 @@ For each task, before fixing `preferred_agent`, query `mcp__penumbra__agent_reco
 
 Each phase opens with:
 
-````
+```
 Dispatch graph: 1.1 → 1.2 → 1.3
-````
+```
+
 or, for fan-out:
-````
+
+```
 Dispatch graph: 2.1 ∥ 2.2 → 2.3
-````
+```
 
 Each phase closes with:
 
-````
+```
 Integration: <one or two sentences on cherry-pick / FF-merge / verification command>
-````
+```
 
 ### Validator gate
 

@@ -64,21 +64,25 @@ export function useStream<T = unknown>(
       return;
     }
 
-    const sub = subscribeImpl<T>(topic, (msg) => {
-      if (msg.event === "__reconnect__") {
-        setSnapshot([]);
-        setReconnectCount((n) => n + 1);
-        return;
-      }
+    const sub = subscribeImpl<T>(
+      topic,
+      (msg) => {
+        if (msg.event === "__reconnect__") {
+          setSnapshot([]);
+          setReconnectCount((n) => n + 1);
+          return;
+        }
 
-      setSnapshot((prev) =>
-        bufferSize === 0
-          ? []
-          : prev.length >= bufferSize
-            ? [...prev.slice(prev.length - bufferSize + 1), msg]
-            : [...prev, msg],
-      );
-    }, { params: opts?.params });
+        setSnapshot((prev) =>
+          bufferSize === 0
+            ? []
+            : prev.length >= bufferSize
+              ? [...prev.slice(prev.length - bufferSize + 1), msg]
+              : [...prev, msg],
+        );
+      },
+      { params: opts?.params },
+    );
 
     subscriptionRef.current?.unsubscribe();
     subscriptionRef.current = sub;

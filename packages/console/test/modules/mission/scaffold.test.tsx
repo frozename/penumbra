@@ -7,15 +7,8 @@ import { MissionControl } from "../../../src/modules/mission";
 import { StatRow } from "../../../src/modules/mission/StatRow";
 import { useMissionStore } from "../../../src/modules/mission/store";
 import { useDaemonStore } from "../../../src/stores/daemon-store";
-import {
-  __resetBrokerForTests,
-  __setSourceFactory,
-} from "../../../src/api/streams";
-import type {
-  StreamMessage,
-  StreamTopic,
-  Subscription,
-} from "../../../src/api/streams";
+import { __resetBrokerForTests, __setSourceFactory } from "../../../src/api/streams";
+import type { StreamMessage, StreamTopic, Subscription } from "../../../src/api/streams";
 import type { EventSourceLike } from "../../../src/api/event-source-shim";
 import type { DaemonClient } from "../../../src/api/client";
 
@@ -101,9 +94,7 @@ describe("MissionControl scaffold", () => {
     );
 
     expect(container.querySelector("h1")?.textContent).toBe("Mission Control");
-    expect(container.querySelector(".lede")?.textContent).toContain(
-      "Live operator view",
-    );
+    expect(container.querySelector(".lede")?.textContent).toContain("Live operator view");
     unmount();
     client.clear();
   });
@@ -131,9 +122,7 @@ describe("MissionControl scaffold", () => {
       </Wrapper>,
     );
 
-    expect(container.querySelector(".surface-head h1")?.textContent).toContain(
-      "Mission control",
-    );
+    expect(container.querySelector(".surface-head h1")?.textContent).toContain("Mission control");
 
     unmount();
     client.clear();
@@ -163,22 +152,16 @@ describe("StatRow", () => {
       </Wrapper>,
     );
 
-    const labels = Array.from(container.querySelectorAll(".lab")).map(
-      (el) => el.textContent,
-    );
+    const labels = Array.from(container.querySelectorAll(".lab")).map((el) => el.textContent);
     expect(labels).toEqual([
       "Concurrent dispatches",
       "Resolved · session",
       "t0 events · last 5m",
       "Synthetic spend · session",
     ]);
-    const values = Array.from(container.querySelectorAll(".val")).map(
-      (el) => el.textContent,
-    );
+    const values = Array.from(container.querySelectorAll(".val")).map((el) => el.textContent);
     expect(values).toEqual(["—", "—", "—", "—"]);
-    const deltas = Array.from(container.querySelectorAll(".d")).map(
-      (el) => el.textContent,
-    );
+    const deltas = Array.from(container.querySelectorAll(".d")).map((el) => el.textContent);
     expect(deltas).toEqual(["—", "—", "—", "—"]);
     unmount();
     client.clear();
@@ -227,9 +210,7 @@ describe("StatRow", () => {
         (el) => el.textContent ?? "",
       );
       expect(values).toEqual(["3/6", "41", "42", "3.94$"]);
-      const deltas = Array.from(container.querySelectorAll(".d")).map(
-        (el) => el.textContent ?? "",
-      );
+      const deltas = Array.from(container.querySelectorAll(".d")).map((el) => el.textContent ?? "");
       expect(deltas).toEqual([
         "50% of cap",
         "47 dispatched · 2 failed",
@@ -268,9 +249,7 @@ describe("StatRow", () => {
         (el) => el.textContent ?? "",
       );
       expect(values).toEqual(["—", "—", "—", "—"]);
-      const deltas = Array.from(container.querySelectorAll(".d")).map(
-        (el) => el.textContent ?? "",
-      );
+      const deltas = Array.from(container.querySelectorAll(".d")).map((el) => el.textContent ?? "");
       expect(deltas).toEqual(["—", "—", "—", "—"]);
     });
 

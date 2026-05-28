@@ -1,27 +1,30 @@
-import { z } from 'zod';
-import type { Services } from '@penumbra/core';
-import { runPrOrphanSweepForDaemon } from '../services/pr-orphan-sweep.js';
-import { bodyJson, json } from './_helpers.js';
+import { z } from "zod";
+import type { Services } from "@penumbra/core";
+import { runPrOrphanSweepForDaemon } from "../services/pr-orphan-sweep.js";
+import { bodyJson, json } from "./_helpers.js";
 const SweepInputSchema = z.object({
   dry_run: z.boolean().optional(),
   max_close: z.number().int().positive().optional(),
 });
 
 const VerdictsQuerySchema = z.object({
-  since: z.string().optional().refine((value) => value === undefined || !Number.isNaN(Date.parse(value)), {
-    message: 'since must be an ISO timestamp',
-  }),
+  since: z
+    .string()
+    .optional()
+    .refine((value) => value === undefined || !Number.isNaN(Date.parse(value)), {
+      message: "since must be an ISO timestamp",
+    }),
   limit: z.coerce.number().int().positive().max(500).optional().default(50),
   only_unverified: z
-    .enum(['true', 'false'])
+    .enum(["true", "false"])
     .optional()
-    .transform((value) => value === 'true'),
+    .transform((value) => value === "true"),
 });
 
 function parsePayloadJson(raw: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object') return parsed as Record<string, unknown>;
+    if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
   } catch {
     // ignored
   }
@@ -47,19 +50,19 @@ type VerdictRow = {
 export async function reconcilerVerdictsRoute(req: Request, services: Services): Promise<Response> {
   const url = new URL(req.url);
   const parsed = VerdictsQuerySchema.safeParse({
-    since: url.searchParams.get('since') ?? undefined,
-    limit: url.searchParams.get('limit') ?? undefined,
-    only_unverified: url.searchParams.get('only_unverified') ?? undefined,
+    since: url.searchParams.get("since") ?? undefined,
+    limit: url.searchParams.get("limit") ?? undefined,
+    only_unverified: url.searchParams.get("only_unverified") ?? undefined,
   });
   if (!parsed.success) {
-    return json({ error: { code: 'invalid_params', issues: parsed.error.issues } }, 400);
+    return json({ error: { code: "invalid_params", issues: parsed.error.issues } }, 400);
   }
 
   const clauses = [`e.event_type='reconciler.verdict'`];
   const params: Array<string | number> = [];
   if (parsed.data.since) {
     const sinceUtc = new Date(parsed.data.since).toISOString();
-    clauses.push('e.ts >= ?');
+    clauses.push("e.ts >= ?");
     params.push(sinceUtc);
   }
   if (parsed.data.only_unverified) {
@@ -86,7 +89,7 @@ export async function reconcilerVerdictsRoute(req: Request, services: Services):
        FROM t0_events e
        LEFT JOIN handoffs h
          ON h.handoff_id = CAST(json_extract(e.payload_json, '$.handoff_id') AS TEXT)
-       WHERE ${clauses.join(' AND ')}
+       WHERE ${clauses.join(" AND ")}
        ORDER BY e.ts DESC, e.event_id DESC
        LIMIT ?`,
     )
@@ -94,8 +97,9 @@ export async function reconcilerVerdictsRoute(req: Request, services: Services):
 
   const verdicts = rows.map((row) => {
     const verdict = parsePayloadJson(row.payload_json);
-    const payloadConversation = typeof verdict.conversation_id === 'string' ? verdict.conversation_id : null;
-    const payloadHandoff = typeof verdict.handoff_id === 'string' ? verdict.handoff_id : null;
+    const payloadConversation =
+      typeof verdict.conversation_id === "string" ? verdict.conversation_id : null;
+    const payloadHandoff = typeof verdict.handoff_id === "string" ? verdict.handoff_id : null;
     return {
       event_id: row.event_id,
       ts: row.ts,
@@ -115,17 +119,20 @@ export async function reconcilerVerdictsRoute(req: Request, services: Services):
   return json({ verdicts });
 }
 
-export async function reconcilerSweepOrphanPrsRoute(req: Request, services: Services): Promise<Response> {
+export async function reconcilerSweepOrphanPrsRoute(
+  req: Request,
+  services: Services,
+): Promise<Response> {
   const raw = await bodyJson(req);
   const parsed = SweepInputSchema.safeParse(raw ?? {});
   if (!parsed.success) {
-    return json({ error: { code: 'invalid_params', issues: parsed.error.issues } }, 400);
+    return json({ error: { code: "invalid_params", issues: parsed.error.issues } }, 400);
   }
 
   const daemonSettings = services.settings as any;
   const result = await runPrOrphanSweepForDaemon({
     services,
-    dryRun: parsed.data.dry_run ?? (daemonSettings.prOrphanSweeperDryRun ?? true),
+    dryRun: parsed.data.dry_run ?? daemonSettings.prOrphanSweeperDryRun ?? true,
     maxClose: parsed.data.max_close,
   });
 

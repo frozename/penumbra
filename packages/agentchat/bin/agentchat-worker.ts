@@ -1,74 +1,78 @@
 #!/usr/bin/env bun
-import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
-import type { CapturePort } from '../src/worker/capture-port.js';
-import { defaultProjectRegistryPath, loadProjectRegistry, SettingsDefaults } from '@penumbra/core';
-import type { AgentChatConfig } from '../src/config/types.js';
-import { PermissionDaemonClient } from '../src/worker/permission-daemon-client.js';
-import { loadConfig } from '../src/config/load.js';
-import { PenumbraClient } from '../src/penumbra-client.js';
-import { PenumbraHttpError, isTerminalHttpStatus } from '../src/penumbra-client.js';
-import { dispatchHandoff } from '../src/cli/dispatch-handoff.js';
-import type { McpServer } from '../src/adapters/acp-types.js';
+import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
+import type { CapturePort } from "../src/worker/capture-port.js";
+import { defaultProjectRegistryPath, loadProjectRegistry, SettingsDefaults } from "@penumbra/core";
+import type { AgentChatConfig } from "../src/config/types.js";
+import { PermissionDaemonClient } from "../src/worker/permission-daemon-client.js";
+import { loadConfig } from "../src/config/load.js";
+import { PenumbraClient } from "../src/penumbra-client.js";
+import { PenumbraHttpError, isTerminalHttpStatus } from "../src/penumbra-client.js";
+import { dispatchHandoff } from "../src/cli/dispatch-handoff.js";
+import type { McpServer } from "../src/adapters/acp-types.js";
 import {
   spawnCliAdapter,
   spawnCliAdapterStream,
   type CapacityError,
   type SpawnOpts,
-} from '../src/adapters/cli-spawn.js';
-import { prepareOpencodeMcpConfigDir } from '../src/adapters/opencode-mcp-config.js';
-import { registerAdapter } from '../src/adapters/registry.js';
-import { resolveAdapterApiKey } from '../src/adapters/secret.js';
-import { StdioAcpClient } from '../src/adapters/stdio-acp-client.js';
-import { startStdioAcpServer, type StdioAcpHandle } from '../src/adapters/stdio-acp-server.js';
-import { StdioAcpAdapter, type StdioAcpOptions } from '../src/adapters/stdio-acp.js';
-import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from '../src/sdk/adapter.js';
-import { startEventSource } from '../src/worker/event-source.js';
-import { createWorkerDispatcher } from '../src/worker/dispatcher.js';
-import { autocommitOnChainEnd } from '../src/worker/autocommit-on-chain-end.js';
-import { DispatchEventQueue } from '../src/worker/event-queue.js';
-import { emitHeartbeat } from '../src/worker/heartbeat-emit.js';
-import { createPermissionCallback } from '../src/worker/permission-callback.js';
-import { createDiscordRateLimiter } from '../src/worker/discord-rate-limit.js';
-import { runWorkerControlListener } from '../src/worker/control-listener.js';
-import { registerExecutor, unregisterExecutor } from '../src/worker/executor-registry.js';
-import { resolveSandboxConfig } from '../src/worker/sandbox-config.js';
-import { WriteToolsExecutor } from '../src/worker/write-tools-executor.js';
-import { runWorkerBoot } from '../src/worker-boot.js';
+} from "../src/adapters/cli-spawn.js";
+import { prepareOpencodeMcpConfigDir } from "../src/adapters/opencode-mcp-config.js";
+import { registerAdapter } from "../src/adapters/registry.js";
+import { resolveAdapterApiKey } from "../src/adapters/secret.js";
+import { StdioAcpClient } from "../src/adapters/stdio-acp-client.js";
+import { startStdioAcpServer, type StdioAcpHandle } from "../src/adapters/stdio-acp-server.js";
+import { StdioAcpAdapter, type StdioAcpOptions } from "../src/adapters/stdio-acp.js";
+import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../src/sdk/adapter.js";
+import { startEventSource } from "../src/worker/event-source.js";
+import { createWorkerDispatcher } from "../src/worker/dispatcher.js";
+import { autocommitOnChainEnd } from "../src/worker/autocommit-on-chain-end.js";
+import { DispatchEventQueue } from "../src/worker/event-queue.js";
+import { emitHeartbeat } from "../src/worker/heartbeat-emit.js";
+import { createPermissionCallback } from "../src/worker/permission-callback.js";
+import { createDiscordRateLimiter } from "../src/worker/discord-rate-limit.js";
+import { runWorkerControlListener } from "../src/worker/control-listener.js";
+import { registerExecutor, unregisterExecutor } from "../src/worker/executor-registry.js";
+import { resolveSandboxConfig } from "../src/worker/sandbox-config.js";
+import { WriteToolsExecutor } from "../src/worker/write-tools-executor.js";
+import { runWorkerBoot } from "../src/worker-boot.js";
 import {
   applyWorktreeOverride,
   rewriteWorktreeHandoffMessage,
-} from '../src/worker/worktree-integration.js';
-import { createMergeReconciler, type MergeResult } from '../src/worker/merge-reconciler.js';
-import {
-  postToDiscord,
-} from '../src/worker/discord-notifier.js';
-import { renderDiscordEvent, type DiscordNotificationEvent } from '../src/worker/discord-events.js';
-import { loadNotificationConfig } from '../src/worker/notification-config.js';
-import { resolveNotificationRoute } from '../src/worker/notification-router.js';
-import { createNotificationScheduler } from '../src/worker/notification-scheduler.js';
-import { resolveWorkerId } from '../src/worker-id.js';
-import { runThoughtAnalyzer, type ThoughtAnalyzerDeps } from '../src/worker/thought-analyzer.js';
-import { ThoughtCapture } from '../src/worker/thought-capture.js';
-import { loadThoughtsConfig } from '../src/worker/thought-config.js';
-import { RecallEnricher } from '../src/worker/recall-enricher.js';
-import { workerInjectRoute } from '../src/worker/inject-route.js';
+} from "../src/worker/worktree-integration.js";
+import { createMergeReconciler, type MergeResult } from "../src/worker/merge-reconciler.js";
+import { postToDiscord } from "../src/worker/discord-notifier.js";
+import { renderDiscordEvent, type DiscordNotificationEvent } from "../src/worker/discord-events.js";
+import { loadNotificationConfig } from "../src/worker/notification-config.js";
+import { resolveNotificationRoute } from "../src/worker/notification-router.js";
+import { createNotificationScheduler } from "../src/worker/notification-scheduler.js";
+import { resolveWorkerId } from "../src/worker-id.js";
+import { runThoughtAnalyzer, type ThoughtAnalyzerDeps } from "../src/worker/thought-analyzer.js";
+import { ThoughtCapture } from "../src/worker/thought-capture.js";
+import { loadThoughtsConfig } from "../src/worker/thought-config.js";
+import { RecallEnricher } from "../src/worker/recall-enricher.js";
+import { workerInjectRoute } from "../src/worker/inject-route.js";
 import {
   buildSilentRetryPayload,
   buildRetryPayloadOrNull,
   SILENT_RETRY_PREFIX,
   shouldRetryHandoffForSilentFailure,
-} from '../src/worker/silent-failure-retry.js';
-import { startUsagePoller } from '../src/usage-readers/poller.js';
-import { CodexRolloutReader } from '../src/usage-readers/codex-rollout-reader.js';
-import { OpenCodeDbReader } from '../src/usage-readers/opencode-db-reader.js';
-import { ClaudeJsonlReader } from '../src/usage-readers/claude-jsonl-reader.js';
-import { ClaudeStatusLineBridge } from '../src/usage-readers/claude-statusline-bridge.js';
-import { GoogleOtlpSynth } from '../src/usage-readers/google-otlp-synth.js';
-import { createLogger, type DispatchEventInput, type HandoffRow, waitForDaemonStorageRoot, systemUuid } from '@penumbra/core';
-import { resolveDispatchCwd } from '../src/worker/project-cwd.js';
-import { createWorkerWorktreeManager } from '../src/worker/worktree-manager.js';
+} from "../src/worker/silent-failure-retry.js";
+import { startUsagePoller } from "../src/usage-readers/poller.js";
+import { CodexRolloutReader } from "../src/usage-readers/codex-rollout-reader.js";
+import { OpenCodeDbReader } from "../src/usage-readers/opencode-db-reader.js";
+import { ClaudeJsonlReader } from "../src/usage-readers/claude-jsonl-reader.js";
+import { ClaudeStatusLineBridge } from "../src/usage-readers/claude-statusline-bridge.js";
+import { GoogleOtlpSynth } from "../src/usage-readers/google-otlp-synth.js";
+import {
+  createLogger,
+  type DispatchEventInput,
+  type HandoffRow,
+  waitForDaemonStorageRoot,
+  systemUuid,
+} from "@penumbra/core";
+import { resolveDispatchCwd } from "../src/worker/project-cwd.js";
+import { createWorkerWorktreeManager } from "../src/worker/worktree-manager.js";
 
 function flag(name: string, fallback?: string): string | undefined {
   const long = `--${name}`;
@@ -84,7 +88,7 @@ interface CliSpawnAdapterOptions {
   command?: string;
   args?: string[];
   cwd?: string;
-  pass_via?: 'stdin' | 'argv';
+  pass_via?: "stdin" | "argv";
   env?: Record<string, string>;
   unset_env?: string[];
   strip_patterns?: string[];
@@ -99,15 +103,20 @@ interface OpencodeCliAdapterOptions extends CliSpawnAdapterOptions {
 
 function cleanGeminiCliOutput(text: string): string {
   return text
-    .replace(/MCP issues detected\. Run \/mcp list for status\./g, '')
-    .split('\n')
-    .filter((line) => !/^Export retry time \d+ms exceeds remaining timeout \d+ms, not retrying further\.$/.test(line))
-    .join('\n');
+    .replace(/MCP issues detected\. Run \/mcp list for status\./g, "")
+    .split("\n")
+    .filter(
+      (line) =>
+        !/^Export retry time \d+ms exceeds remaining timeout \d+ms, not retrying further\.$/.test(
+          line,
+        ),
+    )
+    .join("\n");
 }
 
 function emitCapacityError(capturePort: CapturePort | undefined, err: CapacityError): void {
   capturePort?.emit({
-    kind: 'capacity_error',
+    kind: "capacity_error",
     provider: err.provider,
     model: err.model,
     raw: err.raw,
@@ -116,7 +125,7 @@ function emitCapacityError(capturePort: CapturePort | undefined, err: CapacityEr
 
 function registerThoughtAwareAdapters(thoughtCapture: ThoughtCapture | null): void {
   const createCliSpawnAdapter = (
-    kind: 'claude-cli' | 'gemini-cli' | 'agy-cli' | 'codex-cli',
+    kind: "claude-cli" | "gemini-cli" | "agy-cli" | "codex-cli",
     defaultArgs: string[],
     transformText: (text: string) => string = (text) => text,
   ) => {
@@ -137,7 +146,7 @@ function registerThoughtAwareAdapters(thoughtCapture: ThoughtCapture | null): vo
         emit_stdout_thoughts: opts.emit_stdout_thoughts,
         thoughtCapture: thoughtCapture ?? undefined,
         onCapacityError: (err) => emitCapacityError(opts.capturePort, err),
-        eventContext: input.eventContext as SpawnOpts['eventContext'],
+        eventContext: input.eventContext as SpawnOpts["eventContext"],
         onEvent: input.onEvent,
       });
 
@@ -149,7 +158,7 @@ function registerThoughtAwareAdapters(thoughtCapture: ThoughtCapture | null): vo
         },
         async *dispatchStream(input: DispatchInput): AsyncGenerator<DispatchEvent> {
           for await (const event of spawnCliAdapterStream(spawnOptsFor(input))) {
-            if (event.type === 'done') {
+            if (event.type === "done") {
               yield {
                 ...event,
                 result: {
@@ -167,23 +176,26 @@ function registerThoughtAwareAdapters(thoughtCapture: ThoughtCapture | null): vo
     });
   };
 
-  createCliSpawnAdapter('claude-cli', ['code', '--no-tty']);
-  createCliSpawnAdapter('gemini-cli', [], cleanGeminiCliOutput);
-  createCliSpawnAdapter('agy-cli', [], (text) => text);
-  createCliSpawnAdapter('codex-cli', []);
+  createCliSpawnAdapter("claude-cli", ["code", "--no-tty"]);
+  createCliSpawnAdapter("gemini-cli", [], cleanGeminiCliOutput);
+  createCliSpawnAdapter("agy-cli", [], (text) => text);
+  createCliSpawnAdapter("codex-cli", []);
 
-  registerAdapter('opencode-cli', (rawOptions) => {
+  registerAdapter("opencode-cli", (rawOptions) => {
     const opts = rawOptions as OpencodeCliAdapterOptions;
-    if (!opts.model) throw new Error('opencode-cli: model is required');
+    if (!opts.model) throw new Error("opencode-cli: model is required");
 
-    const model = opts.model.includes('/') ? opts.model : `opencode/${opts.model}`;
-    const command = opts.command ?? '~/.opencode/bin/opencode'.replace(/^~/, process.env.HOME ?? '');
-    const baseArgs = opts.args ?? ['run', '--model', model];
+    const model = opts.model.includes("/") ? opts.model : `opencode/${opts.model}`;
+    const command =
+      opts.command ?? "~/.opencode/bin/opencode".replace(/^~/, process.env.HOME ?? "");
+    const baseArgs = opts.args ?? ["run", "--model", model];
 
-    const spawnOptsFor = async (input: DispatchInput): Promise<SpawnOpts & { cleanup?: () => Promise<void> }> => {
-      let apiKey = '';
+    const spawnOptsFor = async (
+      input: DispatchInput,
+    ): Promise<SpawnOpts & { cleanup?: () => Promise<void> }> => {
+      let apiKey = "";
       try {
-        apiKey = resolveAdapterApiKey({ apiKeyKeychain: 'llamactl/opencode' });
+        apiKey = resolveAdapterApiKey({ apiKeyKeychain: "llamactl/opencode" });
       } catch {
         // Graceful degradation: let the CLI handle missing credentials.
       }
@@ -202,36 +214,36 @@ function registerThoughtAwareAdapters(thoughtCapture: ThoughtCapture | null): vo
         prompt: input.prompt,
         signal: input.signal,
         cwd: opts.cwd,
-        pass_via: opts.pass_via ?? 'argv',
+        pass_via: opts.pass_via ?? "argv",
         env,
         unset_env: opts.unset_env,
         strip_patterns: opts.strip_patterns,
         emit_stdout_thoughts: opts.emit_stdout_thoughts,
         thoughtCapture: thoughtCapture ?? undefined,
         onCapacityError: (err) => emitCapacityError(opts.capturePort, err),
-        eventContext: input.eventContext as SpawnOpts['eventContext'],
+        eventContext: input.eventContext as SpawnOpts["eventContext"],
         onEvent: input.onEvent,
         cleanup,
       };
     };
 
     const adapter: Adapter = {
-      kind: 'opencode-cli',
+      kind: "opencode-cli",
       async dispatch(input: DispatchInput): Promise<DispatchOutput> {
         const spawnOpts = await spawnOptsFor(input);
         try {
           const { text, stderr } = await spawnCliAdapter(spawnOpts);
           if (!text.trim()) {
             const markers = [
-              'ProviderModelNotFoundError',
-              'Error: Model not found',
-              'AuthenticationError',
-              'Error: API key',
+              "ProviderModelNotFoundError",
+              "Error: Model not found",
+              "AuthenticationError",
+              "Error: API key",
             ];
             const matched = markers.find((marker) => stderr.includes(marker));
             if (matched || stderr.trim()) {
               const msg = stderr.trim().slice(0, 500);
-              throw new Error(`opencode-cli error: ${msg || 'empty output'}`);
+              throw new Error(`opencode-cli error: ${msg || "empty output"}`);
             }
           }
           return { text };
@@ -251,9 +263,9 @@ function registerThoughtAwareAdapters(thoughtCapture: ThoughtCapture | null): vo
     return adapter;
   });
 
-  registerAdapter('stdio-acp', (rawOptions) => {
+  registerAdapter("stdio-acp", (rawOptions) => {
     const opts = rawOptions as Partial<StdioAcpOptions>;
-    if (!opts.binary) throw new Error('stdio-acp: binary is required');
+    if (!opts.binary) throw new Error("stdio-acp: binary is required");
     return new StdioAcpAdapter(
       {
         binary: opts.binary,
@@ -293,9 +305,10 @@ function registerThoughtAwareAdapters(thoughtCapture: ThoughtCapture | null): vo
   });
 }
 
-const configPath = process.env.AGENTCHAT_CONFIG ?? join(homedir(), '.config/agentchat/agentchat.yaml');
-const explicitRoot = flag('storage-root', process.env.PENUMBRA_STORAGE_ROOT);
-const bootstrapLog = createLogger({ component: 'agentchat-worker' });
+const configPath =
+  process.env.AGENTCHAT_CONFIG ?? join(homedir(), ".config/agentchat/agentchat.yaml");
+const explicitRoot = flag("storage-root", process.env.PENUMBRA_STORAGE_ROOT);
+const bootstrapLog = createLogger({ component: "agentchat-worker" });
 let storageRoot: string;
 try {
   // Poll for the daemon up to 60s instead of failing fast. The launchd setup
@@ -307,7 +320,7 @@ try {
     onWaiting: (candidates) => {
       bootstrapLog.info(
         { candidates },
-        'penumbra daemon not found yet; waiting (up to 60s) for it to come up',
+        "penumbra daemon not found yet; waiting (up to 60s) for it to come up",
       );
     },
   });
@@ -315,27 +328,30 @@ try {
   console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);
 }
-const concurrency = Number(flag('concurrency', '8'));
-const pollIntervalMs = Number(flag('poll-interval', '1000'));
-const defaultMaxHops = Number(flag('max-hops', '8'));
-const defaultTrust = (flag('trust', 'all') as 'all' | 'config');
-const transcriptBudget = Number(flag('transcript-budget', '8192'));
+const concurrency = Number(flag("concurrency", "8"));
+const pollIntervalMs = Number(flag("poll-interval", "1000"));
+const defaultMaxHops = Number(flag("max-hops", "8"));
+const defaultTrust = flag("trust", "all") as "all" | "config";
+const transcriptBudget = Number(flag("transcript-budget", "8192"));
 
-const log = createLogger({ component: 'agentchat-worker' });
+const log = createLogger({ component: "agentchat-worker" });
 const workerId = resolveWorkerId({
-  flag: flag('worker-id'),
+  flag: flag("worker-id"),
   envValue: process.env.PENUMBRA_WORKER_ID,
   log,
 });
-const workerToken = process.env.PENUMBRA_TOKEN ?? '';
-const workerProjectId = (process.env.PENUMBRA_WORKER_PROJECT_ID ?? '').trim() || undefined;
+const workerToken = process.env.PENUMBRA_TOKEN ?? "";
+const workerProjectId = (process.env.PENUMBRA_WORKER_PROJECT_ID ?? "").trim() || undefined;
 const workerIsolation = (() => {
-  const raw = (process.env.PENUMBRA_WORKER_ISOLATION ?? '').trim().toLowerCase();
-  if (raw === 'hard' || raw === 'sticky' || raw === 'shared') return raw;
-  if (raw !== '') {
-    log.warn({ worker_id: workerId, isolation: raw }, 'unknown PENUMBRA_WORKER_ISOLATION, defaulting to shared');
+  const raw = (process.env.PENUMBRA_WORKER_ISOLATION ?? "").trim().toLowerCase();
+  if (raw === "hard" || raw === "sticky" || raw === "shared") return raw;
+  if (raw !== "") {
+    log.warn(
+      { worker_id: workerId, isolation: raw },
+      "unknown PENUMBRA_WORKER_ISOLATION, defaulting to shared",
+    );
   }
-  return 'shared';
+  return "shared";
 })();
 
 const client = new PenumbraClient({ storageRoot, logger: log });
@@ -346,7 +362,9 @@ const eventQueue = new DispatchEventQueue({
 });
 const config = loadConfig(configPath);
 const settings = SettingsDefaults.build({ env: process.env, input: {} });
-const projectRegistry = loadProjectRegistry(process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath());
+const projectRegistry = loadProjectRegistry(
+  process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath(),
+);
 const notificationConfig = loadNotificationConfig({ agentchat: config, env: process.env });
 const thoughtsConfig = loadThoughtsConfig({ agentchat: config });
 const thoughtCapture = thoughtsConfig.enabled
@@ -363,11 +381,11 @@ const discordRateLimiter = createDiscordRateLimiter({
 });
 const onEvent = (event: DispatchEventInput) => eventQueue.enqueue(event);
 
-function mapChainEndStatus(reason: string): 'completed' | 'failed' | 'rejected' | 'expired' {
-  if (reason === 'completed') return 'completed';
-  if (reason === 'cancelled') return 'rejected';
-  if (reason === 'max_hops') return 'expired';
-  return 'failed';
+function mapChainEndStatus(reason: string): "completed" | "failed" | "rejected" | "expired" {
+  if (reason === "completed") return "completed";
+  if (reason === "cancelled") return "rejected";
+  if (reason === "max_hops") return "expired";
+  return "failed";
 }
 
 function latencySecondsFrom(ts: string): number {
@@ -386,12 +404,16 @@ function resolveAgentEventMetadata(agentName: string | undefined): {
   const options = (agentCfg?.options ?? {}) as Record<string, unknown>;
 
   return {
-    ...(typeof options.provider === 'string' ? { provider: options.provider } : {}),
-    ...(typeof options.model === 'string' ? { model: options.model } : {}),
+    ...(typeof options.provider === "string" ? { provider: options.provider } : {}),
+    ...(typeof options.model === "string" ? { model: options.model } : {}),
   };
 }
 
-function applyAgentCwdOverride(config: AgentChatConfig, agentName: string, cwd: string): AgentChatConfig {
+function applyAgentCwdOverride(
+  config: AgentChatConfig,
+  agentName: string,
+  cwd: string,
+): AgentChatConfig {
   return {
     ...config,
     agents: config.agents.map((agent) => {
@@ -409,12 +431,12 @@ function applyAgentCwdOverride(config: AgentChatConfig, agentName: string, cwd: 
 
 function coalesceKeyForDiscordEvent(event: DiscordNotificationEvent): string | undefined {
   switch (event.kind) {
-    case 'claim_retry':
+    case "claim_retry":
       return `claim_retry:${event.handoff_id}`;
-    case 'permission_decided':
+    case "permission_decided":
       return `permission_decided:${event.permission_id}`;
-    case 'cost_quota_summary':
-      return `cost_quota_summary:${event.period ?? 'default'}`;
+    case "cost_quota_summary":
+      return `cost_quota_summary:${event.period ?? "default"}`;
     default:
       return undefined;
   }
@@ -434,48 +456,54 @@ async function postDiscordEvent(event: DiscordNotificationEvent): Promise<boolea
 
   try {
     const coalesceKey = coalesceKeyForDiscordEvent(event);
-    if (coalesceKey && !discordRateLimiter.shouldSend({ webhookKey: route.routeKey ?? 'default', coalesceKey })) {
-      log.debug({
-        kind: event.kind,
-        handoff_id: event.handoff_id,
-        conversation_id: event.conversation_id,
-        project_id: event.project_id,
-        agent: event.agent,
-        route_key: route.routeKey ?? 'default',
-        channel: route.channelName,
-      }, 'discord notification suppressed by rate limiter');
+    if (
+      coalesceKey &&
+      !discordRateLimiter.shouldSend({ webhookKey: route.routeKey ?? "default", coalesceKey })
+    ) {
+      log.debug(
+        {
+          kind: event.kind,
+          handoff_id: event.handoff_id,
+          conversation_id: event.conversation_id,
+          project_id: event.project_id,
+          agent: event.agent,
+          route_key: route.routeKey ?? "default",
+          channel: route.channelName,
+        },
+        "discord notification suppressed by rate limiter",
+      );
       return true;
     }
 
     const payload = renderDiscordEvent(event, { promptPolicy: route.promptPolicy });
-    const ok = await postToDiscord(
-      route.webhookUrl,
-      payload,
-      fetch,
-      undefined,
-      route.identity,
-    );
+    const ok = await postToDiscord(route.webhookUrl, payload, fetch, undefined, route.identity);
     if (!ok) {
-      log.warn({
+      log.warn(
+        {
+          kind: event.kind,
+          handoff_id: event.handoff_id,
+          conversation_id: event.conversation_id,
+          project_id: event.project_id,
+          agent: event.agent,
+          route_key: route.routeKey,
+          channel: route.channelName,
+        },
+        "discord notification delivery failed",
+      );
+    }
+    return ok;
+  } catch (err) {
+    log.warn(
+      {
         kind: event.kind,
         handoff_id: event.handoff_id,
         conversation_id: event.conversation_id,
         project_id: event.project_id,
         agent: event.agent,
-        route_key: route.routeKey,
-        channel: route.channelName,
-      }, 'discord notification delivery failed');
-    }
-    return ok;
-  } catch (err) {
-    log.warn({
-      kind: event.kind,
-      handoff_id: event.handoff_id,
-      conversation_id: event.conversation_id,
-      project_id: event.project_id,
-      agent: event.agent,
-      err: err instanceof Error ? err.message : String(err),
-    }, 'discord notification delivery failed');
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "discord notification delivery failed",
+    );
     return false;
   }
 }
@@ -492,7 +520,7 @@ async function maybePostDiscordChainEnd(handoff: HandoffRow, reason: string): Pr
   }
 
   const ok = await postDiscordEvent({
-    kind: 'dispatch_end',
+    kind: "dispatch_end",
     handoff_id: resolvedHandoff.handoff_id,
     conversation_id: resolvedHandoff.conversation_id,
     project_id: resolvedHandoff.project_id ?? undefined,
@@ -500,18 +528,22 @@ async function maybePostDiscordChainEnd(handoff: HandoffRow, reason: string): Pr
     worker_id: resolvedHandoff.worker_id ?? workerId,
     status: mapChainEndStatus(reason),
     latency_seconds: latencySecondsFrom(resolvedHandoff.ts),
-    error_summary: reason === 'error' ? resolvedHandoff.error_message ?? 'dispatch error' : undefined,
+    error_summary:
+      reason === "error" ? (resolvedHandoff.error_message ?? "dispatch error") : undefined,
     prompt: resolvedHandoff.message,
     ...resolveAgentEventMetadata(resolvedHandoff.to_agent),
   });
   if (!ok) {
-    log.warn({ handoff_id: resolvedHandoff.handoff_id, reason }, 'discord chain-end notification failed');
+    log.warn(
+      { handoff_id: resolvedHandoff.handoff_id, reason },
+      "discord chain-end notification failed",
+    );
   }
 }
 
 async function maybePostDiscordMergeResult(handoffId: string, result: MergeResult): Promise<void> {
   if (!notificationConfig.enabled || !notificationConfig.events.merge_result) return;
-  if (result.status === 'no_changes') return;
+  if (result.status === "no_changes") return;
 
   let handoff: HandoffRow | null = null;
   try {
@@ -521,28 +553,32 @@ async function maybePostDiscordMergeResult(handoffId: string, result: MergeResul
   }
 
   const ok = await postDiscordEvent({
-    kind: 'merge_result',
+    kind: "merge_result",
     handoff_id: handoffId,
-    conversation_id: handoff?.conversation_id ?? '<unknown>',
+    conversation_id: handoff?.conversation_id ?? "<unknown>",
     project_id: handoff?.project_id ?? undefined,
-    agent: handoff?.to_agent ?? '<unknown>',
+    agent: handoff?.to_agent ?? "<unknown>",
     worker_id: handoff?.worker_id ?? workerId,
-    status: result.status === 'verified'
-      ? 'verified'
-      : result.status === 'pr_opened'
-      ? 'pr_opened'
-      : result.status === 'pr_creation_failed'
-        ? 'pr_creation_failed'
-        : result.status === 'typecheck_failed'
-          ? 'typecheck_failed'
-          : 'test_failed',
+    status:
+      result.status === "verified"
+        ? "verified"
+        : result.status === "pr_opened"
+          ? "pr_opened"
+          : result.status === "pr_creation_failed"
+            ? "pr_creation_failed"
+            : result.status === "typecheck_failed"
+              ? "typecheck_failed"
+              : "test_failed",
     regression_summary: result.regression_summary,
     prompt: handoff?.message,
     pr_url: result.pr_url,
     ...resolveAgentEventMetadata(handoff?.to_agent),
   });
   if (!ok) {
-    log.warn({ handoff_id: handoffId, status: result.status }, 'discord merge-result notification failed');
+    log.warn(
+      { handoff_id: handoffId, status: result.status },
+      "discord merge-result notification failed",
+    );
   }
 }
 
@@ -573,12 +609,17 @@ async function maybeCaptureDispatchOutcome(
   reason: string,
   worktreeChanged: boolean | null,
 ): Promise<void> {
-  const captureReason = reason === 'completed' || reason === 'max_hops' || reason === 'cancelled' || reason === 'error'
-    ? reason
-    : 'error';
-  let perf:
-    | { outcome: string; notes: string | null; metadata_json: string; task_type: string; reliability_status?: string | null }
-    | null = null;
+  const captureReason =
+    reason === "completed" || reason === "max_hops" || reason === "cancelled" || reason === "error"
+      ? reason
+      : "error";
+  let perf: {
+    outcome: string;
+    notes: string | null;
+    metadata_json: string;
+    task_type: string;
+    reliability_status?: string | null;
+  } | null = null;
   try {
     const response = await client.captureAgentPerformanceFromDispatch({
       handoff_id: handoff.handoff_id,
@@ -591,7 +632,10 @@ async function maybeCaptureDispatchOutcome(
     });
     perf = response.performance;
   } catch (err) {
-    log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, 'agent performance dispatch capture failed');
+    log.warn(
+      { handoff_id: handoff.handoff_id, err: String(err) },
+      "agent performance dispatch capture failed",
+    );
     return;
   }
 
@@ -608,8 +652,12 @@ async function maybeCaptureDispatchOutcome(
   if (perf && shouldRetryHandoffForSilentFailure(handoff, perf)) {
     if (handoff.message.startsWith(SILENT_RETRY_PREFIX)) {
       log.warn(
-        { handoff_id: handoff.handoff_id, agent: handoff.to_agent, reliability_status: perf.reliability_status ?? null },
-        'silent-failure retry produced another silent failure — not retrying again',
+        {
+          handoff_id: handoff.handoff_id,
+          agent: handoff.to_agent,
+          reliability_status: perf.reliability_status ?? null,
+        },
+        "silent-failure retry produced another silent failure — not retrying again",
       );
       return;
     }
@@ -629,21 +677,22 @@ async function tryAutoRetrySilentFailure(
       include_neutral: false,
     });
     nextAgent =
-      ranked.candidates.find((c) => c.agent_name !== failedHandoff.to_agent && c.score > 0)?.agent_name ?? null;
+      ranked.candidates.find((c) => c.agent_name !== failedHandoff.to_agent && c.score > 0)
+        ?.agent_name ?? null;
   } catch (err) {
     log.warn(
       { handoff_id: failedHandoff.handoff_id, err: String(err) },
-      'silent-failure retry: agent_rank lookup failed; not retrying',
+      "silent-failure retry: agent_rank lookup failed; not retrying",
     );
     return;
   }
   if (!nextAgent) {
     log.warn(
       { handoff_id: failedHandoff.handoff_id, failed_agent: failedHandoff.to_agent },
-      'silent-failure retry: no eligible alternate agent found in agent_rank',
+      "silent-failure retry: no eligible alternate agent found in agent_rank",
     );
     return;
-    }
+  }
 
   try {
     const retryPayload = buildRetryPayloadOrNull({
@@ -658,13 +707,11 @@ async function tryAutoRetrySilentFailure(
     if (retryPayload === null) {
       console.error(
         `silent-failure-retry: original handoff ${failedHandoff.handoff_id} has no project_id, ` +
-          'refusing to retry (would land in daemon cwd)',
+          "refusing to retry (would land in daemon cwd)",
       );
       return;
     }
-    const result = await client.startChain(
-      retryPayload,
-    );
+    const result = await client.startChain(retryPayload);
     log.info(
       {
         original_handoff_id: failedHandoff.handoff_id,
@@ -672,7 +719,7 @@ async function tryAutoRetrySilentFailure(
         retry_handoff_id: result.handoff_id,
         retry_agent: nextAgent,
       },
-      'silent-failure detected; auto-retried on alternate agent',
+      "silent-failure detected; auto-retried on alternate agent",
     );
   } catch (err) {
     log.warn(
@@ -681,15 +728,15 @@ async function tryAutoRetrySilentFailure(
         next_agent: nextAgent,
         err: String(err),
       },
-      'silent-failure retry: startChain failed',
+      "silent-failure retry: startChain failed",
     );
   }
 }
 
 function loadProjectContext(project_id: string | null): string | undefined {
   if (!project_id) return undefined;
-  const path = join(storageRoot, 'context', project_id, 'latest.md');
-  return existsSync(path) ? readFileSync(path, 'utf8') : undefined;
+  const path = join(storageRoot, "context", project_id, "latest.md");
+  return existsSync(path) ? readFileSync(path, "utf8") : undefined;
 }
 
 function createPermissionEventSource(url: string, token: string) {
@@ -715,15 +762,15 @@ function createPermissionEventSource(url: string, token: string) {
   };
 
   const parseFrame = (frame: string) => {
-    let eventName = '';
+    let eventName = "";
     let lastEventId: string | undefined;
     const dataLines: string[] = [];
-    for (const line of frame.split('\n')) {
-      if (line.startsWith('event:')) eventName = line.slice(6).trim();
-      else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
-      else if (line.startsWith('id:')) lastEventId = line.slice(3).trim();
+    for (const line of frame.split("\n")) {
+      if (line.startsWith("event:")) eventName = line.slice(6).trim();
+      else if (line.startsWith("data:")) dataLines.push(line.slice(5).replace(/^ /, ""));
+      else if (line.startsWith("id:")) lastEventId = line.slice(3).trim();
     }
-    if (eventName && dataLines.length) emit(eventName, dataLines.join('\n'), lastEventId);
+    if (eventName && dataLines.length) emit(eventName, dataLines.join("\n"), lastEventId);
   };
 
   const pump = async () => {
@@ -731,7 +778,7 @@ function createPermissionEventSource(url: string, token: string) {
       try {
         const res = await fetch(url, {
           headers: {
-            accept: 'text/event-stream',
+            accept: "text/event-stream",
             authorization: `Bearer ${token}`,
           },
           signal: controller.signal,
@@ -739,7 +786,7 @@ function createPermissionEventSource(url: string, token: string) {
         if (!res.ok || !res.body) throw new Error(`permissions SSE HTTP ${res.status}`);
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
-        let buf = '';
+        let buf = "";
         fireReconnectListeners();
         try {
           while (!closed && !controller.signal.aborted) {
@@ -747,13 +794,17 @@ function createPermissionEventSource(url: string, token: string) {
             if (done) break;
             backoffMs = 200;
             buf += decoder.decode(value, { stream: true });
-            const frames = buf.split('\n\n');
-            buf = frames.pop() ?? '';
+            const frames = buf.split("\n\n");
+            buf = frames.pop() ?? "";
             for (const frame of frames) parseFrame(frame);
           }
         } finally {
           reader.releaseLock();
-          try { await res.body.cancel(); } catch { /* noop */ }
+          try {
+            await res.body.cancel();
+          } catch {
+            /* noop */
+          }
         }
       } catch {
         if (closed || controller.signal.aborted) return;
@@ -784,19 +835,21 @@ function createPermissionEventSource(url: string, token: string) {
   };
 }
 
-async function loadConversationTranscript(conversation_id: string): Promise<{ handoff_id: string; agent: string; text: string }[]> {
+async function loadConversationTranscript(
+  conversation_id: string,
+): Promise<{ handoff_id: string; agent: string; text: string }[]> {
   // Phase 1: rebuild a transcript by listing handoffs in the conversation. Each handoff row
   // carries the sender (from_agent) and message (the sender's reply text). We retain handoff_id
   // alongside each entry so the dispatcher can drop the current row by id rather than by content
   // — matching by {agent, text} would mis-fire when the same sender emits identical text twice.
   const { handoffs } = await client.listHandoffs({
-    statuses: ['completed', 'dispatched', 'approved', 'redirected'],
+    statuses: ["completed", "dispatched", "approved", "redirected"],
     conversation_id,
   });
   const sorted = [...handoffs].sort((a, b) => a.ts.localeCompare(b.ts));
   return sorted.map((h) => ({
     handoff_id: h.handoff_id as string,
-    agent: h.from_agent === 'user' ? 'user' : (h.from_agent as string),
+    agent: h.from_agent === "user" ? "user" : (h.from_agent as string),
     text: h.message as string,
   }));
 }
@@ -816,17 +869,20 @@ const worktreeManager = createWorkerWorktreeManager();
 let baseDaemonUrl: string;
 let daemonToken: string;
 try {
-  const portStr = readFileSync(join(storageRoot, 'port'), 'utf8').trim();
-  daemonToken = readFileSync(join(storageRoot, 'token'), 'utf8').trim();
+  const portStr = readFileSync(join(storageRoot, "port"), "utf8").trim();
+  daemonToken = readFileSync(join(storageRoot, "token"), "utf8").trim();
   baseDaemonUrl = `http://127.0.0.1:${Number(portStr)}`;
 } catch (err) {
-  console.error(`penumbra not running at ${storageRoot} (missing port/token); start the daemon first`);
+  console.error(
+    `penumbra not running at ${storageRoot} (missing port/token); start the daemon first`,
+  );
   process.exit(1);
 }
 
 const permissionDaemonClient = new PermissionDaemonClient({
   penumbraClient: client,
-  makeEventSource: () => createPermissionEventSource(`${baseDaemonUrl}/permissions/events`, daemonToken),
+  makeEventSource: () =>
+    createPermissionEventSource(`${baseDaemonUrl}/permissions/events`, daemonToken),
   uuid: systemUuid,
   log,
   onPermissionEvent: (event) => {
@@ -855,28 +911,32 @@ const thoughtAnalyzerDeps: ThoughtAnalyzerDeps = {
 const reconcileWorktree = createMergeReconciler({
   worktreeManager,
   postProgress: (id, payload) => client.postProgress(id, payload),
-  captureResult: (id, result) => client.captureAgentPerformanceFromReconciler({ handoff_id: id, result }),
+  captureResult: (id, result) =>
+    client.captureAgentPerformanceFromReconciler({ handoff_id: id, result }),
   reconcilerAutoRebase: config.reconcilerAutoRebase,
   settings,
-  emitVerdict: (verdict) => client.observe({
-    source: 'agentchat',
-    source_detail: 'merge-reconciler',
-    project_id: null,
-    user_id: 'local-user',
-    machine_id: systemUuid(),
-    session_id: verdict.conversation_id,
-    event_type: 'reconciler.verdict',
-    lane: 'local',
-    provider: null,
-    model: null,
-    tokens_in: null,
-    tokens_out: null,
-    cost_usd: null,
-    latency_ms: null,
-    request_id: null,
-    payload_json: verdict,
-    payload_summary: verdict.summary,
-  }).then(() => undefined),
+  emitVerdict: (verdict) =>
+    client
+      .observe({
+        source: "agentchat",
+        source_detail: "merge-reconciler",
+        project_id: null,
+        user_id: "local-user",
+        machine_id: systemUuid(),
+        session_id: verdict.conversation_id,
+        event_type: "reconciler.verdict",
+        lane: "local",
+        provider: null,
+        model: null,
+        tokens_in: null,
+        tokens_out: null,
+        cost_usd: null,
+        latency_ms: null,
+        request_id: null,
+        payload_json: verdict,
+        payload_summary: verdict.summary,
+      })
+      .then(() => undefined),
   notifyResult: (id, result) => maybePostDiscordMergeResult(id, result),
   log,
   mainRepoDir: process.cwd(),
@@ -886,12 +946,12 @@ const reconcileWorktree = createMergeReconciler({
   listThoughtEvents: async (handoffId) => {
     const { events } = await client.getDispatchEvents({ handoff_id: handoffId });
     return events
-      .filter((event) => event.kind === 'agent.thought')
+      .filter((event) => event.kind === "agent.thought")
       .map((event) => ({
         sequence_n: (event.meta?.sequence_n as number) ?? 0,
-        adapter: (event.meta?.adapter as string) ?? '',
-        agent_name: (event.meta?.agent_name as string) ?? '',
-        text: (event.meta?.text as string) ?? '',
+        adapter: (event.meta?.adapter as string) ?? "",
+        agent_name: (event.meta?.agent_name as string) ?? "",
+        text: (event.meta?.text as string) ?? "",
         token_count: event.meta?.token_count as number | undefined,
       }))
       .sort((a, b) => a.sequence_n - b.sequence_n);
@@ -926,15 +986,17 @@ const dispatcher = createWorkerDispatcher({
   getWorktreeSnapshot: async (handoffId) => {
     const wt = worktreeManager.getWorktree(handoffId);
     if (!wt) return { worktreeChanged: null, dirty: null, committed: null };
-    const { promisify } = await import('node:util');
-    const { exec: execCb } = await import('node:child_process');
+    const { promisify } = await import("node:util");
+    const { exec: execCb } = await import("node:child_process");
     const exec = promisify(execCb);
     try {
       const [statusRes, reflogRes] = await Promise.all([
         exec(
           `git -C "${wt.path}" status --short --untracked-files=all -- '.' ':(exclude)node_modules' ':(exclude)packages/*/node_modules' ':(exclude).test-storage'`,
-        ).catch(() => ({ stdout: '' })),
-        exec(`git -C "${wt.path}" reflog show --no-decorate ${wt.branchName} 2>/dev/null | wc -l`).catch(() => ({ stdout: '0' })),
+        ).catch(() => ({ stdout: "" })),
+        exec(
+          `git -C "${wt.path}" reflog show --no-decorate ${wt.branchName} 2>/dev/null | wc -l`,
+        ).catch(() => ({ stdout: "0" })),
       ]);
       const dirty = statusRes.stdout.trim().length > 0;
       // Reflog of a freshly-created branch has 1 entry (the branch creation).
@@ -948,7 +1010,9 @@ const dispatcher = createWorkerDispatcher({
   },
   claim: (id) => client.claimHandoff(id, workerId),
   postProgress: (id, payload) => client.postProgress(id, payload),
-  complete: async (id) => { await client.completeHandoff(id, workerId); },
+  complete: async (id) => {
+    await client.completeHandoff(id, workerId);
+  },
   autocommitOnChainEnd: async (handoff) => {
     const wt = worktreeManager.getWorktree(handoff.handoff_id);
     if (!wt) return;
@@ -958,10 +1022,13 @@ const dispatcher = createWorkerDispatcher({
     const typedHandoff = handoff as HandoffRow;
     void maybePostDiscordChainEnd(typedHandoff, reason);
     void maybeCaptureDispatchOutcome(typedHandoff, reason, worktreeChanged);
-    if (reason === 'completed') {
+    if (reason === "completed") {
       // Trigger the merge reconciler asynchronously without blocking completion
       void reconcileWorktree(typedHandoff.handoff_id).catch((err) => {
-        log.error({ handoff_id: typedHandoff.handoff_id, err: String(err) }, 'worktree reconciliation failed');
+        log.error(
+          { handoff_id: typedHandoff.handoff_id, err: String(err) },
+          "worktree reconciliation failed",
+        );
       });
     }
   },
@@ -985,17 +1052,19 @@ const dispatcher = createWorkerDispatcher({
       .map((t) => ({ agent: t.agent, text: t.text }));
     // Count prior hops: non-user entries in the full transcript (each represents one completed
     // hop's output; the current handoff's row counts because it carries the previous hop's reply).
-    const hopsSoFar = transcript.filter((t) => t.agent !== 'user').length;
-    
+    const hopsSoFar = transcript.filter((t) => t.agent !== "user").length;
+
     // Enrich handoff for dispatcher progress reporting
     handoff.hop_idx = hopsSoFar;
 
     const projectContext = loadProjectContext(handoff.project_id);
-    const trustMode = (handoff.chain_trust_mode ?? defaultTrust) as 'all' | 'config';
+    const trustMode = (handoff.chain_trust_mode ?? defaultTrust) as "all" | "config";
     const maxHops = handoff.chain_max_hops ?? defaultMaxHops;
     const agentCfg = config.agents.find((a) => a.name === handoff.to_agent);
     const allowedTools = (agentCfg?.options as any)?.allowed_tools ?? [];
-    const ttlSeconds = (agentCfg?.options as any)?.permission_ttl_s ?? Number(process.env.PENUMBRA_PERMISSION_TTL_S ?? 300);
+    const ttlSeconds =
+      (agentCfg?.options as any)?.permission_ttl_s ??
+      Number(process.env.PENUMBRA_PERMISSION_TTL_S ?? 300);
     const perDispatchAllowlist = new Set<string>();
     const requestPermission = createPermissionCallback({
       trustMode,
@@ -1024,10 +1093,7 @@ const dispatcher = createWorkerDispatcher({
       dispatchedHandoff = result.worktreePromptRewrite
         ? {
             ...handoff,
-            message: rewriteWorktreeHandoffMessage(
-              handoff.message,
-              result.worktreePromptRewrite,
-            ),
+            message: rewriteWorktreeHandoffMessage(handoff.message, result.worktreePromptRewrite),
           }
         : handoff;
       const sandboxConfig = resolveSandboxConfig((agentCfg?.options as any) ?? {});
@@ -1038,21 +1104,21 @@ const dispatcher = createWorkerDispatcher({
           emit: async (eventType, payload) => {
             const payloadSummary = (() => {
               const typed = payload as Record<string, unknown> | null;
-              if (!typed || typeof typed !== 'object') return eventType;
-              const path = typeof typed.path === 'string' ? typed.path : null;
-              const terminalId = typeof typed.terminal_id === 'string' ? typed.terminal_id : null;
-              const reason = typeof typed.reason === 'string' ? typed.reason : null;
+              if (!typed || typeof typed !== "object") return eventType;
+              const path = typeof typed.path === "string" ? typed.path : null;
+              const terminalId = typeof typed.terminal_id === "string" ? typed.terminal_id : null;
+              const reason = typeof typed.reason === "string" ? typed.reason : null;
               const detail = path ?? terminalId ?? reason;
               return detail ? `${eventType}: ${detail}` : eventType;
             })();
             await client.observe({
               ts: new Date().toISOString(),
-              source: 'agentchat',
+              source: "agentchat",
               event_type: eventType,
-              lane: 'cli-subscription',
+              lane: "cli-subscription",
               project_id: handoff.project_id ?? null,
               user_id: handoff.to_agent,
-              machine_id: 'local',
+              machine_id: "local",
               session_id: handoff.conversation_id,
               payload_json: payload as Record<string, unknown>,
               payload_summary: payloadSummary.slice(0, 240),
@@ -1107,14 +1173,14 @@ const dispatcher = createWorkerDispatcher({
           handoffId: handoff.handoff_id as string,
           workerId,
           agentName: handoff.to_agent,
-        } as SpawnOpts['eventContext'],
+        } as SpawnOpts["eventContext"],
         onEvent,
         signal,
       });
     } finally {
       if (executor) {
         await executor.dispose().catch((err) => {
-          log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, 'executor dispose failed');
+          log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, "executor dispose failed");
         });
         unregisterExecutor(handoff.handoff_id as string);
       }
@@ -1122,46 +1188,49 @@ const dispatcher = createWorkerDispatcher({
   },
 });
 
-mkdirSync(join(homedir(), '.penumbra'), { recursive: true });
+mkdirSync(join(homedir(), ".penumbra"), { recursive: true });
 const workerServer = Bun.serve({
-  hostname: '127.0.0.1',
+  hostname: "127.0.0.1",
   port: 0,
   fetch: async (req) => {
     const url = new URL(req.url);
     const match = url.pathname.match(/^\/sessions\/([^/]+)\/inject$/);
-    if (req.method === 'POST' && match) {
+    if (req.method === "POST" && match) {
       return workerInjectRoute(req, decodeURIComponent(match[1]!), { token: workerToken });
     }
-    return new Response('not found', { status: 404 });
+    return new Response("not found", { status: 404 });
   },
 });
-writeFileSync(join(homedir(), '.penumbra', 'worker-port'), `${workerServer.port}\n`);
-writeFileSync(join(homedir(), '.penumbra', 'worker-bind'), `127.0.0.1:${workerServer.port}\n`);
+writeFileSync(join(homedir(), ".penumbra", "worker-port"), `${workerServer.port}\n`);
+writeFileSync(join(homedir(), ".penumbra", "worker-bind"), `127.0.0.1:${workerServer.port}\n`);
 
 const eventSource = startEventSource({
   client: {
     listHandoffs: (o) => client.listHandoffs(o),
     subscribeHandoffEvents: (o) => client.subscribeHandoffEvents(o),
   },
-  statuses: ['approved', 'redirected'],
+  statuses: ["approved", "redirected"],
   pollIntervalMs,
   project_id: workerProjectId,
   isolation: workerIsolation,
-  onEvent: (row) => { 
+  onEvent: (row) => {
     if (!row) return;
-    void dispatcher.handle(row); 
+    void dispatcher.handle(row);
   },
   log,
 });
 eventSourceRef = eventSource;
 
-log.info({ storageRoot, concurrency, pollIntervalMs, defaultMaxHops, defaultTrust, workerId }, 'agentchat worker started');
+log.info(
+  { storageRoot, concurrency, pollIntervalMs, defaultMaxHops, defaultTrust, workerId },
+  "agentchat worker started",
+);
 
 // Usage poller: singleton inside this worker process. Production deploys one
 // worker via launchd; the cursor file is read+written serially within each
 // tick. Disabled via PENUMBRA_USAGE_POLL_DISABLED=1 for tests.
 let usagePoller: { stop: () => void } | null = null;
-if (process.env.PENUMBRA_USAGE_POLL_DISABLED !== '1') {
+if (process.env.PENUMBRA_USAGE_POLL_DISABLED !== "1") {
   usagePoller = startUsagePoller({
     readers: [
       new CodexRolloutReader(),
@@ -1171,15 +1240,15 @@ if (process.env.PENUMBRA_USAGE_POLL_DISABLED !== '1') {
       new GoogleOtlpSynth({ client, min_emit_pct: 1 }),
     ],
     intervalMs: Number(process.env.PENUMBRA_USAGE_POLL_INTERVAL_MS) || 60_000,
-    cursorPath: join(storageRoot, 'local-state-cursors.json'),
+    cursorPath: join(storageRoot, "local-state-cursors.json"),
     emit: (e) => client.observe(e),
     log,
   });
-  log.info({ readers: 5, workerId }, 'usage-poller started');
+  log.info({ readers: 5, workerId }, "usage-poller started");
 }
 
 let notificationScheduler: { stop: () => void } | null = null;
-if (process.env.PENUMBRA_NOTIFICATION_SCHEDULER_DISABLED !== '1') {
+if (process.env.PENUMBRA_NOTIFICATION_SCHEDULER_DISABLED !== "1") {
   notificationScheduler = createNotificationScheduler({
     now: () => Date.now(),
     intervalMs: 60_000,
@@ -1197,22 +1266,25 @@ if (process.env.PENUMBRA_NOTIFICATION_SCHEDULER_DISABLED !== '1') {
           })),
         };
       } catch (err) {
-        log.warn({
-          kind: 'cost_quota_summary',
-          err: err instanceof Error ? err.message : String(err),
-        }, 'cost quota summary fetch failed');
+        log.warn(
+          {
+            kind: "cost_quota_summary",
+            err: err instanceof Error ? err.message : String(err),
+          },
+          "cost quota summary fetch failed",
+        );
         throw err;
       }
     },
     postEvent: async (event) => {
       const ok = await postDiscordEvent(event);
       if (!ok) {
-        throw new Error('cost quota summary delivery failed');
+        throw new Error("cost quota summary delivery failed");
       }
     },
   });
   notificationScheduler.start();
-  log.info({ interval_ms: 60_000, workerId }, 'notification scheduler started');
+  log.info({ interval_ms: 60_000, workerId }, "notification scheduler started");
 }
 
 // Heartbeat loop (15s nominal, with backoff on failure)
@@ -1240,14 +1312,20 @@ const sendHeartbeat = (delayMs = 15_000, attempt = 0) => {
       const status = err instanceof PenumbraHttpError ? err.status : null;
       const isTerminal = status !== null && isTerminalHttpStatus(status);
       if (isTerminal) {
-        log.error({ status, err: String(err) }, 'heartbeat failed permanently; worker may be unauthorized');
+        log.error(
+          { status, err: String(err) },
+          "heartbeat failed permanently; worker may be unauthorized",
+        );
         // We don't exit here to allow in-flight tasks to finish, but we stop heartbeating
         return;
       }
 
       const nextAttempt = attempt + 1;
       const backoff = Math.min(1000 * Math.pow(2, attempt), 30_000);
-      log.debug({ err: String(err), backoff, nextAttempt }, 'heartbeat failed; retrying with backoff');
+      log.debug(
+        { err: String(err), backoff, nextAttempt },
+        "heartbeat failed; retrying with backoff",
+      );
       sendHeartbeat(backoff, nextAttempt);
     }
   }, delayMs);
@@ -1266,7 +1344,7 @@ void runWorkerControlListener({
 });
 
 const shutdown = async (sig: string) => {
-  log.info({ sig }, 'shutting down');
+  log.info({ sig }, "shutting down");
   controlAbort.abort();
   if (heartbeatTimer) clearTimeout(heartbeatTimer);
   usagePoller?.stop();
@@ -1278,5 +1356,5 @@ const shutdown = async (sig: string) => {
   await eventQueue.stop();
   process.exit(0);
 };
-process.on('SIGINT', () => void shutdown('SIGINT'));
-process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on("SIGINT", () => void shutdown("SIGINT"));
+process.on("SIGTERM", () => void shutdown("SIGTERM"));

@@ -1,9 +1,9 @@
-import { expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import type { AgentDescriptor, Services } from '@penumbra/core';
+import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { AgentDescriptor, Services } from "@penumbra/core";
 import {
   buildServices,
   loadSqliteVec,
@@ -11,17 +11,17 @@ import {
   migrate,
   TaskEventBus,
   TaskWriter,
-} from '@penumbra/core';
-import { TestEmbedder } from '@penumbra/core/testing';
-import { createBoundsCallbacks } from '../../daemon/src/maestro/bounds-callbacks.js';
-import { createBoundsTracker } from '../../daemon/src/maestro/bounds-tracker.js';
-import { createOrchestrateReactor } from '../../daemon/src/reactors/orchestrate-reactor.js';
-import { chainStartInternal } from '../../daemon/src/routes/chains.js';
-import { createDaemonFetchHandler } from '../../daemon/src/serve.js';
+} from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
+import { createBoundsCallbacks } from "../../daemon/src/maestro/bounds-callbacks.js";
+import { createBoundsTracker } from "../../daemon/src/maestro/bounds-tracker.js";
+import { createOrchestrateReactor } from "../../daemon/src/reactors/orchestrate-reactor.js";
+import { chainStartInternal } from "../../daemon/src/routes/chains.js";
+import { createDaemonFetchHandler } from "../../daemon/src/serve.js";
 
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {}
 
@@ -50,17 +50,17 @@ interface MaestroHarness {
   tracker: { tick(): void };
   setNow: (nextMs: number) => void;
   nowMs: () => number;
-  injectCalls: Array<{ chain_handoff_id: string; message: { role: 'user'; text: string } }>;
+  injectCalls: Array<{ chain_handoff_id: string; message: { role: "user"; text: string } }>;
   chainCancelCalls: string[];
   stop: () => void;
 }
 
 const MAESTRO_AGENT = {
-  name: 'e2e-maestro-stub',
-  adapter: 'noop',
+  name: "e2e-maestro-stub",
+  adapter: "noop",
   options: {},
-  tier: 'oc',
-  tags: ['orchestrator'],
+  tier: "oc",
+  tags: ["orchestrator"],
   maestro_capable: true,
   cost_cents_per_run: 1,
 };
@@ -72,17 +72,17 @@ const MAESTRO_DESCRIPTOR: AgentDescriptor = {
 };
 
 function createHarness(): MaestroHarness {
-  const db = new Database(':memory:');
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
-  const root = mkdtempSync(join(tmpdir(), 'maestro-e2e-'));
-  const worktreeRootDir = join(root, 'worktrees');
-  const mainRepoDir = join(root, 'main');
+  const root = mkdtempSync(join(tmpdir(), "maestro-e2e-"));
+  const worktreeRootDir = join(root, "worktrees");
+  const mainRepoDir = join(root, "main");
   mkdirSync(worktreeRootDir, { recursive: true });
   mkdirSync(mainRepoDir, { recursive: true });
 
-  let now = Date.parse('2026-05-05T00:00:00.000Z');
+  let now = Date.parse("2026-05-05T00:00:00.000Z");
   let n = 0;
   const services = buildServices({
     env: {},
@@ -107,7 +107,7 @@ function createHarness(): MaestroHarness {
   };
 
   const resolveAgent = (name: string): AgentDescriptor | undefined =>
-    (name === MAESTRO_DESCRIPTOR.name ? MAESTRO_DESCRIPTOR : undefined);
+    name === MAESTRO_DESCRIPTOR.name ? MAESTRO_DESCRIPTOR : undefined;
 
   const taskEvents = new TaskEventBus();
   const sessions = new MaestroSessionWriter({ db, now: () => now });
@@ -123,7 +123,8 @@ function createHarness(): MaestroHarness {
     },
   });
 
-  const injectCalls: Array<{ chain_handoff_id: string; message: { role: 'user'; text: string } }> = [];
+  const injectCalls: Array<{ chain_handoff_id: string; message: { role: "user"; text: string } }> =
+    [];
   const boundsCallbacks = createBoundsCallbacks({
     db,
     taskWriter,
@@ -155,14 +156,16 @@ function createHarness(): MaestroHarness {
     sessions,
     taskWriter,
     chainStart: async (request) => {
-      const response = await chainStartInternal(request, services, { applyMaestroBudgetGate: false });
+      const response = await chainStartInternal(request, services, {
+        applyMaestroBudgetGate: false,
+      });
       if (!response.ok) {
         const body = await response.text();
         throw new Error(`chain_start failed (${response.status}): ${body}`);
       }
-      const data = await response.json() as { handoff_id?: unknown; conversation_id?: unknown };
-      if (typeof data.handoff_id !== 'string' || typeof data.conversation_id !== 'string') {
-        throw new Error('chain_start returned malformed response');
+      const data = (await response.json()) as { handoff_id?: unknown; conversation_id?: unknown };
+      if (typeof data.handoff_id !== "string" || typeof data.conversation_id !== "string") {
+        throw new Error("chain_start returned malformed response");
       }
       return { handoff_id: data.handoff_id, conversation_id: data.conversation_id };
     },
@@ -176,7 +179,7 @@ function createHarness(): MaestroHarness {
   });
   orchestrateReactor.start();
 
-  const token = 'tok';
+  const token = "tok";
   const handler = createDaemonFetchHandler({
     services,
     token,
@@ -200,9 +203,15 @@ function createHarness(): MaestroHarness {
     injectCalls,
     chainCancelCalls,
     stop: () => {
-      try { orchestrateReactor.stop(); } catch {}
-      try { services.supervisor.stopAll(); } catch {}
-      try { db.close(); } catch {}
+      try {
+        orchestrateReactor.stop();
+      } catch {}
+      try {
+        services.supervisor.stopAll();
+      } catch {}
+      try {
+        db.close();
+      } catch {}
       rmSync(root, { recursive: true, force: true });
     },
   };
@@ -217,8 +226,8 @@ function authHeaders(token: string, headers: HeadersInit = {}): HeadersInit {
 
 async function postJson(harness: MaestroHarness, path: string, body: unknown): Promise<Response> {
   return harness.fetch(path, {
-    method: 'POST',
-    headers: authHeaders(harness.token, { 'content-type': 'application/json' }),
+    method: "POST",
+    headers: authHeaders(harness.token, { "content-type": "application/json" }),
     body: JSON.stringify(body),
   });
 }
@@ -229,22 +238,22 @@ async function readSseFrames(
 ): Promise<void> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
-  let buffer = '';
+  let buffer = "";
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       if (!value) continue;
       buffer += decoder.decode(value, { stream: true });
-      let splitAt = buffer.indexOf('\n\n');
+      let splitAt = buffer.indexOf("\n\n");
       while (splitAt >= 0) {
         const frame = buffer.slice(0, splitAt);
         buffer = buffer.slice(splitAt + 2);
-        const dataLine = frame.split('\n').find((line) => line.startsWith('data: '));
+        const dataLine = frame.split("\n").find((line) => line.startsWith("data: "));
         if (dataLine) {
           onEvent(JSON.parse(dataLine.slice(6)) as TaskEvent);
         }
-        splitAt = buffer.indexOf('\n\n');
+        splitAt = buffer.indexOf("\n\n");
       }
     }
   } finally {
@@ -279,14 +288,14 @@ async function waitForEvent(
   throw new Error(`timed out waiting for event after ${timeoutMs}ms`);
 }
 
-test('maestro board smoke: orchestrate spawn, sub-dispatch accounting, completion, and SSE', async () => {
+test("maestro board smoke: orchestrate spawn, sub-dispatch accounting, completion, and SSE", async () => {
   const harness = createHarness();
   const abort = new AbortController();
   let streamDone: Promise<void> | null = null;
   let sseBody: ReadableStream<Uint8Array> | null = null;
   try {
     const sseRes = await harness.fetch(
-      '/tasks/events?kind=orchestrate_spawned,orchestrate_warning,orchestrate_terminated',
+      "/tasks/events?kind=orchestrate_spawned,orchestrate_warning,orchestrate_terminated",
       { headers: authHeaders(harness.token), signal: abort.signal },
     );
     expect(sseRes.status).toBe(200);
@@ -298,11 +307,11 @@ test('maestro board smoke: orchestrate spawn, sub-dispatch accounting, completio
       streamEvents.push(event);
     });
 
-    const filed = await postJson(harness, '/tasks', {
-      prompt: 'investigate foo',
-      kind: 'orchestrate',
-      created_by_kind: 'human',
-      created_by_id: 'cli',
+    const filed = await postJson(harness, "/tasks", {
+      prompt: "investigate foo",
+      kind: "orchestrate",
+      created_by_kind: "human",
+      created_by_id: "cli",
       eligibility: { allow_agents: [MAESTRO_AGENT.name] },
       bounds: {
         wall_clock_ms: 300_000,
@@ -311,7 +320,7 @@ test('maestro board smoke: orchestrate spawn, sub-dispatch accounting, completio
       },
     });
     expect(filed.status).toBe(201);
-    const filedBody = await filed.json() as { task_id: string };
+    const filedBody = (await filed.json()) as { task_id: string };
     const taskId = filedBody.task_id;
 
     await waitFor(() => {
@@ -325,32 +334,32 @@ test('maestro board smoke: orchestrate spawn, sub-dispatch accounting, completio
     expect(session?.cost_budget_cents).toBe(100);
     expect(session?.sub_dispatch_budget).toBe(5);
     expect(session?.agent_id).toBe(MAESTRO_AGENT.name);
-    expect(harness.taskWriter.get(taskId).status).toBe('leased');
+    expect(harness.taskWriter.get(taskId).status).toBe("leased");
 
-    const sub1 = await postJson(harness, '/tasks', {
-      prompt: 'subtask 1',
-      kind: 'work',
+    const sub1 = await postJson(harness, "/tasks", {
+      prompt: "subtask 1",
+      kind: "work",
       parent_task_id: taskId,
-      created_by_kind: 'agent',
+      created_by_kind: "agent",
       created_by_id: MAESTRO_AGENT.name,
     });
-    const sub2 = await postJson(harness, '/tasks', {
-      prompt: 'subtask 2',
-      kind: 'work',
+    const sub2 = await postJson(harness, "/tasks", {
+      prompt: "subtask 2",
+      kind: "work",
       parent_task_id: taskId,
-      created_by_kind: 'agent',
+      created_by_kind: "agent",
       created_by_id: MAESTRO_AGENT.name,
     });
     expect(sub1.status).toBe(201);
     expect(sub2.status).toBe(201);
 
-    const chainStart = await postJson(harness, '/chains/start', {
+    const chainStart = await postJson(harness, "/chains/start", {
       initial_agent: MAESTRO_AGENT.name,
-      message: 'child dispatch',
+      message: "child dispatch",
       parent_handoff_id: session?.chain_handoff_id,
-      task_type: 'implement_small',
+      task_type: "implement_small",
       use_worktree: true,
-      trust_mode: 'all',
+      trust_mode: "all",
     });
     expect(chainStart.status).toBe(200);
 
@@ -359,12 +368,12 @@ test('maestro board smoke: orchestrate spawn, sub-dispatch accounting, completio
       expect(next?.sub_dispatches_consumed).toBe(1);
     });
 
-    const leaseSub = await postJson(harness, '/tasks/lease', { agent_id: MAESTRO_AGENT.name });
+    const leaseSub = await postJson(harness, "/tasks/lease", { agent_id: MAESTRO_AGENT.name });
     expect(leaseSub.status).toBe(200);
-    const leaseSubBody = await leaseSub.json() as TaskLeaseResponse;
+    const leaseSubBody = (await leaseSub.json()) as TaskLeaseResponse;
     const completeSub = await postJson(harness, `/tasks/${leaseSubBody.task_id}/complete`, {
       lease_id: leaseSubBody.lease_id,
-      result_summary: 'subtask done',
+      result_summary: "subtask done",
     });
     expect(completeSub.status).toBe(200);
 
@@ -381,7 +390,7 @@ test('maestro board smoke: orchestrate spawn, sub-dispatch accounting, completio
 
     const completeMain = await postJson(harness, `/tasks/${taskId}/complete`, {
       lease_id: orchestrateLease?.id,
-      result_summary: 'done',
+      result_summary: "done",
     });
     expect(completeMain.status).toBe(200);
 
@@ -390,39 +399,48 @@ test('maestro board smoke: orchestrate spawn, sub-dispatch accounting, completio
     await Bun.sleep(0);
 
     const completed = harness.taskWriter.get(taskId);
-    expect(completed.status).toBe('done');
+    expect(completed.status).toBe("done");
 
     const subCount = harness.db
-      .query<{ n: number }, [string]>(
-        `SELECT COUNT(*) AS n FROM tasks WHERE parent_task_id = ? AND kind = 'work'`,
-      )
+      .query<
+        { n: number },
+        [string]
+      >(`SELECT COUNT(*) AS n FROM tasks WHERE parent_task_id = ? AND kind = 'work'`)
       .get(taskId);
     expect(subCount?.n).toBe(2);
 
     const ended = harness.sessions.get(taskId);
     expect(ended?.terminated_at).not.toBeNull();
-    expect(ended?.termination_reason).toBe('completed');
+    expect(ended?.termination_reason).toBe("completed");
 
     await waitFor(() => {
       const row = harness.db
-        .query<{ n: number }, [string]>(
-          `SELECT COUNT(*) AS n FROM agent_performance WHERE agent_name = ?`,
-        )
+        .query<
+          { n: number },
+          [string]
+        >(`SELECT COUNT(*) AS n FROM agent_performance WHERE agent_name = ?`)
         .get(MAESTRO_AGENT.name);
       expect((row?.n ?? 0) > 0).toBe(true);
     });
 
     const spawned = harness.db
-      .query<{ n: number }, [string]>(
-        `SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND kind = 'orchestrate_spawned'`,
-      )
+      .query<
+        { n: number },
+        [string]
+      >(`SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND kind = 'orchestrate_spawned'`)
       .get(taskId);
     expect((spawned?.n ?? 0) > 0).toBe(true);
-    expect(streamEvents.some((event) => event.task_id === taskId && event.kind === 'orchestrate_terminated')).toBe(false);
+    expect(
+      streamEvents.some(
+        (event) => event.task_id === taskId && event.kind === "orchestrate_terminated",
+      ),
+    ).toBe(false);
   } finally {
     abort.abort();
     if (sseBody) {
-      try { await sseBody.cancel(); } catch {}
+      try {
+        await sseBody.cancel();
+      } catch {}
     }
     if (streamDone) {
       await Promise.race([streamDone.catch(() => {}), Bun.sleep(100)]);
@@ -431,16 +449,16 @@ test('maestro board smoke: orchestrate spawn, sub-dispatch accounting, completio
   }
 }, 30_000);
 
-test('maestro board variant A: 80% wall-clock emits warning and ACP inject', async () => {
+test("maestro board variant A: 80% wall-clock emits warning and ACP inject", async () => {
   const harness = createHarness();
   const abort = new AbortController();
   let streamDone: Promise<void> | null = null;
   let sseBody: ReadableStream<Uint8Array> | null = null;
   try {
-    const sseRes = await harness.fetch(
-      '/tasks/events?kind=orchestrate_warning',
-      { headers: authHeaders(harness.token), signal: abort.signal },
-    );
+    const sseRes = await harness.fetch("/tasks/events?kind=orchestrate_warning", {
+      headers: authHeaders(harness.token),
+      signal: abort.signal,
+    });
     expect(sseRes.status).toBe(200);
     expect(sseRes.body).toBeTruthy();
     sseBody = sseRes.body!;
@@ -449,11 +467,11 @@ test('maestro board variant A: 80% wall-clock emits warning and ACP inject', asy
       streamEvents.push(event);
     });
 
-    const filed = await postJson(harness, '/tasks', {
-      prompt: 'warn at 80%',
-      kind: 'orchestrate',
-      created_by_kind: 'human',
-      created_by_id: 'cli',
+    const filed = await postJson(harness, "/tasks", {
+      prompt: "warn at 80%",
+      kind: "orchestrate",
+      created_by_kind: "human",
+      created_by_id: "cli",
       eligibility: { allow_agents: [MAESTRO_AGENT.name] },
       bounds: {
         wall_clock_ms: 60_000,
@@ -462,7 +480,7 @@ test('maestro board variant A: 80% wall-clock emits warning and ACP inject', asy
       },
     });
     expect(filed.status).toBe(201);
-    const taskId = (await filed.json() as { task_id: string }).task_id;
+    const taskId = ((await filed.json()) as { task_id: string }).task_id;
 
     await waitFor(() => {
       expect(harness.sessions.get(taskId)).toBeTruthy();
@@ -473,18 +491,20 @@ test('maestro board variant A: 80% wall-clock emits warning and ACP inject', asy
     await Bun.sleep(0);
 
     expect(harness.injectCalls.length).toBe(1);
-    expect(harness.injectCalls[0]?.message.text).toContain('BUDGET WARNING');
+    expect(harness.injectCalls[0]?.message.text).toContain("BUDGET WARNING");
     expect(harness.sessions.get(taskId)?.soft_warned_at).toBe(harness.nowMs());
 
     await waitForEvent(
       streamEvents,
-      (event) => event.task_id === taskId && event.kind === 'orchestrate_warning',
+      (event) => event.task_id === taskId && event.kind === "orchestrate_warning",
       2_000,
     );
   } finally {
     abort.abort();
     if (sseBody) {
-      try { await sseBody.cancel(); } catch {}
+      try {
+        await sseBody.cancel();
+      } catch {}
     }
     if (streamDone) {
       await Promise.race([streamDone.catch(() => {}), Bun.sleep(100)]);
@@ -493,16 +513,16 @@ test('maestro board variant A: 80% wall-clock emits warning and ACP inject', asy
   }
 }, 20_000);
 
-test('maestro board variant B: 100% wall-clock hard-kill fails task and cancels chain', async () => {
+test("maestro board variant B: 100% wall-clock hard-kill fails task and cancels chain", async () => {
   const harness = createHarness();
   const abort = new AbortController();
   let streamDone: Promise<void> | null = null;
   let sseBody: ReadableStream<Uint8Array> | null = null;
   try {
-    const sseRes = await harness.fetch(
-      '/tasks/events?kind=orchestrate_terminated',
-      { headers: authHeaders(harness.token), signal: abort.signal },
-    );
+    const sseRes = await harness.fetch("/tasks/events?kind=orchestrate_terminated", {
+      headers: authHeaders(harness.token),
+      signal: abort.signal,
+    });
     expect(sseRes.status).toBe(200);
     expect(sseRes.body).toBeTruthy();
     sseBody = sseRes.body!;
@@ -511,11 +531,11 @@ test('maestro board variant B: 100% wall-clock hard-kill fails task and cancels 
       streamEvents.push(event);
     });
 
-    const filed = await postJson(harness, '/tasks', {
-      prompt: 'hard kill at 100%',
-      kind: 'orchestrate',
-      created_by_kind: 'human',
-      created_by_id: 'cli',
+    const filed = await postJson(harness, "/tasks", {
+      prompt: "hard kill at 100%",
+      kind: "orchestrate",
+      created_by_kind: "human",
+      created_by_id: "cli",
       eligibility: { allow_agents: [MAESTRO_AGENT.name] },
       bounds: {
         wall_clock_ms: 10_000,
@@ -524,7 +544,7 @@ test('maestro board variant B: 100% wall-clock hard-kill fails task and cancels 
       },
     });
     expect(filed.status).toBe(201);
-    const taskId = (await filed.json() as { task_id: string }).task_id;
+    const taskId = ((await filed.json()) as { task_id: string }).task_id;
 
     await waitFor(() => {
       expect(harness.sessions.get(taskId)).toBeTruthy();
@@ -537,33 +557,36 @@ test('maestro board variant B: 100% wall-clock hard-kill fails task and cancels 
     await Bun.sleep(0);
 
     const task = harness.taskWriter.get(taskId);
-    expect(task.status).toBe('failed');
-    expect(task.failure_reason).toContain('bounds_exceeded:wall_clock');
+    expect(task.status).toBe("failed");
+    expect(task.failure_reason).toContain("bounds_exceeded:wall_clock");
 
     const ended = harness.sessions.get(taskId);
     expect(ended?.terminated_at).not.toBeNull();
-    expect(ended?.termination_reason).toBe('bounds_exceeded:wall_clock');
+    expect(ended?.termination_reason).toBe("bounds_exceeded:wall_clock");
 
     expect(harness.chainCancelCalls).toContain(session?.chain_handoff_id);
 
     const terminated = harness.db
-      .query<{ payload_json: string | null }, [string]>(
-        `SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_terminated' ORDER BY id DESC LIMIT 1`,
-      )
+      .query<
+        { payload_json: string | null },
+        [string]
+      >(`SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_terminated' ORDER BY id DESC LIMIT 1`)
       .get(taskId);
     expect(terminated).toBeTruthy();
-    const payload = JSON.parse(terminated?.payload_json ?? '{}') as { reason?: string };
-    expect(payload.reason).toBe('bounds_exceeded:wall_clock');
+    const payload = JSON.parse(terminated?.payload_json ?? "{}") as { reason?: string };
+    expect(payload.reason).toBe("bounds_exceeded:wall_clock");
 
     await waitForEvent(
       streamEvents,
-      (event) => event.task_id === taskId && event.kind === 'orchestrate_terminated',
+      (event) => event.task_id === taskId && event.kind === "orchestrate_terminated",
       2_000,
     );
   } finally {
     abort.abort();
     if (sseBody) {
-      try { await sseBody.cancel(); } catch {}
+      try {
+        await sseBody.cancel();
+      } catch {}
     }
     if (streamDone) {
       await Promise.race([streamDone.catch(() => {}), Bun.sleep(100)]);

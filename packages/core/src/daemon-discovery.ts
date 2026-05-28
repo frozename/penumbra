@@ -1,6 +1,6 @@
-import { join } from 'node:path';
-import { homedir } from 'node:os';
-import { existsSync as fsExistsSync } from 'node:fs';
+import { join } from "node:path";
+import { homedir } from "node:os";
+import { existsSync as fsExistsSync } from "node:fs";
 
 export interface ResolveDaemonStorageRootOpts {
   explicit?: string;
@@ -19,22 +19,19 @@ export function resolveDaemonStorageRoot(opts: ResolveDaemonStorageRootOpts = {}
     return env.PENUMBRA_STORAGE_ROOT;
   }
 
-  const candidates = opts.candidates ?? [
-    join(homedir(), '.penumbra'),
-    '/tmp/penumbra-live',
-  ];
-  
+  const candidates = opts.candidates ?? [join(homedir(), ".penumbra"), "/tmp/penumbra-live"];
+
   const exists = opts.existsSync ?? fsExistsSync;
 
   for (const candidate of candidates) {
-    const portPath = join(candidate, 'port');
-    const tokenPath = join(candidate, 'token');
+    const portPath = join(candidate, "port");
+    const tokenPath = join(candidate, "token");
     if (exists(portPath) && exists(tokenPath)) {
       return candidate;
     }
   }
 
-  throw new Error(`penumbra daemon not found. Checked candidate paths: ${candidates.join(', ')}`);
+  throw new Error(`penumbra daemon not found. Checked candidate paths: ${candidates.join(", ")}`);
 }
 
 export interface WaitForDaemonStorageRootOpts extends ResolveDaemonStorageRootOpts {
@@ -66,14 +63,15 @@ export async function waitForDaemonStorageRoot(
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const now = opts.now ?? Date.now;
 
-  const explicit = opts.explicit && opts.explicit.length > 0 ? opts.explicit : opts.env?.PENUMBRA_STORAGE_ROOT;
+  const explicit =
+    opts.explicit && opts.explicit.length > 0 ? opts.explicit : opts.env?.PENUMBRA_STORAGE_ROOT;
   if (explicit) {
     return explicit;
   }
 
   const candidates = opts.candidates ?? [
-    `${process.env.HOME ?? ''}/.penumbra`,
-    '/tmp/penumbra-live',
+    `${process.env.HOME ?? ""}/.penumbra`,
+    "/tmp/penumbra-live",
   ];
 
   // First attempt — fail-fast path so we don't pay the onWaiting / sleep

@@ -1,6 +1,6 @@
-import { existsSync as defaultExistsSync } from 'node:fs';
-import { join } from 'node:path';
-import type { ResolvedProjectEntry } from '../projects/schema.js';
+import { existsSync as defaultExistsSync } from "node:fs";
+import { join } from "node:path";
+import type { ResolvedProjectEntry } from "../projects/schema.js";
 
 export type DispatchRoutingGuardInput = {
   prompt: string;
@@ -9,9 +9,9 @@ export type DispatchRoutingGuardInput = {
 };
 
 export type DispatchRoutingGuardResult =
-  | { status: 'ok'; mentioned_paths: string[] }
+  | { status: "ok"; mentioned_paths: string[] }
   | {
-      status: 'mismatch';
+      status: "mismatch";
       mentioned_paths: string[];
       missing_in_project: string[];
       suggested_project_id?: string;
@@ -32,21 +32,21 @@ export function inspectPromptVsProject(
   };
   const mentioned_paths = collectMentionedPaths(input.prompt, input.registry);
   if (mentioned_paths.length === 0) {
-    return { status: 'ok', mentioned_paths };
+    return { status: "ok", mentioned_paths };
   }
 
   const registryById = new Map(input.registry.map((entry) => [entry.project_id, entry] as const));
   const currentProject = registryById.get(input.project_id);
   const currentRoot = currentProject?.root_path;
 
-  const absoluteMentions = mentioned_paths.filter((value) => value.startsWith('/'));
+  const absoluteMentions = mentioned_paths.filter((value) => value.startsWith("/"));
   const absoluteProjectMentions = new Map<string, number>();
   let sawCurrentProjectPath = false;
   let ambiguousAbsoluteMentions = 0;
   for (const abs of absoluteMentions) {
     const projectResolution = resolveProjectIdFromAbsolutePath(abs, input.registry);
-    if (projectResolution.status === 'none') continue;
-    if (projectResolution.status === 'ambiguous') {
+    if (projectResolution.status === "none") continue;
+    if (projectResolution.status === "ambiguous") {
       ambiguousAbsoluteMentions += 1;
       continue;
     }
@@ -61,14 +61,14 @@ export function inspectPromptVsProject(
   }
   if (absoluteProjectMentions.size > 0 && sawCurrentProjectPath) {
     return {
-      status: 'mismatch',
+      status: "mismatch",
       mentioned_paths,
       missing_in_project: [],
     };
   }
   if (absoluteProjectMentions.size > 0) {
     return {
-      status: 'mismatch',
+      status: "mismatch",
       mentioned_paths,
       missing_in_project: [],
       suggested_project_id: pickMostFrequentProject(absoluteProjectMentions),
@@ -76,7 +76,7 @@ export function inspectPromptVsProject(
   }
   if (ambiguousAbsoluteMentions > 0) {
     return {
-      status: 'mismatch',
+      status: "mismatch",
       mentioned_paths,
       missing_in_project: [],
     };
@@ -84,7 +84,7 @@ export function inspectPromptVsProject(
 
   const packageTokens = mentioned_paths.filter((value) => /^packages\/[A-Za-z0-9_-]+$/.test(value));
   if (packageTokens.length === 0) {
-    return { status: 'ok', mentioned_paths };
+    return { status: "ok", mentioned_paths };
   }
   const missing_in_project: string[] = [];
   const suggestedCounts = new Map<string, number>();
@@ -105,11 +105,11 @@ export function inspectPromptVsProject(
   }
 
   if (missing_in_project.length === 0) {
-    return { status: 'ok', mentioned_paths };
+    return { status: "ok", mentioned_paths };
   }
 
   const result: DispatchRoutingGuardResult = {
-    status: 'mismatch',
+    status: "mismatch",
     mentioned_paths,
     missing_in_project: dedupe(missing_in_project),
   };
@@ -127,13 +127,13 @@ export function collectMentionedPaths(prompt: string, registry: ResolvedProjectE
   for (const entry of registry) {
     const roots = effectiveRoots(entry);
     for (const root of roots) {
-      const rootRe = new RegExp(escapeRegExp(root), 'g');
+      const rootRe = new RegExp(escapeRegExp(root), "g");
       for (const match of prompt.matchAll(rootRe)) {
         const start = match.index ?? -1;
         if (start < 0) continue;
         const end = start + root.length;
         const nextChar = prompt[end];
-        if (nextChar !== undefined && nextChar !== '/' && !terminatorRe.test(nextChar)) continue;
+        if (nextChar !== undefined && nextChar !== "/" && !terminatorRe.test(nextChar)) continue;
 
         let cursor = end;
         while (cursor < prompt.length) {
@@ -163,11 +163,14 @@ export function collectMentionedPaths(prompt: string, registry: ResolvedProjectE
 }
 
 export type ProjectIdResolution =
-  | { status: 'unique'; project_id: string }
-  | { status: 'ambiguous' }
-  | { status: 'none' };
+  | { status: "unique"; project_id: string }
+  | { status: "ambiguous" }
+  | { status: "none" };
 
-export function resolveProjectIdFromAbsolutePath(path: string, registry: ResolvedProjectEntry[]): ProjectIdResolution {
+export function resolveProjectIdFromAbsolutePath(
+  path: string,
+  registry: ResolvedProjectEntry[],
+): ProjectIdResolution {
   let longestRootLength = -1;
   let winningProjectId: string | undefined;
   const tiedProjectIds = new Set<string>();
@@ -187,12 +190,12 @@ export function resolveProjectIdFromAbsolutePath(path: string, registry: Resolve
     }
   }
   if (winningProjectId === undefined) {
-    return { status: 'none' };
+    return { status: "none" };
   }
   if (tiedProjectIds.size > 1) {
-    return { status: 'ambiguous' };
+    return { status: "ambiguous" };
   }
-  return { status: 'unique', project_id: winningProjectId };
+  return { status: "unique", project_id: winningProjectId };
 }
 
 function pickMostFrequentProject(counts: Map<string, number>): string | undefined {
@@ -219,5 +222,5 @@ function effectiveRoots(entry: ResolvedProjectEntry): string[] {
 }
 
 function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

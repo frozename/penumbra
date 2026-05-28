@@ -1,4 +1,4 @@
-import type { Database } from 'bun:sqlite';
+import type { Database } from "bun:sqlite";
 
 export type Handoff = {
   handoff_id: string;
@@ -23,7 +23,7 @@ export function runHandoffPendingSource(input: {
     SELECT handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message, status
     FROM handoffs
     WHERE status = 'pending'
-    ${args?.conversation_id ? 'AND conversation_id = ?' : ''}
+    ${args?.conversation_id ? "AND conversation_id = ?" : ""}
     ORDER BY ts ASC
   `;
   try {

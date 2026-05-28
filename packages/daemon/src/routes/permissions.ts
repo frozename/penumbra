@@ -1,30 +1,42 @@
-import type { Services } from '@penumbra/core';
-import { CreatePermissionRequestSchema, ApprovePermissionRequestSchema } from '@penumbra/core';
+import type { Services } from "@penumbra/core";
+import { CreatePermissionRequestSchema, ApprovePermissionRequestSchema } from "@penumbra/core";
 
-import { json } from './_helpers.js';
+import { json } from "./_helpers.js";
 const DEFAULT_TTL_SECONDS = 300;
 
 async function safeJson(req: Request): Promise<unknown | null> {
-  try { return await req.json(); } catch { return null; }
+  try {
+    return await req.json();
+  } catch {
+    return null;
+  }
 }
 
 export async function permissionsCreateRoute(req: Request, services: Services): Promise<Response> {
   const raw = await safeJson(req);
-  if (raw === null) return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400);
+  if (raw === null)
+    return json(
+      { error: { code: "invalid_json", message: "request body was not valid JSON" } },
+      400,
+    );
 
   const parsed = CreatePermissionRequestSchema.safeParse(raw);
   if (!parsed.success) {
-    return json({
-      error: {
-        code: 'validation_error',
-        message: 'body failed schema validation',
-        field_errors: parsed.error.issues.map((i) => ({ path: i.path, message: i.message })),
+    return json(
+      {
+        error: {
+          code: "validation_error",
+          message: "body failed schema validation",
+          field_errors: parsed.error.issues.map((i) => ({ path: i.path, message: i.message })),
+        },
       },
-    }, 400);
+      400,
+    );
   }
 
-  const ttl_seconds = parsed.data.ttl_seconds
-    ?? Number((services.settings as any)?.permission_ttl_seconds ?? DEFAULT_TTL_SECONDS);
+  const ttl_seconds =
+    parsed.data.ttl_seconds ??
+    Number((services.settings as any)?.permission_ttl_seconds ?? DEFAULT_TTL_SECONDS);
   const now = services.clock();
 
   const { row, created: isFreshCreate } = services.permissionWriter.create({
@@ -42,7 +54,7 @@ export async function permissionsCreateRoute(req: Request, services: Services): 
   // (idempotent re-POST returns the existing row unchanged — no event fanned out).
   if (isFreshCreate) {
     services.permissionEvents.emit({
-      kind: 'permission.created',
+      kind: "permission.created",
       permission_id: row.permission_id,
       ts: row.created_at,
       payload: {
@@ -59,16 +71,20 @@ export async function permissionsCreateRoute(req: Request, services: Services): 
       event_id: services.uuid(),
       ts: row.created_at,
       ingest_ts: row.created_at,
-      source: 'mcp',
-      source_detail: 'permission-audit',
+      source: "mcp",
+      source_detail: "permission-audit",
       project_id: null,
       user_id: services.machineId.get(),
       machine_id: services.machineId.get(),
       session_id: row.conversation_id,
-      event_type: 'permission-requested',
-      lane: 'unknown',
-      provider: null, model: null,
-      tokens_in: null, tokens_out: null, cost_usd: null, latency_ms: null,
+      event_type: "permission-requested",
+      lane: "unknown",
+      provider: null,
+      model: null,
+      tokens_in: null,
+      tokens_out: null,
+      cost_usd: null,
+      latency_ms: null,
       request_id: null,
       origin: null,
       payload_json: {
@@ -89,37 +105,47 @@ export async function permissionsCreateRoute(req: Request, services: Services): 
   });
 }
 
-import { PermissionStatusSchema } from '@penumbra/core';
+import { PermissionStatusSchema } from "@penumbra/core";
 
 const VALID_STATUSES = new Set<string>(PermissionStatusSchema.options);
 
-export async function permissionsGetRoute(_req: Request, permission_id: string, services: Services): Promise<Response> {
+export async function permissionsGetRoute(
+  _req: Request,
+  permission_id: string,
+  services: Services,
+): Promise<Response> {
   const row = services.permissionReader.get(permission_id);
   if (!row) {
-    return json({ error: { code: 'not_found', message: `permission ${permission_id} not found` } }, 404);
+    return json(
+      { error: { code: "not_found", message: `permission ${permission_id} not found` } },
+      404,
+    );
   }
   return json({ permission: row });
 }
 
 export async function permissionsListRoute(req: Request, services: Services): Promise<Response> {
   const url = new URL(req.url);
-  const conv = url.searchParams.get('conversation_id') ?? undefined;
-  const parent = url.searchParams.get('parent_handoff_id') ?? undefined;
-  const statusParam = url.searchParams.get('status');
+  const conv = url.searchParams.get("conversation_id") ?? undefined;
+  const parent = url.searchParams.get("parent_handoff_id") ?? undefined;
+  const statusParam = url.searchParams.get("status");
 
   let statuses: string[];
   if (statusParam !== null) {
-    statuses = statusParam.split(',').map((s) => s.trim()).filter(Boolean);
+    statuses = statusParam
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
     if (statuses.length === 0) {
-      return json({ error: { code: 'validation_error', message: 'status is empty' } }, 400);
+      return json({ error: { code: "validation_error", message: "status is empty" } }, 400);
     }
     for (const s of statuses) {
       if (!VALID_STATUSES.has(s)) {
-        return json({ error: { code: 'validation_error', message: `unknown status: ${s}` } }, 400);
+        return json({ error: { code: "validation_error", message: `unknown status: ${s}` } }, 400);
       }
     }
   } else {
-    statuses = ['pending'];
+    statuses = ["pending"];
   }
 
   const permissions = services.permissionReader.listByStatus({
@@ -131,20 +157,29 @@ export async function permissionsListRoute(req: Request, services: Services): Pr
 }
 
 export async function permissionsDecideRoute(
-  req: Request, permission_id: string, services: Services,
+  req: Request,
+  permission_id: string,
+  services: Services,
 ): Promise<Response> {
   const raw = await safeJson(req);
-  if (raw === null) return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400);
+  if (raw === null)
+    return json(
+      { error: { code: "invalid_json", message: "request body was not valid JSON" } },
+      400,
+    );
 
   const parsed = ApprovePermissionRequestSchema.safeParse(raw);
   if (!parsed.success) {
-    return json({
-      error: {
-        code: 'validation_error',
-        message: 'body failed schema validation',
-        field_errors: parsed.error.issues.map((i) => ({ path: i.path, message: i.message })),
+    return json(
+      {
+        error: {
+          code: "validation_error",
+          message: "body failed schema validation",
+          field_errors: parsed.error.issues.map((i) => ({ path: i.path, message: i.message })),
+        },
       },
-    }, 400);
+      400,
+    );
   }
 
   const decided_at = services.clock().toISOString();
@@ -161,16 +196,25 @@ export async function permissionsDecideRoute(
   if (!row) {
     const cur = services.permissionReader.get(permission_id);
     if (!cur) {
-      return json({ error: { code: 'not_found', message: `permission ${permission_id} does not exist` } }, 404);
+      return json(
+        { error: { code: "not_found", message: `permission ${permission_id} does not exist` } },
+        404,
+      );
     }
-    return json({
-      error: { code: 'conflict', message: `permission ${permission_id} is ${cur.status}, not pending` },
-      current_status: cur.status,
-    }, 409);
+    return json(
+      {
+        error: {
+          code: "conflict",
+          message: `permission ${permission_id} is ${cur.status}, not pending`,
+        },
+        current_status: cur.status,
+      },
+      409,
+    );
   }
 
   services.permissionEvents.emit({
-    kind: 'permission.decided',
+    kind: "permission.decided",
     permission_id: row.permission_id,
     ts: decided_at,
     payload: {
@@ -191,16 +235,20 @@ export async function permissionsDecideRoute(
     event_id: services.uuid(),
     ts: decided_at,
     ingest_ts: decided_at,
-    source: 'mcp',
-    source_detail: 'permission-audit',
+    source: "mcp",
+    source_detail: "permission-audit",
     project_id: null,
     user_id: services.machineId.get(),
     machine_id: services.machineId.get(),
     session_id: row.conversation_id,
-    event_type: 'permission-decided',
-    lane: 'unknown',
-    provider: null, model: null,
-    tokens_in: null, tokens_out: null, cost_usd: null, latency_ms: null,
+    event_type: "permission-decided",
+    lane: "unknown",
+    provider: null,
+    model: null,
+    tokens_in: null,
+    tokens_out: null,
+    cost_usd: null,
+    latency_ms: null,
     request_id: null,
     origin: null,
     payload_json: {

@@ -1,14 +1,19 @@
-import { z } from 'zod';
-import type { Database } from 'bun:sqlite';
-import type { Services } from '@penumbra/core';
-import { json } from './_helpers.js';
-import { getPrincipal } from '../auth.js';
+import { z } from "zod";
+import type { Database } from "bun:sqlite";
+import type { Services } from "@penumbra/core";
+import { json } from "./_helpers.js";
+import { getPrincipal } from "../auth.js";
 
 function requireAdminPrincipal(req: Request, _services: Services): Response | null {
   const principal = getPrincipal(req);
-  if (!principal || principal.kind === 'worker') {
+  if (!principal || principal.kind === "worker") {
     return json(
-      { error: { code: 'admin_only', message: 'curator pattern admin requires non-worker principal' } },
+      {
+        error: {
+          code: "admin_only",
+          message: "curator pattern admin requires non-worker principal",
+        },
+      },
       403,
     );
   }
@@ -19,9 +24,9 @@ export function queryCuratorPatterns(
   db: Database,
   opts: { status?: string },
 ): { patterns: unknown[] } {
-  const status = opts.status ?? 'approved';
+  const status = opts.status ?? "approved";
   const rows =
-    status === 'all'
+    status === "all"
       ? db
           .prepare(
             `SELECT pattern_id, pattern, reason, status, proposed_by, proposed_at, enabled
@@ -45,7 +50,7 @@ export function insertCuratorPattern(
   db.prepare(
     `INSERT INTO curator_ephemera_patterns (pattern_id, pattern, reason, status, proposed_by, proposed_at, enabled)
      VALUES (?, ?, ?, 'queued', ?, ?, 0)`,
-  ).run(pattern_id, opts.pattern, opts.reason, opts.proposed_by ?? 'mcp-caller', Date.now());
+  ).run(pattern_id, opts.pattern, opts.reason, opts.proposed_by ?? "mcp-caller", Date.now());
   return { pattern_id };
 }
 
@@ -72,7 +77,7 @@ export function disableCuratorPattern(
 }
 
 const ListQuerySchema = z.object({
-  status: z.enum(['queued', 'approved', 'rejected', 'all']).optional(),
+  status: z.enum(["queued", "approved", "rejected", "all"]).optional(),
 });
 
 const AddBodySchema = z.object({
@@ -87,18 +92,15 @@ export async function curatorPatternsListRoute(
 ): Promise<Response> {
   const url = new URL(req.url);
   const parsed = ListQuerySchema.safeParse({
-    status: url.searchParams.get('status') ?? undefined,
+    status: url.searchParams.get("status") ?? undefined,
   });
   if (!parsed.success) {
-    return json({ error: { code: 'validation_error', message: 'invalid query parameters' } }, 400);
+    return json({ error: { code: "validation_error", message: "invalid query parameters" } }, 400);
   }
   return json(queryCuratorPatterns(services.db, parsed.data));
 }
 
-export async function curatorPatternsAddRoute(
-  req: Request,
-  services: Services,
-): Promise<Response> {
+export async function curatorPatternsAddRoute(req: Request, services: Services): Promise<Response> {
   const workerGuard = requireAdminPrincipal(req, services);
   if (workerGuard) return workerGuard;
 
@@ -106,11 +108,11 @@ export async function curatorPatternsAddRoute(
   try {
     body = await req.json();
   } catch {
-    return json({ error: { code: 'invalid_json', message: 'invalid json' } }, 400);
+    return json({ error: { code: "invalid_json", message: "invalid json" } }, 400);
   }
   const parsed = AddBodySchema.safeParse(body);
   if (!parsed.success) {
-    return json({ error: { code: 'validation_error', message: 'invalid body' } }, 400);
+    return json({ error: { code: "validation_error", message: "invalid body" } }, 400);
   }
   return json(insertCuratorPattern(services.db, parsed.data));
 }
@@ -124,7 +126,7 @@ export async function curatorPatternsApproveRoute(
   if (workerGuard) return workerGuard;
 
   const result = approveCuratorPattern(services.db, pattern_id);
-  if (!result) return json({ error: { code: 'not_found', message: 'pattern not found' } }, 404);
+  if (!result) return json({ error: { code: "not_found", message: "pattern not found" } }, 404);
   return json(result);
 }
 
@@ -137,6 +139,6 @@ export async function curatorPatternsDisableRoute(
   if (workerGuard) return workerGuard;
 
   const result = disableCuratorPattern(services.db, pattern_id);
-  if (!result) return json({ error: { code: 'not_found', message: 'pattern not found' } }, 404);
+  if (!result) return json({ error: { code: "not_found", message: "pattern not found" } }, 404);
   return json(result);
 }

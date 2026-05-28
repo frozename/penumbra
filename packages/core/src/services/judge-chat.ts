@@ -5,24 +5,21 @@ export type JudgeChatFn = (opts: {
 
 const JUDGE_CHAT_TIMEOUT_MS = 30_000;
 
-export function createJudgeChat(opts: {
-  baseUrl: string;
-  token?: string;
-}): JudgeChatFn {
-  const baseUrl = opts.baseUrl.replace(/\/$/, '');
+export function createJudgeChat(opts: { baseUrl: string; token?: string }): JudgeChatFn {
+  const baseUrl = opts.baseUrl.replace(/\/$/, "");
   return async (chatOpts) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), JUDGE_CHAT_TIMEOUT_MS);
     let res: Response;
     try {
       const headers: Record<string, string> = {
-        'content-type': 'application/json',
+        "content-type": "application/json",
       };
       if (opts.token) {
         headers.authorization = `Bearer ${opts.token}`;
       }
       res = await fetch(`${baseUrl}/v1/chat/completions`, {
-        method: 'POST',
+        method: "POST",
         headers,
         body: JSON.stringify({
           model: chatOpts.model,
@@ -46,14 +43,14 @@ export function createJudgeChat(opts: {
     };
     const content = body.choices?.[0]?.message?.content;
     if (!content) {
-      throw new Error('judge chat: empty response');
+      throw new Error("judge chat: empty response");
     }
     return content;
   };
 }
 
-const DEFAULT_JUDGE_BASE_URL = 'http://127.0.0.1:7944';
-const DEFAULT_JUDGE_MODEL = 'local';
+const DEFAULT_JUDGE_BASE_URL = "http://127.0.0.1:7944";
+const DEFAULT_JUDGE_MODEL = "local";
 
 export interface ResolvedJudgeConfig {
   baseUrl: string;
@@ -80,8 +77,8 @@ export function resolveJudgeConfig(
 
   const modelEnvNames = [
     ...(opts.extraModelEnv ?? []),
-    'PENUMBRA_JUDGE_MODEL',
-    'PENUMBRA_SIRIUS_MODEL',
+    "PENUMBRA_JUDGE_MODEL",
+    "PENUMBRA_SIRIUS_MODEL",
   ];
   let model = DEFAULT_JUDGE_MODEL;
   let modelFromEnv = false;
@@ -94,7 +91,7 @@ export function resolveJudgeConfig(
     }
   }
 
-  const token = env.PENUMBRA_JUDGE_TOKEN || env.PENUMBRA_SIRIUS_TOKEN || '';
+  const token = env.PENUMBRA_JUDGE_TOKEN || env.PENUMBRA_SIRIUS_TOKEN || "";
 
   return {
     baseUrl,

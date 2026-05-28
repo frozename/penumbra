@@ -1,4 +1,4 @@
-import type { Services } from '@penumbra/core';
+import type { Services } from "@penumbra/core";
 
 const DEFAULT_TTL_SECONDS = 300;
 
@@ -25,10 +25,13 @@ export interface InProcessPermissionDecision {
  * (sweepers/permission-ttl.ts) emits `permission.expired` and reaps the row.
  */
 export class InProcessPermissionService {
-  private waiters = new Map<string, {
-    resolve: (d: InProcessPermissionDecision) => void;
-    reject: (e: Error) => void;
-  }>();
+  private waiters = new Map<
+    string,
+    {
+      resolve: (d: InProcessPermissionDecision) => void;
+      reject: (e: Error) => void;
+    }
+  >();
   private unsubscribe: (() => void) | null = null;
 
   constructor(private readonly services: Services) {}
@@ -38,14 +41,14 @@ export class InProcessPermissionService {
     this.unsubscribe = this.services.permissionEvents.subscribe((evt) => {
       const w = this.waiters.get(evt.permission_id);
       if (!w) return;
-      if (evt.kind === 'permission.decided') {
+      if (evt.kind === "permission.decided") {
         this.waiters.delete(evt.permission_id);
         const payload = evt.payload as { decision?: string; reason?: string | null };
         w.resolve({
-          approved: payload.decision === 'approve',
+          approved: payload.decision === "approve",
           reason: payload.reason ?? null,
         });
-      } else if (evt.kind === 'permission.expired') {
+      } else if (evt.kind === "permission.expired") {
         this.waiters.delete(evt.permission_id);
         w.reject(new Error(`permission ${evt.permission_id} expired`));
       }
@@ -56,13 +59,15 @@ export class InProcessPermissionService {
     this.unsubscribe?.();
     this.unsubscribe = null;
     for (const w of this.waiters.values()) {
-      w.reject(new Error('InProcessPermissionService stopped'));
+      w.reject(new Error("InProcessPermissionService stopped"));
     }
     this.waiters.clear();
   }
 
-  async requestPermission(input: InProcessPermissionRequestInput): Promise<InProcessPermissionDecision> {
-    if (!this.unsubscribe) throw new Error('InProcessPermissionService not started');
+  async requestPermission(
+    input: InProcessPermissionRequestInput,
+  ): Promise<InProcessPermissionDecision> {
+    if (!this.unsubscribe) throw new Error("InProcessPermissionService not started");
 
     const handoff = this.services.handoffReader.get(input.parent_handoff_id);
     const conversation_id = handoff?.conversation_id ?? input.parent_handoff_id;
@@ -75,7 +80,7 @@ export class InProcessPermissionService {
       this.waiters.set(permission_id, { resolve, reject });
     });
 
-    let row: Awaited<ReturnType<typeof this.services.permissionWriter.create>>['row'];
+    let row: Awaited<ReturnType<typeof this.services.permissionWriter.create>>["row"];
     let created: boolean;
     try {
       const result = this.services.permissionWriter.create({
@@ -97,7 +102,7 @@ export class InProcessPermissionService {
 
     if (created) {
       this.services.permissionEvents.emit({
-        kind: 'permission.created',
+        kind: "permission.created",
         permission_id: row.permission_id,
         ts: row.created_at,
         payload: {
@@ -114,16 +119,20 @@ export class InProcessPermissionService {
         event_id: this.services.uuid(),
         ts: row.created_at,
         ingest_ts: row.created_at,
-        source: 'mcp',
-        source_detail: 'permission-audit',
+        source: "mcp",
+        source_detail: "permission-audit",
         project_id: null,
         user_id: this.services.machineId.get(),
         machine_id: this.services.machineId.get(),
         session_id: row.conversation_id,
-        event_type: 'permission-requested',
-        lane: 'unknown',
-        provider: null, model: null,
-        tokens_in: null, tokens_out: null, cost_usd: null, latency_ms: null,
+        event_type: "permission-requested",
+        lane: "unknown",
+        provider: null,
+        model: null,
+        tokens_in: null,
+        tokens_out: null,
+        cost_usd: null,
+        latency_ms: null,
         request_id: null,
         origin: null,
         payload_json: {
@@ -137,10 +146,10 @@ export class InProcessPermissionService {
       });
     }
 
-    if (row.status !== 'pending') {
+    if (row.status !== "pending") {
       this.waiters.delete(permission_id);
-      if (row.status === 'approved' || row.status === 'rejected') {
-        return { approved: row.status === 'approved', reason: row.decision_reason ?? null };
+      if (row.status === "approved" || row.status === "rejected") {
+        return { approved: row.status === "approved", reason: row.decision_reason ?? null };
       }
       throw new Error(`permission ${permission_id} expired`);
     }

@@ -1,11 +1,4 @@
-const FORBIDDEN_URI_PREFIXES = [
-  'http://',
-  'https://',
-  'file://',
-  'ftp://',
-  'javascript:',
-  'data:',
-];
+const FORBIDDEN_URI_PREFIXES = ["http://", "https://", "file://", "ftp://", "javascript:", "data:"];
 
 export function sanitizeTitleForQuery(title: string): string | null {
   const trimmed = title.trim();

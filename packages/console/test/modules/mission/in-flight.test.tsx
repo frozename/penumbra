@@ -38,42 +38,43 @@ afterEach(() => {
 
 describe("InFlightChains", () => {
   test("renders live chain cards from the daemon", async () => {
-    const fetchStub = mock(async () =>
-      new Response(
-        JSON.stringify({
-          chains: [
-            {
-              conversation_id: "c-1",
-              project_id: null,
-              latest_status: "dispatched",
-              latest_ts: "2026-05-08T22:00:00Z",
-              earliest_ts: "2026-05-08T21:55:00Z",
-              handoff_count: 3,
-              root_handoff_id: "h-abc12345",
-              to_agent: null,
-              to_role: null,
-            },
-            {
-              conversation_id: "c-2",
-              project_id: null,
-              latest_status: "dispatched",
-              latest_ts: "2026-05-08T22:01:00Z",
-              earliest_ts: "2026-05-08T21:58:00Z",
-              handoff_count: 1,
-              root_handoff_id: null,
-              to_agent: null,
-              to_role: null,
-            },
-          ],
-          next_offset: 2,
-          limit: 2,
-          offset: 0,
-        }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        },
-      ),
+    const fetchStub = mock(
+      async () =>
+        new Response(
+          JSON.stringify({
+            chains: [
+              {
+                conversation_id: "c-1",
+                project_id: null,
+                latest_status: "dispatched",
+                latest_ts: "2026-05-08T22:00:00Z",
+                earliest_ts: "2026-05-08T21:55:00Z",
+                handoff_count: 3,
+                root_handoff_id: "h-abc12345",
+                to_agent: null,
+                to_role: null,
+              },
+              {
+                conversation_id: "c-2",
+                project_id: null,
+                latest_status: "dispatched",
+                latest_ts: "2026-05-08T22:01:00Z",
+                earliest_ts: "2026-05-08T21:58:00Z",
+                handoff_count: 1,
+                root_handoff_id: null,
+                to_agent: null,
+                to_role: null,
+              },
+            ],
+            next_offset: 2,
+            limit: 2,
+            offset: 0,
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
     );
     const originalFetch = globalThis.fetch;
     globalThis.fetch = fetchStub as unknown as typeof globalThis.fetch;
@@ -100,19 +101,20 @@ describe("InFlightChains", () => {
   });
 
   test("renders the empty state when no chains are running", async () => {
-    const fetchStub = mock(async () =>
-      new Response(
-        JSON.stringify({
-          chains: [],
-          next_offset: 0,
-          limit: 50,
-          offset: 0,
-        }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        },
-      ),
+    const fetchStub = mock(
+      async () =>
+        new Response(
+          JSON.stringify({
+            chains: [],
+            next_offset: 0,
+            limit: 50,
+            offset: 0,
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
     );
     const originalFetch = globalThis.fetch;
     globalThis.fetch = fetchStub as unknown as typeof globalThis.fetch;
@@ -134,31 +136,32 @@ describe("InFlightChains", () => {
   });
 
   test("does not render the disabled P1 open button", async () => {
-    const fetchStub = mock(async () =>
-      new Response(
-        JSON.stringify({
-          chains: [
-            {
-              conversation_id: "c-1",
-              project_id: null,
-              latest_status: "dispatched",
-              latest_ts: "2026-05-08T22:00:00Z",
-              earliest_ts: "2026-05-08T21:55:00Z",
-              handoff_count: 3,
-              root_handoff_id: "h-abc12345",
-              to_agent: null,
-              to_role: null,
-            },
-          ],
-          next_offset: 1,
-          limit: 1,
-          offset: 0,
-        }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        },
-      ),
+    const fetchStub = mock(
+      async () =>
+        new Response(
+          JSON.stringify({
+            chains: [
+              {
+                conversation_id: "c-1",
+                project_id: null,
+                latest_status: "dispatched",
+                latest_ts: "2026-05-08T22:00:00Z",
+                earliest_ts: "2026-05-08T21:55:00Z",
+                handoff_count: 3,
+                root_handoff_id: "h-abc12345",
+                to_agent: null,
+                to_role: null,
+              },
+            ],
+            next_offset: 1,
+            limit: 1,
+            offset: 0,
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
     );
     const originalFetch = globalThis.fetch;
     globalThis.fetch = fetchStub as unknown as typeof globalThis.fetch;
@@ -174,9 +177,7 @@ describe("InFlightChains", () => {
       expect(container.querySelectorAll(".chain-card")).toHaveLength(1);
     });
 
-    expect(
-      container.querySelector("button[aria-label='Open chain (P1)']"),
-    ).toBeNull();
+    expect(container.querySelector("button[aria-label='Open chain (P1)']")).toBeNull();
 
     unmount();
     client.clear();

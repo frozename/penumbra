@@ -1,12 +1,12 @@
-import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { runAcpPromotion } from '../../../scripts/acp-promotion/run.js';
+import { describe, expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { runAcpPromotion } from "../../../scripts/acp-promotion/run.js";
 
 function configFile(): { path: string; cleanup: () => void } {
-  const dir = mkdtempSync(join(tmpdir(), 'acp-promotion-cfg-'));
-  const path = join(dir, 'agentchat.yaml');
+  const dir = mkdtempSync(join(tmpdir(), "acp-promotion-cfg-"));
+  const path = join(dir, "agentchat.yaml");
   writeFileSync(
     path,
     `
@@ -23,216 +23,271 @@ default_roles: {}
   return { path, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
-describe('runAcpPromotion', () => {
-  test('dry-run validates requested agents and does not dispatch', async () => {
+describe("runAcpPromotion", () => {
+  test("dry-run validates requested agents and does not dispatch", async () => {
     const cfg = configFile();
     try {
       const result = await runAcpPromotion({
         configPath: cfg.path,
         live: false,
-        agents: ['gemini-acp-pro'],
-        baselines: ['gemini'],
-        scenarios: ['ping_exact'],
-        now: () => '2026-05-02T00:00:00.000Z',
+        agents: ["gemini-acp-pro"],
+        baselines: ["gemini"],
+        scenarios: ["ping_exact"],
+        now: () => "2026-05-02T00:00:00.000Z",
       });
 
       expect(result.rows).toEqual([
-        expect.objectContaining({ agent: 'gemini-acp-pro', scenario: 'ping_exact', status: 'skipped' }),
-        expect.objectContaining({ agent: 'gemini', scenario: 'ping_exact', status: 'skipped' }),
+        expect.objectContaining({
+          agent: "gemini-acp-pro",
+          scenario: "ping_exact",
+          status: "skipped",
+        }),
+        expect.objectContaining({ agent: "gemini", scenario: "ping_exact", status: "skipped" }),
       ]);
     } finally {
       cfg.cleanup();
     }
   });
 
-  test('live mode starts a chain and evaluates daemon evidence', async () => {
+  test("live mode starts a chain and evaluates daemon evidence", async () => {
     const cfg = configFile();
     const calls: string[] = [];
     try {
       const result = await runAcpPromotion({
         configPath: cfg.path,
         live: true,
-        agents: ['gemini-acp-pro'],
+        agents: ["gemini-acp-pro"],
         baselines: [],
-        scenarios: ['ping_exact'],
-        now: () => '2026-05-02T00:00:00.000Z',
+        scenarios: ["ping_exact"],
+        now: () => "2026-05-02T00:00:00.000Z",
         pollIntervalMs: 1,
         client: {
           async startChain() {
-            calls.push('startChain');
-            return { handoff_id: 'h-live', conversation_id: 'c-live' };
+            calls.push("startChain");
+            return { handoff_id: "h-live", conversation_id: "c-live" };
           },
           async getHandoffStatus() {
             return {
-              handoff_id: 'h-live',
-              status: 'completed',
+              handoff_id: "h-live",
+              status: "completed",
               error_summary: null,
-              worker_id: 'w',
-              started_at: '2026-05-02T00:00:00.000Z',
-              resolved_at: '2026-05-02T00:00:05.000Z',
+              worker_id: "w",
+              started_at: "2026-05-02T00:00:00.000Z",
+              resolved_at: "2026-05-02T00:00:05.000Z",
               latency_seconds: 5,
-              reliability: { status: 'complete', trustworthy: true, recommended_action: 'accept', summary: 'ok' },
+              reliability: {
+                status: "complete",
+                trustworthy: true,
+                recommended_action: "accept",
+                summary: "ok",
+              },
             };
           },
           async getChainResponses() {
-            return { responses: [{ agent: 'gemini-acp-pro', text: 'ACP_PROMOTION_PING_OK\n', ts: '2026-05-02T00:00:05.000Z' }] };
+            return {
+              responses: [
+                {
+                  agent: "gemini-acp-pro",
+                  text: "ACP_PROMOTION_PING_OK\n",
+                  ts: "2026-05-02T00:00:05.000Z",
+                },
+              ],
+            };
           },
           async getDispatchTimeline() {
-            return { events: [{ kind: 'acp.session.start' }, { kind: 'acp.session.end' }] };
+            return { events: [{ kind: "acp.session.start" }, { kind: "acp.session.end" }] };
           },
           async dispatchAudit() {
-            return { report: { status: 'complete', trustworthy: true, recommended_action: 'accept' } };
+            return {
+              report: { status: "complete", trustworthy: true, recommended_action: "accept" },
+            };
           },
           async inspectWorktree() {
-            return { worktree: { path: '/tmp/wt' }, diff_against_main: '', branch_log: '' };
+            return { worktree: { path: "/tmp/wt" }, diff_against_main: "", branch_log: "" };
           },
         },
       });
 
-      expect(calls).toEqual(['startChain']);
-      expect(result.rows[0]).toMatchObject({ agent: 'gemini-acp-pro', status: 'passed', handoff_id: 'h-live' });
+      expect(calls).toEqual(["startChain"]);
+      expect(result.rows[0]).toMatchObject({
+        agent: "gemini-acp-pro",
+        status: "passed",
+        handoff_id: "h-live",
+      });
     } finally {
       cfg.cleanup();
     }
   });
 
-  test('live mode waits briefly for dispatch.end reliability after terminal status', async () => {
+  test("live mode waits briefly for dispatch.end reliability after terminal status", async () => {
     const cfg = configFile();
     let statusCalls = 0;
     try {
       const result = await runAcpPromotion({
         configPath: cfg.path,
         live: true,
-        agents: ['gemini-acp-pro'],
+        agents: ["gemini-acp-pro"],
         baselines: [],
-        scenarios: ['ping_exact'],
-        now: () => '2026-05-02T00:00:00.000Z',
+        scenarios: ["ping_exact"],
+        now: () => "2026-05-02T00:00:00.000Z",
         pollIntervalMs: 1,
         client: {
           async startChain() {
-            return { handoff_id: 'h-flush', conversation_id: 'c-flush' };
+            return { handoff_id: "h-flush", conversation_id: "c-flush" };
           },
           async getHandoffStatus() {
             statusCalls++;
             return {
-              handoff_id: 'h-flush',
-              status: 'completed',
+              handoff_id: "h-flush",
+              status: "completed",
               error_summary: null,
-              worker_id: 'w',
-              started_at: '2026-05-02T00:00:00.000Z',
-              resolved_at: '2026-05-02T00:00:05.000Z',
+              worker_id: "w",
+              started_at: "2026-05-02T00:00:00.000Z",
+              resolved_at: "2026-05-02T00:00:05.000Z",
               latency_seconds: 5,
-              reliability: statusCalls === 1
-                ? { status: 'missing_dispatch_end', trustworthy: false, recommended_action: 'review_manually', summary: 'not flushed yet' }
-                : { status: 'complete', trustworthy: true, recommended_action: 'accept', summary: 'ok' },
+              reliability:
+                statusCalls === 1
+                  ? {
+                      status: "missing_dispatch_end",
+                      trustworthy: false,
+                      recommended_action: "review_manually",
+                      summary: "not flushed yet",
+                    }
+                  : {
+                      status: "complete",
+                      trustworthy: true,
+                      recommended_action: "accept",
+                      summary: "ok",
+                    },
             };
           },
           async getChainResponses() {
-            return { responses: [{ agent: 'gemini-acp-pro', text: 'ACP_PROMOTION_PING_OK', ts: 't' }] };
+            return {
+              responses: [{ agent: "gemini-acp-pro", text: "ACP_PROMOTION_PING_OK", ts: "t" }],
+            };
           },
           async getDispatchTimeline() {
-            return { events: [{ kind: 'dispatch.end' }] };
+            return { events: [{ kind: "dispatch.end" }] };
           },
           async dispatchAudit() {
-            return { report: { status: 'complete', trustworthy: true, recommended_action: 'accept' } };
+            return {
+              report: { status: "complete", trustworthy: true, recommended_action: "accept" },
+            };
           },
           async inspectWorktree() {
-            return { worktree: { path: '/tmp/wt' }, diff_against_main: '', branch_log: '' };
+            return { worktree: { path: "/tmp/wt" }, diff_against_main: "", branch_log: "" };
           },
         },
       });
 
       expect(statusCalls).toBeGreaterThanOrEqual(2);
-      expect(result.rows[0]).toMatchObject({ status: 'passed', reliability_status: 'complete' });
+      expect(result.rows[0]).toMatchObject({ status: "passed", reliability_status: "complete" });
     } finally {
       cfg.cleanup();
     }
   });
 
-  test('live mode verifies write_worktree_file artifact through worktree grep', async () => {
+  test("live mode verifies write_worktree_file artifact through worktree grep", async () => {
     const cfg = configFile();
     try {
       const result = await runAcpPromotion({
         configPath: cfg.path,
         live: true,
-        agents: ['gemini-acp-pro'],
+        agents: ["gemini-acp-pro"],
         baselines: [],
-        scenarios: ['write_worktree_file'],
-        now: () => '2026-05-02T00:00:00.000Z',
+        scenarios: ["write_worktree_file"],
+        now: () => "2026-05-02T00:00:00.000Z",
         pollIntervalMs: 1,
         client: {
           async startChain() {
-            return { handoff_id: 'h-write', conversation_id: 'c-write' };
+            return { handoff_id: "h-write", conversation_id: "c-write" };
           },
           async getHandoffStatus() {
             return {
-              handoff_id: 'h-write',
-              status: 'completed',
+              handoff_id: "h-write",
+              status: "completed",
               error_summary: null,
-              worker_id: 'w',
+              worker_id: "w",
               started_at: null,
               resolved_at: null,
               latency_seconds: 7,
-              reliability: { status: 'complete', trustworthy: true, recommended_action: 'accept', summary: 'ok' },
+              reliability: {
+                status: "complete",
+                trustworthy: true,
+                recommended_action: "accept",
+                summary: "ok",
+              },
             };
           },
           async getChainResponses() {
-            return { responses: [{ agent: 'gemini-acp-pro', text: 'ACP_PROMOTION_WRITE_DONE', ts: 't' }] };
+            return {
+              responses: [{ agent: "gemini-acp-pro", text: "ACP_PROMOTION_WRITE_DONE", ts: "t" }],
+            };
           },
           async getDispatchTimeline() {
             return { events: [] };
           },
           async dispatchAudit() {
-            return { report: { status: 'complete', trustworthy: true, recommended_action: 'accept' } };
+            return {
+              report: { status: "complete", trustworthy: true, recommended_action: "accept" },
+            };
           },
           async inspectWorktree() {
             return {
-              worktree: { path: '/tmp/wt' },
-              diff_against_main: 'diff --git a/acp-promotion-smoke.txt b/acp-promotion-smoke.txt',
-              branch_log: '',
+              worktree: { path: "/tmp/wt" },
+              diff_against_main: "diff --git a/acp-promotion-smoke.txt b/acp-promotion-smoke.txt",
+              branch_log: "",
             };
           },
           async grepInWorktree() {
-            return { results: [{ path: 'acp-promotion-smoke.txt', line: 1, text: 'ACP_WRITE_OK' }], truncated: false };
+            return {
+              results: [{ path: "acp-promotion-smoke.txt", line: 1, text: "ACP_WRITE_OK" }],
+              truncated: false,
+            };
           },
         } as any,
       });
 
       expect(result.rows[0]).toMatchObject({
-        status: 'passed',
+        status: "passed",
         artifact_verified: true,
-        expected_artifact: 'acp-promotion-smoke.txt',
+        expected_artifact: "acp-promotion-smoke.txt",
       });
     } finally {
       cfg.cleanup();
     }
   });
 
-  test('live mode records artifact verification failure instead of throwing when grep is unavailable', async () => {
+  test("live mode records artifact verification failure instead of throwing when grep is unavailable", async () => {
     const cfg = configFile();
     try {
       const result = await runAcpPromotion({
         configPath: cfg.path,
         live: true,
-        agents: ['gemini-acp-pro'],
+        agents: ["gemini-acp-pro"],
         baselines: [],
-        scenarios: ['write_worktree_file'],
-        now: () => '2026-05-02T00:00:00.000Z',
+        scenarios: ["write_worktree_file"],
+        now: () => "2026-05-02T00:00:00.000Z",
         pollIntervalMs: 1,
         client: {
           async startChain() {
-            return { handoff_id: 'h-grep-missing', conversation_id: 'c-grep-missing' };
+            return { handoff_id: "h-grep-missing", conversation_id: "c-grep-missing" };
           },
           async getHandoffStatus() {
             return {
-              handoff_id: 'h-grep-missing',
-              status: 'failed',
-              error_summary: 'cancelled',
-              worker_id: 'w',
+              handoff_id: "h-grep-missing",
+              status: "failed",
+              error_summary: "cancelled",
+              worker_id: "w",
               started_at: null,
               resolved_at: null,
               latency_seconds: 300,
-              reliability: { status: 'non_terminal_stale', trustworthy: false, recommended_action: 'inspect_worktree', summary: 'stale' },
+              reliability: {
+                status: "non_terminal_stale",
+                trustworthy: false,
+                recommended_action: "inspect_worktree",
+                summary: "stale",
+              },
             };
           },
           async getChainResponses() {
@@ -242,22 +297,30 @@ describe('runAcpPromotion', () => {
             return { events: [] };
           },
           async dispatchAudit() {
-            return { report: { status: 'non_terminal_stale', trustworthy: false, recommended_action: 'inspect_worktree' } };
+            return {
+              report: {
+                status: "non_terminal_stale",
+                trustworthy: false,
+                recommended_action: "inspect_worktree",
+              },
+            };
           },
           async inspectWorktree() {
-            return { worktree: null, diff_against_main: '', branch_log: '' };
+            return { worktree: null, diff_against_main: "", branch_log: "" };
           },
           async grepInWorktree() {
-            throw new Error('worktree not found');
+            throw new Error("worktree not found");
           },
         } as any,
       });
 
       expect(result.rows[0]).toMatchObject({
-        status: 'failed',
+        status: "failed",
         artifact_verified: false,
       });
-      expect(result.rows[0].failure_reason).toMatch(/untrusted reliability status|artifact mismatch/);
+      expect(result.rows[0].failure_reason).toMatch(
+        /untrusted reliability status|artifact mismatch/,
+      );
     } finally {
       cfg.cleanup();
     }

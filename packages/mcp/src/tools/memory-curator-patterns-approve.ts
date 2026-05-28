@@ -1,9 +1,9 @@
-import { z } from 'zod';
-import { toTextContent } from '@nova/mcp-shared';
-import type { DaemonClient } from '../daemon-client.js';
+import { z } from "zod";
+import { toTextContent } from "@nova/mcp-shared";
+import type { DaemonClient } from "../daemon-client.js";
 
 export const MemoryCuratorPatternsApproveInputShape = {
-  pattern_id: z.string().min(1).describe('The pattern_id to approve'),
+  pattern_id: z.string().min(1).describe("The pattern_id to approve"),
 };
 
 const Schema = z.object(MemoryCuratorPatternsApproveInputShape);

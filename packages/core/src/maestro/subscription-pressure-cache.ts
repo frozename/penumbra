@@ -1,9 +1,9 @@
-import type { Database } from 'bun:sqlite';
+import type { Database } from "bun:sqlite";
 import {
   readSubscriptionPressure,
   type PressureResult,
   type PressureSnapshot,
-} from '../readers/subscription-pressure.js';
+} from "../readers/subscription-pressure.js";
 
 export interface SubscriptionPressureCacheOptions {
   intervalMs?: number;
@@ -59,14 +59,17 @@ export function createSubscriptionPressureCache(
     refresh,
     get(provider, windowLabel, model) {
       const expectedModel = model === undefined ? null : model;
-      return cached.result.snapshots.find((snapshot) => (
-        snapshot.provider === provider
-        && snapshot.window_label === windowLabel
-        && snapshot.model === expectedModel
-      )) ?? null;
+      return (
+        cached.result.snapshots.find(
+          (snapshot) =>
+            snapshot.provider === provider &&
+            snapshot.window_label === windowLabel &&
+            snapshot.model === expectedModel,
+        ) ?? null
+      );
     },
     forProvider(provider) {
-      return cached.result.snapshots.filter(snapshot => snapshot.provider === provider);
+      return cached.result.snapshots.filter((snapshot) => snapshot.provider === provider);
     },
     lastUpdatedAt() {
       return cached.lastUpdatedAt;

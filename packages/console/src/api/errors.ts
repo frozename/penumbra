@@ -7,12 +7,7 @@ export class DaemonHttpError extends Error {
   readonly bodyText: string;
   readonly url: string;
 
-  constructor(args: {
-    status: number;
-    statusText: string;
-    bodyText: string;
-    url: string;
-  }) {
+  constructor(args: { status: number; statusText: string; bodyText: string; url: string }) {
     super(`daemon ${args.status} ${args.statusText} for ${args.url}`);
     this.status = args.status;
     this.statusText = args.statusText;

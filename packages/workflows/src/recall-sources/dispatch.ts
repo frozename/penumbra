@@ -1,4 +1,4 @@
-import type { Database } from 'bun:sqlite';
+import type { Database } from "bun:sqlite";
 
 export type DispatchEvent = {
   id: number;
@@ -16,7 +16,7 @@ export type DispatchSummary = {
   started_at: string | null;
   ended_at: string | null;
   duration_seconds: number | null;
-  outcome: 'ok' | 'failed' | 'in_progress';
+  outcome: "ok" | "failed" | "in_progress";
   failed_event_kinds: string[];
 };
 
@@ -26,7 +26,7 @@ export type DispatchSourceOutput = {
   warnings: string[];
 };
 
-const HEARTBEAT_KINDS = ['heartbeat.received', 'heartbeat.sent', 'watchdog.tick'] as const;
+const HEARTBEAT_KINDS = ["heartbeat.received", "heartbeat.sent", "watchdog.tick"] as const;
 
 export function runDispatchEventsSource(input: {
   db: Database;
@@ -43,28 +43,28 @@ export function runDispatchEventsSource(input: {
   const conditions: string[] = [];
   const params: unknown[] = [];
   if (args.since) {
-    conditions.push('ts >= ?');
+    conditions.push("ts >= ?");
     params.push(args.since);
   }
   if (args.until) {
-    conditions.push('ts <= ?');
+    conditions.push("ts <= ?");
     params.push(args.until);
   }
   if (args.handoff_id) {
-    conditions.push('handoff_id = ?');
+    conditions.push("handoff_id = ?");
     params.push(args.handoff_id);
   }
   if (!args.include_heartbeats) {
-    conditions.push(`kind NOT IN (${HEARTBEAT_KINDS.map(() => '?').join(', ')})`);
+    conditions.push(`kind NOT IN (${HEARTBEAT_KINDS.map(() => "?").join(", ")})`);
     params.push(...HEARTBEAT_KINDS);
   }
   const outcomesOnly = args.outcomes_only === true;
   const limit = args.limit ?? (outcomesOnly ? 1000 : 200);
-  const orderBy = outcomesOnly ? 'DESC' : 'ASC';
+  const orderBy = outcomesOnly ? "DESC" : "ASC";
   const sql = `
     SELECT id, handoff_id, worker_id, source, kind, ts, meta_json
     FROM dispatch_events
-    ${conditions.length ? 'WHERE ' + conditions.join(' AND ') : ''}
+    ${conditions.length ? "WHERE " + conditions.join(" AND ") : ""}
     ORDER BY ts ${orderBy}
     LIMIT ?
   `;
@@ -79,27 +79,30 @@ export function runDispatchEventsSource(input: {
     const actionable = ordered.filter((row) => {
       const kind = row.kind.toLowerCase();
       return (
-        row.kind === 'claim' ||
-        row.kind === 'dispatch.start' ||
-        row.kind === 'dispatch.end' ||
-        row.kind === 'dispatch.failed' ||
-        kind.includes('failed') ||
-        kind.includes('error') ||
-        kind.includes('cancel') ||
-        kind.includes('stall') ||
-        kind.includes('timeout') ||
-        kind.includes('agent.tool_call.failed')
+        row.kind === "claim" ||
+        row.kind === "dispatch.start" ||
+        row.kind === "dispatch.end" ||
+        row.kind === "dispatch.failed" ||
+        kind.includes("failed") ||
+        kind.includes("error") ||
+        kind.includes("cancel") ||
+        kind.includes("stall") ||
+        kind.includes("timeout") ||
+        kind.includes("agent.tool_call.failed")
       );
     });
 
-    const handoffIds = Array.from(new Set(actionable.map((row) => row.handoff_id).filter((id) => id.length > 0)));
+    const handoffIds = Array.from(
+      new Set(actionable.map((row) => row.handoff_id).filter((id) => id.length > 0)),
+    );
     const agentByHandoff = new Map<string, string | null>();
     if (handoffIds.length > 0) {
-      const placeholders = handoffIds.map(() => '?').join(', ');
+      const placeholders = handoffIds.map(() => "?").join(", ");
       const handoffRows = db
-        .query<{ handoff_id: string; to_agent: string }, string[]>(
-          `SELECT handoff_id, to_agent FROM handoffs WHERE handoff_id IN (${placeholders})`,
-        )
+        .query<
+          { handoff_id: string; to_agent: string },
+          string[]
+        >(`SELECT handoff_id, to_agent FROM handoffs WHERE handoff_id IN (${placeholders})`)
         .all(...handoffIds);
       for (const row of handoffRows) {
         agentByHandoff.set(row.handoff_id, row.to_agent);
@@ -119,12 +122,14 @@ export function runDispatchEventsSource(input: {
     const summaries: DispatchSummary[] = [];
     for (const [handoff_id, events] of byHandoff.entries()) {
       const started_at = events[0]?.ts ?? null;
-      const endedEvent = [...events]
-        .reverse()
-        .find((event) => {
-          const kind = event.kind.toLowerCase();
-          return event.kind === 'dispatch.end' || event.kind === 'dispatch.failed' || kind.includes('cancel');
-        });
+      const endedEvent = [...events].reverse().find((event) => {
+        const kind = event.kind.toLowerCase();
+        return (
+          event.kind === "dispatch.end" ||
+          event.kind === "dispatch.failed" ||
+          kind.includes("cancel")
+        );
+      });
       const ended_at = endedEvent?.ts ?? null;
 
       const failedEventKinds = Array.from(
@@ -133,27 +138,27 @@ export function runDispatchEventsSource(input: {
             .filter((event) => {
               const kind = event.kind.toLowerCase();
               return (
-                kind.includes('failed') ||
-                kind.includes('error') ||
-                kind.includes('cancel') ||
-                kind.includes('stall') ||
-                kind.includes('timeout') ||
-                kind.includes('agent.tool_call.failed')
+                kind.includes("failed") ||
+                kind.includes("error") ||
+                kind.includes("cancel") ||
+                kind.includes("stall") ||
+                kind.includes("timeout") ||
+                kind.includes("agent.tool_call.failed")
               );
             })
             .map((event) => event.kind),
         ),
       );
 
-      const hasDispatchFailed = events.some((event) => event.kind === 'dispatch.failed');
-      const hasCancel = events.some((event) => event.kind.toLowerCase().includes('cancel'));
-      const hasDispatchEnd = events.some((event) => event.kind === 'dispatch.end');
+      const hasDispatchFailed = events.some((event) => event.kind === "dispatch.failed");
+      const hasCancel = events.some((event) => event.kind.toLowerCase().includes("cancel"));
+      const hasDispatchEnd = events.some((event) => event.kind === "dispatch.end");
 
-      let outcome: DispatchSummary['outcome'] = 'in_progress';
+      let outcome: DispatchSummary["outcome"] = "in_progress";
       if (hasDispatchFailed || hasCancel) {
-        outcome = 'failed';
+        outcome = "failed";
       } else if (hasDispatchEnd) {
-        outcome = 'ok';
+        outcome = "ok";
       }
 
       let duration_seconds: number | null = null;

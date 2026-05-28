@@ -1,10 +1,10 @@
-import type { SiriusEmbedderOpts } from '@penumbra/core';
+import type { SiriusEmbedderOpts } from "@penumbra/core";
 
 const KEYS = [
-  'PENUMBRA_SIRIUS_BASE_URL',
-  'PENUMBRA_SIRIUS_TOKEN',
-  'PENUMBRA_SIRIUS_MODEL',
-  'PENUMBRA_SIRIUS_DIM',
+  "PENUMBRA_SIRIUS_BASE_URL",
+  "PENUMBRA_SIRIUS_TOKEN",
+  "PENUMBRA_SIRIUS_MODEL",
+  "PENUMBRA_SIRIUS_DIM",
 ] as const;
 
 /**
@@ -13,7 +13,9 @@ const KEYS = [
  * resolveEmbedder will then cleanly fall back to the bundled embedder.
  * Throws RangeError if PENUMBRA_SIRIUS_DIM is set but not a positive integer.
  */
-export function readSiriusEnv(env: Record<string, string | undefined>): SiriusEmbedderOpts | undefined {
+export function readSiriusEnv(
+  env: Record<string, string | undefined>,
+): SiriusEmbedderOpts | undefined {
   for (const k of KEYS) {
     if (!env[k]) return undefined;
   }

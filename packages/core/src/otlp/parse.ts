@@ -1,5 +1,5 @@
-import type { OtlpLogsEnvelope, ParsedLogRecord, OtlpResourceLogs } from './types.js';
-import { attrsToObject } from './types.js';
+import type { OtlpLogsEnvelope, ParsedLogRecord, OtlpResourceLogs } from "./types.js";
+import { attrsToObject } from "./types.js";
 
 export function parseOtlpLogs(envelope: unknown): ParsedLogRecord[] {
   const env = envelope as Partial<OtlpLogsEnvelope> | null | undefined;

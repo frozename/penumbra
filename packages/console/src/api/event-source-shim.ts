@@ -20,10 +20,7 @@ const MAX_BUFFER_BYTES = 256 * 1024;
 export function createSseSource(opts: ShimOpts): EventSourceLike {
   const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
   const controller = new AbortController();
-  const listeners = new Map<
-    string,
-    Array<(msg: { data: string; type: string }) => void>
-  >();
+  const listeners = new Map<string, Array<(msg: { data: string; type: string }) => void>>();
   let closed = false;
 
   function addEventListener(
@@ -111,7 +108,7 @@ export function createSseSource(opts: ShimOpts): EventSourceLike {
       const response = await fetchImpl(opts.url, {
         headers,
         signal: controller.signal,
-        credentials: 'include',
+        credentials: "include",
       });
       if (!response.ok || !response.body) {
         throw new Error(`SSE connect failed: ${response.status}`);

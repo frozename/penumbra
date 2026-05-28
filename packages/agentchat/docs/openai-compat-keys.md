@@ -6,10 +6,10 @@ The `openai-compat-http` adapter accepts four key sources in `agentchat.yaml`. T
 
 ```yaml
 options:
-  apiKey: nvapi-...                 # literal — back-compat, fine for trusted on-disk configs
-  apiKeyEnv: NVIDIA_API_KEY         # process.env lookup
-  apiKeyKeychain: llamactl/nvidia   # macOS Keychain ref: <service>/<account>
-  apiKeyFile: /path/to/key.txt      # trimmed file content
+  apiKey: nvapi-... # literal — back-compat, fine for trusted on-disk configs
+  apiKeyEnv: NVIDIA_API_KEY # process.env lookup
+  apiKeyKeychain: llamactl/nvidia # macOS Keychain ref: <service>/<account>
+  apiKeyFile: /path/to/key.txt # trimmed file content
 ```
 
 **Resolution precedence (first non-empty wins):** `apiKey` > `apiKeyEnv` > `apiKeyKeychain` > `apiKeyFile` > empty.

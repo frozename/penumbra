@@ -1,34 +1,32 @@
-import { expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
-import { applySchema, SCHEMA_VERSION } from '../../src/db/schema.js';
-import { migrate } from '../../src/db/migrations.js';
+import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { applySchema, SCHEMA_VERSION } from "../../src/db/schema.js";
+import { migrate } from "../../src/db/migrations.js";
 
-if (process.platform === 'darwin') {
+if (process.platform === "darwin") {
   try {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   } catch {
     // already loaded by a sibling test file — no-op
   }
 }
 
-test('schema_version matches current version on migrate', () => {
-  const db = new Database(':memory:');
+test("schema_version matches current version on migrate", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
   const meta = db
-    .query<{ value: string }, [string]>(
-      `SELECT value FROM db_meta WHERE key = ?`,
-    )
-    .get('schema_version');
+    .query<{ value: string }, [string]>(`SELECT value FROM db_meta WHERE key = ?`)
+    .get("schema_version");
   expect(meta?.value).toBe(String(SCHEMA_VERSION));
 
   db.close();
 });
 
-test('applySchema creates task board tables and indexes', () => {
-  const db = new Database(':memory:');
+test("applySchema creates task board tables and indexes", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   applySchema(db);
 
@@ -38,150 +36,150 @@ test('applySchema creates task board tables and indexes', () => {
     )
     .all()
     .map((row) => row.name);
-  expect(tables).toEqual(['gh_outbox', 'task_events', 'task_leases', 'tasks']);
+  expect(tables).toEqual(["gh_outbox", "task_events", "task_leases", "tasks"]);
 
   const tasksCols = db
     .query<{ name: string; type: string }, []>(`PRAGMA table_info('tasks')`)
     .all();
   expect(tasksCols.map((col) => col.name)).toEqual([
-    'id',
-    'created_at',
-    'updated_at',
-    'created_by_kind',
-    'created_by_id',
-    'project_id',
-    'parent_task_id',
-    'kind',
-    'priority',
-    'prompt',
-    'acceptance_criteria',
-    'expected_artifacts',
-    'eligibility',
-    'review_eligibility',
-    'requires_review',
-    'bounds_wall_clock_ms',
-    'bounds_cost_cents',
-    'bounds_max_sub_dispatches',
-    'bounds_started_at',
-    'branch_base',
-    'status',
-    'result_summary',
-    'result_artifacts',
-    'failure_reason',
-    'chain_id',
-    'origin',
-    'gh_issue_number',
-    'gh_issue_repo',
-    'gh_last_comment_id',
-    'gh_comments_synced_at',
-    'gh_create_status',
-    'gh_create_error',
+    "id",
+    "created_at",
+    "updated_at",
+    "created_by_kind",
+    "created_by_id",
+    "project_id",
+    "parent_task_id",
+    "kind",
+    "priority",
+    "prompt",
+    "acceptance_criteria",
+    "expected_artifacts",
+    "eligibility",
+    "review_eligibility",
+    "requires_review",
+    "bounds_wall_clock_ms",
+    "bounds_cost_cents",
+    "bounds_max_sub_dispatches",
+    "bounds_started_at",
+    "branch_base",
+    "status",
+    "result_summary",
+    "result_artifacts",
+    "failure_reason",
+    "chain_id",
+    "origin",
+    "gh_issue_number",
+    "gh_issue_repo",
+    "gh_last_comment_id",
+    "gh_comments_synced_at",
+    "gh_create_status",
+    "gh_create_error",
   ]);
   expect(tasksCols.map((col) => col.type)).toEqual([
-    'TEXT',
-    'INTEGER',
-    'INTEGER',
-    'TEXT',
-    'TEXT',
-    'TEXT',
-    'TEXT',
-    'TEXT',
-    'TEXT',
-    'TEXT',
-    'TEXT',
-    'TEXT',
-    'TEXT',
-    'TEXT',
-    'INTEGER',
-    'INTEGER',
-    'INTEGER',
-    'INTEGER',
-    'INTEGER',
-    'TEXT',
-    'TEXT',
-    'TEXT',
-    'TEXT',
-    'TEXT',
-    'TEXT',
-    'TEXT',
-    'INTEGER',
-    'TEXT',
-    'TEXT',
-    'INTEGER',
-    'TEXT',
-    'TEXT',
+    "TEXT",
+    "INTEGER",
+    "INTEGER",
+    "TEXT",
+    "TEXT",
+    "TEXT",
+    "TEXT",
+    "TEXT",
+    "TEXT",
+    "TEXT",
+    "TEXT",
+    "TEXT",
+    "TEXT",
+    "TEXT",
+    "INTEGER",
+    "INTEGER",
+    "INTEGER",
+    "INTEGER",
+    "INTEGER",
+    "TEXT",
+    "TEXT",
+    "TEXT",
+    "TEXT",
+    "TEXT",
+    "TEXT",
+    "TEXT",
+    "INTEGER",
+    "TEXT",
+    "TEXT",
+    "INTEGER",
+    "TEXT",
+    "TEXT",
   ]);
 
   const taskLeasesCols = db
     .query<{ name: string; type: string }, []>(`PRAGMA table_info('task_leases')`)
     .all();
   expect(taskLeasesCols.map((col) => col.name)).toEqual([
-    'id',
-    'task_id',
-    'agent_id',
-    'claimed_at',
-    'expires_at',
-    'released_at',
-    'release_reason',
-    'auction_score',
+    "id",
+    "task_id",
+    "agent_id",
+    "claimed_at",
+    "expires_at",
+    "released_at",
+    "release_reason",
+    "auction_score",
   ]);
   expect(taskLeasesCols.map((col) => col.type)).toEqual([
-    'TEXT',
-    'TEXT',
-    'TEXT',
-    'INTEGER',
-    'INTEGER',
-    'INTEGER',
-    'TEXT',
-    'REAL',
+    "TEXT",
+    "TEXT",
+    "TEXT",
+    "INTEGER",
+    "INTEGER",
+    "INTEGER",
+    "TEXT",
+    "REAL",
   ]);
 
   const taskEventsCols = db
     .query<{ name: string; type: string }, []>(`PRAGMA table_info('task_events')`)
     .all();
   expect(taskEventsCols.map((col) => col.name)).toEqual([
-    'id',
-    'task_id',
-    'maestro_session_task_id',
-    'at',
-    'kind',
-    'actor',
-    'payload_json',
+    "id",
+    "task_id",
+    "maestro_session_task_id",
+    "at",
+    "kind",
+    "actor",
+    "payload_json",
   ]);
   expect(taskEventsCols.map((col) => col.type)).toEqual([
-    'INTEGER',
-    'TEXT',
-    'TEXT',
-    'INTEGER',
-    'TEXT',
-    'TEXT',
-    'TEXT',
+    "INTEGER",
+    "TEXT",
+    "TEXT",
+    "INTEGER",
+    "TEXT",
+    "TEXT",
+    "TEXT",
   ]);
 
   const ghOutboxCols = db
     .query<{ name: string; type: string }, []>(`PRAGMA table_info('gh_outbox')`)
     .all();
   expect(ghOutboxCols.map((col) => col.name)).toEqual([
-    'id',
-    'task_id',
-    'op',
-    'payload_json',
-    'status',
-    'created_at',
-    'attempted_at',
-    'completed_at',
-    'error',
+    "id",
+    "task_id",
+    "op",
+    "payload_json",
+    "status",
+    "created_at",
+    "attempted_at",
+    "completed_at",
+    "error",
   ]);
   expect(ghOutboxCols.map((col) => col.type)).toEqual([
-    'INTEGER',
-    'TEXT',
-    'TEXT',
-    'TEXT',
-    'TEXT',
-    'INTEGER',
-    'INTEGER',
-    'INTEGER',
-    'TEXT',
+    "INTEGER",
+    "TEXT",
+    "TEXT",
+    "TEXT",
+    "TEXT",
+    "INTEGER",
+    "INTEGER",
+    "INTEGER",
+    "TEXT",
   ]);
 
   const indexes = db
@@ -190,16 +188,16 @@ test('applySchema creates task board tables and indexes', () => {
     )
     .all()
     .map((row) => row.name);
-  expect(indexes).toContain('tasks_status_priority_created_at');
-  expect(indexes).toContain('tasks_parent_task_id');
-  expect(indexes).toContain('tasks_created_by_id');
-  expect(indexes).toContain('tasks_chain_id');
-  expect(indexes).toContain('tasks_by_gh');
-  expect(indexes).toContain('task_leases_task_id_released_at');
-  expect(indexes).toContain('task_leases_agent_id_released_at');
-  expect(indexes).toContain('task_events_task_id_at');
-  expect(indexes).toContain('gh_outbox_status_created_at');
-  expect(indexes).toContain('gh_outbox_task_id_status');
+  expect(indexes).toContain("tasks_status_priority_created_at");
+  expect(indexes).toContain("tasks_parent_task_id");
+  expect(indexes).toContain("tasks_created_by_id");
+  expect(indexes).toContain("tasks_chain_id");
+  expect(indexes).toContain("tasks_by_gh");
+  expect(indexes).toContain("task_leases_task_id_released_at");
+  expect(indexes).toContain("task_leases_agent_id_released_at");
+  expect(indexes).toContain("task_events_task_id_at");
+  expect(indexes).toContain("gh_outbox_status_created_at");
+  expect(indexes).toContain("gh_outbox_task_id_status");
 
   db.close();
 });

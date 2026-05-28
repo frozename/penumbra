@@ -1,7 +1,7 @@
-import type { Services } from '@penumbra/core';
-import { globToRegExp } from '../long-lived/action-gate.js';
+import type { Services } from "@penumbra/core";
+import { globToRegExp } from "../long-lived/action-gate.js";
 
-import { json } from './_helpers.js';
+import { json } from "./_helpers.js";
 interface FederationToolDescriptor {
   name: string;
   description?: string;
@@ -28,7 +28,7 @@ async function waitForFederationReady(pool: MaybeReadyMcpPool, server: string): 
 
 function parseFederationToolRef(entry: string): { server: string; tool: string } | null {
   // Prefer the first literal separator so legacy `server:tool` and canonical `server.tool` both parse.
-  const separator = entry.includes(':') ? entry.indexOf(':') : entry.indexOf('.');
+  const separator = entry.includes(":") ? entry.indexOf(":") : entry.indexOf(".");
   if (separator <= 0) return null;
   return {
     server: entry.slice(0, separator),
@@ -39,13 +39,16 @@ function parseFederationToolRef(entry: string): { server: string; tool: string }
 function parseAllowlist(value: string, services: Services, agentId: string): string[] {
   try {
     const parsed = JSON.parse(value);
-    if (!Array.isArray(parsed)) throw new Error('not_array');
+    if (!Array.isArray(parsed)) throw new Error("not_array");
     const allowlist: string[] = [];
     for (const entry of parsed) {
-      if (typeof entry !== 'string') continue;
+      if (typeof entry !== "string") continue;
       const parsedEntry = parseFederationToolRef(entry);
       if (!parsedEntry) {
-        services.log?.warn?.({ entry, agent_id: agentId }, 'federation-tools-malformed-allowlist-entry');
+        services.log?.warn?.(
+          { entry, agent_id: agentId },
+          "federation-tools-malformed-allowlist-entry",
+        );
         continue;
       }
       allowlist.push(`${parsedEntry.server}.${parsedEntry.tool}`);
@@ -54,17 +57,24 @@ function parseAllowlist(value: string, services: Services, agentId: string): str
   } catch (err) {
     services.log?.warn?.(
       { err: String((err as Error)?.message ?? err), agent_id: agentId },
-      'federation-tools-allowlist-parse-failed',
+      "federation-tools-allowlist-parse-failed",
     );
     return [];
   }
 }
 
-export async function longLivedFederationToolsRoute(_req: Request, services: Services, agentId: string): Promise<Response> {
-  const row = services.db.query<{ mcp_allowlist_json: string }, [string]>(
-    'SELECT mcp_allowlist_json FROM long_lived_agents WHERE id = ?',
-  ).get(agentId);
-  if (!row) return json({ error: 'agent_not_found' }, 404);
+export async function longLivedFederationToolsRoute(
+  _req: Request,
+  services: Services,
+  agentId: string,
+): Promise<Response> {
+  const row = services.db
+    .query<
+      { mcp_allowlist_json: string },
+      [string]
+    >("SELECT mcp_allowlist_json FROM long_lived_agents WHERE id = ?")
+    .get(agentId);
+  if (!row) return json({ error: "agent_not_found" }, 404);
 
   const allowlist = parseAllowlist(row.mcp_allowlist_json, services, agentId);
   if (!services.mcpPool) {
@@ -77,7 +87,7 @@ export async function longLivedFederationToolsRoute(_req: Request, services: Ser
     if (!parsedEntry) continue;
     serverNames.add(parsedEntry.server);
   }
-  serverNames.delete('penumbra');
+  serverNames.delete("penumbra");
   const matchers = allowlist.map((glob) => globToRegExp(glob));
 
   const tools: FederationToolDescriptor[] = [];
@@ -89,7 +99,7 @@ export async function longLivedFederationToolsRoute(_req: Request, services: Ser
     } catch (err) {
       services.log.warn(
         { err: String((err as Error)?.message ?? err), server, agent_id: agentId },
-        'federation-tools-listTools-failed',
+        "federation-tools-listTools-failed",
       );
       continue;
     }

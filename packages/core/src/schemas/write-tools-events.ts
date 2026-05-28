@@ -1,6 +1,6 @@
-import { z } from 'zod';
+import { z } from "zod";
 
-const Sha256 = z.string().regex(/^[a-f0-9]{64}$/, 'sha256 hex64');
+const Sha256 = z.string().regex(/^[a-f0-9]{64}$/, "sha256 hex64");
 
 export const FsWriteAppliedPayload = z.object({
   path: z.string(),
@@ -45,7 +45,15 @@ export const TerminalKilledPayload = z.object({
   terminal_id: z.string(),
   // 'idle_ttl' and 'max_lifetime' kept in the enum for forward-compat with Phase 1d.5 even though
   // the in-scope C2 design only emits 'timeout' / 'output_overflow' / 'dispatch_end' / 'operator' / 'cancelled'.
-  reason: z.enum(['timeout', 'output_overflow', 'dispatch_end', 'idle_ttl', 'max_lifetime', 'operator', 'cancelled']),
+  reason: z.enum([
+    "timeout",
+    "output_overflow",
+    "dispatch_end",
+    "idle_ttl",
+    "max_lifetime",
+    "operator",
+    "cancelled",
+  ]),
   handoff_id: z.string(),
 });
 export type TerminalKilledPayload = z.infer<typeof TerminalKilledPayload>;

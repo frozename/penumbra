@@ -1,8 +1,8 @@
-import type { Database } from 'bun:sqlite';
-import { z } from 'zod';
-import { WorkingMemorySchema } from '@penumbra/core/long-lived/types';
-import { updateLongLivedAgentState } from '@penumbra/core/long-lived/self-reader';
-import { verifyRunningIdentity } from '../long-lived-context.js';
+import type { Database } from "bun:sqlite";
+import { z } from "zod";
+import { WorkingMemorySchema } from "@penumbra/core/long-lived/types";
+import { updateLongLivedAgentState } from "@penumbra/core/long-lived/self-reader";
+import { verifyRunningIdentity } from "../long-lived-context.js";
 
 const SelfStateSetArgsBaseSchema = z.object({
   intent_summary: z.string().optional(),
@@ -12,7 +12,7 @@ const SelfStateSetArgsBaseSchema = z.object({
 export const SelfStateSetInputShape = SelfStateSetArgsBaseSchema.shape;
 export const SelfStateSetArgsSchema = SelfStateSetArgsBaseSchema.refine(
   (a) => a.intent_summary !== undefined || a.working_memory !== undefined,
-  { message: 'at least one of intent_summary or working_memory required' },
+  { message: "at least one of intent_summary or working_memory required" },
 );
 
 export interface SelfStateSetContext {

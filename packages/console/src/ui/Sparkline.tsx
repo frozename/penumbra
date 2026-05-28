@@ -36,18 +36,11 @@ export function Sparkline({
   const w = 100;
   const h = 100;
   const step = w / (points - 1);
-  const pts = values
-    .map((v, i) => `${(i * step).toFixed(2)},${(h - v * h).toFixed(2)}`)
-    .join(" ");
+  const pts = values.map((v, i) => `${(i * step).toFixed(2)},${(h - v * h).toFixed(2)}`).join(" ");
   const fill = `0,${h} ${pts} ${w},${h}`;
 
   return (
-    <svg
-      className="spark"
-      viewBox={`0 0 ${w} ${h}`}
-      preserveAspectRatio="none"
-      style={{ height }}
-    >
+    <svg className="spark" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ height }}>
       <polygon points={fill} fill={color} opacity={fillOpacity} />
       <polyline
         points={pts}

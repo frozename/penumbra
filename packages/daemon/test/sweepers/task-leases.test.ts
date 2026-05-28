@@ -1,21 +1,17 @@
-import { expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import {
-  TaskWriter,
-  loadSqliteVec,
-  migrate,
-} from '@penumbra/core';
-import { TaskCooldowns } from '@penumbra/core';
-import { createTaskLeaseSweeper } from '../../src/sweepers/task-leases.js';
+import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { TaskWriter, loadSqliteVec, migrate } from "@penumbra/core";
+import { TaskCooldowns } from "@penumbra/core";
+import { createTaskLeaseSweeper } from "../../src/sweepers/task-leases.js";
 
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {}
 
 function setupDb(): Database {
-  const db = new Database(':memory:');
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   return db;
@@ -25,7 +21,7 @@ function makeWriter(db: Database, now: () => number): TaskWriter {
   return new TaskWriter(db, { now });
 }
 
-test('expiry path: expired lease is released and task returns to pending', () => {
+test("expiry path: expired lease is released and task returns to pending", () => {
   const db = setupDb();
   let nowMs = 0;
   const writer = makeWriter(db, () => nowMs);
@@ -37,28 +33,27 @@ test('expiry path: expired lease is released and task returns to pending', () =>
   });
 
   const { task_id } = writer.file({
-    prompt: 'do the thing',
-    created_by_kind: 'human',
-    created_by_id: 'cli',
+    prompt: "do the thing",
+    created_by_kind: "human",
+    created_by_id: "cli",
   });
-  writer.lease({ task_id, agent_id: 'agent-a', ttl_ms: 1_000 });
+  writer.lease({ task_id, agent_id: "agent-a", ttl_ms: 1_000 });
 
   nowMs = 1_100;
   sweeper.tick();
 
   const task = db
-    .query<{ status: string }, [string]>(
-      `SELECT status FROM tasks WHERE id = ?`,
-    )
+    .query<{ status: string }, [string]>(`SELECT status FROM tasks WHERE id = ?`)
     .get(task_id);
-  expect(task?.status).toBe('pending');
+  expect(task?.status).toBe("pending");
 
   const lease = db
-    .query<{ release_reason: string | null }, [string]>(
-      `SELECT release_reason FROM task_leases WHERE task_id = ? ORDER BY claimed_at DESC LIMIT 1`,
-    )
+    .query<
+      { release_reason: string | null },
+      [string]
+    >(`SELECT release_reason FROM task_leases WHERE task_id = ? ORDER BY claimed_at DESC LIMIT 1`)
     .get(task_id);
-  expect(lease?.release_reason).toBe('expired');
+  expect(lease?.release_reason).toBe("expired");
 
   const released = db
     .query<{ kind: string; payload_json: string | null }, [string]>(
@@ -69,11 +64,11 @@ test('expiry path: expired lease is released and task returns to pending', () =>
        LIMIT 1`,
     )
     .get(task_id);
-  expect(released?.kind).toBe('released');
-  expect(JSON.parse(released?.payload_json ?? '{}').reason).toBe('expired');
+  expect(released?.kind).toBe("released");
+  expect(JSON.parse(released?.payload_json ?? "{}").reason).toBe("expired");
 });
 
-test('cooldown population and prune', () => {
+test("cooldown population and prune", () => {
   const db = setupDb();
   let nowMs = 0;
   const writer = makeWriter(db, () => nowMs);
@@ -85,23 +80,23 @@ test('cooldown population and prune', () => {
   });
 
   const { task_id } = writer.file({
-    prompt: 'do the thing',
-    created_by_kind: 'human',
-    created_by_id: 'cli',
+    prompt: "do the thing",
+    created_by_kind: "human",
+    created_by_id: "cli",
   });
-  writer.lease({ task_id, agent_id: 'agent-a', ttl_ms: 1_000 });
+  writer.lease({ task_id, agent_id: "agent-a", ttl_ms: 1_000 });
 
   nowMs = 1_100;
   sweeper.tick();
 
   const byAgent = cooldowns.get().get(task_id);
-  expect(byAgent?.get('agent-a')).toBe(nowMs + 600_000);
+  expect(byAgent?.get("agent-a")).toBe(nowMs + 600_000);
 
   cooldowns.prune(nowMs + 600_001);
   expect(cooldowns.get().get(task_id)).toBeUndefined();
 });
 
-test('idempotent tick: no expirations means no DB changes', () => {
+test("idempotent tick: no expirations means no DB changes", () => {
   const db = setupDb();
   let nowMs = 0;
   const writer = makeWriter(db, () => nowMs);
@@ -113,32 +108,34 @@ test('idempotent tick: no expirations means no DB changes', () => {
   });
 
   const { task_id } = writer.file({
-    prompt: 'still leased',
-    created_by_kind: 'human',
-    created_by_id: 'cli',
+    prompt: "still leased",
+    created_by_kind: "human",
+    created_by_id: "cli",
   });
-  writer.lease({ task_id, agent_id: 'agent-a', ttl_ms: 5_000 });
+  writer.lease({ task_id, agent_id: "agent-a", ttl_ms: 5_000 });
 
   nowMs = 1_000;
   sweeper.tick();
   sweeper.tick();
 
   const lease = db
-    .query<{ released_at: number | null }, [string]>(
-      `SELECT released_at FROM task_leases WHERE task_id = ?`,
-    )
+    .query<
+      { released_at: number | null },
+      [string]
+    >(`SELECT released_at FROM task_leases WHERE task_id = ?`)
     .get(task_id);
   expect(lease?.released_at).toBeNull();
 
   const releasedEvents = db
-    .query<{ n: number }, [string]>(
-      `SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND kind = 'released'`,
-    )
+    .query<
+      { n: number },
+      [string]
+    >(`SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND kind = 'released'`)
     .get(task_id);
   expect(releasedEvents?.n).toBe(0);
 });
 
-test('already-released lease is ignored even when expires_at is in the past', () => {
+test("already-released lease is ignored even when expires_at is in the past", () => {
   const db = setupDb();
   let nowMs = 0;
   const writer = makeWriter(db, () => nowMs);
@@ -150,22 +147,23 @@ test('already-released lease is ignored even when expires_at is in the past', ()
   });
 
   const { task_id } = writer.file({
-    prompt: 'already failed',
-    created_by_kind: 'human',
-    created_by_id: 'cli',
+    prompt: "already failed",
+    created_by_kind: "human",
+    created_by_id: "cli",
   });
-  const lease = writer.lease({ task_id, agent_id: 'agent-a', ttl_ms: 1_000 });
-  writer.fail({ task_id, lease_id: lease.lease_id, reason: 'failed before expiry' });
+  const lease = writer.lease({ task_id, agent_id: "agent-a", ttl_ms: 1_000 });
+  writer.fail({ task_id, lease_id: lease.lease_id, reason: "failed before expiry" });
 
   nowMs = 10_000;
   sweeper.tick();
 
   const leaseRow = db
-    .query<{ release_reason: string | null }, [string]>(
-      `SELECT release_reason FROM task_leases WHERE id = ?`,
-    )
+    .query<
+      { release_reason: string | null },
+      [string]
+    >(`SELECT release_reason FROM task_leases WHERE id = ?`)
     .get(lease.lease_id);
-  expect(leaseRow?.release_reason).toBe('failed');
+  expect(leaseRow?.release_reason).toBe("failed");
 
   const releasedEvents = db
     .query<{ n: number }, [string]>(

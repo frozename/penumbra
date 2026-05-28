@@ -3,7 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "bin": { "penumbra": "./bin/penumbra.ts" },
+  "bin": {
+    "penumbra": "./bin/penumbra.ts"
+  },
   "dependencies": {
     "@penumbra/agentchat": "workspace:*",
     "@penumbra/core": "workspace:*",

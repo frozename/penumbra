@@ -1,7 +1,7 @@
-import type { ChildProcess } from 'node:child_process';
-import { spawn as nodeSpawn } from 'node:child_process';
-import type { HostedMcpServer } from '@penumbra/agentchat/config/types';
-import { createLogger } from '@penumbra/core';
+import type { ChildProcess } from "node:child_process";
+import { spawn as nodeSpawn } from "node:child_process";
+import type { HostedMcpServer } from "@penumbra/agentchat/config/types";
+import { createLogger } from "@penumbra/core";
 
 export interface McpPoolDeps {
   spawnChildProcess?: typeof nodeSpawn;
@@ -35,7 +35,12 @@ export interface FederationHealthSnapshot {
 
 export interface McpPool {
   ensureRunning(spec: HostedMcpServer): Promise<void>;
-  callTool(serverName: string, toolName: string, args: unknown, opts?: { timeoutMs?: number; _meta?: Record<string, unknown> }): Promise<unknown>;
+  callTool(
+    serverName: string,
+    toolName: string,
+    args: unknown,
+    opts?: { timeoutMs?: number; _meta?: Record<string, unknown> },
+  ): Promise<unknown>;
   listTools(serverName: string): Promise<McpToolDescriptor[]>;
   acquire(agentId: string, serverName: string): void;
   release(agentId: string, serverName: string): void;
@@ -72,8 +77,10 @@ type McpState = {
 const DEFAULT_GRACE_MS = 5 * 60_000;
 const MAX_LINE_BYTES = 1_048_576;
 
-export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): void; _state(serverName: string): McpState | undefined } {
-  const log = deps.log ?? createLogger({ component: 'daemon:mcp-pool' });
+export function createMcpPool(
+  deps: McpPoolDeps = {},
+): McpPool & { _sweep(): void; _state(serverName: string): McpState | undefined } {
+  const log = deps.log ?? createLogger({ component: "daemon:mcp-pool" });
   const states = new Map<string, McpState>();
   let lastRegistration: FederationHealthSnapshot = { registered: [], skipped: [] };
   const graceMs = deps.graceMs ?? DEFAULT_GRACE_MS;
@@ -110,7 +117,7 @@ export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): voi
       return;
     }
     state.tornDown = true;
-    rejectPending(state, 'mcp_disconnected');
+    rejectPending(state, "mcp_disconnected");
     try {
       state.proc.kill();
     } catch {
@@ -122,7 +129,9 @@ export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): voi
   function snapshotHealth(reason?: string): void {
     const registered: FederationToolHealth[] = [];
     const skipped: SkippedFederationToolHealth[] = [...lastRegistration.skipped];
-    const seenSkipped = new Set(skipped.map((entry) => `${entry.server}::${entry.tool}::${entry.reason}`));
+    const seenSkipped = new Set(
+      skipped.map((entry) => `${entry.server}::${entry.tool}::${entry.reason}`),
+    );
     for (const [server, state] of states) {
       if (state.initialized) {
         for (const tool of state.tools) {
@@ -146,16 +155,18 @@ export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): voi
   }
 
   function isRunning(state: McpState): boolean {
-    return !state.tornDown &&
+    return (
+      !state.tornDown &&
       state.proc.exitCode == null &&
       state.proc.signalCode == null &&
-      Boolean(state.proc.stdin?.writable);
+      Boolean(state.proc.stdin?.writable)
+    );
   }
 
   function attachProc(serverName: string, spec: HostedMcpServer): McpState {
     const proc = spawnChildProcess(spec.command, spec.args ?? [], {
       env: { ...process.env, ...envFromSpec(spec) },
-      stdio: ['pipe', 'pipe', 'inherit'],
+      stdio: ["pipe", "pipe", "inherit"],
     });
     const state: McpState = {
       proc,
@@ -166,21 +177,24 @@ export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): voi
       spec,
       specHash: specHash(spec),
       initialized: false,
-      stdoutBuffer: '',
+      stdoutBuffer: "",
     };
     const onData = (chunk: string | Buffer) => {
       state.stdoutBuffer += chunk.toString();
       if (state.stdoutBuffer.length > MAX_LINE_BYTES) {
-        log.error({ server: serverName, len: state.stdoutBuffer.length }, 'mcp-pool-stdout-line-too-large-killing');
+        log.error(
+          { server: serverName, len: state.stdoutBuffer.length },
+          "mcp-pool-stdout-line-too-large-killing",
+        );
         try {
-          proc.kill('SIGKILL');
+          proc.kill("SIGKILL");
         } catch {
           /* ignore */
         }
         return;
       }
       let idx: number;
-      while ((idx = state.stdoutBuffer.indexOf('\n')) >= 0) {
+      while ((idx = state.stdoutBuffer.indexOf("\n")) >= 0) {
         const line = state.stdoutBuffer.slice(0, idx).trim();
         state.stdoutBuffer = state.stdoutBuffer.slice(idx + 1);
         if (!line) continue;
@@ -188,47 +202,56 @@ export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): voi
         try {
           message = JSON.parse(line);
         } catch (error) {
-          log.warn({ err: error, serverName, line }, 'mcp pool dropped invalid json line');
+          log.warn({ err: error, serverName, line }, "mcp pool dropped invalid json line");
           continue;
         }
-        if (typeof message.id === 'number' && state.pending.has(message.id)) {
+        if (typeof message.id === "number" && state.pending.has(message.id)) {
           const pending = state.pending.get(message.id)!;
           state.pending.delete(message.id);
           clearTimeout(pending.timer);
           if (message.error) {
-            pending.reject(new Error(typeof message.error?.message === 'string' ? message.error.message : 'mcp_error'));
+            pending.reject(
+              new Error(
+                typeof message.error?.message === "string" ? message.error.message : "mcp_error",
+              ),
+            );
           } else {
             pending.resolve(message.result);
           }
           continue;
         }
-        if (message.method === 'notifications/initialized') continue;
+        if (message.method === "notifications/initialized") continue;
       }
     };
     const onDisconnect = () => teardownState(serverName, state);
-    proc.stdout?.setEncoding('utf8');
-    proc.stdout?.on('data', onData);
-    proc.stdout?.on('end', onDisconnect);
-    proc.stdout?.on('close', onDisconnect);
-    proc.on('exit', onDisconnect);
-    proc.on('close', onDisconnect);
+    proc.stdout?.setEncoding("utf8");
+    proc.stdout?.on("data", onData);
+    proc.stdout?.on("end", onDisconnect);
+    proc.stdout?.on("close", onDisconnect);
+    proc.on("exit", onDisconnect);
+    proc.on("close", onDisconnect);
     state.cleanup = () => {
-      proc.stdout?.off('data', onData);
-      proc.stdout?.off('end', onDisconnect);
-      proc.stdout?.off('close', onDisconnect);
-      proc.off('exit', onDisconnect);
-      proc.off('close', onDisconnect);
+      proc.stdout?.off("data", onData);
+      proc.stdout?.off("end", onDisconnect);
+      proc.stdout?.off("close", onDisconnect);
+      proc.off("exit", onDisconnect);
+      proc.off("close", onDisconnect);
     };
     states.set(serverName, state);
     return state;
   }
 
-  function sendRequest<T>(state: McpState, method: string, params: Record<string, unknown>, timeoutMs = 30_000): Promise<T> {
+  function sendRequest<T>(
+    state: McpState,
+    method: string,
+    params: Record<string, unknown>,
+    timeoutMs = 30_000,
+  ): Promise<T> {
     const id = ++state.requestSeq;
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         state.pending.delete(id);
-        reject(new Error('mcp_call_timeout'));
+        reject(new Error("mcp_call_timeout"));
       }, timeoutMs);
       state.pending.set(id, {
         resolve: resolve as (value: unknown) => void,
@@ -238,33 +261,46 @@ export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): voi
       if (!state.proc.stdin?.writable) {
         state.pending.delete(id);
         clearTimeout(timer);
-        reject(new Error('mcp_unavailable'));
+        reject(new Error("mcp_unavailable"));
         return;
       }
-      state.proc.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+      state.proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
     });
   }
 
   async function initialize(state: McpState): Promise<void> {
-    await sendRequest(state, 'initialize', {
-      protocolVersion: '2025-03-26',
+    await sendRequest(state, "initialize", {
+      protocolVersion: "2025-03-26",
       capabilities: {},
-      clientInfo: { name: 'penumbra-mcp-pool', version: '0.1.0' },
+      clientInfo: { name: "penumbra-mcp-pool", version: "0.1.0" },
     });
-    state.proc.stdin?.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} }) + '\n');
-    const tools = await sendRequest<{ tools: McpToolDescriptor[] }>(state, 'tools/list', {});
+    state.proc.stdin?.write(
+      JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} }) + "\n",
+    );
+    const tools = await sendRequest<{ tools: McpToolDescriptor[] }>(state, "tools/list", {});
     state.tools = Array.isArray(tools.tools) ? tools.tools : [];
     state.initialized = true;
   }
 
   async function ensureStateRunning(spec: HostedMcpServer): Promise<McpState> {
     let existing = states.get(spec.name);
-    if (existing && isRunning(existing) && existing.initialized && existing.specHash === specHash(spec)) return existing;
-    if (existing && isRunning(existing) && existing.initialized && existing.specHash !== specHash(spec)) {
-      log.warn({ server: spec.name }, 'mcp-pool-spec-drift-restart');
+    if (
+      existing &&
+      isRunning(existing) &&
+      existing.initialized &&
+      existing.specHash === specHash(spec)
+    )
+      return existing;
+    if (
+      existing &&
+      isRunning(existing) &&
+      existing.initialized &&
+      existing.specHash !== specHash(spec)
+    ) {
+      log.warn({ server: spec.name }, "mcp-pool-spec-drift-restart");
       existing.cleanup?.();
       try {
-        existing.proc.kill('SIGKILL');
+        existing.proc.kill("SIGKILL");
       } catch {
         /* ignore */
       }
@@ -300,14 +336,14 @@ export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): voi
     const current = now();
     for (const [serverName, state] of states) {
       if (state.refs.size > 0 || state.lastReleaseAt == null) continue;
-      if ((current - state.lastReleaseAt) <= graceMs) continue;
+      if (current - state.lastReleaseAt <= graceMs) continue;
       state.cleanup?.();
       try {
         state.proc.kill();
       } catch {
         /* ignore */
       }
-      rejectPending(state, 'mcp_shutdown');
+      rejectPending(state, "mcp_shutdown");
       states.delete(serverName);
     }
   }
@@ -319,32 +355,44 @@ export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): voi
       } catch (error) {
         lastRegistration = {
           registered: [...lastRegistration.registered],
-          skipped: [...lastRegistration.skipped, { server: spec.name, tool: spec.name, reason: String((error as Error)?.message ?? error) }],
+          skipped: [
+            ...lastRegistration.skipped,
+            {
+              server: spec.name,
+              tool: spec.name,
+              reason: String((error as Error)?.message ?? error),
+            },
+          ],
         };
         throw error;
       }
       snapshotHealth();
     },
 
-    async callTool(serverName: string, toolName: string, args: unknown, opts?: { timeoutMs?: number; _meta?: Record<string, unknown> }): Promise<unknown> {
+    async callTool(
+      serverName: string,
+      toolName: string,
+      args: unknown,
+      opts?: { timeoutMs?: number; _meta?: Record<string, unknown> },
+    ): Promise<unknown> {
       const existing = states.get(serverName);
-      if (!existing) throw new Error('mcp_unavailable');
+      if (!existing) throw new Error("mcp_unavailable");
       await ensureStateRunning(existing.spec);
       const state = states.get(serverName);
-      if (!state || state.tornDown) throw new Error('mcp_unavailable');
+      if (!state || state.tornDown) throw new Error("mcp_unavailable");
       const params: Record<string, unknown> = {
         name: toolName,
         arguments: args ?? {},
       };
-      if (opts?._meta && typeof opts._meta === 'object' && !Array.isArray(opts._meta)) {
+      if (opts?._meta && typeof opts._meta === "object" && !Array.isArray(opts._meta)) {
         params._meta = opts._meta;
       }
-      return sendRequest(state, 'tools/call', params, opts?.timeoutMs ?? 30_000);
+      return sendRequest(state, "tools/call", params, opts?.timeoutMs ?? 30_000);
     },
 
     async listTools(serverName: string): Promise<McpToolDescriptor[]> {
       const state = states.get(serverName);
-      if (!state) throw new Error('mcp_unavailable');
+      if (!state) throw new Error("mcp_unavailable");
       await ensureStateRunning(state.spec);
       return [...(states.get(serverName)?.tools ?? [])];
     },
@@ -375,7 +423,7 @@ export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): voi
       clearInterval(sweepTimer);
       for (const [serverName, state] of states) {
         state.cleanup?.();
-        rejectPending(state, 'mcp_shutdown');
+        rejectPending(state, "mcp_shutdown");
         try {
           state.proc.kill();
         } catch {

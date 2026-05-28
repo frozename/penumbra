@@ -1,18 +1,18 @@
-import { afterEach, expect, mock, spyOn, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import type { AgentDescriptor, ChainStartRequest } from '@penumbra/core';
+import { afterEach, expect, mock, spyOn, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import type { AgentDescriptor, ChainStartRequest } from "@penumbra/core";
 import {
   loadSqliteVec,
   MaestroSessionWriter,
   migrate,
   TaskEventBus,
   TaskWriter,
-} from '@penumbra/core';
-import { createOrchestrateReactor } from '../../src/reactors/orchestrate-reactor.js';
+} from "@penumbra/core";
+import { createOrchestrateReactor } from "../../src/reactors/orchestrate-reactor.js";
 
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {}
 
@@ -23,21 +23,21 @@ const DEFAULT_BOUNDS = {
 };
 
 const AGENT_A: AgentDescriptor = {
-  name: 'agent-a',
+  name: "agent-a",
   maestro_capable: true,
-  tags: ['typescript'],
-  tier: 'premium',
+  tags: ["typescript"],
+  tier: "premium",
 };
 
 const AGENT_B: AgentDescriptor = {
-  name: 'agent-b',
+  name: "agent-b",
   maestro_capable: true,
-  tags: ['typescript'],
-  tier: 'premium',
+  tags: ["typescript"],
+  tier: "premium",
 };
 
 function setupDb(): Database {
-  const db = new Database(':memory:');
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   return db;
@@ -69,7 +69,8 @@ function makeReactor(routeAgentImpl?: (...args: unknown[]) => unknown) {
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) => (name === AGENT_A.name ? AGENT_A : name === AGENT_B.name ? AGENT_B : undefined),
+    resolveAgent: (name) =>
+      name === AGENT_A.name ? AGENT_A : name === AGENT_B.name ? AGENT_B : undefined,
   });
 
   const chainStartCalls: ChainStartRequest[] = [];
@@ -80,9 +81,10 @@ function makeReactor(routeAgentImpl?: (...args: unknown[]) => unknown) {
     taskWriter,
     chainStart: async (req) => {
       chainStartCalls.push(req);
-      return { handoff_id: 'handoff-1', conversation_id: 'conv-1' };
+      return { handoff_id: "handoff-1", conversation_id: "conv-1" };
     },
-    resolveAgent: (name) => (name === AGENT_A.name ? AGENT_A : name === AGENT_B.name ? AGENT_B : undefined),
+    resolveAgent: (name) =>
+      name === AGENT_A.name ? AGENT_A : name === AGENT_B.name ? AGENT_B : undefined,
     defaults: DEFAULT_BOUNDS,
     routeAgent: routeAgentImpl,
   } as any);
@@ -90,19 +92,19 @@ function makeReactor(routeAgentImpl?: (...args: unknown[]) => unknown) {
   return { db, bus, sessions, taskWriter, chainStartCalls, reactor };
 }
 
-test('spawns the only allowed agent without querying rankAgents', async () => {
+test("spawns the only allowed agent without querying rankAgents", async () => {
   const routeAgentMock = mock(() => {
-    throw new Error('rankAgents should not run for a single allowed agent');
+    throw new Error("rankAgents should not run for a single allowed agent");
   });
   const { db, taskWriter, sessions, chainStartCalls, reactor } = makeReactor(routeAgentMock);
   reactor.start();
 
   const { task_id } = taskWriter.file({
-    prompt: 'Ship task 3.2',
-    kind: 'orchestrate',
+    prompt: "Ship task 3.2",
+    kind: "orchestrate",
     eligibility: { allow_agents: [AGENT_A.name] },
-    created_by_kind: 'human',
-    created_by_id: 'cli',
+    created_by_kind: "human",
+    created_by_id: "cli",
   });
 
   await waitFor(() => {
@@ -118,12 +120,12 @@ test('spawns the only allowed agent without querying rankAgents', async () => {
   db.close();
 });
 
-test('spawns the highest-ranked allowed agent when rankAgents returns an overlapping order', async () => {
+test("spawns the highest-ranked allowed agent when rankAgents returns an overlapping order", async () => {
   const routeAgentMock = mock(() => ({
-    detail: 'rank' as const,
+    detail: "rank" as const,
     candidates: {
-      task_type: 'implement_substantial',
-      window: { from: null, to: '2026-05-05T12:00:00.000Z' },
+      task_type: "implement_substantial",
+      window: { from: null, to: "2026-05-05T12:00:00.000Z" },
       candidates: [
         { agent_name: AGENT_B.name, score: 0.9 },
         { agent_name: AGENT_A.name, score: 0.5 },
@@ -134,11 +136,11 @@ test('spawns the highest-ranked allowed agent when rankAgents returns an overlap
   reactor.start();
 
   const { task_id } = taskWriter.file({
-    prompt: 'Ship task 3.2',
-    kind: 'orchestrate',
+    prompt: "Ship task 3.2",
+    kind: "orchestrate",
     eligibility: { allow_agents: [AGENT_A.name, AGENT_B.name] },
-    created_by_kind: 'human',
-    created_by_id: 'cli',
+    created_by_kind: "human",
+    created_by_id: "cli",
   });
 
   await waitFor(() => {
@@ -154,20 +156,20 @@ test('spawns the highest-ranked allowed agent when rankAgents returns an overlap
   db.close();
 });
 
-test('falls back to the first allowed agent when rankAgents throws', async () => {
+test("falls back to the first allowed agent when rankAgents throws", async () => {
   const routeAgentMock = mock(() => {
-    throw new Error('rank lookup failed');
+    throw new Error("rank lookup failed");
   });
-  const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+  const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
   const { db, taskWriter, sessions, chainStartCalls, reactor } = makeReactor(routeAgentMock);
   reactor.start();
 
   const { task_id } = taskWriter.file({
-    prompt: 'Ship task 3.2',
-    kind: 'orchestrate',
+    prompt: "Ship task 3.2",
+    kind: "orchestrate",
     eligibility: { allow_agents: [AGENT_A.name, AGENT_B.name] },
-    created_by_kind: 'human',
-    created_by_id: 'cli',
+    created_by_kind: "human",
+    created_by_id: "cli",
   });
 
   await waitFor(() => {
@@ -184,25 +186,25 @@ test('falls back to the first allowed agent when rankAgents throws', async () =>
   db.close();
 });
 
-test('falls back to the first allowed agent when rankAgents has no overlap', async () => {
+test("falls back to the first allowed agent when rankAgents has no overlap", async () => {
   const routeAgentMock = mock(() => ({
-    detail: 'rank' as const,
+    detail: "rank" as const,
     candidates: {
-      task_type: 'implement_substantial',
-      window: { from: null, to: '2026-05-05T12:00:00.000Z' },
-      candidates: [{ agent_name: 'agent-c', score: 0.9 }],
+      task_type: "implement_substantial",
+      window: { from: null, to: "2026-05-05T12:00:00.000Z" },
+      candidates: [{ agent_name: "agent-c", score: 0.9 }],
     },
   }));
-  const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+  const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
   const { db, taskWriter, sessions, chainStartCalls, reactor } = makeReactor(routeAgentMock);
   reactor.start();
 
   const { task_id } = taskWriter.file({
-    prompt: 'Ship task 3.2',
-    kind: 'orchestrate',
+    prompt: "Ship task 3.2",
+    kind: "orchestrate",
     eligibility: { allow_agents: [AGENT_A.name, AGENT_B.name] },
-    created_by_kind: 'human',
-    created_by_id: 'cli',
+    created_by_kind: "human",
+    created_by_id: "cli",
   });
 
   await waitFor(() => {

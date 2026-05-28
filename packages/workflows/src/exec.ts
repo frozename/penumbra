@@ -1,9 +1,9 @@
-import type { WorkflowSpec } from './schema.js';
-import { renderTemplate } from './template.js';
-import { resolveTemplateVars, type TemplateVarContext } from './template-vars.js';
-import type { RecallBundle } from './recall.js';
-import type { WorkflowCtx } from './ctx.js';
-import { GATES, type GateName } from './gates/index.js';
+import type { WorkflowSpec } from "./schema.js";
+import { renderTemplate } from "./template.js";
+import { resolveTemplateVars, type TemplateVarContext } from "./template-vars.js";
+import type { RecallBundle } from "./recall.js";
+import type { WorkflowCtx } from "./ctx.js";
+import { GATES, type GateName } from "./gates/index.js";
 import {
   emitFileOutput,
   emitClipboardOutput,
@@ -11,9 +11,9 @@ import {
   emitSessionReminder,
   emitObservationOutput,
   taskOutput,
-} from './outputs/index.js';
+} from "./outputs/index.js";
 
-export type ExecuteOutcome = 'success' | 'render_error' | 'run_error' | 'gated_failure';
+export type ExecuteOutcome = "success" | "render_error" | "run_error" | "gated_failure";
 
 export type ExecuteResult = {
   outcome: ExecuteOutcome;
@@ -34,14 +34,14 @@ export type ExecuteOpts = {
   ctx?: WorkflowCtx<any>;
   storageRoot: string;
   captureCtx?: {
-    db: import('bun:sqlite').Database;
+    db: import("bun:sqlite").Database;
     project: string;
     sessionId: string;
     userId: string;
     machineId: string;
     now?: () => Date;
   };
-  captureKind?: 'refresh' | 'intentional';
+  captureKind?: "refresh" | "intentional";
   observationCtx?: {
     sessionId?: string | null;
     projectId?: string | null;
@@ -58,12 +58,12 @@ export type WorkflowFn<TArgs = Record<string, unknown>> = (
 function nestDottedKeys(flat: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, val] of Object.entries(flat)) {
-    const parts = key.split('.');
+    const parts = key.split(".");
     let cur: Record<string, unknown> = out;
     for (let i = 0; i < parts.length - 1; i++) {
       const p = parts[i]!;
       const next = cur[p];
-      if (next && typeof next === 'object' && !Array.isArray(next)) {
+      if (next && typeof next === "object" && !Array.isArray(next)) {
         cur = next as Record<string, unknown>;
       } else {
         const fresh: Record<string, unknown> = {};
@@ -90,9 +90,9 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
 
   const tplCtx: TemplateVarContext = opts.templateCtx ?? {
     now: () => new Date(),
-    project: opts.captureCtx?.project ?? 'unknown',
+    project: opts.captureCtx?.project ?? "unknown",
     sessionStart: new Date(start).toISOString(),
-    tz: process.env.TZ ?? 'UTC',
+    tz: process.env.TZ ?? "UTC",
     cwd: process.cwd(),
     repoRoot: opts.repoRoot ?? process.cwd(),
   };
@@ -101,21 +101,21 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
   let runResult: unknown;
 
   try {
-    if (spec.run.kind === 'markdown-template') {
+    if (spec.run.kind === "markdown-template") {
       const preExpanded = resolveTemplateVars(spec.run.template, tplCtx);
       composedPrompt = renderTemplate(
         preExpanded,
         { recall: nestDottedKeys(bundle.byKey) } as Record<string, unknown>,
         { warnings },
       );
-    } else if (spec.run.kind === 'ts-function') {
-      if (!fn) throw new Error('ts-function workflow has no fn bound');
-      const baseCtx = (opts.ctx ?? ({} as WorkflowCtx));
+    } else if (spec.run.kind === "ts-function") {
+      if (!fn) throw new Error("ts-function workflow has no fn bound");
+      const baseCtx = opts.ctx ?? ({} as WorkflowCtx);
       const context: WorkflowCtx = {
         ...baseCtx,
         fileWrite: async (relativePath: string, body: string) => {
-          if (typeof baseCtx.fileWrite !== 'function') {
-            throw new Error('workflow ctx.fileWrite is not available');
+          if (typeof baseCtx.fileWrite !== "function") {
+            throw new Error("workflow ctx.fileWrite is not available");
           }
           const path = await baseCtx.fileWrite(relativePath, body);
           artifacts.push(path);
@@ -126,7 +126,7 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
     }
   } catch (err: any) {
     const result: ExecuteResult = {
-      outcome: spec.run.kind === 'markdown-template' ? 'render_error' : 'run_error',
+      outcome: spec.run.kind === "markdown-template" ? "render_error" : "run_error",
       composedPrompt,
       artifacts,
       warnings,
@@ -141,7 +141,9 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
   let blockingFailure = false;
   if (spec.process_gates && spec.process_gates.length > 0) {
     const gateInput = {
-      text: composedPrompt ?? (typeof runResult === 'string' ? runResult : JSON.stringify(runResult ?? {})),
+      text:
+        composedPrompt ??
+        (typeof runResult === "string" ? runResult : JSON.stringify(runResult ?? {})),
     };
     for (const name of spec.process_gates) {
       const verify = GATES[name];
@@ -149,13 +151,13 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
       const r = verify(gateInput);
       if (!r.passed) {
         gateEvidence[name] = r.evidence;
-        if (r.severity === 'blocking-in-session') blockingFailure = true;
+        if (r.severity === "blocking-in-session") blockingFailure = true;
       }
     }
   }
   if (blockingFailure) {
     const result: ExecuteResult = {
-      outcome: 'gated_failure',
+      outcome: "gated_failure",
       composedPrompt,
       runResult,
       artifacts,
@@ -175,23 +177,28 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
     // escapes, which breaks session-reminder output.
     const body =
       composedPrompt ??
-      (typeof runResult === 'string' ? runResult : JSON.stringify(runResult ?? {}));
-    if (sink.kind === 'file') {
+      (typeof runResult === "string" ? runResult : JSON.stringify(runResult ?? {}));
+    if (sink.kind === "file") {
       const resolvedPath = resolveTemplateVars(sink.path, tplCtx);
-      const r = await emitFileOutput({ path: resolvedPath, body, mode: sink.mode, repoRoot: opts.repoRoot });
+      const r = await emitFileOutput({
+        path: resolvedPath,
+        body,
+        mode: sink.mode,
+        repoRoot: opts.repoRoot,
+      });
       warnings.push(...r.warnings);
       if (r.path) artifacts.push(r.path);
-    } else if (sink.kind === 'clipboard') {
+    } else if (sink.kind === "clipboard") {
       const r = await emitClipboardOutput({ body });
       warnings.push(...r.warnings);
-    } else if (sink.kind === 'next-session-prompt') {
+    } else if (sink.kind === "next-session-prompt") {
       const r = await emitNextSessionPromptOutput({ body, storageRoot });
       warnings.push(...r.warnings);
       if (r.path) artifacts.push(r.path);
-    } else if (sink.kind === 'session-reminder') {
+    } else if (sink.kind === "session-reminder") {
       const r = emitSessionReminder({ text: body });
       if (r.text) sessionReminderTexts.push(r.text);
-    } else if (sink.kind === 'observation') {
+    } else if (sink.kind === "observation") {
       const r = await emitObservationOutput({
         body,
         storageRoot,
@@ -202,33 +209,33 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
       });
       warnings.push(...r.warnings);
       if (r.eventId) artifacts.push(`observation:${r.eventId}`);
-    } else if (sink.kind === 'task') {
-      const r = await taskOutput(
-        sink,
-        {
-          storageRoot,
-          workflow: { name: spec.name, origin: (spec as WorkflowSpec & { origin?: string | null }).origin ?? undefined },
-          now: tplCtx.now,
-          project: tplCtx.project,
-          sessionStart: tplCtx.sessionStart,
-          tz: tplCtx.tz,
-          filePath: tplCtx.filePath,
+    } else if (sink.kind === "task") {
+      const r = await taskOutput(sink, {
+        storageRoot,
+        workflow: {
+          name: spec.name,
+          origin: (spec as WorkflowSpec & { origin?: string | null }).origin ?? undefined,
         },
-      );
+        now: tplCtx.now,
+        project: tplCtx.project,
+        sessionStart: tplCtx.sessionStart,
+        tz: tplCtx.tz,
+        filePath: tplCtx.filePath,
+      });
       warnings.push(...r.warnings);
       if (r.taskId) artifacts.push(`task:${r.taskId}`);
     }
   }
 
   const result: ExecuteResult = {
-    outcome: 'success',
+    outcome: "success",
     composedPrompt,
     runResult,
     artifacts,
     warnings,
     latencyMs: Date.now() - start,
     gateEvidence: Object.keys(gateEvidence).length ? gateEvidence : undefined,
-    sessionReminder: sessionReminderTexts.length ? sessionReminderTexts.join('\n\n') : undefined,
+    sessionReminder: sessionReminderTexts.length ? sessionReminderTexts.join("\n\n") : undefined,
   };
   await runCapture(opts, result, recallSourceNames, itemCount);
   return result;
@@ -241,7 +248,7 @@ async function runCapture(
   itemCount: number,
 ): Promise<void> {
   if (!opts.captureCtx) return;
-  const { captureWorkflowOutcome } = await import('./capture.js');
+  const { captureWorkflowOutcome } = await import("./capture.js");
   captureWorkflowOutcome({
     db: opts.captureCtx.db,
     workflowName: opts.spec.name,
@@ -257,6 +264,6 @@ async function runCapture(
     userId: opts.captureCtx.userId,
     machineId: opts.captureCtx.machineId,
     now: opts.captureCtx.now ?? (() => new Date()),
-    kind: opts.captureKind ?? 'intentional',
+    kind: opts.captureKind ?? "intentional",
   });
 }

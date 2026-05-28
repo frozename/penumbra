@@ -1,4 +1,4 @@
-import { formatEnvConfig, getConfig } from '@penumbra/config';
+import { formatEnvConfig, getConfig } from "@penumbra/config";
 
 export interface ConfigShowOpts {
   json: boolean;
@@ -19,5 +19,5 @@ export async function runConfigShow(opts: ConfigShowOpts): Promise<void> {
     process.exit(1);
   }
   const output = formatEnvConfig(bundle, { json: opts.json });
-  process.stdout.write(output + '\n');
+  process.stdout.write(output + "\n");
 }

@@ -1,4 +1,4 @@
-import type { Embedder } from './interface.js';
+import type { Embedder } from "./interface.js";
 
 export interface SiriusEmbedderOpts {
   baseUrl: string;
@@ -27,16 +27,16 @@ export class SiriusEmbedder implements Embedder {
   constructor(opts: SiriusEmbedderOpts) {
     this.name = `sirius:${opts.model}`;
     this.dim = opts.dim;
-    this.baseUrl = opts.baseUrl.replace(/\/$/, '');
+    this.baseUrl = opts.baseUrl.replace(/\/$/, "");
     this.token = opts.token;
     this.model = opts.model;
   }
 
   async embed(texts: string[]): Promise<Float32Array[]> {
     const res = await fetch(`${this.baseUrl}/v1/embeddings`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'content-type': 'application/json',
+        "content-type": "application/json",
         authorization: `Bearer ${this.token}`,
       },
       body: JSON.stringify({ input: texts, model: this.model }),

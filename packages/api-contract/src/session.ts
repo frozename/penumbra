@@ -6,17 +6,19 @@ const SessionBudgetSchema = z.object({
   soft_warn_pct: z.number(),
 });
 
-export const MissionSessionSchema = z.object({
-  id: z.string(),
-  project: z.object({
+export const MissionSessionSchema = z
+  .object({
     id: z.string(),
-    name: z.string(),
-  }),
-  started_at: z.string(),
-  dispatched: z.number().int().nonnegative(),
-  resolved: z.number().int().nonnegative(),
-  failed: z.number().int().nonnegative(),
-  budget: SessionBudgetSchema,
-}).strict();
+    project: z.object({
+      id: z.string(),
+      name: z.string(),
+    }),
+    started_at: z.string(),
+    dispatched: z.number().int().nonnegative(),
+    resolved: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+    budget: SessionBudgetSchema,
+  })
+  .strict();
 
 export type MissionSession = z.infer<typeof MissionSessionSchema>;

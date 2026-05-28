@@ -1,16 +1,16 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { getConfig, resetConfigForTest } from '@penumbra/config';
-import { handleIdleSignal } from '../../src/dreaming/event-trigger.js';
-import { buildDreamingConfig } from '../../src/dreaming/config.js';
-import * as cycle from '../../src/dreaming/cycle.js';
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { Database } from "bun:sqlite";
+import { getConfig, resetConfigForTest } from "@penumbra/config";
+import { handleIdleSignal } from "../../src/dreaming/event-trigger.js";
+import { buildDreamingConfig } from "../../src/dreaming/config.js";
+import * as cycle from "../../src/dreaming/cycle.js";
 
-describe('dreaming/event-trigger', () => {
+describe("dreaming/event-trigger", () => {
   let db: Database;
-  
+
   beforeEach(() => {
     resetConfigForTest();
-    db = new Database(':memory:');
+    db = new Database(":memory:");
     db.exec(`
       CREATE TABLE dream_cycles(
         cycle_id TEXT PRIMARY KEY,
@@ -49,26 +49,26 @@ describe('dreaming/event-trigger', () => {
     db.close();
   });
 
-  it('drops when mutexHeld is true', async () => {
+  it("drops when mutexHeld is true", async () => {
     const config = buildDreamingConfig(getConfig({}));
     const log = { warn: () => {} };
     await handleIdleSignal(db, config, { mutexHeld: true, log });
-    const count = db.prepare('SELECT COUNT(*) as c FROM dream_cycles').get() as { c: number };
+    const count = db.prepare("SELECT COUNT(*) as c FROM dream_cycles").get() as { c: number };
     expect(count.c).toBe(0);
   });
 
-  it('10 concurrent calls produce exactly 1 cycle', async () => {
+  it("10 concurrent calls produce exactly 1 cycle", async () => {
     const config = buildDreamingConfig(getConfig({}));
     config.triggerCooldownMinutes = 0; // Disable cooldown for the test
     const log = { warn: () => {} };
-    
+
     const promises = [];
     for (let i = 0; i < 10; i++) {
       promises.push(handleIdleSignal(db, config, { mutexHeld: false, log }));
     }
     await Promise.all(promises);
-    
-    const count = db.prepare('SELECT COUNT(*) as c FROM dream_cycles').get() as { c: number };
+
+    const count = db.prepare("SELECT COUNT(*) as c FROM dream_cycles").get() as { c: number };
     expect(count.c).toBe(1);
   });
 });

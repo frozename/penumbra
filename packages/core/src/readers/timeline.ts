@@ -1,5 +1,10 @@
-import type { Database } from 'bun:sqlite';
-import { computeAgeDays, staleThresholdDays, type TimelineRequest, type TimelineEntry } from '../schemas/recall.js';
+import type { Database } from "bun:sqlite";
+import {
+  computeAgeDays,
+  staleThresholdDays,
+  type TimelineRequest,
+  type TimelineEntry,
+} from "../schemas/recall.js";
 
 /**
  * Returns chronological neighbors around an anchor t2 memory. Useful as the
@@ -8,15 +13,16 @@ import { computeAgeDays, staleThresholdDays, type TimelineRequest, type Timeline
 export function timeline(db: Database, req: TimelineRequest): TimelineEntry[] {
   const now = Date.now();
   const anchor = db
-    .query<{ created_at: string; project_id: string | null; obs_type: string | null }, [string]>(
-      `SELECT created_at, project_id, obs_type FROM t2_memories WHERE memory_id = ?`,
-    )
+    .query<
+      { created_at: string; project_id: string | null; obs_type: string | null },
+      [string]
+    >(`SELECT created_at, project_id, obs_type FROM t2_memories WHERE memory_id = ?`)
     .get(req.anchor);
   if (!anchor) return [];
 
   const projectId = req.project_id ?? null;
   const useProjectFilter = projectId !== null;
-  const projectFragment = useProjectFilter ? 'AND project_id = ?' : '';
+  const projectFragment = useProjectFilter ? "AND project_id = ?" : "";
 
   const beforeRows = db
     .query<

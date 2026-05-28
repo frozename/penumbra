@@ -1,4 +1,4 @@
-import type { TaskEventKind } from './schema.js';
+import type { TaskEventKind } from "./schema.js";
 
 export interface TaskEvent {
   task_id: string;
@@ -30,7 +30,9 @@ export class TaskEventBus {
     }
   }
 
-  subscribe(predicate: (event: TaskEvent) => boolean = () => true): AsyncIterableIterator<TaskEvent> {
+  subscribe(
+    predicate: (event: TaskEvent) => boolean = () => true,
+  ): AsyncIterableIterator<TaskEvent> {
     const subscriber: TaskSubscriber = {
       closed: false,
       predicate,

@@ -1,7 +1,7 @@
-import type { ConfigBundle } from '@penumbra/config';
+import type { ConfigBundle } from "@penumbra/config";
 
 export interface JudgePoolConfig {
-  kind: 'stub' | 'real';
+  kind: "stub" | "real";
 }
 
 function nonNegIntOr(value: number | undefined, fallback: number): number {
@@ -100,20 +100,32 @@ interface DreamingEnvSlice {
 export function buildDreamingConfig(bundle: ConfigBundle): DreamConfig {
   const env = bundle.env as unknown as DreamingEnvSlice;
   const skipPhases = new Set(
-    env.PENUMBRA_DREAMING_SKIP_PHASES
-      .split(',')
+    env.PENUMBRA_DREAMING_SKIP_PHASES.split(",")
       .map((p) => p.trim())
       .filter((p) => p.length > 0),
   );
 
-  if (env.PENUMBRA_DREAMING_PC1_BATCH !== undefined && env.PENUMBRA_DREAMING_PC1_BATCH_SIZE === undefined) {
-    console.warn('PENUMBRA_DREAMING_PC1_BATCH is deprecated; use PENUMBRA_DREAMING_PC1_BATCH_SIZE');
+  if (
+    env.PENUMBRA_DREAMING_PC1_BATCH !== undefined &&
+    env.PENUMBRA_DREAMING_PC1_BATCH_SIZE === undefined
+  ) {
+    console.warn("PENUMBRA_DREAMING_PC1_BATCH is deprecated; use PENUMBRA_DREAMING_PC1_BATCH_SIZE");
   }
-  if (env.PENUMBRA_DREAMING_PC2_MIN_CLUSTER !== undefined && env.PENUMBRA_DREAMING_PC2_MIN_CLUSTER_SIZE === undefined) {
-    console.warn('PENUMBRA_DREAMING_PC2_MIN_CLUSTER is deprecated; use PENUMBRA_DREAMING_PC2_MIN_CLUSTER_SIZE');
+  if (
+    env.PENUMBRA_DREAMING_PC2_MIN_CLUSTER !== undefined &&
+    env.PENUMBRA_DREAMING_PC2_MIN_CLUSTER_SIZE === undefined
+  ) {
+    console.warn(
+      "PENUMBRA_DREAMING_PC2_MIN_CLUSTER is deprecated; use PENUMBRA_DREAMING_PC2_MIN_CLUSTER_SIZE",
+    );
   }
-  if (env.PENUMBRA_DREAMING_PC2_QUEUE_THRESHOLD !== undefined && env.PENUMBRA_DREAMING_PC2_CLUSTER_LINK_THRESHOLD === undefined) {
-    console.warn('PENUMBRA_DREAMING_PC2_QUEUE_THRESHOLD is deprecated; use PENUMBRA_DREAMING_PC2_CLUSTER_LINK_THRESHOLD');
+  if (
+    env.PENUMBRA_DREAMING_PC2_QUEUE_THRESHOLD !== undefined &&
+    env.PENUMBRA_DREAMING_PC2_CLUSTER_LINK_THRESHOLD === undefined
+  ) {
+    console.warn(
+      "PENUMBRA_DREAMING_PC2_QUEUE_THRESHOLD is deprecated; use PENUMBRA_DREAMING_PC2_CLUSTER_LINK_THRESHOLD",
+    );
   }
 
   return {
@@ -138,7 +150,9 @@ export function buildDreamingConfig(bundle: ConfigBundle): DreamConfig {
     briefRefreshHours: env.PENUMBRA_DREAMING_BRIEF_REFRESH_HOURS,
     briefSynthMaxMemories: env.PENUMBRA_DREAMING_BRIEF_SYNTH_MAX_MEMORIES,
     pc1BatchSize: nonNegIntOr(
-      env.PENUMBRA_DREAMING_PC1_BATCH_SIZE ?? env.PENUMBRA_DREAMING_PC1_BATCH ?? env.PENUMBRA_DREAMING_PC,
+      env.PENUMBRA_DREAMING_PC1_BATCH_SIZE ??
+        env.PENUMBRA_DREAMING_PC1_BATCH ??
+        env.PENUMBRA_DREAMING_PC,
       100,
     ),
     pc2MinClusterSize: nonNegIntOr(

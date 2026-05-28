@@ -1,4 +1,4 @@
-import type { AgentChatConfig } from '../config/types.js';
+import type { AgentChatConfig } from "../config/types.js";
 
 export interface RuntimeShellConfig {
   enabled: boolean;
@@ -15,16 +15,16 @@ export interface RuntimeShellConfig {
 }
 
 const DEFAULT_DANGEROUS_COMMANDS = [
-  'sudo\\b',
-  '\\brm\\s+-rf\\b',
-  '\\brm\\s+-fr\\b',
-  '\\bgit\\s+push\\b',
-  '\\bgit\\s+(reset|checkout)\\s+--hard\\b',
-  'curl[^|]*\\|\\s*(sh|bash)\\b',
-  'wget[^|]*\\|\\s*(sh|bash)\\b',
-  '>\\s*/dev/(sd|hd|nvme)',
-  '\\bdd\\b.*\\bof=\\s*/dev/',
-  '\\bmkfs\\.',
+  "sudo\\b",
+  "\\brm\\s+-rf\\b",
+  "\\brm\\s+-fr\\b",
+  "\\bgit\\s+push\\b",
+  "\\bgit\\s+(reset|checkout)\\s+--hard\\b",
+  "curl[^|]*\\|\\s*(sh|bash)\\b",
+  "wget[^|]*\\|\\s*(sh|bash)\\b",
+  ">\\s*/dev/(sd|hd|nvme)",
+  "\\bdd\\b.*\\bof=\\s*/dev/",
+  "\\bmkfs\\.",
 ];
 
 export function loadShellConfig(input: { agentchat: AgentChatConfig }): RuntimeShellConfig {
@@ -49,7 +49,7 @@ export function loadShellConfig(input: { agentchat: AgentChatConfig }): RuntimeS
     },
     redactOutputForAgent(agentName: string): boolean {
       const override = perAgentOverrides[agentName];
-      return override?.redact_output ?? (shell?.redact_output ?? true);
+      return override?.redact_output ?? shell?.redact_output ?? true;
     },
   };
 }

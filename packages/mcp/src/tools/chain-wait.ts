@@ -1,61 +1,76 @@
-import { z } from 'zod';
-import type { DaemonClient } from '../daemon-client.js';
+import { z } from "zod";
+import type { DaemonClient } from "../daemon-client.js";
 
 export const ChainWaitInputShape = {
-  conversation_id: z.string().describe('The conversation ID to wait for.'),
-  timeout_ms: z.number().optional().default(60000).describe('Timeout in ms (default 60000).'),
+  conversation_id: z.string().describe("The conversation ID to wait for."),
+  timeout_ms: z.number().optional().default(60000).describe("Timeout in ms (default 60000)."),
 };
 
-import { formatChainWait, wrapWithSummary } from '../format-summary.js';
+import { formatChainWait, wrapWithSummary } from "../format-summary.js";
 
-export const chainWaitHandler = (daemon: DaemonClient) => async (args: { conversation_id: string; timeout_ms?: number }) => {
-  const timeout = args.timeout_ms ?? 60000;
-  const start = Date.now();
-  let interval = 200;
-  let lastHandoffId: string | undefined;
+export const chainWaitHandler =
+  (daemon: DaemonClient) => async (args: { conversation_id: string; timeout_ms?: number }) => {
+    const timeout = args.timeout_ms ?? 60000;
+    const start = Date.now();
+    let interval = 200;
+    let lastHandoffId: string | undefined;
 
-  while (Date.now() - start < timeout) {
-    try {
-      const { handoff } = await daemon.getLatestHandoff(args.conversation_id);
-      lastHandoffId = handoff.handoff_id;
-      if (handoff.status === 'completed' || handoff.status === 'failed' || handoff.status === 'rejected') {
-        const payload = {
-          status: handoff.status,
-          last_handoff_id: lastHandoffId,
-          error: handoff.error_message ?? undefined,
-        };
-        const elapsedMs = Date.now() - start;
-        return {
-          content: [{
-            type: 'text',
-            text: wrapWithSummary(
-              formatChainWait({ status: payload.status, last_handoff_id: payload.last_handoff_id ?? '' }, elapsedMs),
-              payload
-            )
-          }]
-        };
+    while (Date.now() - start < timeout) {
+      try {
+        const { handoff } = await daemon.getLatestHandoff(args.conversation_id);
+        lastHandoffId = handoff.handoff_id;
+        if (
+          handoff.status === "completed" ||
+          handoff.status === "failed" ||
+          handoff.status === "rejected"
+        ) {
+          const payload = {
+            status: handoff.status,
+            last_handoff_id: lastHandoffId,
+            error: handoff.error_message ?? undefined,
+          };
+          const elapsedMs = Date.now() - start;
+          return {
+            content: [
+              {
+                type: "text",
+                text: wrapWithSummary(
+                  formatChainWait(
+                    { status: payload.status, last_handoff_id: payload.last_handoff_id ?? "" },
+                    elapsedMs,
+                  ),
+                  payload,
+                ),
+              },
+            ],
+          };
+        }
+      } catch (err: any) {
+        // 404 means no handoffs yet; we keep polling.
+        // Other errors we also swallow to keep polling until timeout.
       }
-    } catch (err: any) {
-      // 404 means no handoffs yet; we keep polling.
-      // Other errors we also swallow to keep polling until timeout.
-    }
-    
-    await new Promise(r => setTimeout(r, interval));
-    interval = Math.min(interval * 1.5, 2000);
-  }
 
-  const payload = {
-    status: 'timeout',
-    last_handoff_id: lastHandoffId,
+      await new Promise((r) => setTimeout(r, interval));
+      interval = Math.min(interval * 1.5, 2000);
+    }
+
+    const payload = {
+      status: "timeout",
+      last_handoff_id: lastHandoffId,
+    };
+    const elapsedMs = Date.now() - start;
+    return {
+      content: [
+        {
+          type: "text",
+          text: wrapWithSummary(
+            formatChainWait(
+              { status: payload.status, last_handoff_id: payload.last_handoff_id ?? "" },
+              elapsedMs,
+            ),
+            payload,
+          ),
+        },
+      ],
+    };
   };
-  const elapsedMs = Date.now() - start;
-  return {
-    content: [{
-      type: 'text',
-      text: wrapWithSummary(
-        formatChainWait({ status: payload.status, last_handoff_id: payload.last_handoff_id ?? '' }, elapsedMs),
-        payload
-      )
-    }]
-  };
-};

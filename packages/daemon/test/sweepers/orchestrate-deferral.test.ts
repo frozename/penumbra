@@ -1,16 +1,22 @@
-import { expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { loadSqliteVec, MaestroSessionWriter, migrate, TaskEventBus, TaskWriter } from '@penumbra/core';
-import { runOrchestrateDeferralSweep } from '../../src/sweepers/orchestrate-deferral.js';
+import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import {
+  loadSqliteVec,
+  MaestroSessionWriter,
+  migrate,
+  TaskEventBus,
+  TaskWriter,
+} from "@penumbra/core";
+import { runOrchestrateDeferralSweep } from "../../src/sweepers/orchestrate-deferral.js";
 
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {}
 
 function setupDb(): Database {
-  const db = new Database(':memory:');
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   return db;
@@ -20,39 +26,44 @@ function insertDeferredEvent(db: Database, taskId: string, at: number, resumeAtM
   db.query<unknown, [string, number, string]>(
     `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
      VALUES (?, ?, 'orchestrate_deferred', NULL, ?)`,
-  ).run(taskId, at, JSON.stringify({ reason: 'subscription_pressure_capped', resume_at_ms: resumeAtMs }));
+  ).run(
+    taskId,
+    at,
+    JSON.stringify({ reason: "subscription_pressure_capped", resume_at_ms: resumeAtMs }),
+  );
 }
 
 function insertTask(db: Database, bus: TaskEventBus): string {
   const writer = new TaskWriter(db, {
     now: () => 100,
     bus,
-    resolveAgent: (name) => (name === 'claude'
-      ? {
-          name: 'claude',
-          maestro_capable: true,
-          tags: [],
-          tier: 'premium',
-        }
-      : undefined),
+    resolveAgent: (name) =>
+      name === "claude"
+        ? {
+            name: "claude",
+            maestro_capable: true,
+            tags: [],
+            tier: "premium",
+          }
+        : undefined,
   });
   const filed = writer.file({
-    prompt: 'orchestrate',
-    kind: 'orchestrate',
-    eligibility: { allow_agents: ['claude'] },
-    created_by_kind: 'human',
-    created_by_id: 'test',
+    prompt: "orchestrate",
+    kind: "orchestrate",
+    eligibility: { allow_agents: ["claude"] },
+    created_by_kind: "human",
+    created_by_id: "test",
   });
   return filed.task_id;
 }
 
-test('due deferred event publishes filed and writes orchestrate_resumed', async () => {
+test("due deferred event publishes filed and writes orchestrate_resumed", async () => {
   const db = setupDb();
   const bus = new TaskEventBus();
   const taskId = insertTask(db, bus);
   insertDeferredEvent(db, taskId, 1_000, 4_000);
 
-  const events = bus.subscribe((event) => event.kind === 'filed');
+  const events = bus.subscribe((event) => event.kind === "filed");
   const result = runOrchestrateDeferralSweep({ db, bus, now: () => 5_000 });
 
   expect(result.resumed).toEqual([taskId]);
@@ -63,16 +74,19 @@ test('due deferred event publishes filed and writes orchestrate_resumed', async 
   expect(published.done).toBe(false);
   expect(published.value?.task_id).toBe(taskId);
 
-  const resumedCount = db.query<{ n: number }, [string]>(
-    `SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND kind = 'orchestrate_resumed'`,
-  ).get(taskId);
+  const resumedCount = db
+    .query<
+      { n: number },
+      [string]
+    >(`SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND kind = 'orchestrate_resumed'`)
+    .get(taskId);
   expect(resumedCount?.n).toBe(1);
 
   await events.return?.();
   db.close();
 });
 
-test('future resume_at_ms does nothing', () => {
+test("future resume_at_ms does nothing", () => {
   const db = setupDb();
   const bus = new TaskEventBus();
   const taskId = insertTask(db, bus);
@@ -81,15 +95,18 @@ test('future resume_at_ms does nothing', () => {
   const result = runOrchestrateDeferralSweep({ db, bus, now: () => 5_000 });
   expect(result.resumed).toEqual([]);
 
-  const resumedCount = db.query<{ n: number }, [string]>(
-    `SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND kind = 'orchestrate_resumed'`,
-  ).get(taskId);
+  const resumedCount = db
+    .query<
+      { n: number },
+      [string]
+    >(`SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND kind = 'orchestrate_resumed'`)
+    .get(taskId);
   expect(resumedCount?.n).toBe(0);
 
   db.close();
 });
 
-test('subsequent orchestrate_spawned blocks resuming', () => {
+test("subsequent orchestrate_spawned blocks resuming", () => {
   const db = setupDb();
   const bus = new TaskEventBus();
   const taskId = insertTask(db, bus);
@@ -104,7 +121,7 @@ test('subsequent orchestrate_spawned blocks resuming', () => {
   db.close();
 });
 
-test('terminated maestro session blocks resuming', () => {
+test("terminated maestro session blocks resuming", () => {
   const db = setupDb();
   const bus = new TaskEventBus();
   const nowMs = 5_000;
@@ -113,20 +130,20 @@ test('terminated maestro session blocks resuming', () => {
   const sessions = new MaestroSessionWriter({ db, now: () => nowMs });
   sessions.start({
     task_id: taskId,
-    chain_handoff_id: 'h-4',
-    agent_id: 'claude',
+    chain_handoff_id: "h-4",
+    agent_id: "claude",
     wall_clock_budget_ms: 1000,
     cost_budget_cents: 1,
     sub_dispatch_budget: 1,
   });
-  sessions.terminate(taskId, 'cancelled');
+  sessions.terminate(taskId, "cancelled");
 
   const result = runOrchestrateDeferralSweep({ db, bus, now: () => nowMs });
   expect(result.resumed).toEqual([]);
   db.close();
 });
 
-test('existing orchestrate_resumed blocks double fire', () => {
+test("existing orchestrate_resumed blocks double fire", () => {
   const db = setupDb();
   const bus = new TaskEventBus();
   const taskId = insertTask(db, bus);

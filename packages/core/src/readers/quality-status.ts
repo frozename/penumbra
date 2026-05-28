@@ -1,8 +1,8 @@
-import type { Database } from 'bun:sqlite';
-import { getMemoryEfficacyRecent } from './memory-efficacy.js';
-import { readSubscriptionPressure, type PressureResult } from './subscription-pressure.js';
-import { routeAgent, type RouteAgentInput } from '../services/agent-routing.js';
-import type { AgentRecommendation } from '../services/agent-routing.js';
+import type { Database } from "bun:sqlite";
+import { getMemoryEfficacyRecent } from "./memory-efficacy.js";
+import { readSubscriptionPressure, type PressureResult } from "./subscription-pressure.js";
+import { routeAgent, type RouteAgentInput } from "../services/agent-routing.js";
+import type { AgentRecommendation } from "../services/agent-routing.js";
 
 export interface QualityStatusInput {
   window_hours?: number;
@@ -40,7 +40,7 @@ export interface QualityStatusSnapshot {
     task_type: string;
     recent: AgentRecommendation[];
   } | null;
-  memory_efficacy: ReturnType<typeof getMemoryEfficacyRecent> & { window_hours: number } | null;
+  memory_efficacy: (ReturnType<typeof getMemoryEfficacyRecent> & { window_hours: number }) | null;
   subscription_pressure: PressureResult | null;
   errors: string[]; // stable opaque codes, never raw error strings
 }
@@ -48,22 +48,27 @@ export interface QualityStatusSnapshot {
 export function qualityStatus(db: Database, input: QualityStatusInput = {}): QualityStatusSnapshot {
   const windowHours = input.window_hours ?? 24;
   const minSamples = input.min_samples ?? 3;
-  const taskType = input.task_type ?? 'implement_substantial';
+  const taskType = input.task_type ?? "implement_substantial";
   const generatedAt = new Date().toISOString();
   const cutoff = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString();
   const errors: string[] = [];
 
-  let lanes: QualityStatusSnapshot['lanes'] = null;
+  let lanes: QualityStatusSnapshot["lanes"] = null;
   try {
-    const rows = db.query<{
-      gate_status: string;
-      task_class: string;
-      ts_closed: string | null;
-    }, [string]>(
-      `SELECT gate_status, task_class, ts_closed
+    const rows = db
+      .query<
+        {
+          gate_status: string;
+          task_class: string;
+          ts_closed: string | null;
+        },
+        [string]
+      >(
+        `SELECT gate_status, task_class, ts_closed
        FROM lane_ledger
        WHERE ts_opened >= ?`,
-    ).all(cutoff);
+      )
+      .all(cutoff);
     const byStatus = { passed: 0, failed: 0, skipped: 0, review_debt: 0, open: 0 };
     const byClass = { BOUNDARY: 0, STANDARD: 0, TRIVIAL: 0 };
     let lastCloseAt: string | null = null;
@@ -74,21 +79,31 @@ export function qualityStatus(db: Database, input: QualityStatusInput = {}): Qua
       if (row.task_class in byClass) {
         byClass[row.task_class as keyof typeof byClass] += 1;
       }
-      if (row.ts_closed && (lastCloseAt === null || row.ts_closed > lastCloseAt)) lastCloseAt = row.ts_closed;
+      if (row.ts_closed && (lastCloseAt === null || row.ts_closed > lastCloseAt))
+        lastCloseAt = row.ts_closed;
     }
-    lanes = { total: rows.length, by_status: byStatus, by_class: byClass, last_close_at: lastCloseAt };
+    lanes = {
+      total: rows.length,
+      by_status: byStatus,
+      by_class: byClass,
+      last_close_at: lastCloseAt,
+    };
   } catch (err) {
-    errors.push('lanes_failed');
+    errors.push("lanes_failed");
   }
 
-  let adversarial: QualityStatusSnapshot['adversarial'] = null;
+  let adversarial: QualityStatusSnapshot["adversarial"] = null;
   try {
-    const rows = db.query<{
-      ts: string;
-      payload_latency: number | null;
-      outcome: string | null;
-    }, [string]>(
-      `SELECT ts,
+    const rows = db
+      .query<
+        {
+          ts: string;
+          payload_latency: number | null;
+          outcome: string | null;
+        },
+        [string]
+      >(
+        `SELECT ts,
               CAST(json_extract(payload_json, '$.latency_ms') AS INTEGER) AS payload_latency,
               json_extract(payload_json, '$.outcome') AS outcome
        FROM t0_events
@@ -96,7 +111,8 @@ export function qualityStatus(db: Database, input: QualityStatusInput = {}): Qua
          AND ts >= ?
          AND json_extract(payload_json, '$.workflow_name') = 'adversarial-review'
        ORDER BY ts DESC`,
-    ).all(cutoff);
+      )
+      .all(cutoff);
 
     let success = 0;
     let failure = 0;
@@ -105,8 +121,8 @@ export function qualityStatus(db: Database, input: QualityStatusInput = {}): Qua
     let lastRunAt: string | null = null;
 
     for (const row of rows) {
-      if (row.outcome === 'success') success += 1;
-      else if (row.outcome === 'failure' || row.outcome === 'failed') failure += 1;
+      if (row.outcome === "success") success += 1;
+      else if (row.outcome === "failure" || row.outcome === "failed") failure += 1;
       if (row.payload_latency != null) {
         latencyTotal += row.payload_latency;
         latencyCount += 1;
@@ -123,37 +139,43 @@ export function qualityStatus(db: Database, input: QualityStatusInput = {}): Qua
       last_run_at: lastRunAt,
     };
   } catch (err) {
-    errors.push('adversarial_failed');
+    errors.push("adversarial_failed");
   }
 
-  let agentRecommendations: QualityStatusSnapshot['agent_recommendations'] = null;
+  let agentRecommendations: QualityStatusSnapshot["agent_recommendations"] = null;
   try {
-    const route = routeAgent({ db, detail: 'summary', taskType: taskType as RouteAgentInput['taskType'], windowDays: windowHours / 24 });
-    if (route.detail !== 'summary') throw new Error('unexpected routeAgent detail for qualityStatus');
+    const route = routeAgent({
+      db,
+      detail: "summary",
+      taskType: taskType as RouteAgentInput["taskType"],
+      windowDays: windowHours / 24,
+    });
+    if (route.detail !== "summary")
+      throw new Error("unexpected routeAgent detail for qualityStatus");
     const all: AgentRecommendation[] = route.recommendations;
     agentRecommendations = {
       task_type: taskType,
       recent: all.filter((row) => row.samples >= minSamples),
     };
   } catch (err) {
-    errors.push('agent_recommendations_failed');
+    errors.push("agent_recommendations_failed");
   }
 
-  let memoryEfficacy: QualityStatusSnapshot['memory_efficacy'] = null;
+  let memoryEfficacy: QualityStatusSnapshot["memory_efficacy"] = null;
   try {
     memoryEfficacy = {
       ...getMemoryEfficacyRecent(db, { sinceISO: cutoff }),
       window_hours: windowHours,
     };
   } catch (err) {
-    errors.push('memory_efficacy_failed');
+    errors.push("memory_efficacy_failed");
   }
 
-  let subscriptionPressure: QualityStatusSnapshot['subscription_pressure'] = null;
+  let subscriptionPressure: QualityStatusSnapshot["subscription_pressure"] = null;
   try {
     subscriptionPressure = readSubscriptionPressure(db);
   } catch (err) {
-    errors.push('subscription_pressure_failed');
+    errors.push("subscription_pressure_failed");
   }
 
   return {

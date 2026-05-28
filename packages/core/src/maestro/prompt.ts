@@ -1,4 +1,4 @@
-import type { TaskRecord } from '../tasks/schema.js';
+import type { TaskRecord } from "../tasks/schema.js";
 
 export interface MaestroPromptBounds {
   wall_clock_budget_ms: number;
@@ -7,11 +7,11 @@ export interface MaestroPromptBounds {
 }
 
 function renderOptionalText(value: string | null): string {
-  return value && value.length > 0 ? value : '(none specified)';
+  return value && value.length > 0 ? value : "(none specified)";
 }
 
-function renderExpectedArtifacts(value: TaskRecord['expected_artifacts']): string {
-  return value && value.length > 0 ? JSON.stringify(value, null, 2) : '(none specified)';
+function renderExpectedArtifacts(value: TaskRecord["expected_artifacts"]): string {
+  return value && value.length > 0 ? JSON.stringify(value, null, 2) : "(none specified)";
 }
 
 export function synthesizeMaestroPrompt(task: TaskRecord, bounds: MaestroPromptBounds): string {

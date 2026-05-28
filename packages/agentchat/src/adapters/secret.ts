@@ -1,6 +1,6 @@
-import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { platform } from 'node:os';
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { platform } from "node:os";
 
 /**
  * Common API-key resolution shared by every openai-compat-style adapter.
@@ -27,23 +27,25 @@ export interface ResolveApiKeyEnv {
 }
 
 export function resolveAdapterApiKey(opts: ApiKeyOpts, env: ResolveApiKeyEnv = {}): string {
-  if (opts.apiKey !== undefined && opts.apiKey !== '') return opts.apiKey;
+  if (opts.apiKey !== undefined && opts.apiKey !== "") return opts.apiKey;
 
   if (opts.apiKeyEnv) {
     const v = process.env[opts.apiKeyEnv];
-    if (v === undefined || v === '') {
+    if (v === undefined || v === "") {
       throw new Error(`apiKeyEnv: env var ${opts.apiKeyEnv} is unset or empty`);
     }
     return v;
   }
 
   if (opts.apiKeyKeychain) {
-    const slash = opts.apiKeyKeychain.indexOf('/');
+    const slash = opts.apiKeyKeychain.indexOf("/");
     if (slash <= 0 || slash === opts.apiKeyKeychain.length - 1) {
-      throw new Error(`apiKeyKeychain: expected '<service>/<account>', got '${opts.apiKeyKeychain}'`);
+      throw new Error(
+        `apiKeyKeychain: expected '<service>/<account>', got '${opts.apiKeyKeychain}'`,
+      );
     }
     const host = env.hostPlatform ?? platform();
-    if (host !== 'darwin') {
+    if (host !== "darwin") {
       throw new Error(`apiKeyKeychain: requires macOS; host is '${host}'`);
     }
     const service = opts.apiKeyKeychain.slice(0, slash);
@@ -53,16 +55,20 @@ export function resolveAdapterApiKey(opts: ApiKeyOpts, env: ResolveApiKeyEnv = {
   }
 
   if (opts.apiKeyFile) {
-    return readFileSync(opts.apiKeyFile, 'utf8').trim();
+    return readFileSync(opts.apiKeyFile, "utf8").trim();
   }
 
-  return '';
+  return "";
 }
 
 function defaultRunSecurityCli(service: string, account: string): string {
-  const out = execFileSync('security', ['find-generic-password', '-s', service, '-a', account, '-w'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const out = execFileSync(
+    "security",
+    ["find-generic-password", "-s", service, "-a", account, "-w"],
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
   return out;
 }

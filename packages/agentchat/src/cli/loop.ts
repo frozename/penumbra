@@ -1,13 +1,13 @@
-import { buildAdapter } from '../adapters/registry.js';
-import { parseMentions, type Mention } from '../mention/parser.js';
-import { resolveMention, type Resolution } from '../mention/resolver.js';
-import type { AgentChatConfig } from '../config/types.js';
-import type { DispatchInput, DispatchOutput } from '../sdk/adapter.js';
-import { ensureDispatchStream } from '../sdk/stream-wrapper.js';
-import type { WriteToolsExecutor } from '../worker/write-tools-executor.js';
-import { CapturePort } from '../worker/capture-port.js';
-import { buildMaestroRedactorFromEnv } from '../worker/maestro-output-redactor.js';
-import { normalizeAdapterOptions } from './adapter-options.js';
+import { buildAdapter } from "../adapters/registry.js";
+import { parseMentions, type Mention } from "../mention/parser.js";
+import { resolveMention, type Resolution } from "../mention/resolver.js";
+import type { AgentChatConfig } from "../config/types.js";
+import type { DispatchInput, DispatchOutput } from "../sdk/adapter.js";
+import { ensureDispatchStream } from "../sdk/stream-wrapper.js";
+import type { WriteToolsExecutor } from "../worker/write-tools-executor.js";
+import { CapturePort } from "../worker/capture-port.js";
+import { buildMaestroRedactorFromEnv } from "../worker/maestro-output-redactor.js";
+import { normalizeAdapterOptions } from "./adapter-options.js";
 
 export interface ChatTurnInput {
   config: AgentChatConfig;
@@ -21,11 +21,14 @@ export interface ChatTurnInput {
   observe: (event: any) => Promise<{ event_id: string }>;
   /** optional: called for each text delta as the adapter streams. */
   onChunk?: (delta: string) => void;
-  requestPermission?: DispatchInput['requestPermission'];
-  eventContext?: DispatchInput['eventContext'];
-  onEvent?: DispatchInput['onEvent'];
+  requestPermission?: DispatchInput["requestPermission"];
+  eventContext?: DispatchInput["eventContext"];
+  onEvent?: DispatchInput["onEvent"];
   signal?: AbortSignal;
-  buildAdapterOverride?: (kind: string, opts: Record<string, unknown>) => ReturnType<typeof buildAdapter>;
+  buildAdapterOverride?: (
+    kind: string,
+    opts: Record<string, unknown>,
+  ) => ReturnType<typeof buildAdapter>;
   long_lived_identity?: {
     dispatch_kind?: string | null;
     long_lived_agent_id?: string | null;
@@ -45,25 +48,25 @@ export interface ChatTurnResult {
 }
 
 export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult> {
-  const MAESTRO_RESPONSE_BLOCKED_SENTINEL = '[maestro response withheld by output policy]';
+  const MAESTRO_RESPONSE_BLOCKED_SENTINEL = "[maestro response withheld by output policy]";
   const cfg = input.config.agents.find((a) => a.name === input.initialAgent);
   if (!cfg) throw new Error(`agent not found in config: ${input.initialAgent}`);
 
   const promptText = input.prompt ?? input.userMessage;
   const promptEvent = await input.observe({
     ts: new Date().toISOString(),
-    source: 'agentchat',
-    event_type: 'agent-prompt',
-    lane: 'cli-subscription',
+    source: "agentchat",
+    event_type: "agent-prompt",
+    lane: "cli-subscription",
     session_id: input.conversation.id,
     project_id: input.conversation.project_id,
-    user_id: 'local-user',
-    machine_id: 'local',
+    user_id: "local-user",
+    machine_id: "local",
     payload_json: { prompt: promptText },
     payload_summary: promptText.slice(0, 240),
   });
 
-  const lane: 'local' | 'cloud' | 'cli-subscription' | 'unknown' = 'cli-subscription';
+  const lane: "local" | "cloud" | "cli-subscription" | "unknown" = "cli-subscription";
   const hostedSpecs = cfg.long_lived_config?.hosted_mcp_servers ?? [];
   // TODO: hard-filter unavailable hosted MCP servers here once the CLI has a
   // daemon health client available in this process. The daemon owns the mcpPool
@@ -93,10 +96,13 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
     maestroRedactor,
   });
 
-  const adapter = (input.buildAdapterOverride ?? buildAdapter)(cfg.adapter, { ...adapterOptions, capturePort });
+  const adapter = (input.buildAdapterOverride ?? buildAdapter)(cfg.adapter, {
+    ...adapterOptions,
+    capturePort,
+  });
 
-  let outText = '';
-  let outMeta: DispatchOutput['meta'];
+  let outText = "";
+  let outMeta: DispatchOutput["meta"];
   let dispatchError: { message: string } | undefined;
   try {
     try {
@@ -118,10 +124,10 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
         onEvent: input.onEvent,
       };
       for await (const ev of ensureDispatchStream(adapter, dispatchInput)) {
-        if (ev.type === 'delta') {
+        if (ev.type === "delta") {
           outText += ev.text;
           input.onChunk?.(ev.text);
-        } else if (ev.type === 'done') {
+        } else if (ev.type === "done") {
           // 'done' carries the authoritative final text + meta. Trust it over the
           // accumulated deltas in case the adapter sent a final-shaped result
           // (e.g. one-shot adapters yield delta+done where delta == result.text).
@@ -150,11 +156,11 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
   let rewrittenHits: { rule_id: string; count: number }[] | null = null;
   if (!dispatchError && maestroRedactor) {
     const result = maestroRedactor.checkContent(outText);
-    if (result.decision === 'blocked') {
+    if (result.decision === "blocked") {
       blockedHits = result.hits;
     } else if (result.bypassed) {
       bypassHits = result.hits;
-    } else if (result.decision === 'rewritten') {
+    } else if (result.decision === "rewritten") {
       rewrittenHits = result.hits;
       finalText = result.content;
     }
@@ -162,41 +168,45 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
 
   const baseEnvelope = {
     ts: new Date().toISOString(),
-    source: 'agentchat' as const,
-    lane: 'cli-subscription' as const,
+    source: "agentchat" as const,
+    lane: "cli-subscription" as const,
     session_id: input.conversation.id,
     project_id: input.conversation.project_id,
     user_id: cfg.name,
-    machine_id: 'local',
+    machine_id: "local",
     triggered_by_event_id: promptEvent.event_id,
   };
 
   if (blockedHits) {
     await input.observe({
       ...baseEnvelope,
-      event_type: 'agent-response-blocked',
+      event_type: "agent-response-blocked",
       payload_json: {
         handoff_id: input.handoff_id ?? null,
         hits: blockedHits,
-        decision: 'blocked',
+        decision: "blocked",
         redacted_message: MAESTRO_RESPONSE_BLOCKED_SENTINEL,
       },
-      payload_summary: `maestro response blocked by ${blockedHits.map((h) => h.rule_id).join(',')}`.slice(0, 240),
+      payload_summary:
+        `maestro response blocked by ${blockedHits.map((h) => h.rule_id).join(",")}`.slice(0, 240),
     });
     finalText = MAESTRO_RESPONSE_BLOCKED_SENTINEL;
   } else if (bypassHits) {
     await input.observe({
       ...baseEnvelope,
-      event_type: 'agent-response-redaction-bypassed',
+      event_type: "agent-response-redaction-bypassed",
       payload_json: { handoff_id: input.handoff_id ?? null, hits: bypassHits },
       payload_summary: `bypass on (would-block=${bypassHits.length})`.slice(0, 240),
     });
   } else if (rewrittenHits) {
     await input.observe({
       ...baseEnvelope,
-      event_type: 'agent-response-redaction-hit',
+      event_type: "agent-response-redaction-hit",
       payload_json: { handoff_id: input.handoff_id ?? null, hits: rewrittenHits },
-      payload_summary: `redaction hits: ${rewrittenHits.map((h) => h.rule_id).join(',')}`.slice(0, 240),
+      payload_summary: `redaction hits: ${rewrittenHits.map((h) => h.rule_id).join(",")}`.slice(
+        0,
+        240,
+      ),
     });
   }
 
@@ -209,15 +219,18 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
 
   const responseEvent = await input.observe({
     ...baseEnvelope,
-    event_type: 'agent-response',
+    event_type: "agent-response",
     payload_json: responsePayload,
     payload_summary: responseSummary,
   });
 
   // Don't parse mentions on an errored or blocked turn — the response text is
   // empty/garbage or intentionally withheld.
-  const knownTargets = [...input.config.agents.map((a) => a.name), ...Object.keys(input.config.default_roles)];
-  const mentions = (dispatchError || blockedHits) ? [] : parseMentions(outText, { knownTargets });
+  const knownTargets = [
+    ...input.config.agents.map((a) => a.name),
+    ...Object.keys(input.config.default_roles),
+  ];
+  const mentions = dispatchError || blockedHits ? [] : parseMentions(outText, { knownTargets });
   const next = mentions[0]
     ? { target: mentions[0].target, resolution: resolveMention(mentions[0].target, input.config) }
     : null;
@@ -233,15 +246,18 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
 }
 
 export function resolveCaptureAttribution(
-  cfg: Pick<AgentChatConfig['agents'][number], 'options' | 'subscription_model' | 'subscription_provider'>,
+  cfg: Pick<
+    AgentChatConfig["agents"][number],
+    "options" | "subscription_model" | "subscription_provider"
+  >,
 ) {
   const adapterOptions = (cfg.options ?? {}) as Record<string, unknown>;
   const provider =
     cfg.subscription_provider ??
-    (typeof adapterOptions.provider === 'string' ? adapterOptions.provider : null);
+    (typeof adapterOptions.provider === "string" ? adapterOptions.provider : null);
   const model =
     cfg.subscription_model ??
-    (typeof adapterOptions.model === 'string' ? adapterOptions.model : null);
+    (typeof adapterOptions.model === "string" ? adapterOptions.model : null);
 
   return { provider, model };
 }

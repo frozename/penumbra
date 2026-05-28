@@ -1,5 +1,5 @@
-import type { QuotaStatusResponse } from '../penumbra-client.js';
-import type { RateLimitDelta, UsageReader, UsageReaderResult } from './index.js';
+import type { QuotaStatusResponse } from "../penumbra-client.js";
+import type { RateLimitDelta, UsageReader, UsageReaderResult } from "./index.js";
 
 const DAILY_MS = 24 * 60 * 60 * 1000;
 const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
@@ -10,14 +10,19 @@ interface GoogleOtlpSynthCursor {
 }
 
 export interface GoogleOtlpSynthOptions {
-  client: { fetchQuotaStatus(args?: { since?: string; window?: '24h' | '5h' }): Promise<QuotaStatusResponse> };
+  client: {
+    fetchQuotaStatus(args?: {
+      since?: string;
+      window?: "24h" | "5h";
+    }): Promise<QuotaStatusResponse>;
+  };
   now?: () => Date;
   min_emit_pct?: number;
 }
 
 export class GoogleOtlpSynth implements UsageReader {
-  readonly id = 'google-otlp-synth';
-  private readonly client: GoogleOtlpSynthOptions['client'];
+  readonly id = "google-otlp-synth";
+  private readonly client: GoogleOtlpSynthOptions["client"];
   private readonly now: () => Date;
   private readonly minEmitPct: number;
 
@@ -38,8 +43,8 @@ export class GoogleOtlpSynth implements UsageReader {
 
     const snapshots: RateLimitDelta[] = [];
     for (const window of [
-      { label: 'daily', ms: DAILY_MS, minutes: 1440, quotaWindow: '24h' as const },
-      { label: 'five_hour', ms: FIVE_HOUR_MS, minutes: 300, quotaWindow: '5h' as const },
+      { label: "daily", ms: DAILY_MS, minutes: 1440, quotaWindow: "24h" as const },
+      { label: "five_hour", ms: FIVE_HOUR_MS, minutes: 300, quotaWindow: "5h" as const },
     ] as const) {
       let status: QuotaStatusResponse;
       try {
@@ -56,7 +61,7 @@ export class GoogleOtlpSynth implements UsageReader {
       }
 
       for (const row of status.providers) {
-        if (row.provider !== 'google') continue;
+        if (row.provider !== "google") continue;
         if (!row.model) continue;
         if (row.quota_tokens == null || row.used_tokens == null) continue;
 
@@ -73,7 +78,7 @@ export class GoogleOtlpSynth implements UsageReader {
         }
 
         snapshots.push({
-          provider: 'google',
+          provider: "google",
           model: row.model,
           window_label: window.label,
           used_pct: usedPct,
@@ -92,18 +97,18 @@ export class GoogleOtlpSynth implements UsageReader {
 }
 
 function normalizeCursor(cursor: unknown | null): GoogleOtlpSynthCursor {
-  if (!cursor || typeof cursor !== 'object') {
+  if (!cursor || typeof cursor !== "object") {
     return { last_emitted_minute: {} };
   }
 
   const candidate = (cursor as { last_emitted_minute?: unknown }).last_emitted_minute;
-  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
     return { last_emitted_minute: {} };
   }
 
   const cleaned: Record<string, number> = {};
   for (const [k, v] of Object.entries(candidate)) {
-    if (typeof v === 'number' && Number.isFinite(v)) {
+    if (typeof v === "number" && Number.isFinite(v)) {
       cleaned[k] = v;
     }
   }

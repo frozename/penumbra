@@ -17,7 +17,7 @@ export const MODULES = [
   { id: "tasks", path: "/tasks", label: "Tasks", icon: "☷", available: false },
 ] as const satisfies ReadonlyArray<ModuleSpec>;
 
-export type ModuleId = typeof MODULES[number]["id"];
+export type ModuleId = (typeof MODULES)[number]["id"];
 
 export function getModule(id: ModuleId): ModuleSpec | undefined {
   return MODULES.find((m) => m.id === id);

@@ -1,13 +1,13 @@
-import type { Database } from 'bun:sqlite';
-import type { Uuid } from '../utils/uuid.js';
-import { HandoffReader } from '../readers/handoff.js';
+import type { Database } from "bun:sqlite";
+import type { Uuid } from "../utils/uuid.js";
+import { HandoffReader } from "../readers/handoff.js";
 import {
   RecordOperatorAgentPerformanceInputSchema,
   type AgentPerformanceRow,
   type RecordOperatorAgentPerformanceInput,
-} from '../schemas/agent-performance.js';
-import { aggregateHandoffUsage } from './agent-performance-capture.js';
-import { AgentPerformanceWriter } from '../writers/agent-performance.js';
+} from "../schemas/agent-performance.js";
+import { aggregateHandoffUsage } from "./agent-performance-capture.js";
+import { AgentPerformanceWriter } from "../writers/agent-performance.js";
 
 function computeResolvedLatencyMs(ts: string, resolvedAt: string | null): number | null {
   if (!resolvedAt) return null;
@@ -25,7 +25,9 @@ export function recordOperatorAgentPerformance(opts: {
 }): AgentPerformanceRow {
   const inputResult = RecordOperatorAgentPerformanceInputSchema.safeParse(opts.input);
   if (!inputResult.success) {
-    throw new Error(`invalid operator agent performance input: ${inputResult.error.issues.map((issue) => issue.message).join(', ')}`);
+    throw new Error(
+      `invalid operator agent performance input: ${inputResult.error.issues.map((issue) => issue.message).join(", ")}`,
+    );
   }
   const input = inputResult.data;
   const handoff = new HandoffReader({ db: opts.db }).get(input.handoff_id);
@@ -51,9 +53,9 @@ export function recordOperatorAgentPerformance(opts: {
     cost_usd: input.cost_usd ?? usage.cost_usd,
     tokens_used: tokensUsed,
     latency_ms: latencyMs,
-    source: 'operator',
+    source: "operator",
     notes: input.notes ?? null,
-    metadata_json: JSON.stringify({ source: 'operator' }),
+    metadata_json: JSON.stringify({ source: "operator" }),
   };
 
   return new AgentPerformanceWriter(opts.db).upsert(row);

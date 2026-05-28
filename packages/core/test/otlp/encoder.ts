@@ -35,9 +35,9 @@ export class ProtoWriter {
 
   writeFixed64(fieldNumber: number, n: number | bigint): void {
     this.writeTag(fieldNumber, 1);
-    const val = typeof n === 'bigint' ? n : BigInt(Math.trunc(n));
+    const val = typeof n === "bigint" ? n : BigInt(Math.trunc(n));
     for (let i = 0; i < 8; i++) {
-      this.parts.push(Number(val >> (BigInt(8 * i)) & BigInt(0xff)));
+      this.parts.push(Number((val >> BigInt(8 * i)) & BigInt(0xff)));
     }
   }
 

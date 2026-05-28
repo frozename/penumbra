@@ -1,9 +1,5 @@
 import { useDaemonStore } from "../stores/daemon-store";
-import {
-  createSseSource,
-  type EventSourceLike,
-  type ShimOpts,
-} from "./event-source-shim";
+import { createSseSource, type EventSourceLike, type ShimOpts } from "./event-source-shim";
 import { buildRequestUrl } from "../lib/url";
 
 const TOPIC_PATHS = {
@@ -70,9 +66,7 @@ type SetTimeoutLike = (fn: () => void, ms: number) => unknown;
 type ClearTimeoutLike = (handle: unknown) => void;
 
 export function paramsKey(params?: Record<string, string>): string {
-  return JSON.stringify(
-    Object.entries(params ?? {}).sort((a, b) => a[0].localeCompare(b[0])),
-  );
+  return JSON.stringify(Object.entries(params ?? {}).sort((a, b) => a[0].localeCompare(b[0])));
 }
 
 function topicPath(topic: StreamTopic): string {
@@ -81,11 +75,7 @@ function topicPath(topic: StreamTopic): string {
   return path;
 }
 
-function buildUrl(
-  baseUrl: string,
-  topic: StreamTopic,
-  params?: Record<string, string>,
-): string {
+function buildUrl(baseUrl: string, topic: StreamTopic, params?: Record<string, string>): string {
   return buildRequestUrl(baseUrl, topicPath(topic), params);
 }
 
@@ -99,20 +89,14 @@ export function createStreamBroker(deps: StreamBrokerDeps): StreamBroker {
   const factory = deps.sourceFactory ?? createSseSource;
   const entries = new Map<string, BrokerEntry>();
 
-  function pushToRing(
-    entry: BrokerEntry,
-    msg: StreamMessage<unknown>,
-  ): void {
+  function pushToRing(entry: BrokerEntry, msg: StreamMessage<unknown>): void {
     entry.ring.push(msg);
     if (entry.ring.length > RING_CAP) {
       entry.ring.splice(0, entry.ring.length - RING_CAP);
     }
   }
 
-  function dispatchToSubscribers(
-    entry: BrokerEntry,
-    msg: StreamMessage<unknown>,
-  ): void {
+  function dispatchToSubscribers(entry: BrokerEntry, msg: StreamMessage<unknown>): void {
     for (const sub of entry.subscribers) {
       try {
         sub(msg);
@@ -140,7 +124,7 @@ export function createStreamBroker(deps: StreamBrokerDeps): StreamBroker {
     const url = buildUrl(entry.baseUrl, entry.topic, entry.params);
     const headers: Record<string, string> = {};
     if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+      headers["Authorization"] = `Bearer ${token}`;
     }
     const source = factory({
       url,
@@ -306,8 +290,7 @@ let mutableScheduler: {
   clearTimeout: ClearTimeoutLike;
 } = {
   setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms),
-  clearTimeout: (h) =>
-    globalThis.clearTimeout(h as ReturnType<typeof globalThis.setTimeout>),
+  clearTimeout: (h) => globalThis.clearTimeout(h as ReturnType<typeof globalThis.setTimeout>),
 };
 let mutableSourceFactory: (opts: ShimOpts) => EventSourceLike = createSseSource;
 
@@ -347,8 +330,7 @@ export function __resetBrokerForTests(): void {
   defaultBroker.reset();
   mutableScheduler = {
     setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms),
-    clearTimeout: (h) =>
-      globalThis.clearTimeout(h as ReturnType<typeof globalThis.setTimeout>),
+    clearTimeout: (h) => globalThis.clearTimeout(h as ReturnType<typeof globalThis.setTimeout>),
   };
   mutableSourceFactory = createSseSource;
 }

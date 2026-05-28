@@ -20,8 +20,10 @@ export function allConfiguredThresholdsMs(): number[] {
   return [DEFAULT_THRESHOLD_MS, ...Object.values(THRESHOLDS_MS)];
 }
 
-export function resolveSweeperSqlCutoffMs(staleAfterMs: number | ((taskType: string | null | undefined) => number)): number {
-  return typeof staleAfterMs === 'function'
+export function resolveSweeperSqlCutoffMs(
+  staleAfterMs: number | ((taskType: string | null | undefined) => number),
+): number {
+  return typeof staleAfterMs === "function"
     ? Math.min(...allConfiguredThresholdsMs())
     : staleAfterMs;
 }

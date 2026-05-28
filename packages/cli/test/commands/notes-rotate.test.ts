@@ -1,16 +1,24 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, statSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { runNotesRotate } from '../../src/commands/notes-rotate.js';
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  existsSync,
+  readFileSync,
+  statSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runNotesRotate } from "../../src/commands/notes-rotate.js";
 
-let rootDir = '';
-let originalCwd = '';
+let rootDir = "";
+let originalCwd = "";
 
 beforeEach(() => {
   originalCwd = process.cwd();
-  rootDir = mkdtempSync(join(tmpdir(), 'penumbra-notes-rotate-'));
-  mkdirSync(join(rootDir, 'docs', 'notes'), { recursive: true });
+  rootDir = mkdtempSync(join(tmpdir(), "penumbra-notes-rotate-"));
+  mkdirSync(join(rootDir, "docs", "notes"), { recursive: true });
   process.chdir(rootDir);
 });
 
@@ -21,89 +29,128 @@ afterEach(() => {
 });
 
 function writeNotes(name: string, content = name): void {
-  writeFileSync(join(rootDir, 'docs', 'notes', name), `${content}\n`);
+  writeFileSync(join(rootDir, "docs", "notes", name), `${content}\n`);
 }
 
 function notesPath(name: string): string {
-  return join(rootDir, 'docs', 'notes', name);
+  return join(rootDir, "docs", "notes", name);
 }
 
-function archivePath(name: string, month = '2026-05'): string {
-  return join(rootDir, 'docs', 'notes', 'archive', month, name);
+function archivePath(name: string, month = "2026-05"): string {
+  return join(rootDir, "docs", "notes", "archive", month, name);
 }
 
-describe('runNotesRotate', () => {
-  test('dry-run lists files that would be moved and does not mutate the filesystem', async () => {
-    for (let i = 1; i <= 12; i++) writeNotes(`maestro-continuation-2026-05-${String(i).padStart(2, '0')}.md`);
-    for (let i = 1; i <= 12; i++) writeNotes(`session-summary-2026-05-${String(i).padStart(2, '0')}.md`);
+describe("runNotesRotate", () => {
+  test("dry-run lists files that would be moved and does not mutate the filesystem", async () => {
+    for (let i = 1; i <= 12; i++)
+      writeNotes(`maestro-continuation-2026-05-${String(i).padStart(2, "0")}.md`);
+    for (let i = 1; i <= 12; i++)
+      writeNotes(`session-summary-2026-05-${String(i).padStart(2, "0")}.md`);
 
-    const result = await runNotesRotate({ rootDir, apply: false, keepCount: 10, now: new Date('2026-05-19T12:00:00.000Z') });
+    const result = await runNotesRotate({
+      rootDir,
+      apply: false,
+      keepCount: 10,
+      now: new Date("2026-05-19T12:00:00.000Z"),
+    });
 
     expect(result.dry_run).toBe(true);
     expect(result.would_move).toHaveLength(4);
     expect(result.moved).toHaveLength(0);
-    expect(existsSync(archivePath('maestro-continuation-2026-05-01.md'))).toBe(false);
-    expect(existsSync(notesPath('maestro-continuation-2026-05-01.md'))).toBe(true);
+    expect(existsSync(archivePath("maestro-continuation-2026-05-01.md"))).toBe(false);
+    expect(existsSync(notesPath("maestro-continuation-2026-05-01.md"))).toBe(true);
   });
 
-  test('--apply moves old files into docs/notes/archive/YYYY-MM/ and returns counts', async () => {
-    for (let i = 1; i <= 12; i++) writeNotes(`maestro-continuation-2026-05-${String(i).padStart(2, '0')}.md`);
+  test("--apply moves old files into docs/notes/archive/YYYY-MM/ and returns counts", async () => {
+    for (let i = 1; i <= 12; i++)
+      writeNotes(`maestro-continuation-2026-05-${String(i).padStart(2, "0")}.md`);
 
-    const result = await runNotesRotate({ rootDir, apply: true, keepCount: 10, now: new Date('2026-05-19T12:00:00.000Z') });
+    const result = await runNotesRotate({
+      rootDir,
+      apply: true,
+      keepCount: 10,
+      now: new Date("2026-05-19T12:00:00.000Z"),
+    });
 
     expect(result.dry_run).toBe(false);
     expect(result.moved).toHaveLength(2);
-    expect(result.moved[0]?.destination).toBe(archivePath('maestro-continuation-2026-05-01.md'));
-    expect(existsSync(notesPath('maestro-continuation-2026-05-01.md'))).toBe(false);
-    expect(existsSync(archivePath('maestro-continuation-2026-05-01.md'))).toBe(true);
-    expect(readFileSync(archivePath('maestro-continuation-2026-05-01.md'), 'utf8')).toContain('maestro-continuation-2026-05-01.md');
+    expect(result.moved[0]?.destination).toBe(archivePath("maestro-continuation-2026-05-01.md"));
+    expect(existsSync(notesPath("maestro-continuation-2026-05-01.md"))).toBe(false);
+    expect(existsSync(archivePath("maestro-continuation-2026-05-01.md"))).toBe(true);
+    expect(readFileSync(archivePath("maestro-continuation-2026-05-01.md"), "utf8")).toContain(
+      "maestro-continuation-2026-05-01.md",
+    );
   });
 
-  test('files at or above the keep-count threshold are not moved', async () => {
-    for (let i = 1; i <= 10; i++) writeNotes(`session-summary-2026-05-${String(i).padStart(2, '0')}.md`);
+  test("files at or above the keep-count threshold are not moved", async () => {
+    for (let i = 1; i <= 10; i++)
+      writeNotes(`session-summary-2026-05-${String(i).padStart(2, "0")}.md`);
 
-    const result = await runNotesRotate({ rootDir, apply: true, keepCount: 10, now: new Date('2026-05-19T12:00:00.000Z') });
+    const result = await runNotesRotate({
+      rootDir,
+      apply: true,
+      keepCount: 10,
+      now: new Date("2026-05-19T12:00:00.000Z"),
+    });
 
     expect(result.would_move).toHaveLength(0);
     expect(result.moved).toHaveLength(0);
-    expect(existsSync(notesPath('session-summary-2026-05-01.md'))).toBe(true);
-    expect(existsSync(archivePath('session-summary-2026-05-01.md'))).toBe(false);
+    expect(existsSync(notesPath("session-summary-2026-05-01.md"))).toBe(true);
+    expect(existsSync(archivePath("session-summary-2026-05-01.md"))).toBe(false);
   });
 
-  test('--keep-count 5 keeps only 5 files and moves older ones', async () => {
-    for (let i = 1; i <= 6; i++) writeNotes(`maestro-continuation-2026-05-${String(i).padStart(2, '0')}.md`);
+  test("--keep-count 5 keeps only 5 files and moves older ones", async () => {
+    for (let i = 1; i <= 6; i++)
+      writeNotes(`maestro-continuation-2026-05-${String(i).padStart(2, "0")}.md`);
 
-    const result = await runNotesRotate({ rootDir, apply: true, keepCount: 5, now: new Date('2026-05-19T12:00:00.000Z') });
+    const result = await runNotesRotate({
+      rootDir,
+      apply: true,
+      keepCount: 5,
+      now: new Date("2026-05-19T12:00:00.000Z"),
+    });
 
     expect(result.moved).toHaveLength(1);
-    expect(existsSync(notesPath('maestro-continuation-2026-05-01.md'))).toBe(false);
-    expect(existsSync(notesPath('maestro-continuation-2026-05-06.md'))).toBe(true);
+    expect(existsSync(notesPath("maestro-continuation-2026-05-01.md"))).toBe(false);
+    expect(existsSync(notesPath("maestro-continuation-2026-05-06.md"))).toBe(true);
   });
 
-  test('--keep-count 4 fails the sanity guard', async () => {
-    writeNotes('maestro-continuation-2026-05-01.md');
+  test("--keep-count 4 fails the sanity guard", async () => {
+    writeNotes("maestro-continuation-2026-05-01.md");
 
-    await expect(runNotesRotate({ rootDir, apply: false, keepCount: 4, now: new Date('2026-05-19T12:00:00.000Z') })).rejects.toThrow('keep-count must be at least 5');
+    await expect(
+      runNotesRotate({
+        rootDir,
+        apply: false,
+        keepCount: 4,
+        now: new Date("2026-05-19T12:00:00.000Z"),
+      }),
+    ).rejects.toThrow("keep-count must be at least 5");
   });
 
-  test('unrelated prefixes are not touched', async () => {
-    writeNotes('eval-plan-T1-prereq-report-2026-05-16.md');
-    writeNotes('maestro-continuation-2026-05-01.md');
-    writeNotes('session-summary-2026-05-01.md');
-    writeNotes('session-summary-2026-05-02.md');
-    writeNotes('session-summary-2026-05-03.md');
-    writeNotes('session-summary-2026-05-04.md');
-    writeNotes('session-summary-2026-05-05.md');
-    writeNotes('session-summary-2026-05-06.md');
-    writeNotes('session-summary-2026-05-07.md');
-    writeNotes('session-summary-2026-05-08.md');
-    writeNotes('session-summary-2026-05-09.md');
-    writeNotes('session-summary-2026-05-10.md');
-    writeNotes('session-summary-2026-05-11.md');
+  test("unrelated prefixes are not touched", async () => {
+    writeNotes("eval-plan-T1-prereq-report-2026-05-16.md");
+    writeNotes("maestro-continuation-2026-05-01.md");
+    writeNotes("session-summary-2026-05-01.md");
+    writeNotes("session-summary-2026-05-02.md");
+    writeNotes("session-summary-2026-05-03.md");
+    writeNotes("session-summary-2026-05-04.md");
+    writeNotes("session-summary-2026-05-05.md");
+    writeNotes("session-summary-2026-05-06.md");
+    writeNotes("session-summary-2026-05-07.md");
+    writeNotes("session-summary-2026-05-08.md");
+    writeNotes("session-summary-2026-05-09.md");
+    writeNotes("session-summary-2026-05-10.md");
+    writeNotes("session-summary-2026-05-11.md");
 
-    const result = await runNotesRotate({ rootDir, apply: true, keepCount: 10, now: new Date('2026-05-19T12:00:00.000Z') });
+    const result = await runNotesRotate({
+      rootDir,
+      apply: true,
+      keepCount: 10,
+      now: new Date("2026-05-19T12:00:00.000Z"),
+    });
 
-    expect(existsSync(notesPath('eval-plan-T1-prereq-report-2026-05-16.md'))).toBe(true);
-    expect(result.moved.some((row) => row.source.includes('eval-plan'))).toBe(false);
+    expect(existsSync(notesPath("eval-plan-T1-prereq-report-2026-05-16.md"))).toBe(true);
+    expect(result.moved.some((row) => row.source.includes("eval-plan"))).toBe(false);
   });
 });

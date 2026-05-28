@@ -24,7 +24,7 @@ export interface DiscordWebhookIdentity {
 export interface HandoffNotificationContext {
   handoff_id: string;
   agent: string;
-  status: 'completed' | 'failed' | 'rejected' | 'expired';
+  status: "completed" | "failed" | "rejected" | "expired";
   latency_seconds: number;
   conversation_id: string;
   error_summary?: string;
@@ -36,7 +36,7 @@ export interface MergeResultNotificationContext {
   handoff_id: string;
   conversation_id: string;
   agent: string;
-  status: 'verified' | 'pr_opened' | 'pr_creation_failed' | 'typecheck_failed' | 'test_failed';
+  status: "verified" | "pr_opened" | "pr_creation_failed" | "typecheck_failed" | "test_failed";
   regression_summary?: string;
   prompt?: string;
   pr_url?: string;
@@ -59,23 +59,24 @@ export function formatHandoffEmbed(
   opts: { includePrompt?: boolean } = {},
 ): DiscordEmbed {
   const color =
-    ctx.status === 'completed'
+    ctx.status === "completed"
       ? COLOR_GREEN
-      : ctx.status === 'failed' || ctx.status === 'rejected'
+      : ctx.status === "failed" || ctx.status === "rejected"
         ? COLOR_RED
         : COLOR_YELLOW;
 
   const fields: DiscordField[] = [
-    { name: 'agent', value: ctx.agent, inline: true },
-    { name: 'status', value: ctx.status, inline: true },
-    { name: 'latency', value: `${ctx.latency_seconds}s`, inline: true },
-    { name: 'handoff', value: ctx.handoff_id },
-    { name: 'conversation', value: ctx.conversation_id },
+    { name: "agent", value: ctx.agent, inline: true },
+    { name: "status", value: ctx.status, inline: true },
+    { name: "latency", value: `${ctx.latency_seconds}s`, inline: true },
+    { name: "handoff", value: ctx.handoff_id },
+    { name: "conversation", value: ctx.conversation_id },
   ];
 
-  if (ctx.error_summary) fields.push({ name: 'error', value: truncate(ctx.error_summary) });
-  if (ctx.pr_url) fields.push({ name: 'pr', value: truncate(ctx.pr_url) });
-  if (opts.includePrompt && ctx.prompt) fields.push({ name: 'prompt', value: truncate(ctx.prompt) });
+  if (ctx.error_summary) fields.push({ name: "error", value: truncate(ctx.error_summary) });
+  if (ctx.pr_url) fields.push({ name: "pr", value: truncate(ctx.pr_url) });
+  if (opts.includePrompt && ctx.prompt)
+    fields.push({ name: "prompt", value: truncate(ctx.prompt) });
 
   return {
     title: `penumbra dispatch ${ctx.status}`,
@@ -89,17 +90,19 @@ export function formatMergeResultEmbed(
   ctx: MergeResultNotificationContext,
   opts: { includePrompt?: boolean } = {},
 ): DiscordEmbed {
-  const success = ctx.status === 'pr_opened' || ctx.status === 'verified';
+  const success = ctx.status === "pr_opened" || ctx.status === "verified";
   const fields: DiscordField[] = [
-    { name: 'agent', value: ctx.agent, inline: true },
-    { name: 'status', value: ctx.status, inline: true },
-    { name: 'handoff', value: ctx.handoff_id },
-    { name: 'conversation', value: ctx.conversation_id },
+    { name: "agent", value: ctx.agent, inline: true },
+    { name: "status", value: ctx.status, inline: true },
+    { name: "handoff", value: ctx.handoff_id },
+    { name: "conversation", value: ctx.conversation_id },
   ];
 
-  if (ctx.pr_url) fields.push({ name: 'pr', value: truncate(ctx.pr_url) });
-  if (ctx.regression_summary) fields.push({ name: 'error', value: truncate(ctx.regression_summary) });
-  if (opts.includePrompt && ctx.prompt) fields.push({ name: 'prompt', value: truncate(ctx.prompt) });
+  if (ctx.pr_url) fields.push({ name: "pr", value: truncate(ctx.pr_url) });
+  if (ctx.regression_summary)
+    fields.push({ name: "error", value: truncate(ctx.regression_summary) });
+  if (opts.includePrompt && ctx.prompt)
+    fields.push({ name: "prompt", value: truncate(ctx.prompt) });
 
   return {
     title: `penumbra reconcile ${ctx.status}`,
@@ -119,15 +122,15 @@ export async function postToDiscord(
   if (!webhookUrl) return false;
 
   const payload = {
-    ...(typeof contentOrEmbed === 'string' ? { content: contentOrEmbed } : contentOrEmbed),
+    ...(typeof contentOrEmbed === "string" ? { content: contentOrEmbed } : contentOrEmbed),
     ...(identity?.username ? { username: identity.username } : {}),
     ...(identity?.avatar_url ? { avatar_url: identity.avatar_url } : {}),
   };
 
   const post = async () => {
     return fetchFn(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
   };

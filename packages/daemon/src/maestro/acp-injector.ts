@@ -1,6 +1,6 @@
 // Mid-session ACP messaging ultimately rides the worker-held stdio-acp JSON-RPC `session/prompt` path; this wrapper only locates the live handle by chain_handoff_id.
 export interface AcpInjectMessage {
-  role: 'user';
+  role: "user";
   text: string;
 }
 
@@ -19,28 +19,34 @@ export interface AcpInjectableSessionLike {
 }
 
 export interface AcpWorkerManagerLike {
-  lookupSession: (chain_handoff_id: string) => AcpInjectableSessionLike | null | undefined | Promise<AcpInjectableSessionLike | null | undefined>;
+  lookupSession: (
+    chain_handoff_id: string,
+  ) =>
+    | AcpInjectableSessionLike
+    | null
+    | undefined
+    | Promise<AcpInjectableSessionLike | null | undefined>;
 }
 
 function resolveAdapterId(session: AcpInjectableSessionLike): string {
   return (
-    session.adapter
-    ?? session.adapter_kind
-    ?? session.metadata?.adapter
-    ?? session.metadata?.adapter_kind
-    ?? session.worker?.adapter
-    ?? session.worker?.adapter_kind
-    ?? ''
+    session.adapter ??
+    session.adapter_kind ??
+    session.metadata?.adapter ??
+    session.metadata?.adapter_kind ??
+    session.worker?.adapter ??
+    session.worker?.adapter_kind ??
+    ""
   );
 }
 
 export function supportsMidSessionInject(adapterId: string): boolean {
   return (
-    adapterId === 'stdio-acp'
-    || adapterId === 'remote-worker'
-    || adapterId.startsWith('claude-acp')
-    || adapterId.startsWith('codex-acp')
-    || adapterId.startsWith('gemini-acp')
+    adapterId === "stdio-acp" ||
+    adapterId === "remote-worker" ||
+    adapterId.startsWith("claude-acp") ||
+    adapterId.startsWith("codex-acp") ||
+    adapterId.startsWith("gemini-acp")
   );
 }
 
@@ -53,7 +59,10 @@ export function createAcpInjector(opts: { workerManager: AcpWorkerManagerLike })
       try {
         session = await opts.workerManager.lookupSession(chain_handoff_id);
       } catch (error) {
-        console.error(`[acp-injector] lookup failed for chain_handoff_id=${chain_handoff_id}`, error);
+        console.error(
+          `[acp-injector] lookup failed for chain_handoff_id=${chain_handoff_id}`,
+          error,
+        );
         return;
       }
 
@@ -65,14 +74,14 @@ export function createAcpInjector(opts: { workerManager: AcpWorkerManagerLike })
       const adapterId = resolveAdapterId(session);
       if (!supportsMidSessionInject(adapterId)) {
         console.warn(
-          `[acp-injector] adapter does not support mid-session injection for chain_handoff_id=${chain_handoff_id} adapter=${adapterId || 'unknown'}`,
+          `[acp-injector] adapter does not support mid-session injection for chain_handoff_id=${chain_handoff_id} adapter=${adapterId || "unknown"}`,
         );
         return;
       }
 
-      if (typeof session.inject !== 'function') {
+      if (typeof session.inject !== "function") {
         console.warn(
-          `[acp-injector] live session missing inject handler for chain_handoff_id=${chain_handoff_id} adapter=${adapterId || 'unknown'}`,
+          `[acp-injector] live session missing inject handler for chain_handoff_id=${chain_handoff_id} adapter=${adapterId || "unknown"}`,
         );
         return;
       }
@@ -80,7 +89,10 @@ export function createAcpInjector(opts: { workerManager: AcpWorkerManagerLike })
       try {
         await session.inject(message);
       } catch (error) {
-        console.error(`[acp-injector] inject failed for chain_handoff_id=${chain_handoff_id}`, error);
+        console.error(
+          `[acp-injector] inject failed for chain_handoff_id=${chain_handoff_id}`,
+          error,
+        );
       }
     },
   };

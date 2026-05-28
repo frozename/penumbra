@@ -15,7 +15,8 @@ export interface DiscordRateLimiter {
 export function createDiscordRateLimiter(options: DiscordRateLimiterOptions): DiscordRateLimiter {
   const lastSentAt = new Map<string, number>();
 
-  const keyFor = (webhookKey: string, coalesceKey: string): string => `${webhookKey}\u0000${coalesceKey}`;
+  const keyFor = (webhookKey: string, coalesceKey: string): string =>
+    `${webhookKey}\u0000${coalesceKey}`;
 
   const sweepExpired = (now: number) => {
     if (options.windowMs <= 0) {

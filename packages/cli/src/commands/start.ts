@@ -1,34 +1,61 @@
-import { Database } from 'bun:sqlite';
-import { readFileSync, writeFileSync, unlinkSync, openSync, writeSync, closeSync, existsSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { applyRuntimePragmas, buildServices, loadSqliteVec, migrate, resolveEmbedder, BundledEmbedder } from '@penumbra/core';
-import { buildRegistry as buildWorkflowRegistry } from '@penumbra/workflows';
-import { loadShellConfig } from '@penumbra/agentchat/worker/shell-config';
-import { readSiriusEnv } from './sirius-env.js';
-import { ShellSessionPool } from '../../../daemon/src/services/shell-session-pool.js';
-import { InProcessPermissionService } from '../../../daemon/src/services/in-process-permission-service.js';
-import { createWorkflowRunsRegistry } from '../../../daemon/src/services/workflow-runs-registry.js';
-import { serve, type DaemonHandle } from '../../../daemon/src/serve.js';
-import { loadAgentChatConfig, resolveAgentChatConfigPath } from '../../../daemon/src/agentchat-config.js';
-import { defaultProjectRegistryPath, loadProjectRegistry } from '@penumbra/core';
-import type { AgentRoutingConfig, ProviderQuota } from '@penumbra/core';
+import { Database } from "bun:sqlite";
+import {
+  readFileSync,
+  writeFileSync,
+  unlinkSync,
+  openSync,
+  writeSync,
+  closeSync,
+  existsSync,
+} from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  applyRuntimePragmas,
+  buildServices,
+  loadSqliteVec,
+  migrate,
+  resolveEmbedder,
+  BundledEmbedder,
+} from "@penumbra/core";
+import { buildRegistry as buildWorkflowRegistry } from "@penumbra/workflows";
+import { loadShellConfig } from "@penumbra/agentchat/worker/shell-config";
+import { readSiriusEnv } from "./sirius-env.js";
+import { ShellSessionPool } from "../../../daemon/src/services/shell-session-pool.js";
+import { InProcessPermissionService } from "../../../daemon/src/services/in-process-permission-service.js";
+import { createWorkflowRunsRegistry } from "../../../daemon/src/services/workflow-runs-registry.js";
+import { serve, type DaemonHandle } from "../../../daemon/src/serve.js";
+import {
+  loadAgentChatConfig,
+  resolveAgentChatConfigPath,
+} from "../../../daemon/src/agentchat-config.js";
+import { defaultProjectRegistryPath, loadProjectRegistry } from "@penumbra/core";
+import type { AgentRoutingConfig, ProviderQuota } from "@penumbra/core";
 
-const { resolveLegacyOperatorConfigPath, resolveOperatorConfigPath } = createRequire(import.meta.url)(
-  '../../../config/src/files/operator-paths.js',
-) as {
-  resolveLegacyOperatorConfigPath: (filename: string, env: Record<string, string | undefined>) => string;
+const { resolveLegacyOperatorConfigPath, resolveOperatorConfigPath } = createRequire(
+  import.meta.url,
+)("../../../config/src/files/operator-paths.js") as {
+  resolveLegacyOperatorConfigPath: (
+    filename: string,
+    env: Record<string, string | undefined>,
+  ) => string;
   resolveOperatorConfigPath: (filename: string, env: Record<string, string | undefined>) => string;
 };
 
 function isEnvTruthy(value: string | undefined): boolean {
   if (value == null) return false;
-  return value !== '' && value !== '0' && value.toLowerCase() !== 'false' && value.toLowerCase() !== 'off' && value.toLowerCase() !== 'no';
+  return (
+    value !== "" &&
+    value !== "0" &&
+    value.toLowerCase() !== "false" &&
+    value.toLowerCase() !== "off" &&
+    value.toLowerCase() !== "no"
+  );
 }
 
 function warnLegacyOperatorConfigFiles(): void {
-  for (const filename of ['projects.yaml', 'workers.yaml'] as const) {
+  for (const filename of ["projects.yaml", "workers.yaml"] as const) {
     const legacyPath = resolveLegacyOperatorConfigPath(filename, process.env);
     const currentPath = resolveOperatorConfigPath(filename, process.env);
     if (!existsSync(legacyPath) || legacyPath === currentPath) continue;
@@ -57,14 +84,14 @@ export interface RunStartDetachedResult {
 }
 
 export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
-  const pidPath = join(opts.storageRoot, 'pid');
-  const portPath = join(opts.storageRoot, 'port');
+  const pidPath = join(opts.storageRoot, "pid");
+  const portPath = join(opts.storageRoot, "port");
 
   claimPidFile(pidPath);
   warnLegacyOperatorConfigFiles();
 
-  const token = readFileSync(join(opts.storageRoot, 'token'), 'utf8').trim();
-  const dbPath = join(opts.storageRoot, 'db.sqlite');
+  const token = readFileSync(join(opts.storageRoot, "token"), "utf8").trim();
+  const dbPath = join(opts.storageRoot, "db.sqlite");
   const db = new Database(dbPath);
   let handle: DaemonHandle | undefined;
   try {
@@ -72,7 +99,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
     applyRuntimePragmas(db);
     migrate(db, { embeddingDim: 384 });
 
-    const preferSirius = process.env.PENUMBRA_EMBEDDER_PREFER_SIRIUS === 'true';
+    const preferSirius = process.env.PENUMBRA_EMBEDDER_PREFER_SIRIUS === "true";
     const sirius = preferSirius ? readSiriusEnv(process.env) : undefined;
     const embedder = await resolveEmbedder({
       preferSirius,
@@ -93,7 +120,8 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
         agentRouting = {
           agents: agentchatConfig.agents.map((agent) => ({ name: agent.name, roles: agent.roles })),
           default_roles: agentchatConfig.default_roles,
-          role_exploration_policy: agentchatConfig.role_routing?.exploration_policy ?? 'unsampled-first',
+          role_exploration_policy:
+            agentchatConfig.role_routing?.exploration_policy ?? "unsampled-first",
         };
         providerQuotas = agentchatConfig.providers.map((provider) => ({
           provider: provider.name,
@@ -111,8 +139,8 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
 
     const repoRoot = process.cwd();
     const workflowDirs = {
-      playbooksDir: join(repoRoot, 'plugin/playbooks'),
-      workflowsDir: join(repoRoot, 'plugin/workflows'),
+      playbooksDir: join(repoRoot, "plugin/playbooks"),
+      workflowsDir: join(repoRoot, "plugin/workflows"),
     };
     let workflowRegistry: Awaited<ReturnType<typeof buildWorkflowRegistry>> | undefined;
     try {
@@ -128,7 +156,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       env: process.env,
       input: {},
       storageRoot: opts.storageRoot,
-      reviewsDir: process.env.PENUMBRA_REVIEWS_DIR ?? resolve(process.cwd(), '.penumbra/reviews'),
+      reviewsDir: process.env.PENUMBRA_REVIEWS_DIR ?? resolve(process.cwd(), ".penumbra/reviews"),
       db,
       embedder,
       agentRegistry,
@@ -144,7 +172,10 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       permissionService?: InProcessPermissionService;
       workflowDirs?: { playbooksDir: string; workflowsDir: string };
     };
-    const runtimeServicesWithWorkflowRuns = runtimeServices as Omit<typeof runtimeServices, 'workflowRuns'> & {
+    const runtimeServicesWithWorkflowRuns = runtimeServices as Omit<
+      typeof runtimeServices,
+      "workflowRuns"
+    > & {
       workflowRuns?: Awaited<ReturnType<typeof createWorkflowRunsRegistry>>;
     };
     runtimeServicesWithWorkflowRuns.workflowRuns = createWorkflowRunsRegistry({
@@ -153,8 +184,13 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       db,
       storageRoot: opts.storageRoot,
     });
-    if (isEnvTruthy(process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH) && runtimeServices.workflowRuns === undefined) {
-      throw new Error('strict-mode (PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH=1) requires services.workflowRuns to be wired; check daemon startup');
+    if (
+      isEnvTruthy(process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH) &&
+      runtimeServices.workflowRuns === undefined
+    ) {
+      throw new Error(
+        "strict-mode (PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH=1) requires services.workflowRuns to be wired; check daemon startup",
+      );
     }
     runtimeServices.workflowDirs = workflowDirs;
     const permissionService = new InProcessPermissionService(services);
@@ -187,11 +223,11 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
     }
     if (preferSirius && !sirius) {
       services.log.warn(
-        { hint: 'set PENUMBRA_SIRIUS_BASE_URL/TOKEN/MODEL/DIM' },
-        'PENUMBRA_EMBEDDER_PREFER_SIRIUS is true but sirius env vars are incomplete; falling back to bundled embedder',
+        { hint: "set PENUMBRA_SIRIUS_BASE_URL/TOKEN/MODEL/DIM" },
+        "PENUMBRA_EMBEDDER_PREFER_SIRIUS is true but sirius env vars are incomplete; falling back to bundled embedder",
       );
     }
-    services.log.info({ embedder: embedder.name, dim: embedder.dim }, 'embedder selected');
+    services.log.info({ embedder: embedder.name, dim: embedder.dim }, "embedder selected");
 
     handle = serve({
       services,
@@ -202,11 +238,15 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
         stopShellSweeper?.();
         services.subscriptionPressureCache.stop();
         permissionService.stop();
-        try { db.close(); } catch { /* already closed */ }
+        try {
+          db.close();
+        } catch {
+          /* already closed */
+        }
       },
     });
     writeFileSync(portPath, `${handle.port}\n`, { mode: 0o644 });
-    services.log.info({ pid: process.pid, port: handle.port }, 'penumbra running');
+    services.log.info({ pid: process.pid, port: handle.port }, "penumbra running");
     return handle;
   } catch (err) {
     if (handle) {
@@ -214,24 +254,40 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       handle.stop();
     } else {
       // handle was never created; close db directly.
-      try { db.close(); } catch { /* already closed */ }
+      try {
+        db.close();
+      } catch {
+        /* already closed */
+      }
     }
-    try { unlinkSync(pidPath); } catch { /* already gone */ }
-    try { unlinkSync(portPath); } catch { /* never written */ }
+    try {
+      unlinkSync(pidPath);
+    } catch {
+      /* already gone */
+    }
+    try {
+      unlinkSync(portPath);
+    } catch {
+      /* never written */
+    }
     throw err;
   }
 }
 
 function claimPidFile(pidPath: string): void {
   try {
-    const fd = openSync(pidPath, 'wx');
-    try { writeSync(fd, `${process.pid}\n`); } finally { closeSync(fd); }
+    const fd = openSync(pidPath, "wx");
+    try {
+      writeSync(fd, `${process.pid}\n`);
+    } finally {
+      closeSync(fd);
+    }
     return;
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
   }
   // EEXIST: someone else has the file. Check liveness.
-  const existing = Number(readFileSync(pidPath, 'utf8'));
+  const existing = Number(readFileSync(pidPath, "utf8"));
   if (Number.isInteger(existing) && existing > 0 && isAlive(existing)) {
     throw new Error(`penumbra already running (pid=${existing})`);
   }
@@ -239,42 +295,55 @@ function claimPidFile(pidPath: string): void {
   // window if another stale-takeover runs concurrently — the loser will
   // hit EEXIST again on the second openSync and retry the liveness check.
   // One retry is enough for the practical case.
-  try { unlinkSync(pidPath); } catch { /* concurrent winner already removed it */ }
-  const fd = openSync(pidPath, 'wx');
-  try { writeSync(fd, `${process.pid}\n`); } finally { closeSync(fd); }
+  try {
+    unlinkSync(pidPath);
+  } catch {
+    /* concurrent winner already removed it */
+  }
+  const fd = openSync(pidPath, "wx");
+  try {
+    writeSync(fd, `${process.pid}\n`);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function isAlive(pid: number): boolean {
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function runStartDetached(opts: RunStartOpts): Promise<RunStartDetachedResult> {
-  const binPath = fileURLToPath(new URL('../../bin/penumbra.ts', import.meta.url));
-  const logPath = join(opts.storageRoot, 'log');
-  const portPath = join(opts.storageRoot, 'port');
-  const pidPath = join(opts.storageRoot, 'pid');
+  const binPath = fileURLToPath(new URL("../../bin/penumbra.ts", import.meta.url));
+  const logPath = join(opts.storageRoot, "log");
+  const portPath = join(opts.storageRoot, "port");
+  const pidPath = join(opts.storageRoot, "pid");
   const hostname = resolveDaemonHost(opts.host);
 
   // Stop here if a live daemon already exists; lets us mirror runStart's
   // contract instead of relying on the child process to discover EEXIST and
   // exit non-zero asynchronously.
   if (existsSync(pidPath)) {
-    const existing = Number(readFileSync(pidPath, 'utf8').trim());
+    const existing = Number(readFileSync(pidPath, "utf8").trim());
     if (Number.isInteger(existing) && existing > 0 && isAlive(existing)) {
       throw new Error(`penumbra already running (pid=${existing})`);
     }
   }
 
-  const logFd = openSync(logPath, 'a');
+  const logFd = openSync(logPath, "a");
   let proc;
   try {
-    const childArgs = ['bun', binPath, 'start'];
+    const childArgs = ["bun", binPath, "start"];
     if (opts.port !== undefined) {
-      childArgs.push('--port', String(opts.port));
+      childArgs.push("--port", String(opts.port));
     }
     proc = Bun.spawn(childArgs, {
       detached: true,
-      stdio: ['ignore', logFd, logFd],
+      stdio: ["ignore", logFd, logFd],
       env: {
         ...process.env,
         PENUMBRA_STORAGE_ROOT: opts.storageRoot,
@@ -289,29 +358,37 @@ export async function runStartDetached(opts: RunStartOpts): Promise<RunStartDeta
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
     if (existsSync(portPath)) {
-      const port = Number(readFileSync(portPath, 'utf8').trim());
+      const port = Number(readFileSync(portPath, "utf8").trim());
       if (Number.isInteger(port) && port > 0) {
         try {
           const res = await fetch(`http://${resolveHealthcheckHost(hostname)}:${port}/health`, {
             signal: AbortSignal.timeout(500),
           });
           if (res.ok) return { pid: proc.pid!, port, logPath };
-        } catch { /* not ready yet */ }
+        } catch {
+          /* not ready yet */
+        }
       }
     }
     await new Promise((r) => setTimeout(r, 200));
   }
 
-  try { proc.kill(); } catch { /* already gone */ }
-  throw new Error(`penumbra start --detach: daemon did not become ready within 10s; check ${logPath}`);
+  try {
+    proc.kill();
+  } catch {
+    /* already gone */
+  }
+  throw new Error(
+    `penumbra start --detach: daemon did not become ready within 10s; check ${logPath}`,
+  );
 }
 
 function resolveDaemonHost(host?: string): string {
-  return host?.trim() || process.env.PENUMBRA_DAEMON_HOST?.trim() || '127.0.0.1';
+  return host?.trim() || process.env.PENUMBRA_DAEMON_HOST?.trim() || "127.0.0.1";
 }
 
 function resolveHealthcheckHost(hostname: string): string {
-  if (hostname === '0.0.0.0') return '127.0.0.1';
-  if (hostname === '::') return '[::1]';
-  return hostname.includes(':') && !hostname.startsWith('[') ? `[${hostname}]` : hostname;
+  if (hostname === "0.0.0.0") return "127.0.0.1";
+  if (hostname === "::") return "[::1]";
+  return hostname.includes(":") && !hostname.startsWith("[") ? `[${hostname}]` : hostname;
 }

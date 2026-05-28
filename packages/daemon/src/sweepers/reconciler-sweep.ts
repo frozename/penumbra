@@ -1,13 +1,17 @@
-import type { Services } from '@penumbra/core';
-import { runPrOrphanSweepForDaemon } from '../services/pr-orphan-sweep.js';
-import type { PrSweepResult } from './pr-orphan-sweeper.js';
+import type { Services } from "@penumbra/core";
+import { runPrOrphanSweepForDaemon } from "../services/pr-orphan-sweep.js";
+import type { PrSweepResult } from "./pr-orphan-sweeper.js";
 
 export interface ReconcilerSweepOpts {
   services: Services;
   maxClose?: number;
   log?: { warn?: (obj: unknown, msg?: string) => void };
   /** Injection point for testing — defaults to runPrOrphanSweepForDaemon. */
-  runSweep?: (input: { services: Services; dryRun: boolean; maxClose?: number }) => Promise<PrSweepResult>;
+  runSweep?: (input: {
+    services: Services;
+    dryRun: boolean;
+    maxClose?: number;
+  }) => Promise<PrSweepResult>;
 }
 
 export interface ReconcilerSweepTickResult {
@@ -52,7 +56,7 @@ export async function runReconcilerSweepTick(
 
     return { closed, scanned, errors };
   } catch (err) {
-    opts.log?.warn?.({ err: String(err) }, 'reconciler-sweep tick failed');
+    opts.log?.warn?.({ err: String(err) }, "reconciler-sweep tick failed");
     return null;
   }
 }
@@ -60,11 +64,12 @@ export async function runReconcilerSweepTick(
 /** Schedules the reconciler sweep on a recurring interval. Returns a cancel function. */
 export function startReconcilerSweeper(
   opts: ReconcilerSweepOpts,
-  intervalMs: number = Number(process.env.PENUMBRA_RECONCILER_SWEEP_INTERVAL_MS) || DEFAULT_INTERVAL_MS,
+  intervalMs: number = Number(process.env.PENUMBRA_RECONCILER_SWEEP_INTERVAL_MS) ||
+    DEFAULT_INTERVAL_MS,
 ): () => void {
   const timer = setInterval(() => {
     void runReconcilerSweepTick(opts);
   }, intervalMs);
-  if (typeof (timer as any).unref === 'function') (timer as any).unref();
+  if (typeof (timer as any).unref === "function") (timer as any).unref();
   return () => clearInterval(timer);
 }

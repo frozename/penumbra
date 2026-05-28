@@ -1,8 +1,8 @@
-import { Database } from 'bun:sqlite';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { realpathSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
-import type { ChainStartRequest, Services } from '@penumbra/core';
+import { Database } from "bun:sqlite";
+import { mkdir, writeFile } from "node:fs/promises";
+import { realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import type { ChainStartRequest, Services } from "@penumbra/core";
 
 export type AgentChatConfigLike = {
   agents?: Array<Record<string, unknown>>;
@@ -27,7 +27,7 @@ export type WorkflowCtx<TArgs = Record<string, unknown>> = {
     conversationId: string,
     opts?: { timeoutMs?: number; lateResponseGraceMs?: number },
   ): Promise<{
-    status: 'completed' | 'failed' | 'timeout';
+    status: "completed" | "failed" | "timeout";
     final_agent: string | null;
     response_text: string | null;
   }>;
@@ -42,7 +42,7 @@ export type WorkflowCtx<TArgs = Record<string, unknown>> = {
 
 type ChainTerminalSnapshot = {
   terminal: boolean;
-  status: 'completed' | 'failed';
+  status: "completed" | "failed";
   final_agent: string | null;
   response_text: string | null;
 };
@@ -66,12 +66,14 @@ export type BuildWorkflowCtxDeps<TArgs = Record<string, unknown>> = {
 function resolveWritePath(inputPath: string, cwd: string, storageRoot: string): string {
   const absPath = isAbsolute(inputPath)
     ? resolve(inputPath)
-    : inputPath.startsWith('./')
+    : inputPath.startsWith("./")
       ? resolve(cwd, inputPath)
       : resolve(storageRoot, inputPath);
   const realAbsPath = canonicalizePathForWrite(absPath);
   const roots = [cwd, storageRoot].map(canonicalizePathForWrite);
-  const allowed = roots.some((root) => realAbsPath === root || realAbsPath.startsWith(`${root}${sep}`));
+  const allowed = roots.some(
+    (root) => realAbsPath === root || realAbsPath.startsWith(`${root}${sep}`),
+  );
   if (!allowed) {
     throw new Error(`fileWrite path outside allowed roots: ${inputPath}`);
   }
@@ -99,11 +101,11 @@ function canonicalizePathForWrite(path: string): string {
 }
 
 async function readJsonBody(res: Response): Promise<any> {
-  const contentType = res.headers.get('content-type') ?? '';
-  if (contentType.includes('application/json')) {
+  const contentType = res.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
     return await res.json().catch(() => null);
   }
-  const text = await res.text().catch(() => '');
+  const text = await res.text().catch(() => "");
   if (!text) return null;
   try {
     return JSON.parse(text);
@@ -112,31 +114,38 @@ async function readJsonBody(res: Response): Promise<any> {
   }
 }
 
-async function defaultReadChainStatus(services: Services, conversationId: string): Promise<ChainTerminalSnapshot> {
+async function defaultReadChainStatus(
+  services: Services,
+  conversationId: string,
+): Promise<ChainTerminalSnapshot> {
   const snapshotFromHandoff = (handoff: { status: string; resolved_at: string | null }) => {
-    if (handoff.status !== 'completed' && handoff.status !== 'failed' && handoff.status !== 'rejected') {
+    if (
+      handoff.status !== "completed" &&
+      handoff.status !== "failed" &&
+      handoff.status !== "rejected"
+    ) {
       return {
         terminal: false,
-        status: 'failed',
+        status: "failed",
         final_agent: null,
         response_text: null,
       } as const;
     }
 
-    const responses = services.chainReader.getResponses(conversationId, 'final');
+    const responses = services.chainReader.getResponses(conversationId, "final");
     const final = responses[0] ?? null;
-    const hasResponse = typeof final?.text === 'string' && final.text.length > 0;
+    const hasResponse = typeof final?.text === "string" && final.text.length > 0;
 
-    if (handoff.status === 'completed' && handoff.resolved_at !== null && !hasResponse) {
+    if (handoff.status === "completed" && handoff.resolved_at !== null && !hasResponse) {
       return {
         terminal: true,
-        status: 'failed',
+        status: "failed",
         final_agent: null,
         response_text: null,
       } as const;
     }
 
-    const status = handoff.status === 'completed' ? 'completed' : 'failed';
+    const status = handoff.status === "completed" ? "completed" : "failed";
     const responseText = hasResponse ? final.text : null;
 
     return {
@@ -148,11 +157,15 @@ async function defaultReadChainStatus(services: Services, conversationId: string
   };
 
   let rootLookupOk = false;
-  let root: ReturnType<Services['handoffReader']['getLatestForConversation']> = null;
-  const getRootForConversation = (services.handoffReader as {
-    getRootForConversation?: (conversationId: string) => ReturnType<Services['handoffReader']['getLatestForConversation']>;
-  }).getRootForConversation;
-  if (typeof getRootForConversation === 'function') {
+  let root: ReturnType<Services["handoffReader"]["getLatestForConversation"]> = null;
+  const getRootForConversation = (
+    services.handoffReader as {
+      getRootForConversation?: (
+        conversationId: string,
+      ) => ReturnType<Services["handoffReader"]["getLatestForConversation"]>;
+    }
+  ).getRootForConversation;
+  if (typeof getRootForConversation === "function") {
     rootLookupOk = true;
     root = getRootForConversation.call(services.handoffReader, conversationId);
   }
@@ -160,7 +173,7 @@ async function defaultReadChainStatus(services: Services, conversationId: string
   if (rootLookupOk && !root) {
     return {
       terminal: false,
-      status: 'failed',
+      status: "failed",
       final_agent: null,
       response_text: null,
     };
@@ -174,7 +187,7 @@ async function defaultReadChainStatus(services: Services, conversationId: string
   if (!latest) {
     return {
       terminal: false,
-      status: 'failed',
+      status: "failed",
       final_agent: null,
       response_text: null,
     };
@@ -182,12 +195,17 @@ async function defaultReadChainStatus(services: Services, conversationId: string
   return snapshotFromHandoff(latest);
 }
 
-export function buildWorkflowCtx<TArgs = Record<string, unknown>>(deps: BuildWorkflowCtxDeps<TArgs>): WorkflowCtx<TArgs> {
-  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolveSleep) => setTimeout(resolveSleep, ms)));
+export function buildWorkflowCtx<TArgs = Record<string, unknown>>(
+  deps: BuildWorkflowCtxDeps<TArgs>,
+): WorkflowCtx<TArgs> {
+  const sleep =
+    deps.sleep ??
+    ((ms: number) => new Promise<void>((resolveSleep) => setTimeout(resolveSleep, ms)));
   const now = deps.now ?? (() => Date.now());
   const pollIntervalMs = deps.pollIntervalMs ?? 200;
-  const readChainStatus = deps.readChainStatus ?? ((conversationId: string) =>
-    defaultReadChainStatus(deps.services, conversationId));
+  const readChainStatus =
+    deps.readChainStatus ??
+    ((conversationId: string) => defaultReadChainStatus(deps.services, conversationId));
   let workflowDb: Database | null = null;
 
   return {
@@ -195,14 +213,14 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(deps: BuildWor
       const req: ChainStartRequest & { workflow_run_id?: string } = {
         initial_agent: input.agent,
         message: input.message,
-        dispatch_kind: 'workflow' as ChainStartRequest['dispatch_kind'],
+        dispatch_kind: "workflow" as ChainStartRequest["dispatch_kind"],
       };
       if (deps.workflowRunId) {
         req.workflow_run_id = deps.workflowRunId;
       }
 
       if (input.task_type) {
-        req.task_type = input.task_type as ChainStartRequest['task_type'];
+        req.task_type = input.task_type as ChainStartRequest["task_type"];
       }
       if (input.parent_handoff_id ?? deps.parentHandoffId) {
         req.parent_handoff_id = input.parent_handoff_id ?? deps.parentHandoffId;
@@ -233,8 +251,8 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(deps: BuildWor
 
       const conversationId = payload?.conversation_id;
       const handoffId = payload?.handoff_id;
-      if (typeof conversationId !== 'string' || typeof handoffId !== 'string') {
-        throw new Error('chain.start response missing conversation_id/handoff_id');
+      if (typeof conversationId !== "string" || typeof handoffId !== "string") {
+        throw new Error("chain.start response missing conversation_id/handoff_id");
       }
       return { conversation_id: conversationId, handoff_id: handoffId };
     },
@@ -281,7 +299,7 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(deps: BuildWor
       }
 
       return {
-        status: 'timeout',
+        status: "timeout",
         final_agent: null,
         response_text: null,
       };
@@ -290,12 +308,12 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(deps: BuildWor
     async fileWrite(relativePath, body) {
       const path = resolveWritePath(relativePath, deps.cwd, deps.storageRoot);
       await mkdir(dirname(path), { recursive: true });
-      await writeFile(path, body, 'utf8');
+      await writeFile(path, body, "utf8");
       return path;
     },
     db: () => {
       if (!workflowDb) {
-        workflowDb = new Database(join(deps.storageRoot, 'db.sqlite'), { readonly: true });
+        workflowDb = new Database(join(deps.storageRoot, "db.sqlite"), { readonly: true });
       }
       return workflowDb;
     },
@@ -304,6 +322,6 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(deps: BuildWor
     cwd: deps.cwd,
     storageRoot: deps.storageRoot,
     project: deps.project,
-    args: (deps.args ?? ({} as TArgs)),
+    args: deps.args ?? ({} as TArgs),
   };
 }

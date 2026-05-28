@@ -1,13 +1,17 @@
-import type { Database } from 'bun:sqlite';
-import type { RecallSource } from './schema.js';
-import { runMemorySearchSource, type MemoryHit } from './recall-sources/memory.js';
-import { runGitLog, runGitDiff, runGitShow } from './recall-sources/git.js';
-import { runFileContents } from './recall-sources/file-contents.js';
-import { runFsGlob } from './recall-sources/fs.js';
-import { runDispatchEventsSource, type DispatchEvent, type DispatchSummary } from './recall-sources/dispatch.js';
-import { runHandoffPendingSource, type Handoff } from './recall-sources/handoff.js';
-import { runAgentsSource } from './recall-sources/agents.js';
-import { resolveTemplateVars, type TemplateVarContext } from './template-vars.js';
+import type { Database } from "bun:sqlite";
+import type { RecallSource } from "./schema.js";
+import { runMemorySearchSource, type MemoryHit } from "./recall-sources/memory.js";
+import { runGitLog, runGitDiff, runGitShow } from "./recall-sources/git.js";
+import { runFileContents } from "./recall-sources/file-contents.js";
+import { runFsGlob } from "./recall-sources/fs.js";
+import {
+  runDispatchEventsSource,
+  type DispatchEvent,
+  type DispatchSummary,
+} from "./recall-sources/dispatch.js";
+import { runHandoffPendingSource, type Handoff } from "./recall-sources/handoff.js";
+import { runAgentsSource } from "./recall-sources/agents.js";
+import { resolveTemplateVars, type TemplateVarContext } from "./template-vars.js";
 
 export type RecallBundle = {
   byKey: Record<string, unknown>;
@@ -34,11 +38,14 @@ function estTokens(s: string): number {
   return Math.ceil(s.length * TOKEN_PER_CHAR);
 }
 
-function resolveArgs(args: Record<string, unknown>, ctx: TemplateVarContext | undefined): Record<string, unknown> {
+function resolveArgs(
+  args: Record<string, unknown>,
+  ctx: TemplateVarContext | undefined,
+): Record<string, unknown> {
   if (!ctx) return args;
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(args)) {
-    out[k] = typeof v === 'string' ? resolveTemplateVars(v, ctx) : v;
+    out[k] = typeof v === "string" ? resolveTemplateVars(v, ctx) : v;
   }
   return out;
 }
@@ -53,7 +60,7 @@ function mergeBucket(bucket: Record<string, unknown>, key: string, value: unknow
     bucket[key] = [...existing, ...value];
     return;
   }
-  if (typeof existing === 'string' && typeof value === 'string') {
+  if (typeof existing === "string" && typeof value === "string") {
     bucket[key] = existing.length === 0 ? value : `${existing}\n${value}`;
     return;
   }
@@ -67,69 +74,69 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
   const warnings: string[] = [];
 
   for (const src of sources) {
-    const rawArgs = (('args' in src ? src.args : undefined) ?? {}) as Record<string, unknown>;
+    const rawArgs = (("args" in src ? src.args : undefined) ?? {}) as Record<string, unknown>;
     const args = resolveArgs(rawArgs, opts.templateCtx);
     try {
       switch (src.source) {
-        case 'memory_search': {
+        case "memory_search": {
           const out = await runMemorySearchSource({
             db,
             embedder,
             args: { project, ...args } as never,
           });
-          mergeBucket(byKey, 'memory_search', out.hits);
+          mergeBucket(byKey, "memory_search", out.hits);
           warnings.push(...out.warnings);
           break;
         }
-        case 'git.log': {
+        case "git.log": {
           const out = await runGitLog({ cwd, args: args as never });
-          mergeBucket(byKey, 'git.log', out.text);
+          mergeBucket(byKey, "git.log", out.text);
           warnings.push(...out.warnings);
           break;
         }
-        case 'git.diff': {
+        case "git.diff": {
           const out = await runGitDiff({ cwd, args: args as never });
-          mergeBucket(byKey, 'git.diff', out.text);
+          mergeBucket(byKey, "git.diff", out.text);
           warnings.push(...out.warnings);
           break;
         }
-        case 'git.show': {
+        case "git.show": {
           const out = await runGitShow({ cwd, args: args as never });
-          mergeBucket(byKey, 'git.show', out.commits);
+          mergeBucket(byKey, "git.show", out.commits);
           warnings.push(...out.warnings);
           break;
         }
-        case 'file.contents': {
+        case "file.contents": {
           const out = await runFileContents({ cwd, storageRoot, args: args as never });
-          mergeBucket(byKey, 'file.contents', out.result);
+          mergeBucket(byKey, "file.contents", out.result);
           warnings.push(...out.warnings);
           break;
         }
-        case 'fs_glob': {
+        case "fs_glob": {
           const out = await runFsGlob({ cwd, args: args as { pattern: string } });
-          mergeBucket(byKey, 'fs_glob', out.matches);
+          mergeBucket(byKey, "fs_glob", out.matches);
           warnings.push(...out.warnings);
           break;
         }
-        case 'dispatch_events': {
+        case "dispatch_events": {
           const out = runDispatchEventsSource({ db, args: args as never });
           if (out.summaries) {
-            mergeBucket(byKey, 'dispatch_summaries', out.summaries);
+            mergeBucket(byKey, "dispatch_summaries", out.summaries);
           } else {
-            mergeBucket(byKey, 'dispatch_events', out.events);
+            mergeBucket(byKey, "dispatch_events", out.events);
           }
           warnings.push(...out.warnings);
           break;
         }
-        case 'handoff_list_pending': {
+        case "handoff_list_pending": {
           const out = runHandoffPendingSource({ db, args: args as never });
-          mergeBucket(byKey, 'handoff_list_pending', out.handoffs);
+          mergeBucket(byKey, "handoff_list_pending", out.handoffs);
           warnings.push(...out.warnings);
           break;
         }
-        case 'agents': {
+        case "agents": {
           const out = runAgentsSource({ agentRegistry: opts.agentRegistry });
-          mergeBucket(byKey, 'agents', out.agents);
+          mergeBucket(byKey, "agents", out.agents);
           warnings.push(...out.warnings);
           break;
         }
@@ -152,12 +159,12 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
       for (let i = 0; i < val.length; i++) {
         const item = val[i] as { ts?: string; created_at?: string };
         const tokens = estTokens(JSON.stringify(item));
-        sized.push({ key, ts: item.ts ?? item.created_at ?? '', tokens, ref: item });
+        sized.push({ key, ts: item.ts ?? item.created_at ?? "", tokens, ref: item });
         total += tokens;
       }
-    } else if (typeof val === 'string') {
+    } else if (typeof val === "string") {
       const tokens = estTokens(val);
-      sized.push({ key, ts: '', tokens, ref: val });
+      sized.push({ key, ts: "", tokens, ref: val });
       total += tokens;
     }
   }
@@ -183,8 +190,8 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
     for (const [key, val] of Object.entries(byKey)) {
       if (Array.isArray(val)) {
         byKey[key] = val.filter((v) => !toDrop.has(v));
-      } else if (typeof val === 'string' && toDrop.has(val)) {
-        byKey[key] = '';
+      } else if (typeof val === "string" && toDrop.has(val)) {
+        byKey[key] = "";
       }
     }
     warnings.push(`recall budget exceeded: trimmed ${toDrop.size} items (target ${budget} tokens)`);

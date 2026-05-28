@@ -1,20 +1,24 @@
-import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from '../sdk/adapter.js';
-import type { DispatchEventInput } from '@penumbra/core';
-import { AcpClient, type AcpClientOptions } from './acp-client.js';
-import { startAcpServer, type AcpServerHandle, type StartAcpServerOptions } from './acp-server.js';
-import type { AcpCreateSessionRequest, AcpEvent, McpServer, McpServerStdio } from './acp-types.js';
-import { prepareOpencodeMcpConfigDir } from './opencode-mcp-config.js';
+import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../sdk/adapter.js";
+import type { DispatchEventInput } from "@penumbra/core";
+import { AcpClient, type AcpClientOptions } from "./acp-client.js";
+import { startAcpServer, type AcpServerHandle, type StartAcpServerOptions } from "./acp-server.js";
+import type { AcpCreateSessionRequest, AcpEvent, McpServer, McpServerStdio } from "./acp-types.js";
+import { prepareOpencodeMcpConfigDir } from "./opencode-mcp-config.js";
 
 // Adapter lifecycle events for opencode-acp. Without these, the dispatch
 // reliability classifier sees no `http.*` / `acp.*` / `proc.*` events and
 // flags every successful dispatch as `missing_adapter_lifecycle`. Using
 // `http.*` because opencode-acp is HTTP/SSE, not stdio JSON-RPC.
-function emitLifecycle(input: DispatchInput, kind: DispatchEventInput['kind'], meta?: Record<string, unknown>): void {
+function emitLifecycle(
+  input: DispatchInput,
+  kind: DispatchEventInput["kind"],
+  meta?: Record<string, unknown>,
+): void {
   if (!input.eventContext || !input.onEvent) return;
   input.onEvent({
     handoff_id: input.eventContext.handoffId,
     worker_id: input.eventContext.workerId,
-    source: 'worker',
+    source: "worker",
     kind,
     ts: new Date().toISOString(),
     meta,
@@ -23,64 +27,61 @@ function emitLifecycle(input: DispatchInput, kind: DispatchEventInput['kind'], m
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
 const LONG_LIVED_SELF_TOOL_NAMES = [
-  'long_lived_self_state_get',
-  'long_lived_self_state_set',
-  'long_lived_self_pending_actions',
+  "long_lived_self_state_get",
+  "long_lived_self_state_set",
+  "long_lived_self_pending_actions",
 ] as const;
 const PENUMBRA_MCP_INJECTED_ENV_KEYS = new Set([
-  'PENUMBRA_HANDOFF_ID',
-  'PENUMBRA_LONG_LIVED_AGENT_ID',
-  'PENUMBRA_LONG_LIVED_TICK_ID',
-  'PENUMBRA_MCP_TOOL_ALLOWLIST',
+  "PENUMBRA_HANDOFF_ID",
+  "PENUMBRA_LONG_LIVED_AGENT_ID",
+  "PENUMBRA_LONG_LIVED_TICK_ID",
+  "PENUMBRA_MCP_TOOL_ALLOWLIST",
 ]);
 
 function isPenumbraMcp(server: McpServer): server is McpServerStdio {
-  if ('type' in server) return false;
-  const haystack = [server.name ?? '', server.command, ...(server.args ?? [])].join(' ');
+  if ("type" in server) return false;
+  const haystack = [server.name ?? "", server.command, ...(server.args ?? [])].join(" ");
   return /penumbra-mcp(\.ts|\.js)?($|[\s/])/.test(haystack);
 }
 
 function buildLongLivedMcpEnv(input: DispatchInput): Array<{ name: string; value: string }> {
   const session = input.long_lived_session;
-  if (!session || session.dispatch_kind !== 'long_lived_tick') return [];
+  if (!session || session.dispatch_kind !== "long_lived_tick") return [];
 
   const allowlist = new Set(
-    (session.mcp_tool_allowlist ?? [])
-      .map((name) => name.trim())
-      .filter((name) => name.length > 0),
+    (session.mcp_tool_allowlist ?? []).map((name) => name.trim()).filter((name) => name.length > 0),
   );
   for (const toolName of LONG_LIVED_SELF_TOOL_NAMES) {
     allowlist.add(toolName);
   }
 
   const envEntries: Array<{ name: string; value: string }> = [
-    { name: 'PENUMBRA_MCP_TOOL_ALLOWLIST', value: [...allowlist].join(',') },
+    { name: "PENUMBRA_MCP_TOOL_ALLOWLIST", value: [...allowlist].join(",") },
   ];
   if (session.agent_id && session.agent_id.length > 0) {
-    envEntries.push({ name: 'PENUMBRA_LONG_LIVED_AGENT_ID', value: session.agent_id });
+    envEntries.push({ name: "PENUMBRA_LONG_LIVED_AGENT_ID", value: session.agent_id });
   }
   if (session.tick_id && session.tick_id.length > 0) {
-    envEntries.push({ name: 'PENUMBRA_LONG_LIVED_TICK_ID', value: session.tick_id });
+    envEntries.push({ name: "PENUMBRA_LONG_LIVED_TICK_ID", value: session.tick_id });
   }
   return envEntries;
 }
 
-function injectPenumbraMcpEnv(
-  servers: McpServer[],
-  input: DispatchInput,
-): McpServer[] {
+function injectPenumbraMcpEnv(servers: McpServer[], input: DispatchInput): McpServer[] {
   const longLivedEnv = buildLongLivedMcpEnv(input);
   const shouldInjectDispatchEnv = Boolean(input.handoff_id) || longLivedEnv.length > 0;
   if (!shouldInjectDispatchEnv) return servers;
 
   return servers.map((server) => {
     if (!isPenumbraMcp(server)) return server;
-    const keptEnv = (server.env ?? []).filter((entry) => !PENUMBRA_MCP_INJECTED_ENV_KEYS.has(entry.name));
+    const keptEnv = (server.env ?? []).filter(
+      (entry) => !PENUMBRA_MCP_INJECTED_ENV_KEYS.has(entry.name),
+    );
     return {
       ...server,
       env: [
         ...keptEnv,
-        ...(input.handoff_id ? [{ name: 'PENUMBRA_HANDOFF_ID', value: input.handoff_id }] : []),
+        ...(input.handoff_id ? [{ name: "PENUMBRA_HANDOFF_ID", value: input.handoff_id }] : []),
         ...longLivedEnv,
       ],
     };
@@ -96,7 +97,7 @@ export interface OpencodeAcpOptions {
   mcpServers?: McpServer[];
 }
 
-type AcpClientLike = Pick<AcpClient, 'openSession' | 'sendMessage'>;
+type AcpClientLike = Pick<AcpClient, "openSession" | "sendMessage">;
 
 interface OpencodeAcpDeps {
   startServer: (opts: StartAcpServerOptions) => Promise<AcpServerHandle>;
@@ -119,13 +120,13 @@ function createDispatchAbortSignal(parent: AbortSignal, timeoutMs: number) {
   if (parent.aborted) {
     onParentAbort();
   } else {
-    parent.addEventListener('abort', onParentAbort, { once: true });
+    parent.addEventListener("abort", onParentAbort, { once: true });
   }
 
   if (timeoutMs > 0) {
     timer = setTimeout(() => {
       timeoutError = new Error(`opencode-acp request timed out after ${timeoutMs}ms`);
-      timeoutError.name = 'AbortError';
+      timeoutError.name = "AbortError";
       abortWith(timeoutError);
     }, timeoutMs);
   }
@@ -137,13 +138,13 @@ function createDispatchAbortSignal(parent: AbortSignal, timeoutMs: number) {
     },
     cleanup() {
       if (timer) clearTimeout(timer);
-      parent.removeEventListener('abort', onParentAbort);
+      parent.removeEventListener("abort", onParentAbort);
     },
   };
 }
 
 export class OpencodeAcpAdapter implements Adapter {
-  readonly kind = 'opencode-acp';
+  readonly kind = "opencode-acp";
 
   constructor(
     private readonly opts: OpencodeAcpOptions,
@@ -157,13 +158,13 @@ export class OpencodeAcpAdapter implements Adapter {
     let result: DispatchOutput | null = null;
 
     for await (const event of this.dispatchStream(input)) {
-      if (event.type === 'done') {
+      if (event.type === "done") {
         result = event.result;
       }
     }
 
     if (!result) {
-      throw new Error('opencode-acp: stream ended without a final result');
+      throw new Error("opencode-acp: stream ended without a final result");
     }
 
     return result;
@@ -189,13 +190,13 @@ export class OpencodeAcpAdapter implements Adapter {
         cwd,
         pure: true,
         signal: requestAbort.signal,
-        opencodeBinary: this.opts.opencodeBinary ?? 'opencode',
+        opencodeBinary: this.opts.opencodeBinary ?? "opencode",
         bootTimeoutMs: this.opts.bootTimeoutMs,
         ...(extraEnv ? { env: extraEnv } : {}),
       });
-      emitLifecycle(input, 'http.server.start', {
+      emitLifecycle(input, "http.server.start", {
         adapter: this.kind,
-        binary: this.opts.opencodeBinary ?? 'opencode',
+        binary: this.opts.opencodeBinary ?? "opencode",
         base_url: server.baseUrl,
       });
 
@@ -205,7 +206,7 @@ export class OpencodeAcpAdapter implements Adapter {
       });
       const sessionReq: AcpCreateSessionRequest = { cwd };
       const { sessionId, workspaceId } = await client.openSession(sessionReq);
-      emitLifecycle(input, 'http.session.start', {
+      emitLifecycle(input, "http.session.start", {
         adapter: this.kind,
         session_id: sessionId,
         workspace_id: workspaceId,
@@ -218,7 +219,7 @@ export class OpencodeAcpAdapter implements Adapter {
       // and only accumulate deltas for parts whose type is 'text'.
       // Stream ends on session.idle (turn complete) or session.error.
       const partTypeById = new Map<string, string>();
-      let text = '';
+      let text = "";
       streamLoop: for await (const evtRaw of client.sendMessage(sessionId, input.prompt, {
         model: this.opts.model,
         tools: [],
@@ -228,38 +229,38 @@ export class OpencodeAcpAdapter implements Adapter {
         const evt = evtRaw as any;
         const props = evt?.properties;
         switch (evt?.type) {
-          case 'message.part.updated': {
+          case "message.part.updated": {
             const partId = props?.part?.id;
             const partType = props?.part?.type;
-            if (typeof partId === 'string' && typeof partType === 'string') {
+            if (typeof partId === "string" && typeof partType === "string") {
               partTypeById.set(partId, partType);
             }
             break;
           }
-          case 'message.part.delta': {
-            if (props?.field !== 'text') break;
+          case "message.part.delta": {
+            if (props?.field !== "text") break;
             const partId = props?.partID;
             // First delta on a part may arrive before the part.updated event
             // for it; default-treat unknown parts as 'text' (the common case).
-            const partType = partId ? partTypeById.get(partId) ?? 'text' : 'text';
-            if (partType !== 'text') break;
-            const delta = typeof props?.delta === 'string' ? props.delta : '';
+            const partType = partId ? (partTypeById.get(partId) ?? "text") : "text";
+            if (partType !== "text") break;
+            const delta = typeof props?.delta === "string" ? props.delta : "";
             if (!delta) break;
             text += delta;
-            yield { type: 'delta', text: delta };
+            yield { type: "delta", text: delta };
             break;
           }
-          case 'session.error': {
-            const message = props?.error?.data?.message ?? props?.error?.name ?? 'unknown';
+          case "session.error": {
+            const message = props?.error?.data?.message ?? props?.error?.name ?? "unknown";
             throw new Error(`opencode-acp: session.error — ${message}`);
           }
-          case 'session.idle':
+          case "session.idle":
             // Turn finished cleanly. Stop consuming the stream.
             // usage updates are not emitted on this OpenCode ACP SSE wire; cost capture falls back to opencode-db-reader.
-            emitLifecycle(input, 'http.session.end', {
+            emitLifecycle(input, "http.session.end", {
               adapter: this.kind,
               session_id: sessionId,
-              stop_reason: 'idle',
+              stop_reason: "idle",
             });
             break streamLoop;
           default:
@@ -269,13 +270,13 @@ export class OpencodeAcpAdapter implements Adapter {
         }
       }
 
-      yield { type: 'done', result: { text } };
+      yield { type: "done", result: { text } };
     } catch (err) {
       if (
         requestAbort.timeoutError &&
         requestAbort.signal.aborted &&
         err instanceof Error &&
-        err.name === 'AbortError'
+        err.name === "AbortError"
       ) {
         throw requestAbort.timeoutError;
       }

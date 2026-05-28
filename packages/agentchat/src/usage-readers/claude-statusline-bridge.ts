@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import type { UsageReader, UsageReaderResult, RateLimitDelta } from './index.js';
+import { existsSync, readFileSync, statSync } from "node:fs";
+import type { UsageReader, UsageReaderResult, RateLimitDelta } from "./index.js";
 
 export interface ClaudeStatusLineBridgeOptions {
   cachePath?: string;
@@ -9,10 +9,10 @@ interface BridgeCursor {
   last_seen_mtime_ms: number;
 }
 
-const DEFAULT_CACHE_PATH = process.env.PENUMBRA_CLAUDE_RL_PATH ?? '/tmp/penumbra-claude-rl.json';
+const DEFAULT_CACHE_PATH = process.env.PENUMBRA_CLAUDE_RL_PATH ?? "/tmp/penumbra-claude-rl.json";
 
 export class ClaudeStatusLineBridge implements UsageReader {
-  readonly id = 'claude-statusline';
+  readonly id = "claude-statusline";
   private cachePath: string;
 
   constructor(opts: ClaudeStatusLineBridgeOptions = {}) {
@@ -28,7 +28,9 @@ export class ClaudeStatusLineBridge implements UsageReader {
       };
     }
 
-    const cursor: BridgeCursor = (previousCursor as BridgeCursor | null) ?? { last_seen_mtime_ms: 0 };
+    const cursor: BridgeCursor = (previousCursor as BridgeCursor | null) ?? {
+      last_seen_mtime_ms: 0,
+    };
     const stats = statSync(this.cachePath);
     if (stats.mtimeMs <= cursor.last_seen_mtime_ms) {
       return { cursor, usage_deltas: [], rate_limit_snapshots: [] };
@@ -36,7 +38,7 @@ export class ClaudeStatusLineBridge implements UsageReader {
 
     let body: any;
     try {
-      body = JSON.parse(readFileSync(this.cachePath, 'utf8'));
+      body = JSON.parse(readFileSync(this.cachePath, "utf8"));
     } catch {
       return {
         cursor: { last_seen_mtime_ms: stats.mtimeMs },
@@ -46,16 +48,16 @@ export class ClaudeStatusLineBridge implements UsageReader {
     }
 
     const snapshots: RateLimitDelta[] = [];
-    for (const key of ['five_hour', 'seven_day']) {
+    for (const key of ["five_hour", "seven_day"]) {
       const windowState = body?.[key];
       if (!windowState) continue;
       const used_pct = Number(windowState.used_percentage ?? windowState.utilization);
       if (!Number.isFinite(used_pct)) continue;
       snapshots.push({
-        provider: 'anthropic',
+        provider: "anthropic",
         window_label: key,
         used_pct,
-        resets_at: typeof windowState.resets_at === 'number' ? windowState.resets_at : undefined,
+        resets_at: typeof windowState.resets_at === "number" ? windowState.resets_at : undefined,
       });
     }
 

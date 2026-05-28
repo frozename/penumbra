@@ -1,39 +1,43 @@
-import { describe, expect, test, beforeEach } from 'bun:test';
+import { describe, expect, test, beforeEach } from "bun:test";
 import {
-  registerExecutor, unregisterExecutor, lookupExecutor, __resetExecutorRegistry,
-} from '../../src/worker/executor-registry.js';
-import type { WriteToolsExecutor } from '../../src/worker/write-tools-executor.js';
+  registerExecutor,
+  unregisterExecutor,
+  lookupExecutor,
+  __resetExecutorRegistry,
+} from "../../src/worker/executor-registry.js";
+import type { WriteToolsExecutor } from "../../src/worker/write-tools-executor.js";
 
-const stubExec = (id = 'stub'): WriteToolsExecutor => ({ id } as unknown as WriteToolsExecutor);
+const stubExec = (id = "stub"): WriteToolsExecutor => ({ id }) as unknown as WriteToolsExecutor;
 
-describe('executor-registry', () => {
+describe("executor-registry", () => {
   beforeEach(() => __resetExecutorRegistry());
 
-  test('lookupExecutor returns null for unknown id', () => {
-    expect(lookupExecutor('missing')).toBeNull();
+  test("lookupExecutor returns null for unknown id", () => {
+    expect(lookupExecutor("missing")).toBeNull();
   });
 
-  test('registerExecutor + lookupExecutor round-trip', () => {
-    const exec = stubExec('a');
-    registerExecutor('d1', exec);
-    expect(lookupExecutor('d1')).toBe(exec);
+  test("registerExecutor + lookupExecutor round-trip", () => {
+    const exec = stubExec("a");
+    registerExecutor("d1", exec);
+    expect(lookupExecutor("d1")).toBe(exec);
   });
 
-  test('unregisterExecutor removes the entry', () => {
-    registerExecutor('d1', stubExec());
-    unregisterExecutor('d1');
-    expect(lookupExecutor('d1')).toBeNull();
+  test("unregisterExecutor removes the entry", () => {
+    registerExecutor("d1", stubExec());
+    unregisterExecutor("d1");
+    expect(lookupExecutor("d1")).toBeNull();
   });
 
-  test('unregister of unknown id is a silent no-op', () => {
-    expect(() => unregisterExecutor('never-registered')).not.toThrow();
+  test("unregister of unknown id is a silent no-op", () => {
+    expect(() => unregisterExecutor("never-registered")).not.toThrow();
   });
 
-  test('multiple dispatches can coexist', () => {
-    const e1 = stubExec('a'), e2 = stubExec('b');
-    registerExecutor('d1', e1);
-    registerExecutor('d2', e2);
-    expect(lookupExecutor('d1')).toBe(e1);
-    expect(lookupExecutor('d2')).toBe(e2);
+  test("multiple dispatches can coexist", () => {
+    const e1 = stubExec("a"),
+      e2 = stubExec("b");
+    registerExecutor("d1", e1);
+    registerExecutor("d2", e2);
+    expect(lookupExecutor("d1")).toBe(e1);
+    expect(lookupExecutor("d2")).toBe(e2);
   });
 });

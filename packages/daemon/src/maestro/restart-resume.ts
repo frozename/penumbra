@@ -1,5 +1,10 @@
-import type { Database } from 'bun:sqlite';
-import type { MaestroSessionRecord, MaestroSessionWriter, TaskEventBus, TaskWriter } from '@penumbra/core';
+import type { Database } from "bun:sqlite";
+import type {
+  MaestroSessionRecord,
+  MaestroSessionWriter,
+  TaskEventBus,
+  TaskWriter,
+} from "@penumbra/core";
 
 interface OpenLeaseRow {
   id: string;
@@ -32,7 +37,7 @@ function appendTerminatedEvent(
   bus.publish({
     task_id: input.task_id,
     at: input.at,
-    kind: 'orchestrate_terminated',
+    kind: "orchestrate_terminated",
     actor: null,
     payload: input.payload,
   });
@@ -46,7 +51,9 @@ function failTaskWithoutLease(db: Database, task_id: string, reason: string, now
   ).run(reason, nowMs, task_id);
 }
 
-export async function runRestartResume(opts: RunRestartResumeOpts): Promise<{ resumed: number; cleaned: number }> {
+export async function runRestartResume(
+  opts: RunRestartResumeOpts,
+): Promise<{ resumed: number; cleaned: number }> {
   const now = opts.now ?? Date.now;
   const live = opts.sessions.listLive();
   let resumed = 0;
@@ -64,7 +71,7 @@ export async function runRestartResume(opts: RunRestartResumeOpts): Promise<{ re
     }
 
     const nowMs = now();
-    const reason = 'daemon_restart';
+    const reason = "daemon_restart";
     opts.sessions.terminate(session.task_id, reason);
 
     const leaseRow = opts.db

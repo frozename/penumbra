@@ -1,19 +1,22 @@
 // packages/core/test/db/t0-file-refs.test.ts
-import { describe, expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
-import { migrate } from '../../src/db/migrations.js';
+import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { migrate } from "../../src/db/migrations.js";
 // macOS preamble (see Pre-flight "Test file boilerplate")
-try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
+try {
+  if (process.platform === "darwin")
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
+} catch {}
 
-describe('t0_file_refs trigger', () => {
-  test('Edit/Write/Read tool calls produce one row per file_path in payload', () => {
-    const db = new Database(':memory:');
+describe("t0_file_refs trigger", () => {
+  test("Edit/Write/Read tool calls produce one row per file_path in payload", () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 4 });
     const editPayload = JSON.stringify({
-      tool_name: 'Edit',
-      tool_input: { file_path: 'packages/core/src/db/schema.ts' },
+      tool_name: "Edit",
+      tool_input: { file_path: "packages/core/src/db/schema.ts" },
     });
     db.run(
       `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, payload_json)
@@ -21,14 +24,17 @@ describe('t0_file_refs trigger', () => {
       [editPayload],
     );
     const refs = db
-      .query<{ event_id: string; file_path: string }, []>(`SELECT event_id, file_path FROM t0_file_refs`)
+      .query<
+        { event_id: string; file_path: string },
+        []
+      >(`SELECT event_id, file_path FROM t0_file_refs`)
       .all();
     expect(refs).toHaveLength(1);
-    expect(refs[0]).toEqual({ event_id: 'e1', file_path: 'packages/core/src/db/schema.ts' });
+    expect(refs[0]).toEqual({ event_id: "e1", file_path: "packages/core/src/db/schema.ts" });
   });
 
-  test('events without file_path produce no rows', () => {
-    const db = new Database(':memory:');
+  test("events without file_path produce no rows", () => {
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 4 });
     db.run(

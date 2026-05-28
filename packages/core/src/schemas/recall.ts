@@ -1,5 +1,5 @@
-import { z } from 'zod';
-import { SafeProjectIdSchema } from './project-id.js';
+import { z } from "zod";
+import { SafeProjectIdSchema } from "./project-id.js";
 
 export const RecallRequestSchema = z.object({
   query: z.string().min(1),
@@ -8,13 +8,15 @@ export const RecallRequestSchema = z.object({
   include_raw: z.boolean().default(false),
   include_untrusted: z.boolean().default(false),
   min_score: z.number().min(0).max(1).default(0),
-  sources: z.array(z.enum(['t0', 't1', 't2'])).optional(),
+  sources: z.array(z.enum(["t0", "t1", "t2"])).optional(),
   rrf_k: z.number().optional(),
   session_id: z.string().optional(),
   event_types: z.array(z.string()).optional(),
   file_path: z.string().optional(),
-  strategy_hint: z.enum(['fts', 'vector', 'hybrid', 'rrf']).optional()
-    .describe('Default = rrf (current behavior). hybrid = SQL filter then vector rerank.'),
+  strategy_hint: z
+    .enum(["fts", "vector", "hybrid", "rrf"])
+    .optional()
+    .describe("Default = rrf (current behavior). hybrid = SQL filter then vector rerank."),
   obs_type: z.string().optional(),
   concept: z.string().optional(),
   dateStart: z.string().optional(),
@@ -25,10 +27,10 @@ export type RecallRequest = z.infer<typeof RecallRequestSchema>;
 
 export const RecallResultSchema = z.object({
   id: z.string(),
-  tier: z.enum(['t0', 't1', 't2']),
+  tier: z.enum(["t0", "t1", "t2"]),
   score: z.number(),
   fusedScore: z.number().default(0),
-  sources: z.array(z.enum(['t0', 't1', 't2'])).default([]),
+  sources: z.array(z.enum(["t0", "t1", "t2"])).default([]),
   title: z.string().nullable(),
   body: z.string(),
   project_id: z.string().nullable(),
@@ -56,7 +58,10 @@ export const SearchRequestSchema = z.object({
   file_path: z.string().optional(),
   dateStart: z.string().optional(),
   dateEnd: z.string().optional(),
-  tiers: z.array(z.enum(['t1', 't2'])).optional().default(['t1', 't2']),
+  tiers: z
+    .array(z.enum(["t1", "t2"]))
+    .optional()
+    .default(["t1", "t2"]),
   offset: z.number().int().min(0).optional().default(0),
 });
 export type SearchRequest = z.infer<typeof SearchRequestSchema>;
@@ -79,7 +84,11 @@ export function staleThresholdDays(obsType: string | null | undefined): number {
 
 const MS_PER_DAY = 86_400_000;
 
-export function computeAgeDays(now: number, createdAt: string, lastVerifiedAt: string | null): number | null {
+export function computeAgeDays(
+  now: number,
+  createdAt: string,
+  lastVerifiedAt: string | null,
+): number | null {
   const base = new Date(lastVerifiedAt ?? createdAt).getTime();
   if (Number.isNaN(base)) return null;
   return Math.max(0, Math.floor((now - base) / MS_PER_DAY));
@@ -90,7 +99,7 @@ export const STALE_AFTER_DAYS = STALE_AFTER_DAYS_DEFAULT;
 
 export const SearchHitSchema = z.object({
   id: z.string(),
-  tier: z.enum(['t1', 't2']),
+  tier: z.enum(["t1", "t2"]),
   ts: z.string(),
   obs_type: z.string().nullable().optional(),
   title: z.string(),
@@ -131,7 +140,7 @@ export type GetObservationsRequest = z.infer<typeof GetObservationsRequestSchema
 
 export const ObservationDetailSchema = z.object({
   id: z.string(),
-  tier: z.literal('t2'),
+  tier: z.literal("t2"),
   ts: z.string(),
   project_id: z.string().nullable(),
   obs_type: z.string().nullable(),

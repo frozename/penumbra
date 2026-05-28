@@ -1,6 +1,6 @@
-import { z } from 'zod';
-import { toTextContent } from '@nova/mcp-shared';
-import type { DaemonClient } from '../daemon-client.js';
+import { z } from "zod";
+import { toTextContent } from "@nova/mcp-shared";
+import type { DaemonClient } from "../daemon-client.js";
 
 export const LongLivedRejectActionInputShape = {
   action_id: z.string().min(1),
@@ -10,5 +10,7 @@ export const LongLivedRejectActionInputShape = {
 
 export function longLivedRejectActionHandler(daemon: DaemonClient) {
   return async (input: { action_id: string; reason?: string; decided_by?: string }) =>
-    toTextContent(await daemon.longLivedRejectAction(input.action_id, input.reason, input.decided_by));
+    toTextContent(
+      await daemon.longLivedRejectAction(input.action_id, input.reason, input.decided_by),
+    );
 }

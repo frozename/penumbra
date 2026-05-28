@@ -1,6 +1,6 @@
-import type { AgentChatConfig } from '../config/types.js';
-import { runChatTurn as realRunChatTurn, type ChatTurnInput, type ChatTurnResult } from './loop.js';
-import { dispatchHandoff } from './dispatch-handoff.js';
+import type { AgentChatConfig } from "../config/types.js";
+import { runChatTurn as realRunChatTurn, type ChatTurnInput, type ChatTurnResult } from "./loop.js";
+import { dispatchHandoff } from "./dispatch-handoff.js";
 
 export interface AutoChainOpts {
   config: AgentChatConfig;
@@ -12,9 +12,12 @@ export interface AutoChainOpts {
   observe: (event: any) => Promise<{ event_id: string }>;
   createHandoff: (body: any) => Promise<{ handoff_id: string; status: string }>;
   approve: (id: string, body: any) => Promise<{ handoff_id: string; status: string }>;
-  markFailed?: (handoff_id: string, reason: string) => Promise<{ handoff_id: string; status: string }>;
+  markFailed?: (
+    handoff_id: string,
+    reason: string,
+  ) => Promise<{ handoff_id: string; status: string }>;
   runChatTurn?: (input: ChatTurnInput) => Promise<ChatTurnResult>;
-  trustMode?: 'all' | 'config';
+  trustMode?: "all" | "config";
   projectContext?: string;
   onChunk?: (delta: string) => void;
   /** optional: override retry sleep (tests). */
@@ -23,35 +26,40 @@ export interface AutoChainOpts {
 
 export async function runAutoChain(opts: AutoChainOpts): Promise<{
   hops: number;
-  terminatedReason: 'no_mention' | 'max_hops' | 'untrusted' | 'error';
+  terminatedReason: "no_mention" | "max_hops" | "untrusted" | "error";
   cappedHandoffId?: string;
 }> {
-  const trustMode = opts.trustMode ?? 'all';
-  const transcript: { agent: string; text: string }[] = [{ agent: 'user', text: opts.userMessage }];
+  const trustMode = opts.trustMode ?? "all";
+  const transcript: { agent: string; text: string }[] = [{ agent: "user", text: opts.userMessage }];
 
   // Synthesize an initial chain-start handoff for the loop. We never persist this row;
   // dispatchHandoff treats from_agent === 'user' specially (no transcript wrap).
-  let currentHandoff: { handoff_id?: string; from_agent: string; to_agent: string; message: string } = {
-    from_agent: 'user',
+  let currentHandoff: {
+    handoff_id?: string;
+    from_agent: string;
+    to_agent: string;
+    message: string;
+  } = {
+    from_agent: "user",
     to_agent: opts.initialAgent,
     message: opts.userMessage,
   };
 
   let hops = 0;
-  let reason: 'completed' | 'max_hops' | 'untrusted' | 'error' = 'error';
+  let reason: "completed" | "max_hops" | "untrusted" | "error" = "error";
   let cappedHandoffId: string | undefined = undefined;
 
   const terminate = async () => {
     try {
       await opts.observe({
         ts: new Date().toISOString(),
-        source: 'agentchat',
-        event_type: 'chain-terminated',
-        lane: 'cli-subscription',
+        source: "agentchat",
+        event_type: "chain-terminated",
+        lane: "cli-subscription",
         session_id: opts.conversation.id,
         project_id: opts.conversation.project_id,
-        user_id: 'local-user',
-        machine_id: 'local',
+        user_id: "local-user",
+        machine_id: "local",
         payload_json: {
           reason,
           hop_count: hops,
@@ -60,7 +68,7 @@ export async function runAutoChain(opts: AutoChainOpts): Promise<{
         },
       });
     } catch (err) {
-      console.error('chain-terminated telemetry failed:', err);
+      console.error("chain-terminated telemetry failed:", err);
     }
   };
 
@@ -86,27 +94,29 @@ export async function runAutoChain(opts: AutoChainOpts): Promise<{
         onChunk: opts.onChunk,
         delay: opts.delay,
       });
-      process.stdout.write('\n\n');
+      process.stdout.write("\n\n");
 
-      if (res.terminatedReason === 'no_mention') {
-        reason = 'completed';
-        return { hops, terminatedReason: 'no_mention' };
+      if (res.terminatedReason === "no_mention") {
+        reason = "completed";
+        return { hops, terminatedReason: "no_mention" };
       }
-      if (res.terminatedReason === 'max_hops') {
-        reason = 'max_hops';
+      if (res.terminatedReason === "max_hops") {
+        reason = "max_hops";
         cappedHandoffId = res.cappedHandoffId;
-        return { hops, terminatedReason: 'max_hops', cappedHandoffId: res.cappedHandoffId! };
+        return { hops, terminatedReason: "max_hops", cappedHandoffId: res.cappedHandoffId! };
       }
-      if (res.terminatedReason === 'untrusted') {
-        console.log(`[untrusted edge ${currentHandoff.to_agent}→${res.next ? res.next.to : '?'}, handoff ${res.cappedHandoffId!.slice(0, 8)} queued]`);
-        reason = 'untrusted';
+      if (res.terminatedReason === "untrusted") {
+        console.log(
+          `[untrusted edge ${currentHandoff.to_agent}→${res.next ? res.next.to : "?"}, handoff ${res.cappedHandoffId!.slice(0, 8)} queued]`,
+        );
+        reason = "untrusted";
         cappedHandoffId = res.cappedHandoffId;
-        return { hops, terminatedReason: 'untrusted', cappedHandoffId: res.cappedHandoffId! };
+        return { hops, terminatedReason: "untrusted", cappedHandoffId: res.cappedHandoffId! };
       }
-      if (res.terminatedReason === 'error') {
-        reason = 'error';
+      if (res.terminatedReason === "error") {
+        reason = "error";
         cappedHandoffId = res.cappedHandoffId ?? currentHandoff.handoff_id;
-        return { hops, terminatedReason: 'error', ...(cappedHandoffId ? { cappedHandoffId } : {}) };
+        return { hops, terminatedReason: "error", ...(cappedHandoffId ? { cappedHandoffId } : {}) };
       }
 
       // Continue: shape the next synthetic handoff.
@@ -120,7 +130,7 @@ export async function runAutoChain(opts: AutoChainOpts): Promise<{
       };
     }
   } catch (err) {
-    reason = 'error';
+    reason = "error";
     throw err;
   } finally {
     await terminate();

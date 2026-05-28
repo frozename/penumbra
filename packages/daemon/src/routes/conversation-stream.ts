@@ -1,12 +1,16 @@
-import type { Services } from '@penumbra/core';
+import type { Services } from "@penumbra/core";
 
 /**
  * GET /conversations/:id/stream
  * SSE endpoint for real-time progress updates for a specific conversation.
  * Immediately flushes cached tokens for the active hop upon connection.
  */
-import { json } from './_helpers.js';
-export async function conversationStreamRoute(_req: Request, conversation_id: string, services: Services): Promise<Response> {
+import { json } from "./_helpers.js";
+export async function conversationStreamRoute(
+  _req: Request,
+  conversation_id: string,
+  services: Services,
+): Promise<Response> {
   let off: (() => void) | null = null;
   let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -35,11 +39,11 @@ export async function conversationStreamRoute(_req: Request, conversation_id: st
       });
 
       // Initial comment so clients know the connection is live
-      controller.enqueue(encoder.encode(': ok\n\n'));
+      controller.enqueue(encoder.encode(": ok\n\n"));
 
       keepaliveTimer = setInterval(() => {
         try {
-          controller.enqueue(encoder.encode(': keepalive\n\n'));
+          controller.enqueue(encoder.encode(": keepalive\n\n"));
         } catch {
           try {
             off?.();
@@ -67,9 +71,9 @@ export async function conversationStreamRoute(_req: Request, conversation_id: st
   return new Response(stream, {
     status: 200,
     headers: {
-      'content-type': 'text/event-stream',
-      'cache-control': 'no-cache',
-      connection: 'keep-alive',
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
     },
   });
 }

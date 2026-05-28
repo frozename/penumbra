@@ -1,11 +1,11 @@
-import type { Logger } from '@penumbra/core';
-import type { PermissionRequestRow } from '@penumbra/core';
-import type { PenumbraClient } from '../penumbra-client.js';
-import type { DiscordNotificationEvent } from './discord-events.js';
+import type { Logger } from "@penumbra/core";
+import type { PermissionRequestRow } from "@penumbra/core";
+import type { PenumbraClient } from "../penumbra-client.js";
+import type { DiscordNotificationEvent } from "./discord-events.js";
 
 export interface PermissionDecisionResult {
-  decision: 'approve' | 'reject';
-  remember: 'this_call' | 'this_dispatch' | null;
+  decision: "approve" | "reject";
+  remember: "this_call" | "this_dispatch" | null;
   reason: string | null;
 }
 
@@ -30,7 +30,7 @@ export interface EventSourceLike {
 }
 
 export interface PermissionDaemonClientOpts {
-  penumbraClient: Pick<PenumbraClient, 'createPermission' | 'getPermission'>;
+  penumbraClient: Pick<PenumbraClient, "createPermission" | "getPermission">;
   /** Factory so tests can inject a fake. Defaults to native EventSource against `${baseUrl}/permissions/events`. */
   makeEventSource: () => EventSourceLike;
   uuid: () => string;
@@ -51,11 +51,15 @@ export class PermissionDaemonClient {
     // Native EventSource replays Last-Event-ID on reconnect, but this SSE route
     // currently keys ids as `permission_id:seq` while the parser accepts only `seq:<n>`.
     // We accept that limitation here; cold-reconnect convergence comes from the GET fallback.
-    this.es.addEventListener('permission.decided', (evt) => {
+    this.es.addEventListener("permission.decided", (evt) => {
       let payload: any;
-      try { payload = JSON.parse(evt.data); } catch { return; }
+      try {
+        payload = JSON.parse(evt.data);
+      } catch {
+        return;
+      }
       this.emitPermissionEvent({
-        kind: 'permission_decided',
+        kind: "permission_decided",
         permission_id: payload.permission_id,
         handoff_id: payload.parent_handoff_id,
         conversation_id: payload.conversation_id,
@@ -73,11 +77,15 @@ export class PermissionDaemonClient {
         reason: payload.reason ?? null,
       });
     });
-    this.es.addEventListener('permission.expired', (evt) => {
+    this.es.addEventListener("permission.expired", (evt) => {
       let payload: any;
-      try { payload = JSON.parse(evt.data); } catch { return; }
+      try {
+        payload = JSON.parse(evt.data);
+      } catch {
+        return;
+      }
       this.emitPermissionEvent({
-        kind: 'permission_expired',
+        kind: "permission_expired",
         permission_id: payload.permission_id,
         handoff_id: payload.parent_handoff_id,
         conversation_id: payload.conversation_id,
@@ -103,13 +111,13 @@ export class PermissionDaemonClient {
     this.es?.close();
     this.es = null;
     for (const w of this.waiters.values()) {
-      w.reject(new Error('PermissionDaemonClient stopped'));
+      w.reject(new Error("PermissionDaemonClient stopped"));
     }
     this.waiters.clear();
   }
 
   async requestPermission(input: RequestPermissionInput): Promise<PermissionDecisionResult> {
-    if (!this.es) throw new Error('PermissionDaemonClient not started');
+    if (!this.es) throw new Error("PermissionDaemonClient not started");
     const permission_id = this.opts.uuid();
     // Register waiter BEFORE the POST so an instant decision can't slip past.
     const promise = new Promise<PermissionDecisionResult>((resolve, reject) => {
@@ -126,7 +134,7 @@ export class PermissionDaemonClient {
         ttl_seconds: input.ttl_seconds,
       });
       this.emitPermissionEvent({
-        kind: 'permission_requested',
+        kind: "permission_requested",
         permission_id: created.permission_id,
         handoff_id: input.parent_handoff_id,
         conversation_id: input.conversation_id,
@@ -143,30 +151,35 @@ export class PermissionDaemonClient {
 
   private async convergeWaiters(): Promise<void> {
     const permissionIds = [...this.waiters.keys()];
-    await Promise.all(permissionIds.map(async (permission_id) => {
-      try {
-        const { permission } = await this.opts.penumbraClient.getPermission(permission_id);
-        await this.convergeWaiter(permission_id, permission);
-      } catch (err: any) {
-        const status = typeof err?.status === 'number' ? err.status : null;
-        if (status !== 404) return;
-        const waiter = this.waiters.get(permission_id);
-        if (!waiter) return;
-        this.waiters.delete(permission_id);
-        waiter.reject(new Error(`permission ${permission_id} not found`));
-      }
-    }));
+    await Promise.all(
+      permissionIds.map(async (permission_id) => {
+        try {
+          const { permission } = await this.opts.penumbraClient.getPermission(permission_id);
+          await this.convergeWaiter(permission_id, permission);
+        } catch (err: any) {
+          const status = typeof err?.status === "number" ? err.status : null;
+          if (status !== 404) return;
+          const waiter = this.waiters.get(permission_id);
+          if (!waiter) return;
+          this.waiters.delete(permission_id);
+          waiter.reject(new Error(`permission ${permission_id} not found`));
+        }
+      }),
+    );
   }
 
-  private async convergeWaiter(permission_id: string, permission: PermissionRequestRow): Promise<void> {
+  private async convergeWaiter(
+    permission_id: string,
+    permission: PermissionRequestRow,
+  ): Promise<void> {
     const waiter = this.waiters.get(permission_id);
     if (!waiter) return;
-    if (permission.status === 'pending') return;
+    if (permission.status === "pending") return;
 
     this.waiters.delete(permission_id);
-    if (permission.status === 'approved' || permission.status === 'rejected') {
+    if (permission.status === "approved" || permission.status === "rejected") {
       waiter.resolve({
-        decision: permission.status === 'approved' ? 'approve' : 'reject',
+        decision: permission.status === "approved" ? "approve" : "reject",
         remember: permission.remember_scope,
         reason: permission.decision_reason,
       });
@@ -187,10 +200,10 @@ export class PermissionDaemonClient {
           handoff_id: event.handoff_id,
           conversation_id: event.conversation_id,
           agent: event.agent,
-          permission_id: 'permission_id' in event ? event.permission_id : undefined,
+          permission_id: "permission_id" in event ? event.permission_id : undefined,
           err: err instanceof Error ? err.message : String(err),
         },
-        'permission notification callback failed',
+        "permission notification callback failed",
       );
     }
   }

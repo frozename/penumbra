@@ -1,5 +1,5 @@
-import { expect, test } from 'bun:test';
-import { startEventSource } from '../../src/worker/event-source.js';
+import { expect, test } from "bun:test";
+import { startEventSource } from "../../src/worker/event-source.js";
 
 const pollWaitMs = 60;
 
@@ -19,18 +19,18 @@ function stubClient(overrides: {
   return {
     listHandoffs: overrides.listHandoffs,
     subscribeHandoffEvents: async function* () {
-      throw new Error('sse-disabled');
+      throw new Error("sse-disabled");
     },
   };
 }
 
-test('hard-isolated worker only keeps project-scoped claims', async () => {
+test("hard-isolated worker only keeps project-scoped claims", async () => {
   const calls: Array<ListHandoffsOpts> = [];
   const claimed: string[] = [];
   const rejected: string[] = [];
   const handoffs = [
-    { handoff_id: 'alpha-1', status: 'approved', project_id: 'project-a' },
-    { handoff_id: 'beta-1', status: 'approved', project_id: 'project-b' },
+    { handoff_id: "alpha-1", status: "approved", project_id: "project-a" },
+    { handoff_id: "beta-1", status: "approved", project_id: "project-b" },
   ];
 
   const client = stubClient({
@@ -42,12 +42,12 @@ test('hard-isolated worker only keeps project-scoped claims', async () => {
 
   const { stop } = startEventSource({
     client,
-    statuses: ['approved'],
-    project_id: 'project-a',
-    isolation: 'hard',
+    statuses: ["approved"],
+    project_id: "project-a",
+    isolation: "hard",
     pollIntervalMs: 5,
     onEvent: (row) => {
-      if (row.project_id === 'project-a') {
+      if (row.project_id === "project-a") {
         claimed.push(row.handoff_id);
       } else {
         rejected.push(row.handoff_id);
@@ -59,16 +59,16 @@ test('hard-isolated worker only keeps project-scoped claims', async () => {
   await stop();
 
   expect(calls.length).toBeGreaterThan(0);
-  expect(calls[0].project_id).toBe('project-a');
-  expect(claimed).toContain('alpha-1');
-  expect(rejected).toContain('beta-1');
+  expect(calls[0].project_id).toBe("project-a");
+  expect(claimed).toContain("alpha-1");
+  expect(rejected).toContain("beta-1");
 });
 
-test('sticky worker falls back to shared queue when project queue is empty', async () => {
+test("sticky worker falls back to shared queue when project queue is empty", async () => {
   const calls: Array<ListHandoffsOpts> = [];
   const claimed: string[] = [];
   const projectRows: any[] = [];
-  const sharedRows = [{ handoff_id: 'shared-1', status: 'approved', project_id: 'project-shared' }];
+  const sharedRows = [{ handoff_id: "shared-1", status: "approved", project_id: "project-shared" }];
 
   const client = stubClient({
     listHandoffs: async (opts: ListHandoffsOpts) => {
@@ -80,9 +80,9 @@ test('sticky worker falls back to shared queue when project queue is empty', asy
 
   const { stop } = startEventSource({
     client,
-    statuses: ['approved'],
-    project_id: 'project-a',
-    isolation: 'sticky',
+    statuses: ["approved"],
+    project_id: "project-a",
+    isolation: "sticky",
     pollIntervalMs: 5,
     onEvent: (row) => {
       claimed.push(row.handoff_id);
@@ -92,17 +92,17 @@ test('sticky worker falls back to shared queue when project queue is empty', asy
   await sleep(pollWaitMs);
   await stop();
 
-  expect(calls.some((call) => call.project_id === 'project-a')).toBe(true);
+  expect(calls.some((call) => call.project_id === "project-a")).toBe(true);
   expect(calls.some((call) => call.project_id === undefined)).toBe(true);
-  expect(claimed).toEqual(['shared-1']);
+  expect(claimed).toEqual(["shared-1"]);
 });
 
-test('shared worker polls without project filter and can claim any project', async () => {
+test("shared worker polls without project filter and can claim any project", async () => {
   const calls: Array<ListHandoffsOpts> = [];
   const claimed: string[] = [];
   const handoffs = [
-    { handoff_id: 'any-1', status: 'approved', project_id: 'project-a' },
-    { handoff_id: 'any-2', status: 'approved', project_id: 'project-b' },
+    { handoff_id: "any-1", status: "approved", project_id: "project-a" },
+    { handoff_id: "any-2", status: "approved", project_id: "project-b" },
   ];
 
   const client = stubClient({
@@ -114,9 +114,9 @@ test('shared worker polls without project filter and can claim any project', asy
 
   const { stop } = startEventSource({
     client,
-    statuses: ['approved'],
-    project_id: 'project-a',
-    isolation: 'shared',
+    statuses: ["approved"],
+    project_id: "project-a",
+    isolation: "shared",
     pollIntervalMs: 5,
     onEvent: (row) => {
       claimed.push(row.handoff_id);
@@ -128,6 +128,5 @@ test('shared worker polls without project filter and can claim any project', asy
 
   expect(calls.length).toBeGreaterThan(0);
   expect(calls.every((call) => call.project_id === undefined)).toBe(true);
-  expect(claimed.sort()).toEqual(['any-1', 'any-2']);
+  expect(claimed.sort()).toEqual(["any-1", "any-2"]);
 });
-

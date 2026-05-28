@@ -1,19 +1,19 @@
-import type { EmbeddingModel, FlagEmbedding } from 'fastembed';
-import type { Embedder } from './interface.js';
+import type { EmbeddingModel, FlagEmbedding } from "fastembed";
+import type { Embedder } from "./interface.js";
 
-type FastembedModule = typeof import('fastembed');
+type FastembedModule = typeof import("fastembed");
 
 let fastembedModulePromise: Promise<FastembedModule> | null = null;
 
 async function loadFastembed(): Promise<FastembedModule> {
   if (!fastembedModulePromise) {
-    fastembedModulePromise = import('fastembed');
+    fastembedModulePromise = import("fastembed");
   }
   return fastembedModulePromise;
 }
 
 export class BundledEmbedder implements Embedder {
-  readonly name = 'fastembed-minilm-l6-v2';
+  readonly name = "fastembed-minilm-l6-v2";
   readonly dim = 384;
   private model: FlagEmbedding | null = null;
   private initPromise: Promise<void> | null = null;

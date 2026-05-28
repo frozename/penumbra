@@ -1,7 +1,7 @@
-import type { Database, SQLQueryBindings } from 'bun:sqlite';
-import { randomUUID } from 'node:crypto';
-import type { Embedder } from '../embedder/interface.js';
-import type { HybridHit } from './hybrid.js';
+import type { Database, SQLQueryBindings } from "bun:sqlite";
+import { randomUUID } from "node:crypto";
+import type { Embedder } from "../embedder/interface.js";
+import type { HybridHit } from "./hybrid.js";
 import {
   combineFilters,
   conceptFilter,
@@ -9,7 +9,7 @@ import {
   fileFilter,
   projectFilter,
   typeFilter,
-} from './filters/index.js';
+} from "./filters/index.js";
 
 export interface CorpusFilter {
   project_id?: string | null;
@@ -41,19 +41,20 @@ export async function buildCorpus(
   input: BuildCorpusInput,
 ): Promise<CorpusSummary> {
   const filterContribs = [
-    projectFilter(input.filter.project_id, 'm.project_id'),
-    typeFilter(input.filter.obs_type, 'm.obs_type'),
-    conceptFilter(input.filter.concept, 'm.concepts'),
-    fileFilter(input.filter.file_path, 'm.file_paths'),
-    dateFilter(input.filter.dateStart, input.filter.dateEnd, 'm.created_at'),
+    projectFilter(input.filter.project_id, "m.project_id"),
+    typeFilter(input.filter.obs_type, "m.obs_type"),
+    conceptFilter(input.filter.concept, "m.concepts"),
+    fileFilter(input.filter.file_path, "m.file_paths"),
+    dateFilter(input.filter.dateStart, input.filter.dateEnd, "m.created_at"),
   ].filter((c): c is NonNullable<typeof c> => c !== null);
   const { whereSql, params } = combineFilters(filterContribs);
   const cap = input.filter.limit ?? 500;
 
   const rows = db
-    .query<{ memory_id: string }, SQLQueryBindings[]>(
-      `SELECT m.memory_id FROM t2_memories m WHERE ${whereSql} ORDER BY m.created_at DESC LIMIT ?`,
-    )
+    .query<
+      { memory_id: string },
+      SQLQueryBindings[]
+    >(`SELECT m.memory_id FROM t2_memories m WHERE ${whereSql} ORDER BY m.created_at DESC LIMIT ?`)
     .all(...params, cap);
 
   const now = new Date().toISOString();
@@ -62,13 +63,22 @@ export async function buildCorpus(
     `INSERT INTO corpora(corpus_id, name, description, filter_json, created_at, updated_at, member_count)
      VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(name) DO UPDATE SET filter_json=excluded.filter_json, updated_at=excluded.updated_at, member_count=excluded.member_count`,
-    [newId, input.name, input.description ?? null, JSON.stringify(input.filter), now, now, rows.length],
+    [
+      newId,
+      input.name,
+      input.description ?? null,
+      JSON.stringify(input.filter),
+      now,
+      now,
+      rows.length,
+    ],
   );
 
   const existing = db
-    .query<{ corpus_id: string; created_at: string }, [string]>(
-      `SELECT corpus_id, created_at FROM corpora WHERE name=?`,
-    )
+    .query<
+      { corpus_id: string; created_at: string },
+      [string]
+    >(`SELECT corpus_id, created_at FROM corpora WHERE name=?`)
     .get(input.name)!;
 
   db.run(`DELETE FROM corpus_members WHERE corpus_id=?`, [existing.corpus_id]);
@@ -91,7 +101,13 @@ export async function buildCorpus(
 export function listCorpora(db: Database): CorpusSummary[] {
   return db
     .query<
-      { corpus_id: string; name: string; description: string | null; member_count: number; created_at: string },
+      {
+        corpus_id: string;
+        name: string;
+        description: string | null;
+        member_count: number;
+        created_at: string;
+      },
       []
     >(
       `SELECT corpus_id, name, description, member_count, created_at
@@ -122,11 +138,14 @@ export async function queryCorpus(
   if (!corpus) return [];
 
   const memberRows = db
-    .query<{ memory_id: string }, [string]>(`SELECT memory_id FROM corpus_members WHERE corpus_id=?`)
+    .query<
+      { memory_id: string },
+      [string]
+    >(`SELECT memory_id FROM corpus_members WHERE corpus_id=?`)
     .all(corpus.corpus_id);
   if (memberRows.length === 0) return [];
 
-  const memberPlaceholders = memberRows.map(() => '?').join(',');
+  const memberPlaceholders = memberRows.map(() => "?").join(",");
   const candidates = db
     .query<
       {
@@ -148,7 +167,7 @@ export async function queryCorpus(
 
   const [qvec] = await embedder.embed([req.query]);
   const qBlob = new Float32Array(qvec!);
-  const candPlaceholders = candidates.map(() => '?').join(',');
+  const candPlaceholders = candidates.map(() => "?").join(",");
   const ranked = db
     .query<{ rowid: number; distance: number }, SQLQueryBindings[]>(
       `SELECT v.rowid, v.distance FROM t2_vec v

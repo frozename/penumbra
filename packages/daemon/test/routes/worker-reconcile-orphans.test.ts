@@ -81,7 +81,11 @@ test("POST /worker/reconcile-orphans returns 500 recovery_failed on runOnce erro
       throw new Error("database crash");
     },
   } as any;
-  const fetchHandler = createDaemonFetchHandler({ services, token, orphanHandoffRecovery: mockRecovery });
+  const fetchHandler = createDaemonFetchHandler({
+    services,
+    token,
+    orphanHandoffRecovery: mockRecovery,
+  });
 
   const { worker_token } = await registerWorkerForTest({
     baseUrl: "http://x",
@@ -90,11 +94,13 @@ test("POST /worker/reconcile-orphans returns 500 recovery_failed on runOnce erro
     fetcher: makeFetcher(fetchHandler),
   });
 
-  const res = await fetchHandler(new Request("http://x/worker/reconcile-orphans", {
-    method: "POST",
-    headers: { authorization: `Bearer ${worker_token}` },
-    body: JSON.stringify({ worker_id: "w1" }),
-  }));
+  const res = await fetchHandler(
+    new Request("http://x/worker/reconcile-orphans", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "w1" }),
+    }),
+  );
   expect(res.status).toBe(500);
   const body = await res.json();
   expect(body).toEqual({ error: { code: "recovery_failed" } });
@@ -108,11 +114,22 @@ test("POST /worker/reconcile-orphans passes worker_id to runOnce", async () => {
   const mockRecovery = {
     runOnce: (workerId?: string) => {
       passedWorkerId = workerId;
-      return { requeued: 4, exhausted: 2, requeuedRowIds: ["1"], exhaustedRowIds: ["2"], _requeuedRows: [], _exhaustedRows: [] };
+      return {
+        requeued: 4,
+        exhausted: 2,
+        requeuedRowIds: ["1"],
+        exhaustedRowIds: ["2"],
+        _requeuedRows: [],
+        _exhaustedRows: [],
+      };
     },
   } as any;
 
-  const fetchHandler = createDaemonFetchHandler({ services, token, orphanHandoffRecovery: mockRecovery });
+  const fetchHandler = createDaemonFetchHandler({
+    services,
+    token,
+    orphanHandoffRecovery: mockRecovery,
+  });
 
   const { worker_token } = await registerWorkerForTest({
     baseUrl: "http://x",
@@ -121,13 +138,20 @@ test("POST /worker/reconcile-orphans passes worker_id to runOnce", async () => {
     fetcher: makeFetcher(fetchHandler),
   });
 
-  const res = await fetchHandler(new Request("http://x/worker/reconcile-orphans", {
-    method: "POST",
-    headers: { authorization: `Bearer ${worker_token}` },
-    body: JSON.stringify({ worker_id: "test-worker-123" }),
-  }));
+  const res = await fetchHandler(
+    new Request("http://x/worker/reconcile-orphans", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "test-worker-123" }),
+    }),
+  );
   expect(res.status).toBe(200);
-  expect(await res.json()).toEqual({ requeued: 4, exhausted: 2, requeuedRowIds: ["1"], exhaustedRowIds: ["2"] });
+  expect(await res.json()).toEqual({
+    requeued: 4,
+    exhausted: 2,
+    requeuedRowIds: ["1"],
+    exhaustedRowIds: ["2"],
+  });
   expect(passedWorkerId).toBe("test-worker-123");
 });
 
@@ -138,18 +162,22 @@ test("POST /worker/reconcile-orphans auth boundary and service-unavailable", asy
   const fetchHandler = createDaemonFetchHandler({ services, token });
 
   // 1. Without authz token -> 401
-  const res401 = await fetchHandler(new Request("http://x/worker/reconcile-orphans", {
-    method: "POST",
-    body: JSON.stringify({ worker_id: "w1" }),
-  }));
+  const res401 = await fetchHandler(
+    new Request("http://x/worker/reconcile-orphans", {
+      method: "POST",
+      body: JSON.stringify({ worker_id: "w1" }),
+    }),
+  );
   expect(res401.status).toBe(401);
 
   // 2. With wrong authz token -> 401
-  const res401Wrong = await fetchHandler(new Request("http://x/worker/reconcile-orphans", {
-    method: "POST",
-    headers: { authorization: "Bearer wrong" },
-    body: JSON.stringify({ worker_id: "w1" }),
-  }));
+  const res401Wrong = await fetchHandler(
+    new Request("http://x/worker/reconcile-orphans", {
+      method: "POST",
+      headers: { authorization: "Bearer wrong" },
+      body: JSON.stringify({ worker_id: "w1" }),
+    }),
+  );
   expect(res401Wrong.status).toBe(401);
 
   // 3. Worker token + no recovery service -> 503 (503 guard in serve.ts fires before route)
@@ -159,26 +187,41 @@ test("POST /worker/reconcile-orphans auth boundary and service-unavailable", asy
     worker_id: "w1",
     fetcher: makeFetcher(fetchHandler),
   });
-  const res503 = await fetchHandler(new Request("http://x/worker/reconcile-orphans", {
-    method: "POST",
-    headers: { authorization: `Bearer ${worker_token}` },
-    body: JSON.stringify({ worker_id: "w1" }),
-  }));
+  const res503 = await fetchHandler(
+    new Request("http://x/worker/reconcile-orphans", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "w1" }),
+    }),
+  );
   expect(res503.status).toBe(503);
   expect(await res503.json()).toEqual({ error: { code: "recovery_service_unavailable" } });
 
   // 4. Shared bearer + recovery service -> 403 (route runs, principal check fires)
   const mockRecovery = {
-    runOnce: () => ({ requeued: 1, exhausted: 0, requeuedRowIds: ["1"], exhaustedRowIds: [], _requeuedRows: [], _exhaustedRows: [] }),
+    runOnce: () => ({
+      requeued: 1,
+      exhausted: 0,
+      requeuedRowIds: ["1"],
+      exhaustedRowIds: [],
+      _requeuedRows: [],
+      _exhaustedRows: [],
+    }),
   } as any;
-  const fetchHandlerWithRecovery = createDaemonFetchHandler({ services, token, orphanHandoffRecovery: mockRecovery });
-  const res403 = await fetchHandlerWithRecovery(new Request("http://x/worker/reconcile-orphans", {
-    method: "POST",
-    headers: { authorization: `Bearer ${token}` },
-    body: JSON.stringify({ worker_id: "w1" }),
-  }));
+  const fetchHandlerWithRecovery = createDaemonFetchHandler({
+    services,
+    token,
+    orphanHandoffRecovery: mockRecovery,
+  });
+  const res403 = await fetchHandlerWithRecovery(
+    new Request("http://x/worker/reconcile-orphans", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: JSON.stringify({ worker_id: "w1" }),
+    }),
+  );
   expect(res403.status).toBe(403);
-  expect((await res403.json() as any).error.code).toBe("worker_token_required");
+  expect(((await res403.json()) as any).error.code).toBe("worker_token_required");
 
   // 5. Worker token + valid recovery service -> 200
   const { worker_token: wt2 } = await registerWorkerForTest({
@@ -187,13 +230,20 @@ test("POST /worker/reconcile-orphans auth boundary and service-unavailable", asy
     worker_id: "w2",
     fetcher: makeFetcher(fetchHandlerWithRecovery),
   });
-  const res200 = await fetchHandlerWithRecovery(new Request("http://x/worker/reconcile-orphans", {
-    method: "POST",
-    headers: { authorization: `Bearer ${wt2}` },
-    body: JSON.stringify({ worker_id: "w2" }),
-  }));
+  const res200 = await fetchHandlerWithRecovery(
+    new Request("http://x/worker/reconcile-orphans", {
+      method: "POST",
+      headers: { authorization: `Bearer ${wt2}` },
+      body: JSON.stringify({ worker_id: "w2" }),
+    }),
+  );
   expect(res200.status).toBe(200);
-  expect(await res200.json()).toEqual({ requeued: 1, exhausted: 0, requeuedRowIds: ["1"], exhaustedRowIds: [] });
+  expect(await res200.json()).toEqual({
+    requeued: 1,
+    exhausted: 0,
+    requeuedRowIds: ["1"],
+    exhaustedRowIds: [],
+  });
 });
 
 // --- Phase 4.2 principal enforcement tests ---
@@ -202,15 +252,28 @@ test("POST /worker/reconcile-orphans with shared bearer returns 403 worker_token
   const services = tempServices();
   const token = "secret-token";
   const mockRecovery = {
-    runOnce: () => ({ requeued: 0, exhausted: 0, requeuedRowIds: [], exhaustedRowIds: [], _requeuedRows: [], _exhaustedRows: [] }),
+    runOnce: () => ({
+      requeued: 0,
+      exhausted: 0,
+      requeuedRowIds: [],
+      exhaustedRowIds: [],
+      _requeuedRows: [],
+      _exhaustedRows: [],
+    }),
   } as any;
-  const fetchHandler = createDaemonFetchHandler({ services, token, orphanHandoffRecovery: mockRecovery });
+  const fetchHandler = createDaemonFetchHandler({
+    services,
+    token,
+    orphanHandoffRecovery: mockRecovery,
+  });
 
-  const res = await fetchHandler(new Request("http://x/worker/reconcile-orphans", {
-    method: "POST",
-    headers: { authorization: `Bearer ${token}` },
-    body: JSON.stringify({ worker_id: "W-A" }),
-  }));
+  const res = await fetchHandler(
+    new Request("http://x/worker/reconcile-orphans", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: JSON.stringify({ worker_id: "W-A" }),
+    }),
+  );
   expect(res.status).toBe(403);
   const body = await res.json();
   expect((body as any).error.code).toBe("worker_token_required");
@@ -220,9 +283,20 @@ test("POST /worker/reconcile-orphans with worker token + mismatched body worker_
   const services = tempServices();
   const token = "secret-token";
   const mockRecovery = {
-    runOnce: () => ({ requeued: 0, exhausted: 0, requeuedRowIds: [], exhaustedRowIds: [], _requeuedRows: [], _exhaustedRows: [] }),
+    runOnce: () => ({
+      requeued: 0,
+      exhausted: 0,
+      requeuedRowIds: [],
+      exhaustedRowIds: [],
+      _requeuedRows: [],
+      _exhaustedRows: [],
+    }),
   } as any;
-  const fetchHandler = createDaemonFetchHandler({ services, token, orphanHandoffRecovery: mockRecovery });
+  const fetchHandler = createDaemonFetchHandler({
+    services,
+    token,
+    orphanHandoffRecovery: mockRecovery,
+  });
 
   const { worker_token } = await registerWorkerForTest({
     baseUrl: "http://x",
@@ -231,11 +305,13 @@ test("POST /worker/reconcile-orphans with worker token + mismatched body worker_
     fetcher: makeFetcher(fetchHandler),
   });
 
-  const res = await fetchHandler(new Request("http://x/worker/reconcile-orphans", {
-    method: "POST",
-    headers: { authorization: `Bearer ${worker_token}` },
-    body: JSON.stringify({ worker_id: "W-B" }),
-  }));
+  const res = await fetchHandler(
+    new Request("http://x/worker/reconcile-orphans", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "W-B" }),
+    }),
+  );
   expect(res.status).toBe(403);
   const body = await res.json();
   expect((body as any).error.code).toBe("worker_id_mismatch");
@@ -249,10 +325,21 @@ test("POST /worker/reconcile-orphans with worker token + matching body worker_id
   const mockRecovery = {
     runOnce: (workerId?: string) => {
       calledWith = workerId;
-      return { requeued: 2, exhausted: 1, requeuedRowIds: ["r1", "r2"], exhaustedRowIds: ["e1"], _requeuedRows: [], _exhaustedRows: [] };
+      return {
+        requeued: 2,
+        exhausted: 1,
+        requeuedRowIds: ["r1", "r2"],
+        exhaustedRowIds: ["e1"],
+        _requeuedRows: [],
+        _exhaustedRows: [],
+      };
     },
   } as any;
-  const fetchHandler = createDaemonFetchHandler({ services, token, orphanHandoffRecovery: mockRecovery });
+  const fetchHandler = createDaemonFetchHandler({
+    services,
+    token,
+    orphanHandoffRecovery: mockRecovery,
+  });
 
   const { worker_token } = await registerWorkerForTest({
     baseUrl: "http://x",
@@ -261,13 +348,20 @@ test("POST /worker/reconcile-orphans with worker token + matching body worker_id
     fetcher: makeFetcher(fetchHandler),
   });
 
-  const res = await fetchHandler(new Request("http://x/worker/reconcile-orphans", {
-    method: "POST",
-    headers: { authorization: `Bearer ${worker_token}` },
-    body: JSON.stringify({ worker_id: "W-A" }),
-  }));
+  const res = await fetchHandler(
+    new Request("http://x/worker/reconcile-orphans", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "W-A" }),
+    }),
+  );
   expect(res.status).toBe(200);
-  expect(await res.json()).toEqual({ requeued: 2, exhausted: 1, requeuedRowIds: ["r1", "r2"], exhaustedRowIds: ["e1"] });
+  expect(await res.json()).toEqual({
+    requeued: 2,
+    exhausted: 1,
+    requeuedRowIds: ["r1", "r2"],
+    exhaustedRowIds: ["e1"],
+  });
   expect(calledWith).toBe("W-A");
 });
 
@@ -276,10 +370,12 @@ test("POST /worker/reconcile-orphans without Authorization returns 401", async (
   const token = "secret-token";
   const fetchHandler = createDaemonFetchHandler({ services, token });
 
-  const res = await fetchHandler(new Request("http://x/worker/reconcile-orphans", {
-    method: "POST",
-    body: JSON.stringify({ worker_id: "W-A" }),
-  }));
+  const res = await fetchHandler(
+    new Request("http://x/worker/reconcile-orphans", {
+      method: "POST",
+      body: JSON.stringify({ worker_id: "W-A" }),
+    }),
+  );
   expect(res.status).toBe(401);
   const body = await res.json();
   expect((body as any).error.code).toBe("unauthorized");

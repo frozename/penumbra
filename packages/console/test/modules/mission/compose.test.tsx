@@ -5,10 +5,7 @@ import type { ReactNode } from "react";
 import { MissionControl } from "../../../src/modules/mission";
 import { useMissionStore } from "../../../src/modules/mission/store";
 import { useDaemonStore } from "../../../src/stores/daemon-store";
-import {
-  __resetBrokerForTests,
-  __setSourceFactory,
-} from "../../../src/api/streams";
+import { __resetBrokerForTests, __setSourceFactory } from "../../../src/api/streams";
 import type { EventSourceLike } from "../../../src/api/event-source-shim";
 
 function jsonResponse(body: unknown): Response {
@@ -54,11 +51,7 @@ beforeEach(() => {
 
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url =
-      typeof input === "string"
-        ? input
-        : input instanceof URL
-          ? input.toString()
-          : input.url;
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     if (url.includes("/handoffs") && url.includes("status=pending")) {
       return jsonResponse({ handoffs: [] });
     }
@@ -115,18 +108,15 @@ describe("MissionControl compose", () => {
       </Wrapper>,
     );
 
-    expect(container.querySelector(".surface-head h1")?.textContent).toContain(
-      "Mission control",
-    );
+    expect(container.querySelector(".surface-head h1")?.textContent).toContain("Mission control");
 
-    const labels = Array.from(container.querySelectorAll(".lab")).map(
-      (el) => el.textContent ?? "",
-    );
+    const labels = Array.from(container.querySelectorAll(".lab")).map((el) => el.textContent ?? "");
     expect(labels).toContain("Concurrent dispatches");
 
     await waitFor(() => {
-      const titles = Array.from(container.querySelectorAll(".card-head h3"))
-        .map((el) => (el.textContent ?? "").trim());
+      const titles = Array.from(container.querySelectorAll(".card-head h3")).map((el) =>
+        (el.textContent ?? "").trim(),
+      );
       expect(titles).toContain("Pending handoffs");
       expect(titles).toContain("Pressure");
       expect(titles).toContain("In-flight chains");

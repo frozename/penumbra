@@ -18,10 +18,7 @@ export function buildRequestUrl(
   if (baseUrl.startsWith("/")) {
     url = `${trimTrailingSlash(baseUrl)}${cleanPath}`;
   } else {
-    url = new URL(
-      cleanPath.replace(/^\//, ""),
-      `${trimTrailingSlash(baseUrl)}/`,
-    ).toString();
+    url = new URL(cleanPath.replace(/^\//, ""), `${trimTrailingSlash(baseUrl)}/`).toString();
   }
 
   if (!params) return url;

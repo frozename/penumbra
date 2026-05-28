@@ -4,15 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { T0Tail } from "../../../src/modules/mission/T0Tail";
 import { useMissionStore } from "../../../src/modules/mission/store";
-import {
-  __resetBrokerForTests,
-  __setSourceFactory,
-} from "../../../src/api/streams";
-import type {
-  StreamMessage,
-  StreamTopic,
-  Subscription,
-} from "../../../src/api/streams";
+import { __resetBrokerForTests, __setSourceFactory } from "../../../src/api/streams";
+import type { StreamMessage, StreamTopic, Subscription } from "../../../src/api/streams";
 
 type SubscribeImpl = <T>(
   topic: StreamTopic,
@@ -71,7 +64,16 @@ class FakeResizeObserver {
       [
         {
           target,
-          contentRect: { width: 600, height: 280, top: 0, left: 0, right: 600, bottom: 280, x: 0, y: 0 } as DOMRectReadOnly,
+          contentRect: {
+            width: 600,
+            height: 280,
+            top: 0,
+            left: 0,
+            right: 600,
+            bottom: 280,
+            x: 0,
+            y: 0,
+          } as DOMRectReadOnly,
           borderBoxSize: [],
           contentBoxSize: [],
           devicePixelContentBoxSize: [],
@@ -92,7 +94,8 @@ beforeEach(() => {
   useMissionStore.setState({ tailFilter: null, pausedTail: false });
   __resetBrokerForTests();
 
-  originalResizeObserver = (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
+  originalResizeObserver = (globalThis as { ResizeObserver?: typeof ResizeObserver })
+    .ResizeObserver;
   (globalThis as { ResizeObserver: unknown }).ResizeObserver = FakeResizeObserver;
 
   offsetHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
@@ -145,23 +148,54 @@ describe("T0Tail", () => {
     // Stub layout for happy-dom so virtualizer sees nonzero size.
     const scroll = container.querySelector(".t0-tail-scroll") as HTMLElement;
     scroll.getBoundingClientRect = () =>
-      ({ width: 600, height: 280, top: 0, left: 0, right: 600, bottom: 280, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+      ({
+        width: 600,
+        height: 280,
+        top: 0,
+        left: 0,
+        right: 600,
+        bottom: 280,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
 
     const ts = new Date().toISOString();
     act(() => {
       emit({
         event: "agent.thought",
-        data: { kind: "agent.thought", handoff_id: "h1", source: "worker", ts, worker_id: null, meta: null },
+        data: {
+          kind: "agent.thought",
+          handoff_id: "h1",
+          source: "worker",
+          ts,
+          worker_id: null,
+          meta: null,
+        },
         raw: rawMsg(),
       });
       emit({
         event: "claim",
-        data: { kind: "claim", handoff_id: "h2", source: "daemon", ts, worker_id: null, meta: null },
+        data: {
+          kind: "claim",
+          handoff_id: "h2",
+          source: "daemon",
+          ts,
+          worker_id: null,
+          meta: null,
+        },
         raw: rawMsg(),
       });
       emit({
         event: "watchdog.tick",
-        data: { kind: "watchdog.tick", handoff_id: "h3", source: "daemon", ts, worker_id: null, meta: null },
+        data: {
+          kind: "watchdog.tick",
+          handoff_id: "h3",
+          source: "daemon",
+          ts,
+          worker_id: null,
+          meta: null,
+        },
         raw: rawMsg(),
       });
     });
@@ -186,7 +220,17 @@ describe("T0Tail", () => {
     );
     const scroll = container.querySelector(".t0-tail-scroll") as HTMLElement;
     scroll.getBoundingClientRect = () =>
-      ({ width: 600, height: 280, top: 0, left: 0, right: 600, bottom: 280, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+      ({
+        width: 600,
+        height: 280,
+        top: 0,
+        left: 0,
+        right: 600,
+        bottom: 280,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
 
     act(() => {
       useMissionStore.setState({ tailFilter: "agent.thought" });
@@ -197,14 +241,28 @@ describe("T0Tail", () => {
       for (let i = 0; i < 3; i += 1) {
         emit({
           event: "agent.thought",
-          data: { kind: "agent.thought", handoff_id: `t${i}`, source: "worker", ts, worker_id: null, meta: null },
+          data: {
+            kind: "agent.thought",
+            handoff_id: `t${i}`,
+            source: "worker",
+            ts,
+            worker_id: null,
+            meta: null,
+          },
           raw: rawMsg(),
         });
       }
       for (let i = 0; i < 2; i += 1) {
         emit({
           event: "dispatch.start",
-          data: { kind: "dispatch.start", handoff_id: `d${i}`, source: "daemon", ts, worker_id: null, meta: null },
+          data: {
+            kind: "dispatch.start",
+            handoff_id: `d${i}`,
+            source: "daemon",
+            ts,
+            worker_id: null,
+            meta: null,
+          },
           raw: rawMsg(),
         });
       }
@@ -230,14 +288,31 @@ describe("T0Tail", () => {
     );
     const scroll = container.querySelector(".t0-tail-scroll") as HTMLElement;
     scroll.getBoundingClientRect = () =>
-      ({ width: 600, height: 280, top: 0, left: 0, right: 600, bottom: 280, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+      ({
+        width: 600,
+        height: 280,
+        top: 0,
+        left: 0,
+        right: 600,
+        bottom: 280,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
 
     const ts = new Date().toISOString();
     act(() => {
       for (let i = 0; i < 2; i += 1) {
         emit({
           event: "claim",
-          data: { kind: "claim", handoff_id: `h${i}`, source: "daemon", ts, worker_id: null, meta: null },
+          data: {
+            kind: "claim",
+            handoff_id: `h${i}`,
+            source: "daemon",
+            ts,
+            worker_id: null,
+            meta: null,
+          },
           raw: rawMsg(),
         });
       }
@@ -256,7 +331,14 @@ describe("T0Tail", () => {
       for (let i = 0; i < 2; i += 1) {
         emit({
           event: "claim",
-          data: { kind: "claim", handoff_id: `n${i}`, source: "daemon", ts, worker_id: null, meta: null },
+          data: {
+            kind: "claim",
+            handoff_id: `n${i}`,
+            source: "daemon",
+            ts,
+            worker_id: null,
+            meta: null,
+          },
           raw: rawMsg(),
         });
       }
@@ -281,7 +363,17 @@ describe("T0Tail", () => {
     );
     const scroll = container.querySelector(".t0-tail-scroll") as HTMLElement;
     scroll.getBoundingClientRect = () =>
-      ({ width: 600, height: 280, top: 0, left: 0, right: 600, bottom: 280, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+      ({
+        width: 600,
+        height: 280,
+        top: 0,
+        left: 0,
+        right: 600,
+        bottom: 280,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
 
     act(() => {
       emit({

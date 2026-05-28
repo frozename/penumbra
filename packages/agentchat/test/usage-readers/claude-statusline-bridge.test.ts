@@ -1,40 +1,46 @@
-import { describe, it, expect } from 'bun:test';
-import { writeFileSync, mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { ClaudeStatusLineBridge } from '../../src/usage-readers/claude-statusline-bridge.js';
+import { describe, it, expect } from "bun:test";
+import { writeFileSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ClaudeStatusLineBridge } from "../../src/usage-readers/claude-statusline-bridge.js";
 
 function tmpCache(): string {
-  return join(mkdtempSync(join(tmpdir(), 'claude-rl-')), 'rl.json');
+  return join(mkdtempSync(join(tmpdir(), "claude-rl-")), "rl.json");
 }
 
-describe('ClaudeStatusLineBridge', () => {
-  it('emits one rate-limit-snapshot per window with provider=anthropic', async () => {
+describe("ClaudeStatusLineBridge", () => {
+  it("emits one rate-limit-snapshot per window with provider=anthropic", async () => {
     const path = tmpCache();
-    writeFileSync(path, JSON.stringify({
-      five_hour: { used_percentage: 30, resets_at: 1777364441 },
-      seven_day: { used_percentage: 50, resets_at: 1777545224 },
-    }));
+    writeFileSync(
+      path,
+      JSON.stringify({
+        five_hour: { used_percentage: 30, resets_at: 1777364441 },
+        seven_day: { used_percentage: 50, resets_at: 1777545224 },
+      }),
+    );
     const reader = new ClaudeStatusLineBridge({ cachePath: path });
     const r = await reader.read(null);
     expect(r.rate_limit_snapshots).toHaveLength(2);
-    expect(r.rate_limit_snapshots.every(s => s.provider === 'anthropic')).toBe(true);
-    expect(r.rate_limit_snapshots.find(s => s.window_label === 'five_hour')?.used_pct).toBe(30);
-    expect(r.rate_limit_snapshots.find(s => s.window_label === 'seven_day')?.used_pct).toBe(50);
+    expect(r.rate_limit_snapshots.every((s) => s.provider === "anthropic")).toBe(true);
+    expect(r.rate_limit_snapshots.find((s) => s.window_label === "five_hour")?.used_pct).toBe(30);
+    expect(r.rate_limit_snapshots.find((s) => s.window_label === "seven_day")?.used_pct).toBe(50);
   });
 
-  it('accepts utilization as alternate field name', async () => {
+  it("accepts utilization as alternate field name", async () => {
     const path = tmpCache();
-    writeFileSync(path, JSON.stringify({
-      five_hour: { utilization: 25, resets_at: 1777364441 },
-    }));
+    writeFileSync(
+      path,
+      JSON.stringify({
+        five_hour: { utilization: 25, resets_at: 1777364441 },
+      }),
+    );
     const reader = new ClaudeStatusLineBridge({ cachePath: path });
     const r = await reader.read(null);
     expect(r.rate_limit_snapshots).toHaveLength(1);
     expect(r.rate_limit_snapshots[0].used_pct).toBe(25);
   });
 
-  it('does not re-emit when file mtime is unchanged', async () => {
+  it("does not re-emit when file mtime is unchanged", async () => {
     const path = tmpCache();
     writeFileSync(path, JSON.stringify({ five_hour: { used_percentage: 10, resets_at: 1 } }));
     const reader = new ClaudeStatusLineBridge({ cachePath: path });

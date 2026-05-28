@@ -3,11 +3,15 @@ export interface EventSourceLogger {
 }
 
 export interface EventSourceClient {
-  listHandoffs(opts: { statuses: string[]; conversation_id?: string; project_id?: string | null }): Promise<{ handoffs: any[] }>;
+  listHandoffs(opts: {
+    statuses: string[];
+    conversation_id?: string;
+    project_id?: string | null;
+  }): Promise<{ handoffs: any[] }>;
   subscribeHandoffEvents(opts?: { signal?: AbortSignal }): AsyncIterable<any>;
 }
 
-type IsolationMode = 'shared' | 'sticky' | 'hard';
+type IsolationMode = "shared" | "sticky" | "hard";
 
 export interface EventSourceOpts {
   client: EventSourceClient;
@@ -44,19 +48,23 @@ export function startEventSource(opts: EventSourceOpts): EventSourceHandle {
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
   let lastUnreachableLogAt = 0;
 
-  const logUnreachable = (source: 'poll' | 'sse', err: unknown) => {
+  const logUnreachable = (source: "poll" | "sse", err: unknown) => {
     if (!opts.log) return;
     const now = Date.now();
     if (now - lastUnreachableLogAt < throttleMs) return;
     lastUnreachableLogAt = now;
-    opts.log.warn({ source, err: String(err) }, 'daemon unreachable, retrying');
+    opts.log.warn({ source, err: String(err) }, "daemon unreachable, retrying");
   };
 
   const fanOut = (row: any) => {
     if (!row?.handoff_id) return;
     if (seen.has(row.handoff_id)) return;
     seen.add(row.handoff_id);
-    try { opts.onEvent(row); } catch { /* one bad handler must not kill the loop */ }
+    try {
+      opts.onEvent(row);
+    } catch {
+      /* one bad handler must not kill the loop */
+    }
   };
 
   const poll = async () => {
@@ -66,12 +74,12 @@ export function startEventSource(opts: EventSourceOpts): EventSourceHandle {
         const isolation = opts.isolation;
         const project_id = opts.project_id;
         let handoffs: any[] = [];
-        if (isolation === 'hard' && project_id) {
+        if (isolation === "hard" && project_id) {
           ({ handoffs } = await opts.client.listHandoffs({
             statuses: opts.statuses,
             project_id,
           }));
-        } else if (isolation === 'sticky' && project_id) {
+        } else if (isolation === "sticky" && project_id) {
           ({ handoffs } = await opts.client.listHandoffs({
             statuses: opts.statuses,
             project_id,
@@ -84,7 +92,7 @@ export function startEventSource(opts: EventSourceOpts): EventSourceHandle {
         }
         for (const h of handoffs) fanOut(h);
       } catch (err) {
-        logUnreachable('poll', err);
+        logUnreachable("poll", err);
       }
     }
     if (!stopped) pollTimer = setTimeout(poll, opts.pollIntervalMs);
@@ -98,13 +106,14 @@ export function startEventSource(opts: EventSourceOpts): EventSourceHandle {
         sseAlive = true;
         for await (const ev of opts.client.subscribeHandoffEvents({ signal: abort.signal })) {
           if (stopped) break;
-          if (opts.isolation === 'hard' && opts.project_id && ev.project_id !== opts.project_id) continue;
+          if (opts.isolation === "hard" && opts.project_id && ev.project_id !== opts.project_id)
+            continue;
           fanOut(ev);
         }
         sseAlive = false;
       } catch (err) {
         sseAlive = false;
-        logUnreachable('sse', err);
+        logUnreachable("sse", err);
       }
       if (stopped) break;
       await new Promise((r) => setTimeout(r, backoff));

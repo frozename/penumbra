@@ -5,7 +5,7 @@
  * existing plain tool names (Bash, Read, etc.) work as before.
  */
 export function colonFormToSdkPattern(entry: string): string {
-  const separator = entry.includes(':') ? entry.indexOf(':') : entry.indexOf('.');
+  const separator = entry.includes(":") ? entry.indexOf(":") : entry.indexOf(".");
   if (separator < 0) return entry;
   const server = entry.slice(0, separator);
   const tool = entry.slice(separator + 1);

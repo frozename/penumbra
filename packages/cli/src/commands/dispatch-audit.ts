@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import type { DispatchReliabilityReport } from '@penumbra/core';
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import type { DispatchReliabilityReport } from "@penumbra/core";
 
 export interface DispatchAuditResponse {
   report: DispatchReliabilityReport;
@@ -19,14 +19,16 @@ function defaultPrint(line: string): void {
 }
 
 function resolveDaemon(storageRoot: string): { baseUrl: string; token: string } {
-  const portPath = join(storageRoot, 'port');
-  const tokenPath = join(storageRoot, 'token');
+  const portPath = join(storageRoot, "port");
+  const tokenPath = join(storageRoot, "token");
   if (!existsSync(portPath) || !existsSync(tokenPath)) {
-    throw new Error(`penumbra dispatch audit: missing ${portPath} or ${tokenPath}. Run 'penumbra start' first.`);
+    throw new Error(
+      `penumbra dispatch audit: missing ${portPath} or ${tokenPath}. Run 'penumbra start' first.`,
+    );
   }
 
-  const port = Number(readFileSync(portPath, 'utf8').trim());
-  const token = readFileSync(tokenPath, 'utf8').trim();
+  const port = Number(readFileSync(portPath, "utf8").trim());
+  const token = readFileSync(tokenPath, "utf8").trim();
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error(`penumbra dispatch audit: invalid daemon port in ${portPath}`);
   }
@@ -41,11 +43,11 @@ export function formatDispatchAudit(report: DispatchReliabilityReport): string {
   return [
     `handoff: ${report.handoff_id}`,
     `status: ${report.status}`,
-    `trustworthy: ${report.trustworthy ? 'yes' : 'no'}`,
+    `trustworthy: ${report.trustworthy ? "yes" : "no"}`,
     `summary: ${report.summary}`,
     `recommended_action: ${report.recommended_action}`,
-    `missing_events: ${report.missing_events.length > 0 ? report.missing_events.join(', ') : 'none'}`,
-  ].join('\n');
+    `missing_events: ${report.missing_events.length > 0 ? report.missing_events.join(", ") : "none"}`,
+  ].join("\n");
 }
 
 export async function runDispatchAudit(opts: RunDispatchAuditOpts): Promise<void> {
@@ -60,7 +62,7 @@ export async function runDispatchAudit(opts: RunDispatchAuditOpts): Promise<void
     throw new Error(`penumbra dispatch audit: daemon /dispatch/audit returned HTTP ${res.status}`);
   }
 
-  const body = await res.json() as DispatchAuditResponse;
+  const body = (await res.json()) as DispatchAuditResponse;
   if (opts.json) {
     print(JSON.stringify(body.report, null, 2));
     return;

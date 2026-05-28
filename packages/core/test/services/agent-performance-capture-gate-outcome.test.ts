@@ -1,32 +1,38 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { loadSqliteVec, migrate } from '../../src/index.js';
-import { captureAgentPerformanceFromDispatch, captureAgentPerformanceFromReconciler } from '../../src/services/agent-performance-capture.js';
-import { routeAgent, type AgentRecommendation } from '../../src/services/agent-routing.js';
-import { AgentPerformanceWriter } from '../../src/writers/agent-performance.js';
+import { beforeEach, describe, expect, it } from "bun:test";
+import { Database } from "bun:sqlite";
+import { loadSqliteVec, migrate } from "../../src/index.js";
+import {
+  captureAgentPerformanceFromDispatch,
+  captureAgentPerformanceFromReconciler,
+} from "../../src/services/agent-performance-capture.js";
+import { routeAgent, type AgentRecommendation } from "../../src/services/agent-routing.js";
+import { AgentPerformanceWriter } from "../../src/writers/agent-performance.js";
 
-function getRecommendationsViaRoute(input: Parameters<typeof routeAgent>[0]): AgentRecommendation[] {
-  const out = routeAgent({ ...input, detail: 'summary' });
-  if (out.detail !== 'summary') throw new Error(`routeAgent returned detail="${out.detail}", expected "summary"`);
+function getRecommendationsViaRoute(
+  input: Parameters<typeof routeAgent>[0],
+): AgentRecommendation[] {
+  const out = routeAgent({ ...input, detail: "summary" });
+  if (out.detail !== "summary")
+    throw new Error(`routeAgent returned detail="${out.detail}", expected "summary"`);
   return out.recommendations;
 }
 
-if (process.platform === 'darwin') {
+if (process.platform === "darwin") {
   try {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   } catch {}
 }
 
-describe('agent performance gate outcome wiring', () => {
+describe("agent performance gate outcome wiring", () => {
   let db: Database;
 
   beforeEach(() => {
-    db = new Database(':memory:');
+    db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
   });
 
-  it('stamps gate_outcome from the latest closed lane on reconciler capture', () => {
+  it("stamps gate_outcome from the latest closed lane on reconciler capture", () => {
     db.exec(`
       INSERT INTO handoffs (
         handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message,
@@ -50,15 +56,15 @@ describe('agent performance gate outcome wiring', () => {
 
     const row = captureAgentPerformanceFromReconciler({
       db,
-      uuid: () => 'perf-1',
-      clock: () => new Date('2026-05-12T10:03:00Z'),
-      input: { handoff_id: 'h1', result: { status: 'pr_opened' } },
+      uuid: () => "perf-1",
+      clock: () => new Date("2026-05-12T10:03:00Z"),
+      input: { handoff_id: "h1", result: { status: "pr_opened" } },
     });
 
-    expect(row.gate_outcome).toBe('passed');
+    expect(row.gate_outcome).toBe("passed");
   });
 
-  it('stamps gate_outcome as null when no closed lane exists', () => {
+  it("stamps gate_outcome as null when no closed lane exists", () => {
     db.exec(`
       INSERT INTO handoffs (
         handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message,
@@ -71,15 +77,15 @@ describe('agent performance gate outcome wiring', () => {
 
     const row = captureAgentPerformanceFromReconciler({
       db,
-      uuid: () => 'perf-2',
-      clock: () => new Date('2026-05-12T11:03:00Z'),
-      input: { handoff_id: 'h2', result: { status: 'pr_opened' } },
+      uuid: () => "perf-2",
+      clock: () => new Date("2026-05-12T11:03:00Z"),
+      input: { handoff_id: "h2", result: { status: "pr_opened" } },
     });
 
     expect(row.gate_outcome).toBeNull();
   });
 
-  it('stamps gate_outcome from the lane row on dispatch capture when a closed lane exists', () => {
+  it("stamps gate_outcome from the lane row on dispatch capture when a closed lane exists", () => {
     db.exec(`
       INSERT INTO lane_ledger (
         lane_id, ts_opened, ts_closed, task_class, implementer_handoff, reviewer_handoff, gate_status, metadata_json
@@ -97,75 +103,75 @@ describe('agent performance gate outcome wiring', () => {
 
     const row = captureAgentPerformanceFromDispatch({
       db,
-      uuid: () => 'perf-3',
-      clock: () => new Date('2026-05-12T11:04:00Z'),
-      input: { handoff_id: 'h2', reason: 'completed' },
+      uuid: () => "perf-3",
+      clock: () => new Date("2026-05-12T11:04:00Z"),
+      input: { handoff_id: "h2", reason: "completed" },
     });
 
-    expect(row.gate_outcome).toBe('failed');
+    expect(row.gate_outcome).toBe("failed");
   });
 
-  it('excludes failed gate outcomes from recommendation successes', () => {
+  it("excludes failed gate outcomes from recommendation successes", () => {
     const writer = new AgentPerformanceWriter(db);
     writer.upsert({
-      performance_id: 'p1',
-      ts: '2026-05-12T12:00:00Z',
-      handoff_id: 'h3',
-      conversation_id: 'c3',
-      project_id: 'proj',
-      agent_name: 'alpha',
-      task_type: 'implement_small',
-      outcome: 'merged',
-      gate_outcome: 'failed',
+      performance_id: "p1",
+      ts: "2026-05-12T12:00:00Z",
+      handoff_id: "h3",
+      conversation_id: "c3",
+      project_id: "proj",
+      agent_name: "alpha",
+      task_type: "implement_small",
+      outcome: "merged",
+      gate_outcome: "failed",
       rounds: 1,
-      smoke_pass: 'y',
+      smoke_pass: "y",
       reviewer_findings: 0,
       maestro_score: null,
       cost_usd: null,
       tokens_used: null,
       latency_ms: 1000,
-      source: 'reconciler',
+      source: "reconciler",
       notes: null,
-      metadata_json: '{}',
+      metadata_json: "{}",
     });
 
     const out = getRecommendationsViaRoute({
       db,
-      taskType: 'implement_small',
-      now: new Date('2026-05-12T13:00:00Z'),
+      taskType: "implement_small",
+      now: new Date("2026-05-12T13:00:00Z"),
     });
 
     expect(out[0]?.success_rate).toBe(0);
   });
 
-  it('counts null gate outcomes as successes for backwards compatibility', () => {
+  it("counts null gate outcomes as successes for backwards compatibility", () => {
     const writer = new AgentPerformanceWriter(db);
     writer.upsert({
-      performance_id: 'p2',
-      ts: '2026-05-12T12:30:00Z',
-      handoff_id: 'h4',
-      conversation_id: 'c4',
-      project_id: 'proj',
-      agent_name: 'beta',
-      task_type: 'implement_small',
-      outcome: 'merged',
+      performance_id: "p2",
+      ts: "2026-05-12T12:30:00Z",
+      handoff_id: "h4",
+      conversation_id: "c4",
+      project_id: "proj",
+      agent_name: "beta",
+      task_type: "implement_small",
+      outcome: "merged",
       gate_outcome: null,
       rounds: 1,
-      smoke_pass: 'y',
+      smoke_pass: "y",
       reviewer_findings: 0,
       maestro_score: null,
       cost_usd: null,
       tokens_used: null,
       latency_ms: 1000,
-      source: 'reconciler',
+      source: "reconciler",
       notes: null,
-      metadata_json: '{}',
+      metadata_json: "{}",
     });
 
     const out = getRecommendationsViaRoute({
       db,
-      taskType: 'implement_small',
-      now: new Date('2026-05-12T13:00:00Z'),
+      taskType: "implement_small",
+      now: new Date("2026-05-12T13:00:00Z"),
     });
 
     expect(out[0]?.success_rate).toBe(1);

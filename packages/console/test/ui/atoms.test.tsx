@@ -70,12 +70,7 @@ describe("Card", () => {
 
   test("CardHead renders title id dot and actions", () => {
     const { container } = render(
-      <CardHead
-        actions={<button type="button">x</button>}
-        dot="dot-ok"
-        id="HF-12"
-        title="Inbox"
-      />,
+      <CardHead actions={<button type="button">x</button>} dot="dot-ok" id="HF-12" title="Inbox" />,
     );
 
     expect(container.querySelector("h3")?.textContent).toContain("Inbox");

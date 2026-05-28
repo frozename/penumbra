@@ -1,5 +1,5 @@
-import picomatch from 'picomatch';
-import { colonFormToSdkPattern } from './mcp-tool-name.js';
+import picomatch from "picomatch";
+import { colonFormToSdkPattern } from "./mcp-tool-name.js";
 
 export function matchAllowlist(
   yamlList: readonly string[],
@@ -8,7 +8,8 @@ export function matchAllowlist(
   precomputedSdkPatterns?: readonly string[],
 ): boolean {
   if (perDispatchCache.has(tool_name)) return true;
-  const sdkPatterns = precomputedSdkPatterns ?? yamlList.map((pattern) => colonFormToSdkPattern(pattern));
+  const sdkPatterns =
+    precomputedSdkPatterns ?? yamlList.map((pattern) => colonFormToSdkPattern(pattern));
   for (const sdkPattern of sdkPatterns) {
     if (picomatch(sdkPattern)(tool_name)) return true;
   }

@@ -1,4 +1,4 @@
-import type { WorkerControlStreamEvent } from '../schemas/sse-events.js';
+import type { WorkerControlStreamEvent } from "../schemas/sse-events.js";
 
 export type WorkerControlListener = (event: WorkerControlStreamEvent) => void;
 

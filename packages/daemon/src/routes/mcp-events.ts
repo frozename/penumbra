@@ -1,7 +1,7 @@
-import { z } from 'zod';
-import { getMcpEventBus } from '../events/mcp-event-bus.js';
+import { z } from "zod";
+import { getMcpEventBus } from "../events/mcp-event-bus.js";
 
-import { json } from './_helpers.js';
+import { json } from "./_helpers.js";
 const PublishBody = z.object({
   server: z.string().min(1),
   event: z.string().min(1),
@@ -13,10 +13,10 @@ export async function mcpEventsPublishRoute(req: Request): Promise<Response> {
   try {
     raw = await req.json();
   } catch {
-    return json({ error: 'invalid_json' }, 400);
+    return json({ error: "invalid_json" }, 400);
   }
   const parsed = PublishBody.safeParse(raw);
-  if (!parsed.success) return json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
+  if (!parsed.success) return json({ error: "invalid_body", issues: parsed.error.issues }, 400);
   const bus = getMcpEventBus();
   bus.publish({ ...parsed.data, published_at: Date.now() });
   return json({ ok: true }, 202);

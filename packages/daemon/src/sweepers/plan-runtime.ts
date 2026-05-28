@@ -1,9 +1,15 @@
-import type { Database } from 'bun:sqlite';
-import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { OrchestrateAgentNotMaestroCapable } from '@penumbra/core';
-import type { PlanWriter, TaskEventBus, TaskEvent, TaskWriter, WorktreeManager } from '@penumbra/core';
-import { parsePlanMetaFile } from '@penumbra/workflows';
+import type { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { OrchestrateAgentNotMaestroCapable } from "@penumbra/core";
+import type {
+  PlanWriter,
+  TaskEventBus,
+  TaskEvent,
+  TaskWriter,
+  WorktreeManager,
+} from "@penumbra/core";
+import { parsePlanMetaFile } from "@penumbra/workflows";
 
 type StageMergedBaseWorktreeManager = {
   stageMergedBase(
@@ -42,9 +48,10 @@ async function computeBranchBase(
   const resolveHandoff = (task: any): string | undefined => {
     if (!task || task.task_id_in_board == null) return undefined;
     const handoffRow = db
-      .query<{ chain_handoff_id: string }, [string]>(
-        'SELECT chain_handoff_id FROM maestro_sessions WHERE task_id = ? LIMIT 1',
-      )
+      .query<
+        { chain_handoff_id: string },
+        [string]
+      >("SELECT chain_handoff_id FROM maestro_sessions WHERE task_id = ? LIMIT 1")
       .get(task.task_id_in_board);
     return handoffRow ? `agent/${handoffRow.chain_handoff_id}` : undefined;
   };
@@ -56,44 +63,48 @@ async function computeBranchBase(
     const depTask = byCanonicalKey.get(canonical);
     if (!depTask) return;
 
-    const [proj] = canonical.split('/');
+    const [proj] = canonical.split("/");
     if (
       proj === effectiveProject &&
       depTask.task_id_in_board != null &&
-      depTask.status === 'completed'
+      depTask.status === "completed"
     ) {
       sameProjectAncestors.push({ task: depTask, canonical, depth });
     }
 
     const ancestorMeta = parsedTasks.find((candidate) => candidate.id === depTask.task_meta_id);
     for (const subdep of ancestorMeta?.depends_on ?? []) {
-      const subCanonical = subdep.includes('/') ? subdep : `${proj}/${subdep}`;
+      const subCanonical = subdep.includes("/") ? subdep : `${proj}/${subdep}`;
       walk(subCanonical, depth + 1);
     }
   };
 
   for (const dep of taskMeta.depends_on ?? []) {
-    const canonical = dep.includes('/') ? dep : `${effectiveProject}/${dep}`;
+    const canonical = dep.includes("/") ? dep : `${effectiveProject}/${dep}`;
     walk(canonical, 1);
   }
 
   if (sameProjectAncestors.length === 0) return undefined;
 
-  sameProjectAncestors.sort((a, b) =>
-    (b.task.last_event_ts ?? 0) - (a.task.last_event_ts ?? 0) || a.depth - b.depth,
+  sameProjectAncestors.sort(
+    (a, b) => (b.task.last_event_ts ?? 0) - (a.task.last_event_ts ?? 0) || a.depth - b.depth,
   );
 
   if (sameProjectAncestors.length > 1) {
     const distinct = new Set(sameProjectAncestors.map((ancestor) => ancestor.canonical));
     if (distinct.size > 1 && worktreeManager) {
-      const ancestorRefs = sameProjectAncestors.map((ancestor) => resolveHandoff(ancestor.task)).filter((ref): ref is string => Boolean(ref));
+      const ancestorRefs = sameProjectAncestors
+        .map((ancestor) => resolveHandoff(ancestor.task))
+        .filter((ref): ref is string => Boolean(ref));
       if (ancestorRefs.length > 1) {
         const stageHandoffId = `${planId}__${taskMeta.id}`;
         log?.warn?.(
-          `[plan-runtime] leaf ${taskMeta.id} has multiple same-project ancestors ${Array.from(distinct).join(', ')}; phase 2b will merge-stage.`,
+          `[plan-runtime] leaf ${taskMeta.id} has multiple same-project ancestors ${Array.from(distinct).join(", ")}; phase 2b will merge-stage.`,
         );
         try {
-          return await worktreeManager.stageMergedBase(stageHandoffId, ancestorRefs, { project_id: effectiveProject });
+          return await worktreeManager.stageMergedBase(stageHandoffId, ancestorRefs, {
+            project_id: effectiveProject,
+          });
         } catch (error) {
           log?.warn?.(
             `[plan-runtime] merge-stage failed for leaf ${taskMeta.id}; falling back to latest ancestor ${sameProjectAncestors[0]?.canonical}: ${String(error)}`,
@@ -106,7 +117,7 @@ async function computeBranchBase(
       const chosen = sameProjectAncestors[0];
       if (!chosen) return undefined;
       log?.warn?.(
-        `[plan-runtime] leaf ${taskMeta.id} has multiple same-project ancestors ${Array.from(distinct).join(', ')}; phase 2b will merge-stage. Using ${chosen.canonical}.`,
+        `[plan-runtime] leaf ${taskMeta.id} has multiple same-project ancestors ${Array.from(distinct).join(", ")}; phase 2b will merge-stage. Using ${chosen.canonical}.`,
       );
     }
   }
@@ -116,27 +127,30 @@ async function computeBranchBase(
 
 function deriveLeafPrompt(taskMeta: any, header: any, plan: any): string {
   const lines: string[] = [];
-  lines.push(`Implement Task ${taskMeta.id} of plan ${header?.plan_id ?? 'unknown'}.`);
+  lines.push(`Implement Task ${taskMeta.id} of plan ${header?.plan_id ?? "unknown"}.`);
   if (taskMeta.heading) {
-    lines.push('');
+    lines.push("");
     lines.push(`Task: ${taskMeta.heading}`);
   }
-  lines.push('');
-  lines.push(`Files: ${(taskMeta.files ?? []).join(', ')}`);
+  lines.push("");
+  lines.push(`Files: ${(taskMeta.files ?? []).join(", ")}`);
   lines.push(`file_scope: ${taskMeta.file_scope}`);
   lines.push(`preferred_agent: ${taskMeta.preferred_agent}`);
   if (taskMeta.body) {
-    lines.push('');
-    lines.push('## Task description');
-    lines.push('');
+    lines.push("");
+    lines.push("## Task description");
+    lines.push("");
     lines.push(taskMeta.body);
   }
-  lines.push('');
+  lines.push("");
   lines.push(`(Plan file: ${plan.file_path} — read it for cross-task context if accessible.)`);
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
-type ParseCacheEntry = { sha: string; parsed: Awaited<ReturnType<NonNullable<PlanRuntimeSweeperOpts['planParser']>>> };
+type ParseCacheEntry = {
+  sha: string;
+  parsed: Awaited<ReturnType<NonNullable<PlanRuntimeSweeperOpts["planParser"]>>>;
+};
 
 export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
   start(): void;
@@ -155,7 +169,7 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
 
   async function parsePlanFile(filePath: string) {
     const bytes = await readFile(filePath);
-    const sha = createHash('sha256').update(bytes).digest('hex');
+    const sha = createHash("sha256").update(bytes).digest("hex");
     const cached = cache.get(filePath);
     if (cached && cached.sha === sha) {
       return cached.parsed;
@@ -168,19 +182,23 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
 
   async function tick(): Promise<{ fired: string[] }> {
     const fired: string[] = [];
-    const runningPlans = opts.plans.listPlans({ status: 'running' });
+    const runningPlans = opts.plans.listPlans({ status: "running" });
 
     for (const plan of runningPlans) {
       let parsed;
       try {
         parsed = await parsePlanFile(plan.file_path);
       } catch (error) {
-        opts.log?.warn?.('[plan-runtime] plan parse failed', { plan_id: plan.plan_id, file_path: plan.file_path, error: String(error) });
+        opts.log?.warn?.("[plan-runtime] plan parse failed", {
+          plan_id: plan.plan_id,
+          file_path: plan.file_path,
+          error: String(error),
+        });
         continue;
       }
 
       if (!parsed.header || parsed.errors.length > 0) {
-        opts.log?.warn?.('[plan-runtime] invalid plan meta', {
+        opts.log?.warn?.("[plan-runtime] invalid plan meta", {
           plan_id: plan.plan_id,
           file_path: plan.file_path,
           errors: parsed.errors,
@@ -197,7 +215,7 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
       }
 
       for (const task of tasks) {
-        if (task.status !== 'pending' || task.task_id_in_board !== null) {
+        if (task.status !== "pending" || task.task_id_in_board !== null) {
           continue;
         }
 
@@ -209,9 +227,9 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
         const effectiveProject = taskMeta.project ?? header.home_project;
         let ready = true;
         for (const dep of taskMeta.depends_on ?? []) {
-          const canonicalKey = dep.includes('/') ? dep : `${effectiveProject}/${dep}`;
+          const canonicalKey = dep.includes("/") ? dep : `${effectiveProject}/${dep}`;
           const depTask = byCanonicalKey.get(canonicalKey);
-          if (!depTask || depTask.status !== 'completed') {
+          if (!depTask || depTask.status !== "completed") {
             ready = false;
             break;
           }
@@ -232,11 +250,11 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
             opts.log,
           );
           const result = opts.taskWriter.file({
-            kind: 'orchestrate',
+            kind: "orchestrate",
             project_id: effectiveProject,
             prompt: deriveLeafPrompt(taskMeta, header, plan),
-            created_by_kind: 'workflow',
-            created_by_id: 'plan-runtime',
+            created_by_kind: "workflow",
+            created_by_id: "plan-runtime",
             eligibility: {
               allow_agents: [taskMeta.preferred_agent, taskMeta.fallback_agent].filter(Boolean),
             },
@@ -247,34 +265,39 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
           fired.push(taskMeta.id);
         } catch (error) {
           if (error instanceof OrchestrateAgentNotMaestroCapable) {
-            if (error.reason === 'unknown') {
+            if (error.reason === "unknown") {
               opts.log?.warn?.(
                 `[plan-runtime] cannot file leaf task ${plan.plan_id}/${taskMeta.id}: agent ${error.agent_name} not found in agentchat.yaml`,
               );
             } else {
-              const allowAgents = [taskMeta.preferred_agent, taskMeta.fallback_agent].filter(Boolean);
+              const allowAgents = [taskMeta.preferred_agent, taskMeta.fallback_agent].filter(
+                Boolean,
+              );
               opts.log?.warn?.(
-                `[plan-runtime] cannot file leaf task ${plan.plan_id}/${taskMeta.id}: agent ${error.agent_name} is not maestro_capable. Mark at least one of [${allowAgents.join(', ')}] with \`maestro_capable: true\` in ~/.config/agentchat/agentchat.yaml`,
+                `[plan-runtime] cannot file leaf task ${plan.plan_id}/${taskMeta.id}: agent ${error.agent_name} is not maestro_capable. Mark at least one of [${allowAgents.join(", ")}] with \`maestro_capable: true\` in ~/.config/agentchat/agentchat.yaml`,
               );
             }
           } else {
-            opts.log?.warn?.('[plan-runtime] failed to file leaf task', {
+            opts.log?.warn?.("[plan-runtime] failed to file leaf task", {
               plan_id: plan.plan_id,
               task_meta_id: taskMeta.id,
               error: String(error),
             });
           }
-          opts.plans.markTaskStatus(plan.plan_id, taskMeta.id, 'failed', now());
+          opts.plans.markTaskStatus(plan.plan_id, taskMeta.id, "failed", now());
         }
       }
 
       const refreshedTasks = opts.plans.getTasks(plan.plan_id);
-      if (refreshedTasks.some((task) => task.status === 'failed')) {
-        opts.plans.markPlanStatus(plan.plan_id, 'failed');
+      if (refreshedTasks.some((task) => task.status === "failed")) {
+        opts.plans.markPlanStatus(plan.plan_id, "failed");
         continue;
       }
-      if (refreshedTasks.length > 0 && refreshedTasks.every((task) => task.status === 'completed')) {
-        opts.plans.markPlanStatus(plan.plan_id, 'completed');
+      if (
+        refreshedTasks.length > 0 &&
+        refreshedTasks.every((task) => task.status === "completed")
+      ) {
+        opts.plans.markPlanStatus(plan.plan_id, "completed");
       }
     }
 
@@ -283,7 +306,7 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
 
   async function handleTaskEvent(event: TaskEvent): Promise<void> {
     const kind = event.kind as string;
-    if (kind !== 'completed' && kind !== 'failed' && kind !== 'cancelled') return;
+    if (kind !== "completed" && kind !== "failed" && kind !== "cancelled") return;
 
     const hit = opts.plans.findPlanTaskByBoardId(event.task_id);
     if (!hit) return;
@@ -291,7 +314,7 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
     try {
       opts.plans.markTaskStatus(hit.plan_id, hit.task_meta_id, kind as any, event.at);
     } catch (error) {
-      opts.log?.warn?.('[plan-runtime] failed to mark plan-task status from event', {
+      opts.log?.warn?.("[plan-runtime] failed to mark plan-task status from event", {
         event,
         error: String(error),
       });
@@ -299,14 +322,14 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
     }
 
     void tick().catch((error) => {
-      opts.log?.warn?.('[plan-runtime] immediate tick failed', { error: String(error) });
+      opts.log?.warn?.("[plan-runtime] immediate tick failed", { error: String(error) });
     });
   }
 
   function subscribe(bus: TaskEventBus): () => void {
     const iterator = bus.subscribe((event) => {
       const kind = event.kind as string;
-      return kind === 'completed' || kind === 'failed' || kind === 'cancelled';
+      return kind === "completed" || kind === "failed" || kind === "cancelled";
     });
     activeEventIterator = iterator;
     void (async () => {
@@ -315,7 +338,7 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
           await handleTaskEvent(event);
         }
       } catch (error) {
-        opts.log?.warn?.('[plan-runtime] task event loop failed', { error: String(error) });
+        opts.log?.warn?.("[plan-runtime] task event loop failed", { error: String(error) });
       } finally {
         if (activeEventIterator === iterator) {
           activeEventIterator = null;
@@ -341,7 +364,7 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
           running = false;
         });
       }, intervalMs);
-      if (typeof (intervalHandle as any).unref === 'function') {
+      if (typeof (intervalHandle as any).unref === "function") {
         (intervalHandle as any).unref();
       }
     },

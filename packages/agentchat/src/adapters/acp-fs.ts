@@ -1,15 +1,15 @@
-import * as fs from 'node:fs/promises';
-import { resolveInsideWorktree, FsPathError } from '@penumbra/core';
+import * as fs from "node:fs/promises";
+import { resolveInsideWorktree, FsPathError } from "@penumbra/core";
 
 const MAX_READ_BYTES = 1024 * 1024;
 
 export class ReadTextFileError extends Error {
   constructor(
-    public readonly code: 'outside_worktree' | 'not_found' | 'io',
+    public readonly code: "outside_worktree" | "not_found" | "io",
     message: string,
   ) {
     super(message);
-    this.name = 'ReadTextFileError';
+    this.name = "ReadTextFileError";
   }
 }
 
@@ -31,17 +31,17 @@ function sliceLines(text: string, line?: number | null, limit?: number | null): 
     return text;
   }
 
-  const lines = text.split('\n');
+  const lines = text.split("\n");
   const start = startLine !== null ? startLine - 1 : 0;
   const end = lineLimit !== null ? start + lineLimit : lines.length;
-  let sliced = lines.slice(start, end).join('\n');
+  let sliced = lines.slice(start, end).join("\n");
   const reachedEnd = end >= lines.length;
 
-  if (!reachedEnd && !sliced.endsWith('\n')) {
-    sliced += '\n';
+  if (!reachedEnd && !sliced.endsWith("\n")) {
+    sliced += "\n";
   }
-  if (reachedEnd && text.endsWith('\n') && !sliced.endsWith('\n')) {
-    sliced += '\n';
+  if (reachedEnd && text.endsWith("\n") && !sliced.endsWith("\n")) {
+    sliced += "\n";
   }
 
   return sliced;
@@ -56,13 +56,13 @@ export async function executeReadTextFile(
     real = await resolveInsideWorktree(args.path, worktree);
   } catch (err) {
     if (err instanceof FsPathError) {
-      if (err.code === 'outside_worktree') {
-        throw new ReadTextFileError('outside_worktree', err.message);
+      if (err.code === "outside_worktree") {
+        throw new ReadTextFileError("outside_worktree", err.message);
       }
-      if (err.code === 'not_found') {
-        throw new ReadTextFileError('not_found', err.message);
+      if (err.code === "not_found") {
+        throw new ReadTextFileError("not_found", err.message);
       }
-      throw new ReadTextFileError('io', err.message);
+      throw new ReadTextFileError("io", err.message);
     }
     throw err;
   }
@@ -71,15 +71,18 @@ export async function executeReadTextFile(
   try {
     buf = await fs.readFile(real);
   } catch (err: any) {
-    if (err?.code === 'ENOENT') {
-      throw new ReadTextFileError('not_found', `file not found: ${args.path}`);
+    if (err?.code === "ENOENT") {
+      throw new ReadTextFileError("not_found", `file not found: ${args.path}`);
     }
-    throw new ReadTextFileError('io', `failed to read ${args.path}: ${err?.message ?? String(err)}`);
+    throw new ReadTextFileError(
+      "io",
+      `failed to read ${args.path}: ${err?.message ?? String(err)}`,
+    );
   }
 
-  let content = sliceLines(buf.toString('utf8'), args.line, args.limit);
-  if (Buffer.byteLength(content, 'utf8') > MAX_READ_BYTES) {
-    content = Buffer.from(content, 'utf8').subarray(0, MAX_READ_BYTES).toString('utf8');
+  let content = sliceLines(buf.toString("utf8"), args.line, args.limit);
+  if (Buffer.byteLength(content, "utf8") > MAX_READ_BYTES) {
+    content = Buffer.from(content, "utf8").subarray(0, MAX_READ_BYTES).toString("utf8");
   }
 
   return { content };

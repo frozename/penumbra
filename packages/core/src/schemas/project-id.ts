@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 /**
  * Safe project-id schema.
@@ -20,15 +20,15 @@ const SAFE_PROJECT_ID_RE = /^[A-Za-z0-9_.:\-/]{1,200}$/;
 
 function isTraversalFree(s: string): boolean {
   // Reject any segment that is ".." when the string is split on "/"
-  return !s.split('/').some((seg) => seg === '..');
+  return !s.split("/").some((seg) => seg === "..");
 }
 
 export const SafeProjectIdSchema = z
   .string()
-  .regex(SAFE_PROJECT_ID_RE, 'project_id contains invalid characters')
-  .refine((s) => !s.startsWith('/'), 'project_id must not be an absolute path')
+  .regex(SAFE_PROJECT_ID_RE, "project_id contains invalid characters")
+  .refine((s) => !s.startsWith("/"), "project_id must not be an absolute path")
   .refine(isTraversalFree, 'project_id must not contain ".." path components')
-  .refine((s) => s !== '__null__', 'project_id cannot be __null__');
+  .refine((s) => s !== "__null__", "project_id cannot be __null__");
 
 /**
  * Defensive runtime assertion used inside ContextFileWriter.rewrite().
@@ -39,10 +39,12 @@ export function assertSafeProjectId(projectId: string): void {
   if (!SAFE_PROJECT_ID_RE.test(projectId)) {
     throw new TypeError(`Unsafe project_id rejected: ${JSON.stringify(projectId)}`);
   }
-  if (projectId.startsWith('/')) {
+  if (projectId.startsWith("/")) {
     throw new TypeError(`Unsafe project_id rejected (absolute path): ${JSON.stringify(projectId)}`);
   }
   if (!isTraversalFree(projectId)) {
-    throw new TypeError(`Unsafe project_id rejected (path traversal): ${JSON.stringify(projectId)}`);
+    throw new TypeError(
+      `Unsafe project_id rejected (path traversal): ${JSON.stringify(projectId)}`,
+    );
   }
 }

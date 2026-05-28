@@ -1,20 +1,20 @@
-import { expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { loadSqliteVec } from '../src/db/sqlite-vec.js';
-import { applySchema } from '../src/db/schema.js';
-import { search } from '../src/readers/search.js';
-import { verifyMemory } from '../src/writers/t2.js';
+import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { loadSqliteVec } from "../src/db/sqlite-vec.js";
+import { applySchema } from "../src/db/schema.js";
+import { search } from "../src/readers/search.js";
+import { verifyMemory } from "../src/writers/t2.js";
 
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {
   // already loaded in this process
 }
 
 function freshDb() {
-  const db = new Database(':memory:');
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   applySchema(db);
   return db;
@@ -31,22 +31,22 @@ function insertT2(db: Database, memoryId: string, createdAt: string): void {
     [
       memoryId,
       null,
-      'u1',
-      'fact',
-      '[]',
+      "u1",
+      "fact",
+      "[]",
       createdAt,
       createdAt,
       memoryId,
       `body for ${memoryId}`,
-      '{}',
+      "{}",
       null,
       createdAt,
       createdAt,
       null,
-      'feature',
-      '[]',
+      "feature",
+      "[]",
       null,
-      '[]',
+      "[]",
     ],
   );
 }
@@ -67,77 +67,97 @@ function insertT2WithObsType(
     [
       memoryId,
       null,
-      'u1',
-      'fact',
-      '[]',
+      "u1",
+      "fact",
+      "[]",
       createdAt,
       createdAt,
       memoryId,
       `body for ${memoryId}`,
-      '{}',
+      "{}",
       null,
       createdAt,
       createdAt,
       null,
       obsType,
-      '[]',
+      "[]",
       null,
-      '[]',
+      "[]",
     ],
   );
 }
 
-test('verifyMemory updates freshness and search surfaces it', () => {
+test("verifyMemory updates freshness and search surfaces it", () => {
   const db = freshDb();
-  const now = new Date('2026-05-12T12:00:00.000Z');
+  const now = new Date("2026-05-12T12:00:00.000Z");
   const oldCreatedAt = new Date(now.getTime() - 45 * 86_400_000).toISOString();
   const staleCreatedAt = new Date(now.getTime() - 60 * 86_400_000).toISOString();
 
-  insertT2(db, 'memory-fresh', oldCreatedAt);
+  insertT2(db, "memory-fresh", oldCreatedAt);
 
-  const verified = verifyMemory(db, 'memory-fresh', {
-    verifierActor: 'machine-1',
-    uuid: () => 'evt-1',
+  const verified = verifyMemory(db, "memory-fresh", {
+    verifierActor: "machine-1",
+    uuid: () => "evt-1",
   });
-  expect(verified.memory_id).toBe('memory-fresh');
+  expect(verified.memory_id).toBe("memory-fresh");
   expect(verified.last_verified_at).toBeTruthy();
 
-  const freshHits = search(db, { query: 'memory-fresh', project_id: null, limit: 5, tiers: ['t2'] });
+  const freshHits = search(db, {
+    query: "memory-fresh",
+    project_id: null,
+    limit: 5,
+    tiers: ["t2"],
+  });
   expect(freshHits).toHaveLength(1);
   expect(freshHits[0]).toMatchObject({
-    id: 'memory-fresh',
+    id: "memory-fresh",
     last_verified_at: verified.last_verified_at,
     stale: false,
   });
   expect(freshHits[0]!.age_days).toBeLessThanOrEqual(1);
 
-  insertT2(db, 'memory-stale', staleCreatedAt);
+  insertT2(db, "memory-stale", staleCreatedAt);
 
-  const staleHits = search(db, { query: 'memory-stale', project_id: null, limit: 5, tiers: ['t2'] });
+  const staleHits = search(db, {
+    query: "memory-stale",
+    project_id: null,
+    limit: 5,
+    tiers: ["t2"],
+  });
   expect(staleHits).toHaveLength(1);
   expect(staleHits[0]!.age_days).toBeGreaterThanOrEqual(30);
   expect(staleHits[0]!.stale).toBe(true);
 });
 
-test('search uses obs_type-specific stale thresholds', () => {
+test("search uses obs_type-specific stale thresholds", () => {
   const db = freshDb();
   const oldCreatedAt = new Date(Date.UTC(2026, 4, 12, 12, 0, 0) - 90 * 86_400_000).toISOString();
 
-  insertT2WithObsType(db, 'memory-decision', oldCreatedAt, 'decision');
-  insertT2WithObsType(db, 'memory-session', oldCreatedAt, 'session');
+  insertT2WithObsType(db, "memory-decision", oldCreatedAt, "decision");
+  insertT2WithObsType(db, "memory-session", oldCreatedAt, "session");
 
-  const decisionHits = search(db, { query: 'memory-decision', project_id: null, limit: 5, tiers: ['t2'] });
+  const decisionHits = search(db, {
+    query: "memory-decision",
+    project_id: null,
+    limit: 5,
+    tiers: ["t2"],
+  });
   expect(decisionHits).toHaveLength(1);
   expect(decisionHits[0]).toMatchObject({
-    id: 'memory-decision',
+    id: "memory-decision",
     age_days: expect.any(Number),
     stale: false,
   });
 
-  const sessionHits = search(db, { query: 'memory-session', project_id: null, limit: 5, tiers: ['t2'] });
+  const sessionHits = search(db, {
+    query: "memory-session",
+    project_id: null,
+    limit: 5,
+    tiers: ["t2"],
+  });
   expect(sessionHits).toHaveLength(1);
   expect(sessionHits[0]).toMatchObject({
-    id: 'memory-session',
+    id: "memory-session",
     stale: true,
   });
 });

@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { loadSqliteVec, migrate, type Services } from '@penumbra/core';
+import { beforeEach, describe, expect, it } from "bun:test";
+import { Database } from "bun:sqlite";
+import { loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import {
   agentsPerformanceImportMarkdownRoute,
   agentsPerformanceMarkdownRoute,
@@ -8,229 +8,287 @@ import {
   agentsPerformanceReconcilerRoute,
   agentsRankRoute,
   agentsRecommendRoute,
-} from '../../src/routes/agents.js';
-import { createDaemonFetchHandler } from '../../src/serve.js';
+} from "../../src/routes/agents.js";
+import { createDaemonFetchHandler } from "../../src/serve.js";
 
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch { /* already loaded */ }
+} catch {
+  /* already loaded */
+}
 
 function makeServices(db: Database): Services {
   let n = 0;
   return {
     db,
     uuid: () => `perf-${++n}`,
-    clock: () => new Date('2026-04-30T12:03:00Z'),
-    machineId: { get: () => 'test-machine' },
+    clock: () => new Date("2026-04-30T12:03:00Z"),
+    machineId: { get: () => "test-machine" },
   } as unknown as Services;
 }
 
-describe('agent routes', () => {
+describe("agent routes", () => {
   let db: Database;
   let services: Services;
 
   beforeEach(() => {
-    db = new Database(':memory:');
+    db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     services = makeServices(db);
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO handoffs (handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message, status, resolved_by, resolved_at, triggered_by_event_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run('h1', '2026-04-30T12:00:00Z', 'proj', 'conv', 'maestro', 'claude', null, 'Task type: implement_substantial', 'completed', 'worker', '2026-04-30T12:01:00Z', 'event-1');
+    `,
+    ).run(
+      "h1",
+      "2026-04-30T12:00:00Z",
+      "proj",
+      "conv",
+      "maestro",
+      "claude",
+      null,
+      "Task type: implement_substantial",
+      "completed",
+      "worker",
+      "2026-04-30T12:01:00Z",
+      "event-1",
+    );
   });
 
-  it('captures reconciler results', async () => {
-    const req = new Request('http://x/agents/performance/reconciler', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ handoff_id: 'h1', result: { status: 'pr_opened', pr_url: 'https://example.test/pull/1' } }),
+  it("captures reconciler results", async () => {
+    const req = new Request("http://x/agents/performance/reconciler", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        handoff_id: "h1",
+        result: { status: "pr_opened", pr_url: "https://example.test/pull/1" },
+      }),
     });
     const res = await agentsPerformanceReconcilerRoute(req, services);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.performance.outcome).toBe('pr_opened');
+    expect(body.performance.outcome).toBe("pr_opened");
   });
 
-  it('returns rank output', async () => {
-    await agentsPerformanceReconcilerRoute(new Request('http://x/agents/performance/reconciler', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ handoff_id: 'h1', result: { status: 'pr_opened' } }),
-    }), services);
+  it("returns rank output", async () => {
+    await agentsPerformanceReconcilerRoute(
+      new Request("http://x/agents/performance/reconciler", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ handoff_id: "h1", result: { status: "pr_opened" } }),
+      }),
+      services,
+    );
 
-    const res = await agentsRankRoute(new Request('http://x/agents/rank?task_type=implement_substantial'), services);
+    const res = await agentsRankRoute(
+      new Request("http://x/agents/rank?task_type=implement_substantial"),
+      services,
+    );
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.window.from).toBeNull();
-    expect(body.candidates[0].agent_name).toBe('claude');
+    expect(body.candidates[0].agent_name).toBe("claude");
   });
 
-  it('returns rank output for long-lived rows only when requested', async () => {
-    db.prepare(`
+  it("returns rank output for long-lived rows only when requested", async () => {
+    db.prepare(
+      `
       INSERT INTO agent_performance (
         performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type, outcome,
         rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, tokens_used, latency_ms, source,
         notes, agent_kind, metadata_json
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      'perf-long-lived',
-      '2026-04-30T12:00:00Z',
-      'h-long-lived',
+    `,
+    ).run(
+      "perf-long-lived",
+      "2026-04-30T12:00:00Z",
+      "h-long-lived",
       null,
       null,
-      'orch',
-      'implement_substantial',
-      'merged',
+      "orch",
+      "implement_substantial",
+      "merged",
       1,
-      'y',
+      "y",
       0,
       5,
       0.4,
       10,
       1000,
-      'worker',
+      "worker",
       null,
-      'long_lived',
-      '{}',
+      "long_lived",
+      "{}",
     );
 
-    const res = await agentsRankRoute(new Request('http://x/agents/rank?task_type=implement_substantial&agent_kind=long_lived'), services);
+    const res = await agentsRankRoute(
+      new Request("http://x/agents/rank?task_type=implement_substantial&agent_kind=long_lived"),
+      services,
+    );
     expect(res.status).toBe(200);
-    const body = await res.json() as { candidates: Array<{ agent_name: string }> };
+    const body = (await res.json()) as { candidates: Array<{ agent_name: string }> };
     expect(body.candidates).toHaveLength(1);
-    expect(body.candidates[0].agent_name).toBe('orch');
+    expect(body.candidates[0].agent_name).toBe("orch");
   });
 
-  it('returns 400 for invalid task_type', async () => {
-    const res = await agentsRankRoute(new Request('http://x/agents/rank?task_type=bad'), services);
+  it("returns 400 for invalid task_type", async () => {
+    const res = await agentsRankRoute(new Request("http://x/agents/rank?task_type=bad"), services);
     expect(res.status).toBe(400);
   });
 
-  it('returns recommend output', async () => {
-    await agentsPerformanceReconcilerRoute(new Request('http://x/agents/performance/reconciler', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ handoff_id: 'h1', result: { status: 'pr_opened' } }),
-    }), services);
+  it("returns recommend output", async () => {
+    await agentsPerformanceReconcilerRoute(
+      new Request("http://x/agents/performance/reconciler", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ handoff_id: "h1", result: { status: "pr_opened" } }),
+      }),
+      services,
+    );
 
-    const res = await agentsRecommendRoute(new Request('http://x/agents/recommend?task_type=implement_substantial'), services);
+    const res = await agentsRecommendRoute(
+      new Request("http://x/agents/recommend?task_type=implement_substantial"),
+      services,
+    );
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body[0].agent_name).toBe('claude');
+    expect(body[0].agent_name).toBe("claude");
   });
 
-  it('returns recommend output for long-lived rows only when requested', async () => {
-    db.prepare(`
+  it("returns recommend output for long-lived rows only when requested", async () => {
+    db.prepare(
+      `
       INSERT INTO agent_performance (
         performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type, outcome,
         rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, tokens_used, latency_ms, source,
         notes, agent_kind, metadata_json
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      'perf-long-lived',
-      '2026-04-30T12:00:00Z',
-      'h-long-lived',
+    `,
+    ).run(
+      "perf-long-lived",
+      "2026-04-30T12:00:00Z",
+      "h-long-lived",
       null,
       null,
-      'orch',
-      'implement_substantial',
-      'merged',
+      "orch",
+      "implement_substantial",
+      "merged",
       1,
-      'y',
+      "y",
       0,
       5,
       0.4,
       10,
       1000,
-      'worker',
+      "worker",
       null,
-      'long_lived',
-      '{}',
+      "long_lived",
+      "{}",
     );
 
-    const res = await agentsRecommendRoute(new Request('http://x/agents/recommend?task_type=implement_substantial&agent_kind=long_lived'), services);
+    const res = await agentsRecommendRoute(
+      new Request(
+        "http://x/agents/recommend?task_type=implement_substantial&agent_kind=long_lived",
+      ),
+      services,
+    );
     expect(res.status).toBe(200);
-    const body = await res.json() as Array<{ agent_name: string }>;
+    const body = (await res.json()) as Array<{ agent_name: string }>;
     expect(body).toHaveLength(1);
-    expect(body[0].agent_name).toBe('orch');
+    expect(body[0].agent_name).toBe("orch");
   });
 
-  it('captures operator results and persists the row', async () => {
-    const res = await agentsPerformanceOperatorRoute(new Request('http://x/agents/performance/operator', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        handoff_id: 'h1',
-        task_type: 'implement_substantial',
-        outcome: 'merged',
-        rounds: 1,
-        smoke_pass: 'y',
-        reviewer_findings: 0,
-        maestro_score: 5,
-        cost_usd: 0.4,
-        notes: 'Clean first-shot implementation.',
+  it("captures operator results and persists the row", async () => {
+    const res = await agentsPerformanceOperatorRoute(
+      new Request("http://x/agents/performance/operator", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          handoff_id: "h1",
+          task_type: "implement_substantial",
+          outcome: "merged",
+          rounds: 1,
+          smoke_pass: "y",
+          reviewer_findings: 0,
+          maestro_score: 5,
+          cost_usd: 0.4,
+          notes: "Clean first-shot implementation.",
+        }),
       }),
-    }), services);
+      services,
+    );
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.performance).toEqual(expect.objectContaining({
-      handoff_id: 'h1',
-      agent_name: 'claude',
-      task_type: 'implement_substantial',
-      outcome: 'merged',
-      latency_ms: 60_000,
-      source: 'operator',
-    }));
+    expect(body.performance).toEqual(
+      expect.objectContaining({
+        handoff_id: "h1",
+        agent_name: "claude",
+        task_type: "implement_substantial",
+        outcome: "merged",
+        latency_ms: 60_000,
+        source: "operator",
+      }),
+    );
 
-    const persisted = db.query<any, [string]>(
-      'SELECT handoff_id, agent_name, source, latency_ms FROM agent_performance WHERE handoff_id=?',
-    ).get('h1');
+    const persisted = db
+      .query<
+        any,
+        [string]
+      >("SELECT handoff_id, agent_name, source, latency_ms FROM agent_performance WHERE handoff_id=?")
+      .get("h1");
     expect(persisted).toEqual({
-      handoff_id: 'h1',
-      agent_name: 'claude',
-      source: 'operator',
+      handoff_id: "h1",
+      agent_name: "claude",
+      source: "operator",
       latency_ms: 60_000,
     });
   });
 
-  it('returns 404 for operator capture when the handoff is missing', async () => {
-    const res = await agentsPerformanceOperatorRoute(new Request('http://x/agents/performance/operator', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        handoff_id: 'missing',
-        task_type: 'implement_substantial',
-        outcome: 'merged',
+  it("returns 404 for operator capture when the handoff is missing", async () => {
+    const res = await agentsPerformanceOperatorRoute(
+      new Request("http://x/agents/performance/operator", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          handoff_id: "missing",
+          task_type: "implement_substantial",
+          outcome: "merged",
+        }),
       }),
-    }), services);
+      services,
+    );
 
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({
-      error: { code: 'not_found', message: 'handoff not found: missing' },
+      error: { code: "not_found", message: "handoff not found: missing" },
     });
   });
 
-  it('returns 400 for malformed operator capture payloads', async () => {
-    const res = await agentsPerformanceOperatorRoute(new Request('http://x/agents/performance/operator', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        handoff_id: 'h1',
-        task_type: 'bad',
-        outcome: 'merged',
+  it("returns 400 for malformed operator capture payloads", async () => {
+    const res = await agentsPerformanceOperatorRoute(
+      new Request("http://x/agents/performance/operator", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          handoff_id: "h1",
+          task_type: "bad",
+          outcome: "merged",
+        }),
       }),
-    }), services);
+      services,
+    );
 
     expect(res.status).toBe(400);
     const body = await res.json();
-    expect(body.error.code).toBe('invalid_params');
+    expect(body.error.code).toBe("invalid_params");
   });
 
-  it('imports markdown ledger rows', async () => {
+  it("imports markdown ledger rows", async () => {
     const markdown = `
 | ts | agent | task_type | outcome | rounds | smoke_pass | maestro_score | reviewer_findings | cost_usd | latency_min | notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -238,90 +296,109 @@ describe('agent routes', () => {
 | 2026-04-28 | gemini | implement_substantial | merged_with_concerns | 1 | n* | 5 | 0 | ~0.60 | 13 | Smoke failed but caught a real architecture bug. |
 `;
 
-    const res = await agentsPerformanceImportMarkdownRoute(new Request('http://x/agents/performance/import-markdown', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        markdown,
-        sourcePath: 'docs/superpowers/notes/agent-performance.md',
-        projectId: 'penumbra',
+    const res = await agentsPerformanceImportMarkdownRoute(
+      new Request("http://x/agents/performance/import-markdown", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          markdown,
+          sourcePath: "docs/superpowers/notes/agent-performance.md",
+          projectId: "penumbra",
+        }),
       }),
-    }), services);
+      services,
+    );
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ imported: 2, skipped: 0 });
   });
 
-  it('renders the markdown ledger as text/markdown', async () => {
-    await agentsPerformanceOperatorRoute(new Request('http://x/agents/performance/operator', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        handoff_id: 'h1',
-        task_type: 'implement_substantial',
-        outcome: 'merged',
-        rounds: 1,
-        smoke_pass: 'y',
-        reviewer_findings: 0,
-        maestro_score: 5,
-        cost_usd: 0.4,
-        notes: 'Clean first-shot implementation.',
+  it("renders the markdown ledger as text/markdown", async () => {
+    await agentsPerformanceOperatorRoute(
+      new Request("http://x/agents/performance/operator", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          handoff_id: "h1",
+          task_type: "implement_substantial",
+          outcome: "merged",
+          rounds: 1,
+          smoke_pass: "y",
+          reviewer_findings: 0,
+          maestro_score: 5,
+          cost_usd: 0.4,
+          notes: "Clean first-shot implementation.",
+        }),
       }),
-    }), services);
+      services,
+    );
 
-    const res = await agentsPerformanceMarkdownRoute(new Request('http://x/agents/performance/markdown'), services);
+    const res = await agentsPerformanceMarkdownRoute(
+      new Request("http://x/agents/performance/markdown"),
+      services,
+    );
 
     expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toBe('text/markdown; charset=utf-8');
+    expect(res.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
     const body = await res.text();
-    expect(body).toContain('Generated from agent_performance');
-    expect(body).toContain('| 2026-04-30 | claude | implement_substantial | merged | 1 | y | 5 | 0 | 0.40 | 1 | Clean first-shot implementation. |');
+    expect(body).toContain("Generated from agent_performance");
+    expect(body).toContain(
+      "| 2026-04-30 | claude | implement_substantial | merged | 1 | y | 5 | 0 | 0.40 | 1 | Clean first-shot implementation. |",
+    );
   });
 
-  it('serve.ts wires authenticated agent performance ledger routes', async () => {
-    const handler = createDaemonFetchHandler({ services, token: 'tok' });
-    const operator = await handler(new Request('http://x/agents/performance/operator', {
-      method: 'POST',
-      headers: {
-        authorization: 'Bearer tok',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        handoff_id: 'h1',
-        task_type: 'implement_substantial',
-        outcome: 'merged',
+  it("serve.ts wires authenticated agent performance ledger routes", async () => {
+    const handler = createDaemonFetchHandler({ services, token: "tok" });
+    const operator = await handler(
+      new Request("http://x/agents/performance/operator", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          handoff_id: "h1",
+          task_type: "implement_substantial",
+          outcome: "merged",
+        }),
       }),
-    }));
+    );
     expect(operator.status).toBe(200);
 
-    const importMarkdown = await handler(new Request('http://x/agents/performance/import-markdown', {
-      method: 'POST',
-      headers: {
-        authorization: 'Bearer tok',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        markdown: `
+    const importMarkdown = await handler(
+      new Request("http://x/agents/performance/import-markdown", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          markdown: `
 | ts | agent | task_type | outcome | rounds | smoke_pass | maestro_score | reviewer_findings | cost_usd | latency_min | notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 2026-04-29 | codex-mini | docs_mechanical | no_changes | 0 | n/a | 4 | 0 | ~1.25 | n/a | Cost marker row. |
 `,
-        sourcePath: 'docs/superpowers/notes/agent-performance.md',
-        projectId: 'penumbra',
+          sourcePath: "docs/superpowers/notes/agent-performance.md",
+          projectId: "penumbra",
+        }),
       }),
-    }));
+    );
     expect(importMarkdown.status).toBe(200);
 
-    const markdown = await handler(new Request('http://x/agents/performance/markdown', {
-      headers: { authorization: 'Bearer tok' },
-    }));
+    const markdown = await handler(
+      new Request("http://x/agents/performance/markdown", {
+        headers: { authorization: "Bearer tok" },
+      }),
+    );
     expect(markdown.status).toBe(200);
-    expect(markdown.headers.get('content-type')).toBe('text/markdown; charset=utf-8');
-    expect(await markdown.text()).toContain('Generated from agent_performance');
+    expect(markdown.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
+    expect(await markdown.text()).toContain("Generated from agent_performance");
 
-    const recommend = await handler(new Request('http://x/agents/recommend?task_type=implement_substantial', {
-      headers: { authorization: 'Bearer tok' },
-    }));
+    const recommend = await handler(
+      new Request("http://x/agents/recommend?task_type=implement_substantial", {
+        headers: { authorization: "Bearer tok" },
+      }),
+    );
     expect(recommend.status).toBe(200);
   });
 });

@@ -12,7 +12,10 @@ const DISPATCHED_TTL_MS: Record<string, number> = {
   health_check: 5 * 60_000,
 };
 
-export const MIN_DISPATCHED_TTL_MS = Math.min(DEFAULT_DISPATCHED_TTL_MS, ...Object.values(DISPATCHED_TTL_MS));
+export const MIN_DISPATCHED_TTL_MS = Math.min(
+  DEFAULT_DISPATCHED_TTL_MS,
+  ...Object.values(DISPATCHED_TTL_MS),
+);
 
 export function resolveDispatchedTtlMs(taskType: string | null | undefined): number {
   if (!taskType) return DEFAULT_DISPATCHED_TTL_MS;

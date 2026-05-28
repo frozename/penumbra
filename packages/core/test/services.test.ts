@@ -1,5 +1,5 @@
-import { expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 
 // On macOS, Bun uses the Apple SQLite build which disables extension loading.
 // Switch to Homebrew's full-featured SQLite before any Database is created.
@@ -7,26 +7,26 @@ import { Database } from 'bun:sqlite';
 // Guard: setCustomSQLite throws if called after SQLite is already loaded (e.g.
 // when multiple test files in the same bun test run each attempt the call).
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {
   // already loaded in this process
 }
 
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { loadSqliteVec } from '../src/db/sqlite-vec.js';
-import { migrate } from '../src/db/migrations.js';
-import { buildServices } from '../src/services.js';
-import { TestEmbedder } from '../src/embedder/test-embedder.js';
-import { ProjectRegistry } from '../src/projects/registry.js';
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { loadSqliteVec } from "../src/db/sqlite-vec.js";
+import { migrate } from "../src/db/migrations.js";
+import { buildServices } from "../src/services.js";
+import { TestEmbedder } from "../src/embedder/test-embedder.js";
+import { ProjectRegistry } from "../src/projects/registry.js";
 
-test('buildServices wires all core dependencies with injected clock/uuid', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-svc-'));
+test("buildServices wires all core dependencies with injected clock/uuid", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-svc-"));
   try {
-    const db = new Database(':memory:');
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     const svc = buildServices({
@@ -35,11 +35,11 @@ test('buildServices wires all core dependencies with injected clock/uuid', () =>
       storageRoot: dir,
       db,
       embedder: new TestEmbedder({ dim: 384 }),
-      clock: () => new Date('2026-04-23T00:00:00Z'),
-      uuid: () => 'u',
+      clock: () => new Date("2026-04-23T00:00:00Z"),
+      uuid: () => "u",
     });
     expect(svc.settings.t0RetentionDays).toBe(30);
-    expect(svc.machineId.get()).toBe('u');
+    expect(svc.machineId.get()).toBe("u");
     expect(svc.redactor).toBeDefined();
     expect(svc.t0Writer).toBeDefined();
     expect(svc.recallReader).toBeDefined();
@@ -52,14 +52,14 @@ test('buildServices wires all core dependencies with injected clock/uuid', () =>
   }
 });
 
-test('buildServices passes through workflowRegistry when provided', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'penumbra-svc-wf-'));
+test("buildServices passes through workflowRegistry when provided", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-svc-wf-"));
   try {
-    const db = new Database(':memory:');
+    const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     const stub = {
-      list: () => [{ name: 'demo' }],
+      list: () => [{ name: "demo" }],
       entries: () => [],
       get: () => undefined,
       findByTrigger: () => [],
@@ -81,61 +81,63 @@ test('buildServices passes through workflowRegistry when provided', () => {
   }
 });
 
-test('buildServices wires resolveProjectRoot from projectRegistry', () => {
-  const db = new Database(':memory:');
+test("buildServices wires resolveProjectRoot from projectRegistry", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
   const reg = new ProjectRegistry(
-    new Map([['sirius', { project_id: 'sirius', root_path: '/tmp/sirius-not-real' }]]),
+    new Map([["sirius", { project_id: "sirius", root_path: "/tmp/sirius-not-real" }]]),
   );
 
   const services = buildServices({
     env: {},
     input: {},
-    storageRoot: '/tmp/svc-wiring-test',
+    storageRoot: "/tmp/svc-wiring-test",
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     projectRegistry: reg,
   });
 
-  expect((services.worktreeManager as any).baseFor('sirius')).toBe('/tmp/sirius-not-real-worktrees');
-  expect((services.worktreeManager as any).repoRootFor('sirius')).toBe('/tmp/sirius-not-real');
+  expect((services.worktreeManager as any).baseFor("sirius")).toBe(
+    "/tmp/sirius-not-real-worktrees",
+  );
+  expect((services.worktreeManager as any).repoRootFor("sirius")).toBe("/tmp/sirius-not-real");
 });
 
-test('buildServices without projectRegistry leaves resolveProjectRoot undefined', () => {
-  const db = new Database(':memory:');
+test("buildServices without projectRegistry leaves resolveProjectRoot undefined", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
   const services = buildServices({
     env: {},
     input: {},
-    storageRoot: '/tmp/svc-noreg-test',
+    storageRoot: "/tmp/svc-noreg-test",
     db,
     embedder: new TestEmbedder({ dim: 384 }),
   });
 
-  expect((services.worktreeManager as any).baseFor('sirius')).not.toContain('sirius-not-real');
+  expect((services.worktreeManager as any).baseFor("sirius")).not.toContain("sirius-not-real");
 });
 
-test('buildServices with an empty projectRegistry keeps legacy worktree fallback behavior', () => {
-  const db = new Database(':memory:');
+test("buildServices with an empty projectRegistry keeps legacy worktree fallback behavior", () => {
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
   const reg = new ProjectRegistry(new Map());
-  const rootDir = '/tmp/svc-empty-registry-worktrees';
+  const rootDir = "/tmp/svc-empty-registry-worktrees";
 
   const services = buildServices({
     env: {},
     input: {},
-    storageRoot: '/tmp/svc-empty-registry-test',
+    storageRoot: "/tmp/svc-empty-registry-test",
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     worktreeRootDir: rootDir,
     projectRegistry: reg,
   });
 
-  expect((services.worktreeManager as any).baseFor('whatever')).toBe(rootDir);
+  expect((services.worktreeManager as any).baseFor("whatever")).toBe(rootDir);
 });

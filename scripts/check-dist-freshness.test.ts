@@ -1,12 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import {
-  mkdtempSync,
-  mkdirSync,
-  writeFileSync,
-  utimesSync,
-  rmSync,
-  existsSync,
-} from "fs";
+import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, rmSync, existsSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 

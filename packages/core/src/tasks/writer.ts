@@ -1,12 +1,12 @@
-import type { Database } from 'bun:sqlite';
-import { enforceEmitCaps } from './emit-caps.js';
-import { isEligible, type AgentDescriptor, TIER_ORDER } from './eligibility.js';
-import { pickPreferred, type AgentRankRow } from './auction.js';
-import type { RouteAgentFn } from './rank-bridge.js';
-import type { MaestroSessionWriter } from '../maestro/writer.js';
-import { synthesizeReviewTask } from './review-pairing.js';
-import { validateOrchestrateFile } from './orchestrate-validation.js';
-import { type TaskEvent, TaskEventBus } from './event-bus.js';
+import type { Database } from "bun:sqlite";
+import { enforceEmitCaps } from "./emit-caps.js";
+import { isEligible, type AgentDescriptor, TIER_ORDER } from "./eligibility.js";
+import { pickPreferred, type AgentRankRow } from "./auction.js";
+import type { RouteAgentFn } from "./rank-bridge.js";
+import type { MaestroSessionWriter } from "../maestro/writer.js";
+import { synthesizeReviewTask } from "./review-pairing.js";
+import { validateOrchestrateFile } from "./orchestrate-validation.js";
+import { type TaskEvent, TaskEventBus } from "./event-bus.js";
 import {
   FileTaskInputSchema,
   LeaseTaskInputSchema,
@@ -26,12 +26,12 @@ import {
   type TaskEventKind,
   type ExpectedArtifact,
   type Eligibility,
-} from './schema.js';
+} from "./schema.js";
 
 export class TaskNotFound extends Error {
   constructor(public readonly task_id: string) {
     super(`task not found: ${task_id}`);
-    this.name = 'TaskNotFound';
+    this.name = "TaskNotFound";
   }
 }
 
@@ -41,14 +41,14 @@ export class InvalidTaskStatus extends Error {
     public readonly current_status: TaskStatus,
   ) {
     super(`cannot lease task in status \`${current_status}\``);
-    this.name = 'InvalidTaskStatus';
+    this.name = "InvalidTaskStatus";
   }
 }
 
 export class LeaseConflict extends Error {
   constructor(public readonly task_id: string) {
     super(`task ${task_id} already has an open lease`);
-    this.name = 'LeaseConflict';
+    this.name = "LeaseConflict";
   }
 }
 
@@ -58,21 +58,21 @@ export class LeaseInvalid extends Error {
     public readonly task_id: string,
   ) {
     super(`lease ${lease_id} is invalid for task ${task_id}`);
-    this.name = 'LeaseInvalid';
+    this.name = "LeaseInvalid";
   }
 }
 
 export class MissingReviewVerdict extends Error {
   constructor(public readonly task_id: string) {
     super(`review task ${task_id} requires review_verdict`);
-    this.name = 'MissingReviewVerdict';
+    this.name = "MissingReviewVerdict";
   }
 }
 
 export class UnexpectedReviewVerdict extends Error {
   constructor(public readonly task_id: string) {
     super(`work task ${task_id} cannot accept review_verdict`);
-    this.name = 'UnexpectedReviewVerdict';
+    this.name = "UnexpectedReviewVerdict";
   }
 }
 
@@ -82,7 +82,7 @@ export class ReviewParentInvalidState extends Error {
     public readonly current_status: TaskStatus,
   ) {
     super(`review parent ${parent_task_id} is in invalid status ${current_status}`);
-    this.name = 'ReviewParentInvalidState';
+    this.name = "ReviewParentInvalidState";
   }
 }
 
@@ -121,7 +121,7 @@ export interface TaskWithIncludes extends TaskRecord {
   descendants?: TaskDescendants;
 }
 
-export type TaskInclude = 'lease' | 'events' | 'descendants';
+export type TaskInclude = "lease" | "events" | "descendants";
 
 export interface ListFilters {
   status?: TaskStatus;
@@ -150,12 +150,12 @@ export interface NextTaskResult {
 }
 
 export type GhOutboxOp =
-  | 'gh_create_issue'
-  | 'gh_sync_linked_task'
-  | 'gh_push_status'
-  | 'gh_post_status_comment'
-  | 'gh_post_verdict_comment'
-  | 'gh_post_dispatch_failure_comment';
+  | "gh_create_issue"
+  | "gh_sync_linked_task"
+  | "gh_push_status"
+  | "gh_post_status_comment"
+  | "gh_post_verdict_comment"
+  | "gh_post_dispatch_failure_comment";
 
 export interface GhOutboxRow {
   id: number;
@@ -200,7 +200,7 @@ interface TaskDbRow {
   gh_issue_repo: string | null;
   gh_last_comment_id: string | null;
   gh_comments_synced_at: number | null;
-  gh_create_status: 'queued' | 'pending' | 'created' | 'failed' | null;
+  gh_create_status: "queued" | "pending" | "created" | "failed" | null;
   gh_create_error: string | null;
 }
 
@@ -236,20 +236,25 @@ export class TaskWriter {
 
   constructor(
     private readonly db: Database,
-    deps: (() => number) | {
-      now?: () => number;
-      resolveAgent?: (name: string) => AgentDescriptor | undefined;
-      routeAgent?: RouteAgentFn;
-      cooldowns?: Map<string, Map<string, number>>;
-      bus?: TaskEventBus;
-      onOrchestrateCancel?: (chain_handoff_id: string) => void;
-      maestroSessions?: MaestroSessionWriter;
-    } = {},
+    deps:
+      | (() => number)
+      | {
+          now?: () => number;
+          resolveAgent?: (name: string) => AgentDescriptor | undefined;
+          routeAgent?: RouteAgentFn;
+          cooldowns?: Map<string, Map<string, number>>;
+          bus?: TaskEventBus;
+          onOrchestrateCancel?: (chain_handoff_id: string) => void;
+          maestroSessions?: MaestroSessionWriter;
+        } = {},
   ) {
-    if (typeof deps === 'function') {
+    if (typeof deps === "function") {
       this.now = deps;
       this.resolveAgent = undefined;
-      this.routeAgent = () => ({ detail: 'rank' as const, candidates: { task_type: 'unknown', window: { from: null, to: '' }, candidates: [] } });
+      this.routeAgent = () => ({
+        detail: "rank" as const,
+        candidates: { task_type: "unknown", window: { from: null, to: "" }, candidates: [] },
+      });
       this.cooldowns = undefined;
       this.bus = undefined;
       this.onOrchestrateCancel = undefined;
@@ -258,7 +263,12 @@ export class TaskWriter {
     }
     this.now = deps.now ?? Date.now;
     this.resolveAgent = deps.resolveAgent;
-    this.routeAgent = deps.routeAgent ?? (() => ({ detail: 'rank' as const, candidates: { task_type: 'unknown', window: { from: null, to: '' }, candidates: [] } }));
+    this.routeAgent =
+      deps.routeAgent ??
+      (() => ({
+        detail: "rank" as const,
+        candidates: { task_type: "unknown", window: { from: null, to: "" }, candidates: [] },
+      }));
     this.cooldowns = deps.cooldowns;
     this.bus = deps.bus;
     this.onOrchestrateCancel = deps.onOrchestrateCancel;
@@ -268,7 +278,8 @@ export class TaskWriter {
   file(input: FileTaskInput): { task_id: string } {
     const events: TaskEvent[] = [];
     const filed = this.db.transaction(() =>
-      this._fileInTransaction(input, { emittedEvents: events }))();
+      this._fileInTransaction(input, { emittedEvents: events }),
+    )();
     publishEvents(this.bus, events);
     return filed;
   }
@@ -281,8 +292,8 @@ export class TaskWriter {
     validateOrchestrateFile(this.db, validated, { resolveAgent: this.resolveAgent });
     const task_id = `task_${crypto.randomUUID().toLowerCase()}`;
     const now = this.now();
-    const kind: TaskKind = validated.kind ?? 'work';
-    const priority = validated.priority ?? 'normal';
+    const kind: TaskKind = validated.kind ?? "work";
+    const priority = validated.priority ?? "normal";
     const requires_review = validated.requires_review ?? false;
     const eligibility = JSON.stringify(validated.eligibility ?? {});
     const review_eligibility = validated.review_eligibility
@@ -296,12 +307,12 @@ export class TaskWriter {
     const project_id = validated.project_id ?? null;
     const origin = validated.origin ?? null;
     const bounds_wall_clock_ms =
-      kind === 'orchestrate' ? validated.bounds?.wall_clock_ms ?? null : null;
+      kind === "orchestrate" ? (validated.bounds?.wall_clock_ms ?? null) : null;
     const bounds_cost_cents =
-      kind === 'orchestrate' ? validated.bounds?.cost_cents ?? null : null;
+      kind === "orchestrate" ? (validated.bounds?.cost_cents ?? null) : null;
     const bounds_max_sub_dispatches =
-      kind === 'orchestrate' ? validated.bounds?.max_sub_dispatches ?? null : null;
-    const branch_base = kind === 'orchestrate' ? validated.branch_base ?? null : null;
+      kind === "orchestrate" ? (validated.bounds?.max_sub_dispatches ?? null) : null;
+    const branch_base = kind === "orchestrate" ? (validated.branch_base ?? null) : null;
 
     if (!opts.skipEmitCaps) {
       enforceEmitCaps(this.db, {
@@ -353,7 +364,7 @@ export class TaskWriter {
     recordEvent(opts.emittedEvents, {
       task_id,
       at: now,
-      kind: 'filed',
+      kind: "filed",
       actor: validated.created_by_id,
       payload: null,
     });
@@ -402,7 +413,7 @@ export class TaskWriter {
         .get(candidate.id);
       const auctionStartedAt = filedRow?.at ?? candidate.created_at;
       const auctionWindowMs = candidate.eligibility.preference_window_ms ?? 30_000;
-      const insideWindow = auctionWindowMs > 0 && (now - auctionStartedAt) < auctionWindowMs;
+      const insideWindow = auctionWindowMs > 0 && now - auctionStartedAt < auctionWindowMs;
 
       let rankings: AgentRankRow[] | null = null;
       let callerScore: number | null = null;
@@ -428,14 +439,17 @@ export class TaskWriter {
         } else {
           const routed = this.routeAgent({
             db: this.db,
-            detail: 'rank',
-            taskType: 'implement_substantial',
+            detail: "rank",
+            taskType: "implement_substantial",
             minSamples: 1,
             includeNeutral: false,
             includeCost: false,
           });
-          if (routed.detail !== 'rank') throw new Error('unexpected routeAgent detail');
-          rankings = routed.candidates.candidates.map((c) => ({ agent_name: c.agent_name, score: c.score }));
+          if (routed.detail !== "rank") throw new Error("unexpected routeAgent detail");
+          rankings = routed.candidates.candidates.map((c) => ({
+            agent_name: c.agent_name,
+            score: c.score,
+          }));
 
           const eligibleDescriptors = rankings
             .map((row) => this.resolveAgent?.(row.agent_name))
@@ -463,18 +477,13 @@ export class TaskWriter {
              WHERE NOT EXISTS (
                SELECT 1 FROM task_events WHERE task_id = ? AND kind = 'auctioned'
              )`,
-            [
-              candidate.id,
-              now,
-              JSON.stringify(auctionPayload),
-              candidate.id,
-            ],
+            [candidate.id, now, JSON.stringify(auctionPayload), candidate.id],
           );
           if (insertedAuctioned.changes > 0) {
             recordEvent(emittedEvents, {
               task_id: candidate.id,
               at: now,
-              kind: 'auctioned',
+              kind: "auctioned",
               actor: null,
               payload: auctionPayload,
             });
@@ -489,24 +498,25 @@ export class TaskWriter {
       if (!rankings) {
         const routed = this.routeAgent({
           db: this.db,
-          detail: 'rank',
-          taskType: 'implement_substantial',
+          detail: "rank",
+          taskType: "implement_substantial",
           minSamples: 1,
           includeNeutral: false,
           includeCost: false,
         });
-        if (routed.detail !== 'rank') throw new Error('unexpected routeAgent detail');
-        rankings = routed.candidates.candidates.map((c) => ({ agent_name: c.agent_name, score: c.score }));
+        if (routed.detail !== "rank") throw new Error("unexpected routeAgent detail");
+        rankings = routed.candidates.candidates.map((c) => ({
+          agent_name: c.agent_name,
+          score: c.score,
+        }));
       }
       callerScore = rankings.find((row) => row.agent_name === input.agent_id)?.score ?? null;
 
       const leased = this.db.transaction(() => {
         const taskRow = this.db
-          .query<{ status: TaskStatus }, [string]>(
-            `SELECT status FROM tasks WHERE id = ?`,
-          )
+          .query<{ status: TaskStatus }, [string]>(`SELECT status FROM tasks WHERE id = ?`)
           .get(candidate.id);
-        if (!taskRow || taskRow.status !== 'pending') return null;
+        if (!taskRow || taskRow.status !== "pending") return null;
 
         const openLease = this.db
           .query<{ one: number }, [string]>(
@@ -528,24 +538,19 @@ export class TaskWriter {
            ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)`,
           [lease_id, candidate.id, input.agent_id, now, expires_at, callerScore],
         );
-        this.db.run(
-          `UPDATE tasks SET status = 'leased', updated_at = ? WHERE id = ?`,
-          [now, candidate.id],
-        );
+        this.db.run(`UPDATE tasks SET status = 'leased', updated_at = ? WHERE id = ?`, [
+          now,
+          candidate.id,
+        ]);
         this.db.run(
           `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
            VALUES (?, ?, 'leased', ?, ?)`,
-          [
-            candidate.id,
-            now,
-            input.agent_id,
-            JSON.stringify({ lease_id, ttl_ms }),
-          ],
+          [candidate.id, now, input.agent_id, JSON.stringify({ lease_id, ttl_ms })],
         );
         recordEvent(emittedEvents, {
           task_id: candidate.id,
           at: now,
-          kind: 'leased',
+          kind: "leased",
           actor: input.agent_id,
           payload: { lease_id, ttl_ms },
         });
@@ -579,20 +584,19 @@ export class TaskWriter {
 
     const lease = this.db.transaction(() => {
       const taskRow = this.db
-        .query<{ status: string }, [string]>(
-          `SELECT status FROM tasks WHERE id = ?`,
-        )
+        .query<{ status: string }, [string]>(`SELECT status FROM tasks WHERE id = ?`)
         .get(validated.task_id);
       if (!taskRow) throw new TaskNotFound(validated.task_id);
 
       const openLease = this.db
-        .query<{ one: number }, [string]>(
-          `SELECT 1 AS one FROM task_leases WHERE task_id = ? AND released_at IS NULL LIMIT 1`,
-        )
+        .query<
+          { one: number },
+          [string]
+        >(`SELECT 1 AS one FROM task_leases WHERE task_id = ? AND released_at IS NULL LIMIT 1`)
         .get(validated.task_id);
       if (openLease) throw new LeaseConflict(validated.task_id);
 
-      if (taskRow.status !== 'pending') {
+      if (taskRow.status !== "pending") {
         throw new InvalidTaskStatus(validated.task_id, taskRow.status as TaskStatus);
       }
 
@@ -605,24 +609,19 @@ export class TaskWriter {
          ) VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL)`,
         [lease_id, validated.task_id, validated.agent_id, now, expires_at],
       );
-      this.db.run(
-        `UPDATE tasks SET status = 'leased', updated_at = ? WHERE id = ?`,
-        [now, validated.task_id],
-      );
+      this.db.run(`UPDATE tasks SET status = 'leased', updated_at = ? WHERE id = ?`, [
+        now,
+        validated.task_id,
+      ]);
       this.db.run(
         `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
          VALUES (?, ?, 'leased', ?, ?)`,
-        [
-          validated.task_id,
-          now,
-          validated.agent_id,
-          JSON.stringify({ lease_id, ttl_ms }),
-        ],
+        [validated.task_id, now, validated.agent_id, JSON.stringify({ lease_id, ttl_ms })],
       );
       recordEvent(emittedEvents, {
         task_id: validated.task_id,
         at: now,
-        kind: 'leased',
+        kind: "leased",
         actor: validated.agent_id,
         payload: { lease_id, ttl_ms },
       });
@@ -656,24 +655,16 @@ export class TaskWriter {
       const ttl_ms = leaseRow.expires_at - leaseRow.claimed_at;
       const expires_at = now + ttl_ms;
 
-      this.db.run(
-        `UPDATE task_leases SET expires_at = ? WHERE id = ?`,
-        [expires_at, leaseRow.id],
-      );
+      this.db.run(`UPDATE task_leases SET expires_at = ? WHERE id = ?`, [expires_at, leaseRow.id]);
       this.db.run(
         `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
          VALUES (?, ?, 'heartbeat', ?, ?)`,
-        [
-          validated.task_id,
-          now,
-          leaseRow.agent_id,
-          JSON.stringify({ expires_at }),
-        ],
+        [validated.task_id, now, leaseRow.agent_id, JSON.stringify({ expires_at })],
       );
       recordEvent(emittedEvents, {
         task_id: validated.task_id,
         at: now,
-        kind: 'heartbeat',
+        kind: "heartbeat",
         actor: leaseRow.agent_id,
         payload: { expires_at },
       });
@@ -708,10 +699,7 @@ export class TaskWriter {
       if (!taskRow) throw new TaskNotFound(validated.task_id);
 
       const leaseRow = this.db
-        .query<
-          { id: string; task_id: string; agent_id: string },
-          [string]
-        >(
+        .query<{ id: string; task_id: string; agent_id: string }, [string]>(
           `SELECT id, task_id, agent_id
            FROM task_leases
            WHERE id = ? AND released_at IS NULL`,
@@ -724,23 +712,18 @@ export class TaskWriter {
       const now = this.now();
       let nextStatus: TaskStatus;
 
-      if (taskRow.kind === 'review') {
+      if (taskRow.kind === "review") {
         const verdict = validated.review_verdict;
         if (!verdict) throw new MissingReviewVerdict(validated.task_id);
 
-        const parentTaskId = taskRow.parent_task_id ?? 'unknown';
+        const parentTaskId = taskRow.parent_task_id ?? "unknown";
         const parentRow = taskRow.parent_task_id
           ? this.db
-              .query<{ status: TaskStatus }, [string]>(
-                `SELECT status FROM tasks WHERE id = ?`,
-              )
+              .query<{ status: TaskStatus }, [string]>(`SELECT status FROM tasks WHERE id = ?`)
               .get(taskRow.parent_task_id)
           : null;
-        if (!parentRow || parentRow.status !== 'done_pending_review') {
-          throw new ReviewParentInvalidState(
-            parentTaskId,
-            parentRow?.status ?? 'cancelled',
-          );
+        if (!parentRow || parentRow.status !== "done_pending_review") {
+          throw new ReviewParentInvalidState(parentTaskId, parentRow?.status ?? "cancelled");
         }
 
         if (verdict.passed) {
@@ -763,7 +746,7 @@ export class TaskWriter {
           recordEvent(emittedEvents, {
             task_id: taskRow.parent_task_id!,
             at: now,
-            kind: 'review_passed',
+            kind: "review_passed",
             actor: leaseRow.agent_id,
             payload: { notes: verdict.notes },
           });
@@ -772,11 +755,7 @@ export class TaskWriter {
             `UPDATE tasks
              SET status = 'failed', failure_reason = ?, updated_at = ?
              WHERE id = ?`,
-            [
-              `review rejected: ${verdict.notes}`,
-              now,
-              taskRow.parent_task_id!,
-            ],
+            [`review rejected: ${verdict.notes}`, now, taskRow.parent_task_id!],
           );
           this.db.run(
             `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
@@ -791,7 +770,7 @@ export class TaskWriter {
           recordEvent(emittedEvents, {
             task_id: taskRow.parent_task_id!,
             at: now,
-            kind: 'review_failed',
+            kind: "review_failed",
             actor: leaseRow.agent_id,
             payload: { notes: verdict.notes },
           });
@@ -810,16 +789,16 @@ export class TaskWriter {
         recordEvent(emittedEvents, {
           task_id: validated.task_id,
           at: now,
-          kind: 'completed',
+          kind: "completed",
           actor: leaseRow.agent_id,
           payload: { result_summary: validated.result_summary },
         });
-        nextStatus = 'done';
+        nextStatus = "done";
       } else {
         if (validated.review_verdict) {
           throw new UnexpectedReviewVerdict(validated.task_id);
         }
-        nextStatus = taskRow.requires_review === 1 ? 'done_pending_review' : 'done';
+        nextStatus = taskRow.requires_review === 1 ? "done_pending_review" : "done";
 
         this.db.run(
           `UPDATE tasks
@@ -828,9 +807,7 @@ export class TaskWriter {
           [
             nextStatus,
             validated.result_summary,
-            validated.result_artifacts
-              ? JSON.stringify(validated.result_artifacts)
-              : null,
+            validated.result_artifacts ? JSON.stringify(validated.result_artifacts) : null,
             validated.chain_id ?? null,
             now,
             validated.task_id,
@@ -849,12 +826,12 @@ export class TaskWriter {
         recordEvent(emittedEvents, {
           task_id: validated.task_id,
           at: now,
-          kind: 'completed',
+          kind: "completed",
           actor: leaseRow.agent_id,
           payload: { result_summary: validated.result_summary },
         });
 
-        if (taskRow.kind === 'work' && taskRow.requires_review === 1) {
+        if (taskRow.kind === "work" && taskRow.requires_review === 1) {
           const parentAfterUpdateRow = this.db
             .query<TaskDbRow, [string]>(
               `SELECT id, created_at, updated_at, created_by_kind, created_by_id, project_id,
@@ -881,27 +858,23 @@ export class TaskWriter {
           this.db.run(
             `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
              VALUES (?, ?, 'review_filed', 'system', ?)`,
-            [
-              validated.task_id,
-              now,
-              JSON.stringify({ review_task_id: filed.task_id }),
-            ],
+            [validated.task_id, now, JSON.stringify({ review_task_id: filed.task_id })],
           );
           recordEvent(emittedEvents, {
             task_id: validated.task_id,
             at: now,
-            kind: 'review_filed',
-            actor: 'system',
+            kind: "review_filed",
+            actor: "system",
             payload: { review_task_id: filed.task_id },
           });
         }
       }
 
-      if (taskRow.kind === 'review') {
-        this.db.run(
-          `UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?`,
-          [now, validated.task_id],
-        );
+      if (taskRow.kind === "review") {
+        this.db.run(`UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?`, [
+          now,
+          validated.task_id,
+        ]);
       }
 
       this.db.run(
@@ -911,11 +884,8 @@ export class TaskWriter {
         [now, validated.lease_id],
       );
 
-      if (taskRow.kind === 'review') {
-        this.db.run(
-          `UPDATE tasks SET updated_at = ? WHERE id = ?`,
-          [now, validated.task_id],
-        );
+      if (taskRow.kind === "review") {
+        this.db.run(`UPDATE tasks SET updated_at = ? WHERE id = ?`, [now, validated.task_id]);
       }
 
       return { status: nextStatus };
@@ -924,15 +894,16 @@ export class TaskWriter {
     return completion;
   }
 
-  fail(input: FailTaskInput): { status: 'failed' } {
+  fail(input: FailTaskInput): { status: "failed" } {
     const validated = FailTaskInputSchema.parse(input);
     const emittedEvents: TaskEvent[] = [];
 
     const failed = this.db.transaction(() => {
       const taskRow = this.db
-        .query<{ id: string; kind: TaskKind; parent_task_id: string | null; eligibility: string }, [string]>(
-          `SELECT id, kind, parent_task_id, eligibility FROM tasks WHERE id = ?`,
-        )
+        .query<
+          { id: string; kind: TaskKind; parent_task_id: string | null; eligibility: string },
+          [string]
+        >(`SELECT id, kind, parent_task_id, eligibility FROM tasks WHERE id = ?`)
         .get(validated.task_id);
       if (!taskRow) throw new TaskNotFound(validated.task_id);
 
@@ -973,19 +944,20 @@ export class TaskWriter {
       recordEvent(emittedEvents, {
         task_id: validated.task_id,
         at: now,
-        kind: 'completed',
+        kind: "completed",
         actor: leaseRow.agent_id,
         payload: { success: false, reason: validated.reason },
       });
 
-      if (taskRow.kind === 'review' && taskRow.parent_task_id) {
+      if (taskRow.kind === "review" && taskRow.parent_task_id) {
         const parentRow = this.db
-          .query<{ id: string; status: TaskStatus }, [string]>(
-            `SELECT id, status FROM tasks WHERE id = ?`,
-          )
+          .query<
+            { id: string; status: TaskStatus },
+            [string]
+          >(`SELECT id, status FROM tasks WHERE id = ?`)
           .get(taskRow.parent_task_id);
 
-        if (parentRow && parentRow.status === 'done_pending_review') {
+        if (parentRow && parentRow.status === "done_pending_review") {
           const attemptsRow = this.db
             .query<{ attempts: number }, [string]>(
               `SELECT COUNT(*) AS attempts
@@ -1010,13 +982,15 @@ export class TaskWriter {
             if (originalReviewRow?.eligibility) {
               const parsed = JSON.parse(originalReviewRow.eligibility) as { deny_agents?: unknown };
               originalDenyAgents = Array.isArray(parsed.deny_agents)
-                ? parsed.deny_agents.filter((value): value is string => typeof value === 'string')
+                ? parsed.deny_agents.filter((value): value is string => typeof value === "string")
                 : [];
             }
 
             const currentEligibility = JSON.parse(taskRow.eligibility) as { deny_agents?: unknown };
             const currentDenyAgents = Array.isArray(currentEligibility.deny_agents)
-              ? currentEligibility.deny_agents.filter((value): value is string => typeof value === 'string')
+              ? currentEligibility.deny_agents.filter(
+                  (value): value is string => typeof value === "string",
+                )
               : [];
 
             const parentTaskRow = this.db
@@ -1034,11 +1008,10 @@ export class TaskWriter {
 
             if (parentTaskRow) {
               const doerAgentId = originalDenyAgents[0] ?? leaseRow.agent_id;
-              const reviewInput = synthesizeReviewTask(
-                hydrateTask(parentTaskRow),
-                doerAgentId,
-                [...currentDenyAgents, leaseRow.agent_id],
-              );
+              const reviewInput = synthesizeReviewTask(hydrateTask(parentTaskRow), doerAgentId, [
+                ...currentDenyAgents,
+                leaseRow.agent_id,
+              ]);
               const filed = this._fileInTransaction(reviewInput, {
                 skipEmitCaps: true,
                 emittedEvents,
@@ -1047,17 +1020,13 @@ export class TaskWriter {
               this.db.run(
                 `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
                  VALUES (?, ?, 'review_filed', 'system', ?)`,
-                [
-                  parentTaskRow.id,
-                  now,
-                  JSON.stringify({ review_task_id: filed.task_id }),
-                ],
+                [parentTaskRow.id, now, JSON.stringify({ review_task_id: filed.task_id })],
               );
               recordEvent(emittedEvents, {
                 task_id: parentTaskRow.id,
                 at: now,
-                kind: 'review_filed',
-                actor: 'system',
+                kind: "review_filed",
+                actor: "system",
                 payload: { review_task_id: filed.task_id },
               });
             }
@@ -1079,7 +1048,7 @@ export class TaskWriter {
             recordEvent(emittedEvents, {
               task_id: taskRow.parent_task_id,
               at: now,
-              kind: 'review_failed',
+              kind: "review_failed",
               actor: leaseRow.agent_id,
               payload: {
                 retries_exhausted: true,
@@ -1091,30 +1060,32 @@ export class TaskWriter {
         }
       }
 
-      return { status: 'failed' as const };
+      return { status: "failed" as const };
     })();
     publishEvents(this.bus, emittedEvents);
     return failed;
   }
 
-  cancel(input: CancelTaskInput): { status: 'cancelled' } {
+  cancel(input: CancelTaskInput): { status: "cancelled" } {
     const validated = CancelTaskInputSchema.parse(input);
     const task = this.get(validated.task_id);
-    const session = task.kind === 'orchestrate' && this.maestroSessions
-      ? this.maestroSessions.get(validated.task_id)
-      : null;
+    const session =
+      task.kind === "orchestrate" && this.maestroSessions
+        ? this.maestroSessions.get(validated.task_id)
+        : null;
     const emittedEvents: TaskEvent[] = [];
 
     const cancelled = this.db.transaction(() => {
-      if (task.status === 'done' || task.status === 'failed' || task.status === 'cancelled') {
+      if (task.status === "done" || task.status === "failed" || task.status === "cancelled") {
         throw new InvalidTaskStatus(validated.task_id, task.status);
       }
 
       const now = this.now();
       const openLease = this.db
-        .query<{ id: string }, [string]>(
-          `SELECT id FROM task_leases WHERE task_id = ? AND released_at IS NULL LIMIT 1`,
-        )
+        .query<
+          { id: string },
+          [string]
+        >(`SELECT id FROM task_leases WHERE task_id = ? AND released_at IS NULL LIMIT 1`)
         .get(validated.task_id);
       if (openLease) {
         this.db.run(
@@ -1134,55 +1105,51 @@ export class TaskWriter {
       this.db.run(
         `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
          VALUES (?, ?, 'cancelled', NULL, ?)`,
-        [
-          validated.task_id,
-          now,
-          JSON.stringify({ reason: validated.reason }),
-        ],
+        [validated.task_id, now, JSON.stringify({ reason: validated.reason })],
       );
       recordEvent(emittedEvents, {
         task_id: validated.task_id,
         at: now,
-        kind: 'cancelled',
+        kind: "cancelled",
         actor: null,
         payload: { reason: validated.reason },
       });
 
-      if (task.kind === 'orchestrate' && this.maestroSessions && session && session.terminated_at === null) {
-        this.maestroSessions.terminate(validated.task_id, 'cancelled');
+      if (
+        task.kind === "orchestrate" &&
+        this.maestroSessions &&
+        session &&
+        session.terminated_at === null
+      ) {
+        this.maestroSessions.terminate(validated.task_id, "cancelled");
         this.db.run(
           `INSERT INTO task_events (task_id, maestro_session_task_id, at, kind, actor, payload_json)
            VALUES (?, ?, ?, 'orchestrate_terminated', NULL, ?)`,
-          [
-            validated.task_id,
-            validated.task_id,
-            now,
-            JSON.stringify({ reason: 'cancelled' }),
-          ],
+          [validated.task_id, validated.task_id, now, JSON.stringify({ reason: "cancelled" })],
         );
         recordEvent(emittedEvents, {
           task_id: validated.task_id,
           at: now,
-          kind: 'orchestrate_terminated',
+          kind: "orchestrate_terminated",
           actor: null,
-          payload: { reason: 'cancelled' },
+          payload: { reason: "cancelled" },
         });
       }
 
-      return { status: 'cancelled' as const };
+      return { status: "cancelled" as const };
     })();
     publishEvents(this.bus, emittedEvents);
     if (
-      task.kind === 'orchestrate'
-      && session
-      && session.terminated_at === null
-      && session.chain_handoff_id
-      && this.onOrchestrateCancel
+      task.kind === "orchestrate" &&
+      session &&
+      session.terminated_at === null &&
+      session.chain_handoff_id &&
+      this.onOrchestrateCancel
     ) {
       try {
         this.onOrchestrateCancel(session.chain_handoff_id);
       } catch (error) {
-        console.warn('[task.cancel] onOrchestrateCancel failed', error);
+        console.warn("[task.cancel] onOrchestrateCancel failed", error);
       }
     }
     return cancelled;
@@ -1193,9 +1160,9 @@ export class TaskWriter {
     opts: { repo: string; issue_number: number },
   ): { task_id: string; gh_issue_repo: string; gh_issue_number: number } {
     const repo = opts.repo.trim();
-    if (!repo) throw new Error('repo must be non-empty');
+    if (!repo) throw new Error("repo must be non-empty");
     if (!Number.isInteger(opts.issue_number) || opts.issue_number <= 0) {
-      throw new Error('issue_number must be a positive integer');
+      throw new Error("issue_number must be a positive integer");
     }
     const now = this.now();
     const update = this.db
@@ -1277,9 +1244,12 @@ export class TaskWriter {
     return { task_id, updated_at: now };
   }
 
-  setGhLastCommentId(task_id: string, comment_id: string): { task_id: string; gh_last_comment_id: string } {
+  setGhLastCommentId(
+    task_id: string,
+    comment_id: string,
+  ): { task_id: string; gh_last_comment_id: string } {
     const normalized = comment_id.trim();
-    if (!normalized) throw new Error('comment_id must be non-empty');
+    if (!normalized) throw new Error("comment_id must be non-empty");
     const update = this.db
       .query<unknown, [string, string]>(
         `UPDATE tasks
@@ -1291,9 +1261,12 @@ export class TaskWriter {
     return { task_id, gh_last_comment_id: normalized };
   }
 
-  setGhCommentsSyncedAt(task_id: string, synced_at: number): { task_id: string; gh_comments_synced_at: number } {
+  setGhCommentsSyncedAt(
+    task_id: string,
+    synced_at: number,
+  ): { task_id: string; gh_comments_synced_at: number } {
     if (!Number.isInteger(synced_at) || synced_at < 0) {
-      throw new Error('synced_at must be a non-negative integer');
+      throw new Error("synced_at must be a non-negative integer");
     }
     const update = this.db
       .query<unknown, [number, string]>(
@@ -1308,7 +1281,7 @@ export class TaskWriter {
 
   setGhCreateStatus(
     task_id: string,
-    status: 'queued' | 'pending' | 'created' | 'failed',
+    status: "queued" | "pending" | "created" | "failed",
     error: string | null = null,
   ): { task_id: string; gh_create_status: string; gh_create_error: string | null } {
     const normalizedError = error?.trim().length ? error.trim() : null;
@@ -1338,7 +1311,7 @@ export class TaskWriter {
   enqueueGhOutbox(task_id: string, op: GhOutboxOp, payload: unknown): { id: number } {
     const now = this.now();
     const exists = this.db
-      .query<{ id: string }, [string]>('SELECT id FROM tasks WHERE id = ?')
+      .query<{ id: string }, [string]>("SELECT id FROM tasks WHERE id = ?")
       .get(task_id);
     if (!exists) throw new TaskNotFound(task_id);
     this.db.run(
@@ -1346,7 +1319,7 @@ export class TaskWriter {
        VALUES (?, ?, ?, 'pending', ?)`,
       [task_id, op, JSON.stringify(payload ?? {}), now],
     );
-    const row = this.db.query<{ id: number }, []>('SELECT last_insert_rowid() AS id').get();
+    const row = this.db.query<{ id: number }, []>("SELECT last_insert_rowid() AS id").get();
     return { id: row?.id ?? 0 };
   }
 
@@ -1382,7 +1355,7 @@ export class TaskWriter {
   }
 
   markGhOutboxFailed(id: number, error: string): void {
-    const msg = error.trim().length > 0 ? error.trim() : 'unknown error';
+    const msg = error.trim().length > 0 ? error.trim() : "unknown error";
     this.db.run(
       `UPDATE gh_outbox
        SET status = 'failed', error = ?, attempted_at = ?
@@ -1391,15 +1364,13 @@ export class TaskWriter {
     );
   }
 
-  reopenFromGh(task_id: string): { status: 'pending' } {
+  reopenFromGh(task_id: string): { status: "pending" } {
     const row = this.db
-      .query<{ status: TaskStatus }, [string]>(
-        `SELECT status FROM tasks WHERE id = ?`,
-      )
+      .query<{ status: TaskStatus }, [string]>(`SELECT status FROM tasks WHERE id = ?`)
       .get(task_id);
     if (!row) throw new TaskNotFound(task_id);
-    if (row.status === 'pending') return { status: 'pending' };
-    if (row.status === 'leased' || row.status === 'done_pending_review') {
+    if (row.status === "pending") return { status: "pending" };
+    if (row.status === "leased" || row.status === "done_pending_review") {
       throw new InvalidTaskStatus(task_id, row.status);
     }
     const now = this.now();
@@ -1414,7 +1385,7 @@ export class TaskWriter {
        WHERE id = ?`,
       [now, task_id],
     );
-    return { status: 'pending' };
+    return { status: "pending" };
   }
 
   get(task_id: string, opts?: { include?: TaskInclude[] }): TaskWithIncludes {
@@ -1435,7 +1406,7 @@ export class TaskWriter {
     const result: TaskWithIncludes = hydrateTask(row);
     const include = opts?.include ?? [];
 
-    if (include.includes('lease')) {
+    if (include.includes("lease")) {
       const leaseRow = this.db
         .query<TaskLeaseRow, [string]>(
           `SELECT id, task_id, agent_id, claimed_at, expires_at, released_at, release_reason, auction_score
@@ -1447,10 +1418,17 @@ export class TaskWriter {
       result.lease = leaseRow ?? null;
     }
 
-    if (include.includes('events')) {
+    if (include.includes("events")) {
       const eventRows = this.db
         .query<
-          { id: number; task_id: string; at: number; kind: string; actor: string | null; payload_json: string | null },
+          {
+            id: number;
+            task_id: string;
+            at: number;
+            kind: string;
+            actor: string | null;
+            payload_json: string | null;
+          },
           [string]
         >(
           `SELECT id, task_id, at, kind, actor, payload_json
@@ -1460,7 +1438,7 @@ export class TaskWriter {
            LIMIT 100`,
         )
         .all(task_id);
-      result.events = eventRows.map(r => ({
+      result.events = eventRows.map((r) => ({
         id: r.id,
         task_id: r.task_id,
         at: r.at,
@@ -1470,7 +1448,7 @@ export class TaskWriter {
       }));
     }
 
-    if (include.includes('descendants')) {
+    if (include.includes("descendants")) {
       const rows = this.db
         .query<{ id: string; depth: number }, [string]>(
           `WITH RECURSIVE descendants(id, depth) AS (
@@ -1483,7 +1461,7 @@ export class TaskWriter {
            SELECT id, depth FROM descendants`,
         )
         .all(task_id);
-      const ids = rows.map(r => r.id);
+      const ids = rows.map((r) => r.id);
       const maxDepth = rows.reduce((m, r) => Math.max(m, r.depth), 0);
       result.descendants = { count: rows.length, depth: maxDepth, ids };
     }
@@ -1497,47 +1475,47 @@ export class TaskWriter {
       ? this.resolveAgent?.(filters.eligible_for)
       : undefined;
     if (filters.eligible_for && !resolvedAgent) return [];
-    if (filters.eligible_for && filters.status && filters.status !== 'pending') return [];
+    if (filters.eligible_for && filters.status && filters.status !== "pending") return [];
 
     const where: string[] = [];
     const params: Array<string | number> = [];
 
     if (filters.status !== undefined) {
-      where.push('status = ?');
+      where.push("status = ?");
       params.push(filters.status);
     }
     if (filters.kind !== undefined) {
-      where.push('kind = ?');
+      where.push("kind = ?");
       params.push(filters.kind);
     }
     if (filters.parent_task_id !== undefined) {
-      where.push('parent_task_id = ?');
+      where.push("parent_task_id = ?");
       params.push(filters.parent_task_id);
     }
     if (filters.origin !== undefined) {
-      where.push('origin = ?');
+      where.push("origin = ?");
       params.push(filters.origin);
     }
     if (filters.eligible_for && filters.status === undefined) {
-      where.push('status = ?');
-      params.push('pending');
+      where.push("status = ?");
+      params.push("pending");
     }
     if (filters.eligible_for && resolvedAgent) {
       const tier = resolvedAgent.tier;
       const agentRank = TIER_ORDER.indexOf(tier as (typeof TIER_ORDER)[number]);
       if (agentRank >= 0) {
         const eligibleMinTiers = TIER_ORDER.slice(0, agentRank + 1);
-        const placeholders = eligibleMinTiers.map(() => '?').join(', ');
+        const placeholders = eligibleMinTiers.map(() => "?").join(", ");
         where.push(
           `(json_extract(eligibility, '$.min_tier') IS NULL
-            OR json_extract(eligibility, '$.min_tier') NOT IN (${TIER_ORDER.map(() => '?').join(', ')})
+            OR json_extract(eligibility, '$.min_tier') NOT IN (${TIER_ORDER.map(() => "?").join(", ")})
             OR json_extract(eligibility, '$.min_tier') IN (${placeholders}))`,
         );
         params.push(...TIER_ORDER, ...eligibleMinTiers);
       } else {
         where.push(
           `(json_extract(eligibility, '$.min_tier') IS NULL
-            OR json_extract(eligibility, '$.min_tier') NOT IN (${TIER_ORDER.map(() => '?').join(', ')}))`,
+            OR json_extract(eligibility, '$.min_tier') NOT IN (${TIER_ORDER.map(() => "?").join(", ")}))`,
         );
         params.push(...TIER_ORDER);
       }
@@ -1555,7 +1533,7 @@ export class TaskWriter {
              gh_issue_number, gh_issue_repo, gh_last_comment_id,
                 gh_comments_synced_at, gh_create_status, gh_create_error
       FROM tasks
-      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
       ORDER BY ${PRIORITY_ORDER_SQL} ASC, created_at ASC
       LIMIT ? OFFSET ?
     `;
@@ -1581,12 +1559,12 @@ function hydrateTask(row: TaskDbRow): TaskRecord {
     id: row.id,
     created_at: row.created_at,
     updated_at: row.updated_at,
-    created_by_kind: row.created_by_kind as TaskRecord['created_by_kind'],
+    created_by_kind: row.created_by_kind as TaskRecord["created_by_kind"],
     created_by_id: row.created_by_id,
     project_id: row.project_id,
     parent_task_id: row.parent_task_id,
     kind: row.kind as TaskKind,
-    priority: row.priority as TaskRecord['priority'],
+    priority: row.priority as TaskRecord["priority"],
     prompt: row.prompt,
     acceptance_criteria: row.acceptance_criteria,
     expected_artifacts: row.expected_artifacts

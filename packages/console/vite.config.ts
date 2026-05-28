@@ -11,10 +11,7 @@ if (!process.env.PENUMBRA_DAEMON_URL) {
 }
 if (!process.env.PENUMBRA_TOKEN) {
   try {
-    process.env.PENUMBRA_TOKEN = readFileSync(
-      join(homedir(), ".penumbra", "token"),
-      "utf8",
-    ).trim();
+    process.env.PENUMBRA_TOKEN = readFileSync(join(homedir(), ".penumbra", "token"), "utf8").trim();
   } catch {
     // No token file — leave empty; loadPenumbraConfig will surface the error.
   }

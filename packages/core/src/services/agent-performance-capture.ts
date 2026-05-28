@@ -1,8 +1,8 @@
-import type { Database } from 'bun:sqlite';
-import type { Uuid } from '../utils/uuid.js';
-import { HandoffReader } from '../readers/handoff.js';
-import { ChainReader } from '../readers/chain.js';
-import type { HandoffRow } from '../schemas/handoff.js';
+import type { Database } from "bun:sqlite";
+import type { Uuid } from "../utils/uuid.js";
+import { HandoffReader } from "../readers/handoff.js";
+import { ChainReader } from "../readers/chain.js";
+import type { HandoffRow } from "../schemas/handoff.js";
 import {
   AgentPerformanceCaptureFromReconcilerSchema,
   AgentPerformanceCaptureFromDispatchSchema,
@@ -12,16 +12,21 @@ import {
   type AgentPerformanceCaptureFromDispatch,
   type AgentPerformanceCaptureFromReconciler,
   type AgentPerformanceRow,
-} from '../schemas/agent-performance.js';
-import { AgentPerformanceWriter } from '../writers/agent-performance.js';
+} from "../schemas/agent-performance.js";
+import { AgentPerformanceWriter } from "../writers/agent-performance.js";
 import {
   classifyDispatchReliability,
   type DispatchReliabilityReport,
-} from './dispatch-reliability.js';
+} from "./dispatch-reliability.js";
 
-export function aggregateHandoffUsage(db: Database, handoffId: string): { cost_usd: number | null; tokens_used: number | null } {
+export function aggregateHandoffUsage(
+  db: Database,
+  handoffId: string,
+): { cost_usd: number | null; tokens_used: number | null } {
   type Row = { sum_cost: number | null; sum_tokens: number | null; n_with_cost: number };
-  const row = db.prepare<Row, [string]>(`
+  const row = db
+    .prepare<Row, [string]>(
+      `
     WITH per_group AS (
       SELECT
         provider,
@@ -38,7 +43,9 @@ export function aggregateHandoffUsage(db: Database, handoffId: string): { cost_u
       SUM(group_tokens) AS sum_tokens,
       SUM(CASE WHEN group_cost IS NOT NULL THEN 1 ELSE 0 END) AS n_with_cost
     FROM per_group
-  `).get(handoffId);
+  `,
+    )
+    .get(handoffId);
   return {
     cost_usd: (row?.n_with_cost ?? 0) > 0 ? (row?.sum_cost ?? null) : null,
     tokens_used: row?.sum_tokens ?? null,
@@ -56,9 +63,10 @@ function computeLatencyMs(ts: string, resolvedAt: string | null, nowIso: string)
 function lookupLatestLaneGateOutcome(db: Database, handoffId: string): string | null {
   type Row = { gate_status: string };
   const row = db
-    .prepare<Row, [string]>(
-      `SELECT gate_status FROM lane_ledger WHERE implementer_handoff = ? AND ts_closed IS NOT NULL ORDER BY ts_closed DESC LIMIT 1`,
-    )
+    .prepare<
+      Row,
+      [string]
+    >(`SELECT gate_status FROM lane_ledger WHERE implementer_handoff = ? AND ts_closed IS NOT NULL ORDER BY ts_closed DESC LIMIT 1`)
     .get(handoffId);
   return row?.gate_status ?? null;
 }
@@ -85,7 +93,10 @@ export function captureAgentPerformanceFromReconciler(opts: {
     conversation_id: handoff.conversation_id,
     project_id: handoff.project_id,
     agent_name: handoff.to_agent,
-    task_type: input.task_type ?? handoff.chain_task_type ?? inferAgentTaskTypeForRole(handoff.message, handoff.to_role, input.result.status),
+    task_type:
+      input.task_type ??
+      handoff.chain_task_type ??
+      inferAgentTaskTypeForRole(handoff.message, handoff.to_role, input.result.status),
     outcome: mapMergeStatusToAgentOutcome(input.result.status),
     rounds: null,
     smoke_pass: null,
@@ -94,7 +105,7 @@ export function captureAgentPerformanceFromReconciler(opts: {
     cost_usd: usage.cost_usd,
     tokens_used: usage.tokens_used,
     latency_ms: latency,
-    source: 'reconciler',
+    source: "reconciler",
     gate_outcome: lookupLatestLaneGateOutcome(opts.db, input.handoff_id),
     notes: input.result.regression_summary ?? null,
     metadata_json: JSON.stringify(metadata),
@@ -110,21 +121,22 @@ function computeDispatchSignals(
 ): { silent_failure: boolean; tool_failure_count: number } {
   type Row = { meta_json: string | null; kind: string };
   const rows = db
-    .prepare<Row, [string]>(
-      `SELECT kind, meta_json FROM dispatch_events WHERE handoff_id = ? AND kind IN ('dispatch.end', 'agent.tool_call.failed')`,
-    )
+    .prepare<
+      Row,
+      [string]
+    >(`SELECT kind, meta_json FROM dispatch_events WHERE handoff_id = ? AND kind IN ('dispatch.end', 'agent.tool_call.failed')`)
     .all(handoffId);
   let worktreeChanged: boolean | null = null;
   let toolFailureCount = 0;
   for (const row of rows) {
-    if (row.kind === 'agent.tool_call.failed') {
+    if (row.kind === "agent.tool_call.failed") {
       toolFailureCount++;
       continue;
     }
-    if (row.kind === 'dispatch.end' && row.meta_json) {
+    if (row.kind === "dispatch.end" && row.meta_json) {
       try {
         const meta = JSON.parse(row.meta_json) as Record<string, unknown>;
-        if (typeof meta.worktree_changed === 'boolean') worktreeChanged = meta.worktree_changed;
+        if (typeof meta.worktree_changed === "boolean") worktreeChanged = meta.worktree_changed;
       } catch {
         // ignore malformed meta
       }
@@ -135,7 +147,7 @@ function computeDispatchSignals(
   // payload, sidestepping the race where the dispatch.end events POST and
   // the agent_performance/dispatch POST arrive in parallel and the events
   // row hasn't committed yet when this query runs.
-  if (typeof worktreeChangedHint === 'boolean') worktreeChanged = worktreeChangedHint;
+  if (typeof worktreeChangedHint === "boolean") worktreeChanged = worktreeChangedHint;
   // Silent failure = use_worktree=true dispatch that completed without
   // touching the worktree. The worker captures worktree_changed at
   // dispatch.end (commit 090adb1); reading it here keeps the agent-rank
@@ -151,9 +163,10 @@ function detectRecoveryCancel(
 ): boolean {
   if (!cancelRequestedAt) return false;
   const row = db
-    .prepare<{ ts: string }, [string]>(
-      `SELECT ts FROM dispatch_events WHERE handoff_id = ? AND kind = 'dispatch.end' ORDER BY ts ASC LIMIT 1`,
-    )
+    .prepare<
+      { ts: string },
+      [string]
+    >(`SELECT ts FROM dispatch_events WHERE handoff_id = ? AND kind = 'dispatch.end' ORDER BY ts ASC LIMIT 1`)
     .get(handoffId);
   if (!row) {
     // No terminal event yet but capture is being called — likely a synthetic
@@ -170,25 +183,26 @@ function classifyDispatchReliabilityFromDb(
   worktreeChangedHint: boolean | null | undefined,
 ): DispatchReliabilityReport {
   const eventRows = db
-    .prepare<{ kind: string; ts: string; meta_json: string | null }, [string]>(
-      `SELECT kind, ts, meta_json FROM dispatch_events WHERE handoff_id = ? ORDER BY ts ASC`,
-    )
+    .prepare<
+      { kind: string; ts: string; meta_json: string | null },
+      [string]
+    >(`SELECT kind, ts, meta_json FROM dispatch_events WHERE handoff_id = ? ORDER BY ts ASC`)
     .all(handoffId);
   let worktreeChanged: boolean | null = null;
   let dispatchEndCommitted: boolean | null = null;
   for (const row of eventRows) {
-    if (row.kind === 'dispatch.end' && row.meta_json) {
+    if (row.kind === "dispatch.end" && row.meta_json) {
       try {
         const meta = JSON.parse(row.meta_json) as Record<string, unknown>;
-        if (typeof meta.worktree_changed === 'boolean') worktreeChanged = meta.worktree_changed;
-        if (typeof meta.committed === 'boolean') dispatchEndCommitted = meta.committed;
+        if (typeof meta.worktree_changed === "boolean") worktreeChanged = meta.worktree_changed;
+        if (typeof meta.committed === "boolean") dispatchEndCommitted = meta.committed;
       } catch {
         // ignore malformed meta
       }
     }
   }
-  if (typeof worktreeChangedHint === 'boolean') worktreeChanged = worktreeChangedHint;
-  const responses = new ChainReader(db).getResponses(handoff.conversation_id, 'final');
+  if (typeof worktreeChangedHint === "boolean") worktreeChanged = worktreeChangedHint;
+  const responses = new ChainReader(db).getResponses(handoff.conversation_id, "final");
   return classifyDispatchReliability({
     handoff: {
       handoff_id: handoffId,
@@ -222,7 +236,12 @@ export function captureAgentPerformanceFromDispatch(opts: {
   const nowIso = opts.clock().toISOString();
   const latency = computeLatencyMs(handoff.ts, handoff.resolved_at, nowIso);
   const useWorktree = handoff.use_worktree === true || (handoff.use_worktree as unknown) === 1;
-  const signals = computeDispatchSignals(opts.db, input.handoff_id, useWorktree, input.worktree_changed);
+  const signals = computeDispatchSignals(
+    opts.db,
+    input.handoff_id,
+    useWorktree,
+    input.worktree_changed,
+  );
   const reliabilityReport = classifyDispatchReliabilityFromDb(
     opts.db,
     input.handoff_id,
@@ -231,10 +250,14 @@ export function captureAgentPerformanceFromDispatch(opts: {
   );
   const baseNotes = signals.silent_failure
     ? `${input.reason} (silent_failure: empty worktree)`
-    : reliabilityReport.recommended_action === 'cancel'
+    : reliabilityReport.recommended_action === "cancel"
       ? `${input.reason} (recommended_action=cancel)`
       : input.reason;
-  const recoveryCancel = detectRecoveryCancel(opts.db, input.handoff_id, handoff.cancel_requested_at);
+  const recoveryCancel = detectRecoveryCancel(
+    opts.db,
+    input.handoff_id,
+    handoff.cancel_requested_at,
+  );
   const notes = recoveryCancel ? `${baseNotes} (maestro_takeover: recovery_cancel)` : baseNotes;
   const row: AgentPerformanceRow = {
     performance_id: opts.uuid(),
@@ -243,7 +266,10 @@ export function captureAgentPerformanceFromDispatch(opts: {
     conversation_id: handoff.conversation_id,
     project_id: handoff.project_id,
     agent_name: handoff.to_agent,
-    task_type: input.task_type ?? handoff.chain_task_type ?? inferAgentTaskTypeForRole(handoff.message, handoff.to_role),
+    task_type:
+      input.task_type ??
+      handoff.chain_task_type ??
+      inferAgentTaskTypeForRole(handoff.message, handoff.to_role),
     outcome: mapDispatchReasonToAgentOutcome(input.reason, signals),
     rounds: null,
     smoke_pass: null,
@@ -252,11 +278,11 @@ export function captureAgentPerformanceFromDispatch(opts: {
     cost_usd: usage.cost_usd,
     tokens_used: usage.tokens_used,
     latency_ms: latency,
-    source: 'worker',
+    source: "worker",
     gate_outcome: lookupLatestLaneGateOutcome(opts.db, input.handoff_id),
     notes,
     reliability_status: reliabilityReport.status,
-    maestro_takeover_required: recoveryCancel ? 'y' : (handoff.cancel_requested_at ? 'n' : null),
+    maestro_takeover_required: recoveryCancel ? "y" : handoff.cancel_requested_at ? "n" : null,
     metadata_json: JSON.stringify({ reason: input.reason, ...signals }),
   };
   return new AgentPerformanceWriter(opts.db).upsert(row);

@@ -92,11 +92,7 @@ afterEach(() => {
 
 describe("Rail mission pip badge", () => {
   test("renders pip with count when pending handoffs > 0", async () => {
-    globalThis.fetch = stubFetchHandoffs([
-      fakeRow("h-1"),
-      fakeRow("h-2"),
-      fakeRow("h-3"),
-    ]);
+    globalThis.fetch = stubFetchHandoffs([fakeRow("h-1"), fakeRow("h-2"), fakeRow("h-3")]);
 
     const { Wrapper, client } = makeWrapper();
     const { container, unmount } = render(

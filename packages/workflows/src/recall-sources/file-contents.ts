@@ -1,6 +1,6 @@
-import { open, stat } from 'node:fs/promises';
-import { realpathSync } from 'node:fs';
-import { resolve, sep } from 'node:path';
+import { open, stat } from "node:fs/promises";
+import { realpathSync } from "node:fs";
+import { resolve, sep } from "node:path";
 
 const DEFAULT_MAX_BYTES = 65_536;
 
@@ -20,16 +20,19 @@ type FileContentsSuccess = {
 type FileContentsNotFound = {
   path: string;
   body: null;
-  error: 'not_found';
+  error: "not_found";
 };
 
 type FileContentsOutsideAllowedRoots = {
   path: string;
   body: null;
-  error: 'path_outside_allowed_roots';
+  error: "path_outside_allowed_roots";
 };
 
-export type FileContentsResult = FileContentsSuccess | FileContentsNotFound | FileContentsOutsideAllowedRoots;
+export type FileContentsResult =
+  | FileContentsSuccess
+  | FileContentsNotFound
+  | FileContentsOutsideAllowedRoots;
 export type FileContentsOutput = {
   result: FileContentsResult;
   warnings: string[];
@@ -37,7 +40,7 @@ export type FileContentsOutput = {
 
 function decodeUtf8Prefix(buffer: Buffer): string | null {
   if (buffer.includes(0x00)) return null;
-  const decoder = new TextDecoder('utf-8', { fatal: true });
+  const decoder = new TextDecoder("utf-8", { fatal: true });
   for (let trim = 0; trim <= 3; trim++) {
     const end = buffer.length - trim;
     if (end < 0) break;
@@ -49,16 +52,14 @@ function decodeUtf8Prefix(buffer: Buffer): string | null {
 }
 
 export async function runFileContents(input: FileContentsInput): Promise<FileContentsOutput> {
-  const requested = input.args.path?.trim() ?? '';
+  const requested = input.args.path?.trim() ?? "";
   if (requested.length === 0) {
-    return { result: { path: '', body: null, error: 'not_found' }, warnings: [] };
+    return { result: { path: "", body: null, error: "not_found" }, warnings: [] };
   }
   const absPath = resolve(input.cwd, requested);
-  const candidateRoots = [
-    input.cwd,
-    input.storageRoot,
-    ...(input.args.allowed_roots ?? []),
-  ].filter((root): root is string => typeof root === 'string' && root.length > 0);
+  const candidateRoots = [input.cwd, input.storageRoot, ...(input.args.allowed_roots ?? [])].filter(
+    (root): root is string => typeof root === "string" && root.length > 0,
+  );
   const realAbsPath = (() => {
     try {
       return realpathSync(absPath);
@@ -82,7 +83,7 @@ export async function runFileContents(input: FileContentsInput): Promise<FileCon
     }
     if (!allowed) {
       return {
-        result: { path: absPath, body: null, error: 'path_outside_allowed_roots' },
+        result: { path: absPath, body: null, error: "path_outside_allowed_roots" },
         warnings: [],
       };
     }
@@ -92,12 +93,12 @@ export async function runFileContents(input: FileContentsInput): Promise<FileCon
   try {
     const info = await stat(absPath);
     if (!info.isFile()) {
-      return { result: { path: absPath, body: null, error: 'not_found' }, warnings: [] };
+      return { result: { path: absPath, body: null, error: "not_found" }, warnings: [] };
     }
     byteSize = info.size;
   } catch {
     return {
-      result: { path: absPath, body: null, error: 'not_found' },
+      result: { path: absPath, body: null, error: "not_found" },
       warnings: [],
     };
   }
@@ -107,10 +108,12 @@ export async function runFileContents(input: FileContentsInput): Promise<FileCon
   const truncated = byteSize > limit;
   const warnings: string[] = [];
   if (truncated) {
-    warnings.push(`file.contents: ${absPath} exceeds max_bytes=${limit}; returning first ${bytesToRead} bytes`);
+    warnings.push(
+      `file.contents: ${absPath} exceeds max_bytes=${limit}; returning first ${bytesToRead} bytes`,
+    );
   }
 
-  const handle = await open(absPath, 'r');
+  const handle = await open(absPath, "r");
   try {
     const raw = Buffer.alloc(bytesToRead);
     if (bytesToRead > 0) {
@@ -121,7 +124,7 @@ export async function runFileContents(input: FileContentsInput): Promise<FileCon
       return {
         result: {
           path: absPath,
-          body: '<binary file omitted>',
+          body: "<binary file omitted>",
           truncated: false,
           byte_size: byteSize,
         },

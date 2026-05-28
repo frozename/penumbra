@@ -1,28 +1,28 @@
-import { describe, test, expect } from 'bun:test';
-import { spawn } from 'node:child_process';
+import { describe, test, expect } from "bun:test";
+import { spawn } from "node:child_process";
 
 function runScript(code: string): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn('bun', ['-e', code], {
+    const child = spawn("bun", ["-e", code], {
       cwd: process.cwd(),
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ["ignore", "pipe", "pipe"],
     });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => {
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
       stdout += String(chunk);
     });
-    child.stderr.on('data', (chunk) => {
+    child.stderr.on("data", (chunk) => {
       stderr += String(chunk);
     });
-    child.on('close', (code) => {
+    child.on("close", (code) => {
       resolve({ code: code ?? 1, stdout, stderr });
     });
   });
 }
 
-describe('e2e harness', () => {
-  test('starts, /health responds, stops cleanly', async () => {
+describe("e2e harness", () => {
+  test("starts, /health responds, stops cleanly", async () => {
     const script = `
       import { startE2EHarness } from './e2e/harness';
       const h = await startE2EHarness();
@@ -37,10 +37,10 @@ describe('e2e harness', () => {
     `;
     const result = await runScript(script);
     expect(result.code).toBe(0);
-    expect(result.stderr).toBe('');
+    expect(result.stderr).toBe("");
   });
 
-  test('rejects requests without bearer token', async () => {
+  test("rejects requests without bearer token", async () => {
     const script = `
       import { startE2EHarness } from './e2e/harness';
       const h = await startE2EHarness();
@@ -53,10 +53,10 @@ describe('e2e harness', () => {
     `;
     const result = await runScript(script);
     expect(result.code).toBe(0);
-    expect(result.stderr).toBe('');
+    expect(result.stderr).toBe("");
   });
 
-  test('approve mutation removes the handoff from subsequent list calls', async () => {
+  test("approve mutation removes the handoff from subsequent list calls", async () => {
     const script = `
       import { startE2EHarness } from './e2e/harness';
       const h = await startE2EHarness();
@@ -85,10 +85,10 @@ describe('e2e harness', () => {
     `;
     const result = await runScript(script);
     expect(result.code).toBe(0);
-    expect(result.stderr).toBe('');
+    expect(result.stderr).toBe("");
   });
 
-  test('addChain returns via /chains?status=dispatched', async () => {
+  test("addChain returns via /chains?status=dispatched", async () => {
     const script = `
       import { startE2EHarness } from './e2e/harness';
       const h = await startE2EHarness();
@@ -118,10 +118,10 @@ describe('e2e harness', () => {
     `;
     const result = await runScript(script);
     expect(result.code).toBe(0);
-    expect(result.stderr).toBe('');
+    expect(result.stderr).toBe("");
   });
 
-  test('setPressure returns via /usage/subscription_pressure', async () => {
+  test("setPressure returns via /usage/subscription_pressure", async () => {
     const script = `
       import { startE2EHarness } from './e2e/harness';
       const h = await startE2EHarness();
@@ -146,10 +146,10 @@ describe('e2e harness', () => {
     `;
     const result = await runScript(script);
     expect(result.code).toBe(0);
-    expect(result.stderr).toBe('');
+    expect(result.stderr).toBe("");
   });
 
-  test('injectError causes matching path to return error status, then clears', async () => {
+  test("injectError causes matching path to return error status, then clears", async () => {
     const script = `
       import { startE2EHarness } from './e2e/harness';
       const h = await startE2EHarness();
@@ -167,10 +167,10 @@ describe('e2e harness', () => {
     `;
     const result = await runScript(script);
     expect(result.code).toBe(0);
-    expect(result.stderr).toBe('');
+    expect(result.stderr).toBe("");
   });
 
-  test('pushEvent is callable without throwing', async () => {
+  test("pushEvent is callable without throwing", async () => {
     const script = `
       import { startE2EHarness } from './e2e/harness';
       const h = await startE2EHarness();
@@ -184,10 +184,10 @@ describe('e2e harness', () => {
     `;
     const result = await runScript(script);
     expect(result.code).toBe(0);
-    expect(result.stderr).toBe('');
+    expect(result.stderr).toBe("");
   });
 
-  test('simulateReconnect closes any open SSE writers and is callable when none are open', async () => {
+  test("simulateReconnect closes any open SSE writers and is callable when none are open", async () => {
     const script = `
       import { startE2EHarness } from './e2e/harness';
       const h = await startE2EHarness();
@@ -212,10 +212,10 @@ describe('e2e harness', () => {
     `;
     const result = await runScript(script);
     expect(result.code).toBe(0);
-    expect(result.stderr).toBe('');
+    expect(result.stderr).toBe("");
   });
 
-  test('setQuotaStatus customizes /usage/quota_status response', async () => {
+  test("setQuotaStatus customizes /usage/quota_status response", async () => {
     const script = `
       import { startE2EHarness } from './e2e/harness';
       const h = await startE2EHarness();
@@ -234,6 +234,6 @@ describe('e2e harness', () => {
     `;
     const result = await runScript(script);
     expect(result.code).toBe(0);
-    expect(result.stderr).toBe('');
+    expect(result.stderr).toBe("");
   });
 });

@@ -1,5 +1,5 @@
 // packages/agentchat/src/sdk/stream-wrapper.ts
-import type { Adapter, DispatchEvent, DispatchInput } from './adapter.js';
+import type { Adapter, DispatchEvent, DispatchInput } from "./adapter.js";
 
 export async function* ensureDispatchStream(
   adapter: Adapter,
@@ -10,6 +10,6 @@ export async function* ensureDispatchStream(
     return;
   }
   const result = await adapter.dispatch(input);
-  yield { type: 'delta', text: result.text };
-  yield { type: 'done', result };
+  yield { type: "delta", text: result.text };
+  yield { type: "done", result };
 }

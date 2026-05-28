@@ -86,7 +86,11 @@ export function StatRow(props: StatRowProps = {}): JSX.Element {
       <StatCard
         label="Resolved · session"
         value={hasRealSession ? sessionValues.resolved : "—"}
-        delta={hasRealSession ? `${sessionValues.dispatched} dispatched · ${sessionValues.failed} failed` : "—"}
+        delta={
+          hasRealSession
+            ? `${sessionValues.dispatched} dispatched · ${sessionValues.failed} failed`
+            : "—"
+        }
         deltaCls="up"
         seed={22}
       />

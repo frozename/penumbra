@@ -19,8 +19,7 @@ export const useUIStore = create<UIState>()(
       explorerCollapsed: false,
       setActiveModule: (m) => set({ activeModule: m }),
       setExplorerCollapsed: (v) => set({ explorerCollapsed: v }),
-      toggleExplorerCollapsed: () =>
-        set({ explorerCollapsed: !get().explorerCollapsed }),
+      toggleExplorerCollapsed: () => set({ explorerCollapsed: !get().explorerCollapsed }),
     }),
     {
       name: "penumbra-ui",

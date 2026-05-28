@@ -1,30 +1,30 @@
-import { afterEach, expect, mock, spyOn, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import type { AgentDescriptor, CapCheckWarn } from '@penumbra/core';
+import { afterEach, expect, mock, spyOn, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import type { AgentDescriptor, CapCheckWarn } from "@penumbra/core";
 import {
   loadSqliteVec,
   MaestroSessionWriter,
   migrate,
   TaskEventBus,
   TaskWriter,
-} from '@penumbra/core';
-import { createBoundsCallbacks } from '../../src/maestro/bounds-callbacks.js';
+} from "@penumbra/core";
+import { createBoundsCallbacks } from "../../src/maestro/bounds-callbacks.js";
 
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {}
 
 const MAESTRO_AGENT: AgentDescriptor = {
-  name: 'claude-acp-sonnet',
+  name: "claude-acp-sonnet",
   maestro_capable: true,
-  tags: ['typescript'],
-  tier: 'premium',
+  tags: ["typescript"],
+  tier: "premium",
 };
 
 function setupDb(): Database {
-  const db = new Database(':memory:');
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   return db;
@@ -60,19 +60,22 @@ function createTaskHarness(nowMs = 1_000): {
 
 function fileOrchestrateTask(taskWriter: TaskWriter): string {
   return taskWriter.file({
-    prompt: 'coordinate this task',
-    kind: 'orchestrate',
+    prompt: "coordinate this task",
+    kind: "orchestrate",
     eligibility: { allow_agents: [MAESTRO_AGENT.name] },
-    created_by_kind: 'human',
-    created_by_id: 'cli',
+    created_by_kind: "human",
+    created_by_id: "cli",
   }).task_id;
 }
 
-function seedSession(db: Database, input: {
-  task_id: string;
-  chain_handoff_id: string;
-  started_at: number;
-}): void {
+function seedSession(
+  db: Database,
+  input: {
+    task_id: string;
+    chain_handoff_id: string;
+    started_at: number;
+  },
+): void {
   db.query<unknown, [string, string, string, number, number, number, number, number, number]>(
     `INSERT INTO maestro_sessions (
       task_id, chain_handoff_id, agent_id, started_at,
@@ -96,27 +99,29 @@ afterEach(() => {
   mock.restore();
 });
 
-test('pressure soft warn injects a warning and records an orchestrate_warning event', async () => {
+test("pressure soft warn injects a warning and records an orchestrate_warning event", async () => {
   const harness = createTaskHarness(1_000);
   try {
     const taskId = fileOrchestrateTask(harness.taskWriter);
     seedSession(harness.db, {
       task_id: taskId,
-      chain_handoff_id: 'h-pressure-1',
+      chain_handoff_id: "h-pressure-1",
       started_at: 0,
     });
 
-    const inject = mock(async (_chainHandoffId: string, _msg: { role: 'user'; text: string }) => {});
+    const inject = mock(
+      async (_chainHandoffId: string, _msg: { role: "user"; text: string }) => {},
+    );
     const chainCancel = mock(async (_chainHandoffId: string) => {});
     const outcome: CapCheckWarn = {
-      state: 'warn',
-      provider: 'anthropic',
-      window_label: 'seven_day',
+      state: "warn",
+      provider: "anthropic",
+      window_label: "seven_day",
       used_pct: 73,
       warn_pct: 70,
       refuse_pct: 95,
       snapshot_age_seconds: 120,
-      snapshot_state: 'fresh',
+      snapshot_state: "fresh",
     };
 
     const callbacks = createBoundsCallbacks({
@@ -135,21 +140,22 @@ test('pressure soft warn injects a warning and records an orchestrate_warning ev
     await Bun.sleep(0);
 
     expect(inject).toHaveBeenCalledTimes(1);
-    expect(inject.mock.calls[0]?.[0]).toBe('h-pressure-1');
-    const message = inject.mock.calls[0]?.[1] as { role: 'user'; text: string } | undefined;
-    expect(message?.role).toBe('user');
-    expect(message?.text).toContain('Subscription pressure on anthropic');
-    expect(message?.text).toContain('73%');
-    expect(message?.text).toContain('warn threshold 70%');
-    expect(message?.text).toContain('refuse threshold 95%');
+    expect(inject.mock.calls[0]?.[0]).toBe("h-pressure-1");
+    const message = inject.mock.calls[0]?.[1] as { role: "user"; text: string } | undefined;
+    expect(message?.role).toBe("user");
+    expect(message?.text).toContain("Subscription pressure on anthropic");
+    expect(message?.text).toContain("73%");
+    expect(message?.text).toContain("warn threshold 70%");
+    expect(message?.text).toContain("refuse threshold 95%");
 
     const row = harness.db
-      .query<{ payload_json: string | null }, [string]>(
-        `SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_warning' ORDER BY id DESC LIMIT 1`,
-      )
+      .query<
+        { payload_json: string | null },
+        [string]
+      >(`SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_warning' ORDER BY id DESC LIMIT 1`)
       .get(taskId);
     expect(row).toBeTruthy();
-    const payload = JSON.parse(row?.payload_json ?? '{}') as {
+    const payload = JSON.parse(row?.payload_json ?? "{}") as {
       axis?: string;
       provider?: string;
       window_label?: string;
@@ -159,44 +165,44 @@ test('pressure soft warn injects a warning and records an orchestrate_warning ev
       soft_warned_at?: number;
     };
     expect(payload).toMatchObject({
-      axis: 'subscription_pressure',
-      provider: 'anthropic',
-      window_label: 'seven_day',
+      axis: "subscription_pressure",
+      provider: "anthropic",
+      window_label: "seven_day",
       used_pct: 73,
       warn_pct: 70,
       refuse_pct: 95,
       soft_warned_at: 8_500,
     });
     expect(chainCancel).toHaveBeenCalledTimes(0);
-    expect(harness.taskWriter.get(taskId).status).toBe('pending');
+    expect(harness.taskWriter.get(taskId).status).toBe("pending");
   } finally {
     harness.db.close();
   }
 });
 
-test('pressure soft warn swallows injector errors and logs them', async () => {
+test("pressure soft warn swallows injector errors and logs them", async () => {
   const harness = createTaskHarness(1_000);
   try {
     const taskId = fileOrchestrateTask(harness.taskWriter);
     seedSession(harness.db, {
       task_id: taskId,
-      chain_handoff_id: 'h-pressure-2',
+      chain_handoff_id: "h-pressure-2",
       started_at: 0,
     });
 
-    const errorSpy = spyOn(console, 'error').mockImplementation(() => undefined);
+    const errorSpy = spyOn(console, "error").mockImplementation(() => undefined);
     const inject = mock(async () => {
-      throw new Error('inject failed');
+      throw new Error("inject failed");
     });
     const outcome: CapCheckWarn = {
-      state: 'warn',
-      provider: 'anthropic',
-      window_label: 'seven_day',
+      state: "warn",
+      provider: "anthropic",
+      window_label: "seven_day",
       used_pct: 73,
       warn_pct: 70,
       refuse_pct: 95,
       snapshot_age_seconds: 120,
-      snapshot_state: 'fresh',
+      snapshot_state: "fresh",
     };
 
     const callbacks = createBoundsCallbacks({
@@ -216,7 +222,9 @@ test('pressure soft warn swallows injector errors and logs them', async () => {
     await Bun.sleep(0);
 
     expect(errorSpy).toHaveBeenCalledTimes(1);
-    expect(String(errorSpy.mock.calls[0]?.[0])).toContain('[bounds-callbacks] pressure soft warning failed');
+    expect(String(errorSpy.mock.calls[0]?.[0])).toContain(
+      "[bounds-callbacks] pressure soft warning failed",
+    );
   } finally {
     harness.db.close();
   }

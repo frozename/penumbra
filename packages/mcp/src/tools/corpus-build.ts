@@ -1,9 +1,13 @@
-import { z } from 'zod';
-import { toTextContent } from '@nova/mcp-shared';
-import type { DaemonClient } from '../daemon-client.js';
+import { z } from "zod";
+import { toTextContent } from "@nova/mcp-shared";
+import type { DaemonClient } from "../daemon-client.js";
 
 export const CorpusBuildInputShape = {
-  name: z.string().min(1).max(64).describe('Unique corpus name; rebuilding by name replaces members.'),
+  name: z
+    .string()
+    .min(1)
+    .max(64)
+    .describe("Unique corpus name; rebuilding by name replaces members."),
   description: z.string().max(280).optional(),
   filter: z.object({
     project_id: z.string().nullable().optional(),

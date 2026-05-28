@@ -1,9 +1,9 @@
-import type { AgentChatConfig } from '../config/types.js';
-import type { ChatTurnInput, ChatTurnResult } from './loop.js';
-import { runChatTurn as realRunChatTurn } from './loop.js';
-import { buildNextPrompt } from './transcript.js';
-import { isAutoApproved } from './trust.js';
-import type { WriteToolsExecutor } from '../worker/write-tools-executor.js';
+import type { AgentChatConfig } from "../config/types.js";
+import type { ChatTurnInput, ChatTurnResult } from "./loop.js";
+import { runChatTurn as realRunChatTurn } from "./loop.js";
+import { buildNextPrompt } from "./transcript.js";
+import { isAutoApproved } from "./trust.js";
+import type { WriteToolsExecutor } from "../worker/write-tools-executor.js";
 
 export interface DispatchHandoffOpts {
   handoff: {
@@ -24,17 +24,26 @@ export interface DispatchHandoffOpts {
   transcriptBudget: number;
   hopsSoFar: number;
   maxHops: number;
-  trustMode: 'all' | 'config';
+  trustMode: "all" | "config";
   projectContext?: string;
   executor?: WriteToolsExecutor;
   observe: (event: any) => Promise<{ event_id: string }>;
-  createHandoff: (body: any) => Promise<{ handoff_id: string; status: string; routed_agent?: string; routed_role?: string; routing_task_type?: string }>;
+  createHandoff: (body: any) => Promise<{
+    handoff_id: string;
+    status: string;
+    routed_agent?: string;
+    routed_role?: string;
+    routing_task_type?: string;
+  }>;
   approve: (id: string, body: any) => Promise<{ handoff_id: string; status: string }>;
-  markFailed?: (handoff_id: string, reason: string) => Promise<{ handoff_id: string; status: string }>;
+  markFailed?: (
+    handoff_id: string,
+    reason: string,
+  ) => Promise<{ handoff_id: string; status: string }>;
   runChatTurn?: (input: ChatTurnInput) => Promise<ChatTurnResult>;
-  requestPermission?: ChatTurnInput['requestPermission'];
-  eventContext?: ChatTurnInput['eventContext'];
-  onEvent?: ChatTurnInput['onEvent'];
+  requestPermission?: ChatTurnInput["requestPermission"];
+  eventContext?: ChatTurnInput["eventContext"];
+  onEvent?: ChatTurnInput["onEvent"];
   onChunk?: (delta: string) => void;
   /** optional: override retry sleep (tests). */
   delay?: (ms: number) => Promise<void>;
@@ -43,9 +52,15 @@ export interface DispatchHandoffOpts {
 
 export interface DispatchHandoffResult {
   /** The newly-created next handoff (created+approved) when the chain continues. Null on terminal cases. */
-  next: { handoff_id: string; from: string; to: string; message: string; response_event_id: string } | null;
+  next: {
+    handoff_id: string;
+    from: string;
+    to: string;
+    message: string;
+    response_event_id: string;
+  } | null;
   /** Set when this hop was the last (no_mention | untrusted | max_hops | error). Absent if next is non-null. */
-  terminatedReason?: 'no_mention' | 'untrusted' | 'max_hops' | 'error';
+  terminatedReason?: "no_mention" | "untrusted" | "max_hops" | "error";
   /** The handoff id that was created but not approved (untrusted | max_hops), or the handoff id that failed (error). */
   cappedHandoffId?: string;
   /** Final accumulated reply text from this hop (for transcript building by the caller). */
@@ -61,8 +76,8 @@ async function defaultDelay(ms: number): Promise<void> {
 function extractTurnErrorMessage(turn: ChatTurnResult): string | null {
   const err: any = (turn as any).error;
   if (!err) return null;
-  if (typeof err === 'string') return err;
-  if (typeof err === 'object' && typeof err.message === 'string') return err.message;
+  if (typeof err === "string") return err;
+  if (typeof err === "object" && typeof err.message === "string") return err.message;
   return String(err);
 }
 
@@ -70,7 +85,7 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
   const turnRunner = opts.runChatTurn ?? realRunChatTurn;
   const targetAgent = opts.handoff.to_agent;
 
-  const isChainStart = opts.handoff.from_agent === 'user';
+  const isChainStart = opts.handoff.from_agent === "user";
   const promptText = isChainStart
     ? undefined
     : buildNextPrompt(opts.transcript, opts.handoff.from_agent, opts.handoff.message, {
@@ -113,38 +128,40 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
     // row and a markFailed hook, treat this as a terminal hop rather than a crash.
     if (attempt === RETRY_BACKOFF_MS.length) {
       if (opts.markFailed && opts.handoff.handoff_id) {
-        const reason = lastErrMsg ?? 'adapter dispatch failed';
+        const reason = lastErrMsg ?? "adapter dispatch failed";
         try {
           await opts.markFailed(opts.handoff.handoff_id, reason);
           return {
             next: null,
-            terminatedReason: 'error',
+            terminatedReason: "error",
             cappedHandoffId: opts.handoff.handoff_id,
-            text: '',
+            text: "",
             agent: targetAgent,
           };
         } catch {
           // Fall through: surface the error if we couldn't mark the row failed.
         }
       }
-      throw new Error(lastErrMsg ?? 'adapter dispatch failed');
+      throw new Error(lastErrMsg ?? "adapter dispatch failed");
     }
 
     await delay(RETRY_BACKOFF_MS[attempt]!);
   }
 
   // Should be impossible: loop always assigns `turn` before breaking.
-  if (!turn) throw new Error(lastErrMsg ?? 'adapter dispatch failed');
+  if (!turn) throw new Error(lastErrMsg ?? "adapter dispatch failed");
   if (!turn.next_mention) {
-    return { next: null, terminatedReason: 'no_mention', text: turn.text, agent: targetAgent };
+    return { next: null, terminatedReason: "no_mention", text: turn.text, agent: targetAgent };
   }
 
-  const nextTo = turn.next_mention.resolution.kind === 'unknown'
-    ? turn.next_mention.target
-    : (turn.next_mention.resolution as any).agent_name;
-  const nextRole = turn.next_mention.resolution.kind === 'role'
-    ? (turn.next_mention.resolution as any).role
-    : null;
+  const nextTo =
+    turn.next_mention.resolution.kind === "unknown"
+      ? turn.next_mention.target
+      : (turn.next_mention.resolution as any).agent_name;
+  const nextRole =
+    turn.next_mention.resolution.kind === "role"
+      ? (turn.next_mention.resolution as any).role
+      : null;
 
   const created = await opts.createHandoff({
     from: targetAgent,
@@ -162,25 +179,35 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
   // hop cap is checked against hopsSoFar+1 (this hop completed; the next would be hopsSoFar+1)
   if (opts.hopsSoFar + 1 >= opts.maxHops) {
     return {
-      next: null, terminatedReason: 'max_hops', cappedHandoffId: created.handoff_id,
-      text: turn.text, agent: targetAgent,
+      next: null,
+      terminatedReason: "max_hops",
+      cappedHandoffId: created.handoff_id,
+      text: turn.text,
+      agent: targetAgent,
     };
   }
 
-  if (opts.trustMode === 'config' && !isAutoApproved(opts.config, targetAgent, routedNextTo)) {
+  if (opts.trustMode === "config" && !isAutoApproved(opts.config, targetAgent, routedNextTo)) {
     return {
-      next: null, terminatedReason: 'untrusted', cappedHandoffId: created.handoff_id,
-      text: turn.text, agent: targetAgent,
+      next: null,
+      terminatedReason: "untrusted",
+      cappedHandoffId: created.handoff_id,
+      text: turn.text,
+      agent: targetAgent,
     };
   }
 
-  await opts.approve(created.handoff_id, { resolved_by: 'auto' });
+  await opts.approve(created.handoff_id, { resolved_by: "auto" });
 
   return {
     next: {
-      handoff_id: created.handoff_id, from: targetAgent, to: routedNextTo,
-      message: turn.text, response_event_id: turn.response_event_id,
+      handoff_id: created.handoff_id,
+      from: targetAgent,
+      to: routedNextTo,
+      message: turn.text,
+      response_event_id: turn.response_event_id,
     },
-    text: turn.text, agent: targetAgent,
+    text: turn.text,
+    agent: targetAgent,
   };
 }

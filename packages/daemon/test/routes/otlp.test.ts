@@ -1,79 +1,96 @@
-import { describe, it, expect, afterEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
-import { TestEmbedder } from '@penumbra/core/testing';
-import { ProtoWriter } from '../../../core/test/otlp/encoder.js';
-import { otlpLogsRoute, otlpMetricsRoute, otlpTracesRoute } from '../../src/routes/otlp.js';
+import { describe, it, expect, afterEach } from "bun:test";
+import { Database } from "bun:sqlite";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
+import { ProtoWriter } from "../../../core/test/otlp/encoder.js";
+import { otlpLogsRoute, otlpMetricsRoute, otlpTracesRoute } from "../../src/routes/otlp.js";
 
-const FIXTURE_PATH = join(import.meta.dir, '..', '..', '..', 'core', 'test', 'otlp', 'fixtures', 'gemini-logs.json');
+const FIXTURE_PATH = join(
+  import.meta.dir,
+  "..",
+  "..",
+  "..",
+  "core",
+  "test",
+  "otlp",
+  "fixtures",
+  "gemini-logs.json",
+);
 
 let dbs: Database[] = [];
 
 function makeServices(): Services {
-  const db = new Database(':memory:');
+  const db = new Database(":memory:");
   dbs.push(db);
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   let n = 0;
   return buildServices({
-    env: {}, input: {}, storageRoot: '/tmp/otlp-test',
+    env: {},
+    input: {},
+    storageRoot: "/tmp/otlp-test",
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date('2026-04-29T12:00:00Z'),
-    uuid: () => `00000000-0000-4000-8000-${String(++n).padStart(12, '0')}`,
+    clock: () => new Date("2026-04-29T12:00:00Z"),
+    uuid: () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`,
   });
 }
 
-afterEach(() => { for (const d of dbs) d.close(); dbs = []; });
+afterEach(() => {
+  for (const d of dbs) d.close();
+  dbs = [];
+});
 
-describe('otlpLogsRoute', () => {
-  it('parses, normalizes, and ingests usage-update events from a gemini envelope', async () => {
+describe("otlpLogsRoute", () => {
+  it("parses, normalizes, and ingests usage-update events from a gemini envelope", async () => {
     const services = makeServices();
-    const body = readFileSync(FIXTURE_PATH, 'utf8');
-    const req = new Request('http://localhost/v1/logs', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
+    const body = readFileSync(FIXTURE_PATH, "utf8");
+    const req = new Request("http://localhost/v1/logs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
       body,
     });
     const res = await otlpLogsRoute(req, services);
     expect(res.status).toBe(200);
-    const rows = services.db.prepare(`SELECT provider, model, event_type FROM t0_events WHERE event_type='usage-update'`).all() as Array<{ provider: string; model: string; event_type: string }>;
+    const rows = services.db
+      .prepare(`SELECT provider, model, event_type FROM t0_events WHERE event_type='usage-update'`)
+      .all() as Array<{ provider: string; model: string; event_type: string }>;
     expect(rows.length).toBeGreaterThanOrEqual(1);
-    expect(rows[0]!.provider).toBe('google');
-    expect(rows[0]!.model).toBe('gemini-3-flash-preview');
+    expect(rows[0]!.provider).toBe("google");
+    expect(rows[0]!.model).toBe("gemini-3-flash-preview");
   });
 
-  it('returns 415 on truly unsupported content-type', async () => {
+  it("returns 415 on truly unsupported content-type", async () => {
     const services = makeServices();
-    const req = new Request('http://localhost/v1/logs', {
-      method: 'POST',
-      headers: { 'content-type': 'text/plain' },
-      body: 'plain',
+    const req = new Request("http://localhost/v1/logs", {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "plain",
     });
     const res = await otlpLogsRoute(req, services);
     expect(res.status).toBe(415);
   });
 
-  it('returns 400 on malformed JSON', async () => {
+  it("returns 400 on malformed JSON", async () => {
     const services = makeServices();
-    const req = new Request('http://localhost/v1/logs', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: '{not json',
+    const req = new Request("http://localhost/v1/logs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{not json",
     });
     const res = await otlpLogsRoute(req, services);
     expect(res.status).toBe(400);
   });
 });
 
-describe('otlpMetricsRoute', () => {
-  it('returns 200 and discards (no rows ingested)', async () => {
+describe("otlpMetricsRoute", () => {
+  it("returns 200 and discards (no rows ingested)", async () => {
     const services = makeServices();
-    const req = new Request('http://localhost/v1/metrics', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
+    const req = new Request("http://localhost/v1/metrics", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
       body: '{"resourceMetrics":[]}',
     });
     const res = await otlpMetricsRoute(req, services);
@@ -83,12 +100,12 @@ describe('otlpMetricsRoute', () => {
   });
 });
 
-describe('otlpTracesRoute', () => {
-  it('returns 200 and discards', async () => {
+describe("otlpTracesRoute", () => {
+  it("returns 200 and discards", async () => {
     const services = makeServices();
-    const req = new Request('http://localhost/v1/traces', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
+    const req = new Request("http://localhost/v1/traces", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
       body: '{"resourceSpans":[]}',
     });
     const res = await otlpTracesRoute(req, services);
@@ -105,22 +122,24 @@ function kv(key: string, valueEncoder: (w: ProtoWriter) => void): Uint8Array {
   return i.bytes();
 }
 
-describe('otlpLogsRoute protobuf', () => {
-  it('accepts application/x-protobuf and ingests usage events', async () => {
+describe("otlpLogsRoute protobuf", () => {
+  it("accepts application/x-protobuf and ingests usage events", async () => {
     const services = makeServices();
 
-    const resourceAttr = kv('service.name', (w) => w.writeString(1, 'gemini-cli'));
-    const eventNameAttr = kv('event.name', (w) => w.writeString(1, 'gen_ai.client.inference.operation.details'));
-    const providerAttr = kv('gen_ai.provider.name', (w) => w.writeString(1, 'gcp.vertex_ai'));
-    const modelAttr = kv('gen_ai.request.model', (w) => w.writeString(1, 'gemini-3-flash-preview'));
-    const inAttr = kv('gen_ai.usage.input_tokens', (w) => w.writeVarintField(3, 100));
-    const outAttr = kv('gen_ai.usage.output_tokens', (w) => w.writeVarintField(3, 5));
+    const resourceAttr = kv("service.name", (w) => w.writeString(1, "gemini-cli"));
+    const eventNameAttr = kv("event.name", (w) =>
+      w.writeString(1, "gen_ai.client.inference.operation.details"),
+    );
+    const providerAttr = kv("gen_ai.provider.name", (w) => w.writeString(1, "gcp.vertex_ai"));
+    const modelAttr = kv("gen_ai.request.model", (w) => w.writeString(1, "gemini-3-flash-preview"));
+    const inAttr = kv("gen_ai.usage.input_tokens", (w) => w.writeVarintField(3, 100));
+    const outAttr = kv("gen_ai.usage.output_tokens", (w) => w.writeVarintField(3, 5));
 
     const resource = new ProtoWriter();
     resource.writeNested(1, resourceAttr);
 
     const scope = new ProtoWriter();
-    scope.writeString(1, 'gemini-cli');
+    scope.writeString(1, "gemini-cli");
 
     const logRecord = new ProtoWriter();
     logRecord.writeFixed64(1, 1777466989089000000n);
@@ -141,16 +160,18 @@ describe('otlpLogsRoute protobuf', () => {
     const envelope = new ProtoWriter();
     envelope.writeNested(1, resourceLogs.bytes());
 
-    const req = new Request('http://localhost/v1/logs', {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-protobuf' },
+    const req = new Request("http://localhost/v1/logs", {
+      method: "POST",
+      headers: { "content-type": "application/x-protobuf" },
       body: envelope.bytes(),
     });
     const res = await otlpLogsRoute(req, services);
     expect(res.status).toBe(200);
-    const rows = services.db.prepare(`SELECT provider, model FROM t0_events WHERE event_type='usage-update'`).all() as Array<{ provider: string; model: string }>;
+    const rows = services.db
+      .prepare(`SELECT provider, model FROM t0_events WHERE event_type='usage-update'`)
+      .all() as Array<{ provider: string; model: string }>;
     expect(rows.length).toBeGreaterThanOrEqual(1);
-    expect(rows[0]!.provider).toBe('google');
-    expect(rows[0]!.model).toBe('gemini-3-flash-preview');
+    expect(rows[0]!.provider).toBe("google");
+    expect(rows[0]!.model).toBe("gemini-3-flash-preview");
   });
 });

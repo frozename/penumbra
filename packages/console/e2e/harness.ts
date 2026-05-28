@@ -1,16 +1,12 @@
-import { randomBytes } from 'node:crypto';
-import {
-  createServer,
-  type IncomingMessage,
-  type ServerResponse,
-} from 'node:http';
+import { randomBytes } from "node:crypto";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
   PROTOTYPE_LIVE_CHAINS,
   PROTOTYPE_PENDING_HANDOFFS,
   PROTOTYPE_PRESSURE,
   PROTOTYPE_RECENT_CHAINS,
   PROTOTYPE_SESSION,
-} from './parity-fixture';
+} from "./parity-fixture";
 
 export interface PendingHandoffRow {
   handoff_id: string;
@@ -18,19 +14,13 @@ export interface PendingHandoffRow {
   to_agent: string;
   message: string;
   ts: string;
-  status: 'pending' | 'rejected';
+  status: "pending" | "rejected";
 }
 
 export interface ChainRow {
   conversation_id: string;
   project_id: string | null;
-  latest_status:
-    | 'dispatched'
-    | 'completed'
-    | 'failed'
-    | 'rejected'
-    | 'expired'
-    | 'pending';
+  latest_status: "dispatched" | "completed" | "failed" | "rejected" | "expired" | "pending";
   latest_ts: string;
   earliest_ts: string;
   handoff_count: number;
@@ -55,7 +45,7 @@ export interface E2EHarness {
   token: string;
   baseUrl: string;
   reset: () => void;
-  addPendingHandoff: (row: Omit<PendingHandoffRow, 'status'>) => void;
+  addPendingHandoff: (row: Omit<PendingHandoffRow, "status">) => void;
   seedPrototypeFixture: () => void;
   getCalls: () => Array<{ method: string; path: string; body?: unknown }>;
   stop: () => Promise<void>;
@@ -97,7 +87,7 @@ interface HarnessRow extends PendingHandoffRow {
   resolution_reason: string | null;
   triggered_by_event_id: string | null;
   chain_max_hops: number | null;
-  chain_trust_mode: 'all' | 'config' | null;
+  chain_trust_mode: "all" | "config" | null;
   chain_task_type: string | null;
   use_worktree: boolean | null;
   error_message: string | null;
@@ -129,16 +119,16 @@ interface HarnessState {
 }
 
 export async function startE2EHarness(): Promise<E2EHarness> {
-  const token = randomBytes(16).toString('hex');
+  const token = randomBytes(16).toString("hex");
   const state: HarnessState = {
     pending: [],
     chains: [],
     pressure: [],
     quotaStatus: { dispatched_count: 0, cap: 6, subscription: { synth_total: 0 } },
     session: {
-      id: 'no-session',
-      project: { id: '—', name: 'no project' },
-      started_at: '2026-05-09T00:00:00.000Z',
+      id: "no-session",
+      project: { id: "—", name: "no project" },
+      started_at: "2026-05-09T00:00:00.000Z",
       dispatched: 0,
       resolved: 0,
       failed: 0,
@@ -154,62 +144,62 @@ export async function startE2EHarness(): Promise<E2EHarness> {
     state.pending = [];
     state.chains = [];
     state.pressure = [];
-      state.quotaStatus = {
-        dispatched_count: 0,
-        cap: 6,
-        subscription: { synth_total: 0 },
-      };
-      state.session = {
-        id: 'no-session',
-        project: { id: '—', name: 'no project' },
-        started_at: '2026-05-09T00:00:00.000Z',
-        dispatched: 0,
-        resolved: 0,
-        failed: 0,
-        budget: { current: 0, max_concurrent: 0, soft_warn_pct: 0.8 },
-      };
-      state.calls = [];
-      state.errors.clear();
-    }
+    state.quotaStatus = {
+      dispatched_count: 0,
+      cap: 6,
+      subscription: { synth_total: 0 },
+    };
+    state.session = {
+      id: "no-session",
+      project: { id: "—", name: "no project" },
+      started_at: "2026-05-09T00:00:00.000Z",
+      dispatched: 0,
+      resolved: 0,
+      failed: 0,
+      budget: { current: 0, max_concurrent: 0, soft_warn_pct: 0.8 },
+    };
+    state.calls = [];
+    state.errors.clear();
+  }
 
   const server = createServer(async (request, response) => {
-    const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const simplePath = url.pathname;
     const path = `${simplePath}${url.search}`;
-    const method = (request.method ?? 'GET').toUpperCase();
+    const method = (request.method ?? "GET").toUpperCase();
 
     let reqBody: unknown;
-    if (method === 'POST' && request.headers['content-type']?.includes('json')) {
+    if (method === "POST" && request.headers["content-type"]?.includes("json")) {
       reqBody = await readJsonBody(request);
     }
 
     state.calls.push(
-      method === 'POST' && reqBody !== undefined
+      method === "POST" && reqBody !== undefined
         ? { method, path, body: reqBody }
         : { method, path },
     );
 
-    if (method === 'OPTIONS') {
+    if (method === "OPTIONS") {
       sendEmpty(response, 204);
       return;
     }
 
     const auth = request.headers.authorization;
     if (auth !== `Bearer ${token}`) {
-      sendJson(response, { error: 'unauthorized' }, 401);
+      sendJson(response, { error: "unauthorized" }, 401);
       return;
     }
 
-    if (method === 'GET' && simplePath === '/health') {
-      serveWithError(state, '/health', response, () => {
-        sendJson(response, { status: 'ok' });
+    if (method === "GET" && simplePath === "/health") {
+      serveWithError(state, "/health", response, () => {
+        sendJson(response, { status: "ok" });
       });
       return;
     }
 
-    if (method === 'GET' && simplePath === '/handoffs') {
-      const status = url.searchParams.get('status');
-      if (status !== 'pending') {
+    if (method === "GET" && simplePath === "/handoffs") {
+      const status = url.searchParams.get("status");
+      if (status !== "pending") {
         sendJson(response, { handoffs: [] });
         return;
       }
@@ -218,13 +208,13 @@ export async function startE2EHarness(): Promise<E2EHarness> {
     }
 
     if (
-      method === 'POST' &&
-      simplePath.startsWith('/handoffs/') &&
-      simplePath.endsWith('/approve')
+      method === "POST" &&
+      simplePath.startsWith("/handoffs/") &&
+      simplePath.endsWith("/approve")
     ) {
       const match = /^\/handoffs\/([^/]+)\/approve$/.exec(simplePath);
       if (!match) {
-        sendJson(response, { error: 'not_found' }, 404);
+        sendJson(response, { error: "not_found" }, 404);
         return;
       }
 
@@ -234,9 +224,8 @@ export async function startE2EHarness(): Promise<E2EHarness> {
         if (body?.reject === true) {
           const resolvedRow = state.pending.find((r) => r.handoff_id === handoffId);
           if (resolvedRow) {
-            resolvedRow.status = 'rejected';
-            resolvedRow.resolution_reason =
-              typeof body.reason === 'string' ? body.reason : null;
+            resolvedRow.status = "rejected";
+            resolvedRow.resolution_reason = typeof body.reason === "string" ? body.reason : null;
             resolvedRow.resolved_at = new Date().toISOString();
           }
         }
@@ -244,44 +233,44 @@ export async function startE2EHarness(): Promise<E2EHarness> {
         state.pending = state.pending.filter((row) => row.handoff_id !== handoffId);
         sendJson(response, {
           handoff_id: handoffId,
-          status: body?.reject === true ? 'rejected' : 'approved',
+          status: body?.reject === true ? "rejected" : "approved",
         });
       });
       return;
     }
 
-    if (method === 'GET' && simplePath === '/usage/quota_status') {
+    if (method === "GET" && simplePath === "/usage/quota_status") {
       sendJson(response, state.quotaStatus);
       return;
     }
 
-    if (method === 'GET' && simplePath === '/usage/subscription_pressure') {
+    if (method === "GET" && simplePath === "/usage/subscription_pressure") {
       sendJson(response, { windows: state.pressure });
       return;
     }
 
-    if (method === 'GET' && simplePath === '/session/current') {
+    if (method === "GET" && simplePath === "/session/current") {
       sendJson(response, state.session);
       return;
     }
 
-    if (method === 'GET' && simplePath === '/chains') {
-      const status = url.searchParams.get('status');
-      const limitRaw = url.searchParams.get('limit');
+    if (method === "GET" && simplePath === "/chains") {
+      const status = url.searchParams.get("status");
+      const limitRaw = url.searchParams.get("limit");
       const limit = limitRaw ? parseInt(limitRaw, 10) : undefined;
-      const offsetRaw = url.searchParams.get('offset');
+      const offsetRaw = url.searchParams.get("offset");
       const offset = offsetRaw ? parseInt(offsetRaw, 10) : 0;
 
       let filtered = state.chains;
       if (status) {
-        if (status === 'dispatched') {
-          filtered = filtered.filter((c) => c.latest_status === 'dispatched');
-        } else if (status === 'completed') {
+        if (status === "dispatched") {
+          filtered = filtered.filter((c) => c.latest_status === "dispatched");
+        } else if (status === "completed") {
           filtered = filtered.filter(
             (c) =>
-              c.latest_status === 'completed' ||
-              c.latest_status === 'failed' ||
-              c.latest_status === 'rejected',
+              c.latest_status === "completed" ||
+              c.latest_status === "failed" ||
+              c.latest_status === "rejected",
           );
         }
       }
@@ -298,43 +287,43 @@ export async function startE2EHarness(): Promise<E2EHarness> {
       return;
     }
 
-    if (method === 'GET' && simplePath === '/dispatch-events/stream') {
+    if (method === "GET" && simplePath === "/dispatch-events/stream") {
       response.writeHead(200, {
-        'content-type': 'text/event-stream',
-        'cache-control': 'no-cache',
-        connection: 'keep-alive',
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
         ...corsHeaders(),
       });
-      response.write(': keepalive\n\n');
+      response.write(": keepalive\n\n");
       sseClients.add(response);
-      request.on('close', () => {
+      request.on("close", () => {
         sseClients.delete(response);
       });
       return;
     }
 
-    sendJson(response, { error: 'not_found' }, 404);
+    sendJson(response, { error: "not_found" }, 404);
   });
 
   await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen({ port: 0, hostname: '127.0.0.1' }, () => {
-      server.off('error', reject);
+    server.once("error", reject);
+    server.listen({ port: 0, hostname: "127.0.0.1" }, () => {
+      server.off("error", reject);
       resolve();
     });
   });
 
   const address = server.address();
-  if (!address || typeof address === 'string') {
-    throw new Error('failed to resolve e2e harness address');
+  if (!address || typeof address === "string") {
+    throw new Error("failed to resolve e2e harness address");
   }
 
-  function toHarnessRow(row: Omit<PendingHandoffRow, 'status'>): HarnessRow {
+  function toHarnessRow(row: Omit<PendingHandoffRow, "status">): HarnessRow {
     return {
       ...row,
-      status: 'pending',
+      status: "pending",
       project_id: null,
-      conversation_id: 'e2e-conversation',
+      conversation_id: "e2e-conversation",
       to_role: null,
       resolved_by: null,
       resolved_at: null,
@@ -379,7 +368,7 @@ export async function startE2EHarness(): Promise<E2EHarness> {
         state.chains.push({
           conversation_id: chain.conversation_id,
           project_id: null,
-          latest_status: 'dispatched',
+          latest_status: "dispatched",
           latest_ts: chain.started_at,
           earliest_ts: chain.started_at,
           handoff_count: chain.hops,
@@ -417,7 +406,7 @@ export async function startE2EHarness(): Promise<E2EHarness> {
       };
       state.session = {
         id: PROTOTYPE_SESSION.id,
-        project: { id: 'prototype', name: 'prototype mission' },
+        project: { id: "prototype", name: "prototype mission" },
         started_at: PROTOTYPE_SESSION.started_at,
         dispatched: PROTOTYPE_SESSION.dispatched,
         resolved: PROTOTYPE_SESSION.resolved,
@@ -505,7 +494,7 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   for await (const chunk of request) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
-  const raw = Buffer.concat(chunks).toString('utf8').trim();
+  const raw = Buffer.concat(chunks).toString("utf8").trim();
   if (!raw) return undefined;
   try {
     return JSON.parse(raw);
@@ -523,7 +512,7 @@ function serveWithError(
   const status = state.errors.get(fullPath);
   if (status !== undefined) {
     state.errors.delete(fullPath);
-    sendJson(response, { error: 'injected error' }, status);
+    sendJson(response, { error: "injected error" }, status);
     return;
   }
   handler();
@@ -534,29 +523,22 @@ function corsHeaders(): Record<string, string> {
   // origin must be echoed exactly and credentials must be allowed; '*' would
   // make the browser drop the response after preflight.
   return {
-    'access-control-allow-origin': 'http://127.0.0.1:5176',
-    'access-control-allow-credentials': 'true',
-    'access-control-allow-headers': 'Authorization, Content-Type',
-    'access-control-allow-methods': 'GET, POST, OPTIONS',
-    vary: 'Origin',
+    "access-control-allow-origin": "http://127.0.0.1:5176",
+    "access-control-allow-credentials": "true",
+    "access-control-allow-headers": "Authorization, Content-Type",
+    "access-control-allow-methods": "GET, POST, OPTIONS",
+    vary: "Origin",
   };
 }
 
-function sendEmpty(
-  response: ServerResponse<IncomingMessage>,
-  status: number,
-): void {
+function sendEmpty(response: ServerResponse<IncomingMessage>, status: number): void {
   response.writeHead(status, corsHeaders());
   response.end();
 }
 
-function sendJson(
-  response: ServerResponse<IncomingMessage>,
-  body: unknown,
-  status = 200,
-): void {
+function sendJson(response: ServerResponse<IncomingMessage>, body: unknown, status = 200): void {
   response.writeHead(status, {
-    'content-type': 'application/json',
+    "content-type": "application/json",
     ...corsHeaders(),
   });
   response.end(JSON.stringify(body));

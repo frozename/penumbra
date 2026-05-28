@@ -1,14 +1,14 @@
-import { Database } from 'bun:sqlite';
-import { join } from 'node:path';
-import { HandoffReader, WorktreeManager, loadSqliteVec } from '@penumbra/core';
+import { Database } from "bun:sqlite";
+import { join } from "node:path";
+import { HandoffReader, WorktreeManager, loadSqliteVec } from "@penumbra/core";
 
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {}
 
-const TERMINAL_STATUSES = new Set(['completed', 'failed', 'rejected', 'expired']);
+const TERMINAL_STATUSES = new Set(["completed", "failed", "rejected", "expired"]);
 const DEFAULT_GRACE_MS = 2 * 60 * 60_000;
 
 export interface WorktreeGcOpts {
@@ -16,7 +16,7 @@ export interface WorktreeGcOpts {
   apply: boolean;
   gracePeriodMs?: number;
   /** Injectable for testing; defaults to new WorktreeManager(). */
-  worktreeManager?: Pick<WorktreeManager, 'listWorktrees' | 'teardownWorktree'>;
+  worktreeManager?: Pick<WorktreeManager, "listWorktrees" | "teardownWorktree">;
 }
 
 export interface WorktreeGcCandidate {
@@ -40,14 +40,14 @@ export async function runWorktreeGc(opts: WorktreeGcOpts): Promise<WorktreeGcRes
   const gracePeriodMs = opts.gracePeriodMs ?? DEFAULT_GRACE_MS;
   const nowMs = Date.now();
 
-  const dbPath = join(storageRoot, 'db.sqlite');
+  const dbPath = join(storageRoot, "db.sqlite");
   const db = new Database(dbPath, { readonly: true });
   loadSqliteVec(db);
 
   const handoffReader = new HandoffReader({ db });
 
   // Hard refusal: any in-flight dispatches
-  const pending = handoffReader.listByStatus({ statuses: ['dispatched', 'pending', 'approved'] });
+  const pending = handoffReader.listByStatus({ statuses: ["dispatched", "pending", "approved"] });
   if (pending.length > 0) {
     db.close();
     throw new PendingHandoffsError(pending.map((h) => h.handoff_id));
@@ -63,9 +63,7 @@ export async function runWorktreeGc(opts: WorktreeGcOpts): Promise<WorktreeGcRes
     if (!handoff) continue;
     if (!TERMINAL_STATUSES.has(handoff.status)) continue;
 
-    const resolvedAt = handoff.resolved_at
-      ? new Date(handoff.resolved_at).getTime()
-      : null;
+    const resolvedAt = handoff.resolved_at ? new Date(handoff.resolved_at).getTime() : null;
     if (resolvedAt === null || nowMs - resolvedAt < gracePeriodMs) continue;
 
     candidates.push({
@@ -88,13 +86,13 @@ export async function runWorktreeGc(opts: WorktreeGcOpts): Promise<WorktreeGcRes
 
   if (apply) {
     // Re-open writable for GC events
-    const writableDb = new Database(join(storageRoot, 'db.sqlite'));
+    const writableDb = new Database(join(storageRoot, "db.sqlite"));
     loadSqliteVec(writableDb);
     const gcManager = opts.worktreeManager ?? new WorktreeManager();
 
     for (const candidate of candidates) {
       try {
-        await gcManager.teardownWorktree(candidate.handoff_id, /*force=*/true);
+        await gcManager.teardownWorktree(candidate.handoff_id, /*force=*/ true);
         const ts = new Date().toISOString();
         writableDb
           .query<unknown, [string, string, string]>(
@@ -125,7 +123,9 @@ export async function runWorktreeGc(opts: WorktreeGcOpts): Promise<WorktreeGcRes
 
 export class PendingHandoffsError extends Error {
   constructor(public readonly handoff_ids: string[]) {
-    super(`in-flight handoffs detected, refusing GC; wait for them to land: ${handoff_ids.join(', ')}`);
-    this.name = 'PendingHandoffsError';
+    super(
+      `in-flight handoffs detected, refusing GC; wait for them to land: ${handoff_ids.join(", ")}`,
+    );
+    this.name = "PendingHandoffsError";
   }
 }

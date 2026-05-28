@@ -5,8 +5,8 @@ import {
   AcpEvent,
   AcpTool,
   AcpPermissionReply,
-  AcpPermissionResponse
-} from './acp-types.js';
+  AcpPermissionResponse,
+} from "./acp-types.js";
 
 export interface AcpClientOptions {
   baseUrl: string;
@@ -22,7 +22,7 @@ export class AcpClient {
   private readonly signal?: AbortSignal;
 
   constructor(opts: AcpClientOptions) {
-    this.baseUrl = opts.baseUrl.replace(/\/$/, '');
+    this.baseUrl = opts.baseUrl.replace(/\/$/, "");
     this.signal = opts.signal;
   }
 
@@ -30,22 +30,30 @@ export class AcpClient {
    * Opens a new ACP session.
    * @POST /session
    */
-  async openSession(req: AcpCreateSessionRequest = {}): Promise<{ sessionId: string; workspaceId?: string }> {
+  async openSession(
+    req: AcpCreateSessionRequest = {},
+  ): Promise<{ sessionId: string; workspaceId?: string }> {
     const res = await fetch(`${this.baseUrl}/session`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify(req),
       signal: this.signal,
     });
     if (!res.ok) {
-      const errorText = await res.text().catch(() => 'No error body');
+      const errorText = await res.text().catch(() => "No error body");
       throw new Error(`ACP openSession failed (HTTP ${res.status}): ${errorText}`);
     }
-    const data = (await res.json()) as { id?: string; sessionID?: string; session?: string; workspaceID?: string; workspace?: string };
+    const data = (await res.json()) as {
+      id?: string;
+      sessionID?: string;
+      session?: string;
+      workspaceID?: string;
+      workspace?: string;
+    };
     const sessionId = data.sessionID ?? data.id ?? data.session;
     const workspaceId = data.workspaceID ?? data.workspace;
     if (!sessionId) {
-      throw new Error('ACP openSession failed: missing session id in response');
+      throw new Error("ACP openSession failed: missing session id in response");
     }
     return { sessionId, workspaceId };
   }
@@ -56,7 +64,7 @@ export class AcpClient {
    */
   async closeSession(sessionId: string): Promise<void> {
     const res = await fetch(`${this.baseUrl}/session/${sessionId}`, {
-      method: 'DELETE',
+      method: "DELETE",
       signal: this.signal,
     });
     if (!res.ok && res.status !== 404) {
@@ -77,9 +85,9 @@ export class AcpClient {
       agent?: string;
       directory?: string;
       workspace?: string;
-    }
+    },
   ): AsyncIterable<AcpEvent> {
-    const directory = opts?.directory ?? '.';
+    const directory = opts?.directory ?? ".";
     // OpenCode's /event endpoint validates `workspace` as a wrk_* prefixed
     // workspace id; passing any other value (e.g. '.', a directory path) yields
     // HTTP 500 (Zod "must start with wrk"). POST /session does NOT return a
@@ -97,35 +105,35 @@ export class AcpClient {
     //    Build the wire shape here so callers keep the convenient string form.
     const modelOpt = opts?.model;
     let modelObj: { providerID?: string; modelID: string };
-    if (typeof modelOpt === 'object' && modelOpt !== null) {
+    if (typeof modelOpt === "object" && modelOpt !== null) {
       modelObj = modelOpt as { providerID?: string; modelID: string };
-    } else if (typeof modelOpt === 'string' && modelOpt.includes('/')) {
-      const slash = modelOpt.indexOf('/');
+    } else if (typeof modelOpt === "string" && modelOpt.includes("/")) {
+      const slash = modelOpt.indexOf("/");
       modelObj = { providerID: modelOpt.slice(0, slash), modelID: modelOpt.slice(slash + 1) };
     } else {
-      modelObj = { modelID: modelOpt ?? 'default' };
+      modelObj = { modelID: modelOpt ?? "default" };
     }
     const toolsRecord: Record<string, AcpTool> = {};
     for (const t of opts?.tools ?? []) toolsRecord[t.name] = t;
 
     const messageRequest = {
-      messageID: 'msg_' + crypto.randomUUID().replace(/-/g, ''),
+      messageID: "msg_" + crypto.randomUUID().replace(/-/g, ""),
       model: modelObj,
       // OpenCode rejects agent='default' with "Agent not found"; its built-in
       // agents are build/explorer/etc. 'build' is the standard starting agent.
-      agent: opts?.agent ?? 'build',
+      agent: opts?.agent ?? "build",
       tools: toolsRecord,
-      parts: [{ type: 'text', text: content }],
+      parts: [{ type: "text", text: content }],
     };
 
     const sendPromise = fetch(`${this.baseUrl}/session/${sessionId}/message`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify(messageRequest),
       signal: this.signal,
     }).then(async (res) => {
       if (!res.ok) {
-        const errorText = await res.text().catch(() => 'No error body');
+        const errorText = await res.text().catch(() => "No error body");
         throw new Error(`ACP sendMessage failed (HTTP ${res.status}): ${errorText}`);
       }
     });
@@ -139,9 +147,9 @@ export class AcpClient {
     for await (const event of eventStream) {
       if (sendError) throw sendError;
       yield event;
-      if (event.type === 'done') break;
+      if (event.type === "done") break;
     }
-    
+
     // Ensure the send actually finished if we didn't get a 'done' event but the stream closed
     await sendPromise;
   }
@@ -153,30 +161,34 @@ export class AcpClient {
    * `workspace` is optional and only included when it's a real wrk_* id.
    * OpenCode's server rejects any non-prefixed value with HTTP 500.
    */
-  private async *subscribeEvents(directory: string, workspace: string | undefined, sessionId: string): AsyncIterable<AcpEvent> {
+  private async *subscribeEvents(
+    directory: string,
+    workspace: string | undefined,
+    sessionId: string,
+  ): AsyncIterable<AcpEvent> {
     const url = new URL(`${this.baseUrl}/event`);
-    url.searchParams.set('directory', directory);
-    if (workspace) url.searchParams.set('workspace', workspace);
-    url.searchParams.set('sessionID', sessionId);
+    url.searchParams.set("directory", directory);
+    if (workspace) url.searchParams.set("workspace", workspace);
+    url.searchParams.set("sessionID", sessionId);
 
     const res = await fetch(url.toString(), {
       headers: {
-        'Accept': 'text/event-stream',
+        Accept: "text/event-stream",
       },
       signal: this.signal,
     });
-    
+
     if (!res.ok) {
-      const errorText = await res.text().catch(() => 'No error body');
+      const errorText = await res.text().catch(() => "No error body");
       throw new Error(`ACP subscribeEvents failed (HTTP ${res.status}): ${errorText}`);
     }
     if (!res.body) {
-      throw new Error('ACP subscribeEvents: response body is empty');
+      throw new Error("ACP subscribeEvents: response body is empty");
     }
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
-    let buffer = '';
+    let buffer = "";
 
     try {
       while (true) {
@@ -185,14 +197,14 @@ export class AcpClient {
 
         buffer += decoder.decode(value, { stream: true });
         let boundary: number;
-        while ((boundary = buffer.indexOf('\n\n')) !== -1) {
+        while ((boundary = buffer.indexOf("\n\n")) !== -1) {
           const chunk = buffer.slice(0, boundary);
           buffer = buffer.slice(boundary + 2);
 
-          for (const line of chunk.split('\n')) {
-            if (line.startsWith('data:')) {
+          for (const line of chunk.split("\n")) {
+            if (line.startsWith("data:")) {
               const data = line.slice(5).trim();
-              if (!data || data === '[DONE]') continue;
+              if (!data || data === "[DONE]") continue;
               try {
                 const event = JSON.parse(data) as AcpEvent;
                 yield event;
@@ -214,8 +226,8 @@ export class AcpClient {
    */
   async replyPermission(requestID: string, reply: AcpPermissionReply): Promise<void> {
     const res = await fetch(`${this.baseUrl}/permission/${requestID}/reply`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify(reply),
       signal: this.signal,
     });
@@ -226,10 +238,14 @@ export class AcpClient {
    * Respond to a specific session permission.
    * @POST /session/{sessionId}/permissions/{permissionID}
    */
-  async respondPermission(sessionId: string, permissionID: string, response: AcpPermissionResponse): Promise<void> {
+  async respondPermission(
+    sessionId: string,
+    permissionID: string,
+    response: AcpPermissionResponse,
+  ): Promise<void> {
     const res = await fetch(`${this.baseUrl}/session/${sessionId}/permissions/${permissionID}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify(response),
       signal: this.signal,
     });

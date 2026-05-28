@@ -1,10 +1,13 @@
-import type { Database } from 'bun:sqlite';
-import type { AgentDescriptor, ChainStartRequest, MaestroTerminationReason, TaskEventBus, TaskWriter } from '@penumbra/core';
-import {
-  MaestroSessionWriter,
-  routeAgent,
-} from '@penumbra/core';
-import { orchestrateOneTask } from '../maestro/orchestrate-one-task.js';
+import type { Database } from "bun:sqlite";
+import type {
+  AgentDescriptor,
+  ChainStartRequest,
+  MaestroTerminationReason,
+  TaskEventBus,
+  TaskWriter,
+} from "@penumbra/core";
+import { MaestroSessionWriter, routeAgent } from "@penumbra/core";
+import { orchestrateOneTask } from "../maestro/orchestrate-one-task.js";
 
 interface TaskKindRow {
   kind: string;
@@ -37,9 +40,18 @@ interface HandoffStatusRow {
   status: string;
 }
 
-export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { start(): void; stop(): void } {
+export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): {
+  start(): void;
+  stop(): void;
+} {
   const now = opts.now ?? Date.now;
-  let iterator: AsyncIterableIterator<{ task_id: string; at: number; kind: string; actor: string | null; payload: Record<string, unknown> | null }> | null = null;
+  let iterator: AsyncIterableIterator<{
+    task_id: string;
+    at: number;
+    kind: string;
+    actor: string | null;
+    payload: Record<string, unknown> | null;
+  }> | null = null;
   let running = false;
   let chainCompletionPoll: ReturnType<typeof setInterval> | null = null;
 
@@ -50,8 +62,9 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
   // when the underlying chain completed cleanly in seconds. Bounds-callbacks
   // only writes the terminated event on bounds exceed, not on chain success.
   function reconcileChainCompletions(): void {
-    const rows = opts.db.query<SpawnedRow, []>(
-      `SELECT te.task_id AS task_id, te.payload_json AS payload_json
+    const rows = opts.db
+      .query<SpawnedRow, []>(
+        `SELECT te.task_id AS task_id, te.payload_json AS payload_json
          FROM task_events te
         WHERE te.kind = 'orchestrate_spawned'
           AND NOT EXISTS (
@@ -59,7 +72,8 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
              WHERE te2.task_id = te.task_id
                AND te2.kind = 'orchestrate_terminated'
           )`,
-    ).all();
+      )
+      .all();
     for (const row of rows) {
       let chainHandoffId: string | null = null;
       try {
@@ -70,23 +84,34 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
       }
       if (!chainHandoffId) continue;
       const handoff = opts.db
-        .query<HandoffStatusRow | null, [string]>(
-          'SELECT status FROM handoffs WHERE handoff_id = ? LIMIT 1',
-        )
+        .query<
+          HandoffStatusRow | null,
+          [string]
+        >("SELECT status FROM handoffs WHERE handoff_id = ? LIMIT 1")
         .get(chainHandoffId);
       if (!handoff) continue;
-      if (handoff.status !== 'completed' && handoff.status !== 'failed' && handoff.status !== 'cancelled') {
+      if (
+        handoff.status !== "completed" &&
+        handoff.status !== "failed" &&
+        handoff.status !== "cancelled"
+      ) {
         continue;
       }
       const terminationReason: MaestroTerminationReason =
-        handoff.status === 'completed' ? 'completed'
-        : handoff.status === 'cancelled' ? 'cancelled'
-        : 'failed';
-      void recordTerminated(row.task_id, {
-        reason: handoff.status === 'completed' ? 'completed' : `chain_${handoff.status}`,
-        chain_handoff_id: chainHandoffId,
-        chain_status: handoff.status,
-      }, terminationReason);
+        handoff.status === "completed"
+          ? "completed"
+          : handoff.status === "cancelled"
+            ? "cancelled"
+            : "failed";
+      void recordTerminated(
+        row.task_id,
+        {
+          reason: handoff.status === "completed" ? "completed" : `chain_${handoff.status}`,
+          chain_handoff_id: chainHandoffId,
+          chain_status: handoff.status,
+        },
+        terminationReason,
+      );
     }
   }
 
@@ -101,35 +126,39 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
     // wall_clock budget eventually fires bounds_exceeded:wall_clock long after
     // the underlying chain reached its own terminal state.
     opts.sessions.terminate(taskId, terminationReason);
-    opts.db.query<unknown, [string, number, string, string]>(
-      `INSERT INTO task_events (task_id, at, kind, actor, payload_json, maestro_session_task_id)
+    opts.db
+      .query<unknown, [string, number, string, string]>(
+        `INSERT INTO task_events (task_id, at, kind, actor, payload_json, maestro_session_task_id)
        VALUES (?, ?, 'orchestrate_terminated', NULL, ?, ?)`,
-    ).run(taskId, ts, JSON.stringify(payload), taskId);
+      )
+      .run(taskId, ts, JSON.stringify(payload), taskId);
   }
 
   async function recordSpawned(taskId: string, payload: Record<string, unknown>): Promise<void> {
     const ts = now();
-    opts.db.query<unknown, [string, number, string, string]>(
-      `INSERT INTO task_events (task_id, at, kind, actor, payload_json, maestro_session_task_id)
+    opts.db
+      .query<unknown, [string, number, string, string]>(
+        `INSERT INTO task_events (task_id, at, kind, actor, payload_json, maestro_session_task_id)
        VALUES (?, ?, 'orchestrate_spawned', NULL, ?, ?)`,
-    ).run(taskId, ts, JSON.stringify(payload), taskId);
+      )
+      .run(taskId, ts, JSON.stringify(payload), taskId);
   }
 
   async function recordDeferred(taskId: string, payload: Record<string, unknown>): Promise<void> {
     const ts = now();
-    opts.db.query<unknown, [string, number, string, string]>(
-      `INSERT INTO task_events (task_id, at, kind, actor, payload_json, maestro_session_task_id)
+    opts.db
+      .query<unknown, [string, number, string, string]>(
+        `INSERT INTO task_events (task_id, at, kind, actor, payload_json, maestro_session_task_id)
        VALUES (?, ?, 'orchestrate_deferred', NULL, ?, ?)`,
-    ).run(taskId, ts, JSON.stringify(payload), taskId);
+      )
+      .run(taskId, ts, JSON.stringify(payload), taskId);
   }
 
   async function handleFiled(taskId: string): Promise<void> {
     const taskKind = opts.db
-      .query<TaskKindRow | null, [string]>(
-        'SELECT kind FROM tasks WHERE id = ? LIMIT 1',
-      )
+      .query<TaskKindRow | null, [string]>("SELECT kind FROM tasks WHERE id = ? LIMIT 1")
       .get(taskId);
-    if (!taskKind || taskKind.kind !== 'orchestrate') return;
+    if (!taskKind || taskKind.kind !== "orchestrate") return;
 
     const result = await orchestrateOneTask(taskId, {
       db: opts.db,
@@ -141,8 +170,8 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
       routeAgent: opts.routeAgent ?? routeAgent,
       now,
     });
-    if (result.status === 'short_circuited') {
-      if (result.reason === 'subscription_pressure_capped') {
+    if (result.status === "short_circuited") {
+      if (result.reason === "subscription_pressure_capped") {
         await recordDeferred(taskId, {
           reason: result.reason,
           resume_at_ms: result.resume_at_ms ?? null,
@@ -153,12 +182,16 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
       }
       return;
     }
-    if (result.status === 'failed') {
-      await recordTerminated(taskId, {
-        reason: 'failed',
-        error: result.error,
-        agent_name: result.agent_name ?? null,
-      }, 'failed');
+    if (result.status === "failed") {
+      await recordTerminated(
+        taskId,
+        {
+          reason: "failed",
+          error: result.error,
+          agent_name: result.agent_name ?? null,
+        },
+        "failed",
+      );
       return;
     }
 
@@ -177,7 +210,7 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
     start(): void {
       if (running) return;
       running = true;
-      iterator = opts.bus.subscribe((event) => event.kind === 'filed');
+      iterator = opts.bus.subscribe((event) => event.kind === "filed");
       void (async () => {
         const activeIterator = iterator;
         if (!activeIterator) return;

@@ -1,4 +1,4 @@
-import type { FileTaskInput, TaskPriority, TaskRecord } from './schema.js';
+import type { FileTaskInput, TaskPriority, TaskRecord } from "./schema.js";
 
 export const REVIEW_PROMPT_TEMPLATE = `Review task {{parent_id}}.
 
@@ -22,10 +22,10 @@ export function mergeDeny(existing: string[] | undefined, additional: string): s
 }
 
 function bumpPriority(priority: TaskPriority): TaskPriority {
-  if (priority === 'low') return 'normal';
-  if (priority === 'normal') return 'high';
-  if (priority === 'high') return 'urgent';
-  return 'urgent';
+  if (priority === "low") return "normal";
+  if (priority === "normal") return "high";
+  if (priority === "high") return "urgent";
+  return "urgent";
 }
 
 export function synthesizeReviewTask(
@@ -44,32 +44,28 @@ export function synthesizeReviewTask(
         deny_agents: [...new Set(denyAgents)].sort(),
       }
     : {
-        min_tier: 'premium',
+        min_tier: "premium",
         deny_agents: [...new Set(denyAgents)].sort(),
       };
 
-  const prompt = REVIEW_PROMPT_TEMPLATE
-    .replace('{{parent_id}}', parent.id)
-    .replace('{{parent_prompt}}', parent.prompt)
-    .replace('{{acceptance_criteria}}', parent.acceptance_criteria ?? '(none provided)')
-    .replace('{{result_summary}}', parent.result_summary ?? '(no summary)')
-    .replace(
-      '{{result_artifacts}}',
-      JSON.stringify(parent.result_artifacts ?? [], null, 2),
-    );
+  const prompt = REVIEW_PROMPT_TEMPLATE.replace("{{parent_id}}", parent.id)
+    .replace("{{parent_prompt}}", parent.prompt)
+    .replace("{{acceptance_criteria}}", parent.acceptance_criteria ?? "(none provided)")
+    .replace("{{result_summary}}", parent.result_summary ?? "(no summary)")
+    .replace("{{result_artifacts}}", JSON.stringify(parent.result_artifacts ?? [], null, 2));
 
   return {
-    kind: 'review',
+    kind: "review",
     parent_task_id: parent.id,
     prompt,
-    acceptance_criteria: 'Each parent criterion is met or explicitly rejected with reason.',
-    expected_artifacts: [{ type: 'review_verdict' }],
+    acceptance_criteria: "Each parent criterion is met or explicitly rejected with reason.",
+    expected_artifacts: [{ type: "review_verdict" }],
     eligibility,
     priority: bumpPriority(parent.priority),
     requires_review: false,
     // This board-generated producer is intentional and should not be subject to emit caps.
-    created_by_kind: 'agent',
-    created_by_id: 'system:review-pairing',
+    created_by_kind: "agent",
+    created_by_id: "system:review-pairing",
     origin: parent.origin ?? undefined,
   };
 }

@@ -6,9 +6,9 @@ import {
   renameSync,
   statSync,
   type WriteStream,
-} from 'node:fs';
-import { basename, dirname, join, sep } from 'node:path';
-import { compressStaged, pruneOldRotations } from './invocation-rotation.js';
+} from "node:fs";
+import { basename, dirname, join, sep } from "node:path";
+import { compressStaged, pruneOldRotations } from "./invocation-rotation.js";
 
 const DEFAULT_MAX_BYTES_PER_DAY = 100 * 1024 * 1024;
 const WRITE_BACKPRESSURE_THRESHOLD = 1 * 1024 * 1024;
@@ -54,15 +54,15 @@ function isoDateKey(date: Date): string {
 }
 
 function deriveRotationBasename(filePath: string): string {
-  return basename(filePath).replace(/\.jsonl$/, '');
+  return basename(filePath).replace(/\.jsonl$/, "");
 }
 
-type ClosableWriteStream = Pick<WriteStream, 'once' | 'end'>;
+type ClosableWriteStream = Pick<WriteStream, "once" | "end">;
 
 export function closeWriteStream(stream: ClosableWriteStream): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    stream.once('error', reject);
-    stream.once('finish', () => resolve());
+    stream.once("error", reject);
+    stream.once("finish", () => resolve());
     stream.end();
   });
 }
@@ -132,8 +132,8 @@ function openInvocationSinkInternal(
 
     stream = createWriteStream(filePath, {
       mode: 0o600,
-      flags: 'a',
-      encoding: 'utf8',
+      flags: "a",
+      encoding: "utf8",
     });
     // createWriteStream's `mode` is honored when creating a NEW file, but ignored
     // when opening an existing file with 'a'. For pre-existing files, harden the
@@ -141,7 +141,7 @@ function openInvocationSinkInternal(
     if (preExisted) {
       chmodSync(filePath, 0o600);
     }
-    stream.on('error', () => {
+    stream.on("error", () => {
       // A disk-failure error event would otherwise crash the process. The sink is
       // best-effort observability; surface the failure by closing rather than throwing.
       stream = null;
@@ -174,7 +174,7 @@ function openInvocationSinkInternal(
     if (stream === null) {
       return;
     }
-    const lineBytes = Buffer.byteLength(line, 'utf8');
+    const lineBytes = Buffer.byteLength(line, "utf8");
     if (bytesToday + lineBytes > maxBytesPerDay) {
       return;
     }
@@ -194,7 +194,11 @@ function openInvocationSinkInternal(
   function enqueuePending(line: string): void {
     if (pendingDuringRotation.length >= maxPendingDuringRotation) {
       droppedDuringRotation += 1;
-      warnOnce('pending-overflow', 'pending-overflow: dropping invocation line during rotation', 'full');
+      warnOnce(
+        "pending-overflow",
+        "pending-overflow: dropping invocation line during rotation",
+        "full",
+      );
       return;
     }
     pendingDuringRotation.push(line);
@@ -218,7 +222,7 @@ function openInvocationSinkInternal(
       try {
         await closeActiveStream();
       } catch (error) {
-        warnOnce('close-before-rotate', 'failed closing sink before rotation', error);
+        warnOnce("close-before-rotate", "failed closing sink before rotation", error);
       }
 
       let stagedPath: string | null = null;
@@ -227,13 +231,13 @@ function openInvocationSinkInternal(
         renameSync(filePath, stagedPath);
       } catch (error) {
         const code =
-          typeof error === 'object' && error !== null && 'code' in error
+          typeof error === "object" && error !== null && "code" in error
             ? String((error as { code?: unknown }).code)
-            : '';
-        if (code === 'ENOENT') {
+            : "";
+        if (code === "ENOENT") {
           stagedPath = null;
         } else {
-          warnOnce('rename-before-rotate', 'failed staging invocation log for rotation', error);
+          warnOnce("rename-before-rotate", "failed staging invocation log for rotation", error);
           stagedPath = null;
         }
       }
@@ -246,7 +250,7 @@ function openInvocationSinkInternal(
         openStream(false);
         options.testHooks?.onRotationReopened?.();
       } catch (error) {
-        warnOnce('open-after-rotate', 'failed reopening sink after rotation', error);
+        warnOnce("open-after-rotate", "failed reopening sink after rotation", error);
         stream = null;
       }
 
@@ -259,7 +263,11 @@ function openInvocationSinkInternal(
         backgroundTasks.add(task);
         void task
           .catch((error) => {
-          warnOnce('rotate-background', 'failed background invocation rotation maintenance', error);
+            warnOnce(
+              "rotate-background",
+              "failed background invocation rotation maintenance",
+              error,
+            );
           })
           .finally(() => {
             backgroundTasks.delete(task);
@@ -267,7 +275,7 @@ function openInvocationSinkInternal(
       }
     })()
       .catch((error) => {
-        warnOnce('rotate', 'write-path rotation failed', error);
+        warnOnce("rotate", "write-path rotation failed", error);
       })
       .finally(() => {
         if (droppedDuringRotation > 0) {
@@ -316,7 +324,7 @@ function openInvocationSinkInternal(
         }
         flushPending();
         await closeActiveStream().catch((error) => {
-          warnOnce('close', 'failed closing sink stream', error);
+          warnOnce("close", "failed closing sink stream", error);
         });
         if (backgroundTasks.size > 0) {
           await Promise.allSettled(Array.from(backgroundTasks));
@@ -327,7 +335,10 @@ function openInvocationSinkInternal(
   };
 }
 
-export function openInvocationSink(filePath: string, options: InvocationSinkOptions = {}): InvocationSink {
+export function openInvocationSink(
+  filePath: string,
+  options: InvocationSinkOptions = {},
+): InvocationSink {
   return openInvocationSinkInternal(filePath, options);
 }
 

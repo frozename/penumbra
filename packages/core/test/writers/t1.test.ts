@@ -1,26 +1,24 @@
-import { expect, test, beforeEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { expect, test, beforeEach } from "bun:test";
+import { Database } from "bun:sqlite";
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {
   // already loaded in this process
 }
-import { loadSqliteVec, migrate } from '../../src/index.js';
-import { TestEmbedder } from '../../src/testing/index.js';
-import { T1Rollup } from '../../src/writers/t1.js';
+import { loadSqliteVec, migrate } from "../../src/index.js";
+import { TestEmbedder } from "../../src/testing/index.js";
+import { T1Rollup } from "../../src/writers/t1.js";
 
 let db: Database;
 beforeEach(() => {
-  db = new Database(':memory:');
+  db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
-
 });
 
-
-function seed(sessionId: string, n: number, lane = 'local', origin: string | null = null) {
+function seed(sessionId: string, n: number, lane = "local", origin: string | null = null) {
   for (let i = 0; i < n; i++) {
     db.run(
       `INSERT INTO t0_events(event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id,
@@ -40,111 +38,124 @@ function seed(sessionId: string, n: number, lane = 'local', origin: string | nul
   }
 }
 
-test('rollupSession produces a rollup + vec row with correct counts', async () => {
-  seed('s1', 3);
+test("rollupSession produces a rollup + vec row with correct counts", async () => {
+  seed("s1", 3);
   const roll = new T1Rollup({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date('2026-04-23T12:30:00Z'),
-    uuid: () => 'rollup-1',
+    clock: () => new Date("2026-04-23T12:30:00Z"),
+    uuid: () => "rollup-1",
   });
 
-  const written = await roll.rollupSession('s1');
+  const written = await roll.rollupSession("s1");
   expect(written).not.toBeNull();
   const row = db
-    .query<{ n_events: number; lane_breakdown_json: string }, [string]>(
-      'SELECT n_events, lane_breakdown_json FROM t1_rollups WHERE rollup_id=?',
-    )
-    .get('rollup-1')!;
+    .query<
+      { n_events: number; lane_breakdown_json: string },
+      [string]
+    >("SELECT n_events, lane_breakdown_json FROM t1_rollups WHERE rollup_id=?")
+    .get("rollup-1")!;
   expect(row.n_events).toBe(3);
   expect(JSON.parse(row.lane_breakdown_json)).toEqual({ local: 3 });
 
-  expect(
-    db.query<{ c: number }, []>('SELECT COUNT(*) c FROM t1_vec').get()!.c,
-  ).toBe(1);
+  expect(db.query<{ c: number }, []>("SELECT COUNT(*) c FROM t1_vec").get()!.c).toBe(1);
 });
 
-
-test('rollupSession returns null if session has zero events', async () => {
+test("rollupSession returns null if session has zero events", async () => {
   const roll = new T1Rollup({
-    db, embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date('2026-04-23T12:30:00Z'),
-    uuid: () => 'r',
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date("2026-04-23T12:30:00Z"),
+    uuid: () => "r",
   });
 
-  expect(await roll.rollupSession('nonexistent')).toBeNull();
+  expect(await roll.rollupSession("nonexistent")).toBeNull();
 });
 
-
-test('rollupSession is idempotent — re-running for same session is a no-op', async () => {
-  seed('s1', 2);
+test("rollupSession is idempotent — re-running for same session is a no-op", async () => {
+  seed("s1", 2);
   const roll = new T1Rollup({
-    db, embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date('2026-04-23T12:30:00Z'),
-    uuid: (() => { let i = 0; return () => `r-${++i}`; })(),
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date("2026-04-23T12:30:00Z"),
+    uuid: (() => {
+      let i = 0;
+      return () => `r-${++i}`;
+    })(),
   });
 
-  await roll.rollupSession('s1');
-  const second = await roll.rollupSession('s1');
+  await roll.rollupSession("s1");
+  const second = await roll.rollupSession("s1");
   expect(second).toBeNull();
-  expect(
-    db.query<{ c: number }, []>('SELECT COUNT(*) c FROM t1_rollups').get()!.c,
-  ).toBe(1);
+  expect(db.query<{ c: number }, []>("SELECT COUNT(*) c FROM t1_rollups").get()!.c).toBe(1);
 });
 
-
-function appendEvent(sessionId: string, i: number, lane = 'cloud') {
+function appendEvent(sessionId: string, i: number, lane = "cloud") {
   db.run(
     `INSERT INTO t0_events(event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id,
       session_id, event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms,
       request_id, payload_json, payload_summary)
      VALUES(?, ?, ?, 'mcp', null, 'p1', 'u', 'm', ?, 'agent-tool-use', ?, null, null, null, null, null, null, null, '{}', ?)`,
-    [`e-${sessionId}-${i}`, `2026-04-23T12:0${i}:00Z`, `2026-04-23T12:0${i}:00Z`, sessionId, lane, `event ${i}`]
+    [
+      `e-${sessionId}-${i}`,
+      `2026-04-23T12:0${i}:00Z`,
+      `2026-04-23T12:0${i}:00Z`,
+      sessionId,
+      lane,
+      `event ${i}`,
+    ],
   );
 }
 
-test('rollupSession rerolls append-only by default when new events exist', async () => {
-  seed('s_append', 2);
+test("rollupSession rerolls append-only by default when new events exist", async () => {
+  seed("s_append", 2);
   const roll = new T1Rollup({
-    db, embedder: new TestEmbedder({ dim: 384 }), clock: () => new Date('2026-04-23T12:30:00Z'), uuid: () => 'r_append'
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date("2026-04-23T12:30:00Z"),
+    uuid: () => "r_append",
   });
 
-  await roll.rollupSession('s_append');
-  
-  appendEvent('s_append', 2, 'cloud'); // Add one more event
-  const written = await roll.rollupSession('s_append');
-  expect(written).toBe('r_append');
-  
-  const row = db.query<any, [string]>('SELECT n_events, lane_breakdown_json FROM t1_rollups WHERE session_id=?').get('s_append')!;
+  await roll.rollupSession("s_append");
+
+  appendEvent("s_append", 2, "cloud"); // Add one more event
+  const written = await roll.rollupSession("s_append");
+  expect(written).toBe("r_append");
+
+  const row = db
+    .query<any, [string]>("SELECT n_events, lane_breakdown_json FROM t1_rollups WHERE session_id=?")
+    .get("s_append")!;
   expect(row.n_events).toBe(3);
   expect(JSON.parse(row.lane_breakdown_json)).toEqual({ local: 2, cloud: 1 });
-
 });
 
-
-test('rollupSession fully overwrites when overwriteOnReroll is true', async () => {
-  seed('s_over', 2);
+test("rollupSession fully overwrites when overwriteOnReroll is true", async () => {
+  seed("s_over", 2);
   let idx = 0;
   const roll = new T1Rollup({
-    db, embedder: new TestEmbedder({ dim: 384 }), clock: () => new Date('2026-04-23T12:30:00Z'), 
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date("2026-04-23T12:30:00Z"),
     uuid: () => `r_over_${++idx}`,
     overwriteOnReroll: true,
   });
 
-  await roll.rollupSession('s_over');
-  
-  appendEvent('s_over', 2, 'cloud'); // Add one more
-  const written = await roll.rollupSession('s_over');
-  expect(written).toBe('r_over_2'); // New ID
-  
-  const row = db.query<any, [string]>('SELECT rollup_id, n_events FROM t1_rollups WHERE session_id=?').get('s_over')!;
-  expect(row.rollup_id).toBe('r_over_2');
+  await roll.rollupSession("s_over");
+
+  appendEvent("s_over", 2, "cloud"); // Add one more
+  const written = await roll.rollupSession("s_over");
+  expect(written).toBe("r_over_2"); // New ID
+
+  const row = db
+    .query<any, [string]>("SELECT rollup_id, n_events FROM t1_rollups WHERE session_id=?")
+    .get("s_over")!;
+  expect(row.rollup_id).toBe("r_over_2");
   expect(row.n_events).toBe(3);
 });
 
-test('rollupSession picks maestro over dispatch over unknown when origins are mixed', async () => {
+test("rollupSession picks maestro over dispatch over unknown when origins are mixed", async () => {
   // 1 maestro + 2 dispatch — winner is maestro.
-  seed('s_mix', 1, 'local', 'maestro');
+  seed("s_mix", 1, "local", "maestro");
   // Append two more rows with dispatch origin to the same session.
   for (let i = 1; i < 3; i++) {
     db.run(
@@ -157,30 +168,36 @@ test('rollupSession picks maestro over dispatch over unknown when origins are mi
   }
 
   const roll = new T1Rollup({
-    db, embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date('2026-04-23T13:30:00Z'),
-    uuid: () => 'r_mix',
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date("2026-04-23T13:30:00Z"),
+    uuid: () => "r_mix",
   });
-  await roll.rollupSession('s_mix');
+  await roll.rollupSession("s_mix");
 
-  const row = db.query<{ origin: string | null }, [string]>('SELECT origin FROM t1_rollups WHERE session_id=?').get('s_mix')!;
-  expect(row.origin).toBe('maestro');
+  const row = db
+    .query<{ origin: string | null }, [string]>("SELECT origin FROM t1_rollups WHERE session_id=?")
+    .get("s_mix")!;
+  expect(row.origin).toBe("maestro");
 });
 
-test('rollupSession leaves origin NULL when all source events have NULL origin (legacy)', async () => {
-  seed('s_legacy', 2, 'local', null);
+test("rollupSession leaves origin NULL when all source events have NULL origin (legacy)", async () => {
+  seed("s_legacy", 2, "local", null);
   const roll = new T1Rollup({
-    db, embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date('2026-04-23T13:30:00Z'),
-    uuid: () => 'r_legacy',
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date("2026-04-23T13:30:00Z"),
+    uuid: () => "r_legacy",
   });
-  await roll.rollupSession('s_legacy');
-  const row = db.query<{ origin: string | null }, [string]>('SELECT origin FROM t1_rollups WHERE session_id=?').get('s_legacy')!;
+  await roll.rollupSession("s_legacy");
+  const row = db
+    .query<{ origin: string | null }, [string]>("SELECT origin FROM t1_rollups WHERE session_id=?")
+    .get("s_legacy")!;
   expect(row.origin).toBeNull();
 });
 
-test('rollupSession dispatch beats unknown', async () => {
-  seed('s_du', 1, 'local', 'dispatch');
+test("rollupSession dispatch beats unknown", async () => {
+  seed("s_du", 1, "local", "dispatch");
   db.run(
     `INSERT INTO t0_events(event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id,
       session_id, event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms,
@@ -188,34 +205,36 @@ test('rollupSession dispatch beats unknown', async () => {
      VALUES('e-du-1', '2026-04-23T13:01:00Z', '2026-04-23T13:01:00Z', 'mcp', null, 'p1', 'u', 'm', 's_du', 'agent-tool-use', 'local', null, null, null, null, null, null, null, '{}', 'event 1', 'unknown')`,
   );
   const roll = new T1Rollup({
-    db, embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date('2026-04-23T13:30:00Z'),
-    uuid: () => 'r_du',
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date("2026-04-23T13:30:00Z"),
+    uuid: () => "r_du",
   });
-  await roll.rollupSession('s_du');
-  const row = db.query<{ origin: string | null }, [string]>('SELECT origin FROM t1_rollups WHERE session_id=?').get('s_du')!;
-  expect(row.origin).toBe('dispatch');
+  await roll.rollupSession("s_du");
+  const row = db
+    .query<{ origin: string | null }, [string]>("SELECT origin FROM t1_rollups WHERE session_id=?")
+    .get("s_du")!;
+  expect(row.origin).toBe("dispatch");
 });
 
-test('rollupSession is concurrency-safe — racing calls fold to one row', async () => {
-  seed('sR', 3);
+test("rollupSession is concurrency-safe — racing calls fold to one row", async () => {
+  seed("sR", 3);
   let uuidIdx = 0;
   const roll = new T1Rollup({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date('2026-04-23T12:30:00Z'),
+    clock: () => new Date("2026-04-23T12:30:00Z"),
     uuid: () => `race-${++uuidIdx}`,
   });
 
-  const [a, b] = await Promise.all([roll.rollupSession('sR'), roll.rollupSession('sR')]);
+  const [a, b] = await Promise.all([roll.rollupSession("sR"), roll.rollupSession("sR")]);
   // One call did the work, the other returned null. We don't care which.
-  const winners = [a, b].filter((x): x is string => typeof x === 'string');
+  const winners = [a, b].filter((x): x is string => typeof x === "string");
   const losers = [a, b].filter((x) => x === null);
   expect(winners.length).toBe(1);
   expect(losers.length).toBe(1);
   const count = db
-    .query<{ c: number }, [string]>('SELECT COUNT(*) c FROM t1_rollups WHERE session_id=?')
-    .get('sR');
+    .query<{ c: number }, [string]>("SELECT COUNT(*) c FROM t1_rollups WHERE session_id=?")
+    .get("sR");
   expect(count?.c).toBe(1);
 });
-

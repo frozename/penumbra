@@ -1,4 +1,4 @@
-import type { Eligibility } from './schema.js';
+import type { Eligibility } from "./schema.js";
 
 export type AgentDescriptor = {
   name: string;
@@ -8,7 +8,7 @@ export type AgentDescriptor = {
   maestro_capable?: boolean;
 };
 
-export const TIER_ORDER = ['cheap', 'oc', 'premium'] as const;
+export const TIER_ORDER = ["cheap", "oc", "premium"] as const;
 
 function tierRank(tier: string | undefined): number {
   if (!tier) return -1;

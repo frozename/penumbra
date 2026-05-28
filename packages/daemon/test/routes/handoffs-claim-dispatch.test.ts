@@ -9,7 +9,9 @@ try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch { /* already loaded */ }
+} catch {
+  /* already loaded */
+}
 
 const SHARED_TOKEN = "shared-sec";
 
@@ -36,7 +38,11 @@ function makeFetcher(handler: (req: Request) => Promise<Response>): typeof fetch
     handler(new Request(input as string, init))) as typeof fetch;
 }
 
-function seedApprovedHandoff(services: Services, handoff_id: string, project_id: string | null = null): void {
+function seedApprovedHandoff(
+  services: Services,
+  handoff_id: string,
+  project_id: string | null = null,
+): void {
   services.handoffWriter.createApproved({
     handoff_id,
     ts: "2026-05-21T10:00:00.000Z",
@@ -74,9 +80,10 @@ test("/handoffs/:id/claim with shared bearer returns 403 worker_token_required",
   expect((body as any).error.code).toBe("worker_token_required");
 
   const row = services.db
-    .query<{ status: string; worker_id: string | null }, [string]>(
-      "SELECT status, worker_id FROM handoffs WHERE handoff_id = ?",
-    )
+    .query<
+      { status: string; worker_id: string | null },
+      [string]
+    >("SELECT status, worker_id FROM handoffs WHERE handoff_id = ?")
     .get("h-1");
   expect(row?.status).toBe("approved");
   expect(row?.worker_id).toBeNull();
@@ -106,9 +113,7 @@ test("/handoffs/:id/claim with worker token + mismatched body returns 403 worker
   expect((body as any).error.code).toBe("worker_id_mismatch");
 
   const row = services.db
-    .query<{ status: string }, [string]>(
-      "SELECT status FROM handoffs WHERE handoff_id = ?",
-    )
+    .query<{ status: string }, [string]>("SELECT status FROM handoffs WHERE handoff_id = ?")
     .get("h-2");
   expect(row?.status).toBe("approved");
 });
@@ -137,9 +142,10 @@ test("/handoffs/:id/claim with worker token + matching body claims successfully"
   expect((body as any).status).toBe("dispatched");
 
   const row = services.db
-    .query<{ status: string; worker_id: string | null }, [string]>(
-      "SELECT status, worker_id FROM handoffs WHERE handoff_id = ?",
-    )
+    .query<
+      { status: string; worker_id: string | null },
+      [string]
+    >("SELECT status, worker_id FROM handoffs WHERE handoff_id = ?")
     .get("h-3");
   expect(row?.status).toBe("dispatched");
   expect(row?.worker_id).toBe("W-A");
@@ -182,9 +188,10 @@ test("Claim collision: W-A claims; W-B token + W-B body cannot steal", async () 
   expect(resB.status).toBe(409);
 
   const row = services.db
-    .query<{ worker_id: string | null }, [string]>(
-      "SELECT worker_id FROM handoffs WHERE handoff_id = ?",
-    )
+    .query<
+      { worker_id: string | null },
+      [string]
+    >("SELECT worker_id FROM handoffs WHERE handoff_id = ?")
     .get("h-4");
   expect(row?.worker_id).toBe("W-A");
 });
@@ -211,9 +218,11 @@ test("/handoffs/:id/claim hard-isolated worker cannot claim foreign project hand
   seedApprovedHandoff(services, "h-6", "project-b");
 
   const workerId = "worker-extras-hard-projA";
-  (services as { workerAuthz?: Map<string, { project_id?: string; isolation: 'sticky' | 'hard' | 'shared' }> }).workerAuthz = new Map([
-    [workerId, { project_id: "project-a", isolation: 'hard' }],
-  ]);
+  (
+    services as {
+      workerAuthz?: Map<string, { project_id?: string; isolation: "sticky" | "hard" | "shared" }>;
+    }
+  ).workerAuthz = new Map([[workerId, { project_id: "project-a", isolation: "hard" }]]);
 
   const { worker_token } = await registerWorkerForTest({
     baseUrl: "http://x",
@@ -235,9 +244,10 @@ test("/handoffs/:id/claim hard-isolated worker cannot claim foreign project hand
   expect((body as any).error.code).toBe("project_mismatch");
 
   const row = services.db
-    .query<{ status: string; worker_id: string | null }, [string]>(
-      "SELECT status, worker_id FROM handoffs WHERE handoff_id = ?",
-    )
+    .query<
+      { status: string; worker_id: string | null },
+      [string]
+    >("SELECT status, worker_id FROM handoffs WHERE handoff_id = ?")
     .get("h-6");
   expect(row?.status).toBe("approved");
   expect(row?.worker_id).toBeNull();

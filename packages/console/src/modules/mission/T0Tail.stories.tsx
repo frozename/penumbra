@@ -1,6 +1,6 @@
-import type { Meta, StoryObj } from '@storybook/react';
-import type { StreamMessage, StreamTopic, Subscription } from '../../api/streams';
-import { T0Tail } from './T0Tail';
+import type { Meta, StoryObj } from "@storybook/react";
+import type { StreamMessage, StreamTopic, Subscription } from "../../api/streams";
+import { T0Tail } from "./T0Tail";
 
 type SubscribeImpl = <T>(
   topic: StreamTopic,
@@ -14,7 +14,7 @@ const inertSubscribe: SubscribeImpl = (_topic, _onMessage, _opts) => ({
 });
 
 const meta: Meta<typeof T0Tail> = {
-  title: 'Mission/T0Tail',
+  title: "Mission/T0Tail",
   component: T0Tail,
 };
 

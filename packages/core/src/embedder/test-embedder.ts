@@ -1,8 +1,8 @@
-import { createHash } from 'node:crypto';
-import type { Embedder } from './interface.js';
+import { createHash } from "node:crypto";
+import type { Embedder } from "./interface.js";
 
 export class TestEmbedder implements Embedder {
-  readonly name = 'test';
+  readonly name = "test";
   readonly dim: number;
 
   constructor(opts: { dim: number }) {
@@ -16,10 +16,10 @@ export class TestEmbedder implements Embedder {
   private hashToVector(text: string): Float32Array {
     const out = new Float32Array(this.dim);
     // Use repeated SHA256 rounds to fill the vector deterministically.
-    let buf = Buffer.from(text, 'utf8');
+    let buf = Buffer.from(text, "utf8");
     let i = 0;
     while (i < this.dim) {
-      buf = createHash('sha256').update(buf).digest();
+      buf = createHash("sha256").update(buf).digest();
       for (let j = 0; j < buf.length && i < this.dim; j += 4) {
         const v = buf.readUInt32BE(j) / 0xffffffff; // 0..1
         out[i++] = v * 2 - 1; // -1..1

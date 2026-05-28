@@ -18,6 +18,7 @@ output:
 run:
   kind: markdown-template
 ---
+
 # Brainstorming session — {{date}}
 
 You are starting a brainstorming session in {{project}}. Prior specs and recent brainstorm memory are pre-loaded below — read them, then ask the user one clarifying question at a time.
@@ -25,14 +26,16 @@ You are starting a brainstorming session in {{project}}. Prior specs and recent 
 ## Prior specs in this project
 
 {{#each recall.fs_glob}}
+
 - {{.}}
-{{/each}}
+  {{/each}}
 
 ## Recent brainstorm-tagged memories
 
 {{#each recall.memory_search}}
+
 - `{{id}}` — {{title}}
-{{/each}}
+  {{/each}}
 
 ## Process
 

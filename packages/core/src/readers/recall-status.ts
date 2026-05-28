@@ -1,4 +1,4 @@
-import type { Database } from 'bun:sqlite';
+import type { Database } from "bun:sqlite";
 
 export interface RecallStatus {
   tiers: { t0: number; t1: number; t2: number };
@@ -22,16 +22,18 @@ export function recallStatus(db: Database): RecallStatus {
 
   const t2ByType = histo(
     db
-      .query<{ k: string | null; c: number }, []>(
-        `SELECT obs_type AS k, COUNT(*) AS c FROM t2_memories GROUP BY obs_type`,
-      )
+      .query<
+        { k: string | null; c: number },
+        []
+      >(`SELECT obs_type AS k, COUNT(*) AS c FROM t2_memories GROUP BY obs_type`)
       .all(),
   );
   const t2BySev = histo(
     db
-      .query<{ k: string | null; c: number }, []>(
-        `SELECT severity AS k, COUNT(*) AS c FROM t2_memories GROUP BY severity`,
-      )
+      .query<
+        { k: string | null; c: number },
+        []
+      >(`SELECT severity AS k, COUNT(*) AS c FROM t2_memories GROUP BY severity`)
       .all(),
   );
 
@@ -41,13 +43,15 @@ export function recallStatus(db: Database): RecallStatus {
       .get()?.c ?? 0;
   const t1Failed =
     db
-      .query<{ c: number }, []>(
-        `SELECT COUNT(*) AS c FROM t1_rollups WHERE failed_promotion_attempts > 0`,
-      )
+      .query<
+        { c: number },
+        []
+      >(`SELECT COUNT(*) AS c FROM t1_rollups WHERE failed_promotion_attempts > 0`)
       .get()?.c ?? 0;
   const corpora = db.query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM corpora`).get()?.c ?? 0;
   const lastRecall =
-    db.query<{ ts: string | null }, []>(`SELECT MAX(ts) AS ts FROM recall_audit`).get()?.ts ?? undefined;
+    db.query<{ ts: string | null }, []>(`SELECT MAX(ts) AS ts FROM recall_audit`).get()?.ts ??
+    undefined;
 
   return {
     tiers,

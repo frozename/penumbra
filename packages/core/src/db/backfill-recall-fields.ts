@@ -1,15 +1,15 @@
-import type { Database } from 'bun:sqlite';
+import type { Database } from "bun:sqlite";
 
 const EMOJI_TO_OBS_TYPE: Array<[string, string]> = [
-  ['🔴', 'bugfix'],
-  ['🟣', 'feature'],
-  ['🔄', 'refactor'],
-  ['✅', 'change'],
-  ['🔵', 'discovery'],
-  ['⚖️', 'decision'],
-  ['🚨', 'security_alert'],
-  ['🔐', 'security_note'],
-  ['🎯', 'session'],
+  ["🔴", "bugfix"],
+  ["🟣", "feature"],
+  ["🔄", "refactor"],
+  ["✅", "change"],
+  ["🔵", "discovery"],
+  ["⚖️", "decision"],
+  ["🚨", "security_alert"],
+  ["🔐", "security_note"],
+  ["🎯", "session"],
 ];
 
 function emojiToObsType(title: string): string | null {
@@ -47,7 +47,9 @@ export function backfillRecallFields(db: Database): BackfillStats {
         file_paths: string | null;
       },
       []
-    >(`SELECT memory_id, title, metadata_json, obs_type, concepts, severity, file_paths FROM t2_memories`)
+    >(
+      `SELECT memory_id, title, metadata_json, obs_type, concepts, severity, file_paths FROM t2_memories`,
+    )
     .all();
 
   const updateStmt = db.prepare(
@@ -57,7 +59,7 @@ export function backfillRecallFields(db: Database): BackfillStats {
   for (const row of rows) {
     let meta: { concepts?: string[]; severity?: string; file_paths?: string[] } = {};
     try {
-      meta = JSON.parse(row.metadata_json || '{}');
+      meta = JSON.parse(row.metadata_json || "{}");
     } catch {
       meta = {};
     }
@@ -69,34 +71,40 @@ export function backfillRecallFields(db: Database): BackfillStats {
     }
 
     let concepts = row.concepts;
-    if (!concepts || concepts === '[]') {
+    if (!concepts || concepts === "[]") {
       const fromMeta = Array.isArray(meta.concepts) ? meta.concepts : [];
       if (fromMeta.length > 0) {
         concepts = JSON.stringify(fromMeta);
         stats.t2_concepts_set += 1;
       } else if (concepts === null) {
-        concepts = '[]';
+        concepts = "[]";
       }
     }
 
     let severity = row.severity;
-    if (!severity && typeof meta.severity === 'string') {
+    if (!severity && typeof meta.severity === "string") {
       severity = meta.severity;
       stats.t2_severity_set += 1;
     }
 
     let filePaths = row.file_paths;
-    if (!filePaths || filePaths === '[]') {
+    if (!filePaths || filePaths === "[]") {
       const fromMeta = Array.isArray(meta.file_paths) ? meta.file_paths : [];
       if (fromMeta.length > 0) {
         filePaths = JSON.stringify(fromMeta);
         stats.t2_file_paths_set += 1;
       } else if (filePaths === null) {
-        filePaths = '[]';
+        filePaths = "[]";
       }
     }
 
-    updateStmt.run(obsType ?? null, concepts ?? '[]', severity ?? null, filePaths ?? '[]', row.memory_id);
+    updateStmt.run(
+      obsType ?? null,
+      concepts ?? "[]",
+      severity ?? null,
+      filePaths ?? "[]",
+      row.memory_id,
+    );
   }
 
   return stats;

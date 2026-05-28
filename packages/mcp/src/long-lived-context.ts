@@ -1,4 +1,4 @@
-import type { Database } from 'bun:sqlite';
+import type { Database } from "bun:sqlite";
 
 export interface LongLivedRuntimeContext {
   running_agent_id?: string;
@@ -39,11 +39,12 @@ export function verifyRunningIdentity(
   ctx: LongLivedRuntimeContext,
 ): VerifiedLongLivedRuntimeIdentity {
   if (!ctx.running_agent_id || !ctx.running_tick_id) {
-    throw new Error('no_running_long_lived_tick');
+    throw new Error("no_running_long_lived_tick");
   }
 
-  const row = db.query<TickIdentityRow, [string]>(
-    `SELECT
+  const row = db
+    .query<TickIdentityRow, [string]>(
+      `SELECT
        agent_id,
        CASE
          WHEN completed_at IS NOT NULL OR outcome IS NOT NULL THEN 'set'
@@ -52,11 +53,12 @@ export function verifyRunningIdentity(
      FROM long_lived_ticks
      WHERE id = ?
      LIMIT 1`,
-  ).get(ctx.running_tick_id);
+    )
+    .get(ctx.running_tick_id);
 
-  if (!row) throw new Error('unknown_long_lived_tick');
-  if (row.agent_id !== ctx.running_agent_id) throw new Error('cross_identity_long_lived');
-  if (row.terminal_status !== null) throw new Error('tick_terminal_status_set');
+  if (!row) throw new Error("unknown_long_lived_tick");
+  if (row.agent_id !== ctx.running_agent_id) throw new Error("cross_identity_long_lived");
+  if (row.terminal_status !== null) throw new Error("tick_terminal_status_set");
 
   return { agent_id: row.agent_id, tick_id: ctx.running_tick_id };
 }

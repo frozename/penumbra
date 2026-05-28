@@ -23,19 +23,21 @@ const LOOPBACK_ORIGIN_RE = /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/;
  * even if a malicious page resolves a domain to 127.0.0.1, the Host
  * header it sends will be the original domain.
  */
-export function createOriginHostGuard(opts: OriginHostOpts = {}): (req: Request) => Response | null {
+export function createOriginHostGuard(
+  opts: OriginHostOpts = {},
+): (req: Request) => Response | null {
   const allowRemote = opts.allowRemote === true;
   return (req) => {
     if (allowRemote) return null;
 
-    const origin = req.headers.get('origin');
-    if (origin !== null && origin !== 'null' && !LOOPBACK_ORIGIN_RE.test(origin)) {
+    const origin = req.headers.get("origin");
+    if (origin !== null && origin !== "null" && !LOOPBACK_ORIGIN_RE.test(origin)) {
       return forbidden(`origin not allowed: ${origin}`);
     }
 
-    const host = req.headers.get('host');
+    const host = req.headers.get("host");
     if (host === null) {
-      return forbidden('missing host header');
+      return forbidden("missing host header");
     }
     if (!LOOPBACK_HOST_RE.test(host)) {
       return forbidden(`host not allowed: ${host}`);
@@ -45,8 +47,5 @@ export function createOriginHostGuard(opts: OriginHostOpts = {}): (req: Request)
 }
 
 function forbidden(message: string): Response {
-  return Response.json(
-    { error: { code: 'forbidden_origin', message } },
-    { status: 403 },
-  );
+  return Response.json({ error: { code: "forbidden_origin", message } }, { status: 403 });
 }

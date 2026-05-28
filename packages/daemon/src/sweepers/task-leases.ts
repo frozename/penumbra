@@ -1,5 +1,5 @@
-import type { Database } from 'bun:sqlite';
-import type { TaskCooldowns, TaskEventBus } from '@penumbra/core';
+import type { Database } from "bun:sqlite";
+import type { TaskCooldowns, TaskEventBus } from "@penumbra/core";
 
 export interface TaskLeaseSweeperOpts {
   db: Database;
@@ -43,9 +43,10 @@ export function createTaskLeaseSweeper(opts: TaskLeaseSweeperOpts): {
       }
 
       opts.db
-        .query<unknown, [number, string]>(
-          `UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ?`,
-        )
+        .query<
+          unknown,
+          [number, string]
+        >(`UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ?`)
         .run(releasedAt, taskId);
 
       opts.db
@@ -56,7 +57,7 @@ export function createTaskLeaseSweeper(opts: TaskLeaseSweeperOpts): {
         .run(
           taskId,
           releasedAt,
-          JSON.stringify({ reason: 'expired', cooldown_until: cooldownUntil, lease_id: leaseId }),
+          JSON.stringify({ reason: "expired", cooldown_until: cooldownUntil, lease_id: leaseId }),
         );
 
       return true;
@@ -73,7 +74,7 @@ export function createTaskLeaseSweeper(opts: TaskLeaseSweeperOpts): {
           // keep sweeper alive across transient tick failures
         }
       }, intervalMs);
-      if (typeof (timer as any).unref === 'function') {
+      if (typeof (timer as any).unref === "function") {
         (timer as any).unref();
       }
     },
@@ -105,9 +106,9 @@ export function createTaskLeaseSweeper(opts: TaskLeaseSweeperOpts): {
           opts.bus?.publish({
             task_id: lease.task_id,
             at: nowMs,
-            kind: 'released',
+            kind: "released",
             actor: null,
-            payload: { reason: 'expired', cooldown_until: cooldownUntil, lease_id: lease.id },
+            payload: { reason: "expired", cooldown_until: cooldownUntil, lease_id: lease.id },
           });
           opts.cooldowns.add(lease.task_id, lease.agent_id, cooldownUntil);
         }

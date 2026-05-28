@@ -1,50 +1,53 @@
-import { beforeEach, describe, expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
-import { migrate } from '../../src/db/migrations.js';
-import { MaestroSessionExists, MaestroSessionWriter } from '../../src/maestro/writer.js';
+import { beforeEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { migrate } from "../../src/db/migrations.js";
+import { MaestroSessionExists, MaestroSessionWriter } from "../../src/maestro/writer.js";
 
-if (process.platform === 'darwin') {
+if (process.platform === "darwin") {
   try {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   } catch {
     // already loaded
   }
 }
 
 function freshDb(): Database {
-  const db = new Database(':memory:');
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   return db;
 }
 
 function seedTask(db: Database, taskId: string): void {
-  db.query<unknown, [
-    string,
-    number,
-    number,
-    string,
-    string,
-    string | null,
-    string,
-    string,
-    string,
-    string | null,
-    string | null,
-    string,
-    string | null,
-    number,
-    number | null,
-    number | null,
-    number | null,
-    string,
-    string | null,
-    string | null,
-    string | null,
-    string | null,
-    string | null,
-  ]>(
+  db.query<
+    unknown,
+    [
+      string,
+      number,
+      number,
+      string,
+      string,
+      string | null,
+      string,
+      string,
+      string,
+      string | null,
+      string | null,
+      string,
+      string | null,
+      number,
+      number | null,
+      number | null,
+      number | null,
+      string,
+      string | null,
+      string | null,
+      string | null,
+      string | null,
+      string | null,
+    ]
+  >(
     `INSERT INTO tasks (
       id, created_at, updated_at, created_by_kind, created_by_id,
       parent_task_id, kind, priority, prompt, acceptance_criteria,
@@ -57,22 +60,22 @@ function seedTask(db: Database, taskId: string): void {
     taskId,
     1,
     1,
-    'workflow',
-    'test-suite',
+    "workflow",
+    "test-suite",
     null,
-    'orchestrate',
-    'normal',
-    'coordinate the run',
+    "orchestrate",
+    "normal",
+    "coordinate the run",
     null,
     null,
-    '{}',
+    "{}",
     null,
     0,
     null,
     null,
     null,
     null,
-    'pending',
+    "pending",
     null,
     null,
     null,
@@ -97,33 +100,33 @@ function startSession(
   });
 }
 
-describe('MaestroSessionWriter', () => {
+describe("MaestroSessionWriter", () => {
   let db: Database;
 
   beforeEach(() => {
     db = freshDb();
   });
 
-  test('start inserts a live row and uses fresh now() timestamps', () => {
+  test("start inserts a live row and uses fresh now() timestamps", () => {
     const nowValues = [1_000, 1_050];
     const writer = new MaestroSessionWriter({ db, now: () => nowValues.shift() ?? 0 });
-    const taskA = 'task-a';
-    const taskB = 'task-b';
+    const taskA = "task-a";
+    const taskB = "task-b";
     seedTask(db, taskA);
     seedTask(db, taskB);
 
     const first = writer.start({
       task_id: taskA,
-      chain_handoff_id: 'handoff-a',
-      agent_id: 'agent-a',
+      chain_handoff_id: "handoff-a",
+      agent_id: "agent-a",
       wall_clock_budget_ms: 3_000,
       cost_budget_cents: 250,
       sub_dispatch_budget: 5,
     });
     const second = writer.start({
       task_id: taskB,
-      chain_handoff_id: 'handoff-b',
-      agent_id: 'agent-b',
+      chain_handoff_id: "handoff-b",
+      agent_id: "agent-b",
       wall_clock_budget_ms: 4_000,
       cost_budget_cents: 300,
       sub_dispatch_budget: 7,
@@ -134,28 +137,29 @@ describe('MaestroSessionWriter', () => {
     expect(first.started_at).not.toBe(second.started_at);
 
     const row = db
-      .query<{
-        task_id: string;
-        chain_handoff_id: string;
-        agent_id: string;
-        started_at: number;
-        wall_clock_budget_ms: number;
-        cost_budget_cents: number;
-        sub_dispatch_budget: number;
-        cost_consumed_cents: number;
-        sub_dispatches_consumed: number;
-        soft_warned_at: number | null;
-        terminated_at: number | null;
-        termination_reason: string | null;
-      }, [string]>(
-        'SELECT * FROM maestro_sessions WHERE task_id = ?',
-      )
+      .query<
+        {
+          task_id: string;
+          chain_handoff_id: string;
+          agent_id: string;
+          started_at: number;
+          wall_clock_budget_ms: number;
+          cost_budget_cents: number;
+          sub_dispatch_budget: number;
+          cost_consumed_cents: number;
+          sub_dispatches_consumed: number;
+          soft_warned_at: number | null;
+          terminated_at: number | null;
+          termination_reason: string | null;
+        },
+        [string]
+      >("SELECT * FROM maestro_sessions WHERE task_id = ?")
       .get(taskA);
 
     expect(row).toEqual({
       task_id: taskA,
-      chain_handoff_id: 'handoff-a',
-      agent_id: 'agent-a',
+      chain_handoff_id: "handoff-a",
+      agent_id: "agent-a",
       started_at: 1_000,
       wall_clock_budget_ms: 3_000,
       cost_budget_cents: 250,
@@ -168,14 +172,14 @@ describe('MaestroSessionWriter', () => {
     });
   });
 
-  test('start supports pre-bound rows with null chain_handoff_id', () => {
+  test("start supports pre-bound rows with null chain_handoff_id", () => {
     const writer = new MaestroSessionWriter({ db, now: () => 1_000 });
-    const taskId = 'task-prebound-null-chain';
+    const taskId = "task-prebound-null-chain";
     seedTask(db, taskId);
 
     const session = writer.start({
       task_id: taskId,
-      agent_id: 'agent-a',
+      agent_id: "agent-a",
       wall_clock_budget_ms: 3_000,
       cost_budget_cents: 250,
       sub_dispatch_budget: 5,
@@ -184,32 +188,34 @@ describe('MaestroSessionWriter', () => {
     expect(session.chain_handoff_id).toBeNull();
   });
 
-  test('start rejects duplicate task_id with MaestroSessionExists', () => {
+  test("start rejects duplicate task_id with MaestroSessionExists", () => {
     const writer = new MaestroSessionWriter({ db, now: () => 1_000 });
-    const taskId = 'task-dup';
+    const taskId = "task-dup";
     seedTask(db, taskId);
 
-    startSession(writer, taskId, 'handoff-dup', 'agent-a');
+    startSession(writer, taskId, "handoff-dup", "agent-a");
 
-    expect(() => startSession(writer, taskId, 'handoff-dup-2', 'agent-b')).toThrow(MaestroSessionExists);
+    expect(() => startSession(writer, taskId, "handoff-dup-2", "agent-b")).toThrow(
+      MaestroSessionExists,
+    );
     try {
-      startSession(writer, taskId, 'handoff-dup-2', 'agent-b');
+      startSession(writer, taskId, "handoff-dup-2", "agent-b");
     } catch (error) {
       expect(error).toBeInstanceOf(MaestroSessionExists);
       expect((error as MaestroSessionExists).task_id).toBe(taskId);
     }
   });
 
-  test('get returns a hydrated row and null when missing', () => {
+  test("get returns a hydrated row and null when missing", () => {
     const writer = new MaestroSessionWriter({ db, now: () => 1_000 });
-    const taskId = 'task-get';
+    const taskId = "task-get";
     seedTask(db, taskId);
-    startSession(writer, taskId, 'handoff-get', 'agent-a');
+    startSession(writer, taskId, "handoff-get", "agent-a");
 
     expect(writer.get(taskId)).toEqual({
       task_id: taskId,
-      chain_handoff_id: 'handoff-get',
-      agent_id: 'agent-a',
+      chain_handoff_id: "handoff-get",
+      agent_id: "agent-a",
       started_at: 1_000,
       wall_clock_budget_ms: 3_000,
       cost_budget_cents: 250,
@@ -220,19 +226,19 @@ describe('MaestroSessionWriter', () => {
       terminated_at: null,
       termination_reason: null,
     });
-    expect(writer.get('missing-task')).toBeNull();
+    expect(writer.get("missing-task")).toBeNull();
   });
 
-  test('getByChainHandoff returns a hydrated row and null when missing', () => {
+  test("getByChainHandoff returns a hydrated row and null when missing", () => {
     const writer = new MaestroSessionWriter({ db, now: () => 1_000 });
-    const taskId = 'task-chain';
+    const taskId = "task-chain";
     seedTask(db, taskId);
-    startSession(writer, taskId, 'handoff-chain', 'agent-a');
+    startSession(writer, taskId, "handoff-chain", "agent-a");
 
-    expect(writer.getByChainHandoff('handoff-chain')).toEqual({
+    expect(writer.getByChainHandoff("handoff-chain")).toEqual({
       task_id: taskId,
-      chain_handoff_id: 'handoff-chain',
-      agent_id: 'agent-a',
+      chain_handoff_id: "handoff-chain",
+      agent_id: "agent-a",
       started_at: 1_000,
       wall_clock_budget_ms: 3_000,
       cost_budget_cents: 250,
@@ -243,48 +249,50 @@ describe('MaestroSessionWriter', () => {
       terminated_at: null,
       termination_reason: null,
     });
-    expect(writer.getByChainHandoff('missing-handoff')).toBeNull();
+    expect(writer.getByChainHandoff("missing-handoff")).toBeNull();
   });
 
-  test('markDispatched sets chain_handoff_id once and rejects double-set', () => {
+  test("markDispatched sets chain_handoff_id once and rejects double-set", () => {
     const writer = new MaestroSessionWriter({ db, now: () => 1_000 });
-    const taskId = 'task-mark-dispatched';
+    const taskId = "task-mark-dispatched";
     seedTask(db, taskId);
     writer.start({
       task_id: taskId,
-      agent_id: 'agent-a',
+      agent_id: "agent-a",
       wall_clock_budget_ms: 3_000,
       cost_budget_cents: 250,
       sub_dispatch_budget: 5,
     });
 
-    const updated = writer.markDispatched(taskId, 'handoff-marked');
-    expect(updated.chain_handoff_id).toBe('handoff-marked');
-    expect(writer.get(taskId)?.chain_handoff_id).toBe('handoff-marked');
+    const updated = writer.markDispatched(taskId, "handoff-marked");
+    expect(updated.chain_handoff_id).toBe("handoff-marked");
+    expect(writer.get(taskId)?.chain_handoff_id).toBe("handoff-marked");
 
-    expect(() => writer.markDispatched(taskId, 'handoff-marked-again')).toThrow('already dispatched');
+    expect(() => writer.markDispatched(taskId, "handoff-marked-again")).toThrow(
+      "already dispatched",
+    );
   });
 
-  test('listLive returns live rows ordered by started_at ascending', () => {
+  test("listLive returns live rows ordered by started_at ascending", () => {
     const nowValues = [100, 200, 300];
     const writer = new MaestroSessionWriter({ db, now: () => nowValues.shift() ?? 0 });
-    const tasks = ['task-live-1', 'task-live-2', 'task-live-3'];
+    const tasks = ["task-live-1", "task-live-2", "task-live-3"];
     for (const taskId of tasks) seedTask(db, taskId);
 
-    startSession(writer, tasks[0]!, 'handoff-live-1', 'agent-a');
-    startSession(writer, tasks[1]!, 'handoff-live-2', 'agent-b');
-    startSession(writer, tasks[2]!, 'handoff-live-3', 'agent-c');
+    startSession(writer, tasks[0]!, "handoff-live-1", "agent-a");
+    startSession(writer, tasks[1]!, "handoff-live-2", "agent-b");
+    startSession(writer, tasks[2]!, "handoff-live-3", "agent-c");
 
-    writer.terminate(tasks[1]!, 'completed');
+    writer.terminate(tasks[1]!, "completed");
 
     expect(writer.listLive().map((row) => row.task_id)).toEqual([tasks[0], tasks[2]]);
   });
 
-  test('incrementSubDispatch is atomic across concurrent calls', async () => {
+  test("incrementSubDispatch is atomic across concurrent calls", async () => {
     const writer = new MaestroSessionWriter({ db, now: () => 1_000 });
-    const taskId = 'task-subdispatch';
+    const taskId = "task-subdispatch";
     seedTask(db, taskId);
-    startSession(writer, taskId, 'handoff-subdispatch', 'agent-a');
+    startSession(writer, taskId, "handoff-subdispatch", "agent-a");
 
     const settled = await Promise.allSettled(
       Array.from({ length: 50 }, () =>
@@ -292,8 +300,9 @@ describe('MaestroSessionWriter', () => {
       ),
     );
     const fulfilled = settled
-      .filter((result): result is PromiseFulfilledResult<{ new_count: number; budget: number }> =>
-        result.status === 'fulfilled',
+      .filter(
+        (result): result is PromiseFulfilledResult<{ new_count: number; budget: number }> =>
+          result.status === "fulfilled",
       )
       .map((result) => result.value);
 
@@ -305,23 +314,23 @@ describe('MaestroSessionWriter', () => {
     expect(row?.sub_dispatches_consumed).toBe(50);
   });
 
-  test('incrementSubDispatch returns zeroes for missing and terminated sessions', () => {
+  test("incrementSubDispatch returns zeroes for missing and terminated sessions", () => {
     const writer = new MaestroSessionWriter({ db, now: () => 1_000 });
-    const taskId = 'task-subdispatch-terminated';
+    const taskId = "task-subdispatch-terminated";
     seedTask(db, taskId);
-    startSession(writer, taskId, 'handoff-subdispatch-term', 'agent-a');
-    writer.terminate(taskId, 'cancelled');
+    startSession(writer, taskId, "handoff-subdispatch-term", "agent-a");
+    writer.terminate(taskId, "cancelled");
 
-    expect(writer.incrementSubDispatch('missing-task')).toEqual({ new_count: 0, budget: 0 });
+    expect(writer.incrementSubDispatch("missing-task")).toEqual({ new_count: 0, budget: 0 });
     expect(writer.incrementSubDispatch(taskId)).toEqual({ new_count: 0, budget: 0 });
   });
 
-  test('markSoftWarned only stamps the first time', () => {
+  test("markSoftWarned only stamps the first time", () => {
     const nowValues = [1_000, 2_000, 3_000];
     const writer = new MaestroSessionWriter({ db, now: () => nowValues.shift() ?? 0 });
-    const taskId = 'task-soft-warning';
+    const taskId = "task-soft-warning";
     seedTask(db, taskId);
-    startSession(writer, taskId, 'handoff-soft-warning', 'agent-a');
+    startSession(writer, taskId, "handoff-soft-warning", "agent-a");
 
     writer.markSoftWarned(taskId);
     expect(writer.get(taskId)?.soft_warned_at).toBe(2_000);
@@ -330,20 +339,20 @@ describe('MaestroSessionWriter', () => {
     expect(writer.get(taskId)?.soft_warned_at).toBe(2_000);
   });
 
-  test('terminate is idempotent and preserves the first reason and timestamp', () => {
+  test("terminate is idempotent and preserves the first reason and timestamp", () => {
     const nowValues = [1_000, 2_000, 3_000];
     const writer = new MaestroSessionWriter({ db, now: () => nowValues.shift() ?? 0 });
-    const taskId = 'task-terminate';
+    const taskId = "task-terminate";
     seedTask(db, taskId);
-    startSession(writer, taskId, 'handoff-terminate', 'agent-a');
+    startSession(writer, taskId, "handoff-terminate", "agent-a");
 
-    writer.terminate(taskId, 'completed');
-    writer.terminate(taskId, 'failed');
+    writer.terminate(taskId, "completed");
+    writer.terminate(taskId, "failed");
 
     expect(writer.get(taskId)).toEqual({
       task_id: taskId,
-      chain_handoff_id: 'handoff-terminate',
-      agent_id: 'agent-a',
+      chain_handoff_id: "handoff-terminate",
+      agent_id: "agent-a",
       started_at: 1_000,
       wall_clock_budget_ms: 3_000,
       cost_budget_cents: 250,
@@ -352,19 +361,19 @@ describe('MaestroSessionWriter', () => {
       sub_dispatches_consumed: 0,
       soft_warned_at: null,
       terminated_at: 2_000,
-      termination_reason: 'completed',
+      termination_reason: "completed",
     });
   });
 
-  test('bumpCostConsumed writes the absolute value and ignores terminated sessions', () => {
+  test("bumpCostConsumed writes the absolute value and ignores terminated sessions", () => {
     const writer = new MaestroSessionWriter({ db, now: () => 1_000 });
-    const liveTaskId = 'task-cost-live';
-    const terminatedTaskId = 'task-cost-terminated';
+    const liveTaskId = "task-cost-live";
+    const terminatedTaskId = "task-cost-terminated";
     seedTask(db, liveTaskId);
     seedTask(db, terminatedTaskId);
-    startSession(writer, liveTaskId, 'handoff-cost-live', 'agent-a');
-    startSession(writer, terminatedTaskId, 'handoff-cost-term', 'agent-b');
-    writer.terminate(terminatedTaskId, 'completed');
+    startSession(writer, liveTaskId, "handoff-cost-live", "agent-a");
+    startSession(writer, terminatedTaskId, "handoff-cost-term", "agent-b");
+    writer.terminate(terminatedTaskId, "completed");
 
     writer.bumpCostConsumed(liveTaskId, 50);
     writer.bumpCostConsumed(liveTaskId, 30);

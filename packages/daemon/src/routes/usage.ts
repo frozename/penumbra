@@ -1,7 +1,7 @@
-import type { Services } from '@penumbra/core';
-import { quotaStatus, readSubscriptionPressure, recentCost } from '@penumbra/core';
-import { z } from 'zod';
-import { json } from './_helpers.js';
+import type { Services } from "@penumbra/core";
+import { quotaStatus, readSubscriptionPressure, recentCost } from "@penumbra/core";
+import { z } from "zod";
+import { json } from "./_helpers.js";
 const RecentInputSchema = z.object({
   since: z.string().datetime().optional(),
   project_id: z.string().min(1).nullable().optional(),
@@ -9,7 +9,7 @@ const RecentInputSchema = z.object({
 
 const QuotaInputSchema = z.object({
   since: z.string().datetime().optional(),
-  window: z.enum(['24h', '5h']).optional(),
+  window: z.enum(["24h", "5h"]).optional(),
 });
 
 const SubscriptionPressureInputSchema = z.object({
@@ -20,11 +20,11 @@ const SubscriptionPressureInputSchema = z.object({
 export async function usageRecentRoute(req: Request, services: Services): Promise<Response> {
   const url = new URL(req.url);
   const parsed = RecentInputSchema.safeParse({
-    since: url.searchParams.get('since') ?? undefined,
-    project_id: url.searchParams.get('project_id') ?? undefined,
+    since: url.searchParams.get("since") ?? undefined,
+    project_id: url.searchParams.get("project_id") ?? undefined,
   });
   if (!parsed.success) {
-    return json({ error: { code: 'invalid_params', issues: parsed.error.issues } }, 400);
+    return json({ error: { code: "invalid_params", issues: parsed.error.issues } }, 400);
   }
   const result = recentCost(services.db, parsed.data, services.clock);
   return json(result);
@@ -33,26 +33,28 @@ export async function usageRecentRoute(req: Request, services: Services): Promis
 export async function usageQuotaStatusRoute(req: Request, services: Services): Promise<Response> {
   const url = new URL(req.url);
   const parsed = QuotaInputSchema.safeParse({
-    since: url.searchParams.get('since') ?? undefined,
-    window: url.searchParams.get('window') ?? undefined,
+    since: url.searchParams.get("since") ?? undefined,
+    window: url.searchParams.get("window") ?? undefined,
   });
   if (!parsed.success) {
-    return json({ error: { code: 'invalid_params', issues: parsed.error.issues } }, 400);
+    return json({ error: { code: "invalid_params", issues: parsed.error.issues } }, 400);
   }
   const result = quotaStatus(services.db, services.providerQuotas, parsed.data, services.clock);
   return json(result);
 }
 
-export async function usageSubscriptionPressureRoute(req: Request, services: Services): Promise<Response> {
+export async function usageSubscriptionPressureRoute(
+  req: Request,
+  services: Services,
+): Promise<Response> {
   const url = new URL(req.url);
   const parsed = SubscriptionPressureInputSchema.safeParse({
-    provider: url.searchParams.get('provider') ?? undefined,
-    stale_after_seconds: url.searchParams.get('stale_after_seconds') ?? undefined,
+    provider: url.searchParams.get("provider") ?? undefined,
+    stale_after_seconds: url.searchParams.get("stale_after_seconds") ?? undefined,
   });
   if (!parsed.success) {
-    return json({ error: { code: 'invalid_params', issues: parsed.error.issues } }, 400);
+    return json({ error: { code: "invalid_params", issues: parsed.error.issues } }, 400);
   }
   const result = readSubscriptionPressure(services.db, parsed.data);
   return json(result);
 }
-

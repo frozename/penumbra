@@ -1,13 +1,13 @@
-import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from '../sdk/adapter.js';
-import { spawnCliAdapter, spawnCliAdapterStream } from './cli-spawn.js';
-import type { CapacityError } from './cli-spawn.js';
-import type { CapturePort } from '../worker/capture-port.js';
+import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../sdk/adapter.js";
+import { spawnCliAdapter, spawnCliAdapterStream } from "./cli-spawn.js";
+import type { CapacityError } from "./cli-spawn.js";
+import type { CapturePort } from "../worker/capture-port.js";
 
 export interface GeminiCliOptions {
   command: string;
   args?: string[];
   cwd?: string;
-  pass_via?: 'stdin' | 'argv';
+  pass_via?: "stdin" | "argv";
   env?: Record<string, string>;
   unset_env?: string[];
   strip_patterns?: string[];
@@ -16,19 +16,24 @@ export interface GeminiCliOptions {
 
 function cleanGeminiCliOutput(text: string): string {
   return text
-    .replace(/MCP issues detected\. Run \/mcp list for status\./g, '')
-    .split('\n')
-    .filter((line) => !/^Export retry time \d+ms exceeds remaining timeout \d+ms, not retrying further\.$/.test(line))
-    .join('\n');
+    .replace(/MCP issues detected\. Run \/mcp list for status\./g, "")
+    .split("\n")
+    .filter(
+      (line) =>
+        !/^Export retry time \d+ms exceeds remaining timeout \d+ms, not retrying further\.$/.test(
+          line,
+        ),
+    )
+    .join("\n");
 }
 
 export class GeminiCliAdapter implements Adapter {
-  readonly kind = 'gemini-cli';
+  readonly kind = "gemini-cli";
   constructor(private readonly opts: GeminiCliOptions) {}
 
   private onCapacityError(err: CapacityError): void {
     this.opts.capturePort?.emit({
-      kind: 'capacity_error',
+      kind: "capacity_error",
       provider: err.provider,
       model: err.model,
       raw: err.raw,
@@ -68,7 +73,7 @@ export class GeminiCliAdapter implements Adapter {
       eventContext: input.eventContext,
       onEvent: input.onEvent,
     })) {
-      if (event.type === 'done') {
+      if (event.type === "done") {
         yield {
           ...event,
           result: {

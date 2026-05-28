@@ -36,11 +36,7 @@ function formatDate(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-function bumpCount(
-  bucket: Record<string, RuleCounts>,
-  key: string,
-  severity: number,
-): void {
+function bumpCount(bucket: Record<string, RuleCounts>, key: string, severity: number): void {
   const current = bucket[key] ?? { errors: 0, warnings: 0 };
   if (severity === 2) {
     current.errors += 1;

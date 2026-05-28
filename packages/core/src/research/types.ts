@@ -12,7 +12,7 @@ export interface WebResearchResult {
   title: string;
   markdown: string;
   fetched_at: string;
-  source_provider: 'firecrawl' | 'webfetch';
+  source_provider: "firecrawl" | "webfetch";
   source_billed_usd?: number;
   metadata?: { author?: string; published_at?: string; word_count?: number };
 }

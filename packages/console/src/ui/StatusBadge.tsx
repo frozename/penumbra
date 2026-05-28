@@ -27,7 +27,9 @@ export interface StatusBadgeProps {
 }
 
 export function StatusBadge({ status, monoLabel }: StatusBadgeProps): JSX.Element {
-  const s = (STATUS_BADGE as Record<string, { cls: string; dot: string; label: string }>)[status] ?? STATUS_BADGE.filed;
+  const s =
+    (STATUS_BADGE as Record<string, { cls: string; dot: string; label: string }>)[status] ??
+    STATUS_BADGE.filed;
 
   return (
     <span className={`badge ${s.cls}`}>

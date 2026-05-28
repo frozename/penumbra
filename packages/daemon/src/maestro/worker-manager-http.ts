@@ -1,7 +1,11 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
-import type { AcpInjectMessage, AcpInjectableSessionLike, AcpWorkerManagerLike } from './acp-injector.js';
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
+import type {
+  AcpInjectMessage,
+  AcpInjectableSessionLike,
+  AcpWorkerManagerLike,
+} from "./acp-injector.js";
 
 export interface WorkerManagerHttpDeps {
   workerUrl?: string | null;
@@ -11,15 +15,18 @@ export interface WorkerManagerHttpDeps {
 }
 
 export function createHttpWorkerManager(deps: WorkerManagerHttpDeps = {}): AcpWorkerManagerLike {
-  const token = deps.token ?? process.env.PENUMBRA_TOKEN ?? '';
-  const workerUrl = deps.workerUrl !== undefined ? deps.workerUrl : (process.env.PENUMBRA_WORKER_URL ?? readWorkerUrl());
+  const token = deps.token ?? process.env.PENUMBRA_TOKEN ?? "";
+  const workerUrl =
+    deps.workerUrl !== undefined
+      ? deps.workerUrl
+      : (process.env.PENUMBRA_WORKER_URL ?? readWorkerUrl());
   let warned = false;
   if (!workerUrl) {
     return {
       lookupSession: async () => {
         if (!warned) {
           warned = true;
-          deps.logWarn?.('[serve] worker URL unavailable; ACP soft warnings will no-op');
+          deps.logWarn?.("[serve] worker URL unavailable; ACP soft warnings will no-op");
         }
         return null;
       },
@@ -27,12 +34,12 @@ export function createHttpWorkerManager(deps: WorkerManagerHttpDeps = {}): AcpWo
   }
   return {
     lookupSession: async (handoffId: string): Promise<AcpInjectableSessionLike> => ({
-      adapter: 'remote-worker',
+      adapter: "remote-worker",
       inject: async (message: AcpInjectMessage) => {
         const res = await (deps.fetch ?? fetch)(`${workerUrl}/sessions/${handoffId}/inject`, {
-          method: 'POST',
+          method: "POST",
           headers: {
-            'content-type': 'application/json',
+            "content-type": "application/json",
             authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({ content: message.text }),
@@ -46,9 +53,9 @@ export function createHttpWorkerManager(deps: WorkerManagerHttpDeps = {}): AcpWo
 }
 
 function readWorkerUrl(): string | null {
-  const workerPortPath = join(homedir(), '.penumbra', 'worker-port');
+  const workerPortPath = join(homedir(), ".penumbra", "worker-port");
   try {
-    const port = readFileSync(workerPortPath, 'utf8').trim();
+    const port = readFileSync(workerPortPath, "utf8").trim();
     if (!port) return null;
     const parsedPort = Number(port);
     if (!Number.isInteger(parsedPort) || parsedPort <= 0) return null;

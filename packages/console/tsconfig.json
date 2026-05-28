@@ -13,12 +13,6 @@
     "rootDir": ".",
     "types": ["bun"]
   },
-  "include": [
-    "src/**/*.ts",
-    "src/**/*.tsx",
-    "test/**/*.ts",
-    "test/**/*.tsx",
-    "visual/**/*.ts"
-  ],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "test/**/*.tsx", "visual/**/*.ts"],
   "references": [{ "path": "../api-contract" }]
 }

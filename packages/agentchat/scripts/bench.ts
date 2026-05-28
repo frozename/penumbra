@@ -1,7 +1,7 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { BENCH_TASKS, BENCH_SYSTEM_PROMPT, type BenchTask } from './bench-prompts.js';
+import { existsSync, readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { BENCH_TASKS, BENCH_SYSTEM_PROMPT, type BenchTask } from "./bench-prompts.js";
 
 export interface RunBenchOpts {
   label: string;
@@ -21,11 +21,11 @@ export interface RunBenchOpts {
    * much of the token budget goes to chain-of-thought vs the final answer.
    * Pass as `low` to leave room for the actual answer at small max_tokens.
    */
-  reasoningEffort?: 'low' | 'medium' | 'high';
+  reasoningEffort?: "low" | "medium" | "high";
   /** Arbitrary OpenAI-compat extra body fields. */
   extraBody?: Record<string, unknown>;
   /** Override one or more task fixtures (testing seam). */
-  fixtureOverrides?: Partial<Record<BenchTask['id'], string>>;
+  fixtureOverrides?: Partial<Record<BenchTask["id"], string>>;
   /** Abort signal for cancelling the benchmark. */
   signal?: AbortSignal;
 }
@@ -33,7 +33,7 @@ export interface RunBenchOpts {
 export interface BenchResult {
   label: string;
   model: string;
-  task: BenchTask['id'];
+  task: BenchTask["id"];
   description: string;
   prompt_tokens?: number;
   completion_tokens?: number;
@@ -61,15 +61,15 @@ export async function runBench(opts: RunBenchOpts): Promise<BenchResult[]> {
       if (!existsSync(fixturePath)) {
         throw new Error(`fixture not found: ${fixturePath}`);
       }
-      const fixtureBody = readFileSync(fixturePath, 'utf8');
+      const fixtureBody = readFileSync(fixturePath, "utf8");
       const userContent = `--- File: ${task.fixtureLabel} ---\n${fixtureBody}\n\n---\n\n${task.question}`;
       const bodyObj: Record<string, unknown> = {
         model: opts.model,
         temperature: 0,
         max_tokens: Math.ceil(task.maxTokens * (opts.maxTokensMultiplier ?? 1)),
         messages: [
-          { role: 'system', content: BENCH_SYSTEM_PROMPT },
-          { role: 'user', content: userContent },
+          { role: "system", content: BENCH_SYSTEM_PROMPT },
+          { role: "user", content: userContent },
         ],
       };
       if (!opts.strictOpenAI) {
@@ -82,27 +82,33 @@ export async function runBench(opts: RunBenchOpts): Promise<BenchResult[]> {
         Object.assign(bodyObj, opts.extraBody);
       }
       const body = JSON.stringify(bodyObj);
-      const headers: Record<string, string> = { 'content-type': 'application/json' };
+      const headers: Record<string, string> = { "content-type": "application/json" };
       if (opts.authToken) headers.authorization = `Bearer ${opts.authToken}`;
       const init: any = {
-        method: 'POST',
+        method: "POST",
         headers,
         body,
-        signal: opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
+        signal: opts.signal
+          ? AbortSignal.any([opts.signal, AbortSignal.timeout(120_000)])
+          : AbortSignal.timeout(120_000),
       };
-      if (opts.caPath) init.tls = { ca: readFileSync(opts.caPath, 'utf8') };
+      if (opts.caPath) init.tls = { ca: readFileSync(opts.caPath, "utf8") };
 
-      const res = await fetcher(`${opts.url.replace(/\/$/, '')}/chat/completions`, init);
+      const res = await fetcher(`${opts.url.replace(/\/$/, "")}/chat/completions`, init);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const text = await res.text();
-      if (text.length === 0) throw new Error('empty response body');
+      if (text.length === 0) throw new Error("empty response body");
       let json: any;
-      try { json = JSON.parse(text); }
-      catch { throw new Error(`non-JSON body: ${text.slice(0, 80)}`); }
+      try {
+        json = JSON.parse(text);
+      } catch {
+        throw new Error(`non-JSON body: ${text.slice(0, 80)}`);
+      }
       const msg = json?.choices?.[0]?.message;
-      const answer = (msg?.content && msg.content.length > 0)
-        ? msg.content
-        : (msg?.reasoning_content ?? msg?.reasoning ?? '');
+      const answer =
+        msg?.content && msg.content.length > 0
+          ? msg.content
+          : (msg?.reasoning_content ?? msg?.reasoning ?? "");
       results.push({
         label: opts.label,
         model: opts.model,
@@ -136,38 +142,42 @@ if (import.meta.main) {
     const i = argv.indexOf(`--${name}`);
     return i >= 0 ? argv[i + 1] : undefined;
   };
-  const label = flag('label');
-  const url = flag('url');
-  const model = flag('model') ?? 'local';
-  const authToken = flag('auth-token');
-  const caPath = flag('auth-cert');
-  const strictOpenAI = argv.includes('--strict-openai');
-  const reasoningEffort = flag('reasoning-effort');
-  const extraBodyJson = flag('extra-body-json');
-  const maxTokensMultiplierRaw = flag('max-tokens-multiplier');
+  const label = flag("label");
+  const url = flag("url");
+  const model = flag("model") ?? "local";
+  const authToken = flag("auth-token");
+  const caPath = flag("auth-cert");
+  const strictOpenAI = argv.includes("--strict-openai");
+  const reasoningEffort = flag("reasoning-effort");
+  const extraBodyJson = flag("extra-body-json");
+  const maxTokensMultiplierRaw = flag("max-tokens-multiplier");
   if (!label || !url) {
-    console.error('usage: bun bench.ts --label NAME --url URL [--model M] [--auth-token T] [--auth-cert PATH] [--strict-openai] [--reasoning-effort low|medium|high] [--extra-body-json JSON] [--max-tokens-multiplier N]');
+    console.error(
+      "usage: bun bench.ts --label NAME --url URL [--model M] [--auth-token T] [--auth-cert PATH] [--strict-openai] [--reasoning-effort low|medium|high] [--extra-body-json JSON] [--max-tokens-multiplier N]",
+    );
     process.exit(1);
   }
   const opts: RunBenchOpts = { label, url, model };
   if (authToken) opts.authToken = authToken;
   if (caPath) opts.caPath = caPath;
   if (strictOpenAI) opts.strictOpenAI = true;
-  if (reasoningEffort === 'low' || reasoningEffort === 'medium' || reasoningEffort === 'high') {
+  if (reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "high") {
     opts.reasoningEffort = reasoningEffort;
   }
   if (extraBodyJson) {
     try {
       opts.extraBody = JSON.parse(extraBodyJson);
     } catch (err) {
-      console.error(`invalid --extra-body-json: ${err instanceof Error ? err.message : String(err)}`);
+      console.error(
+        `invalid --extra-body-json: ${err instanceof Error ? err.message : String(err)}`,
+      );
       process.exit(1);
     }
   }
   if (maxTokensMultiplierRaw !== undefined) {
     const parsed = Number(maxTokensMultiplierRaw);
     if (!Number.isFinite(parsed) || parsed <= 0) {
-      console.error('invalid --max-tokens-multiplier: must be a number greater than 0');
+      console.error("invalid --max-tokens-multiplier: must be a number greater than 0");
       process.exit(1);
     }
     opts.maxTokensMultiplier = parsed;

@@ -1,5 +1,10 @@
-import type { Database } from 'bun:sqlite';
-import { computeAgeDays, staleThresholdDays, type SearchRequest, type SearchHit } from '../schemas/recall.js';
+import type { Database } from "bun:sqlite";
+import {
+  computeAgeDays,
+  staleThresholdDays,
+  type SearchRequest,
+  type SearchHit,
+} from "../schemas/recall.js";
 
 const SNIPPET_LEN = 120;
 function snippetFromBody(body: string): string {
@@ -15,7 +20,7 @@ function sanitizeFtsQuery(input: string): string {
       if (/^[A-Za-z0-9_]+$/.test(tok)) return tok;
       return `"${tok.replace(/"/g, '""')}"`;
     })
-    .join(' ');
+    .join(" ");
 }
 
 /**
@@ -24,23 +29,23 @@ function sanitizeFtsQuery(input: string): string {
  * `timeline` or `get_observations` for the few they actually want.
  */
 export function search(db: Database, req: SearchRequest): SearchHit[] {
-  const tiers = req.tiers ?? ['t1', 't2'];
+  const tiers = req.tiers ?? ["t1", "t2"];
   const limit = req.limit;
   const offset = req.offset ?? 0;
   const hits: SearchHit[] = [];
   const now = Date.now();
 
-  if (tiers.includes('t2')) {
-    const where: string[] = ['t2_fts MATCH ?', 'm.retired_at IS NULL'];
+  if (tiers.includes("t2")) {
+    const where: string[] = ["t2_fts MATCH ?", "m.retired_at IS NULL"];
     const params: (string | number | null)[] = [sanitizeFtsQuery(req.query)];
 
     // null = no filter (matches existing recall convention); non-null = exact match.
     if (req.project_id != null) {
-      where.push('m.project_id = ?');
+      where.push("m.project_id = ?");
       params.push(req.project_id);
     }
     if (req.obs_type) {
-      where.push('m.obs_type = ?');
+      where.push("m.obs_type = ?");
       params.push(req.obs_type);
     }
     if (req.concept) {
@@ -52,11 +57,11 @@ export function search(db: Database, req: SearchRequest): SearchHit[] {
       params.push(req.file_path);
     }
     if (req.dateStart) {
-      where.push('m.created_at >= ?');
+      where.push("m.created_at >= ?");
       params.push(req.dateStart);
     }
     if (req.dateEnd) {
-      where.push('m.created_at <= ?');
+      where.push("m.created_at <= ?");
       params.push(req.dateEnd);
     }
 
@@ -67,7 +72,7 @@ export function search(db: Database, req: SearchRequest): SearchHit[] {
              m.last_verified_session_id AS last_verified_session_id,
              m.created_at, bm25(t2_fts) AS score
         FROM t2_fts JOIN t2_memories m ON m.rowid = t2_fts.rowid
-       WHERE ${where.join(' AND ')}
+       WHERE ${where.join(" AND ")}
        ORDER BY score
        LIMIT ? OFFSET ?
     `;
@@ -97,7 +102,7 @@ export function search(db: Database, req: SearchRequest): SearchHit[] {
       const ageDays = computeAgeDays(now, row.created_at, row.last_verified_at);
       hits.push({
         id: row.id,
-        tier: 't2',
+        tier: "t2",
         ts: row.ts,
         obs_type: row.obs_type,
         title: row.title,
@@ -114,19 +119,19 @@ export function search(db: Database, req: SearchRequest): SearchHit[] {
     }
   }
 
-  if (tiers.includes('t1')) {
-    const where: string[] = ['t1_fts MATCH ?'];
+  if (tiers.includes("t1")) {
+    const where: string[] = ["t1_fts MATCH ?"];
     const params: (string | number | null)[] = [sanitizeFtsQuery(req.query)];
     if (req.project_id != null) {
-      where.push('r.project_id = ?');
+      where.push("r.project_id = ?");
       params.push(req.project_id);
     }
     if (req.dateStart) {
-      where.push('r.ended_at >= ?');
+      where.push("r.ended_at >= ?");
       params.push(req.dateStart);
     }
     if (req.dateEnd) {
-      where.push('r.ended_at <= ?');
+      where.push("r.ended_at <= ?");
       params.push(req.dateEnd);
     }
     const sql = `
@@ -134,7 +139,7 @@ export function search(db: Database, req: SearchRequest): SearchHit[] {
              r.first_prompt_excerpt AS prompt, r.last_response_excerpt AS resp,
              r.project_id AS project_id, bm25(t1_fts) AS score
         FROM t1_fts JOIN t1_rollups r ON r.rowid = t1_fts.rowid
-       WHERE ${where.join(' AND ')}
+       WHERE ${where.join(" AND ")}
        ORDER BY score
        LIMIT ? OFFSET ?
     `;
@@ -157,10 +162,10 @@ export function search(db: Database, req: SearchRequest): SearchHit[] {
     for (const row of rows) {
       hits.push({
         id: row.id,
-        tier: 't1',
+        tier: "t1",
         ts: row.ts,
-        title: row.prompt ?? '(no prompt)',
-        snippet: snippetFromBody(row.resp ?? ''),
+        title: row.prompt ?? "(no prompt)",
+        snippet: snippetFromBody(row.resp ?? ""),
         project_id: row.project_id,
         score: row.score,
       });

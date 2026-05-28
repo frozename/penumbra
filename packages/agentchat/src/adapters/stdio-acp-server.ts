@@ -1,5 +1,5 @@
-import { spawn } from 'node:child_process';
-import type { Readable, Writable } from 'node:stream';
+import { spawn } from "node:child_process";
+import type { Readable, Writable } from "node:stream";
 
 export interface StartStdioAcpServerOptions {
   binary: string;
@@ -26,7 +26,9 @@ export interface StdioAcpHandle {
   getStderrTail: () => string;
 }
 
-export async function startStdioAcpServer(opts: StartStdioAcpServerOptions): Promise<StdioAcpHandle> {
+export async function startStdioAcpServer(
+  opts: StartStdioAcpServerOptions,
+): Promise<StdioAcpHandle> {
   const {
     binary,
     args = [],
@@ -44,14 +46,18 @@ export async function startStdioAcpServer(opts: StartStdioAcpServerOptions): Pro
     // retain a bounded tail buffer that error paths can surface — without
     // this, a crashed/limit-bound CLI's stderr was unattributable to a
     // specific handoff once it landed in the shared worker log.
-    stdio: ['pipe', 'pipe', 'pipe'],
-    detached: process.platform !== 'win32',
+    stdio: ["pipe", "pipe", "pipe"],
+    detached: process.platform !== "win32",
   });
 
   const tailChunks: Buffer[] = [];
   let tailBytes = 0;
-  child.stderr?.on('data', (chunk: Buffer) => {
-    try { process.stderr.write(chunk); } catch { /* downstream stderr closed */ }
+  child.stderr?.on("data", (chunk: Buffer) => {
+    try {
+      process.stderr.write(chunk);
+    } catch {
+      /* downstream stderr closed */
+    }
     tailChunks.push(chunk);
     tailBytes += chunk.length;
     while (tailBytes > stderrTailBytes && tailChunks.length > 0) {
@@ -68,14 +74,14 @@ export async function startStdioAcpServer(opts: StartStdioAcpServerOptions): Pro
   });
 
   const exited = new Promise<number | null>((resolve) => {
-    child.on('exit', (code) => resolve(code));
-    child.on('error', () => resolve(null));
+    child.on("exit", (code) => resolve(code));
+    child.on("error", () => resolve(null));
   });
 
   const signalProcess = (signal: NodeJS.Signals) => {
     if (!child.pid) return;
     try {
-      if (process.platform !== 'win32') {
+      if (process.platform !== "win32") {
         process.kill(-child.pid, signal);
       } else {
         child.kill(signal);
@@ -86,15 +92,15 @@ export async function startStdioAcpServer(opts: StartStdioAcpServerOptions): Pro
   };
 
   const kill = () => {
-    signalProcess('SIGTERM');
+    signalProcess("SIGTERM");
     const timer = setTimeout(() => {
-      signalProcess('SIGKILL');
+      signalProcess("SIGKILL");
     }, 2000);
     timer.unref();
   };
 
   if (signal) {
-    signal.addEventListener('abort', () => kill(), { once: true });
+    signal.addEventListener("abort", () => kill(), { once: true });
   }
 
   return {
@@ -103,6 +109,6 @@ export async function startStdioAcpServer(opts: StartStdioAcpServerOptions): Pro
     kill,
     exited,
     pid: child.pid,
-    getStderrTail: () => Buffer.concat(tailChunks).toString('utf8'),
+    getStderrTail: () => Buffer.concat(tailChunks).toString("utf8"),
   };
 }

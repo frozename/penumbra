@@ -4,10 +4,10 @@ import {
   reloadLongLivedReactorSubsystem,
   reloadWorkflowAndProjectRegistrySubsystem,
   type ReloadSubsystemStatus,
-} from './reload-config-orchestrators.js';
-import type { DaemonServices } from '../serve.js';
+} from "./reload-config-orchestrators.js";
+import type { DaemonServices } from "../serve.js";
 
-import { json } from './_helpers.js';
+import { json } from "./_helpers.js";
 
 /**
  * POST /agentchat/reload
@@ -28,17 +28,22 @@ import { json } from './_helpers.js';
  * Worker agentchat config is reloaded separately via the worker control bus —
  * see daemon.reload_workers.
  */
-export async function reloadConfigRoute(_req: Request, services: DaemonServices): Promise<Response> {
+export async function reloadConfigRoute(
+  _req: Request,
+  services: DaemonServices,
+): Promise<Response> {
   const agentchatSubsystem = await reloadAgentChatConfigSubsystem(services);
-  if (agentchatSubsystem.status === 'failed') {
-    const status = agentchatSubsystem.meta.reason === 'missing_config' || agentchatSubsystem.meta.reason === 'invalid_config'
-      ? 422
-      : 500;
+  if (agentchatSubsystem.status === "failed") {
+    const status =
+      agentchatSubsystem.meta.reason === "missing_config" ||
+      agentchatSubsystem.meta.reason === "invalid_config"
+        ? 422
+        : 500;
     return json({ error: agentchatSubsystem.error }, status);
   }
 
   const workflowProjectSubsystem = await reloadWorkflowAndProjectRegistrySubsystem(services);
-  if (workflowProjectSubsystem.status === 'failed') {
+  if (workflowProjectSubsystem.status === "failed") {
     services.log.error(
       {
         err: workflowProjectSubsystem.error,
@@ -46,7 +51,7 @@ export async function reloadConfigRoute(_req: Request, services: DaemonServices)
         workflowsDir: workflowProjectSubsystem.meta.workflows_dir,
         projectRegistryPath: workflowProjectSubsystem.meta.project_registry_path,
       },
-      'workflow-registry-rebuild-failed',
+      "workflow-registry-rebuild-failed",
     );
     return json(
       { error: `workflow registry rebuild failed: ${workflowProjectSubsystem.error}` },
@@ -55,18 +60,22 @@ export async function reloadConfigRoute(_req: Request, services: DaemonServices)
   }
 
   const reactorSubsystem = await reloadLongLivedReactorSubsystem(services);
-  const workersSubsystem = await reloadExtraWorkersSubsystem(services, workflowProjectSubsystem.meta.project_registry);
-  const workerExtras = workersSubsystem.status === 'failed'
-    ? { error: workersSubsystem.error ?? 'failed to reload extra workers' }
-    : workersSubsystem.status === 'reloaded'
-      ? workersSubsystem.meta.summary
-      : {
-        started: [],
-        restarted: [],
-        stopped: [],
-        skipped: [],
-        errors: [],
-      };
+  const workersSubsystem = await reloadExtraWorkersSubsystem(
+    services,
+    workflowProjectSubsystem.meta.project_registry,
+  );
+  const workerExtras =
+    workersSubsystem.status === "failed"
+      ? { error: workersSubsystem.error ?? "failed to reload extra workers" }
+      : workersSubsystem.status === "reloaded"
+        ? workersSubsystem.meta.summary
+        : {
+            started: [],
+            restarted: [],
+            stopped: [],
+            skipped: [],
+            errors: [],
+          };
 
   const agentCount = services.agentRegistry?.length ?? 0;
   const workflowCount = services.workflowRegistry?.list().length ?? 0;
@@ -83,7 +92,7 @@ export async function reloadConfigRoute(_req: Request, services: DaemonServices)
       reactor_status: reactorStatus,
       ...(reactorError ? { reactor_error: reactorError } : {}),
     },
-    'agentchat-config-reloaded',
+    "agentchat-config-reloaded",
   );
 
   return json({
@@ -94,6 +103,9 @@ export async function reloadConfigRoute(_req: Request, services: DaemonServices)
     reactor_status: reactorStatus,
     worker_extras: workerExtras,
     ...(reactorError ? { reactor_error: reactorError } : {}),
-    reloaded_at: typeof services.clock === 'function' ? (services.clock() as any).toISOString() : new Date().toISOString(),
+    reloaded_at:
+      typeof services.clock === "function"
+        ? (services.clock() as any).toISOString()
+        : new Date().toISOString(),
   });
 }

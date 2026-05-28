@@ -1,4 +1,4 @@
-import { resolveDaemonStorageRoot, type ResolveDaemonStorageRootOpts } from '@penumbra/core';
+import { resolveDaemonStorageRoot, type ResolveDaemonStorageRootOpts } from "@penumbra/core";
 
 export interface ResolveCliStorageRootOpts extends ResolveDaemonStorageRootOpts {
   explicit?: string;

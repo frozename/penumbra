@@ -73,11 +73,7 @@ describe("useStream", () => {
     }) as any) as SubscribeImpl;
 
     const { result } = renderHook(() =>
-      useStream<{ id?: number }>(
-        "dispatch-events",
-        { enabled: true },
-        { subscribeImpl },
-      ),
+      useStream<{ id?: number }>("dispatch-events", { enabled: true }, { subscribeImpl }),
     );
 
     act(() => {
@@ -110,12 +106,10 @@ describe("useStream", () => {
 
   test("unsubscribes on unmount", () => {
     const unsubscribe = mock(() => {});
-    const subscribeImpl = mock(
-      ((..._args: any[]) => ({
-        tail: () => [],
-        unsubscribe,
-      })) as any,
-    ) as SubscribeImpl;
+    const subscribeImpl = mock(((..._args: any[]) => ({
+      tail: () => [],
+      unsubscribe,
+    })) as any) as SubscribeImpl;
 
     const { unmount } = renderHook(() =>
       useStream("dispatch-events", { enabled: true }, { subscribeImpl }),
@@ -126,12 +120,10 @@ describe("useStream", () => {
   });
 
   test("enabled false skips subscription, then enables once flipped", () => {
-    const subscribeImpl = mock(
-      ((..._args: any[]) => ({
-        tail: () => [],
-        unsubscribe: mock(() => {}),
-      })) as any,
-    ) as SubscribeImpl;
+    const subscribeImpl = mock(((..._args: any[]) => ({
+      tail: () => [],
+      unsubscribe: mock(() => {}),
+    })) as any) as SubscribeImpl;
 
     const { rerender } = renderHook(
       ({ enabled }) =>
@@ -156,11 +148,7 @@ describe("useStream", () => {
     }) as any) as SubscribeImpl;
 
     const { result } = renderHook(() =>
-      useStream<{ i: number }>(
-        "dispatch-events",
-        { enabled: true },
-        { subscribeImpl },
-      ),
+      useStream<{ i: number }>("dispatch-events", { enabled: true }, { subscribeImpl }),
     );
 
     act(() => {
@@ -281,11 +269,7 @@ describe("useStream", () => {
     rerender({ bufferSize: 3 });
 
     await waitFor(() => expect(result.current.messages).toHaveLength(3));
-    expect(result.current.messages.map((m) => m.data)).toEqual([
-      { i: 7 },
-      { i: 8 },
-      { i: 9 },
-    ]);
+    expect(result.current.messages.map((m) => m.data)).toEqual([{ i: 7 }, { i: 8 }, { i: 9 }]);
   });
 
   test("growing bufferSize keeps existing snapshot intact", async () => {
@@ -324,24 +308,17 @@ describe("useStream", () => {
     rerender({ bufferSize: 10 });
 
     expect(result.current.messages).toHaveLength(3);
-    expect(result.current.messages.map((m) => m.data)).toEqual([
-      { i: 0 },
-      { i: 1 },
-      { i: 2 },
-    ]);
+    expect(result.current.messages.map((m) => m.data)).toEqual([{ i: 0 }, { i: 1 }, { i: 2 }]);
   });
 
   test("same params across rerender does not resubscribe", () => {
-    const subscribeImpl = mock(
-      ((..._args: any[]) => ({
-        tail: () => [],
-        unsubscribe: mock(() => {}),
-      })) as any,
-    ) as SubscribeImpl;
+    const subscribeImpl = mock(((..._args: any[]) => ({
+      tail: () => [],
+      unsubscribe: mock(() => {}),
+    })) as any) as SubscribeImpl;
 
     const { rerender } = renderHook(
-      ({ a }) =>
-        useStream("dispatch-events", { params: { a, b: "2" } }, { subscribeImpl }),
+      ({ a }) => useStream("dispatch-events", { params: { a, b: "2" } }, { subscribeImpl }),
       { initialProps: { a: "1" } },
     );
 

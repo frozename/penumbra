@@ -1,6 +1,6 @@
-import { realpathSync } from 'node:fs';
-import { basename, dirname, isAbsolute, resolve, sep } from 'node:path';
-import type { WorkflowCtx } from '@penumbra/workflows';
+import { realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, resolve, sep } from "node:path";
+import type { WorkflowCtx } from "@penumbra/workflows";
 
 function canonicalizePathForWrite(path: string): string {
   const absPath = resolve(path);
@@ -24,16 +24,30 @@ function canonicalizePathForWrite(path: string): string {
 
 function sanitizeFileStem(input: string): string {
   const trimmed = input.trim().toLowerCase();
-  return trimmed.replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'persona';
+  return trimmed.replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "persona";
 }
 
-function resolveOutDir(ctx: WorkflowCtx, outDirArg: string | undefined): { ok: true; path: string } | { ok: false } {
-  const defaultOutDir = resolve(ctx.cwd, '.penumbra', 'reviews', new Date().toISOString().replace(/:/g, '-'));
-  const outDir = !outDirArg ? defaultOutDir : isAbsolute(outDirArg) ? resolve(outDirArg) : resolve(ctx.cwd, outDirArg);
+function resolveOutDir(
+  ctx: WorkflowCtx,
+  outDirArg: string | undefined,
+): { ok: true; path: string } | { ok: false } {
+  const defaultOutDir = resolve(
+    ctx.cwd,
+    ".penumbra",
+    "reviews",
+    new Date().toISOString().replace(/:/g, "-"),
+  );
+  const outDir = !outDirArg
+    ? defaultOutDir
+    : isAbsolute(outDirArg)
+      ? resolve(outDirArg)
+      : resolve(ctx.cwd, outDirArg);
   const realOutDir = canonicalizePathForWrite(outDir);
   const roots = [ctx.cwd, ctx.storageRoot].map(canonicalizePathForWrite);
   // containment: compare canonical roots before any later writes to limit symlink-swap escapes.
-  const allowed = roots.some((root) => realOutDir === root || realOutDir.startsWith(`${root}${sep}`));
+  const allowed = roots.some(
+    (root) => realOutDir === root || realOutDir.startsWith(`${root}${sep}`),
+  );
   if (!allowed) return { ok: false };
   return { ok: true, path: realOutDir };
 }

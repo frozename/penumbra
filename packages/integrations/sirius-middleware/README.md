@@ -1,6 +1,6 @@
 # @penumbra/sirius-middleware
 
-This package provides a Fastify plugin that integrates a service with Penumbra for session observability and tracing. 
+This package provides a Fastify plugin that integrates a service with Penumbra for session observability and tracing.
 
 It acts as middleware that intercepts incoming requests and outgoing responses, logging them as observations to a running Penumbra Daemon.
 
@@ -29,16 +29,16 @@ The middleware requires the following environment variables to be set in order t
 Register the plugin with your Fastify instance:
 
 ```typescript
-import Fastify from 'fastify';
-import { penumbraFastifyPlugin } from '@penumbra/sirius-middleware';
+import Fastify from "fastify";
+import { penumbraFastifyPlugin } from "@penumbra/sirius-middleware";
 
 const app = Fastify({ logger: true });
 
 // Register the middleware
 app.register(penumbraFastifyPlugin);
 
-app.get('/', async (request, reply) => {
-  return { hello: 'world' };
+app.get("/", async (request, reply) => {
+  return { hello: "world" };
 });
 
 const start = async () => {

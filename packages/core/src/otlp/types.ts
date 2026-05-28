@@ -47,11 +47,11 @@ export interface ParsedLogRecord {
 }
 
 export function attrToValue(v: OtlpAttrValue): unknown {
-  if ('stringValue' in v) return v.stringValue;
-  if ('intValue' in v) return typeof v.intValue === 'string' ? Number(v.intValue) : v.intValue;
-  if ('doubleValue' in v) return v.doubleValue;
-  if ('boolValue' in v) return v.boolValue;
-  if ('arrayValue' in v) return v.arrayValue.values.map(attrToValue);
+  if ("stringValue" in v) return v.stringValue;
+  if ("intValue" in v) return typeof v.intValue === "string" ? Number(v.intValue) : v.intValue;
+  if ("doubleValue" in v) return v.doubleValue;
+  if ("boolValue" in v) return v.boolValue;
+  if ("arrayValue" in v) return v.arrayValue.values.map(attrToValue);
   return null;
 }
 

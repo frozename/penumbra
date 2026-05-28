@@ -14,9 +14,7 @@ function makeDefaultClient(): DaemonClient {
   return new DaemonClient(deps);
 }
 
-export function useDaemonHealth(
-  opts?: UseDaemonHealthOpts,
-): "unknown" | "ok" | "down" {
+export function useDaemonHealth(opts?: UseDaemonHealthOpts): "unknown" | "ok" | "down" {
   const client = useMemo(() => opts?.client ?? makeDefaultClient(), [opts?.client]);
   const intervalMs = opts?.intervalMs ?? 5_000;
   const health = useDaemonStore((s) => s.health);

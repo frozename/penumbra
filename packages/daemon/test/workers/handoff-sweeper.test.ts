@@ -1,22 +1,22 @@
-import { expect, test } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import {
   type Services,
   migrate,
   loadSqliteVec,
   HandoffWriter,
   HandoffReader,
-} from '@penumbra/core';
-import { createHandoffSweeperWorker } from '../../src/workers/handoff-sweeper.js';
+} from "@penumbra/core";
+import { createHandoffSweeperWorker } from "../../src/workers/handoff-sweeper.js";
 
 try {
-  if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {}
 
 function setupDb(): Database {
-  const db = new Database(':memory:');
+  const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   return db;
@@ -28,7 +28,7 @@ function makeServices(db: Database, now: Date): Services {
     handoffWriter: new HandoffWriter({ db }),
     handoffReader: new HandoffReader({ db }),
     t0Writer: { write: () => {} },
-    machineId: { get: () => 'machine-test' },
+    machineId: { get: () => "machine-test" },
     uuid: (() => {
       let n = 0;
       return () => `evt-${++n}`;
@@ -72,80 +72,80 @@ function insertDispatchEvent(db: Database, handoff_id: string, kind: string, ts:
 }
 
 // Fixed reference point for all tests.
-const NOW = new Date('2026-01-01T12:00:00.000Z');
+const NOW = new Date("2026-01-01T12:00:00.000Z");
 const m = (min: number) => new Date(NOW.getTime() - min * 60_000).toISOString();
 const s = (sec: number) => new Date(NOW.getTime() - sec * 1_000).toISOString();
 
-test('continuous-activity survives: dispatched 35min ago with recent events is not expired', async () => {
+test("continuous-activity survives: dispatched 35min ago with recent events is not expired", async () => {
   const db = setupDb();
   const services = makeServices(db, NOW);
-  insertDispatchedHandoff(db, 'h-live', m(35));
-  insertDispatchEvent(db, 'h-live', 'dispatch.start', m(35));
-  insertDispatchEvent(db, 'h-live', 'agent.thought', m(5));
-  insertDispatchEvent(db, 'h-live', 'agent.thought', s(30));
+  insertDispatchedHandoff(db, "h-live", m(35));
+  insertDispatchEvent(db, "h-live", "dispatch.start", m(35));
+  insertDispatchEvent(db, "h-live", "agent.thought", m(5));
+  insertDispatchEvent(db, "h-live", "agent.thought", s(30));
 
   const worker = createHandoffSweeperWorker({ services });
   await worker.tick();
 
-  const handoff = (services as any).handoffReader.get('h-live');
-  expect(handoff?.status).toBe('dispatched');
+  const handoff = (services as any).handoffReader.get("h-live");
+  expect(handoff?.status).toBe("dispatched");
 });
 
-test('wedged handoff expires: dispatched 35min ago with no events becomes expired', async () => {
+test("wedged handoff expires: dispatched 35min ago with no events becomes expired", async () => {
   const db = setupDb();
   const services = makeServices(db, NOW);
-  insertDispatchedHandoff(db, 'h-wedged', m(35));
+  insertDispatchedHandoff(db, "h-wedged", m(35));
 
   const worker = createHandoffSweeperWorker({ services });
   await worker.tick();
 
-  const handoff = (services as any).handoffReader.get('h-wedged');
-  expect(handoff?.status).toBe('expired');
-  expect(handoff?.resolution_reason).toContain('expired by sweeper after');
+  const handoff = (services as any).handoffReader.get("h-wedged");
+  expect(handoff?.status).toBe("expired");
+  expect(handoff?.resolution_reason).toContain("expired by sweeper after");
 });
 
-test('per-task TTL: debug_diagnose (45min) survives at 35min; smoke_test (10min) expires at 35min', async () => {
+test("per-task TTL: debug_diagnose (45min) survives at 35min; smoke_test (10min) expires at 35min", async () => {
   const db = setupDb();
   const services = makeServices(db, NOW);
   // debug_diagnose threshold is 45min — 35min old should survive.
-  insertDispatchedHandoff(db, 'h-debug', m(35), 'debug_diagnose');
+  insertDispatchedHandoff(db, "h-debug", m(35), "debug_diagnose");
   // smoke_test threshold is 10min — 35min old should expire.
-  insertDispatchedHandoff(db, 'h-smoke', m(35), 'smoke_test');
+  insertDispatchedHandoff(db, "h-smoke", m(35), "smoke_test");
 
   const worker = createHandoffSweeperWorker({ services });
   await worker.tick();
 
-  const debug = (services as any).handoffReader.get('h-debug');
-  const smoke = (services as any).handoffReader.get('h-smoke');
-  expect(debug?.status).toBe('dispatched');
-  expect(smoke?.status).toBe('expired');
-  expect(smoke?.resolution_reason).toContain('task_type=smoke_test');
+  const debug = (services as any).handoffReader.get("h-debug");
+  const smoke = (services as any).handoffReader.get("h-smoke");
+  expect(debug?.status).toBe("dispatched");
+  expect(smoke?.status).toBe("expired");
+  expect(smoke?.resolution_reason).toContain("task_type=smoke_test");
 });
 
-test('flat TTL override wins over per-task-class: debug_diagnose at 35min expires when override=10min', async () => {
+test("flat TTL override wins over per-task-class: debug_diagnose at 35min expires when override=10min", async () => {
   const db = setupDb();
   const services = makeServices(db, NOW);
   // debug_diagnose would normally survive to 45min, but flat override is 10min.
-  insertDispatchedHandoff(db, 'h-override', m(35), 'debug_diagnose');
+  insertDispatchedHandoff(db, "h-override", m(35), "debug_diagnose");
 
   const worker = createHandoffSweeperWorker({ services, dispatchedTtlMs: 10 * 60_000 });
   await worker.tick();
 
-  const handoff = (services as any).handoffReader.get('h-override');
-  expect(handoff?.status).toBe('expired');
-  expect(handoff?.resolution_reason).toContain('expired by sweeper after');
+  const handoff = (services as any).handoffReader.get("h-override");
+  expect(handoff?.status).toBe("expired");
+  expect(handoff?.resolution_reason).toContain("expired by sweeper after");
 });
 
-test('pending handoffs still expire after pending TTL (60min)', async () => {
+test("pending handoffs still expire after pending TTL (60min)", async () => {
   const db = setupDb();
   const services = makeServices(db, NOW);
-  insertPendingHandoff(db, 'h-pending', m(61));
+  insertPendingHandoff(db, "h-pending", m(61));
 
   const worker = createHandoffSweeperWorker({ services });
   await worker.tick();
 
-  const handoff = (services as any).handoffReader.get('h-pending');
-  expect(handoff?.status).toBe('expired');
-  expect(handoff?.resolution_reason).toContain('expired by sweeper after');
-  expect(handoff?.resolution_reason).toContain('in pending');
+  const handoff = (services as any).handoffReader.get("h-pending");
+  expect(handoff?.status).toBe("expired");
+  expect(handoff?.resolution_reason).toContain("expired by sweeper after");
+  expect(handoff?.resolution_reason).toContain("in pending");
 });

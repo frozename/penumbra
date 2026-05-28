@@ -1,6 +1,6 @@
-import { z } from 'zod';
-import { randomUUID } from 'node:crypto';
-import type { Services } from '@penumbra/core';
+import { z } from "zod";
+import { randomUUID } from "node:crypto";
+import type { Services } from "@penumbra/core";
 import {
   parseWikiLinks,
   writeDirectT2Memory,
@@ -22,22 +22,22 @@ import {
   enqueueMemoryEfficacyJob,
   getJobStatus,
   listRecentJobs,
-} from '@penumbra/core';
-import { getPrincipal } from '../auth.js';
-import { json } from './_helpers.js';
+} from "@penumbra/core";
+import { getPrincipal } from "../auth.js";
+import { json } from "./_helpers.js";
 
-const DIRECT_WRITE_CYCLE_ID = 'direct-write';
+const DIRECT_WRITE_CYCLE_ID = "direct-write";
 
 interface MemoryWritePreparedStatements {
-  deleteWikiLinks: ReturnType<Services['db']['prepare']>;
-  resolveSlugByCount: Map<number, ReturnType<Services['db']['prepare']>>;
-  upsertResolvedLink: ReturnType<Services['db']['prepare']>;
-  upsertUnresolvedLink: ReturnType<Services['db']['prepare']>;
+  deleteWikiLinks: ReturnType<Services["db"]["prepare"]>;
+  resolveSlugByCount: Map<number, ReturnType<Services["db"]["prepare"]>>;
+  upsertResolvedLink: ReturnType<Services["db"]["prepare"]>;
+  upsertUnresolvedLink: ReturnType<Services["db"]["prepare"]>;
 }
 
-const memoryWritePreparedStatements = new Map<Services['db'], MemoryWritePreparedStatements>();
+const memoryWritePreparedStatements = new Map<Services["db"], MemoryWritePreparedStatements>();
 
-function getMemoryWritePreparedStatements(db: Services['db']): MemoryWritePreparedStatements {
+function getMemoryWritePreparedStatements(db: Services["db"]): MemoryWritePreparedStatements {
   const existing = memoryWritePreparedStatements.get(db);
   if (existing) {
     return existing;
@@ -63,21 +63,23 @@ function getMemoryWritePreparedStatements(db: Services['db']): MemoryWritePrepar
   return prepared;
 }
 
-function ensureDirectWriteCycleId(db: Services['db']): string {
+function ensureDirectWriteCycleId(db: Services["db"]): string {
   const existing = db
     .prepare(`SELECT cycle_id FROM dream_cycles WHERE cycle_id = ?`)
     .get(DIRECT_WRITE_CYCLE_ID) as { cycle_id: string } | undefined;
   if (existing?.cycle_id) return DIRECT_WRITE_CYCLE_ID;
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run)
     VALUES(?, ?, 'direct-write', 0, 'completed', '[]')
-  `).run(DIRECT_WRITE_CYCLE_ID, Date.now());
+  `,
+  ).run(DIRECT_WRITE_CYCLE_ID, Date.now());
   return DIRECT_WRITE_CYCLE_ID;
 }
 
 function resolveSlugsInTransaction(
-  db: Services['db'],
+  db: Services["db"],
   statements: MemoryWritePreparedStatements,
   slugs: string[],
 ): Array<{ memory_id: string; slug: string; project_id: string | null }> {
@@ -86,11 +88,15 @@ function resolveSlugsInTransaction(
   if (!stmt) {
     stmt = db.prepare(`
       SELECT memory_id, slug, project_id FROM t2_memories
-      WHERE slug IN (${slugs.map(() => '?').join(',')}) AND retired_at IS NULL
+      WHERE slug IN (${slugs.map(() => "?").join(",")}) AND retired_at IS NULL
     `);
     statements.resolveSlugByCount.set(slugs.length, stmt);
   }
-  return stmt.all(...slugs) as Array<{ memory_id: string; slug: string; project_id: string | null }>;
+  return stmt.all(...slugs) as Array<{
+    memory_id: string;
+    slug: string;
+    project_id: string | null;
+  }>;
 }
 
 async function readJson(req: Request): Promise<unknown | { _err: Response }> {
@@ -99,21 +105,23 @@ async function readJson(req: Request): Promise<unknown | { _err: Response }> {
   } catch {
     return {
       _err: json(
-        { error: { code: 'invalid_json', message: 'request body was not valid JSON' } },
+        { error: { code: "invalid_json", message: "request body was not valid JSON" } },
         400,
       ),
     };
   }
 }
 export const EFFICACY_RUNNER_HEARTBEAT_STALE_MS = 60_000;
-function validationError(parsed: { error: { issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }> } }): Response {
+function validationError(parsed: {
+  error: { issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }> };
+}): Response {
   return json(
     {
       error: {
-        code: 'validation_error',
-        message: 'body failed schema validation',
+        code: "validation_error",
+        message: "body failed schema validation",
         field_errors: parsed.error.issues.map((i) => ({
-          path: i.path.map((p) => (typeof p === 'symbol' ? p.toString() : p)),
+          path: i.path.map((p) => (typeof p === "symbol" ? p.toString() : p)),
           message: i.message,
         })),
       },
@@ -124,36 +132,39 @@ function validationError(parsed: { error: { issues: ReadonlyArray<{ path: Readon
 
 export async function memorySearchRoute(req: Request, services: Services): Promise<Response> {
   const raw = await readJson(req);
-  if (raw && typeof raw === 'object' && '_err' in raw) return (raw as { _err: Response })._err;
+  if (raw && typeof raw === "object" && "_err" in raw) return (raw as { _err: Response })._err;
   const parsed = SearchRequestSchema.safeParse(raw);
   if (!parsed.success) return validationError(parsed);
   const hits = search(services.db, parsed.data);
   return json({ hits });
 }
 
-const MemoryWriteT2Schema = z.object({
-  title: z.string().min(1),
-  body: z.string().min(1),
-  slug: z.string().optional().nullable(),
-  hook: z.string().optional().nullable(),
-  sub_kind: z.string().optional().nullable(),
-  cc_kind: z.string().optional().nullable(),
-  project_id: z.string().nullable().optional(),
-}).strict();
+const MemoryWriteT2Schema = z
+  .object({
+    title: z.string().min(1),
+    body: z.string().min(1),
+    slug: z.string().optional().nullable(),
+    hook: z.string().optional().nullable(),
+    sub_kind: z.string().optional().nullable(),
+    cc_kind: z.string().optional().nullable(),
+    project_id: z.string().nullable().optional(),
+  })
+  .strict();
 
 export async function memoryWriteT2Route(req: Request, services: Services): Promise<Response> {
   const raw = await readJson(req);
-  if (raw && typeof raw === 'object' && '_err' in raw) return (raw as { _err: Response })._err;
+  if (raw && typeof raw === "object" && "_err" in raw) return (raw as { _err: Response })._err;
   const parsed = MemoryWriteT2Schema.safeParse(raw);
   if (!parsed.success) return validationError(parsed);
 
   const principal = getPrincipal(req);
-  if (principal?.kind !== 'shared') {
+  if (principal?.kind !== "shared") {
     return json(
       {
         error: {
-          code: 'principal_forbidden',
-          message: 'direct-write is restricted to shared-bearer principals; worker-token callers are not authorized',
+          code: "principal_forbidden",
+          message:
+            "direct-write is restricted to shared-bearer principals; worker-token callers are not authorized",
         },
       },
       403,
@@ -163,10 +174,10 @@ export async function memoryWriteT2Route(req: Request, services: Services): Prom
   const data = parsed.data;
   const embedding = (await services.embedder.embed([data.body]))[0];
   if (embedding == null) {
-    return json({ error: { code: 'embed_failed', message: 'embedding returned no vector' } }, 500);
+    return json({ error: { code: "embed_failed", message: "embedding returned no vector" } }, 500);
   }
-    const statements = getMemoryWritePreparedStatements(services.db);
-    const { deleteWikiLinks, upsertResolvedLink, upsertUnresolvedLink } = statements;
+  const statements = getMemoryWritePreparedStatements(services.db);
+  const { deleteWikiLinks, upsertResolvedLink, upsertUnresolvedLink } = statements;
 
   const result = services.db.transaction(() => {
     const directCycleId = ensureDirectWriteCycleId(services.db);
@@ -224,14 +235,32 @@ export async function memoryWriteT2Route(req: Request, services: Services): Prom
 
 export async function memoryVerifyRoute(req: Request, services: Services): Promise<Response> {
   const raw = await readJson(req);
-  if (raw && typeof raw === 'object' && '_err' in raw) return (raw as { _err: Response })._err;
-  const parsed = z.object({
-    memory_id: z.string().min(1),
-    claimed_by: z.string().min(1).max(120).regex(/^[A-Za-z0-9._:@-]+$/).optional(),
-    by: z.string().min(1).max(120).regex(/^[A-Za-z0-9._:@-]+$/).describe('Deprecated: use claimed_by instead').optional(),
-    reason: z.string().min(1).max(500).optional(),
-    session_id: z.string().min(1).max(120).regex(/^[A-Za-z0-9._-]+$/).optional(),
-  }).safeParse(raw);
+  if (raw && typeof raw === "object" && "_err" in raw) return (raw as { _err: Response })._err;
+  const parsed = z
+    .object({
+      memory_id: z.string().min(1),
+      claimed_by: z
+        .string()
+        .min(1)
+        .max(120)
+        .regex(/^[A-Za-z0-9._:@-]+$/)
+        .optional(),
+      by: z
+        .string()
+        .min(1)
+        .max(120)
+        .regex(/^[A-Za-z0-9._:@-]+$/)
+        .describe("Deprecated: use claimed_by instead")
+        .optional(),
+      reason: z.string().min(1).max(500).optional(),
+      session_id: z
+        .string()
+        .min(1)
+        .max(120)
+        .regex(/^[A-Za-z0-9._-]+$/)
+        .optional(),
+    })
+    .safeParse(raw);
   if (!parsed.success) return validationError(parsed);
   // Keep the legacy alias wired for callers that still send `by`.
   const claimedBy = parsed.data.claimed_by ?? parsed.data.by ?? null;
@@ -244,7 +273,7 @@ export async function memoryVerifyRoute(req: Request, services: Services): Promi
     sessionId: parsed.data.session_id,
     uuid: () => eventId,
   });
-  if (!result) return json({ error: 'memory_not_found' }, 404);
+  if (!result) return json({ error: "memory_not_found" }, 404);
   return json({
     memory_id: result.memory_id,
     last_verified_at: result.last_verified_at,
@@ -258,17 +287,25 @@ export async function memoryVerifyRoute(req: Request, services: Services): Promi
   });
 }
 
-export async function memoryVerificationEventsRoute(req: Request, services: Services): Promise<Response> {
+export async function memoryVerificationEventsRoute(
+  req: Request,
+  services: Services,
+): Promise<Response> {
   const url = new URL(req.url);
-  const parts = url.pathname.split('/');
+  const parts = url.pathname.split("/");
   const memoryId = parts[2];
-  if (parts.length !== 4 || parts[1] !== 'memory' || parts[3] !== 'verification_events' || !memoryId) {
-    return json({ error: 'not_found' }, 404);
+  if (
+    parts.length !== 4 ||
+    parts[1] !== "memory" ||
+    parts[3] !== "verification_events" ||
+    !memoryId
+  ) {
+    return json({ error: "not_found" }, 404);
   }
-  const limitRaw = url.searchParams.get('limit');
+  const limitRaw = url.searchParams.get("limit");
   const limit = limitRaw === null ? undefined : Number(limitRaw);
   if (limitRaw !== null && (!Number.isInteger(limit) || !Number.isFinite(limit))) {
-    return json({ error: 'invalid_limit' }, 400);
+    return json({ error: "invalid_limit" }, 400);
   }
   const events = getMemoryVerificationEvents(services.db, memoryId, limit);
   return json({ events });
@@ -276,7 +313,7 @@ export async function memoryVerificationEventsRoute(req: Request, services: Serv
 
 export async function memoryTimelineRoute(req: Request, services: Services): Promise<Response> {
   const raw = await readJson(req);
-  if (raw && typeof raw === 'object' && '_err' in raw) return (raw as { _err: Response })._err;
+  if (raw && typeof raw === "object" && "_err" in raw) return (raw as { _err: Response })._err;
   const parsed = TimelineRequestSchema.safeParse(raw);
   if (!parsed.success) return validationError(parsed);
   const entries = timeline(services.db, parsed.data);
@@ -285,7 +322,7 @@ export async function memoryTimelineRoute(req: Request, services: Services): Pro
 
 export async function memoryGetRoute(req: Request, services: Services): Promise<Response> {
   const raw = await readJson(req);
-  if (raw && typeof raw === 'object' && '_err' in raw) return (raw as { _err: Response })._err;
+  if (raw && typeof raw === "object" && "_err" in raw) return (raw as { _err: Response })._err;
   const parsed = GetObservationsRequestSchema.safeParse(raw);
   if (!parsed.success) return validationError(parsed);
   const observations = getObservations(services.db, parsed.data);
@@ -294,7 +331,7 @@ export async function memoryGetRoute(req: Request, services: Services): Promise<
 
 export async function memoryCorpusBuildRoute(req: Request, services: Services): Promise<Response> {
   const raw = await readJson(req);
-  if (raw && typeof raw === 'object' && '_err' in raw) return (raw as { _err: Response })._err;
+  if (raw && typeof raw === "object" && "_err" in raw) return (raw as { _err: Response })._err;
   const parsed = CorpusBuildRequestSchema.safeParse(raw);
   if (!parsed.success) return validationError(parsed);
   const summary = await buildCorpus(services.db, services.embedder, parsed.data);
@@ -303,7 +340,7 @@ export async function memoryCorpusBuildRoute(req: Request, services: Services): 
 
 export async function memoryCorpusQueryRoute(req: Request, services: Services): Promise<Response> {
   const raw = await readJson(req);
-  if (raw && typeof raw === 'object' && '_err' in raw) return (raw as { _err: Response })._err;
+  if (raw && typeof raw === "object" && "_err" in raw) return (raw as { _err: Response })._err;
   const parsed = CorpusQueryRequestSchema.safeParse(raw);
   if (!parsed.success) return validationError(parsed);
   const hits = await queryCorpus(services.db, services.embedder, parsed.data);
@@ -325,9 +362,12 @@ const EfficacyRecentSchema = z.object({
   include_raw: z.boolean().optional(),
 });
 
-export async function memoryEfficacyRecentRoute(req: Request, services: Services): Promise<Response> {
+export async function memoryEfficacyRecentRoute(
+  req: Request,
+  services: Services,
+): Promise<Response> {
   const raw = await readJson(req);
-  if (raw && typeof raw === 'object' && '_err' in raw) return (raw as { _err: Response })._err;
+  if (raw && typeof raw === "object" && "_err" in raw) return (raw as { _err: Response })._err;
   const parsed = EfficacyRecentSchema.safeParse(raw);
   if (!parsed.success) return validationError(parsed);
   return json(
@@ -341,21 +381,21 @@ export async function memoryEfficacyRecentRoute(req: Request, services: Services
 
 const EfficacyRebuildSchema = z.object({
   since: z.string().datetime({ offset: true }).optional(),
-  source: z.enum(['maestro', 'cli', 'http']).optional(),
+  source: z.enum(["maestro", "cli", "http"]).optional(),
 });
 
-export async function memoryEfficacyRebuildRoute(req: Request, services: Services): Promise<Response> {
+export async function memoryEfficacyRebuildRoute(
+  req: Request,
+  services: Services,
+): Promise<Response> {
   const raw = await readJson(req);
-  if (raw && typeof raw === 'object' && '_err' in raw) return (raw as { _err: Response })._err;
+  if (raw && typeof raw === "object" && "_err" in raw) return (raw as { _err: Response })._err;
   const parsed = EfficacyRebuildSchema.safeParse(raw);
   if (!parsed.success) return validationError(parsed);
   // Async v2: enqueue only when a live runner is available to drain the queue.
   const runnerHeartbeatAt = services.memoryEfficacyRunnerHeartbeatAt ?? 0;
   if (Date.now() - runnerHeartbeatAt > EFFICACY_RUNNER_HEARTBEAT_STALE_MS) {
-    return json(
-      { error: { code: 'backend_unavailable', message: 'no live job runner' } },
-      503,
-    );
+    return json({ error: { code: "backend_unavailable", message: "no live job runner" } }, 503);
   }
 
   const reviewsDir = services.reviewsDir;
@@ -363,25 +403,25 @@ export async function memoryEfficacyRebuildRoute(req: Request, services: Service
   const enqueued = enqueueMemoryEfficacyJob(services.db, {
     reviewsDir,
     sinceISO: parsed.data.since,
-    enqueuedBy: parsed.data.source ?? 'http',
+    enqueuedBy: parsed.data.source ?? "http",
   });
 
-  return json({ job_id: enqueued.job_id, status: 'queued' }, 202);
+  return json({ job_id: enqueued.job_id, status: "queued" }, 202);
 }
 
 export async function memoryEfficacyJobRoute(req: Request, services: Services): Promise<Response> {
   const url = new URL(req.url);
-  const jobId = url.pathname.split('/').pop();
-  if (!jobId) return json({ error: 'job_id_required' }, 400);
+  const jobId = url.pathname.split("/").pop();
+  if (!jobId) return json({ error: "job_id_required" }, 400);
   const status = getJobStatus(services.db, jobId);
-  if (!status) return json({ error: 'job_not_found' }, 404);
+  if (!status) return json({ error: "job_not_found" }, 404);
   return json(status);
 }
 
 export async function memoryEfficacyJobsRoute(req: Request, services: Services): Promise<Response> {
   const url = new URL(req.url);
-  const limit = url.searchParams.get('limit');
-  const status = url.searchParams.get('status');
+  const limit = url.searchParams.get("limit");
+  const status = url.searchParams.get("status");
   const jobs = listRecentJobs(services.db, {
     limit: limit ? parseInt(limit, 10) : undefined,
     status: status ?? undefined,

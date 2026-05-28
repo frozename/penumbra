@@ -1,23 +1,24 @@
-import { z } from 'zod';
-import {
-  TASK_DRAFT_LIFECYCLE_EVENT_TYPES,
-  T0EventInputSchema,
-} from '@penumbra/core';
-import { toTextContent } from '@nova/mcp-shared';
-import type { DaemonClient } from '../daemon-client.js';
+import { z } from "zod";
+import { TASK_DRAFT_LIFECYCLE_EVENT_TYPES, T0EventInputSchema } from "@penumbra/core";
+import { toTextContent } from "@nova/mcp-shared";
+import type { DaemonClient } from "../daemon-client.js";
 
 const ObserveBaseEventTypes = [
-  'agent-prompt', 'agent-tool-use', 'agent-response', 'request', 'response',
+  "agent-prompt",
+  "agent-tool-use",
+  "agent-response",
+  "request",
+  "response",
 ] as const;
 
 export const ObserveInputShape = {
   ts: z.string(),
-  source: z.enum(['mcp', 'transcript', 'sirius-middleware', 'claude-code', 'agentchat']),
+  source: z.enum(["mcp", "transcript", "sirius-middleware", "claude-code", "agentchat"]),
   source_detail: z.string().nullable().optional(),
   project_id: z.string().nullable().optional(),
   session_id: z.string().nullable().optional(),
   event_type: z.enum([...ObserveBaseEventTypes, ...TASK_DRAFT_LIFECYCLE_EVENT_TYPES]),
-  lane: z.enum(['local', 'cloud', 'cli-subscription', 'unknown']),
+  lane: z.enum(["local", "cloud", "cli-subscription", "unknown"]),
   provider: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
   tokens_in: z.number().int().nullable().optional(),
@@ -41,8 +42,8 @@ export function observeHandler(daemon: DaemonClient) {
     const parsed = ObserveSchema.parse(input);
     const event = T0EventInputSchema.parse({
       ...parsed,
-      user_id: 'mcp-client',
-      machine_id: 'mcp-client',
+      user_id: "mcp-client",
+      machine_id: "mcp-client",
     });
     const r = await daemon.observe(event);
     return toTextContent(r);

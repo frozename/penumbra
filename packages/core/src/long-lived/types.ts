@@ -1,47 +1,55 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 export const PendingGoalSchema = z.union([
   z.object({
-    kind: z.literal('user_goal'),
+    kind: z.literal("user_goal"),
     text: z.string().optional(),
   }),
   z.object({
-    kind: z.literal('approved_action'),
+    kind: z.literal("approved_action"),
     pending_action_id: z.string(),
     original_payload: z.unknown(),
   }),
 ]);
 
-export const WorkingMemorySchema = z.object({
-  version: z.literal(1),
-  updated_at: z.number(),
-  pending_goals: z.array(PendingGoalSchema),
-  open_threads: z.array(z.object({
-    id: z.string(),
-    topic: z.string(),
-    opened_at: z.number(),
-    notes: z.string(),
-  })),
-  watches: z.array(z.object({
-    id: z.string(),
-    subject: z.string(),
-    until: z.number().optional(),
-    reason: z.string(),
-  })),
-  recent_decisions: z.array(z.object({
-    pending_action_id: z.string(),
-    decision: z.enum(['approved', 'rejected', 'expired']),
-    reason: z.string().optional(),
-    decided_at: z.number(),
-  })),
-}).passthrough();
+export const WorkingMemorySchema = z
+  .object({
+    version: z.literal(1),
+    updated_at: z.number(),
+    pending_goals: z.array(PendingGoalSchema),
+    open_threads: z.array(
+      z.object({
+        id: z.string(),
+        topic: z.string(),
+        opened_at: z.number(),
+        notes: z.string(),
+      }),
+    ),
+    watches: z.array(
+      z.object({
+        id: z.string(),
+        subject: z.string(),
+        until: z.number().optional(),
+        reason: z.string(),
+      }),
+    ),
+    recent_decisions: z.array(
+      z.object({
+        pending_action_id: z.string(),
+        decision: z.enum(["approved", "rejected", "expired"]),
+        reason: z.string().optional(),
+        decided_at: z.number(),
+      }),
+    ),
+  })
+  .passthrough();
 
 export type WorkingMemory = z.infer<typeof WorkingMemorySchema>;
 
-export const AgentStatusSchema = z.enum(['active', 'paused', 'degraded', 'retired']);
-export const TickOutcomeSchema = z.enum(['success', 'failed', 'bound_exceeded', 'circuit_open']);
-export const TriggerKindSchema = z.enum(['cron', 'event', 'injected_goal', 'manual']);
-export const PendingActionStatusSchema = z.enum(['pending', 'approved', 'rejected', 'expired']);
+export const AgentStatusSchema = z.enum(["active", "paused", "degraded", "retired"]);
+export const TickOutcomeSchema = z.enum(["success", "failed", "bound_exceeded", "circuit_open"]);
+export const TriggerKindSchema = z.enum(["cron", "event", "injected_goal", "manual"]);
+export const PendingActionStatusSchema = z.enum(["pending", "approved", "rejected", "expired"]);
 
 export const LongLivedAgentRowSchema = z.object({
   id: z.string(),

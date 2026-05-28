@@ -9,7 +9,9 @@ try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch { /* already loaded */ }
+} catch {
+  /* already loaded */
+}
 
 const SHARED_TOKEN = "shared-sec";
 
@@ -56,12 +58,11 @@ function seedDispatched(services: Services, worker_id: string, handoff_id: strin
     parent_handoff_id: null,
   });
 
-  services.db.run(
-    "UPDATE handoffs SET status = 'dispatched', worker_id = ? WHERE handoff_id = ?",
-    [worker_id, handoff_id]
-  );
+  services.db.run("UPDATE handoffs SET status = 'dispatched', worker_id = ? WHERE handoff_id = ?", [
+    worker_id,
+    handoff_id,
+  ]);
 }
-
 
 describe("/handoffs/:id/complete terminal CAS", () => {
   test("worker principal + omitted body worker_id: completes with expected = principal.worker_id", async () => {

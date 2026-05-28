@@ -1,12 +1,12 @@
-import type { Database } from 'bun:sqlite';
-import type { JudgeChatFn, Services } from '@penumbra/core';
-import { randomUUID } from 'node:crypto';
+import type { Database } from "bun:sqlite";
+import type { JudgeChatFn, Services } from "@penumbra/core";
+import { randomUUID } from "node:crypto";
 import {
   buildMemoryEfficacyCache as defaultBuildMemoryEfficacyCache,
   claimNextJob as defaultClaimNextJob,
   completeJob as defaultCompleteJob,
   heartbeatJob as defaultHeartbeatJob,
-} from '@penumbra/core';
+} from "@penumbra/core";
 
 type ClaimNextJobFn = typeof defaultClaimNextJob;
 type HeartbeatJobFn = typeof defaultHeartbeatJob;
@@ -62,17 +62,17 @@ export function createMemoryEfficacyJobRunner(opts: MemoryEfficacyJobRunnerOpts)
       const job = collab.claimNextJob(opts.db, now, { workerId, leaseTtlMs });
       if (!job) return;
 
-      log.info({ job_id: job.job_id }, 'memory-efficacy-job-runner: claimed job');
+      log.info({ job_id: job.job_id }, "memory-efficacy-job-runner: claimed job");
 
       const heartbeatTimer = setInterval(() => {
         const beatAt = new Date().toISOString();
         opts.services.memoryEfficacyRunnerHeartbeatAt = Date.now();
         const ok = collab.heartbeatJob(opts.db, job.job_id, workerId, beatAt, { leaseTtlMs });
         if (!ok) {
-          log.error({ job_id: job.job_id }, 'memory-efficacy-job-runner: lease lost during run');
+          log.error({ job_id: job.job_id }, "memory-efficacy-job-runner: lease lost during run");
         }
       }, heartbeatIntervalMs);
-      if (typeof (heartbeatTimer as any).unref === 'function') (heartbeatTimer as any).unref();
+      if (typeof (heartbeatTimer as any).unref === "function") (heartbeatTimer as any).unref();
       try {
         const result = await collab.buildMemoryEfficacyCache(opts.db, {
           reviewsDir: job.reviews_dir,
@@ -84,12 +84,12 @@ export function createMemoryEfficacyJobRunner(opts: MemoryEfficacyJobRunnerOpts)
         const finishedAt = new Date().toISOString();
         const ok = collab.completeJob(opts.db, job.job_id, result, finishedAt, { workerId });
         if (!ok) {
-          log.error({ job_id: job.job_id }, 'memory-efficacy-job-runner: lease lost - terminal write rejected');
-        } else {
-          log.info(
-            { job_id: job.job_id, ...result },
-            'memory-efficacy-job-runner: completed job',
+          log.error(
+            { job_id: job.job_id },
+            "memory-efficacy-job-runner: lease lost - terminal write rejected",
           );
+        } else {
+          log.info({ job_id: job.job_id, ...result }, "memory-efficacy-job-runner: completed job");
         }
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
@@ -98,18 +98,21 @@ export function createMemoryEfficacyJobRunner(opts: MemoryEfficacyJobRunnerOpts)
           workerId,
         });
         if (!ok) {
-          log.error({ job_id: job.job_id }, 'memory-efficacy-job-runner: lease lost - terminal write rejected');
+          log.error(
+            { job_id: job.job_id },
+            "memory-efficacy-job-runner: lease lost - terminal write rejected",
+          );
         } else {
           log.error(
             { job_id: job.job_id, err: errorMessage },
-            'memory-efficacy-job-runner: job failed',
+            "memory-efficacy-job-runner: job failed",
           );
         }
       } finally {
         clearInterval(heartbeatTimer);
       }
     } catch (err) {
-      log.error({ err }, 'memory-efficacy-job-runner: tick error');
+      log.error({ err }, "memory-efficacy-job-runner: tick error");
     } finally {
       running = false;
     }

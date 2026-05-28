@@ -8,11 +8,23 @@ export function parseShellArgs(s: string): string[] {
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
     if (quote) {
-      if (c === quote) { quote = null; continue; }
+      if (c === quote) {
+        quote = null;
+        continue;
+      }
       cur += c;
     } else {
-      if (c === '"' || c === "'") { quote = c; continue; }
-      if (/\s/.test(c)) { if (cur) { out.push(cur); cur = ""; } continue; }
+      if (c === '"' || c === "'") {
+        quote = c;
+        continue;
+      }
+      if (/\s/.test(c)) {
+        if (cur) {
+          out.push(cur);
+          cur = "";
+        }
+        continue;
+      }
       cur += c;
     }
   }
@@ -48,7 +60,10 @@ function must(k: string): string {
 if (import.meta.main) {
   const upstreamCmd = parseShellArgs(must("MCP_PROXY_UPSTREAM"));
   const allowlist = new Set(
-    must("MCP_PROXY_ALLOWLIST").split(",").map((s) => s.trim()).filter(Boolean)
+    must("MCP_PROXY_ALLOWLIST")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
   );
 
   const child = spawn(upstreamCmd[0], upstreamCmd.slice(1), {
@@ -153,8 +168,8 @@ if (import.meta.main) {
       if (method === "tools/list") {
         const result = msg["result"] as Record<string, unknown> | undefined;
         if (result?.["tools"]) {
-          result["tools"] = (result["tools"] as Array<Record<string, unknown>>).filter(
-            (t) => allowlist.has(t["name"] as string)
+          result["tools"] = (result["tools"] as Array<Record<string, unknown>>).filter((t) =>
+            allowlist.has(t["name"] as string),
           );
         }
       }

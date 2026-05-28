@@ -73,9 +73,7 @@ class FakeClock {
   advance(ms: number): void {
     const target = this.now + ms;
     while (true) {
-      const next = this.timers
-        .filter((t) => t.at <= target)
-        .sort((a, b) => a.at - b.at)[0];
+      const next = this.timers.filter((t) => t.at <= target).sort((a, b) => a.at - b.at)[0];
       if (!next) break;
       this.timers = this.timers.filter((t) => t.id !== next.id);
       this.now = next.at;
@@ -282,11 +280,7 @@ describe("streams broker", () => {
     const clock = new FakeClock();
     __setSchedulers(clock.setTimeout, clock.clearTimeout);
 
-    pendingResponses = [
-      createMockSseResponse(),
-      createMockSseResponse(),
-      createMockSseResponse(),
-    ];
+    pendingResponses = [createMockSseResponse(), createMockSseResponse(), createMockSseResponse()];
     const sub = subscribe("dispatch-events", () => {});
     await flushMicrotasks();
     expect(sessions).toHaveLength(1);
@@ -351,9 +345,7 @@ describe("streams broker", () => {
     const sub = subscribe("dispatch-events", () => {});
     await flushMicrotasks();
 
-    expect(sessions[0]!.url).toBe(
-      "http://127.0.0.1:51257/dispatch-events/stream",
-    );
+    expect(sessions[0]!.url).toBe("http://127.0.0.1:51257/dispatch-events/stream");
     expect(sessions[0]!.init?.credentials).toBe("include");
     const headers = (sessions[0]!.init?.headers ?? {}) as Record<string, string>;
     expect(headers.Authorization).toBe("Bearer tok-test");
@@ -391,9 +383,7 @@ describe("streams broker", () => {
   });
 
   test("unknown topic throws (runtime guard against stringly-typed callers)", () => {
-    expect(() =>
-      subscribe("not-a-topic" as never, () => {}),
-    ).toThrow(/unknown stream topic/);
+    expect(() => subscribe("not-a-topic" as never, () => {})).toThrow(/unknown stream topic/);
   });
 });
 
@@ -429,10 +419,7 @@ function createFakeSseFactory(): {
 } {
   const sources: FakeSseHandle[] = [];
   const factory = (opts: ShimOpts): EventSourceLike => {
-    const listeners = new Map<
-      string,
-      Array<(msg: { data: string; type: string }) => void>
-    >();
+    const listeners = new Map<string, Array<(msg: { data: string; type: string }) => void>>();
     let closed = false;
     sources.push({
       url: opts.url,

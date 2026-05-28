@@ -1,10 +1,14 @@
-import { readFileSync, realpathSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { ProjectRegistryFileSchema, type ProjectEntry, type ResolvedProjectEntry } from './schema.js';
-export { getGithubRepo } from './schema.js';
+import { readFileSync, realpathSync } from "node:fs";
+import { createRequire } from "node:module";
+import {
+  ProjectRegistryFileSchema,
+  type ProjectEntry,
+  type ResolvedProjectEntry,
+} from "./schema.js";
+export { getGithubRepo } from "./schema.js";
 
 const { resolveOperatorConfigPath } = createRequire(import.meta.url)(
-  '../../../config/src/files/operator-paths.js',
+  "../../../config/src/files/operator-paths.js",
 ) as {
   resolveOperatorConfigPath: (filename: string, env: Record<string, string | undefined>) => string;
 };
@@ -13,12 +17,9 @@ const missingWarnings = new Set<string>();
 const canonicalizationWarnings = new Set<string>();
 
 export class ProjectRegistryParseError extends Error {
-  constructor(
-    path: string,
-    cause: unknown,
-  ) {
+  constructor(path: string, cause: unknown) {
     super(`project registry ${path}: ${cause instanceof Error ? cause.message : String(cause)}`);
-    this.name = 'ProjectRegistryParseError';
+    this.name = "ProjectRegistryParseError";
   }
 }
 
@@ -27,7 +28,7 @@ export class ProjectRegistryDuplicateId extends Error {
 
   constructor(id: string, filePath: string) {
     super(`project registry ${filePath}: duplicate project_id ${id}`);
-    this.name = 'ProjectRegistryDuplicateId';
+    this.name = "ProjectRegistryDuplicateId";
     this.id = id;
   }
 }
@@ -54,19 +55,21 @@ export class ProjectRegistry {
 }
 
 export function defaultProjectRegistryPath(): string {
-  return resolveOperatorConfigPath('projects.yaml', process.env);
+  return resolveOperatorConfigPath("projects.yaml", process.env);
 }
 
 export function loadProjectRegistry(filePath = defaultProjectRegistryPath()): ProjectRegistry {
   try {
-    const raw = readFileSync(filePath, 'utf8');
+    const raw = readFileSync(filePath, "utf8");
     const parsed = parseProjectRegistryYaml(raw);
     const file = ProjectRegistryFileSchema.parse(parsed);
     const entries = new Map<string, ResolvedProjectEntry>();
 
     for (const entry of file.projects) {
       if (entry.remote && entry.gh_repo) {
-        throw new Error(`entry ${entry.project_id} declares both legacy gh_repo and remote; pick one`);
+        throw new Error(
+          `entry ${entry.project_id} declares both legacy gh_repo and remote; pick one`,
+        );
       }
       if (entries.has(entry.project_id)) {
         throw new ProjectRegistryDuplicateId(entry.project_id, filePath);
@@ -98,7 +101,9 @@ export function loadProjectRegistry(filePath = defaultProjectRegistryPath()): Pr
     if (isMissingFileError(err)) {
       if (!missingWarnings.has(filePath)) {
         missingWarnings.add(filePath);
-        console.warn(`project registry ${sanitizeLogValue(filePath)} not found; continuing without project registry`);
+        console.warn(
+          `project registry ${sanitizeLogValue(filePath)} not found; continuing without project registry`,
+        );
       }
       return new ProjectRegistry(Object.freeze(new Map<string, ResolvedProjectEntry>()));
     }
@@ -110,20 +115,20 @@ export function loadProjectRegistry(filePath = defaultProjectRegistryPath()): Pr
 }
 
 function isMissingFileError(err: unknown): boolean {
-  return err instanceof Error && 'code' in err && (err as { code?: string }).code === 'ENOENT';
+  return err instanceof Error && "code" in err && (err as { code?: string }).code === "ENOENT";
 }
 
 function sanitizeLogValue(value: string): string {
-  const escaped = value.replaceAll('\n', '\\n').replaceAll('\r', '\\r').replaceAll('\t', '\\t');
+  const escaped = value.replaceAll("\n", "\\n").replaceAll("\r", "\\r").replaceAll("\t", "\\t");
   if (escaped.length <= 256) return escaped;
   return `${escaped.slice(0, 253)}...`;
 }
 
 function parseProjectRegistryYaml(raw: string): unknown {
-  const lines = raw.replace(/\r\n/g, '\n').split('\n');
-  const projectsIndex = lines.findIndex((line) => line.trim() === 'projects:');
+  const lines = raw.replace(/\r\n/g, "\n").split("\n");
+  const projectsIndex = lines.findIndex((line) => line.trim() === "projects:");
   if (projectsIndex < 0) {
-    throw new Error('missing projects root key');
+    throw new Error("missing projects root key");
   }
 
   const entries: ProjectEntry[] = [];
@@ -131,7 +136,7 @@ function parseProjectRegistryYaml(raw: string): unknown {
   let sawEntry = false;
 
   for (let i = projectsIndex + 1; i < lines.length; i += 1) {
-    const line = lines[i] ?? '';
+    const line = lines[i] ?? "";
     if (!line.trim()) continue;
     if (/^\s*#/.test(line)) continue;
 
@@ -140,7 +145,7 @@ function parseProjectRegistryYaml(raw: string): unknown {
       if (current && current.project_id && current.root_path) {
         entries.push(current as ProjectEntry);
       } else if (current) {
-        throw new Error('incomplete project entry');
+        throw new Error("incomplete project entry");
       }
       current = { project_id: unquote(entryMatch[1]!) };
       sawEntry = true;
@@ -176,7 +181,7 @@ function parseProjectRegistryYaml(raw: string): unknown {
       let consumed = 0;
 
       while (j < lines.length) {
-        const remoteLine = lines[j] ?? '';
+        const remoteLine = lines[j] ?? "";
         if (!remoteLine.trim() || /^\s*#/.test(remoteLine)) {
           j += 1;
           consumed += 1;
@@ -203,14 +208,14 @@ function parseProjectRegistryYaml(raw: string): unknown {
       }
 
       if (kind === undefined || repo === undefined) {
-        throw new Error('remote block must contain kind and repo');
+        throw new Error("remote block must contain kind and repo");
       }
-      if (kind !== 'github') {
+      if (kind !== "github") {
         throw new Error(`unsupported remote kind: ${kind}`);
       }
       if (!current) current = {};
       current.remote = {
-        kind: 'github',
+        kind: "github",
         repo,
       };
       i += consumed;
@@ -228,13 +233,13 @@ function parseProjectRegistryYaml(raw: string): unknown {
         return s.match(/^(\s*)/)?.[1]?.length ?? 0;
       };
 
-      let researchProvider: 'firecrawl' | 'webfetch' | 'off' | undefined;
+      let researchProvider: "firecrawl" | "webfetch" | "off" | undefined;
       let allowedDomains: string[] | undefined;
       let j = i + 1;
       let consumed = 0;
 
       while (j < lines.length) {
-        const dreamingLine = lines[j] ?? '';
+        const dreamingLine = lines[j] ?? "";
         if (!dreamingLine.trim() || /^\s*#/.test(dreamingLine)) {
           j += 1;
           consumed += 1;
@@ -247,9 +252,9 @@ function parseProjectRegistryYaml(raw: string): unknown {
         if (researchProviderMatch) {
           const parsedResearchProvider = unquote(researchProviderMatch[1]!);
           if (
-            parsedResearchProvider !== 'firecrawl'
-            && parsedResearchProvider !== 'webfetch'
-            && parsedResearchProvider !== 'off'
+            parsedResearchProvider !== "firecrawl" &&
+            parsedResearchProvider !== "webfetch" &&
+            parsedResearchProvider !== "off"
           ) {
             throw new Error(`unsupported dreaming research_provider: ${parsedResearchProvider}`);
           }
@@ -267,7 +272,7 @@ function parseProjectRegistryYaml(raw: string): unknown {
           consumed += 1;
 
           while (j < lines.length) {
-            const domainLine = lines[j] ?? '';
+            const domainLine = lines[j] ?? "";
             if (!domainLine.trim() || /^\s*#/.test(domainLine)) {
               j += 1;
               consumed += 1;
@@ -311,13 +316,13 @@ function parseProjectRegistryYaml(raw: string): unknown {
 
   if (current) {
     if (!current.project_id || !current.root_path) {
-      throw new Error('incomplete project entry');
+      throw new Error("incomplete project entry");
     }
     entries.push(current as ProjectEntry);
   }
 
   if (!sawEntry && entries.length === 0) {
-    throw new Error('no project entries found');
+    throw new Error("no project entries found");
   }
 
   return { projects: entries };
@@ -351,7 +356,7 @@ function stripTrailingInlineComment(value: string): string {
       continue;
     }
 
-    if (inDouble && ch === '\\') {
+    if (inDouble && ch === "\\") {
       escaped = true;
       continue;
     }
@@ -374,7 +379,7 @@ function stripTrailingInlineComment(value: string): string {
       continue;
     }
 
-    if (ch === '#' && !inSingle && !inDouble && (i === 0 || /\s/.test(trimmed[i - 1]!))) {
+    if (ch === "#" && !inSingle && !inDouble && (i === 0 || /\s/.test(trimmed[i - 1]!))) {
       return trimmed.slice(0, i).trimEnd();
     }
   }

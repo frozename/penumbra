@@ -1,7 +1,11 @@
-import { describe, expect, test } from 'bun:test';
-import { PassThrough } from 'node:stream';
-import { StdioAcpAdapter } from '../../src/adapters/stdio-acp.js';
-import { OperationRejectedError, OutsideWorktreeError, TerminalNotFoundError } from '../../src/worker/write-tools-errors.js';
+import { describe, expect, test } from "bun:test";
+import { PassThrough } from "node:stream";
+import { StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
+import {
+  OperationRejectedError,
+  OutsideWorktreeError,
+  TerminalNotFoundError,
+} from "../../src/worker/write-tools-errors.js";
 
 function createHarness(options: Record<string, unknown> = {}, executor: Record<string, any> = {}) {
   const registeredMethods: string[] = [];
@@ -22,20 +26,20 @@ function createHarness(options: Record<string, unknown> = {}, executor: Record<s
     },
     on() {},
     async request(method: string, params?: any) {
-      if (method === 'initialize') {
+      if (method === "initialize") {
         initializeParams = params;
         return { protocolVersion: 1 };
       }
-      if (method === 'session/new') return { sessionId: 'session-123' };
-      if (method === 'session/prompt') return { stopReason: 'end_turn' };
+      if (method === "session/new") return { sessionId: "session-123" };
+      if (method === "session/prompt") return { stopReason: "end_turn" };
       return {};
     },
   };
 
   const adapter = new StdioAcpAdapter(
     {
-      binary: 'mock-acp',
-      cwd: '/tmp',
+      binary: "mock-acp",
+      cwd: "/tmp",
       ...options,
     } as any,
     {
@@ -46,11 +50,11 @@ function createHarness(options: Record<string, unknown> = {}, executor: Record<s
 
   async function runDispatch() {
     await adapter.dispatch({
-      prompt: 'hello',
+      prompt: "hello",
       signal: new AbortController().signal,
-      conversation: { id: 'conv-1', project_id: null },
+      conversation: { id: "conv-1", project_id: null },
       config: {},
-      handoff_id: 'handoff-1',
+      handoff_id: "handoff-1",
       executor: executor as any,
     });
   }
@@ -71,16 +75,16 @@ async function captureError(promise: Promise<any>) {
   }
 }
 
-describe('StdioAcpAdapter write-tool ACP handlers', () => {
-  test('fsWriteTextFile=true registers fs/write_text_file', async () => {
+describe("StdioAcpAdapter write-tool ACP handlers", () => {
+  test("fsWriteTextFile=true registers fs/write_text_file", async () => {
     const harness = createHarness({ fsWriteTextFile: true });
 
     await harness.runDispatch();
 
-    expect(harness.registeredMethods).toContain('fs/write_text_file');
+    expect(harness.registeredMethods).toContain("fs/write_text_file");
   });
 
-  test('fsWriteTextFile=true advertises clientCapabilities.fs.writeTextFile', async () => {
+  test("fsWriteTextFile=true advertises clientCapabilities.fs.writeTextFile", async () => {
     const harness = createHarness({ fsWriteTextFile: true });
 
     await harness.runDispatch();
@@ -88,92 +92,92 @@ describe('StdioAcpAdapter write-tool ACP handlers', () => {
     expect(harness.getInitializeParams().clientCapabilities.fs).toEqual({ writeTextFile: true });
   });
 
-  test('fs/write_text_file invokes executor.writeTextFile and returns empty response', async () => {
+  test("fs/write_text_file invokes executor.writeTextFile and returns empty response", async () => {
     const calls: any[] = [];
     const harness = createHarness(
       { fsWriteTextFile: true },
       {
         writeTextFile: async (args: any, ctx: any) => {
           calls.push({ args, ctx });
-          return { bytesWritten: 5, sha256: 'abc' };
+          return { bytesWritten: 5, sha256: "abc" };
         },
       },
     );
 
     await harness.runDispatch();
-    const handler = harness.getHandler('fs/write_text_file');
+    const handler = harness.getHandler("fs/write_text_file");
     expect(handler).toBeDefined();
 
-    const result = await handler!({ path: '/tmp/file.txt', content: 'hello' });
+    const result = await handler!({ path: "/tmp/file.txt", content: "hello" });
 
     expect(result).toEqual({});
     expect(calls).toEqual([
       {
-        args: { path: '/tmp/file.txt', content: 'hello' },
+        args: { path: "/tmp/file.txt", content: "hello" },
         ctx: {
-          toolName: 'fs.write_text_file',
-          rawInput: { path: '/tmp/file.txt', content_bytes: 5 },
-          dispatchId: 'handoff-1',
+          toolName: "fs.write_text_file",
+          rawInput: { path: "/tmp/file.txt", content_bytes: 5 },
+          dispatchId: "handoff-1",
         },
       },
     ]);
   });
 
-  test('fs/write_text_file maps OperationRejectedError to -32004', async () => {
+  test("fs/write_text_file maps OperationRejectedError to -32004", async () => {
     const harness = createHarness(
       { fsWriteTextFile: true },
       {
         writeTextFile: async () => {
-          throw new OperationRejectedError('denied');
+          throw new OperationRejectedError("denied");
         },
       },
     );
 
     await harness.runDispatch();
-    const handler = harness.getHandler('fs/write_text_file');
-    const { error } = await captureError(handler!({ path: '/tmp/file.txt', content: 'hello' }));
+    const handler = harness.getHandler("fs/write_text_file");
+    const { error } = await captureError(handler!({ path: "/tmp/file.txt", content: "hello" }));
 
     expect(error).toBeInstanceOf(Error);
     expect((error as any).code).toBe(-32004);
-    expect(error?.message).toBe('denied');
+    expect(error?.message).toBe("denied");
   });
 
-  test('fs/write_text_file maps OutsideWorktreeError to -32001', async () => {
+  test("fs/write_text_file maps OutsideWorktreeError to -32001", async () => {
     const harness = createHarness(
       { fsWriteTextFile: true },
       {
         writeTextFile: async () => {
-          throw new OutsideWorktreeError('outside');
+          throw new OutsideWorktreeError("outside");
         },
       },
     );
 
     await harness.runDispatch();
-    const handler = harness.getHandler('fs/write_text_file');
-    const { error } = await captureError(handler!({ path: '/tmp/file.txt', content: 'hello' }));
+    const handler = harness.getHandler("fs/write_text_file");
+    const { error } = await captureError(handler!({ path: "/tmp/file.txt", content: "hello" }));
 
     expect(error).toBeInstanceOf(Error);
     expect((error as any).code).toBe(-32001);
-    expect(error?.message).toBe('outside');
+    expect(error?.message).toBe("outside");
   });
 
-  test('terminal=true registers all terminal/* handlers', async () => {
+  test("terminal=true registers all terminal/* handlers", async () => {
     const harness = createHarness({ terminal: true });
 
     await harness.runDispatch();
 
     expect(harness.registeredMethods).toEqual(
       expect.arrayContaining([
-        'terminal/create',
-        'terminal/output',
-        'terminal/wait_for_exit',
-        'terminal/release',
-        'terminal/kill',
+        "terminal/create",
+        "terminal/output",
+        "terminal/wait_for_exit",
+        "terminal/release",
+        "terminal/kill",
       ]),
     );
   });
 
-  test('terminal=true advertises clientCapabilities.terminal', async () => {
+  test("terminal=true advertises clientCapabilities.terminal", async () => {
     const harness = createHarness({ terminal: true });
 
     await harness.runDispatch();
@@ -181,41 +185,51 @@ describe('StdioAcpAdapter write-tool ACP handlers', () => {
     expect(harness.getInitializeParams().clientCapabilities.terminal).toBe(true);
   });
 
-  test('terminal/create returns terminal_id from executor', async () => {
+  test("terminal/create returns terminal_id from executor", async () => {
     const calls: any[] = [];
     const harness = createHarness(
       { terminal: true },
       {
         terminalCreate: async (args: any, ctx: any) => {
           calls.push({ args, ctx });
-          return { terminal_id: 'term-123' };
+          return { terminal_id: "term-123" };
         },
       },
     );
 
     await harness.runDispatch();
-    const handler = harness.getHandler('terminal/create');
-    const result = await handler!({ command: 'echo hello', args: ['echo', 'hello'], cwd: '/tmp', output_byte_limit: 1234 });
+    const handler = harness.getHandler("terminal/create");
+    const result = await handler!({
+      command: "echo hello",
+      args: ["echo", "hello"],
+      cwd: "/tmp",
+      output_byte_limit: 1234,
+    });
 
-    expect(result).toEqual({ terminal_id: 'term-123' });
+    expect(result).toEqual({ terminal_id: "term-123" });
     expect(calls).toEqual([
       {
-        args: { command: 'echo hello', argv: ['echo', 'hello'], cwd: '/tmp', output_byte_limit: 1234 },
+        args: {
+          command: "echo hello",
+          argv: ["echo", "hello"],
+          cwd: "/tmp",
+          output_byte_limit: 1234,
+        },
         ctx: {
-          toolName: 'terminal.create',
-          rawInput: { argv: ['echo', 'hello'], cmd: 'echo hello', cwd: '/tmp' },
-          dispatchId: 'handoff-1',
+          toolName: "terminal.create",
+          rawInput: { argv: ["echo", "hello"], cmd: "echo hello", cwd: "/tmp" },
+          dispatchId: "handoff-1",
         },
       },
     ]);
   });
 
-  test('terminal/output returns the executor output snapshot', async () => {
+  test("terminal/output returns the executor output snapshot", async () => {
     const harness = createHarness(
       { terminal: true },
       {
         terminalOutput: async () => ({
-          output: 'hello\n',
+          output: "hello\n",
           truncated: false,
           exit_status: { exitCode: 0, signal: null },
         }),
@@ -223,32 +237,32 @@ describe('StdioAcpAdapter write-tool ACP handlers', () => {
     );
 
     await harness.runDispatch();
-    const handler = harness.getHandler('terminal/output');
-    const result = await handler!({ terminal_id: 'term-123' });
+    const handler = harness.getHandler("terminal/output");
+    const result = await handler!({ terminal_id: "term-123" });
 
     expect(result).toEqual({
-      output: 'hello\n',
+      output: "hello\n",
       truncated: false,
       exit_status: { exitCode: 0, signal: null },
     });
   });
 
-  test('terminal/kill maps TerminalNotFoundError to -32005', async () => {
+  test("terminal/kill maps TerminalNotFoundError to -32005", async () => {
     const harness = createHarness(
       { terminal: true },
       {
         terminalKill: async () => {
-          throw new TerminalNotFoundError('term-404');
+          throw new TerminalNotFoundError("term-404");
         },
       },
     );
 
     await harness.runDispatch();
-    const handler = harness.getHandler('terminal/kill');
-    const { error } = await captureError(handler!({ terminal_id: 'term-404' }));
+    const handler = harness.getHandler("terminal/kill");
+    const { error } = await captureError(handler!({ terminal_id: "term-404" }));
 
     expect(error).toBeInstanceOf(Error);
     expect((error as any).code).toBe(-32005);
-    expect(error?.message).toBe('terminal not found: term-404');
+    expect(error?.message).toBe("terminal not found: term-404");
   });
 });

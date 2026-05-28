@@ -1,4 +1,4 @@
-import type { Services } from '@penumbra/core';
+import type { Services } from "@penumbra/core";
 
 export interface WorktreeGcOpts {
   services: Services;
@@ -13,7 +13,7 @@ export interface WorktreeGcTickResult {
   failed: string[];
 }
 
-const TERMINAL_STATUSES = new Set(['completed', 'failed', 'rejected', 'expired']);
+const TERMINAL_STATUSES = new Set(["completed", "failed", "rejected", "expired"]);
 const DEFAULT_GRACE_PERIOD_MS = 2 * 60 * 60_000;
 
 /**
@@ -50,7 +50,7 @@ export async function runWorktreeGcTick(
     candidates.push(handle.handoffId);
 
     try {
-      await services.worktreeManager.teardownWorktree(handle.handoffId, /*force=*/true);
+      await services.worktreeManager.teardownWorktree(handle.handoffId, /*force=*/ true);
 
       const ts = now().toISOString();
       services.db
@@ -73,7 +73,7 @@ export async function runWorktreeGcTick(
     } catch (err) {
       opts.log?.warn?.(
         { handoff_id: handle.handoffId, err: String(err) },
-        'worktree-gc teardown failed; skipping',
+        "worktree-gc teardown failed; skipping",
       );
       failed.push(handle.handoffId);
     }
@@ -98,9 +98,9 @@ export function startWorktreeGcSweeper(
 
   const timer = setInterval(() => {
     runWorktreeGcTick(effectiveOpts, now).catch((err) => {
-      opts.log?.warn?.({ err: String(err) }, 'worktree-gc sweep failed');
+      opts.log?.warn?.({ err: String(err) }, "worktree-gc sweep failed");
     });
   }, intervalMs);
-  if (typeof (timer as any).unref === 'function') (timer as any).unref();
+  if (typeof (timer as any).unref === "function") (timer as any).unref();
   return () => clearInterval(timer);
 }

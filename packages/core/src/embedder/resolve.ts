@@ -1,5 +1,5 @@
-import type { Embedder } from './interface.js';
-import { SiriusEmbedder, type SiriusEmbedderOpts } from './sirius.js';
+import type { Embedder } from "./interface.js";
+import { SiriusEmbedder, type SiriusEmbedderOpts } from "./sirius.js";
 
 export interface ResolveOpts {
   preferSirius: boolean;
@@ -21,7 +21,7 @@ async function siriusReachable(baseUrl: string, timeoutMs: number): Promise<bool
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch(`${baseUrl.replace(/\/$/, '')}/healthz`, { signal: ctrl.signal });
+    const res = await fetch(`${baseUrl.replace(/\/$/, "")}/healthz`, { signal: ctrl.signal });
     return res.ok;
   } catch {
     return false;

@@ -33,9 +33,9 @@ export type RedactValueResult<T> = {
 
 export const MAX_WALKER_DEPTH = 16;
 export const MAX_WALKER_STRING_BYTES = 64 * 1024;
-export const WALKER_DEPTH_EXCEEDED_RULE_ID = 'walker_depth_exceeded';
-export const WALKER_STRING_OVERSIZE_RULE_ID = 'walker_string_oversize';
-export const WALKER_KEY_COLLISION_RULE_ID = 'walker_key_collision';
+export const WALKER_DEPTH_EXCEEDED_RULE_ID = "walker_depth_exceeded";
+export const WALKER_STRING_OVERSIZE_RULE_ID = "walker_string_oversize";
+export const WALKER_KEY_COLLISION_RULE_ID = "walker_key_collision";
 
 function mergeHits(into: Map<string, number>, hits: ValueRedactionHit[]): void {
   for (const h of hits) {
@@ -48,15 +48,15 @@ function addSyntheticHit(into: Map<string, number>, ruleId: string): void {
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (!value || typeof value !== 'object') return false;
+  if (!value || typeof value !== "object") return false;
   const proto = Object.getPrototypeOf(value);
   return proto === Object.prototype || proto === null;
 }
 
 function utf8Prefix(text: string, maxBytes: number): string {
-  const encoded = Buffer.from(text, 'utf8');
+  const encoded = Buffer.from(text, "utf8");
   if (encoded.byteLength <= maxBytes) return text;
-  return encoded.subarray(0, maxBytes).toString('utf8');
+  return encoded.subarray(0, maxBytes).toString("utf8");
 }
 
 export class ValuePatternRedactor {
@@ -69,7 +69,7 @@ export class ValuePatternRedactor {
       const matches = out.match(rule.pattern);
       if (matches?.length) {
         let actualHitCount = 0;
-        if (typeof rule.replacement === 'function') {
+        if (typeof rule.replacement === "function") {
           const fn = rule.replacement;
           out = out.replace(rule.pattern, (...args: any[]) => {
             // String.replace passes (match, p1, p2, ..., offset, str).
@@ -89,10 +89,7 @@ export class ValuePatternRedactor {
     return { redacted: out, hits };
   }
 
-  redactValue<T>(
-    value: T,
-    limits: RedactValueLimits = {},
-  ): RedactValueResult<T> {
+  redactValue<T>(value: T, limits: RedactValueLimits = {}): RedactValueResult<T> {
     const maxDepth = limits.maxDepth ?? MAX_WALKER_DEPTH;
     const maxStringBytes = limits.maxStringBytes ?? MAX_WALKER_STRING_BYTES;
     const hitCounts = new Map<string, number>();
@@ -108,8 +105,8 @@ export class ValuePatternRedactor {
         return { value: input, rewritten: false };
       }
 
-      if (typeof input === 'string') {
-        const bytes = Buffer.byteLength(input, 'utf8');
+      if (typeof input === "string") {
+        const bytes = Buffer.byteLength(input, "utf8");
         if (bytes > maxStringBytes) {
           if (!oversizeRecorded) {
             addSyntheticHit(hitCounts, WALKER_STRING_OVERSIZE_RULE_ID);
@@ -175,7 +172,7 @@ export class ValuePatternRedactor {
         return { value: out as unknown, rewritten: true };
       }
 
-      if (input && typeof input === 'object') {
+      if (input && typeof input === "object") {
         // Deliberately skip opaque instances (Date/Map/URL/etc).
         return { value: input, rewritten: false };
       }

@@ -28,7 +28,9 @@ export function Titlebar(): JSX.Element {
         <span className="dot dot-brand dot-live" style={{ width: 7, height: 7 }} />
         <span className="crumb">penumbra</span>
         <span className="crumb-sep">/</span>
-        <span className="crumb" style={{ color: "var(--color-text)" }}>—</span>
+        <span className="crumb" style={{ color: "var(--color-text)" }}>
+          —
+        </span>
         <span className="spacer" />
         <span className="t-ghost" style={{ fontSize: 10 }}>
           Cmd-K to jump

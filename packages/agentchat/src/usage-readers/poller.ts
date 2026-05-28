@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
-import type { RateLimitDelta, UsageReader, UsageReaderResult } from './index.js';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import type { RateLimitDelta, UsageReader, UsageReaderResult } from "./index.js";
 
 export interface PollerOptions {
   readers: UsageReader[];
@@ -31,7 +31,9 @@ export function startUsagePoller(opts: PollerOptions): PollerHandle {
   };
 
   const runReader = async (reader: UsageReader): Promise<void> => {
-    const prev = Object.prototype.hasOwnProperty.call(cursors, reader.id) ? cursors[reader.id] : null;
+    const prev = Object.prototype.hasOwnProperty.call(cursors, reader.id)
+      ? cursors[reader.id]
+      : null;
     const result = await reader.read(prev);
     await emitResult(reader.id, result, opts.emit, opts.log);
     cursors[reader.id] = result.cursor;
@@ -43,16 +45,16 @@ export function startUsagePoller(opts: PollerOptions): PollerHandle {
       try {
         await runReader(reader);
       } catch (err) {
-        opts.log.error({ err: String(err), reader: reader.id }, 'usage-poller: reader failed');
+        opts.log.error({ err: String(err), reader: reader.id }, "usage-poller: reader failed");
       }
     }
   };
 
   const timer = setInterval(() => {
     if (stopped) return;
-    runOnce().catch(err => opts.log.error({ err: String(err) }, 'usage-poller: tick failed'));
+    runOnce().catch((err) => opts.log.error({ err: String(err) }, "usage-poller: tick failed"));
   }, intervalMs);
-  if (typeof (timer as any).unref === 'function') (timer as any).unref();
+  if (typeof (timer as any).unref === "function") (timer as any).unref();
 
   return {
     stop: () => {
@@ -63,16 +65,19 @@ export function startUsagePoller(opts: PollerOptions): PollerHandle {
   };
 }
 
-function loadCursors(cursorPath: string, log: PollerOptions['log']): CursorMap {
+function loadCursors(cursorPath: string, log: PollerOptions["log"]): CursorMap {
   if (!existsSync(cursorPath)) return {};
   try {
-    const raw = readFileSync(cursorPath, 'utf8');
+    const raw = readFileSync(cursorPath, "utf8");
     const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       return parsed as CursorMap;
     }
   } catch (err) {
-    log.error({ err: String(err), path: cursorPath }, 'usage-poller: cursor file corrupt; recreating');
+    log.error(
+      { err: String(err), path: cursorPath },
+      "usage-poller: cursor file corrupt; recreating",
+    );
   }
   return {};
 }
@@ -80,15 +85,18 @@ function loadCursors(cursorPath: string, log: PollerOptions['log']): CursorMap {
 async function emitResult(
   readerId: string,
   result: UsageReaderResult,
-  emit: PollerOptions['emit'],
-  log: PollerOptions['log'],
+  emit: PollerOptions["emit"],
+  log: PollerOptions["log"],
 ): Promise<void> {
   for (const delta of result.usage_deltas) {
     const event = buildUsageEvent(readerId, delta);
     try {
       await emit(event);
     } catch (err) {
-      log.error({ err: String(err), readerId, event_type: 'usage-update' }, 'usage-poller: emit failed');
+      log.error(
+        { err: String(err), readerId, event_type: "usage-update" },
+        "usage-poller: emit failed",
+      );
     }
   }
 
@@ -97,21 +105,29 @@ async function emitResult(
     try {
       await emit(event);
     } catch (err) {
-      log.error({ err: String(err), readerId, event_type: 'rate-limit-snapshot' }, 'usage-poller: emit failed');
+      log.error(
+        { err: String(err), readerId, event_type: "rate-limit-snapshot" },
+        "usage-poller: emit failed",
+      );
     }
   }
 }
 
-function buildBaseEvent(readerId: string, eventType: string, provider: string, model: string | null): any {
+function buildBaseEvent(
+  readerId: string,
+  eventType: string,
+  provider: string,
+  model: string | null,
+): any {
   return {
     ts: new Date().toISOString(),
-    source: 'agentchat',
+    source: "agentchat",
     source_detail: `usage-poller-${readerId}`,
-    user_id: 'local-user',
-    machine_id: 'local',
+    user_id: "local-user",
+    machine_id: "local",
     session_id: null,
     event_type: eventType,
-    lane: 'cli-subscription',
+    lane: "cli-subscription",
     provider,
     model,
     tokens_in: null,
@@ -120,13 +136,13 @@ function buildBaseEvent(readerId: string, eventType: string, provider: string, m
     latency_ms: null,
     request_id: null,
     payload_json: {},
-    payload_summary: '',
+    payload_summary: "",
   };
 }
 
-function buildUsageEvent(readerId: string, delta: UsageReaderResult['usage_deltas'][number]): any {
+function buildUsageEvent(readerId: string, delta: UsageReaderResult["usage_deltas"][number]): any {
   const used = Number(delta.tokens_input ?? 0) + Number(delta.tokens_output ?? 0);
-  const event = buildBaseEvent(readerId, 'usage-update', delta.provider, delta.model);
+  const event = buildBaseEvent(readerId, "usage-update", delta.provider, delta.model);
   event.tokens_in = delta.tokens_input;
   event.tokens_out = delta.tokens_output;
   event.cost_usd = delta.cost_usd;
@@ -141,12 +157,17 @@ function buildUsageEvent(readerId: string, delta: UsageReaderResult['usage_delta
     window_end: delta.window_end,
     source_kind: `local-state-${readerId}`,
   };
-  event.payload_summary = `${delta.provider}/${delta.model ?? '?'}: ${used} tokens`.slice(0, 240);
+  event.payload_summary = `${delta.provider}/${delta.model ?? "?"}: ${used} tokens`.slice(0, 240);
   return event;
 }
 
 function buildRateLimitEvent(readerId: string, snapshot: RateLimitDelta): any {
-  const event = buildBaseEvent(readerId, 'rate-limit-snapshot', snapshot.provider, snapshot.model ?? null);
+  const event = buildBaseEvent(
+    readerId,
+    "rate-limit-snapshot",
+    snapshot.provider,
+    snapshot.model ?? null,
+  );
   event.payload_json = {
     window_label: snapshot.window_label,
     model: snapshot.model ?? null,
@@ -156,6 +177,7 @@ function buildRateLimitEvent(readerId: string, snapshot: RateLimitDelta): any {
     extra: snapshot.extra ?? null,
     source_kind: `local-state-${readerId}`,
   };
-  event.payload_summary = `${snapshot.provider}/${snapshot.window_label}: ${snapshot.used_pct}%`.slice(0, 240);
+  event.payload_summary =
+    `${snapshot.provider}/${snapshot.window_label}: ${snapshot.used_pct}%`.slice(0, 240);
   return event;
 }

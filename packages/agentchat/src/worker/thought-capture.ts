@@ -1,5 +1,5 @@
-import type { DispatchEventInput } from '@penumbra/core';
-import type { RuntimeThoughtsConfig } from './thought-config.js';
+import type { DispatchEventInput } from "@penumbra/core";
+import type { RuntimeThoughtsConfig } from "./thought-config.js";
 
 export interface RecordThoughtInput {
   handoffId: string;
@@ -27,13 +27,16 @@ const REDACTION_PATTERNS: RegExp[] = [
 function redactCredentials(text: string): string {
   let out = text;
   for (const pattern of REDACTION_PATTERNS) {
-    out = out.replace(pattern, '[REDACTED]');
+    out = out.replace(pattern, "[REDACTED]");
   }
   return out;
 }
 
 export class ThoughtCapture {
-  private readonly perDispatch = new Map<string, { sequence: number; bytesUsed: number; streamCapHit: boolean }>();
+  private readonly perDispatch = new Map<
+    string,
+    { sequence: number; bytesUsed: number; streamCapHit: boolean }
+  >();
 
   constructor(private readonly deps: ThoughtCaptureDeps) {}
 
@@ -48,10 +51,14 @@ export class ThoughtCapture {
   recordThought(input: RecordThoughtInput): void {
     if (!this.isAdapterEnabled(input.adapter, input.agentName)) return;
 
-    const state = this.perDispatch.get(input.handoffId) ?? { sequence: 0, bytesUsed: 0, streamCapHit: false };
+    const state = this.perDispatch.get(input.handoffId) ?? {
+      sequence: 0,
+      bytesUsed: 0,
+      streamCapHit: false,
+    };
     if (state.streamCapHit) return;
 
-    const ts = (input.ts ?? (this.deps.now ?? (() => new Date()))().toISOString());
+    const ts = input.ts ?? (this.deps.now ?? (() => new Date()))().toISOString();
     const sequence = state.sequence;
     state.sequence = sequence + 1;
 
@@ -62,14 +69,14 @@ export class ThoughtCapture {
 
     const remaining = this.deps.config.capture.maxStreamBytes - state.bytesUsed;
     if (truncated.length > remaining) {
-      const totalDropped = (redacted.length) + 0;
+      const totalDropped = redacted.length + 0;
       state.streamCapHit = true;
       this.perDispatch.set(input.handoffId, state);
       this.deps.enqueue({
         handoff_id: input.handoffId,
         worker_id: this.deps.workerId ?? null,
-        source: 'worker',
-        kind: 'agent.thought.overflow',
+        source: "worker",
+        kind: "agent.thought.overflow",
         ts,
         meta: { sequence_n: -1, bytes_dropped: totalDropped },
       });
@@ -90,8 +97,8 @@ export class ThoughtCapture {
     this.deps.enqueue({
       handoff_id: input.handoffId,
       worker_id: this.deps.workerId ?? null,
-      source: 'worker',
-      kind: 'agent.thought',
+      source: "worker",
+      kind: "agent.thought",
       ts,
       meta: thoughtMeta,
     });
@@ -100,8 +107,8 @@ export class ThoughtCapture {
       this.deps.enqueue({
         handoff_id: input.handoffId,
         worker_id: this.deps.workerId ?? null,
-        source: 'worker',
-        kind: 'agent.thought.overflow',
+        source: "worker",
+        kind: "agent.thought.overflow",
         ts,
         meta: { sequence_n: sequence, bytes_dropped: droppedFromRow },
       });

@@ -1,7 +1,11 @@
 // Handoff sweeper worker - periodic TTL-based handoff cleanup.
 // The memory-verify auto-fire path that previously lived here was removed in 2026-05-18; see docs/specs/2026-05-17-memory-verify-authz-decouple.md.
-import type { Services } from '@penumbra/core';
-import { resolveDispatchedTtlMs, resolvePendingTtlMs, MIN_DISPATCHED_TTL_MS } from './handoff-sweeper-thresholds.js';
+import type { Services } from "@penumbra/core";
+import {
+  resolveDispatchedTtlMs,
+  resolvePendingTtlMs,
+  MIN_DISPATCHED_TTL_MS,
+} from "./handoff-sweeper-thresholds.js";
 
 export interface HandoffSweeperOpts {
   services: Services;
@@ -57,16 +61,21 @@ export function createHandoffSweeperWorker(opts: HandoffSweeperOpts) {
         const sqlCutoff = new Date(now.getTime() - sqlCutoffMs).toISOString();
 
         const candidates = opts.services.db
-          .query<CandidateRow, [string]>(
-            `SELECT handoff_id, ts, chain_task_type FROM handoffs WHERE status = 'dispatched' AND ts < ?`,
-          )
+          .query<
+            CandidateRow,
+            [string]
+          >(`SELECT handoff_id, ts, chain_task_type FROM handoffs WHERE status = 'dispatched' AND ts < ?`)
           .all(sqlCutoff);
 
         const activityQuery = opts.services.db.query<{ found: 1 }, [string, string]>(
           `SELECT 1 AS found FROM dispatch_events WHERE handoff_id = ? AND ts >= ? LIMIT 1`,
         );
 
-        const toExpire: Array<{ handoff_id: string; ttlMs: number; chain_task_type: string | null }> = [];
+        const toExpire: Array<{
+          handoff_id: string;
+          ttlMs: number;
+          chain_task_type: string | null;
+        }> = [];
         for (const row of candidates) {
           const effectiveTtlMs =
             globalDispatchedOverride ?? resolveDispatchedTtlMs(row.chain_task_type);
@@ -79,7 +88,11 @@ export function createHandoffSweeperWorker(opts: HandoffSweeperOpts) {
           const recentEvent = activityQuery.get(row.handoff_id, threshold);
           if (recentEvent) continue;
 
-          toExpire.push({ handoff_id: row.handoff_id, ttlMs: effectiveTtlMs, chain_task_type: row.chain_task_type });
+          toExpire.push({
+            handoff_id: row.handoff_id,
+            ttlMs: effectiveTtlMs,
+            chain_task_type: row.chain_task_type,
+          });
         }
 
         const expireDispatched = opts.services.db.transaction(() => {
@@ -88,18 +101,22 @@ export function createHandoffSweeperWorker(opts: HandoffSweeperOpts) {
             `UPDATE handoffs SET status = 'expired', resolved_at = ?1, resolution_reason = ?2 WHERE handoff_id = ?3 AND status = 'dispatched'`,
           );
           for (const { handoff_id, ttlMs, chain_task_type } of toExpire) {
-            const suffix = chain_task_type ? ` (task_type=${chain_task_type})` : '';
-            stmt.run(nowIso, `expired by sweeper after ${ttlMs}ms in dispatched${suffix}`, handoff_id);
+            const suffix = chain_task_type ? ` (task_type=${chain_task_type})` : "";
+            stmt.run(
+              nowIso,
+              `expired by sweeper after ${ttlMs}ms in dispatched${suffix}`,
+              handoff_id,
+            );
           }
           return toExpire.length;
         });
 
         const count = expirePending() + expireDispatched();
         if (count > 0) {
-          opts.services.log.info({ count }, 'handoff sweeper: marked stuck handoffs as expired');
+          opts.services.log.info({ count }, "handoff sweeper: marked stuck handoffs as expired");
         }
       } catch (err) {
-        opts.services.log.error({ err }, 'handoff sweeper: failed to sweep handoffs');
+        opts.services.log.error({ err }, "handoff sweeper: failed to sweep handoffs");
       }
     },
   };
