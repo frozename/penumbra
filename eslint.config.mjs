@@ -98,11 +98,10 @@ export default tseslint.config(
         },
       ],
       "@typescript-eslint/explicit-module-boundary-types": "warn",
-      "@typescript-eslint/consistent-type-imports": [
-        "warn",
-        { prefer: "type-imports", fixStyle: "inline-type-imports" },
-      ],
-      "@typescript-eslint/no-import-type-side-effects": "warn",
+      // Deferred: requires verbatimModuleSyntax in tsconfig.base.json (plan Open Decision #1).
+      // Re-enable after the verbatim migration PR; current state has accumulated value/type import drift.
+      "@typescript-eslint/consistent-type-imports": "off",
+      "@typescript-eslint/no-import-type-side-effects": "off",
       "no-warning-comments": [
         "warn",
         { terms: ["todo", "fixme", "hack", "xxx"], location: "anywhere" },
