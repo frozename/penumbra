@@ -50,7 +50,7 @@ risk_class: STANDARD
 **Write the test first** (`packages/mcp/test/responses/envelope.test.ts`):
 
 ```typescript
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "bun:test";
 import {
   makeEnvelopeResult,
   isEnvelopeResult,
@@ -167,7 +167,7 @@ risk_class: STANDARD
 **Write the test first** (`packages/mcp/test/responses/budget.test.ts`):
 
 ```typescript
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "bun:test";
 import {
   estimateTokens,
   withinBudget,
@@ -233,7 +233,7 @@ export function truncateToTokens(
 }
 ```
 
-**Integration:** Run `vitest run packages/mcp/test/responses/`. Both must pass before Phase 1. Commit: `feat(mcp): response envelope + budget primitives`.
+**Integration:** Run `bun test packages/mcp/test/responses/`. Both must pass before Phase 1. Commit: `feat(mcp): response envelope + budget primitives`.
 
 ---
 
@@ -259,11 +259,11 @@ risk_class: STANDARD
 Write this test first — it MUST fail until Task 1.2 is complete:
 
 ```typescript
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, mock, beforeEach } from "bun:test";
 import { isEnvelopeResult } from "../../src/responses/envelope.js";
 import { handleMemorySearch } from "../../src/tools/registry.js";
 
-const mockSearch = vi.fn();
+const mockSearch = mock(() => {});
 
 describe("memory_search — envelope opt-in", () => {
   beforeEach(() => mockSearch.mockReset());
@@ -336,7 +336,7 @@ return content;
 
 Task 1.1 tests must pass after this. Commit: `feat(mcp): add envelope opt-in to memory_search`.
 
-**Integration:** Run `vitest run packages/mcp/test/tools/memory-search-envelope.test.ts`. Pre-existing `test/tools/registry.test.ts` failure is known — do not fix here.
+**Integration:** Run `bun test packages/mcp/test/tools/memory-search-envelope.test.ts`. Pre-existing `test/tools/registry.test.ts` failure is known — do not fix here.
 
 ---
 
@@ -457,7 +457,7 @@ risk_class: STANDARD
 
 Identical to 3.1. Commit: `feat(mcp): add envelope opt-in to TOOL_C`.
 
-**Integration:** Run `vitest run packages/mcp/test/tools/TOOL_A-envelope.test.ts packages/mcp/test/tools/TOOL_B-envelope.test.ts packages/mcp/test/tools/TOOL_C-envelope.test.ts`. All must pass. One commit per tool.
+**Integration:** Run `bun test packages/mcp/test/tools/TOOL_A-envelope.test.ts packages/mcp/test/tools/TOOL_B-envelope.test.ts packages/mcp/test/tools/TOOL_C-envelope.test.ts`. All must pass. One commit per tool.
 
 ---
 
@@ -483,7 +483,7 @@ risk_class: STANDARD
 **Write first** (`packages/mcp/test/handle-store.test.ts`):
 
 ```typescript
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { HandleStore } from "../src/handle-store.js";
 
 describe("HandleStore", () => {
@@ -608,7 +608,7 @@ risk_class: STANDARD
 **Write first** (`packages/mcp/test/tools/read-handle.test.ts`):
 
 ```typescript
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "bun:test";
 import { HandleStore } from "../../src/handle-store.js";
 import { handleReadHandle } from "../../src/tools/registry.js";
 
@@ -658,7 +658,7 @@ Wire `HandleStore` singleton into server bootstrap via closure. Do not use a mod
 
 Commit: `feat(mcp): read_handle tool — retrieve stored large results by handle ID`.
 
-**Integration:** Run `vitest run packages/mcp/test/handle-store.test.ts packages/mcp/test/tools/read-handle.test.ts`. All must pass.
+**Integration:** Run `bun test packages/mcp/test/handle-store.test.ts packages/mcp/test/tools/read-handle.test.ts`. All must pass.
 
 ---
 
@@ -684,13 +684,13 @@ risk_class: STANDARD
 **Write first** (`packages/mcp/test/summary-cache.test.ts`):
 
 ```typescript
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, mock } from "bun:test";
 import { SummaryCache } from "../src/summary-cache.js";
 
 describe("SummaryCache", () => {
   it("memoizes: calls compute only once per key", async () => {
     const cache = new SummaryCache({ ttlMs: 60_000 });
-    const fn = vi.fn().mockResolvedValue("summary");
+    const fn = mock(() => {}).mockResolvedValue("summary");
     await cache.getOrCompute("k", fn);
     await cache.getOrCompute("k", fn);
     expect(fn).toHaveBeenCalledTimes(1);
@@ -699,7 +699,7 @@ describe("SummaryCache", () => {
 
   it("calls compute again for a different key", async () => {
     const cache = new SummaryCache({ ttlMs: 60_000 });
-    const fn = vi.fn().mockImplementation((k: string) => Promise.resolve(k));
+    const fn = mock(() => {}).mockImplementation((k: string) => Promise.resolve(k));
     expect(await cache.getOrCompute("a", () => fn("a"))).toBe("a");
     expect(await cache.getOrCompute("b", () => fn("b"))).toBe("b");
     expect(fn).toHaveBeenCalledTimes(2);
@@ -777,7 +777,7 @@ export class SummaryCache {
 
 Commit: `feat(mcp): summary cache with content-hash dedup`.
 
-**Integration:** Run `vitest run packages/mcp/test/summary-cache.test.ts`. Cache wiring into handlers happens in Phase 8.
+**Integration:** Run `bun test packages/mcp/test/summary-cache.test.ts`. Cache wiring into handlers happens in Phase 8.
 
 ---
 
@@ -803,7 +803,7 @@ risk_class: STANDARD
 **Write first** (`packages/mcp/test/resources.test.ts`):
 
 ```typescript
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "bun:test";
 import { buildResourcesHandler } from "../src/resources.js";
 import { HandleStore } from "../src/handle-store.js";
 
@@ -902,7 +902,7 @@ Register `resources/list` and `resources/read` in `packages/mcp/src/server.ts` (
 
 Commit: `feat(mcp): MCP resources surface — browse and read stored handles`.
 
-**Integration:** Run `vitest run packages/mcp/test/resources.test.ts`. Verify via manual `resources/list` call.
+**Integration:** Run `bun test packages/mcp/test/resources.test.ts`. Verify via manual `resources/list` call.
 
 ---
 
@@ -1000,4 +1000,4 @@ risk_class: STANDARD
 
 Same migration pattern. Commit: `feat(mcp): add envelope opt-in to TOOL_E`.
 
-**Integration:** Run `vitest run packages/mcp/test/tools/` excluding pre-existing failures (`chain-cancel`, `tools/registry`, `tools/brainstorm`). All new `*-envelope.test.ts` files must pass.
+**Integration:** Run `bun test packages/mcp/test/tools/` excluding pre-existing failures (`chain-cancel`, `tools/registry`, `tools/brainstorm`). All new `*-envelope.test.ts` files must pass.
