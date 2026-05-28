@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- test fixtures and sqlite row mocks intentionally use loose shapes */
 import { expect, test } from "bun:test";
 import {
   MAX_WALKER_DEPTH,

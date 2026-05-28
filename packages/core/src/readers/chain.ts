@@ -176,17 +176,29 @@ export class ChainReader {
       .all(conversation_id, limit);
 
     return rows.map((row) => {
-      let payload: any = null;
+      let payload: {
+        reason?: string | null;
+        hop_count?: number | null;
+        terminal_handoff_id?: string | null;
+      } | null = null;
       try {
-        payload = JSON.parse(row.payload_json);
+        const parsed = JSON.parse(row.payload_json) as unknown;
+        if (parsed && typeof parsed === "object") {
+          payload = parsed as {
+            reason?: string | null;
+            hop_count?: number | null;
+            terminal_handoff_id?: string | null;
+          };
+        }
       } catch {
         // null is handled below
       }
       return {
         ts: row.ts,
-        reason: payload?.reason ?? null,
-        hop_count: payload?.hop_count ?? null,
-        terminal_handoff_id: payload?.terminal_handoff_id ?? null,
+        reason: typeof payload?.reason === "string" ? payload.reason : "unknown",
+        hop_count: typeof payload?.hop_count === "number" ? payload.hop_count : 0,
+        terminal_handoff_id:
+          typeof payload?.terminal_handoff_id === "string" ? payload.terminal_handoff_id : undefined,
         conversation_id: row.session_id,
       };
     });
@@ -230,7 +242,7 @@ export class ChainReader {
           user_id: string | null;
           payload_json: string;
         },
-        any
+        (string | number)[]
       >(sql)
       .all(...params);
 

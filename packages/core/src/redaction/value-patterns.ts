@@ -71,7 +71,7 @@ export class ValuePatternRedactor {
         let actualHitCount = 0;
         if (typeof rule.replacement === "function") {
           const fn = rule.replacement;
-          out = out.replace(rule.pattern, (...args: any[]) => {
+          out = out.replace(rule.pattern, (...args: unknown[]) => {
             // String.replace passes (match, p1, p2, ..., offset, str).
             // Strip the trailing offset+str so callers see (match, ...groups).
             const groups = args.slice(1, -2) as string[];

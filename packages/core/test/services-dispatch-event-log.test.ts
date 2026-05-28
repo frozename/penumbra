@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- test fixtures and sqlite row mocks intentionally use loose shapes */
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { applySchema } from "../src/db/schema.js";

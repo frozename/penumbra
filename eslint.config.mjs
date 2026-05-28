@@ -155,6 +155,12 @@ export default tseslint.config(
     },
   },
   {
+    files: ["packages/core/**/*.ts"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "error",
+    },
+  },
+  {
     files: ["**/*.test.ts", "**/*.spec.ts"],
     rules: {
       "@typescript-eslint/no-non-null-assertion": "off",

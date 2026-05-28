@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- test fixtures and sqlite row mocks intentionally use loose shapes */
 import { beforeEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { closeLane, getLane, insertLane, recentLanes } from "../../src/db/lane-ledger.js";

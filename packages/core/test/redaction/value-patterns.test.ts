@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- test fixtures and sqlite row mocks intentionally use loose shapes */
 import { expect, test } from "bun:test";
 import { ValuePatternRedactor } from "../../src/redaction/value-patterns.js";
 

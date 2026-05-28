@@ -21,8 +21,9 @@ export async function resolveInsideWorktree(userPath: string, worktree: string):
   let real: string;
   try {
     real = await fs.realpath(candidate);
-  } catch (err: any) {
-    if (err?.code === "ENOENT") {
+  } catch (err: unknown) {
+    const errorCode = typeof err === "object" && err && "code" in err ? (err as { code?: unknown }).code : undefined;
+    if (errorCode === "ENOENT") {
       // Non-existent leaf: realpath the parent dir so we still get canonical
       // platform path translation (e.g. macOS /var -> /private/var), then
       // re-attach the basename. This lets us detect outside-worktree escapes
@@ -43,7 +44,9 @@ export async function resolveInsideWorktree(userPath: string, worktree: string):
       }
       throw new FsPathError("not_found", `file not found: ${userPath}`);
     }
-    throw new FsPathError("io", `failed to resolve ${userPath}: ${err?.message ?? String(err)}`);
+    const errorMessage =
+      typeof err === "object" && err && "message" in err ? String((err as { message?: unknown }).message) : String(err);
+    throw new FsPathError("io", `failed to resolve ${userPath}: ${errorMessage}`);
   }
 
   const rel = path.relative(worktreeReal, real);
