@@ -98,7 +98,7 @@ export async function dispatchWorkflowSubcommand(
   storageRoot: string,
 ): Promise<number> {
   const sub = args[0];
-  const out = (s: string) => console.log(s);
+  const out = (s: string) => process.stdout.write(`${s}\n`);
   switch (sub) {
     case "list": {
       const showTriggers = args.includes("--triggers");

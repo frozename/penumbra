@@ -279,5 +279,5 @@ if (import.meta.main) {
     outDir: flag("--out"),
     configPath: flag("--config"),
   });
-  console.log(out.markdown);
+  process.stdout.write(`${out.markdown}\n`);
 }

@@ -106,8 +106,8 @@ export async function runAutoChain(opts: AutoChainOpts): Promise<{
         return { hops, terminatedReason: "max_hops", cappedHandoffId: res.cappedHandoffId! };
       }
       if (res.terminatedReason === "untrusted") {
-        console.log(
-          `[untrusted edge ${currentHandoff.to_agent}→${res.next ? res.next.to : "?"}, handoff ${res.cappedHandoffId!.slice(0, 8)} queued]`,
+        process.stdout.write(
+          `[untrusted edge ${currentHandoff.to_agent}→${res.next ? res.next.to : "?"}, handoff ${res.cappedHandoffId!.slice(0, 8)} queued]\n`,
         );
         reason = "untrusted";
         cappedHandoffId = res.cappedHandoffId;
@@ -121,7 +121,7 @@ export async function runAutoChain(opts: AutoChainOpts): Promise<{
 
       // Continue: shape the next synthetic handoff.
       transcript.push({ agent: currentHandoff.to_agent, text: res.text });
-      console.log(`[auto-approved → ${res.next!.to}]`);
+      process.stdout.write(`[auto-approved → ${res.next!.to}]\n`);
       currentHandoff = {
         handoff_id: res.next!.handoff_id,
         from_agent: res.next!.from,

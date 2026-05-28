@@ -13,22 +13,17 @@ function writeConfigFile(yaml: string): string {
 
 async function captureStdout(fn: () => Promise<number>): Promise<{ code: number; output: string }> {
   const originalWrite = process.stdout.write.bind(process.stdout);
-  const originalLog = console.log;
   let output = "";
 
   process.stdout.write = ((chunk: string | Uint8Array) => {
     output += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
     return true;
   }) as typeof process.stdout.write;
-  console.log = ((...args: unknown[]) => {
-    output += `${args.map(String).join(" ")}\n`;
-  }) as typeof console.log;
 
   try {
     return { code: await fn(), output };
   } finally {
     process.stdout.write = originalWrite;
-    console.log = originalLog;
   }
 }
 

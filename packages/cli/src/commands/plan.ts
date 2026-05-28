@@ -207,7 +207,7 @@ export interface RunPlanCancelOpts {
 }
 
 function defaultPrint(line: string): void {
-  console.log(line);
+  process.stdout.write(`${line}\n`);
 }
 
 function resolveDaemon(storageRoot: string): { baseUrl: string; token: string } {
@@ -597,7 +597,7 @@ export async function runPlanCancel(opts: RunPlanCancelOpts): Promise<void> {
 
 export async function dispatchPlanSubcommand(args: string[], storageRoot: string): Promise<number> {
   const sub = args[0];
-  const out = (s: string) => console.log(s);
+  const out = (s: string) => process.stdout.write(`${s}\n`);
   const err = (s: string) => console.error(s);
   switch (sub) {
     case "start": {

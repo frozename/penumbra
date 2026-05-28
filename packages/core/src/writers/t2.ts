@@ -335,13 +335,6 @@ export class T2Promotion {
       const transcriptLength = transcript.length;
 
       if (transcriptLength < minTranscriptChars) {
-        console.debug("[t2-promotion] skipping transcript below minimum length", {
-          rollupId,
-          projectId: rollup.project_id,
-          kind: rollupKind,
-          transcriptLength,
-          minTranscriptChars,
-        });
         this.markPromoted(rollupId);
         return 0;
       }
@@ -349,13 +342,6 @@ export class T2Promotion {
       let llmTranscript = transcript;
       if (transcriptLength > maxTranscriptChars) {
         llmTranscript = `${transcript.slice(0, 8000)}\n… [truncated] …\n${transcript.slice(-8000)}`;
-        console.debug("[t2-promotion] truncating transcript before llm call", {
-          rollupId,
-          projectId: rollup.project_id,
-          kind: rollupKind,
-          transcriptLength,
-          maxTranscriptChars,
-        });
       }
 
       const seenCount = (this.recentShapes.get(shapeKey) ?? 0) + 1;
@@ -365,14 +351,6 @@ export class T2Promotion {
       }
       this.recentShapes.set(shapeKey, seenCount);
       if (seenCount > highFrequencyThreshold && Math.random() < 0.5) {
-        console.debug("[t2-promotion] skipping high-frequency transcript sample", {
-          rollupId,
-          projectId: rollup.project_id,
-          kind: rollupKind,
-          shapeKey,
-          seenCount,
-          highFrequencyThreshold,
-        });
         this.markPromoted(rollupId);
         return 0;
       }

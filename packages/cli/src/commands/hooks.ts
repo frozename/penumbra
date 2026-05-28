@@ -70,7 +70,9 @@ export async function runHooksInstallClaude(
       workflowsDir: join(process.cwd(), "plugin/workflows"),
     });
     const written = writeSlashCommands(reg, join(claudeDir, "commands"));
-    console.log(`wrote ${written.length} slash commands to ${join(claudeDir, "commands")}/`);
+    process.stdout.write(
+      `wrote ${written.length} slash commands to ${join(claudeDir, "commands")}/\n`,
+    );
   } catch (err) {
     console.warn("skipped slash-bridge install:", (err as Error).message);
   }

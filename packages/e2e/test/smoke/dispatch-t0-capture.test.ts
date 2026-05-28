@@ -106,7 +106,7 @@ test("dispatch t0 capture end-to-end", async () => {
   })) as CallToolResult;
 
   const startText = startRes.content[0]!.text;
-  console.log("START_TEXT:", JSON.stringify(startText));
+  process.stdout.write(`START_TEXT: ${JSON.stringify(startText)}\n`);
   const startJson = startText.substring(startText.indexOf("{"));
   let startData: any;
   try {
@@ -115,8 +115,8 @@ test("dispatch t0 capture end-to-end", async () => {
     console.error("FAIL PARSING JSON. LOGS:");
     const { execSync } = require("node:child_process");
     try {
-      console.log(execSync("find " + sb.dir + ' -type f -name "*.log"').toString());
-      console.log(execSync("cat " + sb.dir + "/logs/*.log 2>/dev/null || true").toString());
+      process.stdout.write(execSync("find " + sb.dir + ' -type f -name "*.log"').toString());
+      process.stdout.write(execSync("cat " + sb.dir + "/logs/*.log 2>/dev/null || true").toString());
     } catch (err) {}
     throw e;
   }
@@ -129,7 +129,7 @@ test("dispatch t0 capture end-to-end", async () => {
 
   const db = new Database(join(sb.dir, "db.sqlite"), { readonly: true });
   const failed = db.query(`SELECT resolution_reason FROM handoffs WHERE status = 'failed'`).all();
-  console.log("FAILED HANDOFFS:", failed);
+  process.stdout.write(`FAILED HANDOFFS: ${JSON.stringify(failed)}\n`);
 
   const rows = db
     .query(

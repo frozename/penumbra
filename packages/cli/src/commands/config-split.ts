@@ -179,10 +179,12 @@ export async function runConfigSplit(opts: ConfigSplitOpts): Promise<number> {
   if (opts.dryRun) {
     for (const [name, value] of targets) {
       const serialized = stringifyYaml(sortValue(value));
-      console.log(`would write ${join(dest, name)} (${countYamlLines(serialized)} lines)`);
+      process.stdout.write(
+        `would write ${join(dest, name)} (${countYamlLines(serialized)} lines)\n`,
+      );
     }
     for (const target of copyTargets) {
-      console.log(`would copy ${target.sourcePath} -> ${target.destPath}`);
+      process.stdout.write(`would copy ${target.sourcePath} -> ${target.destPath}\n`);
     }
     return 0;
   }

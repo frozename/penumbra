@@ -101,7 +101,6 @@ export function createStreamBroker(deps: StreamBrokerDeps): StreamBroker {
       try {
         sub(msg);
       } catch (err) {
-        // eslint-disable-next-line no-console
         console.error(`[stream:${entry.topic}] subscriber threw`, err);
       }
     }
@@ -163,7 +162,6 @@ export function createStreamBroker(deps: StreamBrokerDeps): StreamBroker {
   }
 
   function handleTransportError(entry: BrokerEntry, err: unknown): void {
-    // eslint-disable-next-line no-console
     console.warn(`[stream:${entry.topic}] transport error`, err);
     if (entry.source) {
       try {

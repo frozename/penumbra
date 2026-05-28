@@ -55,8 +55,8 @@ const have = new Set(list.map((t) => t.name));
 const present = REQUIRED_TOOLS.filter((t) => have.has(t));
 const missing = REQUIRED_TOOLS.filter((t) => !have.has(t));
 
-console.log(
-  JSON.stringify(
+process.stdout.write(
+  `${JSON.stringify(
     {
       required: REQUIRED_TOOLS,
       present,
@@ -64,7 +64,7 @@ console.log(
     },
     null,
     2,
-  ),
+  )}\n`,
 );
 process.exit(missing.length === 0 ? 0 : 1);
 

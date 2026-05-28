@@ -75,7 +75,7 @@ function main() {
   const findings = scan(paths);
 
   if (findings.length === 0) {
-    console.log("no raw PENUMBRA env reads found");
+    process.stdout.write("no raw PENUMBRA env reads found\n");
     process.exit(0);
   }
 

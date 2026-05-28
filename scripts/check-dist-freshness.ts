@@ -61,7 +61,7 @@ for (const entry of entries) {
 }
 
 if (stale.length === 0) {
-  console.log("all dist fresh");
+  process.stdout.write("all dist fresh\n");
   process.exit(0);
 }
 
@@ -74,5 +74,5 @@ if (CHECK_MODE) {
 for (const p of stale) {
   rmSync(join(p, "dist"), { recursive: true, force: true });
 }
-console.log(`removed ${stale.length} stale dist dir${stale.length === 1 ? "" : "s"}`);
+process.stdout.write(`removed ${stale.length} stale dist dir${stale.length === 1 ? "" : "s"}\n`);
 process.exit(0);

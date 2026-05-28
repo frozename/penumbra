@@ -148,7 +148,7 @@ function validateCommand(env: Record<string, string | undefined>): number {
   }
 
   const defaultRoute = resolveNotificationRoute({ config: notifications, env });
-  console.log(`default: ${defaultRoute ? "configured" : "missing"}`);
+  process.stdout.write(`default: ${defaultRoute ? "configured" : "missing"}\n`);
 
   for (const projectId of Object.keys(notifications.routes.projects).sort()) {
     const route = resolveNotificationRoute({
@@ -156,7 +156,7 @@ function validateCommand(env: Record<string, string | undefined>): number {
       env,
       projectId,
     });
-    console.log(`project ${projectId}: ${route ? "configured" : "missing"}`);
+    process.stdout.write(`project ${projectId}: ${route ? "configured" : "missing"}\n`);
   }
 
   let hasMissingEnv = false;
@@ -164,10 +164,10 @@ function validateCommand(env: Record<string, string | undefined>): number {
     const value = env[name];
     if (!value) {
       hasMissingEnv = true;
-      console.log(`env ${name}: unset`);
+      process.stdout.write(`env ${name}: unset\n`);
     } else if (!isDiscordWebhookUrl(value)) {
       hasMissingEnv = true;
-      console.log(`env ${name}: invalid`);
+      process.stdout.write(`env ${name}: invalid\n`);
     }
   }
 
@@ -199,7 +199,7 @@ async function renderCommand(args: string[], deps: DiscordCliDeps): Promise<numb
   const payload = renderDiscordEvent(buildSampleEvent({ kind, projectId, agent, prompt }), {
     promptPolicy: route.promptPolicy,
   });
-  console.log(JSON.stringify({ route_key: route.routeKey, payload }));
+  process.stdout.write(`${JSON.stringify({ route_key: route.routeKey, payload })}\n`);
   return 0;
 }
 

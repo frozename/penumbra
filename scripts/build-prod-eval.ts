@@ -160,4 +160,4 @@ for (const line of readFileSync(SOURCE, "utf8").split(/\r?\n/)) {
 }
 
 writeFileSync(TARGET, out.join("\n") + "\n");
-console.log(`Wrote ${out.length} cases to ${TARGET}`);
+process.stdout.write(`Wrote ${out.length} cases to ${TARGET}\n`);

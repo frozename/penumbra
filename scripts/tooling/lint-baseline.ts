@@ -81,4 +81,4 @@ const today = formatDate(new Date());
 const outputPath = `docs/quality/lint-baseline-${today}.json`;
 mkdirSync(dirname(outputPath), { recursive: true });
 writeFileSync(`${outputPath}`, JSON.stringify(baseline, null, 2) + "\n", "utf8");
-console.log(`wrote ${outputPath}`);
+process.stdout.write(`wrote ${outputPath}\n`);

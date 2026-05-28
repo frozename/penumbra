@@ -53,7 +53,6 @@ export function createSseSource(opts: ShimOpts): EventSourceLike {
         try {
           l({ data, type: eventName });
         } catch (err) {
-          // eslint-disable-next-line no-console
           console.error(`[sse:${opts.url}] listener threw`, err);
         }
       }
@@ -65,7 +64,6 @@ export function createSseSource(opts: ShimOpts): EventSourceLike {
           try {
             l({ data, type: eventName });
           } catch (err) {
-            // eslint-disable-next-line no-console
             console.error(`[sse:${opts.url}] listener threw`, err);
           }
         }
@@ -145,7 +143,6 @@ export function createSseSource(opts: ShimOpts): EventSourceLike {
       }
     } catch (err) {
       if (closed) return;
-      // eslint-disable-next-line no-console
       console.error(`[sse:${opts.url}] read error`, err);
       try {
         opts.onTransportError?.(err);

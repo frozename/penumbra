@@ -398,7 +398,7 @@ async function main() {
 
   for (const model of MODELS) {
     for (const variant of PROMPT_VARIANTS) {
-      console.log(`model=${model.id} variant=${variant} start`);
+      process.stdout.write(`model=${model.id} variant=${variant} start\n`);
       for (const caseItem of cases) {
         allResults.push(await runCase(model, variant, caseItem));
       }

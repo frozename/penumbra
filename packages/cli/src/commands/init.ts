@@ -37,16 +37,16 @@ export async function runInit(opts: RunInitOpts): Promise<number> {
     if (opts.forceAgentchat) {
       mkdirSync(dirname(agentchatPath), { recursive: true });
       writeFileSync(agentchatPath, AGENTCHAT_TEMPLATE);
-      console.log(`penumbra: seeded agentchat config at ${agentchatPath}`);
+      process.stdout.write(`penumbra: seeded agentchat config at ${agentchatPath}\n`);
     } else {
-      console.log(`penumbra: agentchat config exists at ${agentchatPath}; not overwriting`);
+      process.stdout.write(`penumbra: agentchat config exists at ${agentchatPath}; not overwriting\n`);
     }
   } else {
     mkdirSync(dirname(agentchatPath), { recursive: true });
     writeFileSync(agentchatPath, AGENTCHAT_TEMPLATE);
-    console.log(`penumbra: seeded agentchat config at ${agentchatPath}`);
+    process.stdout.write(`penumbra: seeded agentchat config at ${agentchatPath}\n`);
   }
 
-  console.log(`penumbra: initialized at ${opts.storageRoot}`);
+  process.stdout.write(`penumbra: initialized at ${opts.storageRoot}\n`);
   return 0;
 }
