@@ -34,6 +34,15 @@ describe("truncateToTokens", () => {
     expect(r.truncated).toBe(true);
     expect(r.text.length).toBe(400);
   });
+  it("does not slice through a surrogate pair (no lone trailing surrogate)", () => {
+    // charLimit = 1 * 4 = 4. With one BMP char then astral emoji, the raw cut
+    // at index 4 keeps "a", the first 😀, and a LONE high surrogate of the
+    // second 😀. The boundary must back off to a whole codepoint instead.
+    const r = truncateToTokens("a" + "😀".repeat(3), 1);
+    expect(r.truncated).toBe(true);
+    expect(r.text).toBe("a😀");
+    expect(/[\uD800-\uDBFF]$/.test(r.text)).toBe(false);
+  });
 });
 
 describe("DEFAULT_BUDGET", () => {
