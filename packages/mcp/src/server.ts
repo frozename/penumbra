@@ -95,6 +95,16 @@ export async function buildServer(opts: {
         handler as unknown as Parameters<typeof server.registerTool>[2],
       );
     }
+    // read_handle is registered OUTSIDE the TOOL_REGISTRY loop on purpose: it
+    // needs the HandleStore, not the daemon, so it can't go through
+    // def.makeHandler(opts.daemon). Never add "read_handle" to TOOL_REGISTRY — it
+    // would register twice (the loop above + this block). server.test.ts locks the
+    // full registered set to [...TOOL_REGISTRY, "read_handle"] to catch that.
+    // TODO(token-opt S3 / producer phase): no tool calls handleStore.put() yet, so
+    // read_handle always returns handle_not_found until producers (search.ts spill,
+    // workflow_wait) are wired. When that lands, give the store a caller-owned
+    // lifecycle (inject via buildServer opts, or close() it on server teardown) so
+    // reentrant buildServer callers don't accumulate live TTL timers.
     const handleStore = new HandleStore();
     if (!allowlist || allowlist.has("read_handle")) {
       const readHandle = instrumentHandler("read_handle", readHandleHandler(handleStore) as any, {
