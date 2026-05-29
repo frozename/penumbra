@@ -150,6 +150,28 @@ test("getStatusLight reports a running run without a result", async () => {
   });
 });
 
+test("getStatusLight keeps result_available true for completed null payloads", async () => {
+  const now = new Date("2026-04-26T00:00:00Z");
+  const registry = createWorkflowRunsRegistry({
+    uuid: () => "wfrun-1",
+    clock: () => now,
+    db: freshDb(":memory:"),
+    storageRoot: tmpdir(),
+  });
+  expect(registry.register("wf-a", "proj")).toBe("wfrun-1");
+  await registry.recordResult("wfrun-1", null);
+
+  await expect(registry.getStatusLight("wfrun-1")).resolves.toEqual({
+    status: "completed",
+    started_at: now.getTime(),
+    finished_at: now.getTime(),
+    result_available: true,
+    result_bytes: Buffer.byteLength("null"),
+    error_bytes: 0,
+    persistence_status: "persisted",
+  });
+});
+
 test("recordResult/recordError persist result_bytes/error_bytes matching serialized payload size", async () => {
   const now = new Date("2026-04-26T00:00:00Z");
   const db = freshDb(":memory:");
@@ -435,6 +457,7 @@ test("recordResult stores large payloads only in spill files and nulls the inlin
     });
     expect(registry.register("wf-a", "proj")).toBe("wfrun-1");
     const payload = { data: "x".repeat(200_000) };
+    const expectedBytes = Buffer.byteLength(JSON.stringify(payload));
     await registry.recordResult("wfrun-1", payload);
     const row = freshDb(dbPath)
       .query<
@@ -443,6 +466,9 @@ test("recordResult stores large payloads only in spill files and nulls the inlin
       >(`SELECT result_json, result_spill_path FROM workflow_runs WHERE id = ? LIMIT 1`)
       .get("wfrun-1");
     expect(row).toEqual({ result_json: null, result_spill_path: expect.any(String) });
+    const light = await registry.getStatusLight("wfrun-1");
+    expect(light?.result_bytes).toBe(expectedBytes);
+    expect(light?.result_bytes).toBeGreaterThan(0);
     const freshRegistry = createWorkflowRunsRegistry({
       uuid: () => "wfrun-2",
       clock: () => new Date("2026-04-26T00:00:00Z"),
@@ -456,6 +482,36 @@ test("recordResult stores large payloads only in spill files and nulls the inlin
       result: payload,
       persistence_status: "persisted",
     });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("recordError stores large payloads only in spill files and tracks error_bytes", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wfr-spill-error-"));
+  const dbPath = join(root, "db.sqlite");
+  try {
+    const registry = createWorkflowRunsRegistry({
+      uuid: () => "wfrun-1",
+      clock: () => new Date("2026-04-26T00:00:00Z"),
+      db: freshDb(dbPath),
+      storageRoot: root,
+    });
+    expect(registry.register("wf-a", "proj")).toBe("wfrun-1");
+    const errorPayload = { detail: "x".repeat(200_000) };
+    const expectedBytes = Buffer.byteLength(JSON.stringify(errorPayload));
+    await registry.recordError("wfrun-1", errorPayload);
+    const row = freshDb(dbPath)
+      .query<
+        { error_json: string | null; error_spill_path: string | null },
+        [string]
+      >(`SELECT error_json, error_spill_path FROM workflow_runs WHERE id = ? LIMIT 1`)
+      .get("wfrun-1");
+    expect(row).toEqual({ error_json: null, error_spill_path: expect.any(String) });
+    const light = await registry.getStatusLight("wfrun-1");
+    expect(light?.result_available).toBe(false);
+    expect(light?.error_bytes).toBe(expectedBytes);
+    expect(light?.error_bytes).toBeGreaterThan(0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -557,8 +613,10 @@ test("recordResult falls back to inline error when spill writing fails and relea
     });
     expect(registry.register("wf-a", "proj")).toBe("wfrun-1");
     const waiter = registry.waitForResult("wfrun-1", 10_000);
+    const spillWriteError = { code: "disk_full", message: "disk full" };
+    const expectedErrorBytes = Buffer.byteLength(JSON.stringify(spillWriteError));
     const writeSpy = spyOn(fsPromises, "writeFile").mockImplementationOnce(async () => {
-      throw new Error("disk full");
+      throw spillWriteError;
     });
     await registry.recordResult("wfrun-1", { data: "x".repeat(200_000) });
     await expect(waiter).resolves.toEqual({
@@ -580,8 +638,11 @@ test("recordResult falls back to inline error when spill writing fails and relea
       )
       .get("wfrun-1");
     expect(row?.error_json).not.toBeNull();
+    expect(row?.error_json).toBe(JSON.stringify(spillWriteError));
     expect(row?.error_spill_path).toBeNull();
     expect(row?.result_spill_path).toBeNull();
+    const light = await registry.getStatusLight("wfrun-1");
+    expect(light?.error_bytes).toBe(expectedErrorBytes);
     writeSpy.mockRestore();
   } finally {
     rmSync(root, { recursive: true, force: true });

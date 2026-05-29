@@ -515,9 +515,9 @@ export function createWorkflowRunsRegistry(opts: {
           : {}),
       };
     },
+    // Cheap status read: single-row metadata SELECT only - never hydrates the payload,
+    // never reads the spill file, never sweeps/purges.
     async getStatusLight(workflowRunId: string) {
-      sweepExpired(opts.clock().getTime());
-      purgeExpiredRows(opts.clock().getTime());
       const row = opts.db
         .query<
           {
@@ -553,7 +553,7 @@ export function createWorkflowRunsRegistry(opts: {
         status: row.status,
         started_at: row.started_at,
         finished_at: row.completed_at ?? undefined,
-        result_available: row.status === "completed" && row.result_bytes > 0,
+        result_available: row.status === "completed",
         result_bytes: row.result_bytes,
         error_bytes: row.error_bytes,
         ...(persistenceStatus && persistenceStatus !== "pending"

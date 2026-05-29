@@ -752,6 +752,10 @@ test("POST /workflows/status returns 200 (not 400 untrusted_cwd) for a same-proj
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body?.error?.code).not.toBe("untrusted_cwd");
+    expect(body).toMatchObject({
+      status: "running",
+      started_at: expect.any(Number),
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -873,6 +877,12 @@ test("POST /workflows/wait returns 200 (not 400 untrusted_cwd) for a same-projec
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body?.error?.code).not.toBe("untrusted_cwd");
+    expect(body).toMatchObject({
+      status: "completed",
+      started_at: expect.any(Number),
+      finished_at: expect.any(Number),
+      result: { ok: true },
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

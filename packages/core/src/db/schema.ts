@@ -648,13 +648,13 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
     addColumnIfMissing(db, "workflow_runs", "error_bytes", "INTEGER NOT NULL DEFAULT 0");
     db.exec(
       `UPDATE workflow_runs
-          SET result_bytes = length(result_json)
+          SET result_bytes = length(CAST(result_json AS BLOB))
         WHERE result_json IS NOT NULL
           AND result_bytes = 0;`,
     );
     db.exec(
       `UPDATE workflow_runs
-          SET error_bytes = length(error_json)
+          SET error_bytes = length(CAST(error_json AS BLOB))
         WHERE error_json IS NOT NULL
           AND error_bytes = 0;`,
     );
