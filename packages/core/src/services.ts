@@ -56,6 +56,15 @@ export interface WorkflowRunRecord {
   error?: unknown;
 }
 
+export interface WorkflowStatusLight {
+  status: WorkflowRunStatus;
+  started_at: number;
+  finished_at?: number;
+  result_available: boolean;
+  result_bytes: number;
+  error_bytes: number;
+}
+
 export interface WorkflowRunsRegistry {
   register(workflowName: string, projectId: string | null): string | null;
   verify(workflowRunId: string): WorkflowRunInfo | null;
@@ -63,6 +72,7 @@ export interface WorkflowRunsRegistry {
   recordResult(workflowRunId: string, result: unknown): Promise<void>;
   recordError(workflowRunId: string, error: unknown): Promise<void>;
   getStatus(workflowRunId: string): Promise<WorkflowRunRecord | null>;
+  getStatusLight(workflowRunId: string): Promise<WorkflowStatusLight | null>;
   waitForResult(workflowRunId: string, timeoutMs: number): Promise<WorkflowRunRecord | null>;
   setPersistenceStatus(
     workflowRunId: string,

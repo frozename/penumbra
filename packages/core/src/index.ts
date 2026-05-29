@@ -64,6 +64,7 @@ export {
   type AgentRoutingConfig,
   type WorkflowRunInfo,
   type WorkflowRunRecord,
+  type WorkflowStatusLight,
   type WorkflowRunsRegistry,
 } from "./services.js";
 export { type McpPoolLike, type ActionGateLike } from "./services.js";

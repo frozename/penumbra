@@ -399,7 +399,7 @@ export const fn: WorkflowFn = async () => ({ ok: true });
   }
 });
 
-test("POST /workflows/status remains bounded after detached persistence failure", async () => {
+test("POST /workflows/status stays bounded when recordResult rejects outright (run stays running)", async () => {
   const root = mkdtempSync(join(tmpdir(), "wf-detached-status-"));
   try {
     markTrustedRoot(root);
@@ -449,6 +449,9 @@ export const fn: WorkflowFn = async () => ({ ok: true });
     const runRes = await workflowsRunRoute(runReq, services);
     expect(runRes.status).toBe(200);
     await new Promise((resolve) => setTimeout(resolve, 0));
+    // This test forces recordResult to reject, bypassing recordResult's internal
+    // persistence-failure try/catch. Real writePayload failures are caught there
+    // and transition the DB row to failed; this asserts the forced-rejection edge case.
     expect(recordSpy).toHaveBeenCalled();
     const statusReq = new Request("http://localhost/workflows/status", {
       method: "POST",

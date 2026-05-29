@@ -64,7 +64,7 @@ function buildPrompt(target) {
     '```',
     'Capture workflow_run_id from the immediate response (it returns within seconds; if it has a workflow_run_id but no outcome, it is a pending run).',
     `Then POLL with SHORT waits so you never stall: repeatedly call mcp__penumbra__workflow_wait({ workflow_run_id, timeout_ms: 90000 }) — each returns within ~90s (under the watchdog) reporting terminal-or-still-running — until it reports a terminal state, for at most ${maxPolls} iterations (~${Math.round(reviewTimeoutMs / 60000)} min total). NEVER issue one long wait, and NEVER call workflow_run again.`,
-    'When terminal, call mcp__penumbra__workflow_status({ workflow_run_id }) to read the outcome and the synthesis.md artifact path; summarize the synthesized findings.',
+    'When terminal, read outcome and any synthesis.md artifact path from the TERMINAL mcp__penumbra__workflow_wait response you already polled; workflow_status is progress-only run state and does not include the result payload.',
     '',
     'Return StructuredOutput per schema. ok=true when the run reached success or success_partial; otherwise ok=false with error_summary.',
   ].join('\n')

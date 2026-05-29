@@ -2,6 +2,22 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import { dirname, join, resolve as pathResolve, relative as pathRelative } from "node:path";
 import type { Database } from "bun:sqlite";
+import type { WorkflowStatusLight } from "@penumbra/core";
+
+declare module "@penumbra/core" {
+  interface WorkflowStatusLight {
+    status: "running" | "completed" | "failed";
+    started_at: number;
+    finished_at?: number;
+    result_available: boolean;
+    result_bytes: number;
+    error_bytes: number;
+  }
+
+  interface WorkflowRunsRegistry {
+    getStatusLight(workflowRunId: string): Promise<WorkflowStatusLight | null>;
+  }
+}
 
 type WorkflowRunInfo = {
   workflow_name: string;
@@ -17,15 +33,6 @@ type WorkflowRunRecord = {
   finished_at?: number;
   result?: unknown;
   error?: unknown;
-};
-
-export type WorkflowStatusLight = {
-  status: WorkflowRunStatus;
-  started_at: number;
-  finished_at?: number;
-  result_available: boolean;
-  result_bytes: number;
-  error_bytes: number;
 };
 
 type WorkflowRunsRegistry = {
@@ -45,6 +52,7 @@ type WorkflowRunsRegistry = {
 };
 
 export type WorkflowRunsRegistryInternal = WorkflowRunsRegistry;
+export type { WorkflowStatusLight } from "@penumbra/core";
 
 const DEFAULT_CAPACITY = 1024;
 const DEFAULT_TTL_MS = 600_000;
@@ -532,7 +540,7 @@ export function createWorkflowRunsRegistry(opts: {
              FROM workflow_runs
             WHERE id = ?
             LIMIT 1`,
-      )
+        )
         .get(workflowRunId);
       if (!row) return null;
       if (row.status === "running") {

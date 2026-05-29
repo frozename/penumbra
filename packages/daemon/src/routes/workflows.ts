@@ -6,7 +6,6 @@ import {
   resolveProjectScope,
 } from "@penumbra/core";
 import type { Registry, TemplateVarContext, WorkflowSpec } from "@penumbra/workflows";
-import type { WorkflowRunsRegistryInternal } from "../services/workflow-runs-registry.js";
 import {
   buildWorkflowCtx,
   composeRecall,
@@ -556,9 +555,7 @@ export async function workflowsStatusRoute(req: Request, services: Services): Pr
   if (info.project_id !== scope.project) {
     return json({ error: { code: "not_found", message: "workflow run not found" } }, 404);
   }
-  const status = await (workflowRuns as WorkflowRunsRegistryInternal).getStatusLight(
-    body.workflow_run_id,
-  );
+  const status = await workflowRuns.getStatusLight(body.workflow_run_id);
   if (!status)
     return json({ error: { code: "not_found", message: "workflow run not found" } }, 404);
   return json(status);

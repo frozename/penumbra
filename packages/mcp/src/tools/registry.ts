@@ -586,7 +586,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
   workflow_status: {
     descriptor: {
       description:
-        "Check the status of an async workflow run. Returns run state only (status, result_available, result_bytes); for the full result payload use workflow_wait.",
+        "Check the status of an async workflow run. Returns run state only — { status, started_at, finished_at?, result_available, result_bytes, error_bytes }; result/error payloads are NOT included. Use workflow_wait for the full result.",
       inputSchema: WorkflowStatusInputShape,
     },
     makeHandler: workflowStatusHandler as unknown as ToolDef["makeHandler"],
