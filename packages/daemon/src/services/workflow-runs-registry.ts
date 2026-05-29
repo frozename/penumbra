@@ -19,6 +19,16 @@ type WorkflowRunRecord = {
   error?: unknown;
 };
 
+export type WorkflowStatusLight = {
+  status: WorkflowRunStatus;
+  started_at: number;
+  finished_at?: number;
+  result_available: boolean;
+  result_bytes: number;
+  error_bytes: number;
+  persistence_status?: "pending" | "persisted" | "persistence_failed";
+};
+
 type WorkflowRunsRegistry = {
   register(workflowName: string, projectId: string | null): string | null;
   verify(workflowRunId: string): WorkflowRunInfo | null;
@@ -26,6 +36,7 @@ type WorkflowRunsRegistry = {
   recordResult(workflowRunId: string, result: unknown): Promise<void>;
   recordError(workflowRunId: string, error: unknown): Promise<void>;
   getStatus(workflowRunId: string): Promise<WorkflowRunRecord | null>;
+  getStatusLight(workflowRunId: string): Promise<WorkflowStatusLight | null>;
   waitForResult(workflowRunId: string, timeoutMs: number): Promise<WorkflowRunRecord | null>;
   setPersistenceStatus(
     workflowRunId: string,
@@ -292,6 +303,8 @@ export function createWorkflowRunsRegistry(opts: {
       error_json: string | null;
       result_spill_path: string | null;
       error_spill_path: string | null;
+      result_bytes: number;
+      error_bytes: number;
     }>,
   ): void {
     const parts: string[] = [];
@@ -393,6 +406,7 @@ export function createWorkflowRunsRegistry(opts: {
           finished_at: finishedAt,
           result,
         };
+        const resultBytes = Buffer.byteLength(spill.payloadJson);
         entry.record = record;
         refreshPersistedState(workflowRunId, {
           status: "completed",
@@ -401,10 +415,13 @@ export function createWorkflowRunsRegistry(opts: {
           error_json: null,
           result_spill_path: spill.spillPath,
           error_spill_path: null,
+          result_bytes: resultBytes,
+          error_bytes: 0,
         });
         setPersistenceStatus(workflowRunId, "persisted");
         releaseWaiters(workflowRunId, entry);
       } catch (error) {
+        const errorJson = safeStringify(error);
         const record: WorkflowRunRecord = {
           status: "failed",
           started_at: entry.registered_at,
@@ -416,9 +433,11 @@ export function createWorkflowRunsRegistry(opts: {
           status: "failed",
           completed_at: record.finished_at,
           result_json: null,
-          error_json: safeStringify(error),
+          error_json: errorJson,
           result_spill_path: null,
           error_spill_path: null,
+          result_bytes: 0,
+          error_bytes: Buffer.byteLength(errorJson),
         });
         setPersistenceStatus(workflowRunId, "persistence_failed");
         releaseWaiters(workflowRunId, entry);
@@ -436,6 +455,7 @@ export function createWorkflowRunsRegistry(opts: {
           finished_at: finishedAt,
           error,
         };
+        const errorBytes = Buffer.byteLength(spill.payloadJson);
         entry.record = record;
         refreshPersistedState(workflowRunId, {
           status: "failed",
@@ -444,10 +464,13 @@ export function createWorkflowRunsRegistry(opts: {
           error_json: spill.spillPath ? null : spill.payloadJson,
           result_spill_path: null,
           error_spill_path: spill.spillPath,
+          result_bytes: 0,
+          error_bytes: errorBytes,
         });
         setPersistenceStatus(workflowRunId, "persisted");
         releaseWaiters(workflowRunId, entry);
       } catch (spillError) {
+        const errorJson = safeStringify(spillError);
         const record: WorkflowRunRecord = {
           status: "failed",
           started_at: entry.registered_at,
@@ -459,9 +482,11 @@ export function createWorkflowRunsRegistry(opts: {
           status: "failed",
           completed_at: record.finished_at,
           result_json: null,
-          error_json: safeStringify(spillError),
+          error_json: errorJson,
           result_spill_path: null,
           error_spill_path: null,
+          result_bytes: 0,
+          error_bytes: Buffer.byteLength(errorJson),
         });
         setPersistenceStatus(workflowRunId, "persistence_failed");
         releaseWaiters(workflowRunId, entry);
@@ -485,6 +510,52 @@ export function createWorkflowRunsRegistry(opts: {
       return {
         status: "running",
         started_at: entry.registered_at,
+        ...(persistenceStatus && persistenceStatus !== "pending"
+          ? { persistence_status: persistenceStatus }
+          : {}),
+      };
+    },
+    async getStatusLight(workflowRunId: string) {
+      sweepExpired(opts.clock().getTime());
+      purgeExpiredRows(opts.clock().getTime());
+      const row = opts.db
+        .query<
+          {
+            status: WorkflowRunStatus;
+            started_at: number;
+            completed_at: number | null;
+            result_bytes: number;
+            error_bytes: number;
+          },
+          [string]
+        >(
+          `SELECT status, started_at, completed_at, result_bytes, error_bytes
+             FROM workflow_runs
+            WHERE id = ?
+            LIMIT 1`,
+        )
+        .get(workflowRunId);
+      if (!row) return null;
+      const persistenceStatus = persistenceByRunId.get(workflowRunId);
+      if (row.status === "running") {
+        return {
+          status: "running",
+          started_at: row.started_at,
+          result_available: false,
+          result_bytes: row.result_bytes,
+          error_bytes: row.error_bytes,
+          ...(persistenceStatus && persistenceStatus !== "pending"
+            ? { persistence_status: persistenceStatus }
+            : {}),
+        };
+      }
+      return {
+        status: row.status,
+        started_at: row.started_at,
+        finished_at: row.completed_at ?? undefined,
+        result_available: row.status === "completed" && row.result_bytes > 0,
+        result_bytes: row.result_bytes,
+        error_bytes: row.error_bytes,
         ...(persistenceStatus && persistenceStatus !== "pending"
           ? { persistence_status: persistenceStatus }
           : {}),

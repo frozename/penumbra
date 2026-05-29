@@ -21,6 +21,8 @@ function freshDb(path: string) {
       error_json TEXT,
       result_spill_path TEXT,
       error_spill_path TEXT,
+      result_bytes INTEGER NOT NULL DEFAULT 0,
+      error_bytes INTEGER NOT NULL DEFAULT 0,
       expires_at INTEGER NOT NULL
     );
   `);
@@ -100,6 +102,85 @@ test("register persists status and results across registry re-instantiation", as
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("getStatusLight returns result_available + result_bytes and omits the result payload", async () => {
+  const now = new Date("2026-04-26T00:00:00Z");
+  const registry = createWorkflowRunsRegistry({
+    uuid: () => "wfrun-1",
+    clock: () => now,
+    db: freshDb(":memory:"),
+    storageRoot: tmpdir(),
+  });
+  expect(registry.register("wf-a", "proj")).toBe("wfrun-1");
+  const result = { ok: true, nested: { value: 1 } };
+  const expectedBytes = Buffer.byteLength(JSON.stringify(result));
+  await registry.recordResult("wfrun-1", result);
+
+  const status = await registry.getStatusLight("wfrun-1");
+  expect(status).toEqual({
+    status: "completed",
+    started_at: now.getTime(),
+    finished_at: now.getTime(),
+    result_available: true,
+    result_bytes: expectedBytes,
+    error_bytes: 0,
+    persistence_status: "persisted",
+  });
+  expect(status).not.toHaveProperty("result");
+  expect(status).not.toHaveProperty("error");
+});
+
+test("getStatusLight reports a running run without a result", async () => {
+  const now = new Date("2026-04-26T00:00:00Z");
+  const registry = createWorkflowRunsRegistry({
+    uuid: () => "wfrun-1",
+    clock: () => now,
+    db: freshDb(":memory:"),
+    storageRoot: tmpdir(),
+  });
+  expect(registry.register("wf-a", "proj")).toBe("wfrun-1");
+
+  await expect(registry.getStatusLight("wfrun-1")).resolves.toEqual({
+    status: "running",
+    started_at: now.getTime(),
+    result_available: false,
+    result_bytes: 0,
+    error_bytes: 0,
+  });
+});
+
+test("recordResult/recordError persist result_bytes/error_bytes matching serialized payload size", async () => {
+  const now = new Date("2026-04-26T00:00:00Z");
+  const db = freshDb(":memory:");
+  const registry = createWorkflowRunsRegistry({
+    uuid: (() => {
+      let n = 0;
+      return () => `wfrun-${++n}`;
+    })(),
+    clock: () => now,
+    db,
+    storageRoot: tmpdir(),
+  });
+
+  expect(registry.register("wf-result", "proj")).toBe("wfrun-1");
+  const resultPayload = { ok: true, values: [1, 2, 3] };
+  await registry.recordResult("wfrun-1", resultPayload);
+
+  expect(registry.register("wf-error", "proj")).toBe("wfrun-2");
+  const errorPayload = { code: "boom", detail: "something failed" };
+  await registry.recordError("wfrun-2", errorPayload);
+
+  await expect(registry.getStatusLight("wfrun-1")).resolves.toMatchObject({
+    result_bytes: Buffer.byteLength(JSON.stringify(resultPayload)),
+    error_bytes: 0,
+    result_available: true,
+  });
+  await expect(registry.getStatusLight("wfrun-2")).resolves.toMatchObject({
+    result_bytes: 0,
+    error_bytes: Buffer.byteLength(JSON.stringify(errorPayload)),
+    result_available: false,
+  });
 });
 
 test("register refuses to evict running runs when capacity is exhausted", () => {

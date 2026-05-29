@@ -131,6 +131,8 @@ function freshDb() {
       error_json TEXT,
       result_spill_path TEXT,
       error_spill_path TEXT,
+      result_bytes INTEGER NOT NULL DEFAULT 0,
+      error_bytes INTEGER NOT NULL DEFAULT 0,
       expires_at INTEGER NOT NULL
     );
   `);
@@ -719,6 +721,42 @@ test("POST /workflows/status rejects cross-project access with not_found shape",
   }
 });
 
+test("POST /workflows/status returns 200 (not 400 untrusted_cwd) for a same-project run", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wf-status-same-project-"));
+  try {
+    markTrustedRoot(root);
+    const db = freshDb();
+    const workflowRuns = createWorkflowRunsRegistry({
+      uuid: () => "wfrun-1",
+      clock: () => new Date("2026-04-26T00:00:00Z"),
+      db,
+      storageRoot: root,
+    });
+    expect(workflowRuns.register("wf", "proj-a")).toBe("wfrun-1");
+    const services = {
+      workflowRuns,
+      projectRegistry: new ProjectRegistry(
+        new Map([["proj-a", { project_id: "proj-a", root_path: root }]]),
+      ),
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      settings: { storageRoot: root },
+    } as any;
+
+    const req = new Request("http://localhost/workflows/status", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workflow_run_id: "wfrun-1", cwd: root }),
+    });
+    const res = await workflowsStatusRoute(req, services);
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body?.error?.code).not.toBe("untrusted_cwd");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("POST /workflows/status returns the same not_found response for unknown and foreign ids", async () => {
   const root1 = mkdtempSync(join(tmpdir(), "wf-auth-c-"));
   const root2 = mkdtempSync(join(tmpdir(), "wf-auth-d-"));
@@ -798,6 +836,43 @@ test("POST /workflows/status returns explicit not_found for unknown ids", async 
     expect(await res.json()).toEqual({
       error: { code: "not_found", message: "workflow run not found" },
     });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("POST /workflows/wait returns 200 (not 400 untrusted_cwd) for a same-project run", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wf-wait-same-project-"));
+  try {
+    markTrustedRoot(root);
+    const db = freshDb();
+    const workflowRuns = createWorkflowRunsRegistry({
+      uuid: () => "wfrun-1",
+      clock: () => new Date("2026-04-26T00:00:00Z"),
+      db,
+      storageRoot: root,
+    });
+    expect(workflowRuns.register("wf", "proj-a")).toBe("wfrun-1");
+    await workflowRuns.recordResult("wfrun-1", { ok: true });
+    const services = {
+      workflowRuns,
+      projectRegistry: new ProjectRegistry(
+        new Map([["proj-a", { project_id: "proj-a", root_path: root }]]),
+      ),
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      settings: { storageRoot: root },
+    } as any;
+
+    const req = new Request("http://localhost/workflows/wait", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workflow_run_id: "wfrun-1", cwd: root, timeout_ms: 10 }),
+    });
+    const res = await workflowsWaitRoute(req, services);
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body?.error?.code).not.toBe("untrusted_cwd");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

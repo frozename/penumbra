@@ -644,6 +644,20 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
     addColumnIfMissing(db, "workflow_runs", "result_spill_path", "TEXT");
     addColumnIfMissing(db, "workflow_runs", "error_spill_path", "TEXT");
     addColumnIfMissing(db, "workflow_runs", "expires_at", "INTEGER NOT NULL DEFAULT 0");
+    addColumnIfMissing(db, "workflow_runs", "result_bytes", "INTEGER NOT NULL DEFAULT 0");
+    addColumnIfMissing(db, "workflow_runs", "error_bytes", "INTEGER NOT NULL DEFAULT 0");
+    db.exec(
+      `UPDATE workflow_runs
+          SET result_bytes = length(result_json)
+        WHERE result_json IS NOT NULL
+          AND result_bytes = 0;`,
+    );
+    db.exec(
+      `UPDATE workflow_runs
+          SET error_bytes = length(error_json)
+        WHERE error_json IS NOT NULL
+          AND error_bytes = 0;`,
+    );
     db.exec(
       `CREATE INDEX IF NOT EXISTS workflow_runs_project_id ON workflow_runs(project_id, status, started_at DESC);`,
     );
