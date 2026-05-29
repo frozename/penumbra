@@ -4,21 +4,6 @@ import { dirname, join, resolve as pathResolve, relative as pathRelative } from 
 import type { Database } from "bun:sqlite";
 import type { WorkflowStatusLight } from "@penumbra/core";
 
-declare module "@penumbra/core" {
-  interface WorkflowStatusLight {
-    status: "running" | "completed" | "failed";
-    started_at: number;
-    finished_at?: number;
-    result_available: boolean;
-    result_bytes: number;
-    error_bytes: number;
-  }
-
-  interface WorkflowRunsRegistry {
-    getStatusLight(workflowRunId: string): Promise<WorkflowStatusLight | null>;
-  }
-}
-
 type WorkflowRunInfo = {
   workflow_name: string;
   project_id: string | null;
