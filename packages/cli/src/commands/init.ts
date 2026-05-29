@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { applyRuntimePragmas, loadSqliteVec, migrate, systemUuid, type Uuid } from "@penumbra/core";
@@ -10,6 +10,21 @@ export interface RunInitOpts {
   uuid?: Uuid;
   embeddingDim?: number;
   forceAgentchat?: boolean;
+  claudeUserDir?: string;
+  workflowsSourceDir?: string;
+}
+
+function resolveDefaultWorkflowsSourceDir(fromDir: string): string {
+  let current = fromDir;
+  while (true) {
+    const candidate = join(current, ".claude/workflows");
+    if (existsSync(candidate))
+      return candidate;
+    const parent = dirname(current);
+    if (parent === current)
+      return join(fromDir, ".claude/workflows");
+    current = parent;
+  }
 }
 
 export async function runInit(opts: RunInitOpts): Promise<number> {
@@ -45,6 +60,35 @@ export async function runInit(opts: RunInitOpts): Promise<number> {
     mkdirSync(dirname(agentchatPath), { recursive: true });
     writeFileSync(agentchatPath, AGENTCHAT_TEMPLATE);
     process.stdout.write(`penumbra: seeded agentchat config at ${agentchatPath}\n`);
+  }
+
+  const claudeUserDir = opts.claudeUserDir ?? join(homedir(), ".claude");
+  const workflowsSourceDir = opts.workflowsSourceDir ?? resolveDefaultWorkflowsSourceDir(import.meta.dir);
+  const workflowsTargetDir = join(claudeUserDir, "workflows");
+  if (!existsSync(workflowsSourceDir)) {
+    process.stdout.write(
+      `penumbra: warning: workflows source dir not found at ${workflowsSourceDir}; skipping bundled workflow install\n`,
+    );
+  } else {
+    const workflowFiles = readdirSync(workflowsSourceDir).filter((name) =>
+      /^penumbra-.*\.js$/.test(name),
+    );
+    if (workflowFiles.length === 0) {
+      process.stdout.write(
+        `penumbra: warning: no bundled workflows matching penumbra-*.js in ${workflowsSourceDir}; skipping install\n`,
+      );
+    } else {
+      mkdirSync(workflowsTargetDir, { recursive: true });
+      for (const name of workflowFiles) {
+        const sourcePath = join(workflowsSourceDir, name);
+        const targetPath = join(workflowsTargetDir, name);
+        copyFileSync(sourcePath, targetPath);
+        process.stdout.write(`penumbra: installed Claude workflow ${name} to ${targetPath}\n`);
+      }
+      process.stdout.write(
+        `penumbra: installed ${workflowFiles.length} bundled workflow file(s) to ${workflowsTargetDir}\n`,
+      );
+    }
   }
 
   process.stdout.write(`penumbra: initialized at ${opts.storageRoot}\n`);
