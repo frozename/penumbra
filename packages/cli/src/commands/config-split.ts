@@ -107,9 +107,30 @@ function splitLegacyConfig(source: AgentChatConfig) {
     workloads.plan_refine = planWorkload;
   }
 
+  const personas: Record<
+    string,
+    { preferred_agent: string; bias: string; system_prompt: string; category_hints?: string[] }
+  > = {};
+  for (const [name, persona] of Object.entries(legacy.review_personas ?? {})) {
+    personas[name] = {
+      preferred_agent: persona.preferred_agent,
+      bias: persona.bias,
+      system_prompt: persona.system_prompt,
+      ...(persona.category_hints ? { category_hints: persona.category_hints } : {}),
+    };
+  }
+  for (const [name, persona] of Object.entries(legacy.planner_personas ?? {})) {
+    personas[name] ??= {
+      preferred_agent: persona.preferred_agent,
+      bias: persona.bias,
+      system_prompt: persona.system_prompt,
+    };
+  }
+
   const routing = RoutingConfigSchema.parse({
     default_roles: legacy.default_roles,
     role_routing: legacy.role_routing,
+    ...(Object.keys(personas).length > 0 ? { personas } : {}),
     ...(Object.keys(workloads).length > 0 ? { workloads } : {}),
   });
 
