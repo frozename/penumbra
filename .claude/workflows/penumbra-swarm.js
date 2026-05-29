@@ -97,6 +97,11 @@ if (!tasks.length) {
   log('penumbra-swarm: planner produced no tasks.')
   return { ok: false, error: 'empty_plan', goal, plan }
 }
+if (plan && Array.isArray(plan.tasks) && plan.tasks.length > maxTasks) {
+  log(
+    `penumbra-swarm: planner returned ${plan.tasks.length} tasks; truncated to maxTasks=${maxTasks} (dropped ${plan.tasks.length - maxTasks}).`,
+  )
+}
 log(`penumbra-swarm: planner produced ${tasks.length} task(s)${plan.summary ? ' — ' + plan.summary : ''}`)
 
 phase('Dispatch')

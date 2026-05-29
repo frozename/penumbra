@@ -26,6 +26,10 @@ const defaults = input.defaults || {}
 // The proxy only brokers workflow_run; the personas run on their own routed agents
 // inside the daemon, so the proxy itself can be cheap.
 const reviewModel = input.reviewModel || 'haiku'
+// adversarial-review can run 30+ min for full multi-persona reviews; size the poll
+// ceiling off a configurable budget (default 40 min) instead of a fixed count.
+const reviewTimeoutMs = input.reviewTimeoutMs || defaults.reviewTimeoutMs || 2400000
+const maxPolls = Math.ceil(reviewTimeoutMs / 90000)
 
 const REVIEW_RESULT = {
   type: 'object',
@@ -59,7 +63,7 @@ function buildPrompt(target) {
     JSON.stringify({ name: 'adversarial-review', args: reviewArgs, wait: false }, null, 2),
     '```',
     'Capture workflow_run_id from the immediate response (it returns within seconds; if it has a workflow_run_id but no outcome, it is a pending run).',
-    'Then POLL with SHORT waits so you never stall: repeatedly call mcp__penumbra__workflow_wait({ workflow_run_id, timeout_ms: 90000 }) — each returns within ~90s (under the watchdog) reporting terminal-or-still-running — until it reports a terminal state, for at most ~12 iterations. NEVER issue one long wait, and NEVER call workflow_run again.',
+    `Then POLL with SHORT waits so you never stall: repeatedly call mcp__penumbra__workflow_wait({ workflow_run_id, timeout_ms: 90000 }) — each returns within ~90s (under the watchdog) reporting terminal-or-still-running — until it reports a terminal state, for at most ${maxPolls} iterations (~${Math.round(reviewTimeoutMs / 60000)} min total). NEVER issue one long wait, and NEVER call workflow_run again.`,
     'When terminal, call mcp__penumbra__workflow_status({ workflow_run_id }) to read the outcome and the synthesis.md artifact path; summarize the synthesized findings.',
     '',
     'Return StructuredOutput per schema. ok=true when the run reached success or success_partial; otherwise ok=false with error_summary.',
