@@ -25,9 +25,9 @@ if (typeof input === 'string') {
   }
 }
 
-const tasks = (input && input.tasks) || []
-if (!tasks.length) {
-  log('penumbra-fanout: no tasks. Pass args.tasks = [{ initial_agent, task_class, task_type, message, ... }].')
+const tasks = input && input.tasks
+if (!Array.isArray(tasks) || !tasks.length) {
+  log('penumbra-fanout: no tasks. Pass args.tasks = [{ initial_agent, task_class, task_type, message, ... }] (must be an array).')
   return { ok: false, error: 'no_tasks', total: 0, completed: 0, failed: 0, results: [] }
 }
 
@@ -37,6 +37,17 @@ const agentType = input && input.agentType // optional override; omit to use the
 // penumbra fleet agent, not here. Pin it to a cheap model so it doesn't inherit
 // the (expensive) session model. Override via args.dispatcherModel; 'inherit' to follow the session.
 const dispatcherModel = (input && input.dispatcherModel) || 'haiku'
+
+// BOUNDARY work shouldn't flow through unattended auto-approve. Warn loudly per task.
+for (const t of tasks) {
+  const tc = t.task_class || defaults.task_class
+  const tm = t.trust_mode || defaults.trust_mode || 'all'
+  if (tc === 'BOUNDARY' && tm === 'all') {
+    log(
+      `WARNING: task "${t.label || t.initial_agent || '?'}" is BOUNDARY + trust_mode:all — unattended auto-approve of architectural work. Route BOUNDARY through maestro with review gates, or set trust_mode:'config'.`,
+    )
+  }
+}
 
 const DISPATCH_RESULT = {
   type: 'object',
@@ -87,7 +98,7 @@ function buildPrompt(t) {
     'Protocol:',
     '1. If initial_agent is "AUTO", call mcp__penumbra__agent_recommend({ task_type }) and use the top candidate; else use it verbatim.',
     '2. Call mcp__penumbra__chain_start with initial_agent, message, task_class, task_type, trust_mode, use_worktree, max_hops, and branch_base if present in the spec. Capture conversation_id and handoff_id from the result.',
-    '3. Loop mcp__penumbra__chain_wait({ conversation_id, timeout_ms: 600000 }) until status is terminal (completed/failed) or the spec timeout_ms budget is exhausted. Use mcp__penumbra__chain_status({ handoff_id }) for cheap liveness between waits if needed.',
+    '3. Poll with SHORT waits so you never stall: repeatedly call mcp__penumbra__chain_wait({ conversation_id, timeout_ms: 90000 }) — each returns within ~90s (under the workflow runtime no-progress watchdog), reporting terminal-or-still-running — until status is terminal (completed/failed), for at most ceil(spec.timeout_ms / 90000) iterations. Do NOT issue a single long blocking wait. Use mcp__penumbra__chain_status({ handoff_id }) for cheap liveness if needed.',
     '4. Call mcp__penumbra__chain_get_response({ conversation_id, which: "final" }) for the worker response.',
     '5. Return StructuredOutput per schema. ok=true only on a completed terminal state; otherwise ok=false with status and error_summary. Report branch as agent/<handoff_id> if a worktree was created. Do not retry.',
   ].join('\n')

@@ -134,6 +134,7 @@ if (persist && report && report.summary) {
       `Call mcp__penumbra__memory_observe with a concise observation capturing the question and the key finding.`,
       `Question: ${question}`,
       `Summary to store:\n${report.summary}`,
+      'If mcp__penumbra__memory_observe is unavailable or errors, do NOT fail — return persisted:false with a note explaining why.',
       'Return StructuredOutput: { persisted: boolean, note?: string }.',
     ].join('\n'),
     {

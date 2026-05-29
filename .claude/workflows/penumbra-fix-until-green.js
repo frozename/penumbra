@@ -49,8 +49,11 @@ function roundMessage(roundIndex, prevBranch, prevOutput) {
 
 function parseCheck(responseText) {
   const text = String(responseText || '')
-  if (/CHECK_RESULT:\s*PASS/i.test(text)) return { passed: true, output: '' }
-  // FAIL, or no marker at all → treat as not-green so the loop retries.
+  // The worker is told to BEGIN its final message with the marker, so only the first
+  // non-empty line counts — avoids a false PASS from the marker echoed inside
+  // instructions or failure output.
+  const firstLine = (text.split('\n').map((l) => l.trim()).find((l) => l.length > 0)) || ''
+  if (/^CHECK_RESULT:\s*PASS\b/i.test(firstLine)) return { passed: true, output: '' }
   return { passed: false, output: text.slice(-4000) }
 }
 

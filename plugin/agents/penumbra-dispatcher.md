@@ -32,9 +32,12 @@ Your task message contains a fenced ```dispatch block of JSON:
 2. Call `mcp__penumbra__chain_start` with `initial_agent`, `message`, `task_class`,
    `task_type`, `trust_mode`, `use_worktree`, `max_hops`, and `branch_base` if the
    spec includes it. Capture whatever `conversation_id` and `handoff_id` the result returns.
-3. Wait for terminal: loop `mcp__penumbra__chain_wait({ conversation_id, timeout_ms })`
-   using up to 600000 ms per call, until status is terminal (completed/failed) OR
-   the spec's overall `timeout_ms` budget is exhausted. Between waits you MAY call
+3. Wait for terminal with SHORT polls so you never stall: repeatedly call
+   `mcp__penumbra__chain_wait({ conversation_id, timeout_ms: 90000 })` — each returns
+   within ~90s, under the workflow runtime's no-progress watchdog — until status is
+   terminal (completed/failed), for at most `ceil(spec.timeout_ms / 90000)` iterations.
+   Do NOT issue a single long blocking wait (it trips the watchdog → kill + retry →
+   duplicate dispatches). Between polls you MAY call
    `mcp__penumbra__chain_status({ handoff_id })` for a cheap liveness check.
 4. On terminal, call `mcp__penumbra__chain_get_response({ conversation_id, which: "final" })`.
 5. Return StructuredOutput per schema. Set `ok=true` ONLY when the chain reached a

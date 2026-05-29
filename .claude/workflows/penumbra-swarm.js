@@ -92,7 +92,7 @@ const plan = await agent(plannerPrompt, {
   ...(plannerModel && plannerModel !== 'inherit' ? { model: plannerModel } : {}),
 })
 
-const tasks = (plan && plan.tasks) || []
+const tasks = ((plan && Array.isArray(plan.tasks) && plan.tasks) || []).slice(0, maxTasks)
 if (!tasks.length) {
   log('penumbra-swarm: planner produced no tasks.')
   return { ok: false, error: 'empty_plan', goal, plan }

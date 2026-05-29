@@ -54,12 +54,13 @@ function buildPrompt(target) {
   return [
     "You are a review-sweep proxy. Run penumbra's native adversarial-review workflow against ONE target and report the outcome. Do NOT review the code yourself — the workflow's personas do that.",
     '',
-    'Start the run with mcp__penumbra__workflow_run:',
+    'Start the run NON-BLOCKING. Do NOT use wait=true: adversarial-review takes ~7-12 min, and a single blocking call exceeds the workflow runtime watchdog (~180s of no progress) — it gets killed and retried, which spawns DUPLICATE reviews. Call workflow_run exactly ONCE with wait=false:',
     '```json',
-    JSON.stringify({ name: 'adversarial-review', args: reviewArgs, wait: true }, null, 2),
+    JSON.stringify({ name: 'adversarial-review', args: reviewArgs, wait: false }, null, 2),
     '```',
-    'With wait=true the call returns the full result body when the run finishes. From it, extract: outcome (success / success_partial / failed), workflow_run_id, the synthesis.md path if present, and a short summary of the synthesized findings.',
-    'If the call instead returns a run id without a finished body (or wait times out), fall back to polling: mcp__penumbra__workflow_wait({ workflow_run_id, timeout_ms: 1800000 }) until terminal, then mcp__penumbra__workflow_status({ workflow_run_id }) for the outcome.',
+    'Capture workflow_run_id from the immediate response (it returns within seconds; if it has a workflow_run_id but no outcome, it is a pending run).',
+    'Then POLL with SHORT waits so you never stall: repeatedly call mcp__penumbra__workflow_wait({ workflow_run_id, timeout_ms: 90000 }) — each returns within ~90s (under the watchdog) reporting terminal-or-still-running — until it reports a terminal state, for at most ~12 iterations. NEVER issue one long wait, and NEVER call workflow_run again.',
+    'When terminal, call mcp__penumbra__workflow_status({ workflow_run_id }) to read the outcome and the synthesis.md artifact path; summarize the synthesized findings.',
     '',
     'Return StructuredOutput per schema. ok=true when the run reached success or success_partial; otherwise ok=false with error_summary.',
   ].join('\n')

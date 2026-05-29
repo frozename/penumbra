@@ -61,13 +61,14 @@ const tasks = agents.map((a) => ({
   initial_agent: a,
   task_class: task.task_class || defaults.task_class || 'STANDARD',
   task_type: task.task_type || defaults.task_type || 'implement_small',
+  use_worktree: true, // judging compares per-candidate branches, so each needs its own worktree
   message: task.message,
 }))
 const fan = await workflow(
   { scriptPath: '.claude/workflows/penumbra-fanout.js' },
   { tasks, defaults, dispatcherModel },
 )
-const candidates = ((fan && fan.results) || []).filter((r) => r && r.ok && r.handoff_id)
+const candidates = ((fan && fan.results) || []).filter((r) => r && r.ok && r.branch && r.handoff_id)
 if (!candidates.length) {
   log('penumbra-tournament: no successful candidates to judge.')
   return { ok: false, error: 'no_successful_candidates', fanout: fan }
@@ -106,4 +107,7 @@ return {
   winner: verdict && verdict.winner_branch,
   // All candidate branches exist; maestro lands the winner and GCs the rest.
   branches: candidates.map((c) => c.branch),
+  loser_branches: candidates
+    .map((c) => c.branch)
+    .filter((b) => b !== (verdict && verdict.winner_branch)),
 }
