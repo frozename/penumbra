@@ -1,0 +1,129 @@
+export const meta = {
+  name: 'penumbra-fanout',
+  description: 'Fan out N tasks to the penumbra fleet via chain_start (one dispatch per task), wait for each to terminate, and collect every worker result',
+  whenToUse: 'When you have several independent tasks to run on the penumbra fleet at once and want the fan-out, waiting, and result collection codified as a rerunnable script. Pass args.tasks. Landing the resulting agent/<id> branches stays with the orchestrator.',
+  phases: [
+    { title: 'Dispatch', detail: 'one penumbra chain_start per task; wait for terminal; collect final response' },
+  ],
+}
+
+// args shape:
+// {
+//   defaults?: { initial_agent?, task_class?, task_type?, trust_mode?, use_worktree?, max_hops?, timeout_ms? },
+//   tasks: [ { label?, initial_agent?, task_class?, task_type?, trust_mode?, use_worktree?, max_hops?, timeout_ms?, message } ],
+//   agentType?: 'penumbra-dispatcher'   // set once the subagent is registered (needs a session restart to load)
+// }
+
+// args may arrive as an object OR as a JSON string (the Workflow `args` field is
+// untyped, so a JSON object passed in the tool call can reach the script stringified).
+let input = args
+if (typeof input === 'string') {
+  try {
+    input = JSON.parse(input)
+  } catch {
+    input = {}
+  }
+}
+
+const tasks = (input && input.tasks) || []
+if (!tasks.length) {
+  log('penumbra-fanout: no tasks. Pass args.tasks = [{ initial_agent, task_class, task_type, message, ... }].')
+  return { ok: false, error: 'no_tasks', total: 0, completed: 0, failed: 0, results: [] }
+}
+
+const defaults = (input && input.defaults) || {}
+const agentType = input && input.agentType // optional override; omit to use the default self-contained workflow subagent
+// The proxy is pure glue (dispatch + poll + return) — the real work runs on the
+// penumbra fleet agent, not here. Pin it to a cheap model so it doesn't inherit
+// the (expensive) session model. Override via args.dispatcherModel; 'inherit' to follow the session.
+const dispatcherModel = (input && input.dispatcherModel) || 'haiku'
+
+const DISPATCH_RESULT = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['ok', 'status'],
+  properties: {
+    ok: { type: 'boolean', description: 'true only when the chain reached a completed terminal state' },
+    status: { type: 'string', description: 'completed | failed | timeout | error' },
+    initial_agent: { type: 'string', description: 'the agent actually dispatched to (resolved if AUTO)' },
+    conversation_id: { type: 'string' },
+    handoff_id: { type: 'string' },
+    branch: { type: 'string', description: 'agent/<handoff_id> if a worktree branch was created' },
+    response: { type: 'string', description: 'final worker response text (may be truncated)' },
+    error_summary: { type: 'string', description: 'short reason when ok=false' },
+    latency_seconds: { type: 'number' },
+  },
+}
+
+function buildSpec(t) {
+  const spec = {
+    initial_agent: t.initial_agent || defaults.initial_agent || 'AUTO',
+    task_class: t.task_class || defaults.task_class || 'STANDARD',
+    task_type: t.task_type || defaults.task_type || 'unknown',
+    trust_mode: t.trust_mode || defaults.trust_mode || 'all',
+    use_worktree: t.use_worktree ?? defaults.use_worktree ?? true,
+    max_hops: t.max_hops || defaults.max_hops || 8,
+    timeout_ms: t.timeout_ms || defaults.timeout_ms || 1800000,
+    message: t.message,
+  }
+  // Optional: base the worktree on a prior agent branch (enables iterative loops
+  // like fix-until-green that build on the previous round's branch).
+  const branchBase = t.branch_base || defaults.branch_base
+  if (branchBase) spec.branch_base = branchBase
+  return spec
+}
+
+function buildPrompt(t) {
+  const spec = buildSpec(t)
+  return [
+    'You are a penumbra dispatch proxy. Broker exactly ONE penumbra chain dispatch and report its outcome.',
+    'Do NOT implement the task yourself, edit files, or land branches — you only dispatch one chain and report the result.',
+    '',
+    'Dispatch spec:',
+    '```dispatch',
+    JSON.stringify(spec, null, 2),
+    '```',
+    '',
+    'Protocol:',
+    '1. If initial_agent is "AUTO", call mcp__penumbra__agent_recommend({ task_type }) and use the top candidate; else use it verbatim.',
+    '2. Call mcp__penumbra__chain_start with initial_agent, message, task_class, task_type, trust_mode, use_worktree, max_hops, and branch_base if present in the spec. Capture conversation_id and handoff_id from the result.',
+    '3. Loop mcp__penumbra__chain_wait({ conversation_id, timeout_ms: 600000 }) until status is terminal (completed/failed) or the spec timeout_ms budget is exhausted. Use mcp__penumbra__chain_status({ handoff_id }) for cheap liveness between waits if needed.',
+    '4. Call mcp__penumbra__chain_get_response({ conversation_id, which: "final" }) for the worker response.',
+    '5. Return StructuredOutput per schema. ok=true only on a completed terminal state; otherwise ok=false with status and error_summary. Report branch as agent/<handoff_id> if a worktree was created. Do not retry.',
+  ].join('\n')
+}
+
+phase('Dispatch')
+
+const results = await parallel(
+  tasks.map((t, i) => () =>
+    agent(buildPrompt(t), {
+      label: t.label || `dispatch:${t.initial_agent || defaults.initial_agent || 'AUTO'}#${i}`,
+      phase: 'Dispatch',
+      schema: DISPATCH_RESULT,
+      ...(dispatcherModel && dispatcherModel !== 'inherit' ? { model: dispatcherModel } : {}),
+      ...(agentType ? { agentType } : {}),
+    }),
+  ),
+)
+
+const clean = results.filter(Boolean)
+const completed = clean.filter((r) => r.ok)
+const failed = clean.filter((r) => !r.ok)
+const dropped = tasks.length - clean.length
+
+log(
+  `penumbra-fanout: ${completed.length}/${tasks.length} completed, ${failed.length} failed` +
+    (dropped ? `, ${dropped} dropped (agent skipped/errored)` : ''),
+)
+
+return {
+  ok: failed.length === 0 && dropped === 0 && clean.length === tasks.length,
+  total: tasks.length,
+  completed: completed.length,
+  failed: failed.length,
+  dropped,
+  // Branches ready for the orchestrator to review + dispatch_land (this workflow never lands):
+  branches: completed.map((r) => r.branch).filter(Boolean),
+  results: clean,
+}

@@ -167,6 +167,54 @@ A workflow that fails three runs in a row is auto-quarantined: triggers stop fir
 
 Specs: `docs/superpowers/specs/2026-05-04-workflow-runtime-design.md`. Plans: `docs/superpowers/plans/2026-05-04-workflow-runtime.md`.
 
+### Claude Code dynamic workflows → penumbra fan-out
+
+> Disambiguation: this is **not** penumbra's `workflow_*` runtime. Claude Code's *dynamic workflows* (the `Workflow` tool / `ultracode`) are JS scripts that fan out **Claude Code subagents**. The bridge lets one of those scripts fan out **penumbra fleet agents** instead, by having each subagent broker a `chain_start` dispatch.
+
+The seam: a Claude Code workflow's `agent()` spawns a subagent, and subagents can reach session-connected MCP tools — including `mcp__penumbra__chain_start`. So each `agent()` becomes a thin **dispatch proxy** that runs one `chain_start → chain_wait → chain_get_response` and returns the worker's result as structured output. The penumbra daemon still does the real work in worktrees; the workflow only holds the fan-out control flow and collects results.
+
+Two artifacts ship this (both work without the penumbra runtime — they use the MCP surface):
+
+- `.claude/agents/penumbra-dispatcher.md` — the proxy subagent. Tool-restricted to the `chain_*` / `agent_recommend` / `worktree_inspect` MCP tools, `model: haiku` (it only brokers, never implements). Referenced via `agent(..., { agentType: 'penumbra-dispatcher' })`. Subagent files load at session start, so a new session is needed before `agentType` resolves.
+- `.claude/workflows/penumbra-fanout.js` — the fan-out script. `parallel()` over `args.tasks`, one penumbra dispatch each, collects every result + the list of `agent/<id>` branches. Its `agent()` prompt is fully self-contained, so it runs in any session even before the subagent is registered (it falls back to the default workflow subagent, which inherits the penumbra MCP tools); set `args.agentType = 'penumbra-dispatcher'` once registered to get the cheaper, tool-locked proxy.
+
+Invoke from the orchestrator (maestro) with a structured `args` object:
+
+```
+Workflow({ scriptPath: '.claude/workflows/penumbra-fanout.js', args: {
+  defaults: { task_class: 'STANDARD', trust_mode: 'all', timeout_ms: 1800000 },
+  tasks: [
+    { initial_agent: 'codex-acp-fast', task_type: 'implement_small',  message: '...' },
+    { initial_agent: 'AUTO',           task_type: 'review_adversarial', message: '...' },
+  ],
+}})
+```
+
+Boundaries baked into the design (do not loosen without intent):
+
+- **`trust_mode: all` by default.** Background workflows cannot surface penumbra's human approval gate mid-run (no mid-run user input), so unattended fan-out auto-approves every hop. Restrict fan-out to STANDARD/TRIVIAL work; route BOUNDARY tasks through maestro with the normal `dispatch-quality-gates` review fan-out.
+- **The workflow never lands.** It stops at "dispatched + responses collected + `agent/<id>` branches ready". Review + `dispatch_land` stays with maestro (worktree-state-audit, then the `land` skill), so `agent_performance` attribution and worktree teardown happen on the supported path.
+- **Concurrency.** Claude Code caps at 16 concurrent agents; penumbra has its own worker-pool limits (`workers.yaml` extras). Excess tasks queue. Size `args.tasks` against live fleet capacity rather than firing dozens at once.
+
+**The workflow family** (`.claude/workflows/`, all route through the dispatch proxy / `chain_start`; none land — landing stays with maestro):
+
+| Workflow | Shape | Key args |
+| :-- | :-- | :-- |
+| `penumbra-fanout` | N independent tasks → fleet; collect results + `agent/<id>` branches | `tasks: [{ initial_agent, task_class, task_type, message, branch_base? }]` |
+| `penumbra-swarm` | goal → planner decomposes into independent tasks → `workflow('penumbra-fanout')` | `goal` string, or `{ goal, maxTasks?, plannerModel? }` |
+| `penumbra-tournament` | same task → K agents in parallel → judge inspects each worktree (`worktree_inspect`) → winner | `{ task: { message }, agents: [...], judgeModel? }` |
+| `penumbra-fix-until-green` | dispatch → worker runs `check` → on FAIL re-dispatch on the prior branch (`branch_base`) with the failure log → until green or capped | `{ task: { message }, check, maxRounds?, escalateTo? }` |
+| `penumbra-review-sweep` | wraps penumbra's native `adversarial-review` across N targets (`workflow_run`, keeps its routing/gates/capture) | `{ targets: [{ target_ref, base_ref?, focus? }] }` |
+| `penumbra-research` | memory-augmented research: prime with t2 `memory_search` → sourced web fan-out → cited report → persist to t2 `memory_observe` | `question` string, or `{ question, angles?, persist? }` (needs WebSearch/WebFetch allowlisted) |
+
+Operational notes:
+
+- **Models.** The dispatch proxy is glue and defaults to `haiku` (`dispatcherModel`); planners/judges keep the session model (`plannerModel` / `judgeModel`, `'inherit'` to follow the session). The real work runs on the fleet agent, not the proxy. Set `agentType: 'penumbra-dispatcher'` (after a session restart loads the subagent) to also tool-lock the proxy.
+- **args.** The Workflow `args` field is untyped, so a passed object can reach the script stringified; every script accepts an object OR a JSON string (`penumbra-swarm` also accepts a bare goal string).
+- **Nesting.** `swarm` / `tournament` / `fix-until-green` call `penumbra-fanout` via `workflow()` — one level only; don't chain them into each other (a 2nd nesting level throws).
+
+**Deliberately NOT reimplemented:** penumbra's 7 lifecycle/state-threshold workflows (`delegate-suggest`, `file-context`, `session-summarize`, `prompt-classify`, `session-handoff`, `maestro-context-prime`, `memory-digest`) are event hooks → they map to Claude Code *hooks*, not Workflows. `brainstorm` / `write-plan` are single-shot generative (no fan-out gain). `adversarial-review` / `adversarial-plan` are mature daemon workflows with persona routing, pass-rate gates, and capture — `penumbra-review-sweep` *wraps* the former rather than duplicating it. The only bundled CC-native workflow, `/deep-research`, needs nothing from penumbra for its web-search core; the worthwhile augmentation — shipped as `penumbra-research` — bookends research with penumbra memory: it primes from t2 `memory_search` and persists the cited report back via `memory_observe` for cross-session recall.
+
 ## Cross-agent doc center
 
 `packages/agentchat/docs/` carries the calibration + dispatch references — these are the load-bearing docs for "which agent for what task":

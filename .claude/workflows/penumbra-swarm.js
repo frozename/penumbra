@@ -1,0 +1,115 @@
+export const meta = {
+  name: 'penumbra-swarm',
+  description: 'Decompose a high-level goal into N independent penumbra task specs with a planner agent, then fan them out to the fleet via chain_start and collect every result',
+  whenToUse: 'When you have a goal but not a task list yet. A planner breaks it into independent, parallelizable penumbra dispatches; penumbra-fanout runs them on the fleet; results are collected. Tasks MUST be independent (isolated worktrees, run in parallel). Landing the agent/<id> branches stays with the orchestrator. Pass the goal as args (string) or args.goal.',
+  phases: [
+    { title: 'Plan', detail: 'one planner agent decomposes the goal into independent task specs' },
+    { title: 'Dispatch', detail: 'delegate to penumbra-fanout: one chain_start per task; wait; collect' },
+  ],
+}
+
+// args:
+//   string                       -> the goal
+//   { goal, maxTasks?, defaults?, agentType? }
+//     defaults/agentType are forwarded to penumbra-fanout (see that script's header).
+
+// args may arrive as a plain goal string, an object, or a JSON string (the Workflow
+// `args` field is untyped, so a JSON object passed in the tool call can reach the
+// script stringified). Parse only when the string clearly looks like JSON.
+let input = args
+if (typeof input === 'string') {
+  const s = input.trim()
+  if (s.startsWith('{') || s.startsWith('[')) {
+    try {
+      input = JSON.parse(s)
+    } catch {
+      /* keep as goal string */
+    }
+  }
+}
+
+const goal = typeof input === 'string' ? input : input && input.goal
+if (!goal || !String(goal).trim()) {
+  log('penumbra-swarm: no goal. Pass the goal as args (string) or args.goal.')
+  return { ok: false, error: 'no_goal' }
+}
+
+const opts = typeof input === 'object' && input ? input : {}
+const maxTasks = opts.maxTasks || 8
+const defaults = opts.defaults || {}
+const agentType = opts.agentType
+// Planner does real reasoning → default to the session model (override via args.plannerModel).
+// Dispatch proxies are pure glue → cheap by default, forwarded to penumbra-fanout.
+const plannerModel = opts.plannerModel
+const dispatcherModel = opts.dispatcherModel || 'haiku'
+
+const PLAN_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['tasks'],
+  properties: {
+    summary: { type: 'string', description: 'one-line read of the decomposition' },
+    tasks: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['task_class', 'task_type', 'message'],
+        properties: {
+          label: { type: 'string' },
+          initial_agent: { type: 'string', description: 'penumbra fleet agent id, or "AUTO"' },
+          task_class: { type: 'string', enum: ['BOUNDARY', 'STANDARD', 'TRIVIAL'] },
+          task_type: { type: 'string', description: 'implement_small | implement_substantial | review_adversarial | docs_mechanical | debug_diagnose | plan_refine | smoke_test | health_check | unknown' },
+          message: { type: 'string', description: 'self-contained instruction for the worker; no dependency on sibling tasks' },
+          rationale: { type: 'string' },
+        },
+      },
+    },
+  },
+}
+
+const plannerPrompt = [
+  'You are a dispatch planner for the penumbra agent fleet. Decompose the GOAL below into a set of INDEPENDENT tasks that can run fully in parallel.',
+  '',
+  'Hard constraints:',
+  `- At most ${maxTasks} tasks. Fewer is better — only split where parallelism genuinely helps.`,
+  '- Each task runs in its OWN isolated git worktree branched from the default branch. Tasks CANNOT see each other\'s changes or any uncommitted work. Do NOT create tasks that depend on a sibling task\'s output, or that edit the same files. If the work is inherently sequential or shares files, return a single task.',
+  '- Each message must be fully self-contained: state the file paths, the exact change, and the acceptance check. No references to "the other task".',
+  '- Classify each task_class: BOUNDARY (architectural / cross-cutting / risky), STANDARD (normal feature/fix), TRIVIAL (mechanical, low-risk).',
+  '- Pick a task_type from the enum and an initial_agent. Use the penumbra MCP tools to choose well: call mcp__penumbra__chain_list_agents to see the roster and mcp__penumbra__agent_recommend({ task_type }) for the live-best agent per type. Use "AUTO" if unsure (the dispatcher will resolve it).',
+  '',
+  'GOAL:',
+  String(goal),
+  '',
+  'Return ONLY the StructuredOutput (summary + tasks). Do NOT dispatch anything yourself — planning only.',
+].join('\n')
+
+phase('Plan')
+const plan = await agent(plannerPrompt, {
+  label: 'plan',
+  phase: 'Plan',
+  schema: PLAN_SCHEMA,
+  ...(plannerModel && plannerModel !== 'inherit' ? { model: plannerModel } : {}),
+})
+
+const tasks = (plan && plan.tasks) || []
+if (!tasks.length) {
+  log('penumbra-swarm: planner produced no tasks.')
+  return { ok: false, error: 'empty_plan', goal, plan }
+}
+log(`penumbra-swarm: planner produced ${tasks.length} task(s)${plan.summary ? ' — ' + plan.summary : ''}`)
+
+phase('Dispatch')
+// Reuse the fan-out primitive rather than re-implementing the dispatch proxy.
+const fan = await workflow(
+  { scriptPath: '.claude/workflows/penumbra-fanout.js' },
+  { tasks, defaults, dispatcherModel, ...(agentType ? { agentType } : {}) },
+)
+
+return {
+  ok: !!(fan && fan.ok),
+  goal,
+  plan,
+  fanout: fan,
+  branches: (fan && fan.branches) || [],
+}
