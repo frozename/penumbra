@@ -49,7 +49,7 @@ describe("buildServer tool registration", () => {
     delete process.env.PENUMBRA_MCP_TOOL_ALLOWLIST;
     const server = (await buildServer({ daemon: {} as any })) as any;
     const names = Object.keys(server._registeredTools).sort();
-    expect(names).toEqual(Object.keys(TOOL_REGISTRY).sort());
+    expect(names).toEqual([...Object.keys(TOOL_REGISTRY), "read_handle"].sort());
   });
 
   it("canonicalizes mcp__penumbra__ wire-form prefixed ids in allowlist entries", async () => {

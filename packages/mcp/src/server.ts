@@ -9,6 +9,12 @@ import {
   resolveDefaultInvocationLogPath,
 } from "./invocation-sink-registry.js";
 import { setLongLivedRuntimeContextFromEnv } from "./long-lived-context.js";
+import { HandleStore } from "./handle-store.js";
+import {
+  READ_HANDLE_DESCRIPTION,
+  ReadHandleInputShape,
+  readHandleHandler,
+} from "./tools/read-handle.js";
 import { TOOL_REGISTRY } from "./tools/registry.js";
 
 export function canonicalToolId(rawId: string): string | null {
@@ -87,6 +93,20 @@ export async function buildServer(opts: {
         name,
         def.descriptor as Parameters<typeof server.registerTool>[1],
         handler as unknown as Parameters<typeof server.registerTool>[2],
+      );
+    }
+    const handleStore = new HandleStore();
+    if (!allowlist || allowlist.has("read_handle")) {
+      const readHandle = instrumentHandler("read_handle", readHandleHandler(handleStore) as any, {
+        enabled: invocationLogEnabled,
+      });
+      server.registerTool(
+        "read_handle",
+        {
+          description: READ_HANDLE_DESCRIPTION,
+          inputSchema: ReadHandleInputShape,
+        } as Parameters<typeof server.registerTool>[1],
+        readHandle as unknown as Parameters<typeof server.registerTool>[2],
       );
     }
     const result = await registerFederatedTools({
