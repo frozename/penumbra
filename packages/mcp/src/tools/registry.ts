@@ -594,7 +594,8 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
   },
   workflow_wait: {
     descriptor: {
-      description: "Block until an async workflow run reaches a terminal state or times out.",
+      description:
+        "Block until an async workflow run reaches a terminal state or times out. On truncation, result/error is null and result_preview/error_preview contains a bounded preview; branch on result_truncated/error_truncated.",
       inputSchema: WorkflowWaitInputShape,
     },
     makeHandler: workflowWaitHandler as unknown as ToolDef["makeHandler"],

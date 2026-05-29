@@ -560,11 +560,14 @@ test("POST /workflows/wait blocks until terminal state and times out", async () 
       body: JSON.stringify({ workflow_run_id: "wfrun-1", timeout_ms: 100, cwd: root }),
     });
     const successRes = await workflowsWaitRoute(successReq, services);
-    expect(await successRes.json()).toEqual({
+    expect(await successRes.json()).toMatchObject({
       status: "completed",
       started_at: expect.any(Number),
       finished_at: expect.any(Number),
       result: { ok: true },
+      result_truncated: false,
+      result_bytes: expect.any(Number),
+      error_bytes: 0,
     });
 
     const timeoutReq = new Request("http://localhost/workflows/wait", {
