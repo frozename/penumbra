@@ -26,7 +26,6 @@ export type WorkflowStatusLight = {
   result_available: boolean;
   result_bytes: number;
   error_bytes: number;
-  persistence_status?: "pending" | "persisted" | "persistence_failed";
 };
 
 type WorkflowRunsRegistry = {
@@ -533,10 +532,9 @@ export function createWorkflowRunsRegistry(opts: {
              FROM workflow_runs
             WHERE id = ?
             LIMIT 1`,
-        )
+      )
         .get(workflowRunId);
       if (!row) return null;
-      const persistenceStatus = persistenceByRunId.get(workflowRunId);
       if (row.status === "running") {
         return {
           status: "running",
@@ -544,9 +542,6 @@ export function createWorkflowRunsRegistry(opts: {
           result_available: false,
           result_bytes: row.result_bytes,
           error_bytes: row.error_bytes,
-          ...(persistenceStatus && persistenceStatus !== "pending"
-            ? { persistence_status: persistenceStatus }
-            : {}),
         };
       }
       return {
@@ -556,9 +551,6 @@ export function createWorkflowRunsRegistry(opts: {
         result_available: row.status === "completed",
         result_bytes: row.result_bytes,
         error_bytes: row.error_bytes,
-        ...(persistenceStatus && persistenceStatus !== "pending"
-          ? { persistence_status: persistenceStatus }
-          : {}),
       };
     },
     waitForResult(workflowRunId: string, timeoutMs: number) {

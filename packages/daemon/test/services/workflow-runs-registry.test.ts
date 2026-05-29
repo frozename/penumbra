@@ -125,7 +125,6 @@ test("getStatusLight returns result_available + result_bytes and omits the resul
     result_available: true,
     result_bytes: expectedBytes,
     error_bytes: 0,
-    persistence_status: "persisted",
   });
   expect(status).not.toHaveProperty("result");
   expect(status).not.toHaveProperty("error");
@@ -168,7 +167,6 @@ test("getStatusLight keeps result_available true for completed null payloads", a
     result_available: true,
     result_bytes: Buffer.byteLength("null"),
     error_bytes: 0,
-    persistence_status: "persisted",
   });
 });
 

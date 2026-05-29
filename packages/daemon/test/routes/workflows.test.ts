@@ -399,7 +399,7 @@ export const fn: WorkflowFn = async () => ({ ok: true });
   }
 });
 
-test("POST /workflows/status surfaces persistence outcome after detached execution", async () => {
+test("POST /workflows/status remains bounded after detached persistence failure", async () => {
   const root = mkdtempSync(join(tmpdir(), "wf-detached-status-"));
   try {
     markTrustedRoot(root);
@@ -457,10 +457,14 @@ export const fn: WorkflowFn = async () => ({ ok: true });
     });
     const statusRes = await workflowsStatusRoute(statusReq, services);
     expect(statusRes.status).toBe(200);
-    expect(await statusRes.json()).toMatchObject({
-      status: "completed",
-      persistence_status: "persistence_failed",
+    const status = (await statusRes.json()) as Record<string, unknown>;
+    expect(status).toMatchObject({
+      status: "running",
+      result_available: false,
+      result_bytes: 0,
+      error_bytes: 0,
     });
+    expect("persistence_status" in status).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -718,6 +722,123 @@ test("POST /workflows/status rejects cross-project access with not_found shape",
   } finally {
     rmSync(root1, { recursive: true, force: true });
     rmSync(root2, { recursive: true, force: true });
+  }
+});
+
+test("POST /workflows/status omits result and error fields", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wf-status-omits-payload-"));
+  try {
+    markTrustedRoot(root);
+    const db = freshDb();
+    const workflowRuns = createWorkflowRunsRegistry({
+      uuid: () => "wfrun-1",
+      clock: () => new Date("2026-04-26T00:00:00Z"),
+      db,
+      storageRoot: root,
+    });
+    expect(workflowRuns.register("wf", "proj-a")).toBe("wfrun-1");
+    const largeResult = { data: "x".repeat(100_000) };
+    await workflowRuns.recordResult("wfrun-1", largeResult);
+    const services = {
+      workflowRuns,
+      projectRegistry: new ProjectRegistry(
+        new Map([["proj-a", { project_id: "proj-a", root_path: root }]]),
+      ),
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      settings: { storageRoot: root },
+    } as any;
+
+    const req = new Request("http://localhost/workflows/status", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workflow_run_id: "wfrun-1", cwd: root }),
+    });
+    const res = await workflowsStatusRoute(req, services);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(res.status).toBe(200);
+    expect("result" in body).toBe(false);
+    expect("error" in body).toBe(false);
+    expect(body.status).toBe("completed");
+    expect(body.result_available).toBe(true);
+    expect(Number(body.result_bytes)).toBeGreaterThan(90_000);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("POST /workflows/status body is < 2 KB regardless of result size", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wf-status-bound-size-"));
+  try {
+    markTrustedRoot(root);
+    const db = freshDb();
+    const workflowRuns = createWorkflowRunsRegistry({
+      uuid: () => "wfrun-1",
+      clock: () => new Date("2026-04-26T00:00:00Z"),
+      db,
+      storageRoot: root,
+    });
+    expect(workflowRuns.register("wf", "proj-a")).toBe("wfrun-1");
+    await workflowRuns.recordResult("wfrun-1", { data: "x".repeat(100_000) });
+    const services = {
+      workflowRuns,
+      projectRegistry: new ProjectRegistry(
+        new Map([["proj-a", { project_id: "proj-a", root_path: root }]]),
+      ),
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      settings: { storageRoot: root },
+    } as any;
+
+    const req = new Request("http://localhost/workflows/status", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workflow_run_id: "wfrun-1", cwd: root }),
+    });
+    const res = await workflowsStatusRoute(req, services);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(res.status).toBe(200);
+    expect(Buffer.byteLength(JSON.stringify(body))).toBeLessThan(2048);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("POST /workflows/status uses getStatusLight, not getStatus", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wf-status-light-path-"));
+  try {
+    markTrustedRoot(root);
+    const db = freshDb();
+    const workflowRuns = createWorkflowRunsRegistry({
+      uuid: () => "wfrun-1",
+      clock: () => new Date("2026-04-26T00:00:00Z"),
+      db,
+      storageRoot: root,
+    });
+    expect(workflowRuns.register("wf", "proj-a")).toBe("wfrun-1");
+    const getStatusLightSpy = spyOn(workflowRuns, "getStatusLight");
+    const getStatusSpy = spyOn(workflowRuns, "getStatus");
+    const services = {
+      workflowRuns,
+      projectRegistry: new ProjectRegistry(
+        new Map([["proj-a", { project_id: "proj-a", root_path: root }]]),
+      ),
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      settings: { storageRoot: root },
+    } as any;
+
+    const req = new Request("http://localhost/workflows/status", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workflow_run_id: "wfrun-1", cwd: root }),
+    });
+    const res = await workflowsStatusRoute(req, services);
+    expect(res.status).toBe(200);
+    expect(getStatusLightSpy).toHaveBeenCalledWith("wfrun-1");
+    expect(getStatusSpy).not.toHaveBeenCalled();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

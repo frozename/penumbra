@@ -171,6 +171,7 @@ export class DaemonClient {
   }
 
   async workflowStatus(input: { workflow_run_id: string }): Promise<unknown> {
+    // Returns the bounded light status shape (no inline result/error payload).
     return this.post("/workflows/status", input);
   }
 
