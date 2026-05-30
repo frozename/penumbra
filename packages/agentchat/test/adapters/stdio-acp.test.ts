@@ -1627,6 +1627,7 @@ describe("StdioAcpAdapter", () => {
     expect(capturedSessionParams.mcpServers).toBeDefined();
     expect(capturedSessionParams.mcpServers[0].env).toEqual([
       { name: "PENUMBRA_HANDOFF_ID", value: "HANDOFF_ABC" },
+      { name: "PENUMBRA_MCP_ORIGIN", value: "fleet-worker" },
     ]);
     expect(capturedSessionParams.mcpServers[1].env).toEqual([{ name: "TOKEN", value: "abc123" }]);
   });
@@ -1705,6 +1706,7 @@ describe("StdioAcpAdapter", () => {
     const env = capturedSessionParams.mcpServers[0].env as Array<{ name: string; value: string }>;
     expect(env).toContainEqual({ name: "TOKEN", value: "abc123" });
     expect(env).toContainEqual({ name: "PENUMBRA_HANDOFF_ID", value: "HANDOFF_ABC" });
+    expect(env).toContainEqual({ name: "PENUMBRA_MCP_ORIGIN", value: "fleet-worker" });
     expect(env).toContainEqual({ name: "PENUMBRA_LONG_LIVED_AGENT_ID", value: "agent-1" });
     expect(env).toContainEqual({ name: "PENUMBRA_LONG_LIVED_TICK_ID", value: "tick-1" });
     const allowlist =
@@ -1795,6 +1797,7 @@ describe("StdioAcpAdapter", () => {
       value: string;
     }>;
     expect(penumbraEnv).toContainEqual({ name: "TOKEN", value: "abc123" });
+    expect(penumbraEnv).toContainEqual({ name: "PENUMBRA_MCP_ORIGIN", value: "fleet-worker" });
     expect(penumbraEnv).toContainEqual({ name: "PENUMBRA_LONG_LIVED_AGENT_ID", value: "agent-1" });
     expect(penumbraEnv).toContainEqual({ name: "PENUMBRA_LONG_LIVED_TICK_ID", value: "tick-1" });
     expect(capturedSessionParams.mcpServers[1].env).toEqual([

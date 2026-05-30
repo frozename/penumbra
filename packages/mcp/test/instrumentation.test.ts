@@ -87,6 +87,50 @@ describe("instrumentHandler", () => {
     expect(rows[0].origin).toBe("unknown");
   });
 
+  it("uses PENUMBRA_MCP_ORIGIN when request metadata/header is absent", async () => {
+    const prev = process.env.PENUMBRA_MCP_ORIGIN;
+    process.env.PENUMBRA_MCP_ORIGIN = "fleet-worker";
+    try {
+      const { path, sink } = withSink();
+      const handler = instrumentHandler("t", async () => ({}), { enabled: true });
+
+      await handler({}, {});
+      await sink.close();
+
+      const rows = readRows(path);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].origin).toBe("fleet-worker");
+    } finally {
+      if (prev === undefined) {
+        delete process.env.PENUMBRA_MCP_ORIGIN;
+      } else {
+        process.env.PENUMBRA_MCP_ORIGIN = prev;
+      }
+    }
+  });
+
+  it("prefers _meta.origin over PENUMBRA_MCP_ORIGIN fallback", async () => {
+    const prev = process.env.PENUMBRA_MCP_ORIGIN;
+    process.env.PENUMBRA_MCP_ORIGIN = "fleet-worker";
+    try {
+      const { path, sink } = withSink();
+      const handler = instrumentHandler("t", async () => ({}), { enabled: true });
+
+      await handler({}, { _meta: { origin: "maestro" } });
+      await sink.close();
+
+      const rows = readRows(path);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].origin).toBe("maestro");
+    } finally {
+      if (prev === undefined) {
+        delete process.env.PENUMBRA_MCP_ORIGIN;
+      } else {
+        process.env.PENUMBRA_MCP_ORIGIN = prev;
+      }
+    }
+  });
+
   it("caps caller-controlled origin at 128 chars (prevents disk-exhaustion vector)", async () => {
     const { path, sink } = withSink();
     const handler = instrumentHandler("t", async () => ({}), { enabled: true });

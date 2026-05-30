@@ -9,6 +9,12 @@ function readHeaderValue(value: string | string[] | undefined): string | undefin
   return undefined;
 }
 
+function readEnvOrigin(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  // For callers that cannot thread per-request metadata (for example user-level
+  // maestro sessions), set PENUMBRA_MCP_ORIGIN=maestro in the MCP child env.
+  return readHeaderValue(env.PENUMBRA_MCP_ORIGIN);
+}
+
 export function resolveToolOrigin(extra: unknown): string | undefined {
   if (!extra || typeof extra !== "object") return undefined;
 
@@ -35,5 +41,5 @@ export function resolveToolOrigin(extra: unknown): string | undefined {
     if (metaOrigin) return metaOrigin;
   }
 
-  return undefined;
+  return readEnvOrigin();
 }

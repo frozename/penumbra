@@ -82,6 +82,7 @@ export function shouldScrubHostEnvKey(key: string, policy: HostEnvPolicy): boole
 }
 const PENUMBRA_MCP_INJECTED_ENV_KEYS = new Set([
   "PENUMBRA_HANDOFF_ID",
+  "PENUMBRA_MCP_ORIGIN",
   "PENUMBRA_LONG_LIVED_AGENT_ID",
   "PENUMBRA_LONG_LIVED_TICK_ID",
   // Note: PENUMBRA_MCP_TOOL_ALLOWLIST is intentionally NOT in this strip-list.
@@ -92,6 +93,7 @@ const PENUMBRA_MCP_INJECTED_ENV_KEYS = new Set([
   // passes through — without this, the schema-injection bloat fix has no
   // way to land outside the cron tick path.
 ]);
+const PENUMBRA_MCP_ORIGIN_FLEET_WORKER = "fleet-worker";
 
 function buildLongLivedMcpEnv(input: DispatchInput): Array<{ name: string; value: string }> {
   const session = input.long_lived_session;
@@ -607,6 +609,7 @@ export class StdioAcpAdapter implements Adapter {
                     ...(input.handoff_id
                       ? [{ name: "PENUMBRA_HANDOFF_ID", value: input.handoff_id }]
                       : []),
+                    { name: "PENUMBRA_MCP_ORIGIN", value: PENUMBRA_MCP_ORIGIN_FLEET_WORKER },
                     ...longLivedEnv,
                   ],
                 }

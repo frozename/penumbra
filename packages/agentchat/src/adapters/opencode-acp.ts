@@ -33,10 +33,12 @@ const LONG_LIVED_SELF_TOOL_NAMES = [
 ] as const;
 const PENUMBRA_MCP_INJECTED_ENV_KEYS = new Set([
   "PENUMBRA_HANDOFF_ID",
+  "PENUMBRA_MCP_ORIGIN",
   "PENUMBRA_LONG_LIVED_AGENT_ID",
   "PENUMBRA_LONG_LIVED_TICK_ID",
   "PENUMBRA_MCP_TOOL_ALLOWLIST",
 ]);
+const PENUMBRA_MCP_ORIGIN_FLEET_WORKER = "fleet-worker";
 
 function isPenumbraMcp(server: McpServer): server is McpServerStdio {
   if ("type" in server) return false;
@@ -82,6 +84,7 @@ function injectPenumbraMcpEnv(servers: McpServer[], input: DispatchInput): McpSe
       env: [
         ...keptEnv,
         ...(input.handoff_id ? [{ name: "PENUMBRA_HANDOFF_ID", value: input.handoff_id }] : []),
+        { name: "PENUMBRA_MCP_ORIGIN", value: PENUMBRA_MCP_ORIGIN_FLEET_WORKER },
         ...longLivedEnv,
       ],
     };

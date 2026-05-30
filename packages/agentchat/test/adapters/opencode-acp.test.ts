@@ -251,6 +251,7 @@ test("opencode-acp injects long-lived env into penumbra mcp config for long_live
   const mcp = (capturedConfig as any).mcp.penumbra;
   expect(mcp.environment.PENUMBRA_STORAGE_ROOT).toBe("/tmp/penumbra-live");
   expect(mcp.environment.PENUMBRA_HANDOFF_ID).toBe("HANDOFF_ABC");
+  expect(mcp.environment.PENUMBRA_MCP_ORIGIN).toBe("fleet-worker");
   expect(mcp.environment.PENUMBRA_LONG_LIVED_AGENT_ID).toBe("agent-1");
   expect(mcp.environment.PENUMBRA_LONG_LIVED_TICK_ID).toBe("tick-1");
   const allowlist = new Set(String(mcp.environment.PENUMBRA_MCP_TOOL_ALLOWLIST).split(","));
