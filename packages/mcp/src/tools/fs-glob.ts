@@ -1,5 +1,7 @@
 import { z } from "zod";
 import type { DaemonClient } from "../daemon-client.js";
+import { makeEnvelopeResult } from "../responses/envelope.js";
+import { estimateTokens, truncateToTokens, DEFAULT_BUDGET } from "../responses/budget.js";
 
 export const FsGlobInputShape = {
   pattern: z.string().min(1).describe('Glob pattern (e.g. "**/*.ts").'),
@@ -19,6 +21,12 @@ export const FsGlobInputShape = {
     .string()
     .optional()
     .describe("Worktree to scope the search to. Defaults to PENUMBRA_HANDOFF_ID env var."),
+  envelope: z
+    .boolean()
+    .optional()
+    .describe(
+      "When true, return a token-budgeted envelope with _meta.token_budget + result_bytes instead of the raw payload.",
+    ),
 };
 
 function errorContent(code: string, message: string) {
@@ -50,7 +58,18 @@ export function fsGlobHandler(daemon: DaemonClient) {
         max_results: input.max_results ?? null,
         include_ignored: input.include_ignored === true,
       });
-      return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      const rawJson = JSON.stringify(result);
+      if (input.envelope) {
+        const resultBytes = Buffer.byteLength(rawJson, "utf8");
+        const { text, truncated } = truncateToTokens(rawJson, DEFAULT_BUDGET);
+        return makeEnvelopeResult([{ type: "text", text }], {
+          usedTokens: estimateTokens(text),
+          limitTokens: DEFAULT_BUDGET,
+          truncated,
+          resultBytes,
+        });
+      }
+      return { content: [{ type: "text" as const, text: rawJson }] };
     } catch (err) {
       return toErrorContent(err);
     }
