@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { ProjectRegistry } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { WORKFLOW_WAIT_PAYLOAD_LIMIT, workflowsWaitRoute } from "../../src/routes/workflows.js";
+import { workflowsWaitRoute } from "../../src/routes/workflows.js";
 import { createWorkflowRunsRegistry } from "../../src/services/workflow-runs-registry.js";
 
 if (process.platform === "darwin") {
@@ -56,7 +56,7 @@ function makeServices(
   } as any;
 }
 
-test("POST /workflows/wait truncates a result larger than the limit", async () => {
+test("POST /workflows/wait returns full result inline even when oversized", async () => {
   const root = mkdtempSync(join(tmpdir(), "wf-wait-cap-result-"));
   try {
     markTrustedRoot(root);
@@ -80,19 +80,14 @@ test("POST /workflows/wait truncates a result larger than the limit", async () =
     });
     const res = await workflowsWaitRoute(req, makeServices(root, db, workflowRuns));
     const body = (await res.json()) as Record<string, unknown>;
-    const marker = `…[truncated — ${totalBytes} bytes total; full payload not inlined]`;
 
     expect(res.status).toBe(200);
     expect(body.status).toBe("completed");
-    expect(body.result).toBeNull();
-    expect(body.result_truncated).toBe(true);
+    expect(body.result).toEqual(largeResult);
     expect(body.result_bytes).toBe(totalBytes);
     expect(body.error_bytes).toBe(0);
-    expect(typeof body.result_preview).toBe("string");
-    expect(Buffer.byteLength(JSON.stringify(body))).toBeLessThanOrEqual(
-      WORKFLOW_WAIT_PAYLOAD_LIMIT,
-    );
-    expect((body.result_preview as string).endsWith(marker)).toBe(true);
+    expect("result_truncated" in body).toBe(false);
+    expect("result_preview" in body).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -124,10 +119,10 @@ test("POST /workflows/wait returns the full result when below the limit", async 
     const body = (await res.json()) as Record<string, unknown>;
 
     expect(res.status).toBe(200);
-    expect(body.result_truncated).toBe(false);
     expect(body.result).toEqual(result);
     expect(body.result_bytes).toBe(totalBytes);
     expect(body.error_bytes).toBe(0);
+    expect("result_truncated" in body).toBe(false);
     expect("result_preview" in body).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -166,7 +161,7 @@ test("POST /workflows/wait always includes result_bytes on a terminal response",
   }
 });
 
-test("POST /workflows/wait truncates an oversized error symmetrically", async () => {
+test("POST /workflows/wait returns full error inline even when oversized", async () => {
   const root = mkdtempSync(join(tmpdir(), "wf-wait-cap-error-"));
   try {
     markTrustedRoot(root);
@@ -190,25 +185,20 @@ test("POST /workflows/wait truncates an oversized error symmetrically", async ()
     });
     const res = await workflowsWaitRoute(req, makeServices(root, db, workflowRuns));
     const body = (await res.json()) as Record<string, unknown>;
-    const marker = `…[truncated — ${totalBytes} bytes total; full payload not inlined]`;
 
     expect(res.status).toBe(200);
     expect(body.status).toBe("failed");
-    expect(body.error).toBeNull();
-    expect(body.error_truncated).toBe(true);
+    expect(body.error).toEqual(largeError);
     expect(body.error_bytes).toBe(totalBytes);
     expect(body.result_bytes).toBe(0);
-    expect(typeof body.error_preview).toBe("string");
-    expect(Buffer.byteLength(JSON.stringify(body))).toBeLessThanOrEqual(
-      WORKFLOW_WAIT_PAYLOAD_LIMIT,
-    );
-    expect((body.error_preview as string).endsWith(marker)).toBe(true);
+    expect("error_truncated" in body).toBe(false);
+    expect("error_preview" in body).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("POST /workflows/wait keeps response bounded for escape-heavy oversized payloads", async () => {
+test("POST /workflows/wait returns escape-heavy oversized result inline", async () => {
   const root = mkdtempSync(join(tmpdir(), "wf-wait-escape-heavy-"));
   try {
     markTrustedRoot(root);
@@ -234,12 +224,9 @@ test("POST /workflows/wait keeps response bounded for escape-heavy oversized pay
     const body = (await res.json()) as Record<string, unknown>;
 
     expect(res.status).toBe(200);
-    expect(body.result).toBeNull();
-    expect(body.result_truncated).toBe(true);
-    expect(typeof body.result_preview).toBe("string");
-    expect(Buffer.byteLength(JSON.stringify(body))).toBeLessThanOrEqual(
-      WORKFLOW_WAIT_PAYLOAD_LIMIT,
-    );
+    expect(body.result).toEqual(largeResult);
+    expect("result_truncated" in body).toBe(false);
+    expect("result_preview" in body).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

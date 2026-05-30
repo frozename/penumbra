@@ -565,7 +565,6 @@ test("POST /workflows/wait blocks until terminal state and times out", async () 
       started_at: expect.any(Number),
       finished_at: expect.any(Number),
       result: { ok: true },
-      result_truncated: false,
       result_bytes: expect.any(Number),
       error_bytes: 0,
     });

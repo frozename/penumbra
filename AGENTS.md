@@ -102,6 +102,10 @@ To wire into your agentic harness, register the MCP server in user-level config:
 
 Prereq: penumbra daemon running (`bun packages/cli/bin/penumbra.ts start --detach`).
 
+## Deploy ordering
+
+For the token-opt S3 `workflow_wait` bounding move, restart MCP shims on the new build before upgrading the daemon past the daemon-side cap removal. Old shim + new daemon can forward uncapped workflow payloads (token blowout), while new shim + old daemon is safe because daemon-truncated payloads are preserved defensively.
+
 ## Dispatch reliability
 
 Dispatches are tracked end-to-end via `dispatch_events` rows (`acp.session.start`, `agent.thought`, `agent.tool_call.failed`, `agent.heartbeat`, `acp.session.end`, `dispatch.start`/`dispatch.end`, …). The reliability classifier (`packages/core/src/services/dispatch-reliability.ts`) reads those events and emits a `report` with status (`complete` / `non_terminal_stale` / `non_terminal_recoverable` / …) and a recommended action (`accept` / `wait` / `cancel` / `inspect_worktree`).
@@ -169,7 +173,7 @@ Specs: `docs/superpowers/specs/2026-05-04-workflow-runtime-design.md`. Plans: `d
 
 ### Claude Code dynamic workflows → penumbra fan-out
 
-> Disambiguation: this is **not** penumbra's `workflow_*` runtime. Claude Code's *dynamic workflows* (the `Workflow` tool / `ultracode`) are JS scripts that fan out **Claude Code subagents**. The bridge lets one of those scripts fan out **penumbra fleet agents** instead, by having each subagent broker a `chain_start` dispatch.
+> Disambiguation: this is **not** penumbra's `workflow_*` runtime. Claude Code's _dynamic workflows_ (the `Workflow` tool / `ultracode`) are JS scripts that fan out **Claude Code subagents**. The bridge lets one of those scripts fan out **penumbra fleet agents** instead, by having each subagent broker a `chain_start` dispatch.
 
 The seam: a Claude Code workflow's `agent()` spawns a subagent, and subagents can reach session-connected MCP tools — including `mcp__penumbra__chain_start`. So each `agent()` becomes a thin **dispatch proxy** that runs one `chain_start → chain_wait → chain_get_response` and returns the worker's result as structured output. The penumbra daemon still does the real work in worktrees; the workflow only holds the fan-out control flow and collects results.
 
@@ -198,14 +202,14 @@ Boundaries baked into the design (do not loosen without intent):
 
 **The workflow family** (`.claude/workflows/`, all route through the dispatch proxy / `chain_start`; none land — landing stays with maestro):
 
-| Workflow | Shape | Key args |
-| :-- | :-- | :-- |
-| `penumbra-fanout` | N independent tasks → fleet; collect results + `agent/<id>` branches | `tasks: [{ initial_agent, task_class, task_type, message, branch_base? }]` |
-| `penumbra-swarm` | goal → planner decomposes into independent tasks → `workflow('penumbra-fanout')` | `goal` string, or `{ goal, maxTasks?, plannerModel? }` |
-| `penumbra-tournament` | same task → K agents in parallel → judge inspects each worktree (`worktree_inspect`) → winner | `{ task: { message }, agents: [...], judgeModel? }` |
-| `penumbra-fix-until-green` | dispatch → worker runs `check` → on FAIL re-dispatch on the prior branch (`branch_base`) with the failure log → until green or capped | `{ task: { message }, check, maxRounds?, escalateTo? }` |
-| `penumbra-review-sweep` | wraps penumbra's native `adversarial-review` across N targets (`workflow_run`, keeps its routing/gates/capture) | `{ targets: [{ target_ref, base_ref?, focus? }] }` |
-| `penumbra-research` | memory-augmented research: prime with t2 `memory_search` → sourced web fan-out → cited report → persist to t2 `memory_observe` | `question` string, or `{ question, angles?, persist? }` (needs WebSearch/WebFetch allowlisted) |
+| Workflow                   | Shape                                                                                                                                 | Key args                                                                                       |
+| :------------------------- | :------------------------------------------------------------------------------------------------------------------------------------ | :--------------------------------------------------------------------------------------------- |
+| `penumbra-fanout`          | N independent tasks → fleet; collect results + `agent/<id>` branches                                                                  | `tasks: [{ initial_agent, task_class, task_type, message, branch_base? }]`                     |
+| `penumbra-swarm`           | goal → planner decomposes into independent tasks → `workflow('penumbra-fanout')`                                                      | `goal` string, or `{ goal, maxTasks?, plannerModel? }`                                         |
+| `penumbra-tournament`      | same task → K agents in parallel → judge inspects each worktree (`worktree_inspect`) → winner                                         | `{ task: { message }, agents: [...], judgeModel? }`                                            |
+| `penumbra-fix-until-green` | dispatch → worker runs `check` → on FAIL re-dispatch on the prior branch (`branch_base`) with the failure log → until green or capped | `{ task: { message }, check, maxRounds?, escalateTo? }`                                        |
+| `penumbra-review-sweep`    | wraps penumbra's native `adversarial-review` across N targets (`workflow_run`, keeps its routing/gates/capture)                       | `{ targets: [{ target_ref, base_ref?, focus? }] }`                                             |
+| `penumbra-research`        | memory-augmented research: prime with t2 `memory_search` → sourced web fan-out → cited report → persist to t2 `memory_observe`        | `question` string, or `{ question, angles?, persist? }` (needs WebSearch/WebFetch allowlisted) |
 
 Operational notes:
 
@@ -214,7 +218,7 @@ Operational notes:
 - **Nesting.** `swarm` / `tournament` / `fix-until-green` call `penumbra-fanout` via `workflow()` — one level only; don't chain them into each other (a 2nd nesting level throws).
 - **Scope / distribution.** The dispatcher agent ships via the user-global penumbra plugin (`plugin/agents/`), so `agentType: 'penumbra-dispatcher'` resolves in every project. Plugins can't ship dynamic workflows (not a plugin component type), so the 6 `.js` workflows live in the repo (`.claude/workflows/`, the tracked source of truth) and are copied to `~/.claude/workflows/` for cross-project availability; `~/.claude/settings.json` carries the dispatch + `WebSearch`/`WebFetch` allowlist so unattended runs don't stall outside this repo. `penumbra init` installs the `penumbra-*.js` scripts into `~/.claude/workflows/` (best-effort, non-destructive) — the cross-project install path on a fresh machine. Re-run it (or re-copy) after editing the repo originals, since the user-scope copies are snapshots.
 
-**Deliberately NOT reimplemented:** penumbra's 7 lifecycle/state-threshold workflows (`delegate-suggest`, `file-context`, `session-summarize`, `prompt-classify`, `session-handoff`, `maestro-context-prime`, `memory-digest`) are event hooks → they map to Claude Code *hooks*, not Workflows. `brainstorm` / `write-plan` are single-shot generative (no fan-out gain). `adversarial-review` / `adversarial-plan` are mature daemon workflows with persona routing, pass-rate gates, and capture — `penumbra-review-sweep` *wraps* the former rather than duplicating it. The only bundled CC-native workflow, `/deep-research`, needs nothing from penumbra for its web-search core; the worthwhile augmentation — shipped as `penumbra-research` — bookends research with penumbra memory: it primes from t2 `memory_search` and persists the cited report back via `memory_observe` for cross-session recall.
+**Deliberately NOT reimplemented:** penumbra's 7 lifecycle/state-threshold workflows (`delegate-suggest`, `file-context`, `session-summarize`, `prompt-classify`, `session-handoff`, `maestro-context-prime`, `memory-digest`) are event hooks → they map to Claude Code _hooks_, not Workflows. `brainstorm` / `write-plan` are single-shot generative (no fan-out gain). `adversarial-review` / `adversarial-plan` are mature daemon workflows with persona routing, pass-rate gates, and capture — `penumbra-review-sweep` _wraps_ the former rather than duplicating it. The only bundled CC-native workflow, `/deep-research`, needs nothing from penumbra for its web-search core; the worthwhile augmentation — shipped as `penumbra-research` — bookends research with penumbra memory: it primes from t2 `memory_search` and persists the cited report back via `memory_observe` for cross-session recall.
 
 ## Cross-agent doc center
 

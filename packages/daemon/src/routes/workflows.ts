@@ -19,8 +19,6 @@ import { chainStartFromInput } from "./chains.js";
 
 import { json } from "./_helpers.js";
 const SESSION_START_FALLBACK_MS = 8 * 60 * 60 * 1000;
-export const WORKFLOW_WAIT_PAYLOAD_LIMIT = 8192;
-export const WORKFLOW_WAIT_PREVIEW_BYTES = 1024;
 
 const MAX_EVENTS_SCANNED_DEFAULT = 500;
 const EVENT_TIME_WINDOW_MS_DEFAULT = 86_400_000;
@@ -110,13 +108,6 @@ function serializeError(error: unknown): Record<string, unknown> {
     };
   }
   return serializeErrorRedacted(error);
-}
-
-function buildPayloadPreview(serialized: string, totalBytes: number): string {
-  const head = Buffer.from(serialized, "utf8")
-    .subarray(0, WORKFLOW_WAIT_PREVIEW_BYTES)
-    .toString("utf8");
-  return `${head}…[truncated — ${totalBytes} bytes total; full payload not inlined]`;
 }
 
 const SYNTHETIC_PROJECT_ID_WARNING =
@@ -621,25 +612,11 @@ export async function workflowsWaitRoute(req: Request, services: Services): Prom
   };
 
   if (status.result !== undefined) {
-    if (resultBytes <= WORKFLOW_WAIT_PAYLOAD_LIMIT) {
-      response.result = status.result;
-      response.result_truncated = false;
-    } else {
-      response.result = null;
-      response.result_truncated = true;
-      response.result_preview = buildPayloadPreview(resultSerialized!, resultBytes);
-    }
+    response.result = status.result;
   }
 
   if (status.error !== undefined) {
-    if (errorBytes <= WORKFLOW_WAIT_PAYLOAD_LIMIT) {
-      response.error = status.error;
-      response.error_truncated = false;
-    } else {
-      response.error = null;
-      response.error_truncated = true;
-      response.error_preview = buildPayloadPreview(errorSerialized!, errorBytes);
-    }
+    response.error = status.error;
   }
 
   return json(response);

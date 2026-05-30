@@ -17,6 +17,10 @@ import {
 } from "./tools/read-handle.js";
 import { TOOL_REGISTRY } from "./tools/registry.js";
 
+type ToolBuildContext = {
+  handleStore: HandleStore;
+};
+
 export function canonicalToolId(rawId: string): string | null {
   const trimmed = rawId.trim();
   if (trimmed.length === 0) return null;
@@ -58,6 +62,16 @@ export async function buildServer(opts: {
 }): Promise<McpServer> {
   setLongLivedRuntimeContextFromEnv(process.env);
   const allowlist = parseAllowlist(process.env);
+  if (allowlist?.has("workflow_wait") && !allowlist.has("read_handle")) {
+    console.error(
+      JSON.stringify({
+        event: "mcp_allowlist_read_handle_missing",
+        warning:
+          "workflow_wait is allowlisted but read_handle is excluded; truncated handle ids will be unresolvable.",
+        allowlisted_tools: [...allowlist].sort(),
+      }),
+    );
+  }
   // Read the flag ONCE per server build. Pass it explicitly into instrumentHandler so
   // the registration and runtime sides can't disagree if env mutates mid-process.
   const invocationLogEnabled = isMcpInvocationLogEnabled();
@@ -82,11 +96,13 @@ export async function buildServer(opts: {
 
   try {
     const server = new McpServer({ name: "penumbra", version: "0.0.0" });
+    const handleStore = new HandleStore();
+    const serverCtx: ToolBuildContext = { handleStore };
     for (const [rawName, def] of Object.entries(TOOL_REGISTRY)) {
       const name = canonicalToolId(rawName);
       if (!name) continue;
       if (allowlist && !allowlist.has(name)) continue;
-      const handler = instrumentHandler(name, def.makeHandler(opts.daemon) as any, {
+      const handler = instrumentHandler(name, def.makeHandler(opts.daemon, serverCtx) as any, {
         enabled: invocationLogEnabled,
       });
       server.registerTool(
@@ -99,13 +115,9 @@ export async function buildServer(opts: {
     // needs the HandleStore, not the daemon, so it can't go through
     // def.makeHandler(opts.daemon). Never add "read_handle" to TOOL_REGISTRY — it
     // would register twice (the loop above + this block). server.test.ts locks the
-    // full registered set to [...TOOL_REGISTRY, "read_handle"] to catch that.
-    // TODO(token-opt S3 / producer phase): no tool calls handleStore.put() yet, so
-    // read_handle always returns handle_not_found until producers (search.ts spill,
-    // workflow_wait) are wired. When that lands, give the store a caller-owned
-    // lifecycle (inject via buildServer opts, or close() it on server teardown) so
-    // reentrant buildServer callers don't accumulate live TTL timers.
-    const handleStore = new HandleStore();
+    // full registered set to [...TOOL_REGISTRY, "read_handle"] to catch that. The
+    // shared HandleStore is populated by workflow_wait truncation spill and read via
+    // read_handle; lifecycle is owned by this server build and closed on server.close().
     if (!allowlist || allowlist.has("read_handle")) {
       const readHandle = instrumentHandler("read_handle", readHandleHandler(handleStore) as any, {
         enabled: invocationLogEnabled,
@@ -119,6 +131,21 @@ export async function buildServer(opts: {
         readHandle as unknown as Parameters<typeof server.registerTool>[2],
       );
     }
+    let handleStoreClosed = false;
+    const closeHandleStore = () => {
+      if (handleStoreClosed) return;
+      handleStoreClosed = true;
+      handleStore.close();
+    };
+    const priorClose = server.close.bind(server);
+    // Keep teardown on the public close() surface and avoid coupling to SDK internals.
+    (server as unknown as { close: () => Promise<void> }).close = async () => {
+      try {
+        await priorClose();
+      } finally {
+        closeHandleStore();
+      }
+    };
     const result = await registerFederatedTools({
       server,
       daemon: opts.daemon,

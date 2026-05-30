@@ -223,6 +223,11 @@ import {
   MemoryCuratorPatternsDisableInputShape,
   memoryCuratorPatternsDisableHandler,
 } from "./memory-curator-patterns-disable.js";
+import type { HandleStore } from "../handle-store.js";
+
+interface ToolBuildContext {
+  handleStore: HandleStore;
+}
 
 export type ToolDescriptor = {
   description: string;
@@ -234,7 +239,7 @@ export type ToolDef = {
   descriptor: ToolDescriptor;
   makeHandler: (daemon: DaemonClient, opts?: unknown) => (args: unknown) => Promise<unknown>;
   readOnly: boolean;
-  handlerOpts?: () => unknown;
+  handlerOpts?: (ctx: ToolBuildContext) => unknown;
 };
 
 type ProjectRegistryResolverDeps = {
@@ -580,7 +585,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: WorkflowRunInputShape,
     },
     makeHandler: workflowRunHandler as unknown as ToolDef["makeHandler"],
-    handlerOpts: () => ({ resolveCwd: () => process.cwd() }) satisfies WorkflowRunHandlerOpts,
+    handlerOpts: (_ctx) => ({ resolveCwd: () => process.cwd() }) satisfies WorkflowRunHandlerOpts,
     readOnly: false,
   },
   workflow_status: {
@@ -595,10 +600,11 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
   workflow_wait: {
     descriptor: {
       description:
-        "Block until an async workflow run reaches a terminal state or times out. On truncation, result/error is null and result_preview/error_preview contains a bounded preview; branch on result_truncated/error_truncated.",
+        "Block until an async workflow run reaches a terminal state or times out. On truncation, result/error is null, result_preview/error_preview contains a bounded string preview, and result_handle_id/error_handle_id can be resolved with read_handle.",
       inputSchema: WorkflowWaitInputShape,
     },
     makeHandler: workflowWaitHandler as unknown as ToolDef["makeHandler"],
+    handlerOpts: (ctx?: ToolBuildContext) => ({ handleStore: ctx?.handleStore }),
     readOnly: true,
   },
   workflow_suggest: {
@@ -989,7 +995,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: ChainStartInputShape,
     },
     makeHandler: chainStartHandler as unknown as ToolDef["makeHandler"],
-    handlerOpts: () =>
+    handlerOpts: (_ctx) =>
       ({
         resolveProjectIdFromCwd: createProjectIdResolverFromCwd(),
         resolveProjectIdFromPath: createProjectIdResolverFromPath(),
@@ -1003,7 +1009,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: ChainStartSimpleInputShape,
     },
     makeHandler: chainStartSimpleHandler as unknown as ToolDef["makeHandler"],
-    handlerOpts: () =>
+    handlerOpts: (_ctx) =>
       ({
         resolveProjectIdFromCwd: createProjectIdResolverFromCwd(),
         resolveProjectIdFromPath: createProjectIdResolverFromPath(),
@@ -1017,7 +1023,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: ChainStartInputShape,
     },
     makeHandler: chainStartRefinedHandler as unknown as ToolDef["makeHandler"],
-    handlerOpts: () =>
+    handlerOpts: (_ctx) =>
       ({
         resolveProjectIdFromCwd: createProjectIdResolverFromCwd(),
         resolveProjectIdFromPath: createProjectIdResolverFromPath(),
@@ -1375,8 +1381,8 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = Object.fromEntries(
     name,
     {
       ...def,
-      makeHandler: (daemon: DaemonClient) =>
-        withActingOnEnvelope(def.makeHandler(daemon, def.handlerOpts?.())),
+      makeHandler: (daemon: DaemonClient, opts?: unknown) =>
+        withActingOnEnvelope(def.makeHandler(daemon, def.handlerOpts?.(opts as ToolBuildContext))),
     } satisfies ToolDef,
   ]),
 );

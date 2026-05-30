@@ -8,12 +8,15 @@ import { applySchema } from "@penumbra/core/db/schema";
 import { reconcileLongLivedAgents } from "@penumbra/daemon/long-lived/reconciler";
 import { openInvocationSink } from "../src/invocation-sink.js";
 import * as registry from "../src/invocation-sink-registry.js";
+import { HandleStore } from "../src/handle-store.js";
+import { DEFAULT_BUDGET } from "../src/responses/budget.js";
 import { buildServer } from "../src/server.js";
 import { TOOL_REGISTRY } from "../src/tools/registry.js";
 
 const ENV_KEYS = [
   "PENUMBRA_MCP_TOOL_ALLOWLIST",
   "PENUMBRA_MCP_INVOCATION_LOG_ENABLED",
+  "PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID",
   "PENUMBRA_LONG_LIVED_AGENT_ID",
   "PENUMBRA_LONG_LIVED_TICK_ID",
   "PENUMBRA_STORAGE_ROOT",
@@ -50,6 +53,74 @@ describe("buildServer tool registration", () => {
     const server = (await buildServer({ daemon: {} as any })) as any;
     const names = Object.keys(server._registeredTools).sort();
     expect(names).toEqual([...Object.keys(TOOL_REGISTRY), "read_handle"].sort());
+  });
+
+  it("shares one HandleStore between registry tools and read_handle", async () => {
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = "__ctx_handle_store_probe,read_handle";
+    const original = (TOOL_REGISTRY as any).__ctx_handle_store_probe;
+    (TOOL_REGISTRY as any).__ctx_handle_store_probe = {
+      descriptor: { description: "ctx handle store probe", inputSchema: {} },
+      makeHandler: (_daemon: any, opts?: { handleStore?: HandleStore }) => async () => {
+        const handleStore = opts?.handleStore;
+        if (!handleStore) throw new Error("missing_handle_store");
+        const handle_id = handleStore.put(JSON.stringify({ from: "ctx-probe", n: 1 }));
+        return { handle_id };
+      },
+      handlerOpts: (ctx: { handleStore: HandleStore }) => ({ handleStore: ctx.handleStore }),
+      readOnly: true,
+    };
+    try {
+      const server = (await buildServer({ daemon: {} as any })) as any;
+      const putOut = await server._registeredTools.__ctx_handle_store_probe.handler({});
+      const handleId = (putOut as any)?.handle_id;
+      expect(typeof handleId).toBe("string");
+
+      const readOut = await server._registeredTools.read_handle.handler({ handle_id: handleId });
+      expect((readOut as any)?.isError).toBeUndefined();
+      expect((readOut as any)?.content?.[0]?.type).toBe("text");
+      expect((readOut as any)?.content?.[0]?.text).toBe(
+        JSON.stringify({ from: "ctx-probe", n: 1 }),
+      );
+    } finally {
+      if (original === undefined) {
+        delete (TOOL_REGISTRY as any).__ctx_handle_store_probe;
+      } else {
+        (TOOL_REGISTRY as any).__ctx_handle_store_probe = original;
+      }
+    }
+  });
+
+  it("closes HandleStore on server close", async () => {
+    delete process.env.PENUMBRA_MCP_TOOL_ALLOWLIST;
+    const closeSpy = spyOn(HandleStore.prototype, "close");
+    const server = await buildServer({ daemon: {} as any });
+    await server.close();
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("warns when workflow_wait is allowlisted without read_handle", async () => {
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = "workflow_wait";
+    const lines: string[] = [];
+    const original = console.error;
+    console.error = ((msg: string) => {
+      lines.push(msg);
+    }) as any;
+    try {
+      await buildServer({ daemon: {} as any });
+      const warning = lines
+        .map((line) => {
+          try {
+            return JSON.parse(line);
+          } catch {
+            return null;
+          }
+        })
+        .find((row) => row?.event === "mcp_allowlist_read_handle_missing");
+      expect(warning).toBeDefined();
+      expect(warning.allowlisted_tools).toEqual(["workflow_wait"]);
+    } finally {
+      console.error = original;
+    }
   });
 
   it("canonicalizes mcp__penumbra__ wire-form prefixed ids in allowlist entries", async () => {
@@ -268,5 +339,42 @@ describe("buildServer tool registration", () => {
         (TOOL_REGISTRY as any).__invocation_log_reentrant_tool = original;
       }
     }
+  });
+
+  it("workflow_wait receives handleStore from the wrapped registry path", async () => {
+    const huge = { payload: "x".repeat(DEFAULT_BUDGET * 6) };
+    const store = new HandleStore();
+    try {
+      const handler = TOOL_REGISTRY.workflow_wait.makeHandler(
+        {
+          workflowWait: async () => ({
+            status: "completed",
+            started_at: 1,
+            finished_at: 2,
+            result: huge,
+          }),
+        } as any,
+        { handleStore: store },
+      );
+      const out: any = await handler({ workflow_run_id: "run-1", timeout_ms: 1_000 });
+      const body = JSON.parse(out.content[0].text);
+      expect(typeof body.result_handle_id).toBe("string");
+      expect(store.get(body.result_handle_id)).toBe(JSON.stringify(huge));
+    } finally {
+      store.close();
+    }
+  });
+
+  it("workflow_run still applies handler opts when makeHandler is called with one arg", async () => {
+    delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+    const daemon = {
+      workflowRun: mock(async (payload: Record<string, unknown>) => payload),
+    };
+    const handler = TOOL_REGISTRY.workflow_run.makeHandler(daemon as any);
+    const out: any = await handler({ name: "test-workflow" });
+    const body = JSON.parse(out.content[0].text) as Record<string, unknown>;
+    expect(body.cwd).toBe(process.cwd());
+    expect(body.resolution_warning).toBe("workflow_cwd_inferred_from_mcp_cwd");
+    expect(daemon.workflowRun).toHaveBeenCalledTimes(1);
   });
 });
