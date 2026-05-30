@@ -54,7 +54,9 @@ export const ChainStartInputShape = {
       "unknown",
     ])
     .optional()
-    .describe("Optional task type hint for agent performance routing"),
+    .describe(
+      "DEPRECATED: optional task type hint for agent performance routing. Prefer 'workload'; if both are provided they must match and workload takes precedence.",
+    ),
   workload: z.enum(WORKLOADS).optional().describe("Optional alias for task_type"),
   parent_handoff_id: z
     .string()

@@ -1,5 +1,6 @@
 import { beforeEach, expect, mock, test } from "bun:test";
 import {
+  ChainStartInputShape,
   chainStartHandler,
   resetChainStartTaskTypeDeprecationForTests,
 } from "../../src/tools/chain-start.js";
@@ -76,4 +77,33 @@ test("chain_start task_type-only logs deprecation once per process", async () =>
   });
 
   expect(logger.info).toHaveBeenCalledTimes(1);
+});
+
+test("chain_start schema accepts task_type/workload and marks task_type deprecated", async () => {
+  expect(ChainStartInputShape.task_type.safeParse("implement_small").success).toBe(true);
+  expect(ChainStartInputShape.workload.safeParse("implement_small").success).toBe(true);
+
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
+  } as any;
+  const logger = { info: mock() };
+  const handler = chainStartHandler(daemon, { logger });
+
+  await handler({
+    initial_agent: "executor",
+    message: "run it",
+    workload: "implement_small",
+    task_type: "implement_small",
+  });
+
+  expect(daemon.startChain).toHaveBeenCalledWith({
+    initial_agent: "executor",
+    message: "run it",
+    task_type: "implement_small",
+  });
+  expect(logger.info).not.toHaveBeenCalled();
+
+  const taskTypeDescription = ChainStartInputShape.task_type.description;
+  expect(taskTypeDescription).toMatch(/deprecat/i);
+  expect(taskTypeDescription).toMatch(/workload/i);
 });
