@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { DaemonClient } from "../daemon-client.js";
 import { DaemonHttpError } from "../daemon-client.js";
+import { makeEnvelopeResult } from "../responses/envelope.js";
+import { estimateTokens, truncateToTokens, DEFAULT_BUDGET } from "../responses/budget.js";
 
 export const HandoffGetInputShape = {
   handoff_id: z.string().min(1).describe("The ID of the handoff to retrieve."),
@@ -9,6 +11,12 @@ export const HandoffGetInputShape = {
     .optional()
     .describe(
       "When true, omits the original prompt and truncates resolution_reason to head 500 + tail 500 chars. Saves ~1500-2500 tokens per call. Default false.",
+    ),
+  envelope: z
+    .boolean()
+    .optional()
+    .describe(
+      "When true, return a token-budgeted envelope with _meta.token_budget + result_bytes instead of the formatted payload.",
     ),
 };
 
@@ -27,11 +35,23 @@ function applyCompactTransform(handoff: any) {
 import { formatHandoffGet, wrapWithSummary } from "../format-summary.js";
 
 export const handoffGetHandler =
-  (daemon: DaemonClient) => async (args: { handoff_id: string; compact?: boolean }) => {
+  (daemon: DaemonClient) =>
+  async (args: { handoff_id: string; compact?: boolean; envelope?: boolean }) => {
     try {
       const { handoff } = await daemon.getHandoff(args.handoff_id);
       const output = args.compact ? applyCompactTransform(handoff) : handoff;
       const payload = { handoff: output };
+      if (args.envelope) {
+        const rawJson = JSON.stringify(payload, null, 2);
+        const resultBytes = Buffer.byteLength(rawJson, "utf8");
+        const { text, truncated } = truncateToTokens(rawJson, DEFAULT_BUDGET);
+        return makeEnvelopeResult([{ type: "text", text }], {
+          usedTokens: estimateTokens(text),
+          limitTokens: DEFAULT_BUDGET,
+          truncated,
+          resultBytes,
+        });
+      }
       return {
         content: [
           {
