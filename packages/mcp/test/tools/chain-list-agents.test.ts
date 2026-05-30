@@ -1,11 +1,14 @@
 import { expect, test, mock } from "bun:test";
+import { z } from "zod";
 import {
   chainListAgentsHandler,
   ChainListAgentsInputShape,
 } from "../../src/tools/chain-list-agents.js";
 
-test("ChainListAgentsInputShape is empty", () => {
-  expect(ChainListAgentsInputShape).toEqual({});
+test("ChainListAgentsInputShape accepts optional envelope", () => {
+  const schema = z.object(ChainListAgentsInputShape);
+  expect(schema.parse({})).toEqual({});
+  expect(schema.parse({ envelope: true }).envelope).toBe(true);
 });
 
 test("chainListAgentsHandler calls daemon.listChainAgents and formats output", async () => {
