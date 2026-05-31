@@ -78,7 +78,7 @@ describe("curator e2e", () => {
     expect(action).toBeNull();
   });
 
-  it("full dream cycle with curatorEnabled=true produces PC1 ephemera_retire", async () => {
+  it("full dream cycle with curatorEnabled=true queues PC1 ephemera_retire by default", async () => {
     const db = openTestDb();
     const memId = crypto.randomUUID();
     const nowIso = new Date().toISOString();
@@ -97,14 +97,14 @@ describe("curator e2e", () => {
     expect(arr).toContain("PC2");
     const action = db
       .prepare(
-        `SELECT * FROM dream_actions WHERE action_type='ephemera_retire' AND status='auto_applied'`,
+        `SELECT * FROM dream_actions WHERE action_type='ephemera_retire' AND status='queued'`,
       )
       .get();
     expect(action).toBeDefined();
     const mem = db
       .prepare(`SELECT retired_at FROM t2_memories WHERE memory_id=?`)
       .get(memId) as any;
-    expect(mem.retired_at).toBeTruthy();
+    expect(mem.retired_at).toBeNull();
   });
 
   it("revert ephemera_retire un-retires the memory", async () => {

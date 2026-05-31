@@ -4,11 +4,14 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const URL_RE = /^https?:\/\//;
 
 export function likeToRegex(pattern: string): RegExp {
+  const startsWithWildcard = pattern.startsWith("%");
+  const endsWithWildcard = pattern.endsWith("%");
   const s = pattern
     .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
     .replace(/%/g, ".*")
     .replace(/_/g, ".");
-  return new RegExp(s, "i");
+  const anchored = `${startsWithWildcard ? "" : "^"}${s}${endsWithWildcard ? "" : "$"}`;
+  return new RegExp(anchored, "i");
 }
 
 export function detectT2Ephemera(

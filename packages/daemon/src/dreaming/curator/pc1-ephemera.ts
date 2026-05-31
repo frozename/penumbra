@@ -3,6 +3,11 @@ import { retireNonDirectMemory } from "@penumbra/core";
 import type { DreamConfig } from "../config.js";
 import { detectT2Ephemera } from "./t2-ephemera-detector.js";
 
+function isEnvTruthy(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+}
+
 function upsertCursor(db: Database, name: string, value: string): void {
   db.prepare(
     `INSERT INTO curator_cursors(name, value, updated_at) VALUES(?, ?, ?)
@@ -23,6 +28,7 @@ export async function runPC1Phase(
   config: DreamConfig,
   _deps: object,
 ): Promise<void> {
+  const autoRetireEnabled = isEnvTruthy(process.env.PENUMBRA_PC1_AUTORETIRE);
   const batchSize = config.pc1BatchSize ?? 100;
 
   const patternRows = db
@@ -61,7 +67,12 @@ export async function runPC1Phase(
     db.transaction(() => {
       const now = Date.now();
       const actionId = crypto.randomUUID();
-      const retired = retireNonDirectMemory(db, mem.memory_id, now);
+      const retired = autoRetireEnabled ? retireNonDirectMemory(db, mem.memory_id, now) : false;
+      const status = autoRetireEnabled
+        ? retired
+          ? "auto_applied"
+          : "skipped_direct_origin"
+        : "queued";
       db.prepare(
         `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
          VALUES(?, ?, 'PC1', 'ephemera_retire', ?, ?, ?, ?)`,
@@ -69,7 +80,7 @@ export async function runPC1Phase(
         actionId,
         cycleId,
         verdict.confidence ?? 0.99,
-        retired ? "auto_applied" : "skipped_direct_origin",
+        status,
         JSON.stringify([mem.memory_id]),
         JSON.stringify({ reason: verdict.reason, confidence: verdict.confidence }),
       );

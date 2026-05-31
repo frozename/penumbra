@@ -1,4 +1,4 @@
-import { expect, it, beforeAll } from "bun:test";
+import { expect, it, beforeAll, beforeEach, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
 import { loadSqliteVec, applySchema } from "@penumbra/core";
 import type { DreamConfig } from "../../src/dreaming/config.js";
@@ -16,6 +16,14 @@ try {
 
 beforeAll(() => {
   delete process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
+});
+
+beforeEach(() => {
+  delete process.env.PENUMBRA_PC1_AUTORETIRE;
+});
+
+afterEach(() => {
+  delete process.env.PENUMBRA_PC1_AUTORETIRE;
 });
 
 function openTestDb(): Database {
@@ -113,6 +121,24 @@ it("detectT2Ephemera flags dispatch-prompt body", () => {
   expect(r.isEphemera).toBe(true);
 });
 
+it("detectT2Ephemera does not flag mid-string Fix prefix text", () => {
+  const r = detectT2Ephemera({
+    title: "normal note",
+    body: "After review, we will Fix: the bug in a follow-up task.",
+    kind: "knowledge",
+  });
+  expect(r.isEphemera).toBe(false);
+});
+
+it("detectT2Ephemera keeps substring matching for %...% prompt patterns", () => {
+  const r = detectT2Ephemera({
+    title: "normal note",
+    body: "Team guidance: # Operating rules are documented in the runbook.",
+    kind: "knowledge",
+  });
+  expect(r).toMatchObject({ isEphemera: true, reason: "dispatch_prompt_body" });
+});
+
 it("detectT2Ephemera passes normal knowledge memory", () => {
   const r = detectT2Ephemera({
     title: "Agent branch naming",
@@ -132,7 +158,22 @@ it("detectT2Ephemera respects approved runtime pattern", () => {
 
 // ── runPC1Phase integration tests ─────────────────────────────────────────────
 
-it("runPC1Phase auto-retires UUID-body memory", async () => {
+it("runPC1Phase queues ephemera_retire by default without retiring memory", async () => {
+  const db = openTestDb();
+  seedCycle(db, "cycle-1");
+  const memId = seedMemory(db, { body: "429c79cc-6240-43bb-bd97-4ef675382c35" });
+  await runPC1Phase(db, "cycle-1", testConfig(), {});
+  const action = db
+    .prepare(`SELECT * FROM dream_actions WHERE action_type='ephemera_retire'`)
+    .get() as any;
+  expect(action).toBeDefined();
+  expect(action.status).toBe("queued");
+  const mem = db.prepare(`SELECT retired_at FROM t2_memories WHERE memory_id=?`).get(memId) as any;
+  expect(mem.retired_at).toBeNull();
+});
+
+it("runPC1Phase auto-applies retire when PENUMBRA_PC1_AUTORETIRE is enabled", async () => {
+  process.env.PENUMBRA_PC1_AUTORETIRE = "1";
   const db = openTestDb();
   seedCycle(db, "cycle-1");
   const memId = seedMemory(db, { body: "429c79cc-6240-43bb-bd97-4ef675382c35" });
