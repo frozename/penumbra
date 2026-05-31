@@ -108,7 +108,7 @@ const results = await pipeline(
         `Measure exact values (single-token outputs for counts):`,
         `1. in worktree: run the repo typecheck for the touched package(s) (e.g. bunx tsc --build packages/<pkg>/tsconfig.json) -> typecheck_exit. If you cannot determine the package, set -1 and explain in notes.`,
         `2. in worktree: run the relevant test slice (bun test <paths>) -> tests_pass, tests_fail.`,
-        `3. from ${REPO}: git diff --name-only main..${d.branch} -> files_changed (count) + changed_files (the list).`,
+        `3. from ${REPO}: compute the branch's OWN footprint using the merge-base: run "git diff --name-only $(git merge-base main ${d.branch})..${d.branch}" -> files_changed (count) + changed_files (the list). MUST use the merge-base form, NOT "main..${d.branch}" — commits that landed on main in parallel would otherwise show as bogus changed/deleted files and trigger a false scope-bleed fail.`,
         `4. git log main..${d.branch} --format=%B | count (co-authored|claude|codex|gpt|assistant|generated with|robot) -> attribution_lines.`,
         `5. checklist_result: measure these task-specific checks and report findings: ${t.verifyChecklist || '(none beyond the standard gates)'}`,
         `Set name="${t.name}" and verdict per schema. Report only measured values.`,
