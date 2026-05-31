@@ -21,7 +21,7 @@ export async function dreamingPendingActionsRoute(
   return json(listPendingDreamActionsQuery(services.db, parsed.data));
 }
 
-import { revertDreamAction } from "../dreaming/reembed.js";
+import { applyDreamAction, revertDreamAction } from "../dreaming/reembed.js";
 
 export async function dreamingHealthRoute(req: Request, services: Services): Promise<Response> {
   const db = services.db;
@@ -85,5 +85,32 @@ export async function dreamingRevertRoute(req: Request, services: Services): Pro
       return json({ error: "has_dependents", details: err.message }, 409);
     }
     return json({ error: err.message }, 500);
+  }
+}
+
+export async function dreamingApplyRoute(req: Request, services: Services): Promise<Response> {
+  const body = (await req.json()) as { action_id?: string };
+  if (!body.action_id) return json({ error: "missing action_id" }, 400);
+  try {
+    applyDreamAction(services.db, body.action_id);
+    return json({ ok: true });
+  } catch (err: unknown) {
+    const status =
+      typeof err === "object" &&
+      err !== null &&
+      "status" in err &&
+      typeof (err as { status?: unknown }).status === "number"
+        ? ((err as { status: number }).status as number)
+        : 500;
+    const code =
+      typeof err === "object" &&
+      err !== null &&
+      "code" in err &&
+      typeof (err as { code?: unknown }).code === "string"
+        ? ((err as { code: string }).code as string)
+        : undefined;
+    const message =
+      err instanceof Error ? err.message : typeof err === "string" ? err : "unknown_error";
+    return json({ error: message, ...(code ? { code } : {}) }, status);
   }
 }

@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { retireNonDirectMemory } from "@penumbra/core";
 import type { DreamConfig } from "./config.js";
 import type { DreamCycleDeps } from "./cycle.js";
 
@@ -103,25 +104,116 @@ export async function runReembedPhase(
   return { deferred, processed };
 }
 
+type DreamActionRow = {
+  phase: string;
+  action_type: string;
+  status: string;
+  target_ids: string;
+  payload_json: string;
+  decided_at: number | null;
+};
+
+class DreamActionApplyError extends Error {
+  readonly code: string;
+  readonly status: number;
+
+  constructor(code: string, message: string, status = 409) {
+    super(message);
+    this.code = code;
+    this.status = status;
+  }
+}
+
+function getDreamAction(db: Database, actionId: string): DreamActionRow | null {
+  return db
+    .prepare(
+      "SELECT phase, action_type, status, target_ids, payload_json, decided_at FROM dream_actions WHERE action_id = ?",
+    )
+    .get(actionId) as DreamActionRow | null;
+}
+
+function parseTargetIds(targetIdsRaw: string): string[] {
+  const parsed = JSON.parse(targetIdsRaw) as unknown;
+  if (!Array.isArray(parsed) || !parsed.every((id) => typeof id === "string")) {
+    throw new DreamActionApplyError("invalid_target_ids", "dream action target_ids must be string[]");
+  }
+  return parsed;
+}
+
+function markDreamActionReverted(
+  db: Database,
+  actionId: string,
+  previousStatus: string,
+): void {
+  if (previousStatus === "applied") {
+    db.prepare('UPDATE dream_actions SET reverted_by = "user", status = "reverted" WHERE action_id = ?').run(
+      actionId,
+    );
+    return;
+  }
+  db.prepare('UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?').run(actionId);
+}
+
+export function applyDreamAction(db: Database, actionId: string): void {
+  const action = getDreamAction(db, actionId);
+  if (!action) throw new DreamActionApplyError("action_not_found", "Action not found: " + actionId, 404);
+  if (action.status !== "queued") {
+    throw new DreamActionApplyError(
+      "action_not_queued",
+      `Action must be queued before apply: ${actionId} (status=${action.status})`,
+      409,
+    );
+  }
+
+  const targetIds = parseTargetIds(action.target_ids);
+  const now = Date.now();
+
+  db.transaction(() => {
+    if (action.action_type === "ephemera_retire" || action.action_type === "retire") {
+      const memoryId = targetIds[0];
+      if (!memoryId) {
+        throw new DreamActionApplyError(
+          "invalid_target_ids",
+          `Action ${actionId} requires exactly one memory target`,
+        );
+      }
+      const retired = retireNonDirectMemory(db, memoryId, now);
+      if (!retired) {
+        throw new DreamActionApplyError(
+          "retire_not_applied",
+          `Action ${actionId} did not retire target memory ${memoryId}`,
+        );
+      }
+    } else if (action.action_type === "merge" || action.action_type === "promote_t1") {
+      throw new DreamActionApplyError(
+        "apply_not_supported",
+        `Action type ${action.action_type} is not safely applyable yet`,
+        422,
+      );
+    } else {
+      throw new DreamActionApplyError(
+        "unknown_action_type",
+        `Unknown apply action_type: ${action.action_type}`,
+        422,
+      );
+    }
+
+    db.prepare("UPDATE dream_actions SET status = 'applied', decided_at = ?, decided_by = 'user' WHERE action_id = ?").run(
+      now,
+      actionId,
+    );
+  })();
+}
+
 export function revertDreamAction(
   db: Database,
   actionId: string,
   cascade: "none" | "force" = "none",
 ): void {
-  const action = db
-    .prepare(
-      "SELECT phase, action_type, status, target_ids, payload_json, decided_at FROM dream_actions WHERE action_id = ?",
-    )
-    .get(actionId) as {
-    phase: string;
-    action_type: string;
-    status: string;
-    target_ids: string;
-    payload_json: string;
-    decided_at: number;
-  } | null;
+  const action = getDreamAction(db, actionId);
 
   if (!action) throw new Error("Action not found: " + actionId);
+  const canCompensateState = action.status === "auto_applied" || action.status === "applied";
 
   const deps = db
     .prepare(
@@ -140,7 +232,7 @@ export function revertDreamAction(
     }
   }
 
-  if (action.phase === "P7" && action.status === "auto_applied") {
+  if (action.phase === "P7" && canCompensateState) {
     const targetIds = JSON.parse(action.target_ids) as string[];
     if (targetIds.length !== 1)
       throw new Error("Expected exactly 1 target memory for P7 action, got " + targetIds.length);
@@ -173,12 +265,12 @@ export function revertDreamAction(
         memoryId,
       );
 
-      db.prepare('UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?').run(actionId);
+      markDreamActionReverted(db, actionId, action.status);
     })();
   } else if (
     action.phase === "P1" &&
     action.action_type === "promote_t1" &&
-    action.status === "auto_applied"
+    canCompensateState
   ) {
     const targetIds = JSON.parse(action.target_ids) as string[];
     const rollupId = targetIds[0] as string;
@@ -200,12 +292,12 @@ export function revertDreamAction(
           t2MemoryId,
         );
       }
-      db.prepare('UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?').run(actionId);
+      markDreamActionReverted(db, actionId, action.status);
     })();
   } else if (
     action.phase === "P2" &&
     action.action_type === "link" &&
-    action.status === "auto_applied"
+    canCompensateState
   ) {
     const targetIds = JSON.parse(action.target_ids) as string[];
     const srcId = targetIds[0] as string;
@@ -217,33 +309,33 @@ export function revertDreamAction(
       db.prepare(
         "UPDATE memory_links SET retired_at = ? WHERE src_id = ? AND dst_id = ? AND link_type = ?",
       ).run(Date.now(), srcId, dstId, linkType);
-      db.prepare('UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?').run(actionId);
+      markDreamActionReverted(db, actionId, action.status);
     })();
   } else if (
     action.phase === "P3" &&
     action.action_type === "retire" &&
-    action.status === "auto_applied"
+    canCompensateState
   ) {
     const targetIds = JSON.parse(action.target_ids) as string[];
     const memoryId = targetIds[0] as string;
 
     db.transaction(() => {
       db.prepare("UPDATE t2_memories SET retired_at = NULL WHERE memory_id = ?").run(memoryId);
-      db.prepare('UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?').run(actionId);
+      markDreamActionReverted(db, actionId, action.status);
     })();
-  } else if (action.action_type === "ephemera_retire" && action.status === "auto_applied") {
+  } else if (action.action_type === "ephemera_retire" && canCompensateState) {
     const memoryId = (JSON.parse(action.target_ids) as string[])[0] as string;
     db.transaction(() => {
       db.prepare("UPDATE t2_memories SET retired_at = NULL WHERE memory_id = ?").run(memoryId);
-      db.prepare('UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?').run(actionId);
+      markDreamActionReverted(db, actionId, action.status);
     })();
-  } else if (action.action_type === "cluster_retire" && action.status === "auto_applied") {
+  } else if (action.action_type === "cluster_retire" && canCompensateState) {
     const memoryId = (JSON.parse(action.target_ids) as string[])[0] as string;
     db.transaction(() => {
       db.prepare("UPDATE t2_memories SET retired_at = NULL WHERE memory_id = ?").run(memoryId);
-      db.prepare('UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?').run(actionId);
+      markDreamActionReverted(db, actionId, action.status);
     })();
-  } else if (action.phase === "P6" && action.status === "auto_applied") {
+  } else if (action.phase === "P6" && canCompensateState) {
     const targetIds = JSON.parse(action.target_ids) as string[];
     const projectId = targetIds[0] as string;
 
@@ -252,10 +344,10 @@ export function revertDreamAction(
         projectId,
         action.decided_at,
       );
-      db.prepare('UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?').run(actionId);
+      markDreamActionReverted(db, actionId, action.status);
     })();
   } else {
     // Soft stamp — queued actions and unknown phases: no state rollback
-    db.prepare('UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?').run(actionId);
+    markDreamActionReverted(db, actionId, action.status);
   }
 }

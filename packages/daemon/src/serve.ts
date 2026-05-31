@@ -77,6 +77,7 @@ import { qualityStatusRoute } from "./routes/quality.js";
 import {
   dreamingPendingActionsRoute,
   dreamingHealthRoute,
+  dreamingApplyRoute,
   dreamingRevertRoute,
 } from "./routes/dreaming.js";
 import {
@@ -631,6 +632,9 @@ export function createDaemonFetchHandler(opts: {
     }
     if (req.method === "POST" && url.pathname === "/dreaming/revert") {
       return dreamingRevertRoute(req, opts.services);
+    }
+    if (req.method === "POST" && url.pathname === "/dreaming/apply") {
+      return dreamingApplyRoute(req, opts.services);
     }
     if (req.method === "GET" && url.pathname === "/curator/patterns") {
       return curatorPatternsListRoute(req, opts.services);
