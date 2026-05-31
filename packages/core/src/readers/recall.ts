@@ -43,6 +43,10 @@ export class RecallReader {
         source_session_ids: h.source_session_ids,
         created_at: h.ts,
         ts: h.ts,
+        why: h.why,
+        source_quote: h.source_quote,
+        learned_at: h.learned_at,
+        last_verified_at: h.last_verified_at,
       }));
     }
     const limit = req.limit;
@@ -158,11 +162,16 @@ export class RecallReader {
         body: string;
         created_at: string;
         source_session_ids: string;
+        why: string | null;
+        source_quote: string | null;
+        learned_at: string | null;
+        last_verified_at: string | null;
         distance: number;
       };
       const t2Rows = this.db
         .query<T2Row, [Float32Array, number, string | null, string | null]>(
           `SELECT m.memory_id, m.project_id, m.title, m.body, m.created_at, m.source_session_ids,
+                  m.why, m.source_quote, m.learned_at, m.last_verified_at,
                   v.distance
              FROM t2_vec v
              JOIN t2_memories m ON m.rowid = v.rowid
@@ -192,6 +201,10 @@ export class RecallReader {
               source_session_ids: JSON.parse(r.source_session_ids) as string[],
               created_at: r.created_at,
               ts: r.created_at,
+              why: r.why,
+              source_quote: r.source_quote,
+              learned_at: r.learned_at,
+              last_verified_at: r.last_verified_at,
               payload: { memory_id: r.memory_id },
             },
           };

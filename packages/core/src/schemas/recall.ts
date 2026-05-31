@@ -37,6 +37,10 @@ export const RecallResultSchema = z.object({
   source_session_ids: z.array(z.string()),
   created_at: z.string(),
   ts: z.string(),
+  why: z.string().nullable().optional(),
+  source_quote: z.string().nullable().optional(),
+  learned_at: z.string().nullable().optional(),
+  last_verified_at: z.string().nullable().optional(),
   payload: z.unknown().optional(),
 });
 
@@ -106,6 +110,9 @@ export const SearchHitSchema = z.object({
   snippet: z.string(),
   project_id: z.string().nullable(),
   score: z.number(),
+  why: z.string().nullable().optional(),
+  source_quote: z.string().nullable().optional(),
+  learned_at: z.string().nullable().optional(),
   last_verified_at: z.string().nullable().optional(),
   last_verified_by: z.string().nullable().optional(),
   last_verified_reason: z.string().nullable().optional(),

@@ -52,4 +52,32 @@ describe("memory_search — envelope opt-in", () => {
     const fullBytes = Buffer.byteLength(JSON.stringify(big, null, 2), "utf8");
     expect(result._meta.result_bytes).toBe(fullBytes);
   });
+
+  it("preserves additive why/source_quote/learned_at/last_verified_at fields in envelope text", async () => {
+    const payload = {
+      hits: [
+        {
+          id: "mem-1",
+          tier: "t2",
+          ts: "2026-05-30T00:00:00.000Z",
+          obs_type: "decision",
+          title: "Decision title",
+          snippet: "short snippet",
+          project_id: "p1",
+          score: -2.5,
+          why: "to prevent stale dispatch false positives",
+          source_quote: "event-aware idle threshold required before force-fail",
+          learned_at: "2026-05-30T00:01:00.000Z",
+          last_verified_at: "2026-05-30T00:02:00.000Z",
+        },
+      ],
+      total: 1,
+    };
+    const handler = searchHandler(fakeDaemon(async () => payload));
+    const result: any = await handler({ query: "dispatch", envelope: true });
+
+    expect(isEnvelopeResult(result)).toBe(true);
+    const roundTripped = JSON.parse(result.content[0].text);
+    expect(roundTripped).toEqual(payload);
+  });
 });

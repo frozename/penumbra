@@ -30,6 +30,10 @@ export interface HybridHit {
   score: number;
   project_id: string | null;
   source_session_ids: string[];
+  why?: string | null;
+  source_quote?: string | null;
+  learned_at?: string | null;
+  last_verified_at?: string | null;
 }
 
 export async function hybridSearch(
@@ -59,10 +63,15 @@ export async function hybridSearch(
         body: string;
         project_id: string | null;
         source_session_ids: string;
+        why: string | null;
+        source_quote: string | null;
+        learned_at: string | null;
+        last_verified_at: string | null;
       },
       SQLQueryBindings[]
     >(
-      `SELECT m.memory_id, m.rowid, m.created_at, m.obs_type, m.title, m.body, m.project_id, m.source_session_ids
+      `SELECT m.memory_id, m.rowid, m.created_at, m.obs_type, m.title, m.body, m.project_id,
+              m.source_session_ids, m.why, m.source_quote, m.learned_at, m.last_verified_at
          FROM t2_memories m
         WHERE ${whereSql}
           AND m.retired_at IS NULL
@@ -101,9 +110,13 @@ export async function hybridSearch(
         score: 1 - r.distance, // distance → similarity for caller convenience
         project_id: c.project_id,
         source_session_ids: parseSourceSessionIds(c.source_session_ids),
+        why: c.why,
+        source_quote: c.source_quote,
+        learned_at: c.learned_at,
+        last_verified_at: c.last_verified_at,
       };
     })
-    .filter((x): x is HybridHit => x !== null);
+    .filter((x): x is NonNullable<typeof x> => x !== null);
 }
 
 function parseSourceSessionIds(raw: string): string[] {
