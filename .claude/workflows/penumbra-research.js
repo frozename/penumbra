@@ -29,7 +29,7 @@ if (!question || !String(question).trim()) {
 const opts = typeof input === 'object' && input ? input : {}
 const nAngles = opts.angles || 4
 const persist = opts.persist !== false // default true
-const researchModel = opts.researchModel // default: session model
+const researchModel = opts.researchModel || 'sonnet' // default: sonnet for source extraction; caller can pass 'opus' for hard questions or 'inherit'
 
 phase('Prime')
 const prime = await agent(
@@ -41,6 +41,7 @@ const prime = await agent(
   {
     label: 'prime',
     phase: 'Prime',
+    model: 'sonnet', // mechanical memory recall
     schema: {
       type: 'object',
       additionalProperties: false,
@@ -63,6 +64,7 @@ const plan = await agent(
   {
     label: 'plan-angles',
     phase: 'Research',
+    model: 'sonnet', // light decomposition
     schema: {
       type: 'object',
       additionalProperties: false,
@@ -116,6 +118,7 @@ const report = await agent(
   {
     label: 'synthesize',
     phase: 'Synthesize',
+    model: 'opus', // the cited-report synthesis is the quality-determining judgment
     schema: {
       type: 'object',
       additionalProperties: false,
@@ -140,6 +143,7 @@ if (persist && report && report.summary) {
     {
       label: 'persist',
       phase: 'Persist',
+      model: 'sonnet', // single memory_observe call
       schema: {
         type: 'object',
         additionalProperties: false,

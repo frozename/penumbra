@@ -1,0 +1,16 @@
+{
+  "ultracode": true,
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/penumbra-agent-gc-guard.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
