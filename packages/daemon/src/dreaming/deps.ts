@@ -65,6 +65,7 @@ export function buildDreamCycleDeps(
     judgePool,
     briefSynthesizer: briefSynthesizer ?? undefined,
     contentQualityJudge,
+    phaseCostEstimates: dreamConfig.phaseCostEstimatesUsd,
   };
 
   Object.defineProperty(deps, "projectRegistry", {

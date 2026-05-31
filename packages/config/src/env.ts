@@ -262,6 +262,43 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: 0.25,
     description: "Max research USD per dreaming cycle.",
   },
+  PENUMBRA_DREAMING_PHASE_LLM_FRACTION: {
+    schema: OptNonNegNum,
+    description: "Optional LLM lane budget fraction (0..1) for per-cycle/daily dreaming caps.",
+  },
+  PENUMBRA_DREAMING_PHASE_EMBEDDING_FRACTION: {
+    schema: OptNonNegNum,
+    description: "Optional embedding lane budget fraction (0..1) for per-cycle/daily dreaming caps.",
+  },
+  PENUMBRA_DREAMING_PHASE_RESEARCH_FRACTION: {
+    schema: OptNonNegNum,
+    description: "Optional research lane budget fraction (0..1) for per-cycle/daily dreaming caps.",
+  },
+  PENUMBRA_DREAMING_COST_ESTIMATE_P3_LLM_USD: {
+    schema: NonNegNum,
+    default: 0.02,
+    description: "Estimated LLM USD per P3 scoring call.",
+  },
+  PENUMBRA_DREAMING_COST_ESTIMATE_P4_REWRITER_LLM_USD: {
+    schema: NonNegNum,
+    default: 0.01,
+    description: "Estimated LLM USD per P4 query rewrite call.",
+  },
+  PENUMBRA_DREAMING_COST_ESTIMATE_P5_RESEARCH_USD: {
+    schema: NonNegNum,
+    default: 0.05,
+    description: "Estimated research USD per P5 queued query action.",
+  },
+  PENUMBRA_DREAMING_COST_ESTIMATE_P6_SYNTH_LLM_USD: {
+    schema: NonNegNum,
+    default: 0.04,
+    description: "Estimated LLM USD per P6 brief synthesis call.",
+  },
+  PENUMBRA_DREAMING_COST_ESTIMATE_P7_EMBED_USD: {
+    schema: NonNegNum,
+    default: 0.005,
+    description: "Estimated embedding USD per P7 re-embed call.",
+  },
   PENUMBRA_DREAMING_LINK_AUTO_THRESHOLD: {
     schema: NonNegNum,
     default: 0.75,

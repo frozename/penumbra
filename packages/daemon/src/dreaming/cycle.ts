@@ -2,7 +2,11 @@ import type { Database } from "bun:sqlite";
 import type { DispatchEventInput, Logger } from "@penumbra/core";
 import { retireNonDirectMemory } from "@penumbra/core";
 import { z } from "zod";
-import type { DreamConfig } from "./config.js";
+import type {
+  DreamConfig,
+  DreamPhaseBudgetFractions,
+  DreamPhaseCostEstimatesUsd,
+} from "./config.js";
 import { StubJudgePool, type JudgePool } from "./judge-pool.js";
 import type { WebResearchAdapter } from "@penumbra/core";
 import { hashQuery, runP5Phase } from "./research.js";
@@ -34,6 +38,19 @@ const MIN_PER_CYCLE_USD = 0.01;
 const P2_SCAN_LIMIT = 30;
 const P3_SCAN_LIMIT = 20;
 const LINK_QUEUE_FLOOR = 0.5;
+const ZERO_SPEND = { llm: 0, embedding: 0, research: 0 } as const;
+const DEFAULT_PHASE_BUDGET_FRACTIONS: DreamPhaseBudgetFractions = {
+  llm: 0.3,
+  embedding: 0.2,
+  research: 0.5,
+};
+const DEFAULT_PHASE_COST_ESTIMATES_USD: DreamPhaseCostEstimatesUsd = {
+  p3ScorerLlmUsd: 0.02,
+  p4RewriterLlmUsd: 0.01,
+  p5ResearchUsd: 0.05,
+  p6BriefSynthLlmUsd: 0.04,
+  p7EmbedUsd: 0.005,
+};
 export const EPHEMERA_PROMPT_LIKE_PATTERNS = [
   "You are %a long-lived agent%",
   "%# Operating rules%",
@@ -52,11 +69,20 @@ interface PressureGuard {
 }
 
 interface MemoryScorer {
+  estimateCostUsd?: (mem: { memory_id: string; body: string }) => number;
   score(mem: { memory_id: string; body: string }): Promise<{
     verdict: "retire" | "rewrite" | "keep";
     composite: number;
     should_auto_retire: boolean;
+    estimated_cost_usd?: number;
   }>;
+}
+
+export type DreamSpendLane = "llm" | "embedding" | "research";
+
+export interface DreamCostMeter {
+  canAfford(phase: string, lane: DreamSpendLane, usd: number): boolean;
+  record(phase: string, lane: DreamSpendLane, usd: number): void;
 }
 
 type RewriteLlmInvoker = <T extends z.ZodTypeAny>(
@@ -81,6 +107,8 @@ export interface DreamCycleDeps {
   dispatchEventLog?: {
     record(event: DispatchEventInput): void;
   };
+  costMeter?: DreamCostMeter;
+  phaseCostEstimates?: DreamPhaseCostEstimatesUsd;
 }
 
 export async function runDreamCycle(
@@ -166,7 +194,47 @@ export async function runDreamCycle(
      VALUES(?, ?, 'cron', ?, 'running', '[]')`,
   ).run(cycleId, now, config.perCycleUsd);
 
+  const budgetFractions = normalizeBudgetFractions(config.phaseBudgetFractions);
+  const phaseCostEstimates = normalizeCostEstimates(
+    config.phaseCostEstimatesUsd ?? deps.phaseCostEstimates,
+  );
+  const deferredPhases = new Set<string>();
   const phasesRun: string[] = [];
+  const todayStartMs = getTodayStartMs();
+
+  const costMeter: DreamCostMeter = {
+    canAfford: (phase, lane, usd) => {
+      const normalizedUsd = sanitizeUsd(usd);
+      if (normalizedUsd <= 0) return true;
+      const cycleSpend = getCycleSpend(db, cycleId);
+      const dailySpend = getTodayLaneSpend(db, lane, todayStartMs);
+      const laneFraction = budgetFractions[lane];
+      const perCycleLaneCap = config.perCycleUsd * laneFraction;
+      const dailyLaneCap = config.dailyUsd * laneFraction;
+      if (cycleSpend[lane] + normalizedUsd > perCycleLaneCap) {
+        deferredPhases.add(phase);
+        return false;
+      }
+      if (dailySpend + normalizedUsd > dailyLaneCap) {
+        deferredPhases.add(phase);
+        return false;
+      }
+      return true;
+    },
+    record: (phase, lane, usd) => {
+      const normalizedUsd = sanitizeUsd(usd);
+      if (normalizedUsd <= 0) return;
+      if (lane === "llm") {
+        recordSpend(db, cycleId, { llm: normalizedUsd });
+      } else if (lane === "embedding") {
+        recordSpend(db, cycleId, { embedding: normalizedUsd });
+      } else {
+        recordSpend(db, cycleId, { research: normalizedUsd });
+      }
+      deferredPhases.delete(phase);
+    },
+  };
+  deps.costMeter = costMeter;
 
   function bail(reason: string): string {
     db.prepare(
@@ -186,7 +254,6 @@ export async function runDreamCycle(
   // ── P0: pre-flight ────────────────────────────────────────────────────────
 
   // 1. Daily cap
-  const todayStartMs = getTodayStartMs();
   const todayRow = db
     .prepare(
       `SELECT COALESCE(SUM(llm_spent_usd + embedding_spent_usd + research_spent_usd), 0) AS total_today
@@ -530,6 +597,7 @@ export async function runDreamCycle(
 
     // ── P3: multi-factor quality signal ───────────────────────────────────
 
+    let ranP3 = false;
     if (deps.scorer) {
       const memories = db
         .prepare(
@@ -540,7 +608,18 @@ export async function runDreamCycle(
         .all(P3_SCAN_LIMIT) as Array<{ memory_id: string; body: string }>;
 
       for (const mem of memories) {
+        const estimatedScoringCost =
+          sanitizeUsd(deps.scorer.estimateCostUsd?.(mem)) || phaseCostEstimates.p3ScorerLlmUsd;
+        if (!costMeter.canAfford("P3", "llm", estimatedScoringCost)) {
+          break;
+        }
         const result = await deps.scorer.score(mem);
+        costMeter.record(
+          "P3",
+          "llm",
+          sanitizeUsd(result.estimated_cost_usd) || estimatedScoringCost,
+        );
+        ranP3 = true;
 
         if (result.should_auto_retire) {
           const retired = retireNonDirectMemory(db, mem.memory_id, Date.now());
@@ -581,10 +660,12 @@ export async function runDreamCycle(
       }
     }
 
-    phasesRun.push("P3");
-    db.prepare(
-      `UPDATE dream_cycles SET phases_run=?, last_phase_completed='P3' WHERE cycle_id=?`,
-    ).run(JSON.stringify(phasesRun), cycleId);
+    if (ranP3 || !deferredPhases.has("P3")) {
+      phasesRun.push("P3");
+      db.prepare(
+        `UPDATE dream_cycles SET phases_run=?, last_phase_completed='P3' WHERE cycle_id=?`,
+      ).run(JSON.stringify(phasesRun), cycleId);
+    }
 
     if (!(await checkAdvancement())) {
       return bail("pressure guard: provider throttled after P3");
@@ -719,6 +800,9 @@ export async function runDreamCycle(
               model: rewriteModel,
             });
           } else {
+            if (!costMeter.canAfford("P4", "llm", phaseCostEstimates.p4RewriterLlmUsd)) {
+              return;
+            }
             const prompt = buildDreamQueryRewritePrompt({
               title: memory.title,
               bodyFirst200: memory.body,
@@ -731,6 +815,7 @@ export async function runDreamCycle(
               schema: REWRITE_RESPONSE_SCHEMA,
               timeoutMs: rewriterTimeoutMs,
             });
+            costMeter.record("P4", "llm", phaseCostEstimates.p4RewriterLlmUsd);
             rewriteLatencyMs = Date.now() - rewriteStart;
 
             if (!rewriteResult.ok) {
@@ -867,7 +952,12 @@ export async function runDreamCycle(
 
     // ── P5: active research ──────────────────────────────────────────────────────────
 
-    if (typeof runP5Phase !== "undefined") await runP5Phase(db, cycleId, config, deps as any);
+    if (typeof runP5Phase !== "undefined") {
+      await runP5Phase(db, cycleId, config, {
+        ...(deps as any),
+        phaseCostEstimates,
+      });
+    }
     phasesRun.push("P5");
     db.prepare(
       "UPDATE dream_cycles SET phases_run=?, last_phase_completed='P5' WHERE cycle_id=?",
@@ -895,6 +985,9 @@ export async function runDreamCycle(
         let briefMarkdown: string;
         let sourceMemoryIds: string[] = [];
         if (deps.briefSynthesizer) {
+          if (!costMeter.canAfford("P6", "llm", phaseCostEstimates.p6BriefSynthLlmUsd)) {
+            continue;
+          }
           const recentMemories = db
             .prepare(
               `SELECT memory_id, kind, title, body, created_at
@@ -921,6 +1014,7 @@ export async function runDreamCycle(
               recent_memories: recentMemories,
               prior_brief: priorBriefRow?.brief_md,
             });
+            costMeter.record("P6", "llm", phaseCostEstimates.p6BriefSynthLlmUsd);
             briefMarkdown = result.markdown;
             sourceMemoryIds = result.source_memory_ids ?? recentMemories.map((m) => m.memory_id);
           } catch (err) {
@@ -965,11 +1059,16 @@ export async function runDreamCycle(
     // ── P7: re-embed stale vectors ────────────────────────────────────────
 
     if (!config.skipPhases?.has("P7")) {
-      await runReembedPhase(db, cycleId, config, deps);
-      phasesRun.push("P7");
-      db.prepare(
-        `UPDATE dream_cycles SET phases_run=?, last_phase_completed='P7' WHERE cycle_id=?`,
-      ).run(JSON.stringify(phasesRun), cycleId);
+      const reembedOutcome = await runReembedPhase(db, cycleId, config, {
+        ...(deps as any),
+        phaseCostEstimates,
+      });
+      if (!(reembedOutcome as { deferred?: boolean } | undefined)?.deferred) {
+        phasesRun.push("P7");
+        db.prepare(
+          `UPDATE dream_cycles SET phases_run=?, last_phase_completed='P7' WHERE cycle_id=?`,
+        ).run(JSON.stringify(phasesRun), cycleId);
+      }
     }
 
     // ── P8: audit ──────────────────────────────────────────────────────────
@@ -1014,8 +1113,98 @@ export async function runDreamCycle(
 
     return cycleId;
   } finally {
+    delete deps.costMeter;
     dreamingCycleInFlight = false;
   }
+}
+
+function normalizeBudgetFractions(
+  fractions: DreamPhaseBudgetFractions | undefined,
+): DreamPhaseBudgetFractions {
+  const base = fractions ?? DEFAULT_PHASE_BUDGET_FRACTIONS;
+  const llm = Number.isFinite(base.llm) ? Math.max(0, base.llm) : 0;
+  const embedding = Number.isFinite(base.embedding) ? Math.max(0, base.embedding) : 0;
+  const research = Number.isFinite(base.research) ? Math.max(0, base.research) : 0;
+  const total = llm + embedding + research;
+  if (total <= 0) return { ...DEFAULT_PHASE_BUDGET_FRACTIONS };
+  return {
+    llm: llm / total,
+    embedding: embedding / total,
+    research: research / total,
+  };
+}
+
+function normalizeCostEstimates(
+  estimates: DreamPhaseCostEstimatesUsd | undefined,
+): DreamPhaseCostEstimatesUsd {
+  const base = estimates ?? DEFAULT_PHASE_COST_ESTIMATES_USD;
+  return {
+    p3ScorerLlmUsd: sanitizeUsd(base.p3ScorerLlmUsd),
+    p4RewriterLlmUsd: sanitizeUsd(base.p4RewriterLlmUsd),
+    p5ResearchUsd: sanitizeUsd(base.p5ResearchUsd),
+    p6BriefSynthLlmUsd: sanitizeUsd(base.p6BriefSynthLlmUsd),
+    p7EmbedUsd: sanitizeUsd(base.p7EmbedUsd),
+  };
+}
+
+function getSpendColumnsForLane(lane: DreamSpendLane): string {
+  if (lane === "llm") return "llm_spent_usd";
+  if (lane === "embedding") return "embedding_spent_usd";
+  return "research_spent_usd";
+}
+
+function sanitizeUsd(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return n;
+}
+
+function getCycleSpend(db: Database, cycleId: string): { llm: number; embedding: number; research: number } {
+  const row = db
+    .prepare(
+      `SELECT llm_spent_usd, embedding_spent_usd, research_spent_usd
+       FROM dream_cycles WHERE cycle_id = ?`,
+    )
+    .get(cycleId) as
+    | { llm_spent_usd: number; embedding_spent_usd: number; research_spent_usd: number }
+    | null;
+  if (!row) return { ...ZERO_SPEND };
+  return {
+    llm: sanitizeUsd(row.llm_spent_usd),
+    embedding: sanitizeUsd(row.embedding_spent_usd),
+    research: sanitizeUsd(row.research_spent_usd),
+  };
+}
+
+function getTodayLaneSpend(db: Database, lane: DreamSpendLane, todayStartMs: number): number {
+  const column = getSpendColumnsForLane(lane);
+  const row = db
+    .prepare(
+      `SELECT COALESCE(SUM(${column}), 0) AS total
+         FROM dream_cycles
+        WHERE started_at >= ?
+          AND outcome != 'crashed'`,
+    )
+    .get(todayStartMs) as { total: number } | null;
+  return sanitizeUsd(row?.total ?? 0);
+}
+
+export function recordSpend(
+  db: Database,
+  cycleId: string,
+  spend: { llm?: number; embedding?: number; research?: number },
+): void {
+  const llmUsd = sanitizeUsd(spend.llm ?? 0);
+  const embeddingUsd = sanitizeUsd(spend.embedding ?? 0);
+  const researchUsd = sanitizeUsd(spend.research ?? 0);
+  if (llmUsd <= 0 && embeddingUsd <= 0 && researchUsd <= 0) return;
+  db.prepare(
+    `UPDATE dream_cycles
+        SET llm_spent_usd = llm_spent_usd + ?,
+            embedding_spent_usd = embedding_spent_usd + ?,
+            research_spent_usd = research_spent_usd + ?
+      WHERE cycle_id = ?`,
+  ).run(llmUsd, embeddingUsd, researchUsd, cycleId);
 }
 
 export function startDreamingCron(deps: {

@@ -1,15 +1,25 @@
 import crypto from "node:crypto";
 import type { Database } from "bun:sqlite";
 import type { DreamConfig } from "./config.js";
+import type { DreamPhaseCostEstimatesUsd } from "./config.js";
 import type { WebResearchAdapter, WebResearchResult } from "@penumbra/core";
 import type { ContentQualityJudge } from "./curator/content-quality-judge.js";
 import { sanitizeResearchMarkdown, buildJudgePromptBlock } from "../research/sanitization.js";
 import { isDomainAllowed } from "../research/firecrawl-adapter.js";
+import type { DreamCostMeter } from "./cycle.js";
 
 export interface ResearchDeps {
   getResearchAdapter?: (project: any) => WebResearchAdapter | null;
   projectRegistry?: { get(id: string): any };
   contentQualityJudge?: ContentQualityJudge;
+  costMeter?: DreamCostMeter;
+  phaseCostEstimates?: DreamPhaseCostEstimatesUsd;
+}
+
+function sanitizeUsd(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return n;
 }
 
 export function hashQuery(query: string, url: string): string {
@@ -34,6 +44,15 @@ export async function runP5Phase(
     .all(K) as Array<{ action_id: string; target_ids: string; payload_json: string }>;
 
   for (const action of pendingResearch) {
+    const researchEstimateUsd = sanitizeUsd(deps.phaseCostEstimates?.p5ResearchUsd ?? 0);
+    if (
+      researchEstimateUsd > 0 &&
+      deps.costMeter &&
+      !deps.costMeter.canAfford("P5", "research", researchEstimateUsd)
+    ) {
+      continue;
+    }
+
     let project_id = "";
     try {
       const targets = JSON.parse(action.target_ids);
@@ -75,6 +94,7 @@ export async function runP5Phase(
     const now = Date.now();
     const negativeCacheTtlMs = config.negativeCacheTtlMs ?? 3_600_000;
     let rawResults: WebResearchResult[] = [];
+    let usedExternalResearchCall = false;
 
     const cacheNegativeResult = () => {
       db.prepare(
@@ -118,6 +138,7 @@ export async function runP5Phase(
       ];
     } else {
       try {
+        usedExternalResearchCall = true;
         if (resolvedUrl.startsWith("http")) {
           // Pre-scrape domain check — always apply regardless of judge presence
           if (allowedDomains.length > 0) {
@@ -171,6 +192,14 @@ export async function runP5Phase(
         );
         continue;
       }
+    }
+
+    if (usedExternalResearchCall && deps.costMeter) {
+      const billedUsd = rawResults.reduce(
+        (sum, result) => sum + sanitizeUsd(result.source_billed_usd ?? 0),
+        0,
+      );
+      deps.costMeter.record("P5", "research", billedUsd > 0 ? billedUsd : researchEstimateUsd);
     }
 
     // F1: domain gate ALWAYS runs post-fetch; judge only scores domain-allowed survivors

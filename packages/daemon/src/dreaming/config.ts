@@ -4,6 +4,20 @@ export interface JudgePoolConfig {
   kind: "stub" | "real";
 }
 
+export interface DreamPhaseBudgetFractions {
+  llm: number;
+  embedding: number;
+  research: number;
+}
+
+export interface DreamPhaseCostEstimatesUsd {
+  p3ScorerLlmUsd: number;
+  p4RewriterLlmUsd: number;
+  p5ResearchUsd: number;
+  p6BriefSynthLlmUsd: number;
+  p7EmbedUsd: number;
+}
+
 function nonNegIntOr(value: number | undefined, fallback: number): number {
   return value !== undefined && Number.isFinite(value) && value >= 0 ? value : fallback;
 }
@@ -51,6 +65,8 @@ export interface DreamConfig {
   rewriterTimeoutMs: number;
   rewriterCacheTtlMs: number;
   rewriterConcurrency: number;
+  phaseBudgetFractions?: DreamPhaseBudgetFractions;
+  phaseCostEstimatesUsd?: DreamPhaseCostEstimatesUsd;
 }
 
 // Local typed view of the dreaming slice of EnvConfig. TODO(config-refactor F16):
@@ -65,6 +81,14 @@ interface DreamingEnvSlice {
   PENUMBRA_DREAMING_PRESSURE_GUARD: boolean;
   PENUMBRA_DREAMING_PER_CYCLE_EMBEDDING_USD: number;
   PENUMBRA_DREAMING_PER_CYCLE_RESEARCH_USD: number;
+  PENUMBRA_DREAMING_PHASE_LLM_FRACTION: number | undefined;
+  PENUMBRA_DREAMING_PHASE_EMBEDDING_FRACTION: number | undefined;
+  PENUMBRA_DREAMING_PHASE_RESEARCH_FRACTION: number | undefined;
+  PENUMBRA_DREAMING_COST_ESTIMATE_P3_LLM_USD: number;
+  PENUMBRA_DREAMING_COST_ESTIMATE_P4_REWRITER_LLM_USD: number;
+  PENUMBRA_DREAMING_COST_ESTIMATE_P5_RESEARCH_USD: number;
+  PENUMBRA_DREAMING_COST_ESTIMATE_P6_SYNTH_LLM_USD: number;
+  PENUMBRA_DREAMING_COST_ESTIMATE_P7_EMBED_USD: number;
   PENUMBRA_DREAMING_LINK_AUTO_THRESHOLD: number;
   PENUMBRA_DREAMING_P1_BATCH_SIZE: number | undefined;
   PENUMBRA_DREAMING_P: number | undefined;
@@ -128,6 +152,39 @@ export function buildDreamingConfig(bundle: ConfigBundle): DreamConfig {
     );
   }
 
+  const perCycleUsd = env.PENUMBRA_DREAMING_PER_CYCLE_USD;
+  const defaultEmbeddingFraction =
+    perCycleUsd > 0
+      ? Math.min(1, Math.max(0, env.PENUMBRA_DREAMING_PER_CYCLE_EMBEDDING_USD / perCycleUsd))
+      : 0;
+  const defaultResearchFraction =
+    perCycleUsd > 0
+      ? Math.min(1, Math.max(0, env.PENUMBRA_DREAMING_PER_CYCLE_RESEARCH_USD / perCycleUsd))
+      : 0;
+  const configuredEmbeddingFraction =
+    env.PENUMBRA_DREAMING_PHASE_EMBEDDING_FRACTION ?? defaultEmbeddingFraction;
+  const configuredResearchFraction =
+    env.PENUMBRA_DREAMING_PHASE_RESEARCH_FRACTION ?? defaultResearchFraction;
+  const configuredLlmFraction =
+    env.PENUMBRA_DREAMING_PHASE_LLM_FRACTION ??
+    Math.max(0, 1 - configuredEmbeddingFraction - configuredResearchFraction);
+
+  const rawBudgetFractions = {
+    llm: Math.max(0, configuredLlmFraction),
+    embedding: Math.max(0, configuredEmbeddingFraction),
+    research: Math.max(0, configuredResearchFraction),
+  };
+  const rawFractionTotal =
+    rawBudgetFractions.llm + rawBudgetFractions.embedding + rawBudgetFractions.research;
+  const phaseBudgetFractions =
+    rawFractionTotal > 0
+      ? {
+          llm: rawBudgetFractions.llm / rawFractionTotal,
+          embedding: rawBudgetFractions.embedding / rawFractionTotal,
+          research: rawBudgetFractions.research / rawFractionTotal,
+        }
+      : { llm: 1, embedding: 0, research: 0 };
+
   return {
     enabled: env.PENUMBRA_DREAMING_ENABLED,
     cronMinutes: env.PENUMBRA_DREAMING_CRON_MINUTES,
@@ -172,5 +229,13 @@ export function buildDreamingConfig(bundle: ConfigBundle): DreamConfig {
     rewriterTimeoutMs: env.PENUMBRA_DREAMING_REWRITER_TIMEOUT_MS,
     rewriterCacheTtlMs: env.PENUMBRA_DREAMING_REWRITER_CACHE_TTL_MS,
     rewriterConcurrency: env.PENUMBRA_DREAMING_REWRITER_CONCURRENCY,
+    phaseBudgetFractions,
+    phaseCostEstimatesUsd: {
+      p3ScorerLlmUsd: env.PENUMBRA_DREAMING_COST_ESTIMATE_P3_LLM_USD,
+      p4RewriterLlmUsd: env.PENUMBRA_DREAMING_COST_ESTIMATE_P4_REWRITER_LLM_USD,
+      p5ResearchUsd: env.PENUMBRA_DREAMING_COST_ESTIMATE_P5_RESEARCH_USD,
+      p6BriefSynthLlmUsd: env.PENUMBRA_DREAMING_COST_ESTIMATE_P6_SYNTH_LLM_USD,
+      p7EmbedUsd: env.PENUMBRA_DREAMING_COST_ESTIMATE_P7_EMBED_USD,
+    },
   };
 }
