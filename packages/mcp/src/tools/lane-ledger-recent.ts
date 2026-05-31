@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { toTextContent } from "@nova/mcp-shared";
 import { TaskClassSchema } from "@penumbra/core";
 import type { DaemonClient } from "../daemon-client.js";
 
@@ -22,7 +23,7 @@ export function laneLedgerRecentHandler(daemon: DaemonClient) {
       since: input.since,
       limit: input.limit,
     });
-    return response as { lanes: unknown[] };
+    return toTextContent(response);
   };
 }
 

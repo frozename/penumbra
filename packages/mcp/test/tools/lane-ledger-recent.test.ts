@@ -6,6 +6,12 @@ import {
   laneLedgerRecentHandler,
 } from "../../src/tools/lane-ledger-recent.js";
 
+function parseToolResult(out: unknown): unknown {
+  const content = (out as { content: Array<{ type: string; text: string }> }).content;
+  expect(content[0]?.type).toBe("text");
+  return JSON.parse(content[0]!.text);
+}
+
 function makeDaemon(fetchImpl: typeof fetch) {
   const original = globalThis.fetch;
   globalThis.fetch = fetchImpl;
@@ -51,17 +57,51 @@ test("laneLedgerRecentHandler GETs /lanes/recent with filters and returns lanes 
     receivedAuth = init?.headers
       ? (new Headers(init.headers as HeadersInit).get("authorization") ?? undefined)
       : undefined;
-    return Response.json({ lanes: [] });
+    return Response.json({
+      lanes: [
+        {
+          lane_id: "lane-recent-1",
+          ts_opened: "2026-05-12T00:00:00Z",
+          ts_closed: "2026-05-12T00:01:00Z",
+          task_class: "STANDARD",
+          implementer_handoff: "h-recent-1",
+          reviewer_handoff: "h-review-1",
+          gate_status: "passed",
+          recalled_memory_ids: [],
+          recalled_query: null,
+          override_reason: null,
+          metadata_json: "{}",
+        },
+      ],
+    });
   });
 
   try {
-    const out = await laneLedgerRecentHandler(daemon)({ status: "passed", limit: 10 });
+    const out = parseToolResult(
+      await laneLedgerRecentHandler(daemon)({ status: "passed", limit: 10 }),
+    );
 
     expect(receivedMethod).toBe("GET");
     expect(receivedPath).toBe("/lanes/recent");
     expect(receivedSearch).toBe("?status=passed&limit=10");
     expect(receivedAuth).toBe("Bearer t");
-    expect(out).toEqual({ lanes: [] });
+    expect(out).toEqual({
+      lanes: [
+        {
+          lane_id: "lane-recent-1",
+          ts_opened: "2026-05-12T00:00:00Z",
+          ts_closed: "2026-05-12T00:01:00Z",
+          task_class: "STANDARD",
+          implementer_handoff: "h-recent-1",
+          reviewer_handoff: "h-review-1",
+          gate_status: "passed",
+          recalled_memory_ids: [],
+          recalled_query: null,
+          override_reason: null,
+          metadata_json: "{}",
+        },
+      ],
+    });
   } finally {
     restore();
   }
@@ -75,7 +115,7 @@ test("laneLedgerRecentHandler omits query params when no filters are given", asy
   });
 
   try {
-    await laneLedgerRecentHandler(daemon)({});
+    parseToolResult(await laneLedgerRecentHandler(daemon)({}));
     expect(receivedSearch).toBe("");
   } finally {
     restore();

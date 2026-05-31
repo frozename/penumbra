@@ -3,6 +3,12 @@ import { z } from "zod";
 import { DaemonClient } from "../../src/daemon-client.js";
 import { LaneCloseInputShape, laneCloseHandler } from "../../src/tools/lane-close.js";
 
+function parseToolResult(out: unknown): unknown {
+  const content = (out as { content: Array<{ type: string; text: string }> }).content;
+  expect(content[0]?.type).toBe("text");
+  return JSON.parse(content[0]!.text);
+}
+
 function makeDaemon(fetchImpl: typeof fetch) {
   const original = globalThis.fetch;
   globalThis.fetch = fetchImpl;
@@ -41,22 +47,30 @@ test("laneCloseHandler posts lane_close to the daemon and returns the response",
     if (receivedPath === "/lanes/close") {
       return Response.json({
         lane_id: "lane-1234",
-        gate_status: "passed",
+        ts_opened: "2026-05-12T00:00:00Z",
         ts_closed: "2026-05-12T00:00:00Z",
+        task_class: "STANDARD",
         implementer_handoff: "h-impl",
         reviewer_handoff: "reviewer-1",
+        gate_status: "passed",
+        recalled_memory_ids: [],
+        recalled_query: null,
+        override_reason: "validated in review",
+        metadata_json: "{}",
       });
     }
     return Response.json({ ok: true, authorized: true, events_written: 1 });
   });
 
   try {
-    const out = await laneCloseHandler(daemon)({
+    const out = parseToolResult(
+      await laneCloseHandler(daemon)({
       lane_id: "lane-1234",
       gate_status: "passed",
       reviewer_handoff_id: "reviewer-1",
       override_reason: "validated in review",
-    });
+      }),
+    );
 
     expect(receivedMethod).toBe("POST");
     expect(receivedPaths).toEqual(["/lanes/close", "/memory-verify/authorize"]);
@@ -69,10 +83,16 @@ test("laneCloseHandler posts lane_close to the daemon and returns the response",
     });
     expect(out).toEqual({
       lane_id: "lane-1234",
-      gate_status: "passed",
+      ts_opened: "2026-05-12T00:00:00Z",
       ts_closed: "2026-05-12T00:00:00Z",
+      task_class: "STANDARD",
       implementer_handoff: "h-impl",
       reviewer_handoff: "reviewer-1",
+      gate_status: "passed",
+      recalled_memory_ids: [],
+      recalled_query: null,
+      override_reason: "validated in review",
+      metadata_json: "{}",
     });
   } finally {
     restore();
@@ -88,9 +108,16 @@ test("laneCloseHandler authorizes memory verification after a successful close",
     if (path === "/lanes/close") {
       return Response.json({
         lane_id: "lane-1234",
+        ts_opened: "2026-05-12T00:00:00Z",
+        ts_closed: "2026-05-12T00:00:00Z",
+        task_class: "STANDARD",
         gate_status: "passed",
         implementer_handoff: "h-impl",
         reviewer_handoff: "h-review",
+        recalled_memory_ids: [],
+        recalled_query: null,
+        override_reason: null,
+        metadata_json: "{}",
       });
     }
     if (path === "/memory-verify/authorize") {
@@ -157,7 +184,19 @@ test("lane_close forwards metadata to daemon POST body", async () => {
   const { daemon, restore } = makeDaemon(async (_input, init) => {
     callCount += 1;
     capturedBody = JSON.parse(String(init?.body));
-    return Response.json({ lane_id: "lane-meta", gate_status: "skipped" });
+    return Response.json({
+      lane_id: "lane-meta",
+      ts_opened: "2026-05-12T00:00:00Z",
+      ts_closed: "2026-05-12T00:00:00Z",
+      task_class: "STANDARD",
+      implementer_handoff: "h-meta",
+      reviewer_handoff: null,
+      gate_status: "skipped",
+      recalled_memory_ids: [],
+      recalled_query: null,
+      override_reason: null,
+      metadata_json: "{}",
+    });
   });
 
   try {
@@ -184,7 +223,19 @@ test("lane_close omits metadata key when not provided", async () => {
   const { daemon, restore } = makeDaemon(async (_input, init) => {
     callCount += 1;
     capturedBody = JSON.parse(String(init?.body));
-    return Response.json({ lane_id: "lane-nometa", gate_status: "skipped" });
+    return Response.json({
+      lane_id: "lane-nometa",
+      ts_opened: "2026-05-12T00:00:00Z",
+      ts_closed: "2026-05-12T00:00:00Z",
+      task_class: "STANDARD",
+      implementer_handoff: "h-nometa",
+      reviewer_handoff: null,
+      gate_status: "skipped",
+      recalled_memory_ids: [],
+      recalled_query: null,
+      override_reason: null,
+      metadata_json: "{}",
+    });
   });
 
   try {

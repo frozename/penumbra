@@ -3,6 +3,12 @@ import { z } from "zod";
 import { DaemonClient } from "../../src/daemon-client.js";
 import { LaneOpenInputShape, laneOpenHandler } from "../../src/tools/lane-open.js";
 
+function parseToolResult(out: unknown): unknown {
+  const content = (out as { content: Array<{ type: string; text: string }> }).content;
+  expect(content[0]?.type).toBe("text");
+  return JSON.parse(content[0]!.text);
+}
+
 function makeDaemon(fetchImpl: typeof fetch) {
   const original = globalThis.fetch;
   globalThis.fetch = fetchImpl;
@@ -43,15 +49,25 @@ test("laneOpenHandler posts lane_open to the daemon and returns the response", a
     return Response.json({
       lane_id: (receivedBody as { lane_id: string }).lane_id,
       ts_opened: "2026-05-12T00:00:00Z",
+      ts_closed: null,
+      task_class: "STANDARD",
+      implementer_handoff: "handoff-1",
+      reviewer_handoff: null,
       gate_status: "open",
+      recalled_memory_ids: [],
+      recalled_query: null,
+      override_reason: null,
+      metadata_json: "{}",
     });
   });
 
   try {
-    const out = await laneOpenHandler(daemon)({
+    const out = parseToolResult(
+      await laneOpenHandler(daemon)({
       implementer_handoff_id: "handoff-1",
       task_class: "STANDARD",
-    });
+      }),
+    );
 
     expect(receivedMethod).toBe("POST");
     expect(receivedPath).toBe("/lanes/open");
@@ -64,7 +80,15 @@ test("laneOpenHandler posts lane_open to the daemon and returns the response", a
     expect(out).toEqual({
       lane_id: (receivedBody as { lane_id: string }).lane_id,
       ts_opened: "2026-05-12T00:00:00Z",
+      ts_closed: null,
+      task_class: "STANDARD",
+      implementer_handoff: "handoff-1",
+      reviewer_handoff: null,
       gate_status: "open",
+      recalled_memory_ids: [],
+      recalled_query: null,
+      override_reason: null,
+      metadata_json: "{}",
     });
   } finally {
     restore();

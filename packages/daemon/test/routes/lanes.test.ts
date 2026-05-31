@@ -113,6 +113,116 @@ test("open then close then recent returns lane with closed status", async () => 
   }
 });
 
+test("open returns the full persisted lane row", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const opened = await postJson(daemon, "/lanes/open", {
+      lane_id: "lane-full-open",
+      implementer_handoff: "h-full-open",
+      task_class: "STANDARD",
+    });
+    expect(opened.status).toBe(200);
+    expect(await opened.json()).toEqual({
+      lane_id: "lane-full-open",
+      ts_opened: "2026-04-23T12:00:00.000Z",
+      ts_closed: null,
+      task_class: "STANDARD",
+      implementer_handoff: "h-full-open",
+      reviewer_handoff: null,
+      gate_status: "open",
+      recalled_memory_ids: [],
+      recalled_query: null,
+      override_reason: null,
+      metadata_json: "{}",
+    });
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("close returns json(null) when getLane returns null after close", async () => {
+  const daemon = startTestDaemon();
+  try {
+    await postJson(daemon, "/lanes/open", {
+      lane_id: "lane-close-null",
+      implementer_handoff: "h-close-null",
+      task_class: "STANDARD",
+    });
+
+    daemon.services.db
+      .prepare(
+        `
+      INSERT INTO handoffs (
+        handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message,
+        status, resolved_by, resolved_at, triggered_by_event_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+      )
+      .run(
+        "h-close-null",
+        "2026-04-23T12:00:00.000Z",
+        "proj",
+        "conv",
+        "maestro",
+        "claude",
+        null,
+        "Task type: implement_small",
+        "completed",
+        "worker",
+        "2026-04-23T12:01:00.000Z",
+        "event-close-null",
+      );
+    daemon.services.db
+      .prepare(
+        `
+      INSERT INTO agent_performance (
+        performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type, outcome,
+        gate_outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, tokens_used,
+        latency_ms, source, notes, metadata_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+      )
+      .run(
+        "perf-close-null",
+        "2026-04-23T12:02:00.000Z",
+        "h-close-null",
+        "conv",
+        "proj",
+        "claude",
+        "implement_small",
+        "merged",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "worker",
+        null,
+        "{}",
+      );
+
+    daemon.services.db.exec(`
+      CREATE TRIGGER delete_lane_after_gate_outcome_update
+      AFTER UPDATE OF gate_outcome ON agent_performance
+      BEGIN
+        DELETE FROM lane_ledger WHERE lane_id = 'lane-close-null';
+      END;
+    `);
+
+    const closed = await postJson(daemon, "/lanes/close", {
+      lane_id: "lane-close-null",
+      gate_status: "passed",
+    });
+    expect(closed.status).toBe(200);
+    expect(await closed.json()).toBeNull();
+  } finally {
+    daemon.stop();
+  }
+});
+
 test("duplicate lane_id returns 409", async () => {
   const daemon = startTestDaemon();
   try {

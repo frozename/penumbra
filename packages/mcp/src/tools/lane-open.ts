@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { toTextContent } from "@nova/mcp-shared";
 import { TaskClassSchema } from "@penumbra/core";
 import type { DaemonClient } from "../daemon-client.js";
 
@@ -18,7 +19,7 @@ export function laneOpenHandler(daemon: DaemonClient) {
       implementer_handoff: input.implementer_handoff_id,
       task_class: input.task_class,
     });
-    return response as { lane_id: string; ts_opened: string; gate_status: "open" };
+    return toTextContent(response);
   };
 }
 

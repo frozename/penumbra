@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { toTextContent } from "@nova/mcp-shared";
 import { LaneCloseMetadataSchema, type LaneCloseMetadata } from "@penumbra/core";
 import type { DaemonClient } from "../daemon-client.js";
 
@@ -49,7 +50,7 @@ export function laneCloseHandler(daemon: DaemonClient) {
       });
     }
 
-    return response as { lane_id: string; gate_status: string };
+    return toTextContent(response);
   };
 }
 

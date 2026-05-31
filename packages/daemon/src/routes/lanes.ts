@@ -3,6 +3,7 @@ import type { Services, TaskClass } from "@penumbra/core";
 import {
   TaskClassSchema,
   closeLane,
+  getLane,
   insertLane,
   recentLanes,
   type LaneGateStatus,
@@ -74,7 +75,12 @@ export async function lanesOpenRoute(req: Request, services: Services): Promise<
     throw err;
   }
 
-  return json({ lane_id: parsed.data.lane_id, ts_opened, gate_status: "open" });
+  // Return the full persisted lane row (not a minimal ack).
+  const opened = getLane(services.db, parsed.data.lane_id);
+  if (!opened) {
+    throw new Error(`lane not found after insert: ${parsed.data.lane_id}`);
+  }
+  return json(opened);
 }
 
 export async function lanesCloseRoute(req: Request, services: Services): Promise<Response> {
@@ -128,46 +134,14 @@ export async function lanesCloseRoute(req: Request, services: Services): Promise
     throw err;
   }
 
-  const closedLane = services.db
-    .query<
-      { implementer_handoff: string },
-      [string]
-    >("SELECT implementer_handoff FROM lane_ledger WHERE lane_id = ?")
-    .get(parsed.data.lane_id);
-  if (!closedLane) {
-    throw new Error(`lane disappeared during close: ${parsed.data.lane_id}`);
+  const closedLane = getLane(services.db, parsed.data.lane_id);
+  if (closedLane) {
+    services.db
+      .prepare(`UPDATE agent_performance SET gate_outcome = ? WHERE handoff_id = ?`)
+      .run(parsed.data.gate_status, closedLane.implementer_handoff);
   }
-  services.db
-    .prepare(`UPDATE agent_performance SET gate_outcome = ? WHERE handoff_id = ?`)
-    .run(parsed.data.gate_status, closedLane.implementer_handoff);
 
-  const row = services.db
-    .query<
-      {
-        lane_id: string;
-        ts_opened: string;
-        ts_closed: string | null;
-        task_class: string;
-        implementer_handoff: string;
-        reviewer_handoff: string | null;
-        gate_status: LaneGateStatus;
-        recalled_memory_ids: string;
-        recalled_query: string | null;
-        override_reason: string | null;
-        metadata_json: string;
-      },
-      [string]
-    >("SELECT * FROM lane_ledger WHERE lane_id = ?")
-    .get(parsed.data.lane_id);
-
-  return json(
-    row
-      ? {
-          ...row,
-          recalled_memory_ids: JSON.parse(row.recalled_memory_ids || "[]"),
-        }
-      : null,
-  );
+  return json(getLane(services.db, parsed.data.lane_id) ?? null);
 }
 
 export async function lanesRecentRoute(req: Request, services: Services): Promise<Response> {
