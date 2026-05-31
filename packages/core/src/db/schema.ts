@@ -704,6 +704,18 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
     addColumnIfMissing(db, "t2_memories", "last_verified_actor", "TEXT");
     addColumnIfMissing(db, "t2_memories", "last_verified_reason", "TEXT");
     addColumnIfMissing(db, "t2_memories", "last_verified_session_id", "TEXT");
+    addColumnIfMissing(db, "t2_memories", "why", "TEXT");
+    addColumnIfMissing(db, "t2_memories", "source_quote", "TEXT");
+    // SQLite ALTER TABLE ADD COLUMN does not support non-constant/expression
+    // defaults; legacy rows are backfilled from created_at and new writes
+    // must set learned_at explicitly.
+    addColumnIfMissing(db, "t2_memories", "learned_at", "TEXT");
+    addColumnIfMissing(db, "t2_memories", "durability", "TEXT");
+    addColumnIfMissing(db, "t2_memories", "depth", "INTEGER");
+    addColumnIfMissing(db, "t2_memories", "is_episodic", "INTEGER NOT NULL DEFAULT 0");
+    addColumnIfMissing(db, "t2_memories", "decay_score", "REAL");
+    addColumnIfMissing(db, "t2_memories", "decay_scored_at", "TEXT");
+    addColumnIfMissing(db, "t2_memories", "archived_at", "TEXT");
     addColumnIfMissing(db, "t2_memory_verification_events", "basis", "TEXT");
     addColumnIfMissing(db, "t2_memory_verification_events", "basis_type", "TEXT");
     addColumnIfMissing(db, "t2_memory_verification_events", "basis_detail", "TEXT");
