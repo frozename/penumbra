@@ -150,6 +150,12 @@ const MemoryWriteT2Schema = z
     sub_kind: z.string().optional().nullable(),
     cc_kind: z.string().optional().nullable(),
     project_id: z.string().nullable().optional(),
+    session_id: z
+      .string()
+      .min(1)
+      .max(120)
+      .regex(/^[A-Za-z0-9._-]+$/)
+      .optional(),
   })
   .strict();
 
@@ -183,7 +189,7 @@ export async function memoryWriteT2Route(req: Request, services: Services): Prom
 
   const result = services.db.transaction(() => {
     const directCycleId = ensureDirectWriteCycleId(services.db);
-    const wrote = writeDirectT2Memory(services.db, {
+    const writeInput = {
       title: data.title,
       body: data.body,
       slug: data.slug,
@@ -192,7 +198,11 @@ export async function memoryWriteT2Route(req: Request, services: Services): Prom
       cc_kind: data.cc_kind,
       project_id: data.project_id,
       embedding,
-    });
+    } satisfies Parameters<typeof writeDirectT2Memory>[1];
+    if (data.session_id) {
+      (writeInput as { source_session_ids?: string[] }).source_session_ids = [data.session_id];
+    }
+    const wrote = writeDirectT2Memory(services.db, writeInput);
     const wroteProjectId = data.project_id ?? null;
 
     const parsedLinks = parseWikiLinks(data.body);

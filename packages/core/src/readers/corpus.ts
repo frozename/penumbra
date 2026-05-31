@@ -156,10 +156,11 @@ export async function queryCorpus(
         title: string;
         body: string;
         project_id: string | null;
+        source_session_ids: string;
       },
       string[]
     >(
-      `SELECT memory_id, rowid, created_at, obs_type, title, body, project_id
+      `SELECT memory_id, rowid, created_at, obs_type, title, body, project_id, source_session_ids
          FROM t2_memories WHERE memory_id IN (${memberPlaceholders})`,
     )
     .all(...memberRows.map((m) => m.memory_id));
@@ -190,7 +191,18 @@ export async function queryCorpus(
         body: c.body,
         score: 1 - r.distance,
         project_id: c.project_id,
+        source_session_ids: parseSourceSessionIds(c.source_session_ids),
       };
     })
     .filter((x): x is HybridHit => x !== null);
+}
+
+function parseSourceSessionIds(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((value): value is string => typeof value === "string");
+  } catch {
+    return [];
+  }
 }

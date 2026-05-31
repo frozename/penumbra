@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Embedder } from "../embedder/interface.js";
 import { T2MemoryWriteSchema, type T2MemoryWriteInput } from "../schemas/memory.js";
@@ -34,6 +34,7 @@ export interface DirectT2WriteInput {
   title: string;
   body: string;
   project_id?: string | null;
+  source_session_ids?: string[];
   embedding: Float32Array;
 }
 
@@ -49,6 +50,10 @@ export function writeDirectT2Memory(db: Database, input: DirectT2WriteInput): Di
   const hook = input.hook ?? null;
   const subKind = input.sub_kind ?? null;
   const ccKind = input.cc_kind ?? null;
+  const sourceSessionIds = [...new Set((input.source_session_ids ?? []).map((id) => id.trim()))].filter(
+    (id) => id.length > 0,
+  );
+  const sourceSessionIdsJson = JSON.stringify(sourceSessionIds);
 
   if (slug !== null) {
     const existing = db
@@ -60,9 +65,22 @@ export function writeDirectT2Memory(db: Database, input: DirectT2WriteInput): Di
     if (existing) {
       db.run(
         `UPDATE t2_memories
-         SET kind = 'direct', origin = 'direct', title = ?, body = ?, hook = ?, sub_kind = ?, cc_kind = ?, project_id = ?, updated_at = ?, retired_at = NULL
+         SET kind = 'direct', origin = 'direct', title = ?, body = ?, hook = ?, sub_kind = ?, cc_kind = ?, project_id = ?,
+             source_session_ids = CASE WHEN ? = '[]' THEN source_session_ids ELSE ? END,
+             updated_at = ?, retired_at = NULL
          WHERE memory_id = ?`,
-        [input.title, input.body, hook, subKind, ccKind, projectId, now, existing.memory_id],
+        [
+          input.title,
+          input.body,
+          hook,
+          subKind,
+          ccKind,
+          projectId,
+          sourceSessionIdsJson,
+          sourceSessionIdsJson,
+          now,
+          existing.memory_id,
+        ],
       );
       const rowid = db
         .query<{ rowid: number }, [string]>("SELECT rowid FROM t2_memories WHERE memory_id = ?")
@@ -84,7 +102,7 @@ export function writeDirectT2Memory(db: Database, input: DirectT2WriteInput): Di
     [
       memoryId,
       projectId,
-      "[]",
+      sourceSessionIdsJson,
       now,
       now,
       input.title,
@@ -271,6 +289,7 @@ export interface T2PromotionOpts {
 
 export class T2Promotion {
   private readonly recentShapes = new Map<string, number>();
+  private readonly promotedTranscriptHashes = new Set<string>();
 
   constructor(private readonly opts: T2PromotionOpts) {}
 
@@ -301,9 +320,11 @@ export class T2Promotion {
     // Fetch transcript from t0_events
     const events = this.opts.db
       .query<
-        { event_type: string; payload_summary: string | null },
+        { event_type: string; payload_summary: string | null; payload_json: string | null },
         [string]
-      >("SELECT event_type, payload_summary FROM t0_events WHERE session_id = ? ORDER BY ts ASC")
+      >(
+        "SELECT event_type, payload_summary, payload_json FROM t0_events WHERE session_id = ? ORDER BY ts ASC",
+      )
       .all(rollup.session_id);
 
     if (events.length === 0) {
@@ -315,7 +336,7 @@ export class T2Promotion {
       .filter((e) => e.event_type === "agent-prompt" || e.event_type === "agent-response")
       .map((e) => {
         const role = e.event_type === "agent-prompt" ? "User" : "Assistant";
-        const content = (e.payload_summary || "").trim();
+        const content = pickTranscriptContent(e.payload_summary, e.payload_json);
         return content ? `${role}: ${content}` : null;
       })
       .filter(Boolean)
@@ -350,9 +371,17 @@ export class T2Promotion {
         if (firstKey !== undefined) this.recentShapes.delete(firstKey);
       }
       this.recentShapes.set(shapeKey, seenCount);
-      if (seenCount > highFrequencyThreshold && Math.random() < 0.5) {
-        this.markPromoted(rollupId);
-        return 0;
+      if (seenCount > highFrequencyThreshold) {
+        const transcriptHash = hashContent(transcript);
+        if (this.promotedTranscriptHashes.has(transcriptHash)) {
+          this.markPromoted(rollupId);
+          return 0;
+        }
+        if (this.promotedTranscriptHashes.size >= 256) {
+          const firstHash = this.promotedTranscriptHashes.values().next().value as string | undefined;
+          if (firstHash !== undefined) this.promotedTranscriptHashes.delete(firstHash);
+        }
+        this.promotedTranscriptHashes.add(transcriptHash);
       }
 
       const rawExtractions = await this.opts.llm(llmTranscript);
@@ -456,4 +485,58 @@ export class T2Promotion {
       .all(cutoff, cutoff, limit, finalMinEvents)
       .map((r) => r.rollup_id);
   }
+}
+
+function pickTranscriptContent(payloadSummary: string | null, payloadJson: string | null): string {
+  const summary = (payloadSummary ?? "").trim();
+  if (summary) return summary;
+  if (!payloadJson) return "";
+  try {
+    const parsed = JSON.parse(payloadJson) as unknown;
+    return extractPayloadText(parsed).trim();
+  } catch {
+    return "";
+  }
+}
+
+function extractPayloadText(payload: unknown): string {
+  if (typeof payload === "string") return payload;
+  if (!payload || typeof payload !== "object") return "";
+  const record = payload as Record<string, unknown>;
+  return (
+    readString(record.text) ??
+    readString(record.message) ??
+    readString(record.prompt) ??
+    readString(record.message_excerpt) ??
+    readString(record.response) ??
+    extractResponseText(record.response) ??
+    extractInputText(record.input) ??
+    ""
+  );
+}
+
+function extractResponseText(response: unknown): string | null {
+  if (typeof response === "string") return response;
+  if (Array.isArray(response) && response.length > 0) {
+    const first = response[0];
+    if (first && typeof first === "object") return readString((first as Record<string, unknown>).text);
+  }
+  if (response && typeof response === "object") {
+    return readString((response as Record<string, unknown>).text);
+  }
+  return null;
+}
+
+function extractInputText(input: unknown): string | null {
+  if (!input || typeof input !== "object") return null;
+  const record = input as Record<string, unknown>;
+  return readString(record.text) ?? readString(record.message) ?? readString(record.prompt);
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function hashContent(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
 }

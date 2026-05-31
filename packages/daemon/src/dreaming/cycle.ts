@@ -96,6 +96,7 @@ export interface DreamCycleDeps {
     briefMarkdown: string,
     projectId: string,
     cycleId: string,
+    opts?: { session_id?: string | null },
   ) => Promise<{ memory_id: string }>;
   pressureGuard?: PressureGuard;
   judgePool?: JudgePool;

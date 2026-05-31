@@ -22,15 +22,18 @@ export function buildDreamCycleDeps(
     briefMarkdown: string,
     projectId: string,
     cycleId: string,
+    opts?: { session_id?: string | null },
   ): Promise<{ memory_id: string }> => {
     const memory_id = randomUUID();
     const nowIso = new Date().toISOString();
+    const sourceSessionIds = opts?.session_id ? JSON.stringify([opts.session_id]) : "[]";
     db.prepare(
-      `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, window_start, window_end, title, body, created_at, updated_at)
-       VALUES(?, ?, 'system', 'brief', ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, source_session_ids, window_start, window_end, title, body, created_at, updated_at)
+       VALUES(?, ?, 'system', 'brief', ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       memory_id,
       projectId,
+      sourceSessionIds,
       nowIso,
       nowIso,
       `Brief: ${projectId} (${cycleId.slice(0, 8)})`,

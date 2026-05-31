@@ -40,7 +40,7 @@ export class RecallReader {
         title: h.title,
         body: h.body,
         project_id: h.project_id,
-        source_session_ids: [],
+        source_session_ids: h.source_session_ids,
         created_at: h.ts,
         ts: h.ts,
       }));

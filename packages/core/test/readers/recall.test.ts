@@ -204,3 +204,33 @@ test("excludes retired t2 memories from results", async () => {
   });
   expect(results.map((r) => r.id)).toEqual(["active"]);
 });
+
+test("hybrid strategy returns persisted source_session_ids from t2 rows", async () => {
+  const embedder = new TestEmbedder({ dim: 384 });
+  const [vec] = await embedder.embed(["hybrid session provenance"]);
+  db.run(
+    `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, source_session_ids, window_start, window_end,
+                             title, body, metadata_json, created_at, updated_at)
+     VALUES ('hybrid-src', 'p1', 'u', 'summary', ?, '2026-04-20T00:00:00Z', '2026-04-20T00:00:00Z',
+             'hybrid', 'hybrid session provenance', '{}', '2026-04-20T00:00:00Z', '2026-04-20T00:00:00Z')`,
+    [JSON.stringify(["sess-hybrid-1"])],
+  );
+  const rowid = db
+    .query<{ rowid: number }, [string]>("SELECT rowid FROM t2_memories WHERE memory_id = ?")
+    .get("hybrid-src")!.rowid;
+  db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [rowid, vec!]);
+
+  const reader = new RecallReader({ db, embedder });
+  const results = await reader.recall({
+    query: "hybrid session provenance",
+    project_id: "p1",
+    limit: 5,
+    include_raw: false,
+    min_score: 0,
+    strategy_hint: "hybrid",
+  });
+
+  expect(results).toHaveLength(1);
+  expect(results[0]?.id).toBe("hybrid-src");
+  expect(results[0]?.source_session_ids).toEqual(["sess-hybrid-1"]);
+});

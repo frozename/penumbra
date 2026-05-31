@@ -29,6 +29,7 @@ export interface HybridHit {
   body: string;
   score: number;
   project_id: string | null;
+  source_session_ids: string[];
 }
 
 export async function hybridSearch(
@@ -57,10 +58,11 @@ export async function hybridSearch(
         title: string;
         body: string;
         project_id: string | null;
+        source_session_ids: string;
       },
       SQLQueryBindings[]
     >(
-      `SELECT m.memory_id, m.rowid, m.created_at, m.obs_type, m.title, m.body, m.project_id
+      `SELECT m.memory_id, m.rowid, m.created_at, m.obs_type, m.title, m.body, m.project_id, m.source_session_ids
          FROM t2_memories m
         WHERE ${whereSql}
           AND m.retired_at IS NULL
@@ -80,8 +82,8 @@ export async function hybridSearch(
          FROM t2_vec v
         WHERE v.rowid IN (${placeholders})
           AND embedding MATCH ?
-        ORDER BY distance ASC
-        LIMIT ?`,
+          AND k = ?
+        ORDER BY distance ASC`,
     )
     .all(...([...candidates.map((c) => c.rowid), qBlob, req.limit] as SQLQueryBindings[]));
 
@@ -98,7 +100,18 @@ export async function hybridSearch(
         body: c.body,
         score: 1 - r.distance, // distance → similarity for caller convenience
         project_id: c.project_id,
+        source_session_ids: parseSourceSessionIds(c.source_session_ids),
       };
     })
     .filter((x): x is HybridHit => x !== null);
+}
+
+function parseSourceSessionIds(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((value): value is string => typeof value === "string");
+  } catch {
+    return [];
+  }
 }

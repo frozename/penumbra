@@ -10,7 +10,7 @@ try {
 }
 import { loadSqliteVec, migrate } from "../../src/index.js";
 import { TestEmbedder } from "../../src/testing/index.js";
-import { T2Promotion, verifyMemory } from "../../src/writers/t2.js";
+import { T2Promotion, verifyMemory, writeDirectT2Memory } from "../../src/writers/t2.js";
 
 let db: Database;
 beforeEach(() => {
@@ -52,6 +52,43 @@ function seedT1(
       "2026-04-27T10:05:00Z",
       sessionId,
       "The project is called Penumbra",
+    ],
+  );
+}
+
+function seedT1WithPayloadJsonOnly(
+  rollupId: string,
+  sessionId: string,
+  endedAt: string,
+  payloadPromptText: string,
+  payloadResponseText: string,
+) {
+  db.run(
+    `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at,
+                             n_events, lane_breakdown_json, provider_breakdown_json)
+     VALUES (?, 'p1', 'u1', ?, '2026-04-27T10:00:00Z', ?, 5, '{}', '{}')`,
+    [rollupId, sessionId, endedAt],
+  );
+  db.run(
+    `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+     VALUES (?, ?, ?, 'mcp', 'u1', 'm1', ?, 'agent-prompt', 'local', ?, NULL)`,
+    [
+      `e-${sessionId}-1`,
+      "2026-04-27T10:00:00Z",
+      "2026-04-27T10:00:00Z",
+      sessionId,
+      JSON.stringify({ text: payloadPromptText }),
+    ],
+  );
+  db.run(
+    `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+     VALUES (?, ?, ?, 'mcp', 'u1', 'm1', ?, 'agent-response', 'local', ?, NULL)`,
+    [
+      `e-${sessionId}-2`,
+      "2026-04-27T10:05:00Z",
+      "2026-04-27T10:05:00Z",
+      sessionId,
+      JSON.stringify({ text: payloadResponseText }),
     ],
   );
 }
@@ -351,4 +388,110 @@ test("promoteRollup replaces orphaned t2_vec rowids", async () => {
   expect(memories.c).toBe(1);
   const vectors = db.query("SELECT COUNT(*) c FROM t2_vec", []).get() as any;
   expect(vectors.c).toBe(1);
+});
+
+test("promoteRollup deterministically keeps one promoted copy for identical high-frequency transcripts", async () => {
+  seedT1("r-dedupe-1", "s-dedupe-1", "2026-04-27T10:05:00Z");
+  seedT1("r-dedupe-2", "s-dedupe-2", "2026-04-27T10:05:00Z");
+
+  const originalRandom = Math.random;
+  Math.random = () => 0.1;
+  try {
+    const prom = new T2Promotion({
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      clock: () => new Date("2026-04-27T15:00:00Z"),
+      uuid: (() => {
+        const ids = ["m-dedupe-1", "m-dedupe-2"];
+        return () => ids.shift() ?? "m-dedupe-fallback";
+      })(),
+      llm: async () => [{ title: "Stable fact", body: "Stable body", kind: "fact" }],
+      minTranscriptChars: 0,
+      highFrequencyThreshold: 0,
+    });
+
+    const first = await prom.promoteRollup("r-dedupe-1");
+    const second = await prom.promoteRollup("r-dedupe-2");
+    expect(first).toBe(1);
+    expect(second).toBe(0);
+  } finally {
+    Math.random = originalRandom;
+  }
+
+  const memories = db.query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM t2_memories`).get();
+  expect(memories?.c).toBe(1);
+});
+
+test("promoteRollup uses payload_json transcript text and still applies transcript length gates", async () => {
+  const shortPrompt = "tiny";
+  const shortResponse = "small";
+  seedT1WithPayloadJsonOnly(
+    "r-json-short",
+    "s-json-short",
+    "2026-04-27T10:05:00Z",
+    shortPrompt,
+    shortResponse,
+  );
+
+  const shortInputs: string[] = [];
+  const shortProm = new T2Promotion({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date("2026-04-27T15:00:00Z"),
+    uuid: () => "m-json-short",
+    llm: async (transcript) => {
+      shortInputs.push(transcript);
+      return [{ title: "T", body: "B", kind: "fact" }];
+    },
+    minTranscriptChars: 30,
+    maxTranscriptChars: 200,
+  });
+  const shortCount = await shortProm.promoteRollup("r-json-short");
+  expect(shortCount).toBe(0);
+  expect(shortInputs).toHaveLength(0);
+
+  const longPrompt = "P".repeat(120);
+  const longResponse = "R".repeat(120);
+  seedT1WithPayloadJsonOnly(
+    "r-json-long",
+    "s-json-long",
+    "2026-04-27T10:05:00Z",
+    longPrompt,
+    longResponse,
+  );
+
+  const longInputs: string[] = [];
+  const longProm = new T2Promotion({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date("2026-04-27T15:00:00Z"),
+    uuid: () => "m-json-long",
+    llm: async (transcript) => {
+      longInputs.push(transcript);
+      return [{ title: "Long", body: "Body", kind: "fact" }];
+    },
+    minTranscriptChars: 1,
+    maxTranscriptChars: 40,
+  });
+  const longCount = await longProm.promoteRollup("r-json-long");
+  expect(longCount).toBe(1);
+  expect(longInputs).toHaveLength(1);
+  expect(longInputs[0]).toContain("… [truncated] …");
+});
+
+test("writeDirectT2Memory persists source_session_ids when provided", () => {
+  const result = writeDirectT2Memory(db, {
+    title: "Direct with session",
+    body: "Body",
+    embedding: new Float32Array(384),
+    project_id: "p1",
+    source_session_ids: ["sess-direct-1"],
+  });
+
+  const row = db
+    .query<{ source_session_ids: string }, [string]>(
+      `SELECT source_session_ids FROM t2_memories WHERE memory_id = ?`,
+    )
+    .get(result.memory_id);
+  expect(JSON.parse(row?.source_session_ids ?? "[]")).toEqual(["sess-direct-1"]);
 });
