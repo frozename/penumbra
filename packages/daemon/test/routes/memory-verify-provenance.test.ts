@@ -100,6 +100,7 @@ test("POST /memory/verify stores provenance and search returns it", async () => 
         claimed_by: "agent-name@worktree",
         reason: "manual spot check",
         session_id: "lane-xyz",
+        basis: { kind: "manual_override", reason: "approved", authorized_by: "lead" },
       }),
     });
     expect(res.status).toBe(200);
@@ -143,6 +144,7 @@ test("POST /memory/verify rejects invalid by values", async () => {
       body: JSON.stringify({
         memory_id: "memory-route-2",
         by: "<script>",
+        basis: { kind: "manual_override", reason: "approved", authorized_by: "lead" },
       }),
     });
     expect(res.status).toBe(400);

@@ -1,5 +1,6 @@
 import type {
   AgentRankOutput,
+  Basis,
   DispatchReliabilityReport,
   MaestroSessionRecord,
   PlanRecord,
@@ -85,7 +86,14 @@ export class DaemonClient {
     return this.post("/memory/search", req);
   }
 
-  async memoryVerify(req: unknown): Promise<unknown> {
+  async memoryVerify(req: {
+    memory_id: string;
+    claimed_by?: string;
+    by?: string;
+    reason?: string;
+    session_id?: string;
+    basis: Basis;
+  }): Promise<unknown> {
     return this.post("/memory/verify", req);
   }
   async memoryWriteT2(req: unknown): Promise<unknown> {

@@ -22,6 +22,8 @@ import {
   enqueueMemoryEfficacyJob,
   getJobStatus,
   listRecentJobs,
+  BasisSchema,
+  validateBasis,
 } from "@penumbra/core";
 import { getPrincipal } from "../auth.js";
 import { json } from "./_helpers.js";
@@ -259,9 +261,17 @@ export async function memoryVerifyRoute(req: Request, services: Services): Promi
         .max(120)
         .regex(/^[A-Za-z0-9._-]+$/)
         .optional(),
+      basis: BasisSchema,
     })
     .safeParse(raw);
   if (!parsed.success) return validationError(parsed);
+  const basisValidation = await validateBasis(services, parsed.data.basis);
+  if (!basisValidation.ok) {
+    return json(
+      { error: { code: basisValidation.status, reason: basisValidation.reason } },
+      basisValidation.status,
+    );
+  }
   // Keep the legacy alias wired for callers that still send `by`.
   const claimedBy = parsed.data.claimed_by ?? parsed.data.by ?? null;
   const verifierActor = services.machineId.get();
@@ -271,6 +281,11 @@ export async function memoryVerifyRoute(req: Request, services: Services): Promi
     claimedBy: claimedBy ?? undefined,
     reason: parsed.data.reason,
     sessionId: parsed.data.session_id,
+    basis: {
+      type: parsed.data.basis.kind,
+      detail: parsed.data.basis.kind,
+      basis: JSON.stringify(parsed.data.basis),
+    },
     uuid: () => eventId,
   });
   if (!result) return json({ error: "memory_not_found" }, 404);

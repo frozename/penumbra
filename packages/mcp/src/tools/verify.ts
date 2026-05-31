@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { toTextContent } from "@nova/mcp-shared";
+import { BasisSchema } from "@penumbra/core";
 import type { DaemonClient } from "../daemon-client.js";
 
 export const VerifyInputShape = {
@@ -24,6 +25,7 @@ export const VerifyInputShape = {
     .max(120)
     .regex(/^[A-Za-z0-9._-]+$/)
     .optional(),
+  basis: BasisSchema,
 };
 
 const VerifySchema = z.object(VerifyInputShape);
@@ -38,6 +40,7 @@ export function verifyHandler(daemon: DaemonClient) {
         claimed_by,
         reason: parsed.reason,
         session_id: parsed.session_id,
+        basis: parsed.basis,
       }),
     );
   };
