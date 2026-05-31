@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
-import { join } from "node:path";
 import { HandoffReader, WorktreeManager, loadSqliteVec } from "@penumbra/core";
+import { resolveStorageDbPath } from "../../../core/src/db/storage-db-path.js";
 
 try {
   if (process.platform === "darwin") {
@@ -40,7 +40,7 @@ export async function runWorktreeGc(opts: WorktreeGcOpts): Promise<WorktreeGcRes
   const gracePeriodMs = opts.gracePeriodMs ?? DEFAULT_GRACE_MS;
   const nowMs = Date.now();
 
-  const dbPath = join(storageRoot, "db.sqlite");
+  const dbPath = resolveStorageDbPath(storageRoot);
   const db = new Database(dbPath, { readonly: true });
   loadSqliteVec(db);
 
@@ -86,7 +86,7 @@ export async function runWorktreeGc(opts: WorktreeGcOpts): Promise<WorktreeGcRes
 
   if (apply) {
     // Re-open writable for GC events
-    const writableDb = new Database(join(storageRoot, "db.sqlite"));
+    const writableDb = new Database(resolveStorageDbPath(storageRoot));
     loadSqliteVec(writableDb);
     const gcManager = opts.worktreeManager ?? new WorktreeManager();
 

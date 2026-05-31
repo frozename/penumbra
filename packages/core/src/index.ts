@@ -86,6 +86,11 @@ export {
 } from "./long-lived/self-reader.js";
 export { applySchema, SCHEMA_VERSION, runStartupZombieSweep } from "./db/schema.js";
 export { migrate, type MigrateOpts } from "./db/migrations.js";
+export {
+  resolveStorageDbPath,
+  assertTestDbPathIsolation,
+  type ResolveStorageDbPathOpts,
+} from "./db/storage-db-path.js";
 export { backfillRecallFields, type BackfillStats } from "./db/backfill-recall-fields.js";
 export {
   closeLane,

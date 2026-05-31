@@ -30,6 +30,7 @@ import {
   loadAgentChatConfig,
   resolveAgentChatConfigPath,
 } from "../../../daemon/src/agentchat-config.js";
+import { resolveStorageDbPath } from "../../../core/src/db/storage-db-path.js";
 import { defaultProjectRegistryPath, loadProjectRegistry } from "@penumbra/core";
 import type { AgentRoutingConfig, ProviderQuota } from "@penumbra/core";
 
@@ -91,7 +92,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
   warnLegacyOperatorConfigFiles();
 
   const token = readFileSync(join(opts.storageRoot, "token"), "utf8").trim();
-  const dbPath = join(opts.storageRoot, "db.sqlite");
+  const dbPath = resolveStorageDbPath(opts.storageRoot);
   const db = new Database(dbPath);
   let handle: DaemonHandle | undefined;
   try {

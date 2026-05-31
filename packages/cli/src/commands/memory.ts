@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { parseWikiLinks } from "@penumbra/core";
+import { resolveStorageDbPath } from "../../../core/src/db/storage-db-path.js";
 
 const DEFAULT_DIGEST_LIMIT = 200;
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
@@ -361,7 +362,7 @@ export function runMemoryDigest(opts: RunMemoryDigestOpts): number {
   const print = opts.print ?? ((line: string) => process.stdout.write(line));
   const shouldClose = !opts.db;
 
-  const db = opts.db ?? new Database(join(opts.storageRoot, "db.sqlite"), { readonly: true });
+  const db = opts.db ?? new Database(resolveStorageDbPath(opts.storageRoot), { readonly: true });
   try {
     const rows = db
       .query<MemoryDigestRow, [string, number]>(

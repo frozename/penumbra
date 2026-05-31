@@ -2,8 +2,15 @@ import { Database } from "bun:sqlite";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { applyRuntimePragmas, loadSqliteVec, migrate, systemUuid, type Uuid } from "@penumbra/core";
+import {
+  applyRuntimePragmas,
+  loadSqliteVec,
+  migrate,
+  systemUuid,
+  type Uuid,
+} from "@penumbra/core";
 import { AGENTCHAT_TEMPLATE } from "./init-agentchat-template.js";
+import { resolveStorageDbPath } from "../../../core/src/db/storage-db-path.js";
 
 export interface RunInitOpts {
   storageRoot: string;
@@ -36,7 +43,7 @@ export async function runInit(opts: RunInitOpts): Promise<number> {
     writeFileSync(tokenPath, `${uuid()}\n`, { mode: 0o600 });
   }
 
-  const dbPath = join(opts.storageRoot, "db.sqlite");
+  const dbPath = resolveStorageDbPath(opts.storageRoot);
   const db = new Database(dbPath, { create: true });
   try {
     loadSqliteVec(db);
