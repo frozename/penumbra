@@ -85,7 +85,7 @@ it("memory_links UNIQUE(src_id, dst_id, link_type) prevents duplicate edges from
   ).toThrow();
 });
 
-it("t1_rollups gains claimed_at, claimed_by_cycle, embedding_model_version; t2_memories gains embedding_model_version", async () => {
+it("t1_rollups gains claimed_at, claimed_by_cycle, embedding_model_version, promotion_skipped_at; t2_memories gains embedding_model_version", async () => {
   const db = await openTestDb();
   const t1cols = db
     .prepare("PRAGMA table_info(t1_rollups)")
@@ -98,6 +98,7 @@ it("t1_rollups gains claimed_at, claimed_by_cycle, embedding_model_version; t2_m
   expect(t1cols).toContain("claimed_at");
   expect(t1cols).toContain("claimed_by_cycle");
   expect(t1cols).toContain("embedding_model_version");
+  expect(t1cols).toContain("promotion_skipped_at");
   expect(t2cols).toContain("embedding_model_version");
 });
 

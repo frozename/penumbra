@@ -368,6 +368,25 @@ test("detectEligibleRollups respects minEvents threshold", () => {
   expect(eligible).not.toContain("r-ineligible");
 });
 
+test("detectEligibleRollups excludes promotion-skipped rollups", () => {
+  seedT1("r-skipped", "s-skipped", "2026-04-26T10:00:00Z");
+  db.run(
+    `UPDATE t1_rollups SET promotion_skipped_at = '2026-04-27T15:00:00.000Z' WHERE rollup_id = 'r-skipped'`,
+  );
+
+  const prom = new T2Promotion({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date("2026-04-27T15:00:00Z"),
+    uuid: () => "u",
+    llm: async () => [],
+    minEvents: 5,
+  });
+
+  const eligible = prom.detectEligibleRollups(24, new Date("2026-04-27T15:00:00Z"));
+  expect(eligible).not.toContain("r-skipped");
+});
+
 test("promoteRollup replaces orphaned t2_vec rowids", async () => {
   seedT1("r-orphan", "s-orphan", "2026-04-27T10:05:00Z");
   db.run(`INSERT INTO t2_vec(rowid, embedding) VALUES (?, ?)`, [1, new Float32Array(384)]);

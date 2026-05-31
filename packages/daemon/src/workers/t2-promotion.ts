@@ -27,9 +27,16 @@ DO NOT EXTRACT (❌):
 
 ${T2_PROMPT_FILTER_RULE}
 
+Discriminator rules (required for gateable promotion):
+- Episodic narration (example: "a failing test was written, then implementation followed") must be tagged \`obs_type: "is_episodic"\` and \`promote: false\`.
+- Long-lived standing instructions (example: "You are X, a long-lived agent...") must be tagged \`obs_type: "standing_brief"\` and \`promote: false\`.
+- Density floor: when \`body\` is under 80 characters and \`depth < 2\`, set \`promote: false\`.
+- Depth escape hatch: deep items (\`depth >= 2\`) may still be promotable even when short.
+- Durable semantic facts with explicit rationale should include a non-empty \`why\` and set \`promote: true\`.
+
 If nothing in the transcript clears the bar, the CORRECT answer is the literal string \`{"memories":[]}\` — an empty array. NOT the word "none", NOT "null", NOT prose explaining why nothing matched. Just \`{"memories":[]}\`. This is the right answer for chitchat, pure activity logs, and anything below the bar.
 
-Output ONLY a valid JSON object: {"memories": [...]}. Each memory object: { title (short headline), body (the durable knowledge itself), kind ("fact" | "preference" | "decision" | "knowledge"), metadata (optional object) }. No prose. No code fence. No wrapper tags. No "none"/"null" string fallbacks.
+Output ONLY a valid JSON object: {"memories": [...]}. Each memory object: { title (short headline), body (the durable knowledge itself), kind ("fact" | "preference" | "decision" | "knowledge"), metadata (optional object), obs_type (optional string), why (optional string), source_quote (optional string), learned_at (optional ISO-8601 string), durability (optional string), depth (optional integer), is_episodic (optional boolean), promote (optional boolean) }. No prose. No code fence. No wrapper tags. No "none"/"null" string fallbacks.
 
 Transcript:
 {{TRANSCRIPT}}

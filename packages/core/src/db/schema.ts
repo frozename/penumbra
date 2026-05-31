@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 
-export const SCHEMA_VERSION = 29;
+export const SCHEMA_VERSION = 30;
 
 export interface ReleaseT1RollupClaimsOpts {
   terminalOutcomes?: readonly string[];
@@ -84,7 +84,8 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
         tool_calls_summary      TEXT,
         source_event_ids        TEXT NOT NULL DEFAULT '[]',
         t2_promoted_at          TEXT,
-        failed_promotion_attempts INTEGER NOT NULL DEFAULT 0
+        failed_promotion_attempts INTEGER NOT NULL DEFAULT 0,
+        promotion_skipped_at    TEXT
       );
       CREATE INDEX IF NOT EXISTS t1_by_project     ON t1_rollups(project_id, ended_at DESC);
       CREATE UNIQUE INDEX IF NOT EXISTS t1_session ON t1_rollups(session_id);
@@ -683,6 +684,7 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
     // Additive migration for t1_rollups
     addColumnIfMissing(db, "t1_rollups", "t2_promoted_at", "TEXT");
     addColumnIfMissing(db, "t1_rollups", "failed_promotion_attempts", "INTEGER NOT NULL DEFAULT 0");
+    addColumnIfMissing(db, "t1_rollups", "promotion_skipped_at", "TEXT");
 
     // Index for t2 promotion polling
     db.exec(

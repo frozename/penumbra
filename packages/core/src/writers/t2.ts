@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Embedder } from "../embedder/interface.js";
+import { isNearDuplicate, type NearDuplicateItem } from "../memory/near-dup.js";
 import { T2MemoryWriteSchema, type T2MemoryWriteInput } from "../schemas/memory.js";
 import type { Clock } from "../utils/clock.js";
 import type { Uuid } from "../utils/uuid.js";
@@ -18,6 +19,7 @@ export const T2MemoryExtractionSchema = z.object({
   durability: z.string().nullable().optional(),
   depth: z.number().int().nullable().optional(),
   is_episodic: z.boolean().nullable().optional(),
+  promote: z.boolean().nullable().optional(),
 });
 
 export type T2MemoryExtraction = z.infer<typeof T2MemoryExtractionSchema>;
@@ -424,16 +426,91 @@ export class T2Promotion {
         return 0;
       }
 
-      const bodies = extractions.map((e) => e.body);
+      const promotionGateEnabled = isEnvGateEnabled("PENUMBRA_PROMOTION_GATE");
+      const nearDupGateEnabled = isEnvGateEnabled("PENUMBRA_PROMOTION_NEAR_DUP_GATE");
+      const nearDupThreshold = Number(process.env.PENUMBRA_PROMOTION_NEAR_DUP_THRESHOLD ?? "0.95");
+
+      const filteredExtractions = promotionGateEnabled
+        ? extractions.filter((extraction) => isPromotionCandidate(extraction))
+        : extractions;
+
+      if (filteredExtractions.length === 0) {
+        this.markPromotionSkipped(rollupId);
+        return 0;
+      }
+
+      const bodies = filteredExtractions.map((e) => e.body);
       const embeddings = await this.opts.embedder.embed(bodies);
+      const existingNearDupCandidates = nearDupGateEnabled
+        ? embeddings.map((embedding) =>
+            readExistingNearDuplicateCandidates(
+              this.opts.db,
+              rollup.project_id,
+              embedding,
+              NEAR_DUP_QUERY_LIMIT,
+            ),
+          )
+        : [];
 
-      this.opts.db.transaction(() => {
-        for (let i = 0; i < extractions.length; i++) {
-          const ext = extractions[i]!;
+      const insertedCount = this.opts.db.transaction(() => {
+        const threshold = Number.isFinite(nearDupThreshold) ? nearDupThreshold : 0.95;
+        const selectedCandidates: PendingNearDuplicateCandidate[] = [];
+        let blockedByNearDupInTxn = false;
+
+        for (let i = 0; i < filteredExtractions.length; i++) {
+          const ext = filteredExtractions[i]!;
           const vec = embeddings[i]!;
-          const memoryId = this.opts.uuid();
-          const now = this.opts.clock().toISOString();
+          const candidate: PendingNearDuplicateCandidate = {
+            extraction: ext,
+            body: ext.body,
+            why: ext.why ?? null,
+            depth: ext.depth ?? null,
+            embedding: vec,
+            retireExistingIds: new Map<string, number>(),
+          };
 
+          if (nearDupGateEnabled) {
+            const existingCandidates = existingNearDupCandidates[i] ?? [];
+            const existingDup = isNearDuplicate(candidate, existingCandidates, threshold);
+            if (existingDup) {
+              blockedByNearDupInTxn = true;
+              if (existingDup.winner === "existing") {
+                continue;
+              }
+              candidate.retireExistingIds.set(existingDup.existing.memory_id, existingDup.similarity);
+            }
+
+            const batchDup = isNearDuplicate(candidate, selectedCandidates, threshold);
+            if (batchDup) {
+              blockedByNearDupInTxn = true;
+              if (batchDup.winner === "existing") {
+                continue;
+              }
+              const weakerIndex = selectedCandidates.indexOf(batchDup.existing);
+              if (weakerIndex >= 0) {
+                const weaker = selectedCandidates[weakerIndex]!;
+                for (const [memoryId, similarity] of weaker.retireExistingIds) {
+                  const prior = candidate.retireExistingIds.get(memoryId);
+                  if (prior === undefined || similarity > prior) {
+                    candidate.retireExistingIds.set(memoryId, similarity);
+                  }
+                }
+                selectedCandidates.splice(weakerIndex, 1);
+              }
+            }
+          }
+
+          selectedCandidates.push(candidate);
+        }
+
+        let insertedCountInTxn = 0;
+        const queuedRetireIds = new Set<string>();
+        const now = this.opts.clock().toISOString();
+        let nearDupCycleId: string | null = null;
+
+        for (const pending of selectedCandidates) {
+          const memoryId = this.opts.uuid();
+          const ext = pending.extraction;
           this.opts.db.run(
             `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, source_session_ids,
                                      window_start, window_end, title, body, metadata_json,
@@ -468,13 +545,31 @@ export class T2Promotion {
             .query<{ rowid: number }, [string]>("SELECT rowid FROM t2_memories WHERE memory_id=?")
             .get(memoryId)!.rowid;
           this.opts.db.run("DELETE FROM t2_vec WHERE rowid = ?", [rowid]);
-          this.opts.db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [rowid, vec]);
+          this.opts.db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [rowid, pending.embedding]);
+          insertedCountInTxn += 1;
+
+          if (!nearDupGateEnabled) continue;
+          for (const [existingMemoryId, similarity] of pending.retireExistingIds) {
+            if (queuedRetireIds.has(existingMemoryId)) continue;
+            if (!nearDupCycleId) nearDupCycleId = ensureNearDupRetireCycle(this.opts.db, now);
+            const enqueued = enqueueNearDupRetireAction(this.opts.db, {
+              cycleId: nearDupCycleId,
+              actionId: this.opts.uuid(),
+              memoryId: existingMemoryId,
+              similarity,
+            });
+            if (enqueued) queuedRetireIds.add(existingMemoryId);
+          }
         }
 
-        this.markPromoted(rollupId);
+        if (insertedCountInTxn > 0) this.markPromoted(rollupId);
+        if (insertedCountInTxn === 0 && (blockedByNearDupInTxn || promotionGateEnabled)) {
+          this.markPromotionSkipped(rollupId);
+        }
+        return insertedCountInTxn;
       })();
 
-      return extractions.length;
+      return insertedCount;
     } catch (err) {
       this.recordFailure(rollupId);
       throw err;
@@ -483,9 +578,16 @@ export class T2Promotion {
 
   private markPromoted(rollupId: string): void {
     this.opts.db.run(
-      "UPDATE t1_rollups SET t2_promoted_at = ?, failed_promotion_attempts = 0 WHERE rollup_id = ?",
+      "UPDATE t1_rollups SET t2_promoted_at = ?, promotion_skipped_at = NULL, failed_promotion_attempts = 0 WHERE rollup_id = ?",
       [this.opts.clock().toISOString(), rollupId],
     );
+  }
+
+  private markPromotionSkipped(rollupId: string): void {
+    this.opts.db.run("UPDATE t1_rollups SET promotion_skipped_at = ? WHERE rollup_id = ?", [
+      this.opts.clock().toISOString(),
+      rollupId,
+    ]);
   }
 
   private recordFailure(rollupId: string): void {
@@ -507,6 +609,7 @@ export class T2Promotion {
       .query<{ rollup_id: string }, [string, string, number, number]>(
         `SELECT rollup_id FROM t1_rollups 
          WHERE t2_promoted_at IS NULL 
+           AND promotion_skipped_at IS NULL
            AND (ended_at < ? OR (ended_at IS NULL AND started_at < ?))
            AND failed_promotion_attempts < ?
            AND n_events >= ?`,
@@ -514,6 +617,93 @@ export class T2Promotion {
       .all(cutoff, cutoff, limit, finalMinEvents)
       .map((r) => r.rollup_id);
   }
+}
+
+interface ExistingNearDuplicateCandidate extends NearDuplicateItem {
+  memory_id: string;
+}
+
+interface PendingNearDuplicateCandidate extends NearDuplicateItem {
+  extraction: T2MemoryExtraction;
+  retireExistingIds: Map<string, number>;
+}
+
+const NEAR_DUP_QUERY_LIMIT = 10;
+const NEAR_DUP_RETIRE_CYCLE_ID = "t2-promotion-near-dup";
+
+function isPromotionCandidate(extraction: T2MemoryExtraction): boolean {
+  if (extraction.promote === false) return false;
+  if (extraction.is_episodic === true) return false;
+  if (extraction.obs_type === "standing_brief") return false;
+  const depth = extraction.depth ?? 0;
+  if (extraction.body.trim().length < 80 && depth < 2) return false;
+  return true;
+}
+
+function readExistingNearDuplicateCandidates(
+  db: Database,
+  projectId: string | null,
+  embedding: Float32Array,
+  limit: number,
+): ExistingNearDuplicateCandidate[] {
+  const rows = db
+    .query<
+      {
+        memory_id: string;
+        body: string;
+        why: string | null;
+        depth: number | null;
+        embedding: unknown;
+      },
+      [string | null, Float32Array, number]
+    >(
+      `SELECT m.memory_id, m.body, m.why, m.depth, v.embedding
+       FROM t2_memories m
+       JOIN t2_vec v ON v.rowid = m.rowid
+       WHERE m.retired_at IS NULL
+         AND m.project_id IS ?
+       ORDER BY vec_distance_cosine(v.embedding, ?)
+       LIMIT ?`,
+    )
+    .all(projectId, embedding, limit);
+
+  const candidates: ExistingNearDuplicateCandidate[] = [];
+  for (const row of rows) {
+    const embedding = toFloat32Array(row.embedding, row.memory_id);
+    if (!embedding) continue;
+    candidates.push({
+      memory_id: row.memory_id,
+      body: row.body,
+      why: row.why,
+      depth: row.depth,
+      embedding,
+    });
+  }
+  return candidates;
+}
+
+function toFloat32Array(value: unknown, memoryId?: string): Float32Array | null {
+  try {
+    if (value instanceof Float32Array) return value;
+    if (value instanceof ArrayBuffer) return new Float32Array(value);
+    if (ArrayBuffer.isView(value)) {
+      const view = value as ArrayBufferView;
+      const bytes = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+      return new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+    }
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.warn(`[t2-promotion] failed to decode embedding for memory_id=${memoryId ?? "unknown"}: ${errMsg}`);
+    return null;
+  }
+  return null;
+}
+
+function isEnvGateEnabled(name: string): boolean {
+  const raw = process.env[name];
+  if (!raw) return false;
+  const normalized = raw.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
 function pickTranscriptContent(payloadSummary: string | null, payloadJson: string | null): string {
@@ -568,4 +758,55 @@ function readString(value: unknown): string | null {
 
 function hashContent(content: string): string {
   return createHash("sha256").update(content).digest("hex");
+}
+
+function ensureNearDupRetireCycle(db: Database, nowIso: string): string {
+  const existing = db
+    .query<{ cycle_id: string }, [string]>("SELECT cycle_id FROM dream_cycles WHERE cycle_id = ?")
+    .get(NEAR_DUP_RETIRE_CYCLE_ID);
+  if (existing?.cycle_id) return NEAR_DUP_RETIRE_CYCLE_ID;
+
+  db.run(
+    `INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run)
+     VALUES(?, ?, 't2-promotion-near-dup', 0, 'completed', '[]')`,
+    [NEAR_DUP_RETIRE_CYCLE_ID, nowIso],
+  );
+  return NEAR_DUP_RETIRE_CYCLE_ID;
+}
+
+function enqueueNearDupRetireAction(
+  db: Database,
+  opts: {
+    cycleId: string;
+    actionId: string;
+    memoryId: string;
+    similarity: number;
+  },
+): boolean {
+  const targetIds = JSON.stringify([opts.memoryId]);
+  const alreadyQueued = db
+    .query<{ action_id: string }, [string]>(
+      `SELECT action_id
+         FROM dream_actions
+        WHERE action_type = 'retire'
+          AND status IN ('queued', 'approved', 'auto_applied')
+          AND reverted_by IS NULL
+          AND target_ids = ?
+        LIMIT 1`,
+    )
+    .get(targetIds);
+  if (alreadyQueued) return false;
+
+  db.run(
+    `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
+     VALUES(?, ?, 'P3', 'retire', ?, 'queued', ?, ?)`,
+    [
+      opts.actionId,
+      opts.cycleId,
+      Math.max(0, Math.min(1, opts.similarity)),
+      targetIds,
+      JSON.stringify({ source: "t2_promotion_near_dup_gate" }),
+    ],
+  );
+  return true;
 }
