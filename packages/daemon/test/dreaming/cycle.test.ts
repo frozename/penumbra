@@ -1,7 +1,7 @@
 import { expect, it, beforeAll } from "bun:test";
 import { Database } from "bun:sqlite";
 import { loadSqliteVec, applySchema } from "@penumbra/core";
-import { runDreamCycle } from "../../src/dreaming/cycle.js";
+import { P1_CLAIM_TTL_MS, runDreamCycle } from "../../src/dreaming/cycle.js";
 import { makeFakeJudgePool } from "../../src/dreaming/judge-pool.js";
 import { hashQuery } from "../../src/dreaming/research.js";
 import { sanitizeTitleForQuery } from "../../src/dreaming/query-sanitize.js";
@@ -40,6 +40,7 @@ function testConfig(overrides?: Partial<DreamConfig>): DreamConfig {
     perCycleResearchUsd: 0.25,
     linkAutoThreshold: 0.75,
     p1BatchSize: 10,
+    t2PromotionMinEvents: 5,
     ...overrides,
   };
 }
@@ -150,6 +151,72 @@ it("P1 transactional claim: two concurrent P1 invocations produce disjoint worki
   const c2claims = getClaimedRollups(db, c2);
   const intersection = c1claims.filter((id: string) => c2claims.includes(id));
   expect(intersection).toHaveLength(0);
+});
+
+it("P1 releases claims held by terminal cycles so rollups are re-selectable", async () => {
+  const db = openTestDb();
+  const oldCycleId = "terminal-cycle";
+  db.prepare(
+    `INSERT INTO dream_cycles(cycle_id, started_at, ended_at, trigger, budget_usd_cap, outcome, phases_run)
+     VALUES(?, ?, ?, 'cron', 1.0, 'completed', '["P0","P1"]')`,
+  ).run(oldCycleId, Date.now() - 10_000, Date.now() - 5_000);
+
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "terminal-cycle claim release regression: this rollup should be selectable by the next run.",
+  });
+  db.prepare(`UPDATE t1_rollups SET claimed_at=?, claimed_by_cycle=? WHERE rollup_id=?`).run(
+    Date.now() - 1_000,
+    oldCycleId,
+    rollupId,
+  );
+
+  const cycleId = await runDreamCycle(db, testConfig());
+  const action = db
+    .prepare(
+      `SELECT 1 AS ok
+         FROM dream_actions
+        WHERE cycle_id = ?
+          AND phase = 'P1'
+          AND action_type = 'promote_t1'
+          AND target_ids = ?`,
+    )
+    .get(cycleId, JSON.stringify([rollupId])) as { ok: number } | null;
+  expect(action?.ok).toBe(1);
+});
+
+it("P1 releases stale claims by TTL using millisecond timestamps", async () => {
+  const db = openTestDb();
+  const staleRollupId = seedUnpromotedRollup(db, {
+    body: "stale claim should be released and re-selected after TTL elapsed in milliseconds.",
+  });
+  const freshRollupId = seedUnpromotedRollup(db, {
+    body: "fresh claim should stay leased and not be re-selected yet.",
+  });
+  const now = Date.now();
+  db.prepare(
+    `UPDATE t1_rollups SET claimed_at=?, claimed_by_cycle='still-running' WHERE rollup_id=?`,
+  ).run(now - P1_CLAIM_TTL_MS - 60_000, staleRollupId);
+  db.prepare(
+    `UPDATE t1_rollups SET claimed_at=?, claimed_by_cycle='still-running' WHERE rollup_id=?`,
+  ).run(now - P1_CLAIM_TTL_MS + 60_000, freshRollupId);
+
+  const cycleId = await runDreamCycle(db, testConfig());
+  const staleAction = db
+    .prepare(
+      `SELECT 1 AS ok
+         FROM dream_actions
+        WHERE cycle_id = ?
+          AND phase = 'P1'
+          AND action_type = 'promote_t1'
+          AND target_ids = ?`,
+    )
+    .get(cycleId, JSON.stringify([staleRollupId])) as { ok: number } | null;
+  expect(staleAction?.ok).toBe(1);
+
+  const fresh = db
+    .prepare(`SELECT claimed_by_cycle FROM t1_rollups WHERE rollup_id=?`)
+    .get(freshRollupId) as { claimed_by_cycle: string | null } | null;
+  expect(fresh?.claimed_by_cycle).toBe("still-running");
 });
 
 it("P2 auto-applies semantic_near link when cosine >= LINK_AUTO_THRESHOLD", async () => {

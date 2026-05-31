@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { DispatchEventInput, Logger } from "@penumbra/core";
 import { retireNonDirectMemory } from "@penumbra/core";
+import { releaseT1RollupClaims } from "../../../core/src/db/schema.js";
 import { z } from "zod";
 import type {
   DreamConfig,
@@ -38,6 +39,13 @@ const MIN_PER_CYCLE_USD = 0.01;
 const P2_SCAN_LIMIT = 30;
 const P3_SCAN_LIMIT = 20;
 const LINK_QUEUE_FLOOR = 0.5;
+export const P1_CLAIM_TTL_MS = 60 * 60_000;
+const TERMINAL_DREAM_CYCLE_OUTCOMES = [
+  "bailed",
+  "completed",
+  "completed_with_curator_error",
+  "crashed",
+] as const;
 const ZERO_SPEND = { llm: 0, embedding: 0, research: 0 } as const;
 const DEFAULT_PHASE_BUDGET_FRACTIONS: DreamPhaseBudgetFractions = {
   llm: 0.3,
@@ -334,6 +342,11 @@ export async function runDreamCycle(
     const hasT1ProjectId = t1Columns.some((column) => column.name === "project_id");
     const hasT2ProjectId = t2Columns.some((column) => column.name === "project_id");
     const seenLegacyProjectlessMemoryIds = new Set<string>();
+
+    releaseT1RollupClaims(db, {
+      terminalOutcomes: TERMINAL_DREAM_CYCLE_OUTCOMES,
+      staleBeforeMs: now - P1_CLAIM_TTL_MS,
+    });
 
     let claimedRollups: Array<{
       rollup_id: string;
@@ -1160,15 +1173,20 @@ function sanitizeUsd(value: unknown): number {
   return n;
 }
 
-function getCycleSpend(db: Database, cycleId: string): { llm: number; embedding: number; research: number } {
+function getCycleSpend(
+  db: Database,
+  cycleId: string,
+): { llm: number; embedding: number; research: number } {
   const row = db
     .prepare(
       `SELECT llm_spent_usd, embedding_spent_usd, research_spent_usd
        FROM dream_cycles WHERE cycle_id = ?`,
     )
-    .get(cycleId) as
-    | { llm_spent_usd: number; embedding_spent_usd: number; research_spent_usd: number }
-    | null;
+    .get(cycleId) as {
+    llm_spent_usd: number;
+    embedding_spent_usd: number;
+    research_spent_usd: number;
+  } | null;
   if (!row) return { ...ZERO_SPEND };
   return {
     llm: sanitizeUsd(row.llm_spent_usd),

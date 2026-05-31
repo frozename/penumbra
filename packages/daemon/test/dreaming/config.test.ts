@@ -16,6 +16,9 @@ describe("dreaming/config", () => {
   let originalRewriterTimeoutMs: string | undefined;
   let originalRewriterCacheTtlMs: string | undefined;
   let originalRewriterConcurrency: string | undefined;
+  let originalT2PromotionMinEvents: string | undefined;
+  let originalDreamingEnabled: string | undefined;
+  let originalDreamingDailyUsd: string | undefined;
 
   beforeEach(() => {
     resetConfigForTest();
@@ -27,6 +30,9 @@ describe("dreaming/config", () => {
     originalRewriterTimeoutMs = process.env.PENUMBRA_DREAMING_REWRITER_TIMEOUT_MS;
     originalRewriterCacheTtlMs = process.env.PENUMBRA_DREAMING_REWRITER_CACHE_TTL_MS;
     originalRewriterConcurrency = process.env.PENUMBRA_DREAMING_REWRITER_CONCURRENCY;
+    originalT2PromotionMinEvents = process.env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS;
+    originalDreamingEnabled = process.env.PENUMBRA_DREAMING_ENABLED;
+    originalDreamingDailyUsd = process.env.PENUMBRA_DREAMING_DAILY_USD;
 
     delete process.env.PENUMBRA_DREAMING_BRIEF_REFRESH_HOURS;
     delete process.env.PENUMBRA_DREAMING_NEGATIVE_CACHE_TTL_MS;
@@ -36,6 +42,9 @@ describe("dreaming/config", () => {
     delete process.env.PENUMBRA_DREAMING_REWRITER_TIMEOUT_MS;
     delete process.env.PENUMBRA_DREAMING_REWRITER_CACHE_TTL_MS;
     delete process.env.PENUMBRA_DREAMING_REWRITER_CONCURRENCY;
+    delete process.env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS;
+    delete process.env.PENUMBRA_DREAMING_ENABLED;
+    delete process.env.PENUMBRA_DREAMING_DAILY_USD;
   });
 
   afterEach(() => {
@@ -61,6 +70,13 @@ describe("dreaming/config", () => {
     if (originalRewriterConcurrency === undefined)
       delete process.env.PENUMBRA_DREAMING_REWRITER_CONCURRENCY;
     else process.env.PENUMBRA_DREAMING_REWRITER_CONCURRENCY = originalRewriterConcurrency;
+    if (originalT2PromotionMinEvents === undefined)
+      delete process.env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS;
+    else process.env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS = originalT2PromotionMinEvents;
+    if (originalDreamingEnabled === undefined) delete process.env.PENUMBRA_DREAMING_ENABLED;
+    else process.env.PENUMBRA_DREAMING_ENABLED = originalDreamingEnabled;
+    if (originalDreamingDailyUsd === undefined) delete process.env.PENUMBRA_DREAMING_DAILY_USD;
+    else process.env.PENUMBRA_DREAMING_DAILY_USD = originalDreamingDailyUsd;
   });
 
   it("rejects negative integers at parse time (strict zod schema)", () => {
@@ -111,11 +127,14 @@ describe("dreaming/config", () => {
     expect(defaults.enabled).toBe(false);
     expect(defaults.briefRefreshHours).toBe(24);
     expect(defaults.rewriterModel).toBe("Qwen3.6-35B-A3B-4bit");
+    expect(defaults.t2PromotionMinEvents).toBe(5);
 
-    const overrides = buildDreamingConfig(
-      getConfig({ PENUMBRA_DREAMING_ENABLED: "true", PENUMBRA_DREAMING_DAILY_USD: "5" }),
-    );
+    process.env.PENUMBRA_DREAMING_ENABLED = "true";
+    process.env.PENUMBRA_DREAMING_DAILY_USD = "5";
+    process.env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS = "7";
+    const overrides = buildDreamingConfig(getConfig(process.env));
     expect(overrides.enabled).toBe(true);
     expect(overrides.dailyUsd).toBe(5);
+    expect(overrides.t2PromotionMinEvents).toBe(7);
   });
 });

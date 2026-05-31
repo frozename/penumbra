@@ -36,6 +36,7 @@ export interface DreamConfig {
   perCycleResearchUsd: number;
   linkAutoThreshold: number;
   p1BatchSize: number;
+  t2PromotionMinEvents?: number;
   retireAutoThreshold?: number;
   autoPromoteMinJudges?: number;
   contentQualityThreshold: number;
@@ -91,6 +92,7 @@ interface DreamingEnvSlice {
   PENUMBRA_DREAMING_COST_ESTIMATE_P7_EMBED_USD: number;
   PENUMBRA_DREAMING_LINK_AUTO_THRESHOLD: number;
   PENUMBRA_DREAMING_P1_BATCH_SIZE: number | undefined;
+  PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS: number;
   PENUMBRA_DREAMING_P: number | undefined;
   PENUMBRA_DREAMING_RETIRE_AUTO_THRESHOLD: number;
   PENUMBRA_DREAMING_CONTENT_QUALITY_THRESHOLD: number;
@@ -123,6 +125,11 @@ interface DreamingEnvSlice {
 
 export function buildDreamingConfig(bundle: ConfigBundle): DreamConfig {
   const env = bundle.env as unknown as DreamingEnvSlice;
+  const t2PromotionMinEventsRaw =
+    env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS ??
+    (process.env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS !== undefined
+      ? Number(process.env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS)
+      : undefined);
   const skipPhases = new Set(
     env.PENUMBRA_DREAMING_SKIP_PHASES.split(",")
       .map((p) => p.trim())
@@ -195,6 +202,7 @@ export function buildDreamingConfig(bundle: ConfigBundle): DreamConfig {
     perCycleResearchUsd: env.PENUMBRA_DREAMING_PER_CYCLE_RESEARCH_USD,
     linkAutoThreshold: env.PENUMBRA_DREAMING_LINK_AUTO_THRESHOLD,
     p1BatchSize: nonNegIntOr(env.PENUMBRA_DREAMING_P1_BATCH_SIZE ?? env.PENUMBRA_DREAMING_P, 10),
+    t2PromotionMinEvents: nonNegIntOr(t2PromotionMinEventsRaw, 5),
     retireAutoThreshold: env.PENUMBRA_DREAMING_RETIRE_AUTO_THRESHOLD,
     contentQualityThreshold: env.PENUMBRA_DREAMING_CONTENT_QUALITY_THRESHOLD,
     autoPromoteMinJudges: env.PENUMBRA_DREAMING_AUTO_PROMOTE_MIN_JUDGES,

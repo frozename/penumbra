@@ -94,21 +94,13 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
     llm: judge,
   });
 
-  let lastEnv: string | undefined;
-  let cachedMinEvents: number = 5;
+  const minEvents = opts.minEvents ?? 5;
   // Cycle-scoped circuit breaker: once we see a connection failure on the first
   // rollup of a tick, skip the rest of the rollups in that tick (no point
   // hammering an unreachable judge N times in a row). Resets every tick.
   return {
     async tick(): Promise<void> {
       if (activePool) activePool.resetTickHealth();
-      const currentEnv = process.env.MEMORY_PROMOTION_MIN_EVENTS;
-      if (currentEnv !== lastEnv) {
-        lastEnv = currentEnv;
-        cachedMinEvents = currentEnv ? parseInt(currentEnv, 10) : 5;
-      }
-      const minEvents = opts.minEvents ?? cachedMinEvents;
-
       const rollups = t2.detectEligibleRollups(opts.delayHours, opts.services.clock(), minEvents);
       let judgeUnreachable = false;
       for (const rollupId of rollups) {

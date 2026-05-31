@@ -268,7 +268,8 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   },
   PENUMBRA_DREAMING_PHASE_EMBEDDING_FRACTION: {
     schema: OptNonNegNum,
-    description: "Optional embedding lane budget fraction (0..1) for per-cycle/daily dreaming caps.",
+    description:
+      "Optional embedding lane budget fraction (0..1) for per-cycle/daily dreaming caps.",
   },
   PENUMBRA_DREAMING_PHASE_RESEARCH_FRACTION: {
     schema: OptNonNegNum,
@@ -735,6 +736,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   PENUMBRA_DREAMING_P1_BATCH_SIZE: {
     schema: OptNonNegInt,
     description: "P1 batch size (overrides PENUMBRA_DREAMING_P; default 10).",
+  },
+  PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS: {
+    schema: NonNegInt,
+    default: 5,
+    description: "Minimum t1_rollups.n_events required for t2 promotion eligibility (default 5).",
   },
   PENUMBRA_DREAMING_P4_QUEUE_MAX: {
     schema: NonNegInt,

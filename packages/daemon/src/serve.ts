@@ -1011,6 +1011,7 @@ export function createDaemonFetchHandler(opts: {
 
 export function serve(opts: ServeOpts): DaemonHandle {
   const daemonServices = opts.services as DaemonServices;
+  const dreamConfig = buildDreamingConfig(getConfig());
   let workerHealthProbe: WorkerHealthProbe | undefined;
   const extraWorkers = loadExtraWorkersConfig({
     projectRegistry: opts.services.projectRegistry,
@@ -1062,6 +1063,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
   const promotion = createT2PromotionWorker({
     services: opts.services,
     delayHours: opts.services.settings.t2PromotionDelayHours,
+    minEvents: dreamConfig.t2PromotionMinEvents ?? 5,
   });
   const retention = createT0RetentionWorker({
     services: opts.services,
@@ -1441,7 +1443,6 @@ export function serve(opts: ServeOpts): DaemonHandle {
   void opts.services.supervisor.startAll();
   efficacyJobRunner.start();
 
-  const dreamConfig = buildDreamingConfig(getConfig());
   let stopDreaming: (() => void) | undefined;
   let stopDigest: (() => void) | undefined;
   let stopEventTrigger: (() => void) | undefined;

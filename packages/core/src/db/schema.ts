@@ -2,6 +2,12 @@ import { Database } from "bun:sqlite";
 
 export const SCHEMA_VERSION = 29;
 
+export interface ReleaseT1RollupClaimsOpts {
+  terminalOutcomes?: readonly string[];
+  staleBeforeMs?: number;
+  cycleIds?: readonly string[];
+}
+
 export function applySchema(db: Database, opts: { embeddingDim?: number } = {}): void {
   const dim = opts.embeddingDim ?? 384;
   db.exec("BEGIN");
@@ -1280,10 +1286,47 @@ export function runStartupZombieSweep(db: Database): void {
   db.prepare(
     `UPDATE dream_cycles SET outcome='crashed', bail_reason='daemon_respawn', ended_at=? WHERE outcome='running'`,
   ).run(now);
-  db.prepare(
-    `UPDATE t1_rollups SET claimed_at=NULL, claimed_by_cycle=NULL
-     WHERE claimed_by_cycle IN (SELECT cycle_id FROM dream_cycles WHERE outcome='crashed')`,
-  ).run();
+  releaseT1RollupClaims(db, { terminalOutcomes: ["crashed"] });
+}
+
+export function releaseT1RollupClaims(db: Database, opts: ReleaseT1RollupClaimsOpts): number {
+  const clauses: string[] = [];
+  const params: Array<string | number> = [];
+
+  const outcomes = (opts.terminalOutcomes ?? []).filter((outcome) => outcome.trim().length > 0);
+  if (outcomes.length > 0) {
+    clauses.push(
+      `claimed_by_cycle IN (
+         SELECT cycle_id FROM dream_cycles WHERE outcome IN (${outcomes.map(() => "?").join(",")})
+       )`,
+    );
+    params.push(...outcomes);
+  }
+
+  if (opts.staleBeforeMs !== undefined && Number.isFinite(opts.staleBeforeMs)) {
+    clauses.push("claimed_at <= ?");
+    params.push(opts.staleBeforeMs);
+  }
+
+  const cycleIds = (opts.cycleIds ?? []).filter((cycleId) => cycleId.trim().length > 0);
+  if (cycleIds.length > 0) {
+    clauses.push(`claimed_by_cycle IN (${cycleIds.map(() => "?").join(",")})`);
+    params.push(...cycleIds);
+  }
+
+  if (clauses.length === 0) {
+    return 0;
+  }
+
+  const result = db
+    .prepare(
+      `UPDATE t1_rollups
+          SET claimed_at=NULL, claimed_by_cycle=NULL
+        WHERE claimed_at IS NOT NULL
+          AND (${clauses.join(" OR ")})`,
+    )
+    .run(...params);
+  return result.changes;
 }
 
 function ensureNullableMaestroSessionChainHandoffId(db: Database): void {

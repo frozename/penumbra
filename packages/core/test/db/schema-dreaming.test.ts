@@ -2,7 +2,7 @@
 import { expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { applySchema, runStartupZombieSweep } from "../../src/db/schema.js";
+import { applySchema, releaseT1RollupClaims, runStartupZombieSweep } from "../../src/db/schema.js";
 
 async function openTestDb(): Promise<Database> {
   const db = new Database(":memory:");
@@ -119,4 +119,39 @@ it("startup zombie sweep marks outcome='running' rows as 'crashed' and clears cl
     .prepare(`SELECT COUNT(*) as n FROM t1_rollups WHERE claimed_at IS NOT NULL`)
     .get() as any;
   expect(claimed.n).toBe(0);
+});
+
+it("shared claim reset path releases terminal-cycle and stale leases", async () => {
+  const db = await openTestDb();
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO dream_cycles(cycle_id,started_at,ended_at,trigger,budget_usd_cap,outcome,phases_run)
+     VALUES
+       ('done', ?, ?, 'cron', 0.5, 'completed', '["P0","P1"]'),
+       ('running-keep', ?, NULL, 'cron', 0.5, 'running', '["P0"]')`,
+  ).run(now - 10_000, now - 5_000, now - 2_000);
+  db.prepare(
+    `INSERT INTO t1_rollups(rollup_id, user_id, session_id, started_at, n_events, claimed_at, claimed_by_cycle)
+     VALUES
+       ('terminal', 'u1', 's-terminal', '2026-01-01T00:00:00Z', 1, ?, 'done'),
+       ('stale', 'u1', 's-stale', '2026-01-01T00:00:00Z', 1, ?, 'running-keep'),
+       ('fresh', 'u1', 's-fresh', '2026-01-01T00:00:00Z', 1, ?, 'running-keep')`,
+  ).run(now - 1_000, now - 5_000, now - 200);
+
+  const released = releaseT1RollupClaims(db, {
+    terminalOutcomes: ["completed"],
+    staleBeforeMs: now - 1_000,
+  });
+  expect(released).toBeGreaterThanOrEqual(2);
+
+  const rows = db
+    .prepare(
+      `SELECT rollup_id, claimed_by_cycle FROM t1_rollups WHERE rollup_id IN ('terminal','stale','fresh') ORDER BY rollup_id`,
+    )
+    .all() as Array<{ rollup_id: string; claimed_by_cycle: string | null }>;
+  expect(rows).toEqual([
+    { rollup_id: "fresh", claimed_by_cycle: "running-keep" },
+    { rollup_id: "stale", claimed_by_cycle: null },
+    { rollup_id: "terminal", claimed_by_cycle: null },
+  ]);
 });

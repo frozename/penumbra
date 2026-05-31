@@ -84,7 +84,13 @@ export {
   type LongLivedAgentStateUpdate,
   type LongLivedPendingActionRow,
 } from "./long-lived/self-reader.js";
-export { applySchema, SCHEMA_VERSION, runStartupZombieSweep } from "./db/schema.js";
+export {
+  applySchema,
+  SCHEMA_VERSION,
+  runStartupZombieSweep,
+  releaseT1RollupClaims,
+  type ReleaseT1RollupClaimsOpts,
+} from "./db/schema.js";
 export { migrate, type MigrateOpts } from "./db/migrations.js";
 export {
   resolveStorageDbPath,

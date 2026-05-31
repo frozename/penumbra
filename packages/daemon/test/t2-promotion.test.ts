@@ -715,7 +715,7 @@ test("t2 promotion worker stops retrying after limit", async () => {
   }
 });
 
-test("t2 promotion worker re-reads MEMORY_PROMOTION_MIN_EVENTS per tick", async () => {
+test("t2 promotion worker defaults minEvents to 5", async () => {
   const d = makeTempDaemon();
   const now = new Date("2026-04-27T10:00:00Z");
   d.services.clock = () => now;
@@ -745,39 +745,14 @@ test("t2 promotion worker re-reads MEMORY_PROMOTION_MIN_EVENTS per tick", async 
       },
     });
 
-    // 1. First tick - default behavior (minEvents=5), r1 has 3, should be skipped
     await worker.tick();
     expect(callCount).toBe(0);
-
-    // 2. Set env to 2 - r1 (n_events=3) should now be eligible
-    process.env.MEMORY_PROMOTION_MIN_EVENTS = "2";
-    await worker.tick();
-    expect(callCount).toBe(1);
-
-    const count = d.services.db.query("SELECT COUNT(*) c FROM t2_memories", []).get() as any;
-    expect(count.c).toBe(1);
-
-    // 3. Unset env - back to 5. (Already promoted so it wouldn't be picked up anyway, but let's add r2)
-    delete process.env.MEMORY_PROMOTION_MIN_EVENTS;
-    d.services.db.run(
-      `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
-        VALUES ('r2', 'p1', 'u1', 's2', ?, ?, 3, '{}', '{}')`,
-      [oldTs, oldTs],
-    );
-    d.services.db.run(
-      `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
-        VALUES ('e2', ?, ?, 'mcp', 'u1', 'm1', 's2', 'agent-prompt', 'local', '{}', 'Session transcript for promotion test second entry. Additional implementation work was completed. More tests were written and confirmed passing. Integration verification process was completed successfully and all requirements were satisfied.')`,
-      [oldTs, oldTs],
-    );
-    await worker.tick();
-    expect(callCount).toBe(1); // Still 1, r2 skipped
   } finally {
-    delete process.env.MEMORY_PROMOTION_MIN_EVENTS;
     d.stop();
   }
 });
 
-test("t2 promotion worker opts take precedence over MEMORY_PROMOTION_MIN_EVENTS env", async () => {
+test("t2 promotion worker respects configured minEvents override", async () => {
   const d = makeTempDaemon();
   const now = new Date("2026-04-27T10:00:00Z");
   d.services.clock = () => now;
@@ -797,21 +772,22 @@ test("t2 promotion worker opts take precedence over MEMORY_PROMOTION_MIN_EVENTS 
       [oldTs, oldTs],
     );
 
-    process.env.MEMORY_PROMOTION_MIN_EVENTS = "2";
-    // Opts set to 5 should win over env=2
+    let callCount = 0;
     const worker = createT2PromotionWorker({
       services: d.services,
       delayHours: 24,
-      minEvents: 5,
-      llm: async () => [{ title: "Fact", body: "Fact", kind: "fact" }],
+      minEvents: 2,
+      llm: async () => {
+        callCount++;
+        return [{ title: "Fact", body: "Fact", kind: "fact" }];
+      },
     });
 
     await worker.tick();
-    // Should skip because opts.minEvents=5 wins
+    expect(callCount).toBe(1);
     const count = d.services.db.query("SELECT COUNT(*) c FROM t2_memories", []).get() as any;
-    expect(count.c).toBe(0);
+    expect(count.c).toBe(1);
   } finally {
-    delete process.env.MEMORY_PROMOTION_MIN_EVENTS;
     d.stop();
   }
 });
