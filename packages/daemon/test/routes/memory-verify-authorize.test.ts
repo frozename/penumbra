@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { buildServices, loadSqliteVec, migrate } from "@penumbra/core";
@@ -41,49 +41,42 @@ function seedMemory(db: Database, memoryId: string, createdAt: string): void {
   );
 }
 
-function seedDispatchMemory(db: Database, handoffId: string, memoryId: string): void {
+function seedLaneClose(
+  db: Database,
+  laneId: string,
+  recalledMemoryIds: string[],
+  reviewerHandoff = "h-review",
+): void {
   db.run(
-    `INSERT INTO dispatch_events(handoff_id, worker_id, source, kind, ts, meta_json)
-     VALUES (?, NULL, 'worker', 'memory_recall_injected', '2026-05-17T12:00:00.000Z', ?)`,
-    [handoffId, JSON.stringify({ memory_id: memoryId })],
+    `INSERT INTO lane_ledger(
+      lane_id, ts_opened, ts_closed, task_class, implementer_handoff, reviewer_handoff,
+      gate_status, recalled_memory_ids, recalled_query, metadata_json
+    ) VALUES (?, '2026-05-17T10:00:00.000Z', '2026-05-17T11:00:00.000Z', 'STANDARD',
+      'h-impl', ?, 'passed', ?, NULL, '{}')`,
+    [laneId, reviewerHandoff, JSON.stringify(recalledMemoryIds)],
   );
 }
 
-test("authorize route accepts manual_override and writes verification rows", async () => {
-  const ctx = setup();
-  try {
-    seedMemory(ctx.db, "m-1", "2026-05-17T11:00:00.000Z");
-    const res = await memoryVerifyAuthorizeRoute(
-      new Request("http://x/memory-verify/authorize", {
-        method: "POST",
-        body: JSON.stringify({
-          handoff_id: "h-auth",
-          verdict: "passed",
-          authorized_by_handoff: "h-auth",
-          basis: { kind: "manual_override", reason: "approved", authorized_by: "lead" },
-        }),
-      }),
-      ctx.services,
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; events_written: number };
-    expect(body.ok).toBe(true);
-    expect(body.events_written).toBe(0);
-  } finally {
-    ctx.stop();
-  }
-});
+function seedHandoff(
+  db: Database,
+  handoffId: string,
+  fromAgent: string,
+  toAgent: string,
+  taskType: string,
+): void {
+  db.run(
+    `INSERT INTO handoffs(handoff_id, ts, conversation_id, from_agent, to_agent, message, status, chain_task_type)
+     VALUES (?, '2026-05-17T12:00:00.000Z', ?, ?, ?, 'prompt', 'dispatched', ?)`,
+    [handoffId, `c-${handoffId}`, fromAgent, toAgent, taskType],
+  );
+}
 
-test("authorize route writes one row per injected memory", async () => {
+test("authorize route writes one row per lane_ledger recalled memory for lane_close basis", async () => {
   const ctx = setup();
   try {
-    seedMemory(ctx.db, "m-1", "2026-05-17T11:00:00.000Z");
-    seedMemory(ctx.db, "m-2", "2026-05-17T11:05:00.000Z");
-    ctx.db.run(
-      `INSERT INTO dispatch_events(handoff_id, worker_id, source, kind, ts, meta_json)
-       VALUES (?, NULL, 'worker', 'memory_recall_injected', ?, ?)`,
-      ["h-auth", "2026-05-17T12:00:00.000Z", JSON.stringify({ memory_ids: ["m-1", "m-2"] })],
-    );
+    seedMemory(ctx.db, "m1", "2026-05-17T11:00:00.000Z");
+    seedMemory(ctx.db, "m2", "2026-05-17T11:05:00.000Z");
+    seedLaneClose(ctx.db, "L1", ["m1", "m2"], "h-review");
 
     const res = await memoryVerifyAuthorizeRoute(
       new Request("http://x/memory-verify/authorize", {
@@ -92,7 +85,7 @@ test("authorize route writes one row per injected memory", async () => {
           handoff_id: "h-auth",
           verdict: "passed",
           authorized_by_handoff: "h-auth",
-          basis: { kind: "manual_override", reason: "approved", authorized_by: "lead" },
+          basis: { kind: "lane_close", lane_id: "L1", reviewer_handoff: "h-review" },
         }),
       }),
       ctx.services,
@@ -103,26 +96,35 @@ test("authorize route writes one row per injected memory", async () => {
     expect(body.ok).toBe(true);
     expect(body.events_written).toBe(2);
 
-    const rows = ctx.db
+    const writtenRows = ctx.db
       .query<{ c: number }, []>("SELECT COUNT(*) AS c FROM t2_memory_verification_events")
       .get();
-    expect(rows?.c).toBe(2);
+    expect(writtenRows?.c).toBe(2);
+
+    const verifiedRows = ctx.db
+      .query<{ c: number }, []>(
+        `SELECT COUNT(*) AS c
+         FROM t2_memories
+         WHERE memory_id IN ('m1', 'm2') AND last_verified_at IS NOT NULL`,
+      )
+      .get();
+    expect(verifiedRows?.c).toBe(2);
   } finally {
     ctx.stop();
   }
 });
 
-test("authorize route is idempotent for the same memory basis", async () => {
+test("authorize route is idempotent for lane_close basis", async () => {
   const ctx = setup();
   try {
-    seedMemory(ctx.db, "m-1", "2026-05-17T11:00:00.000Z");
-    seedDispatchMemory(ctx.db, "h-auth", "m-1");
+    seedMemory(ctx.db, "m1", "2026-05-17T11:00:00.000Z");
+    seedLaneClose(ctx.db, "L1", ["m1"], "h-review");
 
     const payload = {
       handoff_id: "h-auth",
       verdict: "passed",
       authorized_by_handoff: "h-auth",
-      basis: { kind: "manual_override", reason: "approved", authorized_by: "lead" },
+      basis: { kind: "lane_close", lane_id: "L1", reviewer_handoff: "h-review" },
     };
 
     const first = await memoryVerifyAuthorizeRoute(
@@ -154,7 +156,7 @@ test("authorize route is idempotent for the same memory basis", async () => {
   }
 });
 
-test("authorize route returns zero writes when the handoff has no injected memories", async () => {
+test("authorize route returns zero writes with reason for manual_override basis", async () => {
   const ctx = setup();
   try {
     const res = await memoryVerifyAuthorizeRoute(
@@ -171,9 +173,14 @@ test("authorize route returns zero writes when the handoff has no injected memor
     );
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; events_written: number };
+    const body = (await res.json()) as {
+      ok: boolean;
+      events_written: number;
+      reason: string | undefined;
+    };
     expect(body.ok).toBe(true);
     expect(body.events_written).toBe(0);
+    expect(body.reason).toContain("manual_override");
   } finally {
     ctx.stop();
   }
@@ -198,6 +205,45 @@ test("authorize route rejects adversarial_review traversal", async () => {
       ctx.services,
     );
     expect(res.status).toBe(400);
+  } finally {
+    ctx.stop();
+  }
+});
+
+test("authorize route returns zero writes with reason for dispatch_land basis", async () => {
+  const ctx = setup();
+  try {
+    seedMemory(ctx.db, "m1", "2026-05-17T11:00:00.000Z");
+    seedLaneClose(ctx.db, "L1", ["m1"], "h-review");
+    seedHandoff(ctx.db, "h-review", "h-impl", "h-review", "review_adversarial");
+
+    const res = await memoryVerifyAuthorizeRoute(
+      new Request("http://x/memory-verify/authorize", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-auth",
+          verdict: "passed",
+          authorized_by_handoff: "h-auth",
+          basis: {
+            kind: "dispatch_land",
+            merge_commit: "f128dd9",
+            reviewer_handoff: "h-review",
+          },
+        }),
+      }),
+      ctx.services,
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      ok: boolean;
+      events_written: number;
+      reason: string | undefined;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.events_written).toBe(0);
+    expect(body.reason).toContain("dispatch_land");
+    expect(body.reason).toContain("lane_close");
   } finally {
     ctx.stop();
   }

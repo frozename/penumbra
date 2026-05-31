@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { json } from "./_helpers.js";
-import { type Services, verifyMemory, validateBasis } from "@penumbra/core";
+import { getLane, type Services, verifyMemory, validateBasis } from "@penumbra/core";
 
 const BasisSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -64,18 +64,6 @@ function shortSummary(basis: z.infer<typeof BasisSchema>): string {
   }
 }
 
-function parseMemoryIdsFromInjectedEvent(metaJson: string | null): string[] {
-  if (!metaJson) return [];
-  try {
-    const meta = JSON.parse(metaJson) as Record<string, unknown>;
-    if (typeof meta.memory_id === "string") return [meta.memory_id];
-    if (Array.isArray(meta.memory_ids)) {
-      return meta.memory_ids.filter((value): value is string => typeof value === "string");
-    }
-  } catch {}
-  return [];
-}
-
 export async function memoryVerifyAuthorizeRoute(
   req: Request,
   services: Services,
@@ -92,13 +80,26 @@ export async function memoryVerifyAuthorizeRoute(
   }
   const verifierActor = services.machineId.get();
   const basis = parsed.data.basis;
-  const rows = services.db
-    .query<
-      { meta_json: string | null },
-      [string]
-    >(`SELECT meta_json FROM dispatch_events WHERE handoff_id = ? AND kind = 'memory_recall_injected' ORDER BY ts ASC, id ASC`)
-    .all(parsed.data.handoff_id);
-  const memoryIds = rows.flatMap((row) => parseMemoryIdsFromInjectedEvent(row.meta_json));
+  if (basis.kind !== "lane_close") {
+    return json({
+      ok: true,
+      authorized: true,
+      events_written: 0,
+      reason: `basis ${basis.kind} has no lane_ledger recalled_memory_ids source; only lane_close can authorize recalled memories`,
+    });
+  }
+
+  const lane = getLane(services.db, basis.lane_id);
+  if (!lane) {
+    return json({
+      ok: true,
+      authorized: true,
+      events_written: 0,
+      reason: `lane ${basis.lane_id} not found while resolving recalled memories`,
+    });
+  }
+
+  const memoryIds = lane.recalled_memory_ids;
   let written = 0;
   for (const memoryId of memoryIds) {
     const result = verifyMemory(services.db, memoryId, {
