@@ -16,7 +16,12 @@ export function timeline(db: Database, req: TimelineRequest): TimelineEntry[] {
     .query<
       { created_at: string; project_id: string | null; obs_type: string | null },
       [string]
-    >(`SELECT created_at, project_id, obs_type FROM t2_memories WHERE memory_id = ?`)
+    >(
+      `SELECT created_at, project_id, obs_type
+         FROM t2_memories
+        WHERE memory_id = ?
+          AND retired_at IS NULL`,
+    )
     .get(req.anchor);
   if (!anchor) return [];
 
@@ -39,7 +44,9 @@ export function timeline(db: Database, req: TimelineRequest): TimelineEntry[] {
       `SELECT memory_id AS id, created_at AS ts, obs_type, title,
               created_at AS created_at_raw, last_verified_at
          FROM t2_memories
-        WHERE created_at < ? ${projectFragment}
+        WHERE created_at < ?
+          AND retired_at IS NULL
+          ${projectFragment}
         ORDER BY created_at DESC
         LIMIT ?`,
     )
@@ -64,7 +71,9 @@ export function timeline(db: Database, req: TimelineRequest): TimelineEntry[] {
     >(
       `SELECT memory_id AS id, created_at AS ts, obs_type, title,
               created_at AS created_at_raw, last_verified_at
-         FROM t2_memories WHERE memory_id = ?`,
+         FROM t2_memories
+        WHERE memory_id = ?
+          AND retired_at IS NULL`,
     )
     .get(req.anchor);
 
@@ -83,7 +92,9 @@ export function timeline(db: Database, req: TimelineRequest): TimelineEntry[] {
       `SELECT memory_id AS id, created_at AS ts, obs_type, title,
               created_at AS created_at_raw, last_verified_at
          FROM t2_memories
-        WHERE created_at > ? ${projectFragment}
+        WHERE created_at > ?
+          AND retired_at IS NULL
+          ${projectFragment}
         ORDER BY created_at ASC
         LIMIT ?`,
     )

@@ -34,7 +34,9 @@ export function getObservations(db: Database, req: GetObservationsRequest): Obse
     .query<Row, string[]>(
       `SELECT memory_id, created_at, project_id, obs_type, severity, concepts, file_paths, title, body,
               last_verified_at, last_verified_by, last_verified_reason, last_verified_session_id
-         FROM t2_memories WHERE memory_id IN (${placeholders})`,
+         FROM t2_memories
+        WHERE memory_id IN (${placeholders})
+          AND retired_at IS NULL`,
     )
     .all(...req.ids);
   const byId = new Map(rows.map((r) => [r.memory_id, r] as const));
