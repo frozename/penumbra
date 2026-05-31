@@ -121,6 +121,47 @@ describe("WorktreeManager — project parameterization", () => {
     expect(handle.path).toBe(path.join(homeRoot, id));
     await manager.teardownWorktree(id, true);
   });
+
+  it("tears down and deletes branch after daemon restart when map is empty", async () => {
+    const managerA = new WorktreeManager({ rootDir: homeRoot, mainRepoDir: homeRepo });
+    const id = nextHandoff();
+    const handle = await managerA.createWorktree(id);
+    const managerB = new WorktreeManager({ rootDir: homeRoot, mainRepoDir: homeRepo });
+
+    const result = await (managerB as any).teardownWorktree(id, false);
+
+    expect(result).toEqual({ worktreeRemoved: true, branchDeleted: true });
+    expect(fs.existsSync(handle.path)).toBe(false);
+    await expect(
+      exec(`git -C "${homeRepo}" rev-parse --verify --quiet "refs/heads/agent/${id}"`),
+    ).rejects.toThrow();
+  });
+
+  it("honors deleteBranch=false by keeping the agent branch", async () => {
+    const manager = new WorktreeManager({ rootDir: homeRoot, mainRepoDir: homeRepo });
+    const id = nextHandoff();
+    const handle = await manager.createWorktree(id);
+
+    const result = await (manager as any).teardownWorktree(id, false, undefined, false);
+
+    expect(result).toEqual({ worktreeRemoved: true, branchDeleted: false });
+    expect(fs.existsSync(handle.path)).toBe(false);
+    const branch = await exec(`git -C "${homeRepo}" rev-parse --verify --quiet "refs/heads/agent/${id}"`);
+    expect(branch.stdout.trim()).toMatch(/^[0-9a-f]{40}$/);
+    await exec(`git -C "${homeRepo}" branch -D "agent/${id}"`);
+  });
+
+  it("throws when path exists but is not a git worktree", async () => {
+    const manager = new WorktreeManager({ rootDir: homeRoot, mainRepoDir: homeRepo });
+    const id = nextHandoff();
+    const fakePath = path.join(homeRoot, id);
+    fs.mkdirSync(fakePath, { recursive: true });
+    fs.writeFileSync(path.join(fakePath, "orphan.txt"), "not a worktree");
+
+    await expect((manager as any).teardownWorktree(id, false)).rejects.toThrow(
+      /Failed to remove worktree/,
+    );
+  });
 });
 
 describe("WorktreeManager.stageMergedBase", () => {

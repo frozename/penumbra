@@ -8,7 +8,7 @@ import { dispatchAuditRoute } from "./dispatch-audit.js";
 import { json } from "./_helpers.js";
 const DispatchLandInputSchema = z.object({
   handoff_id: z.string().min(1),
-  commit_message: z.string().min(1),
+  commit_message: z.string().min(1).optional(),
   mode: z.enum(["squash", "ff"]).optional().default("squash"),
   delete_branch: z.boolean().optional().default(true),
   force: z.boolean().optional().default(false),
@@ -371,7 +371,7 @@ async function executeLand(input: {
   now: () => Date;
   handoff: ReturnType<Services["handoffReader"]["get"]>;
   handoff_id: string;
-  commit_message: string;
+  commit_message?: string;
   mode: "squash" | "ff";
   delete_branch: boolean;
 }): Promise<DispatchLandSuccess | DispatchLandFailure> {
@@ -384,7 +384,23 @@ async function executeLand(input: {
     };
   }
 
-  const message_subject = subjectFromCommitMessage(commit_message);
+  const branch = `agent/${handoff_id}`;
+  let resolvedCommitMessage = commit_message;
+  if (!resolvedCommitMessage) {
+    const commitMessageFromBranch = await deps.runGit(["log", "-1", "--format=%B", branch]);
+    if (commitMessageFromBranch.code !== 0) {
+      return {
+        status: 500,
+        error: {
+          code: "git_failed",
+          step: "resolve_commit_message",
+          stderr: commitMessageFromBranch.stderr.trim() || undefined,
+        },
+      };
+    }
+    resolvedCommitMessage = commitMessageFromBranch.stdout.trim();
+  }
+  const message_subject = subjectFromCommitMessage(resolvedCommitMessage);
   const beforeMain = await deps.runGit(["rev-parse", "main"]);
   if (beforeMain.code !== 0) {
     return {
@@ -397,7 +413,6 @@ async function executeLand(input: {
     };
   }
 
-  const branch = `agent/${handoff_id}`;
   if (mode === "squash") {
     const checkout = await deps.runGit(["checkout", "main"]);
     if (checkout.code !== 0) {
@@ -439,7 +454,7 @@ async function executeLand(input: {
       };
     }
 
-    const commit = await deps.runGit(["commit", "-F", "-"], { stdin: commit_message });
+    const commit = await deps.runGit(["commit", "-F", "-"], { stdin: resolvedCommitMessage });
     if (commit.code !== 0) {
       return {
         status: 500,
@@ -510,20 +525,21 @@ async function executeLand(input: {
     payload_summary: `landed ${handoff_id} via ${mode} -> ${commit_sha.slice(0, 8)}`,
   });
 
-  let branch_deleted = false;
-  if (delete_branch) {
-    const del = await deps.runGit(["branch", "-D", `agent/${handoff_id}`]);
-    branch_deleted = del.code === 0;
-  }
-
   const pr_closed = await closeOpenPrIfAny(deps.gh, `agent/${handoff_id}`, commit_sha).catch(
     () => false,
   );
 
+  let branch_deleted = false;
   let worktree_torn_down = false;
   try {
-    await services.worktreeManager.teardownWorktree(handoff_id, /*force=*/ false);
-    worktree_torn_down = true;
+    const td = (await (services.worktreeManager as any).teardownWorktree(
+      handoff_id,
+      /*force=*/ false,
+      handoff.project_id ?? undefined,
+      delete_branch,
+    )) as { worktreeRemoved?: boolean; branchDeleted?: boolean } | undefined;
+    worktree_torn_down = td?.worktreeRemoved === true;
+    branch_deleted = td?.branchDeleted === true;
   } catch (err) {
     services.log?.warn?.(
       { handoff_id, err: String(err) },

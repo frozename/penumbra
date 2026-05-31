@@ -271,6 +271,78 @@ describe("dispatchLandRoute", () => {
     expect(body.error.code).toBe("not_found");
   });
 
+  test("omitting commit_message resolves it from branch tip", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-msg-tip", "c-msg-tip");
+    writeVerdictEvent(svc, {
+      eventId: "v-msg-tip",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-msg-tip",
+      conversationId: "c-msg-tip",
+      typecheck: "pass",
+      tests: "pass",
+    });
+
+    (svc.worktreeManager as any).teardownWorktree = async () => ({
+      worktreeRemoved: true,
+      branchDeleted: true,
+    });
+
+    const gitCalls: string[] = [];
+    let revParseCount = 0;
+    const post = await dispatchLandRoute(
+      new Request("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-msg-tip",
+          mode: "ff",
+          delete_branch: true,
+        }),
+      }),
+      svc,
+      {
+        runGit: async (args: string[]) => {
+          gitCalls.push(args.join(" "));
+          if (args[0] === "log") {
+            return {
+              code: 0,
+              stdout: "feat(core): from branch tip\n\nbody\n",
+              stderr: "",
+            };
+          }
+          if (args[0] === "rev-parse" && args[1] === "main") {
+            revParseCount += 1;
+            return {
+              code: 0,
+              stdout: revParseCount === 1 ? "before-main\n" : "after-main\n",
+              stderr: "",
+            };
+          }
+          if (args[0] === "merge" && args[1] === "--ff-only") return { code: 0, stdout: "", stderr: "" };
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: {
+          listOpenPullRequestsByHead: async () => [],
+          closePullRequest: async () => {},
+        },
+        now: () => new Date("2026-05-08T00:04:00.000Z"),
+      } as any,
+    );
+
+    expect(post.status).toBe(202);
+    const accepted = (await post.json()) as any;
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe("done");
+    expect(body.result).toMatchObject({
+      ok: true,
+      commit_sha: "after-main",
+      message_subject: "feat(core): from branch tip",
+      branch_deleted: true,
+      worktree_torn_down: true,
+    });
+    expect(gitCalls).toContain("log -1 --format=%B agent/h-msg-tip");
+  });
+
   test("resolves repoDir from handoff project before executing git commands", async () => {
     const svc = services();
     seedHandoff(svc, "h-project", "c-project", "other-project");
@@ -463,6 +535,10 @@ describe("dispatchLandRoute", () => {
 
     const gitCalls: Array<{ args: string[]; stdin?: string }> = [];
     let revParseCount = 0;
+    (svc.worktreeManager as any).teardownWorktree = async () => ({
+      worktreeRemoved: true,
+      branchDeleted: true,
+    });
     const deps = {
       runGit: async (args: string[], opts?: { stdin?: string }) => {
         gitCalls.push({ args, stdin: opts?.stdin });
@@ -512,7 +588,6 @@ describe("dispatchLandRoute", () => {
       "merge --squash agent/h-1",
       "commit -F -",
       "rev-parse main",
-      "branch -D agent/h-1",
     ]);
     expect(gitCalls[3]?.stdin).toBe("feat(core): curated subject\n\nbody details");
 
@@ -1021,7 +1096,7 @@ describe("dispatchLandRoute", () => {
     expect(body.error.files).toEqual(["packages/core/src/a.ts", "packages/daemon/src/b.ts"]);
   });
 
-  test("success path calls teardownWorktree(handoff_id, false)", async () => {
+  test("success path uses teardownWorktree return for branch_deleted + worktree_torn_down", async () => {
     const svc = services();
     seedHandoff(svc, "h-wt-1", "c-wt-1");
     writeVerdictEvent(svc, {
@@ -1033,9 +1108,20 @@ describe("dispatchLandRoute", () => {
       tests: "pass",
     });
 
-    const teardownCalls: Array<{ handoffId: string; force: boolean | undefined }> = [];
-    (svc.worktreeManager as any).teardownWorktree = async (handoffId: string, force?: boolean) => {
-      teardownCalls.push({ handoffId, force });
+    const teardownCalls: Array<{
+      handoffId: string;
+      force: boolean | undefined;
+      projectId: string | undefined;
+      deleteBranch: boolean | undefined;
+    }> = [];
+    (svc.worktreeManager as any).teardownWorktree = async (
+      handoffId: string,
+      force?: boolean,
+      projectId?: string,
+      deleteBranch?: boolean,
+    ) => {
+      teardownCalls.push({ handoffId, force, projectId, deleteBranch });
+      return { worktreeRemoved: true, branchDeleted: true };
     };
 
     const res = await dispatchLandRoute(
@@ -1064,7 +1150,10 @@ describe("dispatchLandRoute", () => {
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
     expect(body.result.worktree_torn_down).toBe(true);
-    expect(teardownCalls).toEqual([{ handoffId: "h-wt-1", force: false }]);
+    expect(body.result.branch_deleted).toBe(true);
+    expect(teardownCalls).toEqual([
+      { handoffId: "h-wt-1", force: false, projectId: undefined, deleteBranch: false },
+    ]);
   });
 
   test("teardownWorktree failure is logged but does not fail the land", async () => {
@@ -1116,6 +1205,53 @@ describe("dispatchLandRoute", () => {
     expect(warnCalls.some((args) => String(args[1] ?? args[0]).includes("teardown failed"))).toBe(
       true,
     );
+  });
+
+  test("teardownWorktree non-throwing false result reports worktree_torn_down=false", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-wt-3", "c-wt-3");
+    writeVerdictEvent(svc, {
+      eventId: "v-wt-3",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-wt-3",
+      conversationId: "c-wt-3",
+      typecheck: "pass",
+      tests: "pass",
+    });
+
+    (svc.worktreeManager as any).teardownWorktree = async () => ({
+      worktreeRemoved: false,
+      branchDeleted: false,
+    });
+
+    const res = await dispatchLandRoute(
+      new Request("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-wt-3",
+          commit_message: "feat: truthful teardown flag",
+          mode: "squash",
+          delete_branch: true,
+        }),
+      }),
+      svc,
+      {
+        runGit: async (args: string[]) => {
+          if (args[0] === "rev-parse") return { code: 0, stdout: "sha-wt-3\n", stderr: "" };
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: { listOpenPullRequestsByHead: async () => [], closePullRequest: async () => {} },
+        now: () => new Date("2026-05-08T00:04:00.000Z"),
+      } as any,
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = (await res.json()) as any;
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe("done");
+    expect(body.result.ok).toBe(true);
+    expect(body.result.worktree_torn_down).toBe(false);
+    expect(body.result.branch_deleted).toBe(false);
   });
 
   test("is silent about PR close when branch has no open PR", async () => {

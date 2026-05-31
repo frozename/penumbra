@@ -262,22 +262,37 @@ export class WorktreeManager {
     return Array.from(this.worktrees.values());
   }
 
-  async teardownWorktree(handoffId: string, force?: boolean, project_id?: string): Promise<void> {
-    const handle = this.worktrees.get(handoffId);
+  async teardownWorktree(
+    handoffId: string,
+    force?: boolean,
+    project_id?: string,
+    deleteBranch: boolean = true,
+  ): Promise<{ worktreeRemoved: boolean; branchDeleted: boolean }> {
+    let handle = this.worktrees.get(handoffId);
     const effectiveProjectId = handle?.projectId ?? project_id;
     const repoRoot = this.repoRootFor(effectiveProjectId);
 
     if (!handle) {
-      // Check if it exists on disk even if not in map (edge case)
-      const base = this.baseFor(effectiveProjectId);
+      const base = this.baseFor(project_id);
       const wtPath = path.join(base, handoffId);
-      if (fs.existsSync(wtPath)) {
-        const forceFlag = force ? "--force" : "";
-        await exec(`git worktree remove ${forceFlag} "${wtPath}"`, {
-          cwd: repoRoot,
-        }).catch(() => {});
+      if (!fs.existsSync(wtPath)) {
+        return { worktreeRemoved: false, branchDeleted: false };
       }
-      return;
+      let createdAt = new Date().toISOString();
+      try {
+        createdAt = fs.statSync(wtPath).birthtime.toISOString();
+      } catch {
+        // ignore stat errors — synthesize a placeholder timestamp
+      }
+      handle = {
+        handoffId,
+        path: wtPath,
+        branchName: `agent/${handoffId}`,
+        storageRoot: path.join(wtPath, ".test-storage"),
+        createdAt,
+        status: "created",
+        projectId: project_id,
+      };
     }
 
     const forceFlag = force ? "--force" : "";
@@ -309,15 +324,31 @@ export class WorktreeManager {
       throw new Error(`Failed to remove worktree ${handle.path}: ${err}`);
     }
 
-    try {
-      await exec(`git branch -D "${handle.branchName}"`, {
-        cwd: repoRoot,
-      });
-    } catch (err) {
-      // Ignore if branch deletion fails (e.g., if it didn't exist)
+    if (fs.existsSync(handle.path)) {
+      throw new Error(`worktree remove reported success but path still exists: ${handle.path}`);
+    }
+
+    let branchDeleted = false;
+    if (deleteBranch) {
+      try {
+        await exec(`git branch -D "${handle.branchName}"`, {
+          cwd: repoRoot,
+        });
+      } catch {
+        // branch deletion is verified below
+      }
+      try {
+        await exec(`git rev-parse --verify --quiet "refs/heads/${handle.branchName}"`, {
+          cwd: repoRoot,
+        });
+        branchDeleted = false;
+      } catch {
+        branchDeleted = true;
+      }
     }
 
     this.worktrees.delete(handoffId);
+    return { worktreeRemoved: true, branchDeleted };
   }
 }
 
