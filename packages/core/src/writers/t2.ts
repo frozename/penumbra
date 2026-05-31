@@ -11,6 +11,13 @@ export const T2MemoryExtractionSchema = z.object({
   body: z.string().min(1),
   kind: z.string(),
   metadata: z.record(z.string(), z.unknown()).optional(),
+  obs_type: z.string().nullable().optional(),
+  why: z.string().nullable().optional(),
+  source_quote: z.string().nullable().optional(),
+  learned_at: z.string().nullable().optional(),
+  durability: z.string().nullable().optional(),
+  depth: z.number().int().nullable().optional(),
+  is_episodic: z.boolean().nullable().optional(),
 });
 
 export type T2MemoryExtraction = z.infer<typeof T2MemoryExtractionSchema>;
@@ -416,8 +423,9 @@ export class T2Promotion {
           this.opts.db.run(
             `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, source_session_ids,
                                      window_start, window_end, title, body, metadata_json,
+                                     obs_type, why, source_quote, learned_at, durability, depth, is_episodic,
                                      created_at, updated_at, origin)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               memoryId,
               rollup.project_id,
@@ -429,6 +437,13 @@ export class T2Promotion {
               ext.title,
               ext.body,
               JSON.stringify(ext.metadata || {}),
+              ext.obs_type ?? null,
+              ext.why ?? null,
+              ext.source_quote ?? null,
+              ext.learned_at ?? null,
+              ext.durability ?? null,
+              ext.depth ?? null,
+              ext.is_episodic ? 1 : 0,
               now,
               now,
               rollup.origin,
