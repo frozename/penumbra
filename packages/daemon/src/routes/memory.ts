@@ -149,6 +149,9 @@ const MemoryWriteT2Schema = z
     hook: z.string().optional().nullable(),
     sub_kind: z.string().optional().nullable(),
     cc_kind: z.string().optional().nullable(),
+    why: z.string().optional().nullable(),
+    source_quote: z.string().optional().nullable(),
+    obs_type: z.string().optional().nullable(),
     project_id: z.string().nullable().optional(),
     session_id: z
       .string()
@@ -196,13 +199,16 @@ export async function memoryWriteT2Route(req: Request, services: Services): Prom
       hook: data.hook,
       sub_kind: data.sub_kind,
       cc_kind: data.cc_kind,
+      why: data.why,
+      source_quote: data.source_quote,
+      obs_type: data.obs_type,
       project_id: data.project_id,
       embedding,
-    } satisfies Parameters<typeof writeDirectT2Memory>[1];
+    };
     if (data.session_id) {
       (writeInput as { source_session_ids?: string[] }).source_session_ids = [data.session_id];
     }
-    const wrote = writeDirectT2Memory(services.db, writeInput);
+    const wrote = writeDirectT2Memory(services.db, writeInput as Parameters<typeof writeDirectT2Memory>[1]);
     const wroteProjectId = data.project_id ?? null;
 
     const parsedLinks = parseWikiLinks(data.body);

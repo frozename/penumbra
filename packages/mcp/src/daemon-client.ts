@@ -96,7 +96,19 @@ export class DaemonClient {
   }): Promise<unknown> {
     return this.post("/memory/verify", req);
   }
-  async memoryWriteT2(req: unknown): Promise<unknown> {
+  async memoryWriteT2(req: {
+    title: string;
+    body: string;
+    slug?: string | null;
+    hook?: string | null;
+    sub_kind?: string | null;
+    cc_kind?: string | null;
+    why?: string | null;
+    source_quote?: string | null;
+    obs_type?: string | null;
+    project_id?: string | null;
+    session_id?: string;
+  }): Promise<unknown> {
     return this.post("/memory/write", req);
   }
   async memoryVerifyAuthorize(req: unknown): Promise<unknown> {

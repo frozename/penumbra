@@ -495,3 +495,32 @@ test("writeDirectT2Memory persists source_session_ids when provided", () => {
     .get(result.memory_id);
   expect(JSON.parse(row?.source_session_ids ?? "[]")).toEqual(["sess-direct-1"]);
 });
+
+test("writeDirectT2Memory persists why/source_quote/obs_type and sets learned_at", () => {
+  const result = writeDirectT2Memory(db, {
+    title: "Direct with fields",
+    body: "Body",
+    embedding: new Float32Array(384),
+    why: "Why this memory matters",
+    source_quote: "Body",
+    obs_type: "operator_note",
+  });
+
+  const row = db
+    .query<
+      {
+        why: string | null;
+        source_quote: string | null;
+        obs_type: string | null;
+        learned_at: string | null;
+        created_at: string;
+      },
+      [string]
+    >(`SELECT why, source_quote, obs_type, learned_at, created_at FROM t2_memories WHERE memory_id = ?`)
+    .get(result.memory_id);
+  expect(row).not.toBeNull();
+  expect(row?.why).toBe("Why this memory matters");
+  expect(row?.source_quote).toBe("Body");
+  expect(row?.obs_type).toBe("operator_note");
+  expect(row?.learned_at).toBe(row?.created_at);
+});

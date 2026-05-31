@@ -9,6 +9,9 @@ export const MemoryWriteT2InputShape = {
   hook: z.string().optional().nullable(),
   sub_kind: z.string().optional().nullable(),
   cc_kind: z.string().optional().nullable(),
+  why: z.string().optional().nullable(),
+  source_quote: z.string().optional().nullable(),
+  obs_type: z.string().optional().nullable(),
   project_id: z.string().nullable().optional(),
 };
 

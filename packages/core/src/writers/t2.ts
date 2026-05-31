@@ -38,6 +38,9 @@ export interface DirectT2WriteInput {
   hook?: string | null;
   sub_kind?: string | null;
   cc_kind?: string | null;
+  why?: string | null;
+  source_quote?: string | null;
+  obs_type?: string | null;
   title: string;
   body: string;
   project_id?: string | null;
@@ -57,6 +60,9 @@ export function writeDirectT2Memory(db: Database, input: DirectT2WriteInput): Di
   const hook = input.hook ?? null;
   const subKind = input.sub_kind ?? null;
   const ccKind = input.cc_kind ?? null;
+  const why = input.why ?? null;
+  const sourceQuote = input.source_quote ?? null;
+  const obsType = input.obs_type ?? null;
   const sourceSessionIds = [...new Set((input.source_session_ids ?? []).map((id) => id.trim()))].filter(
     (id) => id.length > 0,
   );
@@ -72,9 +78,9 @@ export function writeDirectT2Memory(db: Database, input: DirectT2WriteInput): Di
     if (existing) {
       db.run(
         `UPDATE t2_memories
-         SET kind = 'direct', origin = 'direct', title = ?, body = ?, hook = ?, sub_kind = ?, cc_kind = ?, project_id = ?,
+         SET kind = 'direct', origin = 'direct', title = ?, body = ?, hook = ?, sub_kind = ?, cc_kind = ?, why = ?, source_quote = ?, obs_type = ?, project_id = ?,
              source_session_ids = CASE WHEN ? = '[]' THEN source_session_ids ELSE ? END,
-             updated_at = ?, retired_at = NULL
+             learned_at = ?, updated_at = ?, retired_at = NULL
          WHERE memory_id = ?`,
         [
           input.title,
@@ -82,9 +88,13 @@ export function writeDirectT2Memory(db: Database, input: DirectT2WriteInput): Di
           hook,
           subKind,
           ccKind,
+          why,
+          sourceQuote,
+          obsType,
           projectId,
           sourceSessionIdsJson,
           sourceSessionIdsJson,
+          now,
           now,
           existing.memory_id,
         ],
@@ -103,9 +113,9 @@ export function writeDirectT2Memory(db: Database, input: DirectT2WriteInput): Di
     `INSERT INTO t2_memories(
       memory_id, project_id, user_id, kind, source_session_ids,
       window_start, window_end, title, body, metadata_json, compressed_from,
-      created_at, updated_at, slug, hook, sub_kind, cc_kind, origin
+      created_at, updated_at, slug, hook, sub_kind, cc_kind, why, source_quote, obs_type, learned_at, origin
     )
-    VALUES (?, ?, 'system', 'direct', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'direct')`,
+    VALUES (?, ?, 'system', 'direct', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'direct')`,
     [
       memoryId,
       projectId,
@@ -122,6 +132,10 @@ export function writeDirectT2Memory(db: Database, input: DirectT2WriteInput): Di
       hook,
       subKind,
       ccKind,
+      why,
+      sourceQuote,
+      obsType,
+      now,
     ],
   );
 
