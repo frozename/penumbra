@@ -91,7 +91,7 @@ export {
   releaseT1RollupClaims,
   type ReleaseT1RollupClaimsOpts,
 } from "./db/schema.js";
-export { migrate, type MigrateOpts } from "./db/migrations.js";
+export { assertEmbedderDim, migrate, type MigrateOpts } from "./db/migrations.js";
 export {
   resolveStorageDbPath,
   assertTestDbPathIsolation,

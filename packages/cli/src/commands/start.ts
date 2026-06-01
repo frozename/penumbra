@@ -13,6 +13,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   applyRuntimePragmas,
+  assertEmbedderDim,
   buildServices,
   loadSqliteVec,
   migrate,
@@ -107,6 +108,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       sirius,
       fallback: new BundledEmbedder(),
     });
+    assertEmbedderDim(db, embedder.dim, embedder.name);
 
     // Load agent registry + provider quotas from the same agentchat.yaml.
     let agentRegistry: string[] | null = null;
