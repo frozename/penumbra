@@ -147,6 +147,45 @@ describe("Dreaming P7 re-embed", () => {
     expect(embededCount).toBe(1);
   });
 
+  it("P7 re-embeds full batch even when cost meter cannot afford", async () => {
+    const db = getTestDb();
+    for (let i = 0; i < 3; i++) {
+      seedMemoryWithEmbeddingVersion(db, {
+        embeddingModelVersion: "v1",
+        vector: new Array(384).fill(0.1),
+      });
+    }
+
+    const config = { reembedBatchSize: 3, skipPhases: new Set([]), p1BatchSize: 10 } as any;
+    const prevEnabled = process.env.PENUMBRA_T2_REEMBED_ENABLED;
+    const prevModelVersion = process.env.PENUMBRA_EMBEDDING_MODEL_VERSION;
+    process.env.PENUMBRA_T2_REEMBED_ENABLED = "true";
+    process.env.PENUMBRA_EMBEDDING_MODEL_VERSION = "v2";
+
+    let onReembedCalls = 0;
+    try {
+      const out = await runReembedPhase(db, "cycle11", config, {
+        phaseCostEstimates: { p7EmbedUsd: 0.01 },
+        costMeter: {
+          canAfford: () => false,
+          record: () => {},
+        },
+        onReembed: async () => {
+          onReembedCalls++;
+          return new Float32Array(new Array(384).fill(0.3));
+        },
+      } as any);
+
+      expect(out).toEqual({ deferred: false, processed: 3 });
+      expect(onReembedCalls).toBe(3);
+    } finally {
+      if (prevEnabled === undefined) delete process.env.PENUMBRA_T2_REEMBED_ENABLED;
+      else process.env.PENUMBRA_T2_REEMBED_ENABLED = prevEnabled;
+      if (prevModelVersion === undefined) delete process.env.PENUMBRA_EMBEDDING_MODEL_VERSION;
+      else process.env.PENUMBRA_EMBEDDING_MODEL_VERSION = prevModelVersion;
+    }
+  });
+
   it("P7 repairs orphaned rows by creating missing t2_vec entries", async () => {
     const db = getTestDb();
     const staleId = seedMemoryWithoutVector(db, {

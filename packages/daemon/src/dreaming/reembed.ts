@@ -9,12 +9,6 @@ function isTrueEnv(value: string | undefined): boolean {
   return value === "1" || value === "true" || value === "yes";
 }
 
-function sanitizeUsd(value: unknown): number {
-  const n = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(n) || n <= 0) return 0;
-  return n;
-}
-
 export async function runReembedPhase(
   db: Database,
   cycleId: string,
@@ -25,7 +19,6 @@ export async function runReembedPhase(
   if (!deps.onReembed) return { deferred: false, processed: 0 };
 
   const currentModelVersion = process.env.PENUMBRA_EMBEDDING_MODEL_VERSION || "v1";
-  const embedEstimateUsd = sanitizeUsd((deps as any).phaseCostEstimates?.p7EmbedUsd ?? 0);
 
   const staleMemories = db
     .prepare(
@@ -43,19 +36,9 @@ export async function runReembedPhase(
 
   if (staleMemories.length === 0) return { deferred: false, processed: 0 };
 
-  let deferred = false;
   let processed = 0;
 
   for (const mem of staleMemories) {
-    if (
-      embedEstimateUsd > 0 &&
-      deps.costMeter &&
-      !deps.costMeter.canAfford("P7", "embedding", embedEstimateUsd)
-    ) {
-      deferred = true;
-      break;
-    }
-
     const vecRow = db
       .prepare(
         `SELECT embedding FROM t2_vec WHERE rowid = (SELECT rowid FROM t2_memories WHERE memory_id = ?)`,
@@ -119,16 +102,13 @@ export async function runReembedPhase(
           JSON.stringify({ previous_version: mem.embedding_model_version }),
         );
       })();
-      if (embedEstimateUsd > 0 && deps.costMeter) {
-        deps.costMeter.record("P7", "embedding", embedEstimateUsd);
-      }
       processed += 1;
     } catch (err) {
       console.error(`error: P7 reembed failed for memory ${mem.memory_id}:`, err);
     }
   }
 
-  return { deferred, processed };
+  return { deferred: false, processed };
 }
 
 type DreamActionRow = {
