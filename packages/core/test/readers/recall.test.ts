@@ -137,6 +137,38 @@ async function seedT2(memoryId: string, text: string, createdAt: string) {
   db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [rowid, vec!]);
 }
 
+function vectorWithHead(value: number): Float32Array {
+  const vec = new Float32Array(384);
+  vec[0] = value;
+  return vec;
+}
+
+async function seedT1WithVector(rollupId: string, vec: Float32Array, createdAt: string) {
+  db.run(
+    `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at,
+                            n_events, last_response_excerpt, first_prompt_excerpt)
+     VALUES (?, ?, 'u', ?, ?, ?, 1, ?, ?)`,
+    [rollupId, "p1", rollupId, createdAt, createdAt, rollupId, rollupId],
+  );
+  const rowid = db
+    .query<{ rowid: number }, [string]>("SELECT rowid FROM t1_rollups WHERE rollup_id=?")
+    .get(rollupId)!.rowid;
+  db.run("INSERT INTO t1_vec(rowid, embedding) VALUES(?, ?)", [rowid, vec]);
+}
+
+async function seedT2WithVector(memoryId: string, vec: Float32Array, createdAt: string) {
+  db.run(
+    `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, window_start, window_end,
+                             title, body, created_at, updated_at)
+     VALUES (?, 'p1', 'u', 'summary', ?, ?, 'title', ?, ?, ?)`,
+    [memoryId, createdAt, createdAt, memoryId, createdAt, createdAt],
+  );
+  const rowid = db
+    .query<{ rowid: number }, [string]>("SELECT rowid FROM t2_memories WHERE memory_id=?")
+    .get(memoryId)!.rowid;
+  db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [rowid, vec]);
+}
+
 test("returns T0 hits using FTS5 when include_raw is true", async () => {
   seedT0("evt1", "the quick brown fox", "2026-04-20T00:00:00Z");
   const reader = new RecallReader({ db, embedder: new TestEmbedder({ dim: 384 }) });
@@ -234,6 +266,95 @@ test("excludes retired t2 memories from results", async () => {
     sources: ["t2"],
   });
   expect(results.map((r) => r.id)).toEqual(["active"]);
+});
+
+test("oversample factor default is inert: unset and explicit 1 return byte-identical ids+order", async () => {
+  await seedT1("inert-t1-a", "inert alpha", "2026-04-20T00:00:00Z");
+  await seedT1("inert-t1-b", "inert beta", "2026-04-21T00:00:00Z");
+  await seedT2("inert-t2-a", "inert alpha", "2026-04-22T00:00:00Z");
+  await seedT2("inert-t2-b", "inert beta", "2026-04-23T00:00:00Z");
+
+  const prev = process.env.PENUMBRA_T2_OVERSAMPLE_FACTOR;
+  try {
+    delete process.env.PENUMBRA_T2_OVERSAMPLE_FACTOR;
+    const readerDefault = new RecallReader({ db, embedder: new TestEmbedder({ dim: 384 }) });
+    const baseline = await readerDefault.recall({
+      query: "inert alpha",
+      project_id: "p1",
+      limit: 20,
+      include_raw: false,
+      min_score: 0,
+    });
+
+    process.env.PENUMBRA_T2_OVERSAMPLE_FACTOR = "1";
+    const readerFactorOne = new RecallReader({ db, embedder: new TestEmbedder({ dim: 384 }) });
+    const factorOne = await readerFactorOne.recall({
+      query: "inert alpha",
+      project_id: "p1",
+      limit: 20,
+      include_raw: false,
+      min_score: 0,
+    });
+
+    expect(factorOne.map((r) => r.id)).toEqual(baseline.map((r) => r.id));
+    expect(factorOne).toEqual(baseline);
+  } finally {
+    if (prev === undefined) delete process.env.PENUMBRA_T2_OVERSAMPLE_FACTOR;
+    else process.env.PENUMBRA_T2_OVERSAMPLE_FACTOR = prev;
+  }
+});
+
+test("oversampling retrieves a crowded-out t2 row and lets it survive fusion", async () => {
+  const queryVec = vectorWithHead(0);
+  const fixedEmbedder = {
+    name: "fixed-embedder",
+    dim: 384,
+    async embed(_texts: string[]) {
+      return [queryVec];
+    },
+  };
+
+  for (let i = 1; i <= 19; i++) {
+    const value = i / 1000;
+    await seedT1WithVector(`t1-rank-${i.toString().padStart(2, "0")}`, vectorWithHead(value), "2026-04-20T00:00:00Z");
+  }
+  await seedT1WithVector("shared-crowded", vectorWithHead(0.02), "2026-04-20T00:00:00Z");
+
+  for (let i = 1; i <= 21; i++) {
+    const value = i / 1000;
+    await seedT2WithVector(`t2-rank-${i.toString().padStart(2, "0")}`, vectorWithHead(value), "2026-04-21T00:00:00Z");
+  }
+  await seedT2WithVector("shared-crowded", vectorWithHead(0.022), "2026-04-21T00:00:00Z");
+
+  const prev = process.env.PENUMBRA_T2_OVERSAMPLE_FACTOR;
+  try {
+    process.env.PENUMBRA_T2_OVERSAMPLE_FACTOR = "1";
+    const readerFactorOne = new RecallReader({ db, embedder: fixedEmbedder as any });
+    const factorOne = await readerFactorOne.recall({
+      query: "crowded recall query",
+      project_id: "p1",
+      limit: 20,
+      include_raw: false,
+      min_score: 0,
+    });
+    expect(factorOne.some((r) => r.id === "shared-crowded")).toBeFalse();
+
+    process.env.PENUMBRA_T2_OVERSAMPLE_FACTOR = "3";
+    const readerFactorThree = new RecallReader({ db, embedder: fixedEmbedder as any });
+    const factorThree = await readerFactorThree.recall({
+      query: "crowded recall query",
+      project_id: "p1",
+      limit: 20,
+      include_raw: false,
+      min_score: 0,
+    });
+    const rescued = factorThree.find((r) => r.id === "shared-crowded");
+    expect(rescued).toBeDefined();
+    expect(rescued?.sources).toEqual(["t1", "t2"]);
+  } finally {
+    if (prev === undefined) delete process.env.PENUMBRA_T2_OVERSAMPLE_FACTOR;
+    else process.env.PENUMBRA_T2_OVERSAMPLE_FACTOR = prev;
+  }
 });
 
 test("hybrid strategy returns persisted source_session_ids from t2 rows", async () => {

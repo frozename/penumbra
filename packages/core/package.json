@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@penumbra/api-contract": "workspace:*",
+    "@penumbra/config": "workspace:*",
     "zod": "^4.3.0",
     "@nova/contracts": "file:../../../nova/packages/contracts",
     "@nova/mcp-shared": "file:../../../nova/packages/mcp-shared",

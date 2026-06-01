@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { getConfig } from "@penumbra/config";
 import type { Embedder } from "../embedder/interface.js";
 import type { RecallRequest, RecallResult } from "../schemas/recall.js";
 import { fuseRRF, type RankedResult } from "./rrf.js";
@@ -50,6 +51,14 @@ export class RecallReader {
       }));
     }
     const limit = req.limit;
+    const rawOversampleFactor = getConfig(process.env).env.PENUMBRA_T2_OVERSAMPLE_FACTOR;
+    const oversampleFactor =
+      typeof rawOversampleFactor === "number" &&
+      Number.isFinite(rawOversampleFactor) &&
+      rawOversampleFactor >= 1
+        ? Math.floor(rawOversampleFactor)
+        : 1;
+    const perTierLimit = limit * oversampleFactor;
     const requestedSources = req.sources ?? (req.include_raw ? ["t0", "t1", "t2"] : ["t1", "t2"]);
 
     let qvec: Float32Array | undefined;
@@ -61,7 +70,7 @@ export class RecallReader {
     if (requestedSources.includes("t0")) {
       const raw = queryT0(this.db, {
         query: req.query,
-        limit,
+        limit: perTierLimit,
         project_id: req.project_id,
         session_id: req.session_id,
         event_types: req.event_types,
@@ -119,7 +128,7 @@ export class RecallReader {
         )
         .all(
           qvec,
-          limit,
+          perTierLimit,
           req.project_id,
           req.project_id,
           req.session_id ?? null,
@@ -181,7 +190,7 @@ export class RecallReader {
               AND m.retired_at IS NULL
             ORDER BY v.distance ASC`,
         )
-        .all(qvec, limit, req.project_id, req.project_id);
+        .all(qvec, perTierLimit, req.project_id, req.project_id);
 
       t2Results = t2Rows
         .map((r): RankedResult<RecallResult> => {
@@ -215,13 +224,15 @@ export class RecallReader {
     const lists = [t0Results, t1Results, t2Results];
     const sourceMap = ["t0", "t1", "t2"] as const;
 
-    const fused = fuseRRF(lists, { k: req.rrf_k, limit });
+    const fused = fuseRRF(lists, { k: req.rrf_k });
 
-    return fused.map((f) => ({
-      ...f.payload,
-      fusedScore: f.fusedScore,
-      sources: f.sources.map((idx) => sourceMap[idx]!),
-    }));
+    return fused
+      .slice(0, limit)
+      .map((f) => ({
+        ...f.payload,
+        fusedScore: f.fusedScore,
+        sources: f.sources.map((idx) => sourceMap[idx]!),
+      }));
   }
 }
 
