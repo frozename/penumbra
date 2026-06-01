@@ -1,6 +1,6 @@
 import { expect, it, beforeAll } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec, applySchema } from "@penumbra/core";
+import { loadSqliteVec, applySchema, buildT2EmbedText } from "@penumbra/core";
 import { P1_CLAIM_TTL_MS, runDreamCycle } from "../../src/dreaming/cycle.js";
 import { makeFakeJudgePool } from "../../src/dreaming/judge-pool.js";
 import { hashQuery } from "../../src/dreaming/research.js";
@@ -306,6 +306,10 @@ function seedUnpromotedRollup(
   return rollupId;
 }
 
+async function testP1Embed(): Promise<Float32Array> {
+  return new Float32Array([0.1, 0.2, 0.3]);
+}
+
 function seedNegativeResearchCache(
   db: Database,
   opts: { project_id: string; title: string; expiresAt: number; isNegative?: number },
@@ -370,11 +374,135 @@ it("P1 auto-promotes when judge consensus >= ceil(2/3)", async () => {
     { promote: true, confidence: 0.85 },
     { promote: false, confidence: 0.4 },
   ]);
-  await runDreamCycle(db, testConfig(), { judgePool: pool });
+  await runDreamCycle(db, testConfig(), { judgePool: pool, onReembed: testP1Embed });
   const action = db
     .prepare(`SELECT status FROM dream_actions WHERE phase='P1' AND action_type='promote_t1'`)
     .get() as { status: string } | null;
   expect(action?.status).toBe("auto_applied");
+});
+
+it("P1 auto-promote inserts t2 memory + vector and uses buildT2EmbedText input", async () => {
+  const db = openTestDb();
+  const body =
+    "Auto-promotion should embed the canonical recipe text and persist a vector in the same write path.";
+  seedUnpromotedRollup(db, { body, projectId: "proj_embed" });
+  const pool = makeFakeJudgePool([{ promote: true, confidence: 1 }]);
+  const prevRecipe = process.env.PENUMBRA_T2_EMBED_RECIPE;
+  const prevModelVersion = process.env.PENUMBRA_EMBEDDING_MODEL_VERSION;
+  process.env.PENUMBRA_T2_EMBED_RECIPE = "body_v1";
+  process.env.PENUMBRA_EMBEDDING_MODEL_VERSION = "embed-model-v2";
+  const seen: Array<{ memory_id: string; text: string }> = [];
+  const promotedCountDuringEmbed: number[] = [];
+
+  try {
+    await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), {
+      judgePool: pool,
+      onReembed: async (memory_id, text) => {
+        const promotedCount = (
+          db.prepare(`SELECT COUNT(*) AS c FROM t2_memories WHERE kind='promoted'`).get() as {
+            c: number;
+          }
+        ).c;
+        promotedCountDuringEmbed.push(promotedCount);
+        seen.push({ memory_id, text });
+        return new Float32Array([0.25, 0.5, 0.75]);
+      },
+    });
+  } finally {
+    if (prevRecipe === undefined) delete process.env.PENUMBRA_T2_EMBED_RECIPE;
+    else process.env.PENUMBRA_T2_EMBED_RECIPE = prevRecipe;
+    if (prevModelVersion === undefined) delete process.env.PENUMBRA_EMBEDDING_MODEL_VERSION;
+    else process.env.PENUMBRA_EMBEDDING_MODEL_VERSION = prevModelVersion;
+  }
+
+  const promoted = db
+    .prepare(
+      `SELECT rowid, memory_id, title, body, embedding_model_version
+       FROM t2_memories
+       WHERE kind='promoted'
+       ORDER BY rowid DESC
+       LIMIT 1`,
+    )
+    .get() as
+    | {
+        rowid: number;
+        memory_id: string;
+        title: string;
+        body: string;
+        embedding_model_version: string | null;
+      }
+    | null;
+  expect(promoted).toBeTruthy();
+  expect(promoted?.embedding_model_version).toBe("embed-model-v2");
+  expect(seen).toHaveLength(1);
+  expect(promotedCountDuringEmbed).toEqual([0]);
+  expect(seen[0]?.memory_id).toBe(promoted?.memory_id);
+  expect(seen[0]?.text).toBe(buildT2EmbedText(promoted!.title, promoted!.body));
+
+  const vecRow = db
+    .prepare(`SELECT embedding FROM t2_vec WHERE rowid = ?`)
+    .get(promoted?.rowid) as { embedding: Uint8Array } | null;
+  expect(vecRow).toBeTruthy();
+});
+
+it("P1 embed failure rolls back candidate promotion and continues to next rollup", async () => {
+  const db = openTestDb();
+  const failingBody =
+    "This candidate should fail embedding and must not get promoted despite auto-promote consensus.";
+  const succeedingBody =
+    "This second candidate should still promote after the first candidate fails embedding mid-cycle.";
+  const failingRollupId = seedUnpromotedRollup(db, { body: failingBody, projectId: "proj_fail" });
+  const succeedingRollupId = seedUnpromotedRollup(db, {
+    body: succeedingBody,
+    projectId: "proj_pass",
+  });
+  const pool = makeFakeJudgePool([{ promote: true, confidence: 1 }]);
+  const prevRecipe = process.env.PENUMBRA_T2_EMBED_RECIPE;
+  process.env.PENUMBRA_T2_EMBED_RECIPE = "body_v1";
+  let embedCalls = 0;
+
+  try {
+    await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), {
+      judgePool: pool,
+      onReembed: async (_memory_id, text) => {
+        embedCalls += 1;
+        if (text === buildT2EmbedText(`P1 auto-promote: ${failingBody.slice(0, 80)}`, failingBody)) {
+          throw new Error("embed exploded");
+        }
+        return new Float32Array([1, 2, 3]);
+      },
+    });
+  } finally {
+    if (prevRecipe === undefined) delete process.env.PENUMBRA_T2_EMBED_RECIPE;
+    else process.env.PENUMBRA_T2_EMBED_RECIPE = prevRecipe;
+  }
+
+  expect(embedCalls).toBeGreaterThanOrEqual(2);
+  const promotedCount = (db
+    .prepare(`SELECT COUNT(*) AS c FROM t2_memories WHERE kind='promoted'`)
+    .get() as { c: number }).c;
+  expect(promotedCount).toBe(1);
+  const failedPromoted = db
+    .prepare(`SELECT 1 AS ok FROM t2_memories WHERE kind='promoted' AND body = ? LIMIT 1`)
+    .get(failingBody) as { ok: number } | null;
+  expect(failedPromoted).toBeNull();
+  const successPromoted = db
+    .prepare(`SELECT rowid FROM t2_memories WHERE kind='promoted' AND body = ? LIMIT 1`)
+    .get(succeedingBody) as { rowid: number } | null;
+  expect(successPromoted).toBeTruthy();
+  const successVec = db
+    .prepare(`SELECT 1 AS ok FROM t2_vec WHERE rowid = ? LIMIT 1`)
+    .get(successPromoted?.rowid) as { ok: number } | null;
+  expect(successVec?.ok).toBe(1);
+
+  const failedRollupRow = db
+    .prepare(`SELECT t2_promoted_at FROM t1_rollups WHERE rollup_id = ?`)
+    .get(failingRollupId) as { t2_promoted_at: string | null } | null;
+  const succeededRollupRow = db
+    .prepare(`SELECT t2_promoted_at FROM t1_rollups WHERE rollup_id = ?`)
+    .get(succeedingRollupId) as { t2_promoted_at: string | null } | null;
+  expect(failedRollupRow?.t2_promoted_at).toBeNull();
+  expect(succeededRollupRow?.t2_promoted_at).toBeTruthy();
 });
 
 it("P1 skips rollups whose first_prompt_excerpt is a long-lived standing prompt", async () => {
@@ -392,7 +520,7 @@ it("P1 skips rollups whose first_prompt_excerpt is a long-lived standing prompt"
     { promote: true, confidence: 0.95 },
     { promote: true, confidence: 0.95 },
   ]);
-  const cycleId = await runDreamCycle(db, testConfig(), { judgePool: pool });
+  const cycleId = await runDreamCycle(db, testConfig(), { judgePool: pool, onReembed: testP1Embed });
   const claimedRollups = getClaimedRollups(db, cycleId);
   expect(claimedRollups).toContain(normalRollupId);
   expect(claimedRollups).not.toContain(longLivedRollupId);
@@ -422,7 +550,7 @@ it("P1 skips dispatch-mode excerpts (Operating rules / IMPLEMENTER MODE)", async
     { promote: true, confidence: 0.95 },
     { promote: true, confidence: 0.95 },
   ]);
-  await runDreamCycle(db, testConfig(), { judgePool: pool });
+  await runDreamCycle(db, testConfig(), { judgePool: pool, onReembed: testP1Embed });
   const p1Actions = db
     .prepare(
       `SELECT COUNT(*) as n FROM dream_actions WHERE phase='P1' AND action_type='promote_t1'`,
@@ -442,7 +570,7 @@ it("P1 skips Fix:-prefixed excerpts", async () => {
     { promote: true, confidence: 0.95 },
     { promote: true, confidence: 0.95 },
   ]);
-  await runDreamCycle(db, testConfig(), { judgePool: pool });
+  await runDreamCycle(db, testConfig(), { judgePool: pool, onReembed: testP1Embed });
   const p1Actions = db
     .prepare(
       `SELECT COUNT(*) as n FROM dream_actions WHERE phase='P1' AND action_type='promote_t1'`,
@@ -466,7 +594,7 @@ it("P1 skips NULL and short first_prompt_excerpt rollups (no UUID fallback)", as
     { promote: true, confidence: 0.95 },
     { promote: true, confidence: 0.95 },
   ]);
-  const cycleId = await runDreamCycle(db, testConfig(), { judgePool: pool });
+  const cycleId = await runDreamCycle(db, testConfig(), { judgePool: pool, onReembed: testP1Embed });
   const claimedRollups = getClaimedRollups(db, cycleId);
   expect(claimedRollups).toContain(nullRollupId);
   expect(claimedRollups).toContain(shortRollupId);
@@ -493,7 +621,10 @@ it("P1 queues queued auto-promote when title already exists in active t2 memory"
     { promote: true, confidence: 0.95 },
     { promote: true, confidence: 0.95 },
   ]);
-  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), { judgePool: pool });
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+  });
   const action = db
     .prepare(
       `SELECT status, payload_json FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' ORDER BY rowid DESC LIMIT 1`,
@@ -523,7 +654,10 @@ it("P1 queues queued auto-promote when body already exists in active t2 memory",
     { promote: true, confidence: 0.95 },
     { promote: true, confidence: 0.95 },
   ]);
-  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), { judgePool: pool });
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+  });
   const action = db
     .prepare(
       `SELECT status, payload_json FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' ORDER BY rowid DESC LIMIT 1`,
@@ -548,7 +682,10 @@ it("P1 deduplicates against the same project_id and leaves a dedup proof in payl
   );
   seedUnpromotedRollup(db, { body, projectId: "proj_a" });
   const pool = makeFakeJudgePool([{ promote: true, confidence: 1 }]);
-  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), { judgePool: pool });
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+  });
 
   const action = db
     .prepare(
@@ -578,7 +715,10 @@ it("P1 does not deduplicate across different project_id scopes", async () => {
   seedUnpromotedRollup(db, { body, projectId: "proj_b" });
   const pool = makeFakeJudgePool([{ promote: true, confidence: 1 }]);
 
-  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), { judgePool: pool });
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+  });
 
   const action = db
     .prepare(
@@ -608,7 +748,10 @@ it("P1 with NULL project_id dedups only against NULL-scoped t2 memory", async ()
   seedUnpromotedRollup(db, { body, projectId: null });
   const pool = makeFakeJudgePool([{ promote: true, confidence: 1 }]);
 
-  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), { judgePool: pool });
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+  });
 
   const action = db
     .prepare(
@@ -629,7 +772,10 @@ it("P1 minted t2 row carries project_id from the source rollup", async () => {
   seedUnpromotedRollup(db, { body, projectId: "proj_x" });
   const pool = makeFakeJudgePool([{ promote: true, confidence: 1 }]);
 
-  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), { judgePool: pool });
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+  });
 
   const row = db
     .prepare(`SELECT project_id FROM t2_memories WHERE kind='promoted' ORDER BY rowid DESC LIMIT 1`)
@@ -651,7 +797,10 @@ it("P1 only dedups within the same project_id scope", async () => {
   seedUnpromotedRollup(db, { body, projectId: "proj_b" });
   const pool = makeFakeJudgePool([{ promote: true, confidence: 1 }]);
 
-  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), { judgePool: pool });
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+  });
 
   const minted = db
     .prepare(`SELECT project_id FROM t2_memories WHERE kind='promoted' ORDER BY rowid DESC LIMIT 1`)
@@ -695,7 +844,10 @@ it("P1 matches NULL project_id rows only against NULL rows", async () => {
   );
   seedUnpromotedRollup(db, { body, projectId: null });
   const pool = makeFakeJudgePool([{ promote: true, confidence: 1 }]);
-  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), { judgePool: pool });
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+  });
 
   const action = db
     .prepare(
@@ -715,7 +867,10 @@ it("P1 minted t2 memory includes project_id from rollup", async () => {
     "Auto-promoted memory should persist originating rollup project_id for reader scoping.";
   seedUnpromotedRollup(db, { body, projectId: "proj_x" });
   const pool = makeFakeJudgePool([{ promote: true, confidence: 1 }]);
-  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), { judgePool: pool });
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+  });
 
   const row = db
     .prepare(`SELECT project_id FROM t2_memories WHERE kind='promoted' ORDER BY rowid DESC LIMIT 1`)

@@ -82,9 +82,27 @@ export async function runReembedPhase(
       const newVecBuffer = Buffer.from(newVec.buffer, newVec.byteOffset, newVec.byteLength);
 
       db.transaction(() => {
-        db.prepare(
-          `UPDATE t2_vec SET embedding = ? WHERE rowid = (SELECT rowid FROM t2_memories WHERE memory_id = ?)`,
-        ).run(newVecBuffer, mem.memory_id);
+        const row = db
+          .prepare(`SELECT rowid FROM t2_memories WHERE memory_id = ?`)
+          .get(mem.memory_id) as { rowid: number } | null;
+        if (!row) {
+          throw new Error(`P7 reembed target missing rowid for memory ${mem.memory_id}`);
+        }
+
+        try {
+          db.prepare(`INSERT OR REPLACE INTO t2_vec(rowid, embedding) VALUES(?, ?)`).run(
+            row.rowid,
+            newVecBuffer,
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!/UNIQUE constraint failed/i.test(msg)) throw err;
+          db.prepare(`DELETE FROM t2_vec WHERE rowid = ?`).run(row.rowid);
+          db.prepare(`INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)`).run(
+            row.rowid,
+            newVecBuffer,
+          );
+        }
 
         db.prepare(`UPDATE t2_memories SET embedding_model_version = ? WHERE memory_id = ?`).run(
           currentModelVersion,

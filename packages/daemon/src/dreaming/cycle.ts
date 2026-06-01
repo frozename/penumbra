@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { DispatchEventInput, Logger } from "@penumbra/core";
-import { retireNonDirectMemory } from "@penumbra/core";
+import { buildT2EmbedText, retireNonDirectMemory } from "@penumbra/core";
 import { releaseT1RollupClaims } from "../../../core/src/db/schema.js";
 import { z } from "zod";
 import type {
@@ -431,15 +431,11 @@ export async function runDreamCycle(
       const total = votes.length;
       const autoPromote = total >= autoPromoteMinJudges && yesCount >= Math.ceil((total * 2) / 3);
       const avgConfidence = votes.reduce((s, v) => s + v.confidence, 0) / Math.max(total, 1);
-      const status = autoPromote ? "auto_applied" : "queued";
+      let status = autoPromote ? "auto_applied" : "queued";
 
       let mintedT2Id: string | undefined;
       if (autoPromote) {
         const nowIso = new Date().toISOString();
-        db.prepare(`UPDATE t1_rollups SET t2_promoted_at=? WHERE rollup_id=?`).run(
-          nowIso,
-          rollup.rollup_id,
-        );
         const proposedTitle = `P1 auto-promote: ${body.slice(0, 80)}`;
         const existing = (
           hasT2ProjectId
@@ -478,34 +474,76 @@ export async function runDreamCycle(
           );
           continue;
         }
-        mintedT2Id = crypto.randomUUID();
-        if (hasT2ProjectId) {
-          db.prepare(
-            `INSERT INTO t2_memories(memory_id, user_id, project_id, kind, window_start, window_end, title, body, created_at, updated_at)
-             VALUES(?, 'system', ?, 'promoted', ?, ?, ?, ?, ?, ?)`,
-          ).run(
-            mintedT2Id,
-            rollup.project_id,
-            nowIso,
-            nowIso,
-            `P1 auto-promote: ${body.slice(0, 80)}`,
-            body,
-            nowIso,
-            nowIso,
+        if (!deps.onReembed) {
+          status = "queued";
+          console.warn(
+            `P1 auto-promote skipped for rollup ${rollup.rollup_id}: onReembed handler unavailable`,
           );
         } else {
-          db.prepare(
-            `INSERT INTO t2_memories(memory_id, user_id, kind, window_start, window_end, title, body, created_at, updated_at)
-             VALUES(?, 'system', 'promoted', ?, ?, ?, ?, ?, ?)`,
-          ).run(
-            mintedT2Id,
-            nowIso,
-            nowIso,
-            `P1 auto-promote: ${body.slice(0, 80)}`,
-            body,
-            nowIso,
-            nowIso,
-          );
+          const currentModelVersion = process.env.PENUMBRA_EMBEDDING_MODEL_VERSION || "v1";
+          const candidateMemoryId = crypto.randomUUID();
+          const candidateTitle = `P1 auto-promote: ${body.slice(0, 80)}`;
+          const embedText = buildT2EmbedText(candidateTitle, body);
+          try {
+            const vec = await deps.onReembed(candidateMemoryId, embedText);
+
+            try {
+              db.transaction(() => {
+                if (hasT2ProjectId) {
+                  db.prepare(
+                    `INSERT INTO t2_memories(memory_id, user_id, project_id, kind, window_start, window_end, title, body, created_at, updated_at, embedding_model_version)
+                     VALUES(?, 'system', ?, 'promoted', ?, ?, ?, ?, ?, ?, ?)`,
+                  ).run(
+                    candidateMemoryId,
+                    rollup.project_id,
+                    nowIso,
+                    nowIso,
+                    candidateTitle,
+                    body,
+                    nowIso,
+                    nowIso,
+                    currentModelVersion,
+                  );
+                } else {
+                  db.prepare(
+                    `INSERT INTO t2_memories(memory_id, user_id, kind, window_start, window_end, title, body, created_at, updated_at, embedding_model_version)
+                     VALUES(?, 'system', 'promoted', ?, ?, ?, ?, ?, ?, ?)`,
+                  ).run(
+                    candidateMemoryId,
+                    nowIso,
+                    nowIso,
+                    candidateTitle,
+                    body,
+                    nowIso,
+                    nowIso,
+                    currentModelVersion,
+                  );
+                }
+                const inserted = db
+                  .prepare(`SELECT rowid FROM t2_memories WHERE memory_id = ?`)
+                  .get(candidateMemoryId) as { rowid: number } | null;
+                if (!inserted) throw new Error("inserted t2 memory missing rowid");
+                db.prepare(`INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)`).run(inserted.rowid, vec);
+                db.prepare(`UPDATE t1_rollups SET t2_promoted_at=? WHERE rollup_id=?`).run(
+                  nowIso,
+                  rollup.rollup_id,
+                );
+              })();
+              mintedT2Id = candidateMemoryId;
+            } catch (err) {
+              status = "queued";
+              console.error(
+                `P1 auto-promote promotion transaction failed for rollup ${rollup.rollup_id}; promotion skipped`,
+                err,
+              );
+            }
+          } catch (err) {
+            status = "queued";
+            console.error(
+              `P1 auto-promote embed failed for rollup ${rollup.rollup_id}; promotion skipped`,
+              err,
+            );
+          }
         }
       }
 

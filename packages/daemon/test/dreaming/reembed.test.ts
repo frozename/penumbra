@@ -53,6 +53,28 @@ function seedMemoryWithEmbeddingVersion(
   return memoryId;
 }
 
+function seedMemoryWithoutVector(
+  db,
+  opts: { memory_id?: string; embeddingModelVersion: string | null; title?: string; body?: string },
+) {
+  const memoryId = opts.memory_id || crypto.randomUUID();
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO t2_memories(memory_id, user_id, kind, window_start, window_end, title, body, created_at, updated_at, embedding_model_version)
+     VALUES(?, 'hting', 'decision', ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    memoryId,
+    now,
+    now,
+    opts.title ?? "test-title",
+    opts.body ?? "test-body",
+    now,
+    now,
+    opts.embeddingModelVersion,
+  );
+  return memoryId;
+}
+
 describe("Dreaming P7 re-embed", () => {
   it("P7 is a no-op when PENUMBRA_T2_REEMBED_ENABLED is false", async () => {
     const db = getTestDb();
@@ -123,6 +145,41 @@ describe("Dreaming P7 re-embed", () => {
     else process.env.PENUMBRA_T2_EMBED_RECIPE = prevRecipe;
 
     expect(embededCount).toBe(1);
+  });
+
+  it("P7 repairs orphaned rows by creating missing t2_vec entries", async () => {
+    const db = getTestDb();
+    const staleId = seedMemoryWithoutVector(db, {
+      embeddingModelVersion: "v1",
+      title: "orphan-title",
+      body: "orphan-body",
+    });
+    const config = { reembedBatchSize: 100, skipPhases: new Set([]), p1BatchSize: 10 } as any;
+    const prevEnabled = process.env.PENUMBRA_T2_REEMBED_ENABLED;
+    const prevModelVersion = process.env.PENUMBRA_EMBEDDING_MODEL_VERSION;
+    process.env.PENUMBRA_T2_REEMBED_ENABLED = "true";
+    process.env.PENUMBRA_EMBEDDING_MODEL_VERSION = "v2";
+
+    try {
+      const out = await runReembedPhase(db, "cycle11", config, {
+        onReembed: async () => new Float32Array(new Array(384).fill(0.4)),
+      });
+      expect(out).toEqual({ deferred: false, processed: 1 });
+    } finally {
+      if (prevEnabled === undefined) delete process.env.PENUMBRA_T2_REEMBED_ENABLED;
+      else process.env.PENUMBRA_T2_REEMBED_ENABLED = prevEnabled;
+      if (prevModelVersion === undefined) delete process.env.PENUMBRA_EMBEDDING_MODEL_VERSION;
+      else process.env.PENUMBRA_EMBEDDING_MODEL_VERSION = prevModelVersion;
+    }
+
+    const row = db
+      .prepare(`SELECT rowid, embedding_model_version FROM t2_memories WHERE memory_id = ?`)
+      .get(staleId) as { rowid: number; embedding_model_version: string | null };
+    expect(row.embedding_model_version).toBe("v2");
+    const vecRow = db
+      .prepare(`SELECT embedding FROM t2_vec WHERE rowid = ?`)
+      .get(row.rowid) as { embedding: Uint8Array } | null;
+    expect(vecRow).toBeTruthy();
   });
 
   it("P7 routes re-embed input through title recipe when enabled", async () => {
@@ -196,6 +253,41 @@ describe("Dreaming P7 re-embed", () => {
     );
     expect(oldVecArray[0]).toBeCloseTo(0.1);
     expect(oldVecArray[1]).toBeCloseTo(0.1);
+  });
+
+  it("P7 does not stamp embedding_model_version when vec upsert fails", async () => {
+    const db = getTestDb();
+    const id = seedMemoryWithEmbeddingVersion(db, {
+      embeddingModelVersion: "v1",
+      vector: new Array(384).fill(0.1),
+    });
+    const config = { reembedBatchSize: 100, skipPhases: new Set([]), p1BatchSize: 10 } as any;
+    const prevEnabled = process.env.PENUMBRA_T2_REEMBED_ENABLED;
+    const prevModelVersion = process.env.PENUMBRA_EMBEDDING_MODEL_VERSION;
+    process.env.PENUMBRA_T2_REEMBED_ENABLED = "true";
+    process.env.PENUMBRA_EMBEDDING_MODEL_VERSION = "v2";
+
+    try {
+      const out = await runReembedPhase(db, "cycle22", config, {
+        // wrong dimension (1 instead of 384) should fail vec write
+        onReembed: async () => new Float32Array([0.2]),
+      });
+      expect(out).toEqual({ deferred: false, processed: 0 });
+    } finally {
+      if (prevEnabled === undefined) delete process.env.PENUMBRA_T2_REEMBED_ENABLED;
+      else process.env.PENUMBRA_T2_REEMBED_ENABLED = prevEnabled;
+      if (prevModelVersion === undefined) delete process.env.PENUMBRA_EMBEDDING_MODEL_VERSION;
+      else process.env.PENUMBRA_EMBEDDING_MODEL_VERSION = prevModelVersion;
+    }
+
+    const mem = db
+      .prepare(`SELECT embedding_model_version FROM t2_memories WHERE memory_id = ?`)
+      .get(id) as { embedding_model_version: string | null };
+    expect(mem.embedding_model_version).toBe("v1");
+    const actionCount = db
+      .prepare(`SELECT COUNT(*) AS c FROM dream_actions WHERE phase='P7' AND target_ids = ?`)
+      .get(JSON.stringify([id])) as { c: number };
+    expect(actionCount.c).toBe(0);
   });
 
   it("P7 revert: restores pre-action vector from t2_vec_history", async () => {
