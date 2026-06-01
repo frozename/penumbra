@@ -1,5 +1,6 @@
 export type T2EmbedRecipe = "body_v1" | "title_only" | "title_plus_concise";
 export const MAX_BODY_CHARS = 4096;
+export const T2_CONCISE_BODY_CHARS = 320;
 
 const T2_XML_BLEED_PATTERN =
   /<\/?(?:function_calls|invoke|tool_call|tool_use|antml:[a-z_]+)[\s>]/i;
@@ -17,7 +18,9 @@ function resolveRecipe(recipe?: T2EmbedRecipe): T2EmbedRecipe {
 export function buildT2EmbedText(title: string, body: string, recipe?: T2EmbedRecipe): string {
   const resolved = resolveRecipe(recipe);
   if (resolved === "title_only") return title.slice(0, 200);
-  if (resolved === "title_plus_concise") return `${title.slice(0, 200)}\n${body.slice(0, 256)}`;
+  // Tuned via live-corpus sweep: +54 weak lift, regression 2, golden 49/50 at 320 chars (<=5 guard with margin).
+  if (resolved === "title_plus_concise")
+    return `${title.slice(0, 200)}\n${body.slice(0, T2_CONCISE_BODY_CHARS)}`;
   return body;
 }
 

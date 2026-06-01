@@ -12,9 +12,9 @@ test("buildT2EmbedText returns capped title for title_only", () => {
 
 test("buildT2EmbedText returns capped title + concise body for title_plus_concise", () => {
   const title = "A".repeat(210);
-  const body = "B".repeat(300);
+  const body = "B".repeat(400);
   expect(buildT2EmbedText(title, body, "title_plus_concise")).toBe(
-    `${"A".repeat(200)}\n${"B".repeat(256)}`,
+    `${"A".repeat(200)}\n${"B".repeat(320)}`,
   );
 });
 
