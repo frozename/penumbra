@@ -1,0 +1,239 @@
+{
+  "weakRows": [
+    {
+      "id": "mem-025",
+      "title": "Raft Snapshot Compaction Windows",
+      "body": "Field notes about greenhouse irrigation timing, compost temperature checks, pruning schedules, seedling trays, and pest traps in a community garden."
+    },
+    {
+      "id": "mem-026",
+      "title": "Kubernetes PodDisruptionBudget Drain Math",
+      "body": "Kitchen prep checklist for sourdough batches, hydration ratios, bulk fermentation timing, banneton rotation, and oven steam routines."
+    },
+    {
+      "id": "mem-027",
+      "title": "WAL Segment Recycling Thresholds",
+      "body": "Backpacking itinerary with campsite distances, water refill points, trail markers, weather notes, and sunrise photo locations."
+    },
+    {
+      "id": "mem-028",
+      "title": "TLS Ticket Rotation Cadence",
+      "body": "Studio rehearsal log tracking metronome tempos, vocal warmups, song order, instrument tuning, and microphone placement."
+    },
+    {
+      "id": "mem-029",
+      "title": "BTree Fillfactor and Page Split Control",
+      "body": "Neighborhood cycling journal listing cadence drills, hill intervals, recovery spins, chain lubrication, and tire pressure checks."
+    },
+    {
+      "id": "mem-030",
+      "title": "NATS JetStream Ack Wait Tuning",
+      "body": "Birdwatching diary with migration sightings, binocular settings, wetland routes, call pattern notes, and weekly species counts."
+    }
+  ],
+  "goldenRows": [
+    {
+      "id": "mem-001",
+      "title": "Gateway Retry Policy",
+      "body": "Set exponential backoff with jitter for HTTP 429 and 503, cap retries at three, and emit retry budget metrics for each route to avoid retry storms."
+    },
+    {
+      "id": "mem-002",
+      "title": "SQLite Recall Index Maintenance",
+      "body": "Run sqlite-vacuum weekly, analyze recall_audit and t2_vec statistics, and checkpoint WAL before benchmarking retrieval latency in production-like loads."
+    },
+    {
+      "id": "mem-003",
+      "title": "Daemon Worker Probe Rules",
+      "body": "Workers probe every fifteen seconds and are evicted after three misses; stale tasks are requeued and tagged for reconciler sweep diagnostics."
+    },
+    {
+      "id": "mem-004",
+      "title": "OpenAI Compatible Key Resolution",
+      "body": "Key lookup precedence is inline apiKey, then apiKeyEnv, then keychain, then apiKeyFile; tests must validate fallback order and redaction."
+    },
+    {
+      "id": "mem-005",
+      "title": "Dispatch Reliability States",
+      "body": "Classifier outputs complete, non_terminal_stale, and non_terminal_recoverable states using dispatch events, heartbeat gaps, and task-class thresholds."
+    },
+    {
+      "id": "mem-006",
+      "title": "Worktree GC Grace Period",
+      "body": "Garbage collector removes worktrees whose handoffs are terminal for more than two hours and records worktree.gc forensic events in dispatch logs."
+    },
+    {
+      "id": "mem-007",
+      "title": "MCP Permission Flow",
+      "body": "Permission list_pending, get, and approve routes are required for boundary actions, with explicit deny paths and audit rows for each decision."
+    },
+    {
+      "id": "mem-008",
+      "title": "Bench Fleet Output Contract",
+      "body": "Bench fleet emits per-agent jsonl rows with model, latency, token totals, strict-openai mode flags, and grading verdict for longitudinal comparisons."
+    }
+  ],
+  "corpusRows": [
+    {
+      "id": "mem-001",
+      "title": "Gateway Retry Policy",
+      "body": "Set exponential backoff with jitter for HTTP 429 and 503, cap retries at three, and emit retry budget metrics for each route to avoid retry storms."
+    },
+    {
+      "id": "mem-002",
+      "title": "SQLite Recall Index Maintenance",
+      "body": "Run sqlite-vacuum weekly, analyze recall_audit and t2_vec statistics, and checkpoint WAL before benchmarking retrieval latency in production-like loads."
+    },
+    {
+      "id": "mem-003",
+      "title": "Daemon Worker Probe Rules",
+      "body": "Workers probe every fifteen seconds and are evicted after three misses; stale tasks are requeued and tagged for reconciler sweep diagnostics."
+    },
+    {
+      "id": "mem-004",
+      "title": "OpenAI Compatible Key Resolution",
+      "body": "Key lookup precedence is inline apiKey, then apiKeyEnv, then keychain, then apiKeyFile; tests must validate fallback order and redaction."
+    },
+    {
+      "id": "mem-005",
+      "title": "Dispatch Reliability States",
+      "body": "Classifier outputs complete, non_terminal_stale, and non_terminal_recoverable states using dispatch events, heartbeat gaps, and task-class thresholds."
+    },
+    {
+      "id": "mem-006",
+      "title": "Worktree GC Grace Period",
+      "body": "Garbage collector removes worktrees whose handoffs are terminal for more than two hours and records worktree.gc forensic events in dispatch logs."
+    },
+    {
+      "id": "mem-007",
+      "title": "MCP Permission Flow",
+      "body": "Permission list_pending, get, and approve routes are required for boundary actions, with explicit deny paths and audit rows for each decision."
+    },
+    {
+      "id": "mem-008",
+      "title": "Bench Fleet Output Contract",
+      "body": "Bench fleet emits per-agent jsonl rows with model, latency, token totals, strict-openai mode flags, and grading verdict for longitudinal comparisons."
+    },
+    {
+      "id": "mem-009",
+      "title": "Session Notes Rotation",
+      "body": "Archive old notes weekly, preserve turn boundaries, and keep append-only history for incident reconstruction and planning continuity."
+    },
+    {
+      "id": "mem-010",
+      "title": "Context File Writer",
+      "body": "Generate concise context files from recent t0 events and selected memories, then attach them to dispatched handoffs for routing quality."
+    },
+    {
+      "id": "mem-011",
+      "title": "Supervisor Tick Backoff",
+      "body": "Long-lived ticks retry with bounded backoff after transient failures and trip a circuit breaker after repeated consecutive errors."
+    },
+    {
+      "id": "mem-012",
+      "title": "Recall Budget Limits",
+      "body": "Workflow recall budget caps token usage per run and trims low-score candidates before synthesis to prevent runaway context growth."
+    },
+    {
+      "id": "mem-013",
+      "title": "Workflow Quarantine Rule",
+      "body": "After three consecutive failures, a workflow is quarantined from automatic triggers while still allowing manual runs for diagnosis."
+    },
+    {
+      "id": "mem-014",
+      "title": "Dispatch Timeline Export",
+      "body": "Timeline export includes dispatch.start, agent.heartbeat, tool failures, and dispatch.end so operators can classify stale versus active work."
+    },
+    {
+      "id": "mem-015",
+      "title": "Agent Persona Routing",
+      "body": "Adversarial review personas map to preferred agents with fallback ordering, and outcomes are merged into one prioritized synthesis."
+    },
+    {
+      "id": "mem-016",
+      "title": "Synthetic Fixture Hygiene",
+      "body": "Committed fixtures must avoid private user content, use invented text, and stay deterministic for CI guardrails in benchmark tests."
+    },
+    {
+      "id": "mem-017",
+      "title": "Launchd Worker Environment",
+      "body": "Inspect launchctl print output to verify PATH and environment variables when worker commands fail despite healthy daemon status."
+    },
+    {
+      "id": "mem-018",
+      "title": "Model Promotion Ledger",
+      "body": "Record model promotion decisions with benchmark evidence, caveats, and rollback criteria to preserve reproducible routing policy."
+    },
+    {
+      "id": "mem-019",
+      "title": "HTTP Direct Agent Limits",
+      "body": "Define per-provider concurrency and timeout limits, then monitor quota pressure to prevent fleet-wide throttling during fan-out."
+    },
+    {
+      "id": "mem-020",
+      "title": "Cost Quota Warnings",
+      "body": "Emit scheduled quota summaries with recent burn rates and trigger warning events before hard budget exhaustion."
+    },
+    {
+      "id": "mem-021",
+      "title": "Chain Wait Bounding",
+      "body": "Bound wait payloads to reduce token blowouts and rely on status polling for long-running chains with sparse message traffic."
+    },
+    {
+      "id": "mem-022",
+      "title": "SQLite Vec Extension",
+      "body": "Load sqlite-vec before vector queries and fail fast with a clear operator error when the shared library is unavailable."
+    },
+    {
+      "id": "mem-023",
+      "title": "Handoff Approval Gate",
+      "body": "Boundary tasks require explicit approval before claim, and denied actions emit audit events tied to the originating session."
+    },
+    {
+      "id": "mem-024",
+      "title": "CLI Status View",
+      "body": "Status output should summarize daemon health, pending approvals, worker liveness, and recent sweep activity in a compact panel."
+    },
+    {
+      "id": "mem-025",
+      "title": "Raft Snapshot Compaction Windows",
+      "body": "Field notes about greenhouse irrigation timing, compost temperature checks, pruning schedules, seedling trays, and pest traps in a community garden."
+    },
+    {
+      "id": "mem-026",
+      "title": "Kubernetes PodDisruptionBudget Drain Math",
+      "body": "Kitchen prep checklist for sourdough batches, hydration ratios, bulk fermentation timing, banneton rotation, and oven steam routines."
+    },
+    {
+      "id": "mem-027",
+      "title": "WAL Segment Recycling Thresholds",
+      "body": "Backpacking itinerary with campsite distances, water refill points, trail markers, weather notes, and sunrise photo locations."
+    },
+    {
+      "id": "mem-028",
+      "title": "TLS Ticket Rotation Cadence",
+      "body": "Studio rehearsal log tracking metronome tempos, vocal warmups, song order, instrument tuning, and microphone placement."
+    },
+    {
+      "id": "mem-029",
+      "title": "BTree Fillfactor and Page Split Control",
+      "body": "Neighborhood cycling journal listing cadence drills, hill intervals, recovery spins, chain lubrication, and tire pressure checks."
+    },
+    {
+      "id": "mem-030",
+      "title": "NATS JetStream Ack Wait Tuning",
+      "body": "Birdwatching diary with migration sightings, binocular settings, wetland routes, call pattern notes, and weekly species counts."
+    }
+  ],
+  "queries": [
+    "retry policy for HTTP 429 and 503 with jitter",
+    "how are worker probe misses handled",
+    "dispatch reliability stale versus recoverable states",
+    "where is openai compatible api key precedence documented",
+    "pod disruption budget drain math guidance",
+    "raft snapshot compaction window tuning",
+    "wal segment recycling threshold recommendations",
+    "nats jetstream ack wait tuning notes",
+    "btree fillfactor page split control reference"
+  ]
+}
