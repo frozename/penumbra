@@ -110,6 +110,18 @@ it("P0 bails when daily cap already reached", async () => {
   expect(getCycleBailReason(db, cycleId)).toMatch(/daily/i);
 });
 
+it("P0 treats zero USD caps as unlimited and still runs P7", async () => {
+  const db = openTestDb();
+  const cycleId = await runDreamCycle(db, testConfig({ dailyUsd: 0, perCycleUsd: 0 }));
+  const row = db
+    .prepare(`SELECT outcome, bail_reason, phases_run FROM dream_cycles WHERE cycle_id = ?`)
+    .get(cycleId) as { outcome: string; bail_reason: string | null; phases_run: string };
+  const phasesRun = JSON.parse(row.phases_run) as string[];
+  expect(row.outcome).not.toBe("bailed");
+  expect(row.bail_reason ?? "").not.toMatch(/daily|per-cycle|per cycle|usd/i);
+  expect(phasesRun).toContain("P7");
+});
+
 it("P0 bails when per-cycle LLM cap exceeded", async () => {
   const db = openTestDb();
   const cycleId = await runDreamCycle(db, testConfig({ perCycleUsd: 0.001 }));
@@ -423,15 +435,13 @@ it("P1 auto-promote inserts t2 memory + vector and uses buildT2EmbedText input",
        ORDER BY rowid DESC
        LIMIT 1`,
     )
-    .get() as
-    | {
-        rowid: number;
-        memory_id: string;
-        title: string;
-        body: string;
-        embedding_model_version: string | null;
-      }
-    | null;
+    .get() as {
+    rowid: number;
+    memory_id: string;
+    title: string;
+    body: string;
+    embedding_model_version: string | null;
+  } | null;
   expect(promoted).toBeTruthy();
   expect(promoted?.embedding_model_version).toBe("embed-model-v2");
   expect(seen).toHaveLength(1);
@@ -466,7 +476,9 @@ it("P1 embed failure rolls back candidate promotion and continues to next rollup
       judgePool: pool,
       onReembed: async (_memory_id, text) => {
         embedCalls += 1;
-        if (text === buildT2EmbedText(`P1 auto-promote: ${failingBody.slice(0, 80)}`, failingBody)) {
+        if (
+          text === buildT2EmbedText(`P1 auto-promote: ${failingBody.slice(0, 80)}`, failingBody)
+        ) {
           throw new Error("embed exploded");
         }
         return new Float32Array([1, 2, 3]);
@@ -478,9 +490,9 @@ it("P1 embed failure rolls back candidate promotion and continues to next rollup
   }
 
   expect(embedCalls).toBeGreaterThanOrEqual(2);
-  const promotedCount = (db
-    .prepare(`SELECT COUNT(*) AS c FROM t2_memories WHERE kind='promoted'`)
-    .get() as { c: number }).c;
+  const promotedCount = (
+    db.prepare(`SELECT COUNT(*) AS c FROM t2_memories WHERE kind='promoted'`).get() as { c: number }
+  ).c;
   expect(promotedCount).toBe(1);
   const failedPromoted = db
     .prepare(`SELECT 1 AS ok FROM t2_memories WHERE kind='promoted' AND body = ? LIMIT 1`)
@@ -520,7 +532,10 @@ it("P1 skips rollups whose first_prompt_excerpt is a long-lived standing prompt"
     { promote: true, confidence: 0.95 },
     { promote: true, confidence: 0.95 },
   ]);
-  const cycleId = await runDreamCycle(db, testConfig(), { judgePool: pool, onReembed: testP1Embed });
+  const cycleId = await runDreamCycle(db, testConfig(), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+  });
   const claimedRollups = getClaimedRollups(db, cycleId);
   expect(claimedRollups).toContain(normalRollupId);
   expect(claimedRollups).not.toContain(longLivedRollupId);
@@ -594,7 +609,10 @@ it("P1 skips NULL and short first_prompt_excerpt rollups (no UUID fallback)", as
     { promote: true, confidence: 0.95 },
     { promote: true, confidence: 0.95 },
   ]);
-  const cycleId = await runDreamCycle(db, testConfig(), { judgePool: pool, onReembed: testP1Embed });
+  const cycleId = await runDreamCycle(db, testConfig(), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+  });
   const claimedRollups = getClaimedRollups(db, cycleId);
   expect(claimedRollups).toContain(nullRollupId);
   expect(claimedRollups).toContain(shortRollupId);

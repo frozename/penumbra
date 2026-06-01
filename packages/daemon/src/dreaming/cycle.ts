@@ -271,12 +271,12 @@ export async function runDreamCycle(
     )
     .get(todayStartMs) as { total_today: number };
 
-  if ((todayRow?.total_today ?? 0) >= config.dailyUsd) {
+  if (config.dailyUsd > 0 && (todayRow?.total_today ?? 0) >= config.dailyUsd) {
     return bail("daily USD cap already reached");
   }
 
   // 2. Per-cycle sanity floor
-  if (config.perCycleUsd < MIN_PER_CYCLE_USD) {
+  if (config.perCycleUsd > 0 && config.perCycleUsd < MIN_PER_CYCLE_USD) {
     return bail(`per-cycle USD cap (${config.perCycleUsd}) is too low to run any phase`);
   }
 
@@ -523,7 +523,10 @@ export async function runDreamCycle(
                   .prepare(`SELECT rowid FROM t2_memories WHERE memory_id = ?`)
                   .get(candidateMemoryId) as { rowid: number } | null;
                 if (!inserted) throw new Error("inserted t2 memory missing rowid");
-                db.prepare(`INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)`).run(inserted.rowid, vec);
+                db.prepare(`INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)`).run(
+                  inserted.rowid,
+                  vec,
+                );
                 db.prepare(`UPDATE t1_rollups SET t2_promoted_at=? WHERE rollup_id=?`).run(
                   nowIso,
                   rollup.rollup_id,

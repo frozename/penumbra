@@ -240,13 +240,15 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   },
   PENUMBRA_DREAMING_PER_CYCLE_USD: {
     schema: NonNegNum,
-    default: 0.5,
-    description: "Max USD per dreaming cycle.",
+    // Dreaming runs on local/free models by default; set a positive value to re-enable a USD cap.
+    default: 0,
+    description: "Max USD per dreaming cycle (0 disables cap).",
   },
   PENUMBRA_DREAMING_DAILY_USD: {
     schema: NonNegNum,
-    default: 5.0,
-    description: "Max daily USD for dreaming.",
+    // Dreaming runs on local/free models by default; set a positive value to re-enable a USD cap.
+    default: 0,
+    description: "Max daily USD for dreaming (0 disables cap).",
   },
   PENUMBRA_DREAMING_PRESSURE_GUARD: {
     schema: Bool,
