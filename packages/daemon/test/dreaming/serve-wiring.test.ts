@@ -145,13 +145,18 @@ describe("buildDreamCycleDeps", () => {
 
   test("onReembed delegates to embedder.embed", async () => {
     const vec = new Float32Array([0.5, 0.6]);
+    const seen: string[][] = [];
     const fakeEmbedder = {
-      embed: async (_bodies: string[]) => [vec],
+      embed: async (bodies: string[]) => {
+        seen.push(bodies);
+        return [vec];
+      },
     };
 
     const deps = buildDreamCycleDeps({ embedder: fakeEmbedder }, db, {} as any);
     const result = await deps.onReembed!("mem-1", "hello world");
 
     expect(result).toBe(vec);
+    expect(seen).toEqual([["hello world"]]);
   });
 });

@@ -78,8 +78,8 @@ export function buildDreamCycleDeps(
   });
 
   if (services.embedder) {
-    deps.onReembed = async (_id: string, body: string) =>
-      (await services.embedder!.embed([body]))[0]!;
+    deps.onReembed = async (_id: string, text: string) =>
+      (await services.embedder!.embed([text]))[0]!;
   }
   if (services.dispatchEventLog) {
     deps.dispatchEventLog = services.dispatchEventLog;

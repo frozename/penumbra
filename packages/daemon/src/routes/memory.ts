@@ -25,6 +25,7 @@ import {
   BasisSchema,
   validateBasis,
 } from "@penumbra/core";
+import { buildT2EmbedText } from "@penumbra/core";
 import { getPrincipal } from "../auth.js";
 import { json } from "./_helpers.js";
 
@@ -183,7 +184,7 @@ export async function memoryWriteT2Route(req: Request, services: Services): Prom
   }
 
   const data = parsed.data;
-  const embedding = (await services.embedder.embed([data.body]))[0];
+  const embedding = (await services.embedder.embed([buildT2EmbedText(data.title, data.body)]))[0];
   if (embedding == null) {
     return json({ error: { code: "embed_failed", message: "embedding returned no vector" } }, 500);
   }
@@ -208,7 +209,10 @@ export async function memoryWriteT2Route(req: Request, services: Services): Prom
     if (data.session_id) {
       (writeInput as { source_session_ids?: string[] }).source_session_ids = [data.session_id];
     }
-    const wrote = writeDirectT2Memory(services.db, writeInput as Parameters<typeof writeDirectT2Memory>[1]);
+    const wrote = writeDirectT2Memory(
+      services.db,
+      writeInput as Parameters<typeof writeDirectT2Memory>[1],
+    );
     const wroteProjectId = data.project_id ?? null;
 
     const parsedLinks = parseWikiLinks(data.body);

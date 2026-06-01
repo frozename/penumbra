@@ -255,6 +255,74 @@ test("wrapJudgeWithChunking falls back to title-only dedupe when no embedder is 
   expect(out.map((m) => m.title)).toEqual(["X", "Y"]);
 });
 
+test("wrapJudgeWithChunking uses body-v1 embed text by default (inert-default)", async () => {
+  const prev = process.env.PENUMBRA_T2_EMBED_RECIPE;
+  delete process.env.PENUMBRA_T2_EMBED_RECIPE;
+  const seen: string[][] = [];
+  const embedder = {
+    name: "spy",
+    dim: 4,
+    embed: async (texts: string[]) => {
+      seen.push(texts);
+      return texts.map(() => new Float32Array([1, 0, 0, 0]));
+    },
+  };
+
+  try {
+    const judge = wrapJudgeWithChunking({
+      maxCharsPerChunk: 20,
+      embedder,
+      judge: async (transcript) => {
+        if (transcript.includes("aaa")) {
+          return [{ title: "Alpha title", body: "Alpha body", kind: "fact" }];
+        }
+        return [{ title: "Beta title", body: "Beta body", kind: "fact" }];
+      },
+    });
+
+    const transcript = ["User: aaa", "Assistant: bbb", "User: ccc", "Assistant: ddd"].join("\n\n");
+    await judge(transcript);
+    expect(seen).toEqual([["Alpha body", "Beta body"]]);
+  } finally {
+    if (prev === undefined) delete process.env.PENUMBRA_T2_EMBED_RECIPE;
+    else process.env.PENUMBRA_T2_EMBED_RECIPE = prev;
+  }
+});
+
+test("wrapJudgeWithChunking routes embed input through title recipe when enabled", async () => {
+  const prev = process.env.PENUMBRA_T2_EMBED_RECIPE;
+  process.env.PENUMBRA_T2_EMBED_RECIPE = "title_only";
+  const seen: string[][] = [];
+  const embedder = {
+    name: "spy",
+    dim: 4,
+    embed: async (texts: string[]) => {
+      seen.push(texts);
+      return texts.map(() => new Float32Array([1, 0, 0, 0]));
+    },
+  };
+
+  try {
+    const judge = wrapJudgeWithChunking({
+      maxCharsPerChunk: 20,
+      embedder,
+      judge: async (transcript) => {
+        if (transcript.includes("aaa")) {
+          return [{ title: "Alpha title", body: "Alpha body", kind: "fact" }];
+        }
+        return [{ title: "Beta title", body: "Beta body", kind: "fact" }];
+      },
+    });
+
+    const transcript = ["User: aaa", "Assistant: bbb", "User: ccc", "Assistant: ddd"].join("\n\n");
+    await judge(transcript);
+    expect(seen).toEqual([["Alpha title", "Beta title"]]);
+  } finally {
+    if (prev === undefined) delete process.env.PENUMBRA_T2_EMBED_RECIPE;
+    else process.env.PENUMBRA_T2_EMBED_RECIPE = prev;
+  }
+});
+
 test("wrapJudgeWithChunking continues when one chunk fails", async () => {
   let call = 0;
   const judge = wrapJudgeWithChunking({

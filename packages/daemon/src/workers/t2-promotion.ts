@@ -1,5 +1,6 @@
 import type { Services } from "@penumbra/core";
 import { T2Promotion, type T2MemoryExtraction, type Embedder } from "@penumbra/core";
+import { buildT2EmbedText } from "@penumbra/core";
 import type { AgentChatConfig } from "@penumbra/config";
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
 import { createJudgePool, type JudgeEntry, type JudgePool } from "./t2-judge-pool.js";
@@ -272,7 +273,7 @@ async function dedupeBySemanticSimilarity(
   embedder: Embedder,
   threshold: number,
 ): Promise<T2MemoryExtraction[]> {
-  const vectors = await embedder.embed(memories.map((m) => m.body));
+  const vectors = await embedder.embed(memories.map((m) => buildT2EmbedText(m.title, m.body)));
   // Index in `memories` of the surviving representative for each cluster.
   const reps: number[] = [];
   // Per-input mapping to its cluster's rep index.

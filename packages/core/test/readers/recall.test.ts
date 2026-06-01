@@ -57,6 +57,37 @@ test("returns T1 rollups ranked by vector similarity", async () => {
   expect(results[0]!.tier).toBe("t1");
 });
 
+test("recall query path embeds raw query text even when t2 title recipe is enabled", async () => {
+  await seedT1("raw-query", "seed text", "2026-04-20T00:00:00Z");
+  const prev = process.env.PENUMBRA_T2_EMBED_RECIPE;
+  process.env.PENUMBRA_T2_EMBED_RECIPE = "title_only";
+  const seen: string[][] = [];
+  const baseEmbedder = new TestEmbedder({ dim: 384 });
+  const spyEmbedder = {
+    name: "spy",
+    dim: 384,
+    async embed(texts: string[]) {
+      seen.push(texts);
+      return baseEmbedder.embed(texts);
+    },
+  };
+
+  try {
+    const reader = new RecallReader({ db, embedder: spyEmbedder as any });
+    await reader.recall({
+      query: "RAW QUERY STRING",
+      project_id: "p1",
+      limit: 10,
+      include_raw: false,
+      min_score: 0,
+    });
+    expect(seen[0]).toEqual(["RAW QUERY STRING"]);
+  } finally {
+    if (prev === undefined) delete process.env.PENUMBRA_T2_EMBED_RECIPE;
+    else process.env.PENUMBRA_T2_EMBED_RECIPE = prev;
+  }
+});
+
 test("honors project_id filter", async () => {
   await seedT1("a", "x", "2026-04-20T00:00:00Z");
   db.run("UPDATE t1_rollups SET project_id='other' WHERE rollup_id='a'");

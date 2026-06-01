@@ -3,7 +3,13 @@ import { Database } from "bun:sqlite";
 import { mkdirSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import {
+  buildServices,
+  loadSqliteVec,
+  migrate,
+  type Services,
+  type Embedder,
+} from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { createDaemonFetchHandler } from "../../src/serve.js";
 import { registerWorkerForTest } from "../../test-utils.js";
@@ -21,7 +27,7 @@ function makeFetcher(
   }) as unknown as (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 }
 
-function makeServices(): {
+function makeServices(embedder: Embedder = new TestEmbedder({ dim: 384 })): {
   services: Services;
   db: Database;
   fetch: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -39,7 +45,7 @@ function makeServices(): {
     input: {},
     storageRoot: join(root, "storage"),
     db,
-    embedder: new TestEmbedder({ dim: 384 }),
+    embedder,
   });
 
   return {
@@ -239,6 +245,70 @@ describe("POST /memory/write", () => {
       .query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM t2_memories WHERE slug = 'stable-slug'`)
       .get()!;
     expect(rows.c).toBe(1);
+  });
+
+  test("POST /memory/write uses body-v1 embed input by default (inert-default)", async () => {
+    const prev = process.env.PENUMBRA_T2_EMBED_RECIPE;
+    delete process.env.PENUMBRA_T2_EMBED_RECIPE;
+    const seen: string[][] = [];
+    const embedder: Embedder = {
+      name: "spy",
+      dim: 384,
+      async embed(texts: string[]) {
+        seen.push(texts);
+        return texts.map(() => new Float32Array(384));
+      },
+    };
+    const { db, fetch, root } = makeServices(embedder);
+    handles.push({ db, root });
+
+    try {
+      const res = await fetch("http://x/memory/write", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${SHARED_TOKEN}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ title: "T", body: "Body text" }),
+      });
+      expect(res.status).toBe(200);
+      expect(seen).toEqual([["Body text"]]);
+    } finally {
+      if (prev === undefined) delete process.env.PENUMBRA_T2_EMBED_RECIPE;
+      else process.env.PENUMBRA_T2_EMBED_RECIPE = prev;
+    }
+  });
+
+  test("POST /memory/write routes embed input through title recipe when enabled", async () => {
+    const prev = process.env.PENUMBRA_T2_EMBED_RECIPE;
+    process.env.PENUMBRA_T2_EMBED_RECIPE = "title_only";
+    const seen: string[][] = [];
+    const embedder: Embedder = {
+      name: "spy",
+      dim: 384,
+      async embed(texts: string[]) {
+        seen.push(texts);
+        return texts.map(() => new Float32Array(384));
+      },
+    };
+    const { db, fetch, root } = makeServices(embedder);
+    handles.push({ db, root });
+
+    try {
+      const res = await fetch("http://x/memory/write", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${SHARED_TOKEN}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ title: "Title text", body: "Body text" }),
+      });
+      expect(res.status).toBe(200);
+      expect(seen).toEqual([["Title text"]]);
+    } finally {
+      if (prev === undefined) delete process.env.PENUMBRA_T2_EMBED_RECIPE;
+      else process.env.PENUMBRA_T2_EMBED_RECIPE = prev;
+    }
   });
 
   test("3) POST /memory/write parses [[slug]] and inserts wiki backlinks for resolved slugs", async () => {

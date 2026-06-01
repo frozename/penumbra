@@ -6,6 +6,7 @@ import { isNearDuplicate, type NearDuplicateItem } from "../memory/near-dup.js";
 import { T2MemoryWriteSchema, type T2MemoryWriteInput } from "../schemas/memory.js";
 import type { Clock } from "../utils/clock.js";
 import type { Uuid } from "../utils/uuid.js";
+import { buildT2EmbedText } from "./t2-embed-text.js";
 
 export const T2MemoryExtractionSchema = z.object({
   title: z.string().min(1),
@@ -65,9 +66,9 @@ export function writeDirectT2Memory(db: Database, input: DirectT2WriteInput): Di
   const why = input.why ?? null;
   const sourceQuote = input.source_quote ?? null;
   const obsType = input.obs_type ?? null;
-  const sourceSessionIds = [...new Set((input.source_session_ids ?? []).map((id) => id.trim()))].filter(
-    (id) => id.length > 0,
-  );
+  const sourceSessionIds = [
+    ...new Set((input.source_session_ids ?? []).map((id) => id.trim())),
+  ].filter((id) => id.length > 0);
   const sourceSessionIdsJson = JSON.stringify(sourceSessionIds);
 
   if (slug !== null) {
@@ -345,9 +346,7 @@ export class T2Promotion {
       .query<
         { event_type: string; payload_summary: string | null; payload_json: string | null },
         [string]
-      >(
-        "SELECT event_type, payload_summary, payload_json FROM t0_events WHERE session_id = ? ORDER BY ts ASC",
-      )
+      >("SELECT event_type, payload_summary, payload_json FROM t0_events WHERE session_id = ? ORDER BY ts ASC")
       .all(rollup.session_id);
 
     if (events.length === 0) {
@@ -401,7 +400,9 @@ export class T2Promotion {
           return 0;
         }
         if (this.promotedTranscriptHashes.size >= 256) {
-          const firstHash = this.promotedTranscriptHashes.values().next().value as string | undefined;
+          const firstHash = this.promotedTranscriptHashes.values().next().value as
+            | string
+            | undefined;
           if (firstHash !== undefined) this.promotedTranscriptHashes.delete(firstHash);
         }
         this.promotedTranscriptHashes.add(transcriptHash);
@@ -439,8 +440,8 @@ export class T2Promotion {
         return 0;
       }
 
-      const bodies = filteredExtractions.map((e) => e.body);
-      const embeddings = await this.opts.embedder.embed(bodies);
+      const embedTexts = filteredExtractions.map((e) => buildT2EmbedText(e.title, e.body));
+      const embeddings = await this.opts.embedder.embed(embedTexts);
       const existingNearDupCandidates = nearDupGateEnabled
         ? embeddings.map((embedding) =>
             readExistingNearDuplicateCandidates(
@@ -477,7 +478,10 @@ export class T2Promotion {
               if (existingDup.winner === "existing") {
                 continue;
               }
-              candidate.retireExistingIds.set(existingDup.existing.memory_id, existingDup.similarity);
+              candidate.retireExistingIds.set(
+                existingDup.existing.memory_id,
+                existingDup.similarity,
+              );
             }
 
             const batchDup = isNearDuplicate(candidate, selectedCandidates, threshold);
@@ -545,7 +549,10 @@ export class T2Promotion {
             .query<{ rowid: number }, [string]>("SELECT rowid FROM t2_memories WHERE memory_id=?")
             .get(memoryId)!.rowid;
           this.opts.db.run("DELETE FROM t2_vec WHERE rowid = ?", [rowid]);
-          this.opts.db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [rowid, pending.embedding]);
+          this.opts.db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [
+            rowid,
+            pending.embedding,
+          ]);
           insertedCountInTxn += 1;
 
           if (!nearDupGateEnabled) continue;
@@ -689,11 +696,15 @@ function toFloat32Array(value: unknown, memoryId?: string): Float32Array | null 
     if (ArrayBuffer.isView(value)) {
       const view = value as ArrayBufferView;
       const bytes = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
-      return new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+      return new Float32Array(
+        bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+      );
     }
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    console.warn(`[t2-promotion] failed to decode embedding for memory_id=${memoryId ?? "unknown"}: ${errMsg}`);
+    console.warn(
+      `[t2-promotion] failed to decode embedding for memory_id=${memoryId ?? "unknown"}: ${errMsg}`,
+    );
     return null;
   }
   return null;
@@ -738,7 +749,8 @@ function extractResponseText(response: unknown): string | null {
   if (typeof response === "string") return response;
   if (Array.isArray(response) && response.length > 0) {
     const first = response[0];
-    if (first && typeof first === "object") return readString((first as Record<string, unknown>).text);
+    if (first && typeof first === "object")
+      return readString((first as Record<string, unknown>).text);
   }
   if (response && typeof response === "object") {
     return readString((response as Record<string, unknown>).text);

@@ -124,6 +124,72 @@ test("promoteRollup extracts memories and marks as promoted", async () => {
   expect(rollup.t2_promoted_at).toBe("2026-04-27T15:00:00.000Z");
 });
 
+test("promoteRollup sends body-v1 embed text by default (inert-default)", async () => {
+  seedT1("r-embed-default", "s-embed-default", "2026-04-27T10:05:00Z");
+  const prev = process.env.PENUMBRA_T2_EMBED_RECIPE;
+  delete process.env.PENUMBRA_T2_EMBED_RECIPE;
+  const seen: string[][] = [];
+  const embedder = {
+    name: "spy",
+    dim: 384,
+    embed: async (texts: string[]) => {
+      seen.push(texts);
+      return texts.map(() => new Float32Array(384));
+    },
+  };
+
+  try {
+    const prom = new T2Promotion({
+      db,
+      embedder,
+      clock: () => new Date("2026-04-27T15:00:00Z"),
+      uuid: () => "m-embed-default",
+      llm: async () => [{ title: "Project Name", body: "The body text", kind: "fact" }],
+      minTranscriptChars: 0,
+    });
+
+    const count = await prom.promoteRollup("r-embed-default");
+    expect(count).toBe(1);
+    expect(seen).toEqual([["The body text"]]);
+  } finally {
+    if (prev === undefined) delete process.env.PENUMBRA_T2_EMBED_RECIPE;
+    else process.env.PENUMBRA_T2_EMBED_RECIPE = prev;
+  }
+});
+
+test("promoteRollup routes embed input through title recipe when enabled", async () => {
+  seedT1("r-embed-title", "s-embed-title", "2026-04-27T10:05:00Z");
+  const prev = process.env.PENUMBRA_T2_EMBED_RECIPE;
+  process.env.PENUMBRA_T2_EMBED_RECIPE = "title_only";
+  const seen: string[][] = [];
+  const embedder = {
+    name: "spy",
+    dim: 384,
+    embed: async (texts: string[]) => {
+      seen.push(texts);
+      return texts.map(() => new Float32Array(384));
+    },
+  };
+
+  try {
+    const prom = new T2Promotion({
+      db,
+      embedder,
+      clock: () => new Date("2026-04-27T15:00:00Z"),
+      uuid: () => "m-embed-title",
+      llm: async () => [{ title: "A title", body: "The body text", kind: "fact" }],
+      minTranscriptChars: 0,
+    });
+
+    const count = await prom.promoteRollup("r-embed-title");
+    expect(count).toBe(1);
+    expect(seen).toEqual([["A title"]]);
+  } finally {
+    if (prev === undefined) delete process.env.PENUMBRA_T2_EMBED_RECIPE;
+    else process.env.PENUMBRA_T2_EMBED_RECIPE = prev;
+  }
+});
+
 test("promoteRollup handles empty transcript gracefully", async () => {
   // Seed rollup but no events
   db.run(
@@ -508,9 +574,10 @@ test("writeDirectT2Memory persists source_session_ids when provided", () => {
   });
 
   const row = db
-    .query<{ source_session_ids: string }, [string]>(
-      `SELECT source_session_ids FROM t2_memories WHERE memory_id = ?`,
-    )
+    .query<
+      { source_session_ids: string },
+      [string]
+    >(`SELECT source_session_ids FROM t2_memories WHERE memory_id = ?`)
     .get(result.memory_id);
   expect(JSON.parse(row?.source_session_ids ?? "[]")).toEqual(["sess-direct-1"]);
 });
@@ -535,7 +602,9 @@ test("writeDirectT2Memory persists why/source_quote/obs_type and sets learned_at
         created_at: string;
       },
       [string]
-    >(`SELECT why, source_quote, obs_type, learned_at, created_at FROM t2_memories WHERE memory_id = ?`)
+    >(
+      `SELECT why, source_quote, obs_type, learned_at, created_at FROM t2_memories WHERE memory_id = ?`,
+    )
     .get(result.memory_id);
   expect(row).not.toBeNull();
   expect(row?.why).toBe("Why this memory matters");

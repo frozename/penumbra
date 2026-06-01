@@ -1,7 +1,13 @@
 import type { Database } from "bun:sqlite";
 import { retireNonDirectMemory } from "@penumbra/core";
+import { buildT2EmbedText } from "@penumbra/core";
 import type { DreamConfig } from "./config.js";
 import type { DreamCycleDeps } from "./cycle.js";
+
+function isTrueEnv(value: string | undefined): boolean {
+  if (!value) return false;
+  return value === "1" || value === "true" || value === "yes";
+}
 
 function sanitizeUsd(value: unknown): number {
   const n = typeof value === "number" ? value : Number(value);
@@ -15,6 +21,7 @@ export async function runReembedPhase(
   config: DreamConfig,
   deps: DreamCycleDeps,
 ): Promise<{ deferred: boolean; processed: number }> {
+  if (!isTrueEnv(process.env.PENUMBRA_T2_REEMBED_ENABLED)) return { deferred: false, processed: 0 };
   if (!deps.onReembed) return { deferred: false, processed: 0 };
 
   const currentModelVersion = process.env.PENUMBRA_EMBEDDING_MODEL_VERSION || "v1";
@@ -22,13 +29,14 @@ export async function runReembedPhase(
 
   const staleMemories = db
     .prepare(
-      `SELECT memory_id, body, embedding_model_version 
-     FROM t2_memories 
-     WHERE embedding_model_version IS NULL OR embedding_model_version != ?
-     LIMIT ?`,
+      `SELECT memory_id, title, body, embedding_model_version
+       FROM t2_memories
+       WHERE embedding_model_version IS NULL OR embedding_model_version != ?
+       LIMIT ?`,
     )
     .all(currentModelVersion, config.reembedBatchSize) as Array<{
     memory_id: string;
+    title: string;
     body: string;
     embedding_model_version: string | null;
   }>;
@@ -69,7 +77,8 @@ export async function runReembedPhase(
     }
 
     try {
-      const newVec = await deps.onReembed(mem.memory_id, mem.body);
+      const embedText = buildT2EmbedText(mem.title, mem.body);
+      const newVec = await deps.onReembed(mem.memory_id, embedText);
       const newVecBuffer = Buffer.from(newVec.buffer, newVec.byteOffset, newVec.byteLength);
 
       db.transaction(() => {
@@ -135,20 +144,19 @@ function getDreamAction(db: Database, actionId: string): DreamActionRow | null {
 function parseTargetIds(targetIdsRaw: string): string[] {
   const parsed = JSON.parse(targetIdsRaw) as unknown;
   if (!Array.isArray(parsed) || !parsed.every((id) => typeof id === "string")) {
-    throw new DreamActionApplyError("invalid_target_ids", "dream action target_ids must be string[]");
+    throw new DreamActionApplyError(
+      "invalid_target_ids",
+      "dream action target_ids must be string[]",
+    );
   }
   return parsed;
 }
 
-function markDreamActionReverted(
-  db: Database,
-  actionId: string,
-  previousStatus: string,
-): void {
+function markDreamActionReverted(db: Database, actionId: string, previousStatus: string): void {
   if (previousStatus === "applied") {
-    db.prepare('UPDATE dream_actions SET reverted_by = "user", status = "reverted" WHERE action_id = ?').run(
-      actionId,
-    );
+    db.prepare(
+      'UPDATE dream_actions SET reverted_by = "user", status = "reverted" WHERE action_id = ?',
+    ).run(actionId);
     return;
   }
   db.prepare('UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?').run(actionId);
@@ -156,7 +164,8 @@ function markDreamActionReverted(
 
 export function applyDreamAction(db: Database, actionId: string): void {
   const action = getDreamAction(db, actionId);
-  if (!action) throw new DreamActionApplyError("action_not_found", "Action not found: " + actionId, 404);
+  if (!action)
+    throw new DreamActionApplyError("action_not_found", "Action not found: " + actionId, 404);
   if (action.status !== "queued") {
     throw new DreamActionApplyError(
       "action_not_queued",
@@ -198,10 +207,9 @@ export function applyDreamAction(db: Database, actionId: string): void {
       );
     }
 
-    db.prepare("UPDATE dream_actions SET status = 'applied', decided_at = ?, decided_by = 'user' WHERE action_id = ?").run(
-      now,
-      actionId,
-    );
+    db.prepare(
+      "UPDATE dream_actions SET status = 'applied', decided_at = ?, decided_by = 'user' WHERE action_id = ?",
+    ).run(now, actionId);
   })();
 }
 
@@ -267,11 +275,7 @@ export function revertDreamAction(
 
       markDreamActionReverted(db, actionId, action.status);
     })();
-  } else if (
-    action.phase === "P1" &&
-    action.action_type === "promote_t1" &&
-    canCompensateState
-  ) {
+  } else if (action.phase === "P1" && action.action_type === "promote_t1" && canCompensateState) {
     const targetIds = JSON.parse(action.target_ids) as string[];
     const rollupId = targetIds[0] as string;
     const payload = JSON.parse(action.payload_json ?? "{}") as { t2_memory_id?: string };
@@ -294,11 +298,7 @@ export function revertDreamAction(
       }
       markDreamActionReverted(db, actionId, action.status);
     })();
-  } else if (
-    action.phase === "P2" &&
-    action.action_type === "link" &&
-    canCompensateState
-  ) {
+  } else if (action.phase === "P2" && action.action_type === "link" && canCompensateState) {
     const targetIds = JSON.parse(action.target_ids) as string[];
     const srcId = targetIds[0] as string;
     const dstId = targetIds[1] as string;
@@ -311,11 +311,7 @@ export function revertDreamAction(
       ).run(Date.now(), srcId, dstId, linkType);
       markDreamActionReverted(db, actionId, action.status);
     })();
-  } else if (
-    action.phase === "P3" &&
-    action.action_type === "retire" &&
-    canCompensateState
-  ) {
+  } else if (action.phase === "P3" && action.action_type === "retire" && canCompensateState) {
     const targetIds = JSON.parse(action.target_ids) as string[];
     const memoryId = targetIds[0] as string;
 

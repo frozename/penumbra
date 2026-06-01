@@ -109,7 +109,7 @@ export interface DreamCycleDeps {
   pressureGuard?: PressureGuard;
   judgePool?: JudgePool;
   scorer?: MemoryScorer;
-  onReembed?: (memory_id: string, body: string) => Promise<Float32Array>;
+  onReembed?: (memory_id: string, text: string) => Promise<Float32Array>;
   briefSynthesizer?: BriefSynthesizer;
   contentQualityJudge?: ContentQualityJudge;
   llmInvoke?: RewriteLlmInvoker;

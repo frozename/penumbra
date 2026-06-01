@@ -21,6 +21,21 @@ describe("parseEnv", () => {
       /PENUMBRA_DREAMING_ENABLED/,
     );
   });
+
+  test("t2 embed recipe defaults to body_v1", () => {
+    const result = parseEnv({});
+    expect(result.PENUMBRA_T2_EMBED_RECIPE).toBe("body_v1");
+    expect(result.PENUMBRA_T2_OVERSAMPLE_FACTOR).toBe(1);
+    expect(result.PENUMBRA_T2_REEMBED_ENABLED).toBe(false);
+  });
+
+  test("t2 embed recipe accepts only supported values", () => {
+    expect(() => parseEnv({ PENUMBRA_T2_EMBED_RECIPE: "invalid" })).toThrow(
+      /PENUMBRA_T2_EMBED_RECIPE/,
+    );
+    const ok = parseEnv({ PENUMBRA_T2_EMBED_RECIPE: "title_plus_concise" });
+    expect(ok.PENUMBRA_T2_EMBED_RECIPE).toBe("title_plus_concise");
+  });
 });
 
 describe("ENV_REGISTRY", () => {

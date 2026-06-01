@@ -10,6 +10,7 @@ export type EnvEntry<T> = {
 const Bool = z
   .enum(["true", "1", "yes", "false", "0", "no"])
   .transform((v) => v === "true" || v === "1" || v === "yes");
+const T2EmbedRecipe = z.enum(["body_v1", "title_only", "title_plus_concise"]);
 
 const NonNegInt = z.coerce
   .number()
@@ -731,6 +732,21 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: NonNegInt,
     default: 24,
     description: "Hours to delay t2 promotion after t1 close.",
+  },
+  PENUMBRA_T2_EMBED_RECIPE: {
+    schema: T2EmbedRecipe,
+    default: "body_v1",
+    description: "T2 embedding representation recipe (body_v1, title_only, title_plus_concise).",
+  },
+  PENUMBRA_T2_OVERSAMPLE_FACTOR: {
+    schema: PosInt,
+    default: 1,
+    description: "Oversampling multiplier for T2 candidate retrieval.",
+  },
+  PENUMBRA_T2_REEMBED_ENABLED: {
+    schema: Bool,
+    default: false,
+    description: "Enable P7 t2 re-embedding/backfill passes.",
   },
   // ── dreaming phase tunables (consumed by dreaming/config.ts + curator) ─
   PENUMBRA_DREAMING_P1_BATCH_SIZE: {

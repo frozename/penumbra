@@ -54,6 +54,41 @@ function seedMemoryWithEmbeddingVersion(
 }
 
 describe("Dreaming P7 re-embed", () => {
+  it("P7 is a no-op when PENUMBRA_T2_REEMBED_ENABLED is false", async () => {
+    const db = getTestDb();
+    seedMemoryWithEmbeddingVersion(db, {
+      embeddingModelVersion: "v1",
+      vector: new Array(384).fill(0.1),
+    });
+    const prevEnabled = process.env.PENUMBRA_T2_REEMBED_ENABLED;
+    process.env.PENUMBRA_T2_REEMBED_ENABLED = "false";
+    let called = false;
+
+    try {
+      const out = await runReembedPhase(
+        db,
+        "cycle11",
+        { reembedBatchSize: 100, skipPhases: new Set([]), p1BatchSize: 10 } as any,
+        {
+          onReembed: async () => {
+            called = true;
+            return new Float32Array(new Array(384).fill(0.3));
+          },
+        },
+      );
+
+      expect(out).toEqual({ deferred: false, processed: 0 });
+      expect(called).toBe(false);
+      const actionCount = db
+        .prepare("SELECT COUNT(*) as c FROM dream_actions WHERE phase='P7'")
+        .get() as any;
+      expect(actionCount.c).toBe(0);
+    } finally {
+      if (prevEnabled === undefined) delete process.env.PENUMBRA_T2_REEMBED_ENABLED;
+      else process.env.PENUMBRA_T2_REEMBED_ENABLED = prevEnabled;
+    }
+  });
+
   it("P7 only re-embeds memories with stale embedding_model_version", async () => {
     const db = getTestDb();
     const uptoDateId = seedMemoryWithEmbeddingVersion(db, {
@@ -68,16 +103,60 @@ describe("Dreaming P7 re-embed", () => {
     const config = { reembedBatchSize: 100, skipPhases: new Set([]), p1BatchSize: 10 } as any;
     let embededCount = 0;
 
+    const prevEnabled = process.env.PENUMBRA_T2_REEMBED_ENABLED;
+    const prevRecipe = process.env.PENUMBRA_T2_EMBED_RECIPE;
+    process.env.PENUMBRA_T2_REEMBED_ENABLED = "true";
+    process.env.PENUMBRA_T2_EMBED_RECIPE = "body_v1";
     process.env.PENUMBRA_EMBEDDING_MODEL_VERSION = "v2";
     await runReembedPhase(db, "cycle11", config, {
-      onReembed: async (id, body) => {
+      onReembed: async (id, text) => {
         embededCount++;
         expect(id).toBe(staleId); // Should only be called for stale memory
+        expect(text).toBe("test-body");
         return new Float32Array(new Array(384).fill(0.3));
       },
     });
 
+    if (prevEnabled === undefined) delete process.env.PENUMBRA_T2_REEMBED_ENABLED;
+    else process.env.PENUMBRA_T2_REEMBED_ENABLED = prevEnabled;
+    if (prevRecipe === undefined) delete process.env.PENUMBRA_T2_EMBED_RECIPE;
+    else process.env.PENUMBRA_T2_EMBED_RECIPE = prevRecipe;
+
     expect(embededCount).toBe(1);
+  });
+
+  it("P7 routes re-embed input through title recipe when enabled", async () => {
+    const db = getTestDb();
+    seedMemoryWithEmbeddingVersion(db, {
+      embeddingModelVersion: "v1",
+      vector: new Array(384).fill(0.1),
+    });
+    const prevEnabled = process.env.PENUMBRA_T2_REEMBED_ENABLED;
+    const prevRecipe = process.env.PENUMBRA_T2_EMBED_RECIPE;
+    process.env.PENUMBRA_T2_REEMBED_ENABLED = "true";
+    process.env.PENUMBRA_T2_EMBED_RECIPE = "title_only";
+    const seen: string[] = [];
+
+    try {
+      await runReembedPhase(
+        db,
+        "cycle11",
+        { reembedBatchSize: 100, skipPhases: new Set([]), p1BatchSize: 10 } as any,
+        {
+          onReembed: async (_id, text) => {
+            seen.push(text);
+            return new Float32Array(new Array(384).fill(0.3));
+          },
+        },
+      );
+
+      expect(seen).toEqual(["test-title"]);
+    } finally {
+      if (prevEnabled === undefined) delete process.env.PENUMBRA_T2_REEMBED_ENABLED;
+      else process.env.PENUMBRA_T2_REEMBED_ENABLED = prevEnabled;
+      if (prevRecipe === undefined) delete process.env.PENUMBRA_T2_EMBED_RECIPE;
+      else process.env.PENUMBRA_T2_EMBED_RECIPE = prevRecipe;
+    }
   });
 
   it("P7 snapshots old vector to t2_vec_history BEFORE overwriting", async () => {
@@ -88,11 +167,15 @@ describe("Dreaming P7 re-embed", () => {
     });
 
     const config = { reembedBatchSize: 100, skipPhases: new Set([]), p1BatchSize: 10 } as any;
+    const prevEnabled = process.env.PENUMBRA_T2_REEMBED_ENABLED;
+    process.env.PENUMBRA_T2_REEMBED_ENABLED = "true";
     process.env.PENUMBRA_EMBEDDING_MODEL_VERSION = "v2";
 
     await runReembedPhase(db, "cycle22", config, {
       onReembed: async () => new Float32Array(new Array(384).fill(0.2)),
     });
+    if (prevEnabled === undefined) delete process.env.PENUMBRA_T2_REEMBED_ENABLED;
+    else process.env.PENUMBRA_T2_REEMBED_ENABLED = prevEnabled;
 
     const mem = db
       .prepare(`SELECT embedding_model_version FROM t2_memories WHERE memory_id = ?`)
@@ -123,11 +206,15 @@ describe("Dreaming P7 re-embed", () => {
     });
 
     const config = { reembedBatchSize: 100, skipPhases: new Set([]), p1BatchSize: 10 } as any;
+    const prevEnabled = process.env.PENUMBRA_T2_REEMBED_ENABLED;
+    process.env.PENUMBRA_T2_REEMBED_ENABLED = "true";
     process.env.PENUMBRA_EMBEDDING_MODEL_VERSION = "v2";
 
     await runReembedPhase(db, "cycle33", config, {
       onReembed: async () => new Float32Array(new Array(384).fill(0.2)),
     });
+    if (prevEnabled === undefined) delete process.env.PENUMBRA_T2_REEMBED_ENABLED;
+    else process.env.PENUMBRA_T2_REEMBED_ENABLED = prevEnabled;
 
     const action = db.prepare(`SELECT action_id FROM dream_actions WHERE phase='P7'`).get() as any;
     expect(action).toBeTruthy();
@@ -175,6 +262,10 @@ describe("Dreaming P7 re-embed", () => {
       },
     };
 
+    const prevEnabled = process.env.PENUMBRA_T2_REEMBED_ENABLED;
+    const prevRecipe = process.env.PENUMBRA_T2_EMBED_RECIPE;
+    process.env.PENUMBRA_T2_REEMBED_ENABLED = "true";
+    process.env.PENUMBRA_T2_EMBED_RECIPE = "title_only";
     process.env.PENUMBRA_EMBEDDING_MODEL_VERSION = "v2";
 
     await runDreamCycle(
@@ -186,8 +277,13 @@ describe("Dreaming P7 re-embed", () => {
         p1BatchSize: 10,
         reembedBatchSize: 100,
       } as any,
-      { onReembed: (_id, body) => stubEmbedder.embed([body]).then((arr) => arr[0]!) },
+      { onReembed: (_id, text) => stubEmbedder.embed([text]).then((arr) => arr[0]!) },
     );
+
+    if (prevEnabled === undefined) delete process.env.PENUMBRA_T2_REEMBED_ENABLED;
+    else process.env.PENUMBRA_T2_REEMBED_ENABLED = prevEnabled;
+    if (prevRecipe === undefined) delete process.env.PENUMBRA_T2_EMBED_RECIPE;
+    else process.env.PENUMBRA_T2_EMBED_RECIPE = prevRecipe;
 
     expect(embedCallCount).toBe(1);
   });
