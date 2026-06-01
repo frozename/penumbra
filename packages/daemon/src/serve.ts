@@ -12,6 +12,7 @@ import { getConfig } from "@penumbra/config";
 import { startDreamingCron, startDailyDigestCron } from "./dreaming/index.js";
 import { buildDreamingConfig } from "./dreaming/config.js";
 import { buildDreamCycleDeps } from "./dreaming/deps.js";
+import { resolveDreamRuntimeConfig } from "./dreaming/runtime-config.js";
 import { getAgentDescriptor } from "@penumbra/agentchat";
 import type { loadShellConfig } from "@penumbra/agentchat/worker/shell-config";
 import {
@@ -1011,7 +1012,19 @@ export function createDaemonFetchHandler(opts: {
 
 export function serve(opts: ServeOpts): DaemonHandle {
   const daemonServices = opts.services as DaemonServices;
-  const dreamConfig = buildDreamingConfig(getConfig());
+  const configBundle = getConfig();
+  const dreamConfig = buildDreamingConfig(configBundle);
+  const dreamRuntime = resolveDreamRuntimeConfig(opts.services.db, configBundle, dreamConfig);
+  const runtimeDreamConfig = dreamRuntime.config;
+  if (dreamRuntime.autoResumedFromHistory) {
+    opts.services.log.warn(
+      {
+        event: "dreaming_auto_resumed_from_history",
+        source: configBundle.sources.PENUMBRA_DREAMING_ENABLED,
+      },
+      "dreaming: auto-resumed cron because historical cycles exist and PENUMBRA_DREAMING_ENABLED is not explicitly set",
+    );
+  }
   let workerHealthProbe: WorkerHealthProbe | undefined;
   const extraWorkers = loadExtraWorkersConfig({
     projectRegistry: opts.services.projectRegistry,
@@ -1446,19 +1459,19 @@ export function serve(opts: ServeOpts): DaemonHandle {
   let stopDreaming: (() => void) | undefined;
   let stopDigest: (() => void) | undefined;
   let stopEventTrigger: (() => void) | undefined;
-  if (dreamConfig.enabled) {
+  if (runtimeDreamConfig.enabled) {
     stopDreaming = startDreamingCron({
       db: opts.services.db,
-      config: dreamConfig,
+      config: runtimeDreamConfig,
       log: opts.services.log as any,
-      cycleDeps: buildDreamCycleDeps(opts.services, opts.services.db, dreamConfig),
+      cycleDeps: buildDreamCycleDeps(opts.services, opts.services.db, runtimeDreamConfig),
     });
     stopDigest = startDailyDigestCron({
       db: opts.services.db,
       outDir: process.env.PENUMBRA_DREAM_DIGEST_DIR ?? join(homedir(), ".penumbra"),
       log: opts.services.log as any,
     });
-    if (dreamConfig.eventTriggerEnabled) {
+    if (runtimeDreamConfig.eventTriggerEnabled) {
       const timer = setInterval(async () => {
         try {
           const lastActivity = opts.services.db
@@ -1466,14 +1479,14 @@ export function serve(opts: ServeOpts): DaemonHandle {
               "SELECT MAX(ts) as ts FROM dispatch_events WHERE kind IN ('dispatch.end','long_lived.tick.end')",
             )
             .get() as { ts: string | null };
-          const lastTs = lastActivity?.ts ? Date.parse(lastActivity.ts) : 0;
-          if (Date.now() - lastTs >= dreamConfig.idleMinutes * 60_000) {
+            const lastTs = lastActivity?.ts ? Date.parse(lastActivity.ts) : 0;
+          if (Date.now() - lastTs >= runtimeDreamConfig.idleMinutes * 60_000) {
             const { dreamingCycleInFlight } = await import("./dreaming/cycle.js");
             const { handleIdleSignal } = await import("./dreaming/event-trigger.js");
-            await handleIdleSignal(opts.services.db, dreamConfig, {
+            await handleIdleSignal(opts.services.db, runtimeDreamConfig, {
               mutexHeld: dreamingCycleInFlight,
               log: opts.services.log as any,
-              cycleDeps: buildDreamCycleDeps(opts.services, opts.services.db, dreamConfig),
+              cycleDeps: buildDreamCycleDeps(opts.services, opts.services.db, runtimeDreamConfig),
             });
           }
         } catch (err) {
