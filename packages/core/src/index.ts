@@ -1,6 +1,6 @@
 export { Branding } from "./branding.js";
 export type { WebResearchAdapter, WebResearchResult } from "./research/types.js";
-export type { SiriusEmbedderOpts } from "./embedder/sirius.js";
+export type { RemoteEmbedderOpts } from "./embedder/openai-compat.js";
 export { SettingsDefaults, SettingsSchema, type Settings, type SettingsInput } from "./settings.js";
 export { systemClock, type Clock } from "./utils/clock.js";
 export { systemUuid, type Uuid } from "./utils/uuid.js";
@@ -111,8 +111,9 @@ export {
 } from "./db/lane-ledger.js";
 export type { Embedder } from "./embedder/interface.js";
 export { BundledEmbedder } from "./embedder/bundled.js";
-export { SiriusEmbedder } from "./embedder/sirius.js";
+export { OpenAICompatEmbedder } from "./embedder/openai-compat.js";
 export { resolveEmbedder } from "./embedder/resolve.js";
+export type { EmbedderMode } from "./embedder/resolve.js";
 export {
   collectMentionedPaths,
   inspectPromptVsProject,

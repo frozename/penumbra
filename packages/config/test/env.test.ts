@@ -42,6 +42,7 @@ describe("ENV_REGISTRY", () => {
   test("sensitive keys have isSensitive: true", () => {
     expect(ENV_REGISTRY.PENUMBRA_DAEMON_TOKEN?.isSensitive).toBe(true);
     expect(ENV_REGISTRY.PENUMBRA_SIRIUS_TOKEN?.isSensitive).toBe(true);
+    expect(ENV_REGISTRY.PENUMBRA_EMBEDDINGS_TOKEN?.isSensitive).toBe(true);
     expect(ENV_REGISTRY.PENUMBRA_DISCORD_WEBHOOK_URL?.isSensitive).toBe(true);
     expect(ENV_REGISTRY.PENUMBRA_JUDGE_TOKEN?.isSensitive).toBe(true);
   });

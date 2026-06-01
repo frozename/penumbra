@@ -515,7 +515,47 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     description: "Usage poll interval in milliseconds.",
   },
 
-  // ── sirius ──────────────────────────────────────────────────────────
+  // ── embeddings ──────────────────────────────────────────────────────
+  PENUMBRA_EMBEDDINGS_BASE_URL: {
+    schema: OptStr,
+    description: "Base URL for remote OpenAI-compatible embeddings endpoint.",
+  },
+  PENUMBRA_EMBEDDINGS_MODEL: {
+    schema: OptStr,
+    description: "Model name for remote embeddings requests.",
+  },
+  PENUMBRA_EMBEDDINGS_DIM: {
+    schema: NonNegInt,
+    default: 384,
+    description: "Embedding dimension for remote embeddings endpoint.",
+  },
+  PENUMBRA_EMBEDDINGS_TOKEN: {
+    schema: OptStr,
+    description: "Auth token for remote embeddings endpoint.",
+    isSensitive: true,
+  },
+  PENUMBRA_EMBEDDINGS_AUTH_HEADER: {
+    schema: z.string(),
+    default: "Authorization",
+    description: "Header key used when sending embeddings auth token.",
+  },
+  PENUMBRA_EMBEDDINGS_AUTH_SCHEME: {
+    schema: z.string(),
+    default: "Bearer",
+    description: "Auth scheme prefix used with embeddings token (empty for raw token).",
+  },
+  PENUMBRA_EMBEDDINGS_HEALTH_PATH: {
+    schema: z.string(),
+    default: "/healthz",
+    description: "Health path for probe checks; empty string disables probing.",
+  },
+  PENUMBRA_EMBEDDINGS_MODE: {
+    schema: z.enum(["bundled", "remote", "auto"]),
+    default: "auto",
+    description: "Embeddings mode selection: bundled, remote, or auto.",
+  },
+
+  // ── sirius (deprecated embedding aliases) ───────────────────────────
   PENUMBRA_SIRIUS_BASE_URL: {
     schema: OptStr,
     description: "Base URL for sirius-gateway.",

@@ -22,7 +22,7 @@ import {
 } from "@penumbra/core";
 import { buildRegistry as buildWorkflowRegistry } from "@penumbra/workflows";
 import { loadShellConfig } from "@penumbra/agentchat/worker/shell-config";
-import { readSiriusEnv } from "./sirius-env.js";
+import { readEmbedderEnv } from "./sirius-env.js";
 import { ShellSessionPool } from "../../../daemon/src/services/shell-session-pool.js";
 import { InProcessPermissionService } from "../../../daemon/src/services/in-process-permission-service.js";
 import { createWorkflowRunsRegistry } from "../../../daemon/src/services/workflow-runs-registry.js";
@@ -101,11 +101,10 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
     applyRuntimePragmas(db);
     migrate(db, { embeddingDim: 384 });
 
-    const preferSirius = process.env.PENUMBRA_EMBEDDER_PREFER_SIRIUS === "true";
-    const sirius = preferSirius ? readSiriusEnv(process.env) : undefined;
+    const embedderEnv = readEmbedderEnv(process.env) ?? { mode: "auto" as const };
     const embedder = await resolveEmbedder({
-      preferSirius,
-      sirius,
+      mode: embedderEnv.mode,
+      remote: embedderEnv.remote,
       fallback: new BundledEmbedder(),
     });
     assertEmbedderDim(db, embedder.dim, embedder.name);
@@ -223,12 +222,6 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
           void shellSessionPool.shutdown();
         };
       }
-    }
-    if (preferSirius && !sirius) {
-      services.log.warn(
-        { hint: "set PENUMBRA_SIRIUS_BASE_URL/TOKEN/MODEL/DIM" },
-        "PENUMBRA_EMBEDDER_PREFER_SIRIUS is true but sirius env vars are incomplete; falling back to bundled embedder",
-      );
     }
     services.log.info({ embedder: embedder.name, dim: embedder.dim }, "embedder selected");
 
