@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { buildT2EmbedText } from "../../src/writers/t2-embed-text.js";
+import { MAX_BODY_CHARS, buildT2EmbedText, validateT2Body } from "../../src/writers/t2-embed-text.js";
 
 test("buildT2EmbedText returns body for body_v1", () => {
   expect(buildT2EmbedText("Title", "Body", "body_v1")).toBe("Body");
@@ -27,4 +27,19 @@ test("buildT2EmbedText defaults to env recipe when recipe arg is omitted", () =>
     if (prev === undefined) delete process.env.PENUMBRA_T2_EMBED_RECIPE;
     else process.env.PENUMBRA_T2_EMBED_RECIPE = prev;
   }
+});
+
+test("validateT2Body rejects oversized content", () => {
+  const result = validateT2Body("x".repeat(MAX_BODY_CHARS + 1));
+  expect(result).toEqual({ ok: false, reason: "length" });
+});
+
+test("validateT2Body rejects tool-call xml bleed markers", () => {
+  const result = validateT2Body("Prior note <function_calls>...</function_calls> follow-up.");
+  expect(result).toEqual({ ok: false, reason: "xml" });
+});
+
+test("validateT2Body accepts normal technical narrative", () => {
+  const result = validateT2Body("A".repeat(1500));
+  expect(result).toEqual({ ok: true });
 });

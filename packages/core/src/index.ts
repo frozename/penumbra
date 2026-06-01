@@ -203,8 +203,8 @@ export {
   type DirectT2WriteResult,
   writeDirectT2Memory,
 } from "./writers/t2.js";
-export { buildT2EmbedText } from "./writers/t2-embed-text.js";
-export type { T2EmbedRecipe } from "./writers/t2-embed-text.js";
+export { MAX_BODY_CHARS, buildT2EmbedText, validateT2Body } from "./writers/t2-embed-text.js";
+export type { T2BodyValidationResult, T2EmbedRecipe } from "./writers/t2-embed-text.js";
 export { retireMemory, retireNonDirectMemory } from "./writers/retire-memory.js";
 export { PidRegistry } from "./pid/registry.js";
 export { InProcessSupervisor } from "./supervisor/in-process.js";

@@ -190,6 +190,126 @@ test("promoteRollup routes embed input through title recipe when enabled", async
   }
 });
 
+test("promoteRollup skips oversized extraction body without throwing", async () => {
+  seedT1("r-oversized", "s-oversized", "2026-04-27T10:05:00Z");
+
+  const prom = new T2Promotion({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date("2026-04-27T15:00:00Z"),
+    uuid: () => "m-oversized",
+    llm: async () => [{ title: "Too Long", body: "L".repeat(4097), kind: "fact" }],
+    minTranscriptChars: 0,
+  });
+
+  const count = await prom.promoteRollup("r-oversized");
+  expect(count).toBe(0);
+  const memories = db.query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM t2_memories`).get();
+  expect(memories?.c).toBe(0);
+});
+
+test("promoteRollup skips extraction body containing tool-call xml bleed markers", async () => {
+  seedT1("r-xml", "s-xml", "2026-04-27T10:05:00Z");
+
+  const prom = new T2Promotion({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date("2026-04-27T15:00:00Z"),
+    uuid: () => "m-xml",
+    llm: async () => [
+      {
+        title: "Bad XML",
+        body: "Assistant emitted <tool_call id='1'>payload</tool_call> raw markup.",
+        kind: "fact",
+      },
+    ],
+    minTranscriptChars: 0,
+  });
+
+  const count = await prom.promoteRollup("r-xml");
+  expect(count).toBe(0);
+  const memories = db.query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM t2_memories`).get();
+  expect(memories?.c).toBe(0);
+});
+
+test("promoteRollup continues promotion for valid extraction when another extraction is oversized", async () => {
+  seedT1("r-mixed", "s-mixed", "2026-04-27T10:05:00Z");
+
+  const prom = new T2Promotion({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date("2026-04-27T15:00:00Z"),
+    uuid: (() => {
+      const ids = ["m-mixed-good", "m-mixed-bad"];
+      return () => ids.shift() ?? "m-mixed-fallback";
+    })(),
+    llm: async () => [
+      { title: "Bad oversized", body: "B".repeat(5000), kind: "fact" },
+      { title: "Good", body: "This valid extraction should still promote.", kind: "fact" },
+    ],
+    minTranscriptChars: 0,
+  });
+
+  const count = await prom.promoteRollup("r-mixed");
+  expect(count).toBe(1);
+  const rows = db
+    .query<{ title: string; body: string }, []>(`SELECT title, body FROM t2_memories ORDER BY rowid ASC`)
+    .all();
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toEqual({
+    title: "Good",
+    body: "This valid extraction should still promote.",
+  });
+});
+
+test("promoteRollup logs skipped extraction count and reason", async () => {
+  seedT1("r-skip-count", "s-skip-count", "2026-04-27T10:05:00Z");
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map((arg) => String(arg)).join(" "));
+  };
+
+  try {
+    const prom = new T2Promotion({
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      clock: () => new Date("2026-04-27T15:00:00Z"),
+      uuid: () => "m-skip-count",
+      llm: async () => [{ title: "Too Long", body: "Z".repeat(4097), kind: "fact" }],
+      minTranscriptChars: 0,
+    });
+    await prom.promoteRollup("r-skip-count");
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  const combined = warnings.join("\n");
+  expect(combined).toContain("reason=length");
+  expect(combined).toContain("skipped=1");
+  expect(combined).toContain("title=Too Long");
+});
+
+test("promoteRollup accepts normal 1500-char extraction bodies", async () => {
+  seedT1("r-normal-1500", "s-normal-1500", "2026-04-27T10:05:00Z");
+
+  const prom = new T2Promotion({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date("2026-04-27T15:00:00Z"),
+    uuid: () => "m-normal-1500",
+    llm: async () => [{ title: "Normal", body: "N".repeat(1500), kind: "fact" }],
+    minTranscriptChars: 0,
+  });
+
+  const count = await prom.promoteRollup("r-normal-1500");
+  expect(count).toBe(1);
+  const row = db
+    .query<{ body: string }, [string]>(`SELECT body FROM t2_memories WHERE memory_id = ?`)
+    .get("m-normal-1500");
+  expect(row?.body.length).toBe(1500);
+});
+
 test("promoteRollup handles empty transcript gracefully", async () => {
   // Seed rollup but no events
   db.run(
@@ -562,6 +682,42 @@ test("promoteRollup uses payload_json transcript text and still applies transcri
   expect(longCount).toBe(1);
   expect(longInputs).toHaveLength(1);
   expect(longInputs[0]).toContain("… [truncated] …");
+});
+
+test("promoteRollup strips tool-call xml tags from transcript content before LLM extraction", async () => {
+  db.run(
+    `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at,
+                             n_events, lane_breakdown_json, provider_breakdown_json)
+     VALUES ('r-xml-transcript', 'p1', 'u1', 's-xml-transcript', '2026-04-27T10:00:00Z', '2026-04-27T10:05:00Z', 5, '{}', '{}')`,
+  );
+  db.run(
+    `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+     VALUES ('e-xml-transcript-1', '2026-04-27T10:00:00Z', '2026-04-27T10:00:00Z', 'mcp', 'u1', 'm1', 's-xml-transcript', 'agent-prompt', 'local', '{}', 'Please summarize tool behavior')`,
+  );
+  db.run(
+    `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+     VALUES ('e-xml-transcript-2', '2026-04-27T10:05:00Z', '2026-04-27T10:05:00Z', 'mcp', 'u1', 'm1', 's-xml-transcript', 'agent-response', 'local', '{}', ?)`,
+    ["Completed <tool_call id='1'>fs_read()</tool_call> successfully."],
+  );
+
+  const seenTranscripts: string[] = [];
+  const prom = new T2Promotion({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date("2026-04-27T15:00:00Z"),
+    uuid: () => "m-xml-transcript",
+    llm: async (transcript) => {
+      seenTranscripts.push(transcript);
+      return [];
+    },
+    minTranscriptChars: 0,
+  });
+
+  await prom.promoteRollup("r-xml-transcript");
+  expect(seenTranscripts).toHaveLength(1);
+  expect(seenTranscripts[0]).toContain("fs_read()");
+  expect(seenTranscripts[0]).not.toContain("<tool_call");
+  expect(seenTranscripts[0]).not.toContain("</tool_call>");
 });
 
 test("writeDirectT2Memory persists source_session_ids when provided", () => {

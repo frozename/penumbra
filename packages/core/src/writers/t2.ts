@@ -6,7 +6,7 @@ import { isNearDuplicate, type NearDuplicateItem } from "../memory/near-dup.js";
 import { T2MemoryWriteSchema, type T2MemoryWriteInput } from "../schemas/memory.js";
 import type { Clock } from "../utils/clock.js";
 import type { Uuid } from "../utils/uuid.js";
-import { buildT2EmbedText } from "./t2-embed-text.js";
+import { buildT2EmbedText, validateT2Body } from "./t2-embed-text.js";
 
 export const T2MemoryExtractionSchema = z.object({
   title: z.string().min(1),
@@ -427,13 +427,50 @@ export class T2Promotion {
         return 0;
       }
 
+      const bodyGatedExtractions: T2MemoryExtraction[] = [];
+      let skippedBodyCount = 0;
+      let reasoningMarkerCount = 0;
+      for (const extraction of extractions) {
+        const validation = validateT2Body(extraction.body);
+        if (!validation.ok) {
+          skippedBodyCount += 1;
+          console.warn(
+            `[t2-promotion] skipping extraction title=${extraction.title} reason=${validation.reason} body_preview=${toPreview(extraction.body)}`,
+          );
+          continue;
+        }
+        if (hasReasoningProseMarker(extraction.body)) {
+          reasoningMarkerCount += 1;
+          console.warn(
+            `[t2-promotion] advisory reasoning-prose marker title=${extraction.title} body_preview=${toPreview(extraction.body)}`,
+          );
+        }
+        bodyGatedExtractions.push(extraction);
+      }
+
+      if (skippedBodyCount > 0) {
+        console.warn(
+          `[t2-promotion] extraction body gate skipped=${skippedBodyCount} rollup_id=${rollupId}`,
+        );
+      }
+      if (reasoningMarkerCount > 0) {
+        console.warn(
+          `[t2-promotion] extraction body advisory reasoning_markers=${reasoningMarkerCount} rollup_id=${rollupId}`,
+        );
+      }
+
+      if (bodyGatedExtractions.length === 0) {
+        this.markPromotionSkipped(rollupId);
+        return 0;
+      }
+
       const promotionGateEnabled = isEnvGateEnabled("PENUMBRA_PROMOTION_GATE");
       const nearDupGateEnabled = isEnvGateEnabled("PENUMBRA_PROMOTION_NEAR_DUP_GATE");
       const nearDupThreshold = Number(process.env.PENUMBRA_PROMOTION_NEAR_DUP_THRESHOLD ?? "0.95");
 
       const filteredExtractions = promotionGateEnabled
-        ? extractions.filter((extraction) => isPromotionCandidate(extraction))
-        : extractions;
+        ? bodyGatedExtractions.filter((extraction) => isPromotionCandidate(extraction))
+        : bodyGatedExtractions;
 
       if (filteredExtractions.length === 0) {
         this.markPromotionSkipped(rollupId);
@@ -718,12 +755,12 @@ function isEnvGateEnabled(name: string): boolean {
 }
 
 function pickTranscriptContent(payloadSummary: string | null, payloadJson: string | null): string {
-  const summary = (payloadSummary ?? "").trim();
+  const summary = scrubTranscriptMarkup((payloadSummary ?? "").trim());
   if (summary) return summary;
   if (!payloadJson) return "";
   try {
     const parsed = JSON.parse(payloadJson) as unknown;
-    return extractPayloadText(parsed).trim();
+    return scrubTranscriptMarkup(extractPayloadText(parsed).trim());
   } catch {
     return "";
   }
@@ -768,8 +805,31 @@ function readString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function scrubTranscriptMarkup(content: string): string {
+  if (!content) return "";
+  return content
+    .replace(/<\/?(?:function_calls|invoke|tool_call|tool_use|antml:[a-z_]+)\b[^>]*>/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function hashContent(content: string): string {
   return createHash("sha256").update(content).digest("hex");
+}
+
+function toPreview(value: string): string {
+  return value
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
+}
+
+function hasReasoningProseMarker(body: string): boolean {
+  const trimmed = body.trim();
+  if (/^(?:okay|alright|so),?\s+(?:the user|let me|i need|i should)/i.test(trimmed)) return true;
+  if (/\bwait,\s*maybe\b/i.test(trimmed)) return true;
+  if (/\blet me reconsider\b/i.test(trimmed)) return true;
+  return false;
 }
 
 function ensureNearDupRetireCycle(db: Database, nowIso: string): string {
