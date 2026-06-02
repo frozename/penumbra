@@ -28,6 +28,7 @@ type AgentRouteAgentchatConfig = {
     api_provider?: string;
     pricing_mode?: "api" | "subscription";
   }>;
+  role_routing?: { headroom_weighting?: boolean; exploration_policy?: string };
 };
 
 export type DetailMode = "rank" | "summary" | "single";
@@ -391,21 +392,42 @@ function buildRank(
       to: now.toISOString(),
     },
     candidates: summaries
-      .map((s) => ({
-        agent_name: s.agent_name,
-        samples: s.samples,
-        successes: s.successes,
-        failures: s.failures,
-        neutral: s.neutral,
-        success_rate: s.success_rate,
-        avg_rounds: s.avg_rounds,
-        avg_latency_ms: s.avg_latency_ms,
-        cost_per_success_usd: s.cost_per_success_usd,
-        avg_reviewer_findings: s.avg_reviewer_findings,
-        avg_trust_score: s.avg_trust_score,
-        last_outcome_at: s.last_outcome_at,
-        score: scoreCandidate(s, { includeCost: input.includeCost ?? false, minCost, maxCost }),
-      }))
+      .map((s) => {
+        let score = scoreCandidate(s, {
+          includeCost: input.includeCost ?? false,
+          minCost,
+          maxCost,
+        });
+        if (input.agentchatConfig?.role_routing?.headroom_weighting && input.applyPressure) {
+          const agentConf = input.agentchatConfig.agents.find((a) => a.name === s.agent_name);
+          const provider = agentConf ? resolveProvider(agentConf) : null;
+          if (provider) {
+            const snaps = input.applyPressure.snapshots.filter(
+              (snap) => snap.provider === provider,
+            );
+            if (snaps.length > 0) {
+              const maxUsedPct = Math.max(...snaps.map((snap) => snap.used_pct));
+              const factor = clamp01(1 - maxUsedPct);
+              score = clamp01(Math.round(score * factor * 10000) / 10000);
+            }
+          }
+        }
+        return {
+          agent_name: s.agent_name,
+          samples: s.samples,
+          successes: s.successes,
+          failures: s.failures,
+          neutral: s.neutral,
+          success_rate: s.success_rate,
+          avg_rounds: s.avg_rounds,
+          avg_latency_ms: s.avg_latency_ms,
+          cost_per_success_usd: s.cost_per_success_usd,
+          avg_reviewer_findings: s.avg_reviewer_findings,
+          avg_trust_score: s.avg_trust_score,
+          last_outcome_at: s.last_outcome_at,
+          score,
+        };
+      })
       .sort(
         (a, b) =>
           b.score - a.score ||

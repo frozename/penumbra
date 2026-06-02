@@ -18,14 +18,14 @@ export type CapCheckWarn = {
 
 export type CapCheckRefuse = {
   state: "refuse";
-  reason: "over_threshold" | "stale_warm";
+  reason: "over_threshold" | "stale_warm" | "provider_synthetic_cap";
   provider: string;
   window_label: string;
   used_pct: number;
   cap_pct: number;
   resets_at: number | null;
   snapshot_age_seconds: number | null;
-  snapshot_state: "fresh" | "stale_warm";
+  snapshot_state: "fresh" | "stale_warm" | "no_signal";
 };
 
 export type CapCheckOutcome = CapCheckPass | CapCheckWarn | CapCheckRefuse;
@@ -45,6 +45,8 @@ export interface CheckPressureCapDeps {
   defaultCapPct?: number;
   staleAfterSeconds?: number;
   now?: () => Date;
+  syntheticCaps?: Record<string, { max_dispatches: number; window_seconds: number }>;
+  getRecentDispatchCount?: (provider: string, windowSeconds: number) => number;
 }
 
 export function checkPressureCap(deps: CheckPressureCapDeps): CapCheckOutcome {
@@ -54,6 +56,25 @@ export function checkPressureCap(deps: CheckPressureCapDeps): CapCheckOutcome {
 
   if (!deps.agent.subscription_provider) {
     return { state: "pass", snapshot_state: "no_signal" };
+  }
+
+  const provider = deps.agent.subscription_provider;
+  const synthCap = deps.syntheticCaps?.[provider];
+  if (synthCap && deps.getRecentDispatchCount) {
+    const count = deps.getRecentDispatchCount(provider, synthCap.window_seconds);
+    if (count >= synthCap.max_dispatches) {
+      return {
+        state: "refuse",
+        reason: "provider_synthetic_cap",
+        provider,
+        window_label: `${synthCap.window_seconds}s_synthetic_cap`,
+        used_pct: count / synthCap.max_dispatches,
+        cap_pct: 1,
+        resets_at: null,
+        snapshot_age_seconds: null,
+        snapshot_state: "no_signal",
+      };
+    }
   }
 
   const providerEntry = deps.providerCaps[deps.agent.subscription_provider] ?? { default: {} };

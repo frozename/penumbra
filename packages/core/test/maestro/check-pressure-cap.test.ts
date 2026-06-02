@@ -40,6 +40,40 @@ function makeDeps(snapshotsByProvider: Record<string, PressureSnapshot[]>): Chec
 }
 
 describe("checkPressureCap", () => {
+  it("enforces synthetic cap when defined and dispatch count is high", () => {
+    // Under cap
+    const resultPass = checkPressureCap({
+      cache: { forProvider: () => [] },
+      agent: {
+        name: "test-agent",
+        pricing_mode: "subscription" as const,
+        subscription_provider: "anthropic",
+      },
+      providerCaps: {},
+      syntheticCaps: { anthropic: { max_dispatches: 10, window_seconds: 60 } },
+      getRecentDispatchCount: (p, w) => 5,
+    });
+    expect(resultPass.state).toBe("pass");
+
+    // Over cap
+    const resultRefuse = checkPressureCap({
+      cache: { forProvider: () => [] },
+      agent: {
+        name: "test-agent",
+        pricing_mode: "subscription" as const,
+        subscription_provider: "anthropic",
+      },
+      providerCaps: {},
+      syntheticCaps: { anthropic: { max_dispatches: 10, window_seconds: 60 } },
+      getRecentDispatchCount: (p, w) => 12,
+    });
+    expect(resultRefuse.state).toBe("refuse");
+    if (resultRefuse.state === "refuse") {
+      expect(resultRefuse.reason).toBe("provider_synthetic_cap" as any);
+      expect((resultRefuse as any).provider).toBe("anthropic");
+    }
+  });
+
   it("pricing_mode: api → pass with pricing_mode_skip", () => {
     let called = false;
     const result = checkPressureCap({

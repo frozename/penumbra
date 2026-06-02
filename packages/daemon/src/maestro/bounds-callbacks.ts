@@ -245,10 +245,37 @@ function evaluatePressureForSession(
     subscription_provider: agent.subscription_provider,
     subscription_model: agent.subscription_model,
   };
+  const syntheticCaps: Record<string, { max_dispatches: number; window_seconds: number }> = {};
+  for (const quota of services.providerQuotas as any[]) {
+    if (quota.synthetic_cap) syntheticCaps[quota.provider] = quota.synthetic_cap;
+  }
+
+  const getRecentDispatchCount = (provider: string, windowSeconds: number): number => {
+    const cfg = services.agentchatConfig;
+    if (!cfg || !cfg.agents) return 0;
+    const agentsForProvider = cfg.agents
+      .filter(
+        (a: any) =>
+          (a.pricing_mode === "subscription"
+            ? a.subscription_provider
+            : (a.api_provider ?? a.subscription_provider)) === provider,
+      )
+      .map((a: any) => a.name);
+    if (agentsForProvider.length === 0) return 0;
+    const cutoff = new Date(services.clock().getTime() - windowSeconds * 1000).toISOString();
+    const placeholders = agentsForProvider.map(() => "?").join(",");
+    const row = services.db
+      .query(`SELECT COUNT(*) as c FROM handoffs WHERE to_agent IN (${placeholders}) AND ts >= ?`)
+      .get(...agentsForProvider, cutoff) as { c: number };
+    return row?.c ?? 0;
+  };
+
   const outcome = checkPressureCap({
     cache: services.subscriptionPressureCache,
     agent: agentForCheck,
     providerCaps: providerCaps as unknown as Parameters<typeof checkPressureCap>[0]["providerCaps"],
+    syntheticCaps,
+    getRecentDispatchCount,
   });
   if (outcome.state === "warn") {
     return { kind: "warn", outcome };

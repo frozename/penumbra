@@ -98,6 +98,39 @@ function insertSnapshotRow(
 }
 
 describe("quotaStatus", () => {
+  it("distinguishes display-only (subscription) vs billed (api) USD", () => {
+    const db = makeDb();
+    const result = quotaStatus(
+      db,
+      [
+        { provider: "api-prov", quota_usd_per_24h: 10 },
+        {
+          provider: "sub-prov1",
+          quota_usd_per_24h: 20,
+          pressure_caps: { default: { warn: null, refuse: 100 } },
+        },
+        {
+          provider: "sub-prov2",
+          quota_usd_per_24h: 20,
+          synthetic_cap: { max_dispatches: 10, window_seconds: 60 },
+        },
+        { provider: "no-quota-prov" },
+      ],
+      {},
+      () => new Date("2026-05-08T12:00:00Z"),
+    );
+
+    const apiProv = result.providers.find((p) => p.provider === "api-prov");
+    const subProv1 = result.providers.find((p) => p.provider === "sub-prov1");
+    const subProv2 = result.providers.find((p) => p.provider === "sub-prov2");
+    const noQuotaProv = result.providers.find((p) => p.provider === "no-quota-prov");
+
+    expect(apiProv?.usd_quota_mode).toBe("billed");
+    expect(subProv1?.usd_quota_mode).toBe("display_only");
+    expect(subProv2?.usd_quota_mode).toBe("display_only");
+    expect(noQuotaProv?.usd_quota_mode).toBe("none");
+  });
+
   let db: Database;
   beforeEach(() => {
     db = makeDb();

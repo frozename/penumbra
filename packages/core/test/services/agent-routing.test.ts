@@ -12,6 +12,74 @@ if (process.platform === "darwin") {
 const NOW = new Date("2026-05-01T12:00:00Z");
 
 describe("routeAgent", () => {
+  test("headroom-weighted routing applies factor when flag is on", () => {
+    const input = {
+      db,
+      detail: "rank" as const,
+      taskType: "implement_substantial" as const,
+      agentchatConfig: {
+        role_routing: { headroom_weighting: true },
+        agents: [
+          {
+            name: "alpha",
+            roles: ["coder"],
+            pricing_mode: "subscription" as const,
+            subscription_provider: "prov1",
+          },
+          {
+            name: "beta",
+            roles: ["coder"],
+            pricing_mode: "subscription" as const,
+            subscription_provider: "prov2",
+          },
+        ],
+      },
+      applyPressure: {
+        snapshots: [
+          {
+            provider: "prov1",
+            window_label: "five_minute",
+            model: null,
+            used_pct: 0.2,
+            resets_at: null,
+            observed_at: NOW.toISOString(),
+            source_kind: "test",
+          },
+          {
+            provider: "prov2",
+            window_label: "five_minute",
+            model: null,
+            used_pct: 0.8,
+            resets_at: null,
+            observed_at: NOW.toISOString(),
+            source_kind: "test",
+          },
+        ],
+      },
+    };
+
+    // With flag on, alpha score * 0.8, beta score * 0.2
+    const rankOn = routeAgent(input);
+    const alphaOn = (rankOn as any).candidates.candidates.find(
+      (c: any) => c.agent_name === "alpha",
+    );
+    const betaOn = (rankOn as any).candidates.candidates.find((c: any) => c.agent_name === "beta");
+
+    // With flag off, scores should be unchanged
+    input.agentchatConfig.role_routing.headroom_weighting = false;
+    const rankOff = routeAgent(input);
+    const alphaOff = (rankOff as any).candidates.candidates.find(
+      (c: any) => c.agent_name === "alpha",
+    );
+    const betaOff = (rankOff as any).candidates.candidates.find(
+      (c: any) => c.agent_name === "beta",
+    );
+
+    // Using simple precision check
+    expect(alphaOn.score).toBeCloseTo(alphaOff.score * 0.8, 2);
+    expect(betaOn.score).toBeCloseTo(betaOff.score * 0.2, 2);
+  });
+
   let db: Database;
 
   beforeEach(() => {

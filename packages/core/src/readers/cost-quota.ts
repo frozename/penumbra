@@ -15,6 +15,7 @@ export interface ProviderQuota {
   quota_tokens_per_5h?: number;
   /** Per-window subscription pressure caps. Consumed by checkPressureCap, not the USD/token quota path. */
   pressure_caps?: Record<string, { warn: number | null; refuse: number }>;
+  synthetic_cap?: { max_dispatches: number; window_seconds: number };
 }
 
 export interface QuotaStatusInput {
@@ -26,6 +27,7 @@ export interface QuotaStatusInput {
 export interface QuotaStatusProviderRow {
   provider: string;
   model?: string;
+  usd_quota_mode: "billed" | "display_only" | "none";
   used_usd: number | null;
   used_usd_synth: number | null;
   quota_usd: number | null;
@@ -130,8 +132,12 @@ export function quotaStatus(
       p.model,
     );
 
+    const usd_quota_mode =
+      p.pressure_caps || p.synthetic_cap ? "display_only" : quota_usd !== null ? "billed" : "none";
+
     const row: QuotaStatusProviderRow = {
       provider: p.provider,
+      usd_quota_mode,
       used_usd,
       used_usd_synth,
       quota_usd,

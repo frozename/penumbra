@@ -578,6 +578,12 @@ export async function chainStartInternal(
           { subject: "sub_agent" as const, agent: subAgent, agent_name: input.initial_agent },
         ];
 
+        const syntheticCaps: Record<string, { max_dispatches: number; window_seconds: number }> =
+          {};
+        for (const quota of services.providerQuotas as any[]) {
+          if (quota.synthetic_cap) syntheticCaps[quota.provider] = quota.synthetic_cap;
+        }
+
         for (const gate of gateChecks) {
           const outcome = checkPressureCap({
             cache: services.subscriptionPressureCache,
@@ -586,6 +592,8 @@ export async function chainStartInternal(
               typeof checkPressureCap
             >[0]["providerCaps"],
             now: () => services.clock(),
+            syntheticCaps,
+            getRecentDispatchCount: makeGetRecentDispatchCount(services),
           });
           if (outcome.state === "warn") {
             console.warn("subscription pressure warning", {
@@ -951,6 +959,14 @@ function maybeSelectSubDispatchFallback(opts: {
   let attemptCount = 0;
   for (const recommendation of rankedCandidates) {
     if (attemptCount >= MAX_SUB_DISPATCH_FALLBACKS) break;
+    const syntheticCaps: Record<string, { max_dispatches: number; window_seconds: number }> = {};
+    if (!("syntheticCaps" in opts)) {
+      for (const quota of opts.services.providerQuotas as any[]) {
+        if (quota.synthetic_cap) syntheticCaps[quota.provider] = quota.synthetic_cap;
+      }
+      (opts as any).syntheticCaps = syntheticCaps;
+    }
+
     const candidate = opts.cfg.agents?.find((agent) => agent.name === recommendation.agent_name);
     if (!candidate) continue;
     const outcome = checkPressureCap({
@@ -958,6 +974,8 @@ function maybeSelectSubDispatchFallback(opts: {
       agent: candidate,
       providerCaps: opts.providerCaps,
       now: () => opts.services.clock(),
+      syntheticCaps: (opts as any).syntheticCaps,
+      getRecentDispatchCount: makeGetRecentDispatchCount(opts.services),
     });
 
     if (outcome.state === "refuse") {
@@ -1605,4 +1623,26 @@ function resolveRoleRoute(
 
 function inferTaskTypeForRole(message: string, role: string): AgentTaskType {
   return inferAgentTaskTypeForRole(message, role);
+}
+
+function makeGetRecentDispatchCount(services: any) {
+  return (provider: string, windowSeconds: number): number => {
+    const cfg = services.agentchatConfig;
+    if (!cfg || !cfg.agents) return 0;
+    const agentsForProvider = cfg.agents
+      .filter(
+        (a: any) =>
+          (a.pricing_mode === "subscription"
+            ? a.subscription_provider
+            : (a.api_provider ?? a.subscription_provider)) === provider,
+      )
+      .map((a: any) => a.name);
+    if (agentsForProvider.length === 0) return 0;
+    const cutoff = new Date(services.clock().getTime() - windowSeconds * 1000).toISOString();
+    const placeholders = agentsForProvider.map(() => "?").join(",");
+    const row = services.db
+      .query(`SELECT COUNT(*) as c FROM handoffs WHERE to_agent IN (${placeholders}) AND ts >= ?`)
+      .get(...agentsForProvider, cutoff) as { c: number };
+    return row?.c ?? 0;
+  };
 }

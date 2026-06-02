@@ -235,6 +235,12 @@ export const ProviderQuotaConfigSchema = z.object({
   quota_tokens_per_24h: z.number().int().positive().optional(),
   quota_tokens_per_5h: z.number().int().positive().optional(),
   pressure_caps: z.record(z.string().min(1), PressureCapWindowSchema).optional(),
+  synthetic_cap: z
+    .object({
+      max_dispatches: z.number().int().positive(),
+      window_seconds: z.number().int().positive(),
+    })
+    .optional(),
 });
 export type ProviderQuotaConfig = z.infer<typeof ProviderQuotaConfigSchema>;
 
@@ -411,8 +417,9 @@ export type ShellConfig = z.infer<typeof ShellConfigSchema>;
 export const RoleRoutingConfigSchema = z
   .object({
     exploration_policy: z.enum(["unsampled-first", "ranked-first"]).default("unsampled-first"),
+    headroom_weighting: z.boolean().default(false),
   })
-  .default({ exploration_policy: "unsampled-first" });
+  .default({ exploration_policy: "unsampled-first", headroom_weighting: false });
 export type RoleRoutingConfig = z.infer<typeof RoleRoutingConfigSchema>;
 
 export const ReviewPersonaSchema = z.object({
