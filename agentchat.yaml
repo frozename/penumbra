@@ -7,3 +7,18 @@ agents:
     roles: [executor]
 default_roles:
   executor: local-gemma26
+providers:
+  - name: opencode-go
+    cost_budget_usd_per_5h: 12
+    cost_budget_usd_per_week: 30
+    cost_budget_usd_per_month: 60
+    pressure_caps:
+      five_hour:
+        warn: 75
+        refuse: 90
+      seven_day:
+        warn: 80
+        refuse: 95
+      thirty_day:
+        warn: 85
+        refuse: 95

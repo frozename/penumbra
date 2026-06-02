@@ -655,4 +655,57 @@ describe("checkPressureCap", () => {
       snapshot_state: "fresh",
     });
   });
+
+  it("opencode-go agent is refused when cost-window snapshot used_pct >= refuse cap, and passes under it", () => {
+    const depsPass = {
+      ...makeDeps({
+        "opencode-go": [
+          makeSnapshot({
+            provider: "opencode-go",
+            window_label: "five_hour",
+            used_pct: 75,
+            observed_at: "2026-05-08T00:50:00Z",
+          }),
+        ],
+      }),
+      agent: {
+        name: "opencode-agent",
+        pricing_mode: "subscription" as const,
+        subscription_provider: "opencode-go",
+      },
+      providerCaps: {
+        "opencode-go": { default: { five_hour: { warn: null, refuse: 90 } } },
+      },
+    };
+    const resultPass = checkPressureCap(depsPass);
+    expect(resultPass).toEqual({ state: "pass", snapshot_state: "fresh" });
+
+    const depsRefuse = {
+      ...depsPass,
+      cache: {
+        forProvider() {
+          return [
+            makeSnapshot({
+              provider: "opencode-go",
+              window_label: "five_hour",
+              used_pct: 95,
+              observed_at: "2026-05-08T00:50:00Z",
+            }),
+          ];
+        },
+      },
+    };
+    const resultRefuse = checkPressureCap(depsRefuse);
+    expect(resultRefuse).toEqual({
+      state: "refuse",
+      reason: "over_threshold",
+      provider: "opencode-go",
+      window_label: "five_hour",
+      used_pct: 95,
+      cap_pct: 90,
+      resets_at: null,
+      snapshot_age_seconds: 600,
+      snapshot_state: "fresh",
+    });
+  });
 });

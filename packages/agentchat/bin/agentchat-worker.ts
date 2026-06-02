@@ -1234,7 +1234,15 @@ if (process.env.PENUMBRA_USAGE_POLL_DISABLED !== "1") {
   usagePoller = startUsagePoller({
     readers: [
       new CodexRolloutReader(),
-      new OpenCodeDbReader(),
+      new OpenCodeDbReader({
+        budgets: {
+          five_hour: config.providers.find((p) => p.name === "opencode-go")?.cost_budget_usd_per_5h,
+          seven_day: config.providers.find((p) => p.name === "opencode-go")
+            ?.cost_budget_usd_per_week,
+          thirty_day: config.providers.find((p) => p.name === "opencode-go")
+            ?.cost_budget_usd_per_month,
+        },
+      }),
       new ClaudeJsonlReader(),
       new ClaudeStatusLineBridge(),
       new GoogleOtlpSynth({ client, min_emit_pct: 1 }),

@@ -10,13 +10,13 @@ function makeOpencodeDb(): { db: Database; path: string } {
   const path = join(dir, "opencode.db");
   const db = new Database(path);
   db.exec(
-    `CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT NOT NULL);`,
+    "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT NOT NULL);",
   );
   return { db, path };
 }
 
 function insertAssistant(db: Database, id: string, time_created: number, body: any) {
-  db.prepare(`INSERT INTO message VALUES (?, 'sess-1', ?, ?, ?)`).run(
+  db.prepare('INSERT INTO message VALUES (?, "sess-1", ?, ?, ?)').run(
     id,
     time_created,
     time_created,
@@ -109,21 +109,80 @@ describe("OpenCodeDbReader", () => {
     expect(r.usage_deltas).toHaveLength(0);
   });
 
-  it("returns rate_limit_snapshots: [] even when message bodies contain rate-limit-shaped fields (subscription gap is documented)", async () => {
+  it("emits rate-limit-snapshot deltas with correct used_pct from windowed cost", async () => {
     const { db, path } = makeOpencodeDb();
-    insertAssistant(db, "m1", 1777421548000, {
+    const nowMs = Date.now();
+
+    // In 5h window: cost 3
+    insertAssistant(db, "m1", nowMs - 1000 * 3600, {
       role: "assistant",
-      cost: 0,
+      cost: 3,
       tokens: { input: 1, output: 1 },
       modelID: "deepseek-v4-pro",
       providerID: "opencode-go",
-      rate_limits: { five_hour: { used_percentage: 50, resets_at: 1777421999 } },
-      quota: { daily: { used_pct: 12 } },
     });
+
+    // In 7d window (outside 5h): cost 6
+    insertAssistant(db, "m2", nowMs - 1000 * 3600 * 10, {
+      role: "assistant",
+      cost: 6,
+      tokens: { input: 1, output: 1 },
+      modelID: "deepseek-v4-pro",
+      providerID: "opencode-go",
+    });
+
+    // In 30d window (outside 7d): cost 15
+    insertAssistant(db, "m3", nowMs - 1000 * 86400 * 10, {
+      role: "assistant",
+      cost: 15,
+      tokens: { input: 1, output: 1 },
+      modelID: "deepseek-v4-pro",
+      providerID: "opencode-go",
+    });
+
     db.close();
+
+    const reader = new OpenCodeDbReader({
+      dbPath: path,
+      budgets: {
+        five_hour: 10, // used: 3 -> 30%
+        seven_day: 20, // used: 3+6=9 -> 45%
+        thirty_day: 50, // used: 3+6+15=24 -> 48%
+      },
+    });
+
+    const r = await reader.read(null);
+    expect(r.rate_limit_snapshots).toHaveLength(3);
+
+    const fiveH = r.rate_limit_snapshots.find((s) => s.window_label === "five_hour");
+    expect(fiveH?.used_pct).toBe(30);
+
+    const sevenD = r.rate_limit_snapshots.find((s) => s.window_label === "seven_day");
+    expect(sevenD?.used_pct).toBe(45);
+
+    const thirtyD = r.rate_limit_snapshots.find((s) => s.window_label === "thirty_day");
+    expect(thirtyD?.used_pct).toBe(48);
+  });
+
+  it("rollover math excludes old rows", async () => {
+    const { db, path } = makeOpencodeDb();
+    const nowMs = Date.now();
+
+    // Older than 30d -> excluded entirely
+    insertAssistant(db, "old", nowMs - 1000 * 86400 * 31, {
+      role: "assistant",
+      cost: 1000,
+      tokens: { input: 1, output: 1 },
+      modelID: "deepseek-v4-pro",
+      providerID: "opencode-go",
+    });
+
+    db.close();
+
     const reader = new OpenCodeDbReader({ dbPath: path });
     const r = await reader.read(null);
-    expect(r.rate_limit_snapshots).toEqual([]);
-    expect(r.usage_deltas).toHaveLength(1);
+
+    const thirtyD = r.rate_limit_snapshots.find((s) => s.window_label === "thirty_day");
+    expect(thirtyD?.used_pct).toBe(0);
   });
 });
