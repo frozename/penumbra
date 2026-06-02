@@ -50,13 +50,14 @@ function insertDispatchedHandoff(
   handoff_id: string,
   ts: string,
   chainTaskType: string | null = null,
+  workerId: string | null = null,
 ): void {
   db.run(
     `INSERT INTO handoffs (
        handoff_id, ts, project_id, conversation_id, from_agent, to_agent,
-       to_role, message, status, use_worktree, chain_task_type
-     ) VALUES (?, ?, NULL, ?, 'maestro', 'worker', NULL, 'do work', 'dispatched', 1, ?)`,
-    [handoff_id, ts, `c-${handoff_id}`, chainTaskType],
+       to_role, message, status, use_worktree, worker_id, chain_task_type
+     ) VALUES (?, ?, NULL, ?, 'maestro', 'worker', NULL, 'do work', 'dispatched', 1, ?, ?)`,
+    [handoff_id, ts, `c-${handoff_id}`, workerId, chainTaskType],
   );
 }
 
@@ -196,15 +197,15 @@ test("review_adversarial handoff at 44m59s old is not swept", () => {
   expect(services.handoffReader.get("h-review")?.status).toBe("dispatched");
 });
 
-test("smoke_test handoff at 5m01s old is swept", () => {
+test("smoke_test handoff at 10m01s old is swept", () => {
   const db = setupDb();
   const services = makeServices(db);
-  insertDispatchedHandoff(db, "h-smoke", "2026-05-04T11:54:59.000Z", "smoke_test");
-  insertEvent(db, "h-smoke", "dispatch.start", "2026-05-04T11:54:01.000Z");
+  insertDispatchedHandoff(db, "h-smoke", "2026-05-04T11:49:59.000Z", "smoke_test");
+  insertEvent(db, "h-smoke", "dispatch.start", "2026-05-04T11:50:01.000Z");
 
   const state = { lastSwept: new Map<string, number>() };
   const result = runStaleHandoffSweep(
-    makeOpts(services),
+    makeTaskTypeAwareOpts(services),
     state,
     () => new Date("2026-05-04T12:00:00.000Z"),
   );
@@ -213,15 +214,15 @@ test("smoke_test handoff at 5m01s old is swept", () => {
   expect(result.resolved).toEqual(["h-smoke"]);
 });
 
-test("implement_small handoff at 15m01s old is swept", () => {
+test("implement_small handoff at 60m01s old is swept", () => {
   const db = setupDb();
   const services = makeServices(db);
-  insertDispatchedHandoff(db, "h-small", "2026-05-04T11:44:59.000Z", "implement_small");
-  insertEvent(db, "h-small", "dispatch.start", "2026-05-04T11:44:01.000Z");
+  insertDispatchedHandoff(db, "h-small", "2026-05-04T10:59:59.000Z", "implement_small");
+  insertEvent(db, "h-small", "dispatch.start", "2026-05-04T11:00:01.000Z");
 
   const state = { lastSwept: new Map<string, number>() };
   const result = runStaleHandoffSweep(
-    makeOpts(services),
+    makeTaskTypeAwareOpts(services),
     state,
     () => new Date("2026-05-04T12:00:00.000Z"),
   );
@@ -230,11 +231,11 @@ test("implement_small handoff at 15m01s old is swept", () => {
   expect(result.resolved).toEqual(["h-small"]);
 });
 
-test("smoke_test handoff at 4m59s old is not swept", () => {
+test("smoke_test handoff at 9m59s old is not swept", () => {
   const db = setupDb();
   const services = makeServices(db);
-  insertDispatchedHandoff(db, "h-smoke-fresh", "2026-05-04T11:55:01.000Z", "smoke_test");
-  insertEvent(db, "h-smoke-fresh", "dispatch.start", "2026-05-04T11:55:02.000Z");
+  insertDispatchedHandoff(db, "h-smoke-fresh", "2026-05-04T11:50:01.000Z", "smoke_test");
+  insertEvent(db, "h-smoke-fresh", "dispatch.start", "2026-05-04T11:50:02.000Z");
 
   const state = { lastSwept: new Map<string, number>() };
   const result = runStaleHandoffSweep(
@@ -264,11 +265,11 @@ test("review_adversarial handoff at 45m01s old is swept", () => {
   expect(result.resolved).toEqual(["h-review-old"]);
 });
 
-test("implement_small handoff at 14m59s old is not swept", () => {
+test("implement_small handoff at 59m59s old is not swept", () => {
   const db = setupDb();
   const services = makeServices(db);
-  insertDispatchedHandoff(db, "h-small-fresh", "2026-05-04T11:45:01.000Z", "implement_small");
-  insertEvent(db, "h-small-fresh", "dispatch.start", "2026-05-04T11:45:02.000Z");
+  insertDispatchedHandoff(db, "h-small-fresh", "2026-05-04T11:00:01.000Z", "implement_small");
+  insertEvent(db, "h-small-fresh", "dispatch.start", "2026-05-04T11:00:02.000Z");
 
   const state = { lastSwept: new Map<string, number>() };
   const result = runStaleHandoffSweep(
@@ -279,6 +280,16 @@ test("implement_small handoff at 14m59s old is not swept", () => {
 
   expect(result.candidates).toEqual([]);
   expect(result.resolved).toEqual([]);
+});
+
+test("task-type thresholds include Phase 1 uplift while keeping health and smoke unchanged", () => {
+  expect(resolveStaleAfterMs(undefined)).toBe(30 * 60_000);
+  expect(resolveStaleAfterMs(null)).toBe(30 * 60_000);
+  expect(resolveStaleAfterMs("implement_small")).toBe(60 * 60_000);
+  expect(resolveStaleAfterMs("implement_substantial")).toBe(90 * 60_000);
+  expect(resolveStaleAfterMs("plan_refine")).toBe(45 * 60_000);
+  expect(resolveStaleAfterMs("health_check")).toBe(5 * 60_000);
+  expect(resolveStaleAfterMs("smoke_test")).toBe(10 * 60_000);
 });
 
 test("resolveSweeperSqlCutoffMs uses the smallest configured threshold for function resolvers", () => {
@@ -395,4 +406,123 @@ test("cooldown holds → second sweep does not re-process the same handoff", () 
   );
   expect(second.candidates).toEqual([]);
   expect(second.resolved).toEqual([]);
+});
+
+test("liveness gate OFF keeps current behavior (fresh heartbeat still resolves)", () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  insertDispatchedHandoff(db, "h-live-off", "2026-05-04T11:40:00.000Z", null, "worker-live");
+  insertEvent(db, "h-live-off", "dispatch.start", "2026-05-04T11:40:01.000Z");
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    {
+      services,
+      resolveStaleAfterMs: 5 * 60_000,
+      livenessCheckEnabled: false,
+      isWorkerHeartbeatFresh: () => true,
+    },
+    state,
+    () => new Date("2026-05-04T12:00:00.000Z"),
+  );
+
+  expect(result.resolved).toEqual(["h-live-off"]);
+  expect(services.handoffReader.get("h-live-off")?.status).toBe("failed");
+});
+
+test("liveness gate ON defers fresh worker under grace", () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  insertDispatchedHandoff(db, "h-live-grace", "2026-05-04T11:40:00.000Z", null, "worker-live");
+  insertEvent(db, "h-live-grace", "dispatch.start", "2026-05-04T11:40:01.000Z");
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    {
+      services,
+      resolveStaleAfterMs: 5 * 60_000,
+      livenessCheckEnabled: true,
+      maxAliveGraceMs: 30 * 60_000,
+      isWorkerHeartbeatFresh: () => true,
+    },
+    state,
+    () => new Date("2026-05-04T12:00:00.000Z"),
+  );
+
+  expect(result.resolved).toEqual([]);
+  expect(services.handoffReader.get("h-live-grace")?.status).toBe("dispatched");
+});
+
+test("liveness gate ON still resolves fresh worker once grace is exceeded", () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  insertDispatchedHandoff(db, "h-live-over-grace", "2026-05-04T11:20:00.000Z", null, "worker-live");
+  insertEvent(db, "h-live-over-grace", "dispatch.start", "2026-05-04T11:20:01.000Z");
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    {
+      services,
+      resolveStaleAfterMs: 5 * 60_000,
+      livenessCheckEnabled: true,
+      maxAliveGraceMs: 30 * 60_000,
+      isWorkerHeartbeatFresh: () => true,
+    },
+    state,
+    () => new Date("2026-05-04T12:00:00.000Z"),
+  );
+
+  expect(result.resolved).toEqual(["h-live-over-grace"]);
+  expect(services.handoffReader.get("h-live-over-grace")?.status).toBe("failed");
+});
+
+test("liveness gate ON fail-closed resolves stale or unknown workers", () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  insertDispatchedHandoff(db, "h-live-stale", "2026-05-04T11:40:00.000Z", null, "worker-stale");
+  insertDispatchedHandoff(db, "h-live-unknown", "2026-05-04T11:40:00.000Z", null, null);
+  insertEvent(db, "h-live-stale", "dispatch.start", "2026-05-04T11:40:01.000Z");
+  insertEvent(db, "h-live-unknown", "dispatch.start", "2026-05-04T11:40:01.000Z");
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    {
+      services,
+      resolveStaleAfterMs: 5 * 60_000,
+      livenessCheckEnabled: true,
+      maxAliveGraceMs: 30 * 60_000,
+      isWorkerHeartbeatFresh: (workerId: string) => workerId !== "worker-stale",
+    },
+    state,
+    () => new Date("2026-05-04T12:00:00.000Z"),
+  );
+
+  expect(result.resolved.sort()).toEqual(["h-live-stale", "h-live-unknown"]);
+  expect(services.handoffReader.get("h-live-stale")?.status).toBe("failed");
+  expect(services.handoffReader.get("h-live-unknown")?.status).toBe("failed");
+});
+
+test("liveness probe errors fail closed and do not block stale resolution", () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  insertDispatchedHandoff(db, "h-live-throw", "2026-05-04T11:40:00.000Z", null, "worker-throw");
+  insertEvent(db, "h-live-throw", "dispatch.start", "2026-05-04T11:40:01.000Z");
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    {
+      services,
+      resolveStaleAfterMs: 5 * 60_000,
+      livenessCheckEnabled: true,
+      maxAliveGraceMs: 30 * 60_000,
+      isWorkerHeartbeatFresh: () => {
+        throw new Error("probe failed");
+      },
+    },
+    state,
+    () => new Date("2026-05-04T12:00:00.000Z"),
+  );
+
+  expect(result.resolved).toEqual(["h-live-throw"]);
+  expect(services.handoffReader.get("h-live-throw")?.status).toBe("failed");
 });

@@ -16,6 +16,15 @@ export interface StaleHandoffSweeperOpts {
   activityIdleMs?: number;
   /** Default 60_000. Per-handoff cooldown — don't re-process the same handoff within this window. */
   cooldownMs?: number;
+  /** Default false. When enabled, fresh heartbeats can temporarily defer stale force-resolution. */
+  livenessCheckEnabled?: boolean;
+  /** Default 30 min. Upper bound for liveness deferral measured from handoff ts. */
+  maxAliveGraceMs?: number;
+  /**
+   * Returns true when a worker heartbeat is fresh.
+   * Missing worker ids, unknown workers, and probe errors are treated as not fresh (fail-closed).
+   */
+  isWorkerHeartbeatFresh?: (workerId: string) => boolean;
   log?: { warn?: (obj: unknown, msg?: string) => void };
 }
 
@@ -27,6 +36,7 @@ export interface SweepTickResult {
 const DEFAULT_STALE_AFTER_MS = 5 * 60_000;
 const DEFAULT_COOLDOWN_MS = 60_000;
 const DEFAULT_INTERVAL_MS = 60_000;
+const DEFAULT_MAX_ALIVE_GRACE_MS = 30 * 60_000;
 
 /**
  * One sweep tick: find handoffs stuck in `dispatched` past the stale threshold
@@ -40,6 +50,8 @@ export function runStaleHandoffSweep(
 ): SweepTickResult {
   const { services } = opts;
   const cooldownMs = opts.cooldownMs ?? DEFAULT_COOLDOWN_MS;
+  const livenessCheckEnabled = opts.livenessCheckEnabled ?? false;
+  const maxAliveGraceMs = opts.maxAliveGraceMs ?? DEFAULT_MAX_ALIVE_GRACE_MS;
   const nowDate = now();
   const nowMs = nowDate.getTime();
   const configuredStaleAfterMs = opts.resolveStaleAfterMs ?? opts.staleAfterMs;
@@ -76,7 +88,22 @@ export function runStaleHandoffSweep(
     if (!handoff) continue;
 
     const staleAfterMs: number = resolveStaleAfterMsForHandoff(handoff.chain_task_type);
-    if (nowMs - new Date(handoff.ts).getTime() <= staleAfterMs) continue;
+    const handoffAgeMs = nowMs - new Date(handoff.ts).getTime();
+    if (handoffAgeMs <= staleAfterMs) continue;
+
+    if (livenessCheckEnabled && handoffAgeMs < maxAliveGraceMs) {
+      const workerId = handoff.worker_id;
+      if (workerId) {
+        try {
+          if (opts.isWorkerHeartbeatFresh?.(workerId) === true) continue;
+        } catch (err) {
+          opts.log?.warn?.(
+            { handoff_id, worker_id: workerId, err: String(err) },
+            "stale-handoff liveness probe failed; proceeding fail-closed",
+          );
+        }
+      }
+    }
 
     candidates.push(handoff_id);
 

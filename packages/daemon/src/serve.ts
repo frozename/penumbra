@@ -1116,9 +1116,21 @@ export function serve(opts: ServeOpts): DaemonHandle {
     db: opts.services.db,
     log: opts.services.log as any,
   });
+  const workerHeartbeatStaleMs = Number(process.env.PENUMBRA_WORKER_HEARTBEAT_STALE_MS) || 90000;
+  const staleSweepLivenessCheckEnabled =
+    process.env.PENUMBRA_STALE_SWEEP_LIVENESS_CHECK === "1";
+  const staleSweepMaxAliveGraceMs =
+    Number(process.env.PENUMBRA_STALE_SWEEP_MAX_ALIVE_GRACE_MS) || 30 * 60_000;
   const stopStaleHandoffSweeper = startStaleHandoffSweeper({
     services: opts.services,
     resolveStaleAfterMs,
+    livenessCheckEnabled: staleSweepLivenessCheckEnabled,
+    maxAliveGraceMs: staleSweepMaxAliveGraceMs,
+    isWorkerHeartbeatFresh: (workerId: string) => {
+      if (!watchdog.hasWorker(workerId)) return false;
+      const staleWorkers = new Set(watchdog.getStaleWorkers(workerHeartbeatStaleMs));
+      return !staleWorkers.has(workerId);
+    },
   });
   const strictModeEnv = process.env.PENUMBRA_ORPHAN_HANDOFF_STRICT_MODE;
   if (strictModeEnv !== undefined) {
@@ -1128,7 +1140,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     );
   }
   const orphanHandoffRecovery = new OrphanHandoffRecoveryService(opts.services, {
-    staleMs: Number(process.env.PENUMBRA_WORKER_HEARTBEAT_STALE_MS) || 90000,
+    staleMs: workerHeartbeatStaleMs,
     intervalMs:
       process.env.PENUMBRA_ORPHAN_HANDOFF_RECOVERY_INTERVAL_MS !== undefined
         ? Number(process.env.PENUMBRA_ORPHAN_HANDOFF_RECOVERY_INTERVAL_MS)

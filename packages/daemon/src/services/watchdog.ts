@@ -43,6 +43,10 @@ export class WatchdogService implements Watchdog {
     return stale;
   }
 
+  hasWorker(worker_id: string): boolean {
+    return this.lastHeartbeats.has(worker_id);
+  }
+
   tick = async (): Promise<void> => {
     const now = Date.now();
     const tickTs = new Date(now).toISOString();

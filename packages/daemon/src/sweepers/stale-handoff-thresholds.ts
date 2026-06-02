@@ -1,10 +1,10 @@
-const DEFAULT_THRESHOLD_MS = 15 * 60_000;
+const DEFAULT_THRESHOLD_MS = 30 * 60_000;
 
 const THRESHOLDS_MS: Record<string, number> = {
   review_adversarial: 45 * 60_000,
-  implement_substantial: 60 * 60_000,
-  implement_small: 30 * 60_000,
-  plan_refine: 30 * 60_000,
+  implement_substantial: 90 * 60_000,
+  implement_small: 60 * 60_000,
+  plan_refine: 45 * 60_000,
   docs_mechanical: 20 * 60_000,
   debug_diagnose: 45 * 60_000,
   smoke_test: 10 * 60_000,
