@@ -777,7 +777,9 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   },
   PENUMBRA_T2_EMBED_RECIPE: {
     schema: T2EmbedRecipe,
-    default: "body_v1",
+    // Default to the validated title-led recipe so a fresh install gets the recall
+    // fix without operator config; existing corpora migrate via the version-gated P7 reembed.
+    default: "title_plus_concise",
     description: "T2 embedding representation recipe (body_v1, title_only, title_plus_concise).",
   },
   PENUMBRA_T2_OVERSAMPLE_FACTOR: {
