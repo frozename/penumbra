@@ -109,7 +109,7 @@ describe("OpenCodeDbReader", () => {
     expect(r.usage_deltas).toHaveLength(0);
   });
 
-  it("emits rate-limit-snapshot deltas with correct used_pct from windowed cost", async () => {
+  it("does not emit rate-limit snapshots from local API-equivalent message cost", async () => {
     const { db, path } = makeOpencodeDb();
     const nowMs = Date.now();
 
@@ -142,26 +142,10 @@ describe("OpenCodeDbReader", () => {
 
     db.close();
 
-    const reader = new OpenCodeDbReader({
-      dbPath: path,
-      budgets: {
-        five_hour: 10, // used: 3 -> 30%
-        seven_day: 20, // used: 3+6=9 -> 45%
-        thirty_day: 50, // used: 3+6+15=24 -> 48%
-      },
-    });
+    const reader = new OpenCodeDbReader({ dbPath: path });
 
     const r = await reader.read(null);
-    expect(r.rate_limit_snapshots).toHaveLength(3);
-
-    const fiveH = r.rate_limit_snapshots.find((s) => s.window_label === "five_hour");
-    expect(fiveH?.used_pct).toBe(30);
-
-    const sevenD = r.rate_limit_snapshots.find((s) => s.window_label === "seven_day");
-    expect(sevenD?.used_pct).toBe(45);
-
-    const thirtyD = r.rate_limit_snapshots.find((s) => s.window_label === "thirty_day");
-    expect(thirtyD?.used_pct).toBe(48);
+    expect(r.rate_limit_snapshots).toHaveLength(0);
   });
 
   it("rollover math excludes old rows", async () => {
@@ -182,7 +166,6 @@ describe("OpenCodeDbReader", () => {
     const reader = new OpenCodeDbReader({ dbPath: path });
     const r = await reader.read(null);
 
-    const thirtyD = r.rate_limit_snapshots.find((s) => s.window_label === "thirty_day");
-    expect(thirtyD?.used_pct).toBe(0);
+    expect(r.rate_limit_snapshots).toHaveLength(0);
   });
 });

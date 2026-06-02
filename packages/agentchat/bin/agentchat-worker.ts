@@ -60,6 +60,7 @@ import {
 } from "../src/worker/silent-failure-retry.js";
 import { startUsagePoller } from "../src/usage-readers/poller.js";
 import { CodexRolloutReader } from "../src/usage-readers/codex-rollout-reader.js";
+import { OpenCodeApiReader } from "../src/usage-readers/opencode-api-reader.js";
 import { OpenCodeDbReader } from "../src/usage-readers/opencode-db-reader.js";
 import { ClaudeJsonlReader } from "../src/usage-readers/claude-jsonl-reader.js";
 import { ClaudeStatusLineBridge } from "../src/usage-readers/claude-statusline-bridge.js";
@@ -1234,15 +1235,8 @@ if (process.env.PENUMBRA_USAGE_POLL_DISABLED !== "1") {
   usagePoller = startUsagePoller({
     readers: [
       new CodexRolloutReader(),
-      new OpenCodeDbReader({
-        budgets: {
-          five_hour: config.providers.find((p) => p.name === "opencode-go")?.cost_budget_usd_per_5h,
-          seven_day: config.providers.find((p) => p.name === "opencode-go")
-            ?.cost_budget_usd_per_week,
-          thirty_day: config.providers.find((p) => p.name === "opencode-go")
-            ?.cost_budget_usd_per_month,
-        },
-      }),
+      new OpenCodeDbReader(),
+      new OpenCodeApiReader(),
       new ClaudeJsonlReader(),
       new ClaudeStatusLineBridge(),
       new GoogleOtlpSynth({ client, min_emit_pct: 1 }),
@@ -1252,7 +1246,7 @@ if (process.env.PENUMBRA_USAGE_POLL_DISABLED !== "1") {
     emit: (e) => client.observe(e),
     log,
   });
-  log.info({ readers: 5, workerId }, "usage-poller started");
+  log.info({ readers: 6, workerId }, "usage-poller started");
 }
 
 let notificationScheduler: { stop: () => void } | null = null;
