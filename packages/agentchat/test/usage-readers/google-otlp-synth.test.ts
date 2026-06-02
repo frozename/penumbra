@@ -9,6 +9,25 @@ function makeResponse(rows: QuotaStatusResponse["providers"]): QuotaStatusRespon
   };
 }
 
+function googleQuotaRow(args: {
+  model?: string;
+  used_tokens: number;
+  quota_tokens: number;
+}): QuotaStatusResponse["providers"][number] {
+  return {
+    provider: "google",
+    model: args.model ?? "gemini-3.1-pro-preview",
+    used_usd: null,
+    quota_usd: null,
+    remaining_usd: null,
+    remaining_pct_usd: null,
+    used_tokens: args.used_tokens,
+    quota_tokens: args.quota_tokens,
+    remaining_tokens: args.quota_tokens - args.used_tokens,
+    remaining_pct_tokens: null,
+  };
+}
+
 describe("GoogleOtlpSynth", () => {
   it("emits model-aware snapshots for daily and five_hour windows", async () => {
     const calls: Array<{ since?: string; window?: "24h" | "5h" }> = [];
@@ -271,5 +290,128 @@ describe("GoogleOtlpSynth", () => {
 
     const out = await reader.read(null);
     expect(out.rate_limit_snapshots).toHaveLength(0);
+  });
+
+  it("skips implausibly high usage ratios instead of emitting clamped snapshots", async () => {
+    const warnings: Array<{ meta: Record<string, unknown>; msg: string }> = [];
+    const reader = new GoogleOtlpSynth({
+      client: {
+        async fetchQuotaStatus(): Promise<QuotaStatusResponse> {
+          return makeResponse([
+            googleQuotaRow({
+              used_tokens: 10_000_000,
+              quota_tokens: 250_000,
+            }),
+          ]);
+        },
+      },
+      now: () => new Date("2026-05-08T12:34:10Z"),
+      warn: (meta, msg) => warnings.push({ meta, msg }),
+    });
+
+    const out = await reader.read(null);
+
+    expect(out.rate_limit_snapshots).toHaveLength(0);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.meta.model).toBe("gemini-3.1-pro-preview");
+    expect(warnings[0]?.meta.raw_used_pct).toBe(4000);
+  });
+
+  it("emits normal usage ratios without changing the percentage", async () => {
+    const reader = new GoogleOtlpSynth({
+      client: {
+        async fetchQuotaStatus(): Promise<QuotaStatusResponse> {
+          return makeResponse([
+            googleQuotaRow({
+              used_tokens: 18_000_000,
+              quota_tokens: 450_000_000,
+            }),
+          ]);
+        },
+      },
+      now: () => new Date("2026-05-08T12:34:10Z"),
+      warn: () => {
+        throw new Error("unexpected warning");
+      },
+    });
+
+    const out = await reader.read(null);
+
+    expect(out.rate_limit_snapshots).toHaveLength(2);
+    expect(out.rate_limit_snapshots.every((d) => d.used_pct === 4)).toBe(true);
+  });
+
+  it("keeps genuinely maxed but plausible quotas refuse-capable", async () => {
+    const reader = new GoogleOtlpSynth({
+      client: {
+        async fetchQuotaStatus(): Promise<QuotaStatusResponse> {
+          return makeResponse([
+            googleQuotaRow({
+              used_tokens: 450_000_000,
+              quota_tokens: 450_000_000,
+            }),
+          ]);
+        },
+      },
+      now: () => new Date("2026-05-08T12:34:10Z"),
+      warn: () => {
+        throw new Error("unexpected warning");
+      },
+    });
+
+    const out = await reader.read(null);
+
+    expect(out.rate_limit_snapshots).toHaveLength(2);
+    expect(out.rate_limit_snapshots.every((d) => d.used_pct === 100)).toBe(true);
+  });
+
+  it("emits ratios exactly at the configured plausibility threshold", async () => {
+    const reader = new GoogleOtlpSynth({
+      client: {
+        async fetchQuotaStatus(): Promise<QuotaStatusResponse> {
+          return makeResponse([
+            googleQuotaRow({
+              used_tokens: 750_000,
+              quota_tokens: 250_000,
+            }),
+          ]);
+        },
+      },
+      now: () => new Date("2026-05-08T12:34:10Z"),
+      max_plausible_pct: 300,
+      warn: () => {
+        throw new Error("unexpected warning");
+      },
+    });
+
+    const out = await reader.read(null);
+
+    expect(out.rate_limit_snapshots).toHaveLength(2);
+    expect(out.rate_limit_snapshots.every((d) => d.used_pct === 100)).toBe(true);
+  });
+
+  it("uses PENUMBRA_GOOGLE_SYNTH_MAX_PLAUSIBLE_PCT when no threshold is injected", async () => {
+    const reader = new GoogleOtlpSynth({
+      client: {
+        async fetchQuotaStatus(): Promise<QuotaStatusResponse> {
+          return makeResponse([
+            googleQuotaRow({
+              used_tokens: 1_000_000,
+              quota_tokens: 250_000,
+            }),
+          ]);
+        },
+      },
+      now: () => new Date("2026-05-08T12:34:10Z"),
+      env: { PENUMBRA_GOOGLE_SYNTH_MAX_PLAUSIBLE_PCT: "500" },
+      warn: () => {
+        throw new Error("unexpected warning");
+      },
+    });
+
+    const out = await reader.read(null);
+
+    expect(out.rate_limit_snapshots).toHaveLength(2);
+    expect(out.rate_limit_snapshots.every((d) => d.used_pct === 100)).toBe(true);
   });
 });

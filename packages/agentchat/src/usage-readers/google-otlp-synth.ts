@@ -4,10 +4,13 @@ import type { RateLimitDelta, UsageReader, UsageReaderResult } from "./index.js"
 const DAILY_MS = 24 * 60 * 60 * 1000;
 const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
+const DEFAULT_MAX_PLAUSIBLE_PCT = 300;
 
 interface GoogleOtlpSynthCursor {
   last_emitted_minute: Record<string, number>;
 }
+
+type GoogleOtlpSynthWarn = (meta: Record<string, unknown>, msg: string) => void;
 
 export interface GoogleOtlpSynthOptions {
   client: {
@@ -18,6 +21,9 @@ export interface GoogleOtlpSynthOptions {
   };
   now?: () => Date;
   min_emit_pct?: number;
+  max_plausible_pct?: number;
+  env?: Record<string, string | undefined>;
+  warn?: GoogleOtlpSynthWarn;
 }
 
 export class GoogleOtlpSynth implements UsageReader {
@@ -25,11 +31,20 @@ export class GoogleOtlpSynth implements UsageReader {
   private readonly client: GoogleOtlpSynthOptions["client"];
   private readonly now: () => Date;
   private readonly minEmitPct: number;
+  private readonly maxPlausiblePct: number;
+  private readonly warn: GoogleOtlpSynthWarn;
+  private readonly warnedImplausibleModels = new Set<string>();
 
   constructor(opts: GoogleOtlpSynthOptions) {
     this.client = opts.client;
     this.now = opts.now ?? (() => new Date());
     this.minEmitPct = opts.min_emit_pct ?? 0;
+    this.maxPlausiblePct = opts.max_plausible_pct ?? parseMaxPlausiblePct(opts.env ?? process.env);
+    this.warn =
+      opts.warn ??
+      ((meta, msg) => {
+        console.warn(msg, meta);
+      });
   }
 
   async read(previousCursor: unknown | null): Promise<UsageReaderResult> {
@@ -71,7 +86,12 @@ export class GoogleOtlpSynth implements UsageReader {
 
         const dedupeKey = `${window.label} ${row.model}`;
         if (nextCursor.last_emitted_minute[dedupeKey] === minuteBucket) continue;
-        const usedPct = clampPct((used / quota) * 100);
+        const rawUsedPct = (used / quota) * 100;
+        if (rawUsedPct > this.maxPlausiblePct) {
+          this.warnImplausibleQuota(row.model, window.label, rawUsedPct, used, quota);
+          continue;
+        }
+        const usedPct = clampPct(rawUsedPct);
         if (usedPct < this.minEmitPct) {
           // Cursor tracks emitted rows only; skipped rows can be re-evaluated next tick.
           continue;
@@ -93,6 +113,29 @@ export class GoogleOtlpSynth implements UsageReader {
       usage_deltas: [],
       rate_limit_snapshots: snapshots,
     };
+  }
+
+  private warnImplausibleQuota(
+    model: string,
+    windowLabel: string,
+    rawUsedPct: number,
+    usedTokens: number,
+    quotaTokens: number,
+  ): void {
+    if (this.warnedImplausibleModels.has(model)) return;
+    this.warnedImplausibleModels.add(model);
+    this.warn(
+      {
+        provider: "google",
+        model,
+        window_label: windowLabel,
+        raw_used_pct: rawUsedPct,
+        max_plausible_pct: this.maxPlausiblePct,
+        used_tokens: usedTokens,
+        quota_tokens: quotaTokens,
+      },
+      "google-otlp-synth: implausible quota ratio; skipping pressure snapshot",
+    );
   }
 }
 
@@ -119,4 +162,12 @@ function clampPct(value: number): number {
   if (value < 0) return 0;
   if (value > 100) return 100;
   return value;
+}
+
+function parseMaxPlausiblePct(env: Record<string, string | undefined>): number {
+  const raw = env.PENUMBRA_GOOGLE_SYNTH_MAX_PLAUSIBLE_PCT;
+  if (raw == null || raw.trim() === "") return DEFAULT_MAX_PLAUSIBLE_PCT;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_MAX_PLAUSIBLE_PCT;
+  return parsed;
 }
