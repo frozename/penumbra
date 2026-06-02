@@ -178,3 +178,30 @@ test("throttles control-listener reconnect log to once per window and reports su
   expect(warns[0].msg).toBe("control listener stream error; reconnecting in 5s");
   expect(warns[1].obj.suppressedCount).toBe(4);
 });
+
+test("handleControlEvent triggers onConfigReload on agentchat_reload", () => {
+  let reloads = 0;
+  const warns: any[] = [];
+  handleControlEvent(
+    { type: "agentchat_reload" },
+    {
+      client: {
+        sendProbeAck: async () => {},
+        subscribeWorkerControl: async function* () {},
+      },
+      dispatcher: { cancel: () => {} },
+      workerId: "w1",
+      onConfigReload: () => {
+        reloads++;
+      },
+      log: {
+        warn: (obj, msg) => warns.push({ obj, msg }),
+        error: () => {},
+        info: () => {},
+      } as any,
+    },
+  );
+
+  expect(reloads).toBe(1);
+  expect(warns).toHaveLength(0);
+});

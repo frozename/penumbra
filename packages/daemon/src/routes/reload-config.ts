@@ -25,8 +25,8 @@ import { json } from "./_helpers.js";
  * The long-lived reactor is reconciled here too; reload failures are
  * surfaced as reactor_status: 'failed' without failing the overall route.
  *
- * Worker agentchat config is reloaded separately via the worker control bus —
- * see daemon.reload_workers.
+ * Worker agentchat config is automatically reloaded via the worker control bus
+ * on a successful config reload here.
  */
 export async function reloadConfigRoute(
   _req: Request,
@@ -40,6 +40,10 @@ export async function reloadConfigRoute(
         ? 422
         : 500;
     return json({ error: agentchatSubsystem.error }, status);
+  }
+
+  if (agentchatSubsystem.status === "reloaded") {
+    services.workerControl?.emit({ type: "agentchat_reload" });
   }
 
   const workflowProjectSubsystem = await reloadWorkflowAndProjectRegistrySubsystem(services);

@@ -38,6 +38,7 @@ export interface ControlListenerOpts {
   /** Internal: override the clock implementation (tests). */
   now?: () => number;
   onEvent?: (event: DispatchEventInput) => void;
+  onConfigReload?: () => void;
   workerId?: string;
 }
 
@@ -46,10 +47,18 @@ const CONTROL_LISTENER_STREAM_ERR_THROTTLE_MS = 60_000;
 
 export function handleControlEvent(
   event: WorkerControlEvent,
-  opts: Pick<ControlListenerOpts, "dispatcher" | "onEvent" | "workerId"> & {
+  opts: Pick<
+    ControlListenerOpts,
+    "dispatcher" | "onEvent" | "workerId" | "client" | "onConfigReload"
+  > & {
     log?: ControlListenerLogger;
   },
 ): void {
+  if (event.type === "agentchat_reload") {
+    opts.log?.info({}, "received agentchat_reload control event");
+    opts.onConfigReload?.();
+    return;
+  }
   if (event.type === "cancel") {
     if (!event.conversation_id || !event.handoff_id) {
       opts.log?.warn(

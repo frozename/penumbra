@@ -889,3 +889,34 @@ extras:
     });
   });
 });
+
+test("POST /agentchat/reload emits agentchat_reload to workerControl on success", async () => {
+  const services = tempServices();
+  const testDir = join("/tmp", "penumbra-reload-test");
+  if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
+  const yamlPath = join(testDir, "agentchat.yaml");
+
+  writeAgentchat(
+    yamlPath,
+    `
+  agents:
+  - name: test-agent-1
+    adapter: mock
+  `,
+  );
+  process.env.PENUMBRA_CONFIG_DIR = yamlPath;
+
+  const emitSpy = vi.fn();
+  (services as any).workerControl = { emit: emitSpy };
+
+  try {
+    const res = await reloadConfigRoute(
+      new Request("http://x/agentchat/reload", { method: "POST" }),
+      services,
+    );
+    expect(res.status).toBe(200);
+    expect(emitSpy).toHaveBeenCalledWith({ type: "agentchat_reload" });
+  } finally {
+    rmSync(yamlPath, { recursive: true, force: true });
+  }
+});

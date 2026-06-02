@@ -360,7 +360,7 @@ const recallEnricher = new RecallEnricher({ client, log });
 const eventQueue = new DispatchEventQueue({
   send: (events, signal) => client.postDispatchEvents(events, signal),
 });
-const config = loadConfig(configPath);
+let config = loadConfig(configPath);
 const settings = SettingsDefaults.build({ env: process.env, input: {} });
 const projectRegistry = loadProjectRegistry(
   process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath(),
@@ -1341,6 +1341,10 @@ void runWorkerControlListener({
   log,
   workerId,
   onEvent,
+  onConfigReload: () => {
+    config = loadConfig(configPath);
+    log.info({ agent_count: config.agents.length }, "agentchat-config-reloaded-from-control-bus");
+  },
 });
 
 const shutdown = async (sig: string) => {
