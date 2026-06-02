@@ -67,6 +67,8 @@ bun packages/cli/bin/penumbra.ts notes rotate --apply  # actually archive
 - **Default to no comments.** Only add a comment when the WHY is non-obvious (a hidden constraint, a workaround, surprising behavior).
 - **No backward-compat hacks** for unused code. If something's unused, delete it.
 - **Use dispatch_land**, not manual `git merge --ff-only`. dispatch_land closes the `agent_performance` attribution loop AND tears down the worktree on success.
+- **Prefer the codified workflow over hand-rolled dispatch loops.** For fan-out / iterative fix / review sweep / tournament / research, call `workflow_run` (or the harness-optimized equivalent) rather than scripting `chain_start → chain_wait → chain_get_response`. Manual dispatch is reserved for a single one-off with no matching workflow.
+- **Harness-optimized edge, harness-agnostic floor.** Each harness runs the most-optimized orchestration available; porting one to native (`plugin/workflows/`) makes it available to every harness via `workflow_run`. The CC Workflow is the Claude-Code-local accelerator layered on top.
 - **Bun ONNX teardown panic** at end of `bun test` is cosmetic. Look at pass/fail above.
 - **`bun run typecheck`** runs `scripts/check-dist-freshness.ts` first to scrub stale `packages/*/dist` dirs before tsc — prevents the recurring `.d.ts`-shadows-`.ts` trap. Set `DIST_CHECK_STRICT=1` for CI-style enforcement.
 

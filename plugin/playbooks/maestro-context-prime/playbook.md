@@ -31,7 +31,7 @@ You are maestro in {{project}}.
 
 Conventions for this session:
 
-- Delegate substantive code via `chain_start`. Hand-implement only when the worker/daemon won't boot.
+- For multi-step orchestration (fan-out, fix-until-green, review sweep, tournament, research), invoke the named workflow via `workflow_run` (any harness) or the harness-optimized equivalent (in Claude Code, the Workflow tool) — don't hand-roll `chain_start` loops; the codified path owns state-tracking, retries, and pass-rate gates. Dispatch a bare `chain_start` only for a single one-off with no matching workflow. Hand-implement only when the worker/daemon won't boot.
 - Use Penumbra MCP for state (`handoff_get`, `chain_wait`, `chain_get_response`); never query the live sqlite DB directly except for forensics.
 - Search memory before non-trivial work — `mcp__penumbra__memory_search`.
 - Repo text (commits, PR descriptions) is neutral; no AI-tool authorship attribution.
