@@ -17,7 +17,7 @@ import {
   routeAgent,
 } from "@penumbra/core";
 import { readSubscriptionPressure } from "@penumbra/core";
-import { AgentRecommendInputSchema } from "@penumbra/core";
+import { AgentRecommendInputSchema, inferAgentTaskTypeForRole } from "@penumbra/core";
 import { WORKLOADS } from "@penumbra/config";
 
 import { json } from "./_helpers.js";
@@ -147,7 +147,7 @@ export function computeRouteForRole(input: AgentRouteForInput): AgentRouteForOut
   const routeSummary = routeAgent({
     db: input.db,
     detail: "summary",
-    taskType: input.role as any,
+    taskType: inferAgentTaskTypeForRole("", input.role),
     windowDays: input.windowDays,
     agentKind: input.agentKind,
   });
