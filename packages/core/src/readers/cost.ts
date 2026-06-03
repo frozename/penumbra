@@ -17,6 +17,9 @@ export interface RecentCostOutput {
     cost_usd_billed: number | null;
     cost_usd_synth: number | null;
     tokens_used: number;
+    tokens_cache_read: number;
+    tokens_cache_write: number;
+    cache_read_pct: number | null;
     handoff_count: number;
     subscription_pressure: SubscriptionPressureRow[];
   }>;
@@ -27,6 +30,9 @@ export interface RecentCostOutput {
     cost_usd_billed: number | null;
     cost_usd_synth: number | null;
     tokens_used: number;
+    tokens_cache_read: number;
+    tokens_cache_write: number;
+    cache_read_pct: number | null;
     handoff_count: number;
     subscription_pressure: SubscriptionPressureRow[];
   }>;
@@ -157,7 +163,10 @@ export function recentCost(
         MAX(cost_usd) AS handoff_cost_usd,
         MAX(CASE WHEN lane = 'cloud' THEN cost_usd END) AS handoff_cost_usd_billed,
         MAX(CASE WHEN lane = 'cli-subscription' THEN cost_usd END) AS handoff_cost_usd_synth,
-        MAX(CAST(json_extract(payload_json, '$.used') AS INTEGER)) AS handoff_tokens
+        MAX(CAST(json_extract(payload_json, '$.used') AS INTEGER)) AS handoff_tokens,
+        MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_input') AS INTEGER), tokens_in, 0)) AS handoff_input_tokens,
+        MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_cache_read') AS INTEGER), 0)) AS handoff_tokens_cache_read,
+        MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_cache_write') AS INTEGER), 0)) AS handoff_tokens_cache_write
       FROM t0_events
       WHERE event_type = 'usage-update'
         AND ts >= ?
@@ -199,7 +208,10 @@ export function recentCost(
         MAX(cost_usd) AS handoff_cost_usd,
         MAX(CASE WHEN lane = 'cloud' THEN cost_usd END) AS handoff_cost_usd_billed,
         MAX(CASE WHEN lane = 'cli-subscription' THEN cost_usd END) AS handoff_cost_usd_synth,
-        MAX(CAST(json_extract(payload_json, '$.used') AS INTEGER)) AS handoff_tokens
+        MAX(CAST(json_extract(payload_json, '$.used') AS INTEGER)) AS handoff_tokens,
+        MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_input') AS INTEGER), tokens_in, 0)) AS handoff_input_tokens,
+        MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_cache_read') AS INTEGER), 0)) AS handoff_tokens_cache_read,
+        MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_cache_write') AS INTEGER), 0)) AS handoff_tokens_cache_write
       FROM t0_events
       WHERE event_type = 'usage-update'
         AND ts >= ?
@@ -212,6 +224,13 @@ export function recentCost(
       SUM(handoff_cost_usd_billed) AS cost_usd_billed,
       SUM(handoff_cost_usd_synth) AS cost_usd_synth,
       SUM(handoff_tokens)   AS tokens_used,
+      SUM(handoff_tokens_cache_read) AS tokens_cache_read,
+      SUM(handoff_tokens_cache_write) AS tokens_cache_write,
+      CASE
+        WHEN SUM(handoff_tokens_cache_read) + SUM(handoff_input_tokens) > 0
+          THEN CAST(SUM(handoff_tokens_cache_read) AS REAL) / (SUM(handoff_tokens_cache_read) + SUM(handoff_input_tokens))
+        ELSE NULL
+      END AS cache_read_pct,
       COUNT(*)              AS handoff_count
     FROM per_handoff
     GROUP BY provider
@@ -224,6 +243,9 @@ export function recentCost(
     cost_usd_billed: number | null;
     cost_usd_synth: number | null;
     tokens_used: number | null;
+    tokens_cache_read: number | null;
+    tokens_cache_write: number | null;
+    cache_read_pct: number | null;
     handoff_count: number;
   }>;
 
@@ -238,7 +260,10 @@ export function recentCost(
         MAX(cost_usd) AS handoff_cost_usd,
         MAX(CASE WHEN lane = 'cloud' THEN cost_usd END) AS handoff_cost_usd_billed,
         MAX(CASE WHEN lane = 'cli-subscription' THEN cost_usd END) AS handoff_cost_usd_synth,
-        MAX(CAST(json_extract(payload_json, '$.used') AS INTEGER)) AS handoff_tokens
+        MAX(CAST(json_extract(payload_json, '$.used') AS INTEGER)) AS handoff_tokens,
+        MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_input') AS INTEGER), tokens_in, 0)) AS handoff_input_tokens,
+        MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_cache_read') AS INTEGER), 0)) AS handoff_tokens_cache_read,
+        MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_cache_write') AS INTEGER), 0)) AS handoff_tokens_cache_write
       FROM t0_events
       WHERE event_type = 'usage-update'
         AND ts >= ?
@@ -252,6 +277,13 @@ export function recentCost(
       SUM(handoff_cost_usd_billed) AS cost_usd_billed,
       SUM(handoff_cost_usd_synth) AS cost_usd_synth,
       SUM(handoff_tokens)   AS tokens_used,
+      SUM(handoff_tokens_cache_read) AS tokens_cache_read,
+      SUM(handoff_tokens_cache_write) AS tokens_cache_write,
+      CASE
+        WHEN SUM(handoff_tokens_cache_read) + SUM(handoff_input_tokens) > 0
+          THEN CAST(SUM(handoff_tokens_cache_read) AS REAL) / (SUM(handoff_tokens_cache_read) + SUM(handoff_input_tokens))
+        ELSE NULL
+      END AS cache_read_pct,
       COUNT(*)              AS handoff_count
     FROM per_handoff
     GROUP BY provider, model
@@ -265,6 +297,9 @@ export function recentCost(
     cost_usd_billed: number | null;
     cost_usd_synth: number | null;
     tokens_used: number | null;
+    tokens_cache_read: number | null;
+    tokens_cache_write: number | null;
+    cache_read_pct: number | null;
     handoff_count: number;
   }>;
 
@@ -285,6 +320,9 @@ export function recentCost(
       cost_usd_billed: r.cost_usd_billed,
       cost_usd_synth: r.cost_usd_synth,
       tokens_used: r.tokens_used ?? 0,
+      tokens_cache_read: r.tokens_cache_read ?? 0,
+      tokens_cache_write: r.tokens_cache_write ?? 0,
+      cache_read_pct: r.cache_read_pct,
       handoff_count: r.handoff_count,
       subscription_pressure:
         r.provider == null
@@ -298,6 +336,9 @@ export function recentCost(
       cost_usd_billed: r.cost_usd_billed,
       cost_usd_synth: r.cost_usd_synth,
       tokens_used: r.tokens_used ?? 0,
+      tokens_cache_read: r.tokens_cache_read ?? 0,
+      tokens_cache_write: r.tokens_cache_write ?? 0,
+      cache_read_pct: r.cache_read_pct,
       handoff_count: r.handoff_count,
       subscription_pressure:
         r.provider == null

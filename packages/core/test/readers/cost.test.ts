@@ -41,6 +41,9 @@ function insertUsageRow(
     lane?: string;
     cost_usd: number | null;
     used: number;
+    tokens_input?: number;
+    tokens_cache_read?: number;
+    tokens_cache_write?: number;
     handoff_id: string | null;
   },
 ) {
@@ -57,7 +60,13 @@ function insertUsageRow(
     row.provider,
     row.model ?? null,
     row.cost_usd,
-    JSON.stringify({ handoff_id: row.handoff_id, used: row.used }),
+    JSON.stringify({
+      handoff_id: row.handoff_id,
+      used: row.used,
+      tokens_input: row.tokens_input ?? row.used,
+      tokens_cache_read: row.tokens_cache_read ?? 0,
+      tokens_cache_write: row.tokens_cache_write ?? 0,
+    }),
   );
 }
 
@@ -270,6 +279,81 @@ describe("recentCost", () => {
       cost_usd_billed: 8.5,
       cost_usd_synth: 2.25,
       handoff_count: 2,
+    });
+  });
+
+  it("surfaces prompt cache tokens and read percentage by provider and model", () => {
+    insertUsageRow(db, {
+      event_id: "cache-1",
+      ts: "2026-04-28T12:00:00Z",
+      provider: "anthropic",
+      model: "claude-sonnet",
+      cost_usd: 1.1,
+      used: 180,
+      tokens_input: 100,
+      tokens_cache_read: 50,
+      tokens_cache_write: 10,
+      handoff_id: "h-cache-1",
+    });
+    insertUsageRow(db, {
+      event_id: "cache-2",
+      ts: "2026-04-28T12:01:00Z",
+      provider: "anthropic",
+      model: "claude-opus",
+      cost_usd: 2.2,
+      used: 360,
+      tokens_input: 200,
+      tokens_cache_read: 100,
+      tokens_cache_write: 20,
+      handoff_id: "h-cache-2",
+    });
+    insertUsageRow(db, {
+      event_id: "cache-zero",
+      ts: "2026-04-28T12:02:00Z",
+      provider: "google",
+      model: "gemini-flash",
+      cost_usd: null,
+      used: 40,
+      tokens_input: 0,
+      tokens_cache_read: 0,
+      tokens_cache_write: 9,
+      handoff_id: "h-cache-zero",
+    });
+
+    const out = recentCost(
+      db,
+      { since: "2026-04-28T00:00:00Z" },
+      () => new Date("2026-04-28T13:00:00Z"),
+    );
+
+    const anthropic = out.by_provider.find((row) => row.provider === "anthropic");
+    expect(anthropic).toMatchObject({
+      tokens_cache_read: 150,
+      tokens_cache_write: 30,
+      cache_read_pct: 1 / 3,
+    });
+    const google = out.by_provider.find((row) => row.provider === "google");
+    expect(google).toMatchObject({
+      tokens_cache_read: 0,
+      tokens_cache_write: 9,
+      cache_read_pct: null,
+    });
+
+    const sonnet = out.by_provider_model.find(
+      (row) => row.provider === "anthropic" && row.model === "claude-sonnet",
+    );
+    expect(sonnet).toMatchObject({
+      tokens_cache_read: 50,
+      tokens_cache_write: 10,
+      cache_read_pct: 1 / 3,
+    });
+    const zeroInput = out.by_provider_model.find(
+      (row) => row.provider === "google" && row.model === "gemini-flash",
+    );
+    expect(zeroInput).toMatchObject({
+      tokens_cache_read: 0,
+      tokens_cache_write: 9,
+      cache_read_pct: null,
     });
   });
 });

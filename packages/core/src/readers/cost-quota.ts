@@ -34,6 +34,9 @@ export interface QuotaStatusProviderRow {
   remaining_usd: number | null;
   remaining_pct_usd: number | null;
   used_tokens: number;
+  tokens_cache_read: number;
+  tokens_cache_write: number;
+  cache_read_pct: number | null;
   quota_tokens: number | null;
   remaining_tokens: number | null;
   remaining_pct_tokens: number | null;
@@ -63,6 +66,9 @@ export function quotaStatus(
       cost_usd_billed: number | null;
       cost_usd_synth: number | null;
       tokens_used: number;
+      tokens_cache_read: number;
+      tokens_cache_write: number;
+      cache_read_pct: number | null;
     }
   >();
   for (const row of recent.by_provider) {
@@ -72,6 +78,9 @@ export function quotaStatus(
       cost_usd_billed: row.cost_usd_billed,
       cost_usd_synth: row.cost_usd_synth,
       tokens_used: row.tokens_used,
+      tokens_cache_read: row.tokens_cache_read,
+      tokens_cache_write: row.tokens_cache_write,
+      cache_read_pct: row.cache_read_pct,
     });
   }
   const usageByProviderModel = new Map<
@@ -81,6 +90,9 @@ export function quotaStatus(
       cost_usd_billed: number | null;
       cost_usd_synth: number | null;
       tokens_used: number;
+      tokens_cache_read: number;
+      tokens_cache_write: number;
+      cache_read_pct: number | null;
     }
   >();
   for (const row of recent.by_provider_model) {
@@ -91,6 +103,9 @@ export function quotaStatus(
       cost_usd_billed: row.cost_usd_billed,
       cost_usd_synth: row.cost_usd_synth,
       tokens_used: row.tokens_used,
+      tokens_cache_read: row.tokens_cache_read,
+      tokens_cache_write: row.tokens_cache_write,
+      cache_read_pct: row.cache_read_pct,
     });
   }
 
@@ -101,12 +116,18 @@ export function quotaStatus(
           cost_usd_billed: null,
           cost_usd_synth: null,
           tokens_used: 0,
+          tokens_cache_read: 0,
+          tokens_cache_write: 0,
+          cache_read_pct: null,
         })
       : (usageByProvider.get(p.provider) ?? {
           cost_usd: null,
           cost_usd_billed: null,
           cost_usd_synth: null,
           tokens_used: 0,
+          tokens_cache_read: 0,
+          tokens_cache_write: 0,
+          cache_read_pct: null,
         });
 
     const used_usd = p.quota_usd_per_24h !== undefined ? (usage.cost_usd_billed ?? 0) : null;
@@ -144,6 +165,9 @@ export function quotaStatus(
       remaining_usd,
       remaining_pct_usd,
       used_tokens,
+      tokens_cache_read: usage.tokens_cache_read,
+      tokens_cache_write: usage.tokens_cache_write,
+      cache_read_pct: usage.cache_read_pct,
       quota_tokens,
       remaining_tokens,
       remaining_pct_tokens,

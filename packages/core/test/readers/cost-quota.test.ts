@@ -42,6 +42,9 @@ function insertUsageRow(
     lane?: string;
     cost_usd: number | null;
     used: number;
+    tokens_input?: number;
+    tokens_cache_read?: number;
+    tokens_cache_write?: number;
     handoff_id: string | null;
   },
 ) {
@@ -58,7 +61,13 @@ function insertUsageRow(
     row.provider,
     row.model ?? null,
     row.cost_usd,
-    JSON.stringify({ handoff_id: row.handoff_id, used: row.used }),
+    JSON.stringify({
+      handoff_id: row.handoff_id,
+      used: row.used,
+      tokens_input: row.tokens_input ?? row.used,
+      tokens_cache_read: row.tokens_cache_read ?? 0,
+      tokens_cache_write: row.tokens_cache_write ?? 0,
+    }),
   );
 }
 
@@ -183,6 +192,54 @@ describe("quotaStatus", () => {
     expect(out.providers[0].quota_tokens).toBe(1_000_000);
     expect(out.providers[0].remaining_tokens).toBe(750000);
     expect(out.providers[0].remaining_pct_tokens).toBe(75.0);
+  });
+
+  it("surfaces prompt cache token fields from the shared cost reader", () => {
+    insertUsageRow(db, {
+      event_id: "cache-quota",
+      ts: "2026-04-28T12:00:00Z",
+      provider: "openai",
+      model: "gpt-5.4",
+      cost_usd: null,
+      used: 160,
+      tokens_input: 100,
+      tokens_cache_read: 25,
+      tokens_cache_write: 5,
+      handoff_id: "h-cache-quota",
+    });
+    insertUsageRow(db, {
+      event_id: "cache-quota-zero",
+      ts: "2026-04-28T12:01:00Z",
+      provider: "google",
+      model: "gemini-flash",
+      cost_usd: null,
+      used: 12,
+      tokens_input: 0,
+      tokens_cache_read: 0,
+      tokens_cache_write: 7,
+      handoff_id: "h-cache-quota-zero",
+    });
+
+    const out = quotaStatus(
+      db,
+      [
+        { provider: "openai", model: "gpt-5.4", quota_tokens_per_24h: 1_000_000 },
+        { provider: "google", model: "gemini-flash", quota_tokens_per_24h: 1_000_000 },
+      ],
+      { since: "2026-04-28T00:00:00Z" },
+      () => new Date("2026-04-28T13:00:00Z"),
+    );
+
+    expect(out.providers.find((row) => row.provider === "openai")).toMatchObject({
+      tokens_cache_read: 25,
+      tokens_cache_write: 5,
+      cache_read_pct: 0.2,
+    });
+    expect(out.providers.find((row) => row.provider === "google")).toMatchObject({
+      tokens_cache_read: 0,
+      tokens_cache_write: 7,
+      cache_read_pct: null,
+    });
   });
 
   it("returns 0 used + full quota remaining for a provider with config but no usage", () => {
