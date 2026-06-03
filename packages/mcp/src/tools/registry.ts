@@ -71,6 +71,7 @@ import {
   subscriptionPressureStatusHandler,
 } from "./subscription-pressure-status.js";
 import { AgentRankInputShape, agentRankHandler } from "./agent-rank.js";
+import { FleetLatencyInputShape, fleetLatencyHandler } from "./fleet-latency.js";
 import { AgentRecommendInputShape, agentRecommendHandler } from "./agent-recommend.js";
 import { AgentRouteForInputShape, agentRouteForHandler } from "./agent-route-for.js";
 import { PlanStartInputShape, planStartHandler } from "./plan-start.js";
@@ -842,6 +843,15 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: AgentRankInputShape,
     },
     makeHandler: agentRankHandler as unknown as ToolDef["makeHandler"],
+    readOnly: true,
+  },
+  fleet_latency: {
+    descriptor: {
+      description:
+        "Read per-agent dispatch execution latency and throughput from dispatch_events over a recent window, plus current approved/dispatched queue depth.",
+      inputSchema: FleetLatencyInputShape,
+    },
+    makeHandler: fleetLatencyHandler as unknown as ToolDef["makeHandler"],
     readOnly: true,
   },
   agent_recommend: {

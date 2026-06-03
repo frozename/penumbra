@@ -105,6 +105,7 @@ export function captureAgentPerformanceFromReconciler(opts: {
     cost_usd: usage.cost_usd,
     tokens_used: usage.tokens_used,
     latency_ms: latency,
+    exec_ms: null,
     source: "reconciler",
     gate_outcome: lookupLatestLaneGateOutcome(opts.db, input.handoff_id),
     notes: input.result.regression_summary ?? null,
@@ -154,6 +155,24 @@ function computeDispatchSignals(
   // outcome aligned with the reliability classifier's no_worktree_activity.
   const silentFailure = useWorktree && worktreeChanged === false;
   return { silent_failure: silentFailure, tool_failure_count: toolFailureCount };
+}
+
+function readDispatchExecMs(db: Database, handoffId: string): number | null {
+  const row = db
+    .prepare<
+      { meta_json: string | null },
+      [string]
+    >(`SELECT meta_json FROM dispatch_events WHERE handoff_id = ? AND kind = 'dispatch.end' ORDER BY ts DESC, id DESC LIMIT 1`)
+    .get(handoffId);
+  if (!row?.meta_json) return null;
+  try {
+    const meta = JSON.parse(row.meta_json) as Record<string, unknown>;
+    const wallMs = meta.wall_ms;
+    if (typeof wallMs !== "number" || !Number.isFinite(wallMs) || wallMs < 0) return null;
+    return Math.round(wallMs);
+  } catch {
+    return null;
+  }
 }
 
 function detectRecoveryCancel(
@@ -278,6 +297,7 @@ export function captureAgentPerformanceFromDispatch(opts: {
     cost_usd: usage.cost_usd,
     tokens_used: usage.tokens_used,
     latency_ms: latency,
+    exec_ms: readDispatchExecMs(opts.db, input.handoff_id),
     source: "worker",
     gate_outcome: lookupLatestLaneGateOutcome(opts.db, input.handoff_id),
     notes,

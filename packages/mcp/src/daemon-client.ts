@@ -2,6 +2,7 @@ import type {
   AgentRankOutput,
   Basis,
   DispatchReliabilityReport,
+  FleetLatencyOutput,
   MaestroSessionRecord,
   PlanRecord,
   PlanTaskRecord,
@@ -376,6 +377,13 @@ export class DaemonClient {
     if (req.include_neutral != null) qs.set("include_neutral", String(req.include_neutral));
     if (req.include_cost != null) qs.set("include_cost", String(req.include_cost));
     return this.get(`/agents/rank?${qs.toString()}`);
+  }
+
+  async fleetLatency(req: { window_hours?: number }): Promise<FleetLatencyOutput> {
+    const qs = new URLSearchParams();
+    if (req.window_hours != null) qs.set("window_hours", String(req.window_hours));
+    const query = qs.toString();
+    return this.get(query ? `/agents/fleet_latency?${query}` : "/agents/fleet_latency");
   }
 
   async agentRecommend(req: {

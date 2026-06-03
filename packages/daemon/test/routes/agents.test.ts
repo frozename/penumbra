@@ -6,6 +6,7 @@ import {
   agentsPerformanceMarkdownRoute,
   agentsPerformanceOperatorRoute,
   agentsPerformanceReconcilerRoute,
+  agentsFleetLatencyRoute,
   agentsRankRoute,
   agentsRecommendRoute,
 } from "../../src/routes/agents.js";
@@ -138,6 +139,60 @@ describe("agent routes", () => {
   it("returns 400 for invalid task_type", async () => {
     const res = await agentsRankRoute(new Request("http://x/agents/rank?task_type=bad"), services);
     expect(res.status).toBe(400);
+  });
+
+  it("returns fleet latency over the requested window", async () => {
+    const insertHandoff = db.prepare(
+      `
+      INSERT INTO handoffs (
+        handoff_id, ts, project_id, conversation_id, from_agent, to_agent,
+        to_role, message, status, resolved_by, resolved_at, triggered_by_event_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    );
+    insertHandoff.run(
+      "h2",
+      "2026-04-30T11:58:00Z",
+      "proj",
+      "conv-2",
+      "maestro",
+      "claude",
+      null,
+      "Task type: implement_small",
+      "completed",
+      "worker",
+      "2026-04-30T12:00:00Z",
+      "event-2",
+    );
+    db.prepare(
+      `
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', 'dispatch.end', ?, ?)
+    `,
+    ).run("h2", "worker-1", "2026-04-30T12:00:00Z", JSON.stringify({ wall_ms: 9000 }));
+
+    const res = await agentsFleetLatencyRoute(
+      new Request("http://x/agents/fleet_latency?window_hours=1"),
+      services,
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.window).toEqual({
+      from: "2026-04-30T11:03:00.000Z",
+      to: "2026-04-30T12:03:00.000Z",
+      hours: 1,
+    });
+    expect(body.agents).toEqual([
+      {
+        agent_name: "claude",
+        dispatch_count: 1,
+        dispatches_per_hour: 1,
+        exec_ms_p50: 9000,
+        exec_ms_p95: 9000,
+        queue_depth: 0,
+      },
+    ]);
   });
 
   it("returns recommend output", async () => {

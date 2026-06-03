@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 
-export const SCHEMA_VERSION = 30;
+export const SCHEMA_VERSION = 31;
 
 export interface ReleaseT1RollupClaimsOpts {
   terminalOutcomes?: readonly string[];
@@ -318,6 +318,7 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
         cost_usd             REAL,
         tokens_used          INTEGER,
         latency_ms           INTEGER,
+        exec_ms              INTEGER,
         source               TEXT NOT NULL,
         notes                TEXT,
         reliability_status   TEXT,
@@ -645,6 +646,7 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
     addColumnIfMissing(db, "agent_performance", "trust_score", "REAL");
     addColumnIfMissing(db, "agent_performance", "agent_kind", "TEXT");
     addColumnIfMissing(db, "agent_performance", "gate_outcome", "TEXT");
+    addColumnIfMissing(db, "agent_performance", "exec_ms", "INTEGER");
 
     addColumnIfMissing(db, "workflow_stats", "refresh_runs", "INTEGER NOT NULL DEFAULT 0");
     addColumnIfMissing(db, "workflow_stats", "intentional_runs", "INTEGER NOT NULL DEFAULT 0");

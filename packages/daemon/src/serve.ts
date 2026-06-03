@@ -69,6 +69,7 @@ import {
   agentsPerformanceMarkdownRoute,
   agentsPerformanceOperatorRoute,
   agentsPerformanceReconcilerRoute,
+  agentsFleetLatencyRoute,
   agentsRankRoute,
   agentsRouteForRoute,
   agentsRecommendRoute,
@@ -601,6 +602,9 @@ export function createDaemonFetchHandler(opts: {
     if (req.method === "GET" && url.pathname === "/agents/rank") {
       return agentsRankRoute(req, opts.services);
     }
+    if (req.method === "GET" && url.pathname === "/agents/fleet_latency") {
+      return agentsFleetLatencyRoute(req, opts.services);
+    }
     if (req.method === "GET" && url.pathname === "/agents/recommend") {
       return agentsRecommendRoute(req, opts.services);
     }
@@ -1117,8 +1121,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     log: opts.services.log as any,
   });
   const workerHeartbeatStaleMs = Number(process.env.PENUMBRA_WORKER_HEARTBEAT_STALE_MS) || 90000;
-  const staleSweepLivenessCheckEnabled =
-    process.env.PENUMBRA_STALE_SWEEP_LIVENESS_CHECK === "1";
+  const staleSweepLivenessCheckEnabled = process.env.PENUMBRA_STALE_SWEEP_LIVENESS_CHECK === "1";
   const staleSweepMaxAliveGraceMs =
     Number(process.env.PENUMBRA_STALE_SWEEP_MAX_ALIVE_GRACE_MS) || 30 * 60_000;
   const stopStaleHandoffSweeper = startStaleHandoffSweeper({
@@ -1491,7 +1494,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
               "SELECT MAX(ts) as ts FROM dispatch_events WHERE kind IN ('dispatch.end','long_lived.tick.end')",
             )
             .get() as { ts: string | null };
-            const lastTs = lastActivity?.ts ? Date.parse(lastActivity.ts) : 0;
+          const lastTs = lastActivity?.ts ? Date.parse(lastActivity.ts) : 0;
           if (Date.now() - lastTs >= runtimeDreamConfig.idleMinutes * 60_000) {
             const { dreamingCycleInFlight } = await import("./dreaming/cycle.js");
             const { handleIdleSignal } = await import("./dreaming/event-trigger.js");

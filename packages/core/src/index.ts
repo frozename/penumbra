@@ -169,6 +169,12 @@ export {
   type QualityStatusInput,
 } from "./readers/quality-status.js";
 export {
+  readFleetLatency,
+  type FleetLatencyAgentRow,
+  type FleetLatencyInput,
+  type FleetLatencyOutput,
+} from "./readers/fleet-latency.js";
+export {
   routeAgent,
   type DetailMode,
   type RouteAgentInput,

@@ -101,6 +101,17 @@ test("schema creates agent_performance table and indexes", () => {
     .map((r) => r.name);
   expect(indexes).toContain("agent_perf_by_task_agent");
   expect(indexes).toContain("agent_perf_by_ts");
+
+  const columns = db
+    .query<
+      { name: string; type: string; notnull: number },
+      []
+    >(`PRAGMA table_info('agent_performance')`)
+    .all();
+  const execMs = columns.find((column) => column.name === "exec_ms");
+  expect(execMs).toBeDefined();
+  expect(execMs?.type).toBe("INTEGER");
+  expect(execMs?.notnull).toBe(0);
 });
 
 test("applySchema adds dream_research_cache negative-cache fields and index", () => {

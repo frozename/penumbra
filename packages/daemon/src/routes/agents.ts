@@ -12,6 +12,7 @@ import {
   captureAgentPerformanceFromDispatch,
   captureAgentPerformanceFromReconciler,
   parseAgentPerformanceMarkdownRows,
+  readFleetLatency,
   recordOperatorAgentPerformance,
   renderAgentPerformanceMarkdown,
   routeAgent,
@@ -88,6 +89,14 @@ const AgentRouteForQuerySchema = z.object({
   window_days: z.coerce.number().int().positive().max(365).optional(),
   min_samples: z.coerce.number().int().positive().max(1000).optional(),
   agent_kind: z.enum(["coding", "long_lived"]).optional(),
+});
+
+const FleetLatencyQuerySchema = z.object({
+  window_hours: z.coerce
+    .number()
+    .positive()
+    .max(24 * 30)
+    .default(24),
 });
 
 function readOptionalWorkloadQueryValue(value: string | null): {
@@ -371,6 +380,21 @@ export async function agentsRankRoute(req: Request, services: Services): Promise
   });
   if (out.detail !== "rank") throw new Error("unexpected routeAgent detail for agentsRankRoute");
   return json(out.candidates);
+}
+
+export async function agentsFleetLatencyRoute(req: Request, services: Services): Promise<Response> {
+  const url = new URL(req.url);
+  const parsed = FleetLatencyQuerySchema.safeParse({
+    window_hours: url.searchParams.get("window_hours") ?? undefined,
+  });
+  if (!parsed.success)
+    return json({ error: { code: "invalid_params", issues: parsed.error.issues } }, 400);
+  return json(
+    readFleetLatency(services.db, {
+      window_hours: parsed.data.window_hours,
+      now: services.clock(),
+    }),
+  );
 }
 
 export async function agentsRecommendRoute(req: Request, services: Services): Promise<Response> {

@@ -102,6 +102,69 @@ describe("captureAgentPerformanceFromReconciler", () => {
     });
   });
 
+  it("populates exec_ms from dispatch.end wall_ms without changing enqueue latency", () => {
+    db.prepare(
+      `
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `,
+    ).run(
+      "h1",
+      "worker-1",
+      "dispatch.end",
+      "2026-04-30T12:01:00Z",
+      JSON.stringify({ status: "ok", wall_ms: 42000 }),
+    );
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-exec",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: { handoff_id: "h1", reason: "completed" },
+    });
+
+    expect(row.latency_ms).toBe(120000);
+    expect(row.exec_ms).toBe(42000);
+    const persisted = db
+      .query<
+        { latency_ms: number | null; exec_ms: number | null },
+        []
+      >(`SELECT latency_ms, exec_ms FROM agent_performance WHERE handoff_id = 'h1'`)
+      .get();
+    expect(persisted).toEqual({ latency_ms: 120000, exec_ms: 42000 });
+  });
+
+  it("leaves exec_ms null when dispatch.end wall_ms is absent or not finite", () => {
+    db.prepare(
+      `
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `,
+    ).run(
+      "h1",
+      "worker-1",
+      "dispatch.end",
+      "2026-04-30T12:01:00Z",
+      JSON.stringify({ status: "ok" }),
+    );
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-exec-null",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: { handoff_id: "h1", reason: "completed" },
+    });
+
+    expect(row.exec_ms).toBeNull();
+    const persisted = db
+      .query<
+        { exec_ms: number | null },
+        []
+      >(`SELECT exec_ms FROM agent_performance WHERE handoff_id = 'h1'`)
+      .get();
+    expect(persisted).toEqual({ exec_ms: null });
+  });
+
   it("flags completed dispatches with empty worktree as silent_failure → outcome=failed", () => {
     db.prepare(`UPDATE handoffs SET use_worktree=1 WHERE handoff_id=?`).run("h1");
     db.prepare(
