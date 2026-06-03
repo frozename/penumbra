@@ -449,6 +449,7 @@ export class TaskWriter {
           rankings = routed.candidates.candidates.map((c) => ({
             agent_name: c.agent_name,
             score: c.score,
+            avg_latency_ms: c.avg_latency_ms,
           }));
 
           const eligibleDescriptors = rankings
@@ -508,6 +509,7 @@ export class TaskWriter {
         rankings = routed.candidates.candidates.map((c) => ({
           agent_name: c.agent_name,
           score: c.score,
+          avg_latency_ms: c.avg_latency_ms,
         }));
       }
       callerScore = rankings.find((row) => row.agent_name === input.agent_id)?.score ?? null;

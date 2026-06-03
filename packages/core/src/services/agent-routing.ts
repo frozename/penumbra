@@ -432,6 +432,7 @@ function buildRank(
         (a, b) =>
           b.score - a.score ||
           b.success_rate - a.success_rate ||
+          (a.avg_latency_ms ?? Infinity) - (b.avg_latency_ms ?? Infinity) ||
           a.agent_name.localeCompare(b.agent_name),
       ),
   };

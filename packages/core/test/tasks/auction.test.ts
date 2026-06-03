@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite";
 import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { migrate } from "../../src/db/migrations.js";
 import { TaskWriter } from "../../src/tasks/writer.js";
+import { pickPreferred } from "../../src/tasks/auction.js";
 import type { FileTaskInput } from "../../src/tasks/schema.js";
 import type { AgentDescriptor } from "../../src/tasks/eligibility.js";
 
@@ -189,5 +190,22 @@ describe("TaskWriter.next auction window", () => {
       .get(task_id);
     expect(rows).not.toBeNull();
     expect(rows!.n).toBe(1);
+  });
+});
+
+describe("pickPreferred", () => {
+  test("uses latency as a tiebreak before name", () => {
+    const out = pickPreferred(
+      [
+        { agent_name: "zulu-slow", score: 10, avg_latency_ms: 5000 },
+        { agent_name: "aardvark-fast", score: 10, avg_latency_ms: 1000 },
+      ],
+      [
+        { name: "zulu-slow", tags: ["core"], tier: "oc", cost_cents_per_run: 25 },
+        { name: "aardvark-fast", tags: ["core"], tier: "oc", cost_cents_per_run: 25 },
+      ],
+    );
+
+    expect(out).toEqual({ agent_id: "aardvark-fast", score: 10 });
   });
 });

@@ -229,6 +229,189 @@ describe("routeAgent", () => {
     expect(out.recommendations[1]!.avg_latency_seconds).toBe(60);
   });
 
+  test("rank mode breaks score ties by lower latency", () => {
+    const writer = new AgentPerformanceWriter(db);
+    writer.upsert({
+      performance_id: "fast-1",
+      ts: "2026-04-30T14:00:00Z",
+      handoff_id: "h-fast-1",
+      conversation_id: "c-fast-1",
+      project_id: "proj",
+      agent_name: "zulu-fast",
+      task_type: "implement_substantial",
+      outcome: "merged",
+      rounds: 1,
+      smoke_pass: "y",
+      reviewer_findings: 0,
+      maestro_score: null,
+      cost_usd: 0.1,
+      tokens_used: 100,
+      latency_ms: 1000,
+      source: "reconciler",
+      notes: null,
+      metadata_json: "{}",
+    });
+    writer.upsert({
+      performance_id: "slow-1",
+      ts: "2026-04-30T15:00:00Z",
+      handoff_id: "h-slow-1",
+      conversation_id: "c-slow-1",
+      project_id: "proj",
+      agent_name: "aardvark-slow",
+      task_type: "implement_substantial",
+      outcome: "merged",
+      rounds: 1,
+      smoke_pass: "y",
+      reviewer_findings: 0,
+      maestro_score: null,
+      cost_usd: 0.1,
+      tokens_used: 100,
+      latency_ms: 5000,
+      source: "reconciler",
+      notes: null,
+      metadata_json: "{}",
+    });
+
+    const out = routeAgent({
+      db,
+      detail: "rank",
+      taskType: "implement_substantial",
+      minSamples: 1,
+      includeNeutral: false,
+      agentRegistry: ["zulu-fast", "aardvark-slow"],
+      now: NOW,
+    });
+
+    expect(out.detail).toBe("rank");
+    if (out.detail !== "rank") return;
+    expect(out.candidates.candidates.map((candidate) => candidate.agent_name)).toEqual([
+      "zulu-fast",
+      "aardvark-slow",
+    ]);
+  });
+
+  test("rank mode places null latency after numeric latency on equal score and success rate", () => {
+    const writer = new AgentPerformanceWriter(db);
+    writer.upsert({
+      performance_id: "timed-1",
+      ts: "2026-04-30T14:00:00Z",
+      handoff_id: "h-timed-1",
+      conversation_id: "c-timed-1",
+      project_id: "proj",
+      agent_name: "zulu-timed",
+      task_type: "implement_substantial",
+      outcome: "merged",
+      rounds: 1,
+      smoke_pass: "y",
+      reviewer_findings: 0,
+      maestro_score: null,
+      cost_usd: 0.1,
+      tokens_used: 100,
+      latency_ms: 2000,
+      source: "reconciler",
+      notes: null,
+      metadata_json: "{}",
+    });
+    writer.upsert({
+      performance_id: "unknown-1",
+      ts: "2026-04-30T15:00:00Z",
+      handoff_id: "h-unknown-1",
+      conversation_id: "c-unknown-1",
+      project_id: "proj",
+      agent_name: "aardvark-unknown",
+      task_type: "implement_substantial",
+      outcome: "merged",
+      rounds: 1,
+      smoke_pass: "y",
+      reviewer_findings: 0,
+      maestro_score: null,
+      cost_usd: 0.1,
+      tokens_used: 100,
+      latency_ms: null,
+      source: "reconciler",
+      notes: null,
+      metadata_json: "{}",
+    });
+
+    const out = routeAgent({
+      db,
+      detail: "rank",
+      taskType: "implement_substantial",
+      minSamples: 1,
+      includeNeutral: false,
+      agentRegistry: ["zulu-timed", "aardvark-unknown"],
+      now: NOW,
+    });
+
+    expect(out.detail).toBe("rank");
+    if (out.detail !== "rank") return;
+    expect(out.candidates.candidates.map((candidate) => candidate.agent_name)).toEqual([
+      "zulu-timed",
+      "aardvark-unknown",
+    ]);
+  });
+
+  test("rank mode keeps higher score ahead of lower score even when slower", () => {
+    const writer = new AgentPerformanceWriter(db);
+    writer.upsert({
+      performance_id: "strong-1",
+      ts: "2026-04-30T14:00:00Z",
+      handoff_id: "h-strong-1",
+      conversation_id: "c-strong-1",
+      project_id: "proj",
+      agent_name: "zulu-strong",
+      task_type: "implement_substantial",
+      outcome: "merged",
+      rounds: 1,
+      smoke_pass: "y",
+      reviewer_findings: 0,
+      maestro_score: null,
+      cost_usd: 0.1,
+      tokens_used: 100,
+      latency_ms: 9000,
+      source: "reconciler",
+      notes: null,
+      metadata_json: "{}",
+    });
+    writer.upsert({
+      performance_id: "weak-1",
+      ts: "2026-04-30T15:00:00Z",
+      handoff_id: "h-weak-1",
+      conversation_id: "c-weak-1",
+      project_id: "proj",
+      agent_name: "aardvark-weak",
+      task_type: "implement_substantial",
+      outcome: "failed",
+      rounds: 1,
+      smoke_pass: "n",
+      reviewer_findings: 2,
+      maestro_score: null,
+      cost_usd: 0.1,
+      tokens_used: 100,
+      latency_ms: 1000,
+      source: "reconciler",
+      notes: null,
+      metadata_json: "{}",
+    });
+
+    const out = routeAgent({
+      db,
+      detail: "rank",
+      taskType: "implement_substantial",
+      minSamples: 1,
+      includeNeutral: false,
+      agentRegistry: ["zulu-strong", "aardvark-weak"],
+      now: NOW,
+    });
+
+    expect(out.detail).toBe("rank");
+    if (out.detail !== "rank") return;
+    expect(out.candidates.candidates.map((candidate) => candidate.agent_name)).toEqual([
+      "zulu-strong",
+      "aardvark-weak",
+    ]);
+  });
+
   test("single mode returns a role route and respects role task inference", () => {
     const out = routeAgent({
       db,

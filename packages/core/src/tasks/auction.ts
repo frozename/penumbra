@@ -3,6 +3,7 @@ import type { AgentDescriptor } from "./eligibility.js";
 export type AgentRankRow = {
   agent_name: string;
   score: number;
+  avg_latency_ms?: number | null;
 };
 
 export function pickPreferred(
@@ -20,7 +21,17 @@ export function pickPreferred(
       best = row;
       continue;
     }
-    if (row.score === best.score && row.agent_name.localeCompare(best.agent_name) < 0) {
+    const bestLatency = best.avg_latency_ms ?? Infinity;
+    const rowLatency = row.avg_latency_ms ?? Infinity;
+    if (row.score === best.score && rowLatency < bestLatency) {
+      best = row;
+      continue;
+    }
+    if (
+      row.score === best.score &&
+      rowLatency === bestLatency &&
+      row.agent_name.localeCompare(best.agent_name) < 0
+    ) {
       best = row;
     }
   }
