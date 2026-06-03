@@ -59,7 +59,7 @@ import {
   SILENT_RETRY_PREFIX,
   shouldRetryHandoffForSilentFailure,
 } from "../src/worker/silent-failure-retry.js";
-import { startUsagePoller } from "../src/usage-readers/poller.js";
+import { resolveUsageCursorPath, startUsagePoller } from "../src/usage-readers/poller.js";
 import { CodexRolloutReader } from "../src/usage-readers/codex-rollout-reader.js";
 import { OpenCodeConsoleReader } from "../src/usage-readers/opencode-console-reader.js";
 import { loadOpencodeConsoleConfig } from "../src/usage-readers/opencode-console-config.js";
@@ -1250,7 +1250,7 @@ if (process.env.PENUMBRA_USAGE_POLL_DISABLED !== "1") {
   usagePoller = startUsagePoller({
     readers: usageReaders,
     intervalMs: Number(process.env.PENUMBRA_USAGE_POLL_INTERVAL_MS) || 60_000,
-    cursorPath: join(storageRoot, "local-state-cursors.json"),
+    cursorPath: resolveUsageCursorPath({ storageRoot, workerId, env: process.env }),
     emit: (e) => client.observe(e),
     log,
   });

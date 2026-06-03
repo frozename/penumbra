@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import type { RateLimitDelta, UsageReader, UsageReaderResult } from "./index.js";
 
 export interface PollerOptions {
@@ -17,6 +18,22 @@ export interface PollerHandle {
 
 type CursorMap = Record<string, unknown>;
 
+export function usageCursorTempPath(cursorPath: string, pid = process.pid): string {
+  return `${cursorPath}.${pid}.tmp`;
+}
+
+export function resolveUsageCursorPath(opts: {
+  storageRoot: string;
+  workerId: string;
+  env: Record<string, string | undefined>;
+}): string {
+  if (opts.env.PENUMBRA_PER_WORKER_USAGE_CURSOR === "0") {
+    return join(opts.storageRoot, "local-state-cursors.json");
+  }
+  const safeWorkerId = opts.workerId.replace(/[^A-Za-z0-9_.-]/g, "_");
+  return join(opts.storageRoot, `local-state-cursors.${safeWorkerId}.json`);
+}
+
 export function startUsagePoller(opts: PollerOptions): PollerHandle {
   const intervalMs = opts.intervalMs ?? 60_000;
   const cursors = loadCursors(opts.cursorPath, opts.log);
@@ -25,7 +42,7 @@ export function startUsagePoller(opts: PollerOptions): PollerHandle {
   const persist = () => {
     const dir = dirname(opts.cursorPath);
     mkdirSync(dir, { recursive: true });
-    const tmp = `${opts.cursorPath}.tmp`;
+    const tmp = usageCursorTempPath(opts.cursorPath);
     writeFileSync(tmp, `${JSON.stringify(cursors)}\n`);
     renameSync(tmp, opts.cursorPath);
   };
@@ -143,6 +160,9 @@ function buildBaseEvent(
 function buildUsageEvent(readerId: string, delta: UsageReaderResult["usage_deltas"][number]): any {
   const used = Number(delta.tokens_input ?? 0) + Number(delta.tokens_output ?? 0);
   const event = buildBaseEvent(readerId, "usage-update", delta.provider, delta.model);
+  const stableId = stableUsageEventId(readerId, delta);
+  event.event_id = stableId;
+  event.request_id = stableId;
   event.tokens_in = delta.tokens_input;
   event.tokens_out = delta.tokens_output;
   event.cost_usd = delta.cost_usd;
@@ -159,6 +179,21 @@ function buildUsageEvent(readerId: string, delta: UsageReaderResult["usage_delta
   };
   event.payload_summary = `${delta.provider}/${delta.model ?? "?"}: ${used} tokens`.slice(0, 240);
   return event;
+}
+
+function stableUsageEventId(
+  readerId: string,
+  delta: UsageReaderResult["usage_deltas"][number],
+): string {
+  const key = JSON.stringify({
+    readerId,
+    provider: delta.provider,
+    model: delta.model ?? null,
+    handoff_id: delta.handoff_id ?? null,
+    window_start: delta.window_start,
+    window_end: delta.window_end,
+  });
+  return `usage-poller-${createHash("sha256").update(key).digest("hex").slice(0, 32)}`;
 }
 
 function buildRateLimitEvent(readerId: string, snapshot: RateLimitDelta): any {
