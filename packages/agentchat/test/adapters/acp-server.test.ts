@@ -1,10 +1,11 @@
-import { expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import * as net from "node:net";
 import { startAcpServer, type AcpServerSpawner } from "../../src/adapters/acp-server.js";
 
 class FakeChildProcess extends EventEmitter {
+  stdin = new PassThrough();
   stdout = new PassThrough();
   stderr = new PassThrough();
   pid: number;
@@ -37,6 +38,20 @@ function createSpawn(child: FakeChildProcess, onSpawn?: (args: string[]) => void
     return child as unknown as ReturnType<AcpServerSpawner>;
   }) as AcpServerSpawner & ReturnType<typeof mock>;
 }
+
+const previousGroupKill = process.env.PENUMBRA_OPENCODE_GROUP_KILL;
+
+beforeEach(() => {
+  process.env.PENUMBRA_OPENCODE_GROUP_KILL = "0";
+});
+
+afterEach(() => {
+  if (previousGroupKill === undefined) {
+    delete process.env.PENUMBRA_OPENCODE_GROUP_KILL;
+  } else {
+    process.env.PENUMBRA_OPENCODE_GROUP_KILL = previousGroupKill;
+  }
+});
 
 test("startAcpServer resolves when port is successfully bound and kill sends SIGTERM", async () => {
   const child = new FakeChildProcess(5432);

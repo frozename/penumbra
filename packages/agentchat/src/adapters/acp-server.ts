@@ -147,6 +147,7 @@ export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpSe
     cwd: opts.cwd,
     stdio: ["pipe", "pipe", "pipe"],
     env: opts.env ? { ...process.env, ...opts.env } : undefined,
+    detached: process.platform !== "win32",
   });
   if (!child.stdin || !child.stdout || !child.stderr) {
     throw new Error("ACP server failed to start: spawn returned null streams");
@@ -162,6 +163,18 @@ export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpSe
 
   const exited = waitForExit(streamChild);
   let killPromise: Promise<void> | null = null;
+  const signalProcess = (signal: NodeJS.Signals) => {
+    if (!child.pid) return;
+    try {
+      if (process.platform !== "win32" && process.env.PENUMBRA_OPENCODE_GROUP_KILL !== "0") {
+        process.kill(-child.pid, signal);
+      } else {
+        child.kill(signal);
+      }
+    } catch {
+      // Process may already be gone.
+    }
+  };
 
   const kill = async (timeoutMs = DEFAULT_KILL_TIMEOUT_MS): Promise<void> => {
     if (killPromise) return killPromise;
@@ -171,12 +184,7 @@ export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpSe
         return;
       }
 
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        await exited;
-        return;
-      }
+      signalProcess("SIGTERM");
 
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
@@ -188,11 +196,7 @@ export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpSe
         ]);
 
         if (result === "timeout") {
-          try {
-            child.kill("SIGKILL");
-          } catch {
-            // ignore
-          }
+          signalProcess("SIGKILL");
           await exited;
         }
       } finally {
