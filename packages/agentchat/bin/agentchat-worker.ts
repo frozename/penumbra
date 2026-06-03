@@ -32,6 +32,7 @@ import { emitHeartbeat } from "../src/worker/heartbeat-emit.js";
 import { createPermissionCallback } from "../src/worker/permission-callback.js";
 import { createDiscordRateLimiter } from "../src/worker/discord-rate-limit.js";
 import { runWorkerControlListener } from "../src/worker/control-listener.js";
+import { installGlobalCrashHandlers } from "../src/worker/crash-guard.js";
 import { registerExecutor, unregisterExecutor } from "../src/worker/executor-registry.js";
 import { resolveSandboxConfig } from "../src/worker/sandbox-config.js";
 import { WriteToolsExecutor } from "../src/worker/write-tools-executor.js";
@@ -338,6 +339,7 @@ const defaultTrust = flag("trust", "all") as "all" | "config";
 const transcriptBudget = Number(flag("transcript-budget", "8192"));
 
 const log = createLogger({ component: "agentchat-worker" });
+installGlobalCrashHandlers({ log, flush: () => log.flush() });
 const workerId = resolveWorkerId({
   flag: flag("worker-id"),
   envValue: process.env.PENUMBRA_WORKER_ID,
