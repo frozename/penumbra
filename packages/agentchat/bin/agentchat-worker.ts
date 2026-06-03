@@ -60,7 +60,9 @@ import {
 } from "../src/worker/silent-failure-retry.js";
 import { startUsagePoller } from "../src/usage-readers/poller.js";
 import { CodexRolloutReader } from "../src/usage-readers/codex-rollout-reader.js";
-import { OpenCodeApiReader } from "../src/usage-readers/opencode-api-reader.js";
+import { OpenCodeConsoleReader } from "../src/usage-readers/opencode-console-reader.js";
+import { loadOpencodeConsoleConfig } from "../src/usage-readers/opencode-console-config.js";
+import type { UsageReader } from "../src/usage-readers/index.js";
 import { OpenCodeDbReader } from "../src/usage-readers/opencode-db-reader.js";
 import { ClaudeJsonlReader } from "../src/usage-readers/claude-jsonl-reader.js";
 import { ClaudeStatusLineBridge } from "../src/usage-readers/claude-statusline-bridge.js";
@@ -1232,21 +1234,25 @@ log.info(
 // tick. Disabled via PENUMBRA_USAGE_POLL_DISABLED=1 for tests.
 let usagePoller: { stop: () => void } | null = null;
 if (process.env.PENUMBRA_USAGE_POLL_DISABLED !== "1") {
+  const usageReaders: UsageReader[] = [
+    new CodexRolloutReader(),
+    new OpenCodeDbReader(),
+    new ClaudeJsonlReader(),
+    new ClaudeStatusLineBridge(),
+    new GoogleOtlpSynth({ client, min_emit_pct: 1 }),
+  ];
+  const ocConsoleConfig = loadOpencodeConsoleConfig();
+  if (ocConsoleConfig) {
+    usageReaders.push(new OpenCodeConsoleReader(ocConsoleConfig));
+  }
   usagePoller = startUsagePoller({
-    readers: [
-      new CodexRolloutReader(),
-      new OpenCodeDbReader(),
-      new OpenCodeApiReader(),
-      new ClaudeJsonlReader(),
-      new ClaudeStatusLineBridge(),
-      new GoogleOtlpSynth({ client, min_emit_pct: 1 }),
-    ],
+    readers: usageReaders,
     intervalMs: Number(process.env.PENUMBRA_USAGE_POLL_INTERVAL_MS) || 60_000,
     cursorPath: join(storageRoot, "local-state-cursors.json"),
     emit: (e) => client.observe(e),
     log,
   });
-  log.info({ readers: 6, workerId }, "usage-poller started");
+  log.info({ readers: usageReaders.length, workerId }, "usage-poller started");
 }
 
 let notificationScheduler: { stop: () => void } | null = null;

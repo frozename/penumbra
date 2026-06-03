@@ -222,6 +222,26 @@ describe("QuotasConfigSchema", () => {
     parsed.providers[0]!.quota_usd_per_24h = "50";
     expect(() => QuotasConfigSchema.parse(parsed)).toThrow(/quota_usd_per_24h/);
   });
+
+  test("accepts an opencode_console block under a provider", () => {
+    const parsed = QuotasConfigSchema.parse(
+      parseYaml(
+        `providers:\n  - name: opencode-go\n    opencode_console:\n      workspace_id: "ws-abc"\n      base_url: "https://opencode.ai"\n      cookie_file: "~/.config/penumbra/secrets/opencode-go.cookie"\n`,
+      ),
+    );
+    expect(parsed.providers[0]?.opencode_console?.workspace_id).toBe("ws-abc");
+    expect(parsed.providers[0]?.opencode_console?.cookie_file).toContain("cookie");
+  });
+
+  test("rejects an inline cookie inside opencode_console", () => {
+    expect(() =>
+      QuotasConfigSchema.parse(
+        parseYaml(
+          `providers:\n  - name: opencode-go\n    opencode_console:\n      workspace_id: "ws"\n      cookie_file: "x"\n      cookie: "secret"\n`,
+        ),
+      ),
+    ).toThrow();
+  });
 });
 
 describe("AgentChatConfig type compatibility", () => {

@@ -33,6 +33,22 @@ const PressureCapWindowSchema = z.union([
     })),
 ]);
 
+/**
+ * OpenCode-Go exposes no usage API; its rolling/weekly/monthly subscription
+ * limits are only readable from the authenticated web console. This block points
+ * the opencode-console usage reader at the workspace and the session-cookie file.
+ * The cookie itself is NEVER stored inline — only a path to a chmod-600 file
+ * (strict schema rejects an inline `cookie` key).
+ */
+export const OpenCodeConsoleConfigSchema = z
+  .object({
+    workspace_id: z.string().min(1),
+    base_url: z.string().min(1).default("https://opencode.ai"),
+    cookie_file: z.string().min(1),
+  })
+  .strict();
+export type OpenCodeConsoleConfig = z.infer<typeof OpenCodeConsoleConfigSchema>;
+
 export const ProviderQuotaConfigSchema = z.object({
   name: z.string().min(1),
   model: z.string().min(1).optional(),
@@ -40,6 +56,7 @@ export const ProviderQuotaConfigSchema = z.object({
   quota_tokens_per_24h: z.number().int().positive().optional(),
   quota_tokens_per_5h: z.number().int().positive().optional(),
   pressure_caps: z.record(z.string().min(1), PressureCapWindowSchema).optional(),
+  opencode_console: OpenCodeConsoleConfigSchema.optional(),
 });
 export type ProviderQuotaConfig = z.infer<typeof ProviderQuotaConfigSchema>;
 
