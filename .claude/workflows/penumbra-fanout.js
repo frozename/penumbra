@@ -89,6 +89,7 @@ function buildPrompt(t) {
   return [
     'You are a penumbra dispatch proxy. Broker exactly ONE penumbra chain dispatch and report its outcome.',
     'Do NOT implement the task yourself, edit files, or land branches — you only dispatch one chain and report the result.',
+    'CRITICAL: pass the spec.message string INLINE as the mcp__penumbra__chain_start `message` argument. Do NOT stage it to a file, /tmp, a heredoc, or `cat >` — filesystem writes are NOT allowlisted in workflow agents, so they are permission-denied and stall the whole run. You need NO Bash at all; use only the mcp__penumbra__chain_* MCP tools.',
     '',
     'Dispatch spec:',
     '```dispatch',
