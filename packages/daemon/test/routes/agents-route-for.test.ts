@@ -26,7 +26,7 @@ describe("computeRouteForRole", () => {
             rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, tokens_used, latency_ms, source,
             notes, agent_kind, metadata_json
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `
+        `,
         ).run(
           `${agentName}-${n}`,
           tsBase,
@@ -46,7 +46,7 @@ describe("computeRouteForRole", () => {
           "worker",
           null,
           "coding",
-          "{}"
+          "{}",
         );
       }
     };
@@ -133,10 +133,24 @@ describe("computeRouteForRole", () => {
           `INSERT INTO agent_performance (
             performance_id, ts, handoff_id, agent_name, task_type, outcome,
             rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, tokens_used, latency_ms, source, agent_kind, metadata_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
-          `${agentName}-plan-${n}`, tsBase, `${agentName}-handoff-${n}`, agentName, "plan_refine",
-          n < successes ? "merged" : "failed", 1, "y", 0, 5, 0.4, 10, 1000, "worker", "coding", "{}"
+          `${agentName}-plan-${n}`,
+          tsBase,
+          `${agentName}-handoff-${n}`,
+          agentName,
+          "plan_refine",
+          n < successes ? "merged" : "failed",
+          1,
+          "y",
+          0,
+          5,
+          0.4,
+          10,
+          1000,
+          "worker",
+          "coding",
+          "{}",
         );
       }
     };
@@ -150,9 +164,7 @@ describe("computeRouteForRole", () => {
       agentKind: "coding",
       pressureSnapshot: { snapshots: [], warnings: [] },
       agentchatRoles: {
-        agents: [
-          { name: "best-planner", roles: ["planner"], api_provider: "openai" },
-        ],
+        agents: [{ name: "best-planner", roles: ["planner"], api_provider: "openai" }],
       },
     });
 
@@ -162,5 +174,45 @@ describe("computeRouteForRole", () => {
       samples: 10,
       roles: ["planner"],
     });
+  });
+
+  test("honors unsampled-first exploration policy when no agent meets min_samples (cold start)", () => {
+    const out = computeRouteForRole({
+      db,
+      role: "reviewer",
+      windowDays: 14,
+      minSamples: 3,
+      agentKind: "coding",
+      pressureSnapshot: { snapshots: [], warnings: [] },
+      roleExplorationPolicy: "unsampled-first",
+      agentchatRoles: {
+        agents: [
+          { name: "local-a", roles: ["reviewer"], api_provider: "llamactl" },
+          { name: "local-b", roles: ["reviewer"], api_provider: "llamactl" },
+        ],
+      },
+    });
+
+    expect(out.chosen).not.toBeNull();
+    expect(["local-a", "local-b"]).toContain(out.chosen?.agent);
+    expect(out.chosen?.samples).toBe(0);
+
+    const rankedFirst = computeRouteForRole({
+      db,
+      role: "reviewer",
+      windowDays: 14,
+      minSamples: 3,
+      agentKind: "coding",
+      pressureSnapshot: { snapshots: [], warnings: [] },
+      roleExplorationPolicy: "ranked-first",
+      agentchatRoles: {
+        agents: [
+          { name: "local-a", roles: ["reviewer"], api_provider: "llamactl" },
+          { name: "local-b", roles: ["reviewer"], api_provider: "llamactl" },
+        ],
+      },
+    });
+
+    expect(rankedFirst.chosen).toBeNull();
   });
 });

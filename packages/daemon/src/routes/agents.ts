@@ -57,6 +57,8 @@ export type AgentRouteForInput = {
   agentKind?: "coding" | "long_lived";
   pressureSnapshot?: AgentRoutePressureSnapshot;
   agentchatRoles: AgentRouteAgentchatConfig;
+  roleExplorationPolicy?: "unsampled-first" | "ranked-first";
+  defaultRoles?: Record<string, string>;
 };
 
 export type AgentRouteChosen = {
@@ -153,10 +155,11 @@ function isOverPressure(provider: string, pressureSnapshot?: AgentRoutePressureS
 
 export function computeRouteForRole(input: AgentRouteForInput): AgentRouteForOutput {
   const minSamples = input.minSamples ?? 3;
+  const taskType = inferAgentTaskTypeForRole("", input.role);
   const routeSummary = routeAgent({
     db: input.db,
     detail: "summary",
-    taskType: inferAgentTaskTypeForRole("", input.role),
+    taskType,
     windowDays: input.windowDays,
     agentKind: input.agentKind,
   });
@@ -216,6 +219,40 @@ export function computeRouteForRole(input: AgentRouteForInput): AgentRouteForOut
     : null;
 
   if (!chosen) {
+    const roleExplorationPolicy = input.roleExplorationPolicy ?? "unsampled-first";
+    if (roleExplorationPolicy === "unsampled-first") {
+      const single = routeAgent({
+        db: input.db,
+        detail: "single",
+        role: input.role,
+        taskType,
+        windowDays: input.windowDays,
+        agentKind: input.agentKind,
+        agentchatConfig: input.agentchatRoles,
+        roleExplorationPolicy,
+        defaultRoles: input.defaultRoles,
+        applyPressure: input.pressureSnapshot,
+      });
+      if (single.detail !== "single") {
+        throw new Error("unexpected routeAgent detail for computeRouteForRole exploration");
+      }
+      if (single.route) {
+        const route = single.route;
+        const rec = recommendations.find((candidate) => candidate.agent_name === route.agent);
+        const agent = byAgent.get(route.agent);
+        return {
+          chosen: {
+            agent: route.agent,
+            success_rate: rec?.success_rate ?? 0,
+            samples: rec?.samples ?? 0,
+            roles: agent?.roles ?? [],
+          },
+          rejected,
+          reason: `chose ${route.agent} via unsampled-first exploration`,
+        };
+      }
+    }
+
     const filteredOut = roleMatches.length - eligible.length;
     return {
       chosen: null,
@@ -489,6 +526,8 @@ export async function agentsRouteForRoute(req: Request, services: Services): Pro
       agentKind: parsed.data.agent_kind,
       pressureSnapshot: readSubscriptionPressure(services.db),
       agentchatRoles: { agents: agentchatConfig.agents ?? [] },
+      roleExplorationPolicy: services.agentRouting?.role_exploration_policy,
+      defaultRoles: services.agentRouting?.default_roles,
     }),
   );
 }
