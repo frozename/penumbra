@@ -24,10 +24,17 @@ export function loadAgentChatConfig(env: NodeJS.ProcessEnv = process.env): Agent
 
 export function loadAgentRoutingFromConfig(cfg: AgentChatConfig): AgentRoutingConfig {
   return {
-    agents: cfg.agents.map((agent) => ({ name: agent.name, roles: agent.roles })),
+    agents: cfg.agents.map((agent) => ({
+      name: agent.name,
+      roles: agent.roles,
+      subscription_provider: agent.subscription_provider,
+      api_provider: agent.api_provider,
+      pricing_mode: agent.pricing_mode,
+    })),
     default_roles: cfg.default_roles,
     role_exploration_policy: cfg.role_routing?.exploration_policy ?? "unsampled-first",
-  };
+    role_routing: cfg.role_routing,
+  } as AgentRoutingConfig;
 }
 
 export function loadAgentRegistry(env: NodeJS.ProcessEnv = process.env): string[] {

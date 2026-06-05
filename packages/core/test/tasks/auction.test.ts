@@ -4,6 +4,7 @@ import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { migrate } from "../../src/db/migrations.js";
 import { TaskWriter } from "../../src/tasks/writer.js";
 import { pickPreferred } from "../../src/tasks/auction.js";
+import { pickPreferred as exportedPickPreferred } from "../../src/index.js";
 import type { FileTaskInput } from "../../src/tasks/schema.js";
 import type { AgentDescriptor } from "../../src/tasks/eligibility.js";
 
@@ -207,5 +208,22 @@ describe("pickPreferred", () => {
     );
 
     expect(out).toEqual({ agent_id: "aardvark-fast", score: 10 });
+  });
+});
+
+describe("pickPreferred public export", () => {
+  test("selects the highest-scored eligible agent from the package root", () => {
+    const out = exportedPickPreferred(
+      [
+        { agent_name: "a", score: 0.9 },
+        { agent_name: "b", score: 0.4 },
+      ],
+      [
+        { name: "a", tags: ["core"], tier: "oc", cost_cents_per_run: 25 },
+        { name: "b", tags: ["core"], tier: "oc", cost_cents_per_run: 25 },
+      ],
+    );
+
+    expect(out).toEqual({ agent_id: "a", score: 0.9 });
   });
 });

@@ -1,10 +1,16 @@
 import {
   inferAgentTaskTypeForRole,
+  readSubscriptionPressure,
   routeAgent,
+  type AgentRoutingConfig,
   type AgentTaskType,
   type RoleRoute,
   type Services,
 } from "@penumbra/core";
+
+type AgentRoutingWithRoleRouting = AgentRoutingConfig & {
+  role_routing?: { headroom_weighting?: boolean; exploration_policy?: string };
+};
 
 /**
  * Resolve a role to a concrete agent via routeAgent's 'single' detail mode.
@@ -20,7 +26,12 @@ export function resolveSingleRoute(
 ): RoleRoute | null {
   const agentRouting = services.agentRouting;
   if (!agentRouting) return null;
+  const agentRoutingWithRoleRouting = agentRouting as AgentRoutingWithRoleRouting;
   const resolvedTaskType = taskType ?? inferAgentTaskTypeForRole(message, role);
+  let pressure: ReturnType<typeof readSubscriptionPressure> | undefined;
+  try {
+    pressure = readSubscriptionPressure(services.db);
+  } catch {}
   const out = routeAgent({
     db: services.db,
     detail: "single",
@@ -28,9 +39,13 @@ export function resolveSingleRoute(
     message,
     taskType: resolvedTaskType,
     agentRegistry: services.agentRegistry,
-    agentchatConfig: { agents: agentRouting.agents },
+    agentchatConfig: {
+      agents: agentRouting.agents,
+      role_routing: agentRoutingWithRoleRouting.role_routing,
+    },
     roleExplorationPolicy: agentRouting.role_exploration_policy,
     defaultRoles: agentRouting.default_roles,
+    applyPressure: pressure,
     now: services.clock(),
   });
   return out.detail === "single" ? out.route : null;

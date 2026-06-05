@@ -3,9 +3,19 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
+import { Database } from "bun:sqlite";
+import { AgentPerformanceWriter, loadSqliteVec, migrate } from "@penumbra/core";
 import type { RecallBundle, WorkflowCtx } from "@penumbra/workflows";
 import { parse as parseYaml } from "yaml";
 import spec, { fn, inputSchema } from "../../../../plugin/workflows/adversarial-plan/workflow.ts";
+
+if (process.platform === "darwin") {
+  try {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
+  } catch {}
+}
+
+const NOW = "2026-05-01T12:00:00Z";
 
 function baseRecall(): RecallBundle {
   return {
@@ -120,6 +130,59 @@ function parseSynthesisFrontmatter(content: string): Record<string, unknown> | n
   } catch {
     return null;
   }
+}
+
+function freshDb(): Database {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  return db;
+}
+
+function writePerf(db: Database, agent: string, taskType: "plan_refine"): void {
+  new AgentPerformanceWriter(db).upsert({
+    performance_id: `${taskType}-${agent}`,
+    ts: NOW,
+    handoff_id: `handoff-${taskType}-${agent}`,
+    conversation_id: "conv",
+    project_id: "proj",
+    agent_name: agent,
+    task_type: taskType,
+    outcome: "merged",
+    rounds: agent === "claude-acp-sonnet" ? 1 : 5,
+    smoke_pass: "y",
+    reviewer_findings: 0,
+    maestro_score: null,
+    cost_usd: null,
+    tokens_used: 100,
+    latency_ms: agent === "claude-acp-sonnet" ? 10_000 : 60_000,
+    source: "test",
+    notes: null,
+    metadata_json: "{}",
+  });
+}
+
+function writePressure(db: Database, provider: string, usedPct: number): void {
+  db.prepare(
+    `
+    INSERT INTO t0_events (
+      event_id, ts, ingest_ts, source, user_id, machine_id,
+      event_type, lane, provider, payload_json
+    ) VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'rate-limit-snapshot', 'cli-subscription', ?, ?)
+  `,
+  ).run(
+    `pressure-${provider}`,
+    NOW,
+    NOW,
+    provider,
+    JSON.stringify({
+      window_label: "24h",
+      model: null,
+      used_pct: usedPct,
+      resets_at: null,
+      source_kind: "subscription",
+    }),
+  );
 }
 
 test("spec metadata is registered as manual + slash ts-function workflow", () => {
@@ -404,6 +467,57 @@ test("synth dispatch message includes the anti-derail preamble and uses workload
     expect(synthMessage).toContain("Do not output status summaries");
     const synthAgentCall = dispatch.mock.calls[2]?.[0] as { agent?: string } | undefined;
     expect(synthAgentCall?.agent).toBe("codex");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("synthesizer pool resolves through pressure without changing persona fan-out", async () => {
+  const db = freshDb();
+  writePerf(db, "claude-acp-sonnet", "plan_refine");
+  writePerf(db, "codex-acp-deep", "plan_refine");
+  writePressure(db, "anthropic", 0.95);
+  writePressure(db, "openai", 0.05);
+  const { ctx, root, dispatch } = makeCtx({
+    args: {
+      topic: "Ship a planning workflow",
+      personas: ["architect"],
+    },
+  });
+  try {
+    ctx.db = () => db;
+    ctx.config.agents = [
+      {
+        name: "claude-acp-sonnet",
+        roles: [],
+        pricing_mode: "subscription",
+        subscription_provider: "anthropic",
+      },
+      {
+        name: "codex-acp-deep",
+        roles: [],
+        pricing_mode: "subscription",
+        subscription_provider: "openai",
+      },
+    ];
+    const planRefine = (ctx.config.workloads as Record<string, unknown>).plan_refine as Record<
+      string,
+      unknown
+    >;
+    planRefine.synthesizer = ["claude-acp-sonnet", "codex-acp-deep"];
+
+    const result = (await fn(ctx, baseRecall())) as {
+      ok: boolean;
+      out_dir: string;
+      synthesis_path: string | null;
+    };
+    expect(result.ok).toBe(true);
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(dispatch.mock.calls[0]?.[0]?.agent).toBe("architect");
+    expect(dispatch.mock.calls[1]?.[0]?.agent).toBe("codex-acp-deep");
+    const synthContent = await readFile(join(result.out_dir, "synthesis.md"), "utf8");
+    const fm = parseSynthesisFrontmatter(synthContent);
+    expect(fm?.synthesizer_agent).toBe("codex-acp-deep");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -76,4 +76,67 @@ describe("RoutingConfigSchema workloads", () => {
       }),
     ).toThrow(/extra/);
   });
+
+  test("accepts workload synthesizer pools without coercing strings", () => {
+    const arrayParsed = RoutingConfigSchema.parse({
+      default_roles: {},
+      workloads: {
+        plan_refine: {
+          eligible_roles: ["planner"],
+          synthesizer: ["claude-acp-sonnet", "codex-acp-deep"],
+        },
+      },
+    });
+    expect(arrayParsed.workloads?.plan_refine?.synthesizer).toEqual([
+      "claude-acp-sonnet",
+      "codex-acp-deep",
+    ]);
+
+    const stringParsed = RoutingConfigSchema.parse({
+      default_roles: {},
+      workloads: {
+        plan_refine: {
+          eligible_roles: ["planner"],
+          synthesizer: "claude-acp-sonnet",
+        },
+      },
+    });
+    expect(stringParsed.workloads?.plan_refine?.synthesizer).toBe("claude-acp-sonnet");
+  });
+
+  test("rejects empty and non-string workload synthesizers but keeps it optional", () => {
+    expect(() =>
+      RoutingConfigSchema.parse({
+        default_roles: {},
+        workloads: {
+          plan_refine: {
+            eligible_roles: ["planner"],
+            synthesizer: [],
+          },
+        },
+      }),
+    ).toThrow();
+
+    expect(() =>
+      RoutingConfigSchema.parse({
+        default_roles: {},
+        workloads: {
+          plan_refine: {
+            eligible_roles: ["planner"],
+            synthesizer: 42,
+          },
+        },
+      }),
+    ).toThrow();
+
+    const parsed = RoutingConfigSchema.parse({
+      default_roles: {},
+      workloads: {
+        plan_refine: {
+          eligible_roles: ["planner"],
+        },
+      },
+    });
+    expect(parsed.workloads?.plan_refine?.synthesizer).toBeUndefined();
+  });
 });

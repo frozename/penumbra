@@ -162,6 +162,17 @@ describe("RoutingConfigSchema", () => {
     expect(() => RoutingConfigSchema.parse(parsed)).toThrow(/exploration_policy/);
   });
 
+  test("role_routing accepts optional headroom_weighting", () => {
+    const parsed = RoutingConfigSchema.parse({
+      default_roles: {},
+      role_routing: {
+        exploration_policy: "unsampled-first",
+        headroom_weighting: true,
+      },
+    });
+    expect(parsed.role_routing?.headroom_weighting).toBe(true);
+  });
+
   test("workloads persona keys must exist in personas map", () => {
     const parsed = parseYaml(loadFixture("routing")) as {
       personas: Record<string, unknown>;
@@ -178,6 +189,35 @@ describe("RoutingConfigSchema", () => {
         review_personas: {},
       }),
     ).toThrow(/review_personas/);
+  });
+
+  test("personas accept preferred_agent pools without coercing strings", () => {
+    const pooled = RoutingConfigSchema.parse({
+      default_roles: {},
+      personas: {
+        architect: {
+          preferred_agent: ["claude-acp-sonnet", "codex-acp-deep"],
+          bias: "architect",
+          system_prompt: "Focus on architecture.",
+        },
+      },
+    });
+    expect(pooled.personas?.architect?.preferred_agent).toEqual([
+      "claude-acp-sonnet",
+      "codex-acp-deep",
+    ]);
+
+    const single = RoutingConfigSchema.parse({
+      default_roles: {},
+      personas: {
+        architect: {
+          preferred_agent: "claude-acp-sonnet",
+          bias: "architect",
+          system_prompt: "Focus on architecture.",
+        },
+      },
+    });
+    expect(single.personas?.architect?.preferred_agent).toBe("claude-acp-sonnet");
   });
 });
 

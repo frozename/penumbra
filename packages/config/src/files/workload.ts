@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+const AgentPinSchema = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]);
+
 export const WORKLOADS = [
   "plan_refine",
   "implement_small",
@@ -17,7 +19,7 @@ export const WorkloadSchema = z
     eligible_roles: z.array(z.string().min(1)).min(1),
     eligible_agents: z.array(z.string().min(1)).min(1).optional(),
     fan_out: z.number().int().positive().optional(),
-    synthesizer: z.string().min(1).optional(),
+    synthesizer: AgentPinSchema.optional(),
   })
   .strict();
 

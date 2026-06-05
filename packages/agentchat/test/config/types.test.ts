@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { AgentChatConfigSchema, AgentOptionsSchema } from "../../src/config/types.js";
+import {
+  AgentChatConfigSchema,
+  AgentOptionsSchema,
+  PlanSynthesizerSchema,
+  PlannerPersonaSchema,
+  ReviewPersonaSchema,
+  ReviewSynthesizerSchema,
+} from "../../src/config/types.js";
 
 describe("AgentOptionsSchema — Phase 1d boolean opt-ins", () => {
   test("fsReadTextFile defaults to undefined", () => {
@@ -183,6 +190,67 @@ describe("AgentChatConfigSchema — adversarial review config blocks", () => {
         review_synthesizer: {
           preferred_agent: "claude",
         },
+      }),
+    ).toThrow();
+  });
+
+  test("review and plan synthesizers accept preferred_agent pools without coercion", () => {
+    const reviewPool = ReviewSynthesizerSchema.parse({
+      preferred_agent: ["claude", "gemini"],
+      system_prompt: "Synthesize persona findings.",
+    });
+    expect(reviewPool.preferred_agent).toEqual(["claude", "gemini"]);
+
+    const reviewSingle = ReviewSynthesizerSchema.parse({
+      preferred_agent: "claude",
+      system_prompt: "Synthesize persona findings.",
+    });
+    expect(reviewSingle.preferred_agent).toBe("claude");
+
+    const planPool = PlanSynthesizerSchema.parse({
+      preferred_agent: ["claude", "gemini"],
+      system_prompt: "Synthesize plan findings.",
+    });
+    expect(planPool.preferred_agent).toEqual(["claude", "gemini"]);
+
+    const planSingle = PlanSynthesizerSchema.parse({
+      preferred_agent: "gemini",
+      system_prompt: "Synthesize plan findings.",
+    });
+    expect(planSingle.preferred_agent).toBe("gemini");
+  });
+
+  test("review and planner personas accept preferred_agent pools and reject empty strings", () => {
+    const reviewPool = ReviewPersonaSchema.parse({
+      name: "architect",
+      bias: "architecture",
+      system_prompt: "Review with architecture lens.",
+      preferred_agent: ["claude", "gemini"],
+    });
+    expect(reviewPool.preferred_agent).toEqual(["claude", "gemini"]);
+
+    const plannerPool = PlannerPersonaSchema.parse({
+      name: "risk",
+      bias: "risk",
+      system_prompt: "Review with risk lens.",
+      preferred_agent: ["claude", "gemini"],
+    });
+    expect(plannerPool.preferred_agent).toEqual(["claude", "gemini"]);
+
+    expect(() =>
+      ReviewPersonaSchema.parse({
+        name: "architect",
+        bias: "architecture",
+        system_prompt: "Review with architecture lens.",
+        preferred_agent: "",
+      }),
+    ).toThrow();
+    expect(() =>
+      PlannerPersonaSchema.parse({
+        name: "risk",
+        bias: "risk",
+        system_prompt: "Review with risk lens.",
+        preferred_agent: "",
       }),
     ).toThrow();
   });

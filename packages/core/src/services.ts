@@ -82,9 +82,16 @@ export interface WorkflowRunsRegistry {
 }
 
 export interface AgentRoutingConfig {
-  agents: Array<{ name: string; roles: string[] }>;
+  agents: Array<{
+    name: string;
+    roles: string[];
+    subscription_provider?: string;
+    api_provider?: string;
+    pricing_mode?: "api" | "subscription";
+  }>;
   default_roles: Record<string, string>;
   role_exploration_policy?: "unsampled-first" | "ranked-first";
+  role_routing?: { headroom_weighting?: boolean; exploration_policy?: string };
 }
 
 export interface Watchdog {

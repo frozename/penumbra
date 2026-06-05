@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { WorkflowFn, WorkflowSpec, RecallBundle, WorkflowCtx } from "@penumbra/workflows";
 import { z } from "zod";
 import { resolveOutDir, sanitizeFileStem } from "../_shared/io.js";
+import { parseAgentField, resolveAgent, type AgentField } from "../_shared/pool-resolver.js";
 
 type ReviewPersona = {
   name: string;
@@ -14,14 +15,14 @@ type ReviewPersona = {
 };
 
 type ReviewSynthesizer = {
-  preferred_agent: string;
+  preferred_agent: AgentField;
   system_prompt: string;
 };
 
 type ReviewWorkloadConfig = {
   eligible_agents: string[];
   fan_out?: number;
-  synthesizer?: string;
+  synthesizer?: string | string[];
 };
 
 type PersonaResolution =
@@ -111,7 +112,10 @@ function getReviewWorkload(ctx: WorkflowCtx): ReviewWorkloadConfig | null {
       ? (row.fan_out as number)
       : undefined;
   const synthesizer =
-    typeof row.synthesizer === "string" && row.synthesizer.length > 0 ? row.synthesizer : undefined;
+    (typeof row.synthesizer === "string" && row.synthesizer.length > 0) ||
+    (Array.isArray(row.synthesizer) && row.synthesizer.length > 0)
+      ? (row.synthesizer as string | string[])
+      : undefined;
   return {
     eligible_agents: eligibleAgents,
     fan_out: fanOut,
@@ -184,8 +188,10 @@ function getPersonas(ctx: WorkflowCtx): PersonaResolution | null {
 function getSynthesizer(ctx: WorkflowCtx): ReviewSynthesizer | null {
   const workload = getReviewWorkload(ctx);
   if (!workload || !workload.synthesizer) return null;
+  const field = parseAgentField(workload.synthesizer);
+  if (!field) return null;
   return {
-    preferred_agent: workload.synthesizer,
+    preferred_agent: field,
     system_prompt: "Synthesize adversarial reviewer outputs into one prioritized findings list.",
   };
 }
@@ -406,11 +412,13 @@ function buildSynthesisFrontmatter(args: {
   persona_handoff_ids: Record<string, string>;
   target_ref: string;
   base_ref: string;
+  synthesizer_agent: string;
 }): string {
   const lines = [
     "---",
     `review_run_ts: ${args.review_run_ts}`,
     `synthesis_handoff_id: ${args.synthesis_handoff_id}`,
+    `synthesizer_agent: ${args.synthesizer_agent}`,
     "persona_handoff_ids:",
   ];
   for (const [key, id] of Object.entries(args.persona_handoff_ids)) {
@@ -472,6 +480,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       hint: `available personas: ${personaKeys.join(", ")}`,
     };
   }
+  const synthAgent = resolveAgent(synthesizer.preferred_agent, "review_adversarial", ctx);
 
   const outDirResolution = resolveOutDir(ctx, parsedArgs.out_dir);
   if (!outDirResolution.ok) {
@@ -654,7 +663,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     while (true) {
       try {
         const dispatch = await ctx.dispatch({
-          agent: synthesizer.preferred_agent,
+          agent: synthAgent,
           message: `cd ${ctx.cwd}\n\n${synthesisPrompt(synthesizer, selected, personaResults, parsedArgs)}`,
           task_type: "review_adversarial",
           use_worktree: false,
@@ -689,6 +698,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       persona_handoff_ids: personaHandoffIds,
       target_ref: parsedArgs.target_ref,
       base_ref: parsedArgs.base_ref,
+      synthesizer_agent: synthAgent,
     });
     await ctx.fileWrite(
       synthesisPath,
@@ -711,6 +721,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           persona_handoff_ids: personaHandoffIds,
           target_ref: parsedArgs.target_ref,
           base_ref: parsedArgs.base_ref,
+          synthesizer_agent: synthAgent,
         })
       : "";
     await ctx.fileWrite(

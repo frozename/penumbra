@@ -425,18 +425,20 @@ export const RoleRoutingConfigSchema = z
   .default({ exploration_policy: "unsampled-first", headroom_weighting: false });
 export type RoleRoutingConfig = z.infer<typeof RoleRoutingConfigSchema>;
 
+const AgentPinSchema = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]);
+
 export const ReviewPersonaSchema = z.object({
   name: z.string().min(1),
   bias: z.string().min(1),
   system_prompt: z.string().min(1),
-  preferred_agent: z.string().min(1),
+  preferred_agent: AgentPinSchema,
   category_hints: z.array(z.string()).optional(),
   description: z.string().optional(),
 });
 export type ReviewPersona = z.infer<typeof ReviewPersonaSchema>;
 
 export const ReviewSynthesizerSchema = z.object({
-  preferred_agent: z.string().min(1),
+  preferred_agent: AgentPinSchema,
   system_prompt: z.string().min(1),
 });
 export type ReviewSynthesizer = z.infer<typeof ReviewSynthesizerSchema>;
@@ -445,13 +447,13 @@ export const PlannerPersonaSchema = z.object({
   name: z.string().min(1),
   bias: z.string().min(1),
   system_prompt: z.string().min(1),
-  preferred_agent: z.string().min(1),
+  preferred_agent: AgentPinSchema,
   description: z.string().optional(),
 });
 export type PlannerPersona = z.infer<typeof PlannerPersonaSchema>;
 
 export const PlanSynthesizerSchema = z.object({
-  preferred_agent: z.string().min(1),
+  preferred_agent: AgentPinSchema,
   system_prompt: z.string().min(1),
 });
 export type PlanSynthesizer = z.infer<typeof PlanSynthesizerSchema>;

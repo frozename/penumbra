@@ -10,13 +10,16 @@ import { WORKLOADS, WorkloadSchema } from "./workload.js";
 export const RoleRoutingConfigSchema = z
   .object({
     exploration_policy: z.enum(["unsampled-first", "ranked-first"]).default("unsampled-first"),
+    headroom_weighting: z.boolean().optional(),
   })
   .default({ exploration_policy: "unsampled-first" });
 export type RoleRoutingConfig = z.infer<typeof RoleRoutingConfigSchema>;
 
+const AgentPinSchema = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]);
+
 export const PersonaSchema = z
   .object({
-    preferred_agent: z.string().min(1),
+    preferred_agent: AgentPinSchema,
     bias: z.string().min(1),
     system_prompt: z.string().min(1),
     category_hints: z.array(z.string().min(1)).optional(),
