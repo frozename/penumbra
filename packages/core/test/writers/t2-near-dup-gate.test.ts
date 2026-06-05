@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- sqlite row fixtures */
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { loadSqliteVec, migrate } from "../../src/index.js";
 import { T2Promotion } from "../../src/writers/t2.js";
@@ -40,14 +40,22 @@ class DeterministicEmbedder {
 
 let db: Database;
 let uuidSeq = 0;
+let previousT2EmbedRecipe: string | undefined;
 
 beforeEach(() => {
+  previousT2EmbedRecipe = process.env.PENUMBRA_T2_EMBED_RECIPE;
+  process.env.PENUMBRA_T2_EMBED_RECIPE = "body_v1";
   db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 4 });
   uuidSeq = 0;
   delete process.env[PROMOTION_GATE_ENV];
   delete process.env[NEAR_DUP_GATE_ENV];
+});
+
+afterEach(() => {
+  if (previousT2EmbedRecipe === undefined) delete process.env.PENUMBRA_T2_EMBED_RECIPE;
+  else process.env.PENUMBRA_T2_EMBED_RECIPE = previousT2EmbedRecipe;
 });
 
 function seedRollup(rollupId: string, sessionId: string): void {
@@ -83,7 +91,10 @@ function seedRollup(rollupId: string, sessionId: string): void {
   );
 }
 
-function makePromotion(embedder: DeterministicEmbedder, llm: (transcript: string) => Promise<Extraction[]>) {
+function makePromotion(
+  embedder: DeterministicEmbedder,
+  llm: (transcript: string) => Promise<Extraction[]>,
+) {
   return new T2Promotion({
     db,
     embedder,
@@ -104,42 +115,40 @@ describe("T2Promotion creation gate + near-dup gate", () => {
       ["episodic", new Float32Array([0, 0, 1, 0])],
     ]);
 
-    const prom = makePromotion(
-      new DeterministicEmbedder(vecs),
-      async () => [
-        {
-          title: "tiny",
-          body: "tiny",
-          kind: "fact",
-          depth: 1,
-          promote: false,
-        },
-        {
-          title: "standing",
-          body: "standing",
-          kind: "preference",
-          obs_type: "standing_brief",
-          promote: false,
-          depth: 1,
-        },
-        {
-          title: "episodic",
-          body: "episodic",
-          kind: "fact",
-          is_episodic: true,
-          promote: false,
-          depth: 1,
-        },
-      ],
-    );
+    const prom = makePromotion(new DeterministicEmbedder(vecs), async () => [
+      {
+        title: "tiny",
+        body: "tiny",
+        kind: "fact",
+        depth: 1,
+        promote: false,
+      },
+      {
+        title: "standing",
+        body: "standing",
+        kind: "preference",
+        obs_type: "standing_brief",
+        promote: false,
+        depth: 1,
+      },
+      {
+        title: "episodic",
+        body: "episodic",
+        kind: "fact",
+        is_episodic: true,
+        promote: false,
+        depth: 1,
+      },
+    ]);
 
     const count = await prom.promoteRollup("r-default-off");
     expect(count).toBe(3);
 
     const row = db
-      .query<{ t2_promoted_at: string | null; promotion_skipped_at: string | null }, [string]>(
-        "SELECT t2_promoted_at, promotion_skipped_at FROM t1_rollups WHERE rollup_id = ?",
-      )
+      .query<
+        { t2_promoted_at: string | null; promotion_skipped_at: string | null },
+        [string]
+      >("SELECT t2_promoted_at, promotion_skipped_at FROM t1_rollups WHERE rollup_id = ?")
       .get("r-default-off");
     expect(row?.t2_promoted_at).toBe("2026-04-27T15:00:00.000Z");
     expect(row?.promotion_skipped_at).toBeNull();
@@ -161,53 +170,50 @@ describe("T2Promotion creation gate + near-dup gate", () => {
       [keptDeepShortBody, new Float32Array([0.5, 0.5, 0.5, 0.5])],
     ]);
 
-    const prom = makePromotion(
-      new DeterministicEmbedder(vecs),
-      async () => [
-        {
-          title: "episodic",
-          body: "episodic body should drop",
-          kind: "fact",
-          is_episodic: true,
-          obs_type: "is_episodic",
-          promote: false,
-          depth: 1,
-        },
-        {
-          title: "standing brief",
-          body: "standing brief body should drop",
-          kind: "preference",
-          obs_type: "standing_brief",
-          promote: false,
-          depth: 2,
-        },
-        {
-          title: "tiny shallow",
-          body: "tiny",
-          kind: "fact",
-          depth: 1,
-          promote: true,
-        },
-        {
-          title: "semantic keep",
-          body: keptSemanticBody,
-          kind: "knowledge",
-          why: "grounded why",
-          obs_type: "fact",
-          promote: true,
-          depth: 1,
-        },
-        {
-          title: "deep short keep",
-          body: keptDeepShortBody,
-          kind: "decision",
-          why: "depth escape hatch should retain this",
-          obs_type: "fact",
-          promote: true,
-          depth: 2,
-        },
-      ],
-    );
+    const prom = makePromotion(new DeterministicEmbedder(vecs), async () => [
+      {
+        title: "episodic",
+        body: "episodic body should drop",
+        kind: "fact",
+        is_episodic: true,
+        obs_type: "is_episodic",
+        promote: false,
+        depth: 1,
+      },
+      {
+        title: "standing brief",
+        body: "standing brief body should drop",
+        kind: "preference",
+        obs_type: "standing_brief",
+        promote: false,
+        depth: 2,
+      },
+      {
+        title: "tiny shallow",
+        body: "tiny",
+        kind: "fact",
+        depth: 1,
+        promote: true,
+      },
+      {
+        title: "semantic keep",
+        body: keptSemanticBody,
+        kind: "knowledge",
+        why: "grounded why",
+        obs_type: "fact",
+        promote: true,
+        depth: 1,
+      },
+      {
+        title: "deep short keep",
+        body: keptDeepShortBody,
+        kind: "decision",
+        why: "depth escape hatch should retain this",
+        obs_type: "fact",
+        promote: true,
+        depth: 2,
+      },
+    ]);
 
     const count = await prom.promoteRollup("r-gated");
     expect(count).toBe(2);
@@ -362,9 +368,10 @@ describe("T2Promotion creation gate + near-dup gate", () => {
     expect(memoryCount?.c).toBe(2);
 
     const existingWeak = db
-      .query<{ memory_id: string; retired_at: number | null }, [string]>(
-        "SELECT memory_id, retired_at FROM t2_memories WHERE body = ?",
-      )
+      .query<
+        { memory_id: string; retired_at: number | null },
+        [string]
+      >("SELECT memory_id, retired_at FROM t2_memories WHERE body = ?")
       .get(weakBody);
     expect(existingWeak).toBeDefined();
     expect(existingWeak?.retired_at).toBeNull();
@@ -394,9 +401,10 @@ describe("T2Promotion creation gate + near-dup gate", () => {
     expect(retireAction?.confidence).toBeLessThan(1);
 
     const cycle = db
-      .query<{ started_at: string }, []>(
-        "SELECT started_at FROM dream_cycles WHERE cycle_id = 't2-promotion-near-dup' LIMIT 1",
-      )
+      .query<
+        { started_at: string },
+        []
+      >("SELECT started_at FROM dream_cycles WHERE cycle_id = 't2-promotion-near-dup' LIMIT 1")
       .get();
     expect(cycle?.started_at).toBe("2026-04-27T15:00:00.000Z");
   });
@@ -455,9 +463,10 @@ describe("T2Promotion creation gate + near-dup gate", () => {
     expect(await blocked.promoteRollup("r-atomic-b")).toBe(0);
 
     const row = db
-      .query<{ t2_promoted_at: string | null; promotion_skipped_at: string | null }, [string]>(
-        "SELECT t2_promoted_at, promotion_skipped_at FROM t1_rollups WHERE rollup_id = ?",
-      )
+      .query<
+        { t2_promoted_at: string | null; promotion_skipped_at: string | null },
+        [string]
+      >("SELECT t2_promoted_at, promotion_skipped_at FROM t1_rollups WHERE rollup_id = ?")
       .get("r-atomic-b");
     expect(row).toEqual({
       t2_promoted_at: null,
@@ -609,7 +618,10 @@ describe("T2Promotion creation gate + near-dup gate", () => {
     expect(await first.promoteRollup("r-bad-embed-a")).toBe(1);
 
     const existing = db
-      .query<{ rowid: number; memory_id: string }, [string]>("SELECT rowid, memory_id FROM t2_memories WHERE body = ?")
+      .query<
+        { rowid: number; memory_id: string },
+        [string]
+      >("SELECT rowid, memory_id FROM t2_memories WHERE body = ?")
       .get(existingBody);
     expect(existing).toBeDefined();
 
@@ -652,9 +664,11 @@ describe("T2Promotion creation gate + near-dup gate", () => {
       console.warn = oldWarn;
     }
 
-    expect(warnings.some((msg) => msg.includes("failed to decode embedding") && msg.includes(existing!.memory_id))).toBe(
-      true,
-    );
+    expect(
+      warnings.some(
+        (msg) => msg.includes("failed to decode embedding") && msg.includes(existing!.memory_id),
+      ),
+    ).toBe(true);
   });
 
   test("near-dup retire dedup treats approved and auto_applied actions as already handled", async () => {
@@ -695,7 +709,10 @@ describe("T2Promotion creation gate + near-dup gate", () => {
        VALUES('a-approved', 'manual-approved', 'P3', 'retire', 0.99, 'approved', ?, '{}')`,
       [targetIds],
     );
-    db.run("DELETE FROM dream_actions WHERE action_type = 'retire' AND status = 'queued' AND target_ids = ?", [targetIds]);
+    db.run(
+      "DELETE FROM dream_actions WHERE action_type = 'retire' AND status = 'queued' AND target_ids = ?",
+      [targetIds],
+    );
 
     seedRollup("r-dedup-status-b", "s-dedup-status-b");
     const p2 = makePromotion(new DeterministicEmbedder(vecs), async () => [
@@ -710,9 +727,10 @@ describe("T2Promotion creation gate + near-dup gate", () => {
     expect(await p2.promoteRollup("r-dedup-status-b")).toBe(1);
 
     const actionsAfterApproved = db
-      .query<{ c: number }, [string]>(
-        "SELECT COUNT(*) AS c FROM dream_actions WHERE action_type = 'retire' AND target_ids = ?",
-      )
+      .query<
+        { c: number },
+        [string]
+      >("SELECT COUNT(*) AS c FROM dream_actions WHERE action_type = 'retire' AND target_ids = ?")
       .get(targetIds)?.c;
     expect(actionsAfterApproved).toBe(1);
 
@@ -729,13 +747,17 @@ describe("T2Promotion creation gate + near-dup gate", () => {
       },
     ]);
 
-    vecs.set(`${strongBody} plus one more precision sentence`, new Float32Array([0.99, 0.01, 0, 0]));
+    vecs.set(
+      `${strongBody} plus one more precision sentence`,
+      new Float32Array([0.99, 0.01, 0, 0]),
+    );
     expect(await p3.promoteRollup("r-dedup-status-c")).toBe(1);
 
     const actionsAfterAutoApplied = db
-      .query<{ c: number }, [string]>(
-        "SELECT COUNT(*) AS c FROM dream_actions WHERE action_type = 'retire' AND target_ids = ?",
-      )
+      .query<
+        { c: number },
+        [string]
+      >("SELECT COUNT(*) AS c FROM dream_actions WHERE action_type = 'retire' AND target_ids = ?")
       .get(targetIds)?.c;
     expect(actionsAfterAutoApplied).toBe(1);
   });
@@ -777,9 +799,10 @@ describe("T2Promotion creation gate + near-dup gate", () => {
     expect(memoryCount?.c).toBe(2);
 
     const queuedRetire = db
-      .query<{ c: number }, []>(
-        "SELECT COUNT(*) AS c FROM dream_actions WHERE action_type = 'retire' AND status = 'queued'",
-      )
+      .query<
+        { c: number },
+        []
+      >("SELECT COUNT(*) AS c FROM dream_actions WHERE action_type = 'retire' AND status = 'queued'")
       .get();
     expect(queuedRetire?.c).toBe(0);
   });
@@ -815,9 +838,10 @@ describe("T2Promotion creation gate + near-dup gate", () => {
     await expect(p2.promoteRollup("r-dim-b")).rejects.toThrow(/dimension/i);
 
     const failed = db
-      .query<{ failed_promotion_attempts: number }, [string]>(
-        "SELECT failed_promotion_attempts FROM t1_rollups WHERE rollup_id = ?",
-      )
+      .query<
+        { failed_promotion_attempts: number },
+        [string]
+      >("SELECT failed_promotion_attempts FROM t1_rollups WHERE rollup_id = ?")
       .get("r-dim-b");
     expect(failed?.failed_promotion_attempts).toBe(1);
   });

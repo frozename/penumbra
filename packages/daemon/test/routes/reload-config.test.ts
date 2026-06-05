@@ -17,6 +17,7 @@ try {
 
 afterEach(() => {
   delete process.env.PENUMBRA_CONFIG_DIR;
+  delete process.env.PENUMBRA_WORKERS_CONFIG_PATH;
 });
 
 const tempDirs: string[] = [];
@@ -68,11 +69,18 @@ async function withTempHome<T>(fn: (home: string) => T | Promise<T>): Promise<T>
   const home = mkdtempSync(join(tmpdir(), "reload-config-home-"));
   tempDirs.push(home);
   const previousHome = process.env.HOME;
+  const previousWorkersConfigPath = process.env.PENUMBRA_WORKERS_CONFIG_PATH;
   process.env.HOME = home;
+  process.env.PENUMBRA_WORKERS_CONFIG_PATH = join(home, ".config", "penumbra", "workers.yaml");
   try {
     return await fn(home);
   } finally {
     process.env.HOME = previousHome;
+    if (previousWorkersConfigPath === undefined) {
+      delete process.env.PENUMBRA_WORKERS_CONFIG_PATH;
+    } else {
+      process.env.PENUMBRA_WORKERS_CONFIG_PATH = previousWorkersConfigPath;
+    }
   }
 }
 
@@ -727,8 +735,7 @@ extras:
   - id: worker-a
     isolation: shared
   - id: worker-b
-    project_id: penumbra
-    isolation: hard
+    isolation: shared
 `,
     );
     res = await reloadConfigRoute(
@@ -782,8 +789,7 @@ extras:
   - id: worker-a
     isolation: shared
   - id: worker-b
-    project_id: penumbra
-    isolation: hard
+    isolation: shared
 `,
     );
     process.env.PENUMBRA_CONFIG_DIR = yamlPath;

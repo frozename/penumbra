@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { serviceTest } from "./helpers/service-gates.js";
 import { makeTempDaemon } from "./helpers.js";
 
-test("GET /health returns 200", async () => {
+serviceTest("GET /health returns 200", async () => {
   const d = makeTempDaemon();
   try {
     const res = await fetch(`${d.url}/health`);
@@ -14,7 +15,7 @@ test("GET /health returns 200", async () => {
   }
 });
 
-test("GET /health needs no auth", async () => {
+serviceTest("GET /health needs no auth", async () => {
   const d = makeTempDaemon();
   try {
     const res = await fetch(`${d.url}/health`);
@@ -24,7 +25,7 @@ test("GET /health needs no auth", async () => {
   }
 });
 
-test("GET /other returns 401 without token", async () => {
+serviceTest("GET /other returns 401 without token", async () => {
   const d = makeTempDaemon();
   try {
     const res = await fetch(`${d.url}/observations`, { method: "POST" });

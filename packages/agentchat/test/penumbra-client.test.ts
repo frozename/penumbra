@@ -7,6 +7,7 @@ import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/
 import { TestEmbedder } from "@penumbra/core/testing";
 import { createDaemonFetchHandler } from "../../daemon/test-utils.ts";
 import { PenumbraClient } from "../src/penumbra-client.js";
+import { serviceTest } from "./helpers/service-gates.js";
 
 test("observe POSTs /observations with bearer token", async () => {
   let received: { body: any; auth: string | null } | null = null;
@@ -99,7 +100,7 @@ function withDaemon(): {
   };
 }
 
-test("PenumbraClient.startChain calls /chains/start", async () => {
+serviceTest("PenumbraClient.startChain calls /chains/start", async () => {
   const { client, services, stop } = withDaemon();
   try {
     const res = await client.startChain({
@@ -119,19 +120,22 @@ test("PenumbraClient.startChain calls /chains/start", async () => {
   }
 });
 
-test("PenumbraClient.claimHandoff returns 200 on success and rejects on conflict", async () => {
-  const { client, stop } = withDaemon();
-  try {
-    const start = await client.startChain({ initial_agent: "planner", message: "hi" });
-    const claim = await client.claimHandoff(start.handoff_id, "w1");
-    expect(claim.status).toBe("dispatched");
-    await expect(client.claimHandoff(start.handoff_id, "w2")).rejects.toThrow(/409|conflict/i);
-  } finally {
-    stop();
-  }
-});
+serviceTest(
+  "PenumbraClient.claimHandoff returns 200 on success and rejects on conflict",
+  async () => {
+    const { client, stop } = withDaemon();
+    try {
+      const start = await client.startChain({ initial_agent: "planner", message: "hi" });
+      const claim = await client.claimHandoff(start.handoff_id, "w1");
+      expect(claim.status).toBe("dispatched");
+      await expect(client.claimHandoff(start.handoff_id, "w2")).rejects.toThrow(/409|conflict/i);
+    } finally {
+      stop();
+    }
+  },
+);
 
-test("PenumbraClient.completeHandoff flips dispatched → completed", async () => {
+serviceTest("PenumbraClient.completeHandoff flips dispatched → completed", async () => {
   const { client, services, stop } = withDaemon();
   try {
     const start = await client.startChain({ initial_agent: "planner", message: "hi" });
@@ -147,7 +151,7 @@ test("PenumbraClient.completeHandoff flips dispatched → completed", async () =
   }
 });
 
-test("PenumbraClient.markFailed flips dispatched → failed", async () => {
+serviceTest("PenumbraClient.markFailed flips dispatched → failed", async () => {
   const { client, services, stop } = withDaemon();
   try {
     const start = await client.startChain({ initial_agent: "planner", message: "hi" });
@@ -164,7 +168,7 @@ test("PenumbraClient.markFailed flips dispatched → failed", async () => {
   }
 });
 
-test("PenumbraClient.postDispatchEvents posts best-effort event batches", async () => {
+serviceTest("PenumbraClient.postDispatchEvents posts best-effort event batches", async () => {
   const { client, services, stop } = withDaemon();
   try {
     await client.postDispatchEvents([
@@ -212,19 +216,22 @@ test("PenumbraClient.postDispatchEvents threads AbortSignal to fetch", async () 
   }
 });
 
-test("PenumbraClient.listHandoffs(status=approved,dispatched) returns matching rows", async () => {
-  const { client, stop } = withDaemon();
-  try {
-    const a = await client.startChain({ initial_agent: "planner", message: "hi 1" });
-    const b = await client.startChain({ initial_agent: "planner", message: "hi 2" });
-    await client.claimHandoff(a.handoff_id, "w1");
-    const r = await client.listHandoffs({ statuses: ["approved", "dispatched"] });
-    const ids = r.handoffs.map((h: any) => h.handoff_id).sort();
-    expect(ids).toEqual([a.handoff_id, b.handoff_id].sort());
-  } finally {
-    stop();
-  }
-});
+serviceTest(
+  "PenumbraClient.listHandoffs(status=approved,dispatched) returns matching rows",
+  async () => {
+    const { client, stop } = withDaemon();
+    try {
+      const a = await client.startChain({ initial_agent: "planner", message: "hi 1" });
+      const b = await client.startChain({ initial_agent: "planner", message: "hi 2" });
+      await client.claimHandoff(a.handoff_id, "w1");
+      const r = await client.listHandoffs({ statuses: ["approved", "dispatched"] });
+      const ids = r.handoffs.map((h: any) => h.handoff_id).sort();
+      expect(ids).toEqual([a.handoff_id, b.handoff_id].sort());
+    } finally {
+      stop();
+    }
+  },
+);
 
 test("PenumbraClient.listHandoffs encodes global project scope as project_scope=global", async () => {
   const root = mkdtempSync(join(tmpdir(), "pen-client-list-null-"));
@@ -276,7 +283,7 @@ test("PenumbraClient.listHandoffs preserves encoding for project_id string", asy
   }
 });
 
-test("PenumbraClient.subscribeHandoffEvents yields each approved handoff", async () => {
+serviceTest("PenumbraClient.subscribeHandoffEvents yields each approved handoff", async () => {
   const { client, stop } = withDaemon();
   try {
     const it = client.subscribeHandoffEvents();
@@ -296,7 +303,7 @@ test("PenumbraClient.subscribeHandoffEvents yields each approved handoff", async
   }
 });
 
-test("PenumbraClient prefers an explicit storageRoot over autodiscovery", async () => {
+serviceTest("PenumbraClient prefers an explicit storageRoot over autodiscovery", async () => {
   const { stop, storageRoot, fetchImpl } = withDaemon();
   try {
     const oldEnv = process.env.PENUMBRA_STORAGE_ROOT;
@@ -322,31 +329,34 @@ test("PenumbraClient prefers an explicit storageRoot over autodiscovery", async 
   }
 });
 
-test("PenumbraClient auto-discovers a running daemon when ~/.penumbra is empty", async () => {
-  const { stop, storageRoot, fetchImpl } = withDaemon();
-  try {
-    const oldEnv = process.env.PENUMBRA_STORAGE_ROOT;
-    process.env.PENUMBRA_STORAGE_ROOT = storageRoot;
-    const client = new PenumbraClient({ fetch: fetchImpl });
-    const res = await client.observe({
-      ts: "2026-04-25T20:00:00Z",
-      source: "mcp",
-      event_type: "agent-prompt",
-      lane: "unknown",
-      payload_json: {},
-      user_id: "u",
-      machine_id: "m",
-    });
-    expect(res.event_id).toBeDefined();
-    if (oldEnv === undefined) {
-      delete process.env.PENUMBRA_STORAGE_ROOT;
-    } else {
-      process.env.PENUMBRA_STORAGE_ROOT = oldEnv;
+serviceTest(
+  "PenumbraClient auto-discovers a running daemon when ~/.penumbra is empty",
+  async () => {
+    const { stop, storageRoot, fetchImpl } = withDaemon();
+    try {
+      const oldEnv = process.env.PENUMBRA_STORAGE_ROOT;
+      process.env.PENUMBRA_STORAGE_ROOT = storageRoot;
+      const client = new PenumbraClient({ fetch: fetchImpl });
+      const res = await client.observe({
+        ts: "2026-04-25T20:00:00Z",
+        source: "mcp",
+        event_type: "agent-prompt",
+        lane: "unknown",
+        payload_json: {},
+        user_id: "u",
+        machine_id: "m",
+      });
+      expect(res.event_id).toBeDefined();
+      if (oldEnv === undefined) {
+        delete process.env.PENUMBRA_STORAGE_ROOT;
+      } else {
+        process.env.PENUMBRA_STORAGE_ROOT = oldEnv;
+      }
+    } finally {
+      stop();
     }
-  } finally {
-    stop();
-  }
-});
+  },
+);
 
 test("PenumbraClient.resolve() throws clear error when explicit storageRoot is bogus", async () => {
   const client = new PenumbraClient({ storageRoot: "/path/that/does/not/exist" });
@@ -365,7 +375,7 @@ test("PenumbraClient.resolve() throws clear error when explicit storageRoot is b
   );
 });
 
-test("PenumbraClient.getHandoffStatus reads reliability status", async () => {
+serviceTest("PenumbraClient.getHandoffStatus reads reliability status", async () => {
   const { client, services, stop } = withDaemon();
   try {
     const start = await client.startChain({ initial_agent: "planner", message: "hi" });
@@ -387,7 +397,7 @@ test("PenumbraClient.getHandoffStatus reads reliability status", async () => {
   }
 });
 
-test("PenumbraClient.getChainResponses reads final responses", async () => {
+serviceTest("PenumbraClient.getChainResponses reads final responses", async () => {
   const { client, services, stop } = withDaemon();
   try {
     services.t0Writer.write({

@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { serviceTest } from "./helpers/service-gates.js";
 import { makeTempDaemon } from "./helpers.js";
 
-test("POST /recall returns empty array when DB is empty", async () => {
+serviceTest("POST /recall returns empty array when DB is empty", async () => {
   const d = makeTempDaemon();
   try {
     const res = await fetch(`${d.url}/recall`, {
@@ -16,7 +17,7 @@ test("POST /recall returns empty array when DB is empty", async () => {
   }
 });
 
-test("POST /recall with invalid input returns 400", async () => {
+serviceTest("POST /recall with invalid input returns 400", async () => {
   const d = makeTempDaemon();
   try {
     const res = await fetch(`${d.url}/recall`, {
@@ -32,7 +33,7 @@ test("POST /recall with invalid input returns 400", async () => {
   }
 });
 
-test("POST /recall accepts a body without project_id (omitted → null)", async () => {
+serviceTest("POST /recall accepts a body without project_id (omitted → null)", async () => {
   const d = makeTempDaemon();
   try {
     const res = await fetch(`${d.url}/recall`, {
@@ -51,7 +52,7 @@ test("POST /recall accepts a body without project_id (omitted → null)", async 
   }
 });
 
-test("POST /recall strips <private> blocks from the query before audit", async () => {
+serviceTest("POST /recall strips <private> blocks from the query before audit", async () => {
   const d = makeTempDaemon();
   try {
     const res = await fetch(`${d.url}/recall`, {

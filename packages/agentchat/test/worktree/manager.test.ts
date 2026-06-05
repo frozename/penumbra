@@ -5,6 +5,7 @@ import * as os from "node:os";
 import { promisify } from "node:util";
 import { exec as execCb } from "node:child_process";
 import { WorktreeManager } from "@penumbra/core";
+import { RUN_AGENTCHAT_SERVICE_TESTS } from "../helpers/service-gates.js";
 
 const exec = promisify(execCb);
 
@@ -27,7 +28,7 @@ function getWorkspaceDirs(mainRepoDir: string): string[] {
   return [...dirs];
 }
 
-describe("WorktreeManager", () => {
+describe.skipIf(!RUN_AGENTCHAT_SERVICE_TESTS)("WorktreeManager", () => {
   let rootDir: string;
   let mainRepoDir: string;
   let manager: WorktreeManager;

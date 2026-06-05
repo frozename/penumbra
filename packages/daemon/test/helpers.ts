@@ -40,8 +40,7 @@ export function makeTempDaemon(opts: { token?: string } = {}): TempDaemon {
     })(),
   });
   const token = opts.token ?? "test-token";
-  const port = nextTestPort();
-  const handle = serve({ services, token, port });
+  const handle = serve({ services, token, port: 0 });
   return {
     services,
     handle,
@@ -55,13 +54,4 @@ export function makeTempDaemon(opts: { token?: string } = {}): TempDaemon {
       rmSync(dir, { recursive: true, force: true });
     },
   };
-}
-
-let nextPortOffset = 0;
-
-function nextTestPort(): number {
-  const base = 41_000 + (process.pid % 1_000);
-  const port = base + nextPortOffset;
-  nextPortOffset = (nextPortOffset + 1) % 500;
-  return port;
 }

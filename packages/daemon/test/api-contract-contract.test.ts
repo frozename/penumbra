@@ -39,6 +39,7 @@ function startHarness(): TestHarness {
     env: {},
     input: {},
     storageRoot: root,
+    worktreeRootDir: join(root, "worktrees"),
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date("2026-04-23T12:00:00.000Z"),

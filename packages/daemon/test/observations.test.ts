@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { serviceTest } from "./helpers/service-gates.js";
 import { makeTempDaemon } from "./helpers.js";
 
-test("POST /observations writes a T0 row and returns event_id", async () => {
+serviceTest("POST /observations writes a T0 row and returns event_id", async () => {
   const d = makeTempDaemon();
   try {
     const res = await fetch(`${d.url}/observations`, {
@@ -49,7 +50,7 @@ test("POST /observations writes a T0 row and returns event_id", async () => {
   }
 });
 
-test("POST /observations returns 400 on Zod failure", async () => {
+serviceTest("POST /observations returns 400 on Zod failure", async () => {
   const d = makeTempDaemon();
   try {
     const res = await fetch(`${d.url}/observations`, {

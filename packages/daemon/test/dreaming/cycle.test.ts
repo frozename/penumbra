@@ -1,4 +1,4 @@
-import { expect, it, beforeAll } from "bun:test";
+import { afterAll, expect, it, beforeAll } from "bun:test";
 import { Database } from "bun:sqlite";
 import { loadSqliteVec, applySchema, buildT2EmbedText } from "@penumbra/core";
 import { P1_CLAIM_TTL_MS, runDreamCycle } from "../../src/dreaming/cycle.js";
@@ -17,8 +17,33 @@ try {
   // already loaded
 }
 
+let previousT2EmbedRecipe: string | undefined;
+let previousT2ReembedEnabled: string | undefined;
+let previousDreamingEnabled: string | undefined;
+let previousDreamingRewriterEnabled: string | undefined;
+
 beforeAll(() => {
+  previousT2EmbedRecipe = process.env.PENUMBRA_T2_EMBED_RECIPE;
+  previousT2ReembedEnabled = process.env.PENUMBRA_T2_REEMBED_ENABLED;
+  previousDreamingEnabled = process.env.PENUMBRA_DREAMING_ENABLED;
+  previousDreamingRewriterEnabled = process.env.PENUMBRA_DREAMING_REWRITER_ENABLED;
   delete process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
+  process.env.PENUMBRA_T2_EMBED_RECIPE = "body_v1";
+  delete process.env.PENUMBRA_T2_REEMBED_ENABLED;
+  delete process.env.PENUMBRA_DREAMING_ENABLED;
+  delete process.env.PENUMBRA_DREAMING_REWRITER_ENABLED;
+});
+
+afterAll(() => {
+  if (previousT2EmbedRecipe === undefined) delete process.env.PENUMBRA_T2_EMBED_RECIPE;
+  else process.env.PENUMBRA_T2_EMBED_RECIPE = previousT2EmbedRecipe;
+  if (previousT2ReembedEnabled === undefined) delete process.env.PENUMBRA_T2_REEMBED_ENABLED;
+  else process.env.PENUMBRA_T2_REEMBED_ENABLED = previousT2ReembedEnabled;
+  if (previousDreamingEnabled === undefined) delete process.env.PENUMBRA_DREAMING_ENABLED;
+  else process.env.PENUMBRA_DREAMING_ENABLED = previousDreamingEnabled;
+  if (previousDreamingRewriterEnabled === undefined)
+    delete process.env.PENUMBRA_DREAMING_REWRITER_ENABLED;
+  else process.env.PENUMBRA_DREAMING_REWRITER_ENABLED = previousDreamingRewriterEnabled;
 });
 
 function openTestDb(): Database {

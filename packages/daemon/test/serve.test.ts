@@ -1,6 +1,8 @@
-import { afterEach, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, expect, mock, spyOn } from "bun:test";
+import { serviceTest } from "./helpers/service-gates.js";
 import { Database } from "bun:sqlite";
-import { buildServices, loadSqliteVec, migrate, BundledEmbedder } from "@penumbra/core";
+import { buildServices, loadSqliteVec, migrate } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { serve } from "../src/serve.js";
 
 try {
@@ -25,47 +27,41 @@ function makeServices() {
     input: {},
     storageRoot: "/tmp",
     db,
-    embedder: new BundledEmbedder(),
+    embedder: new TestEmbedder({ dim: 384 }),
   });
 }
 
-test("serve binds to 127.0.0.1 by default", () => {
+serviceTest("serve binds to 127.0.0.1 by default", async () => {
   const services = makeServices();
   const stop = spyOn(services.supervisor, "stopAll").mockImplementation(() => undefined);
   spyOn(services.supervisor, "startAll").mockResolvedValue(undefined);
-  const serveSpy = spyOn(Bun, "serve").mockImplementation(
-    (opts: any) =>
-      ({
-        port: opts.port || 4444,
-        stop: () => undefined,
-      }) as any,
-  );
 
   const handle = serve({ services, token: "test-token", port: 0 });
-
-  expect(serveSpy).toHaveBeenCalled();
-  expect(serveSpy.mock.calls[0]?.[0]).toMatchObject({ hostname: "127.0.0.1", port: 0 });
-  handle.stop();
-  expect(stop).toHaveBeenCalled();
-  services.db.close();
+  try {
+    expect(handle.port).toBeGreaterThan(0);
+    const res = await fetch(`http://127.0.0.1:${handle.port}/health`);
+    expect(res.status).toBe(200);
+  } finally {
+    await handle.stop();
+    expect(stop).toHaveBeenCalled();
+    services.db.close();
+  }
 });
 
-test("serve honors PENUMBRA_DAEMON_HOST override", () => {
+serviceTest("serve honors PENUMBRA_DAEMON_HOST override", async () => {
   process.env.PENUMBRA_DAEMON_HOST = "0.0.0.0";
   const services = makeServices();
-  spyOn(services.supervisor, "stopAll").mockImplementation(() => undefined);
+  const stop = spyOn(services.supervisor, "stopAll").mockImplementation(() => undefined);
   spyOn(services.supervisor, "startAll").mockResolvedValue(undefined);
-  const serveSpy = spyOn(Bun, "serve").mockImplementation(
-    (opts: any) =>
-      ({
-        port: opts.port || 5555,
-        stop: () => undefined,
-      }) as any,
-  );
 
   const handle = serve({ services, token: "test-token", port: 0 });
-
-  expect(serveSpy.mock.calls[0]?.[0]).toMatchObject({ hostname: "0.0.0.0", port: 0 });
-  handle.stop();
-  services.db.close();
+  try {
+    expect(handle.port).toBeGreaterThan(0);
+    const res = await fetch(`http://127.0.0.1:${handle.port}/health`);
+    expect(res.status).toBe(200);
+  } finally {
+    await handle.stop();
+    expect(stop).toHaveBeenCalled();
+    services.db.close();
+  }
 });

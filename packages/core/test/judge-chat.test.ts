@@ -60,7 +60,7 @@ test("createJudgeChat includes bearer authorization when token is set", async ()
 
 test("resolveJudgeConfig falls through to local defaults when env is empty", () => {
   const cfg = resolveJudgeConfig({});
-  expect(cfg.baseUrl).toBe("http://127.0.0.1:8090");
+  expect(cfg.baseUrl).toBe("http://127.0.0.1:7944");
   expect(cfg.model).toBe("local");
   expect(cfg.token).toBe("");
   expect(cfg.usedDefaultBaseUrl).toBe(true);

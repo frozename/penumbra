@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { serviceTest } from "./helpers/service-gates.js";
 import { Database } from "bun:sqlite";
 import { serve } from "../src/serve.js";
 import { buildServices, loadSqliteVec, migrate, BundledEmbedder } from "@penumbra/core";
@@ -11,7 +12,7 @@ try {
   /* already loaded */
 }
 
-test("onStop callback is invoked exactly once when handle.stop() is called", async () => {
+serviceTest("onStop callback is invoked exactly once when handle.stop() is called", async () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
@@ -39,7 +40,7 @@ test("onStop callback is invoked exactly once when handle.stop() is called", asy
   expect(callCount).toBe(1);
 });
 
-test("onStop callback swallows throws and does not propagate", () => {
+serviceTest("onStop callback swallows throws and does not propagate", () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });

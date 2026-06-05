@@ -74,7 +74,7 @@ test("readEmbedderEnv maps legacy PENUMBRA_SIRIUS_* vars and warns once", () => 
   });
   expect(second).toEqual(first);
   expect(warn).toHaveBeenCalledTimes(1);
-  expect(String(warn.mock.calls[0]?.[0] ?? "")).toMatch(/PENUMBRA_EMBEDDINGS_/);
+  expect(String(warn.mock.calls[0]?.[0] ?? "")).toContain("PENUMBRA_EMBEDDINGS_");
 
   warn.mockRestore();
 });

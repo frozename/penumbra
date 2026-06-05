@@ -1,4 +1,4 @@
-import { beforeEach, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -78,15 +78,21 @@ const mockDeps: any = {
   },
 };
 
-spyOn(WorktreeManager.prototype, "getWorktree").mockImplementation((id: string) => {
-  return {
-    handoffId: id,
-    path: worktreePath,
-    branchName: `agent/${id}`,
-    storageRoot: `${worktreePath}/.test-storage`,
-    createdAt: "",
-    status: "created",
-  } as any;
+const getWorktreeSpy = spyOn(WorktreeManager.prototype, "getWorktree").mockImplementation(
+  (id: string) => {
+    return {
+      handoffId: id,
+      path: worktreePath,
+      branchName: `agent/${id}`,
+      storageRoot: `${worktreePath}/.test-storage`,
+      createdAt: "",
+      status: "created",
+    } as any;
+  },
+);
+
+afterAll(() => {
+  getWorktreeSpy.mockRestore();
 });
 
 beforeEach(() => {

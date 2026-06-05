@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { makeTempDaemon } from "./helpers.js";
+import { serviceTest } from "./helpers/service-gates.js";
 import { createT2PromotionWorker } from "../src/workers/t2-promotion.js";
 import { stripJsonFence } from "../src/workers/t2-promotion.js";
 import { wrapJudgeWithChunking } from "../src/workers/t2-promotion.js";
@@ -32,13 +33,18 @@ beforeAll(() => {
   _savedEnv.agentchat = process.env.PENUMBRA_CONFIG_DIR;
   _savedEnv.sirius = process.env.PENUMBRA_SIRIUS_BASE_URL;
   _savedEnv.sirius2 = process.env.SIRIUS_URL;
+  _savedEnv.t2EmbedRecipe = process.env.PENUMBRA_T2_EMBED_RECIPE;
   process.env.PENUMBRA_CONFIG_DIR = _fixtureDir;
+  process.env.PENUMBRA_T2_EMBED_RECIPE = "body_v1";
   delete process.env.PENUMBRA_SIRIUS_BASE_URL;
   delete process.env.SIRIUS_URL;
 });
 afterAll(() => {
   if (_savedEnv.agentchat !== undefined) process.env.PENUMBRA_CONFIG_DIR = _savedEnv.agentchat;
   else delete process.env.PENUMBRA_CONFIG_DIR;
+  if (_savedEnv.t2EmbedRecipe !== undefined)
+    process.env.PENUMBRA_T2_EMBED_RECIPE = _savedEnv.t2EmbedRecipe;
+  else delete process.env.PENUMBRA_T2_EMBED_RECIPE;
   if (_savedEnv.sirius !== undefined) process.env.PENUMBRA_SIRIUS_BASE_URL = _savedEnv.sirius;
   if (_savedEnv.sirius2 !== undefined) process.env.SIRIUS_URL = _savedEnv.sirius2;
   rmSync(_fixtureDir, { recursive: true, force: true });
@@ -372,66 +378,69 @@ test("wrapJudgeWithChunking preserves order of extractions across chunks", async
   ]);
 });
 
-test("t2 promotion worker is a no-op when no LLM judge is configured (no PENUMBRA_SIRIUS_BASE_URL)", async () => {
-  const d = makeTempDaemon();
-  d.services.supervisor.stopAll();
-  const dir = mkdtempSync(join(tmpdir(), "penumbra-agentchat-empty-"));
-  // Empty agents list so the pool path also returns null and the worker
-  // falls all the way through to no-op.
-  writeFileSync(
-    join(dir, "agents.yaml"),
-    [
-      "agents:",
-      "  - name: dummy-judge",
-      "    pricing_mode: api",
-      "    adapter: openai-compat-http",
-      "    roles: [memory-refiner]",
-      "",
-    ].join("\n"),
-  );
-  writeFileSync(join(dir, "routing.yaml"), "default_roles: {}\n");
-  writeFileSync(join(dir, "quotas.yaml"), "providers: []\n");
-  const oldEnv = {
-    sirius: process.env.PENUMBRA_SIRIUS_BASE_URL,
-    sirius2: process.env.SIRIUS_URL,
-    agentchat: process.env.PENUMBRA_CONFIG_DIR,
-  };
-  delete process.env.PENUMBRA_SIRIUS_BASE_URL;
-  delete process.env.SIRIUS_URL;
-  process.env.PENUMBRA_CONFIG_DIR = dir;
-  try {
-    const oldTs = "2026-04-20T00:00:00.000Z";
-    d.services.db.run(
-      `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
-       VALUES ('rno', 'p1', 'u1', 'sno', ?, ?, 5, '{}', '{}')`,
-      [oldTs, oldTs],
+serviceTest(
+  "t2 promotion worker is a no-op when no LLM judge is configured (no PENUMBRA_SIRIUS_BASE_URL)",
+  async () => {
+    const d = makeTempDaemon();
+    d.services.supervisor.stopAll();
+    const dir = mkdtempSync(join(tmpdir(), "penumbra-agentchat-empty-"));
+    // Empty agents list so the pool path also returns null and the worker
+    // falls all the way through to no-op.
+    writeFileSync(
+      join(dir, "agents.yaml"),
+      [
+        "agents:",
+        "  - name: dummy-judge",
+        "    pricing_mode: api",
+        "    adapter: openai-compat-http",
+        "    roles: [memory-refiner]",
+        "",
+      ].join("\n"),
     );
-    d.services.clock = () => new Date("2026-04-27T10:00:00Z");
+    writeFileSync(join(dir, "routing.yaml"), "default_roles: {}\n");
+    writeFileSync(join(dir, "quotas.yaml"), "providers: []\n");
+    const oldEnv = {
+      sirius: process.env.PENUMBRA_SIRIUS_BASE_URL,
+      sirius2: process.env.SIRIUS_URL,
+      agentchat: process.env.PENUMBRA_CONFIG_DIR,
+    };
+    delete process.env.PENUMBRA_SIRIUS_BASE_URL;
+    delete process.env.SIRIUS_URL;
+    process.env.PENUMBRA_CONFIG_DIR = dir;
+    try {
+      const oldTs = "2026-04-20T00:00:00.000Z";
+      d.services.db.run(
+        `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
+       VALUES ('rno', 'p1', 'u1', 'sno', ?, ?, 5, '{}', '{}')`,
+        [oldTs, oldTs],
+      );
+      d.services.clock = () => new Date("2026-04-27T10:00:00Z");
 
-    // No `llm` opt — exercises createDefaultLLMJudge which returns null when env unset.
-    const worker = createT2PromotionWorker({ services: d.services, delayHours: 24 });
-    await worker.tick();
+      // No `llm` opt — exercises createDefaultLLMJudge which returns null when env unset.
+      const worker = createT2PromotionWorker({ services: d.services, delayHours: 24 });
+      await worker.tick();
 
-    // Rollup is untouched: not promoted, no failure counter increment.
-    const row = d.services.db
-      .query(
-        `SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id='rno'`,
-        [],
-      )
-      .get() as any;
-    expect(row.t2_promoted_at).toBeNull();
-    expect(row.failed_promotion_attempts).toBe(0);
-  } finally {
-    if (oldEnv.sirius) process.env.PENUMBRA_SIRIUS_BASE_URL = oldEnv.sirius;
-    if (oldEnv.sirius2) process.env.SIRIUS_URL = oldEnv.sirius2;
-    if (oldEnv.agentchat) process.env.PENUMBRA_CONFIG_DIR = oldEnv.agentchat;
-    else delete process.env.PENUMBRA_CONFIG_DIR;
-    rmSync(dir, { recursive: true, force: true });
-    d.stop();
-  }
-});
+      // Rollup is untouched: not promoted, no failure counter increment.
+      const row = d.services.db
+        .query(
+          `SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id='rno'`,
+          [],
+        )
+        .get() as any;
+      expect(row.t2_promoted_at).toBeNull();
+      expect(row.failed_promotion_attempts).toBe(0);
+    } finally {
+      if (oldEnv.sirius) process.env.PENUMBRA_SIRIUS_BASE_URL = oldEnv.sirius;
+      if (oldEnv.sirius2) process.env.SIRIUS_URL = oldEnv.sirius2;
+      if (oldEnv.agentchat) process.env.PENUMBRA_CONFIG_DIR = oldEnv.agentchat;
+      else delete process.env.PENUMBRA_CONFIG_DIR;
+      rmSync(dir, { recursive: true, force: true });
+      d.stop();
+    }
+  },
+);
 
-test("worker uses agentchat-based pool when memory-refiner agents exist", async () => {
+serviceTest("worker uses agentchat-based pool when memory-refiner agents exist", async () => {
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
   const dir = mkdtempSync(join(tmpdir(), "penumbra-agentchat-"));
@@ -476,19 +485,21 @@ agents:
   }
 });
 
-test("worker falls back to single-judge env config when no memory-refiner agents", async () => {
-  const d = makeTempDaemon();
-  d.services.supervisor.stopAll();
-  const dir = mkdtempSync(join(tmpdir(), "penumbra-agentchat-"));
-  const oldConfig = process.env.PENUMBRA_CONFIG_DIR;
-  const oldSirius = process.env.PENUMBRA_SIRIUS_BASE_URL;
-  const oldToken = process.env.PENUMBRA_SIRIUS_TOKEN;
-  process.env.PENUMBRA_CONFIG_DIR = dir;
-  process.env.PENUMBRA_SIRIUS_BASE_URL = "http://judge";
-  process.env.PENUMBRA_SIRIUS_TOKEN = "token";
-  writeFileSync(
-    join(dir, "agents.yaml"),
-    `
+serviceTest(
+  "worker falls back to single-judge env config when no memory-refiner agents",
+  async () => {
+    const d = makeTempDaemon();
+    d.services.supervisor.stopAll();
+    const dir = mkdtempSync(join(tmpdir(), "penumbra-agentchat-"));
+    const oldConfig = process.env.PENUMBRA_CONFIG_DIR;
+    const oldSirius = process.env.PENUMBRA_SIRIUS_BASE_URL;
+    const oldToken = process.env.PENUMBRA_SIRIUS_TOKEN;
+    process.env.PENUMBRA_CONFIG_DIR = dir;
+    process.env.PENUMBRA_SIRIUS_BASE_URL = "http://judge";
+    process.env.PENUMBRA_SIRIUS_TOKEN = "token";
+    writeFileSync(
+      join(dir, "agents.yaml"),
+      `
 agents:
   - name: planner
     adapter: openai-compat-http
@@ -497,29 +508,30 @@ agents:
       model: granite
     roles: [planner]
 `,
-  );
-  writeFileSync(join(dir, "routing.yaml"), "default_roles: {}\n");
-  writeFileSync(join(dir, "quotas.yaml"), "providers: []\n");
-  const infoSpy = spyOn(d.services.log, "info").mockImplementation(() => undefined as any);
-  try {
-    createT2PromotionWorker({ services: d.services, delayHours: 24 });
-    expect(
-      infoSpy.mock.calls.some((call) => String(call[1]).includes("LLM judge configured")),
-    ).toBe(true);
-  } finally {
-    infoSpy.mockRestore();
-    if (oldConfig) process.env.PENUMBRA_CONFIG_DIR = oldConfig;
-    else delete process.env.PENUMBRA_CONFIG_DIR;
-    if (oldSirius) process.env.PENUMBRA_SIRIUS_BASE_URL = oldSirius;
-    else delete process.env.PENUMBRA_SIRIUS_BASE_URL;
-    if (oldToken) process.env.PENUMBRA_SIRIUS_TOKEN = oldToken;
-    else delete process.env.PENUMBRA_SIRIUS_TOKEN;
-    rmSync(dir, { recursive: true, force: true });
-    d.stop();
-  }
-});
+    );
+    writeFileSync(join(dir, "routing.yaml"), "default_roles: {}\n");
+    writeFileSync(join(dir, "quotas.yaml"), "providers: []\n");
+    const infoSpy = spyOn(d.services.log, "info").mockImplementation(() => undefined as any);
+    try {
+      createT2PromotionWorker({ services: d.services, delayHours: 24 });
+      expect(
+        infoSpy.mock.calls.some((call) => String(call[1]).includes("LLM judge configured")),
+      ).toBe(true);
+    } finally {
+      infoSpy.mockRestore();
+      if (oldConfig) process.env.PENUMBRA_CONFIG_DIR = oldConfig;
+      else delete process.env.PENUMBRA_CONFIG_DIR;
+      if (oldSirius) process.env.PENUMBRA_SIRIUS_BASE_URL = oldSirius;
+      else delete process.env.PENUMBRA_SIRIUS_BASE_URL;
+      if (oldToken) process.env.PENUMBRA_SIRIUS_TOKEN = oldToken;
+      else delete process.env.PENUMBRA_SIRIUS_TOKEN;
+      rmSync(dir, { recursive: true, force: true });
+      d.stop();
+    }
+  },
+);
 
-test("t2 promotion worker short-circuits the cycle when judge is unreachable", async () => {
+serviceTest("t2 promotion worker short-circuits the cycle when judge is unreachable", async () => {
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
   d.services.clock = () => new Date("2026-04-27T10:00:00Z");
@@ -557,7 +569,7 @@ test("t2 promotion worker short-circuits the cycle when judge is unreachable", a
   }
 });
 
-test("t2 promotion worker skips on LLM failure but retries next tick", async () => {
+serviceTest("t2 promotion worker skips on LLM failure but retries next tick", async () => {
   const d = makeTempDaemon();
   // Fixed clock for deterministic eligibility
   const now = new Date("2026-04-27T10:00:00Z");
@@ -615,7 +627,7 @@ test("t2 promotion worker skips on LLM failure but retries next tick", async () 
   }
 });
 
-test("t2 promotion worker promotes eligible rollups", async () => {
+serviceTest("t2 promotion worker promotes eligible rollups", async () => {
   const d = makeTempDaemon();
   const now = new Date("2026-04-27T10:00:00Z");
   d.services.clock = () => now;
@@ -659,7 +671,7 @@ test("t2 promotion worker promotes eligible rollups", async () => {
   }
 });
 
-test("t2 promotion worker handles empty transcripts by marking as promoted", async () => {
+serviceTest("t2 promotion worker handles empty transcripts by marking as promoted", async () => {
   const d = makeTempDaemon();
   const now = new Date("2026-04-27T10:00:00Z");
   d.services.clock = () => now;
@@ -701,52 +713,55 @@ test("t2 promotion worker handles empty transcripts by marking as promoted", asy
   }
 });
 
-test("t2 promotion worker fails on malformed LLM response and increments counter", async () => {
-  const d = makeTempDaemon();
-  const now = new Date("2026-04-27T10:00:00Z");
-  d.services.clock = () => now;
-  d.services.supervisor.stopAll();
+serviceTest(
+  "t2 promotion worker fails on malformed LLM response and increments counter",
+  async () => {
+    const d = makeTempDaemon();
+    const now = new Date("2026-04-27T10:00:00Z");
+    d.services.clock = () => now;
+    d.services.supervisor.stopAll();
 
-  try {
-    const oldTs = "2026-04-20T00:00:00.000Z";
-    d.services.db.run(
-      `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
+    try {
+      const oldTs = "2026-04-20T00:00:00.000Z";
+      d.services.db.run(
+        `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
         VALUES ('r1', 'p1', 'u1', 's1', ?, ?, 5, '{}', '{}')`,
-      [oldTs, oldTs],
-    );
-    d.services.db.run(
-      `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+        [oldTs, oldTs],
+      );
+      d.services.db.run(
+        `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
         VALUES ('e1', ?, ?, 'mcp', 'u1', 'm1', 's1', 'agent-prompt', 'local', '{}', 'Session transcript for promotion test. The assistant worked through multiple software implementation tasks, reviewed and approved code changes, wrote and verified tests, and confirmed that multiple system components worked correctly in integration.')`,
-      [oldTs, oldTs],
-    );
+        [oldTs, oldTs],
+      );
 
-    const worker = createT2PromotionWorker({
-      services: d.services,
-      delayHours: 24,
-      llm: async () => [
-        { title: "", body: "missing title", kind: "fact" } as any, // title empty fails min(1)
-      ],
-    });
+      const worker = createT2PromotionWorker({
+        services: d.services,
+        delayHours: 24,
+        llm: async () => [
+          { title: "", body: "missing title", kind: "fact" } as any, // title empty fails min(1)
+        ],
+      });
 
-    await worker.tick();
+      await worker.tick();
 
-    const count = d.services.db.query("SELECT COUNT(*) c FROM t2_memories", []).get() as any;
-    expect(count.c).toBe(0);
+      const count = d.services.db.query("SELECT COUNT(*) c FROM t2_memories", []).get() as any;
+      expect(count.c).toBe(0);
 
-    const promoted = d.services.db
-      .query(
-        'SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id="r1"',
-        [],
-      )
-      .get() as any;
-    expect(promoted.t2_promoted_at).toBeNull();
-    expect(promoted.failed_promotion_attempts).toBe(1);
-  } finally {
-    d.stop();
-  }
-});
+      const promoted = d.services.db
+        .query(
+          'SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id="r1"',
+          [],
+        )
+        .get() as any;
+      expect(promoted.t2_promoted_at).toBeNull();
+      expect(promoted.failed_promotion_attempts).toBe(1);
+    } finally {
+      d.stop();
+    }
+  },
+);
 
-test("t2 promotion worker stops retrying after limit", async () => {
+serviceTest("t2 promotion worker stops retrying after limit", async () => {
   const d = makeTempDaemon();
   const now = new Date("2026-04-27T10:00:00Z");
   d.services.clock = () => now;
@@ -783,7 +798,7 @@ test("t2 promotion worker stops retrying after limit", async () => {
   }
 });
 
-test("t2 promotion worker defaults minEvents to 5", async () => {
+serviceTest("t2 promotion worker defaults minEvents to 5", async () => {
   const d = makeTempDaemon();
   const now = new Date("2026-04-27T10:00:00Z");
   d.services.clock = () => now;
@@ -820,7 +835,7 @@ test("t2 promotion worker defaults minEvents to 5", async () => {
   }
 });
 
-test("t2 promotion worker respects configured minEvents override", async () => {
+serviceTest("t2 promotion worker respects configured minEvents override", async () => {
   const d = makeTempDaemon();
   const now = new Date("2026-04-27T10:00:00Z");
   d.services.clock = () => now;

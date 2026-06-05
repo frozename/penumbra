@@ -89,7 +89,7 @@ describe("T2Promotion cost gates", () => {
     expect(seenTranscript.endsWith("c".repeat(2000))).toBe(true);
   });
 
-  test("samples high-frequency identical-shape sessions after the threshold", async () => {
+  test("allows the first repeated high-frequency transcript after the threshold", async () => {
     const originalRandom = Math.random;
     Math.random = () => 0.1;
     try {
@@ -115,7 +115,7 @@ describe("T2Promotion cost gates", () => {
         await prom.promoteRollup(`r-${i}`);
       }
 
-      expect(called).toBe(5);
+      expect(called).toBe(6);
       const row = db
         .query<
           { t2_promoted_at: string | null },

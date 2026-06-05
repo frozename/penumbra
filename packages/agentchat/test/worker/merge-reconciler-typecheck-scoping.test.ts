@@ -1,4 +1,4 @@
-import { beforeEach, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import { WorktreeManager } from "@penumbra/core";
 import { createMergeReconciler } from "../../src/worker/merge-reconciler.js";
 
@@ -64,15 +64,21 @@ const mockDeps: any = {
   },
 };
 
-spyOn(WorktreeManager.prototype, "getWorktree").mockImplementation((id: string) => {
-  return {
-    handoffId: id,
-    path: `/worktree/${id}`,
-    branchName: `agent/${id}`,
-    storageRoot: `/worktree/${id}/.test-storage`,
-    createdAt: "",
-    status: "created",
-  } as any;
+const getWorktreeSpy = spyOn(WorktreeManager.prototype, "getWorktree").mockImplementation(
+  (id: string) => {
+    return {
+      handoffId: id,
+      path: `/worktree/${id}`,
+      branchName: `agent/${id}`,
+      storageRoot: `/worktree/${id}/.test-storage`,
+      createdAt: "",
+      status: "created",
+    } as any;
+  },
+);
+
+afterAll(() => {
+  getWorktreeSpy.mockRestore();
 });
 
 beforeEach(() => {
@@ -93,7 +99,9 @@ test("scopes typecheck to the affected package when one package changed", async 
 
   await reconciler("h1");
 
-  expect(execHistory).toContain("bun tsc -b packages/core packages/daemon");
+  expect(execHistory).toContain(
+    "bun tsc -b packages/agentchat packages/cli packages/core packages/daemon packages/mcp packages/workflows",
+  );
   expect(execHistory).not.toContain("bun run typecheck");
 });
 
@@ -103,7 +111,9 @@ test("scopes typecheck to multiple affected packages", async () => {
 
   await reconciler("h1");
 
-  expect(execHistory).toContain("bun tsc -b packages/core packages/daemon packages/mcp");
+  expect(execHistory).toContain(
+    "bun tsc -b packages/agentchat packages/cli packages/core packages/daemon packages/mcp packages/workflows",
+  );
   expect(execHistory).not.toContain("bun run typecheck");
 });
 
@@ -113,7 +123,9 @@ test("does not duplicate packages/core when it is already affected", async () =>
 
   await reconciler("h1");
 
-  expect(execHistory).toContain("bun tsc -b packages/core packages/daemon");
+  expect(execHistory).toContain(
+    "bun tsc -b packages/agentchat packages/cli packages/core packages/daemon packages/mcp packages/workflows",
+  );
 });
 
 test("skips typecheck for docs-only diffs", async () => {
@@ -136,7 +148,9 @@ test("falls back to full-tree typecheck when git diff fails", async () => {
 
 test("reports scoped typecheck failures with affected packages in the regression summary", async () => {
   diffOutput = "packages/daemon/src/routes/handoffs.ts\npackages/mcp/src/server.ts\n";
-  execFailures["bun tsc -b packages/core packages/daemon packages/mcp"] = { stderr: "tsc failed" };
+  execFailures[
+    "bun tsc -b packages/agentchat packages/cli packages/core packages/daemon packages/mcp packages/workflows"
+  ] = { stderr: "tsc failed" };
   const reconciler = makeReconciler();
 
   const result = await reconciler("h1");

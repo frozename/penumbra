@@ -64,6 +64,34 @@ function shortSummary(basis: z.infer<typeof BasisSchema>): string {
   }
 }
 
+function dispatchLandRecalledMemoryIds(services: Services, handoffId: string): string[] {
+  const rows = services.db
+    .query<{ meta_json: string | null }, [string]>(
+      `SELECT meta_json FROM dispatch_events
+       WHERE handoff_id = ? AND kind = 'memory_recall_injected'
+       ORDER BY ts ASC, id ASC`,
+    )
+    .all(handoffId);
+  const ids = new Set<string>();
+  for (const row of rows) {
+    if (!row.meta_json) continue;
+    try {
+      const meta = JSON.parse(row.meta_json) as Record<string, unknown>;
+      const one = meta.memory_id;
+      if (typeof one === "string" && one.trim().length > 0) ids.add(one);
+      const many = meta.memory_ids;
+      if (Array.isArray(many)) {
+        for (const id of many) {
+          if (typeof id === "string" && id.trim().length > 0) ids.add(id);
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...ids];
+}
+
 export async function memoryVerifyAuthorizeRoute(
   req: Request,
   services: Services,
@@ -80,7 +108,7 @@ export async function memoryVerifyAuthorizeRoute(
   }
   const verifierActor = services.machineId.get();
   const basis = parsed.data.basis;
-  if (basis.kind !== "lane_close") {
+  if (basis.kind !== "lane_close" && basis.kind !== "dispatch_land") {
     return json({
       ok: true,
       authorized: true,
@@ -89,17 +117,27 @@ export async function memoryVerifyAuthorizeRoute(
     });
   }
 
-  const lane = getLane(services.db, basis.lane_id);
-  if (!lane) {
+  let missingLaneId: string | null = null;
+  const memoryIds =
+    basis.kind === "lane_close"
+      ? (() => {
+          const laneId = basis.lane_id;
+          const lane = getLane(services.db, laneId);
+          if (!lane) {
+            missingLaneId = laneId;
+            return null;
+          }
+          return lane.recalled_memory_ids;
+        })()
+      : dispatchLandRecalledMemoryIds(services, parsed.data.handoff_id);
+  if (memoryIds === null) {
     return json({
       ok: true,
       authorized: true,
       events_written: 0,
-      reason: `lane ${basis.lane_id} not found while resolving recalled memories`,
+      reason: `lane ${missingLaneId ?? "unknown"} not found while resolving recalled memories`,
     });
   }
-
-  const memoryIds = lane.recalled_memory_ids;
   let written = 0;
   for (const memoryId of memoryIds) {
     const result = verifyMemory(services.db, memoryId, {

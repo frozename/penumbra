@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { serviceTest } from "../helpers/service-gates.js";
 import { Database } from "bun:sqlite";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
@@ -47,31 +48,34 @@ async function withDaemon<T>(
   }
 }
 
-test("registerWorkerForTest posts /worker/register with shared bearer and returns worker_token", async () => {
-  await withDaemon(async ({ baseUrl, services }) => {
-    const result = await registerWorkerForTest({
-      baseUrl,
-      sharedBearer: SHARED_TOKEN,
-      worker_id: "W-A",
-      metadata: { host: "x" },
+serviceTest(
+  "registerWorkerForTest posts /worker/register with shared bearer and returns worker_token",
+  async () => {
+    await withDaemon(async ({ baseUrl, services }) => {
+      const result = await registerWorkerForTest({
+        baseUrl,
+        sharedBearer: SHARED_TOKEN,
+        worker_id: "W-A",
+        metadata: { host: "x" },
+      });
+
+      expect(result.worker_id).toBe("W-A");
+      expect(typeof result.worker_token).toBe("string");
+      // base64url of 32 random bytes = 43 chars (no padding)
+      expect(result.worker_token.length).toBe(43);
+
+      const hash = createHash("sha256").update(result.worker_token).digest("hex");
+      const row = services.db
+        .query("SELECT * FROM worker_tokens WHERE token_hash = ?")
+        .get(hash) as any;
+      expect(row).toBeDefined();
+      expect(row.worker_id).toBe("W-A");
+      expect(row.metadata_json).toBe(JSON.stringify({ host: "x" }));
     });
+  },
+);
 
-    expect(result.worker_id).toBe("W-A");
-    expect(typeof result.worker_token).toBe("string");
-    // base64url of 32 random bytes = 43 chars (no padding)
-    expect(result.worker_token.length).toBe(43);
-
-    const hash = createHash("sha256").update(result.worker_token).digest("hex");
-    const row = services.db
-      .query("SELECT * FROM worker_tokens WHERE token_hash = ?")
-      .get(hash) as any;
-    expect(row).toBeDefined();
-    expect(row.worker_id).toBe("W-A");
-    expect(row.metadata_json).toBe(JSON.stringify({ host: "x" }));
-  });
-});
-
-test("registerWorkerForTest without metadata persists metadata_json NULL", async () => {
+serviceTest("registerWorkerForTest without metadata persists metadata_json NULL", async () => {
   await withDaemon(async ({ baseUrl, services }) => {
     const result = await registerWorkerForTest({
       baseUrl,
@@ -88,7 +92,7 @@ test("registerWorkerForTest without metadata persists metadata_json NULL", async
   });
 });
 
-test("returned worker_token authenticates a subsequent /worker/heartbeat call", async () => {
+serviceTest("returned worker_token authenticates a subsequent /worker/heartbeat call", async () => {
   await withDaemon(async ({ baseUrl }) => {
     const { worker_token } = await registerWorkerForTest({
       baseUrl,
@@ -108,7 +112,7 @@ test("returned worker_token authenticates a subsequent /worker/heartbeat call", 
   });
 });
 
-test("registerWorkerForTest throws on non-200 (e.g., wrong shared bearer)", async () => {
+serviceTest("registerWorkerForTest throws on non-200 (e.g., wrong shared bearer)", async () => {
   await withDaemon(async ({ baseUrl }) => {
     await expect(
       registerWorkerForTest({

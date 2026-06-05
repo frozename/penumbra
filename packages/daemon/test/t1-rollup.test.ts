@@ -1,8 +1,9 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { serviceTest } from "./helpers/service-gates.js";
 import { makeTempDaemon } from "./helpers.js";
 import { createRollupWorker } from "../src/workers/t1-rollup.js";
 
-test("rollup worker rolls idle sessions and rewrites the context file", async () => {
+serviceTest("rollup worker rolls idle sessions and rewrites the context file", async () => {
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
   try {
@@ -33,7 +34,7 @@ test("rollup worker rolls idle sessions and rewrites the context file", async ()
   }
 });
 
-test("rollup worker re-reads MEMORY_OVERWRITE_ON_REROLL per tick", async () => {
+serviceTest("rollup worker re-reads MEMORY_OVERWRITE_ON_REROLL per tick", async () => {
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
   try {
@@ -92,7 +93,7 @@ test("rollup worker re-reads MEMORY_OVERWRITE_ON_REROLL per tick", async () => {
   }
 });
 
-test("rollup worker opts take precedence over MEMORY_OVERWRITE_ON_REROLL env", async () => {
+serviceTest("rollup worker opts take precedence over MEMORY_OVERWRITE_ON_REROLL env", async () => {
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
   try {

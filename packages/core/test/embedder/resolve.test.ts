@@ -2,24 +2,32 @@ import { expect, test } from "bun:test";
 import { resolveEmbedder } from "../../src/embedder/resolve.js";
 import { TestEmbedder } from "../../src/embedder/test-embedder.js";
 
+const originalFetch = globalThis.fetch;
+
+function mockFetch(fn: typeof fetch): () => void {
+  globalThis.fetch = fn;
+  return () => {
+    globalThis.fetch = originalFetch;
+  };
+}
+
 test("auto + reachable health chooses remote embedder", async () => {
-  const server = Bun.serve({
-    port: 0,
-    async fetch(req) {
-      const path = new URL(req.url).pathname;
-      if (path === "/healthz") return new Response("ok", { status: 200 });
-      return Response.json({ data: [{ embedding: [0, 0, 0, 0], index: 0 }] });
-    },
+  const restoreFetch = mockFetch(async (url) => {
+    expect(new URL(String(url)).pathname).toBe("/healthz");
+    return new Response("ok", { status: 200 });
   });
 
-  const fallback = new TestEmbedder({ dim: 4 });
-  const e = await resolveEmbedder({
-    mode: "auto",
-    remote: { baseUrl: `http://localhost:${server.port}`, model: "m", dim: 4 },
-    fallback,
-  });
-  expect(e.name).toBe("openai:m");
-  server.stop(true);
+  try {
+    const fallback = new TestEmbedder({ dim: 4 });
+    const e = await resolveEmbedder({
+      mode: "auto",
+      remote: { baseUrl: "http://embedder.test", model: "m", dim: 4 },
+      fallback,
+    });
+    expect(e.name).toBe("openai:m");
+  } finally {
+    restoreFetch();
+  }
 });
 
 test("auto + unreachable health chooses bundled fallback", async () => {
@@ -66,25 +74,26 @@ test("bundled mode always chooses fallback", async () => {
 
 test("auto mode skips health probe when healthPath is empty", async () => {
   let calledHealth = false;
-  const server = Bun.serve({
-    port: 0,
-    async fetch(req) {
-      const path = new URL(req.url).pathname;
-      if (path === "/healthz") {
-        calledHealth = true;
-        return new Response("no", { status: 500 });
-      }
-      return Response.json({ data: [{ embedding: [0, 0, 0, 0], index: 0 }] });
-    },
+  const restoreFetch = mockFetch(async (url) => {
+    const req = new Request(url);
+    const path = new URL(req.url).pathname;
+    if (path === "/healthz") {
+      calledHealth = true;
+      return new Response("no", { status: 500 });
+    }
+    return Response.json({ data: [{ embedding: [0, 0, 0, 0], index: 0 }] });
   });
 
-  const fallback = new TestEmbedder({ dim: 4 });
-  const e = await resolveEmbedder({
-    mode: "auto",
-    remote: { baseUrl: `http://localhost:${server.port}`, model: "m", dim: 4, healthPath: "" },
-    fallback,
-  });
-  expect(e.name).toBe("openai:m");
-  expect(calledHealth).toBe(false);
-  server.stop(true);
+  try {
+    const fallback = new TestEmbedder({ dim: 4 });
+    const e = await resolveEmbedder({
+      mode: "auto",
+      remote: { baseUrl: "http://embedder.test", model: "m", dim: 4, healthPath: "" },
+      fallback,
+    });
+    expect(e.name).toBe("openai:m");
+    expect(calledHealth).toBe(false);
+  } finally {
+    restoreFetch();
+  }
 });

@@ -1,11 +1,27 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import * as os from "node:os";
 import { tmpdir } from "node:os";
 import { OpencodeCliAdapter } from "../../src/adapters/opencode-cli.js";
 import { buildAdapter } from "../../src/adapters/registry.js";
 
 const tempDirs: string[] = [];
+
+async function withTempHome<T>(fn: () => Promise<T>): Promise<T> {
+  const dir = mkdtempSync(join(tmpdir(), "opencode-home-"));
+  tempDirs.push(dir);
+  const prevHome = process.env.HOME;
+  const homedirSpy = spyOn(os, "homedir").mockReturnValue(dir);
+  process.env.HOME = dir;
+  try {
+    return await fn();
+  } finally {
+    homedirSpy.mockRestore();
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+  }
+}
 
 function createCaptureScript() {
   const dir = mkdtempSync(join(tmpdir(), "opencode-cli-test-"));
@@ -50,12 +66,14 @@ test("opencode-cli sets a per-dispatch XDG_CONFIG_HOME when mcpServers are provi
     ],
   });
 
-  const out = await adapter.dispatch({
-    prompt: "hi opencode",
-    conversation: { id: "c", project_id: null },
-    config: {},
-    signal: new AbortController().signal,
-  });
+  const out = await withTempHome(() =>
+    adapter.dispatch({
+      prompt: "hi opencode",
+      conversation: { id: "c", project_id: null },
+      config: {},
+      signal: new AbortController().signal,
+    }),
+  );
 
   const xdgConfigHome = readFileSync(markerPath, "utf8");
   const snapshot = JSON.parse(readFileSync(snapshotPath, "utf8"));

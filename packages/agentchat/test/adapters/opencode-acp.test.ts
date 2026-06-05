@@ -1,8 +1,27 @@
-import { expect, mock, test } from "bun:test";
+import { expect, mock, spyOn, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import * as os from "node:os";
+import { tmpdir } from "node:os";
 import { OpencodeAcpAdapter } from "../../src/adapters/opencode-acp.js";
 import type { AcpServerHandle } from "../../src/adapters/acp-server.js";
 import type { AcpClientOptions } from "../../src/adapters/acp-client.js";
 import type { DispatchInput } from "../../src/sdk/adapter.js";
+
+async function withTempHome<T>(fn: () => Promise<T>): Promise<T> {
+  const dir = mkdtempSync(join(tmpdir(), "opencode-home-"));
+  const prevHome = process.env.HOME;
+  const homedirSpy = spyOn(os, "homedir").mockReturnValue(dir);
+  process.env.HOME = dir;
+  try {
+    return await fn();
+  } finally {
+    homedirSpy.mockRestore();
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 function createInput(prompt = "ping"): DispatchInput {
   return {
@@ -188,7 +207,7 @@ test("opencode-acp sets a per-dispatch XDG_CONFIG_HOME when mcpServers are provi
     },
   );
 
-  await adapter.dispatch(createInput());
+  await withTempHome(() => adapter.dispatch(createInput()));
 
   expect(capturedConfig).toEqual({
     $schema: "https://opencode.ai/config.json",

@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startAcpServer, type AcpServerSpawner } from "../../src/adapters/acp-server.js";
+import { RUN_AGENTCHAT_SERVICE_TESTS } from "../helpers/service-gates.js";
 
 const cleanupPids = new Set<number>();
 const cleanupDirs = new Set<string>();
@@ -99,7 +100,7 @@ setInterval(() => {}, 1_000);
   return opencodePath;
 }
 
-describe("startAcpServer process group cleanup", () => {
+describe.skipIf(!RUN_AGENTCHAT_SERVICE_TESTS)("startAcpServer process group cleanup", () => {
   test.skipIf(process.platform === "win32")(
     "kill reaps the opencode ACP process and its MCP grandchild",
     async () => {

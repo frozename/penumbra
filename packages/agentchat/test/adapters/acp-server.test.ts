@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import * as net from "node:net";
 import { startAcpServer, type AcpServerSpawner } from "../../src/adapters/acp-server.js";
+import { serviceTest } from "../helpers/service-gates.js";
 
 class FakeChildProcess extends EventEmitter {
   stdin = new PassThrough();
@@ -53,46 +54,49 @@ afterEach(() => {
   }
 });
 
-test("startAcpServer resolves when port is successfully bound and kill sends SIGTERM", async () => {
-  const child = new FakeChildProcess(5432);
-  let assignedPort = 0;
+serviceTest(
+  "startAcpServer resolves when port is successfully bound and kill sends SIGTERM",
+  async () => {
+    const child = new FakeChildProcess(5432);
+    let assignedPort = 0;
 
-  const dummyServer = net.createServer((socket) => socket.destroy());
+    const dummyServer = net.createServer((socket) => socket.destroy());
 
-  const spawn = createSpawn(child, (args) => {
-    const portIdx = args.indexOf("--port") + 1;
-    assignedPort = Number(args[portIdx]);
-    dummyServer.listen(assignedPort, "127.0.0.1");
-  });
+    const spawn = createSpawn(child, (args) => {
+      const portIdx = args.indexOf("--port") + 1;
+      assignedPort = Number(args[portIdx]);
+      dummyServer.listen(assignedPort, "127.0.0.1");
+    });
 
-  const handlePromise = startAcpServer({
-    cwd: "/tmp/penumbra-acp",
-    spawn,
-    bootTimeoutMs: 250,
-  });
+    const handlePromise = startAcpServer({
+      cwd: "/tmp/penumbra-acp",
+      spawn,
+      bootTimeoutMs: 250,
+    });
 
-  const handle = await handlePromise;
-  dummyServer.close();
+    const handle = await handlePromise;
+    dummyServer.close();
 
-  expect(handle.port).toBe(assignedPort);
-  expect(handle.baseUrl).toBe(`http://127.0.0.1:${assignedPort}`);
-  expect(handle.pid).toBe(5432);
-  expect(spawn.mock.calls[0]?.[0]).toBe("opencode");
-  expect(spawn.mock.calls[0]?.[1]).toEqual([
-    "acp",
-    "--port",
-    assignedPort.toString(),
-    "--cwd",
-    "/tmp/penumbra-acp",
-    "--pure",
-  ]);
+    expect(handle.port).toBe(assignedPort);
+    expect(handle.baseUrl).toBe(`http://127.0.0.1:${assignedPort}`);
+    expect(handle.pid).toBe(5432);
+    expect(spawn.mock.calls[0]?.[0]).toBe("opencode");
+    expect(spawn.mock.calls[0]?.[1]).toEqual([
+      "acp",
+      "--port",
+      assignedPort.toString(),
+      "--cwd",
+      "/tmp/penumbra-acp",
+      "--pure",
+    ]);
 
-  await handle.kill();
+    await handle.kill();
 
-  expect(child.kill).toHaveBeenCalledWith("SIGTERM");
-});
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  },
+);
 
-test("startAcpServer rejects and kills the child when aborted during boot", async () => {
+serviceTest("startAcpServer rejects and kills the child when aborted during boot", async () => {
   const child = new FakeChildProcess();
   const spawn = createSpawn(child);
   const controller = new AbortController();
@@ -112,7 +116,7 @@ test("startAcpServer rejects and kills the child when aborted during boot", asyn
   expect(child.kill).toHaveBeenCalledWith("SIGTERM");
 });
 
-test("startAcpServer rejects and kills the child when boot timeout expires", async () => {
+serviceTest("startAcpServer rejects and kills the child when boot timeout expires", async () => {
   const child = new FakeChildProcess();
   const spawn = createSpawn(child);
 

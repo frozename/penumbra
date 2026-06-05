@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { serviceTest } from "./helpers/service-gates.js";
 import { makeTempDaemon } from "./helpers.js";
 
-test("POST /sessions/end triggers an immediate rollup for that session", async () => {
+serviceTest("POST /sessions/end triggers an immediate rollup for that session", async () => {
   const d = makeTempDaemon();
   try {
     // Seed one event under session 'sX'.
@@ -35,7 +36,7 @@ test("POST /sessions/end triggers an immediate rollup for that session", async (
   }
 });
 
-test("POST /sessions/end with missing session_id returns 400", async () => {
+serviceTest("POST /sessions/end with missing session_id returns 400", async () => {
   const d = makeTempDaemon();
   try {
     const res = await fetch(`${d.url}/sessions/end`, {

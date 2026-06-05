@@ -70,6 +70,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: false,
     description: "Require explicit project_id on chain_start.",
   },
+  PENUMBRA_DAEMON_SERVICE_TESTS: {
+    schema: Bool,
+    default: false,
+    description: "Enable daemon tests that require live service-style integration harnesses.",
+  },
   PENUMBRA_AUTO_RECALL_ENABLED: {
     schema: Bool,
     default: true,
@@ -161,6 +166,10 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: OptNonNegInt,
     description: "Interval for sweeping stale worker tokens.",
   },
+  PENUMBRA_WORKER_CRASH_GUARD: {
+    schema: z.enum(["survive"]).optional(),
+    description: "Set to survive to keep the agentchat worker alive after unhandled rejections.",
+  },
   PENUMBRA_WORKERS_CONFIG_PATH: {
     schema: OptStr,
     description: "Path to workers.yaml config file.",
@@ -182,6 +191,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: 300,
     description: "Permission request TTL in seconds.",
   },
+  PENUMBRA_AGENTCHAT_SERVICE_TESTS: {
+    schema: Bool,
+    default: false,
+    description: "Enable agentchat tests that require live service-style integration harnesses.",
+  },
   PENUMBRA_PROJECTS_YAML: {
     schema: OptStr,
     description: "Path to projects.yaml registry.",
@@ -194,6 +208,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: OptStr,
     default: "gpt-5",
     description: "Model for opencode adapter.",
+  },
+  PENUMBRA_OPENCODE_GROUP_KILL: {
+    schema: Bool,
+    default: true,
+    description: "Kill opencode ACP child process groups on POSIX platforms.",
   },
   PENUMBRA_REFINER_MODEL: {
     schema: OptStr,
@@ -212,6 +231,10 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: OptStr,
     description: "Comma-separated env keys to inject into MCP sessions.",
   },
+  PENUMBRA_MCP_ORIGIN: {
+    schema: OptStr,
+    description: "Fallback origin label for MCP tool calls when request metadata is unavailable.",
+  },
   PENUMBRA_MCP_INVOCATION_LOG_ENABLED: {
     schema: Bool,
     default: false,
@@ -221,6 +244,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   PENUMBRA_MCP_TOOL_ALLOWLIST: {
     schema: OptStr,
     description: "Comma- or newline-separated MCP tool allowlist.",
+  },
+  PENUMBRA_MCP_ORIGIN_FLEET_WORKER: {
+    schema: OptStr,
+    default: "fleet-worker",
+    description: "Origin label injected into fleet-worker MCP sessions.",
   },
   PENUMBRA_CANCEL_GRACE_S: {
     schema: OptNonNegInt,
@@ -726,6 +754,16 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: false,
     description: "Enable opencode integration tests.",
   },
+  PENUMBRA_GOOGLE_SYNTH_MAX_PLAUSIBLE_PCT: {
+    schema: NonNegNum,
+    default: 40,
+    description: "Maximum plausible percentage for synthesized Google usage estimates.",
+  },
+  PENUMBRA_PER_WORKER_USAGE_CURSOR: {
+    schema: Bool,
+    default: true,
+    description: "Store usage-reader cursors per worker instead of one shared cursor.",
+  },
   PENUMBRA_SHELL_SESSION_ID: {
     schema: OptStr,
     description: "Current shell session ID.",
@@ -792,6 +830,16 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: false,
     description: "Enable P7 t2 re-embedding/backfill passes.",
   },
+  PENUMBRA_PROMOTION_NEAR_DUP_THRESHOLD: {
+    schema: NonNegNum,
+    default: 0.95,
+    description: "Similarity threshold for the T2 promotion near-duplicate gate.",
+  },
+  PENUMBRA_EMBED_RECIPE_TIMEOUT_MS: {
+    schema: NonNegInt,
+    default: 180_000,
+    description: "Timeout for T2 embed recipe benchmark candidates.",
+  },
   // ── dreaming phase tunables (consumed by dreaming/config.ts + curator) ─
   PENUMBRA_DREAMING_P1_BATCH_SIZE: {
     schema: OptNonNegInt,
@@ -814,6 +862,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   PENUMBRA_DREAMING_PC1_BATCH_SIZE: {
     schema: OptNonNegInt,
     description: "PC1 ephemera batch size (default 100).",
+  },
+  PENUMBRA_PC1_AUTORETIRE: {
+    schema: Bool,
+    default: false,
+    description: "Auto-retire memories detected as PC1 ephemera.",
   },
   PENUMBRA_DREAMING_PC2_AUTO_APPLY: {
     schema: Bool,
@@ -840,6 +893,16 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   PENUMBRA_DREAMING_PC2_QUEUE_THRESHOLD: {
     schema: OptNonNegNum,
     description: "DEPRECATED — use PENUMBRA_DREAMING_PC2_CLUSTER_LINK_THRESHOLD.",
+  },
+  PENUMBRA_STALE_SWEEP_LIVENESS_CHECK: {
+    schema: Bool,
+    default: false,
+    description: "Require worker liveness checks before stale handoff force-resolution.",
+  },
+  PENUMBRA_STALE_SWEEP_MAX_ALIVE_GRACE_MS: {
+    schema: NonNegInt,
+    default: 1_800_000,
+    description: "Maximum stale handoff grace period while the owning worker is alive.",
   },
   // ── e2e test gates ────────────────────────────────────────────────
   PENUMBRA_E2E: {

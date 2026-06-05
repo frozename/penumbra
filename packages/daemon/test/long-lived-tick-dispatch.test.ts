@@ -1,4 +1,5 @@
-import { afterEach, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, expect, mock, spyOn } from "bun:test";
+import { serviceTest } from "./helpers/service-gates.js";
 import { Database } from "bun:sqlite";
 import { BundledEmbedder, buildServices, loadSqliteVec, migrate } from "@penumbra/core";
 import * as chainRoutes from "../src/routes/chains.js";
@@ -55,7 +56,7 @@ function makeServices(projectId?: string | undefined) {
   return { db, services, handle };
 }
 
-test("long-lived tick dispatch uses configured project_id", async () => {
+serviceTest("long-lived tick dispatch uses configured project_id", async () => {
   const chainStartMock = mock((input: any, _services: any) =>
     Promise.resolve(
       new Response(JSON.stringify({ conversation_id: "conv-1" }), {
@@ -81,7 +82,7 @@ test("long-lived tick dispatch uses configured project_id", async () => {
   }
 });
 
-test("long-lived tick dispatch falls back to penumbra when project_id is null", async () => {
+serviceTest("long-lived tick dispatch falls back to penumbra when project_id is null", async () => {
   const chainStartMock = mock((input: any, _services: any) =>
     Promise.resolve(
       new Response(JSON.stringify({ conversation_id: "conv-1" }), {

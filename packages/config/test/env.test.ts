@@ -22,9 +22,9 @@ describe("parseEnv", () => {
     );
   });
 
-  test("t2 embed recipe defaults to body_v1", () => {
+  test("t2 embed recipe defaults to title_plus_concise", () => {
     const result = parseEnv({});
-    expect(result.PENUMBRA_T2_EMBED_RECIPE).toBe("body_v1");
+    expect(result.PENUMBRA_T2_EMBED_RECIPE).toBe("title_plus_concise");
     expect(result.PENUMBRA_T2_OVERSAMPLE_FACTOR).toBe(1);
     expect(result.PENUMBRA_T2_REEMBED_ENABLED).toBe(false);
   });

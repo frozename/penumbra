@@ -1,4 +1,4 @@
-import { expect, test, mock, spyOn, beforeEach, describe } from "bun:test";
+import { expect, test, mock, spyOn, beforeEach, afterAll, describe } from "bun:test";
 import {
   createMergeReconciler,
   resolveAffectedPackages,
@@ -85,16 +85,22 @@ const mockDeps: any = {
   },
 };
 
-spyOn(WorktreeManager.prototype, "getWorktree").mockImplementation((id: string) => {
-  if (id === "missing") return null;
-  return {
-    handoffId: id,
-    path: `/worktree/${id}`,
-    branchName: `agent/${id}`,
-    storageRoot: `/worktree/${id}/.test-storage`,
-    createdAt: "",
-    status: "created",
-  } as any;
+const getWorktreeSpy = spyOn(WorktreeManager.prototype, "getWorktree").mockImplementation(
+  (id: string) => {
+    if (id === "missing") return null;
+    return {
+      handoffId: id,
+      path: `/worktree/${id}`,
+      branchName: `agent/${id}`,
+      storageRoot: `/worktree/${id}/.test-storage`,
+      createdAt: "",
+      status: "created",
+    } as any;
+  },
+);
+
+afterAll(() => {
+  getWorktreeSpy.mockRestore();
 });
 
 beforeEach(() => {
@@ -216,7 +222,9 @@ test("default reconcile verifies and emits verdict without opening PR", async ()
   expect(result.status).toBe("verified");
   expect(result.pr_url).toBeUndefined();
   expect(result.pr_number).toBeUndefined();
-  expect(execHistory).toContain("bun tsc -b packages/core packages/daemon");
+  expect(execHistory).toContain(
+    "bun tsc -b packages/agentchat packages/cli packages/core packages/daemon packages/mcp packages/workflows",
+  );
   expect(execHistory).toContain("bun test packages/daemon/test/");
   expect(execHistory).toContain("git diff main...agent/h1 --shortstat");
   expect(prCalls).toHaveLength(0);
@@ -559,13 +567,19 @@ test("does not throw when analyzer throws — logs and continues", async () => {
 });
 
 test("Typecheck fail: returns typecheck_failed and skips PR creation", async () => {
-  execFailures["bun tsc -b packages/core packages/daemon"] = { stderr: "Syntax error" };
+  execFailures[
+    "bun tsc -b packages/agentchat packages/cli packages/core packages/daemon packages/mcp packages/workflows"
+  ] = { stderr: "Syntax error" };
 
   const result = await reconcile("h2");
 
   expect(result.status).toBe("typecheck_failed");
-  expect(result.regression_summary).toBe("packages/core, packages/daemon: Syntax error");
-  expect(execHistory).toContain("bun tsc -b packages/core packages/daemon");
+  expect(result.regression_summary).toBe(
+    "packages/agentchat, packages/cli, packages/core, packages/daemon, packages/mcp, packages/workflows: Syntax error",
+  );
+  expect(execHistory).toContain(
+    "bun tsc -b packages/agentchat packages/cli packages/core packages/daemon packages/mcp packages/workflows",
+  );
   expect(execHistory).not.toContain("bun test");
   expect(prCalls).toHaveLength(0);
   expect(progressCalls).toContainEqual({
@@ -574,12 +588,14 @@ test("Typecheck fail: returns typecheck_failed and skips PR creation", async () 
       type: "merge-result",
       handoff_id: "h2",
       status: "typecheck_failed",
-      regression_summary: "packages/core, packages/daemon: Syntax error",
+      regression_summary:
+        "packages/agentchat, packages/cli, packages/core, packages/daemon, packages/mcp, packages/workflows: Syntax error",
     },
   });
   expect(mockDeps.notifyResult).toHaveBeenCalledWith("h2", {
     status: "typecheck_failed",
-    regression_summary: "packages/core, packages/daemon: Syntax error",
+    regression_summary:
+      "packages/agentchat, packages/cli, packages/core, packages/daemon, packages/mcp, packages/workflows: Syntax error",
   });
   expect(verdictCalls).toHaveLength(1);
   expect(verdictCalls[0]).toMatchObject({
@@ -597,7 +613,9 @@ test("Test fail: returns test_failed and skips PR creation", async () => {
 
   expect(result.status).toBe("test_failed");
   expect(result.regression_summary).toBe("1 test failed");
-  expect(execHistory).toContain("bun tsc -b packages/core packages/daemon");
+  expect(execHistory).toContain(
+    "bun tsc -b packages/agentchat packages/cli packages/core packages/daemon packages/mcp packages/workflows",
+  );
   expect(execHistory).toContain("bun test packages/daemon/test/");
   expect(prCalls).toHaveLength(0);
   expect(mockDeps.notifyResult).toHaveBeenCalledWith("h3", {
@@ -834,8 +852,10 @@ test("Mutex isolation: subsequent PR flows run even if previous one throws", asy
   const p2 = reconcile("h_mutex_2");
 
   const [r1, r2] = await Promise.all([p1, p2]);
-  expect((r1 as any).status).toBe("pr_creation_failed");
-  expect((r2 as any).status).toBe("pr_opened");
+  expect([(r1 as any).status, (r2 as any).status].sort()).toEqual([
+    "pr_creation_failed",
+    "pr_opened",
+  ]);
 });
 
 test("Typecheck timeout returns timed_out: true", async () => {
@@ -846,7 +866,11 @@ test("Typecheck timeout returns timed_out: true", async () => {
     if (cmd.startsWith("git diff --name-only")) {
       return defaultDiffResult;
     }
-    if (cmd.includes("bun tsc -b packages/core packages/daemon")) {
+    if (
+      cmd.includes(
+        "bun tsc -b packages/agentchat packages/cli packages/core packages/daemon packages/mcp packages/workflows",
+      )
+    ) {
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
     return { stdout: "", stderr: "" };

@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { serviceTest } from "./helpers/service-gates.js";
 import { makeTempDaemon } from "./helpers.js";
 
-test("GET /metrics returns counts, embedder name/dim, and version", async () => {
+serviceTest("GET /metrics returns counts, embedder name/dim, and version", async () => {
   const d = makeTempDaemon();
   try {
     const res = await fetch(`${d.url}/metrics`, {

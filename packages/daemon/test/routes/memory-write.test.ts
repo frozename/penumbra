@@ -864,37 +864,44 @@ describe("POST /memory/write", () => {
     const { db, root } = makeServices();
     handles.push({ db, root });
     seedCycle(db, "cycle-1");
+    const prevPc1 = process.env.PENUMBRA_PC1_AUTORETIRE;
+    process.env.PENUMBRA_PC1_AUTORETIRE = "1";
 
-    seedMemory(db, "mem-direct", {
-      title: "direct seed",
-      body: "123e4567-e89b-12d3-a456-426614174000",
-      slug: "direct-mem",
-      origin: "direct",
-    });
-    seedMemory(db, "mem-retire", {
-      title: "retire seed",
-      body: "123e4567-e89b-12d3-a456-426614174001",
-      slug: "normal-mem",
-      origin: null,
-    });
+    try {
+      seedMemory(db, "mem-direct", {
+        title: "direct seed",
+        body: "123e4567-e89b-12d3-a456-426614174000",
+        slug: "direct-mem",
+        origin: "direct",
+      });
+      seedMemory(db, "mem-retire", {
+        title: "retire seed",
+        body: "123e4567-e89b-12d3-a456-426614174001",
+        slug: "normal-mem",
+        origin: null,
+      });
 
-    await runPC1Phase(db, "cycle-1", {}, {});
+      await runPC1Phase(db, "cycle-1", {}, {});
 
-    const directRow = db
-      .query<
-        { retired_at: number | null },
-        [string]
-      >(`SELECT retired_at FROM t2_memories WHERE memory_id = ?`)
-      .get("mem-direct")!;
-    const normalRow = db
-      .query<
-        { retired_at: number | null },
-        [string]
-      >(`SELECT retired_at FROM t2_memories WHERE memory_id = ?`)
-      .get("mem-retire")!;
+      const directRow = db
+        .query<
+          { retired_at: number | null },
+          [string]
+        >(`SELECT retired_at FROM t2_memories WHERE memory_id = ?`)
+        .get("mem-direct")!;
+      const normalRow = db
+        .query<
+          { retired_at: number | null },
+          [string]
+        >(`SELECT retired_at FROM t2_memories WHERE memory_id = ?`)
+        .get("mem-retire")!;
 
-    expect(directRow.retired_at).toBeNull();
-    expect(normalRow.retired_at).not.toBeNull();
+      expect(directRow.retired_at).toBeNull();
+      expect(normalRow.retired_at).not.toBeNull();
+    } finally {
+      if (prevPc1 === undefined) delete process.env.PENUMBRA_PC1_AUTORETIRE;
+      else process.env.PENUMBRA_PC1_AUTORETIRE = prevPc1;
+    }
   });
 
   test("8) PC2 cluster retire skips direct-origin rows", async () => {

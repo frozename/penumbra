@@ -210,7 +210,7 @@ test("authorize route rejects adversarial_review traversal", async () => {
   }
 });
 
-test("authorize route returns zero writes with reason for dispatch_land basis", async () => {
+test("authorize route returns zero writes for dispatch_land basis without recalled memories", async () => {
   const ctx = setup();
   try {
     seedMemory(ctx.db, "m1", "2026-05-17T11:00:00.000Z");
@@ -242,8 +242,7 @@ test("authorize route returns zero writes with reason for dispatch_land basis", 
     };
     expect(body.ok).toBe(true);
     expect(body.events_written).toBe(0);
-    expect(body.reason).toContain("dispatch_land");
-    expect(body.reason).toContain("lane_close");
+    expect(body.reason).toBeUndefined();
   } finally {
     ctx.stop();
   }

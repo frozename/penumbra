@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { WatchdogService } from "../../src/services/watchdog.js";
@@ -17,10 +20,12 @@ function tempServices(): Services {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
+  const root = mkdtempSync(join(tmpdir(), "watchdog-test-"));
   return buildServices({
     env: {},
     input: {},
-    storageRoot: "/tmp/watchdog-test",
+    storageRoot: root,
+    worktreeRootDir: join(root, "worktrees"),
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date("2026-04-26T00:00:00Z"),

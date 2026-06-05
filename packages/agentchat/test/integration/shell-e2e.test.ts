@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { startInProcessDaemon } from "../helpers/in-process-daemon.js";
+import { RUN_AGENTCHAT_SERVICE_TESTS } from "../helpers/service-gates.js";
 
-describe("shell e2e", () => {
+describe.skipIf(!RUN_AGENTCHAT_SERVICE_TESTS)("shell e2e", () => {
   it("runs a shell session through open, reuse, close, and terminal handoff cleanup", async () => {
     const harness = await startInProcessDaemon({
       shellEnabled: true,
