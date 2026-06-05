@@ -109,7 +109,12 @@ function splitLegacyConfig(source: AgentChatConfig) {
 
   const personas: Record<
     string,
-    { preferred_agent: string; bias: string; system_prompt: string; category_hints?: string[] }
+    {
+      preferred_agent: string | string[];
+      bias: string;
+      system_prompt: string;
+      category_hints?: string[];
+    }
   > = {};
   for (const [name, persona] of Object.entries(legacy.review_personas ?? {})) {
     personas[name] = {

@@ -172,6 +172,7 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
       let capturedWorktreeChanged: boolean | null | undefined = undefined;
       let capturedDirty: boolean | null | undefined = undefined;
       let capturedCommitted: boolean | null | undefined = undefined;
+      let dispatchResult: any = null;
       deps.onEvent?.({
         handoff_id: handoff.handoff_id,
         worker_id: deps.workerId,
@@ -263,6 +264,7 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           },
           abort.signal,
         );
+        dispatchResult = result;
         if (abort.signal.aborted) {
           dispatchStatus = "aborted";
         } else if (result.terminatedReason === "error") {
@@ -432,6 +434,9 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           meta: {
             status: dispatchStatus,
             wall_ms: Date.now() - dispatchStart,
+            ...(typeof dispatchResult?.meta?.framework_overhead_ms === "number"
+              ? { framework_overhead_ms: dispatchResult.meta.framework_overhead_ms }
+              : {}),
             ...(worktreeChanged !== null ? { worktree_changed: worktreeChanged } : {}),
             ...(dirty !== null ? { dirty } : {}),
             ...(committed !== null ? { committed } : {}),

@@ -67,6 +67,7 @@ export interface DispatchHandoffResult {
   text: string;
   /** The dispatching agent for this hop (handoff.to_agent). */
   agent: string;
+  meta?: ChatTurnResult["meta"];
 }
 
 const RETRY_BACKOFF_MS = [200, 400, 800] as const;
@@ -151,7 +152,13 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
   // Should be impossible: loop always assigns `turn` before breaking.
   if (!turn) throw new Error(lastErrMsg ?? "adapter dispatch failed");
   if (!turn.next_mention) {
-    return { next: null, terminatedReason: "no_mention", text: turn.text, agent: targetAgent };
+    return {
+      next: null,
+      terminatedReason: "no_mention",
+      text: turn.text,
+      agent: targetAgent,
+      ...(turn.meta ? { meta: turn.meta } : {}),
+    };
   }
 
   const nextTo =
@@ -184,6 +191,7 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
       cappedHandoffId: created.handoff_id,
       text: turn.text,
       agent: targetAgent,
+      ...(turn.meta ? { meta: turn.meta } : {}),
     };
   }
 
@@ -194,6 +202,7 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
       cappedHandoffId: created.handoff_id,
       text: turn.text,
       agent: targetAgent,
+      ...(turn.meta ? { meta: turn.meta } : {}),
     };
   }
 
@@ -209,5 +218,6 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
     },
     text: turn.text,
     agent: targetAgent,
+    ...(turn.meta ? { meta: turn.meta } : {}),
   };
 }

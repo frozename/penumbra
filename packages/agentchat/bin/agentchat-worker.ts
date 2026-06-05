@@ -23,6 +23,7 @@ import { resolveAdapterApiKey } from "../src/adapters/secret.js";
 import { StdioAcpClient } from "../src/adapters/stdio-acp-client.js";
 import { startStdioAcpServer, type StdioAcpHandle } from "../src/adapters/stdio-acp-server.js";
 import { StdioAcpAdapter, type StdioAcpOptions } from "../src/adapters/stdio-acp.js";
+import { drainAgent, shutdownAllAcpWarmPools } from "../src/adapters/acp-warm-pool-registry.js";
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../src/sdk/adapter.js";
 import { startEventSource } from "../src/worker/event-source.js";
 import { createWorkerDispatcher } from "../src/worker/dispatcher.js";
@@ -1352,7 +1353,27 @@ void runWorkerControlListener({
   workerId,
   onEvent,
   onConfigReload: () => {
+    const previousConfig = config;
     config = loadConfig(configPath);
+    const previousWarmAgents = new Set(
+      previousConfig.agents
+        .filter(
+          (agent) => (agent.options as Record<string, unknown> | undefined)?.warm_pool === true,
+        )
+        .map((agent) => agent.name),
+    );
+    for (const agent of config.agents) {
+      if (
+        previousWarmAgents.has(agent.name) &&
+        (agent.options as Record<string, unknown> | undefined)?.warm_pool !== true
+      ) {
+        drainAgent(agent.name);
+      }
+      previousWarmAgents.delete(agent.name);
+    }
+    for (const removedAgent of previousWarmAgents) {
+      drainAgent(removedAgent);
+    }
     log.info({ agent_count: config.agents.length }, "agentchat-config-reloaded-from-control-bus");
   },
 });
@@ -1363,6 +1384,7 @@ const shutdown = async (sig: string) => {
   if (heartbeatTimer) clearTimeout(heartbeatTimer);
   usagePoller?.stop();
   notificationScheduler?.stop();
+  shutdownAllAcpWarmPools();
   await eventSource.stop();
   permissionDaemonClient.stop();
   dispatcher.stop();

@@ -8,6 +8,12 @@ import {
   type StdioAcpHandle,
   type StartStdioAcpServerOptions,
 } from "./stdio-acp-server.js";
+import {
+  acpSpecHash,
+  poolKeyFor,
+  type AcpWarmPool,
+  type AcpWarmPoolEntry,
+} from "./acp-warm-pool.js";
 import type { CapturePort } from "../worker/capture-port.js";
 import { registerSession, unregisterSession } from "../worker/session-registry.js";
 
@@ -95,6 +101,15 @@ const PENUMBRA_MCP_INJECTED_ENV_KEYS = new Set([
 ]);
 const PENUMBRA_MCP_ORIGIN_FLEET_WORKER = "fleet-worker";
 
+export class AcpSessionEvictedError extends Error {
+  readonly retryable = true;
+
+  constructor(message = "stdio-acp: warm ACP session was evicted mid-turn") {
+    super(message);
+    this.name = "AcpSessionEvictedError";
+  }
+}
+
 function buildLongLivedMcpEnv(input: DispatchInput): Array<{ name: string; value: string }> {
   const session = input.long_lived_session;
   if (!session || session.dispatch_kind !== "long_lived_tick") return [];
@@ -153,6 +168,7 @@ function supportsClientCapability(
 export interface StdioAcpOptions {
   binary: string;
   args?: string[];
+  agentName?: string;
   model?: string;
   cwd?: string;
   env?: Record<string, string>;
@@ -226,6 +242,11 @@ export interface StdioAcpOptions {
    * hostEnvPolicy is unset.
    */
   sanitizeClaudeHostEnv?: boolean;
+  warmPool?: boolean;
+  warmPoolIdleGraceMs?: number;
+  warmPoolMaxAgeMs?: number;
+  warmPoolMaxEntries?: number;
+  warmPoolHealthPing?: boolean;
 }
 
 interface StdioAcpThoughtCapture {
@@ -242,6 +263,7 @@ interface StdioAcpThoughtCapture {
 interface StdioAcpAdapterDeps {
   startServer: (opts: StartStdioAcpServerOptions) => Promise<StdioAcpHandle>;
   createClient: (handle: StdioAcpHandle) => StdioAcpClient;
+  pool?: AcpWarmPool;
   thoughtCapture?: StdioAcpThoughtCapture;
 }
 
@@ -269,9 +291,25 @@ export class StdioAcpAdapter implements Adapter {
   }
 
   async *dispatchStream(input: DispatchInput): AsyncIterable<DispatchEvent> {
+    const dispatchStartTs = Date.now();
     const cwd = this.opts.cwd ?? process.cwd();
     const requestTimeoutMs = this.opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    const warmPoolEnabled = this.opts.warmPool === true && this.deps.pool !== undefined;
+    const poolKey = poolKeyFor({
+      agent: this.opts.agentName ?? this.opts.model ?? this.opts.binary,
+      cwd,
+    });
+    const specHash = acpSpecHash({
+      binary: this.opts.binary,
+      args: this.opts.args,
+      model: this.opts.model,
+    });
+    const holderId =
+      input.handoff_id ?? input.conversation?.id ?? `stdio-acp:${Date.now()}:${Math.random()}`;
     let server: StdioAcpHandle | null = null;
+    let pooledEntry: AcpWarmPoolEntry | null = null;
+    let errorThrown = false;
+    let retriedCold = false;
 
     try {
       const inheritedEnv: Record<string, string> = { ...process.env } as Record<string, string>;
@@ -284,20 +322,39 @@ export class StdioAcpAdapter implements Adapter {
       const mergedEnv: Record<string, string> = { ...inheritedEnv, ...(this.opts.env ?? {}) };
       for (const key of this.opts.unsetEnv ?? []) delete mergedEnv[key];
 
-      server = await this.deps.startServer({
-        binary: this.opts.binary,
-        args: this.opts.args,
-        cwd,
-        env: mergedEnv,
-        signal: input.signal,
-      });
-      emitLifecycle(input, "acp.server.start", {
-        adapter: this.kind,
-        binary: this.opts.binary,
-        pid: server.pid,
-      });
+      let client: StdioAcpClient;
+      let sessionId = "";
+      let reusedSession = false;
+      if (warmPoolEnabled) {
+        pooledEntry = this.deps.pool!.acquire(holderId, poolKey, specHash);
+      }
+      if (pooledEntry) {
+        server = pooledEntry.handle;
+        client = pooledEntry.client;
+        sessionId = pooledEntry.sessionId;
+        reusedSession = true;
+        emitLifecycle(input, "acp.session.reuse", {
+          adapter: this.kind,
+          session_id: sessionId,
+          pool_key: poolKey,
+          framework_overhead_ms: Date.now() - dispatchStartTs,
+        });
+      } else {
+        server = await this.deps.startServer({
+          binary: this.opts.binary,
+          args: this.opts.args,
+          cwd,
+          env: mergedEnv,
+          signal: input.signal,
+        });
+        emitLifecycle(input, "acp.server.start", {
+          adapter: this.kind,
+          binary: this.opts.binary,
+          pid: server.pid,
+        });
 
-      const client = this.deps.createClient(server);
+        client = this.deps.createClient(server);
+      }
 
       let serverAlive = true;
       server.exited.then(() => {
@@ -533,131 +590,148 @@ export class StdioAcpAdapter implements Adapter {
         });
       }
 
-      // 1. Initialize
-      const clientCapabilities: any = {};
-      if (this.opts.fsReadTextFile || this.opts.fsWriteTextFile) {
-        clientCapabilities.fs = {
-          ...(this.opts.fsReadTextFile ? { readTextFile: true } : {}),
-          ...(this.opts.fsWriteTextFile ? { writeTextFile: true } : {}),
-        };
-      }
-      if (this.opts.terminal) {
-        clientCapabilities.terminal = true;
-      }
-      const initResponse = await client.request("initialize", {
-        protocolVersion: 1,
-        clientCapabilities,
-        clientInfo: { name: "penumbra", version: "1.0.0" },
-      });
-
-      // 1.5 Authenticate
-      const authMethods = initResponse.authMethods ?? [];
-      if (authMethods.length > 0) {
-        let chosenAuthId = this.opts.authMethodId;
-        if (!chosenAuthId) {
-          const satisfiedEnvVar = authMethods.find(
-            (m: any) => m.type === "env_var" && m.vars?.every((v: any) => !!mergedEnv[v.name]),
-          );
-          if (satisfiedEnvVar) {
-            chosenAuthId = satisfiedEnvVar.id;
-          } else {
-            const nonEnvVar = authMethods.find((m: any) => m.type !== "env_var");
-            chosenAuthId = nonEnvVar ? nonEnvVar.id : authMethods[0].id;
-          }
+      if (!reusedSession) {
+        // 1. Initialize
+        const clientCapabilities: any = {};
+        if (this.opts.fsReadTextFile || this.opts.fsWriteTextFile) {
+          clientCapabilities.fs = {
+            ...(this.opts.fsReadTextFile ? { readTextFile: true } : {}),
+            ...(this.opts.fsWriteTextFile ? { writeTextFile: true } : {}),
+          };
         }
-        await client.request("authenticate", { methodId: chosenAuthId });
-      }
+        if (this.opts.terminal) {
+          clientCapabilities.terminal = true;
+        }
+        const initResponse = await client.request("initialize", {
+          protocolVersion: 1,
+          clientCapabilities,
+          clientInfo: { name: "penumbra", version: "1.0.0" },
+        });
 
-      // 2. New Session
-      const mcpServers = this.opts.mcpServers ?? [];
-      // Scope dispatch identity env injection to the penumbra-mcp server only —
-      // never leak handoff/tick identifiers to third-party stdio MCPs. We
-      // identify it by command/arg path (binary file ending in penumbra-mcp.ts
-      // or penumbra-mcp), which is yaml-independent. The agentchat.yaml
-      // convention names this server simply `penumbra`, so a name-only check
-      // would silently miss it. Some deployments wrap the server in
-      // mcp-allowlist-proxy.ts and carry the real upstream command in
-      // MCP_PROXY_UPSTREAM; those wrappers should also receive the injected
-      // env because the proxy forwards process.env to the upstream child.
-      const isPenumbraMcp = (s: any): boolean => {
-        if (s.command === undefined) return false;
-        const argsArr: string[] = Array.isArray(s.args) ? s.args : [];
-        const direct = /penumbra-mcp(\.ts|\.js)?($|[\s/])/.test(
-          [s.name ?? "", s.command, ...argsArr].join(" "),
-        );
-        if (direct) return true;
-        const envEntries: Array<{ name?: unknown; value?: unknown }> = Array.isArray(s.env)
-          ? s.env
-          : [];
-        const upstream = envEntries.find((entry) => String(entry?.name) === "MCP_PROXY_UPSTREAM");
-        return (
-          typeof upstream?.value === "string" &&
-          /penumbra-mcp(\.ts|\.js)?($|[\s/])/.test(upstream.value)
-        );
-      };
-      const longLivedEnv = buildLongLivedMcpEnv(input);
-      const shouldInjectDispatchEnv = Boolean(input.handoff_id) || longLivedEnv.length > 0;
-      const mcpServersWithEnv = shouldInjectDispatchEnv
-        ? mcpServers.map((s: any) =>
-            isPenumbraMcp(s)
-              ? {
-                  ...s,
-                  env: [
-                    ...((s.env ?? []) as any[]).filter(
-                      (e: any) => !PENUMBRA_MCP_INJECTED_ENV_KEYS.has(String(e?.name)),
-                    ),
-                    ...(input.handoff_id
-                      ? [{ name: "PENUMBRA_HANDOFF_ID", value: input.handoff_id }]
-                      : []),
-                    { name: "PENUMBRA_MCP_ORIGIN", value: PENUMBRA_MCP_ORIGIN_FLEET_WORKER },
-                    ...longLivedEnv,
-                  ],
-                }
-              : s,
-          )
-        : mcpServers;
+        // 1.5 Authenticate
+        const authMethods = initResponse.authMethods ?? [];
+        if (authMethods.length > 0) {
+          let chosenAuthId = this.opts.authMethodId;
+          if (!chosenAuthId) {
+            const satisfiedEnvVar = authMethods.find(
+              (m: any) => m.type === "env_var" && m.vars?.every((v: any) => !!mergedEnv[v.name]),
+            );
+            if (satisfiedEnvVar) {
+              chosenAuthId = satisfiedEnvVar.id;
+            } else {
+              const nonEnvVar = authMethods.find((m: any) => m.type !== "env_var");
+              chosenAuthId = nonEnvVar ? nonEnvVar.id : authMethods[0].id;
+            }
+          }
+          await client.request("authenticate", { methodId: chosenAuthId });
+        }
 
-      const sessionParams: any = {
-        cwd,
-        mcpServers: mcpServersWithEnv,
-      };
-      if (this.opts.model) {
-        sessionParams.model = this.opts.model;
-      }
-      if (
-        this.opts.claudeCodeSettingSources !== undefined ||
-        this.opts.claudeCodeStrictMcpConfig !== undefined ||
-        this.opts.claudeCodeAllowedTools !== undefined ||
-        this.opts.claudeCodeTools !== undefined ||
-        this.opts.claudeCodeDisallowedTools !== undefined
-      ) {
-        sessionParams._meta = {
-          ...(sessionParams._meta ?? {}),
-          claudeCode: {
-            ...(sessionParams._meta?.claudeCode ?? {}),
-            options: {
-              ...(sessionParams._meta?.claudeCode?.options ?? {}),
-              ...(this.opts.claudeCodeSettingSources !== undefined
-                ? { settingSources: this.opts.claudeCodeSettingSources }
-                : {}),
-              ...(this.opts.claudeCodeStrictMcpConfig !== undefined
-                ? { strictMcpConfig: this.opts.claudeCodeStrictMcpConfig }
-                : {}),
-              ...(this.opts.claudeCodeAllowedTools !== undefined
-                ? { allowedTools: this.opts.claudeCodeAllowedTools }
-                : {}),
-              ...(this.opts.claudeCodeTools !== undefined
-                ? { tools: this.opts.claudeCodeTools }
-                : {}),
-              ...(this.opts.claudeCodeDisallowedTools !== undefined
-                ? { disallowedTools: this.opts.claudeCodeDisallowedTools }
-                : {}),
-            },
-          },
+        // 2. New Session
+        const mcpServers = this.opts.mcpServers ?? [];
+        // Scope dispatch identity env injection to the penumbra-mcp server only —
+        // never leak handoff/tick identifiers to third-party stdio MCPs. We
+        // identify it by command/arg path (binary file ending in penumbra-mcp.ts
+        // or penumbra-mcp), which is yaml-independent. The agentchat.yaml
+        // convention names this server simply `penumbra`, so a name-only check
+        // would silently miss it. Some deployments wrap the server in
+        // mcp-allowlist-proxy.ts and carry the real upstream command in
+        // MCP_PROXY_UPSTREAM; those wrappers should also receive the injected
+        // env because the proxy forwards process.env to the upstream child.
+        const isPenumbraMcp = (s: any): boolean => {
+          if (s.command === undefined) return false;
+          const argsArr: string[] = Array.isArray(s.args) ? s.args : [];
+          const direct = /penumbra-mcp(\.ts|\.js)?($|[\s/])/.test(
+            [s.name ?? "", s.command, ...argsArr].join(" "),
+          );
+          if (direct) return true;
+          const envEntries: Array<{ name?: unknown; value?: unknown }> = Array.isArray(s.env)
+            ? s.env
+            : [];
+          const upstream = envEntries.find((entry) => String(entry?.name) === "MCP_PROXY_UPSTREAM");
+          return (
+            typeof upstream?.value === "string" &&
+            /penumbra-mcp(\.ts|\.js)?($|[\s/])/.test(upstream.value)
+          );
         };
+        const longLivedEnv = buildLongLivedMcpEnv(input);
+        const shouldInjectDispatchEnv = Boolean(input.handoff_id) || longLivedEnv.length > 0;
+        const mcpServersWithEnv = shouldInjectDispatchEnv
+          ? mcpServers.map((s: any) =>
+              isPenumbraMcp(s)
+                ? {
+                    ...s,
+                    env: [
+                      ...((s.env ?? []) as any[]).filter(
+                        (e: any) => !PENUMBRA_MCP_INJECTED_ENV_KEYS.has(String(e?.name)),
+                      ),
+                      ...(input.handoff_id
+                        ? [{ name: "PENUMBRA_HANDOFF_ID", value: input.handoff_id }]
+                        : []),
+                      { name: "PENUMBRA_MCP_ORIGIN", value: PENUMBRA_MCP_ORIGIN_FLEET_WORKER },
+                      ...longLivedEnv,
+                    ],
+                  }
+                : s,
+            )
+          : mcpServers;
+
+        const sessionParams: any = {
+          cwd,
+          mcpServers: mcpServersWithEnv,
+        };
+        if (this.opts.model) {
+          sessionParams.model = this.opts.model;
+        }
+        if (
+          this.opts.claudeCodeSettingSources !== undefined ||
+          this.opts.claudeCodeStrictMcpConfig !== undefined ||
+          this.opts.claudeCodeAllowedTools !== undefined ||
+          this.opts.claudeCodeTools !== undefined ||
+          this.opts.claudeCodeDisallowedTools !== undefined
+        ) {
+          sessionParams._meta = {
+            ...(sessionParams._meta ?? {}),
+            claudeCode: {
+              ...(sessionParams._meta?.claudeCode ?? {}),
+              options: {
+                ...(sessionParams._meta?.claudeCode?.options ?? {}),
+                ...(this.opts.claudeCodeSettingSources !== undefined
+                  ? { settingSources: this.opts.claudeCodeSettingSources }
+                  : {}),
+                ...(this.opts.claudeCodeStrictMcpConfig !== undefined
+                  ? { strictMcpConfig: this.opts.claudeCodeStrictMcpConfig }
+                  : {}),
+                ...(this.opts.claudeCodeAllowedTools !== undefined
+                  ? { allowedTools: this.opts.claudeCodeAllowedTools }
+                  : {}),
+                ...(this.opts.claudeCodeTools !== undefined
+                  ? { tools: this.opts.claudeCodeTools }
+                  : {}),
+                ...(this.opts.claudeCodeDisallowedTools !== undefined
+                  ? { disallowedTools: this.opts.claudeCodeDisallowedTools }
+                  : {}),
+              },
+            },
+          };
+        }
+        const session = await client.request("session/new", sessionParams);
+        sessionId = session.sessionId;
+        if (warmPoolEnabled) {
+          pooledEntry =
+            this.deps.pool!.deposit(poolKey, {
+              handle: server,
+              client: client as StdioAcpClient,
+              sessionId,
+              specHash,
+            }) ?? null;
+          pooledEntry?.refs.add(holderId);
+        }
+        emitLifecycle(input, "acp.session.start", {
+          adapter: this.kind,
+          session_id: sessionId,
+          framework_overhead_ms: Date.now() - dispatchStartTs,
+        });
       }
-      const session = await client.request("session/new", sessionParams);
-      const sessionId = session.sessionId;
       if (input.handoff_id) {
         registerSession(input.handoff_id, {
           adapter: this.kind,
@@ -665,14 +739,14 @@ export class StdioAcpAdapter implements Adapter {
             await client.request("session/prompt", {
               sessionId,
               prompt: [{ type: "text", text: message.text }],
+              _meta: {
+                penumbraHandoffId: input.handoff_id,
+                penumbra: { handoff_id: input.handoff_id },
+              },
             });
           },
         });
       }
-      emitLifecycle(input, "acp.session.start", {
-        adapter: this.kind,
-        session_id: sessionId,
-      });
 
       // 3. Prompt — ACP is streaming-first per @agentclientprotocol/sdk:
       //    - prompt: PromptRequest carries `prompt: Array<ContentBlock>`, not a string
@@ -685,6 +759,15 @@ export class StdioAcpAdapter implements Adapter {
       let toolUseRejector: ((err: Error) => void) | null = null;
       const toolUseRejection = new Promise<never>((_, reject) => {
         toolUseRejector = reject;
+      });
+      let sessionExitRejector: ((err: Error) => void) | null = null;
+      const sessionExitRejection = new Promise<never>((_, reject) => {
+        sessionExitRejector = reject;
+      });
+      server.exited.then((code) => {
+        if (pooledEntry && sessionExitRejector && code !== 0) {
+          sessionExitRejector(new AcpSessionEvictedError());
+        }
       });
       client.on("session/update", (params: any) => {
         const update = params?.update;
@@ -827,10 +910,21 @@ export class StdioAcpAdapter implements Adapter {
         }
       });
 
-      const promptPromise = client.request("session/prompt", {
+      const promptParams: any = {
         sessionId,
         prompt: [{ type: "text", text: input.prompt }],
-      });
+      };
+      if (input.handoff_id) {
+        promptParams._meta = {
+          ...(promptParams._meta ?? {}),
+          penumbraHandoffId: input.handoff_id,
+          penumbra: {
+            ...(promptParams._meta?.penumbra ?? {}),
+            handoff_id: input.handoff_id,
+          },
+        };
+      }
+      const promptPromise = client.request("session/prompt", promptParams);
 
       const promptTimeoutPromise = new Promise<never>((_, reject) => {
         promptTimeoutRejector = reject;
@@ -853,6 +947,7 @@ export class StdioAcpAdapter implements Adapter {
           promptPromise,
           toolUseRejection,
           promptTimeoutPromise,
+          sessionExitRejection,
         ]);
         emitLifecycle(input, "acp.session.end", {
           adapter: this.kind,
@@ -860,6 +955,7 @@ export class StdioAcpAdapter implements Adapter {
           stop_reason: (promptResponse as any)?.stopReason ?? null,
         });
       } finally {
+        sessionExitRejector = null;
         promptTimeoutRejector = null;
         clearPromptTimeout();
         if (heartbeatTimer !== null) {
@@ -872,9 +968,30 @@ export class StdioAcpAdapter implements Adapter {
         type: "done",
         result: {
           text: accumulatedText,
+          meta: {
+            framework_overhead_ms: Date.now() - dispatchStartTs,
+          },
         },
       };
     } catch (err) {
+      if (err instanceof AcpSessionEvictedError && warmPoolEnabled && pooledEntry && !retriedCold) {
+        retriedCold = true;
+        this.deps.pool!.evict(poolKey, pooledEntry);
+        pooledEntry = null;
+        server = null;
+        const coldAdapter = new StdioAcpAdapter(
+          { ...this.opts, warmPool: false },
+          {
+            startServer: this.deps.startServer,
+            createClient: this.deps.createClient,
+            thoughtCapture: this.deps.thoughtCapture,
+          },
+        );
+        for await (const event of coldAdapter.dispatchStream(input)) {
+          yield event;
+        }
+        return;
+      }
       // Augment any failure thrown from the dispatch turn with the captured
       // child stderr tail. This covers session/new failures, capability
       // negotiation hangs, and abnormal exits — all paths where the upstream
@@ -885,13 +1002,21 @@ export class StdioAcpAdapter implements Adapter {
         const tail = server.getStderrTail?.() ?? "";
         if (tail) err.message = `${err.message}\n[child stderr tail]\n${tail}`;
       }
+      errorThrown = true;
       throw err;
     } finally {
       if (input.handoff_id) {
         unregisterSession(input.handoff_id);
       }
-      if (server) {
-        server.kill();
+      if (warmPoolEnabled && pooledEntry && !errorThrown) {
+        this.deps.pool!.release(holderId, poolKey);
+      } else {
+        if (warmPoolEnabled && pooledEntry) {
+          this.deps.pool!.evict(poolKey, pooledEntry);
+        }
+        if (server && !(pooledEntry as any)?.tornDown) {
+          server.kill();
+        }
       }
     }
   }

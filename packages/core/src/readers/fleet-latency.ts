@@ -11,6 +11,8 @@ export type FleetLatencyAgentRow = {
   dispatches_per_hour: number;
   exec_ms_p50: number | null;
   exec_ms_p95: number | null;
+  framework_overhead_ms_p50: number | null;
+  framework_overhead_ms_p95: number | null;
   queue_depth: number;
 };
 
@@ -26,6 +28,11 @@ export type FleetLatencyOutput = {
 type DispatchRow = {
   agent_name: string;
   wall_ms: unknown;
+};
+
+type FrameworkOverheadRow = {
+  agent_name: string;
+  framework_overhead_ms: unknown;
 };
 
 type CountRow = {
@@ -70,6 +77,8 @@ export function readFleetLatency(db: Database, input: FleetLatencyInput = {}): F
       dispatches_per_hour: row.dispatch_count / hours,
       exec_ms_p50: null,
       exec_ms_p95: null,
+      framework_overhead_ms_p50: null,
+      framework_overhead_ms_p95: null,
       queue_depth: 0,
     });
   }
@@ -94,6 +103,8 @@ export function readFleetLatency(db: Database, input: FleetLatencyInput = {}): F
         dispatches_per_hour: 0,
         exec_ms_p50: null,
         exec_ms_p95: null,
+        framework_overhead_ms_p50: null,
+        framework_overhead_ms_p95: null,
         queue_depth: 0,
       } satisfies FleetLatencyAgentRow);
     existing.queue_depth = row.queue_depth;
@@ -130,6 +141,40 @@ export function readFleetLatency(db: Database, input: FleetLatencyInput = {}): F
     if (!row) continue;
     row.exec_ms_p50 = percentileNearestRank(values, 0.5);
     row.exec_ms_p95 = percentileNearestRank(values, 0.95);
+  }
+
+  const frameworkRows = db
+    .query<FrameworkOverheadRow, [string, string]>(
+      `
+      SELECT agent_name, framework_overhead_ms
+      FROM agent_performance
+      WHERE ts >= ?
+        AND ts <= ?
+      ORDER BY agent_name ASC, ts ASC
+    `,
+    )
+    .all(fromIso, toIso);
+
+  const overheadByAgent = new Map<string, number[]>();
+  for (const row of frameworkRows) {
+    if (
+      typeof row.framework_overhead_ms !== "number" ||
+      !Number.isFinite(row.framework_overhead_ms) ||
+      row.framework_overhead_ms < 0
+    ) {
+      continue;
+    }
+    const values = overheadByAgent.get(row.agent_name) ?? [];
+    values.push(Math.round(row.framework_overhead_ms));
+    overheadByAgent.set(row.agent_name, values);
+  }
+
+  for (const [agentName, values] of overheadByAgent) {
+    values.sort((a, b) => a - b);
+    const row = agents.get(agentName);
+    if (!row) continue;
+    row.framework_overhead_ms_p50 = percentileNearestRank(values, 0.5);
+    row.framework_overhead_ms_p95 = percentileNearestRank(values, 0.95);
   }
 
   return {

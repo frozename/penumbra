@@ -58,6 +58,35 @@ describe("readFleetLatency", () => {
     );
   }
 
+  function insertPerformance(handoffId: string, agent: string, frameworkOverheadMs: number | null) {
+    db.prepare(
+      `
+      INSERT INTO agent_performance (
+        performance_id, ts, handoff_id, conversation_id, project_id, agent_name,
+        task_type, outcome, cost_usd, tokens_used, latency_ms, exec_ms,
+        framework_overhead_ms, source, notes, metadata_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    ).run(
+      `perf-${handoffId}`,
+      "2026-06-03T11:55:00.000Z",
+      handoffId,
+      `conv-${handoffId}`,
+      "proj",
+      agent,
+      "implement_small",
+      "merged",
+      null,
+      null,
+      null,
+      null,
+      frameworkOverheadMs,
+      "worker",
+      null,
+      "{}",
+    );
+  }
+
   it("returns per-agent p50/p95 wall time, dispatches per hour, and queue depth", () => {
     insertHandoff("a1", "alpha");
     insertHandoff("a2", "alpha");
@@ -78,6 +107,11 @@ describe("readFleetLatency", () => {
     insertDispatchEnd("b1", "2026-06-03T11:40:00Z", 1000);
     insertDispatchEnd("b2", "2026-06-03T11:50:00Z", null);
     insertDispatchEnd("old", "2026-06-03T08:00:00Z", 9999);
+    insertPerformance("a1", "alpha", 10);
+    insertPerformance("a2", "alpha", 20);
+    insertPerformance("a3", "alpha", 30);
+    insertPerformance("a4", "alpha", 40);
+    insertPerformance("b1", "beta", null);
 
     const result = readFleetLatency(db, {
       now: "2026-06-03T12:00:00Z",
@@ -96,6 +130,8 @@ describe("readFleetLatency", () => {
         dispatches_per_hour: 2,
         exec_ms_p50: 200,
         exec_ms_p95: 400,
+        framework_overhead_ms_p50: 20,
+        framework_overhead_ms_p95: 40,
         queue_depth: 2,
       },
       {
@@ -104,6 +140,8 @@ describe("readFleetLatency", () => {
         dispatches_per_hour: 1,
         exec_ms_p50: 1000,
         exec_ms_p95: 1000,
+        framework_overhead_ms_p50: null,
+        framework_overhead_ms_p95: null,
         queue_depth: 1,
       },
       {
@@ -112,6 +150,8 @@ describe("readFleetLatency", () => {
         dispatches_per_hour: 0,
         exec_ms_p50: null,
         exec_ms_p95: null,
+        framework_overhead_ms_p50: null,
+        framework_overhead_ms_p95: null,
         queue_depth: 1,
       },
     ]);

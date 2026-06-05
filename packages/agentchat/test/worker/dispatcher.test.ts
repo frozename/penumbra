@@ -126,6 +126,28 @@ test("emits dispatch.start and dispatch.end events on successful dispatch", asyn
   );
 });
 
+test("threads adapter framework_overhead_ms into dispatch.end meta", async () => {
+  const events: any[] = [];
+  const d = deps({
+    onEvent: (event: any) => events.push(event),
+    workerId: "w-dispatch",
+    dispatch: mock().mockResolvedValue({
+      next: null,
+      terminatedReason: "no_mention",
+      text: "result",
+      agent: "executor",
+      meta: { framework_overhead_ms: 321 },
+    }),
+  } as any);
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff("h-overhead"));
+  await dispatcher.idle();
+
+  const end = events.find((event) => event.kind === "dispatch.end");
+  expect(end?.meta?.framework_overhead_ms).toBe(321);
+});
+
 test("emits cancel.dispatched when cancellation matches an active dispatch", async () => {
   const events: any[] = [];
   const started = Promise.withResolvers<void>();

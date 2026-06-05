@@ -106,6 +106,7 @@ export function captureAgentPerformanceFromReconciler(opts: {
     tokens_used: usage.tokens_used,
     latency_ms: latency,
     exec_ms: null,
+    framework_overhead_ms: null,
     source: "reconciler",
     gate_outcome: lookupLatestLaneGateOutcome(opts.db, input.handoff_id),
     notes: input.result.regression_summary ?? null,
@@ -170,6 +171,26 @@ function readDispatchExecMs(db: Database, handoffId: string): number | null {
     const wallMs = meta.wall_ms;
     if (typeof wallMs !== "number" || !Number.isFinite(wallMs) || wallMs < 0) return null;
     return Math.round(wallMs);
+  } catch {
+    return null;
+  }
+}
+
+function readDispatchFrameworkOverheadMs(db: Database, handoffId: string): number | null {
+  const row = db
+    .prepare<
+      { meta_json: string | null },
+      [string]
+    >(`SELECT meta_json FROM dispatch_events WHERE handoff_id = ? AND kind = 'dispatch.end' ORDER BY ts DESC, id DESC LIMIT 1`)
+    .get(handoffId);
+  if (!row?.meta_json) return null;
+  try {
+    const meta = JSON.parse(row.meta_json) as Record<string, unknown>;
+    const overheadMs = meta.framework_overhead_ms;
+    if (typeof overheadMs !== "number" || !Number.isFinite(overheadMs) || overheadMs < 0) {
+      return null;
+    }
+    return Math.round(overheadMs);
   } catch {
     return null;
   }
@@ -298,6 +319,7 @@ export function captureAgentPerformanceFromDispatch(opts: {
     tokens_used: usage.tokens_used,
     latency_ms: latency,
     exec_ms: readDispatchExecMs(opts.db, input.handoff_id),
+    framework_overhead_ms: readDispatchFrameworkOverheadMs(opts.db, input.handoff_id),
     source: "worker",
     gate_outcome: lookupLatestLaneGateOutcome(opts.db, input.handoff_id),
     notes,

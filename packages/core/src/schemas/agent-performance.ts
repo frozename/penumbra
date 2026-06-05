@@ -64,6 +64,7 @@ export const AgentPerformanceRowSchema = z.object({
   tokens_used: z.number().int().nullable(),
   latency_ms: z.number().int().nullable(),
   exec_ms: z.number().int().nullable().optional(),
+  framework_overhead_ms: z.number().int().nullable().optional(),
   source: AgentPerformanceSourceSchema,
   notes: z.string().nullable(),
   reliability_status: z.string().nullable().optional(),

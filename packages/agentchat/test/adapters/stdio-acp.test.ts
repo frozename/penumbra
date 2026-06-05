@@ -10,6 +10,55 @@ import type { HostEnvPolicy } from "../../src/adapters/stdio-acp.js";
 import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
 import { ThoughtCapture } from "../../src/worker/thought-capture.js";
 
+function createWarmPoolHarness(opts: {
+  warmPool?: boolean;
+  promptThrows?: boolean;
+  sessionNewThrows?: boolean;
+}) {
+  const mockStdin = new PassThrough();
+  const mockStdout = new PassThrough();
+  const mockKill = vi.fn();
+  const startServer = vi.fn().mockResolvedValue({
+    stdin: mockStdin,
+    stdout: mockStdout,
+    pid: 123,
+    kill: mockKill,
+    exited: new Promise<number | null>(() => {}),
+    getStderrTail: () => "",
+  });
+  const pool = {
+    acquire: vi.fn().mockReturnValue(null),
+    deposit: vi.fn().mockReturnValue({ refs: new Set(), sessionId: "session-123" }),
+    release: vi.fn(),
+    evict: vi.fn(),
+  };
+  const request = vi.fn().mockImplementation(async (method: string) => {
+    if (method === "initialize") return { protocolVersion: 1, authMethods: [] };
+    if (method === "session/new") {
+      if (opts.sessionNewThrows) throw new Error("session-new-failed");
+      return { sessionId: "session-123" };
+    }
+    if (method === "session/prompt") {
+      if (opts.promptThrows) throw new Error("prompt-failed");
+      return { stopReason: "end_turn" };
+    }
+    return {};
+  });
+  const adapter = new StdioAcpAdapter(
+    { binary: "mock-acp", warmPool: opts.warmPool } as any,
+    {
+      startServer,
+      createClient: () => ({
+        onRequest: vi.fn(),
+        on: vi.fn(),
+        request,
+      }),
+      pool,
+    } as any,
+  );
+  return { adapter, pool, mockKill, startServer, request };
+}
+
 function createPermissionHarness(
   adapterOptions: Record<string, unknown> = {
     mcpServers: [{ name: "penumbra", command: "bun", args: ["/tmp/penumbra-mcp.ts"] } as any],
@@ -81,6 +130,76 @@ function createPermissionHarness(
 }
 
 describe("StdioAcpAdapter", () => {
+  it("keeps warm_pool disabled path cold and never calls the pool", async () => {
+    for (const warmPool of [undefined, false]) {
+      const { adapter, pool, mockKill } = createWarmPoolHarness({ warmPool });
+
+      await adapter.dispatch({
+        prompt: "hello",
+        signal: new AbortController().signal,
+      });
+
+      expect(pool.acquire).not.toHaveBeenCalled();
+      expect(pool.deposit).not.toHaveBeenCalled();
+      expect(pool.release).not.toHaveBeenCalled();
+      expect(pool.evict).not.toHaveBeenCalled();
+      expect(mockKill).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("keeps warm_pool disabled path cold when session/new throws", async () => {
+    const { adapter, pool, mockKill } = createWarmPoolHarness({
+      warmPool: false,
+      sessionNewThrows: true,
+    });
+
+    await expect(
+      adapter.dispatch({
+        prompt: "hello",
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("session-new-failed");
+
+    expect(pool.acquire).not.toHaveBeenCalled();
+    expect(pool.deposit).not.toHaveBeenCalled();
+    expect(pool.release).not.toHaveBeenCalled();
+    expect(pool.evict).not.toHaveBeenCalled();
+    expect(mockKill).toHaveBeenCalledTimes(1);
+  });
+
+  it("warm_pool enabled deposits and releases a clean cold-started session without killing it", async () => {
+    const { adapter, pool, mockKill } = createWarmPoolHarness({ warmPool: true });
+
+    await adapter.dispatch({
+      prompt: "hello",
+      signal: new AbortController().signal,
+    });
+
+    expect(pool.acquire).toHaveBeenCalledTimes(1);
+    expect(pool.deposit).toHaveBeenCalledTimes(1);
+    expect(pool.release).toHaveBeenCalledTimes(1);
+    expect(pool.evict).not.toHaveBeenCalled();
+    expect(mockKill).not.toHaveBeenCalled();
+  });
+
+  it("warm_pool enabled evicts and kills when session/prompt throws", async () => {
+    const { adapter, pool, mockKill } = createWarmPoolHarness({
+      warmPool: true,
+      promptThrows: true,
+    });
+
+    await expect(
+      adapter.dispatch({
+        prompt: "hello",
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("prompt-failed");
+
+    expect(pool.deposit).toHaveBeenCalledTimes(1);
+    expect(pool.evict).toHaveBeenCalledTimes(1);
+    expect(mockKill).toHaveBeenCalledTimes(1);
+  });
+
   it("isClaudeHostEnvKey identifies host-Claude env keys", () => {
     expect(isClaudeHostEnvKey("CLAUDECODE")).toBe(true);
     expect(isClaudeHostEnvKey("CLAUDE_CODE_ENTRYPOINT")).toBe(true);
@@ -1098,7 +1217,7 @@ describe("StdioAcpAdapter", () => {
         prompt: "hello",
         signal: new AbortController().signal,
       }),
-    ).resolves.toEqual({ text: "still working" });
+    ).resolves.toMatchObject({ text: "still working" });
     expect(mockKill).toHaveBeenCalledTimes(1);
   });
 

@@ -24,6 +24,12 @@ export const AgentOptionsSchema = z.looseObject({
   terminal_output_max_bytes: z.number().int().min(1024).max(8388608).optional(),
   /** Max concurrent terminals per dispatch. Default: 3. */
   terminal_max_concurrent: z.number().int().min(1).max(8).optional(),
+  /** Keep ACP subprocess sessions warm between dispatches. Default: off. */
+  warm_pool: z.boolean().optional(),
+  warm_pool_idle_grace_ms: z.number().int().min(1000).max(3600000).optional(),
+  warm_pool_max_age_ms: z.number().int().min(10000).max(86400000).optional(),
+  warm_pool_max_entries: z.number().int().min(1).max(10).optional(),
+  warm_pool_health_ping: z.boolean().optional(),
 });
 export type AgentOptions = z.infer<typeof AgentOptionsSchema>;
 

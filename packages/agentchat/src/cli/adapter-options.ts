@@ -14,6 +14,7 @@ export function normalizeAdapterOptions(
   allowlist: readonly string[],
 ): AdapterOptions {
   let adapterOptions = (cfg.options ?? {}) as AdapterOptions;
+  adapterOptions = normalizeWarmPoolOptions(adapterOptions);
 
   if (hostedSpecs.length > 0) {
     const yamlMcpServers: any[] = Array.isArray(adapterOptions.mcpServers)
@@ -49,4 +50,21 @@ export function normalizeAdapterOptions(
   }
 
   return adapterOptions;
+}
+
+function normalizeWarmPoolOptions(options: AdapterOptions): AdapterOptions {
+  const mapped: AdapterOptions = { ...options };
+  const mapping: Array<[string, string]> = [
+    ["warm_pool", "warmPool"],
+    ["warm_pool_idle_grace_ms", "warmPoolIdleGraceMs"],
+    ["warm_pool_max_age_ms", "warmPoolMaxAgeMs"],
+    ["warm_pool_max_entries", "warmPoolMaxEntries"],
+    ["warm_pool_health_ping", "warmPoolHealthPing"],
+  ];
+  for (const [from, to] of mapping) {
+    if (mapped[from] !== undefined && mapped[to] === undefined) {
+      mapped[to] = mapped[from];
+    }
+  }
+  return mapped;
 }

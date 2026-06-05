@@ -134,6 +134,61 @@ describe("captureAgentPerformanceFromReconciler", () => {
     expect(persisted).toEqual({ latency_ms: 120000, exec_ms: 42000 });
   });
 
+  it("persists framework_overhead_ms from dispatch.end meta when present", () => {
+    db.prepare(
+      `
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `,
+    ).run(
+      "h1",
+      "worker-1",
+      "dispatch.end",
+      "2026-04-30T12:01:00Z",
+      JSON.stringify({ status: "ok", wall_ms: 42000, framework_overhead_ms: 1234 }),
+    );
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-overhead",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: { handoff_id: "h1", reason: "completed" },
+    });
+
+    expect(row.framework_overhead_ms).toBe(1234);
+    const persisted = db
+      .query<
+        { framework_overhead_ms: number | null },
+        []
+      >(`SELECT framework_overhead_ms FROM agent_performance WHERE handoff_id = 'h1'`)
+      .get();
+    expect(persisted).toEqual({ framework_overhead_ms: 1234 });
+  });
+
+  it("leaves framework_overhead_ms null when dispatch.end omits it", () => {
+    db.prepare(
+      `
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `,
+    ).run(
+      "h1",
+      "worker-1",
+      "dispatch.end",
+      "2026-04-30T12:01:00Z",
+      JSON.stringify({ status: "ok", wall_ms: 42000 }),
+    );
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-overhead-null",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: { handoff_id: "h1", reason: "completed" },
+    });
+
+    expect(row.framework_overhead_ms).toBeNull();
+  });
+
   it("leaves exec_ms null when dispatch.end wall_ms is absent or not finite", () => {
     db.prepare(
       `

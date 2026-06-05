@@ -7,7 +7,10 @@ import { CodexCliAdapter } from "./codex-cli.js";
 import { OpencodeAcpAdapter, type OpencodeAcpOptions } from "./opencode-acp.js";
 import { OpencodeCliAdapter, type OpencodeCliOptions } from "./opencode-cli.js";
 import { StdioAcpAdapter, type StdioAcpOptions } from "./stdio-acp.js";
+import { StdioAcpClient } from "./stdio-acp-client.js";
+import { startStdioAcpServer } from "./stdio-acp-server.js";
 import type { CapturePort } from "../worker/capture-port.js";
+import { getOrCreateAcpWarmPool } from "./acp-warm-pool-registry.js";
 
 export type AdapterFactory = (options: Record<string, unknown>) => Adapter;
 
@@ -15,30 +18,50 @@ const builtIns: Record<string, AdapterFactory> = {
   "stdio-acp": (o) => {
     const opts = o as Partial<StdioAcpOptions>;
     if (!opts.binary) throw new Error("stdio-acp: binary is required");
-    return new StdioAcpAdapter({
-      binary: opts.binary,
-      args: opts.args,
-      model: opts.model,
-      cwd: opts.cwd,
-      env: opts.env,
-      unsetEnv: opts.unsetEnv,
-      bootTimeoutMs: opts.bootTimeoutMs,
-      requestTimeoutMs: opts.requestTimeoutMs,
-      authMethodId: opts.authMethodId,
-      framing: opts.framing,
-      fsReadTextFile: opts.fsReadTextFile,
-      fsWriteTextFile: opts.fsWriteTextFile,
-      terminal: opts.terminal,
-      capturePort: opts.capturePort,
-      mcpServers: opts.mcpServers,
-      claudeCodeSettingSources: opts.claudeCodeSettingSources,
-      claudeCodeStrictMcpConfig: opts.claudeCodeStrictMcpConfig,
-      claudeCodeAllowedTools: opts.claudeCodeAllowedTools,
-      claudeCodeTools: opts.claudeCodeTools,
-      claudeCodeDisallowedTools: opts.claudeCodeDisallowedTools,
-      hostEnvPolicy: opts.hostEnvPolicy,
-      sanitizeClaudeHostEnv: opts.sanitizeClaudeHostEnv,
-    });
+    return new StdioAcpAdapter(
+      {
+        binary: opts.binary,
+        args: opts.args,
+        model: opts.model,
+        cwd: opts.cwd,
+        env: opts.env,
+        unsetEnv: opts.unsetEnv,
+        bootTimeoutMs: opts.bootTimeoutMs,
+        requestTimeoutMs: opts.requestTimeoutMs,
+        authMethodId: opts.authMethodId,
+        framing: opts.framing,
+        fsReadTextFile: opts.fsReadTextFile,
+        fsWriteTextFile: opts.fsWriteTextFile,
+        terminal: opts.terminal,
+        capturePort: opts.capturePort,
+        mcpServers: opts.mcpServers,
+        claudeCodeSettingSources: opts.claudeCodeSettingSources,
+        claudeCodeStrictMcpConfig: opts.claudeCodeStrictMcpConfig,
+        claudeCodeAllowedTools: opts.claudeCodeAllowedTools,
+        claudeCodeTools: opts.claudeCodeTools,
+        claudeCodeDisallowedTools: opts.claudeCodeDisallowedTools,
+        hostEnvPolicy: opts.hostEnvPolicy,
+        sanitizeClaudeHostEnv: opts.sanitizeClaudeHostEnv,
+        agentName: opts.agentName,
+        warmPool: opts.warmPool,
+        warmPoolIdleGraceMs: opts.warmPoolIdleGraceMs,
+        warmPoolMaxAgeMs: opts.warmPoolMaxAgeMs,
+        warmPoolMaxEntries: opts.warmPoolMaxEntries,
+        warmPoolHealthPing: opts.warmPoolHealthPing,
+      },
+      opts.warmPool === true
+        ? {
+            startServer: startStdioAcpServer,
+            createClient: (h) =>
+              new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout, framing: opts.framing }),
+            pool: getOrCreateAcpWarmPool(opts.agentName ?? opts.model ?? opts.binary, {
+              warmPoolIdleGraceMs: opts.warmPoolIdleGraceMs,
+              warmPoolMaxAgeMs: opts.warmPoolMaxAgeMs,
+              warmPoolMaxEntries: opts.warmPoolMaxEntries,
+            }),
+          }
+        : undefined,
+    );
   },
   "openai-compat-http": (o) => {
     // Legacy alias: `api_key_env` (snake_case) is treated as `apiKeyEnv`.

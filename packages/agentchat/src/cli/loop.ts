@@ -8,6 +8,15 @@ import type { WriteToolsExecutor } from "../worker/write-tools-executor.js";
 import { CapturePort } from "../worker/capture-port.js";
 import { buildMaestroRedactorFromEnv } from "../worker/maestro-output-redactor.js";
 import { normalizeAdapterOptions } from "./adapter-options.js";
+import { shutdownAllAcpWarmPools } from "../adapters/acp-warm-pool-registry.js";
+
+export function installAcpWarmPoolShutdownHandlers(
+  proc: Pick<NodeJS.Process, "on"> = process,
+  shutdownAll: () => void = shutdownAllAcpWarmPools,
+): void {
+  proc.on("SIGTERM", () => shutdownAll());
+  proc.on("SIGINT", () => shutdownAll());
+}
 
 export interface ChatTurnInput {
   config: AgentChatConfig;
@@ -43,6 +52,7 @@ export interface ChatTurnResult {
   next_mention: { target: string; resolution: Resolution } | null;
   /** raw mentions found in the response, in order */
   mentions: Mention[];
+  meta?: DispatchOutput["meta"];
   /** Set when the adapter dispatch threw. The error response is still observed in t0; the bin should not queue a handoff and should surface the error inline. */
   error?: { message: string };
 }
@@ -98,6 +108,7 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
 
   const adapter = (input.buildAdapterOverride ?? buildAdapter)(cfg.adapter, {
     ...adapterOptions,
+    agentName: cfg.name,
     capturePort,
   });
 
@@ -241,6 +252,7 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
     response_event_id: responseEvent.event_id,
     next_mention: next,
     mentions,
+    ...(outMeta ? { meta: outMeta } : {}),
     ...(dispatchError ? { error: dispatchError } : {}),
   };
 }

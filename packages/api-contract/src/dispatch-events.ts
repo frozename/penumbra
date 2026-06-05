@@ -5,6 +5,7 @@ export const DispatchEventKindSchema = z.enum([
   "dispatch.end",
   "acp.server.start",
   "acp.session.start",
+  "acp.session.reuse",
   "acp.session.end",
   "http.server.start",
   "http.session.start",

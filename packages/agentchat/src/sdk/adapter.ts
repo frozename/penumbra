@@ -35,6 +35,7 @@ export interface DispatchOutput {
     tokens_in?: number;
     tokens_out?: number;
     raw_response?: unknown;
+    framework_overhead_ms?: number;
   };
 }
 

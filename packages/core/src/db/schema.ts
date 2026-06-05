@@ -319,6 +319,7 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
         tokens_used          INTEGER,
         latency_ms           INTEGER,
         exec_ms              INTEGER,
+        framework_overhead_ms INTEGER,
         source               TEXT NOT NULL,
         notes                TEXT,
         reliability_status   TEXT,
@@ -647,6 +648,7 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
     addColumnIfMissing(db, "agent_performance", "agent_kind", "TEXT");
     addColumnIfMissing(db, "agent_performance", "gate_outcome", "TEXT");
     addColumnIfMissing(db, "agent_performance", "exec_ms", "INTEGER");
+    addColumnIfMissing(db, "agent_performance", "framework_overhead_ms", "INTEGER");
 
     addColumnIfMissing(db, "workflow_stats", "refresh_runs", "INTEGER NOT NULL DEFAULT 0");
     addColumnIfMissing(db, "workflow_stats", "intentional_runs", "INTEGER NOT NULL DEFAULT 0");

@@ -9,14 +9,14 @@ export class AgentPerformanceWriter {
       INSERT INTO agent_performance (
         performance_id, ts, handoff_id, conversation_id, project_id, agent_name,
         task_type, outcome, gate_outcome, rounds, smoke_pass, reviewer_findings, maestro_score,
-        cost_usd, tokens_used, latency_ms, exec_ms, source, notes,
+        cost_usd, tokens_used, latency_ms, exec_ms, framework_overhead_ms, source, notes,
         reliability_status, failure_class, artifact_present, verification_present,
         maestro_takeover_required, empty_response, worktree_changed, reconcile_status,
         environment_failure, trust_score, agent_kind, metadata_json
       ) VALUES (
         ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?,
         ?, ?, ?, ?,
         ?, ?, ?, ?
@@ -38,6 +38,7 @@ export class AgentPerformanceWriter {
         tokens_used=excluded.tokens_used,
         latency_ms=excluded.latency_ms,
         exec_ms=excluded.exec_ms,
+        framework_overhead_ms=excluded.framework_overhead_ms,
         source=excluded.source,
         notes=excluded.notes,
         reliability_status=excluded.reliability_status,
@@ -74,6 +75,7 @@ export class AgentPerformanceWriter {
       row.tokens_used,
       row.latency_ms,
       row.exec_ms ?? null,
+      row.framework_overhead_ms ?? null,
       row.source,
       row.notes,
       row.reliability_status ?? null,
