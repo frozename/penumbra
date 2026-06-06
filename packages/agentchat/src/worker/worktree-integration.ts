@@ -78,6 +78,16 @@ export async function applyWorktreeOverride(
               options: {
                 ...baseOpts,
                 cwd: handle.path,
+                // Pool scope: stable across this project's per-handoff
+                // worktrees so an ACP warm process is reused across them and
+                // re-sessioned at each dispatch's cwd. Falls back to the main
+                // repo path when the project root is unknown.
+                repoRoot:
+                  (
+                    worktreeManager as {
+                      projectRootFor?: (project_id?: string) => string | undefined;
+                    }
+                  ).projectRootFor?.(handoff.project_id) ?? mainRepoPath,
                 env: { ...baseOpts.env, PENUMBRA_STORAGE_ROOT: handle.storageRoot },
               },
             };
@@ -116,7 +126,7 @@ export async function applyWorktreeOverride(
         const baseOpts = (a.options as Record<string, unknown>) ?? {};
         return {
           ...a,
-          options: { ...baseOpts, cwd: projectRoot },
+          options: { ...baseOpts, cwd: projectRoot, repoRoot: projectRoot },
         };
       }),
     };

@@ -171,6 +171,14 @@ export interface StdioAcpOptions {
   agentName?: string;
   model?: string;
   cwd?: string;
+  /**
+   * Repository root shared across this agent's per-dispatch worktrees. The warm
+   * pool keys on (agent, repoRoot) rather than (agent, cwd): a warm ACP process
+   * is reused across worktrees of the same repo and issued a fresh session/new
+   * at each dispatch's cwd. Set per-dispatch by the worktree override; falls
+   * back to cwd when absent (so non-worktree dispatches keep per-cwd pooling).
+   */
+  repoRoot?: string;
   env?: Record<string, string>;
   unsetEnv?: string[];
   bootTimeoutMs?: number;
@@ -295,9 +303,12 @@ export class StdioAcpAdapter implements Adapter {
     const cwd = this.opts.cwd ?? process.cwd();
     const requestTimeoutMs = this.opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     const warmPoolEnabled = this.opts.warmPool === true && this.deps.pool !== undefined;
+    // Pool scope = repoRoot when set (so worktree-isolated dispatches of the
+    // same repo share one warm process), else cwd (non-worktree dispatches).
+    const poolScope = this.opts.repoRoot ?? cwd;
     const poolKey = poolKeyFor({
       agent: this.opts.agentName ?? this.opts.model ?? this.opts.binary,
-      cwd,
+      cwd: poolScope,
     });
     const specHash = acpSpecHash({
       binary: this.opts.binary,
@@ -331,11 +342,13 @@ export class StdioAcpAdapter implements Adapter {
       if (pooledEntry) {
         server = pooledEntry.handle;
         client = pooledEntry.client;
-        sessionId = pooledEntry.sessionId;
         reusedSession = true;
+        // Connection reused (warm process + initialized/authenticated client).
+        // The session is created fresh below at THIS dispatch's cwd + identity
+        // env, so session_id is not known yet — this event signals the
+        // connection-level reuse (the part that skips the cold-start floor).
         emitLifecycle(input, "acp.session.reuse", {
           adapter: this.kind,
-          session_id: sessionId,
           pool_key: poolKey,
           framework_overhead_ms: Date.now() - dispatchStartTs,
         });
@@ -626,7 +639,26 @@ export class StdioAcpAdapter implements Adapter {
           await client.request("authenticate", { methodId: chosenAuthId });
         }
 
-        // 2. New Session
+        // Deposit the warm CONNECTION (process + initialized/authenticated
+        // client) so the next dispatch for this (agent, repoRoot) skips
+        // startServer + initialize + authenticate. The session is created fresh
+        // per dispatch below, so a reused connection always gets the current
+        // dispatch's cwd and injected identity env (PENUMBRA_HANDOFF_ID, tick
+        // allowlist) — which is what keeps warm reuse correct across handoffs.
+        if (warmPoolEnabled) {
+          pooledEntry =
+            this.deps.pool!.deposit(poolKey, {
+              handle: server,
+              client: client as StdioAcpClient,
+              specHash,
+            }) ?? null;
+          pooledEntry?.refs.add(holderId);
+        }
+      }
+
+      // 2. New Session — runs on EVERY dispatch (cold start OR warm-connection
+      // reuse), always at this dispatch's cwd with this dispatch's identity env.
+      {
         const mcpServers = this.opts.mcpServers ?? [];
         // Scope dispatch identity env injection to the penumbra-mcp server only —
         // never leak handoff/tick identifiers to third-party stdio MCPs. We
@@ -716,16 +748,6 @@ export class StdioAcpAdapter implements Adapter {
         }
         const session = await client.request("session/new", sessionParams);
         sessionId = session.sessionId;
-        if (warmPoolEnabled) {
-          pooledEntry =
-            this.deps.pool!.deposit(poolKey, {
-              handle: server,
-              client: client as StdioAcpClient,
-              sessionId,
-              specHash,
-            }) ?? null;
-          pooledEntry?.refs.add(holderId);
-        }
         emitLifecycle(input, "acp.session.start", {
           adapter: this.kind,
           session_id: sessionId,

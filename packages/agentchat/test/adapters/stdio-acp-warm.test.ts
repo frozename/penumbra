@@ -58,7 +58,7 @@ function createClient(opts: { hangFirstPrompt?: boolean } = {}) {
 }
 
 describe("StdioAcpAdapter warm pool reuse", () => {
-  test("reuses a warm session for sequential dispatches and reinjects handoff id per prompt", async () => {
+  test("reuses a warm connection for sequential dispatches and issues a fresh session per dispatch", async () => {
     const lifecycle: any[] = [];
     const pool = createAcpWarmPool();
     const handle = createHandle();
@@ -91,7 +91,10 @@ describe("StdioAcpAdapter warm pool reuse", () => {
     expect(first.text).toBe("ok-1");
     expect(second.text).toBe("ok-2");
     expect(startServer).toHaveBeenCalledTimes(1);
-    expect(client.calls.filter((call) => call.method === "session/new")).toHaveLength(1);
+    // Option B: the warm hit reuses the process (one startServer) but issues a
+    // FRESH session/new on every dispatch — so the per-dispatch identity env is
+    // re-injected and the session is pinned to this dispatch's cwd.
+    expect(client.calls.filter((call) => call.method === "session/new")).toHaveLength(2);
     expect(client.calls.filter((call) => call.method === "session/prompt")).toHaveLength(2);
     expect(lifecycle.filter((event) => event.kind === "acp.server.start")).toHaveLength(1);
     expect(lifecycle.filter((event) => event.kind === "acp.session.reuse")).toHaveLength(1);
