@@ -98,4 +98,54 @@ describe("StdioAcpAdapter warm-connection reuse (Option B)", () => {
     const sessionNews = calls.filter((c) => c.method === "session/new");
     expect(sessionNews.map((c) => c.cwd)).toEqual(["/repo/wt-a", "/repo/wt-b"]); // fresh session per cwd
   });
+
+  it("re-injects each dispatch's PENUMBRA_STORAGE_ROOT into session/new across reuse (no stale worktree DB)", async () => {
+    const pool = createAcpWarmPool({ now: () => 0 });
+    const storageRoots: (string | undefined)[] = [];
+    const request = vi.fn(async (method: string, params?: any) => {
+      if (method === "initialize") return { protocolVersion: 1, authMethods: [] };
+      if (method === "session/new") {
+        const penumbra = (params?.mcpServers ?? []).find((s: any) =>
+          /penumbra/.test(s?.name ?? ""),
+        );
+        const sr = (penumbra?.env ?? []).find((e: any) => e?.name === "PENUMBRA_STORAGE_ROOT");
+        storageRoots.push(sr?.value);
+        return { sessionId: `s-${storageRoots.length}` };
+      }
+      if (method === "session/prompt") return { stopReason: "end_turn" };
+      return {};
+    });
+    const startServer = vi.fn().mockResolvedValue(makeServer());
+    const mk = (storageRoot: string) =>
+      new StdioAcpAdapter(
+        {
+          binary: "mock-acp",
+          agentName: "codex-acp-fast",
+          warmPool: true,
+          repoRoot: "/repo",
+          mcpServers: [{ name: "penumbra", command: "bun", args: ["/x/penumbra-mcp.ts"] }],
+          env: { PENUMBRA_STORAGE_ROOT: storageRoot },
+        } as any,
+        {
+          startServer,
+          createClient: () => ({ onRequest: vi.fn(), on: vi.fn(), request }) as any,
+          pool,
+        } as any,
+      );
+
+    await mk("/repo/wt-a/.test-storage").dispatch({
+      prompt: "a",
+      signal: new AbortController().signal,
+      handoff_id: "hA",
+    } as any);
+    await mk("/repo/wt-b/.test-storage").dispatch({
+      prompt: "b",
+      signal: new AbortController().signal,
+      handoff_id: "hB",
+    } as any);
+
+    expect(startServer).toHaveBeenCalledTimes(1); // process reused
+    // The reused process must NOT freeze wt-a's storage root onto wt-b's dispatch.
+    expect(storageRoots).toEqual(["/repo/wt-a/.test-storage", "/repo/wt-b/.test-storage"]);
+  });
 });

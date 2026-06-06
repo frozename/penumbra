@@ -88,6 +88,12 @@ export function shouldScrubHostEnvKey(key: string, policy: HostEnvPolicy): boole
 }
 const PENUMBRA_MCP_INJECTED_ENV_KEYS = new Set([
   "PENUMBRA_HANDOFF_ID",
+  // Per-worktree storage root. resolveDaemonStorageRoot returns
+  // env.PENUMBRA_STORAGE_ROOT first, so a warm-reused process (whose process env
+  // is frozen at the FIRST dispatch's worktree) must have the current dispatch's
+  // value re-injected per session/new — else the MCP child reads the wrong
+  // worktree's DB. Stripped here so a stale value can't survive the re-inject.
+  "PENUMBRA_STORAGE_ROOT",
   "PENUMBRA_MCP_ORIGIN",
   "PENUMBRA_LONG_LIVED_AGENT_ID",
   "PENUMBRA_LONG_LIVED_TICK_ID",
@@ -685,7 +691,16 @@ export class StdioAcpAdapter implements Adapter {
           );
         };
         const longLivedEnv = buildLongLivedMcpEnv(input);
-        const shouldInjectDispatchEnv = Boolean(input.handoff_id) || longLivedEnv.length > 0;
+        // Re-inject the CURRENT dispatch's per-worktree storage root so a warm
+        // reused process (whose process env is frozen at the first dispatch's
+        // worktree) doesn't point the MCP child at the wrong worktree's DB.
+        // mergedEnv carries the per-dispatch value (set into opts.env by the
+        // worktree override).
+        const storageRootEnv = mergedEnv.PENUMBRA_STORAGE_ROOT
+          ? [{ name: "PENUMBRA_STORAGE_ROOT", value: mergedEnv.PENUMBRA_STORAGE_ROOT }]
+          : [];
+        const shouldInjectDispatchEnv =
+          Boolean(input.handoff_id) || longLivedEnv.length > 0 || storageRootEnv.length > 0;
         const mcpServersWithEnv = shouldInjectDispatchEnv
           ? mcpServers.map((s: any) =>
               isPenumbraMcp(s)
@@ -699,6 +714,7 @@ export class StdioAcpAdapter implements Adapter {
                         ? [{ name: "PENUMBRA_HANDOFF_ID", value: input.handoff_id }]
                         : []),
                       { name: "PENUMBRA_MCP_ORIGIN", value: PENUMBRA_MCP_ORIGIN_FLEET_WORKER },
+                      ...storageRootEnv,
                       ...longLivedEnv,
                     ],
                   }
