@@ -303,6 +303,142 @@ export class StdioAcpAdapter implements Adapter {
     return result;
   }
 
+  /**
+   * Build the dispatch-time process env: inherited env (host-scrubbed) merged
+   * with opts.env, minus unsetEnv. Shared by the cold dispatch path and prewarm
+   * so a pooled connection's env is identical regardless of which path spawned it.
+   */
+  private buildMergedEnv(): Record<string, string> {
+    const inheritedEnv: Record<string, string> = { ...process.env } as Record<string, string>;
+    const hostEnvPolicy = resolveHostEnvPolicy(this.opts);
+    if (Object.values(hostEnvPolicy).some(Boolean)) {
+      for (const key of Object.keys(inheritedEnv)) {
+        if (shouldScrubHostEnvKey(key, hostEnvPolicy)) delete inheritedEnv[key];
+      }
+    }
+    const mergedEnv: Record<string, string> = { ...inheritedEnv, ...(this.opts.env ?? {}) };
+    for (const key of this.opts.unsetEnv ?? []) delete mergedEnv[key];
+    return mergedEnv;
+  }
+
+  /**
+   * Spawn the ACP server process + client. Connection-level only — no session,
+   * no per-dispatch handlers (those are registered by the caller).
+   */
+  private async spawnAcpServer(
+    cwd: string,
+    mergedEnv: Record<string, string>,
+    signal: AbortSignal | undefined,
+  ): Promise<{ server: StdioAcpHandle; client: StdioAcpClient }> {
+    const server = await this.deps.startServer({
+      binary: this.opts.binary,
+      args: this.opts.args,
+      cwd,
+      env: mergedEnv,
+      signal,
+    });
+    const client = this.deps.createClient(server);
+    return { server, client };
+  }
+
+  /**
+   * Initialize + authenticate the connection, then deposit the warm connection
+   * into the pool (when enabled). Returns the deposited (idle, ref-less) entry,
+   * or null when the pool is disabled. Issues NO session/new. Shared by the cold
+   * dispatch path and prewarm so both produce a byte-identical warm connection
+   * (same client capabilities, same auth-method selection, same specHash).
+   */
+  private async handshakeAndDeposit(
+    server: StdioAcpHandle,
+    client: StdioAcpClient,
+    args: {
+      mergedEnv: Record<string, string>;
+      specHash: string;
+      poolKey: string;
+      warmPoolEnabled: boolean;
+    },
+  ): Promise<AcpWarmPoolEntry | null> {
+    // 1. Initialize
+    const clientCapabilities: any = {};
+    if (this.opts.fsReadTextFile || this.opts.fsWriteTextFile) {
+      clientCapabilities.fs = {
+        ...(this.opts.fsReadTextFile ? { readTextFile: true } : {}),
+        ...(this.opts.fsWriteTextFile ? { writeTextFile: true } : {}),
+      };
+    }
+    if (this.opts.terminal) {
+      clientCapabilities.terminal = true;
+    }
+    const initResponse = await client.request("initialize", {
+      protocolVersion: 1,
+      clientCapabilities,
+      clientInfo: { name: "penumbra", version: "1.0.0" },
+    });
+
+    // 1.5 Authenticate
+    const authMethods = initResponse.authMethods ?? [];
+    if (authMethods.length > 0) {
+      let chosenAuthId = this.opts.authMethodId;
+      if (!chosenAuthId) {
+        const satisfiedEnvVar = authMethods.find(
+          (m: any) => m.type === "env_var" && m.vars?.every((v: any) => !!args.mergedEnv[v.name]),
+        );
+        if (satisfiedEnvVar) {
+          chosenAuthId = satisfiedEnvVar.id;
+        } else {
+          const nonEnvVar = authMethods.find((m: any) => m.type !== "env_var");
+          chosenAuthId = nonEnvVar ? nonEnvVar.id : authMethods[0].id;
+        }
+      }
+      await client.request("authenticate", { methodId: chosenAuthId });
+    }
+
+    if (!args.warmPoolEnabled) return null;
+    // Deposit the warm CONNECTION (process + initialized/authenticated client).
+    // The returned entry is idle (no holder ref) — the caller decides whether to
+    // claim a ref (a cold dispatch does; prewarm leaves it acquirable).
+    return (
+      this.deps.pool!.deposit(args.poolKey, {
+        handle: server,
+        client,
+        specHash: args.specHash,
+      }) ?? null
+    );
+  }
+
+  /**
+   * Eagerly establish + deposit a warm connection WITHOUT running a dispatch.
+   * Handshake-only: no session/new, no session/prompt, no per-dispatch handlers,
+   * no holder ref — the deposited entry is left idle so the next matching dispatch
+   * acquires it as a reuse hit (this is what defeats first-poll-wins worker spread).
+   * No-op when the warm pool is disabled for this agent.
+   */
+  async prewarm(): Promise<{ deposited: boolean; poolKey: string }> {
+    const cwd = this.opts.cwd ?? process.cwd();
+    const poolScope = this.opts.repoRoot ?? cwd;
+    const poolKey = poolKeyFor({
+      agent: this.opts.agentName ?? this.opts.model ?? this.opts.binary,
+      cwd: poolScope,
+    });
+    const warmPoolEnabled = this.opts.warmPool === true && this.deps.pool !== undefined;
+    if (!warmPoolEnabled) return { deposited: false, poolKey };
+
+    const specHash = acpSpecHash({
+      binary: this.opts.binary,
+      args: this.opts.args,
+      model: this.opts.model,
+    });
+    const mergedEnv = this.buildMergedEnv();
+    const { server, client } = await this.spawnAcpServer(cwd, mergedEnv, undefined);
+    const entry = await this.handshakeAndDeposit(server, client, {
+      mergedEnv,
+      specHash,
+      poolKey,
+      warmPoolEnabled,
+    });
+    return { deposited: entry !== null, poolKey };
+  }
+
   async *dispatchStream(input: DispatchInput): AsyncIterable<DispatchEvent> {
     const dispatchStartTs = Date.now();
     const cwd = this.opts.cwd ?? process.cwd();
@@ -328,15 +464,7 @@ export class StdioAcpAdapter implements Adapter {
     let retriedCold = false;
 
     try {
-      const inheritedEnv: Record<string, string> = { ...process.env } as Record<string, string>;
-      const hostEnvPolicy = resolveHostEnvPolicy(this.opts);
-      if (Object.values(hostEnvPolicy).some(Boolean)) {
-        for (const key of Object.keys(inheritedEnv)) {
-          if (shouldScrubHostEnvKey(key, hostEnvPolicy)) delete inheritedEnv[key];
-        }
-      }
-      const mergedEnv: Record<string, string> = { ...inheritedEnv, ...(this.opts.env ?? {}) };
-      for (const key of this.opts.unsetEnv ?? []) delete mergedEnv[key];
+      const mergedEnv = this.buildMergedEnv();
 
       let client: StdioAcpClient;
       let sessionId = "";
@@ -358,20 +486,14 @@ export class StdioAcpAdapter implements Adapter {
           framework_overhead_ms: Date.now() - dispatchStartTs,
         });
       } else {
-        server = await this.deps.startServer({
-          binary: this.opts.binary,
-          args: this.opts.args,
-          cwd,
-          env: mergedEnv,
-          signal: input.signal,
-        });
+        const spawned = await this.spawnAcpServer(cwd, mergedEnv, input.signal);
+        server = spawned.server;
+        client = spawned.client;
         emitLifecycle(input, "acp.server.start", {
           adapter: this.kind,
           binary: this.opts.binary,
           pid: server.pid,
         });
-
-        client = this.deps.createClient(server);
       }
 
       let serverAlive = true;
@@ -609,56 +731,20 @@ export class StdioAcpAdapter implements Adapter {
       }
 
       if (!reusedSession) {
-        // 1. Initialize
-        const clientCapabilities: any = {};
-        if (this.opts.fsReadTextFile || this.opts.fsWriteTextFile) {
-          clientCapabilities.fs = {
-            ...(this.opts.fsReadTextFile ? { readTextFile: true } : {}),
-            ...(this.opts.fsWriteTextFile ? { writeTextFile: true } : {}),
-          };
-        }
-        if (this.opts.terminal) {
-          clientCapabilities.terminal = true;
-        }
-        const initResponse = await client.request("initialize", {
-          protocolVersion: 1,
-          clientCapabilities,
-          clientInfo: { name: "penumbra", version: "1.0.0" },
+        // Initialize + authenticate + deposit the warm CONNECTION (process +
+        // initialized/authenticated client) so the next dispatch for this
+        // (agent, repoRoot) skips startServer + initialize + authenticate. Shared
+        // with prewarm via handshakeAndDeposit so both paths produce a
+        // byte-identical connection. The session is created fresh per dispatch
+        // below, so a reused connection always gets the current dispatch's cwd
+        // and injected identity env (PENUMBRA_HANDOFF_ID, tick allowlist).
+        pooledEntry = await this.handshakeAndDeposit(server, client as StdioAcpClient, {
+          mergedEnv,
+          specHash,
+          poolKey,
+          warmPoolEnabled,
         });
-
-        // 1.5 Authenticate
-        const authMethods = initResponse.authMethods ?? [];
-        if (authMethods.length > 0) {
-          let chosenAuthId = this.opts.authMethodId;
-          if (!chosenAuthId) {
-            const satisfiedEnvVar = authMethods.find(
-              (m: any) => m.type === "env_var" && m.vars?.every((v: any) => !!mergedEnv[v.name]),
-            );
-            if (satisfiedEnvVar) {
-              chosenAuthId = satisfiedEnvVar.id;
-            } else {
-              const nonEnvVar = authMethods.find((m: any) => m.type !== "env_var");
-              chosenAuthId = nonEnvVar ? nonEnvVar.id : authMethods[0].id;
-            }
-          }
-          await client.request("authenticate", { methodId: chosenAuthId });
-        }
-
-        // Deposit the warm CONNECTION (process + initialized/authenticated
-        // client) so the next dispatch for this (agent, repoRoot) skips
-        // startServer + initialize + authenticate. The session is created fresh
-        // per dispatch below, so a reused connection always gets the current
-        // dispatch's cwd and injected identity env (PENUMBRA_HANDOFF_ID, tick
-        // allowlist) — which is what keeps warm reuse correct across handoffs.
-        if (warmPoolEnabled) {
-          pooledEntry =
-            this.deps.pool!.deposit(poolKey, {
-              handle: server,
-              client: client as StdioAcpClient,
-              specHash,
-            }) ?? null;
-          pooledEntry?.refs.add(holderId);
-        }
+        pooledEntry?.refs.add(holderId);
       }
 
       // 2. New Session — runs on EVERY dispatch (cold start OR warm-connection
