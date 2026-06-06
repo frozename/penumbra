@@ -190,6 +190,11 @@ describe("agent routes", () => {
         dispatches_per_hour: 1,
         exec_ms_p50: 9000,
         exec_ms_p95: 9000,
+        framework_overhead_ms_p50: null,
+        framework_overhead_ms_p95: null,
+        acp_session_reuse_rate: null,
+        framework_overhead_ms_p50_cold: null,
+        framework_overhead_ms_p50_reuse: null,
         queue_depth: 0,
       },
     ]);

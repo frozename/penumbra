@@ -13,6 +13,15 @@ export type FleetLatencyAgentRow = {
   exec_ms_p95: number | null;
   framework_overhead_ms_p50: number | null;
   framework_overhead_ms_p95: number | null;
+  /**
+   * ACP warm-pool observability (Phase 0). Split off whether each dispatch's
+   * lifecycle emitted `acp.session.reuse` (warm) vs `acp.server.start` (cold).
+   * `acp_session_reuse_rate` = reuse / (reuse + cold) over the window, or null
+   * for agents with no ACP lifecycle events (e.g. non-stdio-acp agents).
+   */
+  acp_session_reuse_rate: number | null;
+  framework_overhead_ms_p50_cold: number | null;
+  framework_overhead_ms_p50_reuse: number | null;
   queue_depth: number;
 };
 
@@ -79,6 +88,9 @@ export function readFleetLatency(db: Database, input: FleetLatencyInput = {}): F
       exec_ms_p95: null,
       framework_overhead_ms_p50: null,
       framework_overhead_ms_p95: null,
+      acp_session_reuse_rate: null,
+      framework_overhead_ms_p50_cold: null,
+      framework_overhead_ms_p50_reuse: null,
       queue_depth: 0,
     });
   }
@@ -105,6 +117,9 @@ export function readFleetLatency(db: Database, input: FleetLatencyInput = {}): F
         exec_ms_p95: null,
         framework_overhead_ms_p50: null,
         framework_overhead_ms_p95: null,
+        acp_session_reuse_rate: null,
+        framework_overhead_ms_p50_cold: null,
+        framework_overhead_ms_p50_reuse: null,
         queue_depth: 0,
       } satisfies FleetLatencyAgentRow);
     existing.queue_depth = row.queue_depth;
@@ -175,6 +190,85 @@ export function readFleetLatency(db: Database, input: FleetLatencyInput = {}): F
     if (!row) continue;
     row.framework_overhead_ms_p50 = percentileNearestRank(values, 0.5);
     row.framework_overhead_ms_p95 = percentileNearestRank(values, 0.95);
+  }
+
+  // ACP warm-pool reuse rate (Phase 0): reuse / (reuse + cold) lifecycle events
+  // per agent. Stays null for agents that emitted no ACP lifecycle events.
+  const acpLifecycleRows = db
+    .query<{ agent_name: string; reuse_count: number; cold_count: number }, [string, string]>(
+      `
+      SELECT h.to_agent AS agent_name,
+             SUM(CASE WHEN e.kind = 'acp.session.reuse' THEN 1 ELSE 0 END) AS reuse_count,
+             SUM(CASE WHEN e.kind = 'acp.server.start' THEN 1 ELSE 0 END) AS cold_count
+      FROM dispatch_events e
+      JOIN handoffs h ON h.handoff_id = e.handoff_id
+      WHERE e.kind IN ('acp.session.reuse', 'acp.server.start')
+        AND e.ts >= ?
+        AND e.ts <= ?
+      GROUP BY h.to_agent
+    `,
+    )
+    .all(fromIso, toIso);
+
+  for (const lifecycleRow of acpLifecycleRows) {
+    const row = agents.get(lifecycleRow.agent_name);
+    if (!row) continue;
+    const denom = lifecycleRow.reuse_count + lifecycleRow.cold_count;
+    if (denom > 0) row.acp_session_reuse_rate = lifecycleRow.reuse_count / denom;
+  }
+
+  // Cold vs reuse framework-overhead split (Phase 0): bucket each dispatch.end's
+  // framework_overhead_ms by whether that handoff's lifecycle emitted a session
+  // reuse (warm) rather than a server start (cold).
+  const overheadSplitRows = db
+    .query<
+      { agent_name: string; framework_overhead_ms: unknown; is_reuse: number },
+      [string, string]
+    >(
+      `
+      SELECT h.to_agent AS agent_name,
+             json_extract(e.meta_json, '$.framework_overhead_ms') AS framework_overhead_ms,
+             EXISTS(
+               SELECT 1 FROM dispatch_events r
+               WHERE r.handoff_id = e.handoff_id AND r.kind = 'acp.session.reuse'
+             ) AS is_reuse
+      FROM dispatch_events e
+      JOIN handoffs h ON h.handoff_id = e.handoff_id
+      WHERE e.kind = 'dispatch.end'
+        AND e.ts >= ?
+        AND e.ts <= ?
+      ORDER BY h.to_agent ASC, e.ts ASC, e.id ASC
+    `,
+    )
+    .all(fromIso, toIso);
+
+  const coldOverheadByAgent = new Map<string, number[]>();
+  const reuseOverheadByAgent = new Map<string, number[]>();
+  for (const splitRow of overheadSplitRows) {
+    if (
+      typeof splitRow.framework_overhead_ms !== "number" ||
+      !Number.isFinite(splitRow.framework_overhead_ms) ||
+      splitRow.framework_overhead_ms < 0
+    ) {
+      continue;
+    }
+    const bucket = splitRow.is_reuse ? reuseOverheadByAgent : coldOverheadByAgent;
+    const values = bucket.get(splitRow.agent_name) ?? [];
+    values.push(Math.round(splitRow.framework_overhead_ms));
+    bucket.set(splitRow.agent_name, values);
+  }
+
+  for (const [agentName, values] of coldOverheadByAgent) {
+    values.sort((a, b) => a - b);
+    const row = agents.get(agentName);
+    if (!row) continue;
+    row.framework_overhead_ms_p50_cold = percentileNearestRank(values, 0.5);
+  }
+  for (const [agentName, values] of reuseOverheadByAgent) {
+    values.sort((a, b) => a - b);
+    const row = agents.get(agentName);
+    if (!row) continue;
+    row.framework_overhead_ms_p50_reuse = percentileNearestRank(values, 0.5);
   }
 
   return {

@@ -87,6 +87,37 @@ describe("readFleetLatency", () => {
     );
   }
 
+  function insertAcpEvent(
+    handoffId: string,
+    kind: "acp.server.start" | "acp.session.reuse",
+    ts: string,
+  ) {
+    db.prepare(
+      `
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, 'worker-1', 'worker', ?, ?, ?)
+    `,
+    ).run(handoffId, kind, ts, JSON.stringify({ adapter: "stdio-acp" }));
+  }
+
+  function insertDispatchEndWithOverhead(
+    handoffId: string,
+    ts: string,
+    wallMs: number,
+    frameworkOverheadMs: number,
+  ) {
+    db.prepare(
+      `
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, 'worker-1', 'worker', 'dispatch.end', ?, ?)
+    `,
+    ).run(
+      handoffId,
+      ts,
+      JSON.stringify({ status: "ok", wall_ms: wallMs, framework_overhead_ms: frameworkOverheadMs }),
+    );
+  }
+
   it("returns per-agent p50/p95 wall time, dispatches per hour, and queue depth", () => {
     insertHandoff("a1", "alpha");
     insertHandoff("a2", "alpha");
@@ -132,6 +163,9 @@ describe("readFleetLatency", () => {
         exec_ms_p95: 400,
         framework_overhead_ms_p50: 20,
         framework_overhead_ms_p95: 40,
+        acp_session_reuse_rate: null,
+        framework_overhead_ms_p50_cold: null,
+        framework_overhead_ms_p50_reuse: null,
         queue_depth: 2,
       },
       {
@@ -142,6 +176,9 @@ describe("readFleetLatency", () => {
         exec_ms_p95: 1000,
         framework_overhead_ms_p50: null,
         framework_overhead_ms_p95: null,
+        acp_session_reuse_rate: null,
+        framework_overhead_ms_p50_cold: null,
+        framework_overhead_ms_p50_reuse: null,
         queue_depth: 1,
       },
       {
@@ -152,8 +189,49 @@ describe("readFleetLatency", () => {
         exec_ms_p95: null,
         framework_overhead_ms_p50: null,
         framework_overhead_ms_p95: null,
+        acp_session_reuse_rate: null,
+        framework_overhead_ms_p50_cold: null,
+        framework_overhead_ms_p50_reuse: null,
         queue_depth: 1,
       },
     ]);
+  });
+
+  it("computes acp reuse rate and cold/reuse framework-overhead split from dispatch_events lifecycle", () => {
+    // 2 cold dispatches (acp.server.start) + 3 reuse dispatches (acp.session.reuse),
+    // each with a matching dispatch.end carrying framework_overhead_ms.
+    for (const id of ["c1", "c2", "r1", "r2", "r3"]) insertHandoff(id, "warmish");
+
+    insertAcpEvent("c1", "acp.server.start", "2026-06-03T11:00:00Z");
+    insertDispatchEndWithOverhead("c1", "2026-06-03T11:00:05Z", 50000, 10000);
+    insertAcpEvent("c2", "acp.server.start", "2026-06-03T11:05:00Z");
+    insertDispatchEndWithOverhead("c2", "2026-06-03T11:05:05Z", 50000, 12000);
+
+    insertAcpEvent("r1", "acp.session.reuse", "2026-06-03T11:10:00Z");
+    insertDispatchEndWithOverhead("r1", "2026-06-03T11:10:05Z", 20000, 1000);
+    insertAcpEvent("r2", "acp.session.reuse", "2026-06-03T11:15:00Z");
+    insertDispatchEndWithOverhead("r2", "2026-06-03T11:15:05Z", 20000, 1500);
+    insertAcpEvent("r3", "acp.session.reuse", "2026-06-03T11:20:00Z");
+    insertDispatchEndWithOverhead("r3", "2026-06-03T11:20:05Z", 20000, 2000);
+
+    // A non-ACP agent: no lifecycle events => reuse fields stay null (not 0).
+    insertHandoff("p1", "plain");
+    insertDispatchEnd("p1", "2026-06-03T11:25:00Z", 300);
+
+    const result = readFleetLatency(db, { now: "2026-06-03T12:00:00Z", window_hours: 2 });
+    const warmish = result.agents.find((a) => a.agent_name === "warmish");
+    const plain = result.agents.find((a) => a.agent_name === "plain");
+
+    expect(warmish?.acp_session_reuse_rate).toBe(0.6); // 3 reuse / (3 reuse + 2 cold)
+    expect(warmish?.framework_overhead_ms_p50_cold).toBe(10000); // p50 of [10000, 12000]
+    expect(warmish?.framework_overhead_ms_p50_reuse).toBe(1500); // p50 of [1000, 1500, 2000]
+    expect(warmish?.dispatch_count).toBe(5);
+    // The existing agent_performance-sourced overhead field is untouched (no perf rows seeded).
+    expect(warmish?.framework_overhead_ms_p50).toBeNull();
+
+    // Non-ACP agent: reuse fields are null, not 0.
+    expect(plain?.acp_session_reuse_rate).toBeNull();
+    expect(plain?.framework_overhead_ms_p50_cold).toBeNull();
+    expect(plain?.framework_overhead_ms_p50_reuse).toBeNull();
   });
 });
