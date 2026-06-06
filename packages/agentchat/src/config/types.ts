@@ -29,6 +29,13 @@ export const AgentOptionsSchema = z.looseObject({
   warm_pool_idle_grace_ms: z.number().int().min(1000).max(3600000).optional(),
   warm_pool_max_age_ms: z.number().int().min(10000).max(86400000).optional(),
   warm_pool_max_entries: z.number().int().min(1).max(10).optional(),
+  /** Eagerly pre-warm a connection for this agent at worker boot so warm reuse
+   *  engages regardless of first-poll-wins worker spread. Requires warm_pool.
+   *  Default: off. */
+  warm_pool_prewarm: z.boolean().optional(),
+  /** Per-agent cap on pre-warm targets this agent may contribute on one worker.
+   *  Bounded further by the worker-level cap. */
+  warm_pool_prewarm_max_targets: z.number().int().min(1).max(10).optional(),
   /** Deprecated and ignored; retained so older configs still parse. */
   warm_pool_health_ping: z.boolean().optional(),
 });

@@ -1,0 +1,68 @@
+/**
+ * Phase 1 of the warm-pool x multi-worker integration: a PURE resolver that
+ * computes the bounded set of `(agent, repoRoot)` tuples a worker should keep
+ * warm at boot. No subprocesses, no side effects — provably a subset of what the
+ * daemon would route to this worker.
+ *
+ * Every isolation mode pre-warms each opted-in agent at the worker's HOME
+ * repoRoot (`resolveProjectRoot(workerProjectId) ?? mainRepoPath`):
+ *   - a `hard` worker only ever receives its own project's dispatches, so home
+ *     IS the only repoRoot it can be routed;
+ *   - `sticky`/`shared` workers CAN claim cross-project work, but are
+ *     deliberately bounded to home so the idle warm-process count stays
+ *     (workers x eligible agents) rather than (x every project).
+ * The emitted repoRoot is byte-identical to the adapter's poolScope
+ * (`repoRoot ?? cwd`, stdio-acp.ts) for that project, so the pre-warmed
+ * connection is acquirable by the next matching dispatch.
+ */
+
+export type PrewarmIsolation = "hard" | "sticky" | "shared";
+
+export type PrewarmTarget = { agent: string; repoRoot: string };
+
+export interface PrewarmAgent {
+  name: string;
+  options?: {
+    warm_pool?: boolean;
+    warm_pool_prewarm?: boolean;
+  } | null;
+}
+
+export interface ComputePrewarmTargetsInput {
+  /** Configured agents, in config order (output order is stable to this). */
+  agents: ReadonlyArray<PrewarmAgent>;
+  /** This worker's isolation mode (kept for explicitness + the isolation matrix
+   *  property test; the home-bounding rule is uniform across modes by design). */
+  isolation: PrewarmIsolation;
+  /** This worker's configured project_id, if any (undefined for `shared`). */
+  workerProjectId?: string;
+  /** Resolve a project_id to its repo root, mirroring the daemon/worktree path. */
+  resolveProjectRoot: (projectId?: string) => string | undefined;
+  /** Fallback repo root when the project has no resolver entry. */
+  mainRepoPath: string;
+  /** Hard cap on the number of tuples returned. */
+  cap: number;
+}
+
+export function computePrewarmTargets(input: ComputePrewarmTargetsInput): PrewarmTarget[] {
+  const { agents, workerProjectId, resolveProjectRoot, mainRepoPath, cap } = input;
+  if (!Number.isFinite(cap) || cap <= 0) return [];
+
+  const homeRepoRoot = resolveProjectRoot(workerProjectId) ?? mainRepoPath;
+  const targets: PrewarmTarget[] = [];
+  const seen = new Set<string>();
+
+  for (const agent of agents) {
+    const options = agent.options ?? {};
+    if (options.warm_pool !== true || options.warm_pool_prewarm !== true) continue;
+
+    const key = JSON.stringify([agent.name, homeRepoRoot]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    targets.push({ agent: agent.name, repoRoot: homeRepoRoot });
+    if (targets.length >= cap) break;
+  }
+
+  return targets;
+}
