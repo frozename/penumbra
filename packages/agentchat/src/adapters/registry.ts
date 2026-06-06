@@ -6,7 +6,7 @@ import { GeminiCliAdapter } from "./gemini-cli.js";
 import { CodexCliAdapter } from "./codex-cli.js";
 import { OpencodeAcpAdapter, type OpencodeAcpOptions } from "./opencode-acp.js";
 import { OpencodeCliAdapter, type OpencodeCliOptions } from "./opencode-cli.js";
-import { StdioAcpAdapter, type StdioAcpOptions } from "./stdio-acp.js";
+import { StdioAcpAdapter, type StdioAcpOptions, type StdioAcpThoughtCapture } from "./stdio-acp.js";
 import { StdioAcpClient } from "./stdio-acp-client.js";
 import { startStdioAcpServer } from "./stdio-acp-server.js";
 import type { CapturePort } from "../worker/capture-port.js";
@@ -15,54 +15,7 @@ import { getOrCreateAcpWarmPool } from "./acp-warm-pool-registry.js";
 export type AdapterFactory = (options: Record<string, unknown>) => Adapter;
 
 const builtIns: Record<string, AdapterFactory> = {
-  "stdio-acp": (o) => {
-    const opts = o as Partial<StdioAcpOptions>;
-    if (!opts.binary) throw new Error("stdio-acp: binary is required");
-    return new StdioAcpAdapter(
-      {
-        binary: opts.binary,
-        args: opts.args,
-        model: opts.model,
-        cwd: opts.cwd,
-        env: opts.env,
-        unsetEnv: opts.unsetEnv,
-        bootTimeoutMs: opts.bootTimeoutMs,
-        requestTimeoutMs: opts.requestTimeoutMs,
-        authMethodId: opts.authMethodId,
-        framing: opts.framing,
-        fsReadTextFile: opts.fsReadTextFile,
-        fsWriteTextFile: opts.fsWriteTextFile,
-        terminal: opts.terminal,
-        capturePort: opts.capturePort,
-        mcpServers: opts.mcpServers,
-        claudeCodeSettingSources: opts.claudeCodeSettingSources,
-        claudeCodeStrictMcpConfig: opts.claudeCodeStrictMcpConfig,
-        claudeCodeAllowedTools: opts.claudeCodeAllowedTools,
-        claudeCodeTools: opts.claudeCodeTools,
-        claudeCodeDisallowedTools: opts.claudeCodeDisallowedTools,
-        hostEnvPolicy: opts.hostEnvPolicy,
-        sanitizeClaudeHostEnv: opts.sanitizeClaudeHostEnv,
-        agentName: opts.agentName,
-        warmPool: opts.warmPool,
-        warmPoolIdleGraceMs: opts.warmPoolIdleGraceMs,
-        warmPoolMaxAgeMs: opts.warmPoolMaxAgeMs,
-        warmPoolMaxEntries: opts.warmPoolMaxEntries,
-        warmPoolHealthPing: opts.warmPoolHealthPing,
-      },
-      opts.warmPool === true
-        ? {
-            startServer: startStdioAcpServer,
-            createClient: (h) =>
-              new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout, framing: opts.framing }),
-            pool: getOrCreateAcpWarmPool(opts.agentName ?? opts.model ?? opts.binary, {
-              warmPoolIdleGraceMs: opts.warmPoolIdleGraceMs,
-              warmPoolMaxAgeMs: opts.warmPoolMaxAgeMs,
-              warmPoolMaxEntries: opts.warmPoolMaxEntries,
-            }),
-          }
-        : undefined,
-    );
-  },
+  "stdio-acp": (o) => createStdioAcpAdapter(o),
   "openai-compat-http": (o) => {
     // Legacy alias: `api_key_env` (snake_case) is treated as `apiKeyEnv`.
     const opts = o as Partial<OpenAiCompatHttpOptions> & { api_key_env?: string };
@@ -213,6 +166,70 @@ const builtIns: Record<string, AdapterFactory> = {
     });
   },
 };
+
+/**
+ * Single construction path for the stdio-acp adapter, shared by the registry
+ * builtin and the worker's thought-aware re-registration
+ * (agentchat-worker.ts). Keeping both behind one factory is the HIGH-1 fix: the
+ * worker override used to hand-roll its own opts/deps mapping that silently
+ * omitted the warm-pool wiring, so `warm_pool: true` was a no-op in the real
+ * worker. Anything that affects how the adapter is built (warm-pool deps,
+ * option pass-through) must live here so the two sites cannot drift.
+ */
+export function createStdioAcpAdapter(
+  o: Record<string, unknown>,
+  extra?: { thoughtCapture?: StdioAcpThoughtCapture },
+): Adapter {
+  const opts = o as Partial<StdioAcpOptions>;
+  if (!opts.binary) throw new Error("stdio-acp: binary is required");
+  return new StdioAcpAdapter(
+    {
+      binary: opts.binary,
+      args: opts.args,
+      model: opts.model,
+      cwd: opts.cwd,
+      env: opts.env,
+      unsetEnv: opts.unsetEnv,
+      bootTimeoutMs: opts.bootTimeoutMs,
+      requestTimeoutMs: opts.requestTimeoutMs,
+      authMethodId: opts.authMethodId,
+      framing: opts.framing,
+      fsReadTextFile: opts.fsReadTextFile,
+      fsWriteTextFile: opts.fsWriteTextFile,
+      terminal: opts.terminal,
+      capturePort: opts.capturePort,
+      mcpServers: opts.mcpServers,
+      claudeCodeSettingSources: opts.claudeCodeSettingSources,
+      claudeCodeStrictMcpConfig: opts.claudeCodeStrictMcpConfig,
+      claudeCodeAllowedTools: opts.claudeCodeAllowedTools,
+      claudeCodeTools: opts.claudeCodeTools,
+      claudeCodeDisallowedTools: opts.claudeCodeDisallowedTools,
+      hostEnvPolicy: opts.hostEnvPolicy,
+      sanitizeClaudeHostEnv: opts.sanitizeClaudeHostEnv,
+      agentName: opts.agentName,
+      warmPool: opts.warmPool,
+      warmPoolIdleGraceMs: opts.warmPoolIdleGraceMs,
+      warmPoolMaxAgeMs: opts.warmPoolMaxAgeMs,
+      warmPoolMaxEntries: opts.warmPoolMaxEntries,
+      warmPoolHealthPing: opts.warmPoolHealthPing,
+    },
+    {
+      startServer: startStdioAcpServer,
+      createClient: (h) =>
+        new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout, framing: opts.framing }),
+      ...(opts.warmPool === true
+        ? {
+            pool: getOrCreateAcpWarmPool(opts.agentName ?? opts.model ?? opts.binary, {
+              warmPoolIdleGraceMs: opts.warmPoolIdleGraceMs,
+              warmPoolMaxAgeMs: opts.warmPoolMaxAgeMs,
+              warmPoolMaxEntries: opts.warmPoolMaxEntries,
+            }),
+          }
+        : {}),
+      ...(extra?.thoughtCapture ? { thoughtCapture: extra.thoughtCapture } : {}),
+    },
+  );
+}
 
 export function buildAdapter(kind: string, options: Record<string, unknown>): Adapter {
   const factory = builtIns[kind];

@@ -18,11 +18,8 @@ import {
   type SpawnOpts,
 } from "../src/adapters/cli-spawn.js";
 import { prepareOpencodeMcpConfigDir } from "../src/adapters/opencode-mcp-config.js";
-import { registerAdapter } from "../src/adapters/registry.js";
+import { registerAdapter, createStdioAcpAdapter } from "../src/adapters/registry.js";
 import { resolveAdapterApiKey } from "../src/adapters/secret.js";
-import { StdioAcpClient } from "../src/adapters/stdio-acp-client.js";
-import { startStdioAcpServer, type StdioAcpHandle } from "../src/adapters/stdio-acp-server.js";
-import { StdioAcpAdapter, type StdioAcpOptions } from "../src/adapters/stdio-acp.js";
 import { drainAgent, shutdownAllAcpWarmPools } from "../src/adapters/acp-warm-pool-registry.js";
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../src/sdk/adapter.js";
 import { startEventSource } from "../src/worker/event-source.js";
@@ -268,46 +265,14 @@ function registerThoughtAwareAdapters(thoughtCapture: ThoughtCapture | null): vo
     return adapter;
   });
 
-  registerAdapter("stdio-acp", (rawOptions) => {
-    const opts = rawOptions as Partial<StdioAcpOptions>;
-    if (!opts.binary) throw new Error("stdio-acp: binary is required");
-    return new StdioAcpAdapter(
-      {
-        binary: opts.binary,
-        args: opts.args,
-        model: opts.model,
-        cwd: opts.cwd,
-        env: opts.env,
-        unsetEnv: opts.unsetEnv,
-        bootTimeoutMs: opts.bootTimeoutMs,
-        requestTimeoutMs: opts.requestTimeoutMs,
-        authMethodId: opts.authMethodId,
-        framing: opts.framing,
-        fsReadTextFile: opts.fsReadTextFile,
-        fsWriteTextFile: opts.fsWriteTextFile,
-        terminal: opts.terminal,
-        capturePort: opts.capturePort,
-        mcpServers: opts.mcpServers,
-        claudeCodeSettingSources: opts.claudeCodeSettingSources,
-        claudeCodeStrictMcpConfig: opts.claudeCodeStrictMcpConfig,
-        claudeCodeAllowedTools: opts.claudeCodeAllowedTools,
-        claudeCodeTools: opts.claudeCodeTools,
-        claudeCodeDisallowedTools: opts.claudeCodeDisallowedTools,
-        hostEnvPolicy: opts.hostEnvPolicy,
-        sanitizeClaudeHostEnv: opts.sanitizeClaudeHostEnv,
-      },
-      {
-        startServer: startStdioAcpServer,
-        createClient: (handle: StdioAcpHandle) =>
-          new StdioAcpClient({
-            stdin: handle.stdin,
-            stdout: handle.stdout,
-            framing: opts.framing,
-          }),
-        thoughtCapture: thoughtCapture ?? undefined,
-      },
-    );
-  });
+  // HIGH-1: route the worker's thought-aware stdio-acp registration through the
+  // SAME factory as the registry builtin. The previous hand-rolled construction
+  // here omitted the warm-pool opts + pool injection, so `warm_pool: true` was a
+  // silent no-op in the real worker. The factory wires warm pool AND
+  // thoughtCapture together; do not reintroduce a parallel opts map.
+  registerAdapter("stdio-acp", (rawOptions) =>
+    createStdioAcpAdapter(rawOptions, { thoughtCapture: thoughtCapture ?? undefined }),
+  );
 }
 
 const configPath =

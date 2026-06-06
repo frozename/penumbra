@@ -249,7 +249,7 @@ export interface StdioAcpOptions {
   warmPoolHealthPing?: boolean;
 }
 
-interface StdioAcpThoughtCapture {
+export interface StdioAcpThoughtCapture {
   recordThought: (input: {
     handoffId: string;
     adapter: "stdio-acp";
