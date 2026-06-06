@@ -254,7 +254,6 @@ export interface StdioAcpOptions {
   warmPoolIdleGraceMs?: number;
   warmPoolMaxAgeMs?: number;
   warmPoolMaxEntries?: number;
-  warmPoolHealthPing?: boolean;
 }
 
 export interface StdioAcpThoughtCapture {

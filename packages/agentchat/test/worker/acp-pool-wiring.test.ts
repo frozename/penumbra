@@ -82,7 +82,6 @@ describe("ACP warm pool worker wiring", () => {
         warm_pool_idle_grace_ms: 1000,
         warm_pool_max_age_ms: 20000,
         warm_pool_max_entries: 2,
-        warm_pool_health_ping: true,
       },
       roles: [],
       auto_approve_to: [],
@@ -93,7 +92,6 @@ describe("ACP warm pool worker wiring", () => {
       warmPoolIdleGraceMs: 1000,
       warmPoolMaxAgeMs: 20000,
       warmPoolMaxEntries: 2,
-      warmPoolHealthPing: true,
     });
   });
 
