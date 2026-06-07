@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { DispatchEventKindSchema } from "@penumbra/api-contract";
 import { applySchema, buildServices, loadSqliteVec, type Services } from "@penumbra/core";
 import { createDaemonFetchHandler } from "../../src/serve.js";
 import {
@@ -106,6 +107,68 @@ describe("dispatch events routes", () => {
       "acp.session.start",
       "acp.session.end",
     ]);
+  });
+
+  test("POST records acp.session.reuse + agent.heartbeat (regression: whitelist drift)", async () => {
+    // Both are worker-emitted kinds that were absent from the route's
+    // hand-maintained accepted-kind list, so every batch carrying them
+    // 400-rejected and the events were never recorded. With acp.session.reuse
+    // dropped, fleet_latency's acp_session_reuse_rate was structurally pinned at
+    // 0 even when warm-pool reuse actually fired.
+    const req = new Request("http://x/dispatch/events", {
+      method: "POST",
+      body: JSON.stringify({
+        events: [
+          {
+            handoff_id: "h-reuse",
+            worker_id: "w",
+            source: "worker",
+            kind: "acp.session.reuse",
+            ts: "2026-05-01T00:00:00.000Z",
+            meta: { pool_key: "codex-acp-fast /repo", framework_overhead_ms: 120 },
+          },
+          {
+            handoff_id: "h-reuse",
+            worker_id: "w",
+            source: "worker",
+            kind: "agent.heartbeat",
+            ts: "2026-05-01T00:00:01.000Z",
+          },
+        ],
+      }),
+    });
+
+    const res = await dispatchEventsPostRoute(req, services);
+    expect(res.status).toBe(200);
+    expect(services.dispatchEventLog.listByHandoff("h-reuse").map((event) => event.kind)).toEqual([
+      "acp.session.reuse",
+      "agent.heartbeat",
+    ]);
+  });
+
+  test("POST accepts every DispatchEventKind (accepted-kind list can't drift)", async () => {
+    // The route derives its accepted kinds from DispatchEventKindSchema, so a
+    // kind added to the api-contract enum can never again be silently dropped at
+    // ingestion. Posts one event per enum value (batched under the 50 cap).
+    const kinds = DispatchEventKindSchema.options;
+    const events = kinds.map((kind, i) => ({
+      handoff_id: "h-all",
+      worker_id: "w",
+      source: "worker" as const,
+      kind,
+      ts: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(),
+    }));
+    for (let i = 0; i < events.length; i += 50) {
+      const res = await dispatchEventsPostRoute(
+        new Request("http://x/dispatch/events", {
+          method: "POST",
+          body: JSON.stringify({ events: events.slice(i, i + 50) }),
+        }),
+        services,
+      );
+      expect(res.status).toBe(200);
+    }
+    expect(services.dispatchEventLog.listByHandoff("h-all")).toHaveLength(kinds.length);
   });
 
   test("POST accepts agent thought event kinds and GET returns them", async () => {

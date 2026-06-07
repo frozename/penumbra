@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DispatchEventKindSchema } from "@penumbra/api-contract";
 import type {
   DispatchEvent,
   DispatchEventInput,
@@ -7,36 +8,19 @@ import type {
 } from "@penumbra/core";
 
 import { json } from "./_helpers.js";
+
+// Every DispatchEventKind the POST route accepts and records. DERIVED from the
+// api-contract schema (the single source of truth) plus the core-only
+// "agent.heartbeat", so it can never silently drift again. The previous copy
+// was hand-maintained and omitted "acp.session.reuse" and "agent.heartbeat":
+// because BatchSchema below 400-rejects a whole batch on any unknown kind, every
+// worker batch carrying those events was dropped at ingestion and never
+// recorded — which pinned fleet_latency's acp_session_reuse_rate at 0 even when
+// warm-pool reuse actually fired, and silently lost heartbeat events. Adding a
+// kind to the api-contract enum now auto-extends this list.
 const KIND_VALUES = [
-  "dispatch.start",
-  "dispatch.end",
-  "acp.server.start",
-  "acp.session.start",
-  "acp.session.end",
-  "http.server.start",
-  "http.session.start",
-  "http.session.end",
-  "proc.spawn",
-  "proc.kill.sent",
-  "proc.exited.resolved",
-  "cancel.received",
-  "cancel.dispatched",
-  "heartbeat.sent",
-  "heartbeat.received",
-  "watchdog.tick",
-  "watchdog.auto_fail",
-  "claim",
-  "agent.thought",
-  "agent.thought.overflow",
-  "agent.thought.digest",
-  "agent.thought.signal",
-  "agent.tool_call.failed",
-  "extra_worker_wedge_evicted",
-  "shell.session.open",
-  "shell.run",
-  "shell.session.close",
-  "worker.recovery.requeued",
-  "worker.recovery.exhausted",
+  ...DispatchEventKindSchema.options,
+  "agent.heartbeat",
 ] as const satisfies readonly DispatchEventKind[];
 
 const EventSchema = z.object({
