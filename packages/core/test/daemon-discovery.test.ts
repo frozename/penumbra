@@ -128,3 +128,48 @@ test("waitForDaemonStorageRoot honors explicit override (no waiting)", async () 
   });
   expect(root).toBe("/explicit/path");
 });
+
+// --- requireConnectionFiles: daemon CLIENT discovery (e.g. the penumbra MCP server) ---
+// A per-dispatch PENUMBRA_STORAGE_ROOT can point at a per-worktree DB root that
+// has NO token/port. A client setting requireConnectionFiles must skip such a
+// root and fall through to the canonical candidate that holds the daemon's
+// connection files, rather than trying (and failing) to connect there.
+
+test("resolveDaemonStorageRoot requireConnectionFiles falls through when PENUMBRA_STORAGE_ROOT lacks token/port (per-worktree DB root)", () => {
+  const root = resolveDaemonStorageRoot({
+    requireConnectionFiles: true,
+    env: { PENUMBRA_STORAGE_ROOT: "/worktree/.test-storage" },
+    candidates: ["/home/.penumbra"],
+    existsSync: (p) => p.startsWith("/home/.penumbra/"),
+  });
+  expect(root).toBe("/home/.penumbra");
+});
+
+test("resolveDaemonStorageRoot requireConnectionFiles uses PENUMBRA_STORAGE_ROOT when it DOES hold token/port", () => {
+  const root = resolveDaemonStorageRoot({
+    requireConnectionFiles: true,
+    env: { PENUMBRA_STORAGE_ROOT: "/home/.penumbra" },
+    candidates: ["/other"],
+    existsSync: (p) => p.startsWith("/home/.penumbra/"),
+  });
+  expect(root).toBe("/home/.penumbra");
+});
+
+test("resolveDaemonStorageRoot WITHOUT requireConnectionFiles returns PENUMBRA_STORAGE_ROOT even without token/port (daemon self-resolution unchanged)", () => {
+  const root = resolveDaemonStorageRoot({
+    env: { PENUMBRA_STORAGE_ROOT: "/fresh/daemon/root" },
+    existsSync: () => false,
+  });
+  expect(root).toBe("/fresh/daemon/root");
+});
+
+test("resolveDaemonStorageRoot requireConnectionFiles throws when neither env root nor candidates hold token/port", () => {
+  expect(() =>
+    resolveDaemonStorageRoot({
+      requireConnectionFiles: true,
+      env: { PENUMBRA_STORAGE_ROOT: "/worktree" },
+      candidates: ["/cand1"],
+      existsSync: () => false,
+    }),
+  ).toThrow(/penumbra daemon not found/);
+});

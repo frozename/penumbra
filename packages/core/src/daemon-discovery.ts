@@ -7,6 +7,15 @@ export interface ResolveDaemonStorageRootOpts {
   env?: Record<string, string | undefined>;
   candidates?: string[];
   existsSync?: (path: string) => boolean;
+  /**
+   * When true, the resolved root MUST contain the daemon's `token`+`port` files.
+   * A daemon CLIENT (e.g. the penumbra MCP server) sets this so a per-dispatch
+   * PENUMBRA_STORAGE_ROOT that points at a per-worktree DB root (which has no
+   * token/port) falls through to the canonical candidates instead of trying to
+   * connect there and failing. The daemon's OWN startup leaves this false —
+   * it CREATES token/port after choosing its root.
+   */
+  requireConnectionFiles?: boolean;
 }
 
 export function resolveDaemonStorageRoot(opts: ResolveDaemonStorageRootOpts = {}): string {
@@ -14,19 +23,24 @@ export function resolveDaemonStorageRoot(opts: ResolveDaemonStorageRootOpts = {}
     return opts.explicit;
   }
 
+  const exists = opts.existsSync ?? fsExistsSync;
+  const hasConnectionFiles = (root: string): boolean =>
+    exists(join(root, "port")) && exists(join(root, "token"));
+
   const env = opts.env ?? process.env;
   if (env.PENUMBRA_STORAGE_ROOT) {
-    return env.PENUMBRA_STORAGE_ROOT;
+    // For a daemon CLIENT (requireConnectionFiles), only honor an env-supplied
+    // root that actually holds the daemon's token/port; a per-worktree DB root
+    // does not, so fall through to the canonical candidates instead.
+    if (!opts.requireConnectionFiles || hasConnectionFiles(env.PENUMBRA_STORAGE_ROOT)) {
+      return env.PENUMBRA_STORAGE_ROOT;
+    }
   }
 
   const candidates = opts.candidates ?? [join(homedir(), ".penumbra"), "/tmp/penumbra-live"];
 
-  const exists = opts.existsSync ?? fsExistsSync;
-
   for (const candidate of candidates) {
-    const portPath = join(candidate, "port");
-    const tokenPath = join(candidate, "token");
-    if (exists(portPath) && exists(tokenPath)) {
+    if (hasConnectionFiles(candidate)) {
       return candidate;
     }
   }

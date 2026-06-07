@@ -2,14 +2,17 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { buildServer } from "../src/server.js";
 import { DaemonClient } from "../src/daemon-client.js";
 import { resolveDaemonStorageRoot } from "@penumbra/core";
 
 let root: string;
 try {
-  root = resolveDaemonStorageRoot();
+  // This server is a daemon CLIENT: it needs the daemon's token/port, not the
+  // per-dispatch PENUMBRA_STORAGE_ROOT (which, for a use_worktree dispatch,
+  // points at the worktree's DB root and has no token/port). requireConnectionFiles
+  // makes it fall through to the canonical daemon root in that case.
+  root = resolveDaemonStorageRoot({ requireConnectionFiles: true });
 } catch (err) {
   console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);
