@@ -132,7 +132,11 @@ export async function shellRunRoute(req: Request, services: Services): Promise<R
     try {
       const created = await shellSessionPool.createSession({
         handoffId: handoff_id,
-        cwd: cwd ?? services.worktreeManager?.getWorktree?.(handoff_id)?.path ?? process.cwd(),
+        cwd:
+          cwd ??
+          services.worktreeManager?.getWorktree?.(handoff_id, handoff.project_id ?? undefined)
+            ?.path ??
+          process.cwd(),
         env: env ?? {},
         pty: pty ?? false,
         agentName: agent_name,

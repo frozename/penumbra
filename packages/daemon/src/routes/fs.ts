@@ -3,12 +3,13 @@ import { resolveInsideWorktree, FsPathError } from "@penumbra/core";
 import { executeGlob, executeGrep, GrepError } from "../fs-search.js";
 
 import { json } from "./_helpers.js";
+import { resolveWorktreeForHandoff } from "./worktree-resolve.js";
 export async function worktreesGlobRoute(
   req: Request,
   handoff_id: string,
   services: Services,
 ): Promise<Response> {
-  const wt = services.worktreeManager.getWorktree(handoff_id);
+  const wt = resolveWorktreeForHandoff(services, handoff_id);
   if (!wt) {
     return json(
       { error: { code: "not_found", message: `worktree for handoff ${handoff_id} not found` } },
@@ -63,7 +64,7 @@ export async function worktreesGrepRoute(
   handoff_id: string,
   services: Services,
 ): Promise<Response> {
-  const wt = services.worktreeManager.getWorktree(handoff_id);
+  const wt = resolveWorktreeForHandoff(services, handoff_id);
   if (!wt) {
     return json(
       { error: { code: "not_found", message: `worktree for handoff ${handoff_id} not found` } },

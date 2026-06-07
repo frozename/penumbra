@@ -2,6 +2,7 @@ import { Services, WorktreeHandle } from "@penumbra/core";
 import { promisify } from "node:util";
 import { exec as execCb } from "node:child_process";
 import { json } from "./_helpers.js";
+import { projectIdForHandoff, resolveWorktreeForHandoff } from "./worktree-resolve.js";
 const exec = promisify(execCb);
 const WORKTREE_STATUS_PATHS = [
   ".",
@@ -29,7 +30,7 @@ export async function worktreesInspectRoute(
   handoff_id: string,
   services: Services,
 ): Promise<Response> {
-  const wt = services.worktreeManager.getWorktree(handoff_id);
+  const wt = resolveWorktreeForHandoff(services, handoff_id);
   if (!wt) {
     return json(
       { error: { code: "not_found", message: `worktree for handoff ${handoff_id} not found` } },
@@ -72,7 +73,8 @@ export async function worktreesCleanupRoute(
   handoff_id: string,
   services: Services,
 ): Promise<Response> {
-  const wt = services.worktreeManager.getWorktree(handoff_id);
+  const projectId = projectIdForHandoff(services, handoff_id);
+  const wt = services.worktreeManager.getWorktree(handoff_id, projectId);
   if (!wt) {
     return json({ status: "not_found" });
   }
@@ -81,7 +83,7 @@ export async function worktreesCleanupRoute(
   const force = url.searchParams.get("force") === "true";
 
   try {
-    await services.worktreeManager.teardownWorktree(handoff_id, force);
+    await services.worktreeManager.teardownWorktree(handoff_id, force, projectId);
     return json({ status: "torn_down" });
   } catch (err: any) {
     return json({ error: { code: "internal_error", message: err.message } }, 500);
