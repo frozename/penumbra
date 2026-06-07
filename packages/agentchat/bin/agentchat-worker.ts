@@ -18,9 +18,18 @@ import {
   type SpawnOpts,
 } from "../src/adapters/cli-spawn.js";
 import { prepareOpencodeMcpConfigDir } from "../src/adapters/opencode-mcp-config.js";
-import { registerAdapter, createStdioAcpAdapter } from "../src/adapters/registry.js";
+import { registerAdapter, createStdioAcpAdapter, buildAdapter } from "../src/adapters/registry.js";
 import { resolveAdapterApiKey } from "../src/adapters/secret.js";
-import { drainAgent, shutdownAllAcpWarmPools } from "../src/adapters/acp-warm-pool-registry.js";
+import {
+  drainAgent,
+  shutdownAllAcpWarmPools,
+  totalAcpWarmPoolEntryCount,
+  acpWarmPoolHasLiveEntry,
+} from "../src/adapters/acp-warm-pool-registry.js";
+import { poolKeyFor } from "../src/adapters/acp-warm-pool.js";
+import { normalizeAdapterOptions } from "../src/cli/adapter-options.js";
+import { computePrewarmTargets, type PrewarmTarget } from "../src/worker/prewarm-targets.js";
+import { createPrewarmLoop, type PrewarmLoop } from "../src/worker/prewarm-loop.js";
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../src/sdk/adapter.js";
 import { startEventSource } from "../src/worker/event-source.js";
 import { createWorkerDispatcher } from "../src/worker/dispatcher.js";
@@ -832,6 +841,146 @@ let eventSourceRef: { forget(id: string): void } | null = null;
 
 const worktreeManager = createWorkerWorktreeManager();
 
+// ---------------------------------------------------------------------------
+// Warm-pool pre-warm loop (warm_pool_multiworker integration, Phase 3+4).
+// Eagerly pre-warms each opted-in (agent, repoRoot) at boot so warm reuse
+// engages regardless of the daemon's first-poll-wins worker spread. Gated on
+// the per-agent `warm_pool_prewarm` sub-flag (default off): when no agent opts
+// in, no loop is created and boot behaviour is byte-identical to before.
+// ---------------------------------------------------------------------------
+const PREWARM_GLOBAL_CAP = Number(process.env.PENUMBRA_WARM_PREWARM_CAP ?? 4);
+const PREWARM_DISPATCH_TIMEOUT_MS = 60_000;
+const DEFAULT_WARM_POOL_MAX_AGE_MS = 30 * 60_000;
+
+const prewarmResolveProjectRoot = (projectId?: string): string | undefined =>
+  (
+    worktreeManager as { projectRootFor?: (projectId?: string) => string | undefined }
+  ).projectRootFor?.(projectId);
+
+// `config` is reassigned on hot-reload; read it lazily so each pass + each
+// prewarm sees the current config without recreating these closures.
+const computePrewarmTargetsNow = (): PrewarmTarget[] =>
+  computePrewarmTargets({
+    agents: config.agents.map((a) => ({
+      name: a.name,
+      options: a.options as { warm_pool?: boolean; warm_pool_prewarm?: boolean } | null,
+    })),
+    isolation: workerIsolation,
+    workerProjectId,
+    resolveProjectRoot: prewarmResolveProjectRoot,
+    mainRepoPath: process.cwd(),
+    cap: PREWARM_GLOBAL_CAP,
+  });
+
+// Aborted on shutdown to kill any in-flight pre-warm spawn before the pools are
+// torn down (prevents orphaned codex-acp children).
+const prewarmAbort = new AbortController();
+
+const prewarmOne = async (target: PrewarmTarget): Promise<void> => {
+  const cfg = config.agents.find((a) => a.name === target.agent);
+  if (!cfg) throw new Error(`prewarm: agent not in config: ${target.agent}`);
+  // Handshake-only: hosted MCP servers + tool allowlist are applied at
+  // session/new (per dispatch), never on the warm connection, so pass none.
+  // repoRoot == cwd == target.repoRoot makes the deposited poolKey byte-equal
+  // the poolScope a real worktree dispatch computes (repoRoot ?? cwd).
+  const adapterOptions = normalizeAdapterOptions(cfg, [], []);
+  const adapter = buildAdapter(cfg.adapter, {
+    ...adapterOptions,
+    agentName: cfg.name,
+    cwd: target.repoRoot,
+    repoRoot: target.repoRoot,
+  }) as Adapter & {
+    prewarm?: (signal?: AbortSignal) => Promise<{ deposited: boolean; poolKey: string }>;
+  };
+  if (typeof adapter.prewarm !== "function") return; // non-ACP adapter: nothing to pre-warm
+
+  // Combine a per-call timeout with the worker-shutdown signal: aborting kills
+  // the spawned child (startServer wires signal→kill), so a hung handshake can
+  // never (a) wedge the loop's single-flight or (b) orphan a process at exit.
+  const ac = new AbortController();
+  const onShutdown = () => ac.abort(new Error("prewarm aborted: worker shutdown"));
+  if (prewarmAbort.signal.aborted) onShutdown();
+  else prewarmAbort.signal.addEventListener("abort", onShutdown, { once: true });
+  const timer = setTimeout(
+    () => ac.abort(new Error(`prewarm timeout ${PREWARM_DISPATCH_TIMEOUT_MS}ms`)),
+    PREWARM_DISPATCH_TIMEOUT_MS,
+  );
+  (timer as { unref?: () => void }).unref?.();
+  try {
+    const result = await adapter.prewarm(ac.signal);
+    if (!result.deposited) {
+      log.warn({ agent: target.agent, repo_root: target.repoRoot }, "prewarm-not-deposited");
+    }
+  } finally {
+    clearTimeout(timer);
+    prewarmAbort.signal.removeEventListener("abort", onShutdown);
+  }
+};
+
+let prewarmLoop: PrewarmLoop | null = null;
+const refreshPrewarmLoop = (): void => {
+  const eligible = computePrewarmTargetsNow();
+  if (eligible.length === 0) {
+    if (prewarmLoop) {
+      prewarmLoop.stop();
+      prewarmLoop = null;
+      log.info({ worker_id: workerId }, "prewarm-loop-stopped");
+    }
+    return;
+  }
+  if (prewarmLoop) {
+    void prewarmLoop.reload();
+    return;
+  }
+  const eligibleMaxAges = config.agents
+    .filter((a) => {
+      const o = a.options as Record<string, unknown> | undefined;
+      return o?.warm_pool === true && o?.warm_pool_prewarm === true;
+    })
+    .map((a) =>
+      Number(
+        (a.options as Record<string, unknown> | undefined)?.warm_pool_max_age_ms ??
+          DEFAULT_WARM_POOL_MAX_AGE_MS,
+      ),
+    );
+  const refreshIntervalMs = eligibleMaxAges.length
+    ? Math.max(60_000, Math.floor(Math.min(...eligibleMaxAges) / 2))
+    : Math.floor(DEFAULT_WARM_POOL_MAX_AGE_MS / 2);
+  prewarmLoop = createPrewarmLoop({
+    computeTargets: computePrewarmTargetsNow,
+    prewarmOne,
+    countEntries: totalAcpWarmPoolEntryCount,
+    // Pool registry key = agentName (cfg.name); entry key = (agentName, repoRoot).
+    hasLiveEntry: (target) =>
+      acpWarmPoolHasLiveEntry(
+        target.agent,
+        poolKeyFor({ agent: target.agent, cwd: target.repoRoot }),
+      ),
+    clock: {
+      now: () => Date.now(),
+      setInterval: (fn, ms) => setInterval(fn, ms),
+      clearInterval: (h) => clearInterval(h as ReturnType<typeof setInterval>),
+    },
+    cap: PREWARM_GLOBAL_CAP,
+    refreshIntervalMs,
+    // Wake at most once a minute so a crashed pre-warm self-heals promptly,
+    // while the expensive proactive replace only runs at refreshIntervalMs.
+    tickIntervalMs: Math.min(60_000, refreshIntervalMs),
+    log: (level, obj, msg) => log[level](obj, msg),
+  });
+  log.info(
+    {
+      worker_id: workerId,
+      targets: eligible.length,
+      refresh_interval_ms: refreshIntervalMs,
+      cap: PREWARM_GLOBAL_CAP,
+    },
+    "prewarm-loop-started",
+  );
+  void prewarmLoop.start();
+};
+refreshPrewarmLoop();
+
 // Read port + token at boot to construct authenticated SSE connections to the
 // daemon. PenumbraClient re-reads on every call (survives daemon restarts) but
 // the SSE pump captures these once; daemon-restart resilience is a documented
@@ -1339,6 +1488,9 @@ void runWorkerControlListener({
     for (const removedAgent of previousWarmAgents) {
       drainAgent(removedAgent);
     }
+    // Recompute pre-warm targets against the new config: start the loop if an
+    // agent just opted in, stop it if the last one opted out, otherwise refresh.
+    refreshPrewarmLoop();
     log.info({ agent_count: config.agents.length }, "agentchat-config-reloaded-from-control-bus");
   },
 });
@@ -1347,6 +1499,11 @@ const shutdown = async (sig: string) => {
   log.info({ sig }, "shutting down");
   controlAbort.abort();
   if (heartbeatTimer) clearTimeout(heartbeatTimer);
+  // Abort any in-flight pre-warm spawn (kills its child) and stop scheduling new
+  // ones BEFORE tearing the pools down, so a refresh tick cannot race pool
+  // closure and leave an orphaned codex-acp child.
+  prewarmAbort.abort(new Error("worker shutdown"));
+  prewarmLoop?.stop();
   usagePoller?.stop();
   notificationScheduler?.stop();
   shutdownAllAcpWarmPools();

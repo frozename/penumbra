@@ -16,6 +16,14 @@ export interface AcpWarmPoolEntry {
   spawnedAt: number;
   specHash: string;
   tornDown?: boolean;
+  /**
+   * A pre-warmed (eagerly deposited) connection the worker keeps warm on
+   * purpose. Pinned entries are EXEMPT from the idle-grace sweep — otherwise a
+   * connection pre-warmed at boot would be reaped ~grace later (5 min on the
+   * canary), long before any sparse dispatch arrives, defeating the point. They
+   * are still reaped once past max-age (the pre-warm loop replaces them first).
+   */
+  pinned?: boolean;
 }
 
 export interface AcpWarmPoolDeposit {
@@ -23,6 +31,7 @@ export interface AcpWarmPoolDeposit {
   client: StdioAcpClient;
   sessionId?: string;
   specHash: string;
+  pinned?: boolean;
 }
 
 export interface AcpWarmPool {
@@ -31,6 +40,12 @@ export interface AcpWarmPool {
   release(holderId: string, key: string): void;
   evict(key: string, entry?: AcpWarmPoolEntry): void;
   shutdown(): void;
+  /** Total warm entries (live processes) across every key in this pool. Used by
+   *  the worker-level pre-warm cap (Phase 4) to bound idle process footprint. */
+  size(): number;
+  /** True if at least one live (running) entry exists for `key`. Lets the
+   *  pre-warm loop self-heal a crashed pre-warm without waiting for the refresh. */
+  has(key: string): boolean;
   _sweep(): void;
 }
 
@@ -114,11 +129,15 @@ export function createAcpWarmPool(
           teardown(key, entry);
           continue;
         }
-        if (
-          entry.refs.size === 0 &&
-          entry.lastReleaseAt !== undefined &&
-          entry.lastReleaseAt <= threshold
-        ) {
+        if (entry.refs.size !== 0) continue;
+        if (entry.pinned) {
+          // Pre-warmed connections are kept warm deliberately: skip the
+          // idle-grace teardown, but reap once past max-age so a stale pinned
+          // entry can't outlive its spec (the pre-warm loop re-warms a fresh one).
+          if (now() - entry.spawnedAt > maxAgeMs) teardown(key, entry);
+          continue;
+        }
+        if (entry.lastReleaseAt !== undefined && entry.lastReleaseAt <= threshold) {
           teardown(key, entry);
         }
       }
@@ -149,6 +168,16 @@ export function createAcpWarmPool(
         /* ignore */
       }
       return null;
+    }
+    if (depositEntry.pinned) {
+      // Replace-before-evict: a pinned (pre-warmed) deposit supersedes any
+      // existing IDLE pinned entry for this key, so at most one idle pinned
+      // connection is kept warm per (agent, repoRoot) — the refresh loop can
+      // re-warm without accumulating duplicate processes. In-use pinned entries
+      // (a dispatch holds one) are left alone and reaped at max-age once idle.
+      for (const candidate of [...(entries.get(key) ?? [])]) {
+        if (candidate.pinned && candidate.refs.size === 0) teardown(key, candidate);
+      }
     }
     const list = entries.get(key) ?? [];
     if (list.length >= maxEntries) {
@@ -202,12 +231,24 @@ export function createAcpWarmPool(
     entries.clear();
   }
 
+  function size(): number {
+    let total = 0;
+    for (const list of entries.values()) total += list.length;
+    return total;
+  }
+
+  function has(key: string): boolean {
+    return (entries.get(key) ?? []).some((entry) => isRunning(entry));
+  }
+
   return {
     acquire,
     deposit,
     release,
     evict,
     shutdown,
+    size,
+    has,
     _sweep: sweep,
   };
 }

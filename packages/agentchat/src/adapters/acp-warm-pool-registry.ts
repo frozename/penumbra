@@ -37,6 +37,30 @@ export function shutdownAllAcpWarmPools(): void {
   pools.clear();
 }
 
+/**
+ * Total warm entries (live ACP processes) across every agent pool on this
+ * worker. The pre-warm loop (Phase 4) reads this as the worker-level cost
+ * ceiling so eager pre-warming can never push the idle-process footprint above
+ * the cap — including processes deposited lazily by cold dispatches, not just
+ * pre-warmed ones.
+ */
+export function totalAcpWarmPoolEntryCount(): number {
+  let total = 0;
+  for (const pool of pools.values()) total += pool.size();
+  return total;
+}
+
+/**
+ * True if a live warm entry already exists for `(agent, key)`. Peek-only — does
+ * NOT create a pool (unlike getOrCreateAcpWarmPool) — so the pre-warm loop can
+ * cheaply decide whether a target needs (re)warming, self-healing a crashed
+ * pre-warm without waiting for the next refresh tick.
+ */
+export function acpWarmPoolHasLiveEntry(agent: string, key: string): boolean {
+  const pool = pools.get(agent);
+  return pool ? pool.has(key) : false;
+}
+
 export function resetAcpWarmPoolRegistryForTest(): void {
   shutdownAllAcpWarmPools();
 }

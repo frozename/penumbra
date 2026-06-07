@@ -188,6 +188,12 @@ export function createStdioAcpAdapter(
       args: opts.args,
       model: opts.model,
       cwd: opts.cwd,
+      // Warm-pool scope. Set per-dispatch by the worktree override
+      // (worktree-integration.ts) to the stable project root so an ACP process
+      // is pooled across this agent's per-handoff worktrees. Without forwarding
+      // it here, the adapter falls back to poolScope=cwd (the unique worktree
+      // path) and warm reuse never engages under the default use_worktree:true.
+      repoRoot: opts.repoRoot,
       env: opts.env,
       unsetEnv: opts.unsetEnv,
       bootTimeoutMs: opts.bootTimeoutMs,

@@ -141,4 +141,87 @@ describe("AcpWarmPool", () => {
     expect(h.kill).toHaveBeenCalledTimes(1);
     expect(pool.acquire("h1", key, "spec-a")).toBeNull();
   });
+
+  test("size() counts live entries across keys and drops to zero on shutdown", () => {
+    const pool = createAcpWarmPool({ now: () => 0 });
+    expect(pool.size()).toBe(0);
+
+    const other = poolKeyFor({ agent: "codex-acp-fast", cwd: "/other" });
+    pool.deposit(key, { handle: handle(), client, sessionId: "s1", specHash: "spec-a" });
+    pool.deposit(other, { handle: handle(), client, sessionId: "s2", specHash: "spec-a" });
+    expect(pool.size()).toBe(2);
+
+    // A held (acquired) entry still counts as a live process.
+    pool.acquire("h1", key, "spec-a");
+    expect(pool.size()).toBe(2);
+
+    pool.shutdown();
+    expect(pool.size()).toBe(0);
+  });
+
+  test("has() is true only while a live entry exists for the key", () => {
+    const pool = createAcpWarmPool({ now: () => 0 });
+    expect(pool.has(key)).toBe(false);
+    pool.deposit(key, { handle: handle(), client, specHash: "spec-a" });
+    expect(pool.has(key)).toBe(true);
+    pool.shutdown();
+    expect(pool.has(key)).toBe(false);
+  });
+});
+
+describe("AcpWarmPool pinned (pre-warm) entries", () => {
+  test("pinned entries survive the idle-grace sweep; non-pinned ones do not", () => {
+    let now = 0;
+    const other = poolKeyFor({ agent: "codex-acp-fast", cwd: "/other" });
+    const pool = createAcpWarmPool({ now: () => now, graceMs: 5_000, maxAgeMs: 1_000_000 });
+    const pinned = handle();
+    const normal = handle();
+    pool.deposit(key, { handle: pinned, client, specHash: "spec-a", pinned: true });
+    pool.deposit(other, { handle: normal, client, specHash: "spec-a" });
+
+    now = 6_000; // past idle grace
+    pool._sweep();
+    expect(pinned.kill).not.toHaveBeenCalled(); // kept warm on purpose
+    expect(normal.kill).toHaveBeenCalledTimes(1); // ordinary idle entry reaped
+  });
+
+  test("pinned entries are still reaped once past max-age", () => {
+    let now = 0;
+    const pool = createAcpWarmPool({ now: () => now, graceMs: 5_000, maxAgeMs: 10_000 });
+    const pinned = handle();
+    pool.deposit(key, { handle: pinned, client, specHash: "spec-a", pinned: true });
+
+    now = 9_999;
+    pool._sweep();
+    expect(pinned.kill).not.toHaveBeenCalled();
+
+    now = 10_001;
+    pool._sweep();
+    expect(pinned.kill).toHaveBeenCalledTimes(1);
+  });
+
+  test("a pinned deposit replaces the existing IDLE pinned entry (no duplicate accumulation)", () => {
+    const pool = createAcpWarmPool({ now: () => 0 });
+    const first = handle();
+    pool.deposit(key, { handle: first, client, specHash: "spec-a", pinned: true });
+    expect(pool.size()).toBe(1);
+
+    const second = handle();
+    pool.deposit(key, { handle: second, client, specHash: "spec-a", pinned: true });
+    expect(first.kill).toHaveBeenCalledTimes(1); // old idle pinned torn down
+    expect(pool.size()).toBe(1); // replaced in place
+    expect(pool.has(key)).toBe(true);
+  });
+
+  test("a pinned deposit does NOT evict an in-use pinned entry (a dispatch holds it)", () => {
+    const pool = createAcpWarmPool({ now: () => 0 });
+    const inUse = handle();
+    pool.deposit(key, { handle: inUse, client, specHash: "spec-a", pinned: true });
+    pool.acquire("h1", key, "spec-a"); // now held by a dispatch
+
+    const fresh = handle();
+    pool.deposit(key, { handle: fresh, client, specHash: "spec-a", pinned: true });
+    expect(inUse.kill).not.toHaveBeenCalled();
+    expect(pool.size()).toBe(2); // held one preserved + the fresh pinned entry
+  });
 });

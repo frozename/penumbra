@@ -8,6 +8,7 @@ import {
   getOrCreateAcpWarmPool,
   resetAcpWarmPoolRegistryForTest,
   shutdownAllAcpWarmPools,
+  totalAcpWarmPoolEntryCount,
 } from "../../src/adapters/acp-warm-pool-registry.js";
 import { installAcpWarmPoolShutdownHandlers } from "../../src/cli/loop.js";
 
@@ -112,6 +113,54 @@ describe("ACP warm pool worker wiring", () => {
     drainAgent("codex-acp-fast");
     const second = getOrCreateAcpWarmPool("codex-acp-fast", {});
     expect(second).not.toBe(first);
+  });
+
+  test("buildAdapter forwards repoRoot so warm reuse keys on (agent, repoRoot), not the per-worktree cwd", () => {
+    // Regression guard: createStdioAcpAdapter used to drop repoRoot, so the
+    // production worker fell back to poolScope=cwd (the unique per-handoff
+    // worktree path) and Option B reuse never engaged under use_worktree:true.
+    const adapter = buildAdapter("stdio-acp", {
+      binary: "mock-acp",
+      model: "codex-acp-fast",
+      warmPool: true,
+      repoRoot: "/repos/penumbra",
+      cwd: "/repos/penumbra/.worktrees/handoff-123",
+    });
+
+    expect((adapter as any).opts.repoRoot).toBe("/repos/penumbra");
+  });
+
+  test("totalAcpWarmPoolEntryCount sums live entries across every agent pool", () => {
+    expect(totalAcpWarmPoolEntryCount()).toBe(0);
+
+    const fast = getOrCreateAcpWarmPool("codex-acp-fast", {});
+    fast.deposit("codex-acp-fast\0/repos/penumbra", {
+      handle: handle(),
+      client: {} as any,
+      sessionId: "s1",
+      specHash: "spec-a",
+    });
+    expect(totalAcpWarmPoolEntryCount()).toBe(1);
+    expect(fast.size()).toBe(1);
+
+    const deep = getOrCreateAcpWarmPool("codex-acp-deep", {});
+    deep.deposit("codex-acp-deep\0/repos/penumbra", {
+      handle: handle(),
+      client: {} as any,
+      sessionId: "s2",
+      specHash: "spec-a",
+    });
+    deep.deposit("codex-acp-deep\0/repos/omlx", {
+      handle: handle(),
+      client: {} as any,
+      sessionId: "s3",
+      specHash: "spec-a",
+    });
+    expect(deep.size()).toBe(2);
+    expect(totalAcpWarmPoolEntryCount()).toBe(3); // 1 + 2 across two pools
+
+    drainAgent("codex-acp-deep");
+    expect(totalAcpWarmPoolEntryCount()).toBe(1);
   });
 
   test("installAcpWarmPoolShutdownHandlers wires SIGTERM and SIGINT to shutdownAll", () => {

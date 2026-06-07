@@ -57,7 +57,26 @@ describe("StdioAcpAdapter.prewarm (Phase 2)", () => {
     const entry = pool.acquire("h-test", poolKey, specHash);
     expect(entry).not.toBeNull();
     expect(entry?.specHash).toBe(specHash);
+    expect(entry?.pinned).toBe(true); // pre-warmed: exempt from the idle-grace sweep
     pool.release("h-test", poolKey);
+  });
+
+  it("prewarm(signal) that is already aborted throws and never spawns a child", async () => {
+    const pool = createAcpWarmPool({ now: () => 0 });
+    const startServer = vi.fn().mockResolvedValue(makeServer());
+    const adapter = new StdioAcpAdapter(
+      { binary: "mock-acp", agentName: "codex-acp-fast", warmPool: true, repoRoot: "/repo" } as any,
+      {
+        startServer,
+        createClient: () => ({ onRequest: vi.fn(), on: vi.fn(), request: vi.fn() }) as any,
+        pool,
+      } as any,
+    );
+
+    const ac = new AbortController();
+    ac.abort(new Error("worker shutdown"));
+    await expect(adapter.prewarm(ac.signal)).rejects.toThrow();
+    expect(startServer).not.toHaveBeenCalled();
   });
 
   it("a dispatch after prewarm is a reuse hit: no second startServer, fresh session/new at the dispatch cwd, storage root re-injected", async () => {

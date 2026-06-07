@@ -356,6 +356,9 @@ export class StdioAcpAdapter implements Adapter {
       specHash: string;
       poolKey: string;
       warmPoolEnabled: boolean;
+      /** Mark the deposited entry as a kept-warm pre-warm (exempt from the
+       *  idle-grace sweep). Only prewarm() sets this; cold dispatch leaves it off. */
+      pinned?: boolean;
     },
   ): Promise<AcpWarmPoolEntry | null> {
     // 1. Initialize
@@ -402,6 +405,7 @@ export class StdioAcpAdapter implements Adapter {
         handle: server,
         client,
         specHash: args.specHash,
+        pinned: args.pinned,
       }) ?? null
     );
   }
@@ -412,8 +416,12 @@ export class StdioAcpAdapter implements Adapter {
    * no holder ref — the deposited entry is left idle so the next matching dispatch
    * acquires it as a reuse hit (this is what defeats first-poll-wins worker spread).
    * No-op when the warm pool is disabled for this agent.
+   *
+   * `signal` aborts the spawn/handshake (the child is killed via startServer's
+   * abort handler) so the pre-warm loop can enforce a timeout and the worker can
+   * tear down in-flight pre-warms on shutdown without orphaning a codex-acp child.
    */
-  async prewarm(): Promise<{ deposited: boolean; poolKey: string }> {
+  async prewarm(signal?: AbortSignal): Promise<{ deposited: boolean; poolKey: string }> {
     const cwd = this.opts.cwd ?? process.cwd();
     const poolScope = this.opts.repoRoot ?? cwd;
     const poolKey = poolKeyFor({
@@ -422,6 +430,7 @@ export class StdioAcpAdapter implements Adapter {
     });
     const warmPoolEnabled = this.opts.warmPool === true && this.deps.pool !== undefined;
     if (!warmPoolEnabled) return { deposited: false, poolKey };
+    if (signal?.aborted) throw signal.reason ?? new Error("prewarm aborted");
 
     const specHash = acpSpecHash({
       binary: this.opts.binary,
@@ -429,12 +438,13 @@ export class StdioAcpAdapter implements Adapter {
       model: this.opts.model,
     });
     const mergedEnv = this.buildMergedEnv();
-    const { server, client } = await this.spawnAcpServer(cwd, mergedEnv, undefined);
+    const { server, client } = await this.spawnAcpServer(cwd, mergedEnv, signal);
     const entry = await this.handshakeAndDeposit(server, client, {
       mergedEnv,
       specHash,
       poolKey,
       warmPoolEnabled,
+      pinned: true,
     });
     return { deposited: entry !== null, poolKey };
   }
