@@ -479,7 +479,15 @@ export class StdioAcpAdapter implements Adapter {
       let client: StdioAcpClient;
       let sessionId = "";
       let reusedSession = false;
+      // Diagnostic snapshot of the pool's match decision BEFORE acquire() (which
+      // tears down stale candidates), so a cold start records exactly why warm
+      // reuse missed — no_entry / not_running / aged / spec_mismatch / in_use, or
+      // would_hit (a real acquire bug). pool_keys surfaces key drift.
+      let warmMissReason: string | undefined;
+      let warmPoolKeys: string[] | undefined;
       if (warmPoolEnabled) {
+        warmMissReason = this.deps.pool!.peekMissReason(poolKey, specHash);
+        warmPoolKeys = this.deps.pool!.debugKeys();
         pooledEntry = this.deps.pool!.acquire(holderId, poolKey, specHash);
       }
       if (pooledEntry) {
@@ -503,6 +511,13 @@ export class StdioAcpAdapter implements Adapter {
           adapter: this.kind,
           binary: this.opts.binary,
           pid: server.pid,
+          ...(warmPoolEnabled
+            ? {
+                pool_key: poolKey,
+                warm_miss: warmMissReason ?? "unknown",
+                pool_keys: warmPoolKeys ?? [],
+              }
+            : {}),
         });
       }
 

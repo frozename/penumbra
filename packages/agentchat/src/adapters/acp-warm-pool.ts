@@ -46,6 +46,13 @@ export interface AcpWarmPool {
   /** True if at least one live (running) entry exists for `key`. Lets the
    *  pre-warm loop self-heal a crashed pre-warm without waiting for the refresh. */
   has(key: string): boolean;
+  /** Diagnostic: why `acquire(key, specHash)` would currently miss, or
+   *  "would_hit" if an acquirable entry exists. Computed WITHOUT mutating the
+   *  pool, so call it BEFORE acquire (acquire tears down stale candidates). */
+  peekMissReason(key: string, specHash: string): string;
+  /** Diagnostic: every key currently holding entries — surfaces key drift
+   *  (deposit under key A, acquire under key B → reuse never fires). */
+  debugKeys(): string[];
   _sweep(): void;
 }
 
@@ -241,6 +248,32 @@ export function createAcpWarmPool(
     return (entries.get(key) ?? []).some((entry) => isRunning(entry));
   }
 
+  // Diagnostic mirror of acquire()'s match logic — read-only, no teardown — so a
+  // cold dispatch can record WHY it missed before acquire() prunes the evidence.
+  function peekMissReason(key: string, specHash: string): string {
+    const list = entries.get(key) ?? [];
+    if (list.length === 0) return "no_entry";
+    const reasons: string[] = [];
+    for (const entry of list) {
+      if (entry.refs.size > 0) {
+        reasons.push("in_use");
+      } else if (!isRunning(entry)) {
+        reasons.push("not_running");
+      } else if (now() - entry.spawnedAt > maxAgeMs) {
+        reasons.push("aged");
+      } else if (entry.specHash !== specHash) {
+        reasons.push("spec_mismatch");
+      } else {
+        return "would_hit";
+      }
+    }
+    return reasons[0] ?? "unknown";
+  }
+
+  function debugKeys(): string[] {
+    return [...entries.keys()];
+  }
+
   return {
     acquire,
     deposit,
@@ -249,6 +282,8 @@ export function createAcpWarmPool(
     shutdown,
     size,
     has,
+    peekMissReason,
+    debugKeys,
     _sweep: sweep,
   };
 }
