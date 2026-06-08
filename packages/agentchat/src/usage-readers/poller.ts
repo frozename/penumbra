@@ -37,6 +37,8 @@ export function resolveUsageCursorPath(opts: {
 export function startUsagePoller(opts: PollerOptions): PollerHandle {
   const intervalMs = opts.intervalMs ?? 60_000;
   const cursors = loadCursors(opts.cursorPath, opts.log);
+  const lastEmittedIds = new Set<string>();
+  const lastEmittedOrder: string[] = [];
   let stopped = false;
 
   const persist = () => {
@@ -52,9 +54,18 @@ export function startUsagePoller(opts: PollerOptions): PollerHandle {
       ? cursors[reader.id]
       : null;
     const result = await reader.read(prev);
-    await emitResult(reader.id, result, opts.emit, opts.log);
-    cursors[reader.id] = result.cursor;
-    persist();
+    const ok = await emitResult(
+      reader.id,
+      result,
+      opts.emit,
+      opts.log,
+      lastEmittedIds,
+      lastEmittedOrder,
+    );
+    if (ok) {
+      cursors[reader.id] = result.cursor;
+      persist();
+    }
   };
 
   const runOnce = async (): Promise<void> => {
@@ -104,12 +115,20 @@ async function emitResult(
   result: UsageReaderResult,
   emit: PollerOptions["emit"],
   log: PollerOptions["log"],
-): Promise<void> {
+  lastEmittedIds: Set<string>,
+  lastEmittedOrder: string[],
+): Promise<boolean> {
+  let ok = true;
   for (const delta of result.usage_deltas) {
     const event = buildUsageEvent(readerId, delta);
+    if (lastEmittedIds.has(event.event_id)) {
+      continue;
+    }
     try {
-      await emit(event);
+      const ack = await emit(event);
+      rememberEmittedId(ack.event_id, lastEmittedIds, lastEmittedOrder);
     } catch (err) {
+      ok = false;
       log.error(
         { err: String(err), readerId, event_type: "usage-update" },
         "usage-poller: emit failed",
@@ -119,14 +138,36 @@ async function emitResult(
 
   for (const snapshot of result.rate_limit_snapshots) {
     const event = buildRateLimitEvent(readerId, snapshot);
+    if (lastEmittedIds.has(event.event_id)) {
+      continue;
+    }
     try {
-      await emit(event);
+      const ack = await emit(event);
+      rememberEmittedId(ack.event_id, lastEmittedIds, lastEmittedOrder);
     } catch (err) {
+      ok = false;
       log.error(
         { err: String(err), readerId, event_type: "rate-limit-snapshot" },
         "usage-poller: emit failed",
       );
     }
+  }
+
+  return ok;
+}
+
+function rememberEmittedId(
+  eventId: string,
+  lastEmittedIds: Set<string>,
+  lastEmittedOrder: string[],
+): void {
+  if (lastEmittedIds.has(eventId)) return;
+  lastEmittedIds.add(eventId);
+  lastEmittedOrder.push(eventId);
+  if (lastEmittedOrder.length <= 256) return;
+  const removed = lastEmittedOrder.shift();
+  if (removed !== undefined) {
+    lastEmittedIds.delete(removed);
   }
 }
 

@@ -109,6 +109,31 @@ describe("OpenCodeDbReader", () => {
     expect(r.usage_deltas).toHaveLength(0);
   });
 
+  it("read() does not throw when the source DB is locked", async () => {
+    const { db, path } = makeOpencodeDb();
+    insertAssistant(db, "m1", 1777421548000, {
+      role: "assistant",
+      cost: 0.001,
+      tokens: { input: 10, output: 20 },
+      modelID: "x",
+      providerID: "p",
+    });
+    db.close();
+
+    const locker = new Database(path);
+    locker.exec("BEGIN EXCLUSIVE");
+
+    const reader = new OpenCodeDbReader({ dbPath: path });
+    const r = await reader.read(null);
+
+    expect(r.usage_deltas).toHaveLength(0);
+    expect(r.rate_limit_snapshots).toHaveLength(0);
+    expect(r.cursor).toEqual({ last_seen_time_created: 0 });
+
+    locker.exec("ROLLBACK");
+    locker.close();
+  });
+
   it("does not emit rate-limit snapshots from local API-equivalent message cost", async () => {
     const { db, path } = makeOpencodeDb();
     const nowMs = Date.now();

@@ -31,63 +31,79 @@ export class OpenCodeDbReader implements UsageReader {
     const cursor: OpenCodeDbCursor = (previousCursor as OpenCodeDbCursor | null) ?? {
       last_seen_time_created: 0,
     };
-    const db = new Database(this.dbPath, { readonly: true });
+    let db: Database | undefined;
+    try {
+      db = new Database(this.dbPath, { readonly: true });
+      db.run("PRAGMA busy_timeout = 3000");
 
-    const rows = db
-      .prepare(
-        'SELECT id, time_created, data FROM message WHERE time_created > ? AND json_extract(data, "$.role") = "assistant" ORDER BY time_created ASC',
-      )
-      .all(cursor.last_seen_time_created) as Array<{
-      id: string;
-      time_created: number;
-      data: string;
-    }>;
+      const rows = db
+        .prepare(
+          'SELECT id, time_created, data FROM message WHERE time_created > ? AND json_extract(data, "$.role") = "assistant" ORDER BY time_created ASC',
+        )
+        .all(cursor.last_seen_time_created) as Array<{
+        id: string;
+        time_created: number;
+        data: string;
+      }>;
 
-    const buckets = new Map<string, UsageReaderDelta>();
-    let max_tc = cursor.last_seen_time_created;
-    for (const row of rows) {
-      let body: any;
-      try {
-        body = JSON.parse(row.data);
-      } catch {
-        continue;
+      const buckets = new Map<string, UsageReaderDelta>();
+      let max_tc = cursor.last_seen_time_created;
+      for (const row of rows) {
+        let body: any;
+        try {
+          body = JSON.parse(row.data);
+        } catch {
+          continue;
+        }
+        const tokens = body?.tokens;
+        if (!tokens || typeof tokens !== "object") continue;
+        const provider = String(body.providerID ?? "unknown");
+        const model = body.modelID ?? null;
+        const key = `${provider}\0${model ?? ""}`;
+        let bucket = buckets.get(key);
+        if (!bucket) {
+          bucket = {
+            provider,
+            model,
+            tokens_input: 0,
+            tokens_output: 0,
+            tokens_cache_read: 0,
+            tokens_cache_write: 0,
+            cost_usd: 0,
+            window_start: new Date(row.time_created).toISOString(),
+            window_end: new Date(row.time_created).toISOString(),
+          };
+          buckets.set(key, bucket);
+        }
+        bucket.tokens_input += Number(tokens.input ?? 0);
+        bucket.tokens_output += Number(tokens.output ?? 0);
+        bucket.tokens_cache_read =
+          (bucket.tokens_cache_read ?? 0) + Number(tokens.cache?.read ?? 0);
+        bucket.tokens_cache_write =
+          (bucket.tokens_cache_write ?? 0) + Number(tokens.cache?.write ?? 0);
+        bucket.cost_usd = (bucket.cost_usd ?? 0) + Number(body.cost ?? 0);
+        bucket.window_end = new Date(row.time_created).toISOString();
+        if (row.time_created > max_tc) max_tc = row.time_created;
       }
-      const tokens = body?.tokens;
-      if (!tokens || typeof tokens !== "object") continue;
-      const provider = String(body.providerID ?? "unknown");
-      const model = body.modelID ?? null;
-      const key = `${provider}\0${model ?? ""}`;
-      let bucket = buckets.get(key);
-      if (!bucket) {
-        bucket = {
-          provider,
-          model,
-          tokens_input: 0,
-          tokens_output: 0,
-          tokens_cache_read: 0,
-          tokens_cache_write: 0,
-          cost_usd: 0,
-          window_start: new Date(row.time_created).toISOString(),
-          window_end: new Date(row.time_created).toISOString(),
+
+      return {
+        cursor: { last_seen_time_created: max_tc } satisfies OpenCodeDbCursor,
+        usage_deltas: [...buckets.values()],
+        rate_limit_snapshots: [],
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("database is locked")) {
+        console.warn(`opencode-db reader: ${message}; returning empty cycle`);
+        return {
+          cursor: cursor,
+          usage_deltas: [],
+          rate_limit_snapshots: [],
         };
-        buckets.set(key, bucket);
       }
-      bucket.tokens_input += Number(tokens.input ?? 0);
-      bucket.tokens_output += Number(tokens.output ?? 0);
-      bucket.tokens_cache_read = (bucket.tokens_cache_read ?? 0) + Number(tokens.cache?.read ?? 0);
-      bucket.tokens_cache_write =
-        (bucket.tokens_cache_write ?? 0) + Number(tokens.cache?.write ?? 0);
-      bucket.cost_usd = (bucket.cost_usd ?? 0) + Number(body.cost ?? 0);
-      bucket.window_end = new Date(row.time_created).toISOString();
-      if (row.time_created > max_tc) max_tc = row.time_created;
+      throw err;
+    } finally {
+      db?.close();
     }
-
-    db.close();
-
-    return {
-      cursor: { last_seen_time_created: max_tc } satisfies OpenCodeDbCursor,
-      usage_deltas: [...buckets.values()],
-      rate_limit_snapshots: [],
-    };
   }
 }

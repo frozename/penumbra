@@ -29,6 +29,49 @@ class ThrowingReader implements UsageReader {
 }
 
 describe("startUsagePoller", () => {
+  it("runOnce re-polling the same cursor position emits 0 new events", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "poller-"));
+    const cursorPath = join(dir, "cursors.json");
+    const reader = new StubReader("a", {
+      cursor: { position: 1 },
+      usage_deltas: [
+        {
+          provider: "p",
+          model: "m",
+          tokens_input: 3,
+          tokens_output: 4,
+          cost_usd: 0.7,
+          window_start: "2026-06-08T00:00:00.000Z",
+          window_end: "2026-06-08T00:05:00.000Z",
+        },
+      ],
+      rate_limit_snapshots: [],
+    });
+    const observed: any[] = [];
+    const poller = startUsagePoller({
+      readers: [reader],
+      intervalMs: 30_000,
+      cursorPath,
+      emit: async (e) => {
+        observed.push(e);
+        return { event_id: e.event_id };
+      },
+      log: { info: () => {}, error: () => {} },
+    });
+
+    await (poller as any).runOnce();
+    await (poller as any).runOnce();
+    poller.stop();
+
+    expect(observed).toHaveLength(1);
+    expect(observed[0].event_id).toMatch(/^usage-poller-/);
+    expect(new Set(observed.map((event) => event.event_id)).size).toBe(1);
+
+    const persisted = JSON.parse(readFileSync(cursorPath, "utf8"));
+    expect(persisted.a).toEqual({ position: 1 });
+    expect(reader.reads).toBe(2);
+  });
+
   it("runs all readers and persists cursors atomically", async () => {
     const dir = mkdtempSync(join(tmpdir(), "poller-"));
     const cursorPath = join(dir, "cursors.json");
