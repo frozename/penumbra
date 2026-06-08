@@ -1,6 +1,12 @@
 import { Database } from "bun:sqlite";
-import { statSync } from "node:fs";
-import { HandoffReader, WorktreeManager, loadSqliteVec, type WorktreeHandle } from "@penumbra/core";
+import {
+  HandoffReader,
+  WorktreeManager,
+  loadSqliteVec,
+  selectWorktreeGcCandidates,
+  type WorktreeGcCandidate,
+  type WorktreeHandle,
+} from "@penumbra/core";
 import { resolveStorageDbPath } from "../../../core/src/db/storage-db-path.js";
 
 try {
@@ -9,7 +15,6 @@ try {
   }
 } catch {}
 
-const TERMINAL_STATUSES = new Set(["completed", "failed", "rejected", "expired"]);
 const DEFAULT_GRACE_MS = 2 * 60 * 60_000;
 type WorktreeGcManager = {
   listWorktrees(): WorktreeHandle[];
@@ -23,16 +28,6 @@ export interface WorktreeGcOpts {
   gracePeriodMs?: number;
   /** Injectable for testing; defaults to new WorktreeManager(). */
   worktreeManager?: WorktreeGcManager;
-}
-
-export interface WorktreeGcCandidate {
-  handoff_id: string;
-  branch: string;
-  status: string;
-  resolved_at: string;
-  path: string;
-  age_ms: number;
-  reason: "terminal_tracked" | "terminal_orphan" | "missing_handoff_orphan";
 }
 
 export interface WorktreeGcResult {
@@ -63,68 +58,13 @@ export async function runWorktreeGc(opts: WorktreeGcOpts): Promise<WorktreeGcRes
   const worktreeManager: WorktreeGcManager = opts.worktreeManager ?? new WorktreeManager();
   const handles = worktreeManager.listWorktrees();
 
-  const candidates: WorktreeGcCandidate[] = [];
-
-  for (const handle of handles) {
-    const handoff = handoffReader.get(handle.handoffId);
-    if (!handoff) continue;
-    if (!TERMINAL_STATUSES.has(handoff.status)) continue;
-
-    const resolvedAt = handoff.resolved_at ? new Date(handoff.resolved_at).getTime() : null;
-    if (resolvedAt === null || nowMs - resolvedAt < gracePeriodMs) continue;
-
-    candidates.push({
-      handoff_id: handle.handoffId,
-      branch: handle.branchName,
-      status: handoff.status,
-      resolved_at: handoff.resolved_at!,
-      path: handle.path,
-      age_ms: nowMs - resolvedAt,
-      reason: "terminal_tracked",
-    });
-  }
-
-  for (const orphan of worktreeManager.discoverOrphanWorktrees?.() ?? []) {
-    const handoff = handoffReader.get(orphan.handoffId);
-    if (handoff) {
-      if (!TERMINAL_STATUSES.has(handoff.status)) continue;
-
-      const resolvedAt = handoff.resolved_at ? new Date(handoff.resolved_at).getTime() : null;
-      if (resolvedAt === null || nowMs - resolvedAt < gracePeriodMs) continue;
-
-      candidates.push({
-        handoff_id: orphan.handoffId,
-        branch: `agent/${orphan.handoffId}`,
-        status: handoff.status,
-        resolved_at: handoff.resolved_at!,
-        path: orphan.path,
-        age_ms: nowMs - resolvedAt,
-        reason: "terminal_orphan",
-      });
-      continue;
-    }
-
-    let mtimeMs: number;
-    try {
-      mtimeMs = fileMtimeMs(orphan.path);
-    } catch {
-      continue;
-    }
-    if (nowMs - mtimeMs < gracePeriodMs) continue;
-
-    candidates.push({
-      handoff_id: orphan.handoffId,
-      branch: `agent/${orphan.handoffId}`,
-      status: "missing",
-      resolved_at: new Date(mtimeMs).toISOString(),
-      path: orphan.path,
-      age_ms: nowMs - mtimeMs,
-      reason: "missing_handoff_orphan",
-    });
-  }
-
-  // Sort oldest first
-  candidates.sort((a, b) => a.age_ms - b.age_ms);
+  const candidates = selectWorktreeGcCandidates({
+    trackedHandles: handles,
+    orphanHandles: worktreeManager.discoverOrphanWorktrees?.() ?? [],
+    handoffReader,
+    gracePeriodMs,
+    nowMs,
+  });
 
   db.close();
 
@@ -170,10 +110,6 @@ export async function runWorktreeGc(opts: WorktreeGcOpts): Promise<WorktreeGcRes
   }
 
   return { candidates, n_removed, n_failed, dry_run: !apply };
-}
-
-function fileMtimeMs(targetPath: string): number {
-  return statSync(targetPath).mtimeMs;
 }
 
 export class PendingHandoffsError extends Error {

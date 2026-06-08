@@ -27,6 +27,7 @@ function makeServices(
   db: Database,
   worktreeHandles: WorktreeHandle[],
   teardownSpy: (id: string, force?: boolean) => Promise<void>,
+  orphanHandles: Array<{ path: string; handoffId: string }> = [],
 ): Services {
   return {
     db,
@@ -42,6 +43,7 @@ function makeServices(
     log: { info: () => {}, warn: () => {} },
     worktreeManager: {
       listWorktrees: () => worktreeHandles,
+      discoverOrphanWorktrees: () => orphanHandles,
       teardownWorktree: teardownSpy,
     },
   } as unknown as Services;
@@ -71,6 +73,13 @@ function makeHandle(handoffId: string): WorktreeHandle {
     storageRoot: `/tmp/worktrees/${handoffId}/.test-storage`,
     createdAt: "2026-05-01T00:00:00.000Z",
     status: "created",
+  };
+}
+
+function makeOrphan(handoffId: string): { path: string; handoffId: string } {
+  return {
+    handoffId,
+    path: `/tmp/worktrees/${handoffId}`,
   };
 }
 
@@ -173,5 +182,71 @@ describe("runWorktreeGcTick", () => {
     expect(meta.status).toBe("completed");
     expect(typeof meta.age_ms).toBe("number");
     expect(meta.age_ms as number).toBeGreaterThan(0);
+  });
+
+  test("terminal orphan worktree resolved beyond grace IS removed", async () => {
+    const db = setupDb();
+    const resolvedAt = new Date(NOW.getTime() - 3 * 60 * 60_000).toISOString();
+    insertHandoff(db, "h-orphan-old", "completed", resolvedAt);
+
+    const teardownCalls: string[] = [];
+    const svc = makeServices(
+      db,
+      [],
+      async (id) => {
+        teardownCalls.push(id);
+      },
+      [makeOrphan("h-orphan-old")],
+    );
+
+    const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
+
+    expect(result.candidates).toEqual(["h-orphan-old"]);
+    expect(result.removed).toEqual(["h-orphan-old"]);
+    expect(result.failed).toEqual([]);
+    expect(teardownCalls).toEqual(["h-orphan-old"]);
+  });
+
+  test("terminal orphan worktree resolved within grace is NOT removed", async () => {
+    const db = setupDb();
+    const resolvedAt = new Date(NOW.getTime() - 60 * 60_000).toISOString();
+    insertHandoff(db, "h-orphan-recent", "completed", resolvedAt);
+
+    const teardownCalls: string[] = [];
+    const svc = makeServices(
+      db,
+      [],
+      async (id) => {
+        teardownCalls.push(id);
+      },
+      [makeOrphan("h-orphan-recent")],
+    );
+
+    const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
+
+    expect(result.candidates).toEqual([]);
+    expect(result.removed).toEqual([]);
+    expect(teardownCalls).toEqual([]);
+  });
+
+  test("non-terminal orphan worktree is NOT removed", async () => {
+    const db = setupDb();
+    insertHandoff(db, "h-orphan-live", "dispatched", null);
+
+    const teardownCalls: string[] = [];
+    const svc = makeServices(
+      db,
+      [],
+      async (id) => {
+        teardownCalls.push(id);
+      },
+      [makeOrphan("h-orphan-live")],
+    );
+
+    const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
+
+    expect(result.candidates).toEqual([]);
+    expect(result.removed).toEqual([]);
+    expect(teardownCalls).toEqual([]);
   });
 });

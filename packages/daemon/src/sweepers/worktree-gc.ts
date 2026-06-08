@@ -1,4 +1,4 @@
-import type { Services } from "@penumbra/core";
+import { selectWorktreeGcCandidates, type Services } from "@penumbra/core";
 
 export interface WorktreeGcOpts {
   services: Services;
@@ -13,7 +13,6 @@ export interface WorktreeGcTickResult {
   failed: string[];
 }
 
-const TERMINAL_STATUSES = new Set(["completed", "failed", "rejected", "expired"]);
 const DEFAULT_GRACE_PERIOD_MS = 2 * 60 * 60_000;
 
 /**
@@ -30,27 +29,20 @@ export async function runWorktreeGcTick(
   const nowMs = now().getTime();
 
   const handles = services.worktreeManager.listWorktrees();
-  const candidates: string[] = [];
+  const gcCandidates = selectWorktreeGcCandidates({
+    trackedHandles: handles,
+    orphanHandles: services.worktreeManager.discoverOrphanWorktrees(),
+    handoffReader: services.handoffReader,
+    gracePeriodMs,
+    nowMs,
+  });
+  const candidates = gcCandidates.map((candidate) => candidate.handoff_id);
   const removed: string[] = [];
   const failed: string[] = [];
 
-  for (const handle of handles) {
-    const handoff = services.handoffReader.get(handle.handoffId);
-
-    // Skip if no DB record (orphan on disk — defer to manual GC)
-    if (!handoff) continue;
-
-    // Skip non-terminal handoffs (in-flight guard)
-    if (!TERMINAL_STATUSES.has(handoff.status)) continue;
-
-    // Skip if resolved too recently (within grace period)
-    const resolvedAt = handoff.resolved_at ? new Date(handoff.resolved_at).getTime() : null;
-    if (resolvedAt === null || nowMs - resolvedAt < gracePeriodMs) continue;
-
-    candidates.push(handle.handoffId);
-
+  for (const candidate of gcCandidates) {
     try {
-      await services.worktreeManager.teardownWorktree(handle.handoffId, /*force=*/ true);
+      await services.worktreeManager.teardownWorktree(candidate.handoff_id, /*force=*/ true);
 
       const ts = now().toISOString();
       services.db
@@ -59,23 +51,24 @@ export async function runWorktreeGcTick(
            VALUES (?, NULL, 'sweeper', 'worktree.gc', ?, ?)`,
         )
         .run(
-          handle.handoffId,
+          candidate.handoff_id,
           ts,
           JSON.stringify({
-            handoff_id: handle.handoffId,
-            branch_name: handle.branchName,
-            status: handoff.status,
-            age_ms: nowMs - resolvedAt,
+            handoff_id: candidate.handoff_id,
+            branch_name: candidate.branch,
+            status: candidate.status,
+            age_ms: candidate.age_ms,
+            reason: candidate.reason,
           }),
         );
 
-      removed.push(handle.handoffId);
+      removed.push(candidate.handoff_id);
     } catch (err) {
       opts.log?.warn?.(
-        { handoff_id: handle.handoffId, err: String(err) },
+        { handoff_id: candidate.handoff_id, err: String(err) },
         "worktree-gc teardown failed; skipping",
       );
-      failed.push(handle.handoffId);
+      failed.push(candidate.handoff_id);
     }
   }
 

@@ -318,6 +318,13 @@ export {
 } from "./daemon-discovery.js";
 export { WorktreeManager, type WorktreeHandle } from "./worktree/manager.js";
 export {
+  selectWorktreeGcCandidates,
+  type OrphanWorktreeHandle,
+  type SelectWorktreeGcCandidatesOpts,
+  type WorktreeGcCandidate,
+  type WorktreeGcCandidateReason,
+} from "./worktree/gc-candidates.js";
+export {
   PermissionStatusSchema,
   PermissionRememberSchema,
   PermissionRequestRowSchema,
