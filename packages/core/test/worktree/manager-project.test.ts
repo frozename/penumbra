@@ -146,7 +146,9 @@ describe("WorktreeManager — project parameterization", () => {
 
     expect(result).toEqual({ worktreeRemoved: true, branchDeleted: false });
     expect(fs.existsSync(handle.path)).toBe(false);
-    const branch = await exec(`git -C "${homeRepo}" rev-parse --verify --quiet "refs/heads/agent/${id}"`);
+    const branch = await exec(
+      `git -C "${homeRepo}" rev-parse --verify --quiet "refs/heads/agent/${id}"`,
+    );
     expect(branch.stdout.trim()).toMatch(/^[0-9a-f]{40}$/);
     await exec(`git -C "${homeRepo}" branch -D "agent/${id}"`);
   });
@@ -161,6 +163,25 @@ describe("WorktreeManager — project parameterization", () => {
     await expect((manager as any).teardownWorktree(id, false)).rejects.toThrow(
       /Failed to remove worktree/,
     );
+  });
+
+  it("discovers uuid-named git worktrees absent from the in-memory map", async () => {
+    const manager = new WorktreeManager({ rootDir: homeRoot, mainRepoDir: homeRepo });
+    const trackedId = "11111111-1111-4111-8111-111111111111";
+    await manager.createWorktree(trackedId);
+
+    const orphanId = "22222222-2222-4222-8222-222222222222";
+    const orphanPath = path.join(homeRoot, orphanId);
+    fs.mkdirSync(orphanPath, { recursive: true });
+    fs.writeFileSync(path.join(orphanPath, ".git"), "gitdir: /tmp/orphan.git\n");
+
+    const nonUuidPath = path.join(homeRoot, "not-a-uuid");
+    fs.mkdirSync(nonUuidPath, { recursive: true });
+    fs.writeFileSync(path.join(nonUuidPath, ".git"), "gitdir: /tmp/not-a-uuid.git\n");
+
+    expect(manager.discoverOrphanWorktrees()).toEqual([{ path: orphanPath, handoffId: orphanId }]);
+
+    await manager.teardownWorktree(trackedId, true);
   });
 });
 

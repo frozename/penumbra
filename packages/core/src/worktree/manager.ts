@@ -6,6 +6,7 @@ import { createLogger, type Logger } from "../logger.js";
 
 const exec = promisify(execCb);
 const NOOP_LOG = createLogger({ component: "worktree-manager", level: "silent" });
+const UUID_DIR_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export interface WorktreeHandle {
   handoffId: string;
@@ -260,6 +261,25 @@ export class WorktreeManager {
 
   listWorktrees(): WorktreeHandle[] {
     return Array.from(this.worktrees.values());
+  }
+
+  discoverOrphanWorktrees(): Array<{ path: string; handoffId: string }> {
+    if (!fs.existsSync(this.rootDir)) return [];
+
+    const orphans: Array<{ path: string; handoffId: string }> = [];
+    const entries = fs.readdirSync(this.rootDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const handoffId = entry.name;
+      if (!UUID_DIR_RE.test(handoffId)) continue;
+      if (this.worktrees.has(handoffId)) continue;
+
+      const wtPath = path.join(this.rootDir, handoffId);
+      if (!fs.existsSync(path.join(wtPath, ".git"))) continue;
+      orphans.push({ path: wtPath, handoffId });
+    }
+
+    return orphans.sort((a, b) => a.handoffId.localeCompare(b.handoffId));
   }
 
   async teardownWorktree(

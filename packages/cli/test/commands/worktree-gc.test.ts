@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -53,6 +53,12 @@ function makeHandle(handoffId: string): WorktreeHandle {
     createdAt: "2026-05-01T00:00:00.000Z",
     status: "created",
   };
+}
+
+function makeOrphan(handoffId: string): { path: string; handoffId: string } {
+  const orphanPath = join(storageRoot, "worktrees", handoffId);
+  mkdirSync(orphanPath, { recursive: true });
+  return { path: orphanPath, handoffId };
 }
 
 const GRACE_MS = 2 * 60 * 60_000;
@@ -128,5 +134,59 @@ describe("runWorktreeGc", () => {
     }
 
     expect(teardownCalls).toEqual([]);
+  });
+
+  test("includes discovered orphan worktrees for old terminal handoffs", async () => {
+    seedHandoff(storageRoot, "h-orphan-old", "completed", OLD_RESOLVED);
+    seedHandoff(storageRoot, "h-orphan-new", "completed", new Date().toISOString());
+
+    const teardownCalls: string[] = [];
+    const wm = {
+      listWorktrees: () => [],
+      discoverOrphanWorktrees: () => [makeOrphan("h-orphan-old"), makeOrphan("h-orphan-new")],
+      teardownWorktree: async (id: string) => {
+        teardownCalls.push(id);
+      },
+    };
+
+    const result = await runWorktreeGc({
+      storageRoot,
+      apply: true,
+      gracePeriodMs: GRACE_MS,
+      worktreeManager: wm,
+    });
+
+    expect(result.candidates.map((candidate) => candidate.handoff_id)).toEqual(["h-orphan-old"]);
+    expect(result.n_removed).toBe(1);
+    expect(teardownCalls).toEqual(["h-orphan-old"]);
+  });
+
+  test("reaps old missing-handoff orphans and skips known non-terminal orphans", async () => {
+    seedHandoff(storageRoot, "h-orphan-active", "redirected", OLD_RESOLVED);
+    const missing = makeOrphan("h-orphan-missing");
+    const oldTime = new Date(Date.now() - 3 * 60 * 60_000);
+    utimesSync(missing.path, oldTime, oldTime);
+
+    const teardownCalls: string[] = [];
+    const wm = {
+      listWorktrees: () => [],
+      discoverOrphanWorktrees: () => [missing, makeOrphan("h-orphan-active")],
+      teardownWorktree: async (id: string) => {
+        teardownCalls.push(id);
+      },
+    };
+
+    const result = await runWorktreeGc({
+      storageRoot,
+      apply: true,
+      gracePeriodMs: GRACE_MS,
+      worktreeManager: wm,
+    });
+
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]?.handoff_id).toBe("h-orphan-missing");
+    expect(result.candidates[0]?.reason).toBe("missing_handoff_orphan");
+    expect(result.n_removed).toBe(1);
+    expect(teardownCalls).toEqual(["h-orphan-missing"]);
   });
 });
