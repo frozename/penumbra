@@ -3,13 +3,33 @@ export type JudgeChatFn = (opts: {
   model: string;
 }) => Promise<string>;
 
-const JUDGE_CHAT_TIMEOUT_MS = 30_000;
+export const DEFAULT_JUDGE_CHAT_TIMEOUT_MS = 30_000;
 
-export function createJudgeChat(opts: { baseUrl: string; token?: string }): JudgeChatFn {
+/**
+ * Resolve the judge-chat HTTP timeout. The default suits a fast
+ * classification judge (granite returns in seconds); a refiner that uses a
+ * reasoning model (which emits a long chain-of-thought before the answer) can
+ * legitimately need longer, so callers override per-instance (see serve.ts
+ * threading PENUMBRA_REFINER_TIMEOUT_MS). PENUMBRA_JUDGE_TIMEOUT_MS overrides
+ * the global default.
+ */
+export function resolveJudgeChatTimeoutMs(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = Number(env.PENUMBRA_JUDGE_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_JUDGE_CHAT_TIMEOUT_MS;
+}
+
+export function createJudgeChat(opts: {
+  baseUrl: string;
+  token?: string;
+  timeoutMs?: number;
+}): JudgeChatFn {
   const baseUrl = opts.baseUrl.replace(/\/$/, "");
+  const timeoutMs = opts.timeoutMs ?? resolveJudgeChatTimeoutMs();
   return async (chatOpts) => {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), JUDGE_CHAT_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     let res: Response;
     try {
       const headers: Record<string, string> = {
@@ -29,7 +49,7 @@ export function createJudgeChat(opts: { baseUrl: string; token?: string }): Judg
       });
     } catch (err) {
       if (controller.signal.aborted) {
-        throw new Error(`judge chat: timed out after ${JUDGE_CHAT_TIMEOUT_MS}ms`);
+        throw new Error(`judge chat: timed out after ${timeoutMs}ms`);
       }
       throw err;
     } finally {

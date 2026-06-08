@@ -218,6 +218,28 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: OptStr,
     description: "Model for task refiner.",
   },
+  PENUMBRA_REFINER_TIMEOUT_MS: {
+    schema: PosInt,
+    default: 90_000,
+    description:
+      "Dispatch-prompt refiner HTTP timeout in ms. Larger than the judge default because the refiner may use a reasoning model that emits a long chain-of-thought before the answer.",
+  },
+  PENUMBRA_JUDGE_TIMEOUT_MS: {
+    schema: PosInt,
+    default: 30_000,
+    description: "Judge-chat HTTP request timeout in milliseconds.",
+  },
+  PENUMBRA_WARM_PREWARM_CAP: {
+    schema: PosInt,
+    default: 4,
+    description: "Max concurrent warm-pool pre-warm dispatches at worker boot.",
+  },
+  PENUMBRA_CLAIM_AFFINITY_GRACE_MS: {
+    schema: NonNegInt,
+    default: 500,
+    description:
+      "Grace a non-home worker holds back before claiming a warm-pooled handoff so a home-repoRoot worker wins the first-poll claim (0 disables).",
+  },
   PENUMBRA_RECURSION_DEPTH_CAP: {
     schema: PosInt,
     default: 8,

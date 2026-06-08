@@ -487,17 +487,28 @@ export function createDaemonFetchHandler(opts: {
   startTaskLedgerCapture({ services: opts.services, taskEvents, taskWriter });
   const dispatchRefineHandler = (() => {
     const cfg = resolveJudgeConfig(process.env, { extraModelEnv: ["PENUMBRA_REFINER_MODEL"] });
+    // The refiner may use a reasoning model (e.g. lfm2) that emits a long
+    // chain-of-thought before the answer, so it needs a larger ceiling than the
+    // fast classification judge's 30s default. Configurable via
+    // PENUMBRA_REFINER_TIMEOUT_MS; very large inputs can still legitimately
+    // exceed it and surface as refiner_upstream_failed.
+    const refinerTimeoutMs = Number(process.env.PENUMBRA_REFINER_TIMEOUT_MS) || 90_000;
     (opts.services.log as any)?.info?.(
       {
         component: "dispatch-refine",
         baseUrl: cfg.baseUrl,
         model: cfg.model,
+        timeoutMs: refinerTimeoutMs,
         usedDefaultBaseUrl: cfg.usedDefaultBaseUrl,
         usedDefaultModel: cfg.usedDefaultModel,
       },
       "dispatch-refine: judge endpoint resolved",
     );
-    const chat = createJudgeChat({ baseUrl: cfg.baseUrl, token: cfg.token });
+    const chat = createJudgeChat({
+      baseUrl: cfg.baseUrl,
+      token: cfg.token,
+      timeoutMs: refinerTimeoutMs,
+    });
     return makeDispatchRefineRoute({ chat, model: cfg.model });
   })();
   return async (req: Request) => {
