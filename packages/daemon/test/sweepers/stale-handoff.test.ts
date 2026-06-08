@@ -179,6 +179,35 @@ test("stale dispatched handoff with no dispatch.end → force-resolved", () => {
   expect(handoff?.resolved_by).toBe("stale-handoff-sweeper");
 });
 
+test("multiple stale candidates are classified consistently with batched dispatch event lookup", () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  insertDispatchedHandoff(db, "h-batch-sweep", "2026-05-04T11:48:00.000Z", "smoke_test");
+  insertDispatchedHandoff(db, "h-batch-end", "2026-05-04T11:49:00.000Z", "smoke_test");
+  insertDispatchedHandoff(db, "h-batch-fresh", "2026-05-04T11:51:00.000Z", "smoke_test");
+
+  insertEvent(db, "h-batch-sweep", "dispatch.start", "2026-05-04T11:48:01.000Z");
+  insertEvent(db, "h-batch-end", "dispatch.start", "2026-05-04T11:49:01.000Z");
+  insertEvent(db, "h-batch-end", "dispatch.end", "2026-05-04T11:49:31.000Z");
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    makeTaskTypeAwareOpts(services),
+    state,
+    () => new Date("2026-05-04T12:00:00.000Z"),
+  );
+
+  expect(result.candidates.sort()).toEqual(["h-batch-end", "h-batch-sweep"].sort());
+  expect(result.resolved).toEqual(["h-batch-sweep"]);
+
+  const hBatchSweep = services.handoffReader.get("h-batch-sweep");
+  const hBatchEnd = services.handoffReader.get("h-batch-end");
+  const hBatchFresh = services.handoffReader.get("h-batch-fresh");
+  expect(hBatchSweep?.status).toBe("failed");
+  expect(hBatchEnd?.status).toBe("dispatched");
+  expect(hBatchFresh?.status).toBe("dispatched");
+});
+
 test("review_adversarial handoff at 44m59s old is not swept", () => {
   const db = setupDb();
   const services = makeServices(db);

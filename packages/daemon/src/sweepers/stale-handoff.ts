@@ -78,6 +78,11 @@ export function runStaleHandoffSweep(
 
   const candidates: string[] = [];
   const resolved: string[] = [];
+  const candidatesForDecision: Array<{
+    handoff_id: string;
+    handoff: NonNullable<ReturnType<typeof services.handoffReader.get>>;
+    staleAfterMs: number;
+  }> = [];
 
   for (const { handoff_id } of rows) {
     const last = state.lastSwept.get(handoff_id);
@@ -106,13 +111,30 @@ export function runStaleHandoffSweep(
     }
 
     candidates.push(handoff_id);
+    candidatesForDecision.push({ handoff_id, handoff, staleAfterMs });
+  }
 
+  const eventsByHandoff = new Map<string, { kind: string; ts: string }[]>();
+  if (candidatesForDecision.length > 0) {
+    const placeholders = candidatesForDecision.map(() => "?").join(",");
     const events = services.db
       .query<
-        { kind: string; ts: string },
-        [string]
-      >(`SELECT kind, ts FROM dispatch_events WHERE handoff_id = ? ORDER BY ts ASC`)
-      .all(handoff_id);
+        { handoff_id: string; kind: string; ts: string },
+        string[]
+      >(`SELECT handoff_id, kind, ts FROM dispatch_events WHERE handoff_id IN (${placeholders}) ORDER BY handoff_id, ts ASC`)
+      .all(...candidatesForDecision.map(({ handoff_id }) => handoff_id));
+    for (const event of events) {
+      let list = eventsByHandoff.get(event.handoff_id);
+      if (!list) {
+        list = [];
+        eventsByHandoff.set(event.handoff_id, list);
+      }
+      list.push({ kind: event.kind, ts: event.ts });
+    }
+  }
+
+  for (const { handoff_id, handoff, staleAfterMs } of candidatesForDecision) {
+    const events = eventsByHandoff.get(handoff_id) ?? [];
 
     const report = classifyDispatchReliability({
       handoff: {
