@@ -79,8 +79,28 @@ test("writes origin=null when not set (legacy compat)", () => {
   expect(row!.origin).toBeNull();
 });
 
-test("insert of duplicate event_id fails loud", () => {
+test("duplicate event_id returns existing id without throwing, row count stays 1", () => {
   const w = new T0Writer(db);
-  w.write(sample);
-  expect(() => w.write(sample)).toThrow();
+  const firstId = w.write(sample);
+
+  const secondId = w.write(sample);
+  const rowCount = db
+    .query<{ count: number }, [string]>("SELECT count(*) AS count FROM t0_events WHERE event_id=?")
+    .get("e1")!.count;
+
+  const distinctCount = db
+    .query<{ count: number }, []>("SELECT count(*) AS count FROM t0_events")
+    .get()!.count;
+
+  expect(secondId).toBe(firstId);
+  expect(rowCount).toBe(1);
+  expect(distinctCount).toBe(1);
+
+  const e2 = { ...sample, event_id: "e2" };
+  const thirdId = w.write(e2);
+  const totalCount = db
+    .query<{ count: number }, []>("SELECT count(*) AS count FROM t0_events")
+    .get()!.count;
+  expect(totalCount).toBe(2);
+  expect(thirdId).toBe("e2");
 });

@@ -30,8 +30,15 @@ export async function observationsRoute(req: Request, services: Services): Promi
     redactor: services.redactor,
   };
   const event = normalize(parsed.data, ctx);
-  services.t0Writer.write(event);
-  return json({ event_id: event.event_id });
+  try {
+    const eventId = services.t0Writer.write(event);
+    return json({ event_id: eventId });
+  } catch (err) {
+    if (isSqliteError(err)) {
+      return json({ event_id: event.event_id });
+    }
+    throw err;
+  }
 }
 
 async function safeJson(req: Request): Promise<unknown | null> {
@@ -40,4 +47,8 @@ async function safeJson(req: Request): Promise<unknown | null> {
   } catch {
     return null;
   }
+}
+
+function isSqliteError(err: unknown): err is Error {
+  return err instanceof Error && err.name === "SQLiteError";
 }

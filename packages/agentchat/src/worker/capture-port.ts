@@ -16,6 +16,7 @@ export interface CapturePortOpts {
    * audit. agent-thought is never redacted.
    */
   maestroRedactor?: MaestroOutputRedactor;
+  closeTimeoutMs?: number;
 }
 
 interface RegularNotificationEvent {
@@ -109,12 +110,23 @@ export class CapturePort {
   async flush(): Promise<void> {
     this.flushChunkBuffer();
     this.emitOrphans();
-    await Promise.allSettled([...this.inFlight]);
+    const closeTimeoutMs = this.opts.closeTimeoutMs ?? 2_000;
+    const pendingCount = this.inFlight.size;
+    await Promise.race([
+      Promise.allSettled([...this.inFlight]),
+      new Promise<void>((resolve) => setTimeout(resolve, closeTimeoutMs)),
+    ]);
+    if (this.inFlight.size > 0 && pendingCount > 0) {
+      console.error(
+        `capture-port: close timed out after ${closeTimeoutMs}ms; pending=${this.inFlight.size}`,
+      );
+    }
   }
 
   async close(): Promise<void> {
-    await this.flush();
+    if (this.closed) return;
     this.closed = true;
+    await this.flush();
   }
 
   getStats(): { sent: number; failed: number } {

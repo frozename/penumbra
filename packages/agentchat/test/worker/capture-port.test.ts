@@ -182,6 +182,18 @@ test("9. close() awaits in-flight observe promises", async () => {
   expect(closeResolved).toBe(true);
 });
 
+test("11. close() resolves within 300ms when in-flight requests stall", async () => {
+  const port = new CapturePort({
+    ...baseOpts,
+    closeTimeoutMs: 200,
+    observe: async () => new Promise<{ event_id: string }>(() => {}),
+  });
+  port.emit({ kind: "agent_thought_chunk", content: "stalled" });
+  const startedAt = Date.now();
+  await port.close();
+  expect(Date.now() - startedAt).toBeLessThan(300);
+});
+
 test("10. observe rejection logs serialized body payload", async () => {
   const error = {
     message: "penumbra /observations: HTTP 400",
