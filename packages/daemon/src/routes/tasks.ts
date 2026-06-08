@@ -117,18 +117,12 @@ function parseIncludeParam(url: URL): TaskInclude[] | Response {
   return [...new Set(parsed.data)];
 }
 
-function queueTaskStatusSync(
-  writer: TaskWriter,
-  task_id: string,
-  ghSync?: GhTaskSyncService,
-  fromStatus?: string | null,
-  toStatus?: string | null,
-): void {
-  if (!ghSync) return;
-  const task = writer.get(task_id);
-  if (!task.gh_issue_repo || !task.gh_issue_number) return;
-  ghSync.queueStatusUpdate(task_id, fromStatus ?? null, toStatus ?? null);
-}
+// Status-transition → gh_outbox enqueue is centralized in TaskWriter
+// (complete/fail/cancel/lease/next) so every caller — routes, maestro
+// orchestration, plan cancellation, lease expiry — stays in sync without each
+// path remembering to call the gh-task-sync service. Routes therefore only
+// enqueue the route-specific extras below (verdict / dispatch-failure comments,
+// issue creation, manual link/push).
 
 export async function tasksFileRoute(
   req: Request,
@@ -305,7 +299,7 @@ export async function tasksCancelRoute(
   req: Request,
   task_id: string,
   writer: TaskWriter,
-  ghSync?: GhTaskSyncService,
+  _ghSync?: GhTaskSyncService, // status sync now enqueued by TaskWriter.cancel; kept for signature symmetry
 ): Promise<Response> {
   const raw = await bodyJson(req);
   if (raw === null) return invalidInput([{ message: "request body was not valid JSON" }]);
@@ -314,9 +308,7 @@ export async function tasksCancelRoute(
   if (!parsed.success) return invalidInput(parsed.error.issues);
 
   try {
-    const before = writer.get(task_id).status;
     const result = writer.cancel({ task_id, ...parsed.data });
-    queueTaskStatusSync(writer, task_id, ghSync, before, result.status);
     return json(result);
   } catch (err) {
     return mapTaskError(err);
@@ -402,7 +394,7 @@ export async function tasksSyncGhNowRoute(
 export async function tasksLeaseRoute(
   req: Request,
   writer: TaskWriter,
-  ghSync?: GhTaskSyncService,
+  _ghSync?: GhTaskSyncService, // status sync now enqueued by TaskWriter.next; kept for signature symmetry
 ): Promise<Response> {
   const raw = await bodyJson(req);
   if (raw === null) return invalidInput([{ message: "request body was not valid JSON" }]);
@@ -416,7 +408,6 @@ export async function tasksLeaseRoute(
       // TODO(task 4.1): distinguish NotPreferred from empty queue when writer exposes it.
       return noContent();
     }
-    queueTaskStatusSync(writer, leased.task_id, ghSync, "pending", "leased");
     return json(leased);
   } catch (err) {
     return mapTaskError(err);
@@ -455,9 +446,7 @@ export async function tasksCompleteRoute(
   if (!parsed.success) return invalidInput(parsed.error.issues);
 
   try {
-    const before = writer.get(task_id).status;
     const result = writer.complete({ task_id, ...parsed.data });
-    queueTaskStatusSync(writer, task_id, ghSync, before, result.status);
     if (ghSync && parsed.data.review_verdict) {
       const task = writer.get(task_id);
       if (task.gh_issue_repo && task.gh_issue_number) {
@@ -483,9 +472,7 @@ export async function tasksFailRoute(
   if (!parsed.success) return invalidInput(parsed.error.issues);
 
   try {
-    const before = writer.get(task_id).status;
     const result = writer.fail({ task_id, ...parsed.data });
-    queueTaskStatusSync(writer, task_id, ghSync, before, result.status);
     if (ghSync) {
       const task = writer.get(task_id);
       if (task.gh_issue_repo && task.gh_issue_number) {

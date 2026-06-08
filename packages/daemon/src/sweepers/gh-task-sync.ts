@@ -26,7 +26,7 @@ export interface GhTaskSyncSummary {
 
 export interface GhTaskSyncService {
   syncLinkedTask(task_id: string): Promise<GhTaskSyncResult>;
-  syncAllLinkedTasks(): Promise<GhTaskSyncSummary>;
+  syncAllLinkedTasks(options?: { fullReconcile?: boolean }): Promise<GhTaskSyncSummary>;
   pushStatusNow(task_id: string): Promise<GhTaskSyncResult | null>;
   enqueueTaskGhCreate(
     task_id: string,
@@ -39,7 +39,6 @@ export interface GhTaskSyncService {
     },
   ): void;
   enqueueSyncLinkedTask(task_id: string): void;
-  queueStatusUpdate(task_id: string, from_status: string | null, to_status: string | null): void;
   queueVerdictComment(task_id: string, verdict: { passed: boolean; notes: string }): void;
   queueDispatchFailureComment(task_id: string, reason: string): void;
   postStatusChangeComment(
@@ -710,8 +709,14 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
   return {
     syncLinkedTask,
 
-    async syncAllLinkedTasks(): Promise<GhTaskSyncSummary> {
+    async syncAllLinkedTasks(options?: { fullReconcile?: boolean }): Promise<GhTaskSyncSummary> {
+      // Always drain the outbox (status pushes stay prompt). The heavy
+      // listLinkedTasks() per-task reconcile (the GitHub→local pull / drift path)
+      // is skipped when the caller throttles it via fullReconcile:false.
       await processGhOutbox();
+      if (options?.fullReconcile === false) {
+        return { linked: 0, pushed: 0, pulled: 0, errored: 0, skipped: false, results: [] };
+      }
       const linked = opts.taskWriter.listLinkedTasks();
       const results = await runInBatches(linked, GH_TASK_SYNC_BATCH_SIZE, async (task) =>
         syncLinkedTask(task.id),
@@ -758,16 +763,6 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
       opts.taskWriter.enqueueGhOutbox(task_id, "gh_sync_linked_task", {});
     },
 
-    queueStatusUpdate(task_id: string, from_status: string | null, to_status: string | null): void {
-      opts.taskWriter.enqueueGhOutbox(task_id, "gh_push_status", {});
-      if (from_status && to_status && from_status !== to_status) {
-        opts.taskWriter.enqueueGhOutbox(task_id, "gh_post_status_comment", {
-          from_status,
-          to_status,
-        });
-      }
-    },
-
     queueVerdictComment(task_id: string, verdict: { passed: boolean; notes: string }): void {
       opts.taskWriter.enqueueGhOutbox(task_id, "gh_post_verdict_comment", { verdict });
     },
@@ -801,14 +796,26 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
 export function createGhTaskSyncSweeper(opts: {
   service: GhTaskSyncService;
   intervalMs?: number;
+  /**
+   * How often the heavy full reconcile (listLinkedTasks → per-task push/pull)
+   * runs. Every tick still drains the gh_outbox so status pushes stay prompt;
+   * only the GitHub→local reconcile (the drift/pull path) is throttled. Defaults
+   * to 5 minutes. The first tick after construction always runs a full reconcile
+   * (lastFullReconcileAt starts at 0).
+   */
+  fullReconcileIntervalMs?: number;
+  now?: () => number;
   log?: {
     info?: (obj: unknown, msg?: string) => void;
     warn?: (obj: unknown, msg?: string) => void;
   };
 }): { start(): void; stop(): void; tick(): Promise<GhTaskSyncSummary> } {
   const intervalMs = opts.intervalMs ?? 30_000;
+  const fullReconcileIntervalMs = opts.fullReconcileIntervalMs ?? 300_000;
+  const now = opts.now ?? ((): number => Date.now());
   let timer: ReturnType<typeof setInterval> | null = null;
   let inFlight = false;
+  let lastFullReconcileAt = 0;
 
   async function tick(): Promise<GhTaskSyncSummary> {
     if (inFlight) {
@@ -827,7 +834,17 @@ export function createGhTaskSyncSweeper(opts: {
     }
     inFlight = true;
     try {
-      return await opts.service.syncAllLinkedTasks();
+      const ts = now();
+      const fullReconcile = ts - lastFullReconcileAt >= fullReconcileIntervalMs;
+      if (fullReconcile) {
+        lastFullReconcileAt = ts;
+      } else {
+        opts.log?.info?.(
+          { event: "gh-task-sync.skip_full_reconcile", sweeper: "gh-task-sync" },
+          "gh-task-sync.skip_full_reconcile",
+        );
+      }
+      return await opts.service.syncAllLinkedTasks({ fullReconcile });
     } finally {
       inFlight = false;
     }

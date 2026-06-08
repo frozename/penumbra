@@ -544,6 +544,7 @@ export class TaskWriter {
           now,
           candidate.id,
         ]);
+        this.enqueueGhStatusSync(candidate.id, "pending", "leased");
         this.db.run(
           `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
            VALUES (?, ?, 'leased', ?, ?)`,
@@ -615,6 +616,7 @@ export class TaskWriter {
         now,
         validated.task_id,
       ]);
+      this.enqueueGhStatusSync(validated.task_id, "pending", "leased");
       this.db.run(
         `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
          VALUES (?, ?, 'leased', ?, ?)`,
@@ -735,6 +737,7 @@ export class TaskWriter {
              WHERE id = ?`,
             [now, taskRow.parent_task_id!],
           );
+          this.enqueueGhStatusSync(parentTaskId, "done_pending_review", "done");
           this.db.run(
             `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
              VALUES (?, ?, 'review_passed', ?, ?)`,
@@ -759,6 +762,7 @@ export class TaskWriter {
              WHERE id = ?`,
             [`review rejected: ${verdict.notes}`, now, taskRow.parent_task_id!],
           );
+          this.enqueueGhStatusSync(parentTaskId, "done_pending_review", "failed");
           this.db.run(
             `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
              VALUES (?, ?, 'review_failed', ?, ?)`,
@@ -815,6 +819,7 @@ export class TaskWriter {
             validated.task_id,
           ],
         );
+        this.enqueueGhStatusSync(validated.task_id, taskRow.status, nextStatus);
         this.db.run(
           `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
            VALUES (?, ?, 'completed', ?, ?)`,
@@ -877,6 +882,7 @@ export class TaskWriter {
           now,
           validated.task_id,
         ]);
+        this.enqueueGhStatusSync(validated.task_id, taskRow.status, "done");
       }
 
       this.db.run(
@@ -903,9 +909,15 @@ export class TaskWriter {
     const failed = this.db.transaction(() => {
       const taskRow = this.db
         .query<
-          { id: string; kind: TaskKind; parent_task_id: string | null; eligibility: string },
+          {
+            id: string;
+            kind: TaskKind;
+            status: TaskStatus;
+            parent_task_id: string | null;
+            eligibility: string;
+          },
           [string]
-        >(`SELECT id, kind, parent_task_id, eligibility FROM tasks WHERE id = ?`)
+        >(`SELECT id, kind, status, parent_task_id, eligibility FROM tasks WHERE id = ?`)
         .get(validated.task_id);
       if (!taskRow) throw new TaskNotFound(validated.task_id);
 
@@ -933,6 +945,7 @@ export class TaskWriter {
          WHERE id = ?`,
         [validated.reason, now, validated.task_id],
       );
+      this.enqueueGhStatusSync(validated.task_id, taskRow.status, "failed");
       this.db.run(
         `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
          VALUES (?, ?, 'completed', ?, ?)`,
@@ -1104,6 +1117,7 @@ export class TaskWriter {
          WHERE id = ?`,
         [validated.reason ?? null, now, validated.task_id],
       );
+      this.enqueueGhStatusSync(validated.task_id, task.status, "cancelled");
       this.db.run(
         `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
          VALUES (?, ?, 'cancelled', NULL, ?)`,
@@ -1325,6 +1339,37 @@ export class TaskWriter {
     return { id: row?.id ?? 0 };
   }
 
+  /**
+   * Centralized GitHub status-sync enqueue for a task status transition.
+   *
+   * Enqueues a `gh_push_status` (plus a `gh_post_status_comment` when the
+   * status actually changed) into `gh_outbox`, but ONLY when the task is
+   * gh-linked. Calling this from inside every transition method
+   * (complete/fail/cancel/lease/next) makes "every status transition enqueues"
+   * a structural invariant — non-route callers (maestro orchestration, plan
+   * cancellation, lease expiry) stay in sync without each having to remember to
+   * call the gh-task-sync service. Runs inside the caller's transaction so the
+   * outbox rows commit atomically with the status change; a non-linked task is
+   * a no-op (the periodic full reconcile still covers any later linkage).
+   */
+  private enqueueGhStatusSync(task_id: string, from: string | null, to: string): void {
+    const issueNumber =
+      this.db
+        .query<
+          { gh_issue_number: number | null },
+          [string]
+        >(`SELECT gh_issue_number FROM tasks WHERE id = ?`)
+        .get(task_id)?.gh_issue_number ?? null;
+    if (issueNumber === null) return;
+    this.enqueueGhOutbox(task_id, "gh_push_status", {});
+    if (from !== null && from !== to) {
+      this.enqueueGhOutbox(task_id, "gh_post_status_comment", {
+        from_status: from,
+        to_status: to,
+      });
+    }
+  }
+
   listPendingGhOutbox(limit = 50): GhOutboxRow[] {
     const finalLimit = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 500) : 50;
     return this.db
@@ -1366,6 +1411,11 @@ export class TaskWriter {
     );
   }
 
+  // Pull-side reaction: invoked by the gh-task-sync sweeper when GitHub shows a
+  // linked issue was reopened. It intentionally does NOT enqueueGhStatusSync —
+  // doing so would echo a push back to the issue we are reacting to. The
+  // centralized enqueue covers LOCAL-originated transitions; GitHub-originated
+  // ones are already reflected upstream.
   reopenFromGh(task_id: string): { status: "pending" } {
     const row = this.db
       .query<{ status: TaskStatus }, [string]>(`SELECT status FROM tasks WHERE id = ?`)

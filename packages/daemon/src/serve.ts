@@ -1212,6 +1212,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
   const ghTaskSyncService = createDefaultGhTaskSyncService(opts.services, taskWriter);
   const ghTaskSyncSweeper = createGhTaskSyncSweeper({
     service: ghTaskSyncService,
+    fullReconcileIntervalMs: daemonSettings.ghTaskSyncFullReconcileIntervalMs ?? 300_000,
     log: opts.services.log as any,
   });
   ghTaskSyncSweeper.start();

@@ -10,6 +10,10 @@ export const SettingsSchema = z.object({
   // after inspecting one dry-run tick.
   prOrphanSweeperDryRun: z.boolean().default(true),
   prOrphanSweeperIntervalMs: z.number().int().positive().default(21_600_000),
+  // gh-task-sync drains the gh_outbox every tick; the heavy full reconcile
+  // (listLinkedTasks → per-task GitHub pull/drift correction) only runs this
+  // often. Default 5min: status pushes stay prompt via the outbox, pulls lag ≤5min.
+  ghTaskSyncFullReconcileIntervalMs: z.number().int().positive().default(300_000),
   dreamModeStrategy: z.enum(["embersynth", "local", "skip"]).default("local"),
   embedderPreferSirius: z.boolean().default(true),
   reconcileTypecheckTimeoutSec: z.number().positive().default(120),
@@ -27,6 +31,7 @@ const envKeyFor: Record<keyof Settings, string> = {
   backupRetentionDays: "PENUMBRA_BACKUP_RETENTION_DAYS",
   prOrphanSweeperDryRun: "PENUMBRA_PR_ORPHAN_SWEEPER_DRY_RUN",
   prOrphanSweeperIntervalMs: "PENUMBRA_PR_ORPHAN_SWEEPER_INTERVAL_MS",
+  ghTaskSyncFullReconcileIntervalMs: "PENUMBRA_GH_TASK_SYNC_FULL_RECONCILE_INTERVAL_MS",
   dreamModeStrategy: "PENUMBRA_DREAM_MODE_STRATEGY",
   embedderPreferSirius: "PENUMBRA_EMBEDDER_PREFER_SIRIUS",
   reconcileTypecheckTimeoutSec: "PENUMBRA_RECONCILE_TYPECHECK_TIMEOUT_S",
@@ -41,6 +46,7 @@ const parsers: Record<keyof Settings, (raw: string) => unknown> = {
   backupRetentionDays: Number,
   prOrphanSweeperDryRun: (s) => s === "true" || s === "1",
   prOrphanSweeperIntervalMs: Number,
+  ghTaskSyncFullReconcileIntervalMs: Number,
   dreamModeStrategy: (s) => s,
   embedderPreferSirius: (s) => s === "true" || s === "1",
   reconcileTypecheckTimeoutSec: Number,
