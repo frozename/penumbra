@@ -129,6 +129,38 @@ describe("TaskWriter.list({ eligible_for })", () => {
     expect(rows.map((r) => r.id)).toEqual([y]);
   });
 
+  test("blocks different agents while a task cooldown is active", () => {
+    const taskId = writer.file(baseInput({ prompt: "task-x" })).task_id;
+    const cooldowns = new Map<string, Map<string, number>>([
+      [taskId, new Map<string, number>([["agent-a", 2_000]])],
+    ]);
+
+    expect(
+      isEligible(
+        {
+          name: "agent-b",
+          tags: ["backend"],
+          tier: "oc",
+          cost_cents_per_run: 10,
+        },
+        {},
+        { now: 1_000, cooldowns, task_id: taskId },
+      ),
+    ).toBe(false);
+    expect(
+      isEligible(
+        {
+          name: "agent-b",
+          tags: ["backend"],
+          tier: "oc",
+          cost_cents_per_run: 10,
+        },
+        {},
+        { now: 2_001, cooldowns, task_id: taskId },
+      ),
+    ).toBe(true);
+  });
+
   test("returns [] when eligible_for agent cannot be resolved", () => {
     writer.file(baseInput({ prompt: "task" }));
 
