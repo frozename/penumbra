@@ -9,6 +9,18 @@ export interface PollerOptions {
   cursorPath: string;
   emit: (event: any) => Promise<{ event_id: string }>;
   log: { info: (m: any, ...rest: any[]) => void; error: (m: any, ...rest: any[]) => void };
+  /**
+   * Per-tick gate for `machineGlobal` readers. Returns true when THIS worker
+   * holds the machine usage-poll lock and should run the host-shared readers.
+   * Called once per tick (so leadership can fail over). When omitted, every
+   * reader runs (single-process / test default).
+   */
+  acquireMachineLock?: () => boolean;
+  /**
+   * Optional: returns the workerId currently holding the machine poll lock, used
+   * only for operator-friendly logging on a holder→non-holder transition.
+   */
+  describeLockHolder?: () => string | null;
 }
 
 export interface PollerHandle {
@@ -36,10 +48,13 @@ export function resolveUsageCursorPath(opts: {
 
 export function startUsagePoller(opts: PollerOptions): PollerHandle {
   const intervalMs = opts.intervalMs ?? 60_000;
-  const cursors = loadCursors(opts.cursorPath, opts.log);
+  // Reassigned on machine-lock takeover so a new holder resumes from the shared
+  // cursor file instead of re-reading the source from its own stale snapshot.
+  let cursors = loadCursors(opts.cursorPath, opts.log);
   const lastEmittedIds = new Set<string>();
   const lastEmittedOrder: string[] = [];
   let stopped = false;
+  let heldLock: boolean | undefined;
 
   const persist = () => {
     const dir = dirname(opts.cursorPath);
@@ -69,7 +84,29 @@ export function startUsagePoller(opts: PollerOptions): PollerHandle {
   };
 
   const runOnce = async (): Promise<void> => {
+    const holdsLock = opts.acquireMachineLock ? opts.acquireMachineLock() : true;
+    if (opts.acquireMachineLock && holdsLock !== heldLock) {
+      const wasHolder = heldLock === true;
+      heldLock = holdsLock;
+      if (holdsLock) {
+        if (!wasHolder) {
+          // Took over: reload cursors so we resume where the previous holder
+          // left off (shared cursor file), avoiding a re-read burst.
+          cursors = loadCursors(opts.cursorPath, opts.log);
+        }
+        opts.log.info(
+          { holdsLock },
+          "usage-poller: holding machine poll lock; running machine-global readers",
+        );
+      } else {
+        opts.log.info(
+          { holdsLock, holder: opts.describeLockHolder?.() ?? null },
+          "usage-poller: another worker holds the machine poll lock; skipping machine-global readers",
+        );
+      }
+    }
     for (const reader of opts.readers) {
+      if (reader.machineGlobal && !holdsLock) continue;
       try {
         await runReader(reader);
       } catch (err) {

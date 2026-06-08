@@ -13,6 +13,7 @@ const DEFAULT_CACHE_PATH = process.env.PENUMBRA_CLAUDE_RL_PATH ?? "/tmp/penumbra
 
 export class ClaudeStatusLineBridge implements UsageReader {
   readonly id = "claude-statusline";
+  readonly machineGlobal = true;
   private cachePath: string;
 
   constructor(opts: ClaudeStatusLineBridgeOptions = {}) {

@@ -21,6 +21,7 @@ interface CodexRolloutCursor {
 
 export class CodexRolloutReader implements UsageReader {
   readonly id = "codex-rollout";
+  readonly machineGlobal = true;
   private rootDir: string;
   private lookbackHours: number;
   private now: () => number;

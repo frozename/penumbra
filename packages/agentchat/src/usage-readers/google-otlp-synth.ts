@@ -28,6 +28,7 @@ export interface GoogleOtlpSynthOptions {
 
 export class GoogleOtlpSynth implements UsageReader {
   readonly id = "google-otlp-synth";
+  readonly machineGlobal = true;
   private readonly client: GoogleOtlpSynthOptions["client"];
   private readonly now: () => Date;
   private readonly minEmitPct: number;

@@ -14,6 +14,7 @@ interface OpenCodeDbCursor {
 
 export class OpenCodeDbReader implements UsageReader {
   readonly id = "opencode-db";
+  readonly machineGlobal = true;
   private dbPath: string;
 
   constructor(opts: OpenCodeDbReaderOptions = {}) {

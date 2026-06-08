@@ -41,6 +41,13 @@ export interface UsageReaderResult {
 export interface UsageReader {
   /** Stable identifier (used as cursor key + source_kind suffix). */
   readonly id: string;
+  /**
+   * True when this reader sources a host-shared origin (a machine-global db /
+   * dir / file, or the daemon's global quota) that every worker would otherwise
+   * read identically. The poller only runs these on the worker holding the
+   * machine usage-poll lock; per-worker readers (default/false) always run.
+   */
+  readonly machineGlobal?: boolean;
   /** Read backing state from `previousCursor` to "now"; return new cursor + deltas. */
   read(previousCursor: unknown | null): Promise<UsageReaderResult>;
 }

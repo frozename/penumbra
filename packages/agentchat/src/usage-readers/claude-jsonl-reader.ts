@@ -17,6 +17,7 @@ interface ClaudeJsonlCursor {
 
 export class ClaudeJsonlReader implements UsageReader {
   readonly id = "claude-jsonl";
+  readonly machineGlobal = true;
   private rootDir: string;
 
   constructor(opts: ClaudeJsonlReaderOptions = {}) {

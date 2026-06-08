@@ -71,6 +71,10 @@ import {
   shouldRetryHandoffForSilentFailure,
 } from "../src/worker/silent-failure-retry.js";
 import { resolveUsageCursorPath, startUsagePoller } from "../src/usage-readers/poller.js";
+import {
+  acquireOrRefreshUsagePollLock,
+  readUsagePollLock,
+} from "../src/usage-readers/poll-lock.js";
 import { CodexRolloutReader } from "../src/usage-readers/codex-rollout-reader.js";
 import { OpenCodeConsoleReader } from "../src/usage-readers/opencode-console-reader.js";
 import { loadOpencodeConsoleConfig } from "../src/usage-readers/opencode-console-config.js";
@@ -1371,9 +1375,13 @@ log.info(
   "agentchat worker started",
 );
 
-// Usage poller: singleton inside this worker process. Production deploys one
-// worker via launchd; the cursor file is read+written serially within each
-// tick. Disabled via PENUMBRA_USAGE_POLL_DISABLED=1 for tests.
+// Usage poller. The fleet runs MANY workers per host, but the usage readers all
+// source machine-global origins (codex rollout dir, opencode db/console, claude
+// jsonl/statusline, the daemon's global quota). A machine lock makes exactly one
+// worker run those readers (self-organizing, with failover) so the others don't
+// redundantly read the same sources and emit duplicate event_ids. Disabled via
+// PENUMBRA_USAGE_POLL_DISABLED=1 (tests); the lock gate can be turned off (every
+// worker polls, legacy behavior) via PENUMBRA_USAGE_POLL_SINGLETON=0.
 let usagePoller: { stop: () => void } | null = null;
 if (process.env.PENUMBRA_USAGE_POLL_DISABLED !== "1") {
   const usageReaders: UsageReader[] = [
@@ -1387,14 +1395,42 @@ if (process.env.PENUMBRA_USAGE_POLL_DISABLED !== "1") {
   if (ocConsoleConfig) {
     usageReaders.push(new OpenCodeConsoleReader(ocConsoleConfig));
   }
+  const usagePollIntervalMs = Number(process.env.PENUMBRA_USAGE_POLL_INTERVAL_MS) || 60_000;
+  const singletonGate = process.env.PENUMBRA_USAGE_POLL_SINGLETON !== "0";
+  const usagePollLockPath = join(storageRoot, "usage-poller.lock");
+  // With single-holder polling, use a SHARED cursor so a worker that takes over on
+  // failover resumes where the previous holder left off (per-worker cursors would
+  // make the new holder re-read the source from its own stale snapshot).
+  const usageCursorPath = singletonGate
+    ? resolveUsageCursorPath({
+        storageRoot,
+        workerId,
+        env: { ...process.env, PENUMBRA_PER_WORKER_USAGE_CURSOR: "0" },
+      })
+    : resolveUsageCursorPath({ storageRoot, workerId, env: process.env });
   usagePoller = startUsagePoller({
     readers: usageReaders,
-    intervalMs: Number(process.env.PENUMBRA_USAGE_POLL_INTERVAL_MS) || 60_000,
-    cursorPath: resolveUsageCursorPath({ storageRoot, workerId, env: process.env }),
+    intervalMs: usagePollIntervalMs,
+    cursorPath: usageCursorPath,
     emit: (e) => client.observe(e),
     log,
+    ...(singletonGate
+      ? {
+          acquireMachineLock: (): boolean =>
+            acquireOrRefreshUsagePollLock({
+              lockPath: usagePollLockPath,
+              workerId,
+              now: Date.now(),
+              // A holder that misses ~2.5 ticks (stops refreshing) is treated as gone →
+              // another worker takes over. Detection is timestamp-only (no pid probe).
+              staleMs: Math.round(usagePollIntervalMs * 2.5),
+            }),
+          describeLockHolder: (): string | null =>
+            readUsagePollLock(usagePollLockPath)?.workerId ?? null,
+        }
+      : {}),
   });
-  log.info({ readers: usageReaders.length, workerId }, "usage-poller started");
+  log.info({ readers: usageReaders.length, workerId, singletonGate }, "usage-poller started");
 }
 
 let notificationScheduler: { stop: () => void } | null = null;

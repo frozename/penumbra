@@ -40,6 +40,7 @@ const WINDOWS: Record<string, { window_label: string; window_minutes: number }> 
  */
 export class OpenCodeConsoleReader implements UsageReader {
   readonly id = "opencode-console";
+  readonly machineGlobal = true;
   private readonly config: OpenCodeConsoleReaderConfig;
   private readonly fetchImpl: typeof fetch;
   private readonly readCookieFileImpl: (path: string) => Promise<string | null>;
