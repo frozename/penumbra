@@ -175,3 +175,50 @@ test("WatchdogService emits notification-shaped metadata for timed-out handoffs"
     error_summary: "worker timeout",
   });
 });
+
+test("WatchdogService does not fail a reassigned handoff during stale worker reap", async () => {
+  const services = tempServices();
+  const watchdog = new WatchdogService(services);
+  (services as any).watchdog = watchdog;
+  (services as any).orphanHandoffRecovery = undefined;
+
+  const stale_worker_id = "worker-stale";
+  const reassigned_worker_id = "worker-live";
+  const c1 = await (
+    await handoffsCreateRoute(
+      new Request("http://x", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "codex",
+          message: "m",
+          conversation_id: "c-2",
+          triggered_by_event_id: "e-2",
+        }),
+      }),
+      services,
+    )
+  ).json();
+
+  await handoffsApproveRoute(
+    new Request("http://x", { method: "POST", body: "{}" }),
+    c1.handoff_id,
+    services,
+  );
+
+  services.handoffWriter.claimDispatch(c1.handoff_id, stale_worker_id);
+  watchdog.recordHeartbeat(stale_worker_id);
+
+  services.db.run(
+    "UPDATE handoffs SET worker_id=? WHERE handoff_id=?",
+    reassigned_worker_id,
+    c1.handoff_id,
+  );
+
+  (watchdog as any).lastHeartbeats.set(stale_worker_id, Date.now() - 100_000);
+  await watchdog.tick();
+
+  const row = services.handoffReader.get(c1.handoff_id);
+  expect(row?.status).toBe("dispatched");
+  expect(row?.worker_id).toBe(reassigned_worker_id);
+});

@@ -1,4 +1,5 @@
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
+import { appendFile } from "node:fs/promises";
 import { join, resolve as pathResolve } from "node:path";
 import { type Logger } from "@penumbra/core";
 import type { ExtraWorkerConfig } from "./config.js";
@@ -440,7 +441,7 @@ export class ExtraWorkerSupervisor {
       if (chunk.done) break;
       if (!chunk.value || chunk.value.length === 0) continue;
       try {
-        appendFileSync(path, chunk.value);
+        await appendFile(path, chunk.value);
       } catch {}
     }
   }

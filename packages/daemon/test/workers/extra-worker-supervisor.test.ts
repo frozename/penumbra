@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { ExtraWorkerSupervisor } from "../../src/workers/supervisor.js";
@@ -94,6 +94,22 @@ function createFailingStream(error: Error): FakeReadableStream {
     getReader: () => ({
       read: async () => {
         throw error;
+      },
+    }),
+  };
+}
+
+function createChunkedStream(chunks: Array<Uint8Array | string>): FakeReadableStream {
+  let index = 0;
+  return {
+    getReader: () => ({
+      read: async () => {
+        if (index >= chunks.length) return { done: true };
+        const value = chunks[index++];
+        return {
+          done: false,
+          value: typeof value === "string" ? new TextEncoder().encode(value) : value,
+        };
       },
     }),
   };
@@ -412,6 +428,25 @@ describe("extra worker supervisor", () => {
       }),
       "extra worker log pipe failed",
     );
+  });
+
+  test("pipeStreamToLog preserves chunk order and flushes the final chunk", async () => {
+    const { supervisor } = createSupervisor([
+      {
+        id: "worker-a",
+        concurrency: 1,
+        isolation: "shared",
+      },
+    ]);
+    const logPath = join(process.env.HOME!, "ordered.log");
+    writeFileSync(logPath, "start");
+
+    await (supervisor as any).pipeStreamToLog(
+      createChunkedStream(["-one", "-two", "-three"]),
+      logPath,
+    );
+
+    expect(readFileSync(logPath, "utf8")).toBe("start-one-two-three");
   });
 
   test("log directory uses storageRoot", async () => {

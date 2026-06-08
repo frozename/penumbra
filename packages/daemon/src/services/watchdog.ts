@@ -85,6 +85,7 @@ export class WatchdogService implements Watchdog {
               reason: "worker timeout",
               ts: tickTs,
               resolved_by: "watchdog",
+              expected_worker_id: worker_id,
             });
             this.services.dispatchEventLog.record({
               handoff_id: row.handoff_id,

@@ -344,4 +344,34 @@ describe("PermissionDaemonClient", () => {
     fakeEs.onReconnectFire();
     await expect(promise).rejects.toThrow(/not found|404/i);
   });
+
+  test("reconnect -> non-404 GET error rejects waiter", async () => {
+    const fakeEs = new FakeEventSource();
+    const fakeClient = makeFakeClient();
+    fakeClient.getPermission = async () => {
+      const err: any = new Error("daemon unavailable");
+      err.status = 503;
+      throw err;
+    };
+    const client = new PermissionDaemonClient({
+      penumbraClient: fakeClient as any,
+      makeEventSource: () => fakeEs as any,
+      uuid: () => "perm-fixed",
+      log: { info: () => {}, warn: () => {} } as any,
+    });
+    await client.start();
+
+    const promise = client.requestPermission({
+      parent_handoff_id: "h-1",
+      conversation_id: "c",
+      agent_name: "a",
+      tool_name: "t",
+      raw_input: {},
+      ttl_seconds: 60,
+    });
+
+    fakeEs.onReconnectFire();
+    await expect(promise).rejects.toThrow(/daemon unavailable/);
+    expect((client as any).waiters.size).toBe(0);
+  });
 });

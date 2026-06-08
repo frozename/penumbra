@@ -40,6 +40,7 @@ import {
 import { autocommitOnChainEnd } from "../src/worker/autocommit-on-chain-end.js";
 import { DispatchEventQueue } from "../src/worker/event-queue.js";
 import { emitHeartbeat } from "../src/worker/heartbeat-emit.js";
+import { MAX_HEARTBEAT_ATTEMPTS, nextHeartbeatRetry } from "../src/worker/heartbeat-retry.js";
 import { createPermissionCallback } from "../src/worker/permission-callback.js";
 import { createDiscordRateLimiter } from "../src/worker/discord-rate-limit.js";
 import { runWorkerControlListener } from "../src/worker/control-listener.js";
@@ -1524,13 +1525,19 @@ const sendHeartbeat = (delayMs = 15_000, attempt = 0) => {
         return;
       }
 
-      const nextAttempt = attempt + 1;
-      const backoff = Math.min(1000 * Math.pow(2, attempt), 30_000);
+      const retry = nextHeartbeatRetry(attempt);
+      if (!retry.shouldRetry) {
+        log.error(
+          { err: String(err), attempts: MAX_HEARTBEAT_ATTEMPTS },
+          "heartbeat retries exhausted; stopping heartbeat loop",
+        );
+        return;
+      }
       log.debug(
-        { err: String(err), backoff, nextAttempt },
+        { err: String(err), backoff: retry.delayMs, nextAttempt: retry.nextAttempt },
         "heartbeat failed; retrying with backoff",
       );
-      sendHeartbeat(backoff, nextAttempt);
+      sendHeartbeat(retry.delayMs!, retry.nextAttempt!);
     }
   }, delayMs);
 };

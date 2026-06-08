@@ -158,10 +158,13 @@ export class PermissionDaemonClient {
           await this.convergeWaiter(permission_id, permission);
         } catch (err: any) {
           const status = typeof err?.status === "number" ? err.status : null;
-          if (status !== 404) return;
           const waiter = this.waiters.get(permission_id);
           if (!waiter) return;
           this.waiters.delete(permission_id);
+          if (status !== 404) {
+            waiter.reject(err instanceof Error ? err : new Error(String(err)));
+            return;
+          }
           waiter.reject(new Error(`permission ${permission_id} not found`));
         }
       }),
