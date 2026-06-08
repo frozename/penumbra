@@ -33,6 +33,10 @@ import { createPrewarmLoop, type PrewarmLoop } from "../src/worker/prewarm-loop.
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../src/sdk/adapter.js";
 import { startEventSource } from "../src/worker/event-source.js";
 import { createWorkerDispatcher } from "../src/worker/dispatcher.js";
+import {
+  computeClaimGraceMs,
+  DEFAULT_CLAIM_AFFINITY_GRACE_MS,
+} from "../src/worker/claim-affinity.js";
 import { autocommitOnChainEnd } from "../src/worker/autocommit-on-chain-end.js";
 import { DispatchEventQueue } from "../src/worker/event-queue.js";
 import { emitHeartbeat } from "../src/worker/heartbeat-emit.js";
@@ -849,6 +853,12 @@ const worktreeManager = createWorkerWorktreeManager();
 // in, no loop is created and boot behaviour is byte-identical to before.
 // ---------------------------------------------------------------------------
 const PREWARM_GLOBAL_CAP = Number(process.env.PENUMBRA_WARM_PREWARM_CAP ?? 4);
+// Cross-project claim affinity: a worker not home for a warm-pooled handoff's
+// project holds back this long so a home-repoRoot worker wins the first-poll
+// claim and reuses its warm connection (0 disables; see worker/claim-affinity.ts).
+const CLAIM_AFFINITY_GRACE_MS = Number(
+  process.env.PENUMBRA_CLAIM_AFFINITY_GRACE_MS ?? DEFAULT_CLAIM_AFFINITY_GRACE_MS,
+);
 const PREWARM_DISPATCH_TIMEOUT_MS = 60_000;
 const DEFAULT_WARM_POOL_MAX_AGE_MS = 30 * 60_000;
 
@@ -1129,6 +1139,21 @@ const dispatcher = createWorkerDispatcher({
     }
   },
   claim: (id) => client.claimHandoff(id, workerId),
+  // Cross-project claim affinity. `config` is read lazily (each handoff) so the
+  // warm_pool flag survives hot-reload, mirroring computePrewarmTargetsNow.
+  claimGraceMs: (handoff) =>
+    computeClaimGraceMs({
+      toAgent: handoff.to_agent,
+      handoffProjectId: handoff.project_id ?? null,
+      agents: config.agents.map((a) => ({
+        name: a.name,
+        options: a.options as { warm_pool?: boolean } | null,
+      })),
+      workerProjectId,
+      resolveProjectRoot: prewarmResolveProjectRoot,
+      mainRepoPath: process.cwd(),
+      graceMs: CLAIM_AFFINITY_GRACE_MS,
+    }),
   postProgress: (id, payload) => client.postProgress(id, payload),
   complete: async (id) => {
     await client.completeHandoff(id, workerId);

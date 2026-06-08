@@ -42,6 +42,19 @@ export interface WorkerDispatcherDeps {
   onDispatchEvent?: (event: DiscordNotificationEvent) => void;
   workerId?: string;
   /**
+   * Optional pre-claim grace (ms) for cross-project warm-pooled handoffs: a
+   * worker that is NOT home for the handoff's project holds back this long so a
+   * home-repoRoot worker (which owns the matching warm connection) wins the
+   * first-poll claim and reuses it instead of cold-starting. Returns 0 to claim
+   * immediately (home worker, non-warm agent, or affinity disabled). The grace
+   * is awaited BEFORE the conv-lock/semaphore, so it never pins a slot; if no
+   * home worker claims within it, this worker still claims (overflow preserved).
+   * See worker/claim-affinity.ts.
+   */
+  claimGraceMs?: (handoff: any) => number;
+  /** Injectable delay (test seam); defaults to setTimeout. */
+  delay?: (ms: number) => Promise<void>;
+  /**
    * Optional probe invoked just before dispatch.end emission. The result is
    * persisted into dispatch.end's meta so the dispatch reliability classifier
    * can detect "completed" handoffs that produced no actual file changes —
@@ -109,7 +122,17 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
     };
   };
 
+  const delay = deps.delay ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+
   const handleOne = async (handoff: any): Promise<void> => {
+    // Cross-project claim affinity. Hold back before claiming so a home-repoRoot
+    // worker wins the first-poll race and reuses its warm connection. 0 for home
+    // workers, non-warm agents, or when disabled. Awaited BEFORE the conv-lock +
+    // semaphore so the grace never pins a slot; if no home worker claims within
+    // it, this worker proceeds and claims (overflow capacity preserved).
+    const graceMs = deps.claimGraceMs?.(handoff) ?? 0;
+    if (graceMs > 0) await delay(graceMs);
+
     const releaseLock = await acquireConvLock(handoff.conversation_id);
     await acquireSemaphore();
 

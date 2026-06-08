@@ -380,3 +380,41 @@ test("token batching: multiple rapid chunks are coalesced into fewer POSTs", asy
   // Currently, t2 will fire immediately at 50ms because inflightProgress is already null.
   expect(tokenCalls.length).toBeLessThan(3);
 });
+
+test("claimGraceMs > 0 delays BEFORE claim (cross-project affinity grace)", async () => {
+  const order: string[] = [];
+  const delay = mock().mockImplementation(async (ms: number) => {
+    order.push(`delay:${ms}`);
+  });
+  const claim = mock().mockImplementation(async () => {
+    order.push("claim");
+    return { status: "dispatched" };
+  });
+  const d = deps({ claim, delay, claimGraceMs: () => 500 });
+  const dispatcher = createWorkerDispatcher(d);
+  await dispatcher.handle(baseHandoff("cross"));
+  await dispatcher.idle();
+  // The grace is awaited before the claim fires, so a home worker can win first.
+  expect(order).toEqual(["delay:500", "claim"]);
+  expect(d.claim).toHaveBeenCalledTimes(1);
+});
+
+test("claimGraceMs 0 (home worker) claims immediately, no delay", async () => {
+  const delay = mock().mockResolvedValue(undefined);
+  const d = deps({ delay, claimGraceMs: () => 0 });
+  const dispatcher = createWorkerDispatcher(d);
+  await dispatcher.handle(baseHandoff("home"));
+  await dispatcher.idle();
+  expect(delay).not.toHaveBeenCalled();
+  expect(d.claim).toHaveBeenCalledTimes(1);
+});
+
+test("no claimGraceMs dep → claim immediately (backward compatible)", async () => {
+  const delay = mock().mockResolvedValue(undefined);
+  const d = deps({ delay });
+  const dispatcher = createWorkerDispatcher(d);
+  await dispatcher.handle(baseHandoff("h1"));
+  await dispatcher.idle();
+  expect(delay).not.toHaveBeenCalled();
+  expect(d.claim).toHaveBeenCalledTimes(1);
+});
