@@ -247,6 +247,55 @@ test("register evicts terminal runs before active runs", async () => {
   });
 });
 
+test("register sweeps expired terminal runs before checking capacity", async () => {
+  let now = new Date("2026-04-26T00:00:00Z");
+  let n = 0;
+  const registry = createWorkflowRunsRegistry({
+    uuid: () => `wfrun-${++n}`,
+    clock: () => now,
+    db: freshDb(":memory:"),
+    storageRoot: tmpdir(),
+    capacity: 2,
+    ttlMs: 1_000,
+  });
+
+  const id1 = registry.register("wf-1", "proj");
+  const id2 = registry.register("wf-2", "proj");
+  expect(id1).toBe("wfrun-1");
+  expect(id2).toBe("wfrun-2");
+  await registry.recordResult(id1!, { ok: true });
+  await registry.recordResult(id2!, { ok: true });
+
+  now = new Date("2026-04-26T00:00:02Z");
+  expect(registry.register("wf-3", "proj")).toBe("wfrun-3");
+  expect(registry.verify(id1!)).toBeNull();
+  expect(registry.verify(id2!)).toBeNull();
+});
+
+test("evictIfNeeded drains all expired terminal runs in one pass", async () => {
+  let now = new Date("2026-04-26T00:00:00Z");
+  let n = 0;
+  const registry = createWorkflowRunsRegistry({
+    uuid: () => `wfrun-${++n}`,
+    clock: () => now,
+    db: freshDb(":memory:"),
+    storageRoot: tmpdir(),
+    capacity: 2,
+    ttlMs: 1_000,
+  });
+
+  const id1 = registry.register("wf-1", "proj");
+  const id2 = registry.register("wf-2", "proj");
+  expect(id1).toBe("wfrun-1");
+  expect(id2).toBe("wfrun-2");
+  await registry.recordResult(id1!, { ok: true });
+  await registry.recordError(id2!, { ok: false });
+
+  now = new Date("2026-04-26T00:00:02Z");
+  expect(registry.register("wf-3", "proj")).toBe("wfrun-3");
+  expect(registry.register("wf-4", "proj")).toBe("wfrun-4");
+});
+
 test("waitForResult enforces waiter caps", async () => {
   const registry = createWorkflowRunsRegistry({
     uuid: () => "wfrun-1",

@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
-import { readFile, realpath, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, readFile, realpath, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve as pathResolve, relative as pathRelative } from "node:path";
 import type { Database } from "bun:sqlite";
 import type { WorkflowStatusLight } from "@penumbra/core";
@@ -74,10 +74,6 @@ function safeParseJson<T>(text: string | null | undefined): T | null {
   }
 }
 
-function ensureParentDir(filePath: string): void {
-  mkdirSync(dirname(filePath), { recursive: true });
-}
-
 function makeSpillPath(storageRoot: string, workflowRunId: string): string {
   return join(storageRoot, ".penumbra", "workflow-runs", `${workflowRunId}.json`);
 }
@@ -90,7 +86,7 @@ async function writePayload(
   const payloadJson = safeStringify(payload);
   if (payloadJson.length <= INLINE_JSON_LIMIT) return { payloadJson, spillPath: null };
   const spillPath = makeSpillPath(storageRoot, workflowRunId);
-  ensureParentDir(spillPath);
+  await mkdir(dirname(spillPath), { recursive: true });
   await writeFile(spillPath, payloadJson, "utf8");
   return { payloadJson, spillPath: pathRelative(storageRoot, spillPath) };
 }
@@ -333,17 +329,19 @@ export function createWorkflowRunsRegistry(opts: {
 
   function evictIfNeeded(): boolean {
     if (entries.size < capacity) return true;
+    let evicted = false;
     for (const [workflowRunId, entry] of entries) {
-      if (entry.record) {
+      if (entry.record && entry.record.status !== "running") {
         entries.delete(workflowRunId);
-        return true;
+        evicted = true;
       }
     }
-    return false;
+    return evicted;
   }
 
   const api: WorkflowRunsRegistryInternal = {
     register(workflowName: string, projectId: string | null) {
+      sweepExpired(opts.clock().getTime());
       if (!evictIfNeeded()) return null;
       const workflowRunId = opts.uuid();
       const startedAt = opts.clock().getTime();
@@ -381,9 +379,12 @@ export function createWorkflowRunsRegistry(opts: {
       opts.db.query(`DELETE FROM workflow_runs WHERE id = ?`).run(workflowRunId);
       const spillPath = makeSpillPath(opts.storageRoot, workflowRunId);
       if (existsSync(spillPath)) {
-        try {
-          unlinkSync(spillPath);
-        } catch {}
+        void unlink(spillPath).catch((err) => {
+          opts.log?.warn?.(
+            { workflow_run_id: workflowRunId, spill_path: spillPath, err: String(err) },
+            "workflow run spill cleanup failed",
+          );
+        });
       }
     },
     async recordResult(workflowRunId: string, result: unknown) {
