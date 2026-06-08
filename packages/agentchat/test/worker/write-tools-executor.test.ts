@@ -217,6 +217,41 @@ describe("WriteToolsExecutor.writeTextFile", () => {
     });
   });
 
+  test("absolute path can write a new file inside an existing deep directory", async () => {
+    await withSandboxedExecutor(async ({ executor, worktreeRoot }) => {
+      const existingDir = join(worktreeRoot, "packages/core/src");
+      await mkdir(existingDir, { recursive: true });
+
+      const absolutePath = join(existingDir, "new-file.ts");
+      const r = await executor.writeTextFile(
+        { path: absolutePath, content: "export const value = 1;\n" },
+        {
+          toolName: "fs.write_text_file",
+          rawInput: {},
+          dispatchId: "d-test",
+        },
+      );
+
+      expect(r.bytesWritten).toBe(24);
+      expect(await readFile(absolutePath, "utf8")).toBe("export const value = 1;\n");
+    });
+  });
+
+  test("absolute path auto-create beyond relative worktree depth throws IoError", async () => {
+    await withSandboxedExecutor(async ({ executor, worktreeRoot }) => {
+      await expect(
+        executor.writeTextFile(
+          { path: join(worktreeRoot, "a/b/c/d/e.txt"), content: "x" },
+          {
+            toolName: "fs.write_text_file",
+            rawInput: {},
+            dispatchId: "d-test",
+          },
+        ),
+      ).rejects.toThrow(IoError);
+    });
+  });
+
   test("audit raw_input (in event payload) is path+content_bytes only, never full content", async () => {
     await withSandboxedExecutor(async ({ executor, events }) => {
       const big = "x".repeat(100_000);

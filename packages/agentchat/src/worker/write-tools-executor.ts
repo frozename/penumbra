@@ -133,10 +133,22 @@ export class WriteToolsExecutor {
   }
 
   protected async ensureParentDir(userPath: string, resolvedReal: string): Promise<void> {
-    const parts = userPath.split("/").filter(Boolean);
-    if (parts.length <= 1) return;
+    const parentDir = dirname(resolvedReal);
+    try {
+      const parentStat = await stat(parentDir);
+      if (parentStat.isDirectory()) return;
+      throw new IoError(`parent path is not a directory: ${userPath}`);
+    } catch (err: any) {
+      if (err instanceof IoError) throw err;
+      if (err?.code !== "ENOENT")
+        throw new IoError(`failed to stat parent ${userPath}: ${err?.message ?? err}`);
+    }
+
+    const worktreeReal = await realpath(resolve(this.opts.worktreeRoot));
+    const relativeTarget = relative(worktreeReal, resolvedReal);
+    const parts = relativeTarget.split(path.sep).filter(Boolean);
     if (parts.length > 4) throw new IoError(`parent depth too deep for auto-create: ${userPath}`);
-    await mkdir(dirname(resolvedReal), { recursive: true });
+    await mkdir(parentDir, { recursive: true });
   }
 
   async editTextFile(
