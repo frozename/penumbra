@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { randomUUID } from "crypto";
+import type { Logger } from "@penumbra/core";
 import { extractActionTarget } from "./target-extractors.js";
 
 const BASELINE_TIERS: Array<{ match: RegExp; tier: 1 | 2 | 3 }> = [
@@ -73,6 +74,22 @@ export interface ActionGateDeps {
   executeTool: (tool: string, args: unknown, _meta?: Record<string, unknown>) => Promise<unknown>;
   takeSnapshot: (agent_id: string) => Promise<string>;
   now: () => number;
+  log?: Pick<Logger, "warn">;
+}
+
+function parseJsonOr<T>(
+  raw: string,
+  fallback: T,
+  log: Pick<Logger, "warn"> | undefined,
+  context: Record<string, unknown>,
+  label: string,
+): T {
+  try {
+    return JSON.parse(raw) as T;
+  } catch (err) {
+    log?.warn({ ...context, err }, label);
+    return fallback;
+  }
 }
 
 export function createActionGate(deps: ActionGateDeps): ActionGate {
@@ -111,7 +128,13 @@ export function createActionGate(deps: ActionGateDeps): ActionGate {
         .get(agent_id);
       if (!agent) return { kind: "rejected", error: "agent_not_found" };
 
-      const allowlist: unknown = JSON.parse(agent.mcp_allowlist_json);
+      const allowlist: unknown = parseJsonOr(
+        agent.mcp_allowlist_json,
+        [],
+        deps.log,
+        { agent_id, tick_id, tool, field: "mcp_allowlist_json" },
+        "action-gate-invalid-agent-config",
+      );
       const allowed =
         Array.isArray(allowlist) &&
         allowlist
@@ -129,7 +152,13 @@ export function createActionGate(deps: ActionGateDeps): ActionGate {
         return { kind: "rejected", error: "not_in_allowlist" };
       }
 
-      const globs: string[] = JSON.parse(agent.approval_required_globs_json);
+      const globs: string[] = parseJsonOr(
+        agent.approval_required_globs_json,
+        [],
+        deps.log,
+        { agent_id, tick_id, tool, field: "approval_required_globs_json" },
+        "action-gate-invalid-agent-config",
+      );
       const baselineTier = classifyTier({ tool, target, agentGlobs: [] });
       let tier = classifyTier({ tool, target, agentGlobs: globs });
       if (pending_action_id) {
@@ -167,7 +196,13 @@ export function createActionGate(deps: ActionGateDeps): ActionGate {
       }
 
       if (tier === 2) {
-        const overrides: Record<string, number> = JSON.parse(agent.cooldown_overrides_json);
+        const overrides: Record<string, number> = parseJsonOr(
+          agent.cooldown_overrides_json,
+          {},
+          deps.log,
+          { agent_id, tick_id, tool, field: "cooldown_overrides_json" },
+          "action-gate-invalid-agent-config",
+        );
         const cdMs = cooldownMsFor(tool, overrides);
         const existing = deps.db
           .query<

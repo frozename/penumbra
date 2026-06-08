@@ -64,6 +64,32 @@ describe("action gate", () => {
     expect(audit.reason).toBe("not_in_allowlist");
   });
 
+  it("falls back safely when agent config JSON is malformed", async () => {
+    const db = setup();
+    db.query(
+      "UPDATE long_lived_agents SET mcp_allowlist_json='not-json', approval_required_globs_json='not-json', cooldown_overrides_json='not-json' WHERE id='home'",
+    ).run();
+    const warn = mock(() => undefined);
+    const gate = createActionGate({
+      db,
+      executeTool: mock(async () => ({ ok: true })),
+      takeSnapshot: mock(async () => "snap1"),
+      now: () => 100,
+      log: { warn },
+    });
+
+    const result = await gate.handleCall({
+      agent_id: "home",
+      tick_id: "t1",
+      tool: "ha:integration.uninstall",
+      args: { domain: "mqtt" },
+    });
+
+    expect(result.kind).toBe("rejected");
+    expect((result as any).error).toBe("not_in_allowlist");
+    expect(warn).toHaveBeenCalled();
+  });
+
   it("tier 1 executes immediately and audits success", async () => {
     const db = setup();
     const exec = mock(async () => ({ ok: true }));

@@ -65,3 +65,29 @@ serviceTest("serve honors PENUMBRA_DAEMON_HOST override", async () => {
     services.db.close();
   }
 });
+
+serviceTest("serve installs global crash handlers once", async () => {
+  const services = makeServices();
+  const stop = spyOn(services.supervisor, "stopAll").mockImplementation(() => undefined);
+  spyOn(services.supervisor, "startAll").mockResolvedValue(undefined);
+
+  const baselineUnhandled = process.listenerCount("unhandledRejection");
+  const baselineUncaught = process.listenerCount("uncaughtException");
+
+  const handle1 = serve({ services, token: "test-token", port: 0 });
+  const afterFirstUnhandled = process.listenerCount("unhandledRejection");
+  const afterFirstUncaught = process.listenerCount("uncaughtException");
+  const handle2 = serve({ services, token: "test-token", port: 0 });
+
+  try {
+    expect(afterFirstUnhandled).toBeGreaterThanOrEqual(baselineUnhandled + 1);
+    expect(afterFirstUncaught).toBeGreaterThanOrEqual(baselineUncaught + 1);
+    expect(process.listenerCount("unhandledRejection")).toBe(afterFirstUnhandled);
+    expect(process.listenerCount("uncaughtException")).toBe(afterFirstUncaught);
+  } finally {
+    await handle1.stop();
+    await handle2.stop();
+    expect(stop).toHaveBeenCalled();
+    services.db.close();
+  }
+});

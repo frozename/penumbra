@@ -1,4 +1,4 @@
-import { describe, it, expect, mock } from "bun:test";
+import { describe, it, expect, mock, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { loadSqliteVec } from "@penumbra/core";
 import { applySchema } from "@penumbra/core/db/schema";
@@ -122,5 +122,47 @@ describe("long-lived reactor", () => {
       "__sweeper_pending_expiry__",
       "__sweeper_snapshot_purge__",
     ]);
+  });
+
+  it("logs and swallows tick chain DB write failures", async () => {
+    const db = new Database(":memory:");
+    loadSqliteVec(db);
+    applySchema(db, { embeddingDim: 384 });
+    const bus = createMcpEventBus();
+    const spawn = mock(async () => ({ chain_id: "ch1" }));
+    const error = mock(() => undefined);
+    const reactor = createLongLivedReactor({
+      db,
+      bus,
+      spawn,
+      isChainActive: () => false,
+      now: () => 100,
+      log: { error, warn: mock(() => undefined) } as any,
+      loadAgentchatYaml: async () => ({ agents: [fakeAgent] }),
+    });
+
+    await reactor.reload();
+    const originalQuery = db.query.bind(db);
+    spyOn(db as any, "query").mockImplementation((sql: string, ...args: any[]) => {
+      if (sql === "UPDATE long_lived_ticks SET chain_id=? WHERE id=?") {
+        return {
+          run: () => {
+            throw new Error("db locked");
+          },
+        } as any;
+      }
+      return originalQuery(sql as any, ...args);
+    });
+
+    const unhandled = mock(() => undefined);
+    process.on("unhandledRejection", unhandled);
+    try {
+      reactor._cronTestFire("home");
+      await Bun.sleep(25);
+      expect(error).toHaveBeenCalled();
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", unhandled);
+    }
   });
 });

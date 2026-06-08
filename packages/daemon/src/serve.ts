@@ -25,6 +25,7 @@ import {
   mapTaskEventToLedger,
   ledgerWriteToPerformanceRow,
 } from "@penumbra/core";
+import { installGlobalCrashHandlers } from "./crash-guard.js";
 import {
   composeRecall,
   executeWorkflow,
@@ -1079,6 +1080,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
 
   const watchdog = new WatchdogService(opts.services);
   daemonServices.watchdog = watchdog;
+  installGlobalCrashHandlers({ log: opts.services.log, flush: () => opts.services.log.flush() });
 
   // Sweep any dream_cycles left in 'running' state from a previous daemon crash
   // before any cron scheduler can start a new cycle.

@@ -25,6 +25,7 @@ export interface TickGateDeps {
   spawn: (a: TickAttempt & { tick_id: string }) => { chain_id: string; tick_id: string };
   isChainActive: (chain_id: string) => boolean;
   now: () => number;
+  log?: Pick<Console, "error">;
   debounceWindowMs?: number;
 }
 
@@ -148,12 +149,26 @@ export function createTickGate(deps: TickGateDeps): TickGate {
         );
 
       const spawned = deps.spawn({ ...a, tick_id: tickId });
-      deps.db
-        .query("UPDATE long_lived_ticks SET chain_id=? WHERE id=?")
-        .run(spawned.chain_id, tickId);
-      deps.db
-        .query("UPDATE long_lived_agents SET last_tick_started_at=?, updated_at=? WHERE id=?")
-        .run(startedAt, startedAt, a.agent_id);
+      try {
+        deps.db
+          .query("UPDATE long_lived_ticks SET chain_id=? WHERE id=?")
+          .run(spawned.chain_id, tickId);
+      } catch (err) {
+        deps.log?.error(
+          { err, agent_id: a.agent_id, tick_id: tickId, chain_id: spawned.chain_id },
+          "long-lived tick chain_id update failed",
+        );
+      }
+      try {
+        deps.db
+          .query("UPDATE long_lived_agents SET last_tick_started_at=?, updated_at=? WHERE id=?")
+          .run(startedAt, startedAt, a.agent_id);
+      } catch (err) {
+        deps.log?.error(
+          { err, agent_id: a.agent_id, tick_id: tickId },
+          "long-lived agent tick metadata update failed",
+        );
+      }
 
       return { outcome: "spawned", tick_id: tickId, chain_id: spawned.chain_id };
     },

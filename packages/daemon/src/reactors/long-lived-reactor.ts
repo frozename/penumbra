@@ -66,6 +66,7 @@ export function createLongLivedReactor(deps: LongLivedReactorDeps): LongLivedRea
 
   const tickGate = createTickGate({
     db: deps.db,
+    log,
     spawn: (attempt) => {
       void deps
         .spawn({
@@ -76,9 +77,21 @@ export function createLongLivedReactor(deps: LongLivedReactorDeps): LongLivedRea
         })
         .then(
           (result) => {
-            deps.db
-              .query("UPDATE long_lived_ticks SET chain_id=? WHERE id=?")
-              .run(result.chain_id, attempt.tick_id);
+            try {
+              deps.db
+                .query("UPDATE long_lived_ticks SET chain_id=? WHERE id=?")
+                .run(result.chain_id, attempt.tick_id);
+            } catch (err) {
+              log.error(
+                {
+                  err,
+                  agent_id: attempt.agent_id,
+                  tick_id: attempt.tick_id,
+                  chain_id: result.chain_id,
+                },
+                "long-lived tick chain_id update failed",
+              );
+            }
           },
           (err) => {
             log.warn(
