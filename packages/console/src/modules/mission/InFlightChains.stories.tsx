@@ -20,7 +20,7 @@ function makeChain(overrides: Partial<ChainSummary> = {}): ChainSummary {
     earliest_ts: "2026-05-09T04:00:00Z",
     handoff_count: 3,
     root_handoff_id: "h-aabbccdd",
-    to_agent: "codex-acp-deep",
+    to_agent: "openai-codex-deep-acp",
     to_role: null,
     worktree_path: null,
     worktree_root: null,

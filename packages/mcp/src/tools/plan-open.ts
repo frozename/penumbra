@@ -14,7 +14,7 @@ const PlanOpenInputSchema = z
 export const PlanOpenInputShape = PlanOpenInputSchema.shape;
 
 const DEFAULT_HOME_PROJECT = "penumbra";
-const DEFAULT_PREFERRED_AGENT = "codex-acp-fast";
+const DEFAULT_PREFERRED_AGENT = "openai-codex-fast-acp";
 
 type PlanOpenDaemon = Pick<DaemonClient, "planStart"> &
   Partial<Pick<DaemonClient, "listChainAgents" | "maestroCapabilities">>;

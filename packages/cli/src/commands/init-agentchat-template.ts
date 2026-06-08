@@ -3,7 +3,7 @@ export const AGENTCHAT_TEMPLATE = `# Penumbra agentchat config - seeded by 'penu
 # 'maestro_capable: true' to dispatch leaf tasks.
 
 agents:
-  - name: codex-acp-fast
+  - name: openai-codex-fast-acp
     adapter: stdio-acp
     maestro_capable: true
     options:
@@ -12,12 +12,12 @@ agents:
 
   # Add more agents here. stdio-acp options take 'binary' and optional 'args'/'env'.
   # Common patterns:
-  #   - claude-acp-sonnet (binary: claude-agent-acp, env: { MAX_THINKING_TOKENS: "8000" })
+  #   - anthropic-claude-sonnet-acp (binary: claude-agent-acp, env: { MAX_THINKING_TOKENS: "8000" })
   #   - gemini-acp        (binary: gemini, args: ['--acp'])
   #   - opencode-acp-*    (adapter: opencode-acp, binary: opencode-acp)
   # Mark each maestro_capable: true to allow plan-runtime to dispatch leaves to it.
 
 default_roles:
-  executor: codex-acp-fast
-  planner: codex-acp-fast
+  executor: openai-codex-fast-acp
+  planner: openai-codex-fast-acp
 `;

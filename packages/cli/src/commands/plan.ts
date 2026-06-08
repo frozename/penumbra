@@ -7,9 +7,9 @@ import { parsePlanMetaFile, validatePlan } from "@penumbra/workflows";
 import { renderPlanTree } from "./plan-render.js";
 
 const FALLBACK_AGENTS: string[] = [
-  "codex-acp-fast",
-  "claude-acp-sonnet",
-  "claude-acp-haiku",
+  "openai-codex-fast-acp",
+  "anthropic-claude-sonnet-acp",
+  "anthropic-claude-haiku-acp",
   "gemini-acp",
   "opencode-acp",
 ];
