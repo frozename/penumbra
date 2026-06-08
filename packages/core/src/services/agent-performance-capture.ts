@@ -60,6 +60,12 @@ function computeLatencyMs(ts: string, resolvedAt: string | null, nowIso: string)
   return end - start;
 }
 
+function normalizeNonnegativeInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.round(value)
+    : null;
+}
+
 function lookupLatestLaneGateOutcome(db: Database, handoffId: string): string | null {
   type Row = { gate_status: string };
   const row = db
@@ -83,6 +89,7 @@ export function captureAgentPerformanceFromReconciler(opts: {
   const usage = aggregateHandoffUsage(opts.db, input.handoff_id);
   const nowIso = opts.clock().toISOString();
   const latency = computeLatencyMs(handoff.ts, handoff.resolved_at, nowIso);
+  const parsedDispatchEndMeta = getParsedDispatchEndMeta(opts.db, input.handoff_id);
   const metadata: Record<string, unknown> = {};
   if (input.result.pr_url) metadata.pr_url = input.result.pr_url;
   if (input.result.timed_out !== undefined) metadata.timed_out = input.result.timed_out;
@@ -105,8 +112,10 @@ export function captureAgentPerformanceFromReconciler(opts: {
     cost_usd: usage.cost_usd,
     tokens_used: usage.tokens_used,
     latency_ms: latency,
-    exec_ms: null,
-    framework_overhead_ms: null,
+    exec_ms: normalizeNonnegativeInteger(input.wall_ms ?? parsedDispatchEndMeta?.wall_ms),
+    framework_overhead_ms: normalizeNonnegativeInteger(
+      input.framework_overhead_ms ?? parsedDispatchEndMeta?.framework_overhead_ms,
+    ),
     source: "reconciler",
     gate_outcome: lookupLatestLaneGateOutcome(opts.db, input.handoff_id),
     notes: input.result.regression_summary ?? null,
@@ -240,6 +249,10 @@ export function captureAgentPerformanceFromDispatch(opts: {
   const latency = computeLatencyMs(handoff.ts, handoff.resolved_at, nowIso);
   const useWorktree = handoff.use_worktree === true || (handoff.use_worktree as unknown) === 1;
   const parsedDispatchEndMeta = getParsedDispatchEndMeta(opts.db, input.handoff_id);
+  const execMs = normalizeNonnegativeInteger(input.wall_ms ?? parsedDispatchEndMeta?.wall_ms);
+  const frameworkOverheadMs = normalizeNonnegativeInteger(
+    input.framework_overhead_ms ?? parsedDispatchEndMeta?.framework_overhead_ms,
+  );
   const signals = computeDispatchSignals(
     opts.db,
     input.handoff_id,
@@ -284,20 +297,8 @@ export function captureAgentPerformanceFromDispatch(opts: {
     cost_usd: usage.cost_usd,
     tokens_used: usage.tokens_used,
     latency_ms: latency,
-    exec_ms:
-      parsedDispatchEndMeta &&
-      typeof parsedDispatchEndMeta.wall_ms === "number" &&
-      Number.isFinite(parsedDispatchEndMeta.wall_ms) &&
-      parsedDispatchEndMeta.wall_ms >= 0
-        ? Math.round(parsedDispatchEndMeta.wall_ms)
-        : null,
-    framework_overhead_ms:
-      parsedDispatchEndMeta &&
-      typeof parsedDispatchEndMeta.framework_overhead_ms === "number" &&
-      Number.isFinite(parsedDispatchEndMeta.framework_overhead_ms) &&
-      parsedDispatchEndMeta.framework_overhead_ms >= 0
-        ? Math.round(parsedDispatchEndMeta.framework_overhead_ms)
-        : null,
+    exec_ms: execMs,
+    framework_overhead_ms: frameworkOverheadMs,
     source: "worker",
     gate_outcome: lookupLatestLaneGateOutcome(opts.db, input.handoff_id),
     notes,

@@ -102,6 +102,30 @@ describe("captureAgentPerformanceFromReconciler", () => {
     });
   });
 
+  it("uses worker-provided wall_ms and framework_overhead_ms when dispatch.end has not landed yet", () => {
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-worker-metrics",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: {
+        handoff_id: "h1",
+        reason: "completed",
+        wall_ms: 42000,
+        framework_overhead_ms: 1234,
+      },
+    });
+
+    expect(row.exec_ms).toBe(42000);
+    expect(row.framework_overhead_ms).toBe(1234);
+    const persisted = db
+      .query<
+        { exec_ms: number | null; framework_overhead_ms: number | null },
+        []
+      >(`SELECT exec_ms, framework_overhead_ms FROM agent_performance WHERE handoff_id = 'h1'`)
+      .get();
+    expect(persisted).toEqual({ exec_ms: 42000, framework_overhead_ms: 1234 });
+  });
+
   it("populates exec_ms from dispatch.end wall_ms without changing enqueue latency", () => {
     db.prepare(
       `
@@ -218,6 +242,41 @@ describe("captureAgentPerformanceFromReconciler", () => {
       >(`SELECT exec_ms FROM agent_performance WHERE handoff_id = 'h1'`)
       .get();
     expect(persisted).toEqual({ exec_ms: null });
+  });
+
+  it("uses dispatch.end wall_ms and framework_overhead_ms during reconciler capture", () => {
+    db.prepare(
+      `
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `,
+    ).run(
+      "h1",
+      "worker-1",
+      "dispatch.end",
+      "2026-04-30T12:01:00Z",
+      JSON.stringify({ status: "ok", wall_ms: 42000, framework_overhead_ms: 1234 }),
+    );
+
+    const row = captureAgentPerformanceFromReconciler({
+      db,
+      uuid: () => "perf-reconciler-metrics",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: {
+        handoff_id: "h1",
+        result: { status: "merged" },
+      },
+    });
+
+    expect(row.exec_ms).toBe(42000);
+    expect(row.framework_overhead_ms).toBe(1234);
+    const persisted = db
+      .query<
+        { exec_ms: number | null; framework_overhead_ms: number | null },
+        []
+      >(`SELECT exec_ms, framework_overhead_ms FROM agent_performance WHERE handoff_id = 'h1'`)
+      .get();
+    expect(persisted).toEqual({ exec_ms: 42000, framework_overhead_ms: 1234 });
   });
 
   it("flags completed dispatches with empty worktree as silent_failure → outcome=failed", () => {

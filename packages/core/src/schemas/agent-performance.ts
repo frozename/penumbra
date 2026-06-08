@@ -96,6 +96,8 @@ const MergeResultStatusSchema = z.enum([
 export const AgentPerformanceCaptureFromReconcilerSchema = z.object({
   handoff_id: z.string().min(1),
   task_type: AgentTaskTypeSchema.optional(),
+  wall_ms: z.number().nonnegative().nullable().optional(),
+  framework_overhead_ms: z.number().nonnegative().nullable().optional(),
   result: z
     .object({
       status: MergeResultStatusSchema,
@@ -118,6 +120,8 @@ export const AgentPerformanceCaptureFromDispatchSchema = z.object({
   // dispatch_events, since the events POST and the capture POST race and
   // the events row may not be visible yet.
   worktree_changed: z.boolean().nullable().optional(),
+  wall_ms: z.number().nonnegative().nullable().optional(),
+  framework_overhead_ms: z.number().nonnegative().nullable().optional(),
 });
 export type AgentPerformanceCaptureFromDispatch = z.infer<
   typeof AgentPerformanceCaptureFromDispatchSchema

@@ -271,6 +271,8 @@ export class PenumbraClient {
   async captureAgentPerformanceFromReconciler(body: {
     handoff_id: string;
     task_type?: string;
+    wall_ms?: number | null;
+    framework_overhead_ms?: number | null;
     result: Record<string, unknown>;
   }): Promise<void> {
     return this.post("/agents/performance/reconciler", body);
@@ -280,6 +282,8 @@ export class PenumbraClient {
     task_type?: string;
     reason: "completed" | "max_hops" | "cancelled" | "error";
     worktree_changed?: boolean | null;
+    wall_ms?: number | null;
+    framework_overhead_ms?: number | null;
   }): Promise<{
     performance: {
       outcome: string;

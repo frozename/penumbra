@@ -596,6 +596,8 @@ async function maybeCaptureDispatchOutcome(
   handoff: HandoffRow,
   reason: string,
   worktreeChanged: boolean | null,
+  wallMs: number | null,
+  frameworkOverheadMs: number | null,
 ): Promise<void> {
   const captureReason =
     reason === "completed" || reason === "max_hops" || reason === "cancelled" || reason === "error"
@@ -617,6 +619,8 @@ async function maybeCaptureDispatchOutcome(
       // doesn't have to read dispatch_events (which races the events POST
       // and can return stale "no row yet" misses).
       worktree_changed: worktreeChanged,
+      wall_ms: wallMs,
+      framework_overhead_ms: frameworkOverheadMs,
     });
     perf = response.performance;
   } catch (err) {
@@ -1167,10 +1171,24 @@ const dispatcher = createWorkerDispatcher({
     if (!wt) return;
     await autocommitOnChainEnd(handoff, wt, { log });
   },
-  onChainEnd: (handoff, reason, worktreeChanged) => {
+  onChainEnd: (
+    handoff,
+    reason,
+    worktreeChanged,
+    _dirty,
+    _committed,
+    wallMs,
+    frameworkOverheadMs,
+  ) => {
     const typedHandoff = handoff as HandoffRow;
     void maybePostDiscordChainEnd(typedHandoff, reason);
-    void maybeCaptureDispatchOutcome(typedHandoff, reason, worktreeChanged);
+    void maybeCaptureDispatchOutcome(
+      typedHandoff,
+      reason,
+      worktreeChanged,
+      wallMs,
+      frameworkOverheadMs,
+    );
     if (reason === "completed") {
       // Trigger the merge reconciler asynchronously without blocking completion
       void reconcileWorktree(typedHandoff.handoff_id).catch((err) => {

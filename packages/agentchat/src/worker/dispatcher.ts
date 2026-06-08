@@ -24,6 +24,8 @@ export interface WorkerDispatcherDeps {
     worktreeChanged: boolean | null,
     dirty: boolean | null,
     committed: boolean | null,
+    wallMs: number | null,
+    frameworkOverheadMs: number | null,
   ) => void;
   /**
    * Optional recovery hook invoked for completed chains that ended with a
@@ -403,7 +405,17 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
               );
             }
           }
-          deps.onChainEnd?.(handoff, reason, worktreeChanged, dirty, committed);
+          deps.onChainEnd?.(
+            handoff,
+            reason,
+            worktreeChanged,
+            dirty,
+            committed,
+            Date.now() - dispatchStart,
+            typeof dispatchResult?.meta?.framework_overhead_ms === "number"
+              ? dispatchResult.meta.framework_overhead_ms
+              : null,
+          );
         }
       } catch (err) {
         dispatchStatus = abort.signal.aborted ? "aborted" : "error";
