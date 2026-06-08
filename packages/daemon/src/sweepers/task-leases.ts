@@ -17,7 +17,7 @@ interface ExpiredLeaseRow {
   agent_id: string;
 }
 
-const DEFAULT_INTERVAL_MS = 15_000;
+const DEFAULT_INTERVAL_MS = 30_000;
 const DEFAULT_COOLDOWN_MS = 600_000;
 
 export function createTaskLeaseSweeper(opts: TaskLeaseSweeperOpts): {
