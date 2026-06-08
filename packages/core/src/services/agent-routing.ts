@@ -92,6 +92,7 @@ interface PerformanceRow {
   cost_usd: number | null;
   latency_ms: number | null;
   exec_ms: number | null;
+  framework_overhead_ms: number | null;
   ts: string;
   agent_kind: string | null;
   trust_score: number | null;
@@ -107,6 +108,7 @@ interface CandidateSummary {
   avg_rounds: number | null;
   avg_latency_ms: number | null;
   avg_exec_ms: number | null;
+  _latency_exec_ms: number | null;
   cost_per_success_usd: number | null;
   avg_reviewer_findings: number | null;
   avg_trust_score: number | null;
@@ -215,6 +217,7 @@ function summarizeAgent(agentName: string, rows: PerformanceRow[]): CandidateSum
   let latencySum = 0;
   let latencyCount = 0;
   const execMsValues: number[] = [];
+  const trueExecMsValues: number[] = [];
   let successCostSum = 0;
   let successCostCount = 0;
   let reviewerSum = 0;
@@ -259,6 +262,7 @@ function summarizeAgent(agentName: string, rows: PerformanceRow[]): CandidateSum
 
     if (row.exec_ms != null) {
       execMsValues.push(row.exec_ms);
+      trueExecMsValues.push(Math.max(0, row.exec_ms - (row.framework_overhead_ms ?? 0)));
     }
 
     if (row.reviewer_findings != null) {
@@ -283,6 +287,7 @@ function summarizeAgent(agentName: string, rows: PerformanceRow[]): CandidateSum
   const avg_rounds = roundsCount > 0 ? roundsSum / roundsCount : null;
   const avg_latency_ms = latencyCount > 0 ? latencySum / latencyCount : null;
   const avg_exec_ms = winsorizedMean(execMsValues);
+  const _latency_exec_ms = winsorizedMean(trueExecMsValues);
   const cost_per_success_usd = successCostCount > 0 ? successCostSum / successCostCount : null;
   const avgReviewerFindings = reviewerCount > 0 ? reviewerSum / reviewerCount : null;
   const avg_reviewer_findings = avgReviewerFindings;
@@ -298,6 +303,7 @@ function summarizeAgent(agentName: string, rows: PerformanceRow[]): CandidateSum
     avg_rounds,
     avg_latency_ms,
     avg_exec_ms,
+    _latency_exec_ms,
     cost_per_success_usd,
     avg_reviewer_findings,
     avg_trust_score,
@@ -321,14 +327,14 @@ function scoreCandidate(
     maxExecMs?: number | null;
   },
 ): number {
-  // Flag-gated latency term. Keys on winsorized exec_ms (true execution time),
+  // Flag-gated latency term. Keys on winsorized true execution time,
   // NEVER queue-inflated latency_ms. Only applies above the min-success floor so
   // speed can't rescue a chronically-failing agent, and outcome weight stays
   // >= 0.28 in every branch (the latency term is carved from the lower-signal
   // weights, not from outcome).
   const latencyActive =
     opts.latencyWeighting === true &&
-    c.avg_exec_ms != null &&
+    c._latency_exec_ms != null &&
     opts.minExecMs != null &&
     opts.maxExecMs != null &&
     c.success_rate >= LATENCY_MIN_SUCCESS_FLOOR;
@@ -336,7 +342,7 @@ function scoreCandidate(
     ? 0
     : opts.maxExecMs === opts.minExecMs
       ? 1
-      : clamp01((opts.maxExecMs! - c.avg_exec_ms!) / (opts.maxExecMs! - opts.minExecMs!));
+      : clamp01((opts.maxExecMs! - c._latency_exec_ms!) / (opts.maxExecMs! - opts.minExecMs!));
 
   let raw: number;
   if (opts.includeCost) {
@@ -423,7 +429,7 @@ function queryRows(
 ): PerformanceRow[] {
   const rows = db
     .query<PerformanceRow, [string, string]>(
-      `SELECT agent_name, task_type, outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, latency_ms, exec_ms, ts, agent_kind, trust_score
+      `SELECT agent_name, task_type, outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, latency_ms, exec_ms, framework_overhead_ms, ts, agent_kind, trust_score
      FROM agent_performance
      WHERE task_type = ? AND COALESCE(agent_kind, '${DEFAULT_AGENT_KIND}') = ?
      ORDER BY ts DESC`,
@@ -468,8 +474,8 @@ function buildRank(
   // everyone else's range.
   const execMsRange = latencyWeighting
     ? summaries
-        .filter((s) => s.success_rate >= LATENCY_MIN_SUCCESS_FLOOR && s.avg_exec_ms != null)
-        .map((s) => s.avg_exec_ms as number)
+        .filter((s) => s.success_rate >= LATENCY_MIN_SUCCESS_FLOOR && s._latency_exec_ms != null)
+        .map((s) => s._latency_exec_ms as number)
     : [];
   const minExecMs = execMsRange.length > 0 ? Math.min(...execMsRange) : null;
   const maxExecMs = execMsRange.length > 0 ? Math.max(...execMsRange) : null;

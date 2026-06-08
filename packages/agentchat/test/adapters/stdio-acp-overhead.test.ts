@@ -22,7 +22,10 @@ describe("StdioAcpAdapter framework overhead telemetry", () => {
           request: vi.fn().mockImplementation(async (method: string) => {
             if (method === "initialize") return { protocolVersion: 1, authMethods: [] };
             if (method === "session/new") return { sessionId: "session-123" };
-            if (method === "session/prompt") return { stopReason: "end_turn" };
+            if (method === "session/prompt") {
+              await new Promise((r) => setTimeout(r, 60));
+              return { stopReason: "end_turn" };
+            }
             return {};
           }),
         }),
@@ -45,7 +48,10 @@ describe("StdioAcpAdapter framework overhead telemetry", () => {
     expect(sessionStart?.meta?.framework_overhead_ms).toBeGreaterThanOrEqual(0);
 
     const done = events.find((event) => event.type === "done");
-    expect(done?.result.meta?.framework_overhead_ms).toBeGreaterThanOrEqual(0);
+    expect(done?.result.meta?.framework_overhead_ms).toBe(
+      sessionStart?.meta?.framework_overhead_ms,
+    );
+    expect(done?.result.meta?.framework_overhead_ms).toBeLessThan(50);
     expect(kill).toHaveBeenCalledTimes(1);
   });
 });

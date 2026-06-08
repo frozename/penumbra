@@ -451,6 +451,7 @@ export class StdioAcpAdapter implements Adapter {
 
   async *dispatchStream(input: DispatchInput): AsyncIterable<DispatchEvent> {
     const dispatchStartTs = Date.now();
+    let frameworkOverheadMs: number | null = null;
     const cwd = this.opts.cwd ?? process.cwd();
     const requestTimeoutMs = this.opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     const warmPoolEnabled = this.opts.warmPool === true && this.deps.pool !== undefined;
@@ -880,7 +881,7 @@ export class StdioAcpAdapter implements Adapter {
         emitLifecycle(input, "acp.session.start", {
           adapter: this.kind,
           session_id: sessionId,
-          framework_overhead_ms: Date.now() - dispatchStartTs,
+          framework_overhead_ms: (frameworkOverheadMs = Date.now() - dispatchStartTs),
         });
       }
       if (input.handoff_id) {
@@ -1120,7 +1121,7 @@ export class StdioAcpAdapter implements Adapter {
         result: {
           text: accumulatedText,
           meta: {
-            framework_overhead_ms: Date.now() - dispatchStartTs,
+            framework_overhead_ms: frameworkOverheadMs,
           },
         },
       };

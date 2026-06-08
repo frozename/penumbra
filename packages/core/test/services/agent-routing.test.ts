@@ -683,7 +683,11 @@ describe("latency_weighting routing", () => {
     writer: AgentPerformanceWriter,
     agent: string,
     i: number,
-    fields: { outcome: "merged" | "failed" | "test_failed"; exec_ms: number | null },
+    fields: {
+      outcome: "merged" | "failed" | "test_failed";
+      exec_ms: number | null;
+      framework_overhead_ms?: number | null;
+    },
   ) => {
     writer.upsert({
       ...baseRow,
@@ -695,6 +699,7 @@ describe("latency_weighting routing", () => {
       task_type: "implement_substantial",
       outcome: fields.outcome,
       exec_ms: fields.exec_ms,
+      framework_overhead_ms: fields.framework_overhead_ms ?? null,
     });
   };
 
@@ -738,6 +743,24 @@ describe("latency_weighting routing", () => {
     expect(find(rank(true), "swift").score).toBeGreaterThan(find(rank(true), "sloth").score);
     // and OFF they are equal — isolates the latency term as the only differentiator
     expect(find(rank(false), "swift").score).toBeCloseTo(find(rank(false), "sloth").score, 6);
+  });
+
+  test("flag ON: latency term keys on true-exec (exec_ms - framework_overhead_ms)", () => {
+    const w = new AgentPerformanceWriter(db);
+    seed(w, "coldy", 1, {
+      outcome: "merged",
+      exec_ms: 100_000,
+      framework_overhead_ms: 90_000,
+    });
+    seed(w, "worky", 1, { outcome: "merged", exec_ms: 100_000, framework_overhead_ms: 0 });
+    expect(find(rank(true), "coldy").score).toBeGreaterThan(find(rank(true), "worky").score);
+  });
+
+  test("flag ON: null framework_overhead_ms falls back to raw exec_ms", () => {
+    const w = new AgentPerformanceWriter(db);
+    seed(w, "swift", 1, { outcome: "merged", exec_ms: 10_000 });
+    seed(w, "sloth", 1, { outcome: "merged", exec_ms: 300_000 });
+    expect(find(rank(true), "swift").score).toBeGreaterThan(find(rank(true), "sloth").score);
   });
 
   test("flag ON: outcome dominates latency (>=0.28 outcome-weight invariant)", () => {
