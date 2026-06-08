@@ -384,10 +384,29 @@ export class ExtraWorkerSupervisor {
 
     void proc.exited
       .then(() => {
-        void this.onProcessExit(extra, proc, state);
+        void this.onProcessExit(extra, proc, state).catch((err) => {
+          this.log.error(
+            {
+              event: "extra_worker_exit_handler_failed",
+              worker_id: extra.id,
+              error: err instanceof Error ? err.message : String(err),
+            },
+            "extra worker exit handler failed",
+          );
+        });
       })
-      .catch(() => {
-        void this.onProcessExit(extra, proc, state);
+      .catch((err) => {
+        void this.onProcessExit(extra, proc, state).catch((exitErr) => {
+          this.log.error(
+            {
+              event: "extra_worker_exit_handler_failed",
+              worker_id: extra.id,
+              error: exitErr instanceof Error ? exitErr.message : String(exitErr),
+              exit_error: err instanceof Error ? err.message : String(err),
+            },
+            "extra worker exit handler failed",
+          );
+        });
       });
   }
 

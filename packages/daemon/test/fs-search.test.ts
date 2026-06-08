@@ -23,6 +23,28 @@ describe("executeGlob", () => {
     expect(r.truncated).toBe(false);
   });
 
+  it("uses async glob scanning and still returns matching files", async () => {
+    fs.writeFileSync(path.join(tmp, "async.ts"), "x");
+    fs.writeFileSync(path.join(tmp, "skip.md"), "y");
+
+    const originalScanSync = Bun.Glob.prototype.scanSync;
+    const originalScan = Bun.Glob.prototype.scan;
+    Bun.Glob.prototype.scanSync = function () {
+      throw new Error("scanSync should not be called");
+    } as any;
+    Bun.Glob.prototype.scan = function* () {
+      yield "async.ts";
+    } as any;
+
+    try {
+      const r = await executeGlob({ pattern: "*.ts" }, tmp);
+      expect(r.results).toEqual(["async.ts"]);
+    } finally {
+      Bun.Glob.prototype.scanSync = originalScanSync;
+      Bun.Glob.prototype.scan = originalScan;
+    }
+  });
+
   it("matches recursive ** patterns", async () => {
     fs.mkdirSync(path.join(tmp, "nested"));
     fs.writeFileSync(path.join(tmp, "nested/c.ts"), "x");

@@ -145,6 +145,26 @@ test("cooldown elapses → fires again", async () => {
   expect(calls).toEqual(["always", "always"]);
 });
 
+test("stale lastFired entries are evicted on a sweep tick", async () => {
+  const opts: WorkflowTriggerSweeperOpts = {
+    registry: fakeRegistry([]),
+    computeMetrics: () => ZERO_METRICS,
+    runWorkflow: async () => {},
+  };
+  const state = {
+    lastFired: new Map<string, number>([
+      ["stale", Date.parse("2026-05-03T12:00:00Z")],
+      ["fresh", Date.parse("2026-05-04T11:59:30Z")],
+    ]),
+  };
+
+  const result = await runWorkflowTriggerSweep(opts, state, () => new Date("2026-05-04T12:00:00Z"));
+
+  expect(result.fired).toEqual([]);
+  expect(state.lastFired.has("stale")).toBe(false);
+  expect(state.lastFired.has("fresh")).toBe(true);
+});
+
 test("runWorkflow throws → sweep continues, fired counts the attempt, warn emitted", async () => {
   const warns: unknown[] = [];
   const opts: WorkflowTriggerSweeperOpts = {

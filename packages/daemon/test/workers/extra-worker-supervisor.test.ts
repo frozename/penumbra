@@ -771,4 +771,28 @@ describe("extra worker supervisor", () => {
 
     expect(result).toBe(false);
   });
+
+  test("logs onProcessExit failures instead of leaving an unhandled rejection", async () => {
+    const { supervisor, processes, log } = createSupervisor([
+      { id: "worker-a", concurrency: 1, isolation: "shared" },
+    ]);
+    const onProcessExit = vi.fn(async () => {
+      throw new Error("boom");
+    });
+    (supervisor as any).onProcessExit = onProcessExit;
+
+    await supervisor.start();
+    processes[0]!.exit(1);
+    await flushPromises();
+    await flushPromises();
+
+    expect(onProcessExit).toHaveBeenCalledTimes(1);
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "extra_worker_exit_handler_failed",
+        worker_id: "worker-a",
+      }),
+      "extra worker exit handler failed",
+    );
+  });
 });

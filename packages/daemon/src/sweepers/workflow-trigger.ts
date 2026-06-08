@@ -23,6 +23,7 @@ export interface SweepTickResult {
 }
 
 const DEFAULT_COOLDOWN_MS = 5 * 60 * 1000;
+const DEFAULT_STALE_LAST_FIRED_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_INTERVAL_MS = 60_000;
 
 /**
@@ -41,6 +42,13 @@ export async function runWorkflowTriggerSweep(
   const matched = matchedSpecs.map((s) => s.name);
 
   const nowMs = now().getTime();
+  const staleBefore = nowMs - DEFAULT_STALE_LAST_FIRED_MS;
+  for (const [name, last] of state.lastFired) {
+    if (last <= staleBefore) {
+      state.lastFired.delete(name);
+    }
+  }
+
   const fired: string[] = [];
   for (const name of matched) {
     const last = state.lastFired.get(name);

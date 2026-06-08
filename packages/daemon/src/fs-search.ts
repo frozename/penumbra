@@ -171,7 +171,7 @@ export async function executeGlob(args: GlobArgs, worktree: string): Promise<Glo
   const glob = new Bun.Glob(args.pattern);
   const collected: PathWithMtime[] = [];
 
-  for (const rel of glob.scanSync({ cwd: searchRoot, onlyFiles: true, absolute: false })) {
+  for await (const rel of glob.scan({ cwd: searchRoot, onlyFiles: true, absolute: false })) {
     const abs = path.resolve(searchRoot, rel);
     const relFromWorktree = path.relative(worktreeRoot, abs);
     if (gitignoreCache && isIgnoredByGitignores(abs, worktreeRoot, gitignoreCache)) {
