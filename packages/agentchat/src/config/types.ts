@@ -435,8 +435,13 @@ export const RoleRoutingConfigSchema = z
   .object({
     exploration_policy: z.enum(["unsampled-first", "ranked-first"]).default("unsampled-first"),
     headroom_weighting: z.boolean().default(false),
+    latency_weighting: z.boolean().default(false),
   })
-  .default({ exploration_policy: "unsampled-first", headroom_weighting: false });
+  .default({
+    exploration_policy: "unsampled-first",
+    headroom_weighting: false,
+    latency_weighting: false,
+  });
 export type RoleRoutingConfig = z.infer<typeof RoleRoutingConfigSchema>;
 
 const AgentPinSchema = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]);

@@ -28,7 +28,11 @@ type AgentRouteAgentchatConfig = {
     api_provider?: string;
     pricing_mode?: "api" | "subscription";
   }>;
-  role_routing?: { headroom_weighting?: boolean; exploration_policy?: string };
+  role_routing?: {
+    headroom_weighting?: boolean;
+    latency_weighting?: boolean;
+    exploration_policy?: string;
+  };
 };
 
 export type DetailMode = "rank" | "summary" | "single";
@@ -87,6 +91,7 @@ interface PerformanceRow {
   maestro_score: number | null;
   cost_usd: number | null;
   latency_ms: number | null;
+  exec_ms: number | null;
   ts: string;
   agent_kind: string | null;
   trust_score: number | null;
@@ -101,6 +106,7 @@ interface CandidateSummary {
   success_rate: number;
   avg_rounds: number | null;
   avg_latency_ms: number | null;
+  avg_exec_ms: number | null;
   cost_per_success_usd: number | null;
   avg_reviewer_findings: number | null;
   avg_trust_score: number | null;
@@ -118,6 +124,33 @@ function clamp01(value: number): number {
   if (value < 0) return 0;
   if (value > 1) return 1;
   return value;
+}
+
+/**
+ * Min success_rate a candidate must clear before the latency term can influence
+ * its score — so a fast-but-failing agent is never promoted on speed alone.
+ */
+const LATENCY_MIN_SUCCESS_FLOOR = 0.2;
+/** Fraction trimmed from each tail before averaging exec_ms (outlier guard). */
+const EXEC_WINSOR_TRIM_FRAC = 0.1;
+
+/**
+ * Winsorized mean: clip the top/bottom EXEC_WINSOR_TRIM_FRAC of samples to the
+ * in-distribution tail before averaging, so a single pathological dispatch
+ * (e.g. one 25-min outlier) can't make an otherwise-fast agent look slow. With
+ * too few samples to trim a whole element, falls back to the plain mean.
+ */
+function winsorizedMean(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const n = sorted.length;
+  const k = Math.floor(EXEC_WINSOR_TRIM_FRAC * n);
+  if (k === 0) return sorted.reduce((sum, v) => sum + v, 0) / n;
+  const lo = sorted[k]!;
+  const hi = sorted[n - 1 - k]!;
+  let total = 0;
+  for (const v of sorted) total += v < lo ? lo : v > hi ? hi : v;
+  return total / n;
 }
 
 function outcomeValue(outcome: string): number {
@@ -181,6 +214,7 @@ function summarizeAgent(agentName: string, rows: PerformanceRow[]): CandidateSum
   let roundsCount = 0;
   let latencySum = 0;
   let latencyCount = 0;
+  const execMsValues: number[] = [];
   let successCostSum = 0;
   let successCostCount = 0;
   let reviewerSum = 0;
@@ -223,6 +257,10 @@ function summarizeAgent(agentName: string, rows: PerformanceRow[]): CandidateSum
       latencyCount++;
     }
 
+    if (row.exec_ms != null) {
+      execMsValues.push(row.exec_ms);
+    }
+
     if (row.reviewer_findings != null) {
       reviewerSum += row.reviewer_findings;
       reviewerCount++;
@@ -244,6 +282,7 @@ function summarizeAgent(agentName: string, rows: PerformanceRow[]): CandidateSum
   const success_rate = nonNeutral > 0 ? successes / nonNeutral : 0;
   const avg_rounds = roundsCount > 0 ? roundsSum / roundsCount : null;
   const avg_latency_ms = latencyCount > 0 ? latencySum / latencyCount : null;
+  const avg_exec_ms = winsorizedMean(execMsValues);
   const cost_per_success_usd = successCostCount > 0 ? successCostSum / successCostCount : null;
   const avgReviewerFindings = reviewerCount > 0 ? reviewerSum / reviewerCount : null;
   const avg_reviewer_findings = avgReviewerFindings;
@@ -258,6 +297,7 @@ function summarizeAgent(agentName: string, rows: PerformanceRow[]): CandidateSum
     success_rate,
     avg_rounds,
     avg_latency_ms,
+    avg_exec_ms,
     cost_per_success_usd,
     avg_reviewer_findings,
     avg_trust_score,
@@ -272,8 +312,32 @@ function summarizeAgent(agentName: string, rows: PerformanceRow[]): CandidateSum
 
 function scoreCandidate(
   c: CandidateSummary,
-  opts: { includeCost: boolean; minCost: number | null; maxCost: number | null },
+  opts: {
+    includeCost: boolean;
+    minCost: number | null;
+    maxCost: number | null;
+    latencyWeighting?: boolean;
+    minExecMs?: number | null;
+    maxExecMs?: number | null;
+  },
 ): number {
+  // Flag-gated latency term. Keys on winsorized exec_ms (true execution time),
+  // NEVER queue-inflated latency_ms. Only applies above the min-success floor so
+  // speed can't rescue a chronically-failing agent, and outcome weight stays
+  // >= 0.28 in every branch (the latency term is carved from the lower-signal
+  // weights, not from outcome).
+  const latencyActive =
+    opts.latencyWeighting === true &&
+    c.avg_exec_ms != null &&
+    opts.minExecMs != null &&
+    opts.maxExecMs != null &&
+    c.success_rate >= LATENCY_MIN_SUCCESS_FLOOR;
+  const latency_score = !latencyActive
+    ? 0
+    : opts.maxExecMs === opts.minExecMs
+      ? 1
+      : clamp01((opts.maxExecMs! - c.avg_exec_ms!) / (opts.maxExecMs! - opts.minExecMs!));
+
   let raw: number;
   if (opts.includeCost) {
     let cost_score: number;
@@ -284,20 +348,33 @@ function scoreCandidate(
     } else {
       cost_score = clamp01((opts.maxCost - c.cost_per_success_usd) / (opts.maxCost - opts.minCost));
     }
-    raw =
-      0.3 * c._outcome_score +
-      0.2 * c._rounds_score +
-      0.2 * c._smoke_score +
-      0.15 * c._reviewer_score +
-      0.1 * c._maestro_score +
-      0.05 * cost_score;
+    raw = latencyActive
+      ? 0.28 * c._outcome_score +
+        0.18 * c._rounds_score +
+        0.17 * c._smoke_score +
+        0.12 * c._reviewer_score +
+        0.08 * c._maestro_score +
+        0.07 * cost_score +
+        0.1 * latency_score
+      : 0.3 * c._outcome_score +
+        0.2 * c._rounds_score +
+        0.2 * c._smoke_score +
+        0.15 * c._reviewer_score +
+        0.1 * c._maestro_score +
+        0.05 * cost_score;
   } else {
-    raw =
-      0.32 * c._outcome_score +
-      0.22 * c._rounds_score +
-      0.22 * c._smoke_score +
-      0.16 * c._reviewer_score +
-      0.08 * c._maestro_score;
+    raw = latencyActive
+      ? 0.3 * c._outcome_score +
+        0.18 * c._rounds_score +
+        0.18 * c._smoke_score +
+        0.14 * c._reviewer_score +
+        0.1 * c._maestro_score +
+        0.1 * latency_score
+      : 0.32 * c._outcome_score +
+        0.22 * c._rounds_score +
+        0.22 * c._smoke_score +
+        0.16 * c._reviewer_score +
+        0.08 * c._maestro_score;
   }
   return clamp01(Math.round(raw * 10000) / 10000);
 }
@@ -346,7 +423,7 @@ function queryRows(
 ): PerformanceRow[] {
   const rows = db
     .query<PerformanceRow, [string, string]>(
-      `SELECT agent_name, task_type, outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, latency_ms, ts, agent_kind, trust_score
+      `SELECT agent_name, task_type, outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, latency_ms, exec_ms, ts, agent_kind, trust_score
      FROM agent_performance
      WHERE task_type = ? AND COALESCE(agent_kind, '${DEFAULT_AGENT_KIND}') = ?
      ORDER BY ts DESC`,
@@ -385,6 +462,17 @@ function buildRank(
     : [];
   const minCost = costs.length > 0 ? Math.min(...costs) : null;
   const maxCost = costs.length > 0 ? Math.max(...costs) : null;
+  const latencyWeighting = input.agentchatConfig?.role_routing?.latency_weighting === true;
+  // Normalize the latency_score over candidates ELIGIBLE for the latency term
+  // (>= success floor, exec present) so a sub-floor fast agent can't compress
+  // everyone else's range.
+  const execMsRange = latencyWeighting
+    ? summaries
+        .filter((s) => s.success_rate >= LATENCY_MIN_SUCCESS_FLOOR && s.avg_exec_ms != null)
+        .map((s) => s.avg_exec_ms as number)
+    : [];
+  const minExecMs = execMsRange.length > 0 ? Math.min(...execMsRange) : null;
+  const maxExecMs = execMsRange.length > 0 ? Math.max(...execMsRange) : null;
   return {
     task_type: taskType,
     window: {
@@ -397,6 +485,9 @@ function buildRank(
           includeCost: input.includeCost ?? false,
           minCost,
           maxCost,
+          latencyWeighting,
+          minExecMs,
+          maxExecMs,
         });
         if (input.agentchatConfig?.role_routing?.headroom_weighting && input.applyPressure) {
           const agentConf = input.agentchatConfig.agents.find((a) => a.name === s.agent_name);
@@ -421,6 +512,7 @@ function buildRank(
           success_rate: s.success_rate,
           avg_rounds: s.avg_rounds,
           avg_latency_ms: s.avg_latency_ms,
+          avg_exec_ms: s.avg_exec_ms,
           cost_per_success_usd: s.cost_per_success_usd,
           avg_reviewer_findings: s.avg_reviewer_findings,
           avg_trust_score: s.avg_trust_score,

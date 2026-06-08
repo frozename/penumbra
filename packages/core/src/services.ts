@@ -91,7 +91,11 @@ export interface AgentRoutingConfig {
   }>;
   default_roles: Record<string, string>;
   role_exploration_policy?: "unsampled-first" | "ranked-first";
-  role_routing?: { headroom_weighting?: boolean; exploration_policy?: string };
+  role_routing?: {
+    headroom_weighting?: boolean;
+    latency_weighting?: boolean;
+    exploration_policy?: string;
+  };
 }
 
 export interface Watchdog {

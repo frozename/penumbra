@@ -661,3 +661,120 @@ describe("routeAgent", () => {
     expect(out.candidates.candidates).toEqual([]);
   });
 });
+
+describe("latency_weighting routing", () => {
+  let db: Database;
+
+  const baseRow = {
+    project_id: "proj",
+    rounds: 1,
+    smoke_pass: "y" as const,
+    reviewer_findings: 0,
+    maestro_score: null,
+    cost_usd: null,
+    tokens_used: null,
+    latency_ms: null,
+    source: "reconciler" as const,
+    notes: null,
+    metadata_json: "{}",
+  };
+
+  const seed = (
+    writer: AgentPerformanceWriter,
+    agent: string,
+    i: number,
+    fields: { outcome: "merged" | "failed" | "test_failed"; exec_ms: number | null },
+  ) => {
+    writer.upsert({
+      ...baseRow,
+      performance_id: `${agent}-${i}`,
+      ts: `2026-04-30T1${i % 10}:00:00Z`,
+      handoff_id: `h-${agent}-${i}`,
+      conversation_id: `c-${agent}-${i}`,
+      agent_name: agent,
+      task_type: "implement_substantial",
+      outcome: fields.outcome,
+      exec_ms: fields.exec_ms,
+    });
+  };
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+  });
+
+  const rank = (latency_weighting: boolean) => {
+    const out = routeAgent({
+      db,
+      detail: "rank" as const,
+      taskType: "implement_substantial" as const,
+      minSamples: 1,
+      includeNeutral: false,
+      now: NOW,
+      agentchatConfig: { role_routing: { latency_weighting }, agents: [] },
+    });
+    if (out.detail !== "rank") throw new Error("expected rank");
+    return out.candidates.candidates;
+  };
+  const find = (cands: ReturnType<typeof rank>, name: string) => {
+    const c = cands.find((x) => x.agent_name === name);
+    if (!c) throw new Error(`candidate ${name} not found`);
+    return c;
+  };
+
+  test("flag OFF: exec_ms does not affect score (regression-safe)", () => {
+    const w = new AgentPerformanceWriter(db);
+    seed(w, "swift", 1, { outcome: "merged", exec_ms: 10_000 });
+    seed(w, "sloth", 1, { outcome: "merged", exec_ms: 300_000 });
+    const off = rank(false);
+    expect(find(off, "swift").score).toBeCloseTo(find(off, "sloth").score, 6);
+  });
+
+  test("flag ON: lower exec_ms scores higher, all else equal", () => {
+    const w = new AgentPerformanceWriter(db);
+    seed(w, "swift", 1, { outcome: "merged", exec_ms: 10_000 });
+    seed(w, "sloth", 1, { outcome: "merged", exec_ms: 300_000 });
+    expect(find(rank(true), "swift").score).toBeGreaterThan(find(rank(true), "sloth").score);
+    // and OFF they are equal — isolates the latency term as the only differentiator
+    expect(find(rank(false), "swift").score).toBeCloseTo(find(rank(false), "sloth").score, 6);
+  });
+
+  test("flag ON: outcome dominates latency (>=0.28 outcome-weight invariant)", () => {
+    const w = new AgentPerformanceWriter(db);
+    // good-slow: 2x merged (success 1.0) but slowest exec
+    seed(w, "good-slow", 1, { outcome: "merged", exec_ms: 300_000 });
+    seed(w, "good-slow", 2, { outcome: "merged", exec_ms: 300_000 });
+    // weak-fast: merged + test_failed (success 0.5) but fastest exec
+    seed(w, "weak-fast", 1, { outcome: "merged", exec_ms: 10_000 });
+    seed(w, "weak-fast", 2, { outcome: "test_failed", exec_ms: 10_000 });
+    expect(rank(true)[0]!.agent_name).toBe("good-slow");
+  });
+
+  test("flag ON: exec_ms is winsorized (one outlier dispatch does not inflate it)", () => {
+    const w = new AgentPerformanceWriter(db);
+    for (let i = 1; i <= 9; i++) seed(w, "tail", i, { outcome: "merged", exec_ms: 5_000 });
+    seed(w, "tail", 10, { outcome: "merged", exec_ms: 500_000 }); // single outlier
+    // winsorized mean clips the outlier to the in-distribution tail, not (9*5000+500000)/10=54500
+    expect(find(rank(true), "tail").avg_exec_ms).toBeCloseTo(5_000, 0);
+  });
+
+  test("flag ON: min-success floor — a sub-floor fast agent gets no latency boost", () => {
+    const w = new AgentPerformanceWriter(db);
+    // subfloor-fast: 1 merged + 5 failed => success 1/6 ~ 0.167 < 0.2 floor; fastest exec
+    seed(w, "subfloor-fast", 1, { outcome: "merged", exec_ms: 5_000 });
+    for (let i = 2; i <= 6; i++) seed(w, "subfloor-fast", i, { outcome: "failed", exec_ms: 5_000 });
+    // solid-slow: merged, success 1.0, slowest exec (eligible)
+    seed(w, "solid-slow", 1, { outcome: "merged", exec_ms: 300_000 });
+    // sub-floor agent is excluded from latency weighting => score identical with flag on/off
+    expect(find(rank(true), "subfloor-fast").score).toBeCloseTo(
+      find(rank(false), "subfloor-fast").score,
+      6,
+    );
+    // an eligible agent's score DOES move when the flag toggles
+    expect(find(rank(true), "solid-slow").score).not.toBeCloseTo(
+      find(rank(false), "solid-slow").score,
+      6,
+    );
+  });
+});

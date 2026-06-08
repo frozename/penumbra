@@ -257,6 +257,7 @@ describe("TaskWriter centralized gh status-sync enqueue", () => {
               success_rate: 1,
               avg_rounds: null,
               avg_latency_ms: null,
+              avg_exec_ms: null,
               cost_per_success_usd: null,
               avg_reviewer_findings: null,
               avg_trust_score: null,

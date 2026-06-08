@@ -9,7 +9,11 @@ import {
 } from "@penumbra/core";
 
 type AgentRoutingWithRoleRouting = AgentRoutingConfig & {
-  role_routing?: { headroom_weighting?: boolean; exploration_policy?: string };
+  role_routing?: {
+    headroom_weighting?: boolean;
+    latency_weighting?: boolean;
+    exploration_policy?: string;
+  };
 };
 
 /**

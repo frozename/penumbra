@@ -11,6 +11,7 @@ export const RoleRoutingConfigSchema = z
   .object({
     exploration_policy: z.enum(["unsampled-first", "ranked-first"]).default("unsampled-first"),
     headroom_weighting: z.boolean().optional(),
+    latency_weighting: z.boolean().optional(),
   })
   .default({ exploration_policy: "unsampled-first" });
 export type RoleRoutingConfig = z.infer<typeof RoleRoutingConfigSchema>;
