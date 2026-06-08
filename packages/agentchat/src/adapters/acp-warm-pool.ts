@@ -46,13 +46,14 @@ export interface AcpWarmPool {
   /** True if at least one live (running) entry exists for `key`. Lets the
    *  pre-warm loop self-heal a crashed pre-warm without waiting for the refresh. */
   has(key: string): boolean;
-  /** Diagnostic: why `acquire(key, specHash)` would currently miss, or
-   *  "would_hit" if an acquirable entry exists. Computed WITHOUT mutating the
-   *  pool, so call it BEFORE acquire (acquire tears down stale candidates). */
-  peekMissReason(key: string, specHash: string): string;
-  /** Diagnostic: every key currently holding entries — surfaces key drift
-   *  (deposit under key A, acquire under key B → reuse never fires). */
-  debugKeys(): string[];
+  /** Diagnostic (optional): why `acquire(key, specHash)` would currently miss,
+   *  or "would_hit" if an acquirable entry exists. Computed WITHOUT mutating the
+   *  pool, so call it BEFORE acquire (acquire tears down stale candidates).
+   *  Optional so diagnostics never break a dispatch on a pool double lacking it. */
+  peekMissReason?(key: string, specHash: string): string;
+  /** Diagnostic (optional): every key currently holding entries — surfaces key
+   *  drift (deposit under key A, acquire under key B → reuse never fires). */
+  debugKeys?(): string[];
   _sweep(): void;
 }
 

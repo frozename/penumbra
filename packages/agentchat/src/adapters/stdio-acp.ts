@@ -486,8 +486,11 @@ export class StdioAcpAdapter implements Adapter {
       let warmMissReason: string | undefined;
       let warmPoolKeys: string[] | undefined;
       if (warmPoolEnabled) {
-        warmMissReason = this.deps.pool!.peekMissReason(poolKey, specHash);
-        warmPoolKeys = this.deps.pool!.debugKeys();
+        // Optional: these are diagnostics-only and must never alter dispatch
+        // behaviour, so tolerate a pool implementation (e.g. a test double) that
+        // doesn't provide them.
+        warmMissReason = this.deps.pool!.peekMissReason?.(poolKey, specHash);
+        warmPoolKeys = this.deps.pool!.debugKeys?.();
         pooledEntry = this.deps.pool!.acquire(holderId, poolKey, specHash);
       }
       if (pooledEntry) {
