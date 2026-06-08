@@ -82,17 +82,25 @@ function normalizeReason(value: unknown): GhIssueStateReason {
 }
 
 async function defaultExec(args: string[], cwd?: string): Promise<GhExecResult> {
-  const proc = Bun.spawnSync({
+  // Bun.spawn (NOT spawnSync): `gh` makes a network round-trip to GitHub
+  // (~0.6s each). spawnSync blocks the daemon's single-threaded event loop for
+  // that whole duration, so a sweep that runs N `gh` calls back-to-back (e.g.
+  // gh-task-sync re-syncing every linked task) stalls ALL HTTP — including the
+  // worker's per-dispatch capture observes — for ~N×0.6s. spawn yields the loop
+  // while the subprocess runs, letting requests interleave. Read both pipes
+  // concurrently with `exited` to drain the buffers and avoid a pipe deadlock.
+  const proc = Bun.spawn({
     cmd: ["gh", ...args],
     cwd,
     stdout: "pipe",
     stderr: "pipe",
   });
-  return {
-    stdout: proc.stdout.toString(),
-    stderr: proc.stderr.toString(),
-    exitCode: proc.exitCode,
-  };
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  return { stdout, stderr, exitCode };
 }
 
 async function runOrThrow(exec: GhExec, args: string[]): Promise<string> {
