@@ -9,6 +9,8 @@ import type {
 import { MaestroSessionWriter, routeAgent } from "@penumbra/core";
 import { orchestrateOneTask } from "../maestro/orchestrate-one-task.js";
 
+const ORCHESTRATE_BACKSTOP_INTERVAL_MS = 30_000;
+
 interface TaskKindRow {
   kind: string;
 }
@@ -228,7 +230,7 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): {
         } catch {
           // keep poller alive across per-tick failures
         }
-      }, 5000);
+      }, ORCHESTRATE_BACKSTOP_INTERVAL_MS);
     },
 
     stop(): void {
