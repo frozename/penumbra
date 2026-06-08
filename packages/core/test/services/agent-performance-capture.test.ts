@@ -522,4 +522,51 @@ describe("captureAgentPerformanceFromReconciler", () => {
       .get();
     expect(count?.n).toBe(1);
   });
+  it("computes exact signals for a multi-event handoff with one dispatch.end", () => {
+    const insertEvt = db.prepare(
+      "INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json) VALUES (?, ?, 'worker', ?, ?, ?)",
+    );
+    insertEvt.run(
+      "h1",
+      "w",
+      "agent.tool_call.failed",
+      "2026-04-30T12:01:00Z",
+      JSON.stringify({ tool_name: "edit" }),
+    );
+    insertEvt.run(
+      "h1",
+      "w",
+      "agent.tool_call.failed",
+      "2026-04-30T12:01:30Z",
+      JSON.stringify({ tool_name: "edit" }),
+    );
+    insertEvt.run(
+      "h1",
+      "w",
+      "dispatch.end",
+      "2026-04-30T12:02:00Z",
+      JSON.stringify({
+        status: "ok",
+        worktree_changed: true,
+        wall_ms: 5000,
+        framework_overhead_ms: 100,
+        committed: true,
+      }),
+    );
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-multi",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: { handoff_id: "h1", reason: "completed" },
+    });
+
+    expect(JSON.parse(row.metadata_json)).toEqual({
+      reason: "completed",
+      silent_failure: false,
+      tool_failure_count: 2,
+    });
+    expect(row.exec_ms).toBe(5000);
+    expect(row.framework_overhead_ms).toBe(100);
+  });
 });

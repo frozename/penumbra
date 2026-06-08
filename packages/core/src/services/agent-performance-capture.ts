@@ -115,34 +115,39 @@ export function captureAgentPerformanceFromReconciler(opts: {
   return new AgentPerformanceWriter(opts.db).upsert(row);
 }
 
+function getParsedDispatchEndMeta(db: Database, handoffId: string): Record<string, unknown> | null {
+  const row = db
+    .prepare<
+      { meta_json: string | null },
+      [string]
+    >(`SELECT meta_json FROM dispatch_events WHERE handoff_id = ? AND kind = 'dispatch.end' ORDER BY ts DESC, id DESC LIMIT 1`)
+    .get(handoffId);
+  if (!row?.meta_json) return null;
+  try {
+    return JSON.parse(row.meta_json) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 function computeDispatchSignals(
   db: Database,
   handoffId: string,
   useWorktree: boolean,
   worktreeChangedHint: boolean | null | undefined,
+  parsedDispatchEndMeta: Record<string, unknown> | null,
 ): { silent_failure: boolean; tool_failure_count: number } {
-  type Row = { meta_json: string | null; kind: string };
-  const rows = db
+  const countRow = db
     .prepare<
-      Row,
+      { count: number },
       [string]
-    >(`SELECT kind, meta_json FROM dispatch_events WHERE handoff_id = ? AND kind IN ('dispatch.end', 'agent.tool_call.failed')`)
-    .all(handoffId);
+    >(`SELECT COUNT(*) as count FROM dispatch_events WHERE handoff_id = ? AND kind = 'agent.tool_call.failed'`)
+    .get(handoffId);
+  const toolFailureCount = countRow?.count ?? 0;
+
   let worktreeChanged: boolean | null = null;
-  let toolFailureCount = 0;
-  for (const row of rows) {
-    if (row.kind === "agent.tool_call.failed") {
-      toolFailureCount++;
-      continue;
-    }
-    if (row.kind === "dispatch.end" && row.meta_json) {
-      try {
-        const meta = JSON.parse(row.meta_json) as Record<string, unknown>;
-        if (typeof meta.worktree_changed === "boolean") worktreeChanged = meta.worktree_changed;
-      } catch {
-        // ignore malformed meta
-      }
-    }
+  if (parsedDispatchEndMeta && typeof parsedDispatchEndMeta.worktree_changed === "boolean") {
+    worktreeChanged = parsedDispatchEndMeta.worktree_changed;
   }
   // Caller-provided hint wins if present — the worker computes
   // worktree_changed at dispatch.end and passes it directly in the capture
@@ -156,44 +161,6 @@ function computeDispatchSignals(
   // outcome aligned with the reliability classifier's no_worktree_activity.
   const silentFailure = useWorktree && worktreeChanged === false;
   return { silent_failure: silentFailure, tool_failure_count: toolFailureCount };
-}
-
-function readDispatchExecMs(db: Database, handoffId: string): number | null {
-  const row = db
-    .prepare<
-      { meta_json: string | null },
-      [string]
-    >(`SELECT meta_json FROM dispatch_events WHERE handoff_id = ? AND kind = 'dispatch.end' ORDER BY ts DESC, id DESC LIMIT 1`)
-    .get(handoffId);
-  if (!row?.meta_json) return null;
-  try {
-    const meta = JSON.parse(row.meta_json) as Record<string, unknown>;
-    const wallMs = meta.wall_ms;
-    if (typeof wallMs !== "number" || !Number.isFinite(wallMs) || wallMs < 0) return null;
-    return Math.round(wallMs);
-  } catch {
-    return null;
-  }
-}
-
-function readDispatchFrameworkOverheadMs(db: Database, handoffId: string): number | null {
-  const row = db
-    .prepare<
-      { meta_json: string | null },
-      [string]
-    >(`SELECT meta_json FROM dispatch_events WHERE handoff_id = ? AND kind = 'dispatch.end' ORDER BY ts DESC, id DESC LIMIT 1`)
-    .get(handoffId);
-  if (!row?.meta_json) return null;
-  try {
-    const meta = JSON.parse(row.meta_json) as Record<string, unknown>;
-    const overheadMs = meta.framework_overhead_ms;
-    if (typeof overheadMs !== "number" || !Number.isFinite(overheadMs) || overheadMs < 0) {
-      return null;
-    }
-    return Math.round(overheadMs);
-  } catch {
-    return null;
-  }
 }
 
 function detectRecoveryCancel(
@@ -221,25 +188,21 @@ function classifyDispatchReliabilityFromDb(
   handoffId: string,
   handoff: HandoffRow,
   worktreeChangedHint: boolean | null | undefined,
+  parsedDispatchEndMeta: Record<string, unknown> | null,
 ): DispatchReliabilityReport {
   const eventRows = db
     .prepare<
-      { kind: string; ts: string; meta_json: string | null },
+      { kind: string; ts: string },
       [string]
-    >(`SELECT kind, ts, meta_json FROM dispatch_events WHERE handoff_id = ? ORDER BY ts ASC`)
+    >(`SELECT kind, ts FROM dispatch_events WHERE handoff_id = ? ORDER BY ts ASC`)
     .all(handoffId);
   let worktreeChanged: boolean | null = null;
   let dispatchEndCommitted: boolean | null = null;
-  for (const row of eventRows) {
-    if (row.kind === "dispatch.end" && row.meta_json) {
-      try {
-        const meta = JSON.parse(row.meta_json) as Record<string, unknown>;
-        if (typeof meta.worktree_changed === "boolean") worktreeChanged = meta.worktree_changed;
-        if (typeof meta.committed === "boolean") dispatchEndCommitted = meta.committed;
-      } catch {
-        // ignore malformed meta
-      }
-    }
+  if (parsedDispatchEndMeta) {
+    if (typeof parsedDispatchEndMeta.worktree_changed === "boolean")
+      worktreeChanged = parsedDispatchEndMeta.worktree_changed;
+    if (typeof parsedDispatchEndMeta.committed === "boolean")
+      dispatchEndCommitted = parsedDispatchEndMeta.committed;
   }
   if (typeof worktreeChangedHint === "boolean") worktreeChanged = worktreeChangedHint;
   const responses = new ChainReader(db).getResponses(handoff.conversation_id, "final");
@@ -253,7 +216,7 @@ function classifyDispatchReliabilityFromDb(
       chain_task_type: handoff.chain_task_type,
       use_worktree: handoff.use_worktree === true || (handoff.use_worktree as unknown) === 1,
     },
-    events: eventRows.map((row) => ({ kind: row.kind, ts: row.ts })),
+    events: eventRows,
     responseCount: responses.length,
     finalResponseText: responses[0]?.text ?? null,
     worktreeChanged,
@@ -276,17 +239,20 @@ export function captureAgentPerformanceFromDispatch(opts: {
   const nowIso = opts.clock().toISOString();
   const latency = computeLatencyMs(handoff.ts, handoff.resolved_at, nowIso);
   const useWorktree = handoff.use_worktree === true || (handoff.use_worktree as unknown) === 1;
+  const parsedDispatchEndMeta = getParsedDispatchEndMeta(opts.db, input.handoff_id);
   const signals = computeDispatchSignals(
     opts.db,
     input.handoff_id,
     useWorktree,
     input.worktree_changed,
+    parsedDispatchEndMeta,
   );
   const reliabilityReport = classifyDispatchReliabilityFromDb(
     opts.db,
     input.handoff_id,
     handoff,
     input.worktree_changed,
+    parsedDispatchEndMeta,
   );
   const baseNotes = signals.silent_failure
     ? `${input.reason} (silent_failure: empty worktree)`
@@ -318,8 +284,20 @@ export function captureAgentPerformanceFromDispatch(opts: {
     cost_usd: usage.cost_usd,
     tokens_used: usage.tokens_used,
     latency_ms: latency,
-    exec_ms: readDispatchExecMs(opts.db, input.handoff_id),
-    framework_overhead_ms: readDispatchFrameworkOverheadMs(opts.db, input.handoff_id),
+    exec_ms:
+      parsedDispatchEndMeta &&
+      typeof parsedDispatchEndMeta.wall_ms === "number" &&
+      Number.isFinite(parsedDispatchEndMeta.wall_ms) &&
+      parsedDispatchEndMeta.wall_ms >= 0
+        ? Math.round(parsedDispatchEndMeta.wall_ms)
+        : null,
+    framework_overhead_ms:
+      parsedDispatchEndMeta &&
+      typeof parsedDispatchEndMeta.framework_overhead_ms === "number" &&
+      Number.isFinite(parsedDispatchEndMeta.framework_overhead_ms) &&
+      parsedDispatchEndMeta.framework_overhead_ms >= 0
+        ? Math.round(parsedDispatchEndMeta.framework_overhead_ms)
+        : null,
     source: "worker",
     gate_outcome: lookupLatestLaneGateOutcome(opts.db, input.handoff_id),
     notes,

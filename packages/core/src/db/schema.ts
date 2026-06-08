@@ -368,6 +368,7 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
       );
       CREATE INDEX IF NOT EXISTS idx_dispatch_events_handoff ON dispatch_events(handoff_id, ts);
       CREATE INDEX IF NOT EXISTS idx_dispatch_events_ts      ON dispatch_events(ts);
+      CREATE INDEX IF NOT EXISTS idx_dispatch_events_handoff_kind ON dispatch_events(handoff_id, kind);
 
       CREATE TABLE IF NOT EXISTS worker_tokens (
         token_hash    TEXT NOT NULL PRIMARY KEY,
