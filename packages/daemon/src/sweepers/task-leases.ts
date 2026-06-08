@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { TaskCooldowns, TaskEventBus } from "@penumbra/core";
+import { enqueueGhStatusSyncOnDb } from "@penumbra/core";
 
 export interface TaskLeaseSweeperOpts {
   db: Database;
@@ -48,6 +49,10 @@ export function createTaskLeaseSweeper(opts: TaskLeaseSweeperOpts): {
           [number, string]
         >(`UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ?`)
         .run(releasedAt, taskId);
+
+      // Raw-SQL reclaim bypasses TaskWriter, so re-establish the gh status-sync
+      // enqueue invariant here (no-op unless the task is gh-linked).
+      enqueueGhStatusSyncOnDb(opts.db, releasedAt, taskId, "leased", "pending");
 
       opts.db
         .query<unknown, [string, number, string]>(

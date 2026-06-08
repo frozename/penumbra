@@ -5,6 +5,7 @@ import type {
   TaskEventBus,
   TaskWriter,
 } from "@penumbra/core";
+import { enqueueGhStatusSyncOnDb } from "@penumbra/core";
 
 interface OpenLeaseRow {
   id: string;
@@ -44,11 +45,18 @@ function appendTerminatedEvent(
 }
 
 function failTaskWithoutLease(db: Database, task_id: string, reason: string, nowMs: number): void {
-  db.query<unknown, [string, number, string]>(
-    `UPDATE tasks
+  const res = db
+    .query<unknown, [string, number, string]>(
+      `UPDATE tasks
      SET status = 'failed', failure_reason = ?, updated_at = ?
      WHERE id = ? AND status NOT IN ('done', 'done_pending_review', 'failed', 'cancelled')`,
-  ).run(reason, nowMs, task_id);
+    )
+    .run(reason, nowMs, task_id);
+  // Raw-SQL fail bypasses TaskWriter; keep the gh status-sync invariant (only
+  // when the row actually transitioned, and only if the task is gh-linked).
+  if (res.changes > 0) {
+    enqueueGhStatusSyncOnDb(db, nowMs, task_id, null, "failed");
+  }
 }
 
 export async function runRestartResume(

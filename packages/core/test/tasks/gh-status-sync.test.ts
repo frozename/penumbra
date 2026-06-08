@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { migrate } from "../../src/db/migrations.js";
-import { TaskWriter } from "../../src/tasks/writer.js";
+import { enqueueGhStatusSyncOnDb, TaskWriter } from "../../src/tasks/writer.js";
 import type { AgentDescriptor } from "../../src/tasks/eligibility.js";
 
 if (process.platform === "darwin") {
@@ -280,5 +280,56 @@ describe("TaskWriter centralized gh status-sync enqueue", () => {
     const got = ops(task_id);
     expect(got.map((o) => o.op)).toEqual(["gh_push_status", "gh_post_status_comment"]);
     expect(got[1]!.payload).toEqual({ from_status: "pending", to_status: "leased" });
+  });
+});
+
+describe("enqueueGhStatusSyncOnDb (raw-SQL bypass paths)", () => {
+  let db: Database;
+  let writer: TaskWriter;
+  beforeEach(() => {
+    db = freshDb();
+    writer = new TaskWriter(db);
+  });
+
+  function ops(task_id: string): { op: string; payload: Record<string, unknown> }[] {
+    return writer
+      .listPendingGhOutbox(500)
+      .filter((r) => r.task_id === task_id)
+      .map((r) => ({ op: r.op, payload: JSON.parse(r.payload_json) as Record<string, unknown> }));
+  }
+
+  function linkedTask(issue = 70): string {
+    const { task_id } = writer.file({
+      prompt: "x",
+      created_by_kind: "human",
+      created_by_id: "cli",
+    });
+    writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: issue });
+    db.run(`DELETE FROM gh_outbox`);
+    return task_id;
+  }
+
+  test("from+to enqueues push + status comment for a gh-linked task (lease-expiry path)", () => {
+    const task_id = linkedTask();
+    enqueueGhStatusSyncOnDb(db, 1000, task_id, "leased", "pending");
+    const got = ops(task_id);
+    expect(got.map((o) => o.op)).toEqual(["gh_push_status", "gh_post_status_comment"]);
+    expect(got[1]!.payload).toEqual({ from_status: "leased", to_status: "pending" });
+  });
+
+  test("from=null enqueues a push only, no comment (raw-SQL fail-without-lease path)", () => {
+    const task_id = linkedTask();
+    enqueueGhStatusSyncOnDb(db, 1000, task_id, null, "failed");
+    expect(ops(task_id).map((o) => o.op)).toEqual(["gh_push_status"]);
+  });
+
+  test("a non-gh-linked task is a no-op", () => {
+    const { task_id } = writer.file({
+      prompt: "x",
+      created_by_kind: "human",
+      created_by_id: "cli",
+    });
+    enqueueGhStatusSyncOnDb(db, 1000, task_id, "leased", "pending");
+    expect(ops(task_id)).toEqual([]);
   });
 });

@@ -395,6 +395,7 @@ export { pickPreferred, type AgentRankRow } from "./tasks/auction.js";
 export { pickFromPool } from "./tasks/pick-from-pool.js";
 export {
   TaskWriter,
+  enqueueGhStatusSyncOnDb,
   TaskNotFound,
   InvalidTaskStatus,
   LeaseConflict,

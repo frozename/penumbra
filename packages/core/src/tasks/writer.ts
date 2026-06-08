@@ -225,6 +225,42 @@ function recordEvent(events: TaskEvent[] | undefined, event: TaskEvent): void {
   events?.push(event);
 }
 
+/**
+ * Enqueue a GitHub status-sync for a task status transition directly against a
+ * `Database`, guarded so it only fires when the task is gh-linked. This is the
+ * standalone form of {@link TaskWriter}'s centralized enqueue, exported so the
+ * few code paths that mutate task status via RAW SQL (the lease-expiry sweeper,
+ * and maestro's fail-without-lease on a dead session) can keep the "every
+ * status transition enqueues" invariant instead of silently bypassing it. Pass
+ * `from = null` to enqueue only the push (no from→to comment).
+ */
+export function enqueueGhStatusSyncOnDb(
+  db: Database,
+  now: number,
+  task_id: string,
+  from: string | null,
+  to: string,
+): void {
+  const linked = db
+    .query<
+      { gh_issue_number: number | null },
+      [string]
+    >(`SELECT gh_issue_number FROM tasks WHERE id = ?`)
+    .get(task_id);
+  if (!linked || linked.gh_issue_number === null) return;
+  const insert = (op: GhOutboxOp, payload: unknown): void => {
+    db.run(
+      `INSERT INTO gh_outbox (task_id, op, payload_json, status, created_at)
+       VALUES (?, ?, ?, 'pending', ?)`,
+      [task_id, op, JSON.stringify(payload ?? {}), now],
+    );
+  };
+  insert("gh_push_status", {});
+  if (from !== null && from !== to) {
+    insert("gh_post_status_comment", { from_status: from, to_status: to });
+  }
+}
+
 export class TaskWriter {
   private readonly now: () => number;
   private readonly resolveAgent?: (name: string) => AgentDescriptor | undefined;
@@ -1353,21 +1389,7 @@ export class TaskWriter {
    * a no-op (the periodic full reconcile still covers any later linkage).
    */
   private enqueueGhStatusSync(task_id: string, from: string | null, to: string): void {
-    const issueNumber =
-      this.db
-        .query<
-          { gh_issue_number: number | null },
-          [string]
-        >(`SELECT gh_issue_number FROM tasks WHERE id = ?`)
-        .get(task_id)?.gh_issue_number ?? null;
-    if (issueNumber === null) return;
-    this.enqueueGhOutbox(task_id, "gh_push_status", {});
-    if (from !== null && from !== to) {
-      this.enqueueGhOutbox(task_id, "gh_post_status_comment", {
-        from_status: from,
-        to_status: to,
-      });
-    }
+    enqueueGhStatusSyncOnDb(this.db, this.now(), task_id, from, to);
   }
 
   listPendingGhOutbox(limit = 50): GhOutboxRow[] {
