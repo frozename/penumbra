@@ -21,16 +21,25 @@ async function setupTempRepo(prefix: string): Promise<string> {
 describe("WorktreeManager — project parameterization", () => {
   let homeRoot: string;
   let homeRepo: string;
+  let originalWorktreeRoot: string | undefined;
   let counter = 0;
 
   beforeEach(async () => {
+    originalWorktreeRoot = process.env.PENUMBRA_WORKTREE_ROOT;
+    delete process.env.PENUMBRA_WORKTREE_ROOT;
     homeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-home-"));
     homeRepo = await setupTempRepo("penumbra-wt-homerepo-");
   });
 
   afterEach(() => {
+    if (originalWorktreeRoot === undefined) {
+      delete process.env.PENUMBRA_WORKTREE_ROOT;
+    } else {
+      process.env.PENUMBRA_WORKTREE_ROOT = originalWorktreeRoot;
+    }
     fs.rmSync(homeRoot, { recursive: true, force: true });
     fs.rmSync(homeRepo, { recursive: true, force: true });
+    fs.rmSync(`${homeRepo}-worktrees`, { recursive: true, force: true });
   });
 
   function nextHandoff(): string {
@@ -182,6 +191,64 @@ describe("WorktreeManager — project parameterization", () => {
     expect(manager.discoverOrphanWorktrees()).toEqual([{ path: orphanPath, handoffId: orphanId }]);
 
     await manager.teardownWorktree(trackedId, true);
+  });
+
+  it("discovers default-project worktrees under <repo_root>-worktrees", async () => {
+    const orphanId = "33333333-3333-4333-8333-333333333333";
+    const defaultProjectBase = `${homeRepo}-worktrees`;
+    const orphanPath = path.join(defaultProjectBase, orphanId);
+    fs.mkdirSync(orphanPath, { recursive: true });
+    fs.writeFileSync(path.join(orphanPath, ".git"), "gitdir: /tmp/default-project.git\n");
+
+    const manager = new WorktreeManager({ mainRepoDir: homeRepo });
+
+    expect(manager.listWorktrees().map((handle) => handle.handoffId)).toContain(orphanId);
+    expect(manager.discoverOrphanWorktrees()).toEqual([]);
+
+    const orphanOnlyManager = new WorktreeManager({ mainRepoDir: homeRepo });
+    (orphanOnlyManager as any).worktrees.clear();
+    expect(orphanOnlyManager.discoverOrphanWorktrees()).toEqual([
+      { path: orphanPath, handoffId: orphanId },
+    ]);
+  });
+
+  it("force teardown removes worktree node_modules symlinks without touching their targets", async () => {
+    const manager = new WorktreeManager({ rootDir: homeRoot, mainRepoDir: homeRepo });
+    const id = nextHandoff();
+    const handle = await manager.createWorktree(id);
+    const sentinelRoot = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-sentinel-"));
+    const sentinelFile = path.join(sentinelRoot, "sentinel.txt");
+    fs.writeFileSync(sentinelFile, "keep\n");
+
+    fs.rmSync(path.join(handle.path, "node_modules"), { recursive: true, force: true });
+    fs.symlinkSync(sentinelRoot, path.join(handle.path, "node_modules"), "dir");
+
+    const result = await manager.teardownWorktree(id, true);
+
+    expect(result.worktreeRemoved).toBe(true);
+    expect(fs.existsSync(handle.path)).toBe(false);
+    expect(fs.existsSync(sentinelRoot)).toBe(true);
+    expect(fs.readFileSync(sentinelFile, "utf8")).toBe("keep\n");
+    fs.rmSync(sentinelRoot, { recursive: true, force: true });
+  });
+
+  it("force teardown unlinks node_modules before asking git to remove the worktree", async () => {
+    const manager = new WorktreeManager({ rootDir: homeRoot, mainRepoDir: homeRepo });
+    const id = nextHandoff();
+    const fakeWorktree = path.join(homeRoot, id);
+    const sentinelRoot = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-sentinel-"));
+    const sentinelFile = path.join(sentinelRoot, "sentinel.txt");
+    fs.mkdirSync(fakeWorktree, { recursive: true });
+    fs.writeFileSync(path.join(fakeWorktree, ".git"), "gitdir: /tmp/not-registered.git\n");
+    fs.writeFileSync(sentinelFile, "keep\n");
+    fs.symlinkSync(sentinelRoot, path.join(fakeWorktree, "node_modules"), "dir");
+
+    await expect(manager.teardownWorktree(id, true)).rejects.toThrow(/Failed to remove worktree/);
+
+    expect(fs.existsSync(path.join(fakeWorktree, "node_modules"))).toBe(false);
+    expect(fs.existsSync(sentinelRoot)).toBe(true);
+    expect(fs.readFileSync(sentinelFile, "utf8")).toBe("keep\n");
+    fs.rmSync(sentinelRoot, { recursive: true, force: true });
   });
 });
 

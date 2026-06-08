@@ -40,13 +40,13 @@ export class WorktreeManager {
   private resolveProjectRoot?: ResolveProjectRoot;
 
   constructor(opts?: WorktreeManagerOpts) {
-    this.rootDir =
-      opts?.rootDir ||
-      process.env.PENUMBRA_WORKTREE_ROOT ||
-      "/Volumes/WorkSSD/repos/penumbra-worktrees/";
     this.mainRepoDir = opts?.mainRepoDir || process.cwd();
     this.log = opts?.log ?? NOOP_LOG;
     this.resolveProjectRoot = opts?.resolveProjectRoot;
+    this.rootDir =
+      opts?.rootDir ||
+      process.env.PENUMBRA_WORKTREE_ROOT ||
+      `${this.repoRootFor(undefined)}-worktrees`;
     this.rediscoverWorktrees();
   }
 
@@ -73,37 +73,43 @@ export class WorktreeManager {
     return undefined;
   }
 
+  private discoveryBases(): string[] {
+    return [...new Set([this.baseFor(undefined)])];
+  }
+
   private rediscoverWorktrees() {
-    if (!fs.existsSync(this.rootDir)) return;
+    for (const base of this.discoveryBases()) {
+      if (!fs.existsSync(base)) continue;
 
-    const entries = fs.readdirSync(this.rootDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const handoffId = entry.name;
-        const wtPath = path.join(this.rootDir, handoffId);
+      const entries = fs.readdirSync(base, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const handoffId = entry.name;
+          const wtPath = path.join(base, handoffId);
 
-        // A valid git worktree has a .git file (not directory) containing `gitdir: ...`
-        if (fs.existsSync(path.join(wtPath, ".git"))) {
-          const branchName = `agent/${handoffId}`;
-          const storageRoot = path.join(wtPath, ".test-storage");
+          // A valid git worktree has a .git file (not directory) containing `gitdir: ...`
+          if (fs.existsSync(path.join(wtPath, ".git"))) {
+            const branchName = `agent/${handoffId}`;
+            const storageRoot = path.join(wtPath, ".test-storage");
 
-          let createdAt = new Date().toISOString();
-          try {
-            const stat = fs.statSync(wtPath);
-            createdAt = stat.birthtime.toISOString();
-          } catch (e) {
-            // Ignore stat errors
+            let createdAt = new Date().toISOString();
+            try {
+              const stat = fs.statSync(wtPath);
+              createdAt = stat.birthtime.toISOString();
+            } catch (e) {
+              // Ignore stat errors
+            }
+
+            this.worktrees.set(handoffId, {
+              handoffId,
+              path: wtPath,
+              branchName,
+              storageRoot,
+              createdAt,
+              status: "created",
+            });
+            mirrorNodeModuleSymlinks(this.mainRepoDir, wtPath, this.log);
           }
-
-          this.worktrees.set(handoffId, {
-            handoffId,
-            path: wtPath,
-            branchName,
-            storageRoot,
-            createdAt,
-            status: "created",
-          });
-          mirrorNodeModuleSymlinks(this.mainRepoDir, wtPath, this.log);
         }
       }
     }
@@ -264,19 +270,21 @@ export class WorktreeManager {
   }
 
   discoverOrphanWorktrees(): Array<{ path: string; handoffId: string }> {
-    if (!fs.existsSync(this.rootDir)) return [];
-
     const orphans: Array<{ path: string; handoffId: string }> = [];
-    const entries = fs.readdirSync(this.rootDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const handoffId = entry.name;
-      if (!UUID_DIR_RE.test(handoffId)) continue;
-      if (this.worktrees.has(handoffId)) continue;
+    for (const base of this.discoveryBases()) {
+      if (!fs.existsSync(base)) continue;
 
-      const wtPath = path.join(this.rootDir, handoffId);
-      if (!fs.existsSync(path.join(wtPath, ".git"))) continue;
-      orphans.push({ path: wtPath, handoffId });
+      const entries = fs.readdirSync(base, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const handoffId = entry.name;
+        if (!UUID_DIR_RE.test(handoffId)) continue;
+        if (this.worktrees.has(handoffId)) continue;
+
+        const wtPath = path.join(base, handoffId);
+        if (!fs.existsSync(path.join(wtPath, ".git"))) continue;
+        orphans.push({ path: wtPath, handoffId });
+      }
     }
 
     return orphans.sort((a, b) => a.handoffId.localeCompare(b.handoffId));
@@ -330,11 +338,12 @@ export class WorktreeManager {
       if (fs.existsSync(storageRoot)) {
         fs.rmSync(storageRoot, { recursive: true, force: true });
       }
-      // Remove every node_modules symlink we mirrored in (top-level + per-package).
-      // .gitignore's `node_modules/` rule matches directories but not symlinks, so without
-      // cleanup `git worktree remove` (non-force) treats them as untracked.
-      removeNodeModuleSymlinks(repoRoot, handle.path, this.log);
     }
+    // Remove every node_modules symlink we mirrored in (top-level + per-package).
+    // .gitignore's `node_modules/` rule matches directories but not symlinks, so without
+    // cleanup `git worktree remove` (non-force) treats them as untracked. Force removal
+    // needs the same pre-cleanup so git never sees symlinks back into the main checkout.
+    removeNodeModuleSymlinks(repoRoot, handle.path, this.log);
 
     try {
       await exec(`git worktree remove ${forceFlag} "${handle.path}"`, {
