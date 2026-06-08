@@ -1,4 +1,5 @@
-import { pickFromPool, readSubscriptionPressure } from "../../../packages/core/src/index.js";
+import { pickFromPool } from "../../../packages/core/src/tasks/pick-from-pool.js";
+import { readSubscriptionPressure } from "../../../packages/core/src/readers/subscription-pressure.js";
 import type { WorkflowCtx } from "@penumbra/workflows";
 
 export type AgentField = { kind: "single"; agent: string } | { kind: "pool"; agents: string[] };
