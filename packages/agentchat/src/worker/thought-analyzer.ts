@@ -13,6 +13,7 @@ export interface ThoughtAnalyzerDeps {
   chainStart: (input: {
     initial_agent: string;
     message: string;
+    dispatch_kind?: "thought_analyzer";
     project_id?: string | null;
     parent_handoff_id?: string;
     task_type?: string;
@@ -73,6 +74,7 @@ async function runOneSubHandoff(
   const started = await deps.chainStart({
     initial_agent: agent,
     message: prompt,
+    dispatch_kind: "thought_analyzer",
     parent_handoff_id: parentHandoffId,
     project_id: projectId,
     task_type: "unknown",

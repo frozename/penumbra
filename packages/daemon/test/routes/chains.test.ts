@@ -650,6 +650,49 @@ test("POST /chains/start exempts workflow dispatches with a valid run id from th
   );
 });
 
+test("POST /chains/start exempts thought_analyzer dispatches with missing project_id but rejects normal dispatches under strict mode", async () => {
+  process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID = "1";
+  const services = tempServices();
+  const logSpy = spyOn(services.log, "info").mockImplementation(() => undefined as any);
+
+  const thoughtAnalyzerRes = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "codex",
+        message: "hi",
+        dispatch_kind: "thought_analyzer",
+      }),
+    }),
+    services,
+  );
+
+  expect(thoughtAnalyzerRes.status).toBe(200);
+  expect(logSpy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: "chain_start.routing_guard.explicit_gate_exempted",
+      dispatch_kind: "thought_analyzer",
+      long_lived_tick_id: null,
+      workflow_run_id: null,
+    }),
+    expect.any(String),
+  );
+
+  const normalRes = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({ initial_agent: "codex", message: "hi" }),
+    }),
+    services,
+  );
+
+  expect(normalRes.status).toBe(400);
+  expect(await normalRes.json()).toEqual({
+    error: "project_id_required",
+    hint: "pass project_id explicitly, or unset PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy behavior",
+  });
+});
+
 test("POST /chains/start rejects null project_id when daemon hard-mode gate is enabled", async () => {
   process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID = "true";
   const services = tempServices();

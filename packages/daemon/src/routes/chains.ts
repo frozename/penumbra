@@ -42,7 +42,7 @@ type AgentChatConfigLike = {
 
 type ChainStartRequestWithLongLived = Omit<ChainStartRequest, "dispatch_kind"> & {
   open_pr_on_review?: boolean;
-  dispatch_kind?: "long_lived_tick" | "workflow";
+  dispatch_kind?: DispatchKind;
   workflow_run_id?: string;
   long_lived_agent_id?: string;
   long_lived_tick_id?: string;
@@ -50,6 +50,8 @@ type ChainStartRequestWithLongLived = Omit<ChainStartRequest, "dispatch_kind"> &
   workload?: Workload;
 };
 type Workload = (typeof WORKLOADS)[number];
+
+type DispatchKind = "long_lived_tick" | "workflow" | "thought_analyzer";
 
 interface LongLivedPromptAgentRow {
   id: string;
@@ -112,7 +114,7 @@ type LongLivedTickExemptionResult =
 export function resolveLongLivedTickExemption(
   services: Services,
   input: {
-    dispatch_kind?: "long_lived_tick" | "workflow";
+    dispatch_kind?: DispatchKind;
     long_lived_tick_id?: string | null;
     long_lived_agent_id?: string | null;
   },
@@ -144,7 +146,7 @@ export function resolveLongLivedTickExemption(
 function resolveWorkflowDispatchExemption(
   services: Services,
   input: {
-    dispatch_kind?: "long_lived_tick" | "workflow";
+    dispatch_kind?: DispatchKind;
     workflow_run_id?: string | null;
     project_id?: string | null;
   },
@@ -167,6 +169,15 @@ function resolveWorkflowDispatchExemption(
   return { ok: true, workflow_run_id: input.workflow_run_id };
 }
 
+function resolveThoughtAnalyzerDispatchExemption(input: {
+  dispatch_kind?: DispatchKind;
+}): { ok: true } | { ok: false; reason: string } {
+  if (input.dispatch_kind !== "thought_analyzer") {
+    return { ok: false, reason: "dispatch_kind_mismatch" };
+  }
+  return { ok: true };
+}
+
 function canBypassExplicitProjectIdGate(
   input: ChainStartRequestWithLongLived,
   services: Services,
@@ -174,7 +185,9 @@ function canBypassExplicitProjectIdGate(
   const longLivedExemption = resolveLongLivedTickExemption(services, input);
   if (longLivedExemption.ok) return true;
   const workflowExemption = resolveWorkflowDispatchExemption(services, input);
-  return workflowExemption.ok;
+  if (workflowExemption.ok) return true;
+  const thoughtAnalyzerExemption = resolveThoughtAnalyzerDispatchExemption(input);
+  return thoughtAnalyzerExemption.ok;
 }
 
 export async function chainStartFromInput(
@@ -188,7 +201,10 @@ export async function chainStartFromInput(
     if (workerGuard) return workerGuard;
   }
 
-  const parsed = ChainStartRequestSchema.safeParse(raw);
+  const chainStartRequestSchemaWithoutDispatchKind = ChainStartRequestSchema.omit({
+    dispatch_kind: true,
+  });
+  const parsed = chainStartRequestSchemaWithoutDispatchKind.safeParse(raw);
   if (!parsed.success) {
     return json(
       {
@@ -1394,13 +1410,20 @@ function readOptionalStringField(
 function readOptionalDispatchKindField(
   raw: unknown,
   field: string,
-): { value: "long_lived_tick" | "workflow" | undefined; error?: string } {
+): { value: DispatchKind | undefined; error?: string } {
   const parsed = readOptionalStringField(raw, field);
   if (parsed.error) return { value: undefined, error: parsed.error };
   if (parsed.value === undefined) return { value: undefined };
-  if (parsed.value === "long_lived_tick" || parsed.value === "workflow")
-    return { value: parsed.value };
-  return { value: undefined, error: "Invalid input: expected 'long_lived_tick' or 'workflow'" };
+  if (
+    parsed.value === "long_lived_tick" ||
+    parsed.value === "workflow" ||
+    parsed.value === "thought_analyzer"
+  )
+    return { value: parsed.value as DispatchKind };
+  return {
+    value: undefined,
+    error: "Invalid input: expected 'long_lived_tick', 'workflow', or 'thought_analyzer'",
+  };
 }
 
 function readOptionalWorkloadField(
