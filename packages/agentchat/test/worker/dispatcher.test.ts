@@ -107,7 +107,7 @@ test("onChainEnd receives the full handoff row and mapped terminal reason", asyn
   await dispatcher.idle();
 
   expect(onChainEnd).toHaveBeenCalledTimes(1);
-  expect(onChainEnd).toHaveBeenCalledWith(handoff, "completed", null, null, null);
+  expect(onChainEnd).toHaveBeenCalledWith(handoff, "completed", null, null, null, 0, null);
 });
 
 test("emits dispatch.start and dispatch.end events on successful dispatch", async () => {
@@ -254,6 +254,32 @@ test("claim 500 is retryable: onClaimRetryable is invoked with the handoff_id", 
       agent: "executor",
     }),
   );
+});
+
+test("retryable claim failures back off per handoff and reset after success", async () => {
+  const onClaimRetryable = mock();
+  const claims = mock()
+    .mockRejectedValueOnce(new PenumbraHttpError("/handoffs/h1/claim", 500))
+    .mockRejectedValueOnce(new PenumbraHttpError("/handoffs/h1/claim", 500))
+    .mockResolvedValueOnce({ status: "dispatched" })
+    .mockRejectedValueOnce(new PenumbraHttpError("/handoffs/h1/claim", 500));
+  const d = deps({
+    claim: claims,
+    onClaimRetryable,
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff("h1"));
+  await dispatcher.idle();
+  await dispatcher.handle(baseHandoff("h1"));
+  await dispatcher.idle();
+  await dispatcher.handle(baseHandoff("h1"));
+  await dispatcher.idle();
+  await dispatcher.handle(baseHandoff("h1"));
+  await dispatcher.idle();
+
+  expect(onClaimRetryable).toHaveBeenCalledTimes(2);
+  expect(onClaimRetryable.mock.calls.map((call) => call[0])).toEqual(["h1", "h1"]);
 });
 
 test("claim network error (non-HTTP) is retryable: onClaimRetryable is invoked", async () => {

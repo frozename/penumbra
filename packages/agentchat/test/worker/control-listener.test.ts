@@ -49,6 +49,43 @@ test("handleControlEvent sends ping ACK only for matching worker", () => {
   expect(acks).toEqual([["w1", "p1"]]);
 });
 
+test("handleControlEvent logs probe-ack failures without throwing", async () => {
+  const warns: any[] = [];
+
+  expect(() =>
+    handleControlEvent(
+      { type: "ping", worker_id: "w1", probe_id: "p1" },
+      {
+        client: {
+          sendProbeAck: async () => {
+            throw new Error("probe ack failed");
+          },
+          subscribeWorkerControl: async function* () {},
+        },
+        dispatcher: { cancel: () => {} },
+        workerId: "w1",
+        log: {
+          warn: (obj, msg) => warns.push({ obj, msg }),
+          error: () => {},
+        },
+      },
+    ),
+  ).not.toThrow();
+
+  await Promise.resolve();
+
+  expect(warns).toEqual([
+    {
+      obj: {
+        worker_id: "w1",
+        probe_id: "p1",
+        err: "Error: probe ack failed",
+      },
+      msg: "probe-ack failed",
+    },
+  ]);
+});
+
 test("handleControlEvent logs malformed cancel event and does not call cancel", () => {
   const cancels: Array<{ conversation_id: string; handoff_id: string }> = [];
   const warns: any[] = [];

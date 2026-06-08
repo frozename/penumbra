@@ -332,7 +332,14 @@ export class WorktreeManager {
         fs.rmSync(wtBunLock, { force: true });
         // bun.lock is git-tracked here, so restore the tracked copy before
         // `git worktree remove` checks for local modifications.
-        await exec(`git -C "${handle.path}" checkout bun.lock`).catch(() => {});
+        try {
+          await exec(`git -C "${handle.path}" checkout bun.lock`);
+        } catch (err) {
+          this.log.warn(
+            { handoff_id: handoffId, path: handle.path, err: String(err) },
+            "failed to restore bun.lock before worktree removal",
+          );
+        }
       }
       const storageRoot = path.join(handle.path, ".test-storage");
       if (fs.existsSync(storageRoot)) {
@@ -350,7 +357,21 @@ export class WorktreeManager {
         cwd: repoRoot,
       });
     } catch (err) {
-      throw new Error(`Failed to remove worktree ${handle.path}: ${err}`);
+      if (!force) {
+        this.log.warn(
+          { handoff_id: handoffId, path: handle.path, err: String(err) },
+          "worktree remove failed without force; retrying with --force",
+        );
+        try {
+          await exec(`git worktree remove --force "${handle.path}"`, {
+            cwd: repoRoot,
+          });
+        } catch (forceErr) {
+          throw new Error(`Failed to remove worktree ${handle.path}: ${forceErr}`);
+        }
+      } else {
+        throw new Error(`Failed to remove worktree ${handle.path}: ${err}`);
+      }
     }
 
     if (fs.existsSync(handle.path)) {

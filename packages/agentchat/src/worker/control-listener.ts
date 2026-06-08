@@ -87,7 +87,16 @@ export function handleControlEvent(
   if (event.type === "ping") {
     if (event.worker_id !== opts.workerId) return;
     if (!event.worker_id || !event.probe_id) return;
-    void opts.client.sendProbeAck(event.worker_id, event.probe_id).catch(() => {});
+    void opts.client.sendProbeAck(event.worker_id, event.probe_id).catch((err) => {
+      opts.log?.warn(
+        {
+          worker_id: event.worker_id,
+          probe_id: event.probe_id,
+          err: String(err),
+        },
+        "probe-ack failed",
+      );
+    });
   }
 }
 

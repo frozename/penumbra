@@ -85,6 +85,7 @@ export interface WorkerDispatcher {
 export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispatcher {
   const convLocks = new Map<string, Promise<void>>();
   const activeAborts = new Map<string, { handoff_id: string; abort: AbortController }>();
+  const claimRetryState = new Map<string, { attempts: number; resumeAtMs: number }>();
   // Two pre-dispatch cancel sets: handoff-id-scoped (preferred — daemon emits
   // hid on every cancel event) and conversation-id-scoped (legacy fallback for
   // callers that pass cancel(conv) with no hid).
@@ -125,6 +126,13 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
   };
 
   const delay = deps.delay ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const claimRetryDelayMs = (attempts: number): number => {
+    const capMs = 30_000;
+    const baseMs = 1_000;
+    const backoff = Math.min(capMs, baseMs * 2 ** Math.max(0, attempts - 1));
+    const jitter = backoff * (0.2 * Math.random());
+    return Math.min(capMs, Math.round(backoff + jitter));
+  };
 
   const handleOne = async (handoff: any): Promise<void> => {
     // Cross-project claim affinity. Hold back before claiming so a home-repoRoot
@@ -169,6 +177,23 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
             "claim failed; terminal",
           );
         } else {
+          const now = Date.now();
+          const previous = claimRetryState.get(handoff.handoff_id);
+          if (previous && now < previous.resumeAtMs) {
+            deps.log.debug(
+              {
+                handoff_id: handoff.handoff_id,
+                status,
+                err: String(err),
+                retry_after_ms: previous.resumeAtMs - now,
+              },
+              "claim failed; retryable but backoff active",
+            );
+            return;
+          }
+          const attempts = (previous?.attempts ?? 0) + 1;
+          const resumeAtMs = now + claimRetryDelayMs(attempts);
+          claimRetryState.set(handoff.handoff_id, { attempts, resumeAtMs });
           deps.log.warn(
             { handoff_id: handoff.handoff_id, status, err: String(err) },
             "claim failed; retryable, will be re-tried on next event",
@@ -186,6 +211,7 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
         }
         return;
       }
+      claimRetryState.delete(handoff.handoff_id);
 
       const dispatchStart = Date.now();
       let dispatchStatus: "ok" | "error" | "aborted" = "ok";
