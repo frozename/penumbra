@@ -89,15 +89,26 @@ describe("readFleetLatency", () => {
 
   function insertAcpEvent(
     handoffId: string,
-    kind: "acp.server.start" | "acp.session.reuse",
+    kind: "acp.server.start" | "acp.session.reuse" | "acp.session.start",
     ts: string,
+    frameworkOverheadMs?: number,
   ) {
     db.prepare(
       `
       INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
       VALUES (?, 'worker-1', 'worker', ?, ?, ?)
     `,
-    ).run(handoffId, kind, ts, JSON.stringify({ adapter: "stdio-acp" }));
+    ).run(
+      handoffId,
+      kind,
+      ts,
+      JSON.stringify({
+        adapter: "stdio-acp",
+        ...(frameworkOverheadMs === undefined
+          ? {}
+          : { framework_overhead_ms: frameworkOverheadMs }),
+      }),
+    );
   }
 
   function insertDispatchEndWithOverhead(
@@ -198,21 +209,15 @@ describe("readFleetLatency", () => {
   });
 
   it("computes acp reuse rate and cold/reuse framework-overhead split from dispatch_events lifecycle", () => {
-    // 2 cold dispatches (acp.server.start) + 3 reuse dispatches (acp.session.reuse),
-    // each with a matching dispatch.end carrying framework_overhead_ms.
-    for (const id of ["c1", "c2", "r1", "r2", "r3"]) insertHandoff(id, "warmish");
+    for (const id of ["c1", "r1"]) insertHandoff(id, "warmish");
 
     insertAcpEvent("c1", "acp.server.start", "2026-06-03T11:00:00Z");
-    insertDispatchEndWithOverhead("c1", "2026-06-03T11:00:05Z", 50000, 10000);
-    insertAcpEvent("c2", "acp.server.start", "2026-06-03T11:05:00Z");
-    insertDispatchEndWithOverhead("c2", "2026-06-03T11:05:05Z", 50000, 12000);
+    insertAcpEvent("c1", "acp.session.start", "2026-06-03T11:00:01Z", 90000);
+    insertDispatchEndWithOverhead("c1", "2026-06-03T11:00:05Z", 120000, 120000);
 
     insertAcpEvent("r1", "acp.session.reuse", "2026-06-03T11:10:00Z");
-    insertDispatchEndWithOverhead("r1", "2026-06-03T11:10:05Z", 20000, 1000);
-    insertAcpEvent("r2", "acp.session.reuse", "2026-06-03T11:15:00Z");
-    insertDispatchEndWithOverhead("r2", "2026-06-03T11:15:05Z", 20000, 1500);
-    insertAcpEvent("r3", "acp.session.reuse", "2026-06-03T11:20:00Z");
-    insertDispatchEndWithOverhead("r3", "2026-06-03T11:20:05Z", 20000, 2000);
+    insertAcpEvent("r1", "acp.session.start", "2026-06-03T11:10:01Z", 1400);
+    insertDispatchEndWithOverhead("r1", "2026-06-03T11:10:05Z", 40000, 40000);
 
     // A non-ACP agent: no lifecycle events => reuse fields stay null (not 0).
     insertHandoff("p1", "plain");
@@ -222,10 +227,10 @@ describe("readFleetLatency", () => {
     const warmish = result.agents.find((a) => a.agent_name === "warmish");
     const plain = result.agents.find((a) => a.agent_name === "plain");
 
-    expect(warmish?.acp_session_reuse_rate).toBe(0.6); // 3 reuse / (3 reuse + 2 cold)
-    expect(warmish?.framework_overhead_ms_p50_cold).toBe(10000); // p50 of [10000, 12000]
-    expect(warmish?.framework_overhead_ms_p50_reuse).toBe(1500); // p50 of [1000, 1500, 2000]
-    expect(warmish?.dispatch_count).toBe(5);
+    expect(warmish?.acp_session_reuse_rate).toBe(0.5); // 1 reuse / (1 reuse + 1 cold)
+    expect(warmish?.framework_overhead_ms_p50_cold).toBe(90000);
+    expect(warmish?.framework_overhead_ms_p50_reuse).toBe(1400);
+    expect(warmish?.dispatch_count).toBe(2);
     // The existing agent_performance-sourced overhead field is untouched (no perf rows seeded).
     expect(warmish?.framework_overhead_ms_p50).toBeNull();
 

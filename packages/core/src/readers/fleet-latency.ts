@@ -217,9 +217,9 @@ export function readFleetLatency(db: Database, input: FleetLatencyInput = {}): F
     if (denom > 0) row.acp_session_reuse_rate = lifecycleRow.reuse_count / denom;
   }
 
-  // Cold vs reuse framework-overhead split (Phase 0): bucket each dispatch.end's
-  // framework_overhead_ms by whether that handoff's lifecycle emitted a session
-  // reuse (warm) rather than a server start (cold).
+  // Cold vs reuse framework-overhead split (Phase 0): bucket each dispatch's
+  // acp.session.start setup overhead by whether that handoff's lifecycle
+  // emitted a session reuse (warm) rather than a cold session start.
   const overheadSplitRows = db
     .query<
       { agent_name: string; framework_overhead_ms: unknown; is_reuse: number },
@@ -227,17 +227,18 @@ export function readFleetLatency(db: Database, input: FleetLatencyInput = {}): F
     >(
       `
       SELECT h.to_agent AS agent_name,
-             json_extract(e.meta_json, '$.framework_overhead_ms') AS framework_overhead_ms,
+             json_extract(s.meta_json, '$.framework_overhead_ms') AS framework_overhead_ms,
              EXISTS(
                SELECT 1 FROM dispatch_events r
                WHERE r.handoff_id = e.handoff_id AND r.kind = 'acp.session.reuse'
              ) AS is_reuse
       FROM dispatch_events e
       JOIN handoffs h ON h.handoff_id = e.handoff_id
+      JOIN dispatch_events s ON s.handoff_id = e.handoff_id AND s.kind = 'acp.session.start'
       WHERE e.kind = 'dispatch.end'
         AND e.ts >= ?
         AND e.ts <= ?
-      ORDER BY h.to_agent ASC, e.ts ASC, e.id ASC
+      ORDER BY h.to_agent ASC, s.ts ASC, s.id ASC
     `,
     )
     .all(fromIso, toIso);
