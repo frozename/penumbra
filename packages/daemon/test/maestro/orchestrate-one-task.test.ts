@@ -167,6 +167,49 @@ test("orchestrateOneTask dispatches a pre-bound session using session.agent_id",
   db.close();
 });
 
+test("orchestrateOneTask leases for the full wall-clock budget, not the 90s default", async () => {
+  const db = setupDb();
+  const bus = new TaskEventBus();
+  const sessions = new MaestroSessionWriter({ db });
+  const taskWriter = new TaskWriter(db, {
+    bus,
+    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+  });
+
+  const { task_id } = taskWriter.file({
+    prompt: "Long-running orchestrate task",
+    kind: "orchestrate",
+    eligibility: { allow_agents: [MAESTRO_AGENT.name] },
+    created_by_kind: "human",
+    created_by_id: "cli",
+  });
+
+  const result = await orchestrateOneTask(task_id, {
+    db,
+    sessions,
+    taskWriter,
+    chainStart: async () => ({ handoff_id: "handoff-ttl", conversation_id: "conv-ttl" }),
+    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    defaults: DEFAULT_BOUNDS,
+  });
+
+  expect(result.status).toBe("dispatched");
+
+  // The lease must outlive the dispatch's own wall-clock budget so the 30s
+  // lease-sweeper cannot reclaim the task mid-dispatch (was the 90s default,
+  // ~20x shorter than the budget -> reclaimed + a false `lease expired` ledger row).
+  const leaseRow = db
+    .query<
+      { claimed_at: number; expires_at: number },
+      [string]
+    >(`SELECT claimed_at, expires_at FROM task_leases WHERE task_id = ? AND released_at IS NULL`)
+    .get(task_id);
+  expect(leaseRow).not.toBeNull();
+  const ttl = leaseRow!.expires_at - leaseRow!.claimed_at;
+  expect(ttl).toBeGreaterThan(DEFAULT_BOUNDS.wall_clock_ms);
+  db.close();
+});
+
 test("orchestrateOneTask fails with unknown_agent when selected agent does not resolve", async () => {
   const db = setupDb();
   const taskWriter = new TaskWriter(db, {

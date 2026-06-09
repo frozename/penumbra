@@ -19,6 +19,16 @@ interface OrchestrateDefaults {
   sub_dispatches: number;
 }
 
+/**
+ * Slack added on top of the dispatch's wall-clock budget when leasing the task.
+ * The lease is a silent-death backstop, NOT the primary deadline — the worker's
+ * own bounds-tracker enforces wall_clock and fails/completes the task first. The
+ * lease must therefore outlive wall_clock by enough to cover ACP cold-start +
+ * the 30s lease-sweeper granularity, otherwise the sweeper reclaims the task
+ * mid-dispatch and records a false `lease expired` ledger row against the agent.
+ */
+const LEASE_TTL_MARGIN_MS = 5 * 60_000;
+
 export type OrchestrateOneTaskOpts = {
   db: Database;
   sessions: MaestroSessionWriter;
@@ -227,7 +237,11 @@ export async function orchestrateOneTask(
   }
 
   try {
-    opts.taskWriter.lease({ task_id: taskId, agent_id: agentName });
+    opts.taskWriter.lease({
+      task_id: taskId,
+      agent_id: agentName,
+      ttl_ms: wall_clock_budget_ms + LEASE_TTL_MARGIN_MS,
+    });
   } catch (error) {
     return { status: "failed", error: String(error), agent_name: agentName };
   }
