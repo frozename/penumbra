@@ -57,7 +57,16 @@ function startTestDaemon(
   };
 
   (services as Services & { agentchatConfig?: any }).agentchatConfig = {
-    agents: [{ name: "codex", tags: ["typescript"], tier: "oc", cost_cents_per_run: 15 }],
+    agents: [
+      { name: "codex", tags: ["typescript"], tier: "oc", cost_cents_per_run: 15 },
+      {
+        name: "openai-codex-deep-acp",
+        tags: ["typescript"],
+        tier: "oc",
+        cost_cents_per_run: 15,
+        maestro_capable: true,
+      },
+    ],
   };
 
   const token = "tok";
@@ -107,6 +116,32 @@ function makeProjectRegistry(
   const path = join(dir, "projects.yaml");
   writeFileSync(path, `${yaml.join("\n")}\n`);
   return loadProjectRegistry(path);
+}
+
+function insertTaskDraftEvent(
+  db: Database,
+  input: {
+    event_id: string;
+    ts: string;
+    ingest_ts: string;
+    project_id: string | null;
+    event_type: "task_draft" | "task_draft_promoted";
+    draft_id: string;
+    payload: unknown;
+  },
+) {
+  db.run(
+    `INSERT INTO t0_events(event_id, ts, ingest_ts, source, project_id, user_id, machine_id, event_type, lane, payload_json)
+     VALUES (?, ?, ?, 'mcp', ?, 'u', 'm', ?, 'unknown', ?)`,
+    [
+      input.event_id,
+      input.ts,
+      input.ingest_ts,
+      input.project_id,
+      input.event_type,
+      JSON.stringify(input.payload),
+    ],
+  );
 }
 
 test("POST /tasks with gh_create queues github issue creation and returns queued status", async () => {
@@ -202,6 +237,24 @@ test("POST /tasks with gh_create resolves repo from project registry when omitte
   daemon.services.projectRegistry = makeProjectRegistry([
     { project_id: "penumbra", root_path: "/tmp/penumbra", gh_repo: "acordeiro/penumbra" },
   ]);
+  insertTaskDraftEvent(daemon.services.db, {
+    event_id: "draft-created",
+    ts: "2026-04-23T11:59:00.000Z",
+    ingest_ts: "2026-04-23T11:59:01.000Z",
+    project_id: "penumbra",
+    event_type: "task_draft",
+    draft_id: "11111111-1111-4111-8111-111111111111",
+    payload: {
+      draft_id: "11111111-1111-4111-8111-111111111111",
+      prompt: "draft prompt",
+      affects_projects: ["penumbra"],
+      evidence: {},
+      auto_ok: true,
+      filed_by_agent: "task-refiner-primary",
+      filed_via: "skill_inline",
+      parent_draft_id: null,
+    },
+  });
   try {
     const create = await postJson(daemon, "/tasks", {
       prompt: "build task board route",
@@ -347,6 +400,24 @@ test("POST /tasks with refiner-origin draft defaults gh_create labels and resolv
   daemon.services.projectRegistry = makeProjectRegistry([
     { project_id: "penumbra", root_path: "/tmp/penumbra", gh_repo: "acordeiro/penumbra" },
   ]);
+  insertTaskDraftEvent(daemon.services.db, {
+    event_id: "draft-created",
+    ts: "2026-04-23T11:59:00.000Z",
+    ingest_ts: "2026-04-23T11:59:01.000Z",
+    project_id: "penumbra",
+    event_type: "task_draft",
+    draft_id: "11111111-1111-4111-8111-111111111111",
+    payload: {
+      draft_id: "11111111-1111-4111-8111-111111111111",
+      prompt: "draft prompt",
+      affects_projects: ["penumbra"],
+      evidence: {},
+      auto_ok: true,
+      filed_by_agent: "task-refiner-primary",
+      filed_via: "skill_inline",
+      parent_draft_id: null,
+    },
+  });
   try {
     const create = await postJson(daemon, "/tasks", {
       prompt: "refiner task file",
@@ -416,6 +487,24 @@ test("POST /tasks with refiner-origin draft emits task_draft_promoted t0 event",
       syncAllLinkedTasks: async () => [],
     },
   });
+  insertTaskDraftEvent(daemon.services.db, {
+    event_id: "draft-created",
+    ts: "2026-04-23T11:59:00.000Z",
+    ingest_ts: "2026-04-23T11:59:01.000Z",
+    project_id: null,
+    event_type: "task_draft",
+    draft_id: "22222222-2222-4222-8222-222222222222",
+    payload: {
+      draft_id: "22222222-2222-4222-8222-222222222222",
+      prompt: "draft prompt",
+      affects_projects: ["a"],
+      evidence: {},
+      auto_ok: true,
+      filed_by_agent: "task-refiner-primary",
+      filed_via: "skill_inline",
+      parent_draft_id: null,
+    },
+  });
   try {
     const create = await postJson(daemon, "/tasks", {
       prompt: "refiner task file",
@@ -442,6 +531,259 @@ test("POST /tasks with refiner-origin draft emits task_draft_promoted t0 event",
       draft_id: "22222222-2222-4222-8222-222222222222",
       task_ids: [created.task_id],
     });
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /tasks with refiner-origin draft rejects missing drafts and already promoted drafts", async () => {
+  const daemon = startTestDaemon({
+    ghTaskSyncService: {
+      enqueueTaskGhCreate: () => {},
+      enqueueSyncLinkedTask: () => {},
+      queueStatusUpdate: () => {},
+      syncLinkedTaskNow: async () => ({
+        task_id: "task-1",
+        repo: "acordeiro/penumbra",
+        issue_number: 47,
+        gh_state: "OPEN",
+        action: "noop",
+        last_sync_ts: "2026-04-23T12:00:00.000Z",
+      }),
+      pushStatusNow: async () => ({
+        task_id: "task-1",
+        repo: "acordeiro/penumbra",
+        issue_number: 47,
+        gh_state: "OPEN",
+        action: "pushed",
+        direction: "push",
+        last_sync_ts: "2026-04-23T12:00:00.000Z",
+      }),
+      syncAllLinkedTasks: async () => [],
+    },
+  });
+  try {
+    const missing = await postJson(daemon, "/tasks", {
+      prompt: "refiner task file",
+      created_by_kind: "human",
+      created_by_id: "cli",
+      origin: "draft:99999999-9999-4999-8999-999999999999",
+    });
+    expect(missing.status).toBe(400);
+    expect(await missing.json()).toEqual({
+      error: "invalid_input",
+      details: [{ message: "origin draft not found", path: ["origin"] }],
+    });
+
+    const draftId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    insertTaskDraftEvent(daemon.services.db, {
+      event_id: "draft-created",
+      ts: "2026-04-23T11:59:00.000Z",
+      ingest_ts: "2026-04-23T11:59:01.000Z",
+      project_id: "p1",
+      event_type: "task_draft",
+      draft_id: draftId,
+      payload: {
+        draft_id: draftId,
+        prompt: "draft prompt",
+        affects_projects: ["p1"],
+        evidence: {},
+        auto_ok: true,
+        filed_by_agent: "task-refiner-primary",
+        filed_via: "skill_inline",
+        parent_draft_id: null,
+      },
+    });
+    insertTaskDraftEvent(daemon.services.db, {
+      event_id: "draft-promoted",
+      ts: "2026-04-23T12:00:00.000Z",
+      ingest_ts: "2026-04-23T12:00:01.000Z",
+      project_id: "p1",
+      event_type: "task_draft_promoted",
+      draft_id: draftId,
+      payload: { draft_id: draftId, task_ids: ["task-existing"] },
+    });
+
+    const promoted = await postJson(daemon, "/tasks", {
+      prompt: "refiner task file",
+      project_id: "p1",
+      created_by_kind: "human",
+      created_by_id: "cli",
+      origin: `draft:${draftId}`,
+    });
+    expect(promoted.status).toBe(409);
+    expect(await promoted.json()).toEqual({
+      task_id: null,
+      error: "draft already promoted",
+    });
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /tasks upgrades trusted auto-approved refiner promotions to orchestrate", async () => {
+  const daemon = startTestDaemon({
+    ghTaskSyncService: {
+      enqueueTaskGhCreate: () => {},
+      enqueueSyncLinkedTask: () => {},
+      queueStatusUpdate: () => {},
+      syncLinkedTaskNow: async () => ({
+        task_id: "task-1",
+        repo: "acordeiro/penumbra",
+        issue_number: 52,
+        gh_state: "OPEN",
+        action: "noop",
+        last_sync_ts: "2026-04-23T12:00:00.000Z",
+      }),
+      pushStatusNow: async () => ({
+        task_id: "task-1",
+        repo: "acordeiro/penumbra",
+        issue_number: 52,
+        gh_state: "OPEN",
+        action: "pushed",
+        direction: "push",
+        last_sync_ts: "2026-04-23T12:00:00.000Z",
+      }),
+      syncAllLinkedTasks: async () => [],
+    },
+  });
+  insertTaskDraftEvent(daemon.services.db, {
+    event_id: "draft-created",
+    ts: "2026-04-23T11:59:00.000Z",
+    ingest_ts: "2026-04-23T11:59:01.000Z",
+    project_id: "p1",
+    event_type: "task_draft",
+    draft_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    payload: {
+      draft_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      prompt: "draft prompt",
+      affects_projects: ["p1"],
+      evidence: {},
+      auto_ok: true,
+      filed_by_agent: "task-refiner-primary",
+      filed_via: "skill_inline",
+      parent_draft_id: null,
+    },
+  });
+  try {
+    const create = await postJson(daemon, "/tasks", {
+      prompt: "refiner task file",
+      project_id: "p1",
+      created_by_kind: "human",
+      created_by_id: "cli",
+      origin: "draft:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    });
+    expect(create.status).toBe(201);
+    const created = (await create.json()) as { task_id: string };
+    const task = daemon.services.db
+      .query(
+        `SELECT kind, eligibility, origin
+           FROM tasks
+          WHERE id = ?`,
+      )
+      .get(created.task_id) as { kind: string; eligibility: string; origin: string | null };
+    expect(task).toMatchObject({
+      kind: "orchestrate",
+      origin: "draft:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    });
+    expect(JSON.parse(task.eligibility)).toEqual({ allow_agents: ["openai-codex-deep-acp"] });
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /tasks keeps untrusted or non-auto-approved refiner promotions as work", async () => {
+  const daemon = startTestDaemon({
+    ghTaskSyncService: {
+      enqueueTaskGhCreate: () => {},
+      enqueueSyncLinkedTask: () => {},
+      queueStatusUpdate: () => {},
+      syncLinkedTaskNow: async () => ({
+        task_id: "task-1",
+        repo: "acordeiro/penumbra",
+        issue_number: 53,
+        gh_state: "OPEN",
+        action: "noop",
+        last_sync_ts: "2026-04-23T12:00:00.000Z",
+      }),
+      pushStatusNow: async () => ({
+        task_id: "task-1",
+        repo: "acordeiro/penumbra",
+        issue_number: 53,
+        gh_state: "OPEN",
+        action: "pushed",
+        direction: "push",
+        last_sync_ts: "2026-04-23T12:00:00.000Z",
+      }),
+      syncAllLinkedTasks: async () => [],
+    },
+  });
+  const trustedFalseDraftId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const untrustedDraftId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  insertTaskDraftEvent(daemon.services.db, {
+    event_id: "trusted-false",
+    ts: "2026-04-23T11:58:00.000Z",
+    ingest_ts: "2026-04-23T11:58:01.000Z",
+    project_id: "p1",
+    event_type: "task_draft",
+    draft_id: trustedFalseDraftId,
+    payload: {
+      draft_id: trustedFalseDraftId,
+      prompt: "draft prompt",
+      affects_projects: ["p1"],
+      evidence: {},
+      auto_ok: false,
+      filed_by_agent: "task-refiner-primary",
+      filed_via: "skill_inline",
+      parent_draft_id: null,
+    },
+  });
+  insertTaskDraftEvent(daemon.services.db, {
+    event_id: "untrusted-true",
+    ts: "2026-04-23T11:57:00.000Z",
+    ingest_ts: "2026-04-23T11:57:01.000Z",
+    project_id: "p1",
+    event_type: "task_draft",
+    draft_id: untrustedDraftId,
+    payload: {
+      draft_id: untrustedDraftId,
+      prompt: "draft prompt",
+      affects_projects: ["p1"],
+      evidence: {},
+      auto_ok: true,
+      filed_by_agent: "some-worker",
+      filed_via: "skill_inline",
+      parent_draft_id: null,
+    },
+  });
+  try {
+    const trustedFalse = await postJson(daemon, "/tasks", {
+      prompt: "refiner task file",
+      project_id: "p1",
+      created_by_kind: "human",
+      created_by_id: "cli",
+      origin: `draft:${trustedFalseDraftId}`,
+    });
+    expect(trustedFalse.status).toBe(201);
+    const trustedFalseTaskId = (await trustedFalse.json()).task_id as string;
+    const trustedFalseTask = daemon.services.db
+      .query(`SELECT kind FROM tasks WHERE id = ?`)
+      .get(trustedFalseTaskId) as { kind: string };
+    expect(trustedFalseTask).toMatchObject({ kind: "work" });
+
+    const untrusted = await postJson(daemon, "/tasks", {
+      prompt: "refiner task file",
+      project_id: "p1",
+      created_by_kind: "human",
+      created_by_id: "cli",
+      origin: `draft:${untrustedDraftId}`,
+    });
+    expect(untrusted.status).toBe(201);
+    const untrustedTaskId = (await untrusted.json()).task_id as string;
+    const untrustedTask = daemon.services.db
+      .query(`SELECT kind FROM tasks WHERE id = ?`)
+      .get(untrustedTaskId) as { kind: string };
+    expect(untrustedTask).toMatchObject({ kind: "work" });
   } finally {
     daemon.stop();
   }
@@ -474,7 +816,43 @@ test("POST /tasks rejects forged draft origins before refiner promotion side eff
       syncAllLinkedTasks: async () => [],
     },
   });
+  insertTaskDraftEvent(daemon.services.db, {
+    event_id: "draft-created",
+    ts: "2026-04-23T11:59:00.000Z",
+    ingest_ts: "2026-04-23T11:59:01.000Z",
+    project_id: "penumbra",
+    event_type: "task_draft",
+    draft_id: "11111111-1111-4111-8111-1111111111aa",
+    payload: {
+      draft_id: "11111111-1111-4111-8111-1111111111aa",
+      prompt: "draft prompt",
+      affects_projects: ["penumbra"],
+      evidence: {},
+      auto_ok: true,
+      filed_by_agent: "task-refiner-primary",
+      filed_via: "skill_inline",
+      parent_draft_id: null,
+    },
+  });
   const originalWrite = daemon.services.t0Writer.write.bind(daemon.services.t0Writer);
+  insertTaskDraftEvent(daemon.services.db, {
+    event_id: "draft-created-2",
+    ts: "2026-04-23T11:59:00.000Z",
+    ingest_ts: "2026-04-23T11:59:01.000Z",
+    project_id: "penumbra",
+    event_type: "task_draft",
+    draft_id: "11111111-1111-4111-8111-111111111111",
+    payload: {
+      draft_id: "11111111-1111-4111-8111-111111111111",
+      prompt: "draft prompt",
+      affects_projects: ["penumbra"],
+      evidence: {},
+      auto_ok: true,
+      filed_by_agent: "task-refiner-primary",
+      filed_via: "skill_inline",
+      parent_draft_id: null,
+    },
+  });
   daemon.services.t0Writer.write = ((event) => {
     events.push(event);
     return originalWrite(event);
@@ -539,6 +917,24 @@ test("POST /tasks rejects dash-only draft origins before promotion side effects"
         last_sync_ts: "2026-04-23T12:00:00.000Z",
       }),
       syncAllLinkedTasks: async () => [],
+    },
+  });
+  insertTaskDraftEvent(daemon.services.db, {
+    event_id: "draft-created",
+    ts: "2026-04-23T11:59:00.000Z",
+    ingest_ts: "2026-04-23T11:59:01.000Z",
+    project_id: "penumbra",
+    event_type: "task_draft",
+    draft_id: "11111111-1111-4111-8111-111111111111",
+    payload: {
+      draft_id: "11111111-1111-4111-8111-111111111111",
+      prompt: "draft prompt",
+      affects_projects: ["penumbra"],
+      evidence: {},
+      auto_ok: true,
+      filed_by_agent: "task-refiner-primary",
+      filed_via: "skill_inline",
+      parent_draft_id: null,
     },
   });
   const originalWrite = daemon.services.t0Writer.write.bind(daemon.services.t0Writer);
@@ -648,6 +1044,24 @@ test("POST /tasks accepts uppercase draft UUIDs and normalizes emitted draft_id"
     events.push(event);
     return originalWrite(event);
   }) as typeof daemon.services.t0Writer.write;
+  insertTaskDraftEvent(daemon.services.db, {
+    event_id: "uc-draft-created",
+    ts: "2026-04-23T11:59:00.000Z",
+    ingest_ts: "2026-04-23T11:59:01.000Z",
+    project_id: "penumbra",
+    event_type: "task_draft",
+    draft_id: "11111111-1111-4111-8111-1111111111aa",
+    payload: {
+      draft_id: "11111111-1111-4111-8111-1111111111aa",
+      prompt: "draft prompt",
+      affects_projects: ["penumbra"],
+      evidence: {},
+      auto_ok: false,
+      filed_by_agent: "task-refiner-primary",
+      filed_via: "skill_inline",
+      parent_draft_id: null,
+    },
+  });
   try {
     const create = await postJson(daemon, "/tasks", {
       prompt: "refiner task file",
@@ -708,6 +1122,24 @@ test("POST /tasks keeps refiner promotion behavior for UUID-shaped draft origins
   daemon.services.projectRegistry = makeProjectRegistry([
     { project_id: "penumbra", root_path: "/tmp/penumbra", gh_repo: "acordeiro/penumbra" },
   ]);
+  insertTaskDraftEvent(daemon.services.db, {
+    event_id: "draft-created",
+    ts: "2026-04-23T11:59:00.000Z",
+    ingest_ts: "2026-04-23T11:59:01.000Z",
+    project_id: "penumbra",
+    event_type: "task_draft",
+    draft_id: "11111111-1111-4111-8111-111111111111",
+    payload: {
+      draft_id: "11111111-1111-4111-8111-111111111111",
+      prompt: "draft prompt",
+      affects_projects: ["penumbra"],
+      evidence: {},
+      auto_ok: true,
+      filed_by_agent: "task-refiner-primary",
+      filed_via: "skill_inline",
+      parent_draft_id: null,
+    },
+  });
   const originalWrite = daemon.services.t0Writer.write.bind(daemon.services.t0Writer);
   daemon.services.t0Writer.write = ((event) => {
     events.push(event);
@@ -866,6 +1298,24 @@ test("POST /tasks with explicit gh_create keeps caller supplied config for refin
         last_sync_ts: "2026-04-23T12:00:00.000Z",
       }),
       syncAllLinkedTasks: async () => [],
+    },
+  });
+  insertTaskDraftEvent(daemon.services.db, {
+    event_id: "draft-created",
+    ts: "2026-04-23T11:59:00.000Z",
+    ingest_ts: "2026-04-23T11:59:01.000Z",
+    project_id: "penumbra",
+    event_type: "task_draft",
+    draft_id: "33333333-3333-4333-8333-333333333333",
+    payload: {
+      draft_id: "33333333-3333-4333-8333-333333333333",
+      prompt: "draft prompt",
+      affects_projects: ["penumbra"],
+      evidence: {},
+      auto_ok: true,
+      filed_by_agent: "task-refiner-primary",
+      filed_via: "skill_inline",
+      parent_draft_id: null,
     },
   });
   try {

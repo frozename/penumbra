@@ -157,6 +157,7 @@ export {
 export { getObservations } from "./readers/get-observations.js";
 export {
   TaskDraftReader,
+  getTaskDraftPromotionInfo,
   type PendingTaskDraft,
   type PendingTaskDraftEscalation,
   type ListPendingInput,

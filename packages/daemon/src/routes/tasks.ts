@@ -1,4 +1,7 @@
 import { z } from "zod";
+// Deep import (core/src, not the @penumbra/core barrel): the barrel's built .d.ts
+// lags newly-added exports, so the daemon typecheck wouldn't see this function.
+import { getTaskDraftPromotionInfo } from "../../../core/src/readers/task-draft.js";
 import {
   FileTaskInputSchema,
   TaskStatusSchema,
@@ -66,6 +69,13 @@ const CommentGhRequestSchema = z
   })
   .strict();
 const DRAFT_ORIGIN_RE = /^draft:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const TRUSTED_PROMOTERS = new Set([
+  "maestro",
+  "task-refiner-primary",
+  "task-refiner-escalation",
+  "claude",
+]);
+const DEFAULT_ORCHESTRATE_ALLOW_AGENT = "openai-codex-deep-acp";
 
 function noContent(): Response {
   return new Response(null, { status: 204 });
@@ -127,7 +137,17 @@ function parseIncludeParam(url: URL): TaskInclude[] | Response {
 export async function tasksFileRoute(
   req: Request,
   writer: TaskWriter,
-  services: Pick<Services, "projectRegistry" | "t0Writer" | "uuid" | "clock" | "machineId" | "log">,
+  services: Pick<
+    Services,
+    | "db"
+    | "projectRegistry"
+    | "taskDraftReader"
+    | "t0Writer"
+    | "uuid"
+    | "clock"
+    | "machineId"
+    | "log"
+  >,
   ghSync?: GhTaskSyncService,
 ): Promise<Response> {
   const raw = await bodyJson(req);
@@ -145,13 +165,39 @@ export async function tasksFileRoute(
     ]);
   }
   const isRefinerPromotion = typeof origin === "string" && DRAFT_ORIGIN_RE.test(origin);
+  let inputForFile = input;
+  if (isRefinerPromotion) {
+    const draftId = origin.slice("draft:".length).toLowerCase();
+    const info = getTaskDraftPromotionInfo(services.db, draftId);
+    if (!info.exists) {
+      return invalidInput([{ message: "origin draft not found", path: ["origin"] }]);
+    }
+    if (info.already_promoted) {
+      return json({ task_id: null, error: "draft already promoted" }, 409);
+    }
+    const autoPromote =
+      info.auto_ok === true &&
+      info.filed_by_agent !== null &&
+      TRUSTED_PROMOTERS.has(info.filed_by_agent);
+    if (autoPromote) {
+      const allowAgents =
+        input.eligibility?.allow_agents?.length && input.eligibility.allow_agents.length > 0
+          ? input.eligibility.allow_agents
+          : [DEFAULT_ORCHESTRATE_ALLOW_AGENT];
+      inputForFile = {
+        ...input,
+        kind: "orchestrate",
+        eligibility: { ...(input.eligibility ?? {}), allow_agents: allowAgents },
+      };
+    }
+  }
   const inputWithDefaults =
-    isRefinerPromotion && !input.gh_create
+    isRefinerPromotion && !inputForFile.gh_create
       ? {
-          ...input,
+          ...inputForFile,
           gh_create: { labels: ["task-draft", "refiner-promoted"] },
         }
-      : input;
+      : inputForFile;
 
   let task_id = "";
   try {

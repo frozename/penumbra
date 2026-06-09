@@ -51,8 +51,70 @@ export type StuckRefiningTaskDraft = {
   payload_json: string;
 };
 
+export function getTaskDraftPromotionInfo(
+  db: Database,
+  draftId: string,
+): {
+  exists: boolean;
+  auto_ok: boolean;
+  filed_by_agent: string | null;
+  already_promoted: boolean;
+} {
+  const row = db
+    .query<
+      {
+        has_draft: number;
+        auto_ok: number | null;
+        filed_by_agent: string | null;
+        already_promoted: number;
+      },
+      [string, string]
+    >(
+      `WITH earliest AS (
+         SELECT
+           1 AS has_draft,
+           json_extract(payload_json, '$.auto_ok') AS auto_ok,
+           json_extract(payload_json, '$.filed_by_agent') AS filed_by_agent
+         FROM t0_events
+         WHERE json_extract(payload_json, '$.draft_id') = ?
+           AND event_type = 'task_draft'
+         ORDER BY ts ASC, ingest_ts ASC, event_id ASC
+         LIMIT 1
+       ),
+       promoted AS (
+         SELECT 1 AS already_promoted
+         FROM t0_events
+         WHERE json_extract(payload_json, '$.draft_id') = ?
+           AND event_type = 'task_draft_promoted'
+         LIMIT 1
+       )
+       SELECT
+         COALESCE((SELECT has_draft FROM earliest), 0) AS has_draft,
+         (SELECT auto_ok FROM earliest) AS auto_ok,
+         (SELECT filed_by_agent FROM earliest) AS filed_by_agent,
+         COALESCE((SELECT already_promoted FROM promoted), 0) AS already_promoted`,
+    )
+    .get(draftId, draftId);
+
+  return {
+    exists: row?.has_draft === 1,
+    auto_ok: row?.auto_ok === 1,
+    filed_by_agent: row?.filed_by_agent ?? null,
+    already_promoted: row?.already_promoted === 1,
+  };
+}
+
 export class TaskDraftReader {
   constructor(private readonly opts: { db: Database }) {}
+
+  getPromotionInfo(draftId: string): {
+    exists: boolean;
+    auto_ok: boolean;
+    filed_by_agent: string | null;
+    already_promoted: boolean;
+  } {
+    return getTaskDraftPromotionInfo(this.opts.db, draftId);
+  }
 
   listPending(input: ListPendingInput): PendingTaskDraft[] {
     const limit = clampLimit(input.limit);

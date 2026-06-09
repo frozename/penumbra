@@ -347,6 +347,81 @@ describe("TaskDraftReader.listPending", () => {
   });
 });
 
+describe("TaskDraftReader.getPromotionInfo", () => {
+  let db: Database;
+  let reader: TaskDraftReader;
+
+  beforeEach(() => {
+    db = freshDb();
+    reader = new TaskDraftReader({ db });
+  });
+
+  test("returns earliest task_draft metadata and promotion state", () => {
+    const draftId = "77777777-7777-4777-8777-777777777777";
+    insertDraft(db, {
+      event_id: "late-draft",
+      ts: "2026-05-16T00:01:00.000Z",
+      ingest_ts: "2026-05-16T00:01:01.000Z",
+      project_id: "p1",
+      event_type: "task_draft",
+      draft_id: draftId,
+      payload: {
+        draft_id: draftId,
+        prompt: "later draft",
+        affects_projects: ["a"],
+        evidence: {},
+        auto_ok: false,
+        filed_by_agent: "some-worker",
+        filed_via: "skill_inline",
+        parent_draft_id: null,
+      },
+    });
+    insertDraft(db, {
+      event_id: "early-draft",
+      ts: "2026-05-16T00:00:00.000Z",
+      ingest_ts: "2026-05-16T00:00:00.500Z",
+      project_id: "p1",
+      event_type: "task_draft",
+      draft_id: draftId,
+      payload: {
+        draft_id: draftId,
+        prompt: "early draft",
+        affects_projects: ["a"],
+        evidence: {},
+        auto_ok: true,
+        filed_by_agent: "task-refiner-primary",
+        filed_via: "skill_inline",
+        parent_draft_id: null,
+      },
+    });
+    insertDraft(db, {
+      event_id: "promoted",
+      ts: "2026-05-16T00:02:00.000Z",
+      ingest_ts: "2026-05-16T00:02:01.000Z",
+      project_id: "p1",
+      event_type: "task_draft_promoted",
+      draft_id: draftId,
+      payload: { draft_id: draftId, task_ids: ["task-1"] },
+    });
+
+    expect(reader.getPromotionInfo(draftId)).toEqual({
+      exists: true,
+      auto_ok: true,
+      filed_by_agent: "task-refiner-primary",
+      already_promoted: true,
+    });
+  });
+
+  test("returns exists false for unknown draft", () => {
+    expect(reader.getPromotionInfo("88888888-8888-4888-8888-888888888888")).toEqual({
+      exists: false,
+      auto_ok: false,
+      filed_by_agent: null,
+      already_promoted: false,
+    });
+  });
+});
+
 describe("TaskDraftReader.listStuckRefining", () => {
   let db: Database;
   let reader: TaskDraftReader;
