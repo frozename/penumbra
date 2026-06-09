@@ -37,9 +37,15 @@ test('prompt-classify recall surfaces recent t2 entries, not literal "session" m
   try {
     const pbDir = join(root, "playbooks/prompt-classify");
     mkdirSync(pbDir, { recursive: true });
+    // The shipped playbook is slash-only (lifecycle firing was removed for
+    // per-prompt context cost); restore the lifecycle trigger in the fixture
+    // so the trigger->recall->render plumbing stays exercised.
     writeFileSync(
       join(pbDir, "playbook.md"),
-      readFileSync(join(playbookSrc, "playbook.md"), "utf8"),
+      readFileSync(join(playbookSrc, "playbook.md"), "utf8").replace(
+        "triggers:\n  - kind: slash\n    command: prompt-classify",
+        "triggers:\n  - kind: lifecycle\n    event: user-prompt-submit",
+      ),
     );
     mkdirSync(join(root, "workflows"), { recursive: true });
 

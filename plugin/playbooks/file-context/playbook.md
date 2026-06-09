@@ -2,10 +2,8 @@
 name: file-context
 description: Before reading a file, surface any prior memory hits that mention its path so the maestro has context for the next operation.
 triggers:
-  - kind: lifecycle
-    event: pre-tool-use
-    filter:
-      tool_name: [Read]
+  - kind: slash
+    command: file-context
 recall:
   - source: memory_search
     args:

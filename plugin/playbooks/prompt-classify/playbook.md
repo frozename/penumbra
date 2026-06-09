@@ -2,8 +2,8 @@
 name: prompt-classify
 description: On every UserPromptSubmit, surface related memory hits and applicable workflows so the maestro can apply them before responding.
 triggers:
-  - kind: lifecycle
-    event: user-prompt-submit
+  - kind: slash
+    command: prompt-classify
 recall:
   - source: memory_search
     args:

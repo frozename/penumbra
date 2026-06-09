@@ -37,9 +37,15 @@ test("file-context surfaces memory hits about the file_path before a Read tool c
   try {
     const pbDir = join(root, "playbooks/file-context");
     mkdirSync(pbDir, { recursive: true });
+    // The shipped playbook is slash-only (lifecycle firing was removed for
+    // per-Read context cost); restore the lifecycle trigger in the fixture so
+    // the trigger->recall->render plumbing stays exercised.
     writeFileSync(
       join(pbDir, "playbook.md"),
-      readFileSync(join(playbookSrc, "playbook.md"), "utf8"),
+      readFileSync(join(playbookSrc, "playbook.md"), "utf8").replace(
+        "triggers:\n  - kind: slash\n    command: file-context",
+        "triggers:\n  - kind: lifecycle\n    event: pre-tool-use\n    filter:\n      tool_name: [Read]",
+      ),
     );
     mkdirSync(join(root, "workflows"), { recursive: true });
 

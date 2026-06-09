@@ -2,10 +2,8 @@
 name: delegate-suggest
 description: After Edit/Write, suggest dispatching follow-up work via chain_start instead of more hand-implementation.
 triggers:
-  - kind: lifecycle
-    event: post-tool-use
-    filter:
-      tool_name: [Edit, Write]
+  - kind: slash
+    command: delegate-suggest
 recall: []
 recall_budget_tokens: 800
 output:
