@@ -33,6 +33,7 @@ function newestMtime(dir: string, ext: string): number {
 }
 
 const stale: string[] = [];
+const strayArtifacts: string[] = [];
 
 let entries;
 try {
@@ -60,9 +61,53 @@ for (const entry of entries) {
   }
 }
 
+function walkStrayArtifacts(dir: string): void {
+  let children;
+  try {
+    children = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const child of children) {
+    const full = join(dir, child.name);
+    if (child.isDirectory()) {
+      walkStrayArtifacts(full);
+      continue;
+    }
+    if (!child.isFile()) continue;
+    const isArtifact = child.name.endsWith(".js") || child.name.endsWith(".d.ts");
+    if (!isArtifact) continue;
+    const baseName = child.name.replace(/(\.d\.ts|\.js)$/, "");
+    const hasSourceSibling =
+      existsSync(join(dir, `${baseName}.ts`)) || existsSync(join(dir, `${baseName}.tsx`));
+    if (!hasSourceSibling) continue;
+    strayArtifacts.push(full);
+  }
+}
+
+for (const entry of entries) {
+  if (entry.name === "daemon") continue;
+  const srcDir = join(packagesDir, entry.name, "src");
+  if (!existsSync(srcDir)) continue;
+  walkStrayArtifacts(srcDir);
+}
+
+if (strayArtifacts.length > 0) {
+  if (CHECK_MODE) {
+    console.error(`stray src artifacts (${strayArtifacts.length}):`);
+    for (const p of strayArtifacts) console.error(`  ${p}`);
+    process.exit(2);
+  }
+  for (const p of strayArtifacts) {
+    rmSync(p, { force: true });
+  }
+}
+
 if (stale.length === 0) {
-  process.stdout.write("all dist fresh\n");
-  process.exit(0);
+  if (strayArtifacts.length === 0) {
+    process.stdout.write("all dist fresh\n");
+    process.exit(0);
+  }
 }
 
 if (CHECK_MODE) {
@@ -74,5 +119,14 @@ if (CHECK_MODE) {
 for (const p of stale) {
   rmSync(join(p, "dist"), { recursive: true, force: true });
 }
-process.stdout.write(`removed ${stale.length} stale dist dir${stale.length === 1 ? "" : "s"}\n`);
+const removedParts = [];
+if (stale.length > 0) {
+  removedParts.push(`${stale.length} stale dist dir${stale.length === 1 ? "" : "s"}`);
+}
+if (strayArtifacts.length > 0) {
+  removedParts.push(
+    `${strayArtifacts.length} stray src artifact${strayArtifacts.length === 1 ? "" : "s"}`,
+  );
+}
+process.stdout.write(`removed ${removedParts.join(" and ")}\n`);
 process.exit(0);

@@ -42,6 +42,7 @@ describe("resolveNotificationRoute", () => {
           permission_decided: true,
           permission_expired: true,
           merge_result: true,
+          autocommit_on_chain_end: true,
           cost_quota_summary: true,
         },
         summaries: {
@@ -107,6 +108,7 @@ describe("resolveNotificationRoute", () => {
           permission_decided: true,
           permission_expired: true,
           merge_result: true,
+          autocommit_on_chain_end: true,
           cost_quota_summary: true,
         },
         summaries: {
@@ -165,6 +167,7 @@ describe("resolveNotificationRoute", () => {
           permission_decided: true,
           permission_expired: true,
           merge_result: true,
+          autocommit_on_chain_end: true,
           cost_quota_summary: true,
         },
         summaries: {
@@ -221,6 +224,7 @@ describe("resolveNotificationRoute", () => {
           permission_decided: true,
           permission_expired: true,
           merge_result: true,
+          autocommit_on_chain_end: true,
           cost_quota_summary: true,
         },
         summaries: {
@@ -269,6 +273,7 @@ describe("resolveNotificationRoute", () => {
           permission_decided: true,
           permission_expired: true,
           merge_result: true,
+          autocommit_on_chain_end: true,
           cost_quota_summary: true,
         },
         summaries: {
@@ -311,6 +316,7 @@ describe("resolveNotificationRoute", () => {
           permission_decided: true,
           permission_expired: true,
           merge_result: true,
+          autocommit_on_chain_end: true,
           cost_quota_summary: true,
         },
         summaries: {
@@ -355,6 +361,7 @@ describe("resolveNotificationRoute", () => {
           permission_decided: true,
           permission_expired: true,
           merge_result: true,
+          autocommit_on_chain_end: true,
           cost_quota_summary: true,
         },
         summaries: {
@@ -406,6 +413,7 @@ describe("resolveNotificationRoute", () => {
           permission_decided: true,
           permission_expired: true,
           merge_result: true,
+          autocommit_on_chain_end: true,
           cost_quota_summary: true,
         },
         summaries: {

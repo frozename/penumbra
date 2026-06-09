@@ -64,6 +64,7 @@ describe("loadNotificationConfig", () => {
     expect(cfg.events.dispatch_end).toBe(true);
     expect(cfg.events.permission_decided).toBe(true);
     expect(cfg.events.cost_quota_summary).toBe(true);
+    expect(cfg.events.autocommit_on_chain_end).toBe(true);
     expect(cfg.promptPolicy).toBe("never");
   });
 

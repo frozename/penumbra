@@ -14,6 +14,7 @@ export interface RuntimeNotificationEventConfig {
   permission_decided: boolean;
   permission_expired: boolean;
   merge_result: boolean;
+  autocommit_on_chain_end: boolean;
   cost_quota_summary: boolean;
 }
 
@@ -28,6 +29,7 @@ export const DEFAULT_NOTIFICATION_EVENTS: RuntimeNotificationEventConfig = {
   permission_decided: true,
   permission_expired: true,
   merge_result: true,
+  autocommit_on_chain_end: true,
   cost_quota_summary: true,
 };
 

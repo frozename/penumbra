@@ -131,4 +131,35 @@ describe("check-dist-freshness", () => {
       expect(existsSync(join(root, "gamma", "dist"))).toBe(false);
     });
   });
+
+  test("removes stray src js and d.ts artifacts but skips daemon src", () => {
+    withTmp((root) => {
+      const agentchat = join(root, "agentchat");
+      mkdirSync(join(agentchat, "src", "nested"), { recursive: true });
+      writeFileSync(join(agentchat, "src", "index.ts"), "export {}");
+      writeFileSync(join(agentchat, "src", "index.js"), "export {}");
+      writeFileSync(join(agentchat, "src", "index.d.ts"), "export {}");
+      writeFileSync(join(agentchat, "src", "nested", "generated.ts"), "export {}");
+      writeFileSync(join(agentchat, "src", "nested", "generated.js"), "export {}");
+      writeFileSync(join(agentchat, "src", "nested", "types.ts"), "export {}");
+      writeFileSync(join(agentchat, "src", "nested", "types.d.ts"), "export {}");
+
+      const daemon = join(root, "daemon");
+      mkdirSync(join(daemon, "src"), { recursive: true });
+      writeFileSync(join(daemon, "src", "keep.js"), "export {}");
+      writeFileSync(join(daemon, "src", "keep.d.ts"), "export {}");
+
+      const r = run(root);
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout).toContain("removed 4 stray src artifact");
+      expect(existsSync(join(agentchat, "src", "index.js"))).toBe(false);
+      expect(existsSync(join(agentchat, "src", "index.d.ts"))).toBe(false);
+      expect(existsSync(join(agentchat, "src", "nested", "generated.js"))).toBe(false);
+      expect(existsSync(join(agentchat, "src", "nested", "types.d.ts"))).toBe(false);
+      expect(existsSync(join(agentchat, "src", "nested", "generated.ts"))).toBe(true);
+      expect(existsSync(join(agentchat, "src", "nested", "types.ts"))).toBe(true);
+      expect(existsSync(join(daemon, "src", "keep.js"))).toBe(true);
+      expect(existsSync(join(daemon, "src", "keep.d.ts"))).toBe(true);
+    });
+  });
 });
