@@ -43,6 +43,14 @@ export type ListPendingEscalationsInput = {
   limit?: number;
 };
 
+export type StuckRefiningTaskDraft = {
+  event_id: string;
+  ts: string;
+  project_id: string | null;
+  draft_id: string;
+  payload_json: string;
+};
+
 export class TaskDraftReader {
   constructor(private readonly opts: { db: Database }) {}
 
@@ -109,6 +117,21 @@ export class TaskDraftReader {
     return out;
   }
 
+  listStuckRefining(input: {
+    now: number;
+    olderThanMs: number;
+    limit?: number;
+  }): StuckRefiningTaskDraft[] {
+    const limit = clampLimit(input.limit);
+    const cutoff = new Date(input.now - input.olderThanMs).toISOString();
+    const rows = this.queryStuckRefining(cutoff, limit);
+    const out: StuckRefiningTaskDraft[] = [];
+    for (const row of rows) {
+      out.push(row);
+    }
+    return out;
+  }
+
   private queryPending(
     latestEventType: ListPendingInput["latest_event_type"],
     limit: number,
@@ -155,6 +178,31 @@ export class TaskDraftReader {
         [ListPendingInput["latest_event_type"], string, number]
       >(sql)
       .all(latestEventType, projectId, limit);
+  }
+
+  private queryStuckRefining(cutoffIso: string, limit: number): StuckRefiningTaskDraft[] {
+    const sql = `WITH ranked AS (
+        SELECT
+          event_id, ts, ingest_ts, project_id, event_type, payload_json,
+          json_extract(payload_json, '$.draft_id') AS draft_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY json_extract(payload_json, '$.draft_id')
+            ORDER BY ts DESC, ingest_ts DESC
+          ) AS rn
+        FROM t0_events
+        WHERE event_type IN (
+          'task_draft','task_draft_refining','task_draft_promoted',
+          'task_draft_stale','task_draft_duplicate','task_draft_escalation'
+        )
+      )
+      SELECT event_id, ts, project_id, draft_id, payload_json
+      FROM ranked
+      WHERE rn = 1
+        AND event_type = 'task_draft_refining'
+        AND ts < ?
+      ORDER BY ts ASC, ingest_ts ASC, event_id ASC
+      LIMIT ?`;
+    return this.opts.db.query<StuckRefiningTaskDraft, [string, number]>(sql).all(cutoffIso, limit);
   }
 
   private parseRowPayload(row: {

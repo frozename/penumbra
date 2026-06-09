@@ -26,6 +26,8 @@ export const TaskDraftPayloadSchema = z.object({
   filed_by_agent: z.string().min(1),
   filed_via: z.enum(["skill_inline", "stop_hook"]),
   parent_draft_id: z.string().uuid().nullable(),
+  recovery_count: z.number().int().nonnegative().optional(),
+  recovered_from: z.string().min(1).optional(),
   provenance: TaskDraftProvenanceSchema.optional(),
 });
 
@@ -46,6 +48,7 @@ export const TaskDraftStalePayloadSchema = z.object({
     "duplicate_of",
     "ttl_expired",
     "refining_stuck",
+    "refining_stuck_exhausted",
   ]),
   details: z.string().optional(),
 });

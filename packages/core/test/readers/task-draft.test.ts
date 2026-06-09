@@ -347,6 +347,133 @@ describe("TaskDraftReader.listPending", () => {
   });
 });
 
+describe("TaskDraftReader.listStuckRefining", () => {
+  let db: Database;
+  let reader: TaskDraftReader;
+
+  beforeEach(() => {
+    db = freshDb();
+    reader = new TaskDraftReader({ db });
+  });
+
+  test("returns stale refining drafts across projects and respects cutoff", () => {
+    const oldDraft = "aaaaaaa1-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
+    const youngDraft = "aaaaaaa2-aaaa-4aaa-8aaa-aaaaaaaaaaa2";
+    const promotedDraft = "aaaaaaa3-aaaa-4aaa-8aaa-aaaaaaaaaaa3";
+    const pendingDraft = "aaaaaaa4-aaaa-4aaa-8aaa-aaaaaaaaaaa4";
+
+    insertDraft(db, {
+      event_id: "old-refining",
+      ts: "2026-05-16T00:00:00.000Z",
+      ingest_ts: "2026-05-16T00:00:01.000Z",
+      project_id: "p1",
+      event_type: "task_draft",
+      draft_id: oldDraft,
+      payload: {
+        draft_id: oldDraft,
+        prompt: "old",
+        affects_projects: ["a"],
+        evidence: {},
+        auto_ok: true,
+        filed_by_agent: "agent",
+        filed_via: "skill_inline",
+        parent_draft_id: null,
+      },
+    });
+    insertDraft(db, {
+      event_id: "old-refining-latest",
+      ts: "2026-05-16T00:10:00.000Z",
+      ingest_ts: "2026-05-16T00:10:01.000Z",
+      project_id: "p1",
+      event_type: "task_draft_refining",
+      draft_id: oldDraft,
+      payload: { draft_id: oldDraft },
+    });
+
+    insertDraft(db, {
+      event_id: "young-refining",
+      ts: "2026-05-16T00:29:59.000Z",
+      ingest_ts: "2026-05-16T00:29:59.500Z",
+      project_id: "p2",
+      event_type: "task_draft",
+      draft_id: youngDraft,
+      payload: {
+        draft_id: youngDraft,
+        prompt: "young",
+        affects_projects: ["a"],
+        evidence: {},
+        auto_ok: true,
+        filed_by_agent: "agent",
+        filed_via: "skill_inline",
+        parent_draft_id: null,
+      },
+    });
+    insertDraft(db, {
+      event_id: "young-refining-latest",
+      ts: "2026-05-16T00:30:00.000Z",
+      ingest_ts: "2026-05-16T00:30:01.000Z",
+      project_id: "p2",
+      event_type: "task_draft_refining",
+      draft_id: youngDraft,
+      payload: { draft_id: youngDraft },
+    });
+
+    insertDraft(db, {
+      event_id: "promoted",
+      ts: "2026-05-16T00:00:00.000Z",
+      ingest_ts: "2026-05-16T00:00:01.000Z",
+      project_id: "p3",
+      event_type: "task_draft",
+      draft_id: promotedDraft,
+      payload: {
+        draft_id: promotedDraft,
+        prompt: "done",
+        affects_projects: ["a"],
+        evidence: {},
+        auto_ok: true,
+        filed_by_agent: "agent",
+        filed_via: "skill_inline",
+        parent_draft_id: null,
+      },
+    });
+    insertDraft(db, {
+      event_id: "promoted-latest",
+      ts: "2026-05-16T00:10:00.000Z",
+      ingest_ts: "2026-05-16T00:10:01.000Z",
+      project_id: "p3",
+      event_type: "task_draft_promoted",
+      draft_id: promotedDraft,
+      payload: { draft_id: promotedDraft, task_ids: ["t1"] },
+    });
+
+    insertDraft(db, {
+      event_id: "pending",
+      ts: "2026-05-16T00:00:00.000Z",
+      ingest_ts: "2026-05-16T00:00:01.000Z",
+      project_id: "p4",
+      event_type: "task_draft",
+      draft_id: pendingDraft,
+      payload: {
+        draft_id: pendingDraft,
+        prompt: "pending",
+        affects_projects: ["a"],
+        evidence: {},
+        auto_ok: true,
+        filed_by_agent: "agent",
+        filed_via: "skill_inline",
+        parent_draft_id: null,
+      },
+    });
+
+    const out = reader.listStuckRefining({
+      now: Date.parse("2026-05-16T01:00:00.000Z"),
+      olderThanMs: 30 * 60 * 1000,
+    });
+    expect(out.map((r) => r.event_id)).toEqual(["old-refining-latest"]);
+    expect(out[0]?.project_id).toBe("p1");
+  });
+});
+
 describe("TaskDraftReader.listPendingEscalations", () => {
   let db: Database;
   let reader: TaskDraftReader;

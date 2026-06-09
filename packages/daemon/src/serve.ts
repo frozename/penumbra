@@ -213,6 +213,7 @@ import { resolveStaleAfterMs } from "./sweepers/stale-handoff-thresholds.js";
 import { startEfficacyJobReclaimSweeper } from "./sweepers/efficacy-job-reclaim.js";
 import { startReconcilerSweeper } from "./sweepers/reconciler-sweep.js";
 import { createTaskLeaseSweeper } from "./sweepers/task-leases.js";
+import { createRefiningStuckRecoverySweeper } from "./sweepers/refining-stuck-recovery.js";
 import { createRollupWorker } from "./workers/t1-rollup.js";
 import { createT2PromotionWorker } from "./workers/t2-promotion.js";
 import { createT0RetentionWorker } from "./workers/t0-retention.js";
@@ -1436,6 +1437,16 @@ export function serve(opts: ServeOpts): DaemonHandle {
     bus: taskEvents,
   });
   taskLeaseSweeper.start();
+  const refiningStuckRecoverySweeper = createRefiningStuckRecoverySweeper({
+    db: opts.services.db,
+    reader: opts.services.taskDraftReader as any,
+    t0Writer: opts.services.t0Writer,
+    now: () => opts.services.clock().getTime(),
+    uuid: () => opts.services.uuid(),
+    machineId: opts.services.machineId,
+    log: opts.services.log,
+  });
+  refiningStuckRecoverySweeper.start();
   const stopWorkflowSweeper = (() => {
     const reg = opts.services.workflowRegistry;
     if (!reg) {
