@@ -77,6 +77,28 @@ describe("handleTickTeardown", () => {
     expect(agent.status).toBe("active");
   });
 
+  it("ignores transient rate-limit failures without incrementing", () => {
+    const db = seed();
+    db.query("UPDATE long_lived_agents SET consecutive_failures=1 WHERE id='a'").run();
+
+    handleTickTeardown(db, {
+      tick_id: "t1",
+      agent_id: "a",
+      outcome: "failed",
+      error: "hit your limit and retry at 3 pm",
+      now: 100,
+    });
+
+    const agent = db
+      .query(
+        "SELECT consecutive_failures, status, degraded_reason FROM long_lived_agents WHERE id='a'",
+      )
+      .get() as any;
+    expect(agent.consecutive_failures).toBe(1);
+    expect(agent.status).toBe("active");
+    expect(agent.degraded_reason).toBeNull();
+  });
+
   it("trips circuit breaker at threshold", () => {
     const db = seed();
     db.query(

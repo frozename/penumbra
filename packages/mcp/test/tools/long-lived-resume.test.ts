@@ -48,6 +48,29 @@ describe("long_lived_resume", () => {
     expect(row).toEqual({ status: "active", consecutive_failures: 0, degraded_reason: null });
   });
 
+  it("resumes retired agents and clears retired state", async () => {
+    const db = new Database(":memory:");
+    seed(db);
+    db.query(
+      "UPDATE long_lived_agents SET status='retired', consecutive_failures=7, degraded_reason='oops', retired_at=123 WHERE id='a'",
+    ).run();
+
+    const result = await handleLongLivedResume(db, { id: "a" });
+    const row = db
+      .query(
+        "SELECT status, consecutive_failures, degraded_reason, retired_at FROM long_lived_agents WHERE id='a'",
+      )
+      .get() as any;
+
+    expect(result).toEqual({ id: "a", status: "active" });
+    expect(row).toEqual({
+      status: "active",
+      consecutive_failures: 0,
+      degraded_reason: null,
+      retired_at: null,
+    });
+  });
+
   it("rejects invalid transitions", async () => {
     const db = new Database(":memory:");
     seed(db);

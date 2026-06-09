@@ -15,6 +15,18 @@ export interface TeardownInput {
 
 const logger = createLogger({ component: "daemon:long-lived:teardown" });
 
+function isTransientRateLimit(error?: string): boolean {
+  if (!error) return false;
+  return (
+    /rate.?limit/i.test(error) ||
+    /hit your limit/i.test(error) ||
+    /\bquota\b/i.test(error) ||
+    /\b429\b/i.test(error) ||
+    /-32603/i.test(error) ||
+    /resets?\s+\d+\s*(am|pm)/i.test(error)
+  );
+}
+
 export function handleTickTeardown(db: Database, input: TeardownInput): void {
   db.transaction(() => {
     new AgentPerformanceWriter(db).upsert({
@@ -69,6 +81,17 @@ export function handleTickTeardown(db: Database, input: TeardownInput): void {
       )
       .get(input.agent_id);
     if (!row) return;
+
+    if (isTransientRateLimit(input.error)) {
+      db.query(
+        `UPDATE long_lived_agents
+          SET last_tick_outcome = ?,
+              last_tick_completed_at = ?,
+              updated_at = ?
+          WHERE id = ?`,
+      ).run(input.outcome, input.now, input.now, input.agent_id);
+      return;
+    }
 
     const nextFailures = row.consecutive_failures + 1;
     const shouldTrip = row.status === "active" && nextFailures >= row.circuit_breaker_threshold;

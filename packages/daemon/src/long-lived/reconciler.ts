@@ -44,6 +44,7 @@ export function reconcileLongLivedAgents(
   const dbRows = db
     .query<{ id: string; status: string }, []>("SELECT id, status FROM long_lived_agents")
     .all();
+  const dbStatusById = new Map(dbRows.map((r) => [r.id, r.status]));
   const dbIds = new Set(dbRows.map((r) => r.id));
 
   const inserted: string[] = [];
@@ -117,6 +118,11 @@ export function reconcileLongLivedAgents(
         opts.now,
         a.name,
       );
+      if (dbStatusById.get(a.name) === "retired") {
+        db.query(
+          "UPDATE long_lived_agents SET status='active', consecutive_failures=0, degraded_reason=NULL, retired_at=NULL, updated_at=? WHERE id=?",
+        ).run(opts.now, a.name);
+      }
       updated.push(a.name);
     }
   }
