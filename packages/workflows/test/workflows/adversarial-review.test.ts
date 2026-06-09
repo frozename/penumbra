@@ -215,7 +215,7 @@ test("inputSchema applies defaults and rejects unknown keys", () => {
   expect(inputSchema.parse({})).toEqual({
     target_ref: "HEAD",
     base_ref: "main",
-    timeout_ms: 1200000,
+    timeout_ms: 1800000,
   });
   expect(() => inputSchema.parse({ unexpected: true })).toThrow();
   expect(() => inputSchema.parse({ focus: "" })).toThrow();

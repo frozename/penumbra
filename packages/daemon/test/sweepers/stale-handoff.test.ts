@@ -226,6 +226,24 @@ test("review_adversarial handoff at 44m59s old is not swept", () => {
   expect(services.handoffReader.get("h-review")?.status).toBe("dispatched");
 });
 
+test("plan_refine handoff at 44m59s old is not swept", () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  insertDispatchedHandoff(db, "h-plan", "2026-05-04T11:15:01.000Z", "plan_refine");
+  insertEvent(db, "h-plan", "dispatch.start", "2026-05-04T11:25:01.000Z");
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    makeTaskTypeAwareOpts(services),
+    state,
+    () => new Date("2026-05-04T12:00:00.000Z"),
+  );
+
+  expect(result.candidates).toEqual([]);
+  expect(result.resolved).toEqual([]);
+  expect(services.handoffReader.get("h-plan")?.status).toBe("dispatched");
+});
+
 test("smoke_test handoff at 10m01s old is swept", () => {
   const db = setupDb();
   const services = makeServices(db);

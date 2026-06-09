@@ -42,7 +42,7 @@ export const inputSchema = z
     personas: z.array(z.string().min(1)).optional(),
     content_path: z.string().optional(),
     focus: z.string().min(1).max(2000).optional(),
-    timeout_ms: z.number().int().positive().default(1200000),
+    timeout_ms: z.number().int().positive().default(1800000),
     out_dir: z.string().optional(),
   })
   .strict();

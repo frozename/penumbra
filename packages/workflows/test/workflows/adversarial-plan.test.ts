@@ -196,7 +196,7 @@ test("spec metadata is registered as manual + slash ts-function workflow", () =>
 
 test("inputSchema applies defaults and rejects unknown keys", () => {
   expect(inputSchema.parse({})).toEqual({
-    timeout_ms: 1200000,
+    timeout_ms: 1800000,
   });
   expect(() => inputSchema.parse({ unexpected: true })).toThrow();
   expect(() => inputSchema.parse({ focus: "" })).toThrow();

@@ -5,7 +5,7 @@ const DISPATCHED_TTL_MS: Record<string, number> = {
   review_adversarial: 45 * 60_000,
   implement_substantial: 60 * 60_000,
   implement_small: 30 * 60_000,
-  plan_refine: 30 * 60_000,
+  plan_refine: 45 * 60_000,
   docs_mechanical: 20 * 60_000,
   debug_diagnose: 45 * 60_000,
   smoke_test: 10 * 60_000,
