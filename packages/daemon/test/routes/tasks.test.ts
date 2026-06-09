@@ -14,6 +14,7 @@ import { TestEmbedder } from "@penumbra/core/testing";
 import { createDaemonFetchHandler } from "../../src/serve.js";
 import type { GhTaskSyncService } from "../../src/sweepers/gh-task-sync.js";
 import type { GhClient } from "../../src/services/gh-client.js";
+import { conciseTitle } from "../../src/routes/tasks.js";
 
 try {
   if (process.platform === "darwin") {
@@ -374,6 +375,19 @@ test("POST /tasks with refiner-origin draft defaults gh_create labels and resolv
   } finally {
     daemon.stop();
   }
+});
+
+test("conciseTitle trims long prompts, preserves short sentences, and never returns empty", () => {
+  expect(
+    conciseTitle(
+      "This is a very long prompt designed to keep going past the target title length so that the helper has to truncate it at a word boundary instead of returning the entire text as the issue title because that would be too long.",
+    ),
+  ).toMatch(/^.{1,100}…$/);
+  expect(conciseTitle("Build the task board route. Keep the API stable. Extra context here.")).toBe(
+    "Build the task board route.",
+  );
+  expect(conciseTitle("Line one\nLine two\nLine three")).toBe("Line one Line two Line three");
+  expect(conciseTitle("   \n\t  ")).toBe("task");
 });
 
 test("POST /tasks with refiner-origin draft emits task_draft_promoted t0 event", async () => {

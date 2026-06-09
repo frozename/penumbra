@@ -421,7 +421,7 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
         switch (row.op) {
           case "gh_create_issue": {
             const repo = String(payload.repo ?? "").trim();
-            const title = String(payload.title ?? "").trim();
+            const title = clampGhIssueTitle(String(payload.title ?? ""));
             const body = String(payload.body ?? "");
             const labels = Array.isArray(payload.labels)
               ? payload.labels.filter((v): v is string => typeof v === "string" && v.length > 0)
@@ -791,6 +791,15 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
 
     postDispatchFailureComment,
   };
+}
+
+function clampGhIssueTitle(title: string): string {
+  const singleLine = title.replace(/\s+/g, " ").trim();
+  if (singleLine.length <= 256) return singleLine;
+  const truncated = singleLine.slice(0, 256);
+  const lastSpace = truncated.lastIndexOf(" ");
+  const cut = lastSpace > 0 ? truncated.slice(0, lastSpace) : truncated;
+  return `${cut.trimEnd()}…`;
 }
 
 export function createGhTaskSyncSweeper(opts: {

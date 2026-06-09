@@ -237,7 +237,7 @@ export async function tasksFileRoute(
     );
   }
 
-  const issueTitle = inputWithDefaults.gh_create.title ?? firstLine(inputWithDefaults.prompt);
+  const issueTitle = inputWithDefaults.gh_create.title ?? conciseTitle(inputWithDefaults.prompt);
   const issueBody = inputWithDefaults.gh_create.body ?? inputWithDefaults.prompt;
 
   ghSync.enqueueTaskGhCreate(task_id, {
@@ -519,9 +519,22 @@ function buildGhIssueUrl(repo: string, issue_number: number): string {
   return `https://github.com/${repo}/issues/${issue_number}`;
 }
 
-function firstLine(text: string): string {
-  const line = text.split("\n")[0]?.trim();
-  return line && line.length > 0 ? line : text;
+export function conciseTitle(prompt: string): string {
+  const collapsed = prompt.replace(/\s+/g, " ").trim();
+  if (!collapsed) return "task";
+
+  const sentenceMatch = collapsed.match(/^(.+?[.!?])(?:\s|$)/);
+  if (sentenceMatch) {
+    const sentence = sentenceMatch[1]!.trim();
+    if (sentence.length <= 100) return sentence;
+  }
+
+  if (collapsed.length <= 100) return collapsed;
+
+  const truncated = collapsed.slice(0, 100);
+  const lastSpace = truncated.lastIndexOf(" ");
+  const cut = lastSpace > 0 ? truncated.slice(0, lastSpace) : truncated;
+  return `${cut.trimEnd()}…`;
 }
 
 function errorMessage(err: unknown): string {

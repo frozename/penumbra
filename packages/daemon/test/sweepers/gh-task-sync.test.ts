@@ -258,6 +258,60 @@ describe("gh-task-sync sweeper/service", () => {
     });
   });
 
+  test("syncAllLinkedTasks clamps gh_create_issue titles before calling GitHub", async () => {
+    const { db, writer } = setup();
+    const { task_id } = writer.file({
+      prompt: "create issue title clamp",
+      created_by_kind: "human",
+      created_by_id: "cli",
+    });
+    writer.enqueueGhOutbox(task_id, "gh_create_issue", {
+      repo: "acordeiro/penumbra",
+      title: `line one\n${"x".repeat(1200)}\nline three`,
+      body: "full body",
+    });
+
+    const createCalls: Array<{ repo: string; title: string; body: string }> = [];
+    const ghClient: GhClient = {
+      createIssue: async (input) => {
+        createCalls.push(input);
+        return {
+          number: 99,
+          title: input.title,
+          url: "https://github.com/acordeiro/penumbra/issues/99",
+        };
+      },
+      viewIssue: async () => {
+        throw new Error("not used");
+      },
+      closeIssue: async () => {},
+      reopenIssue: async () => {},
+      commentIssue: async () => ({
+        comment_url: "https://github.com/acordeiro/penumbra/issues/99#issuecomment-1",
+      }),
+      listComments: async () => [],
+    };
+
+    const sync = createGhTaskSyncService({
+      taskWriter: writer,
+      ghClient,
+      t0Writer: new T0Writer(db),
+      now: () => new Date("2026-05-08T03:00:00.000Z"),
+      uuid: () => crypto.randomUUID(),
+      userId: "test-user",
+      machineId: "test-machine",
+    });
+
+    await sync.syncAllLinkedTasks({ fullReconcile: false });
+
+    expect(createCalls).toHaveLength(1);
+    expect(createCalls[0]?.repo).toBe("acordeiro/penumbra");
+    expect(createCalls[0]?.title).toMatch(/^[^\n]+$/);
+    expect(createCalls[0]?.title.length).toBeLessThanOrEqual(256);
+    expect(createCalls[0]?.title).toContain("line one");
+    expect(createCalls[0]?.body).toBe("full body");
+  });
+
   test("syncAllLinkedTasks processes linked tasks in parallel batches", async () => {
     const { db, writer } = setup();
     for (let i = 1; i <= 6; i += 1) {
