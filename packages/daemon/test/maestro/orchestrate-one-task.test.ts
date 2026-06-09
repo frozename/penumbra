@@ -96,6 +96,7 @@ test("orchestrateOneTask dispatches and creates session when no pre-bound sessio
     task_type: "implement_substantial",
     use_worktree: true,
     trust_mode: "all",
+    dispatch_kind: "orchestrate",
   });
 
   const session = sessions.get(task_id);

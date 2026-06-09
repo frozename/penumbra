@@ -185,6 +185,10 @@ export async function orchestrateOneTask(
       use_worktree: true,
       trust_mode: "all",
       branch_base: task.branch_base ?? undefined,
+      // Marks the worker as an orchestrate maestro so the dispatch path grants
+      // it the task-board resolution tools (task.get/complete/fail) it needs to
+      // self-complete this task. See agentchat withOrchestrateTools.
+      dispatch_kind: "orchestrate",
     });
   } catch (error) {
     const parsed = parseSubscriptionPressureError(error);

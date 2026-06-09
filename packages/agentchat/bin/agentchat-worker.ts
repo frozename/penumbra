@@ -28,6 +28,10 @@ import {
 } from "../src/adapters/acp-warm-pool-registry.js";
 import { poolKeyFor } from "../src/adapters/acp-warm-pool.js";
 import { normalizeAdapterOptions } from "../src/cli/adapter-options.js";
+import {
+  withOrchestrateTools,
+  applyOrchestrateToolsToConfig,
+} from "../src/worker/orchestrate-tools.js";
 import { computePrewarmTargets, type PrewarmTarget } from "../src/worker/prewarm-targets.js";
 import { createPrewarmLoop, type PrewarmLoop } from "../src/worker/prewarm-loop.js";
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../src/sdk/adapter.js";
@@ -1229,7 +1233,15 @@ const dispatcher = createWorkerDispatcher({
     const trustMode = (handoff.chain_trust_mode ?? defaultTrust) as "all" | "config";
     const maxHops = handoff.chain_max_hops ?? defaultMaxHops;
     const agentCfg = config.agents.find((a) => a.name === handoff.to_agent);
-    const allowedTools = (agentCfg?.options as any)?.allowed_tools ?? [];
+    // Orchestrate-maestro dispatches get the task-board resolution tools
+    // (task.get/complete/fail) injected so the worker can self-complete its
+    // task; no-op for every other dispatch kind. Mirrored into overrideConfig
+    // below so the adapter tool SURFACE (not just permission auto-approve) is
+    // augmented too.
+    const allowedTools = withOrchestrateTools(
+      (agentCfg?.options as any)?.allowed_tools ?? [],
+      handoff.dispatch_kind,
+    );
     const ttlSeconds =
       (agentCfg?.options as any)?.permission_ttl_s ??
       Number(process.env.PENUMBRA_PERMISSION_TTL_S ?? 300);
@@ -1257,7 +1269,11 @@ const dispatcher = createWorkerDispatcher({
         worktreeManager,
         process.cwd(),
       );
-      overrideConfig = result.overrideConfig;
+      overrideConfig = applyOrchestrateToolsToConfig(
+        result.overrideConfig,
+        handoff.to_agent,
+        handoff.dispatch_kind,
+      );
       dispatchedHandoff = result.worktreePromptRewrite
         ? {
             ...handoff,

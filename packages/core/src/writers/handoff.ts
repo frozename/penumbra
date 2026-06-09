@@ -27,7 +27,7 @@ export interface CreateApprovedParams {
   chain_max_hops: number | null;
   chain_trust_mode: "all" | "config" | null;
   chain_task_type: string | null;
-  dispatch_kind?: "long_lived_tick" | "workflow" | "thought_analyzer" | null;
+  dispatch_kind?: "long_lived_tick" | "workflow" | "thought_analyzer" | "orchestrate" | null;
   long_lived_agent_id?: string | null;
   long_lived_tick_id?: string | null;
   use_worktree: boolean | null;

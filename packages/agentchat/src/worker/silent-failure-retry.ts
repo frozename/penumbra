@@ -5,7 +5,13 @@ export interface PerformanceForRetry {
 }
 
 export interface RetryHandoffContext {
-  dispatch_kind?: "long_lived_tick" | null | undefined;
+  dispatch_kind?:
+    | "long_lived_tick"
+    | "workflow"
+    | "thought_analyzer"
+    | "orchestrate"
+    | null
+    | undefined;
 }
 
 export interface SilentRetryPayloadInput {

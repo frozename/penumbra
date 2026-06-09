@@ -32,7 +32,10 @@ export const HandoffRowSchema = z.object({
   chain_max_hops: z.number().int().nullable(),
   chain_trust_mode: z.enum(["all", "config"]).nullable(),
   chain_task_type: AgentTaskTypeSchema.nullable(),
-  dispatch_kind: z.enum(["long_lived_tick", "workflow", "thought_analyzer"]).nullable().optional(),
+  dispatch_kind: z
+    .enum(["long_lived_tick", "workflow", "thought_analyzer", "orchestrate"])
+    .nullable()
+    .optional(),
   long_lived_agent_id: z.string().nullable().optional(),
   long_lived_tick_id: z.string().nullable().optional(),
   use_worktree: z.preprocess((v) => (v === 1 ? true : v === 0 ? false : v), z.boolean().nullable()),

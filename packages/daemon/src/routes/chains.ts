@@ -51,7 +51,7 @@ type ChainStartRequestWithLongLived = Omit<ChainStartRequest, "dispatch_kind"> &
 };
 type Workload = (typeof WORKLOADS)[number];
 
-type DispatchKind = "long_lived_tick" | "workflow" | "thought_analyzer";
+type DispatchKind = "long_lived_tick" | "workflow" | "thought_analyzer" | "orchestrate";
 
 interface LongLivedPromptAgentRow {
   id: string;
