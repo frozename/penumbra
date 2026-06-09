@@ -1,4 +1,7 @@
 import { Database } from "bun:sqlite";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test } from "bun:test";
 import type { WorkflowCtx } from "@penumbra/workflows";
 import { fn } from "./workflow.js";
@@ -70,6 +73,42 @@ function splitLines(markdown: string): string[] {
   return markdown.split("\n");
 }
 
+function withEnv(
+  name: string,
+  value: string | undefined,
+  fn: () => Promise<void> | void,
+): Promise<void> | void {
+  const old = process.env[name];
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+
+  const restore = () => {
+    if (old === undefined) delete process.env[name];
+    else process.env[name] = old;
+  };
+
+  try {
+    const result = fn();
+    if (result && typeof (result as Promise<void>).then === "function") {
+      return (result as Promise<void>).finally(restore);
+    }
+    restore();
+  } catch (error) {
+    restore();
+    throw error;
+  }
+}
+
+function derivedMemoryPath(cwd: string, root: string): string {
+  const munged = cwd.replaceAll("/", "-").replaceAll(".", "-");
+  return join(root, "projects", munged, "memory", "MEMORY.md");
+}
+
+function defaultMemoryPath(home: string, cwd: string): string {
+  const munged = cwd.replaceAll("/", "-").replaceAll(".", "-");
+  return join(home, ".claude", "projects", munged, "memory", "MEMORY.md");
+}
+
 test("Composes markdown for direct-origin maestro-scoped rows", async () => {
   const db = freshDb();
   insertMemory(db, {
@@ -117,6 +156,27 @@ test("Composes markdown for direct-origin maestro-scoped rows", async () => {
     "- [Active One](active-1) — hook one",
     DIGEST_MARKER_END,
   ]);
+});
+
+test("Includes direct rows scoped to the current project id", async () => {
+  const db = freshDb();
+  insertMemory(db, {
+    slug: "project-memory",
+    title: "Project Memory",
+    hook: "project hook",
+    projectId: "f823fff4-c945-4761-9510-386b2c0e9fe1",
+    updatedAt: "2026-01-02T00:00:00Z",
+  });
+
+  const result = await fn(
+    {
+      ...makeCtx(db),
+      cwd: "/Volumes/WorkSSD/repos/personal/penumbra-worktrees/f823fff4-c945-4761-9510-386b2c0e9fe1",
+    },
+    {},
+  );
+
+  expect(result).toContain("Project Memory");
 });
 
 test("sanitizes prompt-injection-like memory fields and wraps digest output", async () => {
@@ -259,6 +319,122 @@ test("Returns empty string when no direct maestro memories exist", async () => {
   const db = freshDb();
   const result = await fn(makeCtx(db), {});
   expect(result).toBe("");
+});
+
+test("Writes derived MEMORY.md with sentinel and footer to PENUMBRA_CC_MEMORY_DIR", async () => {
+  const db = freshDb();
+  insertMemory(db, {
+    slug: "active",
+    title: "Active",
+    hook: "keep",
+    updatedAt: "2026-01-02T00:00:00Z",
+  });
+  const dir = mkdtempSync(join(tmpdir(), "memory-digest-"));
+
+  await withEnv("PENUMBRA_CC_MEMORY_DIR", dir, async () => {
+    const result = await fn(makeCtx(db), {});
+    expect(result).toContain("Active");
+  });
+
+  const file = join(dir, "MEMORY.md");
+  const contents = readFileSync(file, "utf8");
+  expect(contents).toContain(
+    "<!-- GENERATED from penumbra t2 — do not edit; write via mcp__penumbra__memory_write_t2 -->",
+  );
+  expect(contents).toContain("- Active — keep");
+  expect(contents).toContain("mcp__penumbra__memory_search");
+});
+
+test("Leaves foreign MEMORY.md byte-identical when sentinel is absent", async () => {
+  const db = freshDb();
+  insertMemory(db, {
+    slug: "active",
+    title: "Active",
+    hook: "keep",
+    updatedAt: "2026-01-02T00:00:00Z",
+  });
+  const dir = mkdtempSync(join(tmpdir(), "memory-digest-"));
+  const file = join(dir, "MEMORY.md");
+  await import("node:fs/promises").then(({ mkdir, writeFile }) =>
+    mkdir(dir, { recursive: true }).then(() => writeFile(file, "keep me as-is")),
+  );
+
+  await withEnv("PENUMBRA_CC_MEMORY_DIR", dir, async () => {
+    await fn(
+      {
+        ...makeCtx(db),
+        cwd: "/Volumes/WorkSSD/repos/personal/penumbra",
+      },
+      {},
+    );
+  });
+
+  expect(readFileSync(file, "utf8")).toBe("keep me as-is");
+});
+
+test("Backs up the previous MEMORY.md to MEMORY.md.prev before overwriting", async () => {
+  const db = freshDb();
+  insertMemory(db, {
+    slug: "active",
+    title: "Active",
+    hook: "keep",
+    updatedAt: "2026-01-02T00:00:00Z",
+  });
+  const dir = mkdtempSync(join(tmpdir(), "memory-digest-"));
+  const file = join(dir, "MEMORY.md");
+  const prev = `${file}.prev`;
+  await import("node:fs/promises").then(({ mkdir, writeFile }) =>
+    mkdir(dir, { recursive: true }).then(() =>
+      writeFile(
+        file,
+        "<!-- GENERATED from penumbra t2 — do not edit; write via mcp__penumbra__memory_write_t2 -->\nold",
+      ),
+    ),
+  );
+
+  await withEnv("PENUMBRA_CC_MEMORY_DIR", dir, async () => {
+    await fn(makeCtx(db), {});
+  });
+
+  expect(readFileSync(prev, "utf8")).toContain("old");
+  expect(readFileSync(file, "utf8")).toContain("- Active — keep");
+});
+
+test("Does not write MEMORY.md when there are no eligible rows", async () => {
+  const db = freshDb();
+  const dir = mkdtempSync(join(tmpdir(), "memory-digest-"));
+
+  await withEnv("PENUMBRA_CC_MEMORY_DIR", dir, async () => {
+    const result = await fn(makeCtx(db), {});
+    expect(result).toBe("");
+  });
+
+  expect(() => readFileSync(derivedMemoryPath("/", dir), "utf8")).toThrow();
+});
+
+test("Munges dotted cwd into the MEMORY.md target path", async () => {
+  const db = freshDb();
+  insertMemory(db, {
+    slug: "active",
+    title: "Active",
+    hook: "keep",
+    updatedAt: "2026-01-02T00:00:00Z",
+  });
+  const cwd =
+    "/Volumes/WorkSSD/repos/personal/penumbra.worktrees/f823fff4.c945.4761.9510.386b2c0e9fe1";
+  const home = mkdtempSync(join(tmpdir(), "memory-home-"));
+
+  await withEnv("HOME", home, async () => {
+    await fn(
+      {
+        ...makeCtx(db),
+        cwd,
+      },
+      {},
+    );
+  });
+
+  expect(readFileSync(defaultMemoryPath(home, cwd), "utf8")).toContain("Active");
 });
 
 test("Respects PENUMBRA_MEMORY_DIGEST_MAX_LINES", async () => {
