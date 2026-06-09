@@ -715,6 +715,20 @@ test("POST /maestro/sessions/adhoc files and dispatches an orchestrate task", as
     expect(task?.kind).toBe("orchestrate");
     const eligibility = JSON.parse(task?.eligibility ?? "{}") as { allow_agents?: string[] };
     expect(eligibility.allow_agents).toEqual(["claude-acp-sonnet"]);
+
+    // The adhoc route must record orchestrate_spawned (carrying the chain
+    // handoff id) so the orchestrate-reactor's chain-completion backstop covers
+    // adhoc dispatches too — otherwise an adhoc dispatch that finishes without
+    // self-completing hangs `leased` until the lease expires.
+    const spawned = daemon.services.db
+      .query<
+        { payload_json: string | null },
+        [string]
+      >("SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_spawned' ORDER BY id DESC LIMIT 1")
+      .get(body.session.task_id);
+    expect(spawned).toBeTruthy();
+    const spawnPayload = JSON.parse(spawned?.payload_json ?? "{}") as { chain_handoff_id?: string };
+    expect(spawnPayload.chain_handoff_id).toBe(body.chain_handoff_id);
   } finally {
     daemon.stop();
   }

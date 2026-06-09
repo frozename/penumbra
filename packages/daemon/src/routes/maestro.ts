@@ -390,6 +390,29 @@ export async function maestroSessionStartAdhocRoute(
   });
 
   if (dispatched.status === "dispatched") {
+    // Record orchestrate_spawned (as the orchestrate-reactor does for the
+    // reactor path) so the reactor's chain-completion backstop covers adhoc
+    // dispatches too — without it, an adhoc dispatch that finishes without
+    // self-completing hangs `leased` until the lease expires.
+    services.db
+      .query<unknown, [string, number, string, string]>(
+        `INSERT INTO task_events (task_id, at, kind, actor, payload_json, maestro_session_task_id)
+         VALUES (?, ?, 'orchestrate_spawned', NULL, ?, ?)`,
+      )
+      .run(
+        created.task_id,
+        services.clock().getTime(),
+        JSON.stringify({
+          session_task_id: created.task_id,
+          chain_handoff_id: dispatched.chain_handoff_id,
+          bounds: {
+            wall_clock_budget_ms: dispatched.session.wall_clock_budget_ms,
+            cost_budget_cents: dispatched.session.cost_budget_cents,
+            sub_dispatch_budget: dispatched.session.sub_dispatch_budget,
+          },
+        }),
+        created.task_id,
+      );
     return json(dispatched, 201);
   }
   if (dispatched.status === "short_circuited") {
