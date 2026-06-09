@@ -2,6 +2,8 @@
 
 Local-first observability + cross-agent dispatch + workflow runtime. Records LLM activity (t0 events, t1 rollups, t2 long-term memories), brokers handoffs between AI agents (Claude / Gemini / Codex / OpenCode / local LLMs) via `@mention` syntax with a human-in-the-loop approval gate, runs memory-aware workflows, and supervises long-lived agents that tick on cron.
 
+The memory-digest workflow renders the t2 digest into a derived read-only `MEMORY.md` per project.
+
 ## Architecture
 
 Bun + TypeScript monorepo (`bun` package manager, workspaces). Top-level packages:
