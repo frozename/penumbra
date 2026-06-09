@@ -1,10 +1,13 @@
 import { z } from "zod";
 
+// Mirrors core's TaskStatusSchema (packages/core/src/tasks/schema.ts) — the
+// daemon returns these values verbatim (no API-boundary translation). Kept in
+// lockstep so the (currently dormant) console validates against reality.
 export const TaskStatusSchema = z.enum([
-  "filed",
-  "eligible",
+  "pending",
   "leased",
-  "completed",
+  "done_pending_review",
+  "done",
   "failed",
   "cancelled",
 ]);
