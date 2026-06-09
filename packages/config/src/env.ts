@@ -854,8 +854,14 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   },
   PENUMBRA_PROMOTION_NEAR_DUP_THRESHOLD: {
     schema: NonNegNum,
+    // packages/core getNearDupThreshold enforces the (0,1] clamp at read time.
     default: 0.95,
     description: "Similarity threshold for the T2 promotion near-duplicate gate.",
+  },
+  PENUMBRA_EXTRACTION_FILTER_GATE: {
+    schema: Bool,
+    default: false,
+    description: "Enable the T2 promotion extraction filter gate.",
   },
   PENUMBRA_EMBED_RECIPE_TIMEOUT_MS: {
     schema: NonNegInt,

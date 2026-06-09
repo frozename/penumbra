@@ -460,20 +460,20 @@ export class T2Promotion {
       }
 
       if (bodyGatedExtractions.length === 0) {
-        this.markPromotionSkipped(rollupId);
+        this.markPromotionFiltered(rollupId);
         return 0;
       }
 
-      const promotionGateEnabled = isEnvGateEnabled("PENUMBRA_PROMOTION_GATE");
+      const extractionFilterEnabled = isEnvGateEnabled("PENUMBRA_EXTRACTION_FILTER_GATE");
       const nearDupGateEnabled = isEnvGateEnabled("PENUMBRA_PROMOTION_NEAR_DUP_GATE");
-      const nearDupThreshold = Number(process.env.PENUMBRA_PROMOTION_NEAR_DUP_THRESHOLD ?? "0.95");
+      const nearDupThreshold = getNearDupThreshold();
 
-      const filteredExtractions = promotionGateEnabled
+      const filteredExtractions = extractionFilterEnabled
         ? bodyGatedExtractions.filter((extraction) => isPromotionCandidate(extraction))
         : bodyGatedExtractions;
 
       if (filteredExtractions.length === 0) {
-        this.markPromotionSkipped(rollupId);
+        this.markPromotionFiltered(rollupId);
         return 0;
       }
 
@@ -491,9 +491,9 @@ export class T2Promotion {
         : [];
 
       const insertedCount = this.opts.db.transaction(() => {
-        const threshold = Number.isFinite(nearDupThreshold) ? nearDupThreshold : 0.95;
+        const threshold = nearDupThreshold;
         const selectedCandidates: PendingNearDuplicateCandidate[] = [];
-        let blockedByNearDupInTxn = false;
+        let nearDupDetectedInTxn = false;
 
         for (let i = 0; i < filteredExtractions.length; i++) {
           const ext = filteredExtractions[i]!;
@@ -511,7 +511,7 @@ export class T2Promotion {
             const existingCandidates = existingNearDupCandidates[i] ?? [];
             const existingDup = isNearDuplicate(candidate, existingCandidates, threshold);
             if (existingDup) {
-              blockedByNearDupInTxn = true;
+              nearDupDetectedInTxn = true;
               if (existingDup.winner === "existing") {
                 continue;
               }
@@ -523,7 +523,7 @@ export class T2Promotion {
 
             const batchDup = isNearDuplicate(candidate, selectedCandidates, threshold);
             if (batchDup) {
-              blockedByNearDupInTxn = true;
+              nearDupDetectedInTxn = true;
               if (batchDup.winner === "existing") {
                 continue;
               }
@@ -595,7 +595,14 @@ export class T2Promotion {
           if (!nearDupGateEnabled) continue;
           for (const [existingMemoryId, similarity] of pending.retireExistingIds) {
             if (queuedRetireIds.has(existingMemoryId)) continue;
-            if (!nearDupCycleId) nearDupCycleId = ensureNearDupRetireCycle(this.opts.db, now);
+            if (!nearDupCycleId) {
+              nearDupCycleId = ensureNearDupRetireCycle(
+                this.opts.db,
+                now,
+                rollupId,
+                this.opts.uuid(),
+              );
+            }
             const enqueued = enqueueNearDupRetireAction(this.opts.db, {
               cycleId: nearDupCycleId,
               actionId: this.opts.uuid(),
@@ -607,8 +614,8 @@ export class T2Promotion {
         }
 
         if (insertedCountInTxn > 0) this.markPromoted(rollupId);
-        if (insertedCountInTxn === 0 && (blockedByNearDupInTxn || promotionGateEnabled)) {
-          this.markPromotionSkipped(rollupId);
+        if (insertedCountInTxn === 0 && (nearDupDetectedInTxn || extractionFilterEnabled)) {
+          this.markPromotionFiltered(rollupId);
         }
         return insertedCountInTxn;
       })();
@@ -622,16 +629,30 @@ export class T2Promotion {
 
   private markPromoted(rollupId: string): void {
     this.opts.db.run(
-      "UPDATE t1_rollups SET t2_promoted_at = ?, promotion_skipped_at = NULL, failed_promotion_attempts = 0 WHERE rollup_id = ?",
+      "UPDATE t1_rollups SET t2_promoted_at = ?, promotion_filtered_at = NULL, failed_promotion_attempts = 0 WHERE rollup_id = ?",
       [this.opts.clock().toISOString(), rollupId],
     );
   }
 
-  private markPromotionSkipped(rollupId: string): void {
-    this.opts.db.run("UPDATE t1_rollups SET promotion_skipped_at = ? WHERE rollup_id = ?", [
+  private markPromotionFiltered(rollupId: string): void {
+    this.opts.db.run("UPDATE t1_rollups SET promotion_filtered_at = ? WHERE rollup_id = ?", [
       this.opts.clock().toISOString(),
       rollupId,
     ]);
+  }
+
+  resetPromotionFilter(rollupId: string | null, opts?: { all?: boolean }): void {
+    if (rollupId && rollupId.trim().length > 0) {
+      this.opts.db.run("UPDATE t1_rollups SET promotion_filtered_at = NULL WHERE rollup_id = ?", [
+        rollupId,
+      ]);
+      return;
+    }
+    if (opts?.all === true) {
+      this.opts.db.run("UPDATE t1_rollups SET promotion_filtered_at = NULL");
+      return;
+    }
+    throw new Error("resetPromotionFilter requires a rollupId or { all: true }");
   }
 
   private recordFailure(rollupId: string): void {
@@ -653,7 +674,7 @@ export class T2Promotion {
       .query<{ rollup_id: string }, [string, string, number, number]>(
         `SELECT rollup_id FROM t1_rollups 
          WHERE t2_promoted_at IS NULL 
-           AND promotion_skipped_at IS NULL
+           AND promotion_filtered_at IS NULL
            AND (ended_at < ? OR (ended_at IS NULL AND started_at < ?))
            AND failed_promotion_attempts < ?
            AND n_events >= ?`,
@@ -673,7 +694,6 @@ interface PendingNearDuplicateCandidate extends NearDuplicateItem {
 }
 
 const NEAR_DUP_QUERY_LIMIT = 10;
-const NEAR_DUP_RETIRE_CYCLE_ID = "t2-promotion-near-dup";
 
 function isPromotionCandidate(extraction: T2MemoryExtraction): boolean {
   if (extraction.promote === false) return false;
@@ -754,6 +774,19 @@ function isEnvGateEnabled(name: string): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
+function getNearDupThreshold(): number {
+  const raw = process.env.PENUMBRA_PROMOTION_NEAR_DUP_THRESHOLD;
+  if (raw === undefined) return 0.95;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 1) {
+    console.warn(
+      `[t2-promotion] invalid PENUMBRA_PROMOTION_NEAR_DUP_THRESHOLD=${JSON.stringify(raw)}; using default 0.95`,
+    );
+    return 0.95;
+  }
+  return parsed;
+}
+
 function pickTranscriptContent(payloadSummary: string | null, payloadJson: string | null): string {
   const summary = scrubTranscriptMarkup((payloadSummary ?? "").trim());
   if (summary) return summary;
@@ -818,10 +851,7 @@ function hashContent(content: string): string {
 }
 
 function toPreview(value: string): string {
-  return value
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 120);
+  return value.replace(/\s+/g, " ").trim().slice(0, 120);
 }
 
 function hasReasoningProseMarker(body: string): boolean {
@@ -832,18 +862,20 @@ function hasReasoningProseMarker(body: string): boolean {
   return false;
 }
 
-function ensureNearDupRetireCycle(db: Database, nowIso: string): string {
-  const existing = db
-    .query<{ cycle_id: string }, [string]>("SELECT cycle_id FROM dream_cycles WHERE cycle_id = ?")
-    .get(NEAR_DUP_RETIRE_CYCLE_ID);
-  if (existing?.cycle_id) return NEAR_DUP_RETIRE_CYCLE_ID;
-
+function ensureNearDupRetireCycle(
+  db: Database,
+  nowIso: string,
+  rollupId: string,
+  seed: string,
+): string {
+  const cycleId = `t2-promotion-near-dup-${rollupId}-${seed.slice(0, 8)}`;
+  const startedAt = Date.parse(nowIso);
   db.run(
     `INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run)
      VALUES(?, ?, 't2-promotion-near-dup', 0, 'completed', '[]')`,
-    [NEAR_DUP_RETIRE_CYCLE_ID, nowIso],
+    [cycleId, Number.isNaN(startedAt) ? Date.now() : startedAt],
   );
-  return NEAR_DUP_RETIRE_CYCLE_ID;
+  return cycleId;
 }
 
 function enqueueNearDupRetireAction(

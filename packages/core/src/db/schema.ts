@@ -85,7 +85,7 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
         source_event_ids        TEXT NOT NULL DEFAULT '[]',
         t2_promoted_at          TEXT,
         failed_promotion_attempts INTEGER NOT NULL DEFAULT 0,
-        promotion_skipped_at    TEXT
+        promotion_filtered_at   TEXT
       );
       CREATE INDEX IF NOT EXISTS t1_by_project     ON t1_rollups(project_id, ended_at DESC);
       CREATE UNIQUE INDEX IF NOT EXISTS t1_session ON t1_rollups(session_id);
@@ -689,7 +689,21 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
     // Additive migration for t1_rollups
     addColumnIfMissing(db, "t1_rollups", "t2_promoted_at", "TEXT");
     addColumnIfMissing(db, "t1_rollups", "failed_promotion_attempts", "INTEGER NOT NULL DEFAULT 0");
-    addColumnIfMissing(db, "t1_rollups", "promotion_skipped_at", "TEXT");
+    addColumnIfMissing(db, "t1_rollups", "promotion_filtered_at", "TEXT");
+    const legacyPromotionSkippedColumn = db
+      .query<
+        { count: number },
+        [string, string]
+      >(`SELECT COUNT(*) as count FROM pragma_table_info(?) WHERE name=?`)
+      .get("t1_rollups", "promotion_skipped_at");
+    if (legacyPromotionSkippedColumn && legacyPromotionSkippedColumn.count > 0) {
+      db.exec(`
+        UPDATE t1_rollups
+           SET promotion_filtered_at = promotion_skipped_at
+         WHERE promotion_filtered_at IS NULL
+           AND promotion_skipped_at IS NOT NULL;
+      `);
+    }
 
     // Index for t2 promotion polling
     db.exec(

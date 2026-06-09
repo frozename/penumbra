@@ -73,15 +73,19 @@ function loadCandidates(db: Database): Candidate[] {
 
 function ensureCycle(db: Database, nowIso: string): string {
   const cycleId = "t2-retire-junk-sweep-2026-06-01";
+  const startedAt = Date.parse(nowIso);
   db.run(
     `INSERT OR IGNORE INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run)
      VALUES(?, ?, 'manual_t2_retire_junk', 0, 'completed', '[]')`,
-    [cycleId, nowIso],
+    [cycleId, Number.isNaN(startedAt) ? Date.now() : startedAt],
   );
   return cycleId;
 }
 
-function enqueueRetireActions(db: Database, candidates: Candidate[]): {
+function enqueueRetireActions(
+  db: Database,
+  candidates: Candidate[],
+): {
   queued: number;
   alreadyQueued: number;
 } {

@@ -12,8 +12,9 @@ try {
   // already loaded in this process
 }
 
-const PROMOTION_GATE_ENV = "PENUMBRA_PROMOTION_GATE";
+const EXTRACTION_FILTER_GATE_ENV = "PENUMBRA_EXTRACTION_FILTER_GATE";
 const NEAR_DUP_GATE_ENV = "PENUMBRA_PROMOTION_NEAR_DUP_GATE";
+const NEAR_DUP_THRESHOLD_ENV = "PENUMBRA_PROMOTION_NEAR_DUP_THRESHOLD";
 
 type Extraction = {
   title: string;
@@ -49,7 +50,7 @@ beforeEach(() => {
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 4 });
   uuidSeq = 0;
-  delete process.env[PROMOTION_GATE_ENV];
+  delete process.env[EXTRACTION_FILTER_GATE_ENV];
   delete process.env[NEAR_DUP_GATE_ENV];
 });
 
@@ -146,16 +147,16 @@ describe("T2Promotion creation gate + near-dup gate", () => {
 
     const row = db
       .query<
-        { t2_promoted_at: string | null; promotion_skipped_at: string | null },
+        { t2_promoted_at: string | null; promotion_filtered_at: string | null },
         [string]
-      >("SELECT t2_promoted_at, promotion_skipped_at FROM t1_rollups WHERE rollup_id = ?")
+      >("SELECT t2_promoted_at, promotion_filtered_at FROM t1_rollups WHERE rollup_id = ?")
       .get("r-default-off");
     expect(row?.t2_promoted_at).toBe("2026-04-27T15:00:00.000Z");
-    expect(row?.promotion_skipped_at).toBeNull();
+    expect(row?.promotion_filtered_at).toBeNull();
   });
 
   test("promotion gate drops episodic + standing_brief + shallow-short extractions, keeps semantic/deep", async () => {
-    process.env[PROMOTION_GATE_ENV] = "1";
+    process.env[EXTRACTION_FILTER_GATE_ENV] = "1";
     seedRollup("r-gated", "s-gated");
 
     const keptSemanticBody =
@@ -225,8 +226,8 @@ describe("T2Promotion creation gate + near-dup gate", () => {
     expect(rows).toEqual(["semantic keep", "deep short keep"]);
   });
 
-  test("promotion gate marks dropped rollups as skipped and removes them from eligibility", async () => {
-    process.env[PROMOTION_GATE_ENV] = "1";
+  test("promotion gate marks dropped rollups as filtered and removes them from eligibility", async () => {
+    process.env[EXTRACTION_FILTER_GATE_ENV] = "1";
     seedRollup("r-drop", "s-drop");
 
     const vecs = new Map<string, Float32Array>([["drop me", new Float32Array([1, 0, 0, 0])]]);
@@ -250,25 +251,25 @@ describe("T2Promotion creation gate + near-dup gate", () => {
         {
           t2_promoted_at: string | null;
           failed_promotion_attempts: number;
-          promotion_skipped_at: string | null;
+          promotion_filtered_at: string | null;
         },
         [string]
       >(
-        "SELECT t2_promoted_at, failed_promotion_attempts, promotion_skipped_at FROM t1_rollups WHERE rollup_id = ?",
+        "SELECT t2_promoted_at, failed_promotion_attempts, promotion_filtered_at FROM t1_rollups WHERE rollup_id = ?",
       )
       .get("r-drop");
 
     expect(row).toEqual({
       t2_promoted_at: null,
       failed_promotion_attempts: 0,
-      promotion_skipped_at: "2026-04-27T15:00:00.000Z",
+      promotion_filtered_at: "2026-04-27T15:00:00.000Z",
     });
 
     const eligible = prom.detectEligibleRollups(24, new Date("2026-04-28T16:00:00Z"), 1);
     expect(eligible).not.toContain("r-drop");
   });
 
-  test("near-dup gate blocks weaker duplicate and marks rollup skipped", async () => {
+  test("near-dup gate blocks weaker duplicate and marks rollup filtered", async () => {
     process.env[NEAR_DUP_GATE_ENV] = "1";
 
     const existingBody =
@@ -312,17 +313,17 @@ describe("T2Promotion creation gate + near-dup gate", () => {
         {
           t2_promoted_at: string | null;
           failed_promotion_attempts: number;
-          promotion_skipped_at: string | null;
+          promotion_filtered_at: string | null;
         },
         [string]
       >(
-        "SELECT t2_promoted_at, failed_promotion_attempts, promotion_skipped_at FROM t1_rollups WHERE rollup_id = ?",
+        "SELECT t2_promoted_at, failed_promotion_attempts, promotion_filtered_at FROM t1_rollups WHERE rollup_id = ?",
       )
       .get("r-b");
     expect(rollup).toEqual({
       t2_promoted_at: null,
       failed_promotion_attempts: 0,
-      promotion_skipped_at: "2026-04-27T15:00:00.000Z",
+      promotion_filtered_at: "2026-04-27T15:00:00.000Z",
     });
 
     const eligible = p2.detectEligibleRollups(24, new Date("2026-04-28T16:00:00Z"), 1);
@@ -402,14 +403,70 @@ describe("T2Promotion creation gate + near-dup gate", () => {
 
     const cycle = db
       .query<
-        { started_at: string },
+        { cycle_id: string; started_at: number; t: string },
         []
-      >("SELECT started_at FROM dream_cycles WHERE cycle_id = 't2-promotion-near-dup' LIMIT 1")
+      >("SELECT cycle_id, started_at, typeof(started_at) AS t FROM dream_cycles WHERE cycle_id LIKE 't2-promotion-near-dup-%' LIMIT 1")
       .get();
-    expect(cycle?.started_at).toBe("2026-04-27T15:00:00.000Z");
+    expect(cycle?.cycle_id).toMatch(/^t2-promotion-near-dup-/);
+    expect(cycle?.t).toBe("integer");
+    expect(typeof cycle?.started_at).toBe("number");
   });
 
-  test("near-dup gate marks promotion skipped atomically when all candidates are blocked", async () => {
+  test("promotion near-dup threshold falls back to default for out-of-range values", async () => {
+    process.env[NEAR_DUP_GATE_ENV] = "1";
+
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+    try {
+      for (const raw of ["0", "-1", "1.1", "not-a-number"]) {
+        const existingBody = `existing body ${raw}`;
+        const candidateBody = `candidate body ${raw}`;
+        const caseVectors = new Map([
+          [existingBody, new Float32Array([1, 0, 0, 0])],
+          [candidateBody, new Float32Array([0.98, 0.02, 0, 0])],
+        ]);
+        process.env[NEAR_DUP_THRESHOLD_ENV] = raw;
+        seedRollup(`r-threshold-existing-${raw}`, `s-threshold-existing-${raw}`);
+        const first = makePromotion(new DeterministicEmbedder(caseVectors), async () => [
+          { title: "existing", body: existingBody, kind: "fact", depth: 3 },
+        ]);
+        expect(await first.promoteRollup(`r-threshold-existing-${raw}`)).toBe(1);
+
+        seedRollup(`r-threshold-candidate-${raw}`, `s-threshold-candidate-${raw}`);
+        const second = makePromotion(new DeterministicEmbedder(caseVectors), async () => [
+          { title: "candidate", body: candidateBody, kind: "fact", depth: 1 },
+        ]);
+        expect(await second.promoteRollup(`r-threshold-candidate-${raw}`)).toBe(0);
+      }
+
+      process.env[NEAR_DUP_THRESHOLD_ENV] = "0.9";
+      const validExistingBody = "existing body valid";
+      const validCandidateBody = "candidate body valid";
+      const validVectors = new Map([
+        [validExistingBody, new Float32Array([1, 0, 0, 0])],
+        [validCandidateBody, new Float32Array([0.98, 0.02, 0, 0])],
+      ]);
+      seedRollup("r-threshold-valid-existing", "s-threshold-valid-existing");
+      const validFirst = makePromotion(new DeterministicEmbedder(validVectors), async () => [
+        { title: "existing", body: validExistingBody, kind: "fact", depth: 3 },
+      ]);
+      expect(await validFirst.promoteRollup("r-threshold-valid-existing")).toBe(1);
+
+      seedRollup("r-threshold-valid-candidate", "s-threshold-valid-candidate");
+      const validSecond = makePromotion(new DeterministicEmbedder(validVectors), async () => [
+        { title: "candidate", body: validCandidateBody, kind: "fact", depth: 1 },
+      ]);
+      expect(await validSecond.promoteRollup("r-threshold-valid-candidate")).toBe(0);
+    } finally {
+      console.warn = originalWarn;
+      delete process.env[NEAR_DUP_THRESHOLD_ENV];
+    }
+
+    expect(warnings.filter((msg) => msg.includes(NEAR_DUP_THRESHOLD_ENV))).toHaveLength(8);
+  });
+
+  test("near-dup gate marks promotion filtered atomically when all candidates are blocked", async () => {
     process.env[NEAR_DUP_GATE_ENV] = "1";
 
     const existingBody =
@@ -455,22 +512,22 @@ describe("T2Promotion creation gate + near-dup gate", () => {
         }
       })) as typeof db.transaction;
     const markCallsInTxn: boolean[] = [];
-    const originalMarkSkipped = (blocked as any).markPromotionSkipped.bind(blocked);
-    (blocked as any).markPromotionSkipped = (rid: string) => {
+    const originalMarkFiltered = (blocked as any).markPromotionFiltered.bind(blocked);
+    (blocked as any).markPromotionFiltered = (rid: string) => {
       markCallsInTxn.push(inTransaction);
-      return originalMarkSkipped(rid);
+      return originalMarkFiltered(rid);
     };
     expect(await blocked.promoteRollup("r-atomic-b")).toBe(0);
 
     const row = db
       .query<
-        { t2_promoted_at: string | null; promotion_skipped_at: string | null },
+        { t2_promoted_at: string | null; promotion_filtered_at: string | null },
         [string]
-      >("SELECT t2_promoted_at, promotion_skipped_at FROM t1_rollups WHERE rollup_id = ?")
+      >("SELECT t2_promoted_at, promotion_filtered_at FROM t1_rollups WHERE rollup_id = ?")
       .get("r-atomic-b");
     expect(row).toEqual({
       t2_promoted_at: null,
-      promotion_skipped_at: "2026-04-27T15:00:00.000Z",
+      promotion_filtered_at: "2026-04-27T15:00:00.000Z",
     });
     expect(markCallsInTxn).toEqual([true]);
   });

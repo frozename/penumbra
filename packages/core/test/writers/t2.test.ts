@@ -253,7 +253,10 @@ test("promoteRollup continues promotion for valid extraction when another extrac
   const count = await prom.promoteRollup("r-mixed");
   expect(count).toBe(1);
   const rows = db
-    .query<{ title: string; body: string }, []>(`SELECT title, body FROM t2_memories ORDER BY rowid ASC`)
+    .query<
+      { title: string; body: string },
+      []
+    >(`SELECT title, body FROM t2_memories ORDER BY rowid ASC`)
     .all();
   expect(rows).toHaveLength(1);
   expect(rows[0]).toEqual({
@@ -554,10 +557,10 @@ test("detectEligibleRollups respects minEvents threshold", () => {
   expect(eligible).not.toContain("r-ineligible");
 });
 
-test("detectEligibleRollups excludes promotion-skipped rollups", () => {
+test("detectEligibleRollups excludes promotion-filtered rollups", () => {
   seedT1("r-skipped", "s-skipped", "2026-04-26T10:00:00Z");
   db.run(
-    `UPDATE t1_rollups SET promotion_skipped_at = '2026-04-27T15:00:00.000Z' WHERE rollup_id = 'r-skipped'`,
+    `UPDATE t1_rollups SET promotion_filtered_at = '2026-04-27T15:00:00.000Z' WHERE rollup_id = 'r-skipped'`,
   );
 
   const prom = new T2Promotion({
@@ -571,6 +574,58 @@ test("detectEligibleRollups excludes promotion-skipped rollups", () => {
 
   const eligible = prom.detectEligibleRollups(24, new Date("2026-04-27T15:00:00Z"));
   expect(eligible).not.toContain("r-skipped");
+});
+
+test("resetPromotionFilter requires an explicit all-rows reset", () => {
+  seedT1("r-one", "s-one", "2026-04-26T10:00:00Z");
+  seedT1("r-two", "s-two", "2026-04-26T10:00:00Z");
+  db.run(
+    `UPDATE t1_rollups SET promotion_filtered_at = '2026-04-27T15:00:00.000Z' WHERE rollup_id IN ('r-one', 'r-two')`,
+  );
+
+  const prom = new T2Promotion({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date("2026-04-27T15:00:00Z"),
+    uuid: () => "u",
+    llm: async () => [],
+    minEvents: 5,
+  });
+
+  prom.resetPromotionFilter("r-one");
+  let rows = db
+    .prepare(
+      `SELECT rollup_id, promotion_filtered_at FROM t1_rollups WHERE rollup_id IN ('r-one', 'r-two') ORDER BY rollup_id`,
+    )
+    .all() as Array<{ rollup_id: string; promotion_filtered_at: string | null }>;
+  expect(rows).toEqual([
+    { rollup_id: "r-one", promotion_filtered_at: null },
+    { rollup_id: "r-two", promotion_filtered_at: "2026-04-27T15:00:00.000Z" },
+  ]);
+
+  expect(() => prom.resetPromotionFilter("", undefined)).toThrow(
+    "resetPromotionFilter requires a rollupId or { all: true }",
+  );
+  rows = db
+    .prepare(
+      `SELECT rollup_id, promotion_filtered_at FROM t1_rollups WHERE rollup_id IN ('r-one', 'r-two') ORDER BY rollup_id`,
+    )
+    .all() as Array<{ rollup_id: string; promotion_filtered_at: string | null }>;
+  expect(rows).toEqual([
+    { rollup_id: "r-one", promotion_filtered_at: null },
+    { rollup_id: "r-two", promotion_filtered_at: "2026-04-27T15:00:00.000Z" },
+  ]);
+
+  prom.resetPromotionFilter(null, { all: true });
+  rows = db
+    .prepare(
+      `SELECT rollup_id, promotion_filtered_at FROM t1_rollups WHERE rollup_id IN ('r-one', 'r-two') ORDER BY rollup_id`,
+    )
+    .all() as Array<{ rollup_id: string; promotion_filtered_at: string | null }>;
+  expect(rows).toEqual([
+    { rollup_id: "r-one", promotion_filtered_at: null },
+    { rollup_id: "r-two", promotion_filtered_at: null },
+  ]);
 });
 
 test("promoteRollup replaces orphaned t2_vec rowids", async () => {

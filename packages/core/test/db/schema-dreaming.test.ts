@@ -85,7 +85,7 @@ it("memory_links UNIQUE(src_id, dst_id, link_type) prevents duplicate edges from
   ).toThrow();
 });
 
-it("t1_rollups gains claimed_at, claimed_by_cycle, embedding_model_version, promotion_skipped_at; t2_memories gains embedding_model_version", async () => {
+it("t1_rollups gains claimed_at, claimed_by_cycle, embedding_model_version, promotion_filtered_at; t2_memories gains embedding_model_version", async () => {
   const db = await openTestDb();
   const t1cols = db
     .prepare("PRAGMA table_info(t1_rollups)")
@@ -98,8 +98,70 @@ it("t1_rollups gains claimed_at, claimed_by_cycle, embedding_model_version, prom
   expect(t1cols).toContain("claimed_at");
   expect(t1cols).toContain("claimed_by_cycle");
   expect(t1cols).toContain("embedding_model_version");
-  expect(t1cols).toContain("promotion_skipped_at");
+  expect(t1cols).toContain("promotion_filtered_at");
   expect(t2cols).toContain("embedding_model_version");
+});
+
+it("promotion_filtered_at migration preserves legacy promotion_skipped_at values and is idempotent", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  db.exec(`
+    CREATE TABLE t1_rollups (
+      rollup_id TEXT PRIMARY KEY,
+      project_id TEXT,
+      user_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      ended_at TEXT,
+      n_events INTEGER NOT NULL,
+      lane_breakdown_json TEXT NOT NULL DEFAULT '{}',
+      provider_breakdown_json TEXT NOT NULL DEFAULT '{}',
+      cost_usd_total REAL,
+      tokens_in_total INTEGER,
+      tokens_out_total INTEGER,
+      first_prompt_excerpt TEXT,
+      last_response_excerpt TEXT,
+      tool_calls_summary TEXT,
+      source_event_ids TEXT NOT NULL DEFAULT '[]',
+      t2_promoted_at TEXT,
+      failed_promotion_attempts INTEGER NOT NULL DEFAULT 0,
+      promotion_skipped_at TEXT
+    );
+    INSERT INTO t1_rollups(
+      rollup_id, user_id, session_id, started_at, n_events, promotion_skipped_at
+    ) VALUES (
+      'r1', 'u1', 's1', '2026-01-01T00:00:00Z', 1, '2026-02-02T03:04:05.000Z'
+    );
+  `);
+
+  applySchema(db, { embeddingDim: 384 });
+
+  let cols = db
+    .prepare("PRAGMA table_info(t1_rollups)")
+    .all()
+    .map((r: any) => r.name);
+  expect(cols).toContain("promotion_filtered_at");
+
+  let row = db
+    .prepare(
+      "SELECT promotion_skipped_at, promotion_filtered_at FROM t1_rollups WHERE rollup_id = 'r1'",
+    )
+    .get() as any;
+  expect(row.promotion_skipped_at).toBe("2026-02-02T03:04:05.000Z");
+  expect(row.promotion_filtered_at).toBe("2026-02-02T03:04:05.000Z");
+
+  applySchema(db, { embeddingDim: 384 });
+  cols = db
+    .prepare("PRAGMA table_info(t1_rollups)")
+    .all()
+    .map((r: any) => r.name);
+  expect(cols.filter((name: string) => name === "promotion_filtered_at")).toHaveLength(1);
+  row = db
+    .prepare(
+      "SELECT promotion_skipped_at, promotion_filtered_at FROM t1_rollups WHERE rollup_id = 'r1'",
+    )
+    .get() as any;
+  expect(row.promotion_filtered_at).toBe("2026-02-02T03:04:05.000Z");
 });
 
 it("startup zombie sweep marks outcome='running' rows as 'crashed' and clears claimed_at", async () => {

@@ -154,8 +154,8 @@ WS4 ranking (needs WS0 verify + WS3 decay_score)
 ### T2.3 — Creation gate: classify + density floor + episodic/standing-brief reject · dispatch-sized: YES
 - **Failing test:** `packages/daemon/test/dreaming/promote-discriminator.test.ts` — golden fixture of REAL corpus cases: `"a failing test was written first, then implemented..."` → `is_episodic=true`, dropped; `"recall.ts:172 filters retired_at IS NULL"` → semantic, **kept** with a `why`; `"You are X, a long-lived agent..."` → `obs_type='standing_brief'`, `promote:false`, NOT inserted; body<80 chars & depth<2 → rejected; **must-KEEP** cases (semantic, why-grounded) included so the gate is tuned against ground truth.
 - **Files:** the promotion LLM prompt (`t2.ts:358-359` — richer schema, **no new call**) returning `obs_type`/`promote:false`; post-parse `extractions.filter(e => e.promote !== false)` in `promoteRollup`.
-- **[RED-TEAM NOTE — cost]** A richer schema = more output tokens × the 4,262-row backlog the first time `PENUMBRA_PROMOTION_GATE` is ON. Sequence after T0.4 and size it (shares the budget concern of #8).
-- **Risk gate:** gated behind `PENUMBRA_PROMOTION_GATE`; **rejection is at promotion (reversible — the t1 rollup stays, can re-promote)**, never retiring live rows; `depth>=2` escape hatch on the density floor.
+- **[RED-TEAM NOTE — cost]** A richer schema = more output tokens × the 4,262-row backlog the first time `PENUMBRA_EXTRACTION_FILTER_GATE` is ON. Sequence after T0.4 and size it (shares the budget concern of #8).
+- **Risk gate:** gated behind `PENUMBRA_EXTRACTION_FILTER_GATE`; **rejection is at promotion (reversible — the t1 rollup stays, can re-promote)**, never retiring live rows; `depth>=2` escape hatch on the density floor.
 
 ### T2.4 — Near-duplicate BLOCK-before-insert (quality-aware) · dispatch-sized: YES
 - **Failing test:** `packages/core/test/t2-near-dup-gate.test.ts` — `fakeEmbedder` (string→fixed unit vector, cosine is arithmetic, no network): body-A then near-dup body-B (cosine>0.95) → second insert handled per tiebreak; cosine 0.5 → both written.
