@@ -375,6 +375,72 @@ test("TTL keeps running workflow runs readable and writable after expiry", async
   }
 });
 
+test("terminal workflow runs keep their result through the retention window and are later purged", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wfr-ttl-terminal-"));
+  const dbPath = join(root, "db.sqlite");
+  try {
+    let now = new Date("2026-04-26T00:10:00Z");
+    let n = 0;
+    const registry = createWorkflowRunsRegistry({
+      uuid: () => `wfrun-${++n}`,
+      clock: () => now,
+      db: freshDb(dbPath),
+      storageRoot: root,
+      ttlMs: 10_000,
+    });
+
+    expect(registry.register("wf-a", "proj")).toBe("wfrun-1");
+    now = new Date("2026-04-26T00:10:18Z");
+    await registry.recordResult("wfrun-1", { ok: true });
+
+    await expect(registry.getStatus("wfrun-1")).resolves.toMatchObject({
+      status: "completed",
+      started_at: new Date("2026-04-26T00:10:00Z").getTime(),
+      finished_at: new Date("2026-04-26T00:10:18Z").getTime(),
+      result: { ok: true },
+    });
+    await expect(registry.waitForResult("wfrun-1", 10)).resolves.toEqual({
+      status: "completed",
+      started_at: new Date("2026-04-26T00:10:00Z").getTime(),
+      finished_at: new Date("2026-04-26T00:10:18Z").getTime(),
+      result: { ok: true },
+    });
+
+    now = new Date("2026-04-26T00:10:27Z");
+    const refreshedRow = freshDb(dbPath)
+      .query<
+        { expires_at: number; completed_at: number | null },
+        [string]
+      >(`SELECT expires_at, completed_at FROM workflow_runs WHERE id = ?`)
+      .get("wfrun-1");
+    expect(refreshedRow).toEqual({
+      expires_at: new Date("2026-04-26T00:10:28Z").getTime(),
+      completed_at: new Date("2026-04-26T00:10:18Z").getTime(),
+    });
+    await expect(registry.getStatus("wfrun-1")).resolves.toMatchObject({
+      status: "completed",
+      started_at: new Date("2026-04-26T00:10:00Z").getTime(),
+      finished_at: new Date("2026-04-26T00:10:18Z").getTime(),
+      result: { ok: true },
+    });
+
+    now = new Date("2026-04-26T00:10:29Z");
+    expect(registry.register("wf-b", "proj")).toBe("wfrun-2");
+    expect(registry.verify("wfrun-1")).toBeNull();
+    await expect(registry.getStatus("wfrun-1")).resolves.toBeNull();
+    await expect(registry.waitForResult("wfrun-1", 10)).resolves.toBeNull();
+    const row = freshDb(dbPath)
+      .query<
+        { count: number },
+        [string]
+      >(`SELECT COUNT(*) AS count FROM workflow_runs WHERE id = ?`)
+      .get("wfrun-1");
+    expect(row?.count).toBe(0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("waitForResult resolves after the in-memory entry is replaced", async () => {
   const root = mkdtempSync(join(tmpdir(), "wfr-wait-race-"));
   const dbPath = join(root, "db.sqlite");

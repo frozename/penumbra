@@ -287,6 +287,7 @@ export function createWorkflowRunsRegistry(opts: {
     patch: Partial<{
       status: "running" | "completed" | "failed";
       completed_at: number | null;
+      expires_at: number;
       result_json: string | null;
       error_json: string | null;
       result_spill_path: string | null;
@@ -404,6 +405,7 @@ export function createWorkflowRunsRegistry(opts: {
         refreshPersistedState(workflowRunId, {
           status: "completed",
           completed_at: record.finished_at,
+          expires_at: finishedAt + ttlMs,
           result_json: spill.spillPath ? null : spill.payloadJson,
           error_json: null,
           result_spill_path: spill.spillPath,
@@ -425,6 +427,7 @@ export function createWorkflowRunsRegistry(opts: {
         refreshPersistedState(workflowRunId, {
           status: "failed",
           completed_at: record.finished_at,
+          expires_at: finishedAt + ttlMs,
           result_json: null,
           error_json: errorJson,
           result_spill_path: null,
@@ -453,6 +456,7 @@ export function createWorkflowRunsRegistry(opts: {
         refreshPersistedState(workflowRunId, {
           status: "failed",
           completed_at: record.finished_at,
+          expires_at: finishedAt + ttlMs,
           result_json: null,
           error_json: spill.spillPath ? null : spill.payloadJson,
           result_spill_path: null,
@@ -474,6 +478,7 @@ export function createWorkflowRunsRegistry(opts: {
         refreshPersistedState(workflowRunId, {
           status: "failed",
           completed_at: record.finished_at,
+          expires_at: finishedAt + ttlMs,
           result_json: null,
           error_json: errorJson,
           result_spill_path: null,
