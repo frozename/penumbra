@@ -170,6 +170,142 @@ test("spawn happy path: creates session, leases task, calls chainStart, and reco
   db.close();
 });
 
+async function dispatchLeasedOrchestrateTask(opts: {
+  db: Database;
+  bus: TaskEventBus;
+  sessions: MaestroSessionWriter;
+  taskWriter: TaskWriter;
+}): Promise<{ reactor: ReturnType<typeof createOrchestrateReactor>; task_id: string }> {
+  const reactor = createOrchestrateReactor({
+    db: opts.db,
+    bus: opts.bus,
+    sessions: opts.sessions,
+    taskWriter: opts.taskWriter,
+    chainStart: async () => ({ handoff_id: "handoff-bk", conversation_id: "conv-bk" }),
+    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    defaults: DEFAULT_BOUNDS,
+  });
+  reactor.start();
+  const { task_id } = opts.taskWriter.file({
+    prompt: "Backstop task",
+    kind: "orchestrate",
+    eligibility: { allow_agents: [MAESTRO_AGENT.name] },
+    created_by_kind: "human",
+    created_by_id: "cli",
+  });
+  await waitFor(() => {
+    expect(opts.taskWriter.get(task_id).status).toBe("leased");
+  });
+  reactor.stop();
+  return { reactor, task_id };
+}
+
+function insertTerminalHandoff(db: Database, status: string): void {
+  db.run(
+    `INSERT INTO handoffs(handoff_id, ts, conversation_id, from_agent, to_agent, message, status)
+     VALUES('handoff-bk', '2026-06-09T00:00:00Z', 'conv-bk', 'maestro', ?, 'msg', ?)`,
+    [MAESTRO_AGENT.name, status],
+  );
+}
+
+test("completion backstop: still-leased task whose chain completed is failed, not inferred done", async () => {
+  const db = setupDb();
+  const bus = new TaskEventBus();
+  const sessions = new MaestroSessionWriter({ db });
+  const taskWriter = new TaskWriter(db, {
+    bus,
+    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+  });
+
+  const { reactor, task_id } = await dispatchLeasedOrchestrateTask({
+    db,
+    bus,
+    sessions,
+    taskWriter,
+  });
+
+  // Chain reached a terminal 'completed' state but the agent never called
+  // task.complete, so the task is still leased.
+  insertTerminalHandoff(db, "completed");
+  reactor.reconcileChainCompletions();
+
+  const task = taskWriter.get(task_id);
+  expect(task.status).toBe("failed");
+  expect(task.failure_reason).toBe("chain_completed_without_self_completion");
+
+  const terminated = db
+    .query<
+      { n: number },
+      [string]
+    >(`SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND kind = 'orchestrate_terminated'`)
+    .get(task_id);
+  expect(terminated?.n).toBeGreaterThanOrEqual(1);
+  // Lease released so the lease-sweeper cannot reclaim a now-terminal task.
+  const openLease = db
+    .query<
+      { n: number },
+      [string]
+    >(`SELECT COUNT(*) AS n FROM task_leases WHERE task_id = ? AND released_at IS NULL`)
+    .get(task_id);
+  expect(openLease?.n).toBe(0);
+  db.close();
+});
+
+test("completion backstop: still-leased task whose chain failed is failed with chain_failed", async () => {
+  const db = setupDb();
+  const bus = new TaskEventBus();
+  const sessions = new MaestroSessionWriter({ db });
+  const taskWriter = new TaskWriter(db, {
+    bus,
+    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+  });
+
+  const { reactor, task_id } = await dispatchLeasedOrchestrateTask({
+    db,
+    bus,
+    sessions,
+    taskWriter,
+  });
+
+  insertTerminalHandoff(db, "failed");
+  reactor.reconcileChainCompletions();
+
+  const task = taskWriter.get(task_id);
+  expect(task.status).toBe("failed");
+  expect(task.failure_reason).toBe("chain_failed");
+  db.close();
+});
+
+test("completion backstop: leaves a task the agent already self-completed untouched", async () => {
+  const db = setupDb();
+  const bus = new TaskEventBus();
+  const sessions = new MaestroSessionWriter({ db });
+  const taskWriter = new TaskWriter(db, {
+    bus,
+    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+  });
+
+  const { reactor, task_id } = await dispatchLeasedOrchestrateTask({
+    db,
+    bus,
+    sessions,
+    taskWriter,
+  });
+
+  // Agent self-completed the task before the backstop runs.
+  const lease = taskWriter.get(task_id, { include: ["lease"] }).lease;
+  expect(lease).toBeTruthy();
+  taskWriter.complete({ task_id, lease_id: lease!.id, result_summary: "agent did the work" });
+  expect(taskWriter.get(task_id).status).toBe("done");
+
+  insertTerminalHandoff(db, "completed");
+  reactor.reconcileChainCompletions();
+
+  // Backstop must not override the agent's own verdict.
+  expect(taskWriter.get(task_id).status).toBe("done");
+  db.close();
+});
+
 test("pre-bound session with null chain_handoff_id dispatches using session.agent_id", async () => {
   const db = setupDb();
   const bus = new TaskEventBus();

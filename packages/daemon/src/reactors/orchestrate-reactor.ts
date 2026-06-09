@@ -42,9 +42,19 @@ interface HandoffStatusRow {
   status: string;
 }
 
+interface TaskStatusRow {
+  status: string;
+}
+
+interface OpenLeaseRow {
+  id: string;
+}
+
 export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): {
   start(): void;
   stop(): void;
+  /** Run the chain-completion backstop once (exposed for tests/maintenance). */
+  reconcileChainCompletions(): void;
 } {
   const now = opts.now ?? Date.now;
   let iterator: AsyncIterableIterator<{
@@ -134,6 +144,43 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): {
        VALUES (?, ?, 'orchestrate_terminated', NULL, ?, ?)`,
       )
       .run(taskId, ts, JSON.stringify(payload), taskId);
+
+    // Completion backstop: if the dispatched agent never resolved the task
+    // itself (still `leased`) when its chain reached a terminal state, resolve
+    // it here. Otherwise it hangs `leased` until the lease expires, then the
+    // lease-sweeper reclaims it -> re-dispatch loop. We FAIL rather than infer
+    // success: a terminated chain is not proof the acceptance criteria were met
+    // -- the agent's own task.complete call is the only success signal. Tasks
+    // the agent self-resolved are already terminal here and left untouched, and
+    // the chainStart-failure path leaves the task `pending` (no open lease), so
+    // it is skipped too and stays retryable.
+    const taskStatusRow = opts.db
+      .query<TaskStatusRow | null, [string]>("SELECT status FROM tasks WHERE id = ? LIMIT 1")
+      .get(taskId);
+    if (taskStatusRow?.status === "leased") {
+      const openLease = opts.db
+        .query<OpenLeaseRow | null, [string]>(
+          `SELECT id
+             FROM task_leases
+            WHERE task_id = ? AND released_at IS NULL
+            ORDER BY claimed_at DESC
+            LIMIT 1`,
+        )
+        .get(taskId);
+      if (openLease) {
+        const failReason =
+          terminationReason === "completed"
+            ? "chain_completed_without_self_completion"
+            : `chain_${terminationReason}`;
+        try {
+          opts.taskWriter.fail({ task_id: taskId, lease_id: openLease.id, reason: failReason });
+        } catch {
+          // Best-effort: the session is already terminated and the
+          // orchestrate_terminated event recorded, so a lost fail race
+          // (e.g. a concurrent self-complete) is benign.
+        }
+      }
+    }
   }
 
   async function recordSpawned(taskId: string, payload: Record<string, unknown>): Promise<void> {
@@ -243,6 +290,10 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): {
         clearInterval(chainCompletionPoll);
         chainCompletionPoll = null;
       }
+    },
+
+    reconcileChainCompletions(): void {
+      reconcileChainCompletions();
     },
   };
 }
