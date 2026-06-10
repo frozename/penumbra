@@ -651,7 +651,8 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
   },
   lane_close: {
     descriptor: {
-      description: "Close a lane with a reviewer outcome.",
+      description:
+        "Close a lane with a reviewer outcome. Pass reviewer_handoff_id on passed/failed closes when a reviewer handoff exists — without it the memory-verify authorization step is skipped (surfaced as memory_verify_authorization in the result).",
       inputSchema: LaneCloseInputShape,
     },
     makeHandler: laneCloseHandler as unknown as ToolDef["makeHandler"],

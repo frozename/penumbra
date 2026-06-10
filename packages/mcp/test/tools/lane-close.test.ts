@@ -139,6 +139,7 @@ test("laneCloseHandler posts lane_close to the daemon and returns the response",
       recalled_query: null,
       override_reason: "validated in review",
       metadata_json: "{}",
+      memory_verify_authorization: "authorized",
     });
   } finally {
     restore();
@@ -357,4 +358,183 @@ test("LaneCloseInputShape rejects unknown metadata keys at MCP boundary", () => 
     metadata: { invented_field: 1 },
   });
   expect(res.success).toBe(false);
+});
+
+test("lane_close without a reviewer returns the row and skips memory-verify authorization", async () => {
+  const receivedPaths: string[] = [];
+  const { daemon, restore } = makeDaemon(async (input) => {
+    receivedPaths.push(new URL(String(input)).pathname);
+    return Response.json({
+      lane_id: "lane-noreviewer",
+      ts_opened: "2026-05-12T00:00:00Z",
+      ts_closed: "2026-05-12T00:00:00Z",
+      task_class: "STANDARD",
+      implementer_handoff: "h-impl",
+      reviewer_handoff: null,
+      gate_status: "passed",
+      recalled_memory_ids: [],
+      recalled_query: null,
+      override_reason: null,
+      metadata_json: "{}",
+    });
+  });
+
+  try {
+    const out = parseToolResult(
+      await laneCloseHandler(daemon)({ lane_id: "lane-noreviewer", gate_status: "passed" }),
+    );
+    expect(receivedPaths).toEqual(["/lanes/close"]);
+    expect(out).toMatchObject({
+      lane_id: "lane-noreviewer",
+      gate_status: "passed",
+      implementer_handoff: "h-impl",
+      reviewer_handoff: null,
+      memory_verify_authorization: "skipped_no_reviewer",
+    });
+  } finally {
+    restore();
+  }
+});
+
+test("lane_close authorizes memory verification on a failed close with a reviewer", async () => {
+  const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+  const { daemon, restore } = makeDaemon(async (input, init) => {
+    const path = new URL(String(input)).pathname;
+    calls.push({ path, body: JSON.parse(String(init?.body)) as Record<string, unknown> });
+    if (path === "/lanes/close") {
+      return Response.json({
+        lane_id: "lane-failed",
+        ts_opened: "2026-05-12T00:00:00Z",
+        ts_closed: "2026-05-12T00:00:00Z",
+        task_class: "STANDARD",
+        implementer_handoff: "h-impl",
+        reviewer_handoff: "h-review",
+        gate_status: "failed",
+        recalled_memory_ids: [],
+        recalled_query: null,
+        override_reason: null,
+        metadata_json: "{}",
+      });
+    }
+    return Response.json({ ok: true, authorized: true, events_written: 1 });
+  });
+
+  try {
+    await laneCloseHandler(daemon)({
+      lane_id: "lane-failed",
+      gate_status: "failed",
+      reviewer_handoff_id: "h-review",
+    });
+    expect(calls.map((c) => c.path)).toEqual(["/lanes/close", "/memory-verify/authorize"]);
+    expect(calls[1]!.body).toMatchObject({ handoff_id: "h-impl", verdict: "failed" });
+  } finally {
+    restore();
+  }
+});
+
+test("lane_close never authorizes on a review_debt close", async () => {
+  const receivedPaths: string[] = [];
+  const { daemon, restore } = makeDaemon(async (input) => {
+    receivedPaths.push(new URL(String(input)).pathname);
+    return Response.json({
+      lane_id: "lane-debt",
+      ts_opened: "2026-05-12T00:00:00Z",
+      ts_closed: "2026-05-12T00:00:00Z",
+      task_class: "STANDARD",
+      implementer_handoff: "h-impl",
+      reviewer_handoff: "h-review",
+      gate_status: "review_debt",
+      recalled_memory_ids: [],
+      recalled_query: null,
+      override_reason: null,
+      metadata_json: "{}",
+    });
+  });
+
+  try {
+    await laneCloseHandler(daemon)({
+      lane_id: "lane-debt",
+      gate_status: "review_debt",
+      reviewer_handoff_id: "h-review",
+    });
+    expect(receivedPaths).toEqual(["/lanes/close"]);
+  } finally {
+    restore();
+  }
+});
+
+test("lane_close still rejects a passed close missing implementer_handoff", async () => {
+  const { daemon, restore } = makeDaemon(async () =>
+    Response.json({
+      lane_id: "lane-malformed",
+      gate_status: "passed",
+      implementer_handoff: null,
+      reviewer_handoff: null,
+    }),
+  );
+  try {
+    await expect(
+      laneCloseHandler(daemon)({ lane_id: "lane-malformed", gate_status: "passed" }),
+    ).rejects.toThrow("missing implementer_handoff");
+  } finally {
+    restore();
+  }
+});
+
+test("lane_close round-trips a reviewer-less passed close through the live daemon", async () => {
+  const live = makeLiveDaemon();
+  const originalFetch = globalThis.fetch;
+  // Record the handler-under-test's daemon traffic so the absence of the
+  // authorize call is asserted, not assumed (the test's own setup calls go
+  // through live.fetchImpl directly and bypass this recorder).
+  const shimPaths: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    shimPaths.push(new URL(String(input)).pathname);
+    return live.fetchImpl(input, init);
+  }) as typeof fetch;
+
+  try {
+    const opened = await live.fetchImpl("http://daemon/lanes/open", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${live.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        lane_id: "lane-live-noreviewer",
+        implementer_handoff: "h-live-impl-2",
+        task_class: "STANDARD",
+      }),
+    });
+    expect(opened.status).toBe(200);
+
+    const out = parseToolResult(
+      await laneCloseHandler(live.daemon)({
+        lane_id: "lane-live-noreviewer",
+        gate_status: "passed",
+      }),
+    );
+
+    expect(out).toMatchObject({
+      lane_id: "lane-live-noreviewer",
+      gate_status: "passed",
+      implementer_handoff: "h-live-impl-2",
+      reviewer_handoff: null,
+    });
+    expect(shimPaths).toEqual(["/lanes/close"]);
+
+    const recent = await live.fetchImpl("http://daemon/lanes/recent", {
+      headers: { authorization: `Bearer ${live.token}` },
+    });
+    expect(recent.status).toBe(200);
+    const lanes = ((await recent.json()) as { lanes: Array<{ lane_id: string }> }).lanes;
+    expect(lanes.find((l) => l.lane_id === "lane-live-noreviewer")).toMatchObject({
+      gate_status: "passed",
+      implementer_handoff: "h-live-impl-2",
+      reviewer_handoff: null,
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    live.stop();
+  }
 });
