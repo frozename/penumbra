@@ -5,6 +5,9 @@
       "command": "bun",
       "args": ["/Volumes/WorkSSD/repos/personal/penumbra/packages/mcp/bin/penumbra-mcp.ts"],
       "env": {
+        "PENUMBRA_STORAGE_ROOT": "/Users/acordeiro/.penumbra",
+        "PENUMBRA_MCP_INVOCATION_LOG_ENABLED": "1",
+        "PENUMBRA_MCP_ORIGIN": "maestro",
         "PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS": "8000"
       }
     }
