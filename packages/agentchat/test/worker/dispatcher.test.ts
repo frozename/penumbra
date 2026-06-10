@@ -1,4 +1,5 @@
 import { expect, test, mock } from "bun:test";
+import { spawnCliAdapter, spawnCliAdapterStream } from "../../src/adapters/cli-spawn.js";
 import { createWorkerDispatcher, type WorkerDispatcherDeps } from "../../src/worker/dispatcher.js";
 import { PenumbraHttpError } from "../../src/penumbra-client.js";
 
@@ -30,6 +31,7 @@ function deps(over: Partial<WorkerDispatcherDeps> = {}): WorkerDispatcherDeps {
       agent: "executor",
     }),
     postProgress: mock().mockResolvedValue(undefined),
+    complete: mock().mockResolvedValue(undefined),
     log: { info: () => {}, warn: () => {}, debug: () => {} } as any,
     concurrency: 4,
     ...over,
@@ -59,7 +61,7 @@ test("progress events are emitted in order", async () => {
   await dispatcher.idle();
 
   // hop-start, tokens, hop-end
-  const calls = d.postProgress.mock.calls.map((c) => (c[1] as any).type);
+  const calls = (d.postProgress as any).mock.calls.map((c: any[]) => c[1].type);
   expect(calls[0]).toBe("hop-start");
   expect(calls).toContain("token");
   expect(calls[calls.length - 1]).toBe("chain-end");
@@ -204,6 +206,115 @@ test("emits dispatch.end status=error when dispatch reports terminal error", asy
       kind: "adapter_retry_exhausted",
       handoff_id: "h-error",
       agent: "executor",
+    }),
+  );
+});
+
+test("missing cli binary fails only the handoff and does not surface an unhandled rejection", async () => {
+  const events: any[] = [];
+  const unhandled: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown) => {
+    unhandled.push(reason);
+  };
+  process.on("unhandledRejection", onUnhandledRejection);
+
+  const d = deps({
+    onEvent: (event: any) => events.push(event),
+    workerId: "w-dispatch",
+    dispatch: mock().mockImplementation(async (handoff, _onChunk, signal: AbortSignal) => {
+      const command =
+        handoff.handoff_id === "h-missing" ? "/nonexistent/definitely-not-a-binary-xyz" : "sh";
+      const args =
+        handoff.handoff_id === "h-missing"
+          ? ["-c", "printf should-not-run"]
+          : ["-c", 'printf "ok"'];
+      const result = await spawnCliAdapter({
+        command,
+        args,
+        prompt: handoff.message ?? "",
+        signal,
+        pass_via: "argv",
+      });
+      return {
+        next: null,
+        terminatedReason: "no_mention",
+        text: result.text,
+        agent: handoff.to_agent,
+      };
+    }),
+  } as any);
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff("h-missing"));
+  await dispatcher.idle();
+  await dispatcher.handle(baseHandoff("h-followup"));
+  await dispatcher.idle();
+
+  process.off("unhandledRejection", onUnhandledRejection);
+
+  expect(unhandled).toHaveLength(0);
+  expect(
+    events.some((event) => event.kind === "dispatch.end" && event.handoff_id === "h-missing"),
+  ).toBe(true);
+  expect(
+    events.some((event) => event.kind === "dispatch.end" && event.handoff_id === "h-followup"),
+  ).toBe(true);
+  expect(
+    events.some(
+      (event) =>
+        event.kind === "dispatch.end" &&
+        event.handoff_id === "h-followup" &&
+        event.meta?.status === "ok",
+    ),
+  ).toBe(true);
+});
+
+test("streaming argv dispatch with a missing binary rejects cleanly and later streaming dispatch still works", async () => {
+  const unhandled: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown) => {
+    unhandled.push(reason);
+  };
+  process.on("unhandledRejection", onUnhandledRejection);
+
+  const missingStream = spawnCliAdapterStream({
+    command: "/nonexistent/definitely-not-a-binary-xyz",
+    args: ["--ignored"],
+    prompt: "hello",
+    signal: new AbortController().signal,
+    pass_via: "argv",
+  });
+
+  const missingEvents: any[] = [];
+  let thrownErr: unknown;
+  try {
+    for await (const ev of missingStream) {
+      missingEvents.push(ev);
+    }
+  } catch (err) {
+    thrownErr = err;
+  }
+
+  const followupEvents: any[] = [];
+  for await (const ev of spawnCliAdapterStream({
+    command: "sh",
+    args: ["-c", 'printf "ok"'],
+    prompt: "",
+    signal: new AbortController().signal,
+    pass_via: "argv",
+  })) {
+    followupEvents.push(ev);
+  }
+
+  process.off("unhandledRejection", onUnhandledRejection);
+
+  expect(missingEvents.some((event) => event.type === "done")).toBe(false);
+  expect(thrownErr).toBeInstanceOf(Error);
+  expect((thrownErr as Error).message).toMatch(/ENOENT/);
+  expect(unhandled).toHaveLength(0);
+  expect(followupEvents.at(-1)).toEqual(
+    expect.objectContaining({
+      type: "done",
+      result: expect.objectContaining({ text: "ok" }),
     }),
   );
 });
@@ -401,7 +512,7 @@ test("token batching: multiple rapid chunks are coalesced into fewer POSTs", asy
   await dispatcher.handle(baseHandoff("h1"));
   await dispatcher.idle();
 
-  const tokenCalls = d.postProgress.mock.calls.filter((c) => (c[1] as any).type === "token");
+  const tokenCalls = (d.postProgress as any).mock.calls.filter((c: any[]) => c[1].type === "token");
   // With correct cooldown, t2 and t3 should be batched and sent AFTER the cooldown.
   // Currently, t2 will fire immediately at 50ms because inflightProgress is already null.
   expect(tokenCalls.length).toBeLessThan(3);

@@ -74,6 +74,8 @@ interface ProcessExit {
   signal: NodeJS.Signals | null;
 }
 
+type SettledProcessExit = { ok: true; exit: ProcessExit } | { ok: false; error: unknown };
+
 function spawnProcess(opts: {
   command: string;
   args: string[];
@@ -138,18 +140,17 @@ async function readStreamText(stream: NodeJS.ReadableStream | null | undefined):
   return text;
 }
 
-function waitForExit(proc: ChildProcess): Promise<ProcessExit> {
-  return new Promise((resolve, reject) => {
-    proc.once("error", reject);
-    proc.once("close", (code, signal) => resolve({ code, signal }));
-  });
-}
-
 function waitForProcessExit(proc: ChildProcess): Promise<ProcessExit> {
   return new Promise((resolve, reject) => {
     proc.once("error", reject);
     proc.once("exit", (code, signal) => resolve({ code, signal }));
   });
+}
+
+function observeProcessExit(proc: ChildProcess): Promise<SettledProcessExit> {
+  return waitForProcessExit(proc)
+    .then((exit) => ({ ok: true, exit }) as const)
+    .catch((error) => ({ ok: false, error }) as const);
 }
 
 function emit(
@@ -215,7 +216,7 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
     stdinMode: isArgv ? "ignore" : "pipe",
   });
   const spawnTs = Date.now();
-  const processExitPromise = waitForProcessExit(proc);
+  const processExitPromise = observeProcessExit(proc);
   emit(opts, "proc.spawn", { argv0: opts.command, pid: proc.pid, has_signal: true });
 
   let cancelTimer: ReturnType<typeof setTimeout> | null = null;
@@ -243,19 +244,26 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
 
   // Start collecting stderr in parallel so it doesn't block stdout consumption.
   const stderrPromise = readStreamText(proc.stderr);
+  stderrPromise.catch(() => {});
 
   let collected = "";
   // Stateful decoder handles multi-byte chars split across chunk boundaries.
   const decoder = new TextDecoder("utf-8", { fatal: false });
 
   try {
-    for await (const chunk of proc.stdout ?? []) {
-      const text = decoder.decode(chunk, { stream: true });
-      if (text) {
-        collected += text;
-        yield { type: "delta", text };
+    try {
+      for await (const chunk of proc.stdout ?? []) {
+        const text = decoder.decode(chunk, { stream: true });
+        if (text) {
+          collected += text;
+          yield { type: "delta", text };
+        }
+        if (opts.signal.aborted || timedOut) break;
       }
-      if (opts.signal.aborted || timedOut) break;
+    } catch (loopErr) {
+      const exitResult = await processExitPromise;
+      if (!exitResult.ok) throw exitResult.error;
+      throw loopErr;
     }
 
     // Flush any remaining bytes held by the stateful decoder.
@@ -266,7 +274,8 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
     }
 
     if (timedOut) {
-      await processExitPromise;
+      const exit = await processExitPromise;
+      if (!exit.ok) throw exit.error;
       emit(opts, "proc.exited.resolved", {
         pid: proc.pid,
         code: null,
@@ -278,7 +287,9 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
     }
 
     if (opts.signal.aborted) {
-      const exit = await processExitPromise;
+      const exitResult = await processExitPromise;
+      if (!exitResult.ok) throw exitResult.error;
+      const exit = exitResult.exit;
       emit(opts, "proc.exited.resolved", {
         pid: proc.pid,
         code: exit.code,
@@ -289,7 +300,9 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
       return;
     }
 
-    const [stderr, exit] = await Promise.all([stderrPromise, waitForExit(proc)]);
+    const [stderr, exitResult] = await Promise.all([stderrPromise, processExitPromise]);
+    if (!exitResult.ok) throw exitResult.error;
+    const exit = exitResult.exit;
     emit(opts, "proc.exited.resolved", {
       pid: proc.pid,
       code: exit.code,
@@ -356,6 +369,7 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; 
     stdinMode: isArgv ? "ignore" : "pipe",
   });
   const spawnTs = Date.now();
+  const processExitPromise = observeProcessExit(proc);
   emit(opts, "proc.spawn", { argv0: opts.command, pid: proc.pid, has_signal: true });
 
   let cancelTimer: ReturnType<typeof setTimeout> | null = null;
@@ -401,7 +415,10 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; 
         const [rawText, stderr, code] = await Promise.all([
           readStreamText(proc.stdout),
           readStreamText(proc.stderr),
-          waitForExit(proc),
+          processExitPromise.then((exit) => {
+            if (!exit.ok) throw exit.error;
+            return exit.exit;
+          }),
         ]);
         if (watchdogTriggered) {
           return { rawText, stderr, exit: code };
