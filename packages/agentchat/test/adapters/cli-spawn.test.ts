@@ -1,4 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import * as childProcess from "node:child_process";
+import { describe, expect, spyOn, test } from "bun:test";
 import {
   detectCapacityError,
   spawnCliAdapter,
@@ -249,6 +252,57 @@ test("spawnCliAdapterStream emits proc.exited.resolved on watchdog timeout befor
         event.meta?.reason === "watchdog",
     ),
   ).toBe(true);
+});
+
+test("spawnCliAdapterStream kills a live child when stdout iteration throws mid-stream", async () => {
+  let killed = false;
+  const spawnSpy = spyOn(childProcess, "spawn").mockImplementation(() => {
+    const proc = new EventEmitter() as any;
+    proc.pid = 1234;
+    proc.exitCode = null;
+    proc.signalCode = null;
+    proc.stdin = new PassThrough();
+    proc.stderr = new PassThrough();
+    proc.kill = (signal: string) => {
+      killed = true;
+      proc.signalCode = signal as NodeJS.Signals;
+      queueMicrotask(() => {
+        proc.stderr.end();
+        proc.emit("exit", null, signal);
+      });
+      return true;
+    };
+    proc.stdout = {
+      async *[Symbol.asyncIterator]() {
+        yield Buffer.from("partial");
+        throw new Error("stdout broke");
+      },
+    };
+    return proc;
+  });
+
+  let thrown: unknown;
+  const events: any[] = [];
+  try {
+    for await (const ev of spawnCliAdapterStream({
+      command: "mock-cli",
+      args: [],
+      prompt: "",
+      signal: new AbortController().signal,
+      onEvent: (event: any) => events.push(event),
+      log: { debug: () => {} },
+    } as any)) {
+      void ev;
+    }
+  } catch (err) {
+    thrown = err;
+  } finally {
+    spawnSpy.mockRestore();
+  }
+
+  expect(thrown).toBeInstanceOf(Error);
+  expect((thrown as Error).message).toBe("stdout broke");
+  expect(killed).toBe(true);
 });
 
 test("spawnCliAdapter emits proc.exited.resolved on watchdog timeout before throwing", async () => {

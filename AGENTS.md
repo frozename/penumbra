@@ -116,8 +116,8 @@ Dispatches are tracked end-to-end via `dispatch_events` rows (`acp.session.start
 
 Three sweepers cooperate:
 
-- **`stale-handoff-sweeper`** (event-aware): per-task-class threshold (`debug_diagnose` / `review_adversarial` 45 min, `implement_substantial` 60 min, `implement_small` / `plan_refine` 30 min, `docs_mechanical` 20 min, `smoke_test` 10 min, `health_check` 5 min) AND ≥ 5 min idle since last event → force-fail with `reason: stale_force_resolve`.
-- **`handoff-sweeper-worker`** (TTL, also event-aware as of `b3590ce`): if a `dispatched` handoff exceeds its task-class TTL AND no `dispatch_events` rows for that handoff are within the TTL window → mark `status: expired`. Streaming dispatches survive wall-clock-only thresholds.
+- **`stale-handoff-sweeper`** (event-aware): per-task-class threshold (`debug_diagnose` / `review_adversarial` 45 min, `implement_substantial` 60 min, `implement_small` 60 min, `plan_refine` 45 min, `docs_mechanical` 20 min, `smoke_test` 10 min, `health_check` 5 min) AND ≥ 5 min idle since last event → force-fail with `reason: stale_force_resolve`.
+- **`handoff-sweeper-worker`** (TTL, also event-aware as of `b3590ce`): if a `dispatched` handoff exceeds its task-class TTL AND no `dispatch_events` rows for that handoff are within the TTL window → mark `status: expired`. `implement_small` uses 30 min and `plan_refine` uses 45 min here; the `implement_small` TTL intentionally differs from the stale-handoff sweep threshold (60 min). Streaming dispatches survive wall-clock-only thresholds.
 - **`worktree-gc`**: every 30 min, remove worktrees whose handoff has been terminal for > 2 h. Emits `worktree.gc` dispatch events for forensics. Defaults configurable via `PENUMBRA_WORKTREE_GC_INTERVAL_MS` and `PENUMBRA_WORKTREE_GC_GRACE_MS`. The MCP `dispatch.land` success path also tears down the worktree inline.
 - **`reconciler-sweep`**: every 30 min, runs `runPrOrphanSweepForDaemon` to close PRs whose handoff terminated. Configurable via `PENUMBRA_RECONCILER_SWEEP_INTERVAL_MS` and `PENUMBRA_RECONCILER_SWEEP_MAX_CLOSE`.
 

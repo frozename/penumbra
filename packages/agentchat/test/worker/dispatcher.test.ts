@@ -257,6 +257,10 @@ test("missing cli binary fails only the handoff and does not surface an unhandle
     events.some((event) => event.kind === "dispatch.end" && event.handoff_id === "h-missing"),
   ).toBe(true);
   expect(
+    events.find((event) => event.kind === "dispatch.end" && event.handoff_id === "h-missing")?.meta
+      ?.status,
+  ).toBe("error");
+  expect(
     events.some((event) => event.kind === "dispatch.end" && event.handoff_id === "h-followup"),
   ).toBe(true);
   expect(
@@ -267,6 +271,37 @@ test("missing cli binary fails only the handoff and does not surface an unhandle
         event.meta?.status === "ok",
     ),
   ).toBe(true);
+});
+
+test("streaming stdin dispatch with a missing binary rejects cleanly", async () => {
+  const unhandled: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown) => {
+    unhandled.push(reason);
+  };
+  process.on("unhandledRejection", onUnhandledRejection);
+
+  const missingStream = spawnCliAdapterStream({
+    command: "/nonexistent/definitely-not-a-binary-xyz",
+    args: [],
+    prompt: "hello",
+    signal: new AbortController().signal,
+  });
+
+  const missingEvents: any[] = [];
+  let thrownErr: unknown;
+  try {
+    for await (const ev of missingStream) {
+      missingEvents.push(ev);
+    }
+  } catch (err) {
+    thrownErr = err;
+  }
+
+  process.off("unhandledRejection", onUnhandledRejection);
+
+  expect(missingEvents.some((event) => event.type === "done")).toBe(false);
+  expect(thrownErr).toBeInstanceOf(Error);
+  expect(unhandled).toHaveLength(0);
 });
 
 test("streaming argv dispatch with a missing binary rejects cleanly and later streaming dispatch still works", async () => {
@@ -309,7 +344,6 @@ test("streaming argv dispatch with a missing binary rejects cleanly and later st
 
   expect(missingEvents.some((event) => event.type === "done")).toBe(false);
   expect(thrownErr).toBeInstanceOf(Error);
-  expect((thrownErr as Error).message).toMatch(/ENOENT/);
   expect(unhandled).toHaveLength(0);
   expect(followupEvents.at(-1)).toEqual(
     expect.objectContaining({

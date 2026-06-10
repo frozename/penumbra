@@ -8,6 +8,7 @@ import {
   HandoffReader,
 } from "@penumbra/core";
 import { createHandoffSweeperWorker } from "../../src/workers/handoff-sweeper.js";
+import { resolveDispatchedTtlMs } from "../../src/workers/handoff-sweeper-thresholds.js";
 
 try {
   if (process.platform === "darwin") {
@@ -148,4 +149,8 @@ test("pending handoffs still expire after pending TTL (60min)", async () => {
   expect(handoff?.status).toBe("expired");
   expect(handoff?.resolution_reason).toContain("expired by sweeper after");
   expect(handoff?.resolution_reason).toContain("in pending");
+});
+
+test("resolveDispatchedTtlMs returns 45min for plan_refine", () => {
+  expect(resolveDispatchedTtlMs("plan_refine")).toBe(45 * 60_000);
 });

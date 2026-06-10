@@ -21,6 +21,7 @@ export interface SpawnOpts {
   thoughtCapture?: ThoughtCapture;
   eventContext?: { handoffId: string; workerId?: string; agentName?: string };
   onEvent?: (event: DispatchEventInput) => void;
+  log?: { debug?: (fields: Record<string, unknown>, message: string) => void };
 }
 
 const CAPACITY_PATTERNS: Array<{ provider: string; re: RegExp }> = [
@@ -147,7 +148,7 @@ function waitForProcessExit(proc: ChildProcess): Promise<ProcessExit> {
   });
 }
 
-function observeProcessExit(proc: ChildProcess): Promise<SettledProcessExit> {
+function settleProcessExit(proc: ChildProcess): Promise<SettledProcessExit> {
   return waitForProcessExit(proc)
     .then((exit) => ({ ok: true, exit }) as const)
     .catch((error) => ({ ok: false, error }) as const);
@@ -216,7 +217,7 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
     stdinMode: isArgv ? "ignore" : "pipe",
   });
   const spawnTs = Date.now();
-  const processExitPromise = observeProcessExit(proc);
+  const processExitPromise = settleProcessExit(proc);
   emit(opts, "proc.spawn", { argv0: opts.command, pid: proc.pid, has_signal: true });
 
   let cancelTimer: ReturnType<typeof setTimeout> | null = null;
@@ -261,8 +262,27 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
         if (opts.signal.aborted || timedOut) break;
       }
     } catch (loopErr) {
+      if (proc.exitCode === null && proc.signalCode === null) {
+        proc.kill("SIGKILL");
+      }
       const exitResult = await processExitPromise;
-      if (!exitResult.ok) throw exitResult.error;
+      const stderr = await stderrPromise;
+      if (!exitResult.ok) {
+        if (opts.log?.debug) {
+          opts.log.debug({ loopErr }, "stdout loop error masked by process error");
+        }
+        throw exitResult.error;
+      }
+      if (stderr && opts.onCapacityError) {
+        const capErr = detectCapacityError(stderr);
+        if (capErr) {
+          try {
+            opts.onCapacityError(capErr);
+          } catch {
+            /* Callback failures must not break the spawn return path. */
+          }
+        }
+      }
       throw loopErr;
     }
 
@@ -274,8 +294,9 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
     }
 
     if (timedOut) {
-      const exit = await processExitPromise;
-      if (!exit.ok) throw exit.error;
+      const exitResult = await processExitPromise;
+      if (!exitResult.ok) throw exitResult.error;
+      const exit = exitResult.exit;
       emit(opts, "proc.exited.resolved", {
         pid: proc.pid,
         code: null,
@@ -369,7 +390,7 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; 
     stdinMode: isArgv ? "ignore" : "pipe",
   });
   const spawnTs = Date.now();
-  const processExitPromise = observeProcessExit(proc);
+  const processExitPromise = settleProcessExit(proc);
   emit(opts, "proc.spawn", { argv0: opts.command, pid: proc.pid, has_signal: true });
 
   let cancelTimer: ReturnType<typeof setTimeout> | null = null;
