@@ -570,6 +570,12 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: OptNonNegInt,
     description: "Usage poll interval in milliseconds.",
   },
+  PENUMBRA_USAGE_POLL_SINGLETON: {
+    schema: Bool,
+    default: true,
+    description:
+      "Machine-wide usage-poll singleton lock gate; set to 0 so every worker polls (legacy behavior).",
+  },
 
   // ── embeddings ──────────────────────────────────────────────────────
   PENUMBRA_EMBEDDINGS_BASE_URL: {
