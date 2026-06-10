@@ -90,6 +90,19 @@ function workerHeartbeatGuard(services: Services): Response | null {
   const timeoutMsStr = process.env.PENUMBRA_WORKER_HEARTBEAT_TIMEOUT_MS;
   const timeoutMs = timeoutMsStr ? parseInt(timeoutMsStr, 10) : 15000;
   if (services.watchdog.hasActiveWorker(timeoutMs)) return null;
+  const staleHeartbeats = services.watchdog.getStaleHeartbeatAges(timeoutMs);
+  if (staleHeartbeats.length > 0) {
+    return json(
+      {
+        error: {
+          code: "worker_heartbeats_stale",
+          message: "agentchat-workers are registered but their heartbeats are stale",
+          workers: staleHeartbeats,
+        },
+      },
+      503,
+    );
+  }
   return json(
     {
       error: {

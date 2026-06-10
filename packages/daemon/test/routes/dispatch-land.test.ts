@@ -318,7 +318,8 @@ describe("dispatchLandRoute", () => {
               stderr: "",
             };
           }
-          if (args[0] === "merge" && args[1] === "--ff-only") return { code: 0, stdout: "", stderr: "" };
+          if (args[0] === "merge" && args[1] === "--ff-only")
+            return { code: 0, stdout: "", stderr: "" };
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {

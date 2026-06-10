@@ -57,6 +57,8 @@ function tempServices(opts?: {
   services.watchdog = {
     recordHeartbeat: () => {},
     hasActiveWorker: () => true,
+    getStaleWorkers: () => [],
+    getStaleHeartbeatAges: () => [],
     tick: async () => {},
   };
   return services;
@@ -1931,6 +1933,30 @@ test("POST /chains/start returns 503 if no active worker has heartbeated", async
   expect(res.status).toBe(503);
   const body = await res.json();
   expect(body.error.code).toBe("no_worker_registered");
+});
+
+test("POST /chains/start distinguishes stale workers from no registered workers", async () => {
+  const services = tempServices();
+  services.watchdog.hasActiveWorker = () => false;
+  services.watchdog.getStaleHeartbeatAges = () => [
+    { worker_id: "worker-a", last_seen_age_ms: 92_000 },
+    { worker_id: "worker-b", last_seen_age_ms: 125_000 },
+  ];
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({ initial_agent: "planner", message: "hi" }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(503);
+  const body = await res.json();
+  expect(body.error.code).toBe("worker_heartbeats_stale");
+  expect(body.error.workers).toEqual([
+    { worker_id: "worker-a", last_seen_age_ms: 92_000 },
+    { worker_id: "worker-b", last_seen_age_ms: 125_000 },
+  ]);
 });
 
 test("POST /chains/start writes user-prompt event + approved handoff and returns ids", async () => {

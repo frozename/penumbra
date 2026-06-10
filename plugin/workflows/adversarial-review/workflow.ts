@@ -69,9 +69,13 @@ type PersonaRunResult = {
 
 const RETRY_BACKOFF_MS = 5000;
 
-function shouldRetryNoWorkerRegistered(err: unknown): boolean {
+function shouldRetryWorkerUnavailable(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
-  return /no_worker_registered/i.test(message) || /503/.test(message);
+  return (
+    /no_worker_registered/i.test(message) ||
+    /worker_heartbeats_stale/i.test(message) ||
+    /503/.test(message)
+  );
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -546,7 +550,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
             wait = await ctx.awaitChain(dispatch.conversation_id, { timeoutMs });
             break;
           } catch (err) {
-            if (retryCount < 1 && shouldRetryNoWorkerRegistered(err)) {
+            if (retryCount < 1 && shouldRetryWorkerUnavailable(err)) {
               retryCount = 1;
               await sleep(RETRY_BACKOFF_MS);
               continue;
@@ -673,7 +677,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
         });
         return { dispatch, wait };
       } catch (err) {
-        if (attempts < 1 && shouldRetryNoWorkerRegistered(err)) {
+        if (attempts < 1 && shouldRetryWorkerUnavailable(err)) {
           attempts += 1;
           synthRetryUsed = true;
           await sleep(RETRY_BACKOFF_MS);
@@ -687,7 +691,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   try {
     const { dispatch: synthDispatch, wait: synthWait } = await dispatchSynth();
     const synthRetryBanner = synthRetryUsed
-      ? "> Synthesizer retried once after 503 no_worker_registered\n\n"
+      ? "> Synthesizer retried once after 503 no_worker_registered or worker_heartbeats_stale\n\n"
       : "";
     synthHandoffId = synthDispatch.handoff_id;
     synthStatus = synthWait.status;
@@ -710,7 +714,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     );
   } catch (err) {
     const synthRetryBanner = synthRetryUsed
-      ? "> Synthesizer retried once after 503 no_worker_registered\n\n"
+      ? "> Synthesizer retried once after 503 no_worker_registered or worker_heartbeats_stale\n\n"
       : "";
     synthStatus = "failed";
     synthesisPath = join(absoluteOutDir, "synthesis.md");

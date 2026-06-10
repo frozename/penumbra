@@ -60,6 +60,8 @@ function tempServices(opts: {
   services.watchdog = {
     recordHeartbeat: () => {},
     hasActiveWorker: () => true,
+    getStaleWorkers: () => [],
+    getStaleHeartbeatAges: () => [],
     tick: async () => {},
   };
   attachRuntimeConfig(services, opts.agents, opts.providerQuotas ?? []);

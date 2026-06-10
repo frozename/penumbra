@@ -102,6 +102,7 @@ export interface Watchdog {
   recordHeartbeat(worker_id: string): void;
   hasActiveWorker(timeoutMs: number): boolean;
   getStaleWorkers(timeoutMs: number): string[];
+  getStaleHeartbeatAges(timeoutMs: number): Array<{ worker_id: string; last_seen_age_ms: number }>;
   tick(): Promise<void>;
 }
 
@@ -318,6 +319,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
     recordHeartbeat: () => {},
     hasActiveWorker: () => false,
     getStaleWorkers: () => [],
+    getStaleHeartbeatAges: () => [],
     tick: async () => {},
   };
   return {

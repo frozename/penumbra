@@ -32,6 +32,8 @@ function tempServices(): Services {
   services.watchdog = {
     recordHeartbeat: () => {},
     hasActiveWorker: () => true,
+    getStaleWorkers: () => [],
+    getStaleHeartbeatAges: () => [],
     tick: async () => {},
   };
   return services;

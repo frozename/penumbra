@@ -35,10 +35,15 @@ export class WatchdogService implements Watchdog {
   }
 
   getStaleWorkers(timeoutMs: number): string[] {
+    return this.getStaleHeartbeatAges(timeoutMs).map(({ worker_id }) => worker_id);
+  }
+
+  getStaleHeartbeatAges(timeoutMs: number): Array<{ worker_id: string; last_seen_age_ms: number }> {
     const now = Date.now();
     const stale = [];
     for (const [worker_id, lastSeen] of this.lastHeartbeats) {
-      if (now - lastSeen > timeoutMs) stale.push(worker_id);
+      const last_seen_age_ms = now - lastSeen;
+      if (last_seen_age_ms > timeoutMs) stale.push({ worker_id, last_seen_age_ms });
     }
     return stale;
   }

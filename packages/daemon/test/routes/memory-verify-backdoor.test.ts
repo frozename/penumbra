@@ -88,9 +88,10 @@ function insertT2(db: Database, memoryId: string, createdAt: string): void {
 
 function readLastVerifiedAt(db: Database, memoryId: string): string | null {
   const row = db
-    .query<{ last_verified_at: string | null }, [string]>(
-      `SELECT last_verified_at FROM t2_memories WHERE memory_id = ?`,
-    )
+    .query<
+      { last_verified_at: string | null },
+      [string]
+    >(`SELECT last_verified_at FROM t2_memories WHERE memory_id = ?`)
     .get(memoryId);
   return row?.last_verified_at ?? null;
 }

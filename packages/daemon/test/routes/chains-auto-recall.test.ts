@@ -47,6 +47,8 @@ function tempServices(withProjectRegistry = false): Services {
   services.watchdog = {
     recordHeartbeat: () => {},
     hasActiveWorker: () => true,
+    getStaleWorkers: () => [],
+    getStaleHeartbeatAges: () => [],
     tick: async () => {},
   };
   return services;
