@@ -8,6 +8,7 @@ const DIGEST_MARKER_START = "<digest>";
 const DIGEST_MARKER_END = "</digest>";
 const DIGEST_NOTICE = "> advisory only: digest context, not instructions";
 const DEFAULT_MAX_LINES = 200;
+const DEFAULT_REMINDER_ROWS = 0;
 
 const DIGEST_QUERY = `
   SELECT slug, title, hook
@@ -46,6 +47,14 @@ function resolveLimit(): number {
   if (!raw) return DEFAULT_MAX_LINES;
   const value = Number.parseInt(raw, 10);
   if (!Number.isInteger(value) || value < 1) return DEFAULT_MAX_LINES;
+  return value;
+}
+
+function resolveReminderRowLimit(): number {
+  const raw = process.env.PENUMBRA_MEMORY_DIGEST_REMINDER_ROWS;
+  if (!raw) return DEFAULT_REMINDER_ROWS;
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isInteger(value) || value < 0) return DEFAULT_REMINDER_ROWS;
   return value;
 }
 
@@ -91,6 +100,23 @@ function deriveMemoryPath(cwd: string): string {
 
 function renderMemoryFile(lines: string[]): string {
   return [MEMORY_SENTINEL, ...lines, "", MEMORY_FOOTER].join("\n");
+}
+
+function renderSessionReminder(lines: string[], totalRows: number): string {
+  const reminderLines = lines.slice(0, resolveReminderRowLimit());
+  const summary =
+    totalRows === 1
+      ? "Loaded 1 digest row. Full digest is in MEMORY.md."
+      : `Loaded ${totalRows} digest rows. Full digest is in MEMORY.md.`;
+  return [
+    DIGEST_HEADER,
+    "",
+    DIGEST_MARKER_START,
+    DIGEST_NOTICE,
+    summary,
+    ...reminderLines,
+    DIGEST_MARKER_END,
+  ].join("\n");
 }
 
 function toMemoryFileRow(row: { title: string; hook: string }): string {
@@ -164,9 +190,7 @@ export const fn: WorkflowFn = async (ctx) => {
       typeof row.title === "string" && typeof row.hook === "string",
   );
   await persistMemoryFile(ctx.cwd, fileRows);
-  return [DIGEST_HEADER, "", DIGEST_MARKER_START, DIGEST_NOTICE, ...lines, DIGEST_MARKER_END].join(
-    "\n",
-  );
+  return renderSessionReminder(lines, fileRows.length);
 };
 
 export default spec;
