@@ -5,7 +5,7 @@ export const meta = {
   whenToUse:
     'Migrating one MCP tool to the envelope opt-in via the fleet, with fabrication-proof structured verification (no hand-narrated dispatch outcomes).',
   phases: [
-    { title: 'Dispatch', detail: 'chain_start one migration to codex-acp-deep' },
+    { title: 'Dispatch', detail: 'chain_start one migration to openai-codex-deep-acp' },
     { title: 'Verify', detail: 'inspect the agent worktree: branch, files, typecheck, tests' },
   ],
 }
@@ -59,7 +59,7 @@ const dispatch = await agent(
     `You are dispatching ONE token-opt migration to the penumbra fleet and reporting back ONLY facts copied verbatim from tool outputs. Do not invent any id or SHA.`,
     ``,
     `STEP 1: call mcp__penumbra__chain_start with:`,
-    `  initial_agent: "codex-acp-deep"`,
+    `  initial_agent: "openai-codex-deep-acp"`,
     `  task_class: "STANDARD"`,
     `  task_type: "implement_small"`,
     `  caller_cwd: "/Volumes/WorkSSD/repos/personal/penumbra"`,
