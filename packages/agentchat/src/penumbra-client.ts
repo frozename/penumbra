@@ -268,6 +268,14 @@ export class PenumbraClient {
       // Instrumentation is best-effort and must not break dispatch execution.
     }
   }
+
+  async postDispatchEventsStrict(
+    events: DispatchEventInput[],
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (events.length === 0) return;
+    await this.post("/dispatch/events", { events }, { signal });
+  }
   async captureAgentPerformanceFromReconciler(body: {
     handoff_id: string;
     task_type?: string;

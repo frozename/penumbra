@@ -1,9 +1,22 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "bun:test";
+import { Database } from "bun:sqlite";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
+import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { ExtraWorkerSupervisor } from "../../src/workers/supervisor.js";
 import type { ExtraWorkerConfig } from "../../src/workers/config.js";
+import { OrphanHandoffRecoveryService } from "../../src/services/orphan-handoff-recovery.js";
+import { handoffsApproveRoute, handoffsCreateRoute } from "../../src/routes/handoffs.js";
+
+try {
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
+  }
+} catch {
+  // ignore
+}
 
 type FakeSubprocess = {
   pid: number;
@@ -40,6 +53,26 @@ let previousHome: string | undefined;
 
 function flushPromises(): Promise<void> {
   return new Promise((resolve) => queueMicrotask(resolve));
+}
+
+function tempServices(): Services {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const root = mkdtempSync(join(tmpdir(), "penumbra-supervisor-recovery-"));
+  return buildServices({
+    env: {},
+    input: {},
+    storageRoot: root,
+    worktreeRootDir: join(root, "worktrees"),
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date("2026-06-09T20:44:00Z"),
+    uuid: (() => {
+      let n = 0;
+      return () => `e-${++n}`;
+    })(),
+  });
 }
 
 beforeEach(() => {
@@ -794,5 +827,104 @@ describe("extra worker supervisor", () => {
       }),
       "extra worker exit handler failed",
     );
+  });
+
+  test("crash recovery only requeues dispatched handoffs that have not started", async () => {
+    const services = tempServices();
+    const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0 });
+    const supervisor = new ExtraWorkerSupervisor({
+      extras: [{ id: "worker-a", concurrency: 1, isolation: "shared" }],
+      storageRoot: "/tmp/penumbra-storage",
+      log: {
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        debug: vi.fn(),
+        trace: vi.fn(),
+        fatal: vi.fn(),
+        silent: vi.fn(),
+        child: () => ({}) as any,
+      } as any,
+      spawn: (() => {
+        let pid = 1;
+        const proc = createFakeProcess(() => pid++);
+        return vi.fn(() => proc as any);
+      })() as any,
+      orphanHandoffRecovery: recovery,
+    });
+
+    const noStart = await (
+      await handoffsCreateRoute(
+        new Request("http://x", {
+          method: "POST",
+          body: JSON.stringify({
+            from: "a",
+            to: "b",
+            message: "m-1",
+            conversation_id: "c-1",
+            triggered_by_event_id: "e-1",
+          }),
+        }),
+        services,
+      )
+    ).json();
+    const started = await (
+      await handoffsCreateRoute(
+        new Request("http://x", {
+          method: "POST",
+          body: JSON.stringify({
+            from: "a",
+            to: "b",
+            message: "m-2",
+            conversation_id: "c-2",
+            triggered_by_event_id: "e-2",
+          }),
+        }),
+        services,
+      )
+    ).json();
+
+    await handoffsApproveRoute(
+      new Request("http://x", { method: "POST", body: "{}" }),
+      noStart.handoff_id,
+      services,
+    );
+    await handoffsApproveRoute(
+      new Request("http://x", { method: "POST", body: "{}" }),
+      started.handoff_id,
+      services,
+    );
+
+    services.handoffWriter.claimDispatch(noStart.handoff_id, "worker-a");
+    services.handoffWriter.claimDispatch(started.handoff_id, "worker-a");
+    services.dispatchEventLog.record({
+      handoff_id: started.handoff_id,
+      worker_id: "worker-a",
+      source: "worker",
+      kind: "dispatch.start",
+      ts: services.clock().toISOString(),
+      meta: null,
+    });
+
+    await supervisor.start();
+    const proc = (supervisor as any).states.get("worker-a").proc as FakeSubprocess;
+    proc.exit(1);
+    await flushPromises();
+    await flushPromises();
+
+    const requeued = services.handoffReader.get(noStart.handoff_id);
+    const stillDispatched = services.handoffReader.get(started.handoff_id);
+    expect(requeued?.status).toBe("approved");
+    expect(requeued?.worker_id).toBeNull();
+    expect(stillDispatched?.status).toBe("dispatched");
+    expect(stillDispatched?.worker_id).toBe("worker-a");
+
+    const events = services.dispatchEventLog.listByHandoff(noStart.handoff_id);
+    expect(events.some((event) => event.kind === "worker.recovery.requeued")).toBe(true);
+    expect(
+      services.dispatchEventLog
+        .listByHandoff(started.handoff_id)
+        .some((event) => event.kind === "worker.recovery.requeued"),
+    ).toBe(false);
   });
 });

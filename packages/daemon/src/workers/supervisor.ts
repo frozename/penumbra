@@ -3,6 +3,7 @@ import { appendFile } from "node:fs/promises";
 import { join, resolve as pathResolve } from "node:path";
 import { type Logger } from "@penumbra/core";
 import type { ExtraWorkerConfig } from "./config.js";
+import type { OrphanHandoffRecoveryService } from "../services/orphan-handoff-recovery.js";
 
 const STABLE_WORKER_LIFETIME_MS = 120_000;
 const BASE_RESTART_DELAY_MS = 1_000;
@@ -64,6 +65,7 @@ export interface ExtraWorkerSupervisorOptions {
   spawn?: SpawnFunction;
   workerEntryPath?: string;
   onConfigChange?: (extras: ExtraWorkerConfig[]) => void;
+  orphanHandoffRecovery?: Pick<OrphanHandoffRecoveryService, "recoverForWorker">;
 }
 
 export class ExtraWorkerSupervisor {
@@ -74,6 +76,7 @@ export class ExtraWorkerSupervisor {
   private readonly logDir: string;
   private readonly workerEntryPath: string;
   private readonly onConfigChange?: (extras: ExtraWorkerConfig[]) => void;
+  private readonly orphanHandoffRecovery?: Pick<OrphanHandoffRecoveryService, "recoverForWorker">;
   private logDirEnsured = false;
   private readonly states: Map<string, ExtraWorkerProcessState> = new Map();
   private reconcileGate = Promise.resolve();
@@ -91,6 +94,7 @@ export class ExtraWorkerSupervisor {
     this.logDir = join(this.storageRoot, "workers");
     this.workerEntryPath = opts.workerEntryPath ?? DEFAULT_WORKER_ENTRY;
     this.onConfigChange = opts.onConfigChange;
+    this.orphanHandoffRecovery = opts.orphanHandoffRecovery;
   }
 
   async start(): Promise<void> {
@@ -447,6 +451,10 @@ export class ExtraWorkerSupervisor {
       },
       "extra worker crashed; scheduling restart",
     );
+
+    if (this.orphanHandoffRecovery) {
+      await this.orphanHandoffRecovery.recoverForWorker(extra.id);
+    }
   }
 
   private async pipeStreamToLog(

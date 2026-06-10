@@ -371,7 +371,10 @@ const discordRateLimiter = createDiscordRateLimiter({
   now: () => Date.now(),
   windowMs: 30_000,
 });
-const onEvent = (event: DispatchEventInput) => eventQueue.enqueue(event);
+const onEvent = (event: DispatchEventInput) => {
+  if (event.kind === "dispatch.start") return;
+  eventQueue.enqueue(event);
+};
 
 function mapChainEndStatus(reason: string): "completed" | "failed" | "rejected" | "expired" {
   if (reason === "completed") return "completed";
@@ -1117,6 +1120,7 @@ const dispatcher = createWorkerDispatcher({
   concurrency,
   workerId,
   onEvent,
+  dispatchStartBarrier: (event) => client.postDispatchEventsStrict([event]),
   onDispatchEvent: (event) => {
     void postDiscordEvent(event);
   },

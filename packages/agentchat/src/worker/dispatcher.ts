@@ -42,6 +42,7 @@ export interface WorkerDispatcherDeps {
   onClaimRetryable?: (handoff_id: string) => void;
   onEvent?: (event: DispatchEventInput) => void;
   onDispatchEvent?: (event: DiscordNotificationEvent) => void;
+  dispatchStartBarrier?: (event: DispatchEventInput) => Promise<void>;
   workerId?: string;
   /**
    * Optional pre-claim grace (ms) for cross-project warm-pooled handoffs: a
@@ -224,7 +225,7 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
       let capturedDirty: boolean | null | undefined = undefined;
       let capturedCommitted: boolean | null | undefined = undefined;
       let dispatchResult: any = null;
-      deps.onEvent?.({
+      const dispatchStartEvent: DispatchEventInput = {
         handoff_id: handoff.handoff_id,
         worker_id: deps.workerId,
         source: "worker",
@@ -236,7 +237,20 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           prompt_bytes:
             typeof handoff.message === "string" ? Buffer.byteLength(handoff.message) : 0,
         },
-      });
+      };
+      if (deps.dispatchStartBarrier) {
+        try {
+          await deps.dispatchStartBarrier(dispatchStartEvent);
+        } catch (err) {
+          deps.log.warn(
+            { handoff_id: handoff.handoff_id, err: String(err) },
+            "dispatch.start barrier failed; not spawning dispatch",
+          );
+          return;
+        }
+      } else {
+        deps.onEvent?.(dispatchStartEvent);
+      }
       deps.onDispatchEvent?.({
         kind: "dispatch_start",
         handoff_id: handoff.handoff_id,

@@ -117,6 +117,9 @@ export class OrphanHandoffRecoveryService {
     // Trades a small lock per orphan for atomicity (event row only exists if state transition won the CAS).
     const processOrphan = this.services.db.transaction(
       (orphan: HandoffRow, attempt: number, maxAttempts: number, failFastMode: boolean) => {
+        if (this.hasDispatchStarted(orphan.handoff_id)) {
+          return "skip";
+        }
         if (failFastMode || attempt >= maxAttempts) {
           const won = this.services.handoffWriter.failOrphanedDispatchExhausted(
             orphan.handoff_id,
@@ -186,6 +189,16 @@ export class OrphanHandoffRecoveryService {
   private recoverAllInner(): RecoveryResult {
     const staleWorkerIds = this.services.watchdog.getStaleWorkers(this.staleMs);
     return this.recoverForWorkerIds(staleWorkerIds);
+  }
+
+  private hasDispatchStarted(handoffId: string): boolean {
+    const row = this.services.db
+      .query<
+        { found: number },
+        [string]
+      >(`SELECT 1 AS found FROM dispatch_events WHERE handoff_id = ? AND kind = 'dispatch.start' LIMIT 1`)
+      .get(handoffId);
+    return row != null;
   }
 
   start(): { stop: () => void } {

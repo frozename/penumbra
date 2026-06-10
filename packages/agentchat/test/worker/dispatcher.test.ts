@@ -1,7 +1,18 @@
 import { expect, test, mock } from "bun:test";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { spawnCliAdapter, spawnCliAdapterStream } from "../../src/adapters/cli-spawn.js";
 import { createWorkerDispatcher, type WorkerDispatcherDeps } from "../../src/worker/dispatcher.js";
-import { PenumbraHttpError } from "../../src/penumbra-client.js";
+import { PenumbraClient, PenumbraHttpError } from "../../src/penumbra-client.js";
+
+function makeMockClient(fetchImpl: typeof fetch): { client: PenumbraClient; cleanup: () => void } {
+  const root = mkdtempSync(join(tmpdir(), "pen-dispatch-test-"));
+  writeFileSync(join(root, "port"), "1\n");
+  writeFileSync(join(root, "token"), "shared-tok\n");
+  const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+  return { client, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+}
 
 const baseHandoff = (id: string, conv = "c1") => ({
   handoff_id: id,
@@ -97,6 +108,92 @@ test("emits dispatch_start after claim and before hop-start progress", async () 
     }),
   );
   expect(order.slice(0, 3)).toEqual(["claim", "dispatch_start", "hop-start"]);
+});
+
+test("waits for durable dispatch.start delivery before calling dispatch", async () => {
+  const order: string[] = [];
+  const startPosted = Promise.withResolvers<void>();
+  const releaseStart = Promise.withResolvers<void>();
+  const d = deps({
+    dispatchStartBarrier: async (event: any) => {
+      order.push(event.kind);
+      startPosted.resolve();
+      await releaseStart.promise;
+    },
+    dispatch: mock().mockImplementation(async () => {
+      order.push("dispatch");
+      return { next: null, terminatedReason: "no_mention", text: "result", agent: "executor" };
+    }),
+    postProgress: mock().mockImplementation(async (_handoffId, payload) => {
+      if (payload.type === "hop-start") order.push("hop-start");
+    }),
+  } as any);
+  const dispatcher = createWorkerDispatcher(d);
+
+  const handlePromise = dispatcher.handle(baseHandoff("h-durable"));
+  await startPosted.promise;
+  expect(d.dispatch).not.toHaveBeenCalled();
+  releaseStart.resolve();
+  await handlePromise;
+  await dispatcher.idle();
+
+  expect(order[0]).toBe("dispatch.start");
+  expect(order.indexOf("dispatch")).toBeGreaterThan(order.indexOf("dispatch.start"));
+  expect(d.dispatch).toHaveBeenCalledTimes(1);
+});
+
+test("aborts dispatch when durable dispatch.start delivery fails (HTTP 500)", async () => {
+  const fetchImpl = mock().mockResolvedValue({
+    ok: false,
+    status: 500,
+    statusText: "Internal Server Error",
+    json: () => Promise.resolve({ error: "daemon down" }),
+    text: () => Promise.resolve("daemon down"),
+  });
+  const { client, cleanup } = makeMockClient(fetchImpl as any);
+
+  const d = deps({
+    dispatchStartBarrier: (event: any) => client.postDispatchEventsStrict([event]),
+  } as any);
+  const dispatcher = createWorkerDispatcher(d);
+
+  try {
+    await dispatcher.handle(baseHandoff("h-durable-fail-500"));
+    await dispatcher.idle();
+
+    expect(d.dispatch).not.toHaveBeenCalled();
+    expect(d.postProgress).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ type: "hop-start" }),
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  } finally {
+    cleanup();
+  }
+});
+
+test("aborts dispatch when durable dispatch.start delivery fails (connection refused)", async () => {
+  const fetchImpl = mock().mockRejectedValue(new TypeError("fetch failed"));
+  const { client, cleanup } = makeMockClient(fetchImpl as any);
+
+  const d = deps({
+    dispatchStartBarrier: (event: any) => client.postDispatchEventsStrict([event]),
+  } as any);
+  const dispatcher = createWorkerDispatcher(d);
+
+  try {
+    await dispatcher.handle(baseHandoff("h-durable-fail-conn"));
+    await dispatcher.idle();
+
+    expect(d.dispatch).not.toHaveBeenCalled();
+    expect(d.postProgress).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ type: "hop-start" }),
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  } finally {
+    cleanup();
+  }
 });
 
 test("onChainEnd receives the full handoff row and mapped terminal reason", async () => {
