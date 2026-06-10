@@ -24,6 +24,33 @@ const handoff = {
   chain_trust_mode: null,
 };
 
+function expectOnChainEndCall(
+  onChainEnd: ReturnType<typeof mock>,
+  expected: {
+    handoff: typeof handoff;
+    reason: "completed" | "cancelled";
+    worktreeChanged: boolean;
+    dirty: boolean;
+    committed: boolean;
+    minWallMs?: number;
+  },
+) {
+  expect(onChainEnd).toHaveBeenCalledTimes(1);
+  const call = onChainEnd.mock.calls[0];
+
+  expect(call.slice(0, 5)).toEqual([
+    expected.handoff,
+    expected.reason,
+    expected.worktreeChanged,
+    expected.dirty,
+    expected.committed,
+  ]);
+  expect(call).toHaveLength(7);
+  expect(typeof call[5]).toBe("number");
+  expect(call[5]).toBeGreaterThanOrEqual(expected.minWallMs ?? 0);
+  expect(call[6]).toBeNull();
+}
+
 function deps(over: Partial<WorkerDispatcherDeps> = {}): WorkerDispatcherDeps {
   return {
     claim: mock().mockResolvedValue({ status: "dispatched" }),
@@ -71,7 +98,13 @@ test("no changes skips autocommit and still runs onChainEnd", async () => {
   expect(
     onDispatchEvent.mock.calls.some((call) => call[0]?.kind === "autocommit_on_chain_end"),
   ).toBe(false);
-  expect(onChainEnd).toHaveBeenCalledWith(handoff, "completed", false, false, false);
+  expectOnChainEndCall(onChainEnd, {
+    handoff,
+    reason: "completed",
+    worktreeChanged: false,
+    dirty: false,
+    committed: false,
+  });
 });
 
 test("real commit skips autocommit and still runs onChainEnd", async () => {
@@ -92,7 +125,13 @@ test("real commit skips autocommit and still runs onChainEnd", async () => {
   await dispatcher.idle();
 
   expect(autocommitOnChainEnd).not.toHaveBeenCalled();
-  expect(onChainEnd).toHaveBeenCalledWith(handoff, "completed", true, false, true);
+  expectOnChainEndCall(onChainEnd, {
+    handoff,
+    reason: "completed",
+    worktreeChanged: true,
+    dirty: false,
+    committed: true,
+  });
 });
 
 test("dirty uncommitted completed dispatch autocommits before onChainEnd", async () => {
@@ -125,7 +164,13 @@ test("dirty uncommitted completed dispatch autocommits before onChainEnd", async
       agent: "executor",
     }),
   );
-  expect(onChainEnd).toHaveBeenCalledWith(handoff, "completed", true, true, false);
+  expectOnChainEndCall(onChainEnd, {
+    handoff,
+    reason: "completed",
+    worktreeChanged: true,
+    dirty: true,
+    committed: false,
+  });
 });
 
 test("dispatch.end meta reflects post-recovery snapshot after autocommit", async () => {
@@ -155,7 +200,13 @@ test("dispatch.end meta reflects post-recovery snapshot after autocommit", async
       worktree_changed: false,
     }),
   );
-  expect(onChainEnd).toHaveBeenCalledWith(handoff, "completed", true, true, false);
+  expectOnChainEndCall(onChainEnd, {
+    handoff,
+    reason: "completed",
+    worktreeChanged: true,
+    dirty: true,
+    committed: false,
+  });
 });
 
 test("autocommit is suppressed on non-success reasons", async () => {
@@ -182,7 +233,13 @@ test("autocommit is suppressed on non-success reasons", async () => {
   await dispatcher.idle();
 
   expect(autocommitOnChainEnd).not.toHaveBeenCalled();
-  expect(onChainEnd).toHaveBeenCalledWith(handoff, "cancelled", true, true, false);
+  expectOnChainEndCall(onChainEnd, {
+    handoff,
+    reason: "cancelled",
+    worktreeChanged: true,
+    dirty: true,
+    committed: false,
+  });
 });
 
 test("autocommit failures warn and still run onChainEnd", async () => {
@@ -210,7 +267,13 @@ test("autocommit failures warn and still run onChainEnd", async () => {
     }),
     "autocommit on chain end failed",
   );
-  expect(onChainEnd).toHaveBeenCalledWith(handoff, "completed", true, true, false);
+  expectOnChainEndCall(onChainEnd, {
+    handoff,
+    reason: "completed",
+    worktreeChanged: true,
+    dirty: true,
+    committed: false,
+  });
 });
 
 test("parseGitStatusPaths and filterAutocommitPaths reject denied entries", async () => {
