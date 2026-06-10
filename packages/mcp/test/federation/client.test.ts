@@ -4,9 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerFederatedTools } from "../../src/federation/client.js";
+import { HandleStore } from "../../src/handle-store.js";
 import { openInvocationSink } from "../../src/invocation-sink.js";
 import * as registry from "../../src/invocation-sink-registry.js";
 import { setLongLivedRuntimeContextFromEnv } from "../../src/long-lived-context.js";
+import { isEnvelopeResult } from "../../src/responses/envelope.js";
+import { readHandleHandler } from "../../src/tools/read-handle.js";
 
 afterEach(async () => {
   mock.restore();
@@ -526,4 +529,70 @@ test("federated tool invocation writes exactly one log row (single wrap)", async
   } finally {
     rmSync(stateRoot, { recursive: true, force: true });
   }
+});
+
+test("oversized federated result is truncated with a handle_id that read_handle resolves to the full payload", async () => {
+  process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
+  process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
+  setLongLivedRuntimeContextFromEnv(process.env);
+
+  let handler: ((args: unknown, extra: unknown) => Promise<unknown>) | null = null;
+  const server = {
+    registerTool: mock((_name: string, _schema: unknown, fn: unknown) => {
+      handler = fn as any;
+    }),
+  } as any;
+  const large = { blob: "x".repeat(256) };
+  const daemon = {
+    getFederationTools: mock(async () => ({ tools: [{ name: "ha.ha_get_state" }] })),
+    mcpCall: mock(async () => ({ action_status: "executed", result: large })),
+  } as any;
+  const handleStore = new HandleStore();
+  try {
+    await registerFederatedTools({
+      server,
+      daemon,
+      invocationLogEnabled: false,
+      responseBudgetTokens: 1,
+      handleStore,
+    });
+    const out = (await handler!({}, {})) as any;
+    expect(isEnvelopeResult(out)).toBe(true);
+    expect(out._meta.token_budget.truncated).toBe(true);
+    expect(out._meta.handle_id).toBeTruthy();
+    const readOut = (await readHandleHandler(handleStore)({
+      handle_id: out._meta.handle_id,
+    })) as any;
+    expect(readOut.isError).toBeUndefined();
+    expect(readOut.content[0].text).toBe(JSON.stringify(large));
+  } finally {
+    handleStore.close();
+  }
+});
+
+test("budget set but no handle store: federated result passes through unbudgeted", async () => {
+  process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
+  process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
+  setLongLivedRuntimeContextFromEnv(process.env);
+
+  let handler: ((args: unknown, extra: unknown) => Promise<unknown>) | null = null;
+  const server = {
+    registerTool: mock((_name: string, _schema: unknown, fn: unknown) => {
+      handler = fn as any;
+    }),
+  } as any;
+  const large = { blob: "x".repeat(256) };
+  const daemon = {
+    getFederationTools: mock(async () => ({ tools: [{ name: "ha.ha_get_state" }] })),
+    mcpCall: mock(async () => ({ action_status: "executed", result: large })),
+  } as any;
+  await registerFederatedTools({
+    server,
+    daemon,
+    invocationLogEnabled: false,
+    responseBudgetTokens: 1,
+  });
+  const out = (await handler!({}, {})) as any;
+  expect(isEnvelopeResult(out)).toBe(false);
+  expect(out).toEqual(large);
 });

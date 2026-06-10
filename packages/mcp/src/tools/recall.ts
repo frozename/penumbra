@@ -2,6 +2,7 @@ import { z } from "zod";
 import { toTextContent } from "@nova/mcp-shared";
 import { RecallRequestSchema } from "@penumbra/core";
 import type { DaemonClient } from "../daemon-client.js";
+import { sliceSurrogateSafe } from "../responses/budget.js";
 
 export const RecallInputShape = {
   query: z.string().min(1),
@@ -9,6 +10,13 @@ export const RecallInputShape = {
   limit: z.number().int().positive().max(200).optional(),
   include_raw: z.boolean().optional(),
   min_score: z.number().min(0).max(1).optional(),
+  body_max_chars: z
+    .number()
+    .int()
+    .positive()
+    .max(10_000)
+    .optional()
+    .describe("Maximum characters to return per hit body (default 600)."),
   session_id: z.string().optional().describe("Limit results to a single chain or session id."),
   event_types: z
     .array(z.string())
@@ -25,6 +33,7 @@ export const RecallInputShape = {
 };
 
 const RecallSchema = z.object(RecallInputShape).strict();
+const DEFAULT_BODY_MAX_CHARS = 600;
 
 /**
  * Unlike observeHandler, recall requires no server-side identity injection —
@@ -39,6 +48,16 @@ export function recallHandler(daemon: DaemonClient) {
       project_id: parsed.project_id ?? null,
     });
     const r = await daemon.recall(request);
+    const bodyMaxChars = parsed.body_max_chars ?? DEFAULT_BODY_MAX_CHARS;
+    if (Array.isArray(r?.results)) {
+      for (const hit of r.results) {
+        if (typeof hit?.body === "string" && hit.body.length > bodyMaxChars) {
+          // Surrogate-safe: a naive slice can split an astral codepoint (emoji)
+          // and leave a lone high surrogate that strict JSON decoders reject.
+          hit.body = sliceSurrogateSafe(hit.body, bodyMaxChars);
+        }
+      }
+    }
     return toTextContent(r);
   };
 }

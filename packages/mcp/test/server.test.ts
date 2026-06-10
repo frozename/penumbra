@@ -9,6 +9,7 @@ import { reconcileLongLivedAgents } from "@penumbra/daemon/long-lived/reconciler
 import { openInvocationSink } from "../src/invocation-sink.js";
 import * as registry from "../src/invocation-sink-registry.js";
 import { HandleStore } from "../src/handle-store.js";
+import { isEnvelopeResult } from "../src/responses/envelope.js";
 import { DEFAULT_BUDGET } from "../src/responses/budget.js";
 import { buildServer } from "../src/server.js";
 import { TOOL_REGISTRY } from "../src/tools/registry.js";
@@ -27,10 +28,16 @@ const baselineEnv = new Map<string, string | undefined>(
   ENV_KEYS.map((key) => [key, process.env[key]]),
 );
 
+delete process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED;
+
 afterEach(async () => {
   mock.restore();
   await registry.closeSink();
   for (const key of ENV_KEYS) {
+    if (key === "PENUMBRA_MCP_INVOCATION_LOG_ENABLED") {
+      delete process.env[key];
+      continue;
+    }
     const baseline = baselineEnv.get(key);
     if (baseline === undefined) {
       delete process.env[key];
@@ -315,6 +322,40 @@ describe("buildServer tool registration", () => {
       } else {
         (TOOL_REGISTRY as any).__invocation_log_disabled_smoke_tool = original;
       }
+    }
+  });
+
+  it("wraps oversized tool results with a handle that read_handle resolves", async () => {
+    process.env.PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS = "1";
+    delete process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED;
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = "__response_budget_smoke_tool,read_handle";
+    const large = { blob: "x".repeat(128) };
+    const original = (TOOL_REGISTRY as any).__response_budget_smoke_tool;
+    (TOOL_REGISTRY as any).__response_budget_smoke_tool = {
+      descriptor: { description: "response budget smoke fixture", inputSchema: {} },
+      makeHandler: () => async () => large,
+      readOnly: true,
+    };
+    try {
+      const server = (await buildServer({ daemon: {} as any })) as any;
+      const out = await server._registeredTools.__response_budget_smoke_tool.handler({}, {});
+      expect(isEnvelopeResult(out)).toBe(true);
+      expect(out._meta.handle_id).toBeTruthy();
+      expect(out._meta.token_budget.truncated).toBe(true);
+      expect(out.content[0].type).toBe("text");
+      expect(out.content[0].text.length).toBeGreaterThan(0);
+      const readOut = await server._registeredTools.read_handle.handler({
+        handle_id: out._meta.handle_id,
+      });
+      expect(readOut.isError).toBeUndefined();
+      expect(readOut.content[0].text).toBe(JSON.stringify(large));
+    } finally {
+      if (original === undefined) {
+        delete (TOOL_REGISTRY as any).__response_budget_smoke_tool;
+      } else {
+        (TOOL_REGISTRY as any).__response_budget_smoke_tool = original;
+      }
+      delete process.env.PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS;
     }
   });
 

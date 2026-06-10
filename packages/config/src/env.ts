@@ -44,6 +44,7 @@ const OptStr = z.string().optional();
 const ReqStr = z.string().min(1);
 const OptNonNegInt = NonNegInt.optional();
 const OptNonNegNum = NonNegNum.optional();
+const OptPosInt = PosInt.optional();
 
 export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   // ── daemon ──────────────────────────────────────────────────────────
@@ -262,6 +263,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: false,
     description:
       "When true, every MCP tool invocation is appended as one JSONL row (ts, tool, origin, args_bytes, result_bytes, duration_ms, ok, error_kind) to $XDG_STATE_HOME/penumbra/mcp-invocations.jsonl. No payloads are captured. Opt-in; restart the penumbra-mcp stdio child to pick up changes.",
+  },
+  PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS: {
+    schema: OptPosInt,
+    description:
+      "Central MCP response budget in estimated tokens. When set, an oversized tool result is truncated to this budget and the full payload is spilled to the in-process handle store (recover via read_handle). Unset disables budgeting. Opt-in; restart the penumbra-mcp stdio child to pick up changes.",
   },
   PENUMBRA_MCP_TOOL_ALLOWLIST: {
     schema: OptStr,
@@ -970,4 +976,13 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): EnvConfig {
 
 export function isMcpInvocationLogEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return parseEnv(env).PENUMBRA_MCP_INVOCATION_LOG_ENABLED === true;
+}
+
+/**
+ * Central MCP response budget in estimated tokens, or null when unset.
+ * Parse this ONCE (in buildServer) and pass it explicitly to instrumentHandler;
+ * instrumentation must never read the env itself.
+ */
+export function getMcpResponseBudgetTokens(env: NodeJS.ProcessEnv = process.env): number | null {
+  return (parseEnv(env).PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS as number | undefined) ?? null;
 }

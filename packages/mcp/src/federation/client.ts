@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { DaemonClient } from "../daemon-client.js";
+import type { HandleStore } from "../handle-store.js";
 import { instrumentHandler } from "../instrumentation.js";
 import { getLongLivedRuntimeContext } from "../long-lived-context.js";
 
@@ -32,6 +33,14 @@ interface RegisterFederatedToolsOpts {
    * decision in so registration and runtime can't disagree.
    */
   invocationLogEnabled?: boolean;
+  /**
+   * Central response budget in estimated tokens, parsed once by `buildServer`.
+   * Must be passed together with `handleStore` — `instrumentHandler` refuses to
+   * budget without a spill target.
+   */
+  responseBudgetTokens?: number | null;
+  /** Spill target for oversized results so federated tools get real `read_handle` recovery. */
+  handleStore?: HandleStore;
 }
 
 // Passthrough object schema: accepts any keys and preserves them through
@@ -158,6 +167,8 @@ export async function registerFederatedTools(
       };
       const instrumented = instrumentHandler(tool.name, proxyHandler as any, {
         enabled: opts.invocationLogEnabled,
+        responseBudgetTokens: opts.responseBudgetTokens,
+        handleStore: opts.handleStore,
       });
       opts.server.registerTool(
         tool.name,

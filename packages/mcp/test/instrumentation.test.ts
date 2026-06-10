@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { HandleStore } from "../src/handle-store.js";
 import { openInvocationSink, type InvocationSink } from "../src/invocation-sink.js";
 import * as registry from "../src/invocation-sink-registry.js";
 import {
@@ -353,5 +354,81 @@ describe("instrumentHandler", () => {
 
     // One-shot: console.error fires once across two invocations.
     expect(warnSpy.mock.calls.length).toBe(1);
+  });
+});
+
+describe("instrumentHandler response budget", () => {
+  it("ignores PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS in env — budget comes only from options", async () => {
+    process.env.PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS = "1";
+    try {
+      const large = { blob: "x".repeat(256) };
+      const raw: ToolHandler = async () => large;
+      const wrapped = instrumentHandler("t", raw, { enabled: false });
+      // No explicit budget option -> no budgeting wrap at all.
+      expect(wrapped).toBe(raw);
+      await expect(wrapped({}, {})).resolves.toBe(large);
+    } finally {
+      delete process.env.PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS;
+    }
+  });
+
+  it("budget without a handle store is a hard no-op — result passes through unbudgeted", async () => {
+    const large = { blob: "x".repeat(256) };
+    const raw: ToolHandler = async () => large;
+    const wrapped = instrumentHandler("t", raw, { enabled: false, responseBudgetTokens: 1 });
+    // Never truncate unrecoverably: with nowhere to spill, budgeting must not engage.
+    expect(wrapped).toBe(raw);
+    await expect(wrapped({}, {})).resolves.toBe(large);
+  });
+
+  it("passes an unserializable result through when budgeting is active (stringify must not break execution)", async () => {
+    const store = new HandleStore();
+    try {
+      const poisoned = { big: 1n };
+      const handler = instrumentHandler("t", async () => poisoned, {
+        enabled: false,
+        responseBudgetTokens: 1,
+        handleStore: store,
+      });
+      await expect(handler({}, {})).resolves.toBe(poisoned);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("does not touch the sink on handler throw when only budgeting is enabled", async () => {
+    const getSinkSpy = spyOn(registry, "getSink");
+    const store = new HandleStore();
+    try {
+      const handler = instrumentHandler(
+        "t",
+        async () => {
+          throw new Error("boom");
+        },
+        { enabled: false, responseBudgetTokens: 1, handleStore: store },
+      );
+      await expect(handler({}, {})).rejects.toThrow("boom");
+      expect(getSinkSpy).not.toHaveBeenCalled();
+    } finally {
+      store.close();
+    }
+  });
+
+  it("spills an oversized result to the handle store and truncates the envelope text", async () => {
+    const store = new HandleStore();
+    try {
+      const large = { blob: "y".repeat(256) };
+      const handler = instrumentHandler("t", async () => large, {
+        enabled: false,
+        responseBudgetTokens: 1,
+        handleStore: store,
+      });
+      const out = (await handler({}, {})) as any;
+      expect(out.isEnvelope).toBe(true);
+      expect(out._meta.token_budget.truncated).toBe(true);
+      expect(store.get(out._meta.handle_id)).toBe(JSON.stringify(large));
+    } finally {
+      store.close();
+    }
   });
 });

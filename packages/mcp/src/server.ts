@@ -1,5 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { isMcpInvocationLogEnabled } from "@penumbra/config";
+import { getMcpResponseBudgetTokens, isMcpInvocationLogEnabled } from "@penumbra/config";
 import type { DaemonClient } from "./daemon-client.js";
 import { registerFederatedTools } from "./federation/client.js";
 import { instrumentHandler } from "./instrumentation.js";
@@ -62,6 +62,10 @@ export async function buildServer(opts: {
 }): Promise<McpServer> {
   setLongLivedRuntimeContextFromEnv(process.env);
   const allowlist = parseAllowlist(process.env);
+  // Parsed ONCE here via the central env registry and passed explicitly to every
+  // instrumentHandler call site (registry loop, read_handle, federated tools).
+  // instrumentHandler itself never reads the env.
+  const responseBudgetTokens = getMcpResponseBudgetTokens();
   if (allowlist?.has("workflow_wait") && !allowlist.has("read_handle")) {
     console.error(
       JSON.stringify({
@@ -104,6 +108,8 @@ export async function buildServer(opts: {
       if (allowlist && !allowlist.has(name)) continue;
       const handler = instrumentHandler(name, def.makeHandler(opts.daemon, serverCtx) as any, {
         enabled: invocationLogEnabled,
+        responseBudgetTokens,
+        handleStore,
       });
       server.registerTool(
         name,
@@ -121,6 +127,8 @@ export async function buildServer(opts: {
     if (!allowlist || allowlist.has("read_handle")) {
       const readHandle = instrumentHandler("read_handle", readHandleHandler(handleStore) as any, {
         enabled: invocationLogEnabled,
+        responseBudgetTokens,
+        handleStore,
       });
       server.registerTool(
         "read_handle",
@@ -151,6 +159,8 @@ export async function buildServer(opts: {
       daemon: opts.daemon,
       envAllowlist: allowlist ?? undefined,
       invocationLogEnabled,
+      responseBudgetTokens,
+      handleStore,
     });
     console.error(
       JSON.stringify({
