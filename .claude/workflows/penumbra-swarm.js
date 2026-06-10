@@ -41,7 +41,7 @@ const agentType = opts.agentType
 // Planner does real reasoning → default to the session model (override via args.plannerModel).
 // Dispatch proxies are pure glue → cheap by default, forwarded to penumbra-fanout.
 const plannerModel = opts.plannerModel
-const dispatcherModel = opts.dispatcherModel || 'haiku'
+const dispatcherModel = opts.dispatcherModel || 'sonnet'
 
 const PLAN_SCHEMA = {
   type: 'object',

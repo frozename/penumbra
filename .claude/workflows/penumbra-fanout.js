@@ -36,7 +36,7 @@ const agentType = input && input.agentType // optional override; omit to use the
 // The proxy is pure glue (dispatch + poll + return) — the real work runs on the
 // penumbra fleet agent, not here. Pin it to a cheap model so it doesn't inherit
 // the (expensive) session model. Override via args.dispatcherModel; 'inherit' to follow the session.
-const dispatcherModel = (input && input.dispatcherModel) || 'haiku'
+const dispatcherModel = (input && input.dispatcherModel) || 'sonnet'
 
 // BOUNDARY work shouldn't flow through unattended auto-approve. Warn loudly per task.
 for (const t of tasks) {

@@ -26,7 +26,7 @@ if (!task || !task.message || !check) {
   return { ok: false, error: 'missing_task_or_check' }
 }
 const defaults = input.defaults || {}
-const dispatcherModel = input.dispatcherModel || 'haiku'
+const dispatcherModel = input.dispatcherModel || 'sonnet'
 const baseAgent = input.agent || defaults.initial_agent || 'AUTO'
 const escalateTo = input.escalateTo // optional stronger agent for the final round
 const maxRounds = input.maxRounds || 3

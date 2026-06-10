@@ -27,7 +27,7 @@ if (!task || !task.message || !agents.length) {
   return { ok: false, error: 'missing_task_or_agents' }
 }
 const defaults = input.defaults || {}
-const dispatcherModel = input.dispatcherModel || 'haiku'
+const dispatcherModel = input.dispatcherModel || 'sonnet'
 const judgeModel = input.judgeModel // default: session model (judging is real reasoning)
 
 const VERDICT = {
