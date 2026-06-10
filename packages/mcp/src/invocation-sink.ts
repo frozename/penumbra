@@ -17,6 +17,7 @@ const MAX_PENDING_DURING_ROTATION = 10_000;
 
 export interface InvocationRow {
   ts: string;
+  pid: number;
   tool: string;
   origin: string;
   args_bytes: number;
@@ -160,6 +161,7 @@ function openInvocationSinkInternal(
     // so a caller passing a wider object cannot leak payloads into the log.
     return `${JSON.stringify({
       ts: row.ts,
+      pid: row.pid,
       tool: row.tool,
       origin: row.origin,
       args_bytes: row.args_bytes,

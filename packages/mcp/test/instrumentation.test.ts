@@ -10,6 +10,11 @@ import {
   instrumentHandler,
   type ToolHandler,
 } from "../src/instrumentation.js";
+import { estimateTokens, sliceSurrogateSafe } from "../src/responses/budget.js";
+
+function expectedBudgetMarker(handleId: string, usedTokens: number, limitTokens: number): string {
+  return `\n[truncated: ${usedTokens} tokens > ${limitTokens} token budget — full payload: read_handle ${handleId}]`;
+}
 
 let tempDirs: string[] = [];
 
@@ -430,5 +435,79 @@ describe("instrumentHandler response budget", () => {
     } finally {
       store.close();
     }
+  });
+
+  it("adds an inline recovery marker that stays within budget and round-trips via HandleStore", async () => {
+    const store = new HandleStore();
+    try {
+      const limitTokens = 48;
+      const large = {
+        blob: "z".repeat(256),
+        nested: { ok: true, note: "recover this payload" },
+      };
+      const handler = instrumentHandler("t", async () => large, {
+        enabled: true,
+        responseBudgetTokens: limitTokens,
+        handleStore: store,
+      });
+
+      const out = (await handler({}, {})) as any;
+      const handleId = out._meta.handle_id as string;
+      const marker = expectedBudgetMarker(handleId, out._meta.token_budget.used, limitTokens);
+      const fullPayload = JSON.stringify(large);
+
+      expect(out.isEnvelope).toBe(true);
+      expect(out._meta.token_budget.truncated).toBe(true);
+      expect(out._meta.token_budget.used).toBe(estimateTokens(fullPayload));
+      expect(out._meta.token_budget.limit).toBe(limitTokens);
+      expect(out._meta.result_bytes).toBe(Buffer.byteLength(fullPayload, "utf8"));
+      expect(handleId).toBeTruthy();
+      expect(out.content).toHaveLength(1);
+      expect(out.content[0].type).toBe("text");
+      expect(out.content[0].text).toContain(marker);
+      expect(out.content[0].text.endsWith(marker)).toBe(true);
+      expect(estimateTokens(out.content[0].text)).toBeLessThanOrEqual(limitTokens);
+      expect(store.get(handleId)).toBe(fullPayload);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("builds the recovery envelope with the marker text already in content", async () => {
+    const store = new HandleStore();
+    try {
+      const limitTokens = 12;
+      const large = { blob: "q".repeat(128), tail: "end" };
+      const handler = instrumentHandler("t", async () => large, {
+        enabled: false,
+        responseBudgetTokens: limitTokens,
+        handleStore: store,
+      });
+
+      const out = (await handler({}, {})) as any;
+      const handleId = out._meta.handle_id as string;
+      const marker = expectedBudgetMarker(handleId, out._meta.token_budget.used, limitTokens);
+      const allowedBodyChars = (limitTokens - estimateTokens(marker)) * 4;
+      const expectedBody = sliceSurrogateSafe(JSON.stringify(large), Math.max(0, allowedBodyChars));
+
+      expect(out.isEnvelope).toBe(true);
+      expect(out.content).toHaveLength(1);
+      expect(out.content[0].text).toBe(`${expectedBody}${marker}`);
+      expect(out.content[0].text.endsWith(marker)).toBe(true);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("records pid on invocation log rows", async () => {
+    const { path, sink } = withSink();
+    const handler = instrumentHandler("t", async () => ({ ok: true }), { enabled: true });
+
+    await handler({}, {});
+    await sink.close();
+
+    const rows = readRows(path);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].pid).toBe(process.pid);
   });
 });

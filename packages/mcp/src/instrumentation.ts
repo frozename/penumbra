@@ -2,7 +2,7 @@ import { isMcpInvocationLogEnabled } from "@penumbra/config";
 import type { InvocationRow } from "./invocation-sink.js";
 import { getSink } from "./invocation-sink-registry.js";
 import { HandleStore } from "./handle-store.js";
-import { estimateTokens, truncateToTokens } from "./responses/budget.js";
+import { estimateTokens, sliceSurrogateSafe, truncateToTokens } from "./responses/budget.js";
 import { isEnvelopeResult, makeEnvelopeResult } from "./responses/envelope.js";
 import { resolveToolOrigin } from "./tool-origin.js";
 
@@ -85,6 +85,25 @@ function safeWrite(row: InvocationRow): void {
   }
 }
 
+function buildRecoveryMarker(handleId: string, usedTokens: number, limitTokens: number): string {
+  return `\n[truncated: ${usedTokens} tokens > ${limitTokens} token budget — full payload: read_handle ${handleId}]`;
+}
+
+function applyBudgetRecoveryMarker(
+  text: string,
+  handleId: string,
+  usedTokens: number,
+  limitTokens: number,
+): string {
+  const marker = buildRecoveryMarker(handleId, usedTokens, limitTokens);
+  const markerTokens = estimateTokens(marker);
+  const allowedBodyTokens = limitTokens - markerTokens;
+  if (allowedBodyTokens <= 0) return marker;
+  const allowedBodyChars = allowedBodyTokens * 4;
+  const body = sliceSurrogateSafe(text, Math.max(0, allowedBodyChars));
+  return `${body}${marker}`;
+}
+
 /**
  * Wraps a tool handler with per-invocation JSONL telemetry. `enabled` is
  * read once at wrap time (typically at server startup); toggling
@@ -137,13 +156,17 @@ export function instrumentHandler(
           if (usedTokens > budget.limitTokens) {
             const handleId = budget.store.put(budgetSerialized);
             const { text, truncated } = truncateToTokens(budgetSerialized, budget.limitTokens);
-            wrappedResult = makeEnvelopeResult([{ type: "text", text }], {
+            const textWithMarker = truncated
+              ? applyBudgetRecoveryMarker(text, handleId, usedTokens, budget.limitTokens)
+              : text;
+            const envelope = makeEnvelopeResult([{ type: "text", text: textWithMarker }], {
               usedTokens,
               limitTokens: budget.limitTokens,
               truncated,
               resultBytes: Buffer.byteLength(budgetSerialized, "utf8"),
               handleId,
             });
+            wrappedResult = envelope;
           }
         }
       }
@@ -158,6 +181,7 @@ export function instrumentHandler(
             : safeStringifyByteLength(wrappedResult);
         safeWrite({
           ts: startedWall,
+          pid: process.pid,
           tool: name,
           origin,
           args_bytes: argsBytes,
@@ -173,6 +197,7 @@ export function instrumentHandler(
       if (enabled) {
         safeWrite({
           ts: startedWall,
+          pid: process.pid,
           tool: name,
           origin,
           args_bytes: argsBytes,
