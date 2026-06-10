@@ -90,6 +90,7 @@ export function captureAgentPerformanceFromReconciler(opts: {
   const nowIso = opts.clock().toISOString();
   const latency = computeLatencyMs(handoff.ts, handoff.resolved_at, nowIso);
   const parsedDispatchEndMeta = getParsedDispatchEndMeta(opts.db, input.handoff_id);
+  const parsedAcpSessionMeta = getParsedAcpSessionMeta(opts.db, input.handoff_id);
   const metadata: Record<string, unknown> = {};
   if (input.result.pr_url) metadata.pr_url = input.result.pr_url;
   if (input.result.timed_out !== undefined) metadata.timed_out = input.result.timed_out;
@@ -113,9 +114,10 @@ export function captureAgentPerformanceFromReconciler(opts: {
     tokens_used: usage.tokens_used,
     latency_ms: latency,
     exec_ms: normalizeNonnegativeInteger(input.wall_ms ?? parsedDispatchEndMeta?.wall_ms),
-    framework_overhead_ms: normalizeNonnegativeInteger(
-      input.framework_overhead_ms ?? parsedDispatchEndMeta?.framework_overhead_ms,
-    ),
+    framework_overhead_ms:
+      normalizeNonnegativeInteger(parsedAcpSessionMeta?.framework_overhead_ms) ??
+      normalizeNonnegativeInteger(input.framework_overhead_ms) ??
+      normalizeNonnegativeInteger(parsedDispatchEndMeta?.framework_overhead_ms),
     source: "reconciler",
     gate_outcome: lookupLatestLaneGateOutcome(opts.db, input.handoff_id),
     notes: input.result.regression_summary ?? null,
@@ -130,6 +132,26 @@ function getParsedDispatchEndMeta(db: Database, handoffId: string): Record<strin
       { meta_json: string | null },
       [string]
     >(`SELECT meta_json FROM dispatch_events WHERE handoff_id = ? AND kind = 'dispatch.end' ORDER BY ts DESC, id DESC LIMIT 1`)
+    .get(handoffId);
+  if (!row?.meta_json) return null;
+  try {
+    return JSON.parse(row.meta_json) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function getParsedAcpSessionMeta(db: Database, handoffId: string): Record<string, unknown> | null {
+  // Prefer acp.session.start (emitted unconditionally after session/new and
+  // carrying the full adapter init cost) over acp.session.reuse (emitted
+  // earlier on warm dispatches with only the ms-scale acquire time); fall back
+  // to reuse only when no start row exists. Pick the LATEST matching event so
+  // it pairs with the latest dispatch.end on swept-and-retried handoffs.
+  const row = db
+    .prepare<
+      { meta_json: string | null },
+      [string]
+    >(`SELECT meta_json FROM dispatch_events WHERE handoff_id = ? AND kind IN ('acp.session.start', 'acp.session.reuse') ORDER BY (kind != 'acp.session.start') ASC, ts DESC, id DESC LIMIT 1`)
     .get(handoffId);
   if (!row?.meta_json) return null;
   try {
@@ -249,10 +271,12 @@ export function captureAgentPerformanceFromDispatch(opts: {
   const latency = computeLatencyMs(handoff.ts, handoff.resolved_at, nowIso);
   const useWorktree = handoff.use_worktree === true || (handoff.use_worktree as unknown) === 1;
   const parsedDispatchEndMeta = getParsedDispatchEndMeta(opts.db, input.handoff_id);
+  const parsedAcpSessionMeta = getParsedAcpSessionMeta(opts.db, input.handoff_id);
   const execMs = normalizeNonnegativeInteger(input.wall_ms ?? parsedDispatchEndMeta?.wall_ms);
-  const frameworkOverheadMs = normalizeNonnegativeInteger(
-    input.framework_overhead_ms ?? parsedDispatchEndMeta?.framework_overhead_ms,
-  );
+  const frameworkOverheadMs =
+    normalizeNonnegativeInteger(parsedAcpSessionMeta?.framework_overhead_ms) ??
+    normalizeNonnegativeInteger(input.framework_overhead_ms) ??
+    normalizeNonnegativeInteger(parsedDispatchEndMeta?.framework_overhead_ms);
   const signals = computeDispatchSignals(
     opts.db,
     input.handoff_id,

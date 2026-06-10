@@ -189,6 +189,212 @@ describe("captureAgentPerformanceFromReconciler", () => {
     expect(persisted).toEqual({ framework_overhead_ms: 1234 });
   });
 
+  it("sources framework_overhead_ms from acp.session.start over dispatch.end when both present", () => {
+    db.prepare(
+      `
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `,
+    ).run(
+      "h1",
+      "worker-1",
+      "dispatch.end",
+      "2026-04-30T12:01:00Z",
+      JSON.stringify({ status: "ok", framework_overhead_ms: 1234 }),
+    );
+    db.prepare(
+      `
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `,
+    ).run(
+      "h1",
+      "worker-1",
+      "acp.session.start",
+      "2026-04-30T12:00:30Z",
+      JSON.stringify({ framework_overhead_ms: 88 }),
+    );
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-overhead-session-start",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: { handoff_id: "h1", reason: "completed" },
+    });
+
+    expect(row.framework_overhead_ms).toBe(88);
+    const persisted = db
+      .query<
+        { framework_overhead_ms: number | null },
+        []
+      >(`SELECT framework_overhead_ms FROM agent_performance WHERE handoff_id = 'h1'`)
+      .get();
+    expect(persisted).toEqual({ framework_overhead_ms: 88 });
+  });
+
+  it("sources framework_overhead_ms from acp.session.reuse when session start is absent", () => {
+    db.prepare(
+      `
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `,
+    ).run(
+      "h1",
+      "worker-1",
+      "dispatch.end",
+      "2026-04-30T12:01:00Z",
+      JSON.stringify({ status: "ok", framework_overhead_ms: 1234 }),
+    );
+    db.prepare(
+      `
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `,
+    ).run(
+      "h1",
+      "worker-1",
+      "acp.session.reuse",
+      "2026-04-30T12:00:30Z",
+      JSON.stringify({ framework_overhead_ms: 77 }),
+    );
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-overhead-session-reuse",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: { handoff_id: "h1", reason: "completed" },
+    });
+
+    expect(row.framework_overhead_ms).toBe(77);
+  });
+
+  it("prefers acp.session.start over an earlier acp.session.reuse on warm dispatches", () => {
+    const insertEvt = db.prepare(`
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `);
+    // Warm dispatch shape: reuse fires first with only the ms-scale acquire
+    // time; session.start follows with the full adapter init cost.
+    insertEvt.run(
+      "h1",
+      "worker-1",
+      "acp.session.reuse",
+      "2026-04-30T12:00:10Z",
+      JSON.stringify({ framework_overhead_ms: 5 }),
+    );
+    insertEvt.run(
+      "h1",
+      "worker-1",
+      "acp.session.start",
+      "2026-04-30T12:00:30Z",
+      JSON.stringify({ framework_overhead_ms: 2200 }),
+    );
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-overhead-warm",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: { handoff_id: "h1", reason: "completed" },
+    });
+
+    expect(row.framework_overhead_ms).toBe(2200);
+  });
+
+  it("prefers the session event over worker-provided framework_overhead_ms", () => {
+    db.prepare(
+      `
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `,
+    ).run(
+      "h1",
+      "worker-1",
+      "acp.session.start",
+      "2026-04-30T12:00:30Z",
+      JSON.stringify({ framework_overhead_ms: 88 }),
+    );
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-overhead-input-vs-session",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: { handoff_id: "h1", reason: "completed", framework_overhead_ms: 1234 },
+    });
+
+    expect(row.framework_overhead_ms).toBe(88);
+  });
+
+  it("falls through to worker-provided framework_overhead_ms when the session value is invalid", () => {
+    db.prepare(
+      `
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `,
+    ).run(
+      "h1",
+      "worker-1",
+      "acp.session.start",
+      "2026-04-30T12:00:30Z",
+      JSON.stringify({ framework_overhead_ms: -42 }),
+    );
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-overhead-invalid-session",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: { handoff_id: "h1", reason: "completed", framework_overhead_ms: 1234 },
+    });
+
+    expect(row.framework_overhead_ms).toBe(1234);
+  });
+
+  it("applies session-event precedence in reconciler capture too", () => {
+    const insertEvt = db.prepare(`
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `);
+    insertEvt.run(
+      "h1",
+      "worker-1",
+      "acp.session.reuse",
+      "2026-04-30T12:00:10Z",
+      JSON.stringify({ framework_overhead_ms: 5 }),
+    );
+    insertEvt.run(
+      "h1",
+      "worker-1",
+      "acp.session.start",
+      "2026-04-30T12:00:30Z",
+      JSON.stringify({ framework_overhead_ms: 2200 }),
+    );
+    insertEvt.run(
+      "h1",
+      "worker-1",
+      "dispatch.end",
+      "2026-04-30T12:01:00Z",
+      JSON.stringify({ status: "ok", wall_ms: 42000, framework_overhead_ms: 1234 }),
+    );
+
+    const row = captureAgentPerformanceFromReconciler({
+      db,
+      uuid: () => "perf-reconciler-session-precedence",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: {
+        handoff_id: "h1",
+        result: { status: "merged" },
+      },
+    });
+
+    expect(row.framework_overhead_ms).toBe(2200);
+    const persisted = db
+      .query<
+        { framework_overhead_ms: number | null },
+        []
+      >(`SELECT framework_overhead_ms FROM agent_performance WHERE handoff_id = 'h1'`)
+      .get();
+    expect(persisted).toEqual({ framework_overhead_ms: 2200 });
+  });
+
   it("leaves framework_overhead_ms null when dispatch.end omits it", () => {
     db.prepare(
       `
