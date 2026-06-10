@@ -1,16 +1,19 @@
 export const meta = {
   name: 'adversarial-review',
   description:
-    'CC-runtime port of the penumbra adversarial-review. Runs the proven DAEMON multi-persona fleet review (config-driven personas + agent_performance capture preserved) and returns SCHEMA-VALIDATED typed findings (severity buckets as data, not synthesis.md prose). Optionally drives the dispatch-quality-gates lifecycle inline: one fix-round for HIGH findings under the 2-round cap, then a recommended lane_close gate_status. Wraps the daemon workflow rather than reimplementing personas. Lands nothing.',
+    'CC-runtime port of the penumbra adversarial-review. Runs the proven DAEMON multi-persona fleet review (config-driven personas + agent_performance capture preserved) and returns SCHEMA-VALIDATED typed findings (severity buckets as data, not synthesis.md prose). Optionally drives the dispatch-quality-gates lifecycle inline: one fix-round for HIGH findings under the 2-round cap, an independent grader that can reject regression-risk fixes, then a recommended lane_close gate_status. Wraps the daemon workflow rather than reimplementing personas. Lands nothing.',
   whenToUse:
-    'When you want adversarial-review findings as typed data (to feed lane_close metadata or branch on HIGH counts), or want review -> fix -> re-review codified in one run. Args { target_ref, base_ref?, fixRound?, laneId?, fixAgent? }.',
+    'When you want adversarial-review findings as typed data (to feed lane_close metadata or branch on HIGH counts), or want review -> fix -> independent grade -> re-review codified in one run. Args { target_ref, base_ref?, fixRound?, laneId?, fixAgent?, graderModel?, taskIntent? }.',
   phases: [
     { title: 'Review', detail: 'run daemon adversarial-review (watchdog-safe poll) + parse synthesis to typed findings' },
-    { title: 'Fix', detail: 'optional: dispatch a fix for HIGH findings, then re-review (2-round cap)' },
+    { title: 'Fix', detail: 'optional: dispatch a fix for HIGH findings, grade it independently, then re-review if not rejected (2-round cap)' },
+    { title: 'Grade', detail: 'independent grader refutes the fix diff and rejects regression-risk changes' },
   ],
 }
 
 // ---- args ----
+// args: { target_ref, base_ref?, fixRound?, laneId?, fixAgent?, graderModel?, taskIntent? }
+// graderModel defaults to 'sonnet'; pass graderModel:'inherit' to use the session-default model.
 let a = args
 if (typeof a === 'string') {
   try { a = JSON.parse(a) } catch { throw new Error('args was a string but not valid JSON: ' + a) }
@@ -20,6 +23,10 @@ const base_ref = (a && a.base_ref) || 'main'
 const fixRound = !!(a && a.fixRound)
 const laneId = a && a.laneId
 const fixAgent = (a && a.fixAgent) || 'codex-acp-deep'
+const graderModel = a && a.graderModel
+const taskIntent =
+  (a && a.taskIntent) ||
+  `Preserve the intent of the pre-fix diff ${base_ref}..${target_ref}: address only the HIGH review findings without reverting, weakening, or deleting unrelated existing behavior.`
 const REPO = '/Volumes/WorkSSD/repos/personal/penumbra'
 
 // ---- schemas (typed findings — the primary payoff over parsing synthesis.md) ----
@@ -68,6 +75,26 @@ const FIX_SCHEMA = {
     notes: { type: 'string' },
   },
 }
+const GRADE_FINDING = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['finding_id', 'addressed', 'regression_risk', 'evidence'],
+  properties: {
+    finding_id: { type: 'string' },
+    addressed: { type: 'boolean' },
+    regression_risk: { type: 'boolean' },
+    evidence: { type: 'string' },
+  },
+}
+const GRADER_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['findings'],
+  properties: {
+    findings: { type: 'array', items: GRADE_FINDING },
+    notes: { type: 'string' },
+  },
+}
 
 // The daemon adversarial-review takes ~7min; a blocking workflow_run(wait:true) inside a
 // workflow agent would exceed the 180s workflow watchdog and get killed+retried (duplicate
@@ -86,6 +113,25 @@ function reviewPrompt(ref) {
   ].join('\n')
 }
 
+function graderPrompt(preFixBranch, fixBranch, highList) {
+  return [
+    `You are an independent adversarial grader for a fix round. You are NOT the fix agent. Your job is to REFUTE the work, not confirm it. Do not edit, dispatch, land, or push anything.`,
+    ``,
+    `Original task intent:`,
+    taskIntent,
+    ``,
+    `HIGH findings the fix claimed to address:`,
+    highList,
+    ``,
+    `Inspect both diffs in ${REPO}:`,
+    `1. PRE-FIX branch vs base: git diff ${base_ref}...${preFixBranch}`,
+    `2. FIX branch vs pre-fix branch: git diff ${preFixBranch}...${fixBranch}`,
+    ``,
+    `For each HIGH finding, decide addressed=true only when the fix diff materially resolves that finding. Set regression_risk=true if the fix diff appears to revert, remove, weaken, or bypass behavior from the pre-fix branch, especially tests or exits related to the finding. Evidence must cite concrete files, hunks, commands, or observed diff facts.`,
+    `Return GRADER_SCHEMA with one object per original HIGH finding. Never invent findings that were not in the HIGH list.`,
+  ].join('\n')
+}
+
 phase('Review')
 let review = await agent(reviewPrompt(target_ref), {
   label: 'review:round1',
@@ -97,6 +143,10 @@ let review = await agent(reviewPrompt(target_ref), {
 log(`round1: verdict="${review.verdict}" high=${review.high.length} medium=${review.medium.length} low=${review.low.length} personas=${review.completed_personas.length}`)
 
 let fix = null
+let fixGrade = null
+let fixRoundStatus = 'NOT_RUN'
+let landCandidate = target_ref
+let landCandidateReason = 'pre-fix reviewed branch'
 let rounds = 1
 
 if (fixRound && review.high.length > 0) {
@@ -120,13 +170,38 @@ if (fixRound && review.high.length > 0) {
 
   if (fix && fix.branch !== 'MISSING' && fix.commit_count > 0) {
     rounds = 2 // the cap: at most one fix + one re-review
-    review = await agent(reviewPrompt(fix.branch), {
-      label: 'review:round2',
-      phase: 'Fix',
-      schema: SYNTHESIS_SCHEMA,
-      model: 'sonnet',
+    phase('Grade')
+    fixGrade = await agent(graderPrompt(target_ref, fix.branch, highList), {
+      label: 'grade:round1',
+      phase: 'Grade',
+      schema: GRADER_SCHEMA,
+      ...(graderModel === 'inherit' ? {} : { model: graderModel || 'sonnet' }),
     })
-    log(`round2: verdict="${review.verdict}" high=${review.high.length} medium=${review.medium.length} low=${review.low.length}`)
+    const hasRegressionRisk = !!(fixGrade && Array.isArray(fixGrade.findings) && fixGrade.findings.some((f) => f.regression_risk))
+    // A dead/skipped grader (agent() -> null) must NOT bless the fix — that is the
+    // exact self-reported-success failure mode this stage exists to catch.
+    fixRoundStatus = fixGrade === null ? 'GRADER_UNAVAILABLE' : hasRegressionRisk ? 'REJECTED' : 'ACCEPTED'
+    if (fixRoundStatus !== 'ACCEPTED') {
+      landCandidate = target_ref
+      landCandidateReason =
+        fixRoundStatus === 'GRADER_UNAVAILABLE'
+          ? 'grader unavailable (agent returned null); fix branch not attested — land candidate stays the pre-fix branch'
+          : 'fix round rejected by independent grader because regression_risk=true'
+      log(`fix grade: ${fixRoundStatus} branch=${fix.branch}; land candidate remains ${landCandidate}`)
+    } else {
+      landCandidate = fix.branch
+      landCandidateReason = 'fix round accepted by independent grader'
+      log(`fix grade: ACCEPTED branch=${fix.branch}; re-reviewing`)
+      review = await agent(reviewPrompt(fix.branch), {
+        label: 'review:round2',
+        phase: 'Fix',
+        schema: SYNTHESIS_SCHEMA,
+        model: 'sonnet',
+      })
+      log(`round2: verdict="${review.verdict}" high=${review.high.length} medium=${review.medium.length} low=${review.low.length}`)
+    }
+  } else {
+    fixRoundStatus = 'FAILED'
   }
 }
 
@@ -145,6 +220,7 @@ if (laneId) {
       medium_findings: review.medium.length,
       low_findings: review.low.length,
       round_count: rounds,
+      fix_round_status: fixRoundStatus,
     },
   }
   log(`lane recommendation: lane_close(${laneId}, gate_status=${gate}, round_count=${rounds})`)
@@ -167,9 +243,16 @@ return {
   synthesis_path: review.synthesis_path,
   persona_handoff_ids: review.persona_handoff_ids,
   fix,
+  fix_grade: fixGrade,
+  fix_round_status: fixRoundStatus,
+  fix_rejected: fixRoundStatus === 'REJECTED' || fixRoundStatus === 'GRADER_UNAVAILABLE',
+  land_candidate: landCandidate,
+  land_candidate_reason: landCandidateReason,
   laneRecommendation,
   next:
-    review.high.length === 0
-      ? 'No HIGH findings outstanding — maestro may land the reviewed branch (land -> verify HEAD+content in main -> push -> teardown).'
-      : `${review.high.length} HIGH finding(s) outstanding after ${rounds} round(s). 2-round cap reached if rounds==2 -> lane_close review_debt (or override with a written reason). A third fix round is NOT auto-run.`,
+    fixRoundStatus === 'REJECTED' || fixRoundStatus === 'GRADER_UNAVAILABLE'
+      ? `Fix round ${fixRoundStatus} (independent grader); land candidate remains PRE-fix branch ${landCandidate}. Do not land ${fix && fix.branch ? fix.branch : 'the fix branch'} without explicit override.`
+      : review.high.length === 0
+        ? `No HIGH findings outstanding — maestro may land ${landCandidate} (land -> verify HEAD+content in main -> push -> teardown).`
+        : `${review.high.length} HIGH finding(s) outstanding after ${rounds} round(s). 2-round cap reached if rounds==2 -> lane_close review_debt (or override with a written reason). A third fix round is NOT auto-run.`,
 }
