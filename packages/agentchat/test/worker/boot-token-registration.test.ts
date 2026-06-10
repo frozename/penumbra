@@ -71,6 +71,44 @@ test("PenumbraClient.postHeartbeat uses worker_token after registerWorker; was s
   }
 });
 
+test("PenumbraClient.reregisterWorker deduplicates concurrent re-registration attempts", async () => {
+  let resolveRegister!: () => void;
+  let registerCalls = 0;
+  const captured: { url: string; auth: string | null }[] = [];
+  const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+    const req = input instanceof Request ? input : new Request(String(input), init);
+    const url = new URL(req.url).pathname;
+    captured.push({ url, auth: req.headers.get("authorization") });
+    if (url === "/worker/register") {
+      registerCalls++;
+      if (registerCalls === 1) {
+        return Response.json({ worker_token: "wt-1", worker_id: "W-A" });
+      }
+      await new Promise<void>((resolve) => {
+        resolveRegister = resolve;
+      });
+      return Response.json({ worker_token: `wt-${registerCalls}`, worker_id: "W-A" });
+    }
+    return Response.json({});
+  }) as any;
+
+  const { client, cleanup } = makeClient(fetchImpl);
+  try {
+    await client.registerWorker({ worker_id: "W-A" });
+    const p1 = client.reregisterWorker();
+    const p2 = client.reregisterWorker();
+    await Promise.resolve();
+    resolveRegister();
+    await Promise.all([p1, p2]);
+
+    expect(registerCalls).toBe(2);
+    expect(captured.filter((entry) => entry.url === "/worker/register")).toHaveLength(2);
+    expect(client.getWorkerToken()).toBe("wt-2");
+  } finally {
+    cleanup();
+  }
+});
+
 test("PenumbraClient.reconcileDispatchOrphans uses worker_token after registerWorker", async () => {
   const captured: { url: string; auth: string | null }[] = [];
   const fetchImpl: typeof fetch = (async (input: any, init?: any) => {

@@ -1508,8 +1508,8 @@ if (process.env.PENUMBRA_NOTIFICATION_SCHEDULER_DISABLED !== "1") {
 }
 
 startHeartbeatLoop({
-  emitHeartbeat: () => emitHeartbeat({ client, workerId, onEvent }),
-  reRegisterWorker: () => client.registerWorker({ worker_id: workerId }),
+  emitHeartbeat: (signal) => emitHeartbeat({ client, workerId, signal, onEvent }),
+  reregisterWorker: () => client.reregisterWorker(),
   exit: (code) => process.exit(code),
   schedule: (run, delayMs) => {
     const timer = setTimeout(() => {

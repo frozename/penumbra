@@ -8,7 +8,29 @@ describe("emitHeartbeat", () => {
 
     await emitHeartbeat({ client, workerId: "w-1", onEvent: (event) => events.push(event) });
 
-    expect(client.postHeartbeat).toHaveBeenCalledWith("w-1");
+    expect(client.postHeartbeat).toHaveBeenCalledWith("w-1", undefined);
+    expect(events.some((event) => event.kind === "heartbeat.sent")).toBe(true);
+  });
+
+  test("passes an abort signal through to postHeartbeat when provided", async () => {
+    const events: any[] = [];
+    const signals: AbortSignal[] = [];
+    const client = {
+      postHeartbeat: mock(async (_workerId: string, signal?: AbortSignal) => {
+        if (signal) signals.push(signal);
+      }),
+    };
+    const controller = new AbortController();
+
+    await emitHeartbeat({
+      client,
+      workerId: "w-1",
+      signal: controller.signal,
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(signals).toHaveLength(1);
+    expect(signals[0]).toBe(controller.signal);
     expect(events.some((event) => event.kind === "heartbeat.sent")).toBe(true);
   });
 

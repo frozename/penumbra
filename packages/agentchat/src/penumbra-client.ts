@@ -327,8 +327,12 @@ export class PenumbraClient {
       }>;
     }>;
   }
-  async postHeartbeat(worker_id: string): Promise<void> {
-    return this.postWorker("/worker/heartbeat", { worker_id });
+  async postHeartbeat(worker_id: string, signal?: AbortSignal): Promise<void> {
+    return this.postWorker("/worker/heartbeat", { worker_id }, { signal });
+  }
+  async reregisterWorker(): Promise<void> {
+    if (this.workerId === null) throw new Error("worker_id is not registered");
+    await this.refreshWorkerRegistration({ reason: "manual" });
   }
   async reconcileDispatchOrphans(
     worker_id: string,
@@ -477,7 +481,10 @@ export class PenumbraClient {
     }
   }
 
-  private async ensureFreshWorkerToken(originalErr: PenumbraHttpError): Promise<void> {
+  private async refreshWorkerRegistration(args: {
+    reason: string;
+    originalErr?: PenumbraHttpError;
+  }): Promise<void> {
     if (this.reregisterInFlight) {
       await this.reregisterInFlight;
       return;
@@ -486,17 +493,24 @@ export class PenumbraClient {
       try {
         await this.registerWorker({ worker_id: this.workerId!, metadata: this.workerMetadata });
         this.logger?.info(
-          { worker_id: this.workerId, reason: "401_retry", status: originalErr.status },
+          {
+            worker_id: this.workerId,
+            reason: args.reason,
+            ...(args.originalErr ? { status: args.originalErr.status } : {}),
+          },
           "worker auto-reregistered",
         );
       } catch (regErr) {
-        const wrapped = new PenumbraHttpError(
-          originalErr.message,
-          originalErr.status,
-          originalErr.body,
-        );
-        (wrapped as { cause?: unknown }).cause = regErr;
-        throw wrapped;
+        if (args.originalErr) {
+          const wrapped = new PenumbraHttpError(
+            args.originalErr.message,
+            args.originalErr.status,
+            args.originalErr.body,
+          );
+          (wrapped as { cause?: unknown }).cause = regErr;
+          throw wrapped;
+        }
+        throw regErr;
       } finally {
         this.reregisterInFlight = null;
       }
@@ -510,12 +524,16 @@ export class PenumbraClient {
     } catch (err) {
       if (!(err instanceof PenumbraHttpError) || err.status !== 401 || this.workerId === null)
         throw err;
-      await this.ensureFreshWorkerToken(err);
+      await this.refreshWorkerRegistration({ reason: "401_retry", originalErr: err });
       return await op();
     }
   }
 
-  private async postWorker<T>(path: string, body: unknown): Promise<T> {
+  private async postWorker<T>(
+    path: string,
+    body: unknown,
+    init?: { signal?: AbortSignal },
+  ): Promise<T> {
     return this.withWorkerTokenRetry(async () => {
       const { baseUrl, token: sharedToken } = this.resolve();
       const token = this.workerToken ?? sharedToken;
@@ -523,6 +541,7 @@ export class PenumbraClient {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
         body: JSON.stringify(body),
+        signal: init?.signal,
       });
       if (!res.ok) {
         const errorBody = await res.json().catch(() => null);

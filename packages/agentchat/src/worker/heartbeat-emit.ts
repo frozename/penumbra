@@ -1,15 +1,16 @@
 import type { DispatchEventInput } from "@penumbra/core";
 
 export interface EmitHeartbeatOpts {
-  client: { postHeartbeat: (worker_id: string) => Promise<void> };
+  client: { postHeartbeat: (worker_id: string, signal?: AbortSignal) => Promise<void> };
   workerId: string;
+  signal?: AbortSignal;
   onEvent?: (event: DispatchEventInput) => void;
 }
 
 export async function emitHeartbeat(opts: EmitHeartbeatOpts): Promise<void> {
   let err: unknown = null;
   try {
-    await opts.client.postHeartbeat(opts.workerId);
+    await opts.client.postHeartbeat(opts.workerId, opts.signal);
   } catch (caught) {
     err = caught;
   } finally {
