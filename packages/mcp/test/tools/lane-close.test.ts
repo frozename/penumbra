@@ -1,7 +1,14 @@
 import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { z } from "zod";
+import { buildServices, loadSqliteVec, migrate } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { DaemonClient } from "../../src/daemon-client.js";
 import { LaneCloseInputShape, laneCloseHandler } from "../../src/tools/lane-close.js";
+import { createDaemonFetchHandler } from "../../../daemon/src/serve.js";
 
 function parseToolResult(out: unknown): unknown {
   const content = (out as { content: Array<{ type: string; text: string }> }).content;
@@ -17,6 +24,45 @@ function makeDaemon(fetchImpl: typeof fetch) {
     daemon,
     restore() {
       globalThis.fetch = original;
+    },
+  };
+}
+
+function makeLiveDaemon() {
+  try {
+    if (process.platform === "darwin") {
+      Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
+    }
+  } catch {}
+
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const root = mkdtempSync(join(tmpdir(), "lane-close-mcp-"));
+  const services = buildServices({
+    env: {},
+    input: {},
+    storageRoot: root,
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date("2026-05-12T00:00:00.000Z"),
+  });
+  const token = "tok";
+  const handler = createDaemonFetchHandler({ services, token });
+  return {
+    daemon: new DaemonClient({ baseUrl: "http://daemon", token }),
+    services,
+    token,
+    fetchImpl: async (input: RequestInfo | URL, init?: RequestInit) =>
+      handler(new Request(String(input), init)),
+    stop() {
+      try {
+        services.supervisor.stopAll();
+      } catch {}
+      try {
+        db.close();
+      } catch {}
+      rmSync(root, { recursive: true, force: true });
     },
   };
 }
@@ -65,10 +111,10 @@ test("laneCloseHandler posts lane_close to the daemon and returns the response",
   try {
     const out = parseToolResult(
       await laneCloseHandler(daemon)({
-      lane_id: "lane-1234",
-      gate_status: "passed",
-      reviewer_handoff_id: "reviewer-1",
-      override_reason: "validated in review",
+        lane_id: "lane-1234",
+        gate_status: "passed",
+        reviewer_handoff_id: "reviewer-1",
+        override_reason: "validated in review",
       }),
     );
 
@@ -214,6 +260,62 @@ test("lane_close forwards metadata to daemon POST body", async () => {
     });
   } finally {
     restore();
+  }
+});
+
+test("lane_close round-trips through the live daemon contract and authorizes memory verify", async () => {
+  const live = makeLiveDaemon();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = live.fetchImpl;
+
+  try {
+    const opened = await live.fetchImpl("http://daemon/lanes/open", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${live.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        lane_id: "lane-live",
+        implementer_handoff: "h-live-impl",
+        task_class: "STANDARD",
+      }),
+    });
+    expect(opened.status).toBe(200);
+
+    const out = parseToolResult(
+      await laneCloseHandler(live.daemon)({
+        lane_id: "lane-live",
+        gate_status: "passed",
+        reviewer_handoff_id: "h-live-review",
+      }),
+    );
+
+    expect(out).toMatchObject({
+      lane_id: "lane-live",
+      gate_status: "passed",
+      implementer_handoff: "h-live-impl",
+      reviewer_handoff: "h-live-review",
+      ts_closed: "2026-05-12T00:00:00.000Z",
+    });
+
+    const recent = await live.fetchImpl("http://daemon/lanes/recent", {
+      headers: { authorization: `Bearer ${live.token}` },
+    });
+    expect(recent.status).toBe(200);
+    expect(await recent.json()).toMatchObject({
+      lanes: [
+        expect.objectContaining({
+          lane_id: "lane-live",
+          gate_status: "passed",
+          implementer_handoff: "h-live-impl",
+          reviewer_handoff: "h-live-review",
+        }),
+      ],
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    live.stop();
   }
 });
 

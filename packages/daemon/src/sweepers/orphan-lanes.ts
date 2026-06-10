@@ -2,7 +2,7 @@ import type { Services } from "@penumbra/core";
 import { closeLane } from "@penumbra/core";
 
 const DEFAULT_INTERVAL_MS = 5 * 60_000;
-const DEFAULT_GRACE_MS = 30 * 60_000;
+const DEFAULT_GRACE_MS = 120 * 60_000;
 
 const TERMINAL_HANDOFF_STATUSES = ["completed", "failed", "rejected", "expired"] as const;
 
@@ -138,9 +138,10 @@ export function startOrphanLanesSweeper(
   services: Services,
   intervalMs = DEFAULT_INTERVAL_MS,
 ): () => void {
+  const graceMs = services.settings.laneOrphanSweeperGraceMinutes * 60_000;
   const timer = setInterval(() => {
     try {
-      runOrphanLanesSweep(services);
+      runOrphanLanesSweep(services, { graceMs });
     } catch (err) {
       (services as any).log?.warn?.({ err: String(err) }, "orphan-lane sweep failed");
     }

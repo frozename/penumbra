@@ -114,6 +114,7 @@ export async function lanesCloseRoute(req: Request, services: Services): Promise
   const parsed = CloseLaneBodySchema.safeParse(raw);
   if (!parsed.success) return validationError(parsed.error);
 
+  const beforeClose = getLane(services.db, parsed.data.lane_id);
   const ts_closed = services.clock().toISOString();
   try {
     closeLane(services.db, parsed.data.lane_id, {
@@ -135,13 +136,33 @@ export async function lanesCloseRoute(req: Request, services: Services): Promise
   }
 
   const closedLane = getLane(services.db, parsed.data.lane_id);
-  if (closedLane) {
+  // The gate-outcome stamp must not silently vanish when the post-close read
+  // misses; the implementer handoff is immutable across close, so the pre-close
+  // snapshot is an equally valid source for it.
+  const implementerHandoff = closedLane?.implementer_handoff ?? beforeClose?.implementer_handoff;
+  if (implementerHandoff) {
     services.db
       .prepare(`UPDATE agent_performance SET gate_outcome = ? WHERE handoff_id = ?`)
-      .run(parsed.data.gate_status, closedLane.implementer_handoff);
+      .run(parsed.data.gate_status, implementerHandoff);
   }
 
-  return json(getLane(services.db, parsed.data.lane_id) ?? null);
+  const responseLane =
+    closedLane ??
+    (beforeClose
+      ? {
+          ...beforeClose,
+          ts_closed,
+          gate_status: parsed.data.gate_status,
+          reviewer_handoff: parsed.data.reviewer_handoff ?? beforeClose.reviewer_handoff,
+          override_reason: parsed.data.override_reason ?? beforeClose.override_reason,
+          metadata_json:
+            parsed.data.metadata !== undefined
+              ? JSON.stringify(parsed.data.metadata)
+              : beforeClose.metadata_json,
+        }
+      : null);
+
+  return json(responseLane);
 }
 
 export async function lanesRecentRoute(req: Request, services: Services): Promise<Response> {

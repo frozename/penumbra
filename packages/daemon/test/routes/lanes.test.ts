@@ -140,7 +140,7 @@ test("open returns the full persisted lane row", async () => {
   }
 });
 
-test("close returns json(null) when getLane returns null after close", async () => {
+test("close returns the closed lane payload even if the row disappears after update", async () => {
   const daemon = startTestDaemon();
   try {
     await postJson(daemon, "/lanes/open", {
@@ -217,7 +217,19 @@ test("close returns json(null) when getLane returns null after close", async () 
       gate_status: "passed",
     });
     expect(closed.status).toBe(200);
-    expect(await closed.json()).toBeNull();
+    expect(await closed.json()).toEqual({
+      lane_id: "lane-close-null",
+      ts_opened: "2026-04-23T12:00:00.000Z",
+      ts_closed: "2026-04-23T12:00:00.000Z",
+      task_class: "STANDARD",
+      implementer_handoff: "h-close-null",
+      reviewer_handoff: null,
+      gate_status: "passed",
+      recalled_memory_ids: [],
+      recalled_query: null,
+      override_reason: null,
+      metadata_json: "{}",
+    });
   } finally {
     daemon.stop();
   }
