@@ -8,7 +8,6 @@ import type { AgentChatConfig } from "../src/config/types.js";
 import { PermissionDaemonClient } from "../src/worker/permission-daemon-client.js";
 import { loadConfig } from "../src/config/load.js";
 import { PenumbraClient } from "../src/penumbra-client.js";
-import { PenumbraHttpError, isTerminalHttpStatus } from "../src/penumbra-client.js";
 import { dispatchHandoff } from "../src/cli/dispatch-handoff.js";
 import type { McpServer } from "../src/adapters/acp-types.js";
 import {
@@ -44,7 +43,7 @@ import {
 import { autocommitOnChainEnd } from "../src/worker/autocommit-on-chain-end.js";
 import { DispatchEventQueue } from "../src/worker/event-queue.js";
 import { emitHeartbeat } from "../src/worker/heartbeat-emit.js";
-import { MAX_HEARTBEAT_ATTEMPTS, nextHeartbeatRetry } from "../src/worker/heartbeat-retry.js";
+import { startHeartbeatLoop } from "../src/worker/heartbeat-loop.js";
 import { createPermissionCallback } from "../src/worker/permission-callback.js";
 import { createDiscordRateLimiter } from "../src/worker/discord-rate-limit.js";
 import { runWorkerControlListener } from "../src/worker/control-listener.js";
@@ -1508,56 +1507,19 @@ if (process.env.PENUMBRA_NOTIFICATION_SCHEDULER_DISABLED !== "1") {
   log.info({ interval_ms: 60_000, workerId }, "notification scheduler started");
 }
 
-// Heartbeat loop (15s nominal, with backoff on failure)
-// HARD timeout per attempt: if the HTTP call hangs (daemon kickstart, sweeper holding
-// DB lock, network blip), we MUST still schedule a retry. Prior version did
-// `await emitHeartbeat(...)` with no timeout, so a single hung call broke the chain
-// forever — root cause of the recurring "worker silently stops heartbeating after
-// ~15 min uptime" pattern. The race makes each attempt bounded.
-const HEARTBEAT_HTTP_TIMEOUT_MS = 10_000;
-let heartbeatTimer: Timer | null = null;
-const sendHeartbeat = (delayMs = 15_000, attempt = 0) => {
-  heartbeatTimer = setTimeout(async () => {
-    try {
-      await Promise.race([
-        emitHeartbeat({ client, workerId, onEvent }),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`heartbeat_timeout_${HEARTBEAT_HTTP_TIMEOUT_MS}ms`)),
-            HEARTBEAT_HTTP_TIMEOUT_MS,
-          ),
-        ),
-      ]);
-      sendHeartbeat(15_000, 0);
-    } catch (err: any) {
-      const status = err instanceof PenumbraHttpError ? err.status : null;
-      const isTerminal = status !== null && isTerminalHttpStatus(status);
-      if (isTerminal) {
-        log.error(
-          { status, err: String(err) },
-          "heartbeat failed permanently; worker may be unauthorized",
-        );
-        // We don't exit here to allow in-flight tasks to finish, but we stop heartbeating
-        return;
-      }
-
-      const retry = nextHeartbeatRetry(attempt);
-      if (!retry.shouldRetry) {
-        log.error(
-          { err: String(err), attempts: MAX_HEARTBEAT_ATTEMPTS },
-          "heartbeat retries exhausted; stopping heartbeat loop",
-        );
-        return;
-      }
-      log.debug(
-        { err: String(err), backoff: retry.delayMs, nextAttempt: retry.nextAttempt },
-        "heartbeat failed; retrying with backoff",
-      );
-      sendHeartbeat(retry.delayMs!, retry.nextAttempt!);
-    }
-  }, delayMs);
-};
-sendHeartbeat(0);
+startHeartbeatLoop({
+  emitHeartbeat: () => emitHeartbeat({ client, workerId, onEvent }),
+  reRegisterWorker: () => client.registerWorker({ worker_id: workerId }),
+  exit: (code) => process.exit(code),
+  schedule: (run, delayMs) => {
+    const timer = setTimeout(() => {
+      void run();
+    }, delayMs);
+    return { cancel: () => clearTimeout(timer) };
+  },
+  log,
+  workerId,
+});
 
 // Control listener (SSE)
 const controlAbort = new AbortController();
