@@ -223,3 +223,5 @@ they are discouraged outside of forensic recovery. Use `dispatch_land`
 as the default merge path; reserve manual merges for the rare case
 where reconciler verdict is poisoned by repo-wide typecheck noise
 (see memory `project_reconciler_typecheck_attribution_bug`).
+
+**Note**: The codified path for this post-dispatch landing tail is now the `.claude/workflows/land-and-close.js` workflow. Use it for a structured, multi-phase sequence (Land, Verify, Close) instead of calling `dispatch_land` directly when you need to resolve lanes and board tasks alongside the merge.
