@@ -44,3 +44,28 @@ Error: Was there a typo in the url or port?
 ## Stub Embed Bisect
 
 Skipped. The canary crash did not reproduce in the baseline matrix, so there was no crashing leg to bisect with `--stub-embed`.
+
+## Rerun From The Home Checkout (proxy reachable) — 2026-06-11 ~14:30Z
+
+The fleet-lane matrix above failed at the judge call because the agent sandbox blocked
+localhost; rerun from the home checkout with `http://127.0.0.1:7944` reachable:
+
+| runtime | version | exit | signal | outcome | duration_ms |
+| --- | --- | ---: | --- | --- | ---: |
+| `~/.bun-canary/bin/bun` | 1.3.14 | 0 | null | completed | 4775 |
+| `~/.bun-canary/bin/bun` | 1.3.14 | 0 | null | completed | 2939 |
+| `~/.bun-canary/bin/bun` | 1.3.14 | 0 | null | completed | 2811 |
+| `~/.bun/bin/bun` | 1.4.0 | 0 | null | completed | 2876 |
+| `~/.bun/bin/bun` | 1.4.0 | 0 | null | completed | 2881 |
+| `~/.bun/bin/bun` | 1.4.0 | 0 | null | completed | 2804 |
+
+## Final Verdict
+
+A single isolated promotion tick does NOT reproduce the segfault under either runtime.
+The crash requires full-daemon conditions (concurrent HTTP serving, workers, dream
+cycles, boot-time FTS backlog). Production A/B remains decisive: 41 panics on
+Bun Canary 1.3.14-canary.1 across 4s-171s uptimes on 2026-06-11; zero panics after the
+daemon plist moved to stable Bun 1.4.0 (same data, same config, judge role re-enabled,
+soak green). Root cause is pinned to the canary runtime under load; the exact trigger
+inside the daemon was not isolated. The bun.report link for the redacted crash trace is
+in ~/.penumbra/launchd.daemon.err.log (~line 105830).
