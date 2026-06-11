@@ -346,4 +346,38 @@ describe("POST /memory/session-extract", () => {
       },
     });
   });
+
+  test("returns structured judge_failed JSON when the configured judge rejects", async () => {
+    const daemon = makeDaemon();
+    handles.push({ db: daemon.db, root: daemon.root });
+    process.env.PENUMBRA_CONFIG_DIR = writeAgentchatConfigWithoutJudge(daemon.root);
+    seedT0(daemon.db, "session-extract-judge-fails");
+
+    globalThis.fetch = (async () =>
+      new Response("backend offline", {
+        status: 500,
+        headers: { "content-type": "text/plain" },
+      })) as typeof globalThis.fetch;
+
+    const res = await daemon.fetch("http://x/memory/session-extract", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${SHARED_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        session_id: "session-extract-judge-fails",
+        project_id: "proj",
+      }),
+    });
+
+    expect(res.status).toBe(502);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(await res.json()).toEqual({
+      error: {
+        code: "judge_failed",
+        message: expect.stringContaining("Sirius returned 500: backend offline"),
+      },
+    });
+  });
 });

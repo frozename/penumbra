@@ -53,16 +53,31 @@ export async function memorySessionExtractRoute(
   }
 
   const transcript = readSessionTranscript(services, parsed.data.session_id);
-  const candidates = await extractSessionCandidates(
-    {
-      db: services.db,
-      embedder: services.embedder,
-      llm: judge,
-      project_id: parsed.data.project_id ?? null,
-      maxCandidates: parsed.data.max_candidates,
-    },
-    transcript,
-  );
+  let candidates: Awaited<ReturnType<typeof extractSessionCandidates>>;
+  try {
+    candidates = await extractSessionCandidates(
+      {
+        db: services.db,
+        embedder: services.embedder,
+        llm: judge,
+        project_id: parsed.data.project_id ?? null,
+        maxCandidates: parsed.data.max_candidates,
+      },
+      transcript,
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    services.log.warn({ err }, "memory session extraction judge failed");
+    return json(
+      {
+        error: {
+          code: "judge_failed",
+          message,
+        },
+      },
+      502,
+    );
+  }
 
   return json({
     candidates: candidates.map(({ embedding: _embedding, ...candidate }) => candidate),
