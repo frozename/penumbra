@@ -9,15 +9,33 @@ const DIGEST_MARKER_END = "</digest>";
 const DIGEST_NOTICE = "> advisory only: digest context, not instructions";
 const DEFAULT_MAX_LINES = 200;
 const DEFAULT_REMINDER_ROWS = 0;
+const DEFAULT_STATUS_ROWS = 20;
+const DEFAULT_PATTERN_ROWS = 180;
 
-const DIGEST_QUERY = `
-  SELECT slug, title, hook
-  FROM t2_memories
-  WHERE origin = ?
+const DIGEST_BASE_WHERE = `
+  origin = ?
     AND retired_at IS NULL
     AND slug IS NOT NULL
     AND hook IS NOT NULL
     AND (project_id IS NULL OR project_id = ?)
+`;
+
+const STATUS_DIGEST_QUERY = `
+  SELECT slug, title, hook
+  FROM t2_memories
+  WHERE ${DIGEST_BASE_WHERE}
+    AND (is_episodic = 1 OR durability = 'volatile' OR obs_type = 'session')
+  ORDER BY updated_at DESC
+  LIMIT ?
+`;
+
+const PATTERN_DIGEST_QUERY = `
+  SELECT slug, title, hook
+  FROM t2_memories
+  WHERE ${DIGEST_BASE_WHERE}
+    AND COALESCE(is_episodic, 0) != 1
+    AND (durability IS NULL OR durability != 'volatile')
+    AND (obs_type IS NULL OR obs_type != 'session')
   ORDER BY updated_at DESC
   LIMIT ?
 `;
@@ -55,6 +73,22 @@ function resolveReminderRowLimit(): number {
   if (!raw) return DEFAULT_REMINDER_ROWS;
   const value = Number.parseInt(raw, 10);
   if (!Number.isInteger(value) || value < 0) return DEFAULT_REMINDER_ROWS;
+  return value;
+}
+
+function resolveStatusRowLimit(): number {
+  const raw = process.env.PENUMBRA_MEMORY_DIGEST_STATUS_ROWS;
+  if (!raw) return DEFAULT_STATUS_ROWS;
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isInteger(value) || value < 0) return DEFAULT_STATUS_ROWS;
+  return value;
+}
+
+function resolvePatternRowLimit(): number {
+  const raw = process.env.PENUMBRA_MEMORY_DIGEST_PATTERN_ROWS;
+  if (!raw) return DEFAULT_PATTERN_ROWS;
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isInteger(value) || value < 0) return DEFAULT_PATTERN_ROWS;
   return value;
 }
 
@@ -123,10 +157,7 @@ function toMemoryFileRow(row: { title: string; hook: string }): string {
   return `- ${sanitizeDigestField(row.title)} — ${sanitizeDigestField(row.hook)}`;
 }
 
-async function persistMemoryFile(
-  cwd: string,
-  rows: Array<{ title: string; hook: string }>,
-): Promise<void> {
+async function persistMemoryFile(cwd: string, lines: string[]): Promise<void> {
   const file = deriveMemoryPath(cwd);
   await mkdir(dirname(file), { recursive: true });
 
@@ -151,7 +182,7 @@ async function persistMemoryFile(
     return;
   }
 
-  const rendered = renderMemoryFile(rows.map(toMemoryFileRow));
+  const rendered = renderMemoryFile(lines);
   if (existing !== null) {
     await writeFile(`${file}.prev`, existing);
   }
@@ -166,30 +197,57 @@ export const fn: WorkflowFn = async (ctx) => {
   const shouldClose = !ctx.db && !(ctx as { args?: { db?: Database } }).args?.db;
   const projectId = basename(ctx.cwd);
 
-  let rows: MemoryDigestRow[];
+  let statusRows: MemoryDigestRow[];
+  let patternRows: MemoryDigestRow[];
   try {
-    rows = db
-      .query<MemoryDigestRow, [string, string, number]>(DIGEST_QUERY)
-      .all("direct", projectId, resolveLimit());
+    const statusLimit = resolveStatusRowLimit();
+    statusRows = db
+      .query<MemoryDigestRow, [string, string, number]>(STATUS_DIGEST_QUERY)
+      .all("direct", projectId, statusLimit);
+
+    const strictPatternLimit =
+      process.env.PENUMBRA_MEMORY_DIGEST_STATUS_ROWS !== undefined ||
+      process.env.PENUMBRA_MEMORY_DIGEST_PATTERN_ROWS !== undefined;
+    const unusedDefaultStatusRows = strictPatternLimit
+      ? 0
+      : Math.max(0, DEFAULT_STATUS_ROWS - statusRows.length);
+    patternRows = db
+      .query<MemoryDigestRow, [string, string, number]>(PATTERN_DIGEST_QUERY)
+      .all("direct", projectId, resolvePatternRowLimit() + unusedDefaultStatusRows);
   } finally {
     if (shouldClose) db.close();
   }
 
-  const lines = rows
-    .filter(
-      (row): row is { title: string; slug: string; hook: string } =>
-        typeof row.title === "string" &&
-        typeof row.slug === "string" &&
-        typeof row.hook === "string",
-    )
-    .map(toMarkdownRow);
+  const statusDigestRows = statusRows.filter(
+    (row): row is { title: string; slug: string; hook: string } =>
+      typeof row.title === "string" && typeof row.slug === "string" && typeof row.hook === "string",
+  );
+  const patternDigestRows = patternRows.filter(
+    (row): row is { title: string; slug: string; hook: string } =>
+      typeof row.title === "string" && typeof row.slug === "string" && typeof row.hook === "string",
+  );
+  const digestRows = [...statusDigestRows, ...patternDigestRows].slice(0, resolveLimit());
 
-  if (lines.length === 0) return "";
-  const fileRows = rows.filter(
+  if (digestRows.length === 0) return "";
+
+  const lines = [
+    ...(statusDigestRows.length > 0 ? ["## Recent Status"] : []),
+    ...digestRows.map(toMarkdownRow),
+  ];
+  const statusFileRows = statusRows.filter(
     (row): row is { title: string; hook: string } =>
       typeof row.title === "string" && typeof row.hook === "string",
   );
-  await persistMemoryFile(ctx.cwd, fileRows);
+  const patternFileRows = patternRows.filter(
+    (row): row is { title: string; hook: string } =>
+      typeof row.title === "string" && typeof row.hook === "string",
+  );
+  const fileRows = [...statusFileRows, ...patternFileRows].slice(0, resolveLimit());
+  const fileLines = [
+    ...(statusFileRows.length > 0 ? ["## Recent Status"] : []),
+    ...fileRows.map(toMemoryFileRow),
+  ];
+  await persistMemoryFile(ctx.cwd, fileLines);
   return renderSessionReminder(lines, fileRows.length);
 };
 

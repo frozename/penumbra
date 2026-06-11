@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { loadSqliteVec, migrate } from "../../src/index.js";
 import { TestEmbedder } from "../../src/testing/index.js";
@@ -13,11 +13,30 @@ try {
 }
 
 let db: Database;
+let previousExtractionFilterGate: string | undefined;
+let previousNearDupGate: string | undefined;
 
 beforeEach(() => {
+  previousExtractionFilterGate = process.env.PENUMBRA_EXTRACTION_FILTER_GATE;
+  previousNearDupGate = process.env.PENUMBRA_PROMOTION_NEAR_DUP_GATE;
+  delete process.env.PENUMBRA_EXTRACTION_FILTER_GATE;
+  delete process.env.PENUMBRA_PROMOTION_NEAR_DUP_GATE;
   db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 4 });
+});
+
+afterEach(() => {
+  if (previousExtractionFilterGate === undefined) {
+    delete process.env.PENUMBRA_EXTRACTION_FILTER_GATE;
+  } else {
+    process.env.PENUMBRA_EXTRACTION_FILTER_GATE = previousExtractionFilterGate;
+  }
+  if (previousNearDupGate === undefined) {
+    delete process.env.PENUMBRA_PROMOTION_NEAR_DUP_GATE;
+  } else {
+    process.env.PENUMBRA_PROMOTION_NEAR_DUP_GATE = previousNearDupGate;
+  }
 });
 
 function seedT1(rollupId: string, sessionId: string): void {
@@ -35,7 +54,13 @@ function seedT1(rollupId: string, sessionId: string): void {
   db.run(
     `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
      VALUES (?, ?, ?, 'mcp', 'u1', 'm1', ?, 'agent-response', 'local', '{}', ?)`,
-    [`e-${sessionId}-2`, "2026-04-27T10:05:00Z", "2026-04-27T10:05:00Z", sessionId, "Response text"],
+    [
+      `e-${sessionId}-2`,
+      "2026-04-27T10:05:00Z",
+      "2026-04-27T10:05:00Z",
+      sessionId,
+      "Response text",
+    ],
   );
 }
 

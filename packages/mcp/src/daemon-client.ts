@@ -107,6 +107,8 @@ export class DaemonClient {
     why?: string | null;
     source_quote?: string | null;
     obs_type?: string | null;
+    durability?: string | null;
+    is_episodic?: boolean | null;
     project_id?: string | null;
     session_id?: string;
   }): Promise<unknown> {

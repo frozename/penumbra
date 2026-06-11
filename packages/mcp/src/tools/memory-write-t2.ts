@@ -12,6 +12,8 @@ export const MemoryWriteT2InputShape = {
   why: z.string().optional().nullable(),
   source_quote: z.string().optional().nullable(),
   obs_type: z.string().optional().nullable(),
+  durability: z.string().optional().nullable(),
+  is_episodic: z.boolean().optional().nullable(),
   project_id: z.string().nullable().optional(),
 };
 

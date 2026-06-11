@@ -19,8 +19,11 @@ function freshDb(): Database {
       title TEXT,
       hook TEXT,
       origin TEXT,
+      obs_type TEXT,
       retired_at TEXT,
       project_id TEXT,
+      durability TEXT,
+      is_episodic INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL,
       memory_id INTEGER PRIMARY KEY AUTOINCREMENT
     );
@@ -35,23 +38,31 @@ function insertMemory(
     title: string;
     hook: string | null;
     origin?: string;
+    obsType?: string | null;
     retiredAt?: string | null;
     projectId?: string | null;
+    durability?: string | null;
+    isEpisodic?: boolean | null;
     updatedAt: string;
   },
 ): void {
   db.prepare(
     `
-    INSERT INTO t2_memories (slug, title, hook, origin, retired_at, project_id, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO t2_memories (
+      slug, title, hook, origin, obs_type, retired_at, project_id, durability, is_episodic, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     row.slug,
     row.title,
     row.hook,
     row.origin ?? "direct",
+    row.obsType ?? null,
     row.retiredAt ?? null,
     row.projectId ?? null,
+    row.durability ?? null,
+    row.isEpisodic ? 1 : 0,
     row.updatedAt,
   );
 }
@@ -107,6 +118,10 @@ function derivedMemoryPath(cwd: string, root: string): string {
 function defaultMemoryPath(home: string, cwd: string): string {
   const munged = cwd.replaceAll("/", "-").replaceAll(".", "-");
   return join(home, ".claude", "projects", munged, "memory", "MEMORY.md");
+}
+
+function countOccurrences(text: string, needle: string): number {
+  return text.split(needle).length - 1;
 }
 
 test("Composes markdown for direct-origin maestro-scoped rows", async () => {
@@ -385,16 +400,104 @@ test("Caps output at default 200 rows", async () => {
       });
     }
 
-    const result = await fn(makeCtx(db), {});
-    const lines = splitLines(result);
-    expect(lines[0]).toBe(DIGEST_HEADER);
-    expect(lines[1]).toBe("");
-    expect(lines).toHaveLength(11);
-    expect(result).toContain("Loaded 200 digest rows. Full digest is in MEMORY.md.");
+    await withEnv("PENUMBRA_MEMORY_DIGEST_MAX_LINES", undefined, async () => {
+      await withEnv("PENUMBRA_MEMORY_DIGEST_STATUS_ROWS", undefined, async () => {
+        await withEnv("PENUMBRA_MEMORY_DIGEST_PATTERN_ROWS", undefined, async () => {
+          const result = await fn(makeCtx(db), {});
+          const lines = splitLines(result);
+          expect(lines[0]).toBe(DIGEST_HEADER);
+          expect(lines[1]).toBe("");
+          expect(lines).toHaveLength(11);
+          expect(result).toContain("Loaded 200 digest rows. Full digest is in MEMORY.md.");
+        });
+      });
+    });
   } finally {
     if (old === undefined) delete process.env.PENUMBRA_MEMORY_DIGEST_REMINDER_ROWS;
     else process.env.PENUMBRA_MEMORY_DIGEST_REMINDER_ROWS = old;
   }
+});
+
+test("Splits digest rows into status and pattern budgets", async () => {
+  const db = freshDb();
+  for (let i = 0; i < 30; i += 1) {
+    insertMemory(db, {
+      slug: `status-${i}`,
+      title: `Status ${i}`,
+      hook: `Status hook ${i}`,
+      isEpisodic: true,
+      updatedAt: `2026-01-01T00:00:${String(i).padStart(2, "0")}Z`,
+    });
+    insertMemory(db, {
+      slug: `pattern-${i}`,
+      title: `Pattern ${i}`,
+      hook: `Pattern hook ${i}`,
+      updatedAt: `2026-01-02T00:00:${String(i).padStart(2, "0")}Z`,
+    });
+  }
+  const dir = mkdtempSync(join(tmpdir(), "memory-digest-"));
+
+  await withEnv("PENUMBRA_MEMORY_DIGEST_STATUS_ROWS", "5", async () => {
+    await withEnv("PENUMBRA_MEMORY_DIGEST_PATTERN_ROWS", "10", async () => {
+      await withEnv("PENUMBRA_CC_MEMORY_DIR", dir, async () => {
+        const result = await fn(makeCtx(db), {});
+        expect(result).toContain("Loaded 15 digest rows. Full digest is in MEMORY.md.");
+      });
+    });
+  });
+
+  const contents = readFileSync(join(dir, "MEMORY.md"), "utf8");
+  expect(contents.split("\n")[0]).toBe(
+    "<!-- GENERATED from penumbra t2 — do not edit; write via mcp__penumbra__memory_write_t2 -->",
+  );
+  expect(contents).toContain("## Recent Status");
+  expect(countOccurrences(contents, "- Status ")).toBe(5);
+  expect(countOccurrences(contents, "- Pattern ")).toBe(10);
+});
+
+test("Defaults to 20 status rows and 180 pattern rows with byte-stable rendering", async () => {
+  const db = freshDb();
+  for (let i = 0; i < 25; i += 1) {
+    insertMemory(db, {
+      slug: `status-${i}`,
+      title: `Status ${i}`,
+      hook: `Status hook ${i}`,
+      durability: "volatile",
+      updatedAt: `2026-01-01T00:00:${String(i).padStart(2, "0")}Z`,
+    });
+  }
+  for (let i = 0; i < 225; i += 1) {
+    insertMemory(db, {
+      slug: `pattern-${i}`,
+      title: `Pattern ${i}`,
+      hook: `Pattern hook ${i}`,
+      updatedAt: `2026-01-02T00:${String(Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}Z`,
+    });
+  }
+  const dir = mkdtempSync(join(tmpdir(), "memory-digest-"));
+
+  await withEnv("PENUMBRA_MEMORY_DIGEST_STATUS_ROWS", undefined, async () => {
+    await withEnv("PENUMBRA_MEMORY_DIGEST_PATTERN_ROWS", undefined, async () => {
+      await withEnv("PENUMBRA_MEMORY_DIGEST_MAX_LINES", undefined, async () => {
+        await withEnv("PENUMBRA_CC_MEMORY_DIR", dir, async () => {
+          const firstResult = await fn(makeCtx(db), {});
+          const firstContents = readFileSync(join(dir, "MEMORY.md"), "utf8");
+          const secondResult = await fn(makeCtx(db), {});
+          const secondContents = readFileSync(join(dir, "MEMORY.md"), "utf8");
+
+          expect(firstResult).toContain("Loaded 200 digest rows. Full digest is in MEMORY.md.");
+          expect(secondResult).toBe(firstResult);
+          expect(secondContents).toBe(firstContents);
+          expect(firstContents.split("\n")[0]).toBe(
+            "<!-- GENERATED from penumbra t2 — do not edit; write via mcp__penumbra__memory_write_t2 -->",
+          );
+          expect(countOccurrences(firstContents, "- Status ")).toBeLessThanOrEqual(20);
+          expect(countOccurrences(firstContents, "- Status ")).toBe(20);
+          expect(countOccurrences(firstContents, "- Pattern ")).toBe(180);
+        });
+      });
+    });
+  });
 });
 
 test("Returns empty string when no direct maestro memories exist", async () => {

@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- test fixtures and sqlite row mocks intentionally use loose shapes */
-import { expect, test, beforeEach } from "bun:test";
+import { afterEach, expect, test, beforeEach } from "bun:test";
 import { Database } from "bun:sqlite";
 try {
   if (process.platform === "darwin") {
@@ -13,10 +13,29 @@ import { TestEmbedder } from "../../src/testing/index.js";
 import { T2Promotion, verifyMemory, writeDirectT2Memory } from "../../src/writers/t2.js";
 
 let db: Database;
+let previousExtractionFilterGate: string | undefined;
+let previousNearDupGate: string | undefined;
 beforeEach(() => {
+  previousExtractionFilterGate = process.env.PENUMBRA_EXTRACTION_FILTER_GATE;
+  previousNearDupGate = process.env.PENUMBRA_PROMOTION_NEAR_DUP_GATE;
+  delete process.env.PENUMBRA_EXTRACTION_FILTER_GATE;
+  delete process.env.PENUMBRA_PROMOTION_NEAR_DUP_GATE;
   db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
+});
+
+afterEach(() => {
+  if (previousExtractionFilterGate === undefined) {
+    delete process.env.PENUMBRA_EXTRACTION_FILTER_GATE;
+  } else {
+    process.env.PENUMBRA_EXTRACTION_FILTER_GATE = previousExtractionFilterGate;
+  }
+  if (previousNearDupGate === undefined) {
+    delete process.env.PENUMBRA_PROMOTION_NEAR_DUP_GATE;
+  } else {
+    process.env.PENUMBRA_PROMOTION_NEAR_DUP_GATE = previousNearDupGate;
+  }
 });
 
 function seedT1(
@@ -822,4 +841,48 @@ test("writeDirectT2Memory persists why/source_quote/obs_type and sets learned_at
   expect(row?.source_quote).toBe("Body");
   expect(row?.obs_type).toBe("operator_note");
   expect(row?.learned_at).toBe(row?.created_at);
+});
+
+test("writeDirectT2Memory persists durability/is_episodic and defaults omitted values", () => {
+  const withMetadata = writeDirectT2Memory(db, {
+    title: "Direct volatile status",
+    body: "Body",
+    embedding: new Float32Array(384),
+    durability: "volatile",
+    is_episodic: true,
+  });
+  const withoutMetadata = writeDirectT2Memory(db, {
+    title: "Direct default metadata",
+    body: "Body",
+    embedding: new Float32Array(384),
+  });
+
+  const rows = db
+    .query<
+      {
+        memory_id: string;
+        durability: string | null;
+        is_episodic: number;
+      },
+      [string, string]
+    >(
+      `SELECT memory_id, durability, is_episodic
+       FROM t2_memories
+       WHERE memory_id IN (?, ?)
+       ORDER BY title ASC`,
+    )
+    .all(withoutMetadata.memory_id, withMetadata.memory_id);
+
+  expect(rows).toEqual([
+    {
+      memory_id: withoutMetadata.memory_id,
+      durability: null,
+      is_episodic: 0,
+    },
+    {
+      memory_id: withMetadata.memory_id,
+      durability: "volatile",
+      is_episodic: 1,
+    },
+  ]);
 });

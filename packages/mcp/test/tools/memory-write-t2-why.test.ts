@@ -16,6 +16,8 @@ test("memory_write_t2 forwards why/source_quote/obs_type when provided", async (
     why: "Operator requested durable memory",
     source_quote: "Body",
     obs_type: "operator_note",
+    durability: "volatile",
+    is_episodic: true,
   });
 
   expect(calls).toHaveLength(1);
@@ -25,6 +27,8 @@ test("memory_write_t2 forwards why/source_quote/obs_type when provided", async (
     why: "Operator requested durable memory",
     source_quote: "Body",
     obs_type: "operator_note",
+    durability: "volatile",
+    is_episodic: true,
   });
   expect(out.content[0].text).toContain('"memory_id": "m1"');
 });

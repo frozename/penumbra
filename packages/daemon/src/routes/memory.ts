@@ -153,6 +153,8 @@ const MemoryWriteT2Schema = z
     why: z.string().optional().nullable(),
     source_quote: z.string().optional().nullable(),
     obs_type: z.string().optional().nullable(),
+    durability: z.string().optional().nullable(),
+    is_episodic: z.boolean().optional().nullable(),
     project_id: z.string().nullable().optional(),
     session_id: z
       .string()
@@ -203,6 +205,8 @@ export async function memoryWriteT2Route(req: Request, services: Services): Prom
       why: data.why,
       source_quote: data.source_quote,
       obs_type: data.obs_type,
+      durability: data.durability,
+      is_episodic: data.is_episodic,
       project_id: data.project_id,
       embedding,
     };
