@@ -65,6 +65,8 @@ export interface ChunkedJudgeOpts {
   semanticDedupeThreshold?: number;
 }
 
+type T2ExtractionJudge = (transcript: string) => Promise<T2MemoryExtraction[]>;
+
 export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
   // If no LLM judge is configured (no PENUMBRA_SIRIUS_BASE_URL / SIRIUS_URL,
   // and no override passed in), short-circuit to a no-op worker. The previous
@@ -74,10 +76,9 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
   let activePool: JudgePool | null = null;
   const rawJudge =
     opts.llm ??
-    createJudgePoolFromAgentchat(opts.services, (pool) => {
+    resolveT2ExtractionJudge(opts.services, (pool) => {
       activePool = pool;
-    }) ??
-    createDefaultLLMJudge(opts.services);
+    });
   if (!rawJudge) {
     opts.services.log.info(
       "no PENUMBRA_SIRIUS_BASE_URL/SIRIUS_URL configured — t2 promotion worker disabled (set one to enable)",
@@ -141,6 +142,13 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
       }
     },
   };
+}
+
+export function resolveT2ExtractionJudge(
+  services: Services,
+  onPool: (pool: JudgePool) => void = () => undefined,
+): T2ExtractionJudge | null {
+  return createJudgePoolFromAgentchat(services, onPool) ?? createDefaultLLMJudge(services);
 }
 
 export function wrapJudgeWithChunking(

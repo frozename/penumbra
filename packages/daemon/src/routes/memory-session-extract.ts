@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { extractSessionCandidates, type Services } from "@penumbra/core";
-import { createDefaultLLMJudge } from "../workers/t2-promotion.js";
+import { resolveT2ExtractionJudge } from "../workers/t2-promotion.js";
 import { bodyJson, json } from "./_helpers.js";
 
 const MemorySessionExtractSchema = z
@@ -39,7 +39,7 @@ export async function memorySessionExtractRoute(
     );
   }
 
-  const judge = createDefaultLLMJudge(services);
+  const judge = resolveT2ExtractionJudge(services);
   if (!judge) {
     return json(
       {

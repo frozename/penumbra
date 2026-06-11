@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
@@ -18,17 +18,27 @@ try {
 const SHARED_TOKEN = "shared-token";
 
 let previousJudgeUrl: string | undefined;
+let previousSiriusUrl: string | undefined;
+let previousConfigDir: string | undefined;
 let previousFetch: typeof globalThis.fetch;
 
 beforeEach(() => {
   previousJudgeUrl = process.env.PENUMBRA_SIRIUS_BASE_URL;
+  previousSiriusUrl = process.env.SIRIUS_URL;
+  previousConfigDir = process.env.PENUMBRA_CONFIG_DIR;
   previousFetch = globalThis.fetch;
   process.env.PENUMBRA_SIRIUS_BASE_URL = "http://judge.local";
+  delete process.env.SIRIUS_URL;
+  delete process.env.PENUMBRA_CONFIG_DIR;
 });
 
 afterEach(() => {
   if (previousJudgeUrl === undefined) delete process.env.PENUMBRA_SIRIUS_BASE_URL;
   else process.env.PENUMBRA_SIRIUS_BASE_URL = previousJudgeUrl;
+  if (previousSiriusUrl === undefined) delete process.env.SIRIUS_URL;
+  else process.env.SIRIUS_URL = previousSiriusUrl;
+  if (previousConfigDir === undefined) delete process.env.PENUMBRA_CONFIG_DIR;
+  else process.env.PENUMBRA_CONFIG_DIR = previousConfigDir;
   globalThis.fetch = previousFetch;
 });
 
@@ -121,6 +131,48 @@ function seedExistingT2(db: Database): void {
   db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [rowid, new Float32Array(384)]);
 }
 
+function writeAgentchatJudgeConfig(root: string, baseUrl: string): string {
+  const dir = join(root, "config");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "agents.yaml"),
+    [
+      "agents:",
+      "  - name: route-memory-refiner",
+      "    adapter: openai-compat-http",
+      "    options:",
+      `      baseUrl: ${baseUrl}`,
+      "      model: granite",
+      "    roles: [memory-refiner]",
+      "",
+    ].join("\n"),
+  );
+  writeFileSync(join(dir, "routing.yaml"), "default_roles: {}\n");
+  writeFileSync(join(dir, "quotas.yaml"), "providers: []\n");
+  return dir;
+}
+
+function writeAgentchatConfigWithoutJudge(root: string): string {
+  const dir = join(root, "config-no-judge");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "agents.yaml"),
+    [
+      "agents:",
+      "  - name: planner",
+      "    adapter: openai-compat-http",
+      "    options:",
+      "      baseUrl: http://planner/v1",
+      "      model: granite",
+      "    roles: [planner]",
+      "",
+    ].join("\n"),
+  );
+  writeFileSync(join(dir, "routing.yaml"), "default_roles: {}\n");
+  writeFileSync(join(dir, "quotas.yaml"), "providers: []\n");
+  return dir;
+}
+
 describe("POST /memory/session-extract", () => {
   const handles: Array<{ db: Database; root: string }> = [];
 
@@ -139,6 +191,7 @@ describe("POST /memory/session-extract", () => {
   test("returns filtered session memory candidates with update slug information", async () => {
     const daemon = makeDaemon();
     handles.push({ db: daemon.db, root: daemon.root });
+    process.env.PENUMBRA_CONFIG_DIR = writeAgentchatConfigWithoutJudge(daemon.root);
     seedT0(daemon.db, "session-extract-route");
     seedExistingT2(daemon.db);
 
@@ -204,5 +257,93 @@ describe("POST /memory/session-extract", () => {
         existing_memory_id: "m-existing-route",
       }),
     );
+  });
+
+  test("uses an agentchat memory-refiner judge when sirius env is unset", async () => {
+    const daemon = makeDaemon();
+    handles.push({ db: daemon.db, root: daemon.root });
+    seedT0(daemon.db, "session-extract-agentchat");
+    delete process.env.PENUMBRA_SIRIUS_BASE_URL;
+    delete process.env.SIRIUS_URL;
+    process.env.PENUMBRA_CONFIG_DIR = writeAgentchatJudgeConfig(
+      daemon.root,
+      "http://agentchat-judge/v1",
+    );
+
+    const judgeRequests: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      judgeRequests.push(String(input));
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  memories: [
+                    {
+                      title: "Agentchat Judge Route",
+                      body: "Session extraction should use the agentchat memory-refiner pool when Sirius environment variables are absent.",
+                      kind: "decision",
+                      why: "Production memory-refiner agents can serve extraction without requiring the legacy Sirius env path.",
+                      source_quote: "agentchat memory-refiner pool",
+                      depth: 2,
+                    },
+                  ],
+                }),
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof globalThis.fetch;
+
+    const res = await daemon.fetch("http://x/memory/session-extract", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${SHARED_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        session_id: "session-extract-agentchat",
+        project_id: "proj",
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(judgeRequests).toEqual(["http://agentchat-judge/v1/chat/completions"]);
+    const payload = (await res.json()) as { candidates: Array<{ title: string }> };
+    expect(payload.candidates).toContainEqual(
+      expect.objectContaining({ title: "Agentchat Judge Route" }),
+    );
+  });
+
+  test("returns judge_unconfigured when no sirius env or agentchat judge is available", async () => {
+    const daemon = makeDaemon();
+    handles.push({ db: daemon.db, root: daemon.root });
+    seedT0(daemon.db, "session-extract-unconfigured");
+    delete process.env.PENUMBRA_SIRIUS_BASE_URL;
+    delete process.env.SIRIUS_URL;
+    process.env.PENUMBRA_CONFIG_DIR = writeAgentchatConfigWithoutJudge(daemon.root);
+
+    const res = await daemon.fetch("http://x/memory/session-extract", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${SHARED_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        session_id: "session-extract-unconfigured",
+        project_id: "proj",
+      }),
+    });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      error: {
+        code: "judge_unconfigured",
+        message: "memory session extraction requires a configured LLM judge",
+      },
+    });
   });
 });
