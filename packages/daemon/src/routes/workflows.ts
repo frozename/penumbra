@@ -395,7 +395,10 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
   const rawArgs = body?.args ?? {};
   const argsResult = validateWorkflowArgs(entry, rawArgs);
   if (!argsResult.ok) return argsResult.response;
-  const args = argsResult.args;
+  const args = {
+    ...argsResult.args,
+    ...(body?.session_id ? { session_id: body.session_id } : {}),
+  };
 
   const cwd = body?.cwd ?? process.cwd();
   const scope = resolveWorkflowScopeOrReject(cwd, services);
@@ -660,7 +663,10 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
     const rawArgs = body?.args ?? {};
     const argsResult = validateWorkflowArgs(entry, rawArgs);
     if (!argsResult.ok) return argsResult.response;
-    const args = argsResult.args;
+    const args = {
+      ...argsResult.args,
+      ...(sessionIdFromBody ? { session_id: sessionIdFromBody } : {}),
+    };
     const start = Date.now();
     const sessionStart = resolveSessionStart((services as any).db, sessionIdFromBody, start);
     const templateCtx: TemplateVarContext = {

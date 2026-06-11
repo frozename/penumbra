@@ -26,6 +26,7 @@ export const T2MemoryExtractionSchema = z.object({
 export type T2MemoryExtraction = z.infer<typeof T2MemoryExtractionSchema>;
 
 export type LLMJudge = (transcript: string) => Promise<T2MemoryExtraction[]>;
+export const DEFAULT_T2_PROMOTION_MIN_EVENTS = 5;
 
 export type T2MemoryWriterInput = T2MemoryWriteInput;
 export type { T2MemoryWriteInput };
@@ -678,7 +679,7 @@ export class T2Promotion {
   detectEligibleRollups(delayHours: number, now: Date, minEvents?: number): string[] {
     const cutoff = new Date(now.getTime() - delayHours * 3600_000).toISOString();
     const limit = this.opts.retryLimit ?? 5;
-    const finalMinEvents = minEvents ?? this.opts.minEvents ?? 5;
+    const finalMinEvents = minEvents ?? this.opts.minEvents ?? DEFAULT_T2_PROMOTION_MIN_EVENTS;
     return this.opts.db
       .query<{ rollup_id: string }, [string, string, number, number]>(
         `SELECT rollup_id FROM t1_rollups 

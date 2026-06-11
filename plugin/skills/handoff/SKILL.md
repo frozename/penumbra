@@ -61,6 +61,8 @@ Required sections (skip any that are empty for this session — don't pad):
 
 ## Step 3 — Save session-noteworthy memories
 
+Run the `session-memory-sweep` workflow first; it extracts and proposes entries with dedup against existing t2. Only hand-file additional entries via `memory_write_t2` that the sweep missed.
+
 If this session surfaced a non-obvious bite, fix recipe, or design decision that future sessions would re-discover otherwise, file it via `mcp__penumbra__memory_write_t2` with a REQUIRED `slug` (kebab-case, stable), `hook` (one-line when-this-bites trigger), `title`, and `project_id` (the concerned project; `null` only for genuinely cross-project maestro policy) - rows missing `slug`/`hook` never render into the digest. The CC `memory/` directory is a generated read-only view; never write it. Daemon down: record the memory text under a `Memories to file` heading in the continuation note and file them first thing next session. Keep the quality bar: session-local trivia gets no `slug`/`hook` or stays unwritten - `slug`+`hook` is the render ticket.
 
 ## What NOT to do

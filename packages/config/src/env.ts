@@ -885,6 +885,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: 0.95,
     description: "Similarity threshold for the T2 promotion near-duplicate gate.",
   },
+  PENUMBRA_PROMOTION_NEAR_DUP_GATE: {
+    schema: Bool,
+    default: false,
+    description: "Enable the T2 promotion near-duplicate approval gate.",
+  },
   PENUMBRA_EXTRACTION_FILTER_GATE: {
     schema: Bool,
     default: false,
@@ -904,6 +909,16 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: NonNegInt,
     default: 5,
     description: "Minimum t1_rollups.n_events required for t2 promotion eligibility (default 5).",
+  },
+  PENUMBRA_SESSION_SWEEP_ENABLED: {
+    schema: Bool,
+    default: true,
+    description: "Enable close-time session memory candidate extraction.",
+  },
+  PENUMBRA_SESSION_SWEEP_MAX_CANDIDATES: {
+    schema: PosInt,
+    default: 10,
+    description: "Maximum session-memory-sweep candidates to request from extraction.",
   },
   PENUMBRA_DREAMING_P4_QUEUE_MAX: {
     schema: NonNegInt,

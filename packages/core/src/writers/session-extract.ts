@@ -20,6 +20,7 @@ export interface SessionExtractCandidate {
   existing_memory_id?: string;
   title: string;
   body: string;
+  hook: string;
   kind: string;
   metadata?: Record<string, unknown>;
   obs_type?: string | null;
@@ -116,6 +117,7 @@ export async function extractSessionCandidates(
         : {}),
       title: extraction.title,
       body: extraction.body,
+      hook: buildHook(extraction),
       kind: extraction.kind,
       ...(extraction.metadata ? { metadata: extraction.metadata } : {}),
       obs_type: extraction.obs_type ?? null,
@@ -137,6 +139,11 @@ export async function extractSessionCandidates(
   }
 
   return out;
+}
+
+function buildHook(extraction: T2MemoryExtraction): string {
+  const source = extraction.why?.trim() || extraction.title.trim();
+  return source.replace(/\s+/g, " ").slice(0, 180);
 }
 
 function validateExtractQuality(extraction: T2MemoryExtraction): boolean {

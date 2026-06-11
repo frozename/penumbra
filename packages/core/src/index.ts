@@ -201,6 +201,7 @@ export {
 export { T1Rollup, type T1RollupOpts } from "./writers/t1.js";
 export {
   T2Promotion,
+  DEFAULT_T2_PROMOTION_MIN_EVENTS,
   type T2PromotionOpts,
   type LLMJudge,
   type T2MemoryExtraction,
