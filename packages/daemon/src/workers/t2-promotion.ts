@@ -154,46 +154,102 @@ export function resolveT2ExtractionJudge(
 export function wrapJudgeWithChunking(
   opts: ChunkedJudgeOpts,
 ): (transcript: string) => Promise<T2MemoryExtraction[]> {
-  const maxChars = opts.maxCharsPerChunk ?? 80_000;
-  return async (transcript: string): Promise<T2MemoryExtraction[]> => {
-    if (transcript.length <= maxChars) return opts.judge(transcript);
+  const envVal = parseInt(process.env.PENUMBRA_T2_JUDGE_MAX_CHARS_PER_CHUNK || "", 10);
+  const defaultMax = !isNaN(envVal) && envVal > 0 ? envVal : 80_000;
+  const maxChars = opts.maxCharsPerChunk ?? defaultMax;
 
-    const events = splitTranscriptOnEventBoundaries(transcript);
-    const chunks: string[] = [];
-    let buf: string[] = [];
-    let bufLen = 0;
-    for (const ev of events) {
-      // Keep each event whole. If an individual event exceeds the budget, let
-      // it stand alone rather than splitting mid-message.
-      if (bufLen > 0 && bufLen + ev.length + 2 > maxChars) {
-        chunks.push(buf.join("\n\n"));
-        buf = [];
-        bufLen = 0;
-      }
-      buf.push(ev);
-      bufLen += ev.length + 2;
-    }
-    if (buf.length > 0) chunks.push(buf.join("\n\n"));
+  const judgeWithRetry = async (chunk: string, depth: number): Promise<T2MemoryExtraction[]> => {
+    try {
+      return await opts.judge(chunk);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/exceed_context_size_error|exceeds the available context size/i.test(msg)) {
+        if (chunk.length < 4000 || depth >= 5) {
+          opts.log?.warn?.(
+            { err: msg, depth, chunkLength: chunk.length },
+            "t2 promotion: context overflow retry exhausted; dropping chunk",
+          );
+          return [];
+        }
 
-    opts.log?.info?.(
-      { chunks: chunks.length, totalChars: transcript.length, maxChars },
-      "t2 promotion: transcript chunked",
-    );
-
-    const allMemories: T2MemoryExtraction[] = [];
-    for (const chunk of chunks) {
-      try {
-        const memories = await opts.judge(chunk);
-        for (const memory of memories) allMemories.push(memory);
-      } catch (err) {
         opts.log?.warn?.(
-          { err: err instanceof Error ? err.message : String(err) },
-          "t2 promotion: chunk judge failed; continuing",
+          { depth, chunkLength: chunk.length },
+          "t2 promotion: context overflow; halving and retrying",
         );
+
+        const events = splitTranscriptOnEventBoundaries(chunk);
+        let halves: string[];
+        if (events.length > 1) {
+          const mid = Math.floor(events.length / 2);
+          halves = [events.slice(0, mid).join("\n\n"), events.slice(mid).join("\n\n")];
+        } else {
+          const mid = Math.floor(chunk.length / 2);
+          halves = [chunk.slice(0, mid), chunk.slice(mid)];
+        }
+
+        const m1 = await judgeWithRetry(halves[0]!, depth + 1);
+        const m2 = await judgeWithRetry(halves[1]!, depth + 1);
+        return [...m1, ...m2];
+      }
+      throw err;
+    }
+  };
+
+  return async (transcript: string): Promise<T2MemoryExtraction[]> => {
+    let finalMemories: T2MemoryExtraction[];
+
+    if (transcript.length <= maxChars) {
+      finalMemories = await judgeWithRetry(transcript, 0);
+    } else {
+      const events = splitTranscriptOnEventBoundaries(transcript);
+      const chunks: string[] = [];
+      let buf: string[] = [];
+      let bufLen = 0;
+      for (const ev of events) {
+        if (ev.length > maxChars) {
+          if (bufLen > 0) {
+            chunks.push(buf.join("\n\n"));
+            buf = [];
+            bufLen = 0;
+          }
+          let start = 0;
+          while (start < ev.length) {
+            chunks.push(ev.slice(start, start + maxChars));
+            start += maxChars;
+          }
+          continue;
+        }
+
+        if (bufLen > 0 && bufLen + ev.length + 2 > maxChars) {
+          chunks.push(buf.join("\n\n"));
+          buf = [];
+          bufLen = 0;
+        }
+        buf.push(ev);
+        bufLen += ev.length + 2;
+      }
+      if (buf.length > 0) chunks.push(buf.join("\n\n"));
+
+      opts.log?.info?.(
+        { chunks: chunks.length, totalChars: transcript.length, maxChars },
+        "t2 promotion: transcript chunked",
+      );
+
+      finalMemories = [];
+      for (const chunk of chunks) {
+        try {
+          const memories = await judgeWithRetry(chunk, 0);
+          for (const memory of memories) finalMemories.push(memory);
+        } catch (err) {
+          opts.log?.warn?.(
+            { err: err instanceof Error ? err.message : String(err) },
+            "t2 promotion: chunk judge failed; continuing",
+          );
+        }
       }
     }
 
-    const titleDeduped = dedupeByTitle(allMemories);
+    const titleDeduped = dedupeByTitle(finalMemories);
     if (!opts.embedder || titleDeduped.length < 2) return titleDeduped;
     try {
       return await dedupeBySemanticSimilarity(

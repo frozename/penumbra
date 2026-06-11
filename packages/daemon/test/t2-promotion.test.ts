@@ -874,3 +874,107 @@ serviceTest("t2 promotion worker respects configured minEvents override", async 
     d.stop();
   }
 });
+
+test("wrapJudgeWithChunking env override PENUMBRA_T2_JUDGE_MAX_CHARS_PER_CHUNK", async () => {
+  const prev = process.env.PENUMBRA_T2_JUDGE_MAX_CHARS_PER_CHUNK;
+  process.env.PENUMBRA_T2_JUDGE_MAX_CHARS_PER_CHUNK = "50";
+  try {
+    const seen: string[] = [];
+    // Omit maxCharsPerChunk so it uses env
+    const judge = wrapJudgeWithChunking({
+      judge: async (transcript) => {
+        seen.push(transcript);
+        return [];
+      },
+    });
+
+    // 60 chars > 50 char limit.
+    const transcript = ["User: " + "a".repeat(20), "Assistant: " + "b".repeat(20)].join("\n\n");
+    await judge(transcript);
+
+    // Each string + role is around 26 chars. 26+2+26 > 50, so should be split.
+    expect(seen.length).toBeGreaterThan(1);
+    for (const chunk of seen) {
+      expect(chunk.length).toBeLessThanOrEqual(50);
+    }
+  } finally {
+    if (prev === undefined) delete process.env.PENUMBRA_T2_JUDGE_MAX_CHARS_PER_CHUNK;
+    else process.env.PENUMBRA_T2_JUDGE_MAX_CHARS_PER_CHUNK = prev;
+  }
+});
+
+test("wrapJudgeWithChunking oversized event hard split", async () => {
+  const seen: string[] = [];
+  const judge = wrapJudgeWithChunking({
+    maxCharsPerChunk: 50,
+    judge: async (transcript) => {
+      seen.push(transcript);
+      return [];
+    },
+  });
+
+  // A single event of 120 chars. It should be hard split into lengths of 50.
+  const transcript = "User: " + "a".repeat(114);
+  await judge(transcript);
+
+  expect(seen.length).toBe(3);
+  expect(seen[0].length).toBe(50);
+  expect(seen[1].length).toBe(50);
+  expect(seen[2].length).toBe(20);
+});
+
+test("wrapJudgeWithChunking halves and retries on context overflow", async () => {
+  const seen: string[] = [];
+  const judge = wrapJudgeWithChunking({
+    maxCharsPerChunk: 10000,
+    judge: async (transcript) => {
+      seen.push(transcript);
+      if (transcript.length > 5000) {
+        throw new Error("exceeds the available context size");
+      }
+      return [
+        {
+          title: "Found " + transcript.substring(0, 10),
+          body: transcript.substring(0, 10),
+          kind: "fact",
+        },
+      ];
+    },
+  });
+
+  const event1 = "User: " + "a".repeat(3000);
+  const event2 = "Assistant: " + "b".repeat(3000);
+  const transcript = [event1, event2].join("\n\n");
+
+  // transcript is ~6020 chars. It fits in maxCharsPerChunk (10000) so it's a single chunk initially.
+  // judge throws context size error. It should halve on event boundaries and retry.
+  const res = await judge(transcript);
+
+  expect(seen.length).toBe(3); // 1 initial fail, 2 success on halves
+  expect(seen[0]).toBe(transcript);
+  expect(seen[1]).toBe(event1);
+  expect(seen[2]).toBe(event2);
+  expect(res.length).toBe(2);
+});
+
+test("wrapJudgeWithChunking recursion floor gives up cleanly", async () => {
+  const seen: string[] = [];
+  const judge = wrapJudgeWithChunking({
+    maxCharsPerChunk: 10000,
+    judge: async (transcript) => {
+      seen.push(transcript);
+      // always throw context size error
+      throw new Error("exceed_context_size_error");
+    },
+  });
+
+  // Small enough that after a split, length will be < 4000 and it will hit the floor.
+  const transcript = "User: " + "a".repeat(4500);
+
+  const res = await judge(transcript);
+
+  // 1 initial try, it halves to ~2250, then retries those 2.
+  // Those 2 will also fail and check length < 4000, and drop the chunk without further retries.
+  expect(seen.length).toBe(3);
+  expect(res.length).toBe(0);
+});
