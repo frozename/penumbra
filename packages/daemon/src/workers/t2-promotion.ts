@@ -334,7 +334,7 @@ function cosineSim(a: Float32Array, b: Float32Array, na: number, nb: number): nu
   return dot / (na * nb);
 }
 
-function parseJudgeResponse(content: string): T2MemoryExtraction[] {
+export function parseJudgeResponse(content: string): T2MemoryExtraction[] {
   // Some transcripts produce structurally invalid JSON from the judge
   // (duplicate keys with mismatched closing braces, unbalanced arrays from
   // mid-output truncation, etc). Returning [] on parse failure marks the
