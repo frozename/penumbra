@@ -2,8 +2,7 @@ export type T2EmbedRecipe = "body_v1" | "title_only" | "title_plus_concise";
 export const MAX_BODY_CHARS = 4096;
 export const T2_CONCISE_BODY_CHARS = 320;
 
-const T2_XML_BLEED_PATTERN =
-  /<\/?(?:function_calls|invoke|tool_call|tool_use|antml:[a-z_]+)[\s>]/i;
+const T2_XML_BLEED_PATTERN = /<\/?(?:function_calls|invoke|tool_call|tool_use|antml:[a-z_]+)[\s>]/i;
 
 export type T2BodyValidationResult = { ok: true } | { ok: false; reason: "length" | "xml" };
 

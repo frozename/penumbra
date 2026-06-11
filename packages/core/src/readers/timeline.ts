@@ -13,10 +13,7 @@ import {
 export function timeline(db: Database, req: TimelineRequest): TimelineEntry[] {
   const now = Date.now();
   const anchor = db
-    .query<
-      { created_at: string; project_id: string | null; obs_type: string | null },
-      [string]
-    >(
+    .query<{ created_at: string; project_id: string | null; obs_type: string | null }, [string]>(
       `SELECT created_at, project_id, obs_type
          FROM t2_memories
         WHERE memory_id = ?

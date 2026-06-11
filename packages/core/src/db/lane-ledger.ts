@@ -87,12 +87,14 @@ function parseLaneRow(row: {
 }
 
 export function insertLane(db: Database, row: InsertLaneInput): void {
-  (db.query(
-    `INSERT INTO lane_ledger (
+  (
+    db.query(
+      `INSERT INTO lane_ledger (
       lane_id, ts_opened, task_class, implementer_handoff, gate_status,
       recalled_memory_ids, recalled_query, metadata_json
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ) as StatementWithRun).run(
+    ) as StatementWithRun
+  ).run(
     row.lane_id,
     row.ts_opened,
     row.task_class,
@@ -110,12 +112,14 @@ export function closeLane(db: Database, lane_id: string, fields: CloseLaneInput)
   }
   // null → COALESCE preserves prior value; undefined also maps to null (same semantic)
   const metadata_json_value = fields.metadata == null ? null : JSON.stringify(fields.metadata);
-  const changes = (db.query(
-    `UPDATE lane_ledger
+  const changes = (
+    db.query(
+      `UPDATE lane_ledger
         SET ts_closed=?, gate_status=?, reviewer_handoff=?, override_reason=?,
             metadata_json = COALESCE(?, metadata_json)
       WHERE lane_id=? AND ts_closed IS NULL`,
-  ) as StatementWithRun).run(
+    ) as StatementWithRun
+  ).run(
     fields.ts_closed,
     fields.gate_status,
     fields.reviewer_handoff ?? null,
@@ -173,18 +177,20 @@ export function recentLanes(db: Database, filter: RecentLaneFilter, limit = 50):
   }
   args.push(limit);
   const sql = `SELECT * FROM lane_ledger${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY ts_opened DESC LIMIT ?`;
-  const rows = (db.query(sql) as StatementWithAll<{
-    lane_id: string;
-    ts_opened: string;
-    ts_closed: string | null;
-    task_class: string;
-    implementer_handoff: string;
-    reviewer_handoff: string | null;
-    gate_status: string;
-    recalled_memory_ids: string;
-    recalled_query: string | null;
-    override_reason: string | null;
-    metadata_json: string;
-  }>).all(...args.map((arg) => String(arg)));
+  const rows = (
+    db.query(sql) as StatementWithAll<{
+      lane_id: string;
+      ts_opened: string;
+      ts_closed: string | null;
+      task_class: string;
+      implementer_handoff: string;
+      reviewer_handoff: string | null;
+      gate_status: string;
+      recalled_memory_ids: string;
+      recalled_query: string | null;
+      override_reason: string | null;
+      metadata_json: string;
+    }>
+  ).all(...args.map((arg) => String(arg)));
   return rows.map(parseLaneRow);
 }

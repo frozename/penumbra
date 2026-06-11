@@ -226,13 +226,11 @@ export class RecallReader {
 
     const fused = fuseRRF(lists, { k: req.rrf_k });
 
-    return fused
-      .slice(0, limit)
-      .map((f) => ({
-        ...f.payload,
-        fusedScore: f.fusedScore,
-        sources: f.sources.map((idx) => sourceMap[idx]!),
-      }));
+    return fused.slice(0, limit).map((f) => ({
+      ...f.payload,
+      fusedScore: f.fusedScore,
+      sources: f.sources.map((idx) => sourceMap[idx]!),
+    }));
   }
 }
 

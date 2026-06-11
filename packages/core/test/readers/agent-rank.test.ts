@@ -110,6 +110,43 @@ describe("routeAgent rank mode", () => {
     expect(out.candidates.map((c) => c.agent_name)).toContain("reviewer");
   });
 
+  it("scores completed_with_output outcome as 1.0 (success)", () => {
+    const isolatedDb = new Database(":memory:");
+    loadSqliteVec(isolatedDb);
+    migrate(isolatedDb, { embeddingDim: 384 });
+    const writer = new AgentPerformanceWriter(isolatedDb);
+    writer.upsert({
+      performance_id: "p-review",
+      ts: "2026-04-29T12:00:00Z",
+      handoff_id: "h-review",
+      conversation_id: "c-review",
+      project_id: "proj",
+      agent_name: "reviewer",
+      task_type: "review_adversarial",
+      outcome: "completed_with_output",
+      rounds: 1,
+      smoke_pass: "n/a",
+      reviewer_findings: 0,
+      maestro_score: 5,
+      cost_usd: 0.05,
+      tokens_used: 100,
+      latency_ms: 30_000,
+      source: "reconciler",
+      notes: null,
+      metadata_json: "{}",
+    });
+
+    const out = rankAgentsViaRoute({
+      db: isolatedDb,
+      taskType: "review_adversarial",
+      minSamples: 1,
+    });
+    const candidate = out.candidates.find((c) => c.agent_name === "reviewer");
+    expect(candidate).toBeDefined();
+    expect(candidate!.successes).toBe(1);
+    expect(candidate!.score).toBeGreaterThan(0.5);
+  });
+
   it("keeps historic manual_seed rows in the default rank window", () => {
     const isolatedDb = new Database(":memory:");
     loadSqliteVec(isolatedDb);

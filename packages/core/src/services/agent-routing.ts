@@ -120,7 +120,7 @@ interface CandidateSummary {
   _maestro_score: number;
 }
 
-const SUCCESS_PREDICATE = `outcome IN ('merged','pr_opened','merged_with_concerns') AND (gate_outcome IS NULL OR gate_outcome = 'passed')`;
+const SUCCESS_PREDICATE = `outcome IN ('merged','pr_opened','merged_with_concerns','completed_with_output') AND (gate_outcome IS NULL OR gate_outcome = 'passed')`;
 
 function clamp01(value: number): number {
   if (value < 0) return 0;
@@ -159,6 +159,7 @@ function outcomeValue(outcome: string): number {
   switch (outcome) {
     case "merged":
     case "pr_opened":
+    case "completed_with_output":
       return 1;
     case "merged_with_concerns":
       return 0.85;
@@ -184,6 +185,7 @@ function outcomeBucket(outcome: string): "success" | "failure" | "neutral" {
     case "merged":
     case "pr_opened":
     case "merged_with_concerns":
+    case "completed_with_output":
       return "success";
     case "partial":
     case "rejected":

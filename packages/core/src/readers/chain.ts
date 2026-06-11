@@ -198,7 +198,9 @@ export class ChainReader {
         reason: typeof payload?.reason === "string" ? payload.reason : "unknown",
         hop_count: typeof payload?.hop_count === "number" ? payload.hop_count : 0,
         terminal_handoff_id:
-          typeof payload?.terminal_handoff_id === "string" ? payload.terminal_handoff_id : undefined,
+          typeof payload?.terminal_handoff_id === "string"
+            ? payload.terminal_handoff_id
+            : undefined,
         conversation_id: row.session_id,
       };
     });
@@ -268,8 +270,13 @@ export class ChainReader {
 
 function parseAgentResponsePayload(payload_json: string): { text: string; error?: string } {
   try {
-    const payload = JSON.parse(payload_json) as { response?: unknown; error?: unknown };
+    const payload = JSON.parse(payload_json) as {
+      response?: unknown;
+      error?: unknown;
+      text?: unknown;
+    };
     if (typeof payload.response === "string") return { text: payload.response };
+    if (typeof payload.text === "string") return { text: payload.text };
     if (typeof payload.error === "string") return { text: "", error: payload.error };
     return { text: "" };
   } catch {

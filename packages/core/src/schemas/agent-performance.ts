@@ -12,6 +12,14 @@ export const AgentTaskTypeSchema = z.enum([
   "unknown",
 ]);
 
+export const NON_MUTATING_TASK_TYPES = [
+  "review_adversarial",
+  "debug_diagnose",
+  "health_check",
+  "smoke_test",
+  "plan_refine",
+] as const satisfies readonly AgentTaskType[];
+
 export const AgentOutcomeSchema = z.enum([
   "pr_opened",
   "merged",
@@ -24,6 +32,7 @@ export const AgentOutcomeSchema = z.enum([
   "failed",
   "partial",
   "bypassed",
+  "completed_with_output",
 ]);
 
 export const AgentSmokePassSchema = z.enum(["y", "n", "partial", "n/a"]);
@@ -122,6 +131,7 @@ export const AgentPerformanceCaptureFromDispatchSchema = z.object({
   worktree_changed: z.boolean().nullable().optional(),
   wall_ms: z.number().nonnegative().nullable().optional(),
   framework_overhead_ms: z.number().nonnegative().nullable().optional(),
+  final_response_text: z.string().max(65536).optional(),
 });
 export type AgentPerformanceCaptureFromDispatch = z.infer<
   typeof AgentPerformanceCaptureFromDispatchSchema
@@ -227,10 +237,13 @@ export function mapMergeStatusToAgentOutcome(status: string): AgentOutcome {
 
 export function mapDispatchReasonToAgentOutcome(
   reason: string,
-  signals: { silent_failure?: boolean; tool_failure_count?: number } = {},
+  signals: {
+    silent_failure?: boolean;
+    tool_failure_count?: number;
+  } = {},
 ): AgentOutcome {
   switch (reason) {
-    case "completed":
+    case "completed": {
       // A "completed" dispatch on an implementation task that produced no
       // worktree changes is a silent failure (the gemini hallucination
       // pattern: agent reports success, no files written). Score it as a
@@ -238,6 +251,7 @@ export function mapDispatchReasonToAgentOutcome(
       // Without this, completed-but-empty dispatches score 0.5 (neutral).
       if (signals.silent_failure) return "failed";
       return "no_changes";
+    }
     case "max_hops":
       return "partial";
     case "cancelled":

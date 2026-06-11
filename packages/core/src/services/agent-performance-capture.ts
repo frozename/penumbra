@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Uuid } from "../utils/uuid.js";
 import { HandoffReader } from "../readers/handoff.js";
-import { ChainReader } from "../readers/chain.js";
+import { ChainReader, type AgentResponseEvent } from "../readers/chain.js";
 import type { HandoffRow } from "../schemas/handoff.js";
 import {
   AgentPerformanceCaptureFromReconcilerSchema,
@@ -12,6 +12,7 @@ import {
   type AgentPerformanceCaptureFromDispatch,
   type AgentPerformanceCaptureFromReconciler,
   type AgentPerformanceRow,
+  NON_MUTATING_TASK_TYPES,
 } from "../schemas/agent-performance.js";
 import { AgentPerformanceWriter } from "../writers/agent-performance.js";
 import {
@@ -220,6 +221,7 @@ function classifyDispatchReliabilityFromDb(
   handoff: HandoffRow,
   worktreeChangedHint: boolean | null | undefined,
   parsedDispatchEndMeta: Record<string, unknown> | null,
+  responses: AgentResponseEvent[],
 ): DispatchReliabilityReport {
   const eventRows = db
     .prepare<
@@ -236,7 +238,6 @@ function classifyDispatchReliabilityFromDb(
       dispatchEndCommitted = parsedDispatchEndMeta.committed;
   }
   if (typeof worktreeChangedHint === "boolean") worktreeChanged = worktreeChangedHint;
-  const responses = new ChainReader(db).getResponses(handoff.conversation_id, "final");
   return classifyDispatchReliability({
     handoff: {
       handoff_id: handoffId,
@@ -284,12 +285,27 @@ export function captureAgentPerformanceFromDispatch(opts: {
     input.worktree_changed,
     parsedDispatchEndMeta,
   );
+
+  // Responses must be read before the dispatch completes.
+  // Note: We assume t0_events for this dispatch have already been fully
+  // ingested synchronously or that any async lag is budgeted before this
+  // capture occurs. Breaking this ordering invariant causes getResponses
+  // to return empty, leading to silent misclassification of outcomes
+  // (e.g. valid non-mutating reviews scored as 'no_changes' failures).
+  const responses =
+    typeof input.final_response_text === "string"
+      ? ([
+          { text: input.final_response_text, ts: nowIso, agent: handoff.to_agent },
+        ] as AgentResponseEvent[])
+      : new ChainReader(opts.db).getResponses(handoff.conversation_id, "final");
+
   const reliabilityReport = classifyDispatchReliabilityFromDb(
     opts.db,
     input.handoff_id,
     handoff,
     input.worktree_changed,
     parsedDispatchEndMeta,
+    responses,
   );
   const baseNotes = signals.silent_failure
     ? `${input.reason} (silent_failure: empty worktree)`
@@ -302,6 +318,33 @@ export function captureAgentPerformanceFromDispatch(opts: {
     handoff.cancel_requested_at,
   );
   const notes = recoveryCancel ? `${baseNotes} (maestro_takeover: recovery_cancel)` : baseNotes;
+
+  const finalResponseText = input.final_response_text ?? responses.map((r) => r.text).join("\n");
+
+  const MIN_RESPONSE_CHARS = 40;
+  const has_non_empty_response =
+    typeof finalResponseText === "string" &&
+    finalResponseText.replace(/\s/g, "").length >= MIN_RESPONSE_CHARS;
+
+  const explicitTaskType = input.task_type ?? handoff.chain_task_type;
+  const taskType = explicitTaskType ?? inferAgentTaskTypeForRole(handoff.message, handoff.to_role);
+
+  let baseOutcome = mapDispatchReasonToAgentOutcome(input.reason, signals);
+
+  // The upgrade deliberately gates on explicitTaskType (input or chain
+  // metadata), never the inferred fallback: handoff message text is
+  // agent-influenced, so an inferred task_type must not be able to promote
+  // an outcome. Cost: inferred-only non-mutating dispatches keep no_changes
+  // even though the row persists the inferred taskType.
+  if (
+    baseOutcome === "no_changes" &&
+    explicitTaskType &&
+    (NON_MUTATING_TASK_TYPES as readonly string[]).includes(explicitTaskType) &&
+    has_non_empty_response
+  ) {
+    baseOutcome = "completed_with_output";
+  }
+
   const row: AgentPerformanceRow = {
     performance_id: opts.uuid(),
     ts: nowIso,
@@ -309,11 +352,8 @@ export function captureAgentPerformanceFromDispatch(opts: {
     conversation_id: handoff.conversation_id,
     project_id: handoff.project_id,
     agent_name: handoff.to_agent,
-    task_type:
-      input.task_type ??
-      handoff.chain_task_type ??
-      inferAgentTaskTypeForRole(handoff.message, handoff.to_role),
-    outcome: mapDispatchReasonToAgentOutcome(input.reason, signals),
+    task_type: taskType,
+    outcome: baseOutcome,
     rounds: null,
     smoke_pass: null,
     reviewer_findings: null,

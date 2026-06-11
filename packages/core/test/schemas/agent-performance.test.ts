@@ -7,10 +7,37 @@ import {
   AgentRankOutputSchema,
   AgentTaskTypeSchema,
   mapMergeStatusToAgentOutcome,
+  mapDispatchReasonToAgentOutcome,
   inferAgentTaskType,
 } from "../../src/schemas/agent-performance.js";
 
 describe("agent performance schemas", () => {
+  describe("mapDispatchReasonToAgentOutcome", () => {
+    it("maps completed to no_changes by default", () => {
+      expect(mapDispatchReasonToAgentOutcome("completed")).toBe("no_changes");
+    });
+
+    it("maps completed with silent failure to failed", () => {
+      expect(
+        mapDispatchReasonToAgentOutcome("completed", {
+          silent_failure: true,
+        }),
+      ).toBe("failed");
+    });
+
+    it("maps max_hops to partial", () => {
+      expect(mapDispatchReasonToAgentOutcome("max_hops")).toBe("partial");
+    });
+
+    it("maps cancelled to rejected", () => {
+      expect(mapDispatchReasonToAgentOutcome("cancelled")).toBe("rejected");
+    });
+
+    it("maps error to failed", () => {
+      expect(mapDispatchReasonToAgentOutcome("error")).toBe("failed");
+    });
+  });
+
   it("accepts the documented task types", () => {
     expect(AgentTaskTypeSchema.safeParse("implement_substantial").success).toBe(true);
     expect(AgentTaskTypeSchema.safeParse("review_adversarial").success).toBe(true);

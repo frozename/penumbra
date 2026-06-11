@@ -1,10 +1,11 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { loadSqliteVec, migrate } from "../../src/index.js";
 import {
   captureAgentPerformanceFromDispatch,
   captureAgentPerformanceFromReconciler,
 } from "../../src/services/agent-performance-capture.js";
+import { ChainReader } from "../../src/readers/chain.js";
 
 if (process.platform === "darwin") {
   try {
@@ -56,6 +57,23 @@ describe("captureAgentPerformanceFromReconciler", () => {
       0.25,
       JSON.stringify({ handoff_id: "h1", used: 250 }),
     );
+  });
+
+  it("calls ChainReader.getResponses exactly once per capture", () => {
+    const spy = spyOn(ChainReader.prototype, "getResponses");
+    captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-spy",
+      clock: () => new Date("2026-04-30T12:05:00Z"),
+      input: {
+        handoff_id: "h1",
+        reason: "completed",
+        wall_ms: null,
+        framework_overhead_ms: null,
+      },
+    });
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
   });
 
   it("creates one row with mapped outcome, inferred task type, cost, tokens, and latency", () => {
