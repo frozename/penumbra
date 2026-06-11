@@ -101,8 +101,33 @@ test("emitNextSessionPromptOutput writes to ~/.penumbra/pending-handoff.md", asy
     const r = await emitNextSessionPromptOutput({ body: "next prompt body", storageRoot: dir });
     const target = join(dir, "pending-handoff.md");
     expect(r.warnings).toEqual([]);
+    expect(r.path).toBe(target);
     expect(existsSync(target)).toBe(true);
     expect(readFileSync(target, "utf8")).toBe("next prompt body");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("emitNextSessionPromptOutput skips write and returns warning when body is empty or whitespace", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "penum-"));
+  try {
+    const target = join(dir, "pending-handoff.md");
+    await Bun.write(target, "existing content");
+
+    const r1 = await emitNextSessionPromptOutput({ body: "", storageRoot: dir });
+    expect(r1.warnings).toEqual([
+      "output next-session-prompt: empty body — skipped write to preserve existing artifact",
+    ]);
+    expect(r1.path).toBeUndefined();
+    expect(readFileSync(target, "utf8")).toBe("existing content");
+
+    const r2 = await emitNextSessionPromptOutput({ body: "   \n  \t ", storageRoot: dir });
+    expect(r2.warnings).toEqual([
+      "output next-session-prompt: empty body — skipped write to preserve existing artifact",
+    ]);
+    expect(r2.path).toBeUndefined();
+    expect(readFileSync(target, "utf8")).toBe("existing content");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
