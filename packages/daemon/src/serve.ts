@@ -244,6 +244,7 @@ import { runRestartResume } from "./maestro/restart-resume.js";
 import { getMcpEventBus } from "./events/mcp-event-bus.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { LagSampler } from "./lag-sampler.js";
 
 type Services = CoreServices;
 
@@ -460,6 +461,7 @@ export function createDaemonFetchHandler(opts: {
   allowRemote?: boolean;
   orphanHandoffRecovery?: OrphanHandoffRecoveryService;
   workerHealthProbe?: WorkerHealthProbe;
+  lagSampler?: LagSampler;
 }): (req: Request) => Promise<Response> {
   const daemonServices = opts.services as DaemonServices;
   const workerTokenStore = new WorkerTokenStore(opts.services.db);
@@ -517,7 +519,7 @@ export function createDaemonFetchHandler(opts: {
     const originDenied = originHostGuard(req);
     if (originDenied) return originDenied;
     const url = new URL(req.url);
-    if (url.pathname === "/health") return healthRoute();
+    if (url.pathname === "/health") return healthRoute(opts.lagSampler);
     // OTLP routes: localhost-only via daemon's 127.0.0.1 bind, no bearer auth.
     if (req.method === "POST" && url.pathname === "/v1/logs")
       return otlpLogsRoute(req, opts.services);
@@ -1079,6 +1081,28 @@ export function serve(opts: ServeOpts): DaemonHandle {
     );
   }
 
+  const onSigterm = () => {
+    opts.services.log.info({ signal: "SIGTERM" }, "signal received");
+  };
+  const onSigint = () => {
+    opts.services.log.info({ signal: "SIGINT" }, "signal received");
+  };
+  process.on("SIGTERM", onSigterm);
+  process.on("SIGINT", onSigint);
+
+  const envNonNegMs = (name: string, fallback: number): number => {
+    const raw = process.env[name];
+    if (raw == null || raw.trim() === "") return fallback;
+    const value = Number(raw);
+    return Number.isFinite(value) && value >= 0 ? value : fallback;
+  };
+  const lagSampler = new LagSampler(
+    opts.services.log,
+    envNonNegMs("PENUMBRA_EVENT_LOOP_LAG_THRESHOLD_MS", 500),
+    envNonNegMs("PENUMBRA_EVENT_LOOP_LAG_INTERVAL_MS", 2000),
+  );
+  lagSampler.start();
+
   const watchdog = new WatchdogService(opts.services);
   daemonServices.watchdog = watchdog;
   installGlobalCrashHandlers({ log: opts.services.log, flush: () => opts.services.log.flush() });
@@ -1548,6 +1572,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     taskWriter,
     ghTaskSyncService,
     workerHealthProbe,
+    lagSampler,
   });
   const hostname = opts.hostname?.trim() || process.env.PENUMBRA_DAEMON_HOST?.trim() || "127.0.0.1";
   const server = Bun.serve({
@@ -1573,6 +1598,9 @@ export function serve(opts: ServeOpts): DaemonHandle {
   return {
     port,
     stop: async () => {
+      process.removeListener("SIGTERM", onSigterm);
+      process.removeListener("SIGINT", onSigint);
+      lagSampler.stop();
       startupStopped = true;
       await daemonServices.extraWorkerSupervisor?.stop();
       stopWorkerProbe();

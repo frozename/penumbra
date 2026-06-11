@@ -14,6 +14,7 @@ export function buildDreamCycleDeps(
     projectRegistry?: { get(id: string): any; list(): any[] };
     embedder?: { embed(bodies: string[]): Promise<Float32Array[]> };
     dispatchEventLog?: { record(event: DispatchEventInput): void };
+    log?: any;
   },
   db: Database,
   dreamConfig: DreamConfig,
@@ -69,6 +70,7 @@ export function buildDreamCycleDeps(
     briefSynthesizer: briefSynthesizer ?? undefined,
     contentQualityJudge,
     phaseCostEstimates: dreamConfig.phaseCostEstimatesUsd,
+    log: services.log,
   };
 
   Object.defineProperty(deps, "projectRegistry", {

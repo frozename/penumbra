@@ -83,7 +83,11 @@ export async function worktreesCleanupRoute(
   const force = url.searchParams.get("force") === "true";
 
   try {
-    await services.worktreeManager.teardownWorktree(handoff_id, force, projectId);
+    if (projectId !== undefined) {
+      await services.worktreeManager.teardownWorktree(handoff_id, force, projectId);
+    } else {
+      await services.worktreeManager.teardownWorktree(handoff_id, force);
+    }
     return json({ status: "torn_down" });
   } catch (err: any) {
     return json({ error: { code: "internal_error", message: err.message } }, 500);

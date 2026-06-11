@@ -71,6 +71,21 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: false,
     description: "Require explicit project_id on chain_start.",
   },
+  PENUMBRA_EVENT_LOOP_LAG_THRESHOLD_MS: {
+    schema: NonNegInt,
+    default: 500,
+    description: "Event-loop lag warning threshold in milliseconds.",
+  },
+  PENUMBRA_EVENT_LOOP_LAG_INTERVAL_MS: {
+    schema: NonNegInt,
+    default: 2000,
+    description: "Event-loop lag sampling interval in milliseconds.",
+  },
+  PENUMBRA_SLOW_QUERY_THRESHOLD_MS: {
+    schema: NonNegInt,
+    default: 250,
+    description: "Slow sqlite query logging threshold in milliseconds.",
+  },
   PENUMBRA_DAEMON_SERVICE_TESTS: {
     schema: Bool,
     default: false,

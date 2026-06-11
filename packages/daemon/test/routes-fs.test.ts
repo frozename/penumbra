@@ -9,6 +9,9 @@ function fakeServices(worktrees: Record<string, string>): any {
     worktreeManager: {
       getWorktree: (id: string) => (worktrees[id] ? { handoffId: id, path: worktrees[id] } : null),
     },
+    handoffReader: {
+      get: () => null,
+    },
   };
 }
 

@@ -98,6 +98,7 @@ type RewriteLlmInvoker = <T extends z.ZodTypeAny>(
 ) => Promise<LlmInvokeResult<T>>;
 
 export interface DreamCycleDeps {
+  log?: Logger;
   projectRegistry?: { get(id: string): any; list(): any[] };
   getResearchAdapter?: (project: any) => WebResearchAdapter | null;
   memoryObserve?: (
@@ -260,6 +261,22 @@ export async function runDreamCycle(
     return cycleId;
   }
 
+  function phaseStart(phase: string): number {
+    deps.log?.info({ phase, cycleId }, "dream-cycle phase start");
+    return Date.now();
+  }
+
+  function phaseEnd(phase: string, startMs: number): void {
+    const durationMs = Date.now() - startMs;
+    phasesRun.push(phase);
+    db.prepare(`UPDATE dream_cycles SET phases_run=?, last_phase_completed=? WHERE cycle_id=?`).run(
+      JSON.stringify(phasesRun),
+      phase,
+      cycleId,
+    );
+    deps.log?.info({ phase, cycleId, durationMs }, "dream-cycle phase end");
+  }
+
   // ── P0: pre-flight ────────────────────────────────────────────────────────
 
   // 1. Daily cap
@@ -293,11 +310,9 @@ export async function runDreamCycle(
     return bail("mutex-held: another cycle is already in flight");
   }
   dreamingCycleInFlight = true;
+  const p0Start = phaseStart("P0");
 
-  phasesRun.push("P0");
-  db.prepare(
-    `UPDATE dream_cycles SET phases_run=?, last_phase_completed='P0' WHERE cycle_id=?`,
-  ).run(JSON.stringify(phasesRun), cycleId);
+  phaseEnd("P0", p0Start);
 
   // Ensure dreaming Phase B columns are present. This is a no-op on daemons
   // whose schema.ts already includes them; it handles worktrees and daemons
@@ -328,6 +343,7 @@ export async function runDreamCycle(
     }
 
     // ── P1: consolidate stale t1 rollups ───────────────────────────────────
+    const p1Start = phaseStart("P1");
 
     const autoPromoteMinJudges = config.autoPromoteMinJudges ?? 2;
     const longLivedDispatcherFilter = KNOWN_LONG_LIVED_DISPATCHER_USER_IDS.length
@@ -566,16 +582,14 @@ export async function runDreamCycle(
       );
     }
 
-    phasesRun.push("P1");
-    db.prepare(
-      `UPDATE dream_cycles SET phases_run=?, last_phase_completed='P1' WHERE cycle_id=?`,
-    ).run(JSON.stringify(phasesRun), cycleId);
+    phaseEnd("P1", p1Start);
 
     if (!(await checkAdvancement())) {
       return bail("pressure guard: provider throttled after P1");
     }
 
     // ── P2: link discovery via pairwise cosine ─────────────────────────────
+    const p2Start = phaseStart("P2");
 
     const recentMemories = db
       .prepare(`SELECT memory_id, rowid FROM t2_memories ORDER BY created_at DESC LIMIT ?`)
@@ -641,16 +655,14 @@ export async function runDreamCycle(
       }
     }
 
-    phasesRun.push("P2");
-    db.prepare(
-      `UPDATE dream_cycles SET phases_run=?, last_phase_completed='P2' WHERE cycle_id=?`,
-    ).run(JSON.stringify(phasesRun), cycleId);
+    phaseEnd("P2", p2Start);
 
     if (!(await checkAdvancement())) {
       return bail("pressure guard: provider throttled after P2");
     }
 
     // ── P3: multi-factor quality signal ───────────────────────────────────
+    const p3Start = phaseStart("P3");
 
     let ranP3 = false;
     if (deps.scorer) {
@@ -716,10 +728,7 @@ export async function runDreamCycle(
     }
 
     if (ranP3 || !deferredPhases.has("P3")) {
-      phasesRun.push("P3");
-      db.prepare(
-        `UPDATE dream_cycles SET phases_run=?, last_phase_completed='P3' WHERE cycle_id=?`,
-      ).run(JSON.stringify(phasesRun), cycleId);
+      phaseEnd("P3", p3Start);
     }
 
     if (!(await checkAdvancement())) {
@@ -727,6 +736,7 @@ export async function runDreamCycle(
     }
 
     // ── P4: bounded discovery queue ────────────────────────────────────────
+    const p4Start = phaseStart("P4");
 
     const p4QueueMax = config.p4QueueMax ?? 1000;
     const nowMs = Date.now();
@@ -1000,12 +1010,10 @@ export async function runDreamCycle(
       await runWithConcurrency(projectTasks, rewriterConcurrency);
     }
 
-    phasesRun.push("P4");
-    db.prepare(
-      `UPDATE dream_cycles SET phases_run=?, last_phase_completed='P4' WHERE cycle_id=?`,
-    ).run(JSON.stringify(phasesRun), cycleId);
+    phaseEnd("P4", p4Start);
 
     // ── P5: active research ──────────────────────────────────────────────────────────
+    const p5Start = phaseStart("P5");
 
     if (typeof runP5Phase !== "undefined") {
       await runP5Phase(db, cycleId, config, {
@@ -1013,16 +1021,14 @@ export async function runDreamCycle(
         phaseCostEstimates,
       });
     }
-    phasesRun.push("P5");
-    db.prepare(
-      "UPDATE dream_cycles SET phases_run=?, last_phase_completed='P5' WHERE cycle_id=?",
-    ).run(JSON.stringify(phasesRun), cycleId);
+    phaseEnd("P5", p5Start);
 
     if (!(await checkAdvancement())) {
       return bail("pressure guard: provider throttled after P5");
     }
 
     // ── P6: brief refresh ────────────────────────────────────────────────────────────
+    const p6Start = phaseStart("P6");
 
     if (deps.projectRegistry && deps.memoryObserve) {
       const briefRefreshMs = (config.briefRefreshHours ?? 24) * 60 * 60 * 1000;
@@ -1102,16 +1108,14 @@ export async function runDreamCycle(
       }
     }
 
-    phasesRun.push("P6");
-    db.prepare(
-      "UPDATE dream_cycles SET phases_run=?, last_phase_completed='P6' WHERE cycle_id=?",
-    ).run(JSON.stringify(phasesRun), cycleId);
+    phaseEnd("P6", p6Start);
 
     if (!(await checkAdvancement())) {
       return bail("pressure guard: provider throttled after P6");
     }
 
     // ── P7: re-embed stale vectors ────────────────────────────────────────
+    const p7Start = phaseStart("P7");
 
     if (!config.skipPhases?.has("P7")) {
       const reembedOutcome = await runReembedPhase(db, cycleId, config, {
@@ -1119,35 +1123,26 @@ export async function runDreamCycle(
         phaseCostEstimates,
       });
       if (!(reembedOutcome as { deferred?: boolean } | undefined)?.deferred) {
-        phasesRun.push("P7");
-        db.prepare(
-          `UPDATE dream_cycles SET phases_run=?, last_phase_completed='P7' WHERE cycle_id=?`,
-        ).run(JSON.stringify(phasesRun), cycleId);
+        phaseEnd("P7", p7Start);
       }
     }
 
     // ── P8: audit ──────────────────────────────────────────────────────────
+    const p8Start = phaseStart("P8");
 
-    phasesRun.push("P8");
-    db.prepare(
-      `UPDATE dream_cycles SET phases_run=?, last_phase_completed='P8' WHERE cycle_id=?`,
-    ).run(JSON.stringify(phasesRun), cycleId);
+    phaseEnd("P8", p8Start);
 
     // ── Curator phases (PC1, PC2) — opt-in via PENUMBRA_DREAMING_CURATOR_ENABLED ──
     // outcome='completed' is set AFTER curator phases so a curator error is visible
     if (config.curatorEnabled) {
       try {
+        const pc1Start = phaseStart("PC1");
         await runPC1Phase(db, cycleId, config, {});
-        phasesRun.push("PC1");
-        db.prepare(
-          `UPDATE dream_cycles SET phases_run=?, last_phase_completed='PC1' WHERE cycle_id=?`,
-        ).run(JSON.stringify(phasesRun), cycleId);
+        phaseEnd("PC1", pc1Start);
 
+        const pc2Start = phaseStart("PC2");
         await runPC2Phase(db, cycleId, config, {});
-        phasesRun.push("PC2");
-        db.prepare(
-          `UPDATE dream_cycles SET phases_run=?, last_phase_completed='PC2' WHERE cycle_id=?`,
-        ).run(JSON.stringify(phasesRun), cycleId);
+        phaseEnd("PC2", pc2Start);
 
         db.prepare(
           `UPDATE dream_cycles SET outcome='completed', ended_at=?, phases_run=? WHERE cycle_id=?`,

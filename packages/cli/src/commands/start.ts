@@ -27,6 +27,7 @@ import { ShellSessionPool } from "../../../daemon/src/services/shell-session-poo
 import { InProcessPermissionService } from "../../../daemon/src/services/in-process-permission-service.js";
 import { createWorkflowRunsRegistry } from "../../../daemon/src/services/workflow-runs-registry.js";
 import { serve, type DaemonHandle } from "../../../daemon/src/serve.js";
+import { wrapDatabaseWithSlowQueryLog } from "../../../daemon/src/slow-query.js";
 import {
   loadAgentChatConfig,
   resolveAgentChatConfigPath,
@@ -94,7 +95,25 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
 
   const token = readFileSync(join(opts.storageRoot, "token"), "utf8").trim();
   const dbPath = resolveStorageDbPath(opts.storageRoot);
-  const db = new Database(dbPath);
+  const rawDb = new Database(dbPath);
+
+  const rawSlowQueryThreshold = process.env.PENUMBRA_SLOW_QUERY_THRESHOLD_MS;
+  const parsedSlowQueryThreshold =
+    rawSlowQueryThreshold == null || rawSlowQueryThreshold.trim() === ""
+      ? Number.NaN
+      : Number(rawSlowQueryThreshold);
+  const slowQueryThreshold =
+    Number.isFinite(parsedSlowQueryThreshold) && parsedSlowQueryThreshold >= 0
+      ? parsedSlowQueryThreshold
+      : 250;
+  let resolvedLog: any;
+  const db = wrapDatabaseWithSlowQueryLog(rawDb, slowQueryThreshold, {
+    warn: (obj: any, msg: string) => {
+      if (resolvedLog) resolvedLog.warn(obj, msg);
+      else console.warn(msg, obj);
+    },
+  } as any);
+
   let handle: DaemonHandle | undefined;
   try {
     loadSqliteVec(db);
@@ -167,6 +186,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       workflowRegistry,
       projectRegistry,
     });
+    resolvedLog = services.log;
     const runtimeServices = services as typeof services & {
       shellConfig?: ReturnType<typeof loadShellConfig>;
       shellSessionPool?: ShellSessionPool;
