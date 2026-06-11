@@ -55,7 +55,7 @@ process_gates:
 output:
   - kind: file
     path: docs/notes/maestro-continuation-{{date}}-{{period}}.md
-    mode: skip-if-exists
+    mode: unique-suffix
   - kind: next-session-prompt
 run:
   kind: markdown-template

@@ -77,7 +77,7 @@ export const OutputSinkSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("file"),
     path: z.string(),
-    mode: z.enum(["overwrite", "append", "skip-if-exists"]).optional(),
+    mode: z.enum(["overwrite", "append", "skip-if-exists", "unique-suffix"]).optional(),
   }),
   z.object({ kind: z.literal("clipboard") }),
   z.object({ kind: z.literal("next-session-prompt") }),
