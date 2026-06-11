@@ -6,6 +6,8 @@ import { parseWikiLinks } from "@penumbra/core";
 import { resolveStorageDbPath } from "../../../core/src/db/storage-db-path.js";
 
 const DEFAULT_DIGEST_LIMIT = 200;
+const DEFAULT_STATUS_ROWS = 20;
+const DEFAULT_PATTERN_ROWS = 180;
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
 const CLAUDE_CODE_KINDS = new Set(["user", "feedback", "project", "reference"]);
 const APPLY_BATCH_SIZE = 8;
@@ -60,13 +62,32 @@ export interface RunMemoryDigestOpts {
 }
 
 function resolveLimit(limit: number | undefined): number {
-  const resolvedLimit = limit ?? DEFAULT_DIGEST_LIMIT;
-  if (!Number.isInteger(resolvedLimit) || resolvedLimit < 1) {
-    throw new Error(
-      `penumbra memory digest: --limit must be a positive integer (got: ${resolvedLimit})`,
-    );
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+    throw new Error(`penumbra memory digest: --limit must be a positive integer (got: ${limit})`);
   }
-  return resolvedLimit;
+  if (limit !== undefined) return limit;
+
+  const raw = process.env.PENUMBRA_MEMORY_DIGEST_MAX_LINES;
+  if (!raw) return DEFAULT_DIGEST_LIMIT;
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isInteger(value) || value < 1) return DEFAULT_DIGEST_LIMIT;
+  return value;
+}
+
+function resolveStatusRowLimit(): number {
+  const raw = process.env.PENUMBRA_MEMORY_DIGEST_STATUS_ROWS;
+  if (!raw) return DEFAULT_STATUS_ROWS;
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isInteger(value) || value < 0) return DEFAULT_STATUS_ROWS;
+  return value;
+}
+
+function resolvePatternRowLimit(): number {
+  const raw = process.env.PENUMBRA_MEMORY_DIGEST_PATTERN_ROWS;
+  if (!raw) return DEFAULT_PATTERN_ROWS;
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isInteger(value) || value < 0) return DEFAULT_PATTERN_ROWS;
+  return value;
 }
 
 function slugify(name: string): string {
@@ -364,22 +385,51 @@ export function runMemoryDigest(opts: RunMemoryDigestOpts): number {
 
   const db = opts.db ?? new Database(resolveStorageDbPath(opts.storageRoot), { readonly: true });
   try {
-    const rows = db
-      .query<MemoryDigestRow, [string, number]>(
-        `
-      SELECT slug, title, hook
-      FROM t2_memories
-      WHERE origin = ?
+    const baseWhere = `
+        origin = ?
         AND retired_at IS NULL
         AND slug IS NOT NULL
         AND hook IS NOT NULL
         ${opts.maestro ? "AND project_id IS NULL" : ""}
+    `;
+    const statusRows = db
+      .query<MemoryDigestRow, [string, number]>(
+        `
+      SELECT slug, title, hook
+      FROM t2_memories
+      WHERE ${baseWhere}
+        AND (is_episodic = 1 OR durability = 'volatile' OR obs_type = 'session')
       ORDER BY updated_at DESC
       LIMIT ?
     `,
       )
-      .all("direct", limit);
+      .all("direct", resolveStatusRowLimit());
 
+    const strictPatternLimit =
+      process.env.PENUMBRA_MEMORY_DIGEST_STATUS_ROWS !== undefined ||
+      process.env.PENUMBRA_MEMORY_DIGEST_PATTERN_ROWS !== undefined;
+    const unusedDefaultStatusRows = strictPatternLimit
+      ? 0
+      : Math.max(0, DEFAULT_STATUS_ROWS - statusRows.length);
+    const patternRows = db
+      .query<MemoryDigestRow, [string, number]>(
+        `
+      SELECT slug, title, hook
+      FROM t2_memories
+      WHERE ${baseWhere}
+        AND COALESCE(is_episodic, 0) != 1
+        AND (durability IS NULL OR durability != 'volatile')
+        AND (obs_type IS NULL OR obs_type != 'session')
+      ORDER BY updated_at DESC
+      LIMIT ?
+    `,
+      )
+      .all("direct", resolvePatternRowLimit() + unusedDefaultStatusRows);
+
+    const rows = [...statusRows, ...patternRows].slice(0, limit);
+    if (statusRows.length > 0) {
+      print("## Recent Status\n");
+    }
     for (const row of rows) {
       print(`- [${row.title}](${row.slug}) — ${row.hook}\n`);
     }

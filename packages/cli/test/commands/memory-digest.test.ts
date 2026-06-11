@@ -30,6 +30,9 @@ interface SeedMemoryInput {
   hook: string | null;
   project_id: string | null;
   retired_at: string | null;
+  durability?: string | null;
+  is_episodic?: boolean;
+  obs_type?: string | null;
 }
 
 function seedT2Memory(input: SeedMemoryInput): void {
@@ -37,9 +40,9 @@ function seedT2Memory(input: SeedMemoryInput): void {
     `
     INSERT INTO t2_memories (
       memory_id, user_id, kind, window_start, window_end, title, body,
-      slug, hook, origin, project_id, created_at, updated_at, retired_at
+      slug, hook, origin, project_id, created_at, updated_at, retired_at, durability, is_episodic, obs_type
     ) VALUES (
-      ?, 'u', 'knowledge', ?, ?, ?, 'body', ?, ?, ?, ?, ?, ?, ?
+      ?, 'u', 'knowledge', ?, ?, ?, 'body', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
   `,
     [
@@ -54,6 +57,9 @@ function seedT2Memory(input: SeedMemoryInput): void {
       input.updated_at,
       input.updated_at,
       input.retired_at,
+      input.durability ?? null,
+      input.is_episodic ? 1 : 0,
+      input.obs_type ?? null,
     ],
   );
 }
@@ -70,6 +76,39 @@ function runDigest(opts: { maestro?: boolean; limit?: number }): string {
   });
   expect(code).toBe(0);
   return printed;
+}
+
+type DigestEnvName =
+  | "PENUMBRA_MEMORY_DIGEST_MAX_LINES"
+  | "PENUMBRA_MEMORY_DIGEST_STATUS_ROWS"
+  | "PENUMBRA_MEMORY_DIGEST_PATTERN_ROWS";
+
+function withDigestEnv(
+  overrides: Partial<Record<DigestEnvName, string | undefined>>,
+  fn: () => void,
+): void {
+  const names: DigestEnvName[] = [
+    "PENUMBRA_MEMORY_DIGEST_MAX_LINES",
+    "PENUMBRA_MEMORY_DIGEST_STATUS_ROWS",
+    "PENUMBRA_MEMORY_DIGEST_PATTERN_ROWS",
+  ];
+  const previous = new Map(names.map((name) => [name, process.env[name]]));
+
+  try {
+    for (const name of names) {
+      if (!(name in overrides)) continue;
+      const value = overrides[name];
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    fn();
+  } finally {
+    for (const name of names) {
+      const value = previous.get(name);
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
 }
 
 describe("runMemoryDigest", () => {
@@ -185,11 +224,20 @@ describe("runMemoryDigest", () => {
       });
     }
 
-    const lines = runDigest({}).split("\n").filter(Boolean);
-    expect(lines).toHaveLength(200);
-    expect(lines[0]).toBe("- [Entry 200](entry-200) — hook");
-    expect(lines[199]).toBe("- [Entry 1](entry-1) — hook");
-    expect(lines.at(-1)).not.toBe("- [Entry 0](entry-0) — hook");
+    withDigestEnv(
+      {
+        PENUMBRA_MEMORY_DIGEST_MAX_LINES: undefined,
+        PENUMBRA_MEMORY_DIGEST_STATUS_ROWS: undefined,
+        PENUMBRA_MEMORY_DIGEST_PATTERN_ROWS: undefined,
+      },
+      () => {
+        const lines = runDigest({}).split("\n").filter(Boolean);
+        expect(lines).toHaveLength(200);
+        expect(lines[0]).toBe("- [Entry 200](entry-200) — hook");
+        expect(lines[199]).toBe("- [Entry 1](entry-1) — hook");
+        expect(lines.at(-1)).not.toBe("- [Entry 0](entry-0) — hook");
+      },
+    );
   });
 
   test("--limit overrides the default cap", () => {
@@ -218,6 +266,38 @@ describe("runMemoryDigest", () => {
     ]);
   });
 
+  test("uses PENUMBRA_MEMORY_DIGEST_MAX_LINES as the outer cap when --limit is omitted", () => {
+    for (let i = 0; i < 5; i++) {
+      const ts = new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString();
+      seedT2Memory({
+        memory_id: `em${i}`,
+        title: `Entry ${i}`,
+        updated_at: ts,
+        origin: "direct",
+        slug: `entry-${i}`,
+        hook: "hook",
+        project_id: null,
+        retired_at: null,
+      });
+    }
+
+    withDigestEnv(
+      {
+        PENUMBRA_MEMORY_DIGEST_MAX_LINES: "3",
+        PENUMBRA_MEMORY_DIGEST_STATUS_ROWS: undefined,
+        PENUMBRA_MEMORY_DIGEST_PATTERN_ROWS: undefined,
+      },
+      () => {
+        const lines = runDigest({}).split("\n").filter(Boolean);
+        expect(lines).toEqual([
+          "- [Entry 4](entry-4) — hook",
+          "- [Entry 3](entry-3) — hook",
+          "- [Entry 2](entry-2) — hook",
+        ]);
+      },
+    );
+  });
+
   test("prints nothing on empty results and still exits successfully", () => {
     seedT2Memory({
       memory_id: "m-retired-only",
@@ -231,5 +311,77 @@ describe("runMemoryDigest", () => {
     });
     const output = runDigest({});
     expect(output).toBe("");
+  });
+
+  test("splits volatile status rows ahead of durable pattern rows", () => {
+    seedT2Memory({
+      memory_id: "m-volatile-new",
+      title: "Volatile new",
+      updated_at: "2026-03-04T00:00:00.000Z",
+      origin: "direct",
+      slug: "volatile-new",
+      hook: "volatile new hook",
+      project_id: null,
+      retired_at: null,
+      durability: "volatile",
+    });
+    seedT2Memory({
+      memory_id: "m-durable-newer",
+      title: "Durable newer",
+      updated_at: "2026-03-05T00:00:00.000Z",
+      origin: "direct",
+      slug: "durable-newer",
+      hook: "durable newer hook",
+      project_id: null,
+      retired_at: null,
+      durability: "durable",
+    });
+    seedT2Memory({
+      memory_id: "m-episodic",
+      title: "Episodic",
+      updated_at: "2026-03-03T00:00:00.000Z",
+      origin: "direct",
+      slug: "episodic",
+      hook: "episodic hook",
+      project_id: null,
+      retired_at: null,
+      is_episodic: true,
+    });
+    seedT2Memory({
+      memory_id: "m-session",
+      title: "Session",
+      updated_at: "2026-03-02T00:00:00.000Z",
+      origin: "direct",
+      slug: "session",
+      hook: "session hook",
+      project_id: null,
+      retired_at: null,
+      obs_type: "session",
+    });
+
+    withDigestEnv(
+      {
+        PENUMBRA_MEMORY_DIGEST_MAX_LINES: undefined,
+        PENUMBRA_MEMORY_DIGEST_STATUS_ROWS: "3",
+        PENUMBRA_MEMORY_DIGEST_PATTERN_ROWS: "10",
+      },
+      () => {
+        const lines = runDigest({}).split("\n").filter(Boolean);
+        const statusIndex = lines.indexOf("## Recent Status");
+
+        expect(statusIndex).toBeGreaterThanOrEqual(0);
+        expect(lines.slice(statusIndex + 1, statusIndex + 4)).toEqual([
+          "- [Volatile new](volatile-new) — volatile new hook",
+          "- [Episodic](episodic) — episodic hook",
+          "- [Session](session) — session hook",
+        ]);
+        expect(lines.slice(statusIndex + 1, statusIndex + 4)).not.toContain(
+          "- [Durable newer](durable-newer) — durable newer hook",
+        );
+        expect(lines.slice(statusIndex + 4)).toContain(
+          "- [Durable newer](durable-newer) — durable newer hook",
+        );
+      },
+    );
   });
 });
