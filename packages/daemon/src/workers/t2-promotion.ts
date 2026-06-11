@@ -3,7 +3,12 @@ import { T2Promotion, type T2MemoryExtraction, type Embedder } from "@penumbra/c
 import { buildT2EmbedText } from "@penumbra/core";
 import type { AgentChatConfig } from "@penumbra/config";
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
-import { createJudgePool, type JudgeEntry, type JudgePool } from "./t2-judge-pool.js";
+import {
+  createJudgePool,
+  getJudgeTimeoutMs,
+  type JudgeEntry,
+  type JudgePool,
+} from "./t2-judge-pool.js";
 
 export const T2_PROMPT_FILTER_RULE =
   "If a memory could be retrieved later by `git log`, `grep`, `find`, or just reading the code, DO NOT extract it. Memory is for things that take judgment to discover, not things that are mechanically discoverable.";
@@ -420,6 +425,7 @@ export function createDefaultLLMJudge(
   services.log.info({ url, model, hasToken: Boolean(token) }, "t2 promotion: LLM judge configured");
 
   return async (transcript: string): Promise<T2MemoryExtraction[]> => {
+    const timeoutMs = getJudgeTimeoutMs();
     try {
       const prompt = T2_PROMOTION_PROMPT.replace("{{TRANSCRIPT}}", transcript);
       const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -435,6 +441,7 @@ export function createDefaultLLMJudge(
           max_tokens: 16384,
           temperature: 0,
         }),
+        signal: AbortSignal.timeout(timeoutMs),
       });
 
       if (!res.ok) {
@@ -445,7 +452,12 @@ export function createDefaultLLMJudge(
       const content = json.choices[0]?.message?.content;
       if (!content) return [];
       return parseJudgeResponse(content);
-    } catch (err) {
+    } catch (err: any) {
+      if (err.name === "TimeoutError") {
+        const msg = `judge default timed out after ${timeoutMs}ms`;
+        services.log.error({ err: msg }, "LLM judge failed");
+        throw new Error(msg);
+      }
       services.log.error({ err }, "LLM judge failed");
       throw err;
     }

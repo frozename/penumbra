@@ -1,6 +1,7 @@
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { serve } from "bun";
 import { expect, test } from "bun:test";
 import { createJudgePool, type JudgeEntry } from "../src/workers/t2-judge-pool.js";
 
@@ -51,10 +52,6 @@ test("judge that fails twice in a tick is skipped for the rest of that tick", as
     parseResponse: () => [],
   });
 
-  // Invoke 1: round-robin starts at A → fails → falls to B → success.   seen += ['a','b']
-  // Invoke 2: nextIndex still 0 (set on B's success); A fails (2nd time → unhealthy), B succeeds. seen += ['a','b']
-  // Invoke 3: A unhealthy → skipped → B succeeds.                          seen += ['b']
-  // Invoke 4: same.                                                        seen += ['b']
   await pool.invoke("1");
   await pool.invoke("2");
   await pool.invoke("3");
@@ -83,15 +80,12 @@ test("resetTickHealth re-enables a previously unhealthy judge", async () => {
     parseResponse: () => [],
   });
 
-  // Two invokes drive A to unhealthy (2 fails), each falling back to B.
   await pool.invoke("1");
   await pool.invoke("2");
-  // A should now be skipped.
   seen.length = 0;
   await pool.invoke("3");
   expect(seen).toEqual(["b"]);
 
-  // Reset health + stop A failing — next invoke should hit A again.
   pool.resetTickHealth();
   aShouldFail = false;
   seen.length = 0;
@@ -111,11 +105,8 @@ test("all judges unhealthy this tick throws", async () => {
     parseResponse: () => [],
   });
 
-  // Invoke 1: A fails (1), B fails (1) → throws lastError 'fetch failed'.
   await expect(pool.invoke("1")).rejects.toThrow("fetch failed");
-  // Invoke 2: A fails (now 2 → unhealthy), B fails (now 2 → unhealthy) → throws "all judges unhealthy".
   await expect(pool.invoke("2")).rejects.toThrow("all judges unhealthy this tick");
-  // Subsequent invokes also short-circuit.
   await expect(pool.invoke("3")).rejects.toThrow("all judges unhealthy this tick");
 });
 
@@ -151,7 +142,6 @@ test("parseResponse error counts as judge failure", async () => {
     fetch: async (url: any) => {
       const which = String(url).includes("http://a") ? "a" : "b";
       seen.push(which);
-      // A returns malformed content, B returns valid JSON.
       const content = which === "a" ? "not-json" : '{"memories":[]}';
       return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 });
     },
@@ -163,9 +153,7 @@ test("parseResponse error counts as judge failure", async () => {
     },
   });
 
-  // Invoke 1: A's parseResponse throws → A unhealthy after 1 fail. Fall to B → succeeds.
   await expect(pool.invoke("x")).resolves.toEqual([]);
-  // Invoke 2: A is unhealthy → skipped. B succeeds.
   await expect(pool.invoke("y")).resolves.toEqual([]);
 
   expect(seen).toEqual(["a", "b", "b"]);
@@ -270,4 +258,127 @@ test("judge pool init throws no_judges_available when all ca paths fail", () => 
   expect(warnSpy).toHaveLength(3);
 
   rmSync(dir, { recursive: true, force: true });
+});
+
+test("judge pool enforces programmatic timeout and reports failure correctly", async () => {
+  const server = serve({
+    port: 0,
+    async fetch() {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }),
+      );
+    },
+  });
+
+  const warnSpy: any[] = [];
+  const pool = createJudgePool({
+    judges: [makeJudge("slow-judge", `http://localhost:${server.port}`)],
+    log: {
+      info: () => undefined,
+      warn: (...args: any[]) => warnSpy.push(args[0]),
+      error: () => undefined,
+    },
+    timeoutMs: 10,
+    unhealthyAfter: 2,
+    promptBuilder: (t) => t,
+    parseResponse: () => [],
+  });
+
+  await expect(pool.invoke("1")).rejects.toThrow(/judge slow-judge timed out after 10ms/i);
+
+  expect(warnSpy.length).toBeGreaterThan(0);
+  expect(warnSpy[0].err).toMatch(/timed out after 10ms/i);
+  expect(warnSpy[0].judge).toBe("slow-judge");
+
+  server.stop(true);
+});
+
+test("judge pool uses env timeout and parses values correctly", async () => {
+  const server = serve({
+    port: 0,
+    async fetch() {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }),
+      );
+    },
+  });
+
+  const testEnv = async (val: string | undefined, expectTimeoutMs: number) => {
+    const originalEnv = process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS;
+    try {
+      if (val === undefined) {
+        delete process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS;
+      } else {
+        process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS = val;
+      }
+
+      const pool = createJudgePool({
+        judges: [makeJudge("env-judge", `http://localhost:${server.port}`)],
+        log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+        unhealthyAfter: 2,
+        promptBuilder: (t) => t,
+        parseResponse: () => [],
+      });
+
+      if (expectTimeoutMs < 50) {
+        await expect(pool.invoke("1")).rejects.toThrow(
+          new RegExp(`judge env-judge timed out after ${expectTimeoutMs}ms`, "i"),
+        );
+      } else {
+        await expect(pool.invoke("1")).resolves.toEqual([]);
+      }
+    } finally {
+      if (originalEnv !== undefined) {
+        process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS = originalEnv;
+      } else {
+        delete process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS;
+      }
+    }
+  };
+
+  await testEnv("10", 10);
+
+  await testEnv("abc", 900000);
+  await testEnv("0", 900000);
+  await testEnv("-5", 900000);
+  await testEnv(undefined, 900000);
+
+  server.stop(true);
+});
+
+test("programmatic override beats env variable", async () => {
+  const originalEnv = process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS;
+  try {
+    process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS = "900000";
+
+    const server = serve({
+      port: 0,
+      async fetch() {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }),
+        );
+      },
+    });
+
+    const pool = createJudgePool({
+      judges: [makeJudge("override-judge", `http://localhost:${server.port}`)],
+      log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+      timeoutMs: 10,
+      unhealthyAfter: 2,
+      promptBuilder: (t) => t,
+      parseResponse: () => [],
+    });
+
+    await expect(pool.invoke("1")).rejects.toThrow(/judge override-judge timed out after 10ms/i);
+    server.stop(true);
+  } finally {
+    if (originalEnv !== undefined) {
+      process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS = originalEnv;
+    } else {
+      delete process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS;
+    }
+  }
 });

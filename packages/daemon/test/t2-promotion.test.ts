@@ -7,6 +7,7 @@ import { serviceTest } from "./helpers/service-gates.js";
 import { createT2PromotionWorker } from "../src/workers/t2-promotion.js";
 import { stripJsonFence } from "../src/workers/t2-promotion.js";
 import { wrapJudgeWithChunking } from "../src/workers/t2-promotion.js";
+import { createDefaultLLMJudge } from "../src/workers/t2-promotion.js";
 
 // Pin PENUMBRA_CONFIG_DIR to a safe fixture config dir so the serve-internal
 // t2-promotion worker created by makeTempDaemon() is always a no-op (dummy agent
@@ -977,4 +978,30 @@ test("wrapJudgeWithChunking recursion floor gives up cleanly", async () => {
   // Those 2 will also fail and check length < 4000, and drop the chunk without further retries.
   expect(seen.length).toBe(3);
   expect(res.length).toBe(0);
+});
+
+test("createDefaultLLMJudge enforces PENUMBRA_T2_JUDGE_TIMEOUT_MS", async () => {
+  const server = Bun.serve({
+    port: 0,
+    async fetch() {
+      await Bun.sleep(100);
+      return new Response("OK");
+    },
+  });
+  const prevUrl = process.env.PENUMBRA_SIRIUS_BASE_URL;
+  const prevTimeout = process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS;
+  process.env.PENUMBRA_SIRIUS_BASE_URL = `http://localhost:${server.port}`;
+  process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS = "50";
+  try {
+    const judge = createDefaultLLMJudge({
+      log: { info: () => {}, error: () => {}, warn: () => {} },
+    } as any);
+    await expect(judge!("transcript")).rejects.toThrow(/judge default timed out after 50ms/);
+  } finally {
+    server.stop(true);
+    if (prevUrl === undefined) delete process.env.PENUMBRA_SIRIUS_BASE_URL;
+    else process.env.PENUMBRA_SIRIUS_BASE_URL = prevUrl;
+    if (prevTimeout === undefined) delete process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS;
+    else process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS = prevTimeout;
+  }
 });

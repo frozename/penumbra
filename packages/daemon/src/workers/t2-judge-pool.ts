@@ -13,6 +13,7 @@ export interface JudgePoolOpts {
   judges: JudgeEntry[];
   log: { info: (...a: any[]) => void; warn: (...a: any[]) => void; error?: (...a: any[]) => void };
   fetch?: typeof fetch;
+  timeoutMs?: number;
   maxTokens?: number;
   unhealthyAfter?: number;
   promptBuilder: (transcript: string) => string;
@@ -27,8 +28,18 @@ export interface JudgePool {
 
 type JudgeState = JudgeEntry & { failCount: number; unhealthy: boolean; caPem?: string };
 
+export function getJudgeTimeoutMs(): number {
+  let envTimeout = parseInt(process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS ?? "", 10);
+  if (isNaN(envTimeout) || envTimeout <= 0) {
+    envTimeout = 900_000;
+  }
+  return envTimeout;
+}
+
 export function createJudgePool(opts: JudgePoolOpts): JudgePool {
   const fetchImpl = opts.fetch ?? fetch;
+  const timeoutMs = opts.timeoutMs ?? getJudgeTimeoutMs();
+
   // Bumped from 4096 → 8192: granite-8b's reasoning_content + JSON output
   // sometimes overflows 4096, causing mid-array truncation ("Expected ']'").
   // 8192 leaves headroom for verbose multi-extraction responses while still
@@ -87,9 +98,18 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
         max_tokens: maxTokens,
         temperature: 0,
       }),
+      signal: AbortSignal.timeout(timeoutMs),
     };
     if (judge.caPem) init.tls = { ca: judge.caPem };
-    const res = await fetchImpl(url, init);
+    let res: Response;
+    try {
+      res = await fetchImpl(url, init);
+    } catch (err: any) {
+      if (err.name === "TimeoutError") {
+        throw new Error(`judge ${judge.name} timed out after ${timeoutMs}ms`);
+      }
+      throw err;
+    }
     if (!res.ok) {
       throw new Error(`judge ${judge.name} returned ${res.status}: ${await res.text()}`);
     }
