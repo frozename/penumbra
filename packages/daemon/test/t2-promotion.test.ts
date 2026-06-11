@@ -980,6 +980,56 @@ test("wrapJudgeWithChunking recursion floor gives up cleanly", async () => {
   expect(res.length).toBe(0);
 });
 
+test("wrapJudgeWithChunking handles exceed-context retry within a chunked path", async () => {
+  let calls = 0;
+  const seen: string[] = [];
+  const judge = wrapJudgeWithChunking({
+    maxCharsPerChunk: 10000,
+    judge: async (transcript) => {
+      calls++;
+      seen.push(transcript);
+      // Fails only on the first combined chunk (length ~8000), succeeds on its halves (~4000)
+      if (transcript.includes("fail_marker") && transcript.length > 5000) {
+        throw new Error("exceeds the available context size");
+      }
+      return [
+        {
+          title: "Found " + transcript.substring(0, 10).trim(),
+          body: transcript.substring(0, 10).trim(),
+          kind: "fact",
+        },
+      ];
+    },
+  });
+
+  const event1 = "User: fail_marker " + "a".repeat(4000);
+  const event2 = "Assistant: " + "b".repeat(4000);
+  const event3 = "User: " + "c".repeat(4000);
+  const event4 = "Assistant: " + "d".repeat(4000);
+
+  const transcript = [event1, event2, event3, event4].join("\n\n");
+
+  // Verify the transcript is long enough to hit the chunked path
+  expect(transcript.length).toBeGreaterThan(10000);
+
+  const res = await judge(transcript);
+
+  const chunk1 = [event1, event2].join("\n\n");
+  const chunk2 = [event3, event4].join("\n\n");
+
+  expect(calls).toBe(4);
+  expect(seen.length).toBe(4);
+  expect(seen[0]).toBe(chunk1);
+  expect(seen[1]).toBe(event1);
+  expect(seen[2]).toBe(event2);
+  expect(seen[3]).toBe(chunk2);
+
+  expect(res.length).toBe(3);
+  expect(res[0].title).toBe("Found User: fail");
+  expect(res[1].title).toBe("Found Assistant:");
+  expect(res[2].title).toBe("Found User: cccc");
+});
+
 test("createDefaultLLMJudge enforces PENUMBRA_T2_JUDGE_TIMEOUT_MS", async () => {
   const server = Bun.serve({
     port: 0,
