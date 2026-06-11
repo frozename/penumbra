@@ -55,7 +55,11 @@ process_gates:
 output:
   - kind: file
     path: docs/notes/maestro-continuation-{{date}}-{{period}}.md
-    mode: unique-suffix
+    # skip-if-exists, NOT unique-suffix: this playbook fires on the stop
+    # lifecycle hook (every turn end), so a suffix-advancing mode writes a
+    # new note per turn (40 notes on 2026-06-11). The same-day clobber this
+    # tried to fix came from the model-written path, not this sink.
+    mode: skip-if-exists
   - kind: next-session-prompt
 run:
   kind: markdown-template
