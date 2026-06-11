@@ -210,7 +210,14 @@ export {
   type DirectT2WriteInput,
   type DirectT2WriteResult,
   writeDirectT2Memory,
+  readExistingNearDuplicateCandidates,
+  type ExistingNearDuplicateCandidate,
 } from "./writers/t2.js";
+export {
+  extractSessionCandidates,
+  type SessionExtractCandidate,
+  type SessionExtractOpts,
+} from "./writers/session-extract.js";
 export { MAX_BODY_CHARS, buildT2EmbedText, validateT2Body } from "./writers/t2-embed-text.js";
 export type { T2BodyValidationResult, T2EmbedRecipe } from "./writers/t2-embed-text.js";
 export { retireMemory, retireNonDirectMemory } from "./writers/retire-memory.js";

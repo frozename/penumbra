@@ -693,8 +693,9 @@ export class T2Promotion {
   }
 }
 
-interface ExistingNearDuplicateCandidate extends NearDuplicateItem {
+export interface ExistingNearDuplicateCandidate extends NearDuplicateItem {
   memory_id: string;
+  slug?: string | null;
 }
 
 interface PendingNearDuplicateCandidate extends NearDuplicateItem {
@@ -713,7 +714,7 @@ function isPromotionCandidate(extraction: T2MemoryExtraction): boolean {
   return true;
 }
 
-function readExistingNearDuplicateCandidates(
+export function readExistingNearDuplicateCandidates(
   db: Database,
   projectId: string | null,
   embedding: Float32Array,
@@ -723,6 +724,7 @@ function readExistingNearDuplicateCandidates(
     .query<
       {
         memory_id: string;
+        slug: string | null;
         body: string;
         why: string | null;
         depth: number | null;
@@ -730,7 +732,7 @@ function readExistingNearDuplicateCandidates(
       },
       [string | null, Float32Array, number]
     >(
-      `SELECT m.memory_id, m.body, m.why, m.depth, v.embedding
+      `SELECT m.memory_id, m.slug, m.body, m.why, m.depth, v.embedding
        FROM t2_memories m
        JOIN t2_vec v ON v.rowid = m.rowid
        WHERE m.retired_at IS NULL
@@ -746,6 +748,7 @@ function readExistingNearDuplicateCandidates(
     if (!embedding) continue;
     candidates.push({
       memory_id: row.memory_id,
+      slug: row.slug,
       body: row.body,
       why: row.why,
       depth: row.depth,

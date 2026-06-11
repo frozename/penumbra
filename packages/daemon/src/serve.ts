@@ -58,6 +58,7 @@ import {
   memoryEfficacyJobRoute,
   memoryEfficacyJobsRoute,
 } from "./routes/memory.js";
+import { memorySessionExtractRoute } from "./routes/memory-session-extract.js";
 import { memoryVerifyAuthorizeRoute } from "./routes/memory-verify.js";
 import {
   usageRecentRoute,
@@ -552,6 +553,9 @@ export function createDaemonFetchHandler(opts: {
     }
     if (req.method === "POST" && url.pathname === "/memory/write") {
       return memoryWriteT2Route(req, opts.services);
+    }
+    if (req.method === "POST" && url.pathname === "/memory/session-extract") {
+      return memorySessionExtractRoute(req, opts.services);
     }
     if (
       req.method === "GET" &&

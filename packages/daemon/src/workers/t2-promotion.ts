@@ -346,7 +346,7 @@ function parseJudgeResponse(content: string): T2MemoryExtraction[] {
   return extractions;
 }
 
-function createDefaultLLMJudge(
+export function createDefaultLLMJudge(
   services: Services,
 ): ((transcript: string) => Promise<T2MemoryExtraction[]>) | null {
   const url = process.env.PENUMBRA_SIRIUS_BASE_URL || process.env.SIRIUS_URL;
