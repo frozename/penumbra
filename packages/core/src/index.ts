@@ -100,6 +100,7 @@ export {
 export { backfillRecallFields, type BackfillStats } from "./db/backfill-recall-fields.js";
 export {
   closeLane,
+  getOpenLaneForImplementer,
   getLane,
   insertLane,
   recentLanes,

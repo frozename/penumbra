@@ -3,6 +3,7 @@ import type { Services, TaskClass } from "@penumbra/core";
 import {
   TaskClassSchema,
   closeLane,
+  getOpenLaneForImplementer,
   getLane,
   insertLane,
   recentLanes,
@@ -46,6 +47,30 @@ function validationError(error: z.ZodError): Response {
   );
 }
 
+function routeError(code: string, message: string, extra?: Record<string, unknown>): Response {
+  return json({ error: { code, message, ...(extra ?? {}) } }, 400);
+}
+
+function getHandoffAgent(services: Services, handoffId: string): string | null {
+  const row = services.db
+    .query<
+      { to_agent: string | null },
+      [string]
+    >(`SELECT to_agent FROM handoffs WHERE handoff_id = ? LIMIT 1`)
+    .get(handoffId);
+  return row?.to_agent ?? null;
+}
+
+function getLaneRoundCount(services: Services, implementerHandoff: string): number {
+  const row = services.db
+    .query<
+      { count: number },
+      [string]
+    >(`SELECT COUNT(*) AS count FROM lane_ledger WHERE implementer_handoff = ?`)
+    .get(implementerHandoff);
+  return row?.count ?? 0;
+}
+
 export async function lanesOpenRoute(req: Request, services: Services): Promise<Response> {
   const raw = await safeJson(req);
   if (raw === null)
@@ -56,6 +81,26 @@ export async function lanesOpenRoute(req: Request, services: Services): Promise<
 
   const parsed = OpenLaneBodySchema.safeParse(raw);
   if (!parsed.success) return validationError(parsed.error);
+
+  const existing = getOpenLaneForImplementer(services.db, parsed.data.implementer_handoff);
+  if (existing) {
+    if (existing.task_class !== parsed.data.task_class) {
+      return json(
+        {
+          error: {
+            code: "task_class_mismatch",
+            message:
+              "an open lane already exists for this implementer_handoff with a different task_class",
+            existing_lane_id: existing.lane_id,
+            existing_task_class: existing.task_class,
+            requested_task_class: parsed.data.task_class,
+          },
+        },
+        409,
+      );
+    }
+    return json(existing);
+  }
 
   const ts_opened = services.clock().toISOString();
   try {
@@ -115,6 +160,45 @@ export async function lanesCloseRoute(req: Request, services: Services): Promise
   if (!parsed.success) return validationError(parsed.error);
 
   const beforeClose = getLane(services.db, parsed.data.lane_id);
+  if (!beforeClose) {
+    return json({ error: "unknown_lane" }, 404);
+  }
+  if (beforeClose.ts_closed !== null) {
+    return json({ error: "lane_already_closed" }, 409);
+  }
+  if (
+    Math.max(
+      parsed.data.metadata?.round_count ?? 0,
+      getLaneRoundCount(services, beforeClose.implementer_handoff),
+    ) > 2 &&
+    parsed.data.override_reason === undefined
+  ) {
+    return routeError(
+      "round_count_exceeds_cap",
+      "metadata.round_count must be <= 2 unless override_reason is present",
+    );
+  }
+  if (parsed.data.reviewer_handoff !== undefined && parsed.data.override_reason === undefined) {
+    const implementerAgent = getHandoffAgent(services, beforeClose.implementer_handoff);
+    const reviewerAgent = getHandoffAgent(services, parsed.data.reviewer_handoff);
+    // An unresolvable reviewer must reject, not skip the check — otherwise a
+    // fabricated reviewer_handoff bypasses self-review prevention.
+    if (reviewerAgent === null) {
+      return routeError(
+        "unknown_reviewer_handoff",
+        "reviewer_handoff does not resolve to a known handoff",
+        { reviewer_handoff: parsed.data.reviewer_handoff },
+      );
+    }
+    if (implementerAgent !== null && implementerAgent === reviewerAgent) {
+      return routeError(
+        "same_agent_self_review",
+        "reviewer_handoff must resolve to a different agent than implementer_handoff unless override_reason is present",
+        { implementer_agent: implementerAgent, reviewer_agent: reviewerAgent },
+      );
+    }
+  }
+
   const ts_closed = services.clock().toISOString();
   try {
     closeLane(services.db, parsed.data.lane_id, {
@@ -142,8 +226,24 @@ export async function lanesCloseRoute(req: Request, services: Services): Promise
   const implementerHandoff = closedLane?.implementer_handoff ?? beforeClose?.implementer_handoff;
   if (implementerHandoff) {
     services.db
-      .prepare(`UPDATE agent_performance SET gate_outcome = ? WHERE handoff_id = ?`)
-      .run(parsed.data.gate_status, implementerHandoff);
+      .prepare(
+        // Substantive terminal verdicts must survive stale duplicate closes:
+        // 'passed' is never downgraded, and 'failed'/'review_debt' cannot be
+        // clobbered by a later 'skipped' (duplicate auto-lane residue).
+        `UPDATE agent_performance
+         SET gate_outcome = CASE
+           WHEN gate_outcome = 'passed' AND ? != 'passed' THEN gate_outcome
+           WHEN gate_outcome IN ('failed', 'review_debt') AND ? = 'skipped' THEN gate_outcome
+           ELSE ?
+         END
+         WHERE handoff_id = ?`,
+      )
+      .run(
+        parsed.data.gate_status,
+        parsed.data.gate_status,
+        parsed.data.gate_status,
+        implementerHandoff,
+      );
   }
 
   const responseLane =

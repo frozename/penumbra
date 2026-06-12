@@ -355,6 +355,7 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
       );
       CREATE INDEX IF NOT EXISTS lane_ledger_by_status_ts ON lane_ledger(gate_status, ts_opened DESC);
       CREATE INDEX IF NOT EXISTS lane_ledger_by_task_class ON lane_ledger(task_class, ts_opened DESC);
+      CREATE INDEX IF NOT EXISTS lane_ledger_by_implementer ON lane_ledger(implementer_handoff, ts_opened DESC);
 
       CREATE TABLE IF NOT EXISTS dispatch_events (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,

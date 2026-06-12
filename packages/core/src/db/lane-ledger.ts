@@ -160,6 +160,36 @@ export function getLane(db: Database, lane_id: string): LaneRow | null {
   return row ? parseLaneRow(row) : null;
 }
 
+export function getOpenLaneForImplementer(
+  db: Database,
+  implementer_handoff: string,
+): LaneRow | null {
+  const row = db
+    .query<
+      {
+        lane_id: string;
+        ts_opened: string;
+        ts_closed: string | null;
+        task_class: string;
+        implementer_handoff: string;
+        reviewer_handoff: string | null;
+        gate_status: string;
+        recalled_memory_ids: string;
+        recalled_query: string | null;
+        override_reason: string | null;
+        metadata_json: string;
+      },
+      [string]
+    >(
+      `SELECT * FROM lane_ledger
+       WHERE implementer_handoff=? AND ts_closed IS NULL
+       ORDER BY ts_opened DESC
+       LIMIT 1`,
+    )
+    .get(implementer_handoff);
+  return row ? parseLaneRow(row) : null;
+}
+
 export function recentLanes(db: Database, filter: RecentLaneFilter, limit = 50): LaneRow[] {
   const where: string[] = [];
   const args: Array<string | number> = [];

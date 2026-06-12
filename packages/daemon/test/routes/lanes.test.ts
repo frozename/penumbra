@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { beforeAll, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -12,6 +12,10 @@ try {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {}
+
+beforeAll(() => {
+  delete process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
+});
 
 function startTestDaemon(): {
   fetch: (path: string, init?: RequestInit) => Promise<Response>;
@@ -31,6 +35,13 @@ function startTestDaemon(): {
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date("2026-04-23T12:00:00.000Z"),
   });
+  services.watchdog = {
+    recordHeartbeat: () => {},
+    hasActiveWorker: () => true,
+    getStaleWorkers: () => [],
+    getStaleHeartbeatAges: () => [],
+    tick: async () => {},
+  };
 
   const token = "tok";
   const handler = createDaemonFetchHandler({ services, token });
@@ -67,9 +78,79 @@ async function postJson(
   });
 }
 
+function insertHandoff(
+  daemon: ReturnType<typeof startTestDaemon>,
+  handoffId: string,
+  agent: string,
+): void {
+  daemon.services.db
+    .prepare(
+      `
+      INSERT INTO handoffs (
+        handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message,
+        status, resolved_by, resolved_at, triggered_by_event_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    )
+    .run(
+      handoffId,
+      "2026-04-23T12:00:00.000Z",
+      "proj",
+      "conv",
+      "maestro",
+      agent,
+      null,
+      "Task type: implement_small",
+      "completed",
+      "worker",
+      "2026-04-23T12:01:00.000Z",
+      `event-${handoffId}`,
+    );
+}
+
+function insertPerformance(
+  daemon: ReturnType<typeof startTestDaemon>,
+  handoffId: string,
+  agent: string,
+): void {
+  daemon.services.db
+    .prepare(
+      `
+      INSERT INTO agent_performance (
+        performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type, outcome,
+        gate_outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, tokens_used,
+        latency_ms, source, notes, metadata_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    )
+    .run(
+      `perf-${handoffId}`,
+      "2026-04-23T12:02:00.000Z",
+      handoffId,
+      "conv",
+      "proj",
+      agent,
+      "implement_small",
+      "merged",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      "worker",
+      null,
+      "{}",
+    );
+}
+
 test("open then close then recent returns lane with closed status", async () => {
   const daemon = startTestDaemon();
   try {
+    insertHandoff(daemon, "h-1", "codex");
+    insertHandoff(daemon, "rev-1", "gemini");
     const opened = await postJson(daemon, "/lanes/open", {
       lane_id: "lane-1",
       implementer_handoff: "h-1",
@@ -108,6 +189,439 @@ test("open then close then recent returns lane with closed status", async () => 
     expect(recentBody.lanes[0]?.lane_id).toBe("lane-1");
     expect(recentBody.lanes[0]?.gate_status).toBe("passed");
     expect(recentBody.lanes[0]?.ts_closed).toBeTruthy();
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("open creates a fresh lane when the latest lane for an implementer is closed", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const first = await postJson(daemon, "/lanes/open", {
+      lane_id: "lane-closed-first",
+      implementer_handoff: "h-reopen",
+      task_class: "BOUNDARY",
+    });
+    expect(first.status).toBe(200);
+
+    const closed = await postJson(daemon, "/lanes/close", {
+      lane_id: "lane-closed-first",
+      gate_status: "passed",
+    });
+    expect(closed.status).toBe(200);
+
+    const reopened = await postJson(daemon, "/lanes/open", {
+      lane_id: "lane-reopened",
+      implementer_handoff: "h-reopen",
+      task_class: "BOUNDARY",
+    });
+    expect(reopened.status).toBe(200);
+    const reopenedBody = (await reopened.json()) as {
+      lane_id: string;
+      gate_status: string;
+      ts_closed: string | null;
+    };
+    expect(reopenedBody.lane_id).toBe("lane-reopened");
+    expect(reopenedBody.gate_status).toBe("open");
+    expect(reopenedBody.ts_closed).toBeNull();
+
+    const laneCount = daemon.services.db
+      .query<
+        { c: number },
+        [string]
+      >("SELECT COUNT(*) AS c FROM lane_ledger WHERE implementer_handoff = ?")
+      .get("h-reopen");
+    expect(laneCount?.c).toBe(2);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("manual open adopts the chain-start auto lane for the same implementer handoff", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const started = await postJson(daemon, "/chains/start", {
+      initial_agent: "codex",
+      message: "implement gated change",
+      task_class: "BOUNDARY",
+    });
+    expect(started.status).toBe(200);
+    const startedBody = (await started.json()) as { handoff_id: string; lane_id: string };
+    insertPerformance(daemon, startedBody.handoff_id, "codex");
+
+    const manualOpen = await postJson(daemon, "/lanes/open", {
+      lane_id: "manual-lane",
+      implementer_handoff: startedBody.handoff_id,
+      task_class: "BOUNDARY",
+    });
+    expect(manualOpen.status).toBe(200);
+    const manualOpenBody = (await manualOpen.json()) as { lane_id: string };
+    expect(manualOpenBody.lane_id).toBe(startedBody.lane_id);
+
+    const closed = await postJson(daemon, "/lanes/close", {
+      lane_id: manualOpenBody.lane_id,
+      gate_status: "passed",
+      metadata: { round_count: 2 },
+    });
+    expect(closed.status).toBe(200);
+
+    const laneCount = daemon.services.db
+      .query<
+        { c: number },
+        [string]
+      >("SELECT COUNT(*) AS c FROM lane_ledger WHERE implementer_handoff = ?")
+      .get(startedBody.handoff_id);
+    expect(laneCount?.c).toBe(1);
+
+    const perf = daemon.services.db
+      .query<
+        { gate_outcome: string | null },
+        [string]
+      >("SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?")
+      .get(startedBody.handoff_id);
+    expect(perf?.gate_outcome).toBe("passed");
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("close enforces the round cap from persisted lane history when metadata omits round_count", async () => {
+  const daemon = startTestDaemon();
+  try {
+    daemon.services.db
+      .prepare(
+        `
+        INSERT INTO lane_ledger (
+          lane_id, ts_opened, ts_closed, task_class, implementer_handoff, gate_status,
+          recalled_memory_ids, recalled_query, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        "lane-round-server-1",
+        "2026-04-23T11:00:00.000Z",
+        "2026-04-23T11:10:00.000Z",
+        "BOUNDARY",
+        "h-round-server",
+        "failed",
+        "[]",
+        null,
+        "{}",
+      );
+    daemon.services.db
+      .prepare(
+        `
+        INSERT INTO lane_ledger (
+          lane_id, ts_opened, ts_closed, task_class, implementer_handoff, gate_status,
+          recalled_memory_ids, recalled_query, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        "lane-round-server-2",
+        "2026-04-23T11:20:00.000Z",
+        "2026-04-23T11:30:00.000Z",
+        "BOUNDARY",
+        "h-round-server",
+        "failed",
+        "[]",
+        null,
+        "{}",
+      );
+    daemon.services.db
+      .prepare(
+        `
+        INSERT INTO lane_ledger (
+          lane_id, ts_opened, task_class, implementer_handoff, gate_status,
+          recalled_memory_ids, recalled_query, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        "lane-round-server-3",
+        "2026-04-23T12:00:00.000Z",
+        "BOUNDARY",
+        "h-round-server",
+        "open",
+        "[]",
+        null,
+        "{}",
+      );
+
+    const rejected = await postJson(daemon, "/lanes/close", {
+      lane_id: "lane-round-server-3",
+      gate_status: "failed",
+    });
+    expect(rejected.status).toBe(400);
+    expect(await rejected.json()).toEqual({
+      error: {
+        code: "round_count_exceeds_cap",
+        message: "metadata.round_count must be <= 2 unless override_reason is present",
+      },
+    });
+
+    const accepted = await postJson(daemon, "/lanes/close", {
+      lane_id: "lane-round-server-3",
+      gate_status: "failed",
+      override_reason: "manual approval for additional fix round",
+    });
+    expect(accepted.status).toBe(200);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("closing a stale duplicate lane cannot regress a passed gate outcome to skipped", async () => {
+  const daemon = startTestDaemon();
+  try {
+    await postJson(daemon, "/lanes/open", {
+      lane_id: "lane-authoritative",
+      implementer_handoff: "h-regress",
+      task_class: "BOUNDARY",
+    });
+    daemon.services.db
+      .prepare(
+        `
+        INSERT INTO lane_ledger (
+          lane_id, ts_opened, task_class, implementer_handoff, gate_status,
+          recalled_memory_ids, recalled_query, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        "lane-stale-duplicate",
+        "2026-04-23T12:00:01.000Z",
+        "BOUNDARY",
+        "h-regress",
+        "open",
+        "[]",
+        null,
+        "{}",
+      );
+    insertHandoff(daemon, "h-regress", "codex");
+    insertPerformance(daemon, "h-regress", "codex");
+
+    const passed = await postJson(daemon, "/lanes/close", {
+      lane_id: "lane-authoritative",
+      gate_status: "passed",
+    });
+    expect(passed.status).toBe(200);
+
+    const skipped = await postJson(daemon, "/lanes/close", {
+      lane_id: "lane-stale-duplicate",
+      gate_status: "skipped",
+    });
+    expect(skipped.status).toBe(200);
+
+    const perf = daemon.services.db
+      .query<
+        { gate_outcome: string | null },
+        [string]
+      >("SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?")
+      .get("h-regress");
+    expect(perf?.gate_outcome).toBe("passed");
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("close rejects round_count over two unless override_reason is present", async () => {
+  const daemon = startTestDaemon();
+  try {
+    await postJson(daemon, "/lanes/open", {
+      lane_id: "lane-round-cap",
+      implementer_handoff: "h-round-cap",
+      task_class: "BOUNDARY",
+    });
+
+    const rejected = await postJson(daemon, "/lanes/close", {
+      lane_id: "lane-round-cap",
+      gate_status: "failed",
+      metadata: { round_count: 3 },
+    });
+    expect(rejected.status).toBe(400);
+    expect(await rejected.json()).toEqual({
+      error: {
+        code: "round_count_exceeds_cap",
+        message: "metadata.round_count must be <= 2 unless override_reason is present",
+      },
+    });
+
+    const accepted = await postJson(daemon, "/lanes/close", {
+      lane_id: "lane-round-cap",
+      gate_status: "failed",
+      override_reason: "manual approval for additional fix round",
+      metadata: { round_count: 3 },
+    });
+    expect(accepted.status).toBe(200);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("close rejects same-agent self-review unless override_reason is present", async () => {
+  const daemon = startTestDaemon();
+  try {
+    insertHandoff(daemon, "h-impl-same", "codex");
+    insertHandoff(daemon, "h-review-same", "codex");
+    await postJson(daemon, "/lanes/open", {
+      lane_id: "lane-self-review",
+      implementer_handoff: "h-impl-same",
+      task_class: "BOUNDARY",
+    });
+
+    const rejected = await postJson(daemon, "/lanes/close", {
+      lane_id: "lane-self-review",
+      gate_status: "passed",
+      reviewer_handoff: "h-review-same",
+    });
+    expect(rejected.status).toBe(400);
+    expect(await rejected.json()).toEqual({
+      error: {
+        code: "same_agent_self_review",
+        message:
+          "reviewer_handoff must resolve to a different agent than implementer_handoff unless override_reason is present",
+        implementer_agent: "codex",
+        reviewer_agent: "codex",
+      },
+    });
+
+    const accepted = await postJson(daemon, "/lanes/close", {
+      lane_id: "lane-self-review",
+      gate_status: "passed",
+      reviewer_handoff: "h-review-same",
+      override_reason: "explicitly approved same-agent review",
+    });
+    expect(accepted.status).toBe(200);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("close rejects an unknown reviewer_handoff instead of skipping the self-review check", async () => {
+  const daemon = startTestDaemon();
+  try {
+    insertHandoff(daemon, "h-impl-known", "codex");
+    await postJson(daemon, "/lanes/open", {
+      lane_id: "lane-unknown-reviewer",
+      implementer_handoff: "h-impl-known",
+      task_class: "BOUNDARY",
+    });
+
+    const rejected = await postJson(daemon, "/lanes/close", {
+      lane_id: "lane-unknown-reviewer",
+      gate_status: "passed",
+      reviewer_handoff: "h-no-such-handoff",
+    });
+    expect(rejected.status).toBe(400);
+    expect(await rejected.json()).toEqual({
+      error: {
+        code: "unknown_reviewer_handoff",
+        message: "reviewer_handoff does not resolve to a known handoff",
+        reviewer_handoff: "h-no-such-handoff",
+      },
+    });
+
+    const accepted = await postJson(daemon, "/lanes/close", {
+      lane_id: "lane-unknown-reviewer",
+      gate_status: "passed",
+      reviewer_handoff: "h-no-such-handoff",
+      override_reason: "reviewer ran outside the handoff system",
+    });
+    expect(accepted.status).toBe(200);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("manual open with a mismatched task_class returns 409 instead of adopting the open lane", async () => {
+  const daemon = startTestDaemon();
+  try {
+    await postJson(daemon, "/lanes/open", {
+      lane_id: "lane-class-original",
+      implementer_handoff: "h-class-mismatch",
+      task_class: "TRIVIAL",
+    });
+
+    const mismatched = await postJson(daemon, "/lanes/open", {
+      lane_id: "lane-class-upgrade",
+      implementer_handoff: "h-class-mismatch",
+      task_class: "BOUNDARY",
+    });
+    expect(mismatched.status).toBe(409);
+    expect(await mismatched.json()).toEqual({
+      error: {
+        code: "task_class_mismatch",
+        message:
+          "an open lane already exists for this implementer_handoff with a different task_class",
+        existing_lane_id: "lane-class-original",
+        existing_task_class: "TRIVIAL",
+        requested_task_class: "BOUNDARY",
+      },
+    });
+
+    const matching = await postJson(daemon, "/lanes/open", {
+      lane_id: "lane-class-same",
+      implementer_handoff: "h-class-mismatch",
+      task_class: "TRIVIAL",
+    });
+    expect(matching.status).toBe(200);
+    const matchingBody = (await matching.json()) as { lane_id: string };
+    expect(matchingBody.lane_id).toBe("lane-class-original");
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("a stale duplicate skipped close cannot regress a failed gate outcome", async () => {
+  const daemon = startTestDaemon();
+  try {
+    await postJson(daemon, "/lanes/open", {
+      lane_id: "lane-failed-authoritative",
+      implementer_handoff: "h-failed-regress",
+      task_class: "BOUNDARY",
+    });
+    daemon.services.db
+      .prepare(
+        `
+        INSERT INTO lane_ledger (
+          lane_id, ts_opened, task_class, implementer_handoff, gate_status,
+          recalled_memory_ids, recalled_query, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        "lane-failed-stale-duplicate",
+        "2026-04-23T12:00:01.000Z",
+        "BOUNDARY",
+        "h-failed-regress",
+        "open",
+        "[]",
+        null,
+        "{}",
+      );
+    insertHandoff(daemon, "h-failed-regress", "codex");
+    insertPerformance(daemon, "h-failed-regress", "codex");
+
+    const failed = await postJson(daemon, "/lanes/close", {
+      lane_id: "lane-failed-authoritative",
+      gate_status: "failed",
+    });
+    expect(failed.status).toBe(200);
+
+    const skipped = await postJson(daemon, "/lanes/close", {
+      lane_id: "lane-failed-stale-duplicate",
+      gate_status: "skipped",
+    });
+    expect(skipped.status).toBe(200);
+
+    const perf = daemon.services.db
+      .query<
+        { gate_outcome: string | null },
+        [string]
+      >("SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?")
+      .get("h-failed-regress");
+    expect(perf?.gate_outcome).toBe("failed");
   } finally {
     daemon.stop();
   }
