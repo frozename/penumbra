@@ -11,6 +11,7 @@ export type StateMetrics = {
   "pending-handoffs": number;
   "commits-since-last-handoff": number;
   "context-window-percent": number;
+  "pending-review-lanes": number;
 };
 
 export function evaluateStateThresholds(reg: Registry, metrics: StateMetrics): WorkflowSpec[] {

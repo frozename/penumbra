@@ -33,6 +33,7 @@ export const TriggerSchema = z.discriminatedUnion("kind", [
       "pending-handoffs",
       "commits-since-last-handoff",
       "context-window-percent",
+      "pending-review-lanes",
     ]),
     op: z.enum([">", "<"]),
     value: z.number(),

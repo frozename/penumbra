@@ -520,7 +520,12 @@ export function createDaemonFetchHandler(opts: {
     const originDenied = originHostGuard(req);
     if (originDenied) return originDenied;
     const url = new URL(req.url);
-    if (url.pathname === "/health") return healthRoute(opts.lagSampler);
+    if (url.pathname === "/health")
+      return healthRoute({
+        sampler: opts.lagSampler,
+        db: opts.services.db,
+        now: opts.services.clock,
+      });
     // OTLP routes: localhost-only via daemon's 127.0.0.1 bind, no bearer auth.
     if (req.method === "POST" && url.pathname === "/v1/logs")
       return otlpLogsRoute(req, opts.services);

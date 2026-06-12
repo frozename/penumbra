@@ -10,7 +10,8 @@ type Trigger = {
     | "queue-idle-min"
     | "time-since-last-handoff-min"
     | "pending-handoffs"
-    | "commits-since-last-handoff";
+    | "commits-since-last-handoff"
+    | "pending-review-lanes";
   op: ">" | "<";
   value: number;
 };
@@ -40,6 +41,7 @@ const ZERO_METRICS = {
   "time-since-last-handoff-min": 0,
   "pending-handoffs": 0,
   "commits-since-last-handoff": 0,
+  "pending-review-lanes": 0,
 };
 
 function makeOpts(
@@ -185,4 +187,33 @@ test("runWorkflow throws → sweep continues, fired counts the attempt, warn emi
   const result = await runWorkflowTriggerSweep(opts, state, () => new Date("2026-05-04T12:00:00Z"));
   expect(result.fired).toEqual(["boom"]);
   expect(warns.length).toBe(1);
+});
+
+test("pending-review-lanes fires once and respects cooldown", async () => {
+  const calls: string[] = [];
+  const opts: WorkflowTriggerSweeperOpts = {
+    registry: fakeRegistry([
+      spec("review-backlog", {
+        kind: "state-threshold",
+        metric: "pending-review-lanes",
+        op: ">",
+        value: 0,
+      }),
+    ]),
+    computeMetrics: () => ({ ...ZERO_METRICS, "pending-review-lanes": 2 }),
+    runWorkflow: async (name) => {
+      calls.push(name);
+    },
+  };
+  const state = { lastFired: new Map<string, number>() };
+  const now = () => new Date("2026-05-04T12:00:00Z");
+
+  const first = await runWorkflowTriggerSweep(opts, state, now);
+  expect(first.matched).toEqual(["review-backlog"]);
+  expect(first.fired).toEqual(["review-backlog"]);
+
+  const second = await runWorkflowTriggerSweep(opts, state, now);
+  expect(second.matched).toEqual(["review-backlog"]);
+  expect(second.fired).toEqual([]);
+  expect(calls).toEqual(["review-backlog"]);
 });

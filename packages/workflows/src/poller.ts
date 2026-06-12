@@ -7,6 +7,7 @@ export type StateMetrics = {
   "pending-handoffs": number;
   "commits-since-last-handoff": number;
   "context-window-percent": number;
+  "pending-review-lanes": number;
 };
 
 export type GitLogSinceCounter = (sinceIso: string) => number;
@@ -38,6 +39,9 @@ export function computeStateMetrics(opts: ComputeStateMetricsOpts): StateMetrics
   const pending = db.query("SELECT COUNT(*) AS n FROM handoffs WHERE status = 'pending'").get() as {
     n: number;
   };
+  const reviewBacklog = db
+    .query("SELECT COUNT(*) AS n FROM lane_ledger WHERE gate_status = 'open'")
+    .get() as { n: number };
   const lastEnd = db
     .query("SELECT ts FROM dispatch_events WHERE kind = 'dispatch.end' ORDER BY ts DESC LIMIT 1")
     .get() as { ts: string } | undefined;
@@ -71,6 +75,7 @@ export function computeStateMetrics(opts: ComputeStateMetricsOpts): StateMetrics
 
   return {
     "pending-handoffs": pending.n,
+    "pending-review-lanes": reviewBacklog.n,
     "queue-idle-min": lastEnd
       ? Math.max(0, Math.floor((nowMs - new Date(lastEnd.ts).getTime()) / 60000))
       : 0,

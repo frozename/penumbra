@@ -25,6 +25,7 @@ test("computeStateMetrics returns zeros on empty db", () => {
     transcriptReader: () => null,
   });
   expect(m["pending-handoffs"]).toBe(0);
+  expect(m["pending-review-lanes"]).toBe(0);
   expect(m["context-window-percent"]).toBe(0);
 });
 
@@ -45,6 +46,31 @@ test("counts pending handoffs and computes queue-idle-min from latest dispatch.e
   });
   expect(m["pending-handoffs"]).toBe(1);
   expect(m["queue-idle-min"]).toBe(30);
+});
+
+test("counts open review lanes across task classes", () => {
+  const db = freshDb();
+  db.exec(`
+    INSERT INTO lane_ledger (
+      lane_id, ts_opened, ts_closed, task_class, implementer_handoff,
+      reviewer_handoff, gate_status, recalled_memory_ids, recalled_query, override_reason, metadata_json
+    ) VALUES (
+      'lane-1', '2026-05-04T10:00:00Z', NULL, 'BOUNDARY', 'h1', NULL, 'open', '[]', NULL, NULL, '{}'
+    ),
+    (
+      'lane-2', '2026-05-04T10:05:00Z', NULL, 'STANDARD', 'h2', NULL, 'open', '[]', NULL, NULL, '{}'
+    ),
+    (
+      'lane-3', '2026-05-04T10:10:00Z', '2026-05-04T11:00:00Z', 'BOUNDARY', 'h3', NULL, 'passed', '[]', NULL, NULL, '{}'
+    );
+  `);
+
+  const m = computeStateMetrics({
+    db,
+    now: () => new Date("2026-05-04T12:00:00Z"),
+    transcriptReader: () => null,
+  });
+  expect(m["pending-review-lanes"]).toBe(2);
 });
 
 function insertHandoffOutcome(db: Database, eventId: string, ts: string): void {
