@@ -33,7 +33,7 @@ interface WorktreeManagerOpts {
 }
 
 function git(args: string[], opts?: { cwd?: string }) {
-  return execFile("git", args, opts);
+  return execFile("git", args, { ...opts, encoding: "utf8" });
 }
 
 export class WorktreeManager {
@@ -234,7 +234,7 @@ export class WorktreeManager {
         ]);
       }
       const { stdout } = await git(["-C", scratchPath, "rev-parse", "HEAD"]);
-      const headSha = stdout.toString().trim();
+      const headSha = stdout.trim();
       await git(["-C", repoRoot, "branch", "-f", stageBranch, headSha]);
       return stageBranch;
     } finally {

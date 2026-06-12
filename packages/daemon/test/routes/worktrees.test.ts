@@ -1,7 +1,7 @@
 import { beforeAll, expect, test, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -125,6 +125,46 @@ test("worktree.inspect includes relevant untracked files but filters framework s
     expect(body.diff_against_main).not.toContain("node_modules");
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("worktree.inspect passes worktree paths literally to git", async () => {
+  const services = tempServices();
+  const dir = mkdtempSync(join(tmpdir(), "worktree-inspect-injection-"));
+  const canaries = [
+    join(tmpdir(), `worktree-inspect-canary-semi-${Date.now()}`),
+    join(tmpdir(), `worktree-inspect-canary-subst-${Date.now()}`),
+  ];
+
+  try {
+    const variants = [`worktree; touch ${canaries[0]}`, `worktree-$(touch ${canaries[1]})`];
+
+    for (const variant of variants) {
+      const handle: WorktreeHandle = {
+        handoffId: "h-injection",
+        path: join(dir, variant),
+        branchName: "agent/h-injection",
+        storageRoot: join(dir, ".test-storage"),
+        createdAt: "2026-04-26T00:00:00Z",
+        status: "created",
+      };
+      spyOn(services.worktreeManager, "getWorktree").mockReturnValue(handle);
+
+      const res = await worktreesInspectRoute(
+        new Request("http://h/worktrees/h-injection"),
+        "h-injection",
+        services,
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.diff_against_main).toContain("[diff error:");
+      expect(body.branch_log).toContain("[log error:");
+    }
+
+    expect(canaries.every((file) => !existsSync(file))).toBe(true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    for (const file of canaries) rmSync(file, { force: true });
   }
 });
 
