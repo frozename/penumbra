@@ -44,6 +44,7 @@ import { autocommitOnChainEnd } from "../src/worker/autocommit-on-chain-end.js";
 import { DispatchEventQueue } from "../src/worker/event-queue.js";
 import { emitHeartbeat } from "../src/worker/heartbeat-emit.js";
 import { startHeartbeatLoop } from "../src/worker/heartbeat-loop.js";
+import { createWorkerShutdown } from "../src/worker/shutdown.js";
 import { createPermissionCallback } from "../src/worker/permission-callback.js";
 import { createDiscordRateLimiter } from "../src/worker/discord-rate-limit.js";
 import { runWorkerControlListener } from "../src/worker/control-listener.js";
@@ -1512,7 +1513,7 @@ if (process.env.PENUMBRA_NOTIFICATION_SCHEDULER_DISABLED !== "1") {
   log.info({ interval_ms: 60_000, workerId }, "notification scheduler started");
 }
 
-startHeartbeatLoop({
+const heartbeatLoop = startHeartbeatLoop({
   emitHeartbeat: (signal) => emitHeartbeat({ client, workerId, signal, onEvent }),
   reregisterWorker: () => client.reregisterWorker(),
   exit: (code) => process.exit(code),
@@ -1564,24 +1565,30 @@ void runWorkerControlListener({
   },
 });
 
-const shutdown = async (sig: string) => {
-  log.info({ sig }, "shutting down");
-  controlAbort.abort();
-  if (heartbeatTimer) clearTimeout(heartbeatTimer);
-  // Abort any in-flight pre-warm spawn (kills its child) and stop scheduling new
-  // ones BEFORE tearing the pools down, so a refresh tick cannot race pool
-  // closure and leave an orphaned codex-acp child.
-  prewarmAbort.abort(new Error("worker shutdown"));
-  prewarmLoop?.stop();
-  usagePoller?.stop();
-  notificationScheduler?.stop();
-  shutdownAllAcpWarmPools();
-  await eventSource.stop();
-  permissionDaemonClient.stop();
-  dispatcher.stop();
-  await dispatcher.idle();
-  await eventQueue.stop();
-  process.exit(0);
-};
-process.on("SIGINT", () => void shutdown("SIGINT"));
-process.on("SIGTERM", () => void shutdown("SIGTERM"));
+const shutdown = createWorkerShutdown({
+  log,
+  controlAbort,
+  heartbeatLoop,
+  prewarmAbort,
+  prewarmLoop,
+  usagePoller,
+  notificationScheduler,
+  shutdownAllAcpWarmPools,
+  eventSource,
+  permissionDaemonClient,
+  dispatcher,
+  eventQueue,
+  exit: (code) => process.exit(code),
+});
+process.on("SIGINT", () => {
+  void shutdown("SIGINT").catch((err) => {
+    log.error({ err: err instanceof Error ? err.message : String(err) }, "worker shutdown failed");
+    process.exit(1);
+  });
+});
+process.on("SIGTERM", () => {
+  void shutdown("SIGTERM").catch((err) => {
+    log.error({ err: err instanceof Error ? err.message : String(err) }, "worker shutdown failed");
+    process.exit(1);
+  });
+});

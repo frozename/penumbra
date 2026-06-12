@@ -1,13 +1,20 @@
 import { test, expect, afterEach } from "bun:test";
 import { startInProcessDaemon, type InProcessDaemonHarness } from "../helpers/in-process-daemon.js";
 
-let harness;
+let harness: InProcessDaemonHarness | undefined;
 
 afterEach(async () => {
   if (harness) await harness.stop();
 });
 
-function insertHandoff(harness, id, attempts, maxAttempts, workerId, workflowRunId = null) {
+function insertHandoff(
+  harness: InProcessDaemonHarness,
+  id: string,
+  attempts: number,
+  maxAttempts: number,
+  workerId: string,
+  workflowRunId: string | null = null,
+) {
   const stmt = harness.services.db.prepare(`
     INSERT INTO handoffs (
       handoff_id, status, worker_id, dispatch_attempts, max_dispatch_attempts, workflow_run_id, 
@@ -31,27 +38,46 @@ test("Orphan recovery requeues workers under max attempts", async () => {
   expect(exhausted).toBe(0);
 
   const row1 = harness.services.db
-    .query(
+    .query<
+      {
+        status: string;
+        worker_id: string | null;
+        dispatch_attempts: number;
+        workflow_run_id: string | null;
+      },
+      [string]
+    >(
       "SELECT status, worker_id, dispatch_attempts, workflow_run_id FROM handoffs WHERE handoff_id = ?",
     )
     .get("h-1");
-  expect(row1.status).toBe("approved");
-  expect(row1.worker_id).toBeNull();
-  expect(row1.dispatch_attempts).toBe(1);
-  expect(row1.workflow_run_id).toBe("wf-xyz");
+  expect(row1?.status).toBe("approved");
+  expect(row1?.worker_id).toBeNull();
+  expect(row1?.dispatch_attempts).toBe(1);
+  expect(row1?.workflow_run_id).toBe("wf-xyz");
 
   const row2 = harness.services.db
-    .query(
+    .query<
+      {
+        status: string;
+        worker_id: string | null;
+        dispatch_attempts: number;
+        workflow_run_id: string | null;
+      },
+      [string]
+    >(
       "SELECT status, worker_id, dispatch_attempts, workflow_run_id FROM handoffs WHERE handoff_id = ?",
     )
     .get("h-2");
-  expect(row2.status).toBe("approved");
-  expect(row2.worker_id).toBeNull();
+  expect(row2?.status).toBe("approved");
+  expect(row2?.worker_id).toBeNull();
 
   const events1 = harness.services.db
-    .query("SELECT kind, meta_json FROM dispatch_events WHERE handoff_id = ? ORDER BY id ASC")
+    .query<
+      { kind: string; meta_json: string },
+      [string]
+    >("SELECT kind, meta_json FROM dispatch_events WHERE handoff_id = ? ORDER BY id ASC")
     .all("h-1");
-  const lastEvent1 = events1[events1.length - 1];
+  const lastEvent1 = events1[events1.length - 1]!;
   expect(lastEvent1.kind).toBe("worker.recovery.requeued");
   expect(JSON.parse(lastEvent1.meta_json)).toMatchObject({
     attempt: 1,
@@ -59,6 +85,87 @@ test("Orphan recovery requeues workers under max attempts", async () => {
     from_worker_id: "dead-worker-A",
     handoff_id: "h-1",
   });
+});
+
+test("Orphan recovery requeues workers after dispatch.start when the worker is stale", async () => {
+  harness = await startInProcessDaemon();
+
+  insertHandoff(harness, "h-started", 1, 3, "dead-worker-started", "wf-started");
+  harness.services.dispatchEventLog.record({
+    handoff_id: "h-started",
+    source: "worker",
+    kind: "dispatch.start",
+    ts: "2026-05-20T00:00:01.000Z",
+    meta: { worker_id: "dead-worker-started" },
+  });
+
+  harness.markWorkerStale("dead-worker-started");
+
+  const { requeued, exhausted } = harness.triggerOrphanRecovery();
+  expect(requeued).toBe(1);
+  expect(exhausted).toBe(0);
+
+  const row = harness.services.db
+    .query<
+      { status: string; worker_id: string | null; dispatch_attempts: number },
+      [string]
+    >("SELECT status, worker_id, dispatch_attempts FROM handoffs WHERE handoff_id = ?")
+    .get("h-started");
+  expect(row?.status).toBe("approved");
+  expect(row?.worker_id).toBeNull();
+  expect(row?.dispatch_attempts).toBe(1);
+
+  const events = harness.services.db
+    .query<
+      { kind: string; meta_json: string },
+      [string]
+    >("SELECT kind, meta_json FROM dispatch_events WHERE handoff_id = ? ORDER BY id ASC")
+    .all("h-started");
+  const lastEvent = events[events.length - 1]!;
+  expect(lastEvent.kind).toBe("worker.recovery.requeued");
+  expect(JSON.parse(lastEvent.meta_json)).toMatchObject({
+    attempt: 1,
+    max_attempts: 3,
+    from_worker_id: "dead-worker-started",
+    handoff_id: "h-started",
+  });
+});
+
+test("Orphan recovery skips post-start handoffs when the worker is only briefly stale", async () => {
+  harness = await startInProcessDaemon();
+
+  insertHandoff(harness, "h-brief-pause", 1, 3, "paused-worker", "wf-brief");
+  harness.services.dispatchEventLog.record({
+    handoff_id: "h-brief-pause",
+    source: "worker",
+    kind: "dispatch.start",
+    ts: "2026-05-20T00:00:01.000Z",
+    meta: { worker_id: "paused-worker" },
+  });
+
+  // Stale at the base threshold but NOT at the deep post-start threshold —
+  // the transient-pause case that must not double-dispatch.
+  const watchdog = harness.services.watchdog as unknown as {
+    getStaleWorkers(ms: number): string[];
+  };
+  const original = watchdog.getStaleWorkers.bind(watchdog);
+  watchdog.getStaleWorkers = (ms: number) => (ms <= 1 ? ["paused-worker"] : []);
+  try {
+    const rec = harness.triggerOrphanRecovery();
+    expect(rec.requeued).toBe(0);
+    expect(rec.exhausted).toBe(0);
+
+    const row = harness.services.db
+      .query<
+        { status: string; worker_id: string | null },
+        [string]
+      >("SELECT status, worker_id FROM handoffs WHERE handoff_id = ?")
+      .get("h-brief-pause");
+    expect(row?.status).toBe("dispatched");
+    expect(row?.worker_id).toBe("paused-worker");
+  } finally {
+    watchdog.getStaleWorkers = original;
+  }
 });
 
 test("Orphan recovery fails workers at max attempts", async () => {
@@ -73,19 +180,30 @@ test("Orphan recovery fails workers at max attempts", async () => {
   expect(exhausted).toBe(1);
 
   const row3 = harness.services.db
-    .query(
+    .query<
+      {
+        status: string;
+        worker_id: string | null;
+        dispatch_attempts: number;
+        resolution_reason: string | null;
+      },
+      [string]
+    >(
       "SELECT status, worker_id, dispatch_attempts, resolution_reason FROM handoffs WHERE handoff_id = ?",
     )
     .get("h-3");
-  expect(row3.status).toBe("failed");
-  expect(row3.worker_id).toBeNull();
-  expect(row3.resolution_reason).toContain("failed_worker_restart");
-  expect(row3.resolution_reason).toContain("attempts exhausted");
+  expect(row3?.status).toBe("failed");
+  expect(row3?.worker_id).toBeNull();
+  expect(row3?.resolution_reason).toContain("failed_worker_restart");
+  expect(row3?.resolution_reason).toContain("attempts exhausted");
 
   const events = harness.services.db
-    .query("SELECT kind, meta_json FROM dispatch_events WHERE handoff_id = ? ORDER BY id ASC")
+    .query<
+      { kind: string; meta_json: string },
+      [string]
+    >("SELECT kind, meta_json FROM dispatch_events WHERE handoff_id = ? ORDER BY id ASC")
     .all("h-3");
-  const lastEvent = events[events.length - 1];
+  const lastEvent = events[events.length - 1]!;
   expect(lastEvent.kind).toBe("worker.recovery.exhausted");
   expect(JSON.parse(lastEvent.meta_json)).toMatchObject({
     attempt: 3,
@@ -117,7 +235,10 @@ test("Orphan recovery cap ensures no infinite loops", async () => {
   expect(rec.exhausted).toBe(1);
 
   const finalRow = harness.services.db
-    .query("SELECT status, resolution_reason FROM handoffs WHERE handoff_id = ?")
+    .query<
+      { status: string; resolution_reason: string | null },
+      [string]
+    >("SELECT status, resolution_reason FROM handoffs WHERE handoff_id = ?")
     .get("h-4");
-  expect(finalRow.status).toBe("failed");
+  expect(finalRow?.status).toBe("failed");
 });

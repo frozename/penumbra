@@ -149,6 +149,24 @@ export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpSe
     env: opts.env ? { ...process.env, ...opts.env } : undefined,
     detached: process.platform !== "win32",
   });
+
+  let bootSettled = false;
+  let rejectChildError!: (err: Error) => void;
+  const childError = new Promise<never>((_, reject) => {
+    rejectChildError = reject;
+  });
+  // Always-attached consumer: a spawn error that fires after the boot race
+  // settled (or after a pre-race throw, e.g. the missing-pid path) must never
+  // escape as an unhandled rejection — that is the worker-killing bug this
+  // module exists to prevent.
+  void childError.catch(() => {});
+  const onChildError = (err: Error) => {
+    if (!bootSettled) {
+      rejectChildError(err);
+    }
+  };
+  child.on("error", onChildError);
+
   if (!child.stdin || !child.stdout || !child.stderr) {
     throw new Error("ACP server failed to start: spawn returned null streams");
   }
@@ -162,6 +180,9 @@ export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpSe
   streamChild.stderr.setEncoding("utf8");
 
   const exited = waitForExit(streamChild);
+  void exited.finally(() => {
+    child.removeListener("error", onChildError);
+  });
   let killPromise: Promise<void> | null = null;
   const signalProcess = (signal: NodeJS.Signals) => {
     if (!child.pid) return;
@@ -223,7 +244,12 @@ export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpSe
   try {
     await Promise.race([
       waitForPort(port, bootTimeoutMs, opts.signal),
+      childError,
       exited.then((info) => {
+        // Only an exit DURING boot is a boot failure. After a successful boot
+        // this dangling continuation still runs on natural exit; throwing then
+        // would be an unhandled rejection that kills the worker.
+        if (bootSettled) return undefined as never;
         throw formatBootError(
           `ACP server exited before TCP port was bound (code=${info.code}, signal=${info.signal})`,
           bootOutput,
@@ -231,12 +257,14 @@ export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpSe
       }),
     ]);
   } catch (err) {
+    bootSettled = true;
     streamChild.stdout.removeListener("data", onStdout);
     streamChild.stderr.removeListener("data", onStderr);
     await kill().catch(() => {});
     throw err;
   }
 
+  bootSettled = true;
   streamChild.stdout.removeListener("data", onStdout);
   streamChild.stderr.removeListener("data", onStderr);
 

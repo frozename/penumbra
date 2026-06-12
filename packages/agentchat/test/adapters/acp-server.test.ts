@@ -131,6 +131,25 @@ serviceTest("startAcpServer rejects and kills the child when boot timeout expire
   expect(child.kill).toHaveBeenCalledWith("SIGTERM");
 });
 
+serviceTest("startAcpServer rejects spawn errors through the boot promise", async () => {
+  const child = new FakeChildProcess();
+  const spawn = createSpawn(child, () => {
+    queueMicrotask(() => {
+      child.emit("error", new Error("spawn ENOENT"));
+    });
+  });
+
+  await expect(
+    startAcpServer({
+      cwd: "/tmp/penumbra-acp",
+      spawn,
+      bootTimeoutMs: 250,
+    }),
+  ).rejects.toThrow("spawn ENOENT");
+
+  expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+});
+
 const integrationEnabled =
   process.env.PENUMBRA_RUN_OPENCODE_INTEGRATION === "1" && Boolean(Bun.which("opencode"));
 

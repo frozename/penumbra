@@ -1,5 +1,10 @@
 import type { Services, HandoffRow } from "@penumbra/core";
 
+// Post-dispatch.start handoffs only recover when the worker's staleness is
+// this many multiples of the base threshold — deep enough that a transient
+// pause cannot trigger a double-dispatch.
+const POST_START_STALENESS_MULTIPLIER = 3;
+
 export interface TerminalHandoffNotifier {
   notifyTerminalHandoff(row: HandoffRow, reason: string): void;
 }
@@ -113,11 +118,23 @@ export class OrphanHandoffRecoveryService {
       this.batchSize,
     );
 
+    // Handoffs already past dispatch.start only recover when their worker is
+    // DEEPLY stale: a transient pause (GC, CPU saturation) barely crosses the
+    // base threshold and the worker is usually still alive — requeueing then
+    // double-dispatches the handoff. A dead worker's staleness keeps growing,
+    // so the deeper threshold rescues genuinely stuck work.
+    const veryStaleWorkers = new Set(
+      this.services.watchdog.getStaleWorkers(this.staleMs * POST_START_STALENESS_MULTIPLIER),
+    );
+
     // Perf: wrap per-orphan write+event in a single transaction.
     // Trades a small lock per orphan for atomicity (event row only exists if state transition won the CAS).
     const processOrphan = this.services.db.transaction(
       (orphan: HandoffRow, attempt: number, maxAttempts: number, failFastMode: boolean) => {
-        if (this.hasDispatchStarted(orphan.handoff_id)) {
+        if (
+          this.hasDispatchStarted(orphan.handoff_id) &&
+          !veryStaleWorkers.has(orphan.worker_id!)
+        ) {
           return "skip";
         }
         if (failFastMode || attempt >= maxAttempts) {

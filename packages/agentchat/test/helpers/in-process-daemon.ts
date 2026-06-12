@@ -15,7 +15,7 @@ import {
   ShellSessionPool,
   OrphanHandoffRecoveryService,
   WatchdogService,
-} from "@penumbra/daemon/test-utils";
+} from "../../../daemon/test-utils.js";
 import { PenumbraClient } from "../../src/penumbra-client.js";
 
 try {
