@@ -34,6 +34,7 @@ export const HandoffRowSchema = z
     chain_trust_mode: z.enum(["all", "config"]).nullable(),
     chain_task_type: z.string().nullable(),
     use_worktree: NumericBoolean.nullable(),
+    isolated_install: NumericBoolean.nullable().optional(),
     open_pr_on_review: NumericBoolean.nullable().optional(),
     branch_base: z.string().nullable().optional(),
     error_message: z.string().nullable(),

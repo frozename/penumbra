@@ -1,6 +1,8 @@
 import { Database } from "bun:sqlite";
 
-export const SCHEMA_VERSION = 33;
+// 34 = isolated_install handoff column (this branch) + one-open-lane unique
+// index with dedupe (main's 33); the dedupe marker re-runs once, idempotently.
+export const SCHEMA_VERSION = 34;
 const LANE_LEDGER_OPEN_DEDUPE_SCHEMA_META_KEY = "lane_ledger_open_dedupe_schema_version";
 
 export interface ReleaseT1RollupClaimsOpts {
@@ -150,6 +152,7 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
         long_lived_agent_id     TEXT,
         long_lived_tick_id      TEXT,
         use_worktree            INTEGER,
+        isolated_install        INTEGER,
         open_pr_on_review       INTEGER,
         branch_base             TEXT,
         error_message           TEXT,
@@ -602,6 +605,7 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
     addColumnIfMissing(db, "handoffs", "long_lived_agent_id", "TEXT");
     addColumnIfMissing(db, "handoffs", "long_lived_tick_id", "TEXT");
     addColumnIfMissing(db, "handoffs", "use_worktree", "INTEGER");
+    addColumnIfMissing(db, "handoffs", "isolated_install", "INTEGER");
     addColumnIfMissing(db, "handoffs", "open_pr_on_review", "INTEGER");
     addColumnIfMissing(db, "handoffs", "branch_base", "TEXT");
     addColumnIfMissing(db, "handoffs", "resolution_reason", "TEXT");

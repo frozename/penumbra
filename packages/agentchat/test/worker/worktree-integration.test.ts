@@ -42,7 +42,15 @@ function makeMockWorktreeManager(): WorktreeManager {
   const handles = new Map<string, WorktreeHandle>();
 
   return {
-    async createWorktree(id: string, opts?: { baseRef?: string; project_id?: string }) {
+    async createWorktree(
+      id: string,
+      opts?: {
+        baseRef?: string;
+        project_id?: string;
+        isolated_install?: boolean;
+        signal?: AbortSignal;
+      },
+    ) {
       if (id === "fail") throw diskFullError;
       if (id === "string-fail") throw "disk full";
 
@@ -53,6 +61,7 @@ function makeMockWorktreeManager(): WorktreeManager {
         status: "created",
         path: `/fake/worktree/${id}`,
         storageRoot: `/fake/worktree/${id}/.test-storage`,
+        worktreeMode: opts?.isolated_install ? "isolated_install" : "symlink_mirror",
       };
       handles.set(id, handle);
       if (opts?.baseRef) {
@@ -263,6 +272,100 @@ test("applyWorktreeOverride forwards branch_base to createWorktree", async () =>
     fs.rmSync(rootDir, { recursive: true, force: true });
     fs.rmSync(repoDir, { recursive: true, force: true });
   }
+});
+
+test("applyWorktreeOverride forwards isolated_install to createWorktree and returns worktreeMode", async () => {
+  const wtm = makeMockWorktreeManager();
+  const { handle, worktreeMode } = await applyWorktreeOverride(
+    {
+      handoff_id: "h-isolated",
+      to_agent: "gemini",
+      use_worktree: true,
+      isolated_install: true,
+    },
+    baseConfig,
+    "/storage",
+    wtm,
+    mainRepoPath,
+  );
+
+  expect(handle).not.toBeNull();
+  expect(handle?.worktreeMode).toBe("isolated_install");
+  expect(worktreeMode).toBe("isolated_install");
+});
+
+test("applyWorktreeOverride forwards abort signal to worktree creation", async () => {
+  const abort = new AbortController();
+  let observedSignal: AbortSignal | undefined;
+  const manager = makeMockWorktreeManager();
+  const spyManager = {
+    ...manager,
+    createWorktree: async (
+      id: string,
+      opts?: {
+        baseRef?: string;
+        project_id?: string;
+        isolated_install?: boolean;
+        signal?: AbortSignal;
+      },
+    ) => {
+      observedSignal = opts?.signal;
+      return manager.createWorktree(id, opts);
+    },
+  } as unknown as WorktreeManager;
+
+  await applyWorktreeOverride(
+    {
+      handoff_id: "h-signal",
+      to_agent: "gemini",
+      use_worktree: true,
+      isolated_install: true,
+    },
+    baseConfig,
+    "/storage",
+    spyManager,
+    mainRepoPath,
+    { signal: abort.signal },
+  );
+
+  expect(observedSignal).toBe(abort.signal);
+});
+
+test("applyWorktreeOverride emits dispatch.worktree_setup timing with mode", async () => {
+  const wtm = makeMockWorktreeManager();
+  const events: any[] = [];
+
+  await applyWorktreeOverride(
+    {
+      handoff_id: "h-setup-event",
+      conversation_id: "conv-setup-event",
+      project_id: null,
+      to_agent: "gemini",
+      use_worktree: true,
+      isolated_install: true,
+    },
+    baseConfig,
+    "/storage",
+    wtm,
+    mainRepoPath,
+    {
+      workerId: "worker-1",
+      onEvent: (event) => events.push(event),
+    },
+  );
+
+  expect(events).toContainEqual(
+    expect.objectContaining({
+      handoff_id: "h-setup-event",
+      worker_id: "worker-1",
+      source: "worker",
+      kind: "dispatch.worktree_setup",
+      meta: expect.objectContaining({
+        worktree_mode: "isolated_install",
+        duration_ms: expect.any(Number),
+      }),
+    }),
+  );
 });
 
 test("rewriteWorktreeHandoffMessage rewrites main-repo paths and adds isolation guard", () => {

@@ -712,3 +712,43 @@ test("chain.start handler forwards daemon routing warnings into the MCP response
     }),
   );
 });
+
+test("chain.start handler forwards isolated_install to daemon.startChain", async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
+  } as any;
+  const handler = chainStartHandler(daemon);
+
+  await handler({
+    initial_agent: "planner",
+    message: "hi",
+    task_class: "BOUNDARY",
+    isolated_install: true,
+  });
+
+  expect(daemon.startChain).toHaveBeenCalledWith(
+    expect.objectContaining({
+      isolated_install: true,
+    }),
+  );
+});
+
+test("chain.start handler forwards isolated_install: false explicitly", async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
+  } as any;
+  const handler = chainStartHandler(daemon);
+
+  await handler({
+    initial_agent: "planner",
+    message: "hi",
+    task_class: "STANDARD",
+    isolated_install: false,
+  });
+
+  expect(daemon.startChain).toHaveBeenCalledWith(
+    expect.objectContaining({
+      isolated_install: false,
+    }),
+  );
+});

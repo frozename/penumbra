@@ -329,7 +329,13 @@ export {
   type ResolveDaemonStorageRootOpts,
   type WaitForDaemonStorageRootOpts,
 } from "./daemon-discovery.js";
-export { WorktreeManager, type WorktreeHandle } from "./worktree/manager.js";
+export {
+  WorktreeManager,
+  type WorktreeCommandRunner,
+  type WorktreeCommandRunnerOptions,
+  type WorktreeHandle,
+  type WorktreeMode,
+} from "./worktree/manager.js";
 export {
   selectWorktreeGcCandidates,
   type OrphanWorktreeHandle,

@@ -71,6 +71,7 @@ test("worktree.list returns tracked worktrees", async () => {
     storageRoot: "/tmp/wt1/.test-storage",
     createdAt: "2026-04-26T00:00:00Z",
     status: "created",
+    worktreeMode: "symlink_mirror",
   };
   spyOn(services.worktreeManager, "listWorktrees").mockReturnValue([handle]);
 
@@ -110,6 +111,7 @@ test("worktree.inspect includes relevant untracked files but filters framework s
       storageRoot: join(dir, ".test-storage"),
       createdAt: "2026-04-26T00:00:00Z",
       status: "created",
+      worktreeMode: "symlink_mirror",
     };
     spyOn(services.worktreeManager, "getWorktree").mockReturnValue(handle);
 
@@ -147,6 +149,7 @@ test("worktree.inspect passes worktree paths literally to git", async () => {
         storageRoot: join(dir, ".test-storage"),
         createdAt: "2026-04-26T00:00:00Z",
         status: "created",
+        worktreeMode: "symlink_mirror",
       };
       spyOn(services.worktreeManager, "getWorktree").mockReturnValue(handle);
 
@@ -177,6 +180,7 @@ test("worktree.cleanup calls manager", async () => {
     storageRoot: "/tmp/wt1/.test-storage",
     createdAt: "2026-04-26T00:00:00Z",
     status: "created",
+    worktreeMode: "symlink_mirror",
   };
   spyOn(services.worktreeManager, "getWorktree").mockReturnValue(handle);
   const teardownSpy = spyOn(services.worktreeManager, "teardownWorktree").mockResolvedValue(

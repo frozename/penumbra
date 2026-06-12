@@ -110,6 +110,21 @@ test("emits dispatch_start after claim and before hop-start progress", async () 
   expect(order.slice(0, 3)).toEqual(["claim", "dispatch_start", "hop-start"]);
 });
 
+test("dispatch.start meta does not include predicted worktree_mode", async () => {
+  const events: any[] = [];
+  const d = deps({
+    onEvent: (event: any) => events.push(event),
+  } as any);
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle({ ...baseHandoff("h-wt"), use_worktree: true, isolated_install: true });
+  await dispatcher.idle();
+
+  const startEvent = events.find((e) => e.kind === "dispatch.start");
+  expect(startEvent).toBeDefined();
+  expect(startEvent.meta).not.toHaveProperty("worktree_mode");
+});
+
 test("waits for durable dispatch.start delivery before calling dispatch", async () => {
   const order: string[] = [];
   const startPosted = Promise.withResolvers<void>();

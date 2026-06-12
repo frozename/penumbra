@@ -16,6 +16,7 @@ function normalizeHandoffRow(row: HandoffRow): HandoffRow {
   return {
     ...row,
     use_worktree: coerceBoolCol(row.use_worktree),
+    isolated_install: coerceBoolCol(row.isolated_install) ?? undefined,
     open_pr_on_review: coerceBoolCol(row.open_pr_on_review) ?? undefined,
   };
 }

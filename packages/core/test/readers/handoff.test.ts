@@ -420,6 +420,37 @@ test("listByStatus filters by conversation_id when given", () => {
   expect(r.map((x) => x.handoff_id)).toEqual(["h-1"]);
 });
 
+test("listByStatus normalizes raw SQLite isolated_install booleans", () => {
+  db.run(
+    `INSERT INTO handoffs (
+       handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role,
+       message, status, triggered_by_event_id, use_worktree, isolated_install,
+       parent_handoff_id, root_handoff_id
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      "h-isolated-raw",
+      isoAt(0),
+      null,
+      "conv-isolated-raw",
+      "planner",
+      "gemini",
+      null,
+      "m",
+      "approved",
+      "e-isolated-raw",
+      1,
+      1,
+      null,
+      "h-isolated-raw",
+    ],
+  );
+
+  const [row] = reader.listByStatus({ statuses: ["approved"] });
+
+  expect(row?.use_worktree).toBe(true);
+  expect(row?.isolated_install).toBe(true);
+});
+
 test("listByStatus rejects empty status list", () => {
   expect(() => reader.listByStatus({ statuses: [] })).toThrow();
 });

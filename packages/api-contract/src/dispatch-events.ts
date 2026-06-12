@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const DispatchEventKindSchema = z.enum([
   "dispatch.start",
+  "dispatch.worktree_setup",
   "dispatch.end",
   "acp.server.start",
   "acp.session.start",

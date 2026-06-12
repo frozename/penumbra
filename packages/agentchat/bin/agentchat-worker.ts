@@ -1271,6 +1271,7 @@ const dispatcher = createWorkerDispatcher({
         storageRoot,
         worktreeManager,
         process.cwd(),
+        { workerId, onEvent, signal },
       );
       overrideConfig = applyOrchestrateToolsToConfig(
         result.overrideConfig,

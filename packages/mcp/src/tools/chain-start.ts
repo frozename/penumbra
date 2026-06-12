@@ -93,6 +93,12 @@ export const ChainStartInputShape = {
     .boolean()
     .optional()
     .describe("Optional opt-in to open a GitHub PR after successful reconcile. Default false."),
+  isolated_install: z
+    .boolean()
+    .optional()
+    .describe(
+      "Optional opt-in to run bun install in the dispatch worktree instead of mirroring node_modules symlinks.",
+    ),
   task_class: TaskClassSchema.describe("Required task class for dispatch routing"),
   caller_cwd: z
     .string()
@@ -274,6 +280,7 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
     if (input.long_lived_tick_id !== undefined) body.long_lived_tick_id = input.long_lived_tick_id;
     if (input.branch_base !== undefined) body.branch_base = input.branch_base;
     if (input.open_pr_on_review !== undefined) body.open_pr_on_review = input.open_pr_on_review;
+    if (input.isolated_install !== undefined) body.isolated_install = input.isolated_install;
     if (input.task_class !== undefined) body.task_class = input.task_class;
     const res: ChainStartResponse = ChainStartResponseSchema.parse(await daemon.startChain(body));
     const response = {

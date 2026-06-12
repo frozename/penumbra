@@ -52,6 +52,7 @@ function makeHandle(handoffId: string): WorktreeHandle {
     storageRoot: `/tmp/test-worktrees/${handoffId}/.test-storage`,
     createdAt: "2026-05-01T00:00:00.000Z",
     status: "created",
+    worktreeMode: "symlink_mirror",
   };
 }
 

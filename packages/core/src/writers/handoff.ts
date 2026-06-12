@@ -31,6 +31,7 @@ export interface CreateApprovedParams {
   long_lived_agent_id?: string | null;
   long_lived_tick_id?: string | null;
   use_worktree: boolean | null;
+  isolated_install?: boolean | null;
   open_pr_on_review?: boolean | null;
   parent_handoff_id: string | null;
   branch_base?: string | null;
@@ -131,6 +132,7 @@ export class HandoffWriter {
           string | null,
           number | null,
           number | null,
+          number | null,
           string | null,
           string | null,
           string | null,
@@ -142,8 +144,8 @@ export class HandoffWriter {
         `INSERT INTO handoffs (
           handoff_id, ts, project_id, conversation_id,
           from_agent, to_agent, to_role, message, status,
-          resolved_by, resolved_at, dispatch_kind, long_lived_agent_id, long_lived_tick_id, chain_max_hops, chain_trust_mode, triggered_by_event_id, use_worktree, open_pr_on_review, parent_handoff_id, chain_task_type, branch_base, root_handoff_id, workflow_run_id, max_dispatch_attempts
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          resolved_by, resolved_at, dispatch_kind, long_lived_agent_id, long_lived_tick_id, chain_max_hops, chain_trust_mode, triggered_by_event_id, use_worktree, isolated_install, open_pr_on_review, parent_handoff_id, chain_task_type, branch_base, root_handoff_id, workflow_run_id, max_dispatch_attempts
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         params.handoff_id,
@@ -163,6 +165,7 @@ export class HandoffWriter {
         params.chain_trust_mode,
         params.triggered_by_event_id,
         params.use_worktree ? 1 : params.use_worktree === false ? 0 : null,
+        params.isolated_install === true ? 1 : params.isolated_install === false ? 0 : null,
         params.open_pr_on_review === true ? 1 : params.open_pr_on_review === false ? 0 : null,
         params.parent_handoff_id ?? null,
         params.chain_task_type ?? null,

@@ -547,6 +547,7 @@ export class DaemonClient {
     long_lived_tick_id?: string;
     branch_base?: string;
     open_pr_on_review?: boolean;
+    isolated_install?: boolean;
   }): Promise<ChainStartResult> {
     return this.post("/chains/start", body);
   }

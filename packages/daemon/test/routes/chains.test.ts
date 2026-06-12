@@ -25,6 +25,7 @@ import {
   chainSendMessageRoute,
   chainStartFromInput,
 } from "../../src/routes/chains.js";
+import { HandoffRowSchema as ApiHandoffRowSchema } from "../../../api-contract/src/handoffs.js";
 
 try {
   if (process.platform === "darwin")
@@ -66,12 +67,15 @@ function tempServices(opts?: {
 
 let previousDaemonRequireExplicitProjectId: string | undefined;
 let previousRequirePromptProjectMatch: string | undefined;
+let previousIsolatedInstallAutoBoundary: string | undefined;
 
 beforeEach(() => {
   previousDaemonRequireExplicitProjectId = process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
   previousRequirePromptProjectMatch = process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH;
+  previousIsolatedInstallAutoBoundary = process.env.PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY;
   delete process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
   delete process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH;
+  delete process.env.PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY;
 });
 
 afterEach(() => {
@@ -85,6 +89,11 @@ afterEach(() => {
     delete process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH;
   } else {
     process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = previousRequirePromptProjectMatch;
+  }
+  if (previousIsolatedInstallAutoBoundary === undefined) {
+    delete process.env.PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY;
+  } else {
+    process.env.PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY = previousIsolatedInstallAutoBoundary;
   }
 });
 
@@ -2085,6 +2094,92 @@ test("POST /chains/start defaults open_pr_on_review to null when omitted", async
     .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
     .get(body.handoff_id);
   expect(handoff.open_pr_on_review).toBeNull();
+});
+
+test("POST /chains/start persists isolated_install: true", async () => {
+  const services = tempServices();
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "planner",
+        message: "hi",
+        isolated_install: true,
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  const handoff = services.db
+    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
+    .get(body.handoff_id);
+  expect(handoff.isolated_install).toBe(1);
+  expect(ApiHandoffRowSchema.parse(handoff).isolated_install).toBe(true);
+});
+
+test("POST /chains/start persists isolated_install: false", async () => {
+  const services = tempServices();
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "planner",
+        message: "hi",
+        isolated_install: false,
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  const handoff = services.db
+    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
+    .get(body.handoff_id);
+  expect(handoff.isolated_install).toBe(0);
+});
+
+test("POST /chains/start leaves BOUNDARY isolated_install off by default", async () => {
+  const services = tempServices();
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "planner",
+        message: "hi",
+        task_class: "BOUNDARY",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  const handoff = services.db
+    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
+    .get(body.handoff_id);
+  expect(handoff.isolated_install).toBeNull();
+});
+
+test("POST /chains/start auto-enables BOUNDARY isolated_install only behind env", async () => {
+  process.env.PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY = "1";
+  const services = tempServices();
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "planner",
+        message: "hi",
+        task_class: "BOUNDARY",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  const handoff = services.db
+    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
+    .get(body.handoff_id);
+  expect(handoff.isolated_install).toBe(1);
 });
 
 test("POST /chains/start persists long-lived dispatch identity fields when supplied", async () => {

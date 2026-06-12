@@ -39,6 +39,10 @@ export const HandoffRowSchema = z.object({
   long_lived_agent_id: z.string().nullable().optional(),
   long_lived_tick_id: z.string().nullable().optional(),
   use_worktree: z.preprocess((v) => (v === 1 ? true : v === 0 ? false : v), z.boolean().nullable()),
+  isolated_install: z.preprocess(
+    (v) => (v === 1 ? true : v === 0 ? false : v),
+    z.boolean().nullable().optional(),
+  ),
   open_pr_on_review: z.preprocess(
     (v) => (v === 1 ? true : v === 0 ? false : v),
     z.boolean().nullable().optional(),
@@ -64,6 +68,10 @@ export const CreateHandoffRequestSchema = z.object({
   project_id: SafeProjectIdSchema.nullable().optional(),
   triggered_by_event_id: z.string().min(1),
   use_worktree: z.preprocess(
+    (v) => (v === 1 ? true : v === 0 ? false : v),
+    z.boolean().nullable().optional(),
+  ),
+  isolated_install: z.preprocess(
     (v) => (v === 1 ? true : v === 0 ? false : v),
     z.boolean().nullable().optional(),
   ),

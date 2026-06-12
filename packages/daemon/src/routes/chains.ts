@@ -48,6 +48,7 @@ type ChainStartRequestWithLongLived = Omit<ChainStartRequest, "dispatch_kind"> &
   long_lived_tick_id?: string;
   task_class?: TaskClass;
   workload?: Workload;
+  isolated_install?: boolean;
 };
 type Workload = (typeof WORKLOADS)[number];
 
@@ -755,6 +756,12 @@ export async function chainStartInternal(
   const openPrOnReview = (input as { open_pr_on_review?: unknown }).open_pr_on_review;
   const openPrOnReviewBool = typeof openPrOnReview === "boolean" ? openPrOnReview : undefined;
   const taskClass = (input as { task_class?: TaskClass }).task_class;
+  const isolatedInstall =
+    input.isolated_install !== undefined
+      ? input.isolated_install
+      : taskClass === "BOUNDARY" && isEnvTruthy(process.env.PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY)
+        ? true
+        : null;
   if (taskClass !== undefined) {
     services.log.debug(
       { event: "dispatch.task_class", task_class: taskClass },
@@ -886,6 +893,7 @@ export async function chainStartInternal(
       long_lived_agent_id: input.long_lived_agent_id ?? null,
       long_lived_tick_id: input.long_lived_tick_id ?? null,
       use_worktree: input.use_worktree ?? true,
+      isolated_install: isolatedInstall,
       parent_handoff_id: input.parent_handoff_id ?? null,
       branch_base: input.branch_base ?? null,
     } as any);

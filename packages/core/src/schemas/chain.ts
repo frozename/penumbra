@@ -25,5 +25,6 @@ export const ChainStartRequestSchema = z.object({
   open_pr_on_review: z.boolean().optional(),
   task_type: AgentTaskTypeSchema.optional(),
   task_class: TaskClassSchema.optional(),
+  isolated_install: z.boolean().optional(),
 });
 export type ChainStartRequest = z.infer<typeof ChainStartRequestSchema>;

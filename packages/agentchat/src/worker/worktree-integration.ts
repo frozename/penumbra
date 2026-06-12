@@ -1,4 +1,9 @@
-import type { WorktreeManager, WorktreeHandle } from "@penumbra/core";
+import type {
+  DispatchEventInput,
+  WorktreeManager,
+  WorktreeHandle,
+  WorktreeMode,
+} from "@penumbra/core";
 import type { AgentChatConfig } from "../config/types.js";
 
 export interface WorktreePromptRewrite {
@@ -11,6 +16,13 @@ export interface WorktreeOverrideResult {
   overrideConfig: AgentChatConfig;
   handle: WorktreeHandle | null;
   worktreePromptRewrite: WorktreePromptRewrite | null;
+  worktreeMode: WorktreeMode | null;
+}
+
+export interface WorktreeSetupContext {
+  workerId?: string;
+  onEvent?: (event: DispatchEventInput) => void;
+  signal?: AbortSignal;
 }
 
 export function rewriteWorktreeHandoffMessage(
@@ -37,6 +49,7 @@ export async function applyWorktreeOverride(
   storageRoot: string,
   worktreeManager: WorktreeManager,
   mainRepoPath = process.cwd(),
+  setupContext?: WorktreeSetupContext,
 ): Promise<WorktreeOverrideResult> {
   const targetAgent = config.agents.find((a) => a.name === handoff.to_agent);
   const useWorktree = handoff.use_worktree ?? true;
@@ -54,12 +67,27 @@ export async function applyWorktreeOverride(
 
   if (useWorktree && isWorktreeCapableAdapter) {
     try {
+      const setupStart = Date.now();
       const handle = await worktreeManager.createWorktree(handoff.handoff_id as string, {
         baseRef:
           typeof handoff.branch_base === "string" && handoff.branch_base.length > 0
             ? handoff.branch_base
             : undefined,
         project_id: handoff.project_id ?? undefined,
+        isolated_install: handoff.isolated_install === true || handoff.isolated_install === 1,
+        signal: setupContext?.signal,
+      });
+      setupContext?.onEvent?.({
+        handoff_id: String(handoff.handoff_id),
+        worker_id: setupContext.workerId,
+        source: "worker",
+        kind: "dispatch.worktree_setup",
+        ts: new Date().toISOString(),
+        meta: {
+          worktree_mode: handle.worktreeMode,
+          duration_ms: Date.now() - setupStart,
+          worktree_path: handle.path,
+        },
       });
       const guardText =
         "This dispatch is isolated to the assigned worktree only.\n" +
@@ -98,6 +126,7 @@ export async function applyWorktreeOverride(
       return {
         overrideConfig,
         handle,
+        worktreeMode: handle.worktreeMode,
         worktreePromptRewrite: {
           mainRepoPath,
           worktreePath: handle.path,
@@ -130,8 +159,8 @@ export async function applyWorktreeOverride(
         };
       }),
     };
-    return { overrideConfig, handle: null, worktreePromptRewrite: null };
+    return { overrideConfig, handle: null, worktreePromptRewrite: null, worktreeMode: null };
   }
 
-  return { overrideConfig: config, handle: null, worktreePromptRewrite: null };
+  return { overrideConfig: config, handle: null, worktreePromptRewrite: null, worktreeMode: null };
 }
