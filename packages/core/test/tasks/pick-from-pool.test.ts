@@ -27,6 +27,12 @@ function freshDb(): Database {
   return db;
 }
 
+// Demotion only considers rows inside the recency floor (7d); fixtures that
+// must count toward demotion need wall-clock-recent timestamps.
+function recentIso(minutesAgo: number): string {
+  return new Date(Date.now() - minutesAgo * 60_000).toISOString();
+}
+
 function writePerf(
   db: Database,
   agent: string,
@@ -35,12 +41,15 @@ function writePerf(
     outcome: "merged" | "pr_opened" | "failed";
     rounds: number;
     latency_ms: number;
+    ts: string;
+    id_suffix: string;
   }> = {},
 ): void {
+  const idSuffix = overrides.id_suffix ? `-${overrides.id_suffix}` : "";
   new AgentPerformanceWriter(db).upsert({
-    performance_id: `${taskType}-${agent}`,
-    ts: NOW,
-    handoff_id: `handoff-${taskType}-${agent}`,
+    performance_id: `${taskType}-${agent}${idSuffix}`,
+    ts: overrides.ts ?? NOW,
+    handoff_id: `handoff-${taskType}-${agent}${idSuffix}`,
     conversation_id: "conv",
     project_id: "proj",
     agent_name: agent,
@@ -163,5 +172,51 @@ describe("pickFromPool", () => {
     writePerf(db, "b", "review_adversarial", { rounds: 1, latency_ms: 10_000 });
 
     expect(pickFromPool(["a", "b"], db, config(), undefined, "review_adversarial")).toBe("b");
+  });
+
+  test("demotes agents whose recent workload attempts all failed", () => {
+    const db = freshDb();
+    for (let i = 0; i < 10; i += 1) {
+      writePerf(db, "a", "review_adversarial", {
+        outcome: "merged",
+        rounds: 1,
+        latency_ms: 10_000,
+        ts: `2026-05-01T10:${String(i).padStart(2, "0")}:00Z`,
+        id_suffix: `old-success-${i}`,
+      });
+    }
+    for (let i = 0; i < 3; i += 1) {
+      writePerf(db, "a", "review_adversarial", {
+        outcome: "failed",
+        rounds: 1,
+        latency_ms: 10_000,
+        ts: recentIso(30 - i),
+        id_suffix: `recent-failure-${i}`,
+      });
+    }
+    writePerf(db, "b", "review_adversarial", {
+      outcome: "merged",
+      rounds: 10,
+      latency_ms: 60_000,
+    });
+
+    expect(pickFromPool(["a", "b"], db, config(), undefined, "review_adversarial")).toBe("b");
+  });
+
+  test("keeps a fallback when every pool agent has recent workload failures", () => {
+    const db = freshDb();
+    for (const agent of ["a", "b"]) {
+      for (let i = 0; i < 3; i += 1) {
+        writePerf(db, agent, "review_adversarial", {
+          outcome: "failed",
+          rounds: 1,
+          latency_ms: 10_000,
+          ts: recentIso(30 - i),
+          id_suffix: `${agent}-recent-failure-${i}`,
+        });
+      }
+    }
+
+    expect(pickFromPool(["a", "b"], db, config(), undefined, "review_adversarial")).toBe("a");
   });
 });

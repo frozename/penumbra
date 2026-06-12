@@ -853,12 +853,14 @@ test("retries persona dispatch once on 503 no_worker_registered and records retr
 }, 15000);
 
 test("retries synthesizer once on 503 no_worker_registered and annotates synthesis", async () => {
+  const synthAgents: string[] = [];
   const { ctx, root, dispatch } = makeCtx({
     args: { personas: ["security"] },
     dispatchImpl: (() => {
       let synthAttempts = 0;
       return async ({ agent }) => {
         if (agent === "codex") {
+          synthAgents.push(agent);
           synthAttempts += 1;
           if (synthAttempts === 1) {
             throw new Error(
@@ -889,6 +891,7 @@ test("retries synthesizer once on 503 no_worker_registered and annotates synthes
     const result = (await fn(ctx, baseRecall())) as { ok: boolean; synthesis_path: string | null };
     expect(result.ok).toBe(true);
     expect(dispatch).toHaveBeenCalledTimes(3);
+    expect(synthAgents).toEqual(["codex", "codex"]);
     expect(result.synthesis_path).toBeTruthy();
     const synthesis = await readFile(result.synthesis_path!, "utf8");
     expect(synthesis).toContain("> Synthesizer retried once after 503 no_worker_registered");
@@ -897,6 +900,150 @@ test("retries synthesizer once on 503 no_worker_registered and annotates synthes
     rmSync(root, { recursive: true, force: true });
   }
 }, 15000);
+
+test("fails over synthesizer pool when completed output is the failure marker", async () => {
+  const synthAgents: string[] = [];
+  const { ctx, root, dispatch } = makeCtx({
+    args: { personas: ["security"] },
+    dispatchImpl: async ({ agent }) => {
+      if (agent === "codex" || agent === "gemini") synthAgents.push(agent);
+      return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
+    },
+    awaitImpl: async (conversationId: string) => {
+      if (conversationId === "codex-conv") {
+        return {
+          status: "completed",
+          final_agent: "codex",
+          response_text: "<synthesizer failed: failed>",
+        };
+      }
+      if (conversationId === "gemini-conv") {
+        return {
+          status: "completed",
+          final_agent: "gemini",
+          response_text: "final synthesizer text",
+        };
+      }
+      return {
+        status: "completed",
+        final_agent: "security",
+        response_text:
+          'security review\n\n```json\n[{"persona":"security","severity":"high","category":"security","file":"x.ts","line":1,"title":"issue","details":"details","suggestion":"fix"}]\n```',
+      };
+    },
+  });
+  try {
+    const reviewWorkload = (ctx.config.workloads as Record<string, unknown>)
+      .review_adversarial as Record<string, unknown>;
+    reviewWorkload.synthesizer = ["codex", "gemini"];
+
+    const result = (await fn(ctx, baseRecall())) as { ok: boolean; synthesis_path: string | null };
+    expect(result.ok).toBe(true);
+    expect(dispatch).toHaveBeenCalledTimes(3);
+    expect(synthAgents).toEqual(["codex", "gemini"]);
+    expect(result.synthesis_path).toBeTruthy();
+    const synthesis = await readFile(result.synthesis_path!, "utf8");
+    const fm = parseSynthesisFrontmatter(synthesis);
+    expect(fm?.synthesizer_agent).toBe("gemini");
+    expect(fm?.synthesizer_failover_from).toBe("codex");
+    expect(fm?.synthesizer_failover_to).toBe("gemini");
+    expect(synthesis).toContain("> Synthesizer failover: codex -> gemini");
+    expect(synthesis).toContain("final synthesizer text");
+    expect(synthesis).not.toContain("<synthesizer failed: failed>");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("does not fail over when a long synthesis merely quotes the failure marker", async () => {
+  const synthAgents: string[] = [];
+  const quotingSynthesis = `<synthesizer failed: failed> is the marker this review discusses.\n\n${"The synthesis itself succeeded and analyzes the failover handling in depth. ".repeat(10)}`;
+  const { ctx, root } = makeCtx({
+    args: { personas: ["security"] },
+    dispatchImpl: async ({ agent }) => {
+      if (agent === "codex" || agent === "gemini") synthAgents.push(agent);
+      return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
+    },
+    awaitImpl: async (conversationId: string) => {
+      if (conversationId === "codex-conv") {
+        return {
+          status: "completed",
+          final_agent: "codex",
+          response_text: quotingSynthesis,
+        };
+      }
+      return {
+        status: "completed",
+        final_agent: "security",
+        response_text:
+          'security review\n\n```json\n[{"persona":"security","severity":"high","category":"security","file":"x.ts","line":1,"title":"issue","details":"details","suggestion":"fix"}]\n```',
+      };
+    },
+  });
+  try {
+    const reviewWorkload = (ctx.config.workloads as Record<string, unknown>)
+      .review_adversarial as Record<string, unknown>;
+    reviewWorkload.synthesizer = ["codex", "gemini"];
+
+    const result = (await fn(ctx, baseRecall())) as { ok: boolean; synthesis_path: string | null };
+    expect(result.ok).toBe(true);
+    expect(synthAgents).toEqual(["codex"]);
+    const synthesis = await readFile(result.synthesis_path!, "utf8");
+    const fm = parseSynthesisFrontmatter(synthesis);
+    expect(fm?.synthesizer_agent).toBe("codex");
+    expect(fm?.synthesizer_failover_from).toBeUndefined();
+    expect(synthesis).toContain("is the marker this review discusses");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("caps synthesis failover when every pool agent returns a failure marker", async () => {
+  const synthAgents: string[] = [];
+  const { ctx, root, dispatch } = makeCtx({
+    args: { personas: ["security"] },
+    dispatchImpl: async ({ agent }) => {
+      if (agent === "codex" || agent === "gemini") synthAgents.push(agent);
+      return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
+    },
+    awaitImpl: async (conversationId: string) => {
+      if (conversationId === "codex-conv" || conversationId === "gemini-conv") {
+        return {
+          status: "completed",
+          final_agent: conversationId.replace("-conv", ""),
+          response_text: "<synthesizer failed: failed>",
+        };
+      }
+      return {
+        status: "completed",
+        final_agent: "security",
+        response_text:
+          'security review\n\n```json\n[{"persona":"security","severity":"high","category":"security","file":"x.ts","line":1,"title":"issue","details":"details","suggestion":"fix"}]\n```',
+      };
+    },
+  });
+  try {
+    const reviewWorkload = (ctx.config.workloads as Record<string, unknown>)
+      .review_adversarial as Record<string, unknown>;
+    reviewWorkload.synthesizer = ["codex", "gemini"];
+
+    const result = (await fn(ctx, baseRecall())) as {
+      ok: boolean;
+      synthesis_path: string | null;
+      synthesizer_status: string | null;
+    };
+    expect(result.ok).toBe(true);
+    expect(result.synthesizer_status).toBe("failed");
+    expect(dispatch).toHaveBeenCalledTimes(3);
+    expect(synthAgents).toEqual(["codex", "gemini"]);
+    expect(result.synthesis_path).toBeTruthy();
+    const synthesis = await readFile(result.synthesis_path!, "utf8");
+    expect(synthesis).toContain("> Synthesizer failover: codex -> gemini");
+    expect(synthesis).toContain("<synthesizer failed: failed>");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("awaitChain uses persona timeout_ms override when configured", async () => {
   const seenTimeouts: number[] = [];

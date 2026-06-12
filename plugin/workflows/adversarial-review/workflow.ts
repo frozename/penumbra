@@ -50,6 +50,7 @@ export const inputSchema = z
 export type Input = z.infer<typeof inputSchema>;
 
 const TRIVIAL_RESPONSE_THRESHOLD = 200;
+const SYNTHESIS_DISPATCH_ATTEMPT_LIMIT = 3;
 
 type PersonaRunResult = {
   persona: string;
@@ -369,6 +370,14 @@ function isTrivialResponse(text: string | null): boolean {
   return !text || text.trim().length < TRIVIAL_RESPONSE_THRESHOLD;
 }
 
+function isFailedSynthesisOutput(text: string | null): boolean {
+  if (!text || text.trim().length === 0) return true;
+  const trimmed = text.trim();
+  // Real failure bodies are a single short marker line; a legitimate synthesis
+  // that quotes the marker is long. The length guard prevents false failovers.
+  return trimmed.length < 500 && /^<synthesizer failed(?::|\b)/i.test(trimmed);
+}
+
 function synthesisPrompt(
   synth: ReviewSynthesizer,
   selected: ReviewPersona[],
@@ -417,14 +426,20 @@ function buildSynthesisFrontmatter(args: {
   target_ref: string;
   base_ref: string;
   synthesizer_agent: string;
+  synthesizer_failover_from?: string;
+  synthesizer_failover_to?: string;
 }): string {
   const lines = [
     "---",
     `review_run_ts: ${args.review_run_ts}`,
     `synthesis_handoff_id: ${args.synthesis_handoff_id}`,
     `synthesizer_agent: ${args.synthesizer_agent}`,
-    "persona_handoff_ids:",
   ];
+  if (args.synthesizer_failover_from && args.synthesizer_failover_to) {
+    lines.push(`synthesizer_failover_from: ${args.synthesizer_failover_from}`);
+    lines.push(`synthesizer_failover_to: ${args.synthesizer_failover_to}`);
+  }
+  lines.push("persona_handoff_ids:");
   for (const [key, id] of Object.entries(args.persona_handoff_ids)) {
     lines.push(`  ${key}: ${id}`);
   }
@@ -649,6 +664,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   let synthStatus: "completed" | "failed" | "timeout" | null = null;
   let synthHandoffId: string | null = null;
   let synthRetryUsed = false;
+  let synthFailover: { from: string; to: string } | null = null;
   const personaHandoffIds: Record<string, string> = {};
   for (const r of personaResults) {
     if (r.handoff_id) {
@@ -656,6 +672,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     }
   }
   const dispatchSynth = async (): Promise<{
+    agent: string;
     dispatch: { conversation_id: string; handoff_id: string };
     wait: {
       status: "completed" | "failed" | "timeout";
@@ -664,10 +681,19 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     };
   }> => {
     let attempts = 0;
+    let currentAgent = synthAgent;
+    const failoverAgent = (failedAgent: string): string | null => {
+      if (synthFailover || synthesizer.preferred_agent.kind !== "pool") return null;
+      const nextAgent = resolveAgent(synthesizer.preferred_agent, "review_adversarial", ctx, {
+        excludeAgents: [failedAgent],
+      });
+      return nextAgent !== failedAgent ? nextAgent : null;
+    };
     while (true) {
       try {
+        attempts += 1;
         const dispatch = await ctx.dispatch({
-          agent: synthAgent,
+          agent: currentAgent,
           message: `cd ${ctx.cwd}\n\n${synthesisPrompt(synthesizer, selected, personaResults, parsedArgs)}`,
           task_type: "review_adversarial",
           use_worktree: false,
@@ -675,12 +701,32 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
         const wait = await ctx.awaitChain(dispatch.conversation_id, {
           timeoutMs: parsedArgs.timeout_ms,
         });
-        return { dispatch, wait };
+        if (wait.status === "completed" && !isFailedSynthesisOutput(wait.response_text)) {
+          return { agent: currentAgent, dispatch, wait };
+        }
+        const nextAgent =
+          attempts < SYNTHESIS_DISPATCH_ATTEMPT_LIMIT ? failoverAgent(currentAgent) : null;
+        if (nextAgent) {
+          synthFailover = { from: currentAgent, to: nextAgent };
+          currentAgent = nextAgent;
+          continue;
+        }
+        return { agent: currentAgent, dispatch, wait };
       } catch (err) {
-        if (attempts < 1 && shouldRetryWorkerUnavailable(err)) {
-          attempts += 1;
+        if (
+          attempts < SYNTHESIS_DISPATCH_ATTEMPT_LIMIT &&
+          !synthRetryUsed &&
+          shouldRetryWorkerUnavailable(err)
+        ) {
           synthRetryUsed = true;
           await sleep(RETRY_BACKOFF_MS);
+          continue;
+        }
+        const nextAgent =
+          attempts < SYNTHESIS_DISPATCH_ATTEMPT_LIMIT ? failoverAgent(currentAgent) : null;
+        if (nextAgent) {
+          synthFailover = { from: currentAgent, to: nextAgent };
+          currentAgent = nextAgent;
           continue;
         }
         throw err;
@@ -689,12 +735,22 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   };
 
   try {
-    const { dispatch: synthDispatch, wait: synthWait } = await dispatchSynth();
+    const {
+      agent: finalSynthAgent,
+      dispatch: synthDispatch,
+      wait: synthWait,
+    } = await dispatchSynth();
     const synthRetryBanner = synthRetryUsed
       ? "> Synthesizer retried once after 503 no_worker_registered or worker_heartbeats_stale\n\n"
       : "";
+    const synthFailoverBanner = synthFailover
+      ? `> Synthesizer failover: ${synthFailover.from} -> ${synthFailover.to}\n\n`
+      : "";
     synthHandoffId = synthDispatch.handoff_id;
-    synthStatus = synthWait.status;
+    synthStatus =
+      synthWait.status === "completed" && isFailedSynthesisOutput(synthWait.response_text)
+        ? "failed"
+        : synthWait.status;
     synthesisPath = join(absoluteOutDir, "synthesis.md");
     const frontmatter = buildSynthesisFrontmatter({
       review_run_ts: reviewRunTs,
@@ -702,11 +758,14 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       persona_handoff_ids: personaHandoffIds,
       target_ref: parsedArgs.target_ref,
       base_ref: parsedArgs.base_ref,
-      synthesizer_agent: synthAgent,
+      synthesizer_agent: finalSynthAgent,
+      synthesizer_failover_from: synthFailover?.from,
+      synthesizer_failover_to: synthFailover?.to,
     });
     await ctx.fileWrite(
       synthesisPath,
       synthRetryBanner +
+        synthFailoverBanner +
         partialBanner +
         (synthWait.status === "completed"
           ? frontmatter + (synthWait.response_text ?? "")
@@ -715,6 +774,9 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   } catch (err) {
     const synthRetryBanner = synthRetryUsed
       ? "> Synthesizer retried once after 503 no_worker_registered or worker_heartbeats_stale\n\n"
+      : "";
+    const synthFailoverBanner = synthFailover
+      ? `> Synthesizer failover: ${synthFailover.from} -> ${synthFailover.to}\n\n`
       : "";
     synthStatus = "failed";
     synthesisPath = join(absoluteOutDir, "synthesis.md");
@@ -725,12 +787,15 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           persona_handoff_ids: personaHandoffIds,
           target_ref: parsedArgs.target_ref,
           base_ref: parsedArgs.base_ref,
-          synthesizer_agent: synthAgent,
+          synthesizer_agent: synthFailover?.to ?? synthAgent,
+          synthesizer_failover_from: synthFailover?.from,
+          synthesizer_failover_to: synthFailover?.to,
         })
       : "";
     await ctx.fileWrite(
       synthesisPath,
       synthRetryBanner +
+        synthFailoverBanner +
         partialBanner +
         frontmatter +
         `<synthesizer failed: ${err instanceof Error ? err.message : String(err)}>`,
