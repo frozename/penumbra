@@ -32,7 +32,7 @@ import {
   computeStateMetrics,
   type TemplateVarContext,
 } from "@penumbra/workflows";
-import { WorkerTokenStore } from "@penumbra/core";
+import { WorkerTokenStore, resolveGateOutcomeCutoverIso } from "@penumbra/core";
 import { workerRegisterRoute } from "./routes/worker-register.js";
 import { createBearerAuth } from "./auth.js";
 import { createOriginHostGuard } from "./origin-host.js";
@@ -1602,6 +1602,13 @@ export function serve(opts: ServeOpts): DaemonHandle {
   });
   const port = server.port!;
   opts.services.log.info({ port }, "daemon started");
+  // Positive boot-time record of the ranking cutover in effect — backdating
+  // the env override silently re-loosens the success predicate, so the
+  // resolved value must always be visible in the boot log.
+  opts.services.log.info(
+    { gate_outcome_cutover: resolveGateOutcomeCutoverIso() },
+    "gate-outcome cutover resolved",
+  );
   extraWorkerSupervisor.start().catch((err) => {
     opts.services.log.error(
       {

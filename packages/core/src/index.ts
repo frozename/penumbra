@@ -178,6 +178,7 @@ export {
 } from "./readers/fleet-latency.js";
 export {
   routeAgent,
+  resolveGateOutcomeCutoverIso,
   type DetailMode,
   type RouteAgentInput,
   type RouteAgentOutput,

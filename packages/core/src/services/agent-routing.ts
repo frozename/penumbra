@@ -48,7 +48,8 @@ export type AgentRecommendation = {
   task_type: string;
   samples: number;
   success_rate: number;
-  gate_outcome_coverage: number;
+  gate_verdict_coverage: number;
+  gate_pass_rate: number;
   avg_latency_seconds: number | null;
   last_observed_at: string;
 };
@@ -114,6 +115,8 @@ interface CandidateSummary {
   cost_per_success_usd: number | null;
   avg_reviewer_findings: number | null;
   avg_trust_score: number | null;
+  gate_verdict_count: number;
+  gate_pass_count: number;
   last_outcome_at: string;
   _outcome_score: number;
   _rounds_score: number;
@@ -124,12 +127,32 @@ interface CandidateSummary {
 
 export const DEFAULT_GATE_OUTCOME_CUTOVER_ISO = "2026-06-12T00:00:00.000Z";
 
+// Graduation plan: once every pre-cutover NULL verdict has been reconciled to
+// an explicit gate outcome, retire the `ts < cutover` branch and remove the
+// env override. Keep the warning loud so any earlier override is intentional.
+let loggedGateOutcomeCutoverIso: string | null = null;
+
 export function resolveGateOutcomeCutoverIso(): string {
   const raw = process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO;
-  if (raw === undefined || raw.trim() === "") return DEFAULT_GATE_OUTCOME_CUTOVER_ISO;
-  const parsed = new Date(raw);
-  if (Number.isNaN(parsed.getTime())) return DEFAULT_GATE_OUTCOME_CUTOVER_ISO;
-  return parsed.toISOString();
+  const candidate = raw === undefined || raw.trim() === "" ? DEFAULT_GATE_OUTCOME_CUTOVER_ISO : raw;
+  const parsed = new Date(candidate);
+  const resolved = Number.isNaN(parsed.getTime())
+    ? DEFAULT_GATE_OUTCOME_CUTOVER_ISO
+    : parsed.toISOString();
+  if (loggedGateOutcomeCutoverIso !== resolved) {
+    if (
+      raw !== undefined &&
+      raw.trim() !== "" &&
+      resolved < DEFAULT_GATE_OUTCOME_CUTOVER_ISO &&
+      resolved === parsed.toISOString()
+    ) {
+      console.warn(
+        `[agent-routing] PENUMBRA_GATE_OUTCOME_CUTOVER_ISO=${resolved} is earlier than default ${DEFAULT_GATE_OUTCOME_CUTOVER_ISO}; this relaxes the legacy NULL-verdict predicate.`,
+      );
+    }
+    loggedGateOutcomeCutoverIso = resolved;
+  }
+  return resolved;
 }
 
 // Single source for success eligibility. The SQL predicate
@@ -204,14 +227,17 @@ function isSuccessOutcome(outcome: string): boolean {
 }
 
 // In-memory mirror of the gate clause in buildSuccessPredicate — both derive
-// from GATE_OUTCOME_PASS_VALUES; keep them in lockstep.
+// from GATE_OUTCOME_PASS_VALUES; keep them in lockstep. The string comparison
+// is intentional because writers stamp canonical ISO-8601 UTC timestamps.
 function rowPassesGateOutcome(row: PerformanceRow, gateOutcomeCutover: string): boolean {
   if (row.gate_outcome == null) return row.ts < gateOutcomeCutover;
   return (GATE_OUTCOME_PASS_VALUES as readonly string[]).includes(row.gate_outcome);
 }
 
-function outcomeValue(row: PerformanceRow, gateOutcomeCutover: string): number {
-  if (isSuccessOutcome(row.outcome) && !rowPassesGateOutcome(row, gateOutcomeCutover)) return 0;
+function rowOutcomeScore(row: PerformanceRow, gateOutcomeCutover: string): number {
+  if (isSuccessOutcome(row.outcome) && !rowPassesGateOutcome(row, gateOutcomeCutover)) {
+    return row.ts >= gateOutcomeCutover ? -1 : 0;
+  }
   switch (row.outcome) {
     case "merged":
     case "pr_opened":
@@ -236,7 +262,7 @@ function outcomeValue(row: PerformanceRow, gateOutcomeCutover: string): number {
   }
 }
 
-function outcomeBucket(
+function rowOutcomeBucket(
   row: PerformanceRow,
   gateOutcomeCutover: string,
 ): "success" | "failure" | "neutral" {
@@ -289,6 +315,8 @@ function summarizeAgent(
   let reviewerCount = 0;
   let trustScoreSum = 0;
   let trustScoreCount = 0;
+  let gateVerdictCount = 0;
+  let gatePassCount = 0;
   let outcomeScoreSum = 0;
   let roundsScoreSum = 0;
   let smokeScoreSum = 0;
@@ -298,12 +326,18 @@ function summarizeAgent(
 
   for (const row of rows) {
     if (row.ts > lastOutcomeAt) lastOutcomeAt = row.ts;
-    const outcomeBucketValue = outcomeBucket(row, gateOutcomeCutover);
+    const outcomeBucketValue = rowOutcomeBucket(row, gateOutcomeCutover);
     if (outcomeBucketValue === "success") successes++;
     else if (outcomeBucketValue === "neutral") neutral++;
     else failures++;
 
-    outcomeScoreSum += outcomeValue(row, gateOutcomeCutover);
+    if (row.gate_outcome != null) {
+      gateVerdictCount++;
+      if ((GATE_OUTCOME_PASS_VALUES as readonly string[]).includes(row.gate_outcome))
+        gatePassCount++;
+    }
+
+    outcomeScoreSum += rowOutcomeScore(row, gateOutcomeCutover);
 
     if (outcomeBucketValue === "success" && row.cost_usd != null) {
       successCostSum += row.cost_usd;
@@ -372,6 +406,8 @@ function summarizeAgent(
     cost_per_success_usd,
     avg_reviewer_findings,
     avg_trust_score,
+    gate_verdict_count: gateVerdictCount,
+    gate_pass_count: gatePassCount,
     last_outcome_at: lastOutcomeAt,
     _outcome_score: outcomeScoreSum / samples,
     _rounds_score: roundsScoreSum / samples,
@@ -519,7 +555,7 @@ function buildRank(
   const gateOutcomeCutover = resolveGateOutcomeCutoverIso();
   const visibleRows = input.includeNeutral
     ? rows
-    : rows.filter((row) => outcomeBucket(row, gateOutcomeCutover) !== "neutral");
+    : rows.filter((row) => rowOutcomeBucket(row, gateOutcomeCutover) !== "neutral");
   const byAgent = new Map<string, PerformanceRow[]>();
   for (const row of visibleRows) {
     const list = byAgent.get(row.agent_name) ?? [];
@@ -588,6 +624,8 @@ function buildRank(
           cost_per_success_usd: s.cost_per_success_usd,
           avg_reviewer_findings: s.avg_reviewer_findings,
           avg_trust_score: s.avg_trust_score,
+          gate_verdict_coverage: s.samples > 0 ? s.gate_verdict_count / s.samples : 0,
+          gate_pass_rate: s.samples > 0 ? s.gate_pass_count / s.samples : 0,
           last_outcome_at: s.last_outcome_at,
           score,
         };
@@ -623,6 +661,7 @@ function buildRecommendations(
         samples: number;
         successes: number;
         gate_outcome_count: number;
+        gate_pass_count: number;
         avg_latency_ms: number | null;
         last_observed_at: string;
       },
@@ -633,7 +672,7 @@ function buildRecommendations(
         $gateOutcomeCutover: string;
       }
     >(
-      `SELECT agent_name, task_type, COUNT(*) AS samples, SUM(CASE WHEN ${successPredicate.sql} THEN 1 ELSE 0 END) AS successes, SUM(CASE WHEN gate_outcome IS NOT NULL THEN 1 ELSE 0 END) AS gate_outcome_count, AVG(latency_ms) AS avg_latency_ms, MAX(ts) AS last_observed_at
+      `SELECT agent_name, task_type, COUNT(*) AS samples, SUM(CASE WHEN ${successPredicate.sql} THEN 1 ELSE 0 END) AS successes, SUM(CASE WHEN gate_outcome IS NOT NULL THEN 1 ELSE 0 END) AS gate_outcome_count, SUM(CASE WHEN gate_outcome IN (${sqlInList(GATE_OUTCOME_PASS_VALUES)}) THEN 1 ELSE 0 END) AS gate_pass_count, AVG(latency_ms) AS avg_latency_ms, MAX(ts) AS last_observed_at
      FROM agent_performance
      WHERE task_type = $taskType AND ts >= $cutoff AND COALESCE(agent_kind, '${DEFAULT_AGENT_KIND}') = $agentKind
      GROUP BY agent_name
@@ -652,7 +691,8 @@ function buildRecommendations(
     task_type: r.task_type,
     samples: r.samples,
     success_rate: r.samples > 0 ? r.successes / r.samples : 0,
-    gate_outcome_coverage: r.samples > 0 ? r.gate_outcome_count / r.samples : 0,
+    gate_verdict_coverage: r.samples > 0 ? r.gate_outcome_count / r.samples : 0,
+    gate_pass_rate: r.samples > 0 ? r.gate_pass_count / r.samples : 0,
     avg_latency_seconds: r.avg_latency_ms != null ? r.avg_latency_ms / 1000 : null,
     last_observed_at: r.last_observed_at,
   }));

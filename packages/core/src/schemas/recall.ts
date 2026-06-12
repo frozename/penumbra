@@ -127,6 +127,7 @@ export const TimelineRequestSchema = z.object({
   depth_before: z.number().int().min(0).max(50).default(3),
   depth_after: z.number().int().min(0).max(50).default(3),
   project_id: SafeProjectIdSchema.nullish(),
+  now: z.date().optional(),
 });
 export type TimelineRequest = z.infer<typeof TimelineRequestSchema>;
 

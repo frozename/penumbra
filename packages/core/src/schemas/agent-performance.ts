@@ -206,6 +206,8 @@ export const AgentRankOutputSchema = z.object({
       cost_per_success_usd: z.number().nullable(),
       avg_reviewer_findings: z.number().nullable(),
       avg_trust_score: z.number().nullable(),
+      gate_verdict_coverage: z.number(),
+      gate_pass_rate: z.number(),
       score: z.number(),
       last_outcome_at: z.string(),
     }),

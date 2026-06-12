@@ -406,8 +406,94 @@ describe("agent recommendations", () => {
     expect(out.find((row) => row.agent_name === "post-null")?.success_rate).toBe(0);
     expect(out.find((row) => row.agent_name === "post-skipped")?.success_rate).toBe(1);
     expect(out.find((row) => row.agent_name === "post-failed")?.success_rate).toBe(0);
-    expect(out.find((row) => row.agent_name === "legacy-null")?.gate_outcome_coverage).toBe(0);
-    expect(out.find((row) => row.agent_name === "post-skipped")?.gate_outcome_coverage).toBe(1);
+    expect(out.find((row) => row.agent_name === "legacy-null")?.gate_verdict_coverage).toBe(0);
+    expect(out.find((row) => row.agent_name === "post-skipped")?.gate_verdict_coverage).toBe(1);
+    expect(out.find((row) => row.agent_name === "legacy-null")?.gate_pass_rate).toBe(0);
+    expect(out.find((row) => row.agent_name === "post-skipped")?.gate_pass_rate).toBe(1);
+  });
+
+  test("post-cutover rejected success scores below a no-data agent", () => {
+    const writer = new AgentPerformanceWriter(db);
+    writer.upsert({
+      performance_id: "clean",
+      ts: "2026-06-12T10:00:00Z",
+      handoff_id: "h-clean",
+      conversation_id: "c-clean",
+      project_id: "proj",
+      agent_name: "clean",
+      task_type: "review_adversarial",
+      outcome: "completed_with_output",
+      gate_outcome: "passed",
+      rounds: 1,
+      smoke_pass: "n/a",
+      reviewer_findings: 0,
+      maestro_score: null,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: 1000,
+      source: "reconciler",
+      notes: null,
+      metadata_json: "{}",
+    });
+    writer.upsert({
+      performance_id: "rejected",
+      ts: "2026-06-12T10:00:00Z",
+      handoff_id: "h-rejected",
+      conversation_id: "c-rejected",
+      project_id: "proj",
+      agent_name: "rejected",
+      task_type: "review_adversarial",
+      outcome: "completed_with_output",
+      gate_outcome: "failed",
+      rounds: 1,
+      smoke_pass: "n/a",
+      reviewer_findings: 0,
+      maestro_score: null,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: 1000,
+      source: "reconciler",
+      notes: null,
+      metadata_json: "{}",
+    });
+    writer.upsert({
+      performance_id: "neutral",
+      ts: "2026-06-12T10:00:00Z",
+      handoff_id: "h-neutral",
+      conversation_id: "c-neutral",
+      project_id: "proj",
+      agent_name: "neutral",
+      task_type: "review_adversarial",
+      outcome: "bypassed",
+      gate_outcome: "skipped",
+      rounds: 1,
+      smoke_pass: "n/a",
+      reviewer_findings: 0,
+      maestro_score: null,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: 1000,
+      source: "reconciler",
+      notes: null,
+      metadata_json: "{}",
+    });
+
+    const out = routeAgent({
+      db,
+      detail: "rank",
+      taskType: "review_adversarial",
+      includeNeutral: true,
+      now: new Date("2026-06-13T12:00:00Z"),
+    });
+    if (out.detail !== "rank") throw new Error("expected rank output");
+    const clean = out.candidates.candidates.find((row) => row.agent_name === "clean");
+    const rejected = out.candidates.candidates.find((row) => row.agent_name === "rejected");
+    const neutral = out.candidates.candidates.find((row) => row.agent_name === "neutral");
+    expect(clean).toBeDefined();
+    expect(rejected).toBeDefined();
+    expect(neutral).toBeDefined();
+    expect(clean!.score).toBeGreaterThan(neutral!.score);
+    expect(neutral!.score).toBeGreaterThan(rejected!.score);
   });
 
   test("success predicate binds the gate cutover by name", () => {

@@ -11,7 +11,7 @@ import {
  * second hop of the search → timeline → get_observations workflow.
  */
 export function timeline(db: Database, req: TimelineRequest): TimelineEntry[] {
-  const now = Date.now();
+  const now = req.now?.getTime() ?? Date.now();
   const anchor = db
     .query<{ created_at: string; project_id: string | null; obs_type: string | null }, [string]>(
       `SELECT created_at, project_id, obs_type
