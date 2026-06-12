@@ -1,20 +1,23 @@
 import type { Logger } from "@penumbra/core";
 
+export const LAG_SAMPLER_WINDOW_MS = 60_000;
+
 export class LagSampler {
   private timer: ReturnType<typeof setInterval> | null = null;
-  private maxLagMs = 0;
   private lastTickMs: number | null = null;
+  private readonly lagSamples: Array<{ timestampMs: number; lagMs: number }> = [];
 
   constructor(
     private readonly log: Logger,
     private readonly thresholdMs: number,
     private readonly intervalMs: number = 2000,
-    private readonly now: () => number = () => Date.now(),
+    private readonly monotonicNowMs: () => number = () => performance.now(),
+    private readonly windowMs: number = LAG_SAMPLER_WINDOW_MS,
   ) {}
 
   start() {
     if (this.timer) return;
-    this.lastTickMs = this.now();
+    this.lastTickMs = this.monotonicNowMs();
     this.timer = setInterval(() => {
       this.sample();
     }, this.intervalMs);
@@ -25,19 +28,18 @@ export class LagSampler {
   }
 
   sample() {
-    const now = this.now();
+    const sampleNowMs = this.monotonicNowMs();
     if (this.lastTickMs === null) {
-      this.lastTickMs = now;
+      this.lastTickMs = sampleNowMs;
       return 0;
     }
 
-    const delta = now - this.lastTickMs;
-    this.lastTickMs = now;
-    const lag = Math.max(0, delta - this.intervalMs);
+    const elapsedMs = sampleNowMs - this.lastTickMs;
+    this.lastTickMs = sampleNowMs;
+    const lag = Math.max(0, elapsedMs - this.intervalMs);
 
-    if (lag > this.maxLagMs) {
-      this.maxLagMs = lag;
-    }
+    this.pruneLagSamples(sampleNowMs);
+    if (lag > 0) this.lagSamples.push({ timestampMs: sampleNowMs, lagMs: lag });
 
     if (lag > this.thresholdMs) {
       this.log.warn(
@@ -55,15 +57,26 @@ export class LagSampler {
       this.timer = null;
     }
     this.lastTickMs = null;
+    this.lagSamples.length = 0;
   }
 
-  forceLag(ms: number) {
-    if (ms > this.maxLagMs) {
-      this.maxLagMs = ms;
+  get maxLagMs() {
+    return this.maxLagMsAt(this.monotonicNowMs());
+  }
+
+  private maxLagMsAt(nowMs: number) {
+    const cutoffMs = nowMs - this.windowMs;
+    return this.lagSamples.reduce(
+      (maxLagMs, sample) =>
+        sample.timestampMs >= cutoffMs ? Math.max(maxLagMs, sample.lagMs) : maxLagMs,
+      0,
+    );
+  }
+
+  private pruneLagSamples(nowMs: number) {
+    const cutoffMs = nowMs - this.windowMs;
+    while (this.lagSamples.length > 0 && this.lagSamples[0]!.timestampMs < cutoffMs) {
+      this.lagSamples.shift();
     }
-  }
-
-  get maxLag() {
-    return this.maxLagMs;
   }
 }

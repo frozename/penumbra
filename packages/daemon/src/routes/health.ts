@@ -35,7 +35,7 @@ export function healthRoute(opts: HealthRouteOpts = {}): Response {
     };
   }
   if (opts.sampler) {
-    payload.lagMs = opts.sampler.maxLag;
+    payload.lagMs = opts.sampler.maxLagMs;
   }
   return Response.json(payload);
 }

@@ -278,6 +278,11 @@ export async function runDreamCycle(
   }
 
   // ── P0: pre-flight ────────────────────────────────────────────────────────
+  const p0Start = phaseStart("P0");
+  const bailP0 = (reason: string): string => {
+    phaseEnd("P0", p0Start);
+    return bail(reason);
+  };
 
   // 1. Daily cap
   const todayRow = db
@@ -289,28 +294,27 @@ export async function runDreamCycle(
     .get(todayStartMs) as { total_today: number };
 
   if (config.dailyUsd > 0 && (todayRow?.total_today ?? 0) >= config.dailyUsd) {
-    return bail("daily USD cap already reached");
+    return bailP0("daily USD cap already reached");
   }
 
   // 2. Per-cycle sanity floor
   if (config.perCycleUsd > 0 && config.perCycleUsd < MIN_PER_CYCLE_USD) {
-    return bail(`per-cycle USD cap (${config.perCycleUsd}) is too low to run any phase`);
+    return bailP0(`per-cycle USD cap (${config.perCycleUsd}) is too low to run any phase`);
   }
 
   // 3. Pressure guard
   if (config.pressureGuardEnabled && deps.pressureGuard) {
     const pressure = await deps.pressureGuard.check();
     if (pressure.anyThrottled) {
-      return bail("pressure guard: provider throttled or constrained");
+      return bailP0("pressure guard: provider throttled or constrained");
     }
   }
 
   // 4. Mutex acquire
   if (dreamingCycleInFlight) {
-    return bail("mutex-held: another cycle is already in flight");
+    return bailP0("mutex-held: another cycle is already in flight");
   }
   dreamingCycleInFlight = true;
-  const p0Start = phaseStart("P0");
 
   phaseEnd("P0", p0Start);
 

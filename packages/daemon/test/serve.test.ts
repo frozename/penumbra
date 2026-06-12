@@ -1,4 +1,4 @@
-import { afterEach, expect, mock, spyOn } from "bun:test";
+import { afterEach, expect, mock, spyOn, test } from "bun:test";
 import { serviceTest } from "./helpers/service-gates.js";
 import { Database } from "bun:sqlite";
 import { buildServices, loadSqliteVec, migrate } from "@penumbra/core";
@@ -88,6 +88,24 @@ serviceTest("serve installs global crash handlers once", async () => {
     await handle1.stop();
     await handle2.stop();
     expect(stop).toHaveBeenCalled();
+    services.db.close();
+  }
+});
+
+test("serve leaves process signal handling to direct embedders by default", async () => {
+  const services = makeServices();
+  spyOn(services.supervisor, "stopAll").mockImplementation(() => undefined);
+  spyOn(services.supervisor, "startAll").mockResolvedValue(undefined);
+
+  const baselineSigterm = process.listenerCount("SIGTERM");
+  const baselineSigint = process.listenerCount("SIGINT");
+  const handle = serve({ services, token: "test-token", port: 0 });
+
+  try {
+    expect(process.listenerCount("SIGTERM")).toBe(baselineSigterm);
+    expect(process.listenerCount("SIGINT")).toBe(baselineSigint);
+  } finally {
+    await handle.stop();
     services.db.close();
   }
 });

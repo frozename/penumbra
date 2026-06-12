@@ -1091,14 +1091,8 @@ export function serve(opts: ServeOpts): DaemonHandle {
     );
   }
 
-  const onSigterm = () => {
-    opts.services.log.info({ signal: "SIGTERM" }, "signal received");
-  };
-  const onSigint = () => {
-    opts.services.log.info({ signal: "SIGINT" }, "signal received");
-  };
-  process.on("SIGTERM", onSigterm);
-  process.on("SIGINT", onSigint);
+  // Signal ownership stays with CLI/embedding callers; log-only handlers here
+  // would suppress the default SIGTERM/SIGINT process termination.
 
   const envNonNegMs = (name: string, fallback: number): number => {
     const raw = process.env[name];
@@ -1624,8 +1618,6 @@ export function serve(opts: ServeOpts): DaemonHandle {
   return {
     port,
     stop: async () => {
-      process.removeListener("SIGTERM", onSigterm);
-      process.removeListener("SIGINT", onSigint);
       lagSampler.stop();
       startupStopped = true;
       await daemonServices.extraWorkerSupervisor?.stop();

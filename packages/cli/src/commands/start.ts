@@ -19,6 +19,7 @@ import {
   migrate,
   resolveEmbedder,
   BundledEmbedder,
+  type Logger,
 } from "@penumbra/core";
 import { buildRegistry as buildWorkflowRegistry } from "@penumbra/workflows";
 import { loadShellConfig } from "@penumbra/agentchat/worker/shell-config";
@@ -106,10 +107,10 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
     Number.isFinite(parsedSlowQueryThreshold) && parsedSlowQueryThreshold >= 0
       ? parsedSlowQueryThreshold
       : 250;
-  let resolvedLog: any;
+  let activeLog: Logger | undefined;
   const db = wrapDatabaseWithSlowQueryLog(rawDb, slowQueryThreshold, {
     warn: (obj: any, msg: string) => {
-      if (resolvedLog) resolvedLog.warn(obj, msg);
+      if (activeLog) activeLog.warn(obj, msg);
       else console.warn(msg, obj);
     },
   } as any);
@@ -186,7 +187,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       workflowRegistry,
       projectRegistry,
     });
-    resolvedLog = services.log;
+    activeLog = services.log;
     const runtimeServices = services as typeof services & {
       shellConfig?: ReturnType<typeof loadShellConfig>;
       shellSessionPool?: ShellSessionPool;

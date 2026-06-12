@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import type { Database } from "bun:sqlite";
-import type { DispatchEventInput } from "@penumbra/core";
+import type { DispatchEventInput, Logger } from "@penumbra/core";
 import { createResearchAdapter } from "../research/firecrawl-adapter.js";
 import { StubJudgePool } from "./judge-pool.js";
 import { createDreamingJudgePoolFromAgentchat } from "./dreaming-judge-pool.js";
@@ -14,7 +14,7 @@ export function buildDreamCycleDeps(
     projectRegistry?: { get(id: string): any; list(): any[] };
     embedder?: { embed(bodies: string[]): Promise<Float32Array[]> };
     dispatchEventLog?: { record(event: DispatchEventInput): void };
-    log?: any;
+    log?: Logger;
   },
   db: Database,
   dreamConfig: DreamConfig,

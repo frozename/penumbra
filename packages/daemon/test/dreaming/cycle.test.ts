@@ -162,6 +162,40 @@ it("P0 bails when pressure guard sees throttled provider", async () => {
   expect(getCycleBailReason(db, cycleId)).toMatch(/pressure/i);
 });
 
+it("P0 duration includes pre-flight pressure guard work", async () => {
+  const db = openTestDb();
+  const originalDateNow = Date.now;
+  let nowMs = 1_000_000;
+  Object.defineProperty(Date, "now", {
+    value: () => nowMs,
+    writable: true,
+  });
+  const phaseEnds: Array<Record<string, any>> = [];
+  const log = {
+    info: (fields: Record<string, any>, msg: string) => {
+      if (msg === "dream-cycle phase end") phaseEnds.push(fields);
+    },
+  };
+  const pressureStub = {
+    check: async () => {
+      nowMs += 42;
+      return { anyThrottled: false };
+    },
+  };
+
+  try {
+    await runDreamCycle(db, testConfig(), { pressureGuard: pressureStub, log: log as any });
+  } finally {
+    Object.defineProperty(Date, "now", {
+      value: originalDateNow,
+      writable: true,
+    });
+  }
+
+  const p0End = phaseEnds.find((entry) => entry.phase === "P0");
+  expect(p0End?.durationMs).toBeGreaterThanOrEqual(42);
+});
+
 it("P0 pressure guard: flap mid-cycle bails before next phase", async () => {
   const db = openTestDb();
   let callCount = 0;
