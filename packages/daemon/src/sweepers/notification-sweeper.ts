@@ -129,6 +129,17 @@ export interface NotificationSweepResult {
   failed: number;
 }
 
+function parseNonNegativeEnvNumber(value: string | undefined, defaultValue: number): number {
+  if (value === undefined || value.trim() === "") return defaultValue;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : defaultValue;
+}
+
+interface DiscoveryCursor {
+  ts: number;
+  id: string;
+}
+
 export function runNotificationDiscovery(
   db: Database,
   outbox: NotificationOutboxWriter,
@@ -141,22 +152,22 @@ export function runNotificationDiscovery(
     "notification_discovery_pending_action_cursor_ms",
     now,
   );
-  const t0CursorIso = new Date(t0Cursor).toISOString();
+  const t0CursorIso = new Date(t0Cursor.ts).toISOString();
   const upperBoundIso = new Date(upperBound).toISOString();
 
   let discovered = 0;
 
   const draftEvents = db
-    .query<DraftEventRow, [string, string, number]>(
+    .query<DraftEventRow, [string, string, string, string, number]>(
       `SELECT event_id, project_id, event_type, payload_json, ts
        FROM t0_events
        WHERE event_type IN ('task_draft', 'task_draft_escalation')
-         AND ts > ?
+         AND (ts > ? OR (ts = ? AND event_id > ?))
          AND ts <= ?
-       ORDER BY ts ASC
+       ORDER BY ts ASC, event_id ASC
        LIMIT ?`,
     )
-    .all(t0CursorIso, upperBoundIso, DISCOVER_BATCH_SIZE);
+    .all(t0CursorIso, t0CursorIso, t0Cursor.id, upperBoundIso, DISCOVER_BATCH_SIZE);
 
   for (const ev of draftEvents) {
     if (outbox.exists(ev.event_type, ev.event_id)) continue;
@@ -182,21 +193,25 @@ export function runNotificationDiscovery(
     discovered++;
   }
 
-  const pendingTtlMs =
-    Number(process.env.PENUMBRA_PENDING_ACTION_TTL_MS) || PENDING_ACTION_TTL_MS_DEFAULT;
+  const pendingTtlMs = parseNonNegativeEnvNumber(
+    process.env.PENUMBRA_PENDING_ACTION_TTL_MS,
+    PENDING_ACTION_TTL_MS_DEFAULT,
+  );
   const pendingCutoff = now - pendingTtlMs * 2;
+  const actionLowerBound = Math.max(actionCursor.ts, pendingCutoff);
+  const actionLowerBoundId = actionLowerBound === actionCursor.ts ? actionCursor.id : "";
   const newActions = db
-    .query<PendingActionRow, [number, number, number]>(
+    .query<PendingActionRow, [number, number, string, number, number]>(
       `SELECT pa.id, pa.agent_id, pa.action_kind, pa.action_target, pa.created_at, ll.project_id
        FROM long_lived_pending_actions pa
        LEFT JOIN long_lived_agents ll ON pa.agent_id = ll.id
        WHERE pa.status = 'pending'
-         AND pa.created_at > ?
+         AND (pa.created_at > ? OR (pa.created_at = ? AND pa.id > ?))
          AND pa.created_at <= ?
-       ORDER BY pa.created_at ASC
+       ORDER BY pa.created_at ASC, pa.id ASC
        LIMIT ?`,
     )
-    .all(Math.max(actionCursor, pendingCutoff), upperBound, DISCOVER_BATCH_SIZE);
+    .all(actionLowerBound, actionLowerBound, actionLowerBoundId, upperBound, DISCOVER_BATCH_SIZE);
 
   for (const action of newActions) {
     if (outbox.exists("pending_action_created", action.id)) continue;
@@ -223,7 +238,7 @@ export function runNotificationDiscovery(
     nextDiscoveryCursor(
       t0Cursor,
       upperBound,
-      draftEvents.map((row) => Date.parse(row.ts)),
+      draftEvents.map((row) => ({ ts: Date.parse(row.ts), id: row.event_id })),
       DISCOVER_BATCH_SIZE,
     ),
   );
@@ -233,7 +248,7 @@ export function runNotificationDiscovery(
     nextDiscoveryCursor(
       actionCursor,
       upperBound,
-      newActions.map((row) => row.created_at),
+      newActions.map((row) => ({ ts: row.created_at, id: row.id })),
       DISCOVER_BATCH_SIZE,
     ),
   );
@@ -241,28 +256,64 @@ export function runNotificationDiscovery(
   return { discovered };
 }
 
-function readDiscoveryCursor(db: Database, key: string, now: number): number {
+function readDiscoveryCursor(db: Database, key: string, now: number): DiscoveryCursor {
   const row = db
     .query<{ value: string }, [string]>(`SELECT value FROM db_meta WHERE key = ?`)
     .get(key);
-  if (row) return Number(row.value);
-  return Math.max(0, now - DISCOVERY_LOOKBACK_MS);
+  if (row) return parseDiscoveryCursor(row.value);
+  return { ts: Math.max(0, now - DISCOVERY_LOOKBACK_MS), id: "" };
 }
 
-function writeDiscoveryCursor(db: Database, key: string, value: number): void {
-  db.prepare(`INSERT OR REPLACE INTO db_meta (key, value) VALUES (?, ?)`).run(key, String(value));
+function writeDiscoveryCursor(db: Database, key: string, value: DiscoveryCursor): void {
+  db.prepare(`INSERT OR REPLACE INTO db_meta (key, value) VALUES (?, ?)`).run(
+    key,
+    JSON.stringify(value),
+  );
 }
 
 function nextDiscoveryCursor(
-  current: number,
+  current: DiscoveryCursor,
   upperBound: number,
-  processedTimestamps: number[],
+  processedRows: DiscoveryCursor[],
   batchSize: number,
-): number {
-  if (processedTimestamps.length >= batchSize) {
-    return Math.max(current, ...processedTimestamps);
+): DiscoveryCursor {
+  if (processedRows.length >= batchSize) {
+    return processedRows.reduce(
+      (best, row) => (compareDiscoveryCursor(row, best) > 0 ? row : best),
+      current,
+    );
   }
-  return Math.max(current, upperBound);
+  return compareDiscoveryCursor({ ts: upperBound, id: "" }, current) > 0
+    ? { ts: upperBound, id: "" }
+    : current;
+}
+
+function parseDiscoveryCursor(raw: string): DiscoveryCursor {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed === "number" && Number.isFinite(parsed)) {
+      return { ts: parsed, id: "" };
+    }
+    if (parsed && typeof parsed === "object") {
+      const cursor = parsed as Partial<DiscoveryCursor>;
+      if (
+        typeof cursor.ts === "number" &&
+        Number.isFinite(cursor.ts) &&
+        typeof cursor.id === "string"
+      ) {
+        return { ts: cursor.ts, id: cursor.id };
+      }
+    }
+  } catch {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed)) return { ts: parsed, id: "" };
+  }
+  return { ts: 0, id: "" };
+}
+
+function compareDiscoveryCursor(a: DiscoveryCursor, b: DiscoveryCursor): number {
+  if (a.ts !== b.ts) return a.ts - b.ts;
+  return a.id.localeCompare(b.id);
 }
 
 export async function runNotificationDelivery(opts: NotificationSweeperDeps): Promise<{
@@ -272,8 +323,10 @@ export async function runNotificationDelivery(opts: NotificationSweeperDeps): Pr
 }> {
   const { db, outbox, getEnv, now } = opts;
   const nowMs = now();
-  const processingStaleMs =
-    Number(getEnv("PENUMBRA_NOTIFICATION_PROCESSING_STALE_MS")) || PROCESSING_STALE_MS_DEFAULT;
+  const processingStaleMs = parseNonNegativeEnvNumber(
+    getEnv("PENUMBRA_NOTIFICATION_PROCESSING_STALE_MS"),
+    PROCESSING_STALE_MS_DEFAULT,
+  );
   outbox.requeueStaleProcessing(nowMs - processingStaleMs);
 
   // Webhook config is global today (resolveWebhookUrl ignores project_id), so
@@ -392,8 +445,10 @@ function markPostFailure(
     Number.isFinite(parsedMaxAttempts) && parsedMaxAttempts >= 0
       ? parsedMaxAttempts
       : MAX_ATTEMPTS_DEFAULT;
-  const retryBaseMs =
-    Number(getEnv("PENUMBRA_NOTIFICATION_RETRY_BASE_MS")) || RETRY_BASE_MS_DEFAULT;
+  const retryBaseMs = parseNonNegativeEnvNumber(
+    getEnv("PENUMBRA_NOTIFICATION_RETRY_BASE_MS"),
+    RETRY_BASE_MS_DEFAULT,
+  );
 
   for (const row of rows) {
     const attempt = row.attempt_count + 1;
@@ -441,7 +496,10 @@ export function startNotificationSweeper(
 ): () => void {
   const effectiveIntervalMs =
     intervalMs ??
-    (Number(process.env.PENUMBRA_NOTIFICATION_SWEEP_INTERVAL_MS) || DEFAULT_INTERVAL_MS);
+    parseNonNegativeEnvNumber(
+      process.env.PENUMBRA_NOTIFICATION_SWEEP_INTERVAL_MS,
+      DEFAULT_INTERVAL_MS,
+    );
 
   const timer = setInterval(() => {
     void runNotificationSweep(opts).catch((err) => {

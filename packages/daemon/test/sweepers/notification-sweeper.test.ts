@@ -215,6 +215,25 @@ describe("notification-sweeper: discovery", () => {
     expect(outbox.exists("task_draft", "evt-batch-200")).toBe(true);
   });
 
+  it("does not skip draft events that share the same timestamp across batches", () => {
+    const now = Date.UTC(2026, 0, 1, 12, 0, 0);
+    const ts = new Date(now - 30 * 60 * 1000).toISOString();
+    for (let i = 0; i < 201; i++) {
+      writeDraftEvent(db, {
+        event_id: `evt-tie-${i}`,
+        project_id: "test-project",
+        ts,
+      });
+    }
+
+    const first = runNotificationDiscovery(db, outbox, now);
+    const second = runNotificationDiscovery(db, outbox, now + 1000);
+
+    expect(first.discovered).toBe(200);
+    expect(second.discovered).toBe(1);
+    expect(outbox.exists("task_draft", "evt-tie-200")).toBe(true);
+  });
+
   it("leaves events inside the discovery settle buffer for the next pass", () => {
     const now = Date.UTC(2026, 0, 1, 12, 0, 0);
     writeDraftEvent(db, {
