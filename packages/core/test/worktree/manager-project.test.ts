@@ -7,6 +7,7 @@ import { exec as execCb } from "node:child_process";
 import { WorktreeManager } from "../../src/worktree/manager.js";
 
 const exec = promisify(execCb);
+const INJECTION_CANARY = "/tmp/penumbra-injection-canary";
 
 async function setupTempRepo(prefix: string): Promise<string> {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -40,6 +41,7 @@ describe("WorktreeManager — project parameterization", () => {
     fs.rmSync(homeRoot, { recursive: true, force: true });
     fs.rmSync(homeRepo, { recursive: true, force: true });
     fs.rmSync(`${homeRepo}-worktrees`, { recursive: true, force: true });
+    fs.rmSync(INJECTION_CANARY, { force: true });
   });
 
   function nextHandoff(): string {
@@ -75,6 +77,23 @@ describe("WorktreeManager — project parameterization", () => {
     expect(fs.existsSync(handle.path)).toBe(true);
     expect(fs.readFileSync(path.join(handle.path, "README.md"), "utf8")).toBe("# base\n");
     await manager.teardownWorktree(id, true);
+  });
+
+  it("treats shell metacharacters in baseRef as ref text without executing them", async () => {
+    const manager = new WorktreeManager({ rootDir: homeRoot, mainRepoDir: homeRepo });
+
+    for (const baseRef of [`main; touch ${INJECTION_CANARY}`, `$(touch ${INJECTION_CANARY})`]) {
+      fs.rmSync(INJECTION_CANARY, { force: true });
+      const id = nextHandoff();
+
+      await expect(manager.createWorktree(id, { baseRef })).rejects.toThrow(
+        /invalid reference|not a valid object name|unknown revision|ambiguous argument/,
+      );
+
+      expect(fs.existsSync(INJECTION_CANARY)).toBe(false);
+      expect(manager.getWorktree(id)).toBeNull();
+      expect(fs.existsSync(path.join(homeRoot, id))).toBe(false);
+    }
   });
 
   it("creates and prunes under <project_root>-worktrees when project_id resolves", async () => {

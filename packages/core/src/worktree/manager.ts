@@ -1,10 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { exec as execCb } from "node:child_process";
+import { execFile as execFileCb } from "node:child_process";
 import { createLogger, type Logger } from "../logger.js";
 
-const exec = promisify(execCb);
+const execFile = promisify(execFileCb);
 const NOOP_LOG = createLogger({ component: "worktree-manager", level: "silent" });
 const UUID_DIR_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -30,6 +30,10 @@ interface WorktreeManagerOpts {
   mainRepoDir?: string;
   log?: Logger;
   resolveProjectRoot?: ResolveProjectRoot;
+}
+
+function git(args: string[], opts?: { cwd?: string }) {
+  return execFile("git", args, opts);
 }
 
 export class WorktreeManager {
@@ -141,12 +145,12 @@ export class WorktreeManager {
 
     try {
       // 1. Add detached worktree
-      await exec(`git worktree add --detach "${wtPath}" ${baseRef}`, {
+      await git(["worktree", "add", "--detach", wtPath, baseRef], {
         cwd: repoRoot,
       });
 
       // 2. Checkout new branch
-      await exec(`git -C "${wtPath}" checkout -b "${branchName}"`);
+      await git(["-C", wtPath, "checkout", "-b", branchName]);
 
       // 3. Symlink node_modules/ — top-level + every per-package node_modules.
       //    Bun's workspace install creates a node_modules/ in the root AND in each
@@ -183,7 +187,7 @@ export class WorktreeManager {
       // Clean up partially created worktree on failure
       if (fs.existsSync(wtPath)) {
         try {
-          await exec(`git worktree remove --force "${wtPath}"`, {
+          await git(["worktree", "remove", "--force", wtPath], {
             cwd: repoRoot,
           });
         } catch (cleanupErr) {
@@ -209,22 +213,33 @@ export class WorktreeManager {
     const scratchPath = path.join(base, `.stage-${handoffId}`);
     const stageBranch = `stage/${handoffId}`;
 
-    await exec(`git -C "${repoRoot}" branch -f "${stageBranch}" "${ancestorRefs[0]}"`);
-    await exec(`git -C "${repoRoot}" worktree add --detach "${scratchPath}" "${stageBranch}"`);
+    await git(["-C", repoRoot, "branch", "-f", stageBranch, ancestorRefs[0]!]);
+    await git(["-C", repoRoot, "worktree", "add", "--detach", scratchPath, stageBranch]);
 
     try {
       for (const ref of ancestorRefs.slice(1)) {
-        await exec(
-          `git -C "${scratchPath}" -c user.email=plan-runtime@penumbra.local -c user.name="Plan Runtime" merge --no-ff --no-edit -m "stage: merge ${ref}" "${ref}"`,
-        );
+        await git([
+          "-C",
+          scratchPath,
+          "-c",
+          "user.email=plan-runtime@penumbra.local",
+          "-c",
+          "user.name=Plan Runtime",
+          "merge",
+          "--no-ff",
+          "--no-edit",
+          "-m",
+          `stage: merge ${ref}`,
+          ref,
+        ]);
       }
-      const { stdout } = await exec(`git -C "${scratchPath}" rev-parse HEAD`);
-      const headSha = stdout.trim();
-      await exec(`git -C "${repoRoot}" branch -f "${stageBranch}" "${headSha}"`);
+      const { stdout } = await git(["-C", scratchPath, "rev-parse", "HEAD"]);
+      const headSha = stdout.toString().trim();
+      await git(["-C", repoRoot, "branch", "-f", stageBranch, headSha]);
       return stageBranch;
     } finally {
       try {
-        await exec(`git -C "${repoRoot}" worktree remove --force "${scratchPath}"`);
+        await git(["-C", repoRoot, "worktree", "remove", "--force", scratchPath]);
       } catch {
         // ignore cleanup errors
       }
@@ -323,8 +338,6 @@ export class WorktreeManager {
       };
     }
 
-    const forceFlag = force ? "--force" : "";
-
     if (!force) {
       // Remove framework-injected files so git doesn't complain about modified/untracked files
       const wtBunLock = path.join(handle.path, "bun.lock");
@@ -333,7 +346,7 @@ export class WorktreeManager {
         // bun.lock is git-tracked here, so restore the tracked copy before
         // `git worktree remove` checks for local modifications.
         try {
-          await exec(`git -C "${handle.path}" checkout bun.lock`);
+          await git(["-C", handle.path, "checkout", "bun.lock"]);
         } catch (err) {
           this.log.warn(
             { handoff_id: handoffId, path: handle.path, err: String(err) },
@@ -353,7 +366,7 @@ export class WorktreeManager {
     removeNodeModuleSymlinks(repoRoot, handle.path, this.log);
 
     try {
-      await exec(`git worktree remove ${forceFlag} "${handle.path}"`, {
+      await git(["worktree", "remove", ...(force ? ["--force"] : []), handle.path], {
         cwd: repoRoot,
       });
     } catch (err) {
@@ -363,7 +376,7 @@ export class WorktreeManager {
           "worktree remove failed without force; retrying with --force",
         );
         try {
-          await exec(`git worktree remove --force "${handle.path}"`, {
+          await git(["worktree", "remove", "--force", handle.path], {
             cwd: repoRoot,
           });
         } catch (forceErr) {
@@ -381,14 +394,14 @@ export class WorktreeManager {
     let branchDeleted = false;
     if (deleteBranch) {
       try {
-        await exec(`git branch -D "${handle.branchName}"`, {
+        await git(["branch", "-D", handle.branchName], {
           cwd: repoRoot,
         });
       } catch {
         // branch deletion is verified below
       }
       try {
-        await exec(`git rev-parse --verify --quiet "refs/heads/${handle.branchName}"`, {
+        await git(["rev-parse", "--verify", "--quiet", `refs/heads/${handle.branchName}`], {
           cwd: repoRoot,
         });
         branchDeleted = false;
