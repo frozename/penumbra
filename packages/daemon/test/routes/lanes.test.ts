@@ -82,14 +82,15 @@ function insertHandoff(
   daemon: ReturnType<typeof startTestDaemon>,
   handoffId: string,
   agent: string,
+  opts: { parent_handoff_id?: string | null; root_handoff_id?: string | null } = {},
 ): void {
   daemon.services.db
     .prepare(
       `
       INSERT INTO handoffs (
         handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message,
-        status, resolved_by, resolved_at, triggered_by_event_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        status, resolved_by, resolved_at, triggered_by_event_id, parent_handoff_id, root_handoff_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     )
     .run(
@@ -105,6 +106,8 @@ function insertHandoff(
       "worker",
       "2026-04-23T12:01:00.000Z",
       `event-${handoffId}`,
+      opts.parent_handoff_id ?? null,
+      opts.root_handoff_id ?? handoffId,
     );
 }
 
@@ -255,8 +258,9 @@ test("manual open adopts the chain-start auto lane for the same implementer hand
       task_class: "BOUNDARY",
     });
     expect(manualOpen.status).toBe(200);
-    const manualOpenBody = (await manualOpen.json()) as { lane_id: string };
+    const manualOpenBody = (await manualOpen.json()) as { lane_id: string; adopted: boolean };
     expect(manualOpenBody.lane_id).toBe(startedBody.lane_id);
+    expect(manualOpenBody.adopted).toBe(true);
 
     const closed = await postJson(daemon, "/lanes/close", {
       lane_id: manualOpenBody.lane_id,
@@ -285,9 +289,22 @@ test("manual open adopts the chain-start auto lane for the same implementer hand
   }
 });
 
-test("close enforces the round cap from persisted lane history when metadata omits round_count", async () => {
+test("close uses closed lineage rounds for the fallback round cap when metadata omits round_count", async () => {
   const daemon = startTestDaemon();
   try {
+    insertHandoff(daemon, "h-round-root", "codex", { root_handoff_id: "h-round-root" });
+    insertHandoff(daemon, "h-round-child-1", "codex", {
+      parent_handoff_id: "h-round-root",
+      root_handoff_id: "h-round-root",
+    });
+    insertHandoff(daemon, "h-round-child-2", "codex", {
+      parent_handoff_id: "h-round-child-1",
+      root_handoff_id: "h-round-root",
+    });
+    insertHandoff(daemon, "h-round-child-3", "codex", {
+      parent_handoff_id: "h-round-child-2",
+      root_handoff_id: "h-round-root",
+    });
     daemon.services.db
       .prepare(
         `
@@ -302,7 +319,7 @@ test("close enforces the round cap from persisted lane history when metadata omi
         "2026-04-23T11:00:00.000Z",
         "2026-04-23T11:10:00.000Z",
         "BOUNDARY",
-        "h-round-server",
+        "h-round-root",
         "failed",
         "[]",
         null,
@@ -322,7 +339,27 @@ test("close enforces the round cap from persisted lane history when metadata omi
         "2026-04-23T11:20:00.000Z",
         "2026-04-23T11:30:00.000Z",
         "BOUNDARY",
-        "h-round-server",
+        "h-round-child-1",
+        "failed",
+        "[]",
+        null,
+        "{}",
+      );
+    daemon.services.db
+      .prepare(
+        `
+        INSERT INTO lane_ledger (
+          lane_id, ts_opened, ts_closed, task_class, implementer_handoff, gate_status,
+          recalled_memory_ids, recalled_query, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        "lane-round-server-3",
+        "2026-04-23T11:40:00.000Z",
+        "2026-04-23T11:50:00.000Z",
+        "BOUNDARY",
+        "h-round-child-2",
         "failed",
         "[]",
         null,
@@ -338,10 +375,10 @@ test("close enforces the round cap from persisted lane history when metadata omi
       `,
       )
       .run(
-        "lane-round-server-3",
+        "lane-round-server-4",
         "2026-04-23T12:00:00.000Z",
         "BOUNDARY",
-        "h-round-server",
+        "h-round-child-3",
         "open",
         "[]",
         null,
@@ -349,23 +386,127 @@ test("close enforces the round cap from persisted lane history when metadata omi
       );
 
     const rejected = await postJson(daemon, "/lanes/close", {
-      lane_id: "lane-round-server-3",
+      lane_id: "lane-round-server-4",
       gate_status: "failed",
     });
     expect(rejected.status).toBe(400);
     expect(await rejected.json()).toEqual({
       error: {
         code: "round_count_exceeds_cap",
-        message: "metadata.round_count must be <= 2 unless override_reason is present",
+        message:
+          "closed lane rounds for this handoff lineage must be <= 2 unless override_reason is present",
+      },
+    });
+
+    const rejectedWithLowMetadata = await postJson(daemon, "/lanes/close", {
+      lane_id: "lane-round-server-4",
+      gate_status: "failed",
+      metadata: { round_count: 1 },
+    });
+    expect(rejectedWithLowMetadata.status).toBe(400);
+    expect(await rejectedWithLowMetadata.json()).toEqual({
+      error: {
+        code: "round_count_exceeds_cap",
+        message:
+          "closed lane rounds for this handoff lineage must be <= 2 unless override_reason is present",
       },
     });
 
     const accepted = await postJson(daemon, "/lanes/close", {
-      lane_id: "lane-round-server-3",
+      lane_id: "lane-round-server-4",
       gate_status: "failed",
       override_reason: "manual approval for additional fix round",
     });
     expect(accepted.status).toBe(200);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("close counts the currently open lane against the lineage round cap", async () => {
+  const daemon = startTestDaemon();
+  try {
+    insertHandoff(daemon, "h-round-cap-root", "codex", { root_handoff_id: "h-round-cap-root" });
+    insertHandoff(daemon, "h-round-cap-child-1", "codex", {
+      parent_handoff_id: "h-round-cap-root",
+      root_handoff_id: "h-round-cap-root",
+    });
+    insertHandoff(daemon, "h-round-cap-child-2", "codex", {
+      parent_handoff_id: "h-round-cap-child-1",
+      root_handoff_id: "h-round-cap-root",
+    });
+    daemon.services.db
+      .prepare(
+        `
+        INSERT INTO lane_ledger (
+          lane_id, ts_opened, ts_closed, task_class, implementer_handoff, gate_status,
+          recalled_memory_ids, recalled_query, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        "lane-round-cap-1",
+        "2026-04-23T11:00:00.000Z",
+        "2026-04-23T11:10:00.000Z",
+        "BOUNDARY",
+        "h-round-cap-root",
+        "failed",
+        "[]",
+        null,
+        "{}",
+      );
+    daemon.services.db
+      .prepare(
+        `
+        INSERT INTO lane_ledger (
+          lane_id, ts_opened, ts_closed, task_class, implementer_handoff, gate_status,
+          recalled_memory_ids, recalled_query, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        "lane-round-cap-2",
+        "2026-04-23T11:20:00.000Z",
+        "2026-04-23T11:30:00.000Z",
+        "BOUNDARY",
+        "h-round-cap-child-1",
+        "failed",
+        "[]",
+        null,
+        "{}",
+      );
+    daemon.services.db
+      .prepare(
+        `
+        INSERT INTO lane_ledger (
+          lane_id, ts_opened, task_class, implementer_handoff, gate_status,
+          recalled_memory_ids, recalled_query, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        "lane-round-cap-open",
+        "2026-04-23T12:00:00.000Z",
+        "BOUNDARY",
+        "h-round-cap-child-2",
+        "open",
+        "[]",
+        null,
+        "{}",
+      );
+
+    const rejected = await postJson(daemon, "/lanes/close", {
+      lane_id: "lane-round-cap-open",
+      gate_status: "failed",
+    });
+    expect(rejected.status).toBe(400);
+    expect(await rejected.json()).toEqual({
+      error: {
+        code: "round_count_exceeds_cap",
+        message:
+          "closed lane rounds for this handoff lineage must be <= 2 unless override_reason is present",
+      },
+    });
   } finally {
     daemon.stop();
   }
@@ -379,25 +520,6 @@ test("closing a stale duplicate lane cannot regress a passed gate outcome to ski
       implementer_handoff: "h-regress",
       task_class: "BOUNDARY",
     });
-    daemon.services.db
-      .prepare(
-        `
-        INSERT INTO lane_ledger (
-          lane_id, ts_opened, task_class, implementer_handoff, gate_status,
-          recalled_memory_ids, recalled_query, metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      )
-      .run(
-        "lane-stale-duplicate",
-        "2026-04-23T12:00:01.000Z",
-        "BOUNDARY",
-        "h-regress",
-        "open",
-        "[]",
-        null,
-        "{}",
-      );
     insertHandoff(daemon, "h-regress", "codex");
     insertPerformance(daemon, "h-regress", "codex");
 
@@ -406,6 +528,13 @@ test("closing a stale duplicate lane cannot regress a passed gate outcome to ski
       gate_status: "passed",
     });
     expect(passed.status).toBe(200);
+
+    const reopened = await postJson(daemon, "/lanes/open", {
+      lane_id: "lane-stale-duplicate",
+      implementer_handoff: "h-regress",
+      task_class: "BOUNDARY",
+    });
+    expect(reopened.status).toBe(200);
 
     const skipped = await postJson(daemon, "/lanes/close", {
       lane_id: "lane-stale-duplicate",
@@ -498,6 +627,98 @@ test("close rejects same-agent self-review unless override_reason is present", a
   }
 });
 
+test("close records an audit event when override_reason bypasses a guard", async () => {
+  const daemon = startTestDaemon();
+  try {
+    insertHandoff(daemon, "h-impl-override", "codex");
+    insertHandoff(daemon, "h-review-override", "codex");
+    await postJson(daemon, "/lanes/open", {
+      lane_id: "lane-override-audit",
+      implementer_handoff: "h-impl-override",
+      task_class: "BOUNDARY",
+    });
+
+    const accepted = await postJson(daemon, "/lanes/close", {
+      lane_id: "lane-override-audit",
+      gate_status: "passed",
+      reviewer_handoff: "h-review-override",
+      override_reason: "operator accepted same-agent review after manual inspection",
+    });
+    expect(accepted.status).toBe(200);
+
+    const row = daemon.services.db
+      .query<
+        { kind: string; source: string; meta_json: string | null },
+        [string]
+      >("SELECT kind, source, meta_json FROM dispatch_events WHERE handoff_id = ?")
+      .get("h-impl-override");
+    expect(row?.kind).toBe("lane.override");
+    expect(row?.source).toBe("daemon");
+    expect(JSON.parse(row!.meta_json!)).toEqual({
+      control: "same_agent_self_review",
+      lane_id: "lane-override-audit",
+      gate_status: "passed",
+      override_reason: "operator accepted same-agent review after manual inspection",
+    });
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("override close persists when audit event recording fails after commit", async () => {
+  const daemon = startTestDaemon();
+  const originalRecord = daemon.services.dispatchEventLog.record.bind(
+    daemon.services.dispatchEventLog,
+  );
+  try {
+    insertHandoff(daemon, "h-impl-override-rollback", "codex");
+    insertHandoff(daemon, "h-review-override-rollback", "codex");
+    await postJson(daemon, "/lanes/open", {
+      lane_id: "lane-override-rollback",
+      implementer_handoff: "h-impl-override-rollback",
+      task_class: "BOUNDARY",
+    });
+
+    daemon.services.dispatchEventLog.record = ((event) => {
+      if (event.kind === "lane.override") {
+        throw new Error("audit write failed");
+      }
+      originalRecord(event);
+    }) as typeof daemon.services.dispatchEventLog.record;
+
+    // The close is the authoritative record and commits before audit events
+    // publish (live-bus delivery cannot roll back). An audit failure is logged
+    // but must not error a close that already persisted — surfacing it as an
+    // error would be the write-then-error trap.
+    const closed = await postJson(daemon, "/lanes/close", {
+      lane_id: "lane-override-rollback",
+      gate_status: "passed",
+      reviewer_handoff: "h-review-override-rollback",
+      override_reason: "operator accepted same-agent review after manual inspection",
+    });
+    expect(closed.status).toBe(200);
+
+    const lane = daemon.services.db
+      .query<
+        { gate_status: string; ts_closed: string | null },
+        [string]
+      >("SELECT gate_status, ts_closed FROM lane_ledger WHERE lane_id = ?")
+      .get("lane-override-rollback");
+    expect(lane?.gate_status).toBe("passed");
+    expect(lane?.ts_closed).toBeTruthy();
+    const auditCount = daemon.services.db
+      .query<
+        { c: number },
+        [string]
+      >("SELECT COUNT(*) AS c FROM dispatch_events WHERE handoff_id = ?")
+      .get("h-impl-override-rollback");
+    expect(auditCount?.c).toBe(0);
+  } finally {
+    daemon.services.dispatchEventLog.record = originalRecord;
+    daemon.stop();
+  }
+});
+
 test("close rejects an unknown reviewer_handoff instead of skipping the self-review check", async () => {
   const daemon = startTestDaemon();
   try {
@@ -581,25 +802,6 @@ test("a stale duplicate skipped close cannot regress a failed gate outcome", asy
       implementer_handoff: "h-failed-regress",
       task_class: "BOUNDARY",
     });
-    daemon.services.db
-      .prepare(
-        `
-        INSERT INTO lane_ledger (
-          lane_id, ts_opened, task_class, implementer_handoff, gate_status,
-          recalled_memory_ids, recalled_query, metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      )
-      .run(
-        "lane-failed-stale-duplicate",
-        "2026-04-23T12:00:01.000Z",
-        "BOUNDARY",
-        "h-failed-regress",
-        "open",
-        "[]",
-        null,
-        "{}",
-      );
     insertHandoff(daemon, "h-failed-regress", "codex");
     insertPerformance(daemon, "h-failed-regress", "codex");
 
@@ -608,6 +810,13 @@ test("a stale duplicate skipped close cannot regress a failed gate outcome", asy
       gate_status: "failed",
     });
     expect(failed.status).toBe(200);
+
+    const reopened = await postJson(daemon, "/lanes/open", {
+      lane_id: "lane-failed-stale-duplicate",
+      implementer_handoff: "h-failed-regress",
+      task_class: "BOUNDARY",
+    });
+    expect(reopened.status).toBe(200);
 
     const skipped = await postJson(daemon, "/lanes/close", {
       lane_id: "lane-failed-stale-duplicate",
@@ -767,6 +976,12 @@ test("duplicate lane_id returns 409", async () => {
       task_class: "STANDARD",
     });
     expect(dup.status).toBe(409);
+    expect(await dup.json()).toEqual({
+      error: {
+        code: "lane_already_exists",
+        message: "lane_id already exists",
+      },
+    });
   } finally {
     daemon.stop();
   }
@@ -780,6 +995,12 @@ test("close unknown lane returns 404", async () => {
       gate_status: "passed",
     });
     expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      error: {
+        code: "unknown_lane",
+        message: "lane_id does not exist",
+      },
+    });
   } finally {
     daemon.stop();
   }
@@ -803,6 +1024,12 @@ test("close twice returns 409 on second call", async () => {
       gate_status: "passed",
     });
     expect(second.status).toBe(409);
+    expect(await second.json()).toEqual({
+      error: {
+        code: "lane_already_closed",
+        message: "lane is already closed",
+      },
+    });
   } finally {
     daemon.stop();
   }

@@ -114,6 +114,125 @@ test("schema creates agent_performance table and indexes", () => {
   expect(execMs?.notnull).toBe(0);
 });
 
+test("applySchema dedupes open lane rows before creating the partial unique index", () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  db.exec(`
+    CREATE TABLE lane_ledger (
+      lane_id              TEXT PRIMARY KEY,
+      ts_opened            TEXT NOT NULL,
+      ts_closed            TEXT,
+      task_class           TEXT NOT NULL,
+      implementer_handoff  TEXT NOT NULL,
+      reviewer_handoff     TEXT,
+      gate_status          TEXT NOT NULL,
+      recalled_memory_ids  TEXT NOT NULL DEFAULT '[]',
+      recalled_query       TEXT,
+      override_reason      TEXT,
+      metadata_json        TEXT NOT NULL DEFAULT '{}'
+    );
+    INSERT INTO lane_ledger (
+      lane_id, ts_opened, task_class, implementer_handoff, gate_status, recalled_memory_ids, metadata_json
+    ) VALUES
+      ('lane-old-open', '2026-06-01T00:00:00.000Z', 'BOUNDARY', 'h-dup-open', 'open', '[]', '{}'),
+      ('lane-new-open', '2026-06-01T00:10:00.000Z', 'BOUNDARY', 'h-dup-open', 'open', '[]', '{}'),
+      ('lane-other-open', '2026-06-01T00:20:00.000Z', 'BOUNDARY', 'h-other', 'open', '[]', '{}');
+  `);
+
+  const beforeApply = Date.now();
+  applySchema(db);
+  const afterApply = Date.now();
+
+  const rows = db
+    .query<
+      {
+        lane_id: string;
+        gate_status: string;
+        ts_closed: string | null;
+        override_reason: string | null;
+      },
+      []
+    >(
+      `SELECT lane_id, gate_status, ts_closed, override_reason
+       FROM lane_ledger
+       WHERE implementer_handoff = 'h-dup-open'
+       ORDER BY ts_opened ASC`,
+    )
+    .all();
+  expect(rows).toEqual([
+    {
+      lane_id: "lane-old-open",
+      gate_status: "skipped",
+      ts_closed: expect.any(String),
+      override_reason: "schema dedupe: duplicate open lane superseded by lane-new-open",
+    },
+    {
+      lane_id: "lane-new-open",
+      gate_status: "open",
+      ts_closed: null,
+      override_reason: null,
+    },
+  ]);
+  const closedAt = Date.parse(rows[0]!.ts_closed!);
+  expect(closedAt).toBeGreaterThanOrEqual(beforeApply);
+  expect(closedAt).toBeLessThanOrEqual(afterApply);
+  expect(rows[0]!.ts_closed).not.toBe("2026-06-01T00:10:00.000Z");
+
+  const indexes = db.query("PRAGMA index_list('lane_ledger')").all() as Array<{
+    name: string;
+    unique: number;
+    partial: number;
+  }>;
+  expect(indexes).toContainEqual(
+    expect.objectContaining({
+      name: "lane_ledger_one_open_per_implementer",
+      unique: 1,
+      partial: 1,
+    }),
+  );
+  expect(() => {
+    db.run(
+      `INSERT INTO lane_ledger (
+        lane_id, ts_opened, task_class, implementer_handoff, gate_status, recalled_memory_ids, metadata_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        "lane-conflicting-open",
+        "2026-06-01T00:30:00.000Z",
+        "BOUNDARY",
+        "h-dup-open",
+        "open",
+        "[]",
+        "{}",
+      ],
+    );
+  }).toThrow(/UNIQUE constraint failed/);
+  db.close();
+});
+
+test("applySchema records the open-lane dedupe schema marker", () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+
+  applySchema(db);
+  const marker = db
+    .query<
+      { value: string },
+      []
+    >("SELECT value FROM db_meta WHERE key = 'lane_ledger_open_dedupe_schema_version'")
+    .get();
+  expect(marker?.value).toBe(String(SCHEMA_VERSION));
+
+  applySchema(db);
+  const markers = db
+    .query<
+      { c: number },
+      []
+    >("SELECT COUNT(*) AS c FROM db_meta WHERE key = 'lane_ledger_open_dedupe_schema_version'")
+    .get();
+  expect(markers?.c).toBe(1);
+  db.close();
+});
+
 test("applySchema adds dream_research_cache negative-cache fields and index", () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);

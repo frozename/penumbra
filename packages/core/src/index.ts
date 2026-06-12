@@ -100,6 +100,7 @@ export {
 export { backfillRecallFields, type BackfillStats } from "./db/backfill-recall-fields.js";
 export {
   closeLane,
+  getClosedLaneRoundCountForHandoffLineage,
   getOpenLaneForImplementer,
   getLane,
   insertLane,
@@ -110,6 +111,7 @@ export {
   type LaneRow,
   type RecentLaneFilter,
 } from "./db/lane-ledger.js";
+export { getHandoffToAgent } from "./db/handoffs.js";
 export type { Embedder } from "./embedder/interface.js";
 export { BundledEmbedder } from "./embedder/bundled.js";
 export { OpenAICompatEmbedder } from "./embedder/openai-compat.js";

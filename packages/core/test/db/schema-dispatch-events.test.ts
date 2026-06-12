@@ -1,11 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { DispatchEventKindSchema } from "@penumbra/api-contract";
 import { applySchema, SCHEMA_VERSION } from "../../src/db/schema.js";
 import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 
 describe("dispatch_events table", () => {
   test("SCHEMA_VERSION is bumped for dispatch event storage", () => {
     expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(4);
+  });
+
+  test("api contract includes lane override audit events", () => {
+    expect(DispatchEventKindSchema.safeParse("lane.override").success).toBe(true);
   });
 
   test("applySchema creates dispatch_events with expected columns and indexes", () => {

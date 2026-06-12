@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 
-export const SCHEMA_VERSION = 32;
+export const SCHEMA_VERSION = 33;
+const LANE_LEDGER_OPEN_DEDUPE_SCHEMA_META_KEY = "lane_ledger_open_dedupe_schema_version";
 
 export interface ReleaseT1RollupClaimsOpts {
   terminalOutcomes?: readonly string[];
@@ -623,6 +624,12 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
       `CREATE INDEX IF NOT EXISTS handoffs_root_by_conv ON handoffs(conversation_id, ts) WHERE parent_handoff_id IS NULL;`,
     );
     backfillHandoffRoots(db);
+    dedupeOpenLaneLedgerRowsOnce(db);
+    db.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS lane_ledger_one_open_per_implementer
+       ON lane_ledger(implementer_handoff)
+       WHERE ts_closed IS NULL;`,
+    );
 
     addColumnIfMissing(db, "tasks", "branch_base", "TEXT");
     addColumnIfMissing(db, "tasks", "gh_issue_number", "INTEGER");
@@ -1235,6 +1242,60 @@ function backfillHandoffRoots(db: Database): void {
   for (const [handoffId, rootId] of updates) {
     stmt.run(rootId, handoffId);
   }
+}
+
+function dedupeOpenLaneLedgerRowsOnce(db: Database): void {
+  const marker = db
+    .query<{ value: string }, [string]>("SELECT value FROM db_meta WHERE key = ?")
+    .get(LANE_LEDGER_OPEN_DEDUPE_SCHEMA_META_KEY);
+  if (marker?.value === String(SCHEMA_VERSION)) return;
+
+  // Errors propagate deliberately: the unique-index creation that follows
+  // would otherwise crash startup with a misattributed UNIQUE-constraint
+  // failure when leftover duplicates survive a swallowed dedupe error.
+  dedupeOpenLaneLedgerRows(db, new Date(Date.now()).toISOString());
+  db.run(
+    "INSERT INTO db_meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+    [LANE_LEDGER_OPEN_DEDUPE_SCHEMA_META_KEY, String(SCHEMA_VERSION)],
+  );
+}
+
+function dedupeOpenLaneLedgerRows(db: Database, tsClosed: string): void {
+  db.run(
+    `
+    WITH ranked_open_lanes AS (
+      SELECT
+        lane_id,
+        FIRST_VALUE(lane_id) OVER (
+          PARTITION BY implementer_handoff
+          ORDER BY ts_opened DESC, lane_id DESC
+        ) AS keep_lane_id,
+        FIRST_VALUE(ts_opened) OVER (
+          PARTITION BY implementer_handoff
+          ORDER BY ts_opened DESC, lane_id DESC
+        ) AS keep_ts_opened,
+        COUNT(*) OVER (PARTITION BY implementer_handoff) AS open_count
+      FROM lane_ledger
+      WHERE ts_closed IS NULL
+    )
+    UPDATE lane_ledger
+    SET
+      ts_closed = ?,
+      gate_status = 'skipped',
+      override_reason = 'schema dedupe: duplicate open lane superseded by ' || (
+        SELECT keep_lane_id
+        FROM ranked_open_lanes
+        WHERE ranked_open_lanes.lane_id = lane_ledger.lane_id
+      )
+    WHERE lane_id IN (
+      SELECT lane_id
+      FROM ranked_open_lanes
+      WHERE open_count > 1
+        AND lane_id != keep_lane_id
+    )
+  `,
+    [tsClosed],
+  );
 }
 
 export function addColumnIfMissing(db: Database, table: string, name: string, type: string): void {

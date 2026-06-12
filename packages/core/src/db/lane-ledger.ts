@@ -190,6 +190,35 @@ export function getOpenLaneForImplementer(
   return row ? parseLaneRow(row) : null;
 }
 
+export function getClosedLaneRoundCountForHandoffLineage(
+  db: Database,
+  implementer_handoff: string,
+): number {
+  const row = db
+    .query<{ count: number }, [string, string]>(
+      `WITH target(root_id) AS (
+         SELECT COALESCE(root_handoff_id, handoff_id)
+         FROM handoffs
+         WHERE handoff_id = ?
+         LIMIT 1
+       ),
+       lineage_handoffs(handoff_id) AS (
+         SELECT ?
+         WHERE NOT EXISTS (SELECT 1 FROM target)
+         UNION
+         SELECT h.handoff_id
+         FROM handoffs AS h
+         JOIN target ON COALESCE(h.root_handoff_id, h.handoff_id) = target.root_id
+       )
+       SELECT COUNT(*) AS count
+       FROM lane_ledger
+       WHERE ts_closed IS NOT NULL
+         AND implementer_handoff IN (SELECT handoff_id FROM lineage_handoffs)`,
+    )
+    .get(implementer_handoff, implementer_handoff);
+  return row?.count ?? 0;
+}
+
 export function recentLanes(db: Database, filter: RecentLaneFilter, limit = 50): LaneRow[] {
   const where: string[] = [];
   const args: Array<string | number> = [];

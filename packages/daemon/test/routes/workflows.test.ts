@@ -111,6 +111,10 @@ function freshDb() {
       message TEXT NOT NULL,
       status TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS lane_ledger (
+      lane_id TEXT PRIMARY KEY,
+      gate_status TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS dispatch_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       handoff_id TEXT NOT NULL,

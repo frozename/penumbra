@@ -1,7 +1,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- test fixtures and sqlite row mocks intentionally use loose shapes */
 import { beforeEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { closeLane, getLane, insertLane, recentLanes } from "../../src/db/lane-ledger.js";
+import {
+  closeLane,
+  getClosedLaneRoundCountForHandoffLineage,
+  getLane,
+  insertLane,
+  recentLanes,
+} from "../../src/db/lane-ledger.js";
 
 const CREATE_LANE_LEDGER_SQL = `
   CREATE TABLE IF NOT EXISTS lane_ledger (
@@ -21,11 +27,21 @@ const CREATE_LANE_LEDGER_SQL = `
   CREATE INDEX IF NOT EXISTS lane_ledger_by_task_class ON lane_ledger(task_class, ts_opened DESC);
 `;
 
+const CREATE_HANDOFFS_SQL = `
+  CREATE TABLE IF NOT EXISTS handoffs (
+    handoff_id TEXT PRIMARY KEY,
+    to_agent TEXT NOT NULL,
+    parent_handoff_id TEXT,
+    root_handoff_id TEXT
+  );
+`;
+
 describe("lane-ledger dao", () => {
   let db: Database;
 
   beforeEach(() => {
     db = new Database(":memory:");
+    db.exec(CREATE_HANDOFFS_SQL);
     db.exec(CREATE_LANE_LEDGER_SQL);
   });
 
@@ -262,5 +278,78 @@ describe("lane-ledger dao", () => {
     });
 
     expect(getLane(db, "lane-meta3")?.metadata_json).toBe("{}");
+  });
+
+  it("counts only closed lanes whose implementer handoffs share the same root", () => {
+    db.run(
+      "INSERT INTO handoffs (handoff_id, to_agent, parent_handoff_id, root_handoff_id) VALUES (?, ?, ?, ?)",
+      ["root", "codex", null, "root"],
+    );
+    db.run(
+      "INSERT INTO handoffs (handoff_id, to_agent, parent_handoff_id, root_handoff_id) VALUES (?, ?, ?, ?)",
+      ["child-1", "codex", "root", "root"],
+    );
+    db.run(
+      "INSERT INTO handoffs (handoff_id, to_agent, parent_handoff_id, root_handoff_id) VALUES (?, ?, ?, ?)",
+      ["child-2", "codex", "child-1", "root"],
+    );
+    db.run(
+      "INSERT INTO handoffs (handoff_id, to_agent, parent_handoff_id, root_handoff_id) VALUES (?, ?, ?, ?)",
+      ["other-root", "codex", null, "other-root"],
+    );
+
+    insertLane(db, {
+      lane_id: "lane-root",
+      ts_opened: "2026-05-14T01:00:00.000Z",
+      task_class: "BOUNDARY",
+      implementer_handoff: "root",
+    });
+    closeLane(db, "lane-root", {
+      ts_closed: "2026-05-14T01:05:00.000Z",
+      gate_status: "failed",
+    });
+    insertLane(db, {
+      lane_id: "lane-child-1",
+      ts_opened: "2026-05-14T01:10:00.000Z",
+      task_class: "BOUNDARY",
+      implementer_handoff: "child-1",
+    });
+    closeLane(db, "lane-child-1", {
+      ts_closed: "2026-05-14T01:15:00.000Z",
+      gate_status: "failed",
+    });
+    insertLane(db, {
+      lane_id: "lane-child-2-open",
+      ts_opened: "2026-05-14T01:20:00.000Z",
+      task_class: "BOUNDARY",
+      implementer_handoff: "child-2",
+    });
+    insertLane(db, {
+      lane_id: "lane-other",
+      ts_opened: "2026-05-14T01:30:00.000Z",
+      task_class: "BOUNDARY",
+      implementer_handoff: "other-root",
+    });
+    closeLane(db, "lane-other", {
+      ts_closed: "2026-05-14T01:35:00.000Z",
+      gate_status: "failed",
+    });
+
+    expect(getClosedLaneRoundCountForHandoffLineage(db, "child-2")).toBe(2);
+  });
+
+  it("counts lineage rounds with an IN union query instead of correlated OR exists", () => {
+    let capturedSql = "";
+    const originalQuery = db.query.bind(db);
+    db.query = ((sql: string) => {
+      capturedSql = sql;
+      return originalQuery(sql);
+    }) as typeof db.query;
+
+    expect(getClosedLaneRoundCountForHandoffLineage(db, "unknown-handoff")).toBe(0);
+
+    expect(capturedSql).toContain(" IN ");
+    expect(capturedSql).toContain("UNION");
+    expect(capturedSql).not.toMatch(/\bOR\s+EXISTS\b/i);
   });
 });
