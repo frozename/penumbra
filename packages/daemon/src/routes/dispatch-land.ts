@@ -81,6 +81,61 @@ function subjectFromCommitMessage(message: string): string {
   return first ?? message.trim();
 }
 
+type GitCleanupResult =
+  | { ok: true }
+  | {
+      ok: false;
+      cleanup_step: "reset_merge" | "status_porcelain" | "status_dirty";
+      cleanup_stderr?: string;
+      cleanup_status?: string;
+    };
+
+async function resetMergeAndVerifyClean(deps: DispatchLandDeps): Promise<GitCleanupResult> {
+  const reset = await deps.runGit(["reset", "--merge"]);
+  if (reset.code !== 0) {
+    return {
+      ok: false,
+      cleanup_step: "reset_merge",
+      cleanup_stderr: reset.stderr.trim() || undefined,
+    };
+  }
+
+  // --untracked-files=no: cleanliness here means the INDEX is clean; the home
+  // checkout legitimately carries hundreds of untracked notes that would
+  // otherwise fail every cleanup verification.
+  const status = await deps.runGit(["status", "--porcelain", "--untracked-files=no"]);
+  if (status.code !== 0) {
+    return {
+      ok: false,
+      cleanup_step: "status_porcelain",
+      cleanup_stderr: status.stderr.trim() || undefined,
+    };
+  }
+
+  const cleanupStatus = status.stdout.trim();
+  if (cleanupStatus.length > 0) {
+    return {
+      ok: false,
+      cleanup_step: "status_dirty",
+      cleanup_status: cleanupStatus,
+    };
+  }
+
+  return { ok: true };
+}
+
+function commitFailureLooksLikeHook(stderr: string): boolean {
+  const normalized = stderr.toLowerCase();
+  return (
+    normalized.includes("pre-commit") ||
+    normalized.includes("precommit") ||
+    normalized.includes("prettier") ||
+    normalized.includes("lint-staged") ||
+    normalized.includes("husky") ||
+    normalized.includes("hook")
+  );
+}
+
 const dispatchLandTasks = new Map<string, DispatchLandTaskRecord>();
 let dispatchLandQueue: Promise<void> = Promise.resolve();
 
@@ -434,7 +489,19 @@ async function executeLand(input: {
         .map((line) => line.trim())
         .filter(Boolean);
       if (files.length > 0) {
-        await deps.runGit(["merge", "--abort"]);
+        const cleanup = await resetMergeAndVerifyClean(deps);
+        if (!cleanup.ok) {
+          return {
+            status: 500,
+            error: {
+              code: "merge_conflict_cleanup_failed",
+              files,
+              hint: `rebase ${branch} onto main and retry`,
+              manual_repair: "run git reset --merge in the target repo before retrying",
+              ...cleanup,
+            },
+          };
+        }
         return {
           status: 409,
           error: {
@@ -444,24 +511,55 @@ async function executeLand(input: {
           },
         };
       }
+      // A failed squash can leave partial staged state even when no unmerged
+      // paths are reported (or when the conflict read itself failed) — clean
+      // up before surfacing the error so the next land never starts dirty.
+      const fallbackCleanup = await resetMergeAndVerifyClean(deps);
       return {
         status: 500,
         error: {
           code: "git_failed",
           step: "merge_squash",
           stderr: merge.stderr.trim() || undefined,
+          ...(fallbackCleanup.ok ? {} : fallbackCleanup),
         },
       };
     }
 
     const commit = await deps.runGit(["commit", "-F", "-"], { stdin: resolvedCommitMessage });
     if (commit.code !== 0) {
+      const stderr = commit.stderr.trim();
+      const cleanup = await resetMergeAndVerifyClean(deps);
+      if (!cleanup.ok) {
+        return {
+          status: 500,
+          error: {
+            code: commitFailureLooksLikeHook(stderr)
+              ? "commit_hook_cleanup_failed"
+              : "commit_cleanup_failed",
+            step: "commit_squash",
+            stderr: stderr || undefined,
+            manual_repair: "run git reset --merge in the target repo before retrying",
+            ...cleanup,
+          },
+        };
+      }
+      if (commitFailureLooksLikeHook(stderr)) {
+        return {
+          status: 500,
+          error: {
+            code: "commit_hook_failed",
+            step: "commit_squash",
+            stderr: stderr || undefined,
+          },
+        };
+      }
       return {
         status: 500,
         error: {
           code: "git_failed",
           step: "commit_squash",
-          stderr: commit.stderr.trim() || undefined,
+          stderr: stderr || undefined,
         },
       };
     }
@@ -479,6 +577,8 @@ async function executeLand(input: {
     }
   }
 
+  // No cleanup on this exit by design: the merge/commit already succeeded, so
+  // there is no staged residue — this is a read failure after a complete land.
   const afterMain = await deps.runGit(["rev-parse", "main"]);
   if (afterMain.code !== 0) {
     return {

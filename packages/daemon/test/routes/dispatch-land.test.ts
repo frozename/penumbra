@@ -968,9 +968,10 @@ describe("dispatchLandRoute", () => {
     expect(body.result.commit_sha).toBe("new-main");
   });
 
-  test("returns 409 merge_conflict with conflicted files and aborts merge", async () => {
+  test("returns 409 merge_conflict with conflicted files, resets squash state, and allows a second land", async () => {
     const svc = services();
     seedHandoff(svc, "h-4", "c-4");
+    seedHandoff(svc, "h-4-clean", "c-4-clean");
     writeVerdictEvent(svc, {
       eventId: "v-4",
       ts: "2026-05-08T00:01:00.000Z",
@@ -979,8 +980,58 @@ describe("dispatchLandRoute", () => {
       typecheck: "pass",
       tests: "pass",
     });
+    writeVerdictEvent(svc, {
+      eventId: "v-4-clean",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-4-clean",
+      conversationId: "c-4-clean",
+      typecheck: "pass",
+      tests: "pass",
+    });
 
     const gitCalls: Array<string> = [];
+    let dirtyIndex = false;
+    let revParseCount = 0;
+    const deps = {
+      runGit: async (args: string[]) => {
+        const cmd = args.join(" ");
+        gitCalls.push(cmd);
+        if (cmd === "rev-parse main") {
+          revParseCount += 1;
+          return {
+            code: 0,
+            stdout: revParseCount === 3 ? "main-after-second-land\n" : "main-before\n",
+            stderr: "",
+          };
+        }
+        if (cmd === "checkout main") {
+          if (dirtyIndex)
+            return { code: 1, stdout: "", stderr: "you need to resolve your current index first" };
+          return { code: 0, stdout: "", stderr: "" };
+        }
+        if (cmd === "merge --squash agent/h-4") {
+          dirtyIndex = true;
+          return { code: 1, stdout: "", stderr: "CONFLICT (content)" };
+        }
+        if (cmd === "diff --name-only --diff-filter=U")
+          return { code: 0, stdout: "a.txt\nb.ts\n", stderr: "" };
+        if (cmd === "reset --merge") {
+          dirtyIndex = false;
+          return { code: 0, stdout: "", stderr: "" };
+        }
+        if (cmd === "status --porcelain --untracked-files=no")
+          return { code: 0, stdout: dirtyIndex ? "UU a.txt\n" : "", stderr: "" };
+        if (cmd === "merge --squash agent/h-4-clean") return { code: 0, stdout: "", stderr: "" };
+        if (cmd === "commit -F -") return { code: 0, stdout: "", stderr: "" };
+        return { code: 0, stdout: "", stderr: "" };
+      },
+      gh: {
+        listOpenPullRequestsByHead: async () => [],
+        closePullRequest: async () => {},
+      },
+      now: () => new Date("2026-05-08T00:04:00.000Z"),
+    } as any;
+
     const res = await dispatchLandRoute(
       new Request("http://x/dispatch/land", {
         method: "POST",
@@ -991,17 +1042,85 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
+      deps,
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = (await res.json()) as any;
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe("failed");
+    expect(body.error.code).toBe("merge_conflict");
+    expect(body.error.files).toEqual(["a.txt", "b.ts"]);
+    expect(dirtyIndex).toBe(false);
+    expect(gitCalls.slice(0, 6)).toEqual([
+      "rev-parse main",
+      "checkout main",
+      "merge --squash agent/h-4",
+      "diff --name-only --diff-filter=U",
+      "reset --merge",
+      "status --porcelain --untracked-files=no",
+    ]);
+
+    const retry = await dispatchLandRoute(
+      new Request("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-4-clean",
+          commit_message: "feat: clean retry",
+          mode: "squash",
+          delete_branch: false,
+        }),
+      }),
+      svc,
+      deps,
+    );
+    expect(retry.status).toBe(202);
+    const retryAccepted = (await retry.json()) as any;
+    const retryBody = await waitForLandTask(svc, retryAccepted.task_id);
+    expect(retryBody.status).toBe("done");
+    expect(retryBody.result.commit_sha).toBe("main-after-second-land");
+    expect(gitCalls).not.toContain("merge --abort");
+  });
+
+  test("surfaces squash conflict cleanup failure with manual repair details", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-conflict-cleanup-fails", "c-conflict-cleanup-fails");
+    writeVerdictEvent(svc, {
+      eventId: "v-conflict-cleanup-fails",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-conflict-cleanup-fails",
+      conversationId: "c-conflict-cleanup-fails",
+      typecheck: "pass",
+      tests: "pass",
+    });
+
+    const gitCalls: Array<string> = [];
+    const res = await dispatchLandRoute(
+      new Request("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-conflict-cleanup-fails",
+          commit_message: "feat: conflict cleanup fails",
+          mode: "squash",
+        }),
+      }),
+      svc,
       {
         runGit: async (args: string[]) => {
           const cmd = args.join(" ");
           gitCalls.push(cmd);
           if (cmd === "rev-parse main") return { code: 0, stdout: "main-before\n", stderr: "" };
           if (cmd === "checkout main") return { code: 0, stdout: "", stderr: "" };
-          if (cmd === "merge --squash agent/h-4")
+          if (cmd === "merge --squash agent/h-conflict-cleanup-fails")
             return { code: 1, stdout: "", stderr: "CONFLICT (content)" };
           if (cmd === "diff --name-only --diff-filter=U")
-            return { code: 0, stdout: "a.txt\nb.ts\n", stderr: "" };
-          if (cmd === "merge --abort") return { code: 0, stdout: "", stderr: "" };
+            return { code: 0, stdout: "packages/core/src/index.ts\n", stderr: "" };
+          if (cmd === "reset --merge")
+            return {
+              code: 1,
+              stdout: "",
+              stderr: "Entry 'packages/core/src/index.ts' not uptodate",
+            };
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {
@@ -1015,14 +1134,155 @@ describe("dispatchLandRoute", () => {
     const accepted = (await res.json()) as any;
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("failed");
-    expect(body.error.code).toBe("merge_conflict");
-    expect(body.error.files).toEqual(["a.txt", "b.ts"]);
+    expect(body.error.code).toBe("merge_conflict_cleanup_failed");
+    expect(body.error.files).toEqual(["packages/core/src/index.ts"]);
+    expect(body.error.cleanup_stderr).toContain("not uptodate");
+    expect(body.error.manual_repair).toBe(
+      "run git reset --merge in the target repo before retrying",
+    );
     expect(gitCalls).toEqual([
       "rev-parse main",
       "checkout main",
-      "merge --squash agent/h-4",
+      "merge --squash agent/h-conflict-cleanup-fails",
       "diff --name-only --diff-filter=U",
-      "merge --abort",
+      "reset --merge",
+    ]);
+  });
+
+  test("cleans the squash state when the merge fails without reported conflicts", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-squash-noconflict", "c-squash-noconflict");
+    writeVerdictEvent(svc, {
+      eventId: "v-squash-noconflict",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-squash-noconflict",
+      conversationId: "c-squash-noconflict",
+      typecheck: "pass",
+      tests: "pass",
+    });
+
+    const gitCalls: Array<string> = [];
+    const deps = {
+      runGit: async (args: string[]) => {
+        const cmd = args.join(" ");
+        gitCalls.push(cmd);
+        if (cmd === "rev-parse main") return { code: 0, stdout: "main-before\n", stderr: "" };
+        if (cmd === "merge --squash agent/h-squash-noconflict")
+          return { code: 1, stdout: "", stderr: "fatal: working tree has modifications" };
+        if (cmd === "diff --name-only --diff-filter=U") return { code: 0, stdout: "", stderr: "" };
+        return { code: 0, stdout: "", stderr: "" };
+      },
+      gh: {
+        listOpenPullRequestsByHead: async () => [],
+        closePullRequest: async () => {},
+      },
+      now: () => new Date("2026-05-08T00:06:00.000Z"),
+    } as any;
+
+    const res = await dispatchLandRoute(
+      new Request("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-squash-noconflict",
+          commit_message: "feat: squash fails without conflicts",
+          mode: "squash",
+        }),
+      }),
+      svc,
+      deps,
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = (await res.json()) as any;
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe("failed");
+    expect(body.error.code).toBe("git_failed");
+    expect(body.error.step).toBe("merge_squash");
+    expect(gitCalls).toContain("reset --merge");
+    expect(gitCalls).toContain("status --porcelain --untracked-files=no");
+  });
+
+  test("returns typed hook error and resets staged squash residue when commit hook rejects", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-hook-fails", "c-hook-fails");
+    writeVerdictEvent(svc, {
+      eventId: "v-hook-fails",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-hook-fails",
+      conversationId: "c-hook-fails",
+      typecheck: "pass",
+      tests: "pass",
+    });
+
+    const gitCalls: Array<string> = [];
+    let stagedSquashResidue = false;
+    let revParseCount = 0;
+    const res = await dispatchLandRoute(
+      new Request("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-hook-fails",
+          commit_message: "feat: hook rejected",
+          mode: "squash",
+        }),
+      }),
+      svc,
+      {
+        runGit: async (args: string[]) => {
+          const cmd = args.join(" ");
+          gitCalls.push(cmd);
+          if (cmd === "rev-parse main") {
+            revParseCount += 1;
+            return {
+              code: 0,
+              stdout: revParseCount === 1 ? "main-before\n" : "main-after\n",
+              stderr: "",
+            };
+          }
+          if (cmd === "merge --squash agent/h-hook-fails") {
+            stagedSquashResidue = true;
+            return { code: 0, stdout: "", stderr: "" };
+          }
+          if (cmd === "commit -F -")
+            return {
+              code: 1,
+              stdout: "",
+              stderr: "pre-commit hook failed\nprettier --check packages/core/src/index.ts\n",
+            };
+          if (cmd === "reset --merge") {
+            stagedSquashResidue = false;
+            return { code: 0, stdout: "", stderr: "" };
+          }
+          if (cmd === "status --porcelain --untracked-files=no")
+            return {
+              code: 0,
+              stdout: stagedSquashResidue ? "M  packages/core/src/index.ts\n" : "",
+              stderr: "",
+            };
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: {
+          listOpenPullRequestsByHead: async () => [],
+          closePullRequest: async () => {},
+        },
+      } as any,
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = (await res.json()) as any;
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe("failed");
+    expect(body.error.code).toBe("commit_hook_failed");
+    expect(body.error.step).toBe("commit_squash");
+    expect(body.error.stderr).toContain("pre-commit hook failed");
+    expect(stagedSquashResidue).toBe(false);
+    expect(gitCalls).toEqual([
+      "rev-parse main",
+      "checkout main",
+      "merge --squash agent/h-hook-fails",
+      "commit -F -",
+      "reset --merge",
+      "status --porcelain --untracked-files=no",
     ]);
   });
 
