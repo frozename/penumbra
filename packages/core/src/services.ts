@@ -35,6 +35,7 @@ import type { TaskCooldowns } from "./tasks/cooldowns.js";
 import { MaestroSessionWriter } from "./maestro/writer.js";
 import { TaskWriter } from "./tasks/writer.js";
 import { PlanWriter } from "./plans/writer.js";
+import { NotificationOutboxWriter } from "./writers/notification-outbox.js";
 import {
   createSubscriptionPressureCache,
   type SubscriptionPressureCache,
@@ -261,6 +262,7 @@ export interface Services {
   workflowRuns?: WorkflowRunsRegistry;
   memoryEfficacyRunnerHeartbeatAt?: number;
   notificationEvents?: NotificationEventsBusLike;
+  notificationOutbox: NotificationOutboxWriter;
   workflowRegistry?: WorkflowRegistry;
   taskCooldowns?: TaskCooldowns;
   maestroSessions?: MaestroSessionWriter;
@@ -367,5 +369,6 @@ export function buildServices(opts: BuildServicesOpts): Services {
     workflowRegistry: opts.workflowRegistry,
     workflowRuns: opts.workflowRuns,
     planWriter: new PlanWriter(opts.db, () => clock().getTime()),
+    notificationOutbox: new NotificationOutboxWriter(opts.db),
   };
 }

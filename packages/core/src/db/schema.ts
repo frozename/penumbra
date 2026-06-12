@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 
-export const SCHEMA_VERSION = 31;
+export const SCHEMA_VERSION = 32;
 
 export interface ReleaseT1RollupClaimsOpts {
   terminalOutcomes?: readonly string[];
@@ -1034,12 +1034,35 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
       );
       CREATE INDEX IF NOT EXISTS idx_dream_query_rewrites_t2_memory_id ON dream_query_rewrites(t2_memory_id);
 
+      CREATE TABLE IF NOT EXISTS notification_outbox (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id    TEXT,
+        kind          TEXT NOT NULL,
+        reference_id  TEXT NOT NULL,
+        summary       TEXT,
+        payload_json  TEXT NOT NULL DEFAULT '{}',
+        status        TEXT NOT NULL DEFAULT 'pending',
+        created_at    INTEGER NOT NULL,
+        coalesce_key  TEXT NOT NULL,
+        attempted_at  INTEGER,
+        completed_at  INTEGER,
+        error         TEXT,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        deliver_after INTEGER
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS notification_outbox_kind_ref ON notification_outbox(kind, reference_id);
+      CREATE INDEX IF NOT EXISTS notification_outbox_status_created ON notification_outbox(status, created_at);
+      CREATE INDEX IF NOT EXISTS notification_outbox_coalesce ON notification_outbox(coalesce_key, status, created_at);
+
       CREATE TABLE IF NOT EXISTS curator_cursors (
         name       TEXT PRIMARY KEY,
         value      TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       );
     `);
+
+    addColumnIfMissing(db, "notification_outbox", "attempt_count", "INTEGER NOT NULL DEFAULT 0");
+    addColumnIfMissing(db, "notification_outbox", "deliver_after", "INTEGER");
 
     addColumnIfMissing(db, "dream_research_cache", "is_negative", "INTEGER NOT NULL DEFAULT 0");
     migrateDreamQueryRewritesToModelScopedKeys(db);

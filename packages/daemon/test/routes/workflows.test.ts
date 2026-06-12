@@ -135,6 +135,21 @@ function freshDb() {
       error_bytes INTEGER NOT NULL DEFAULT 0,
       expires_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS notification_outbox (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id TEXT,
+      kind TEXT NOT NULL,
+      reference_id TEXT NOT NULL,
+      summary TEXT,
+      payload_json TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at INTEGER NOT NULL,
+      coalesce_key TEXT NOT NULL,
+      attempted_at INTEGER,
+      completed_at INTEGER,
+      error TEXT,
+      UNIQUE(kind, reference_id)
+    );
   `);
   return db;
 }

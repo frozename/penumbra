@@ -17,6 +17,7 @@
     "./long-lived/prompt-stamper": "./src/long-lived/prompt-stamper.ts",
     "./long-lived/target-extractors": "./src/long-lived/target-extractors.ts",
     "./long-lived/action-gate": "./src/long-lived/action-gate.ts",
+    "./sweepers/notification-sweeper": "./src/sweepers/notification-sweeper.ts",
     "./test-utils": "./test-utils.ts"
   },
   "dependencies": {

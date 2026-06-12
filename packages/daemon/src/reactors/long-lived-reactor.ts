@@ -44,6 +44,26 @@ export interface LongLivedReactorDeps {
       display_name?: string;
     }>;
   }>;
+  dispatchEventLog?: {
+    record(event: {
+      handoff_id: string;
+      worker_id?: string | null;
+      source: "worker" | "daemon";
+      kind: string;
+      ts: string;
+      meta?: Record<string, unknown>;
+    }): void;
+  };
+  notificationOutbox?: {
+    enqueue(input: {
+      project_id: string | null;
+      kind: string;
+      reference_id: string;
+      summary?: string;
+      payload?: Record<string, unknown>;
+      created_at: number;
+    }): void;
+  };
 }
 
 type AgentRecord = {
@@ -209,7 +229,11 @@ export function createLongLivedReactor(deps: LongLivedReactorDeps): LongLivedRea
       sweeperIds.set(
         "__sweeper_pending_expiry__",
         cron.register("0 */1 * * *", () => {
-          runPendingExpiry(deps.db, { now: deps.now() });
+          runPendingExpiry(deps.db, {
+            now: deps.now(),
+            dispatchEventLog: deps.dispatchEventLog,
+            notificationOutbox: deps.notificationOutbox,
+          });
         }),
       );
       sweeperIds.set(

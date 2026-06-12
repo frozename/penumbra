@@ -35,6 +35,7 @@ export const DispatchEventKindSchema = z.enum([
   "shell.session.close",
   "worker.recovery.requeued",
   "worker.recovery.exhausted",
+  "long_lived.action.expired",
 ]);
 export type DispatchEventKind = z.infer<typeof DispatchEventKindSchema>;
 

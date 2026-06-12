@@ -1,11 +1,12 @@
 import { describe, it, expect } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "@penumbra/core";
+import { loadSqliteVec, NotificationOutboxWriter } from "@penumbra/core";
 import { applySchema } from "@penumbra/core/db/schema";
+import { DispatchEventKindSchema } from "@penumbra/api-contract";
 import { reconcileLongLivedAgents } from "@penumbra/daemon/long-lived/reconciler";
 import { runPendingExpiry } from "@penumbra/daemon/long-lived/pending-expiry";
 
-function setup() {
+function setup(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   applySchema(db, { embeddingDim: 384 });
@@ -80,5 +81,145 @@ describe("runPendingExpiry", () => {
       { pending_action_id: "pa-expired", decision: "expired", decided_at: 100 },
     ]);
     expect(parsed.updated_at).toBe(100);
+  });
+
+  it("writes an audit row when expiring a pending action", () => {
+    const db = setup();
+    db.query(
+      `INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES ('tick-1', 'home', 'manual', 100)`,
+    ).run();
+    db.query(
+      `INSERT INTO long_lived_pending_actions (id, agent_id, tick_id, action_kind, action_target, payload_json, status, expires_at, created_at) VALUES ('pa-1', 'home', 'tick-1', 'ha:light.turn_on', 'light.kitchen', '{}', 'pending', 50, 100)`,
+    ).run();
+
+    runPendingExpiry(db, { now: 100 });
+
+    const audit = db
+      .query<
+        { decision: string; reason: string },
+        []
+      >("SELECT decision, reason FROM long_lived_action_audit WHERE pending_action_id='pa-1'")
+      .get();
+    expect(audit).not.toBeNull();
+    expect(audit!.decision).toBe("expired");
+    expect(audit!.reason).toBe("auto_expired_ttl");
+  });
+
+  it("records a dispatch event when expiring a pending action", () => {
+    const db = setup();
+    db.query(
+      `INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES ('tick-1', 'home', 'manual', 100)`,
+    ).run();
+    db.query(
+      `INSERT INTO long_lived_pending_actions (id, agent_id, tick_id, action_kind, action_target, payload_json, status, expires_at, created_at) VALUES ('pa-dispatch', 'home', 'tick-1', 'ha:light.turn_on', 'light.kitchen', '{}', 'pending', 50, 100)`,
+    ).run();
+
+    const dispatchEvents: Array<{
+      handoff_id: string;
+      worker_id: string | null;
+      source: string;
+      kind: string;
+      ts: string;
+      meta: Record<string, unknown>;
+    }> = [];
+    const dispatchEventLog = {
+      record(event: (typeof dispatchEvents)[0]) {
+        dispatchEvents.push(event);
+      },
+    };
+
+    runPendingExpiry(db, { now: 100, dispatchEventLog });
+
+    expect(dispatchEvents.length).toBe(1);
+    expect(dispatchEvents[0].kind).toBe("long_lived.action.expired");
+    expect(dispatchEvents[0].source).toBe("daemon");
+    expect(dispatchEvents[0].meta).toMatchObject({
+      action_id: "pa-dispatch",
+      agent_id: "home",
+      action_kind: "ha:light.turn_on",
+      action_target: "light.kitchen",
+      reason: "auto_expired_ttl",
+    });
+  });
+
+  it("enqueues a notification outbox entry when expiring a pending action", () => {
+    const db = setup();
+    db.query(
+      `INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES ('tick-1', 'home', 'manual', 100)`,
+    ).run();
+    db.query(
+      `INSERT INTO long_lived_pending_actions (id, agent_id, tick_id, action_kind, action_target, payload_json, status, expires_at, created_at) VALUES ('pa-notify', 'home', 'tick-1', 'ha:light.turn_on', 'light.kitchen', '{}', 'pending', 50, 100)`,
+    ).run();
+
+    const outbox = new NotificationOutboxWriter(db);
+
+    runPendingExpiry(db, { now: 100, notificationOutbox: outbox });
+
+    expect(outbox.exists("pending_action_expired", "pa-notify")).toBe(true);
+
+    const row = db
+      .query<
+        { kind: string; summary: string | null },
+        [string]
+      >("SELECT kind, summary FROM notification_outbox WHERE kind='pending_action_expired' AND reference_id='pa-notify'")
+      .get();
+    expect(row).not.toBeNull();
+    expect(row!.kind).toBe("pending_action_expired");
+    expect(row!.summary).toContain("Expired");
+  });
+
+  it("does not record dispatch event or notification when no deps provided (backward compat)", () => {
+    const db = setup();
+    db.query(
+      `INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES ('tick-1', 'home', 'manual', 100)`,
+    ).run();
+    db.query(
+      `INSERT INTO long_lived_pending_actions (id, agent_id, tick_id, action_kind, action_target, payload_json, status, expires_at, created_at) VALUES ('pa-bc', 'home', 'tick-1', 'ha:light.turn_on', 'light.hall', '{}', 'pending', 50, 100)`,
+    ).run();
+
+    const result = runPendingExpiry(db, { now: 100 });
+    expect(result.expired).toBe(1);
+
+    const dispatchRows = db
+      .query("SELECT * FROM dispatch_events WHERE kind='long_lived.action.expired'")
+      .all();
+    expect(dispatchRows.length).toBe(0);
+
+    const outboxRows = db
+      .query("SELECT * FROM notification_outbox WHERE kind='pending_action_expired'")
+      .all();
+    expect(outboxRows.length).toBe(0);
+  });
+
+  it("uses project_id from agent in notification outbox entry", () => {
+    const db = setup();
+    db.prepare(`UPDATE long_lived_agents SET project_id = ? WHERE id = ?`).run(
+      "my-project",
+      "home",
+    );
+    db.query(
+      `INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES ('tick-1', 'home', 'manual', 100)`,
+    ).run();
+    db.query(
+      `INSERT INTO long_lived_pending_actions (id, agent_id, tick_id, action_kind, action_target, payload_json, status, expires_at, created_at) VALUES ('pa-proj', 'home', 'tick-1', 'ha:light.turn_on', 'light.bedroom', '{}', 'pending', 50, 100)`,
+    ).run();
+
+    const outbox = new NotificationOutboxWriter(db);
+    runPendingExpiry(db, { now: 100, notificationOutbox: outbox });
+
+    const row = db
+      .query<
+        { project_id: string | null; coalesce_key: string },
+        [string]
+      >("SELECT project_id, coalesce_key FROM notification_outbox WHERE reference_id='pa-proj'")
+      .get();
+    expect(row).not.toBeNull();
+    expect(row!.project_id).toBe("my-project");
+    expect(row!.coalesce_key).toBe("my-project");
+  });
+
+  it("long_lived.action.expired is in the dispatch event kind whitelist", () => {
+    const kinds = DispatchEventKindSchema.options as string[];
+    expect(kinds).toContain("long_lived.action.expired");
   });
 });

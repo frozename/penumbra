@@ -227,6 +227,7 @@ import { createActionGate } from "./long-lived/action-gate.js";
 import { buildActionGateCallbacks } from "./long-lived/action-gate-callbacks.js";
 import { createPlanRuntimeSweeper } from "./sweepers/plan-runtime.js";
 import { createOrchestrateDeferralSweeper } from "./sweepers/orchestrate-deferral.js";
+import { startNotificationSweeper } from "./sweepers/notification-sweeper.js";
 import { installPrOrphanSweeper } from "./sweepers/pr-orphan-sweeper.js";
 import { loadExtraWorkersConfig, type ExtraWorkerConfig } from "./workers/config.js";
 import { ExtraWorkerSupervisor } from "./workers/supervisor.js";
@@ -1371,6 +1372,8 @@ export function serve(opts: ServeOpts): DaemonHandle {
     bus: getMcpEventBus(),
     now: () => opts.services.clock().getTime(),
     mcpPool,
+    dispatchEventLog: opts.services.dispatchEventLog,
+    notificationOutbox: opts.services.notificationOutbox,
     loadAgentchatYaml: async () => {
       const cfg = opts.services.agentchatConfig;
       return { agents: Array.isArray(cfg?.agents) ? cfg.agents : [] };
@@ -1480,6 +1483,13 @@ export function serve(opts: ServeOpts): DaemonHandle {
     log: opts.services.log,
   });
   refiningStuckRecoverySweeper.start();
+  const stopNotificationSweeper = startNotificationSweeper({
+    db: opts.services.db,
+    outbox: opts.services.notificationOutbox,
+    getEnv: (key: string) => process.env[key],
+    now: () => opts.services.clock().getTime(),
+    log: opts.services.log as any,
+  });
   const stopWorkflowSweeper = (() => {
     const reg = opts.services.workflowRegistry;
     if (!reg) {
@@ -1632,6 +1642,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       orchestrateReactor.stop();
       await longLivedReactor.shutdown();
       stopWorkflowSweeper();
+      stopNotificationSweeper();
       ghTaskSyncSweeper.stop();
       stopDreaming?.();
       stopDigest?.();
