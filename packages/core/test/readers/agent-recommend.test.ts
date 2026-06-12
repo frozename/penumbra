@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { loadSqliteVec, migrate } from "../../src/index.js";
-import { routeAgent, type AgentRecommendation } from "../../src/services/agent-routing.js";
+import {
+  buildSuccessPredicate,
+  routeAgent,
+  type AgentRecommendation,
+} from "../../src/services/agent-routing.js";
 import { AgentPerformanceWriter } from "../../src/writers/agent-performance.js";
 import { AgentRecommendInputSchema } from "../../src/schemas/agent-recommend.js";
 
@@ -315,5 +319,198 @@ describe("agent recommendations", () => {
     expect(out[0]!.agent_name).toBe("beta");
     expect(out[0]!.task_type).toBe("implement_small");
     expect(out[0]!.samples).toBe(2);
+  });
+
+  test("gate outcome success predicate is cutoff-aware and exposes coverage", () => {
+    const writer = new AgentPerformanceWriter(db);
+    db.exec(`
+      INSERT INTO lane_ledger (
+        lane_id, ts_opened, ts_closed, task_class, implementer_handoff, reviewer_handoff, gate_status, metadata_json
+      ) VALUES
+        ('lane-legacy-null', '2026-06-11T09:00:00Z', NULL, 'STANDARD', 'h-legacy-null', NULL, 'open', '{}'),
+        ('lane-post-null', '2026-06-12T09:00:00Z', NULL, 'STANDARD', 'h-post-null', NULL, 'open', '{}'),
+        ('lane-post-skipped', '2026-06-12T09:00:00Z', '2026-06-12T09:05:00Z', 'TRIVIAL', 'h-post-skipped', NULL, 'skipped', '{}'),
+        ('lane-post-failed', '2026-06-12T09:00:00Z', '2026-06-12T09:05:00Z', 'STANDARD', 'h-post-failed', 'h-reviewer', 'failed', '{}');
+    `);
+    for (const row of [
+      {
+        performance_id: "legacy-null",
+        ts: "2026-06-11T10:00:00Z",
+        handoff_id: "h-legacy-null",
+        agent_name: "legacy-null",
+        gate_outcome: null,
+        latency_ms: 40000,
+      },
+      {
+        performance_id: "post-null",
+        ts: "2026-06-12T10:00:00Z",
+        handoff_id: "h-post-null",
+        agent_name: "post-null",
+        gate_outcome: null,
+        latency_ms: 30000,
+      },
+      {
+        performance_id: "post-skipped",
+        ts: "2026-06-12T10:00:00Z",
+        handoff_id: "h-post-skipped",
+        agent_name: "post-skipped",
+        gate_outcome: "skipped",
+        latency_ms: 20000,
+      },
+      {
+        performance_id: "post-failed",
+        ts: "2026-06-12T10:00:00Z",
+        handoff_id: "h-post-failed",
+        agent_name: "post-failed",
+        gate_outcome: "failed",
+        latency_ms: 10000,
+      },
+    ] as const) {
+      writer.upsert({
+        performance_id: row.performance_id,
+        ts: row.ts,
+        handoff_id: row.handoff_id,
+        conversation_id: `c-${row.performance_id}`,
+        project_id: "proj",
+        agent_name: row.agent_name,
+        task_type: "review_adversarial",
+        outcome: "completed_with_output",
+        gate_outcome: row.gate_outcome,
+        rounds: 1,
+        smoke_pass: "n/a",
+        reviewer_findings: 0,
+        maestro_score: null,
+        cost_usd: null,
+        tokens_used: null,
+        latency_ms: row.latency_ms,
+        source: "reconciler",
+        notes: null,
+        metadata_json: "{}",
+      });
+    }
+
+    const out = getRecommendationsViaRoute({
+      db,
+      taskType: "review_adversarial",
+      now: new Date("2026-06-13T12:00:00Z"),
+    });
+
+    expect(out).toHaveLength(4);
+    expect(out.map((row) => row.agent_name)).toEqual([
+      "post-skipped",
+      "legacy-null",
+      "post-failed",
+      "post-null",
+    ]);
+    expect(out.find((row) => row.agent_name === "legacy-null")?.success_rate).toBe(1);
+    expect(out.find((row) => row.agent_name === "post-null")?.success_rate).toBe(0);
+    expect(out.find((row) => row.agent_name === "post-skipped")?.success_rate).toBe(1);
+    expect(out.find((row) => row.agent_name === "post-failed")?.success_rate).toBe(0);
+    expect(out.find((row) => row.agent_name === "legacy-null")?.gate_outcome_coverage).toBe(0);
+    expect(out.find((row) => row.agent_name === "post-skipped")?.gate_outcome_coverage).toBe(1);
+  });
+
+  test("success predicate binds the gate cutover by name", () => {
+    const previousCutover = process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO;
+    process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO = "2026-05-01T00:00:00.000Z";
+    try {
+      const writer = new AgentPerformanceWriter(db);
+      for (const row of [
+        {
+          performance_id: "predicate-legacy-null",
+          ts: "2026-04-30T12:00:00Z",
+          gate_outcome: null,
+        },
+        {
+          performance_id: "predicate-post-null",
+          ts: "2026-05-02T12:00:00Z",
+          gate_outcome: null,
+        },
+      ] as const) {
+        writer.upsert({
+          performance_id: row.performance_id,
+          ts: row.ts,
+          handoff_id: `h-${row.performance_id}`,
+          conversation_id: `c-${row.performance_id}`,
+          project_id: "proj",
+          agent_name: row.performance_id,
+          task_type: "health_check",
+          outcome: "completed_with_output",
+          gate_outcome: row.gate_outcome,
+          rounds: 1,
+          smoke_pass: "n/a",
+          reviewer_findings: 0,
+          maestro_score: null,
+          cost_usd: null,
+          tokens_used: null,
+          latency_ms: 1000,
+          source: "reconciler",
+          notes: null,
+          metadata_json: "{}",
+        });
+      }
+
+      const predicate = buildSuccessPredicate();
+      expect(predicate.sql).toContain("$gateOutcomeCutover");
+      expect(predicate.params).toEqual({
+        $gateOutcomeCutover: "2026-05-01T00:00:00.000Z",
+      });
+
+      const rows = db
+        .query<{ performance_id: string; success: number }, typeof predicate.params>(
+          `SELECT performance_id, CASE WHEN ${predicate.sql} THEN 1 ELSE 0 END AS success
+             FROM agent_performance
+            WHERE performance_id IN ('predicate-legacy-null', 'predicate-post-null')
+            ORDER BY performance_id`,
+        )
+        .all(predicate.params);
+      expect(rows).toEqual([
+        { performance_id: "predicate-legacy-null", success: 1 },
+        { performance_id: "predicate-post-null", success: 0 },
+      ]);
+    } finally {
+      if (previousCutover === undefined) delete process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO;
+      else process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO = previousCutover;
+    }
+  });
+
+  test("gate outcome cutover can be overridden by environment", () => {
+    const previousCutover = process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO;
+    process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO = "2026-05-01T00:00:00.000Z";
+    try {
+      const writer = new AgentPerformanceWriter(db);
+      writer.upsert({
+        performance_id: "override-post-null",
+        ts: "2026-05-12T12:00:00Z",
+        handoff_id: "h-override-post-null",
+        conversation_id: "c-override-post-null",
+        project_id: "proj",
+        agent_name: "override-post-null",
+        task_type: "health_check",
+        outcome: "completed_with_output",
+        gate_outcome: null,
+        rounds: 1,
+        smoke_pass: "n/a",
+        reviewer_findings: 0,
+        maestro_score: null,
+        cost_usd: null,
+        tokens_used: null,
+        latency_ms: 1000,
+        source: "reconciler",
+        notes: null,
+        metadata_json: "{}",
+      });
+
+      const out = getRecommendationsViaRoute({
+        db,
+        taskType: "health_check",
+        now: new Date("2026-05-12T13:00:00Z"),
+      });
+
+      expect(out[0]?.success_rate).toBe(0);
+    } finally {
+      if (previousCutover === undefined) delete process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO;
+      else process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO = previousCutover;
+    }
   });
 });

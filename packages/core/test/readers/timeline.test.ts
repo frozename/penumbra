@@ -78,12 +78,13 @@ describe("timeline (chronological neighbors)", () => {
 
   test("surfaces freshness metadata on timeline entries", () => {
     const db = freshDb();
-    const now = new Date("2026-05-12T12:00:00.000Z");
-    const freshCreatedAt = new Date(now.getTime() - 2 * 86_400_000).toISOString();
+    const now = new Date();
+    const anchorCreatedAt = new Date(now.getTime() - 1 * 86_400_000).toISOString();
+    const freshCreatedAt = new Date(now.getTime() - 12 * 60 * 60 * 1000).toISOString();
     const staleCreatedAt = new Date(now.getTime() - 200 * 86_400_000).toISOString();
 
     insertT2WithVerifiedAt(db, "fresh", freshCreatedAt, freshCreatedAt);
-    insertT2(db, "anchor", "2026-05-10T00:00:00.000Z");
+    insertT2(db, "anchor", anchorCreatedAt);
     insertT2WithVerifiedAt(db, "stale", staleCreatedAt, null);
 
     const out = timeline(db, { anchor: "anchor", depth_before: 1, depth_after: 1 });

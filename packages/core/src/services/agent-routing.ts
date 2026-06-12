@@ -48,6 +48,7 @@ export type AgentRecommendation = {
   task_type: string;
   samples: number;
   success_rate: number;
+  gate_outcome_coverage: number;
   avg_latency_seconds: number | null;
   last_observed_at: string;
 };
@@ -95,6 +96,7 @@ interface PerformanceRow {
   framework_overhead_ms: number | null;
   ts: string;
   agent_kind: string | null;
+  gate_outcome: string | null;
   trust_score: number | null;
 }
 
@@ -120,7 +122,49 @@ interface CandidateSummary {
   _maestro_score: number;
 }
 
-const SUCCESS_PREDICATE = `outcome IN ('merged','pr_opened','merged_with_concerns','completed_with_output') AND (gate_outcome IS NULL OR gate_outcome = 'passed')`;
+export const DEFAULT_GATE_OUTCOME_CUTOVER_ISO = "2026-06-12T00:00:00.000Z";
+
+export function resolveGateOutcomeCutoverIso(): string {
+  const raw = process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO;
+  if (raw === undefined || raw.trim() === "") return DEFAULT_GATE_OUTCOME_CUTOVER_ISO;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return DEFAULT_GATE_OUTCOME_CUTOVER_ISO;
+  return parsed.toISOString();
+}
+
+// Single source for success eligibility. The SQL predicate
+// (buildSuccessPredicate) and the in-memory checks (isSuccessOutcome,
+// rowPassesGateOutcome) all derive from these arrays — change them here, never
+// inline, or the two scoring paths diverge.
+export const SUCCESS_OUTCOME_VALUES = [
+  "merged",
+  "pr_opened",
+  "merged_with_concerns",
+  "completed_with_output",
+] as const;
+export const GATE_OUTCOME_PASS_VALUES = ["passed", "skipped"] as const;
+
+function sqlInList(values: readonly string[]): string {
+  return values.map((v) => `'${v}'`).join(",");
+}
+
+// After auto-lane enforcement, NULL means the lane never produced a terminal
+// gate verdict. `skipped` remains success-eligible because trivial/read-only
+// work records a conscious "gate not run" decision instead of review debt.
+// Trust boundary: the skipped-implies-TRIVIAL invariant is enforced at the
+// gate layer (lanes routes: class-mismatch rejection, lane dedupe, and
+// terminal-verdict protection), not here — scoring trusts gate_outcome as
+// recorded. A lane deliberately closed skipped via override earns success
+// credit; that is an audited operator decision visible in lane_ledger.
+export function buildSuccessPredicate(): {
+  sql: string;
+  params: { $gateOutcomeCutover: string };
+} {
+  return {
+    sql: `outcome IN (${sqlInList(SUCCESS_OUTCOME_VALUES)}) AND (gate_outcome IN (${sqlInList(GATE_OUTCOME_PASS_VALUES)}) OR (ts < $gateOutcomeCutover AND gate_outcome IS NULL))`,
+    params: { $gateOutcomeCutover: resolveGateOutcomeCutoverIso() },
+  };
+}
 
 function clamp01(value: number): number {
   if (value < 0) return 0;
@@ -155,8 +199,20 @@ function winsorizedMean(values: number[]): number | null {
   return total / n;
 }
 
-function outcomeValue(outcome: string): number {
-  switch (outcome) {
+function isSuccessOutcome(outcome: string): boolean {
+  return (SUCCESS_OUTCOME_VALUES as readonly string[]).includes(outcome);
+}
+
+// In-memory mirror of the gate clause in buildSuccessPredicate — both derive
+// from GATE_OUTCOME_PASS_VALUES; keep them in lockstep.
+function rowPassesGateOutcome(row: PerformanceRow, gateOutcomeCutover: string): boolean {
+  if (row.gate_outcome == null) return row.ts < gateOutcomeCutover;
+  return (GATE_OUTCOME_PASS_VALUES as readonly string[]).includes(row.gate_outcome);
+}
+
+function outcomeValue(row: PerformanceRow, gateOutcomeCutover: string): number {
+  if (isSuccessOutcome(row.outcome) && !rowPassesGateOutcome(row, gateOutcomeCutover)) return 0;
+  switch (row.outcome) {
     case "merged":
     case "pr_opened":
     case "completed_with_output":
@@ -180,13 +236,16 @@ function outcomeValue(outcome: string): number {
   }
 }
 
-function outcomeBucket(outcome: string): "success" | "failure" | "neutral" {
-  switch (outcome) {
+function outcomeBucket(
+  row: PerformanceRow,
+  gateOutcomeCutover: string,
+): "success" | "failure" | "neutral" {
+  switch (row.outcome) {
     case "merged":
     case "pr_opened":
     case "merged_with_concerns":
     case "completed_with_output":
-      return "success";
+      return rowPassesGateOutcome(row, gateOutcomeCutover) ? "success" : "failure";
     case "partial":
     case "rejected":
     case "failed":
@@ -210,7 +269,11 @@ function smokeValue(smoke: string | null): number {
   return 0.5;
 }
 
-function summarizeAgent(agentName: string, rows: PerformanceRow[]): CandidateSummary {
+function summarizeAgent(
+  agentName: string,
+  rows: PerformanceRow[],
+  gateOutcomeCutover: string,
+): CandidateSummary {
   let successes = 0;
   let failures = 0;
   let neutral = 0;
@@ -235,12 +298,12 @@ function summarizeAgent(agentName: string, rows: PerformanceRow[]): CandidateSum
 
   for (const row of rows) {
     if (row.ts > lastOutcomeAt) lastOutcomeAt = row.ts;
-    const outcomeBucketValue = outcomeBucket(row.outcome);
+    const outcomeBucketValue = outcomeBucket(row, gateOutcomeCutover);
     if (outcomeBucketValue === "success") successes++;
     else if (outcomeBucketValue === "neutral") neutral++;
     else failures++;
 
-    outcomeScoreSum += outcomeValue(row.outcome);
+    outcomeScoreSum += outcomeValue(row, gateOutcomeCutover);
 
     if (outcomeBucketValue === "success" && row.cost_usd != null) {
       successCostSum += row.cost_usd;
@@ -431,7 +494,7 @@ function queryRows(
 ): PerformanceRow[] {
   const rows = db
     .query<PerformanceRow, [string, string]>(
-      `SELECT agent_name, task_type, outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, latency_ms, exec_ms, framework_overhead_ms, ts, agent_kind, trust_score
+      `SELECT agent_name, task_type, outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, latency_ms, exec_ms, framework_overhead_ms, ts, agent_kind, gate_outcome, trust_score
      FROM agent_performance
      WHERE task_type = ? AND COALESCE(agent_kind, '${DEFAULT_AGENT_KIND}') = ?
      ORDER BY ts DESC`,
@@ -453,9 +516,10 @@ function buildRank(
   const rows = queryRows(db, taskType, agentKind, allowedAgents).filter((row) =>
     input.since ? row.ts >= new Date(input.since).toISOString() : true,
   );
+  const gateOutcomeCutover = resolveGateOutcomeCutoverIso();
   const visibleRows = input.includeNeutral
     ? rows
-    : rows.filter((row) => outcomeBucket(row.outcome) !== "neutral");
+    : rows.filter((row) => outcomeBucket(row, gateOutcomeCutover) !== "neutral");
   const byAgent = new Map<string, PerformanceRow[]>();
   for (const row of visibleRows) {
     const list = byAgent.get(row.agent_name) ?? [];
@@ -463,7 +527,7 @@ function buildRank(
     byAgent.set(row.agent_name, list);
   }
   const summaries = Array.from(byAgent.entries())
-    .map(([agentName, agentRows]) => summarizeAgent(agentName, agentRows))
+    .map(([agentName, agentRows]) => summarizeAgent(agentName, agentRows, gateOutcomeCutover))
     .filter((c) => c.samples >= (input.minSamples ?? 1));
   const costs = input.includeCost
     ? summaries.map((s) => s.cost_per_success_usd).filter((v): v is number => v != null)
@@ -547,6 +611,7 @@ function buildRecommendations(
   const windowDays = input.windowDays ?? 7;
   const now = input.now ?? new Date();
   const cutoff = new Date(now.getTime() - windowDays * 24 * 60 * 60 * 1000).toISOString();
+  const successPredicate = buildSuccessPredicate();
   const agentKind = input.agentKind ?? DEFAULT_AGENT_KIND;
   // riskClass is accepted on the input shape for forward-compat; not yet consumed by ranking.
   void input.riskClass;
@@ -557,18 +622,29 @@ function buildRecommendations(
         task_type: string;
         samples: number;
         successes: number;
+        gate_outcome_count: number;
         avg_latency_ms: number | null;
         last_observed_at: string;
       },
-      [string, string, string]
+      {
+        $taskType: string;
+        $cutoff: string;
+        $agentKind: string;
+        $gateOutcomeCutover: string;
+      }
     >(
-      `SELECT agent_name, task_type, COUNT(*) AS samples, SUM(CASE WHEN ${SUCCESS_PREDICATE} THEN 1 ELSE 0 END) AS successes, AVG(latency_ms) AS avg_latency_ms, MAX(ts) AS last_observed_at
+      `SELECT agent_name, task_type, COUNT(*) AS samples, SUM(CASE WHEN ${successPredicate.sql} THEN 1 ELSE 0 END) AS successes, SUM(CASE WHEN gate_outcome IS NOT NULL THEN 1 ELSE 0 END) AS gate_outcome_count, AVG(latency_ms) AS avg_latency_ms, MAX(ts) AS last_observed_at
      FROM agent_performance
-     WHERE task_type = ? AND ts >= ? AND COALESCE(agent_kind, '${DEFAULT_AGENT_KIND}') = ?
+     WHERE task_type = $taskType AND ts >= $cutoff AND COALESCE(agent_kind, '${DEFAULT_AGENT_KIND}') = $agentKind
      GROUP BY agent_name
-     ORDER BY (CAST(SUM(CASE WHEN ${SUCCESS_PREDICATE} THEN 1 ELSE 0 END) AS REAL) / COUNT(*)) DESC, (AVG(latency_ms) IS NULL) ASC, AVG(latency_ms) ASC`,
+     ORDER BY (CAST(SUM(CASE WHEN ${successPredicate.sql} THEN 1 ELSE 0 END) AS REAL) / COUNT(*)) DESC, (AVG(latency_ms) IS NULL) ASC, AVG(latency_ms) ASC`,
     )
-    .all(taskType, cutoff, agentKind);
+    .all({
+      $taskType: taskType,
+      $cutoff: cutoff,
+      $agentKind: agentKind,
+      ...successPredicate.params,
+    });
   const filtered =
     allowedAgents == null ? rows : rows.filter((row) => allowedAgents.includes(row.agent_name));
   return filtered.map((r) => ({
@@ -576,6 +652,7 @@ function buildRecommendations(
     task_type: r.task_type,
     samples: r.samples,
     success_rate: r.samples > 0 ? r.successes / r.samples : 0,
+    gate_outcome_coverage: r.samples > 0 ? r.gate_outcome_count / r.samples : 0,
     avg_latency_seconds: r.avg_latency_ms != null ? r.avg_latency_ms / 1000 : null,
     last_observed_at: r.last_observed_at,
   }));

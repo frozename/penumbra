@@ -147,6 +147,71 @@ describe("routeAgent rank mode", () => {
     expect(candidate!.score).toBeGreaterThan(0.5);
   });
 
+  it("applies the gate outcome cutover when summarizing rank candidates", () => {
+    const isolatedDb = new Database(":memory:");
+    loadSqliteVec(isolatedDb);
+    migrate(isolatedDb, { embeddingDim: 384 });
+    const writer = new AgentPerformanceWriter(isolatedDb);
+    writer.upsert({
+      performance_id: "p-post-null-gate",
+      ts: "2026-06-12T10:00:00.000Z",
+      handoff_id: "h-post-null-gate",
+      conversation_id: "c-post-null-gate",
+      project_id: "proj",
+      agent_name: "post-null-gate",
+      task_type: "review_adversarial",
+      outcome: "completed_with_output",
+      gate_outcome: null,
+      rounds: 1,
+      smoke_pass: "n/a",
+      reviewer_findings: 0,
+      maestro_score: 5,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: 10_000,
+      source: "reconciler",
+      notes: null,
+      metadata_json: "{}",
+    });
+    writer.upsert({
+      performance_id: "p-post-passed-gate",
+      ts: "2026-06-12T10:05:00.000Z",
+      handoff_id: "h-post-passed-gate",
+      conversation_id: "c-post-passed-gate",
+      project_id: "proj",
+      agent_name: "post-passed-gate",
+      task_type: "review_adversarial",
+      outcome: "completed_with_output",
+      gate_outcome: "passed",
+      rounds: 1,
+      smoke_pass: "n/a",
+      reviewer_findings: 0,
+      maestro_score: 5,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: 20_000,
+      source: "reconciler",
+      notes: null,
+      metadata_json: "{}",
+    });
+
+    const out = rankAgentsViaRoute({
+      db: isolatedDb,
+      taskType: "review_adversarial",
+      minSamples: 1,
+      includeNeutral: false,
+      now: new Date("2026-06-13T12:00:00.000Z"),
+    });
+
+    expect(out.candidates.map((c) => c.agent_name)).toEqual(["post-passed-gate", "post-null-gate"]);
+    expect(out.candidates.find((c) => c.agent_name === "post-passed-gate")?.successes).toBe(1);
+    expect(out.candidates.find((c) => c.agent_name === "post-null-gate")?.successes).toBe(0);
+    expect(out.candidates.find((c) => c.agent_name === "post-null-gate")?.failures).toBe(1);
+    expect(out.candidates.find((c) => c.agent_name === "post-passed-gate")!.score).toBeGreaterThan(
+      out.candidates.find((c) => c.agent_name === "post-null-gate")!.score,
+    );
+  });
+
   it("keeps historic manual_seed rows in the default rank window", () => {
     const isolatedDb = new Database(":memory:");
     loadSqliteVec(isolatedDb);
