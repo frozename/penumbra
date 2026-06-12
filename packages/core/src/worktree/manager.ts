@@ -8,8 +8,10 @@ const execFile = promisify(execFileCb);
 const NOOP_LOG = createLogger({ component: "worktree-manager", level: "silent" });
 const UUID_DIR_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const WORKTREE_MODE_FILE = ".test-storage/worktree-mode";
+const WORKTREE_READY_FILE = ".test-storage/worktree-ready";
 const DEFAULT_ISOLATED_INSTALL_TIMEOUT_MS = 120_000;
 const ISOLATED_INSTALL_MAX_BUFFER = 1024 * 1024 * 10;
+const UNREADY_WORKTREE_ORPHAN_GRACE_MS = 15 * 60_000;
 // Stderr kept for error context only; cap it so a chatty child cannot balloon memory.
 const SPAWN_STDERR_CAP = 16 * 1024;
 
@@ -41,6 +43,12 @@ export interface WorktreeHandle {
   worktreeMode: WorktreeMode;
 }
 
+export interface OrphanWorktreeHandle {
+  path: string;
+  handoffId: string;
+  state?: "not_ready";
+}
+
 export interface CreateOpts {
   baseRef?: string;
   project_id?: string;
@@ -64,7 +72,7 @@ function defaultRunner(
   opts?: WorktreeCommandRunnerOptions,
 ): Promise<{ stdout: string; stderr: string }> {
   if (opts?.stdio === "ignore") {
-    return spawnIgnored(cmd, args, opts);
+    return spawnSilent(cmd, args, opts);
   }
   return execFile(cmd, args, { ...opts, encoding: opts?.encoding ?? "utf8" }) as Promise<{
     stdout: string;
@@ -72,7 +80,7 @@ function defaultRunner(
   }>;
 }
 
-function spawnIgnored(
+function spawnSilent(
   cmd: string,
   args: string[],
   opts: WorktreeCommandRunnerOptions,
@@ -86,8 +94,9 @@ function spawnIgnored(
     let settled = false;
     let timedOut = false;
     let stderrText = "";
+    const stderrCap = opts.maxBuffer ?? SPAWN_STDERR_CAP;
     child.stderr?.on("data", (chunk: Buffer | string) => {
-      if (stderrText.length < SPAWN_STDERR_CAP) stderrText += String(chunk);
+      if (stderrText.length < stderrCap) stderrText += String(chunk);
     });
     // On timeout the child is killed but the rejection waits for the exit
     // event: rejecting early would let the caller tear the worktree down
@@ -100,7 +109,7 @@ function spawnIgnored(
             child.kill("SIGKILL");
           }, opts.timeout)
         : null;
-    const finish = (fn: () => void) => {
+    const settle = (fn: () => void) => {
       if (settled) return;
       settled = true;
       if (timeout) clearTimeout(timeout);
@@ -108,9 +117,9 @@ function spawnIgnored(
     };
     // An external AbortSignal surfaces here as an unwrapped ABORT_ERR — it
     // must stay distinguishable from a timeout for the caller's retry logic.
-    child.on("error", (err) => finish(() => reject(err)));
+    child.on("error", (err) => settle(() => reject(err)));
     child.on("exit", (code, signal) =>
-      finish(() => {
+      settle(() => {
         const detail = stderrText.trim();
         if (timedOut) {
           const err = new Error(
@@ -205,6 +214,7 @@ export class WorktreeManager {
             const branchName = `agent/${handoffId}`;
             const storageRoot = path.join(wtPath, ".test-storage");
             const worktreeMode = inferWorktreeMode(wtPath);
+            if (!isWorktreeReady(wtPath, worktreeMode)) continue;
 
             let createdAt = new Date().toISOString();
             try {
@@ -258,6 +268,7 @@ export class WorktreeManager {
     const worktreeMode: WorktreeMode = opts?.isolated_install
       ? "isolated_install"
       : "symlink_mirror";
+    let cleanedUpPartialWorktree = false;
 
     try {
       // 1. Add detached worktree
@@ -289,11 +300,19 @@ export class WorktreeManager {
       writeWorktreeMode(wtPath, worktreeMode);
 
       if (worktreeMode === "isolated_install") {
-        await this.runIsolatedInstall(wtPath, opts?.signal);
+        try {
+          await this.runIsolatedInstall(wtPath, opts?.signal);
+        } catch (err) {
+          await this.removePartialWorktree(wtPath, repoRoot);
+          cleanedUpPartialWorktree = true;
+          throw err;
+        }
+        writeWorktreeReady(wtPath);
       } else {
         // Bun workspaces create root and per-package node_modules. Mirroring
         // all of them keeps the default fast path byte-for-byte compatible.
         mirrorNodeModuleSymlinks(repoRoot, wtPath, this.log);
+        writeWorktreeReady(wtPath);
       }
 
       const handle: WorktreeHandle = {
@@ -310,17 +329,30 @@ export class WorktreeManager {
       this.worktrees.set(handoffId, handle);
       return handle;
     } catch (err) {
-      // Clean up partially created worktree on failure
-      if (fs.existsSync(wtPath)) {
-        try {
-          await this.git(["worktree", "remove", "--force", wtPath], {
-            cwd: repoRoot,
-          });
-        } catch (cleanupErr) {
-          // Ignore cleanup errors
-        }
-      }
+      if (!cleanedUpPartialWorktree) await this.removePartialWorktree(wtPath, repoRoot);
       throw err;
+    }
+  }
+
+  private async removePartialWorktree(wtPath: string, repoRoot: string): Promise<void> {
+    if (!fs.existsSync(wtPath)) return;
+    try {
+      await this.git(["worktree", "remove", "--force", wtPath], {
+        cwd: repoRoot,
+      });
+    } catch {
+      // Directory may not be registered as a git worktree yet.
+    }
+    try {
+      await fs.promises.rm(wtPath, { recursive: true, force: true });
+    } catch (err) {
+      // Best-effort: a deletion failure (EBUSY etc.) must never mask the
+      // original install error the caller is about to rethrow; the unready
+      // directory is reaped later by the grace-period GC.
+      this.log.warn(
+        { err: err instanceof Error ? err.message : String(err), wtPath },
+        "partial worktree cleanup failed",
+      );
     }
   }
 
@@ -412,6 +444,8 @@ export class WorktreeManager {
     const base = this.baseFor(project_id);
     const wtPath = path.join(base, handoffId);
     if (!fs.existsSync(path.join(wtPath, ".git"))) return null;
+    const worktreeMode = inferWorktreeMode(wtPath);
+    if (!isWorktreeReady(wtPath, worktreeMode)) return null;
     const branchName = `agent/${handoffId}`;
     const storageRoot = path.join(wtPath, ".test-storage");
     let createdAt = new Date().toISOString();
@@ -428,7 +462,7 @@ export class WorktreeManager {
       createdAt,
       status: "created",
       projectId: project_id,
-      worktreeMode: inferWorktreeMode(wtPath),
+      worktreeMode,
     };
     this.worktrees.set(handoffId, handle);
     return handle;
@@ -438,8 +472,8 @@ export class WorktreeManager {
     return Array.from(this.worktrees.values());
   }
 
-  discoverOrphanWorktrees(): Array<{ path: string; handoffId: string }> {
-    const orphans: Array<{ path: string; handoffId: string }> = [];
+  discoverOrphanWorktrees(): OrphanWorktreeHandle[] {
+    const orphans: OrphanWorktreeHandle[] = [];
     for (const base of this.discoveryBases()) {
       if (!fs.existsSync(base)) continue;
 
@@ -452,6 +486,13 @@ export class WorktreeManager {
 
         const wtPath = path.join(base, handoffId);
         if (!fs.existsSync(path.join(wtPath, ".git"))) continue;
+        const worktreeMode = inferWorktreeMode(wtPath);
+        if (!isWorktreeReady(wtPath, worktreeMode)) {
+          if (isUnreadyWorktreePastGrace(wtPath)) {
+            orphans.push({ path: wtPath, handoffId, state: "not_ready" });
+          }
+          continue;
+        }
         orphans.push({ path: wtPath, handoffId });
       }
     }
@@ -515,6 +556,7 @@ export class WorktreeManager {
       }
       fs.rmSync(path.join(handle.path, ".penumbra-worktree-mode"), { force: true });
       fs.rmSync(path.join(handle.path, WORKTREE_MODE_FILE), { force: true });
+      fs.rmSync(path.join(handle.path, WORKTREE_READY_FILE), { force: true });
     }
     // Remove every node_modules symlink we mirrored in (top-level + per-package).
     // .gitignore's `node_modules/` rule matches directories but not symlinks, so without
@@ -577,6 +619,11 @@ function writeWorktreeMode(wtRoot: string, mode: WorktreeMode): void {
   fs.writeFileSync(path.join(wtRoot, WORKTREE_MODE_FILE), `${mode}\n`);
 }
 
+function writeWorktreeReady(wtRoot: string): void {
+  fs.mkdirSync(path.dirname(path.join(wtRoot, WORKTREE_READY_FILE)), { recursive: true });
+  fs.writeFileSync(path.join(wtRoot, WORKTREE_READY_FILE), "ready\n");
+}
+
 function inferWorktreeMode(wtRoot: string): WorktreeMode {
   const marker = path.join(wtRoot, WORKTREE_MODE_FILE);
   try {
@@ -593,6 +640,33 @@ function inferWorktreeMode(wtRoot: string): WorktreeMode {
   return "symlink_mirror";
 }
 
+// Deliberately asymmetric: symlink_mirror needs no sentinel because
+// re-mirroring on rediscovery is idempotent and self-heals a crash
+// mid-setup, and demanding one would orphan every worktree created before
+// the sentinel existed. Isolated installs cannot self-heal, hence the marker.
+function isWorktreeReady(wtRoot: string, mode: WorktreeMode): boolean {
+  if (mode === "symlink_mirror") return true;
+  return fs.existsSync(path.join(wtRoot, WORKTREE_READY_FILE));
+}
+
+// An unready worktree may still be mid-install: the reap grace must always
+// exceed the configured install timeout, whatever it is tuned to.
+function unreadyWorktreeGraceMs(): number {
+  const installTimeoutMs = readPositiveIntEnv(
+    "PENUMBRA_ISOLATED_INSTALL_TIMEOUT_MS",
+    DEFAULT_ISOLATED_INSTALL_TIMEOUT_MS,
+  );
+  return Math.max(UNREADY_WORKTREE_ORPHAN_GRACE_MS, installTimeoutMs + 5 * 60_000);
+}
+
+function isUnreadyWorktreePastGrace(wtRoot: string): boolean {
+  try {
+    return Date.now() - fs.statSync(wtRoot).mtimeMs > unreadyWorktreeGraceMs();
+  } catch {
+    return false;
+  }
+}
+
 function readPositiveIntEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined) return fallback;
@@ -600,7 +674,7 @@ function readPositiveIntEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-// Only the explicit ETIMEDOUT set by spawnIgnored's self-timeout counts: an
+// Only the explicit ETIMEDOUT set by spawnSilent's self-timeout counts: an
 // external AbortSignal also kills via signal, and matching on signals or
 // message text would misreport a deliberate cancellation as a timeout.
 function isTimeoutError(err: unknown): boolean {

@@ -274,9 +274,9 @@ test("applyWorktreeOverride forwards branch_base to createWorktree", async () =>
   }
 });
 
-test("applyWorktreeOverride forwards isolated_install to createWorktree and returns worktreeMode", async () => {
+test("applyWorktreeOverride forwards isolated_install to createWorktree", async () => {
   const wtm = makeMockWorktreeManager();
-  const { handle, worktreeMode } = await applyWorktreeOverride(
+  const { handle } = await applyWorktreeOverride(
     {
       handoff_id: "h-isolated",
       to_agent: "gemini",
@@ -291,7 +291,6 @@ test("applyWorktreeOverride forwards isolated_install to createWorktree and retu
 
   expect(handle).not.toBeNull();
   expect(handle?.worktreeMode).toBe("isolated_install");
-  expect(worktreeMode).toBe("isolated_install");
 });
 
 test("applyWorktreeOverride forwards abort signal to worktree creation", async () => {
@@ -331,11 +330,10 @@ test("applyWorktreeOverride forwards abort signal to worktree creation", async (
   expect(observedSignal).toBe(abort.signal);
 });
 
-test("applyWorktreeOverride emits dispatch.worktree_setup timing with mode", async () => {
+test("applyWorktreeOverride leaves dispatch event emission to the worker layer", async () => {
   const wtm = makeMockWorktreeManager();
-  const events: any[] = [];
 
-  await applyWorktreeOverride(
+  const result = await applyWorktreeOverride(
     {
       handoff_id: "h-setup-event",
       conversation_id: "conv-setup-event",
@@ -348,24 +346,14 @@ test("applyWorktreeOverride emits dispatch.worktree_setup timing with mode", asy
     "/storage",
     wtm,
     mainRepoPath,
-    {
-      workerId: "worker-1",
-      onEvent: (event) => events.push(event),
-    },
+    {},
   );
 
-  expect(events).toContainEqual(
-    expect.objectContaining({
-      handoff_id: "h-setup-event",
-      worker_id: "worker-1",
-      source: "worker",
-      kind: "dispatch.worktree_setup",
-      meta: expect.objectContaining({
-        worktree_mode: "isolated_install",
-        duration_ms: expect.any(Number),
-      }),
-    }),
-  );
+  // The slimmed WorktreeSetupContext carries no event channel at all — event
+  // emission is structurally the worker layer's job. Assert the result shape
+  // has no event side channel either.
+  expect(Object.keys(result)).toEqual(["overrideConfig", "handle", "worktreePromptRewrite"]);
+  expect(result.handle).toBeTruthy();
 });
 
 test("rewriteWorktreeHandoffMessage rewrites main-repo paths and adds isolation guard", () => {

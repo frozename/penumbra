@@ -114,6 +114,40 @@ test("POST /handoffs creates a pending handoff and returns the id", async () => 
   expect(row?.status).toBe("pending");
 });
 
+test("POST /handoffs persists isolated_install", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+
+  const res = await handoffsCreateRoute(
+    new Request("http://x/handoffs", {
+      method: "POST",
+      body: JSON.stringify({
+        from: "claude",
+        to: "gemini",
+        message: "go",
+        conversation_id: "conv-isolated",
+        project_id: null,
+        triggered_by_event_id: "evt-source-isolated",
+        use_worktree: true,
+        isolated_install: true,
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await res.json();
+
+  const row = db
+    .query<
+      { use_worktree: number | null; isolated_install: number | null },
+      [string]
+    >("SELECT use_worktree, isolated_install FROM handoffs WHERE handoff_id=?")
+    .get(body.handoff_id);
+  expect(row).toEqual({ use_worktree: 1, isolated_install: 1 });
+});
+
 test("POST /handoffs routes role targets through the ledger", async () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);

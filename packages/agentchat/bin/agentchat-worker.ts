@@ -97,6 +97,7 @@ import {
 } from "@penumbra/core";
 import { resolveDispatchCwd } from "../src/worker/project-cwd.js";
 import { createWorkerWorktreeManager } from "../src/worker/worktree-manager.js";
+import { buildWorktreeReadyEvent } from "../src/worker/worktree-ready-event.js";
 
 function flag(name: string, fallback?: string): string | undefined {
   const long = `--${name}`;
@@ -1266,14 +1267,25 @@ const dispatcher = createWorkerDispatcher({
     let executor: WriteToolsExecutor | null = null;
     let dispatchedHandoff = handoff;
     try {
+      const worktreeSetupStart = Date.now();
       const result = await applyWorktreeOverride(
         handoff,
         scopedConfig,
         storageRoot,
         worktreeManager,
         process.cwd(),
-        { workerId, onEvent, signal },
+        { signal },
       );
+      if (result.handle) {
+        onEvent(
+          buildWorktreeReadyEvent({
+            handoffId: String(handoff.handoff_id),
+            workerId,
+            worktreeMode: result.handle.worktreeMode,
+            durationMs: Date.now() - worktreeSetupStart,
+          }),
+        );
+      }
       overrideConfig = applyOrchestrateToolsToConfig(
         result.overrideConfig,
         handoff.to_agent,

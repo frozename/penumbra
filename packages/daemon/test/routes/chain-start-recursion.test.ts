@@ -171,3 +171,47 @@ test("chain.start persists parent_handoff_id when provided", async () => {
     .get(body.handoff_id);
   expect(handoff.parent_handoff_id).toBe(parentLeaf);
 });
+
+test("chain.start inherits isolated_install from an isolated parent when child omits it", async () => {
+  const services = tempServices();
+  services.handoffWriter.createApproved({
+    handoff_id: "h-parent-isolated",
+    ts: "2026-04-27T00:00:00Z",
+    project_id: null,
+    conversation_id: "conv-parent-isolated",
+    from: "user",
+    to: "planner",
+    to_role: null,
+    message: "parent",
+    triggered_by_event_id: null,
+    resolved_by: "test",
+    resolved_at: null,
+    chain_max_hops: null,
+    chain_trust_mode: null,
+    chain_task_type: null,
+    use_worktree: true,
+    isolated_install: true,
+    parent_handoff_id: null,
+  });
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "planner",
+        message: "child",
+        parent_handoff_id: "h-parent-isolated",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  const handoff = services.db
+    .query<
+      { isolated_install: number | null },
+      [string]
+    >(`SELECT isolated_install FROM handoffs WHERE handoff_id=?`)
+    .get(body.handoff_id);
+  expect(handoff?.isolated_install).toBe(1);
+});

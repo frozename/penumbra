@@ -212,6 +212,22 @@ describe("WorktreeManager — project parameterization", () => {
     await manager.teardownWorktree(trackedId, true);
   });
 
+  it("discovers stale unready uuid-named git worktrees for cleanup", () => {
+    const orphanId = "44444444-4444-4444-8444-444444444444";
+    const orphanPath = path.join(homeRoot, orphanId);
+    fs.mkdirSync(path.join(orphanPath, ".test-storage"), { recursive: true });
+    fs.writeFileSync(path.join(orphanPath, ".git"), "gitdir: /tmp/unready-orphan.git\n");
+    fs.writeFileSync(path.join(orphanPath, ".test-storage", "worktree-mode"), "isolated_install\n");
+    const stale = new Date(Date.now() - 16 * 60_000);
+    fs.utimesSync(orphanPath, stale, stale);
+
+    const manager = new WorktreeManager({ rootDir: homeRoot, mainRepoDir: homeRepo });
+
+    expect(manager.discoverOrphanWorktrees()).toEqual([
+      { path: orphanPath, handoffId: orphanId, state: "not_ready" },
+    ]);
+  });
+
   it("discovers default-project worktrees under <repo_root>-worktrees", async () => {
     const orphanId = "33333333-3333-4333-8333-333333333333";
     const defaultProjectBase = `${homeRepo}-worktrees`;

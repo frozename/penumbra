@@ -1,5 +1,5 @@
 import { statSync } from "node:fs";
-import type { WorktreeHandle } from "./manager.js";
+import type { OrphanWorktreeHandle, WorktreeHandle } from "./manager.js";
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "rejected", "expired"]);
 
@@ -16,11 +16,6 @@ export interface WorktreeGcCandidate {
   path: string;
   age_ms: number;
   reason: WorktreeGcCandidateReason;
-}
-
-export interface OrphanWorktreeHandle {
-  path: string;
-  handoffId: string;
 }
 
 interface HandoffLookup {

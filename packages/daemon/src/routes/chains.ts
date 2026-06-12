@@ -756,12 +756,26 @@ export async function chainStartInternal(
   const openPrOnReview = (input as { open_pr_on_review?: unknown }).open_pr_on_review;
   const openPrOnReviewBool = typeof openPrOnReview === "boolean" ? openPrOnReview : undefined;
   const taskClass = (input as { task_class?: TaskClass }).task_class;
+  const parentHandoffForIsolation =
+    typeof input.parent_handoff_id === "string"
+      ? services.handoffReader.get(input.parent_handoff_id)
+      : null;
+  // Sub-dispatches inherit isolated install from an isolated parent unless
+  // they explicitly opt in or out; this preserves multi-hop isolation without
+  // adding a separate privilege gate for same-chain descendants. Inheriting
+  // via an arbitrary parent_handoff_id grants nothing a caller could not
+  // request directly with isolated_install: true (deliberately ungated for
+  // same-trust bearers) — revisit this only if direct opt-in is ever gated.
   const isolatedInstall =
     input.isolated_install !== undefined
       ? input.isolated_install
-      : taskClass === "BOUNDARY" && isEnvTruthy(process.env.PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY)
+      : parentHandoffForIsolation?.isolated_install === true ||
+          (parentHandoffForIsolation?.isolated_install as unknown) === 1
         ? true
-        : null;
+        : taskClass === "BOUNDARY" &&
+            isEnvTruthy(process.env.PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY)
+          ? true
+          : null;
   if (taskClass !== undefined) {
     services.log.debug(
       { event: "dispatch.task_class", task_class: taskClass },

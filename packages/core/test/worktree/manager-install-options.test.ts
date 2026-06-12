@@ -17,12 +17,15 @@ type RunnerCall = { cmd: string; args: string[]; opts: RunnerOptions };
 
 const calls: RunnerCall[] = [];
 
-function makeRunner(opts?: { timeoutBunInstall?: boolean }) {
+function makeRunner(opts?: { failBunInstall?: Error; timeoutBunInstall?: boolean }) {
   return async (cmd: string, args: string[], runnerOpts: RunnerOptions = {}) => {
     calls.push({ cmd, args, opts: runnerOpts });
     if (cmd === "git" && args[0] === "worktree" && args[1] === "add") {
       fs.mkdirSync(args[3]!, { recursive: true });
       fs.writeFileSync(path.join(args[3]!, ".git"), "gitdir: fake\n");
+    }
+    if (cmd === "bun" && opts?.failBunInstall) {
+      throw opts.failBunInstall;
     }
     if (cmd === "bun" && opts?.timeoutBunInstall) {
       const err = new Error("operation timed out") as Error & { code: string };
@@ -32,6 +35,32 @@ function makeRunner(opts?: { timeoutBunInstall?: boolean }) {
     return { stdout: "", stderr: "" };
   };
 }
+
+test("isolated install failure removes the partial worktree and rethrows the install error", async () => {
+  calls.length = 0;
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-install-fail-repo-"));
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-install-fail-root-"));
+  const installError = new Error("install failed");
+  const handoffId = "h-install-failure";
+
+  try {
+    fs.writeFileSync(path.join(repoDir, "package.json"), "{}\n");
+    fs.writeFileSync(path.join(repoDir, "bun.lock"), "");
+    const manager = new WorktreeManager({
+      rootDir,
+      mainRepoDir: repoDir,
+      runner: makeRunner({ failBunInstall: installError }),
+    });
+
+    await expect(manager.createWorktree(handoffId, { isolated_install: true })).rejects.toBe(
+      installError,
+    );
+    expect(fs.existsSync(path.join(rootDir, handoffId))).toBe(false);
+  } finally {
+    fs.rmSync(repoDir, { recursive: true, force: true });
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  }
+});
 
 test("isolated install runs bun install with timeout, maxBuffer, and script suppression", async () => {
   calls.length = 0;
@@ -64,11 +93,12 @@ test("isolated install runs bun install with timeout, maxBuffer, and script supp
   }
 });
 
-test("isolated install writes ignored mode marker before bun install", async () => {
+test("isolated install writes readiness marker only after bun install succeeds", async () => {
   calls.length = 0;
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-install-mode-repo-"));
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-install-mode-root-"));
-  const observed: Array<{ rootMarker: boolean; storageMarker: string | null }> = [];
+  const observed: Array<{ rootMarker: boolean; modeMarker: string | null; readyMarker: boolean }> =
+    [];
 
   try {
     fs.writeFileSync(path.join(repoDir, "package.json"), "{}\n");
@@ -82,9 +112,10 @@ test("isolated install writes ignored mode marker before bun install", async () 
       if (cmd === "bun") {
         observed.push({
           rootMarker: fs.existsSync(path.join(runnerOpts.cwd!, ".penumbra-worktree-mode")),
-          storageMarker: fs.existsSync(path.join(runnerOpts.cwd!, ".test-storage", "worktree-mode"))
+          modeMarker: fs.existsSync(path.join(runnerOpts.cwd!, ".test-storage", "worktree-mode"))
             ? fs.readFileSync(path.join(runnerOpts.cwd!, ".test-storage", "worktree-mode"), "utf8")
             : null,
+          readyMarker: fs.existsSync(path.join(runnerOpts.cwd!, ".test-storage", "worktree-ready")),
         });
       }
       return { stdout: "", stderr: "" };
@@ -97,11 +128,41 @@ test("isolated install writes ignored mode marker before bun install", async () 
 
     const handle = await manager.createWorktree("h-install-mode", { isolated_install: true });
 
-    expect(observed).toEqual([{ rootMarker: false, storageMarker: "isolated_install\n" }]);
+    expect(observed).toEqual([
+      { rootMarker: false, modeMarker: "isolated_install\n", readyMarker: false },
+    ]);
     expect(fs.existsSync(path.join(handle.path, ".penumbra-worktree-mode"))).toBe(false);
     expect(fs.readFileSync(path.join(handle.storageRoot, "worktree-mode"), "utf8")).toBe(
       "isolated_install\n",
     );
+    expect(fs.readFileSync(path.join(handle.storageRoot, "worktree-ready"), "utf8")).toBe(
+      "ready\n",
+    );
+  } finally {
+    fs.rmSync(repoDir, { recursive: true, force: true });
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("rediscovery skips isolated worktrees with a mode marker but no readiness marker", async () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-install-stale-repo-"));
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-install-stale-root-"));
+  const handoffId = "12345678-1234-4234-9234-123456789abc";
+  const wtPath = path.join(rootDir, handoffId);
+
+  try {
+    fs.mkdirSync(path.join(wtPath, ".test-storage"), { recursive: true });
+    fs.writeFileSync(path.join(wtPath, ".git"), "gitdir: fake\n");
+    fs.writeFileSync(path.join(wtPath, ".test-storage", "worktree-mode"), "isolated_install\n");
+
+    const manager = new WorktreeManager({
+      rootDir,
+      mainRepoDir: repoDir,
+      runner: makeRunner(),
+    });
+
+    expect(manager.getWorktree(handoffId)).toBeNull();
+    expect(manager.discoverOrphanWorktrees()).toEqual([]);
   } finally {
     fs.rmSync(repoDir, { recursive: true, force: true });
     fs.rmSync(rootDir, { recursive: true, force: true });

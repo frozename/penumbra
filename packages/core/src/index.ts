@@ -335,10 +335,10 @@ export {
   type WorktreeCommandRunnerOptions,
   type WorktreeHandle,
   type WorktreeMode,
+  type OrphanWorktreeHandle,
 } from "./worktree/manager.js";
 export {
   selectWorktreeGcCandidates,
-  type OrphanWorktreeHandle,
   type SelectWorktreeGcCandidatesOpts,
   type WorktreeGcCandidate,
   type WorktreeGcCandidateReason,

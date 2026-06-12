@@ -46,6 +46,30 @@ test("create() inserts a pending handoff with the given handoff_id", () => {
   expect(row?.from_agent).toBe("claude");
 });
 
+test("create() persists isolated_install for pending handoffs", () => {
+  writer.create({
+    handoff_id: "h-create-isolated",
+    ts: "2026-04-25T20:00:00.000Z",
+    from: "claude",
+    to: "gemini",
+    to_role: null,
+    message: "go",
+    conversation_id: "conv-isolated",
+    project_id: null,
+    triggered_by_event_id: "evt-isolated",
+    use_worktree: true,
+    isolated_install: true,
+  } as any);
+
+  const row = db
+    .query<
+      { use_worktree: number | null; isolated_install: number | null },
+      [string]
+    >("SELECT use_worktree, isolated_install FROM handoffs WHERE handoff_id=?")
+    .get("h-create-isolated");
+  expect(row).toEqual({ use_worktree: 1, isolated_install: 1 });
+});
+
 test("approve() transitions pending → approved and records actor + ts", () => {
   writer.create({
     handoff_id: "h-2",
