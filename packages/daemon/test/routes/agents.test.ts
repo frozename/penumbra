@@ -11,6 +11,7 @@ import {
   agentsRecommendRoute,
 } from "../../src/routes/agents.js";
 import { createDaemonFetchHandler } from "../../src/serve.js";
+import { registerWorkerForTest } from "../../test-utils.js";
 
 try {
   if (process.platform === "darwin") {
@@ -73,6 +74,83 @@ describe("agent routes", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.performance.outcome).toBe("pr_opened");
+  });
+
+  it("rejects dispatch performance capture when worker token does not own the handoff", async () => {
+    const handler = createDaemonFetchHandler({ services, token: "tok" });
+    const registered = await registerWorkerForTest({
+      baseUrl: "http://x",
+      sharedBearer: "tok",
+      worker_id: "worker-b",
+      fetcher: (async (input: any, init?: any) => {
+        const req = input instanceof Request ? input : new Request(String(input), init);
+        return handler(req);
+      }) as typeof fetch,
+    });
+    db.prepare(`UPDATE handoffs SET worker_id = ?, chain_task_type = ? WHERE handoff_id = ?`).run(
+      "worker-a",
+      "review_adversarial",
+      "h1",
+    );
+
+    const res = await handler(
+      new Request("http://x/agents/performance/dispatch", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${registered.worker_token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          handoff_id: "h1",
+          reason: "completed",
+          task_type: "implement_substantial",
+          worktree_changed: false,
+          final_response_text:
+            "This spoofed final text is long enough to promote output if it is trusted.",
+        }),
+      }),
+    );
+
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error.code).toBe("handoff_worker_mismatch");
+    const count = db
+      .query<{ count: number }, []>(`SELECT COUNT(*) AS count FROM agent_performance`)
+      .get();
+    expect(count?.count).toBe(0);
+  });
+
+  it("returns 404 before dispatch performance capture when handoff is missing", async () => {
+    const handler = createDaemonFetchHandler({ services, token: "tok" });
+    const registered = await registerWorkerForTest({
+      baseUrl: "http://x",
+      sharedBearer: "tok",
+      worker_id: "worker-b",
+      fetcher: (async (input: any, init?: any) => {
+        const req = input instanceof Request ? input : new Request(String(input), init);
+        return handler(req);
+      }) as typeof fetch,
+    });
+
+    const res = await handler(
+      new Request("http://x/agents/performance/dispatch", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${registered.worker_token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          handoff_id: "missing-handoff",
+          reason: "error",
+          task_type: "review_adversarial",
+          worktree_changed: false,
+          final_response_text: "caller supplied text must never reach capture",
+        }),
+      }),
+    );
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: { code: "not_found" } });
   });
 
   it("returns rank output", async () => {

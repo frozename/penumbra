@@ -17,6 +17,8 @@ test("retry exhaustion marks failed + emits chain-terminated(error) without reje
   const conversation = { id: "c-retry-e2e", project_id: "p-retry-e2e" };
 
   try {
+    await client.registerWorker({ worker_id: "e2e-worker" });
+
     registerAdapter("e2e-plan-ok", () => ({
       kind: "e2e-plan-ok",
       async dispatch() {

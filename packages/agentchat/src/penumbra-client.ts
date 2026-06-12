@@ -292,6 +292,7 @@ export class PenumbraClient {
     worktree_changed?: boolean | null;
     wall_ms?: number | null;
     framework_overhead_ms?: number | null;
+    final_response_text?: string;
   }): Promise<{
     performance: {
       outcome: string;
@@ -301,7 +302,11 @@ export class PenumbraClient {
       [k: string]: unknown;
     };
   }> {
-    return this.post("/agents/performance/dispatch", body) as Promise<{
+    // Worker token, not the shared bearer: the capture route's ownership
+    // guard binds caller-supplied hints (task_type / worktree_changed /
+    // final_response_text) to the worker principal that owns the handoff —
+    // posting with the shared bearer would leave that guard inert.
+    return this.postWorker("/agents/performance/dispatch", body) as Promise<{
       performance: {
         outcome: string;
         notes: string | null;
@@ -543,8 +548,8 @@ export class PenumbraClient {
     init?: { signal?: AbortSignal },
   ): Promise<T> {
     return this.withWorkerTokenRetry(async () => {
-      const { baseUrl, token: sharedToken } = this.resolve();
-      const token = this.workerToken ?? sharedToken;
+      const { baseUrl } = this.resolve();
+      const token = this.requireWorkerToken(path);
       const res = await this.fetcher(`${baseUrl}${path}`, {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -560,8 +565,8 @@ export class PenumbraClient {
   }
   private async postWorkerNoContent(path: string, body: unknown): Promise<void> {
     return this.withWorkerTokenRetry(async () => {
-      const { baseUrl, token: sharedToken } = this.resolve();
-      const token = this.workerToken ?? sharedToken;
+      const { baseUrl } = this.resolve();
+      const token = this.requireWorkerToken(path);
       const res = await this.fetcher(`${baseUrl}${path}`, {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -573,6 +578,13 @@ export class PenumbraClient {
       }
       return;
     });
+  }
+
+  private requireWorkerToken(path: string): string {
+    if (this.workerToken === null) {
+      throw new Error(`penumbra ${path}: worker token required; call registerWorker first`);
+    }
+    return this.workerToken;
   }
 
   private resolve(): { baseUrl: string; token: string } {

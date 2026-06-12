@@ -45,10 +45,11 @@ function expectOnChainEndCall(
     expected.dirty,
     expected.committed,
   ]);
-  expect(call).toHaveLength(7);
+  expect(call).toHaveLength(8);
   expect(typeof call[5]).toBe("number");
   expect(call[5]).toBeGreaterThanOrEqual(expected.minWallMs ?? 0);
   expect(call[6]).toBeNull();
+  expect(call[7]).toBe("result");
 }
 
 function deps(over: Partial<WorkerDispatcherDeps> = {}): WorkerDispatcherDeps {

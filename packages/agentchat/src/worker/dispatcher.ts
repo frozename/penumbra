@@ -26,6 +26,7 @@ export interface WorkerDispatcherDeps {
     committed: boolean | null,
     wallMs: number | null,
     frameworkOverheadMs: number | null,
+    finalResponseText: string | null,
   ) => void;
   /**
    * Optional recovery hook invoked for completed chains that ended with a
@@ -455,6 +456,7 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
             typeof dispatchResult?.meta?.framework_overhead_ms === "number"
               ? dispatchResult.meta.framework_overhead_ms
               : null,
+            typeof dispatchResult?.text === "string" ? dispatchResult.text : null,
           );
         }
       } catch (err) {

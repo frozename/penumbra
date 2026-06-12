@@ -44,6 +44,8 @@ serviceTest(
       default_roles: { planner: "planner", executor: "executor" },
     };
 
+    await client.registerWorker({ worker_id: "thin-worker" });
+
     const dispatcher = createWorkerDispatcher({
       log: createLogger({ component: "thin-test-worker" }),
       concurrency: 1,

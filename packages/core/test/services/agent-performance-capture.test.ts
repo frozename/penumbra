@@ -144,6 +144,33 @@ describe("captureAgentPerformanceFromReconciler", () => {
     expect(persisted).toEqual({ exec_ms: 42000, framework_overhead_ms: 1234 });
   });
 
+  it("prefers handoff chain_task_type over caller task_type and records the mismatch", () => {
+    db.prepare(`UPDATE handoffs SET chain_task_type = ? WHERE handoff_id = ?`).run(
+      "review_adversarial",
+      "h1",
+    );
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-task-type",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: {
+        handoff_id: "h1",
+        reason: "completed",
+        task_type: "implement_substantial",
+      },
+    });
+
+    expect(row.task_type).toBe("review_adversarial");
+    expect(JSON.parse(row.metadata_json)).toEqual(
+      expect.objectContaining({
+        caller_task_type: "implement_substantial",
+        handoff_task_type: "review_adversarial",
+        task_type_mismatch: true,
+      }),
+    );
+  });
+
   it("populates exec_ms from dispatch.end wall_ms without changing enqueue latency", () => {
     db.prepare(
       `
@@ -650,7 +677,7 @@ describe("captureAgentPerformanceFromReconciler", () => {
       "2026-04-30T12:01:55Z",
       "2026-04-30T12:01:55Z",
       "conv",
-      JSON.stringify({ response: "DONE" }),
+      JSON.stringify({ handoff_id: "h1", response: "DONE" }),
     );
 
     const row = captureAgentPerformanceFromDispatch({
@@ -662,6 +689,36 @@ describe("captureAgentPerformanceFromReconciler", () => {
 
     expect(row.reliability_status).toBe("complete");
     expect(row.notes).toBe("completed");
+  });
+
+  it("promotes review output from legacy agent-response rows without handoff_id", () => {
+    db.prepare(`UPDATE handoffs SET chain_task_type = ? WHERE handoff_id = ?`).run(
+      "review_adversarial",
+      "h1",
+    );
+    db.prepare(
+      `
+      INSERT INTO t0_events (event_id, ts, ingest_ts, source, source_detail, user_id, machine_id, event_type, lane, session_id, payload_json)
+      VALUES (?, ?, ?, 'agentchat', 'claude', 'claude', 'm', 'agent-response', 'cli-subscription', ?, ?)
+    `,
+    ).run(
+      "legacy-r1",
+      "2026-04-30T12:01:55Z",
+      "2026-04-30T12:01:55Z",
+      "conv",
+      JSON.stringify({
+        response: "Legacy review output with enough substance to count as a completed response.",
+      }),
+    );
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-legacy-response",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: { handoff_id: "h1", reason: "completed" },
+    });
+
+    expect(row.outcome).toBe("completed_with_output");
   });
 
   it("persists reliability_status='no_worktree_activity' when an implementation task completed without worktree changes", () => {
@@ -689,7 +746,7 @@ describe("captureAgentPerformanceFromReconciler", () => {
       "2026-04-30T12:01:55Z",
       "2026-04-30T12:01:55Z",
       "conv",
-      JSON.stringify({ response: "done" }),
+      JSON.stringify({ handoff_id: "h1", response: "done" }),
     );
 
     const row = captureAgentPerformanceFromDispatch({

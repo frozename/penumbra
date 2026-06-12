@@ -31,35 +31,68 @@ export interface AgentResponseEvent {
 export class ChainReader {
   constructor(private readonly db: Database) {}
 
-  getResponses(conversation_id: string, which: "final" | "all" = "final"): AgentResponseEvent[] {
+  getResponses(
+    conversation_id: string,
+    which: "final" | "all" = "final",
+    opts: { handoff_id?: string; project_id?: string | null } = {},
+  ): AgentResponseEvent[] {
     const orderSql =
       which === "final"
         ? "ORDER BY ts DESC, ingest_ts DESC, event_id DESC"
         : "ORDER BY ts ASC, ingest_ts ASC, event_id ASC";
     const limitSql = which === "final" ? "LIMIT 1" : "";
-    const rows = this.db
-      .query<
-        {
-          event_id: string;
-          ts: string;
-          ingest_ts: string;
-          source_detail: string | null;
-          source: string;
-          user_id: string | null;
-          payload_json: string;
-        },
-        [string]
-      >(
-        `
+    type ResponseRow = {
+      event_id: string;
+      ts: string;
+      ingest_ts: string;
+      source_detail: string | null;
+      source: string;
+      user_id: string | null;
+      payload_json: string;
+    };
+    // NOTE: deliberately NOT scoped by project_id even though the
+    // project+session index would make the lookup cheaper — t0 agent-response
+    // rows do not reliably carry the handoff's project_id (ingestion can stamp
+    // null), so filtering on it silently drops legitimate responses and
+    // regresses completed_with_output to no_changes. Optional scoping remains
+    // available to callers that can guarantee their rows are stamped.
+    const projectClause = opts.project_id != null ? "AND project_id = ?" : "";
+    const projectArgs: string[] = opts.project_id != null ? [opts.project_id] : [];
+    const baseSelect = `
       SELECT event_id, ts, ingest_ts, source_detail, source, user_id, payload_json
       FROM t0_events
       WHERE event_type = 'agent-response'
         AND session_id = ?
+        ${projectClause}
+    `;
+    const orderLimit = `
       ${orderSql}
       ${limitSql}
-    `,
-      )
-      .all(conversation_id);
+    `;
+    const getUnscoped = () =>
+      this.db
+        .query<ResponseRow, string[]>(`${baseSelect}${orderLimit}`)
+        .all(conversation_id, ...projectArgs);
+    let rows = opts.handoff_id
+      ? this.db
+          .query<
+            ResponseRow,
+            string[]
+          >(`${baseSelect} AND json_valid(payload_json) AND json_extract(payload_json, '$.handoff_id') = ? ${orderLimit}`)
+          .all(conversation_id, ...projectArgs, opts.handoff_id)
+      : getUnscoped();
+    if (opts.handoff_id && rows.length === 0) {
+      // Compatibility fallback for pre-handoff_id agent-response rows ONLY:
+      // rows that carry a handoff_id belong to some OTHER handoff in the
+      // conversation — inheriting them would let a response-less handoff take
+      // credit for a sibling's output. Remove after one deployment cycle.
+      rows = this.db
+        .query<
+          ResponseRow,
+          string[]
+        >(`${baseSelect} AND (NOT json_valid(payload_json) OR json_extract(payload_json, '$.handoff_id') IS NULL) ${orderLimit}`)
+        .all(conversation_id, ...projectArgs);
+    }
 
     return rows.map((row) => {
       const payload = parseAgentResponsePayload(row.payload_json);

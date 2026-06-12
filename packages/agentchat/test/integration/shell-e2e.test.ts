@@ -19,6 +19,7 @@ describe.skipIf(!RUN_AGENTCHAT_SERVICE_TESTS)("shell e2e", () => {
     });
 
     try {
+      await harness.client.registerWorker({ worker_id: "worker-shell-e2e" });
       await harness.client.approve(created.handoff_id);
       await harness.client.claimHandoff(created.handoff_id, "worker-shell-e2e");
 

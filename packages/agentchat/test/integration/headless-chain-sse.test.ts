@@ -82,6 +82,7 @@ serviceTest(
     };
 
     const client = new PenumbraClient({ storageRoot: dir, fetch: fetchImpl });
+    await client.registerWorker({ worker_id: "test-worker" });
     const log = createLogger({ component: "int-test" });
 
     const dispatcher = createWorkerDispatcher({

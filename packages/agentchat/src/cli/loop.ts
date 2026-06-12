@@ -222,8 +222,8 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
   }
 
   const responsePayload = dispatchError
-    ? { error: dispatchError.message }
-    : { response: finalText };
+    ? { handoff_id: input.handoff_id ?? null, error: dispatchError.message }
+    : { handoff_id: input.handoff_id ?? null, response: finalText };
   const responseSummary = dispatchError
     ? `error: ${dispatchError.message}`.slice(0, 240)
     : finalText.slice(0, 240);

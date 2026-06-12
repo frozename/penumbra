@@ -54,6 +54,7 @@ describe("review_adversarial performance roundtrip", () => {
       "agent-response",
       "c1",
       JSON.stringify({
+        handoff_id: "h1",
         response: "Here is my review: everything looks great. It has over forty characters.",
       }),
       "unknown",
@@ -326,5 +327,98 @@ describe("review_adversarial performance roundtrip", () => {
       .prepare(`SELECT outcome FROM agent_performance WHERE handoff_id = 'h4'`)
       .get() as { outcome: string };
     expect(row.outcome).toBe("completed_with_output");
+  });
+
+  test("fallback final response is scoped to the captured handoff", () => {
+    db.prepare(
+      `
+      INSERT INTO handoffs (handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message, status, resolved_by, resolved_at, use_worktree, chain_task_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    ).run(
+      "h5",
+      "2026-05-01T12:40:00Z",
+      "proj1",
+      "c5",
+      "maestro",
+      "echo",
+      "reviewer",
+      "Task type: review_adversarial\nPlease review.",
+      "completed",
+      "worker",
+      "2026-05-01T12:45:00Z",
+      0,
+      "review_adversarial",
+    );
+    db.prepare(
+      `
+      INSERT INTO handoffs (handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message, status, resolved_by, resolved_at, use_worktree, chain_task_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    ).run(
+      "h6",
+      "2026-05-01T12:41:00Z",
+      "proj1",
+      "c5",
+      "maestro",
+      "foxtrot",
+      "reviewer",
+      "Task type: review_adversarial\nPlease review another change.",
+      "completed",
+      "worker",
+      "2026-05-01T12:46:00Z",
+      0,
+      "review_adversarial",
+    );
+
+    const insertResponse = db.prepare(
+      `
+      INSERT INTO t0_events (event_id, ts, ingest_ts, source, event_type, session_id, payload_json, lane, user_id, machine_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    );
+    insertResponse.run(
+      "evt-h5",
+      "2026-05-01T12:45:00Z",
+      "2026-05-01T12:45:00Z",
+      "worker",
+      "agent-response",
+      "c5",
+      JSON.stringify({ handoff_id: "h5", response: "short" }),
+      "unknown",
+      "echo",
+      "test-machine",
+    );
+    insertResponse.run(
+      "evt-h6",
+      "2026-05-01T12:46:00Z",
+      "2026-05-01T12:46:00Z",
+      "worker",
+      "agent-response",
+      "c5",
+      JSON.stringify({
+        handoff_id: "h6",
+        response: "This belongs to the other handoff and is long enough to promote output.",
+      }),
+      "unknown",
+      "foxtrot",
+      "test-machine",
+    );
+
+    captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-5",
+      clock: () => new Date("2026-05-01T12:47:00Z"),
+      input: {
+        handoff_id: "h5",
+        reason: "completed",
+        worktree_changed: false,
+      },
+    });
+
+    const row = db
+      .prepare(`SELECT outcome FROM agent_performance WHERE handoff_id = 'h5'`)
+      .get() as { outcome: string };
+    expect(row.outcome).toBe("no_changes");
   });
 });

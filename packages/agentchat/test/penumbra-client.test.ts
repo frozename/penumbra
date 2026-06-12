@@ -54,6 +54,46 @@ test("createHandoff POSTs /handoffs and returns the new id", async () => {
   expect(r.status).toBe("pending");
 });
 
+test("captureAgentPerformanceFromDispatch sends final_response_text", async () => {
+  let received: any = null;
+  const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+    const req = input instanceof Request ? input : new Request(String(input), init);
+    const url = new URL(req.url).pathname;
+    if (url === "/worker/register") {
+      return Response.json({ worker_token: "wt-final", worker_id: "W-A" });
+    }
+    received = await req.json();
+    return Response.json({
+      performance: {
+        outcome: "completed_with_output",
+        notes: null,
+        metadata_json: "{}",
+        task_type: "review_adversarial",
+      },
+    });
+  }) as any;
+  const root = mkdtempSync(join(tmpdir(), "pen-client-"));
+  writeFileSync(join(root, "port"), `1\n`);
+  writeFileSync(join(root, "token"), "tk\n");
+
+  const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+  await client.registerWorker({ worker_id: "W-A" });
+  await client.captureAgentPerformanceFromDispatch({
+    handoff_id: "h-final",
+    reason: "completed",
+    final_response_text: "final text from the worker",
+  });
+
+  expect(received).toEqual(
+    expect.objectContaining({
+      handoff_id: "h-final",
+      reason: "completed",
+      final_response_text: "final text from the worker",
+    }),
+  );
+  rmSync(root, { recursive: true, force: true });
+});
+
 function withDaemon(): {
   client: PenumbraClient;
   services: Services;
@@ -123,12 +163,15 @@ serviceTest("PenumbraClient.startChain calls /chains/start", async () => {
 serviceTest(
   "PenumbraClient.claimHandoff returns 200 on success and rejects on conflict",
   async () => {
-    const { client, stop } = withDaemon();
+    const { client, stop, storageRoot, fetchImpl } = withDaemon();
     try {
+      await client.registerWorker({ worker_id: "w1" });
+      const worker2 = new PenumbraClient({ storageRoot, fetch: fetchImpl });
+      await worker2.registerWorker({ worker_id: "w2" });
       const start = await client.startChain({ initial_agent: "planner", message: "hi" });
       const claim = await client.claimHandoff(start.handoff_id, "w1");
       expect(claim.status).toBe("dispatched");
-      await expect(client.claimHandoff(start.handoff_id, "w2")).rejects.toThrow(/409|conflict/i);
+      await expect(worker2.claimHandoff(start.handoff_id, "w2")).rejects.toThrow(/409|conflict/i);
     } finally {
       stop();
     }
@@ -138,6 +181,7 @@ serviceTest(
 serviceTest("PenumbraClient.completeHandoff flips dispatched → completed", async () => {
   const { client, services, stop } = withDaemon();
   try {
+    await client.registerWorker({ worker_id: "w1" });
     const start = await client.startChain({ initial_agent: "planner", message: "hi" });
     await client.claimHandoff(start.handoff_id, "w1");
     const res = await client.completeHandoff(start.handoff_id);
@@ -154,6 +198,7 @@ serviceTest("PenumbraClient.completeHandoff flips dispatched → completed", asy
 serviceTest("PenumbraClient.markFailed flips dispatched → failed", async () => {
   const { client, services, stop } = withDaemon();
   try {
+    await client.registerWorker({ worker_id: "w1" });
     const start = await client.startChain({ initial_agent: "planner", message: "hi" });
     await client.claimHandoff(start.handoff_id, "w1");
     const res = await client.markFailed(start.handoff_id, "adapter blew up");
@@ -221,6 +266,7 @@ serviceTest(
   async () => {
     const { client, stop } = withDaemon();
     try {
+      await client.registerWorker({ worker_id: "w1" });
       const a = await client.startChain({ initial_agent: "planner", message: "hi 1" });
       const b = await client.startChain({ initial_agent: "planner", message: "hi 2" });
       await client.claimHandoff(a.handoff_id, "w1");
@@ -378,6 +424,7 @@ test("PenumbraClient.resolve() throws clear error when explicit storageRoot is b
 serviceTest("PenumbraClient.getHandoffStatus reads reliability status", async () => {
   const { client, services, stop } = withDaemon();
   try {
+    await client.registerWorker({ worker_id: "w1" });
     const start = await client.startChain({ initial_agent: "planner", message: "hi" });
     await client.claimHandoff(start.handoff_id, "w1");
     await services.dispatchEventLog.record({

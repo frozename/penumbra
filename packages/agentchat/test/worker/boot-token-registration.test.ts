@@ -43,7 +43,7 @@ test("PenumbraClient.registerWorker calls /worker/register with shared bearer an
   }
 });
 
-test("PenumbraClient.postHeartbeat uses worker_token after registerWorker; was shared-bearer before", async () => {
+test("PenumbraClient.postHeartbeat requires worker_token before posting", async () => {
   const captured: { url: string; auth: string | null }[] = [];
   const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
     const req = input instanceof Request ? input : new Request(String(input), init);
@@ -56,16 +56,13 @@ test("PenumbraClient.postHeartbeat uses worker_token after registerWorker; was s
 
   const { client, cleanup } = makeClient(fetchImpl);
   try {
-    // Before register: uses shared bearer
-    await client.postHeartbeat("W-A");
-    expect(captured[0]).toMatchObject({ url: "/worker/heartbeat", auth: "Bearer shared-tok" });
+    await expect(client.postHeartbeat("W-A")).rejects.toThrow(/worker token/i);
+    expect(captured).toHaveLength(0);
 
-    // Register
     await client.registerWorker({ worker_id: "W-A" });
 
-    // After register: uses worker token
     await client.postHeartbeat("W-A");
-    expect(captured[2]).toMatchObject({ url: "/worker/heartbeat", auth: "Bearer wt-hb" });
+    expect(captured[1]).toMatchObject({ url: "/worker/heartbeat", auth: "Bearer wt-hb" });
   } finally {
     cleanup();
   }
@@ -109,7 +106,7 @@ test("PenumbraClient.reregisterWorker deduplicates concurrent re-registration at
   }
 });
 
-test("PenumbraClient.reconcileDispatchOrphans uses worker_token after registerWorker", async () => {
+test("PenumbraClient.reconcileDispatchOrphans requires worker_token before posting", async () => {
   const captured: { url: string; auth: string | null }[] = [];
   const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
     const req = input instanceof Request ? input : new Request(String(input), init);
@@ -122,17 +119,12 @@ test("PenumbraClient.reconcileDispatchOrphans uses worker_token after registerWo
 
   const { client, cleanup } = makeClient(fetchImpl);
   try {
-    // Before register
-    await client.reconcileDispatchOrphans("W-A");
-    expect(captured[0]).toMatchObject({
-      url: "/worker/reconcile-orphans",
-      auth: "Bearer shared-tok",
-    });
+    await expect(client.reconcileDispatchOrphans("W-A")).rejects.toThrow(/worker token/i);
+    expect(captured).toHaveLength(0);
 
-    // Register + after
     await client.registerWorker({ worker_id: "W-A" });
     await client.reconcileDispatchOrphans("W-A");
-    expect(captured[2]).toMatchObject({ url: "/worker/reconcile-orphans", auth: "Bearer wt-rec" });
+    expect(captured[1]).toMatchObject({ url: "/worker/reconcile-orphans", auth: "Bearer wt-rec" });
   } finally {
     cleanup();
   }
@@ -710,7 +702,7 @@ describe("401 auto-re-register + retry", () => {
     }
   });
 
-  test("Without a prior registerWorker call, 401 propagates (no auto-recovery)", async () => {
+  test("Without a prior registerWorker call, worker-scoped posts fail locally", async () => {
     const calls: { url: string }[] = [];
 
     const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
@@ -728,10 +720,9 @@ describe("401 auto-re-register + retry", () => {
         caughtError = e;
       }
 
-      expect(caughtError).toBeInstanceOf(PenumbraHttpError);
-      expect(caughtError.status).toBe(401);
-      expect(calls).toHaveLength(1);
-      expect(calls[0].url).toBe("/worker/heartbeat");
+      expect(caughtError).toBeInstanceOf(Error);
+      expect(caughtError.message).toMatch(/worker token/i);
+      expect(calls).toHaveLength(0);
     } finally {
       cleanup();
     }

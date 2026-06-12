@@ -63,13 +63,15 @@ serviceTest(
 
     const client = new PenumbraClient({ storageRoot: dir });
 
-    const makeWorker = (id: string) => {
+    const makeWorker = async (id: string) => {
+      const workerClient = new PenumbraClient({ storageRoot: dir });
+      await workerClient.registerWorker({ worker_id: id });
       const dispatcher = createWorkerDispatcher({
         log: createLogger({ component: id }),
         concurrency: 1,
-        claim: (hid) => client.claimHandoff(hid, id),
-        postProgress: (hid, payload) => client.postProgress(hid, payload),
-        complete: (id) => client.completeHandoff(id),
+        claim: (hid) => workerClient.claimHandoff(hid, id),
+        postProgress: (hid, payload) => workerClient.postProgress(hid, payload),
+        complete: (id) => workerClient.completeHandoff(id),
         dispatch: async (h) => {
           const result = await dispatchHandoff({
             handoff: h,
@@ -80,17 +82,17 @@ serviceTest(
             hopsSoFar: 0,
             maxHops: 5,
             trustMode: "all",
-            observe: (e) => client.observe(e),
-            createHandoff: (body) => client.createHandoff(body),
-            approve: (hid2, body) => client.approve(hid2, body),
+            observe: (e) => workerClient.observe(e),
+            createHandoff: (body) => workerClient.createHandoff(body),
+            approve: (hid2, body) => workerClient.approve(hid2, body),
           });
           return result;
         },
       });
       const es = startEventSource({
         client: {
-          listHandoffs: (o) => client.listHandoffs(o),
-          subscribeHandoffEvents: (o) => client.subscribeHandoffEvents(o),
+          listHandoffs: (o) => workerClient.listHandoffs(o),
+          subscribeHandoffEvents: (o) => workerClient.subscribeHandoffEvents(o),
         },
         statuses: ["approved", "redirected"],
         pollIntervalMs: 10,
@@ -101,8 +103,8 @@ serviceTest(
       return { dispatcher, es };
     };
 
-    const w1 = makeWorker("worker-1");
-    const w2 = makeWorker("worker-2");
+    const w1 = await makeWorker("worker-1");
+    const w2 = await makeWorker("worker-2");
 
     try {
       // 1. Create an approved handoff

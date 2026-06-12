@@ -263,6 +263,11 @@ export function captureAgentPerformanceFromDispatch(opts: {
   uuid: Uuid;
   clock: () => Date;
   input: AgentPerformanceCaptureFromDispatch;
+  caller?: {
+    worker_id: string;
+    handoff_worker_id: string | null;
+    handoff_owner_mismatch: boolean;
+  };
 }): AgentPerformanceRow {
   const input = AgentPerformanceCaptureFromDispatchSchema.parse(opts.input);
   const handoff = new HandoffReader({ db: opts.db }).get(input.handoff_id);
@@ -297,7 +302,9 @@ export function captureAgentPerformanceFromDispatch(opts: {
       ? ([
           { text: input.final_response_text, ts: nowIso, agent: handoff.to_agent },
         ] as AgentResponseEvent[])
-      : new ChainReader(opts.db).getResponses(handoff.conversation_id, "final");
+      : new ChainReader(opts.db).getResponses(handoff.conversation_id, "final", {
+          handoff_id: input.handoff_id,
+        });
 
   const reliabilityReport = classifyDispatchReliabilityFromDb(
     opts.db,
@@ -326,8 +333,12 @@ export function captureAgentPerformanceFromDispatch(opts: {
     typeof finalResponseText === "string" &&
     finalResponseText.replace(/\s/g, "").length >= MIN_RESPONSE_CHARS;
 
-  const explicitTaskType = input.task_type ?? handoff.chain_task_type;
+  const explicitTaskType = handoff.chain_task_type ?? input.task_type;
   const taskType = explicitTaskType ?? inferAgentTaskTypeForRole(handoff.message, handoff.to_role);
+  const taskTypeMismatch =
+    handoff.chain_task_type != null &&
+    input.task_type != null &&
+    input.task_type !== handoff.chain_task_type;
 
   let baseOutcome = mapDispatchReasonToAgentOutcome(input.reason, signals);
 
@@ -368,7 +379,24 @@ export function captureAgentPerformanceFromDispatch(opts: {
     notes,
     reliability_status: reliabilityReport.status,
     maestro_takeover_required: recoveryCancel ? "y" : handoff.cancel_requested_at ? "n" : null,
-    metadata_json: JSON.stringify({ reason: input.reason, ...signals }),
+    metadata_json: JSON.stringify({
+      reason: input.reason,
+      ...signals,
+      ...(taskTypeMismatch
+        ? {
+            caller_task_type: input.task_type,
+            handoff_task_type: handoff.chain_task_type,
+            task_type_mismatch: true,
+          }
+        : {}),
+      ...(opts.caller?.handoff_owner_mismatch
+        ? {
+            caller_worker_id: opts.caller.worker_id,
+            handoff_worker_id: opts.caller.handoff_worker_id,
+            caller_handoff_owner_mismatch: true,
+          }
+        : {}),
+    }),
   };
   return new AgentPerformanceWriter(opts.db).upsert(row);
 }

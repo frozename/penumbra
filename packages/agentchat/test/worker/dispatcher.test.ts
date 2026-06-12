@@ -221,7 +221,46 @@ test("onChainEnd receives the full handoff row and mapped terminal reason", asyn
   await dispatcher.idle();
 
   expect(onChainEnd).toHaveBeenCalledTimes(1);
-  expect(onChainEnd).toHaveBeenCalledWith(handoff, "completed", null, null, null, 0, null);
+  expect(onChainEnd).toHaveBeenCalledWith(
+    handoff,
+    "completed",
+    null,
+    null,
+    null,
+    0,
+    null,
+    "result",
+  );
+});
+
+test("onChainEnd receives final response text from dispatch result", async () => {
+  const onChainEnd = mock();
+  const d = deps({
+    onChainEnd,
+    dispatch: mock().mockResolvedValue({
+      next: null,
+      terminatedReason: "no_mention",
+      text: "This is the final response text returned by the worker dispatcher.",
+      agent: "executor",
+    }),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+  const handoff = baseHandoff("h-chain-final-text", "conv-chain-final-text");
+
+  await dispatcher.handle(handoff);
+  await dispatcher.idle();
+
+  expect(onChainEnd).toHaveBeenCalledTimes(1);
+  expect(onChainEnd).toHaveBeenCalledWith(
+    handoff,
+    "completed",
+    null,
+    null,
+    null,
+    0,
+    null,
+    "This is the final response text returned by the worker dispatcher.",
+  );
 });
 
 test("emits dispatch.start and dispatch.end events on successful dispatch", async () => {
