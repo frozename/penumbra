@@ -9,6 +9,7 @@ import {
   migrate,
   type Services,
   loadProjectRegistry,
+  WorkerTokenStore,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { createDaemonFetchHandler } from "../../src/serve.js";
@@ -23,11 +24,12 @@ try {
 } catch {}
 
 function startTestDaemon(
-  opts: { ghClient?: GhClient; ghTaskSyncService?: GhTaskSyncService } = {},
+  opts: { ghClient?: GhClient; ghTaskSyncService?: GhTaskSyncService; workerToken?: boolean } = {},
 ): {
   fetch: (path: string, init?: RequestInit) => Promise<Response>;
   services: Services;
   token: string;
+  workerToken?: string;
   stop: () => void;
 } {
   const db = new Database(":memory:");
@@ -70,6 +72,10 @@ function startTestDaemon(
   };
 
   const token = "tok";
+  let workerToken: string | undefined;
+  if (opts.workerToken) {
+    workerToken = new WorkerTokenStore(db).issue({ worker_id: "worker-1" }, Date.now()).token;
+  }
   const handler = createDaemonFetchHandler({
     services,
     token,
@@ -81,6 +87,7 @@ function startTestDaemon(
     fetch: (path, init) => handler(new Request(`http://x${path}`, init)),
     services,
     token,
+    workerToken,
     stop: () => {
       try {
         services.supervisor.stopAll();
@@ -1727,6 +1734,145 @@ test("POST /tasks/:id/complete transitions to done when review is not required",
     const task = (await get.json()) as { status: string; result_summary: string | null };
     expect(task.status).toBe("done");
     expect(task.result_summary).toBe("implemented");
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /tasks/:id/complete allows shared principal without lease_id but rejects worker-token callers without lease_id", async () => {
+  const daemon = startTestDaemon({ workerToken: true });
+  try {
+    const taskId = await fileTask(daemon);
+
+    const sharedComplete = await postJson(daemon, `/tasks/${taskId}/complete`, {
+      result_summary: "landed via shared principal",
+    });
+    expect(sharedComplete.status).toBe(200);
+
+    const sharedTask = (await (
+      await daemon.fetch(`/tasks/${taskId}`, { headers: authHeaders(daemon.token) })
+    ).json()) as { status: string; result_summary: string | null };
+    expect(sharedTask.status).toBe("done");
+    expect(sharedTask.result_summary).toBe("landed via shared principal");
+
+    const workerTaskId = await fileTask(daemon);
+    const workerComplete = await postJson(
+      daemon,
+      `/tasks/${workerTaskId}/complete`,
+      {
+        result_summary: "should not land",
+      },
+      { authorization: `Bearer ${daemon.workerToken}` },
+    );
+    expect(workerComplete.status).toBe(403);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /tasks/:id/complete shared without lease_id uses writer side effects for review tasks", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const taskId = await fileTask(daemon, { requires_review: true });
+    const link = await postJson(daemon, `/tasks/${taskId}/link-gh`, {
+      repo: "owner/repo",
+      issue_number: 42,
+    });
+    expect(link.status).toBe(200);
+    daemon.services.db.run(`DELETE FROM gh_outbox`);
+
+    const complete = await postJson(daemon, `/tasks/${taskId}/complete`, {
+      result_summary: "landed via shared principal",
+      result_artifacts: [{ type: "commit", ref: "abc123" }],
+    });
+    expect(complete.status).toBe(200);
+    expect(((await complete.json()) as { status: string }).status).toBe("done_pending_review");
+
+    const get = await daemon.fetch(`/tasks/${taskId}?include=descendants,events`, {
+      headers: authHeaders(daemon.token),
+    });
+    expect(get.status).toBe(200);
+    const task = (await get.json()) as {
+      status: string;
+      descendants?: { count: number; ids: string[] };
+      events?: Array<{ kind: string; actor: string | null; payload: unknown }>;
+    };
+    expect(task.status).toBe("done_pending_review");
+    expect(task.descendants?.count).toBe(1);
+    expect(task.descendants?.ids).toHaveLength(1);
+    expect(task.events?.some((event) => event.kind === "review_filed")).toBe(true);
+
+    const outbox = daemon.services.db
+      .query<{ task_id: string; op: string; payload_json: string }, [string]>(
+        `SELECT task_id, op, payload_json
+         FROM gh_outbox
+         WHERE task_id = ?
+         ORDER BY id ASC
+         LIMIT 1`,
+      )
+      .get(taskId);
+    expect(outbox?.task_id).toBe(taskId);
+    expect(outbox?.op).toBe("gh_push_status");
+    const commentOutbox = daemon.services.db
+      .query<{ op: string; payload_json: string }, [string]>(
+        `SELECT op, payload_json
+         FROM gh_outbox
+         WHERE task_id = ? AND op = 'gh_post_status_comment'
+         ORDER BY id DESC
+         LIMIT 1`,
+      )
+      .get(taskId);
+    expect(commentOutbox).not.toBeNull();
+    expect(JSON.parse(commentOutbox!.payload_json)).toEqual({
+      from_status: "pending",
+      to_status: "done_pending_review",
+    });
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /tasks/:id/complete shared without lease_id rejects active leased tasks", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const taskId = await fileTask(daemon);
+    const lease = await postJson(daemon, "/tasks/lease", { agent_id: "codex" });
+    expect(lease.status).toBe(200);
+    const leased = (await lease.json()) as { lease_id: string };
+
+    const complete = await postJson(daemon, `/tasks/${taskId}/complete`, {
+      result_summary: "should not steal active lease",
+    });
+    expect(complete.status).toBe(409);
+    const body = (await complete.json()) as {
+      error: string;
+      message: string;
+      active_lease_id: string | null;
+    };
+    expect(body.error).toBe("LeaseConflict");
+    expect(body.message).toContain(taskId);
+    expect(body.active_lease_id).toBe(leased.lease_id);
+
+    const task = (await (
+      await daemon.fetch(`/tasks/${taskId}`, { headers: authHeaders(daemon.token) })
+    ).json()) as { status: string; result_summary: string | null };
+    expect(task.status).toBe("leased");
+    expect(task.result_summary).toBeNull();
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /tasks/:id/complete without Authorization returns 401", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const taskId = await fileTask(daemon);
+    const res = await daemon.fetch(`/tasks/${taskId}/complete`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ result_summary: "unauthorized" }),
+    });
+    expect(res.status).toBe(401);
   } finally {
     daemon.stop();
   }

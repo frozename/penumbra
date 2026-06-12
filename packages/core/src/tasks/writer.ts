@@ -12,6 +12,7 @@ import {
   LeaseTaskInputSchema,
   HeartbeatTaskInputSchema,
   CompleteTaskInputSchema,
+  CompleteWithoutLeaseInputSchema,
   FailTaskInputSchema,
   CancelTaskInputSchema,
   type FileTaskInput,
@@ -46,7 +47,10 @@ export class InvalidTaskStatus extends Error {
 }
 
 export class LeaseConflict extends Error {
-  constructor(public readonly task_id: string) {
+  constructor(
+    public readonly task_id: string,
+    public readonly active_lease_id?: string,
+  ) {
     super(`task ${task_id} already has an open lease`);
     this.name = "LeaseConflict";
   }
@@ -716,7 +720,21 @@ export class TaskWriter {
   }
 
   complete(input: CompleteTaskInput): { status: TaskStatus } {
-    const validated = CompleteTaskInputSchema.parse(input);
+    return this.completeInternal(CompleteTaskInputSchema.parse(input), { leaseless: false });
+  }
+
+  completeWithoutLease(
+    input: Omit<CompleteTaskInput, "lease_id">,
+    actor: string,
+  ): { status: TaskStatus } {
+    const validated = CompleteWithoutLeaseInputSchema.parse(input);
+    return this.completeInternal(validated, { leaseless: true, actor });
+  }
+
+  private completeInternal(
+    validated: Omit<CompleteTaskInput, "lease_id"> & { lease_id?: string },
+    opts: { leaseless: boolean; actor?: string },
+  ): { status: TaskStatus } {
     const emittedEvents: TaskEvent[] = [];
 
     const completion = this.db.transaction(() => {
@@ -738,19 +756,46 @@ export class TaskWriter {
         .get(validated.task_id);
       if (!taskRow) throw new TaskNotFound(validated.task_id);
 
-      const leaseRow = this.db
-        .query<{ id: string; task_id: string; agent_id: string }, [string]>(
-          `SELECT id, task_id, agent_id
-           FROM task_leases
-           WHERE id = ? AND released_at IS NULL`,
-        )
-        .get(validated.lease_id);
-      if (!leaseRow || leaseRow.task_id !== validated.task_id) {
-        throw new LeaseInvalid(validated.lease_id, validated.task_id);
+      const leaseRow = opts.leaseless
+        ? null
+        : validated.lease_id
+          ? this.db
+              .query<{ id: string; task_id: string; agent_id: string }, [string]>(
+                `SELECT id, task_id, agent_id
+                 FROM task_leases
+                 WHERE id = ? AND released_at IS NULL`,
+              )
+              .get(validated.lease_id)
+          : null;
+
+      if (opts.leaseless) {
+        if (taskRow.status === "leased") {
+          const activeLease = this.db
+            .query<{ id: string }, [string]>(
+              `SELECT id
+               FROM task_leases
+               WHERE task_id = ? AND released_at IS NULL
+               ORDER BY claimed_at DESC
+               LIMIT 1`,
+            )
+            .get(validated.task_id);
+          throw new LeaseConflict(validated.task_id, activeLease?.id);
+        }
+        if (taskRow.status !== "pending") {
+          throw new InvalidTaskStatus(validated.task_id, taskRow.status);
+        }
+      } else {
+        if (!validated.lease_id || !leaseRow || leaseRow.task_id !== validated.task_id) {
+          throw new LeaseInvalid(validated.lease_id ?? "", validated.task_id);
+        }
+        if (taskRow.status !== "leased") {
+          throw new InvalidTaskStatus(validated.task_id, taskRow.status);
+        }
       }
 
       const now = this.now();
       let nextStatus: TaskStatus;
+      const actor = leaseRow?.agent_id ?? opts.actor ?? "maestro";
 
       if (taskRow.kind === "review") {
         const verdict = validated.review_verdict;
@@ -777,18 +822,13 @@ export class TaskWriter {
           this.db.run(
             `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
              VALUES (?, ?, 'review_passed', ?, ?)`,
-            [
-              taskRow.parent_task_id!,
-              now,
-              leaseRow.agent_id,
-              JSON.stringify({ notes: verdict.notes }),
-            ],
+            [taskRow.parent_task_id!, now, actor, JSON.stringify({ notes: verdict.notes })],
           );
           recordEvent(emittedEvents, {
             task_id: taskRow.parent_task_id!,
             at: now,
             kind: "review_passed",
-            actor: leaseRow.agent_id,
+            actor,
             payload: { notes: verdict.notes },
           });
         } else {
@@ -802,18 +842,13 @@ export class TaskWriter {
           this.db.run(
             `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
              VALUES (?, ?, 'review_failed', ?, ?)`,
-            [
-              taskRow.parent_task_id!,
-              now,
-              leaseRow.agent_id,
-              JSON.stringify({ notes: verdict.notes }),
-            ],
+            [taskRow.parent_task_id!, now, actor, JSON.stringify({ notes: verdict.notes })],
           );
           recordEvent(emittedEvents, {
             task_id: taskRow.parent_task_id!,
             at: now,
             kind: "review_failed",
-            actor: leaseRow.agent_id,
+            actor,
             payload: { notes: verdict.notes },
           });
         }
@@ -824,7 +859,7 @@ export class TaskWriter {
           [
             validated.task_id,
             now,
-            leaseRow.agent_id,
+            actor,
             JSON.stringify({ result_summary: validated.result_summary }),
           ],
         );
@@ -832,7 +867,7 @@ export class TaskWriter {
           task_id: validated.task_id,
           at: now,
           kind: "completed",
-          actor: leaseRow.agent_id,
+          actor,
           payload: { result_summary: validated.result_summary },
         });
         nextStatus = "done";
@@ -862,7 +897,7 @@ export class TaskWriter {
           [
             validated.task_id,
             now,
-            leaseRow.agent_id,
+            actor,
             JSON.stringify({ result_summary: validated.result_summary }),
           ],
         );
@@ -870,7 +905,7 @@ export class TaskWriter {
           task_id: validated.task_id,
           at: now,
           kind: "completed",
-          actor: leaseRow.agent_id,
+          actor,
           payload: { result_summary: validated.result_summary },
         });
 
@@ -889,10 +924,7 @@ export class TaskWriter {
             .get(validated.task_id);
           if (!parentAfterUpdateRow) throw new TaskNotFound(validated.task_id);
 
-          const reviewInput = synthesizeReviewTask(
-            hydrateTask(parentAfterUpdateRow),
-            leaseRow.agent_id,
-          );
+          const reviewInput = synthesizeReviewTask(hydrateTask(parentAfterUpdateRow), actor);
           const filed = this._fileInTransaction(reviewInput, {
             skipEmitCaps: true,
             emittedEvents,
@@ -921,12 +953,14 @@ export class TaskWriter {
         this.enqueueGhStatusSync(validated.task_id, taskRow.status, "done");
       }
 
-      this.db.run(
-        `UPDATE task_leases
-         SET released_at = ?, release_reason = 'completed'
-         WHERE id = ?`,
-        [now, validated.lease_id],
-      );
+      if (validated.lease_id) {
+        this.db.run(
+          `UPDATE task_leases
+           SET released_at = ?, release_reason = 'completed'
+           WHERE id = ?`,
+          [now, validated.lease_id],
+        );
+      }
 
       if (taskRow.kind === "review") {
         this.db.run(`UPDATE tasks SET updated_at = ? WHERE id = ?`, [now, validated.task_id]);

@@ -902,7 +902,7 @@ export class DaemonClient {
   async taskComplete(
     task_id: string,
     input: {
-      lease_id: string;
+      lease_id?: string;
       result_summary: string;
       result_artifacts?: unknown[];
       chain_id?: string;

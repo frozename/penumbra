@@ -70,7 +70,7 @@ export type Eligibility = z.infer<typeof EligibilitySchema>;
 export const ExpectedArtifactSchema = z
   .object({
     type: z.enum(["commit", "file", "pr", "memory", "spec", "review_verdict"]),
-    ref: z.string().optional(),
+    ref: z.string().max(4096).optional(),
   })
   .strict();
 export type ExpectedArtifact = z.infer<typeof ExpectedArtifactSchema>;
@@ -135,13 +135,18 @@ export const CompleteTaskInputSchema = z
   .object({
     task_id: z.string(),
     lease_id: z.string(),
-    result_summary: z.string(),
-    result_artifacts: z.array(ExpectedArtifactSchema).optional(),
+    result_summary: z.string().max(16_000),
+    result_artifacts: z.array(ExpectedArtifactSchema).max(50).optional(),
     chain_id: z.string().optional(),
     review_verdict: ReviewVerdictSchema.optional(),
   })
   .strict();
 export type CompleteTaskInput = z.infer<typeof CompleteTaskInputSchema>;
+
+export const CompleteWithoutLeaseInputSchema = CompleteTaskInputSchema.omit({
+  lease_id: true,
+}).strict();
+export type CompleteWithoutLeaseInput = z.infer<typeof CompleteWithoutLeaseInputSchema>;
 
 export const FailTaskInputSchema = z
   .object({

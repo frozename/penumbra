@@ -85,6 +85,43 @@ describe("TaskWriter review pairing", () => {
     expect(child.origin).toBe("task-board/v1");
   });
 
+  test("lease-less completion auto-files review task and uses supplied actor", () => {
+    const { task_id: parentTaskId } = writer.file(baseInput());
+
+    const completion = writer.completeWithoutLease(
+      {
+        task_id: parentTaskId,
+        result_summary: "implemented without lease",
+        result_artifacts: [{ type: "commit", ref: "def456" }],
+      },
+      "maestro",
+    );
+
+    expect(completion.status).toBe("done_pending_review");
+    expect(writer.get(parentTaskId).status).toBe("done_pending_review");
+
+    const childId = fetchReviewChildId(db, parentTaskId);
+    expect(childId).not.toBeNull();
+    const child = writer.get(childId!);
+    expect(child.prompt).toContain("implemented without lease");
+    expect(child.eligibility).toEqual({ min_tier: "premium", deny_agents: ["maestro"] });
+
+    const completed = db
+      .query<{ actor: string | null; payload_json: string | null }, [string]>(
+        `SELECT actor, payload_json
+         FROM task_events
+         WHERE task_id = ? AND kind = 'completed'
+         ORDER BY id DESC
+         LIMIT 1`,
+      )
+      .get(parentTaskId);
+    expect(completed).not.toBeNull();
+    expect(completed!.actor).toBe("maestro");
+    expect(JSON.parse(completed!.payload_json!)).toEqual({
+      result_summary: "implemented without lease",
+    });
+  });
+
   test("appends review_filed event on parent with review task id payload", () => {
     const { task_id: parentTaskId } = writer.file(baseInput());
     const lease = writer.lease({ task_id: parentTaskId, agent_id: "agent-doer" });

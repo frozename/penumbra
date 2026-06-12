@@ -158,6 +158,33 @@ describe("task board schemas", () => {
 
     expect(() => CompleteTaskInputSchema.parse(minimal)).not.toThrow();
     expect(() => CompleteTaskInputSchema.parse(full)).not.toThrow();
+
+    // lease_id is required
+    expect(() =>
+      CompleteTaskInputSchema.parse({ task_id: "task-1", result_summary: "done" }),
+    ).toThrow();
+  });
+
+  test("CompleteTaskInputSchema bounds result payload sizes", () => {
+    expect(() =>
+      CompleteTaskInputSchema.parse({
+        task_id: "task-1",
+        lease_id: "lease-1",
+        result_summary: "x".repeat(16_001),
+      }),
+    ).toThrow();
+
+    expect(() =>
+      CompleteTaskInputSchema.parse({
+        task_id: "task-1",
+        lease_id: "lease-1",
+        result_summary: "done",
+        result_artifacts: Array.from({ length: 51 }, (_, index) => ({
+          type: "file",
+          ref: `file-${index}`,
+        })),
+      }),
+    ).toThrow();
   });
 
   test("FailTaskInputSchema parses minimal payload", () => {

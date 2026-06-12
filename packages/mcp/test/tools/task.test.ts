@@ -299,6 +299,30 @@ describe("task.* handlers", () => {
     expect(parsed.status).toBe("done");
   });
 
+  test("task.complete forwards an omitted lease_id as a lease-less completion", async () => {
+    const calls: Array<{ taskId: string; body: Record<string, unknown> }> = [];
+    const handler = taskCompleteHandler({
+      taskComplete: async (taskId: string, body: Record<string, unknown>) => {
+        calls.push({ taskId, body });
+        return { status: "done" };
+      },
+    } as any);
+
+    const input = {
+      task_id: "task_6b",
+      result_summary: "landed cleanly",
+      result_artifacts: [{ type: "commit" as const, ref: "cafebabe" }],
+    };
+
+    // lease_id is optional at the tool layer: the daemon's principal-aware
+    // gate decides whether a lease-less completion is allowed, not the schema.
+    await handler(input);
+    expect(calls.length).toBe(1);
+    expect(calls[0]?.taskId).toBe("task_6b");
+    expect(calls[0]?.body.lease_id).toBeUndefined();
+    expect(calls[0]?.body.result_summary).toBe("landed cleanly");
+  });
+
   test("task.fail forwards FailTaskInput and returns {status}", async () => {
     const calls: unknown[] = [];
     const handler = taskFailHandler({

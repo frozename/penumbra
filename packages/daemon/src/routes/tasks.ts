@@ -24,6 +24,7 @@ import {
   TaskDraftPromotedPayloadSchema,
   getGithubRepo,
 } from "@penumbra/core";
+import { getPrincipal } from "../auth.js";
 import type { GhTaskSyncService, GhTaskSyncSummary } from "../sweepers/gh-task-sync.js";
 import { bodyJson, json } from "./_helpers.js";
 const TaskIncludeSchema = z.enum(["lease", "events", "descendants"]);
@@ -49,7 +50,12 @@ const LeaseTaskRequestSchema = z
   .strict();
 
 const HeartbeatTaskRequestSchema = HeartbeatTaskInputSchema.omit({ task_id: true });
-const CompleteTaskRequestSchema = CompleteTaskInputSchema.omit({ task_id: true });
+const CompleteTaskRequestSchema = CompleteTaskInputSchema.omit({
+  task_id: true,
+  lease_id: true,
+}).extend({
+  lease_id: z.string().optional(),
+});
 const FailTaskRequestSchema = FailTaskInputSchema.omit({ task_id: true });
 const CancelTaskRequestSchema = CancelTaskInputSchema.omit({ task_id: true });
 const LinkGhRequestSchema = z
@@ -92,12 +98,17 @@ function mapTaskError(err: unknown): Response {
   if (
     err instanceof InvalidTaskStatus ||
     err instanceof LeaseInvalid ||
-    err instanceof LeaseConflict ||
     err instanceof MissingReviewVerdict ||
     err instanceof UnexpectedReviewVerdict ||
     err instanceof ReviewParentInvalidState
   ) {
     return json({ error: err.name, message: err.message }, 409);
+  }
+  if (err instanceof LeaseConflict) {
+    return json(
+      { error: err.name, message: err.message, active_lease_id: err.active_lease_id ?? null },
+      409,
+    );
   }
   if (err instanceof EmitCapExceeded) {
     return json(
@@ -491,8 +502,35 @@ export async function tasksCompleteRoute(
   const parsed = CompleteTaskRequestSchema.safeParse(raw);
   if (!parsed.success) return invalidInput(parsed.error.issues);
 
+  const principal = getPrincipal(req);
+  if (!principal) {
+    return json(
+      {
+        error: "unauthorized",
+        message: "this route requires a bearer principal",
+      },
+      401,
+    );
+  }
+  if (principal?.kind === "worker" && parsed.data.lease_id === undefined) {
+    return json(
+      {
+        error: "worker_token_required",
+        message: "this route requires a lease_id for worker-token principals",
+      },
+      403,
+    );
+  }
+
   try {
-    const result = writer.complete({ task_id, ...parsed.data });
+    // Positive allowlist: only the shared (operator/maestro) principal may
+    // complete without a lease; any future principal kind must opt in here.
+    if (principal.kind === "shared" && parsed.data.lease_id === undefined) {
+      const result = writer.completeWithoutLease({ task_id, ...parsed.data }, "maestro");
+      return json(result);
+    }
+
+    const result = writer.complete({ task_id, ...parsed.data, lease_id: parsed.data.lease_id! });
     if (ghSync && parsed.data.review_verdict) {
       const task = writer.get(task_id);
       if (task.gh_issue_repo && task.gh_issue_number) {
