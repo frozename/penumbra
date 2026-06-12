@@ -55,6 +55,18 @@ Tick context:
 
 Tools available to you (call each tool by its exact name shown below):
 ${agent.mcp_allowlist.map((t) => `  - ${toSdkForm(t)}`).join("\n")}
+
+Tool invocation discipline (binding):
+- If your harness defers MCP tool schemas (e.g. behind a ToolSearch loader), load every
+  required tool in ONE lookup (e.g. ToolSearch "select:<name>,<name>,..."), then call each
+  tool directly by its exact name above. Do not repeat lookups for tools already loaded.
+- NEVER try to reach MCP tools through Bash, shell commands, or by querying the database
+  directly. Those workarounds are treated as tick failures.
+- If a listed tool is still not callable after one load attempt, stop: record the
+  unavailability via long_lived_self_state_set and end the tick cleanly. Tool
+  unavailability is a reportable outcome, not something to work around.
+- A tick that finds no pending work is a SUCCESS: update self-state, note it was an idle
+  tick, and end.
 `;
 
   if (needsAntiConfusion) {

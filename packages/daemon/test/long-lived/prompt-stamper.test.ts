@@ -208,4 +208,22 @@ describe("stampPrompt", () => {
     });
     expect(out).toContain("mcp__penumbra__chain_start");
   });
+
+  it("includes binding tool invocation discipline for deferred-schema harnesses", () => {
+    const out = stampPrompt({ agent: baseAgent, tick: baseTick });
+    expect(out).toContain("Tool invocation discipline (binding):");
+    expect(out).toContain("ONE lookup");
+    expect(out).toMatch(/NEVER try to reach MCP tools through Bash/);
+  });
+
+  it("directs the agent to report tool unavailability instead of working around it", () => {
+    const out = stampPrompt({ agent: baseAgent, tick: baseTick });
+    expect(out).toMatch(/not callable after one load attempt.*long_lived_self_state_set/s);
+    expect(out).toContain("reportable outcome");
+  });
+
+  it("declares an idle tick a success", () => {
+    const out = stampPrompt({ agent: baseAgent, tick: baseTick });
+    expect(out).toContain("no pending work is a SUCCESS");
+  });
 });
