@@ -282,7 +282,7 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS: {
     schema: OptPosInt,
     description:
-      "Central MCP response budget in estimated tokens. When set, an oversized tool result is truncated to this budget and the full payload is spilled to the in-process handle store (recover via read_handle). Unset disables budgeting. Opt-in; restart the penumbra-mcp stdio child to pick up changes.",
+      "Central MCP response budget in estimated tokens. When set, an oversized tool result is truncated to this budget and the full payload is spilled to the in-process handle store (recover via read_handle). Unset disables budgeting. Invalid values fail fast at MCP server startup; use a positive integer. Opt-in; restart the penumbra-mcp stdio child to pick up changes.",
   },
   PENUMBRA_MCP_TOOL_ALLOWLIST: {
     schema: OptStr,
@@ -1016,6 +1016,8 @@ export function isMcpInvocationLogEnabled(env: NodeJS.ProcessEnv = process.env):
 
 /**
  * Central MCP response budget in estimated tokens, or null when unset.
+ * Invalid non-numeric, zero, or negative values fail fast through the env
+ * registry instead of silently disabling or changing the budget.
  * Parse this ONCE (in buildServer) and pass it explicitly to instrumentHandler;
  * instrumentation must never read the env itself.
  */

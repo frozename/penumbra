@@ -13,10 +13,12 @@ import { isEnvelopeResult } from "../src/responses/envelope.js";
 import { DEFAULT_BUDGET } from "../src/responses/budget.js";
 import { buildServer } from "../src/server.js";
 import { TOOL_REGISTRY } from "../src/tools/registry.js";
+import { connectInMemory } from "./helpers.js";
 
 const ENV_KEYS = [
   "PENUMBRA_MCP_TOOL_ALLOWLIST",
   "PENUMBRA_MCP_INVOCATION_LOG_ENABLED",
+  "PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS",
   "PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID",
   "PENUMBRA_LONG_LIVED_AGENT_ID",
   "PENUMBRA_LONG_LIVED_TICK_ID",
@@ -357,6 +359,54 @@ describe("buildServer tool registration", () => {
       }
       delete process.env.PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS;
     }
+  });
+
+  it("applies response budget to federated tools through the real MCP client path", async () => {
+    process.env.PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS = "1";
+    delete process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED;
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = "ha.ha_get_state,read_handle";
+    process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
+    process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
+    const large = { blob: "x".repeat(256) };
+    const daemon = {
+      getFederationTools: async () => ({
+        tools: [{ name: "ha.ha_get_state", description: "get state" }],
+      }),
+      mcpCall: async () => ({ action_status: "executed", result: large }),
+    } as any;
+    const client = await connectInMemory(daemon);
+    try {
+      const out = (await client.callTool({
+        name: "ha.ha_get_state",
+        arguments: {},
+      })) as any;
+      expect(isEnvelopeResult(out)).toBe(true);
+      expect(out._meta.token_budget.truncated).toBe(true);
+      expect(out._meta.handle_id).toBeTruthy();
+      expect(out.content[0].type).toBe("text");
+      expect(out.content[0].text).toContain(`read_handle ${out._meta.handle_id}`);
+
+      const readOut = (await client.callTool({
+        name: "read_handle",
+        arguments: { handle_id: out._meta.handle_id },
+      })) as any;
+      expect(readOut.isError).toBeUndefined();
+      expect(readOut.content[0].text).toBe(JSON.stringify(large));
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("fails fast when PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS is invalid", async () => {
+    process.env.PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS = "not-a-number";
+    await expect(buildServer({ daemon: {} as any })).rejects.toThrow(
+      /PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS/,
+    );
+
+    process.env.PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS = "-1";
+    await expect(buildServer({ daemon: {} as any })).rejects.toThrow(
+      /PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS/,
+    );
   });
 
   it("buildServer is reentrant — second call with logging enabled does not throw", async () => {

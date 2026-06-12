@@ -59,6 +59,13 @@ describe("ENV_REGISTRY", () => {
   test("penumbra multi-file config dir override env key exists", () => {
     expect(ENV_REGISTRY.PENUMBRA_CONFIG_DIR).toBeDefined();
   });
+
+  test("MCP response budget docs mention invalid values fail fast", () => {
+    const description = ENV_REGISTRY.PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS.description;
+    expect(description).toContain("Invalid values");
+    expect(description).toContain("fail fast");
+    expect(description).toContain("positive integer");
+  });
 });
 
 describe("isMcpInvocationLogEnabled", () => {
