@@ -11,6 +11,7 @@ type ReviewPersona = {
   system_prompt: string;
   preferred_agent: string;
   category_hints?: string[];
+  optional?: boolean;
   timeout_ms?: number;
 };
 
@@ -51,7 +52,15 @@ export type Input = z.infer<typeof inputSchema>;
 
 const TRIVIAL_RESPONSE_THRESHOLD = 200;
 const SYNTHESIS_DISPATCH_ATTEMPT_LIMIT = 3;
-export const UI_VISION_PERSONA_KEY = "vision_verify";
+const UI_ACTIVATION_CATEGORY_HINTS = new Set([
+  "ui",
+  "frontend",
+  "styles",
+  "copy",
+  "a11y",
+  "accessibility",
+  "visual",
+]);
 
 type PersonaRunResult = {
   persona: string;
@@ -69,13 +78,18 @@ type PersonaRunResult = {
   retry_count?: 1;
 };
 
-export function summarizePersonaOutcomes(
+function isBlockingPersona(persona?: Pick<ReviewPersona, "optional">): boolean {
+  return persona?.optional !== true;
+}
+
+export function summarizePersonaCompletionOutcome(
   personaResults: Array<{
     persona: string;
     persona_key?: string;
     status: "completed" | "failed" | "timeout";
   }>,
   minPassPct: number,
+  personasByKey: Record<string, Pick<ReviewPersona, "optional">> = {},
 ): {
   completedCount: number;
   failedCount: number;
@@ -87,15 +101,19 @@ export function summarizePersonaOutcomes(
   const failedPersonas = personaResults
     .filter((r) => r.status !== "completed")
     .map((r) => r.persona);
-  const requiredPersonaResults = personaResults.filter(
-    (result) => (result.persona_key ?? result.persona) !== UI_VISION_PERSONA_KEY,
+  const passDenominatorResults = personaResults.filter((result) =>
+    isBlockingPersona(personasByKey[result.persona_key ?? result.persona]),
   );
-  const requiredCompletedCount = requiredPersonaResults.filter(
+  // If a caller selected only optional personas, they still form the pass
+  // denominator so an all-optional run cannot mask total failure.
+  const thresholdPersonaResults =
+    passDenominatorResults.length > 0 ? passDenominatorResults : personaResults;
+  const passDenominatorCompletedCount = thresholdPersonaResults.filter(
     (r) => r.status === "completed",
   ).length;
   const passPct =
-    requiredPersonaResults.length > 0
-      ? (requiredCompletedCount / requiredPersonaResults.length) * 100
+    thresholdPersonaResults.length > 0
+      ? (passDenominatorCompletedCount / thresholdPersonaResults.length) * 100
       : 100;
   let outcome: "success" | "success_partial" | "failed";
   if (failedCount === 0) outcome = "success";
@@ -194,40 +212,77 @@ function getConfiguredPersonas(ctx: WorkflowCtx): Record<string, ReviewPersona> 
       category_hints: Array.isArray(value.category_hints)
         ? value.category_hints.filter((x): x is string => typeof x === "string" && x.length > 0)
         : undefined,
+      optional: typeof value.optional === "boolean" ? value.optional : undefined,
     };
   }
   return out;
 }
 
-export function diffTouchesUI(diffText: string): boolean {
-  // Capture the path from BOTH unified-diff header sides: `+++ b/<path>` covers
-  // adds/modifies, `--- a/<path>` covers deletes (whose `+++` side is /dev/null).
-  // A deleted UI file is precisely the silent-drop case this reviewer exists for.
-  // Deliberately conservative whitelist: false negatives are preferable to
-  // running the vision reviewer on backend or test-only changes.
-  const changedPathHeaderPattern = /^(?:--- a\/|\+\+\+ b\/)([^\r\n\t ]*)/gm;
-  let match: RegExpExecArray | null;
-  while ((match = changedPathHeaderPattern.exec(diffText)) !== null) {
-    const path = match[1];
-    if (!path || path === "/dev/null") continue;
-    const lower = path.toLowerCase();
-    if (lower.endsWith(".d.ts") || lower.endsWith(".test.tsx") || lower.endsWith(".spec.tsx")) {
-      continue;
-    }
-    // `.stories.tsx` is covered by the `.tsx` check below.
-    if (
-      lower.endsWith(".tsx") ||
-      lower.endsWith(".jsx") ||
-      lower.endsWith(".css") ||
-      lower.endsWith(".scss")
-    ) {
-      return true;
-    }
-    if (/(^|\/)(components|styles)(\/|$)/.test(lower)) {
-      return true;
+function normalizeDiffPath(path: string): string | null {
+  if (path === "/dev/null") return null;
+  let normalized = path;
+  if (normalized.startsWith('"') && normalized.endsWith('"')) {
+    try {
+      normalized = JSON.parse(normalized) as string;
+    } catch {
+      normalized = normalized.slice(1, -1);
     }
   }
-  return false;
+  return normalized.replace(/^[ab]\//, "");
+}
+
+function pathTouchesUI(path: string): boolean {
+  const lower = path.toLowerCase();
+  if (
+    lower.endsWith(".d.ts") ||
+    lower.endsWith(".test.ts") ||
+    lower.endsWith(".test.tsx") ||
+    lower.endsWith(".spec.ts") ||
+    lower.endsWith(".spec.tsx")
+  ) {
+    return false;
+  }
+  if (
+    lower.endsWith(".tsx") ||
+    lower.endsWith(".jsx") ||
+    lower.endsWith(".css") ||
+    lower.endsWith(".scss")
+  ) {
+    return true;
+  }
+  return /(^|\/)(components|styles)(\/|$)/.test(lower);
+}
+
+export function diffTouchesUI(diffText: string): boolean {
+  const changedPathHeaderPattern =
+    /^---[ \t]+("[^"\r\n]*(?:\\.[^"\r\n]*)*"|[^\r\n]+)\r?\n\+\+\+[ \t]+("[^"\r\n]*(?:\\.[^"\r\n]*)*"|[^\r\n]+)/gm;
+  const paths = new Set<string>();
+  let match: RegExpExecArray | null;
+  while ((match = changedPathHeaderPattern.exec(diffText)) !== null) {
+    for (const rawPath of [match[1], match[2]]) {
+      if (!rawPath) continue;
+      const normalized = normalizeDiffPath(rawPath);
+      if (normalized) paths.add(normalized);
+    }
+  }
+  return [...paths].some(pathTouchesUI);
+}
+
+function contentPathTouchesUI(contentPath: string | undefined): boolean {
+  return typeof contentPath === "string" && contentPath.length > 0 && pathTouchesUI(contentPath);
+}
+
+function uiActivatedPersona(persona: ReviewPersona): boolean {
+  return (
+    persona.category_hints?.some((hint) => UI_ACTIVATION_CATEGORY_HINTS.has(hint.toLowerCase())) ??
+    false
+  );
+}
+
+function reviewTouchesUI(recall: RecallBundle, args: Input): boolean {
+  const gitDiff =
+    typeof recall.byKey["git.diff"] === "string" ? (recall.byKey["git.diff"] as string) : "";
+  return diffTouchesUI(gitDiff) || contentPathTouchesUI(args.content_path);
 }
 
 function getPersonas(ctx: WorkflowCtx, recall: RecallBundle): PersonaResolution | null {
@@ -240,15 +295,13 @@ function getPersonas(ctx: WorkflowCtx, recall: RecallBundle): PersonaResolution 
 
   const configured = getConfiguredPersonas(ctx);
   const resolved: Record<string, ReviewPersona> = {};
-  const gitDiff =
-    typeof recall.byKey["git.diff"] === "string" ? (recall.byKey["git.diff"] as string) : "";
   const selectedPersonaKeys = [...eligibleAgents];
-  if (
-    diffTouchesUI(gitDiff) &&
-    configured[UI_VISION_PERSONA_KEY] &&
-    !selectedPersonaKeys.includes(UI_VISION_PERSONA_KEY)
-  ) {
-    selectedPersonaKeys.push(UI_VISION_PERSONA_KEY);
+  if (reviewTouchesUI(recall, ctx.args)) {
+    for (const [personaKey, persona] of Object.entries(configured)) {
+      if (!selectedPersonaKeys.includes(personaKey) && uiActivatedPersona(persona)) {
+        selectedPersonaKeys.push(personaKey);
+      }
+    }
   }
 
   for (const personaKey of selectedPersonaKeys) {
@@ -307,7 +360,8 @@ function renderPersonaPrompt(persona: ReviewPersona, recall: RecallBundle, args:
   const gitDiff =
     typeof recall.byKey["git.diff"] === "string" ? (recall.byKey["git.diff"] as string) : "";
   const commits = formatGitShow(recall);
-  const content = fileContentsBody(recall);
+  const hasContentPath = typeof args.content_path === "string" && args.content_path.length > 0;
+  const content = hasContentPath ? fileContentsBody(recall) : "";
   const categoryHints =
     persona.category_hints && persona.category_hints.length > 0
       ? persona.category_hints.join(", ")
@@ -317,8 +371,7 @@ function renderPersonaPrompt(persona: ReviewPersona, recall: RecallBundle, args:
   // git.diff and git.show recall fetched from the workflow's cwd, which can be the
   // daemon's cwd (penumbra) rather than the target repo — drop the misleading
   // sections to prevent personas from reviewing the wrong thing.
-  const useContent =
-    typeof args.content_path === "string" && args.content_path.length > 0 && content.length > 0;
+  const useContent = hasContentPath && content.length > 0;
   const diffBody = useContent ? content : gitDiff;
   const reviewTarget = useContent
     ? `content_path=${args.content_path}\nbase_ref=${args.base_ref}\ntarget_ref=${args.target_ref}\n\nThe Diff section below comes from the explicit content_path file — this is the authoritative review target. Ignore any git context from your worktree.`
@@ -699,10 +752,8 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   );
 
   const minPassPct = (ctx.config.review_min_personas_pass_pct as number | undefined) ?? 80;
-  const { completedCount, failedCount, failedPersonas, outcome } = summarizePersonaOutcomes(
-    personaResults,
-    minPassPct,
-  );
+  const { completedCount, failedCount, failedPersonas, outcome } =
+    summarizePersonaCompletionOutcome(personaResults, minPassPct, personasByKey);
   const partialBanner =
     failedCount > 0
       ? `> Partial review: ${completedCount} of ${personaResults.length} personas completed (failed: ${failedPersonas.join(", ")})\n\n`

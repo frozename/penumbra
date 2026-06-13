@@ -144,6 +144,7 @@ describe("AgentChatConfigSchema — adversarial review config blocks", () => {
           system_prompt: "Review with architecture lens.",
           preferred_agent: "claude",
           category_hints: ["design", "maintainability"],
+          optional: true,
           description: "Checks structural integrity.",
         },
         security: {
@@ -156,7 +157,25 @@ describe("AgentChatConfigSchema — adversarial review config blocks", () => {
     });
 
     expect(parsed.review_personas?.architect?.preferred_agent).toBe("claude");
+    expect(parsed.review_personas?.architect?.optional).toBe(true);
     expect(parsed.review_personas?.security?.category_hints).toBeUndefined();
+  });
+
+  test("review_personas reject legacy blocking marker", () => {
+    expect(() =>
+      AgentChatConfigSchema.parse({
+        ...baseConfig,
+        review_personas: {
+          architect: {
+            name: "architect",
+            bias: "long-term architecture and modularity",
+            system_prompt: "Review with architecture lens.",
+            preferred_agent: "claude",
+            blocking: false,
+          },
+        },
+      }),
+    ).toThrow(/blocking/);
   });
 
   test("review_personas rejects missing required fields", () => {

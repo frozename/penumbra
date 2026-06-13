@@ -24,6 +24,7 @@ export const PersonaSchema = z
     bias: z.string().min(1),
     system_prompt: z.string().min(1),
     category_hints: z.array(z.string().min(1)).optional(),
+    optional: z.boolean().optional(),
   })
   .strict();
 export type PersonaConfig = z.infer<typeof PersonaSchema>;

@@ -114,6 +114,7 @@ function splitLegacyConfig(source: AgentChatConfig) {
       bias: string;
       system_prompt: string;
       category_hints?: string[];
+      optional?: boolean;
     }
   > = {};
   for (const [name, persona] of Object.entries(legacy.review_personas ?? {})) {
@@ -122,6 +123,7 @@ function splitLegacyConfig(source: AgentChatConfig) {
       bias: persona.bias,
       system_prompt: persona.system_prompt,
       ...(persona.category_hints ? { category_hints: persona.category_hints } : {}),
+      ...(typeof persona.optional === "boolean" ? { optional: persona.optional } : {}),
     };
   }
   for (const [name, persona] of Object.entries(legacy.planner_personas ?? {})) {

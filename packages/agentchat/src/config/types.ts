@@ -446,14 +446,17 @@ export type RoleRoutingConfig = z.infer<typeof RoleRoutingConfigSchema>;
 
 const AgentPinSchema = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]);
 
-export const ReviewPersonaSchema = z.object({
-  name: z.string().min(1),
-  bias: z.string().min(1),
-  system_prompt: z.string().min(1),
-  preferred_agent: AgentPinSchema,
-  category_hints: z.array(z.string()).optional(),
-  description: z.string().optional(),
-});
+export const ReviewPersonaSchema = z
+  .object({
+    name: z.string().min(1),
+    bias: z.string().min(1),
+    system_prompt: z.string().min(1),
+    preferred_agent: AgentPinSchema,
+    category_hints: z.array(z.string()).optional(),
+    optional: z.boolean().optional(),
+    description: z.string().optional(),
+  })
+  .strict();
 export type ReviewPersona = z.infer<typeof ReviewPersonaSchema>;
 
 export const ReviewSynthesizerSchema = z.object({

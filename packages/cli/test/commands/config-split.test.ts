@@ -174,6 +174,43 @@ describe("penumbra config split", () => {
     });
   });
 
+  test("migrates review persona optionality as optional only", async () => {
+    const dir = await makeTempDir();
+    const source = join(dir, "legacy.yaml");
+    writeFileSync(
+      source,
+      [
+        "agents:",
+        "  - name: one",
+        "    adapter: stdio-acp",
+        "default_roles: {}",
+        "review_personas:",
+        "  ui_regression:",
+        "    name: ui_regression",
+        "    preferred_agent: one",
+        "    bias: ui_regression",
+        "    system_prompt: Review UI regressions.",
+        "    category_hints: [ui, frontend]",
+        "    optional: true",
+        "review_synthesizer:",
+        "  preferred_agent: one",
+        "  system_prompt: Synthesize.",
+        "providers: []",
+        "notifications: {}",
+        "",
+      ].join("\n"),
+    );
+
+    const result = await runSplit(["--source", source, "--dest", dir, "--force"]);
+
+    expect(result.exitCode).toBe(0);
+    const routing = RoutingConfigSchema.parse(
+      YAML.parse(readFileSync(join(dir, "routing.yaml"), "utf8")),
+    );
+    expect(routing.personas?.ui_regression?.optional).toBe(true);
+    expect(routing.personas?.ui_regression).not.toHaveProperty("blocking");
+  });
+
   test("missing source exits 2", async () => {
     const result = await runSplit(["--dest", "/tmp/nowhere"]);
 
