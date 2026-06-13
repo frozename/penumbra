@@ -42,14 +42,23 @@ function seedApprovedHandoff(
   services: Services,
   handoff_id: string,
   project_id: string | null = null,
+  opts: {
+    to?: string;
+    dispatch_kind?: "workflow";
+    workflow_run_id?: string;
+    tsOffsetMs?: number;
+  } = {},
 ): void {
+  const ts = new Date(
+    Date.parse("2026-05-21T10:00:00.000Z") + (opts.tsOffsetMs ?? 0),
+  ).toISOString();
   services.handoffWriter.createApproved({
     handoff_id,
-    ts: "2026-05-21T10:00:00.000Z",
+    ts,
     project_id,
     conversation_id: `conv-${handoff_id}`,
     from: "planner",
-    to: "worker",
+    to: opts.to ?? "worker",
     to_role: null,
     message: "go",
     triggered_by_event_id: null,
@@ -60,6 +69,8 @@ function seedApprovedHandoff(
     chain_task_type: null,
     use_worktree: null,
     parent_handoff_id: null,
+    dispatch_kind: opts.dispatch_kind ?? null,
+    workflow_run_id: opts.workflow_run_id ?? null,
   });
 }
 
@@ -194,6 +205,135 @@ test("Claim collision: W-A claims; W-B token + W-B body cannot steal", async () 
     >("SELECT worker_id FROM handoffs WHERE handoff_id = ?")
     .get("h-4");
   expect(row?.worker_id).toBe("W-A");
+});
+
+test("workflow fan-out sibling claims are spread across active workers without exceeding the per-worker cap", async () => {
+  const services = tempServices();
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+  const workerIds = ["W-A", "W-B", "W-C"];
+  const tokens = new Map<string, string>();
+  for (const worker_id of workerIds) {
+    const { worker_token } = await registerWorkerForTest({
+      baseUrl: "http://x",
+      sharedBearer: SHARED_TOKEN,
+      worker_id,
+      fetcher: makeFetcher(fetchHandler),
+    });
+    tokens.set(worker_id, worker_token);
+  }
+
+  for (let i = 0; i < 10; i++) {
+    seedApprovedHandoff(services, `fanout-${i}`, null, {
+      dispatch_kind: "workflow",
+      workflow_run_id: "workflow-spread-1",
+      tsOffsetMs: i,
+    });
+  }
+
+  for (let i = 0; i < 5; i++) {
+    const res = await fetchHandler(
+      new Request(`http://x/handoffs/fanout-${i}/claim`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${tokens.get("W-A")}` },
+        body: JSON.stringify({ worker_id: "W-A" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+  }
+
+  const overCap = await fetchHandler(
+    new Request("http://x/handoffs/fanout-5/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokens.get("W-A")}` },
+      body: JSON.stringify({ worker_id: "W-A" }),
+    }),
+  );
+  expect(overCap.status).toBe(409);
+  const overCapBody = await overCap.json();
+  expect((overCapBody as any).error.code).toBe("claim_spread_cap");
+
+  const spreadClaim = await fetchHandler(
+    new Request("http://x/handoffs/fanout-5/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokens.get("W-B")}` },
+      body: JSON.stringify({ worker_id: "W-B" }),
+    }),
+  );
+  expect(spreadClaim.status).toBe(200);
+
+  const counts = services.db
+    .query<{ worker_id: string; n: number }, []>(
+      `SELECT worker_id, COUNT(*) AS n
+         FROM handoffs
+        WHERE workflow_run_id = 'workflow-spread-1'
+          AND status = 'dispatched'
+        GROUP BY worker_id
+        ORDER BY worker_id`,
+    )
+    .all();
+  expect(counts).toEqual([
+    { worker_id: "W-A", n: 5 },
+    { worker_id: "W-B", n: 1 },
+  ]);
+});
+
+test("workflow sibling spreading does not block a warm-pool home worker", async () => {
+  const services = tempServices();
+  (services as Services & { agentchatConfig?: any }).agentchatConfig = {
+    agents: [{ name: "warm-agent", roles: [], options: { warm_pool: true } }],
+  };
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+  (
+    services as {
+      workerAuthz?: Map<string, { project_id?: string; isolation: "sticky" | "hard" | "shared" }>;
+    }
+  ).workerAuthz = new Map([
+    ["W-HOME", { project_id: "project-a", isolation: "sticky" }],
+    ["W-OTHER", { project_id: "project-b", isolation: "sticky" }],
+    ["W-THIRD", { project_id: "project-c", isolation: "sticky" }],
+  ]);
+
+  const tokens = new Map<string, string>();
+  for (const worker_id of ["W-HOME", "W-OTHER", "W-THIRD"]) {
+    const { worker_token } = await registerWorkerForTest({
+      baseUrl: "http://x",
+      sharedBearer: SHARED_TOKEN,
+      worker_id,
+      fetcher: makeFetcher(fetchHandler),
+    });
+    tokens.set(worker_id, worker_token);
+  }
+
+  for (let i = 0; i < 8; i++) {
+    seedApprovedHandoff(services, `warm-${i}`, "project-a", {
+      to: "warm-agent",
+      dispatch_kind: "workflow",
+      workflow_run_id: "workflow-warm-1",
+      tsOffsetMs: i,
+    });
+  }
+
+  for (let i = 0; i < 5; i++) {
+    const res = await fetchHandler(
+      new Request(`http://x/handoffs/warm-${i}/claim`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${tokens.get("W-HOME")}` },
+        body: JSON.stringify({ worker_id: "W-HOME" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+  }
+
+  const count = services.db
+    .query<{ n: number }, []>(
+      `SELECT COUNT(*) AS n
+         FROM handoffs
+        WHERE workflow_run_id = 'workflow-warm-1'
+          AND status = 'dispatched'
+          AND worker_id = 'W-HOME'`,
+    )
+    .get();
+  expect(count?.n).toBe(5);
 });
 
 test("/handoffs/:id/claim without Authorization returns 401", async () => {

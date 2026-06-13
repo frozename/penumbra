@@ -251,6 +251,7 @@ export interface Services {
     agents?: Array<{
       name: string;
       roles: string[];
+      options?: Record<string, unknown>;
       subscription_provider?: string;
       subscription_model?: string;
       api_provider?: string;

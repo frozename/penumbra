@@ -72,6 +72,146 @@ interface AgentPerformanceCostRow {
   cost_usd: number | null;
 }
 
+interface ClaimSpreadDecision {
+  workflow_run_id: string;
+  active_worker_count: number;
+  sibling_count: number;
+  max_per_worker: number;
+}
+
+interface WorkerTokenWorkerRow {
+  worker_id: string;
+}
+
+interface CountRow {
+  n: number;
+}
+
+function workerHeartbeatStaleMs(): number {
+  const configured = Number(process.env.PENUMBRA_WORKER_HEARTBEAT_STALE_MS);
+  return Number.isFinite(configured) && configured > 0 ? configured : 90_000;
+}
+
+function workerCanClaimProject(
+  authz: { project_id?: string; isolation: ExtraWorkerConfig["isolation"] } | undefined,
+  project_id: string | null,
+): boolean {
+  return !(
+    authz?.isolation === "hard" &&
+    authz.project_id != null &&
+    project_id !== authz.project_id
+  );
+}
+
+function countFreshEligibleWorkers(services: DaemonServices, project_id: string | null): number {
+  const cutoff = Date.now() - workerHeartbeatStaleMs();
+  const rows = services.db
+    .query<WorkerTokenWorkerRow, [number]>(
+      `SELECT DISTINCT worker_id
+         FROM worker_tokens
+        WHERE revoked_at IS NULL
+          AND last_seen_at >= ?`,
+    )
+    .all(cutoff);
+  let n = 0;
+  for (const row of rows) {
+    if (workerCanClaimProject(services.workerAuthz?.get(row.worker_id), project_id)) n++;
+  }
+  return n;
+}
+
+function agentUsesWarmPool(services: DaemonServices, agentName: string): boolean {
+  const agents = services.agentchatConfig?.agents;
+  if (!Array.isArray(agents)) return false;
+  const agent = agents.find((candidate) => candidate.name === agentName);
+  return agent?.options?.warm_pool === true;
+}
+
+function workerHasWarmClaimAdvantage(
+  services: DaemonServices,
+  handoff: { project_id: string | null; to_agent: string },
+  worker_id: string,
+): boolean {
+  if (!agentUsesWarmPool(services, handoff.to_agent)) return false;
+  const authz = services.workerAuthz?.get(worker_id);
+  if (handoff.project_id === null) return authz?.project_id == null;
+  return authz?.project_id === handoff.project_id;
+}
+
+function countWorkflowGroupSiblings(services: DaemonServices, workflow_run_id: string): number {
+  const row = services.db
+    .query<CountRow, [string]>(
+      `SELECT COUNT(*) AS n
+         FROM handoffs
+        WHERE dispatch_kind='workflow'
+          AND workflow_run_id=?
+          AND status IN ('approved','redirected','dispatched')`,
+    )
+    .get(workflow_run_id);
+  return row?.n ?? 0;
+}
+
+function countWorkflowGroupClaimsForWorker(
+  services: DaemonServices,
+  workflow_run_id: string,
+  worker_id: string,
+): number {
+  const row = services.db
+    .query<CountRow, [string, string]>(
+      `SELECT COUNT(*) AS n
+         FROM handoffs
+        WHERE dispatch_kind='workflow'
+          AND workflow_run_id=?
+          AND status='dispatched'
+          AND worker_id=?`,
+    )
+    .get(workflow_run_id, worker_id);
+  return row?.n ?? 0;
+}
+
+function resolveClaimSpreadDecision(
+  services: DaemonServices,
+  handoff: {
+    dispatch_kind?: string | null;
+    workflow_run_id?: string | null;
+    project_id: string | null;
+    to_agent: string;
+  },
+  worker_id: string,
+): ClaimSpreadDecision | null {
+  if (handoff.dispatch_kind !== "workflow" || !handoff.workflow_run_id) return null;
+  if (workerHasWarmClaimAdvantage(services, handoff, worker_id)) return null;
+
+  const active_worker_count = countFreshEligibleWorkers(services, handoff.project_id);
+  if (active_worker_count <= 1) return null;
+
+  const sibling_count = countWorkflowGroupSiblings(services, handoff.workflow_run_id);
+  if (sibling_count <= 1) return null;
+
+  return {
+    workflow_run_id: handoff.workflow_run_id,
+    active_worker_count,
+    sibling_count,
+    max_per_worker: Math.ceil(sibling_count / active_worker_count) + 1,
+  };
+}
+
+function claimSpreadCapResponse(handoff_id: string, decision: ClaimSpreadDecision): Response {
+  return json(
+    {
+      error: {
+        code: "claim_spread_cap",
+        message: `handoff ${handoff_id} belongs to workflow fan-out ${decision.workflow_run_id}; worker is at the sibling claim cap`,
+      },
+      workflow_run_id: decision.workflow_run_id,
+      sibling_count: decision.sibling_count,
+      active_worker_count: decision.active_worker_count,
+      max_per_worker: decision.max_per_worker,
+    },
+    409,
+  );
+}
+
 function maybeTeardownLongLivedTick(params: {
   services: Services;
   handoff_id: string;
@@ -517,9 +657,36 @@ export async function handoffsClaimRoute(
     );
   }
 
-  const won = services.handoffWriter.claimDispatch(handoff_id, body.data.worker_id);
+  const spreadDecision = resolveClaimSpreadDecision(services, cur, body.data.worker_id);
+  if (
+    spreadDecision &&
+    countWorkflowGroupClaimsForWorker(
+      services,
+      spreadDecision.workflow_run_id,
+      body.data.worker_id,
+    ) >= spreadDecision.max_per_worker
+  ) {
+    return claimSpreadCapResponse(handoff_id, spreadDecision);
+  }
+
+  const won = services.handoffWriter.claimDispatch(handoff_id, body.data.worker_id, {
+    workflow_run_id: spreadDecision?.workflow_run_id,
+    maxWorkflowSiblingsPerWorker: spreadDecision?.max_per_worker,
+  });
   if (!won) {
     const after = services.handoffReader.get(handoff_id);
+    if (
+      spreadDecision &&
+      after &&
+      (after.status === "approved" || after.status === "redirected") &&
+      countWorkflowGroupClaimsForWorker(
+        services,
+        spreadDecision.workflow_run_id,
+        body.data.worker_id,
+      ) >= spreadDecision.max_per_worker
+    ) {
+      return claimSpreadCapResponse(handoff_id, spreadDecision);
+    }
     return json(
       {
         error: {

@@ -250,8 +250,39 @@ export class HandoffWriter {
   }
 
   /** Atomically claim approved → dispatched. Returns true if this caller won. */
-  claimDispatch(handoff_id: string, worker_id: string): boolean {
+  claimDispatch(
+    handoff_id: string,
+    worker_id: string,
+    opts?: { workflow_run_id?: string | null; maxWorkflowSiblingsPerWorker?: number | null },
+  ): boolean {
     const last_dispatch_started_at = new Date().toISOString();
+    if (
+      opts?.workflow_run_id &&
+      opts.maxWorkflowSiblingsPerWorker != null &&
+      Number.isFinite(opts.maxWorkflowSiblingsPerWorker) &&
+      opts.maxWorkflowSiblingsPerWorker >= 0
+    ) {
+      const changes = this.db
+        .query<unknown, [string, string, string, string, string, number]>(
+          `UPDATE handoffs SET status='dispatched', worker_id=?, dispatch_attempts = dispatch_attempts + 1, last_dispatch_started_at=? WHERE handoff_id=? AND status IN ('approved','redirected') AND dispatch_attempts < max_dispatch_attempts AND (
+            SELECT COUNT(*)
+              FROM handoffs sibling
+             WHERE sibling.dispatch_kind='workflow'
+               AND sibling.workflow_run_id=?
+               AND sibling.status='dispatched'
+               AND sibling.worker_id=?
+          ) < ?`,
+        )
+        .run(
+          worker_id,
+          last_dispatch_started_at,
+          handoff_id,
+          opts.workflow_run_id,
+          worker_id,
+          opts.maxWorkflowSiblingsPerWorker,
+        );
+      return changes.changes > 0;
+    }
     const changes = this.db
       .query<
         unknown,
