@@ -51,6 +51,7 @@ export type Input = z.infer<typeof inputSchema>;
 
 const TRIVIAL_RESPONSE_THRESHOLD = 200;
 const SYNTHESIS_DISPATCH_ATTEMPT_LIMIT = 3;
+export const UI_VISION_PERSONA_KEY = "vision_verify";
 
 type PersonaRunResult = {
   persona: string;
@@ -67,6 +68,41 @@ type PersonaRunResult = {
   triviality_reason?: "trivial_response" | "no_findings";
   retry_count?: 1;
 };
+
+export function summarizePersonaOutcomes(
+  personaResults: Array<{
+    persona: string;
+    persona_key?: string;
+    status: "completed" | "failed" | "timeout";
+  }>,
+  minPassPct: number,
+): {
+  completedCount: number;
+  failedCount: number;
+  failedPersonas: string[];
+  outcome: "success" | "success_partial" | "failed";
+} {
+  const completedCount = personaResults.filter((r) => r.status === "completed").length;
+  const failedCount = personaResults.length - completedCount;
+  const failedPersonas = personaResults
+    .filter((r) => r.status !== "completed")
+    .map((r) => r.persona);
+  const requiredPersonaResults = personaResults.filter(
+    (result) => (result.persona_key ?? result.persona) !== UI_VISION_PERSONA_KEY,
+  );
+  const requiredCompletedCount = requiredPersonaResults.filter(
+    (r) => r.status === "completed",
+  ).length;
+  const passPct =
+    requiredPersonaResults.length > 0
+      ? (requiredCompletedCount / requiredPersonaResults.length) * 100
+      : 100;
+  let outcome: "success" | "success_partial" | "failed";
+  if (failedCount === 0) outcome = "success";
+  else if (passPct < minPassPct) outcome = "failed";
+  else outcome = "success_partial";
+  return { completedCount, failedCount, failedPersonas, outcome };
+}
 
 const RETRY_BACKOFF_MS = 5000;
 
@@ -163,7 +199,38 @@ function getConfiguredPersonas(ctx: WorkflowCtx): Record<string, ReviewPersona> 
   return out;
 }
 
-function getPersonas(ctx: WorkflowCtx): PersonaResolution | null {
+export function diffTouchesUI(diffText: string): boolean {
+  // Capture the path from BOTH unified-diff header sides: `+++ b/<path>` covers
+  // adds/modifies, `--- a/<path>` covers deletes (whose `+++` side is /dev/null).
+  // A deleted UI file is precisely the silent-drop case this reviewer exists for.
+  // Deliberately conservative whitelist: false negatives are preferable to
+  // running the vision reviewer on backend or test-only changes.
+  const changedPathHeaderPattern = /^(?:--- a\/|\+\+\+ b\/)([^\r\n\t ]*)/gm;
+  let match: RegExpExecArray | null;
+  while ((match = changedPathHeaderPattern.exec(diffText)) !== null) {
+    const path = match[1];
+    if (!path || path === "/dev/null") continue;
+    const lower = path.toLowerCase();
+    if (lower.endsWith(".d.ts") || lower.endsWith(".test.tsx") || lower.endsWith(".spec.tsx")) {
+      continue;
+    }
+    // `.stories.tsx` is covered by the `.tsx` check below.
+    if (
+      lower.endsWith(".tsx") ||
+      lower.endsWith(".jsx") ||
+      lower.endsWith(".css") ||
+      lower.endsWith(".scss")
+    ) {
+      return true;
+    }
+    if (/(^|\/)(components|styles)(\/|$)/.test(lower)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function getPersonas(ctx: WorkflowCtx, recall: RecallBundle): PersonaResolution | null {
   const workload = getReviewWorkload(ctx);
   if (!workload) return null;
   const eligibleAgents = workload.fan_out
@@ -173,7 +240,18 @@ function getPersonas(ctx: WorkflowCtx): PersonaResolution | null {
 
   const configured = getConfiguredPersonas(ctx);
   const resolved: Record<string, ReviewPersona> = {};
-  for (const personaKey of eligibleAgents) {
+  const gitDiff =
+    typeof recall.byKey["git.diff"] === "string" ? (recall.byKey["git.diff"] as string) : "";
+  const selectedPersonaKeys = [...eligibleAgents];
+  if (
+    diffTouchesUI(gitDiff) &&
+    configured[UI_VISION_PERSONA_KEY] &&
+    !selectedPersonaKeys.includes(UI_VISION_PERSONA_KEY)
+  ) {
+    selectedPersonaKeys.push(UI_VISION_PERSONA_KEY);
+  }
+
+  for (const personaKey of selectedPersonaKeys) {
     const persona = configured[personaKey];
     if (!persona) {
       return {
@@ -450,7 +528,7 @@ function buildSynthesisFrontmatter(args: {
 }
 
 export const fn: WorkflowFn<Input> = async (ctx, recall) => {
-  const personaResolution = getPersonas(ctx);
+  const personaResolution = getPersonas(ctx, recall);
   if (!personaResolution) {
     return {
       ok: false,
@@ -620,17 +698,11 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     }),
   );
 
-  const completedCount = personaResults.filter((r) => r.status === "completed").length;
-  const failedCount = personaResults.length - completedCount;
-  const failedPersonas = personaResults
-    .filter((r) => r.status !== "completed")
-    .map((r) => r.persona);
-  const passPct = (completedCount / personaResults.length) * 100;
   const minPassPct = (ctx.config.review_min_personas_pass_pct as number | undefined) ?? 80;
-  let outcome: "success" | "success_partial" | "failed";
-  if (failedCount === 0) outcome = "success";
-  else if (passPct < minPassPct) outcome = "failed";
-  else outcome = "success_partial";
+  const { completedCount, failedCount, failedPersonas, outcome } = summarizePersonaOutcomes(
+    personaResults,
+    minPassPct,
+  );
   const partialBanner =
     failedCount > 0
       ? `> Partial review: ${completedCount} of ${personaResults.length} personas completed (failed: ${failedPersonas.join(", ")})\n\n`

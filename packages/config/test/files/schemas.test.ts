@@ -123,6 +123,13 @@ describe("RoutingConfigSchema", () => {
           bias: "data_correctness",
           system_prompt: "Validate invariants and data-shape correctness.",
         },
+        vision_verify: {
+          preferred_agent: "google-gemini-pro-acp",
+          bias: "vision_verify",
+          system_prompt:
+            "You review UI-touching diffs for SILENT regressions text-focused reviewers miss. Compare removed (-) vs added (+) hunks for: dropped user-visible copy (labels, button text, tooltips, aria-labels, placeholders), removed interactive affordances (onClick/onChange handlers, buttons, links, inputs), and deleted style props or className entries. For each, state whether the removal is intentional (clearly replaced/moved nearby) or a likely silent drop from a refactor; flag silent drops as HIGH. Do not pixel-diff or comment on non-UI logic.",
+          category_hints: ["ui", "frontend", "styles", "copy"],
+        },
       },
       workloads: {
         review_adversarial: {

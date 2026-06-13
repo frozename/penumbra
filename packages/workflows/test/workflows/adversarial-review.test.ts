@@ -1,5 +1,5 @@
 import { expect, mock, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -7,7 +7,16 @@ import { Database } from "bun:sqlite";
 import { AgentPerformanceWriter, loadSqliteVec, migrate } from "@penumbra/core";
 import type { WorkflowCtx, RecallBundle } from "@penumbra/workflows";
 import { parse as parseYaml } from "yaml";
-import spec, { fn, inputSchema } from "../../../../plugin/workflows/adversarial-review/workflow.ts";
+import {
+  loadAgentChatConfigFromDir,
+  reloadAgentChatConfig,
+} from "../../../config/src/files/load.ts";
+import spec, {
+  diffTouchesUI,
+  fn,
+  inputSchema,
+  summarizePersonaOutcomes,
+} from "../../../../plugin/workflows/adversarial-review/workflow.ts";
 
 if (process.platform === "darwin") {
   try {
@@ -36,6 +45,16 @@ function baseRecall(): RecallBundle {
     },
     warnings: [],
     estimatedTokens: 10,
+  };
+}
+
+function recallWithDiff(diffText: string): RecallBundle {
+  return {
+    ...baseRecall(),
+    byKey: {
+      ...baseRecall().byKey,
+      "git.diff": diffText,
+    },
   };
 }
 
@@ -135,6 +154,29 @@ function makeCtx(opts?: {
   return { ctx, root, writes, dispatch, awaitChain };
 }
 
+function loadFixtureConfig(): ReturnType<typeof loadAgentChatConfigFromDir> {
+  const dir = mkdtempSync(join(tmpdir(), "adv-review-config-"));
+  writeFileSync(
+    join(dir, "agents.yaml"),
+    readFileSync(resolve("packages/config/test/files/fixtures/agents.yaml"), "utf8"),
+  );
+  writeFileSync(
+    join(dir, "routing.yaml"),
+    readFileSync(resolve("packages/config/test/files/fixtures/routing.yaml"), "utf8"),
+  );
+  writeFileSync(
+    join(dir, "quotas.yaml"),
+    readFileSync(resolve("packages/config/test/files/fixtures/quotas.yaml"), "utf8"),
+  );
+  try {
+    reloadAgentChatConfig();
+    return loadAgentChatConfigFromDir(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    reloadAgentChatConfig();
+  }
+}
+
 function parseSynthesisFrontmatter(content: string): Record<string, unknown> | null {
   // Allow an optional banner line before the frontmatter block
   const match = content.match(/---\n([\s\S]*?)\n---/);
@@ -220,6 +262,124 @@ test("inputSchema applies defaults and rejects unknown keys", () => {
   expect(() => inputSchema.parse({ unexpected: true })).toThrow();
   expect(() => inputSchema.parse({ focus: "" })).toThrow();
   expect(() => inputSchema.parse({ focus: "x".repeat(3000) })).toThrow();
+});
+
+test("diffTouchesUI detects conservative user-visible UI file changes", () => {
+  expect(
+    diffTouchesUI(`diff --git a/packages/console/src/App.tsx b/packages/console/src/App.tsx
+--- a/packages/console/src/App.tsx
++++ b/packages/console/src/App.tsx
+@@ -1 +1 @@
+-old
++new`),
+  ).toBe(true);
+  expect(
+    diffTouchesUI(`diff --git a/packages/console/src/styles/theme.scss b/packages/console/src/styles/theme.scss
+--- a/packages/console/src/styles/theme.scss
++++ b/packages/console/src/styles/theme.scss
+@@ -1 +1 @@
+-.old {}
++.new {}`),
+  ).toBe(true);
+  expect(
+    diffTouchesUI(`diff --git a/packages/console/src/components/Button.ts b/packages/console/src/components/Button.ts
+--- a/packages/console/src/components/Button.ts
++++ b/packages/console/src/components/Button.ts
+@@ -1 +1 @@
+-export const label = "Save";
++export const label = "Submit";`),
+  ).toBe(true);
+  expect(
+    diffTouchesUI(`diff --git a/packages/console/src/App.test.tsx b/packages/console/src/App.test.tsx
+--- a/packages/console/src/App.test.tsx
++++ b/packages/console/src/App.test.tsx
+@@ -1 +1 @@
+-old
++new`),
+  ).toBe(false);
+  expect(
+    diffTouchesUI(`diff --git a/packages/core/src/types.d.ts b/packages/core/src/types.d.ts
+--- a/packages/core/src/types.d.ts
++++ b/packages/core/src/types.d.ts
+@@ -1 +1 @@
+-old
++new`),
+  ).toBe(false);
+  expect(
+    diffTouchesUI(`diff --git a/packages/core/src/index.ts b/packages/core/src/index.ts
+--- a/packages/core/src/index.ts
++++ b/packages/core/src/index.ts
+@@ -1 +1 @@
+-old
++new`),
+  ).toBe(false);
+  // A DELETED UI file is exactly the silent-drop case the vision reviewer exists
+  // to catch: the only path lives on the `--- a/` header (`+++ /dev/null`).
+  expect(
+    diffTouchesUI(`diff --git a/packages/console/src/components/OldPanel.tsx b/packages/console/src/components/OldPanel.tsx
+deleted file mode 100644
+--- a/packages/console/src/components/OldPanel.tsx
++++ /dev/null
+@@ -1 +0,0 @@
+-export const Panel = () => <button>Save</button>;`),
+  ).toBe(true);
+  // A newly ADDED UI file has its path on the `+++ b/` header (`--- /dev/null`).
+  expect(
+    diffTouchesUI(`diff --git a/packages/console/src/components/NewPanel.tsx b/packages/console/src/components/NewPanel.tsx
+new file mode 100644
+--- /dev/null
++++ b/packages/console/src/components/NewPanel.tsx
+@@ -0,0 +1 @@
++export const Panel = () => <button>Save</button>;`),
+  ).toBe(true);
+});
+
+test("diffTouchesUI scans changed paths without splitting the full diff", () => {
+  const originalSplit = String.prototype.split;
+  String.prototype.split = function () {
+    throw new Error("split should not be used while scanning diff paths");
+  };
+  try {
+    expect(
+      diffTouchesUI(`diff --git a/packages/console/src/App.tsx b/packages/console/src/App.tsx
+--- a/packages/console/src/App.tsx
++++ b/packages/console/src/App.tsx
+@@ -1 +1 @@
+-old
++new`),
+    ).toBe(true);
+  } finally {
+    String.prototype.split = originalSplit;
+  }
+});
+
+test("vision_verify failures are excluded using persona identity", () => {
+  const outcome = summarizePersonaOutcomes(
+    [
+      { persona: "security", status: "completed" },
+      { persona: "vision_verify", status: "failed" },
+    ],
+    80,
+  );
+  expect(outcome.outcome).toBe("success_partial");
+  expect(outcome.completedCount).toBe(1);
+  expect(outcome.failedCount).toBe(1);
+  expect(outcome.failedPersonas).toEqual(["vision_verify"]);
+});
+
+test("vision_verify exemption keys off the stable persona_key, not the display name", () => {
+  // The exemption must follow the config key even if the display name diverges
+  // from it; filtering by the mutable display name would mis-handle the optional
+  // persona the moment a name and key differ.
+  const outcome = summarizePersonaOutcomes(
+    [
+      { persona: "security", persona_key: "security", status: "completed" },
+      { persona: "UI Regression Check", persona_key: "vision_verify", status: "failed" },
+    ],
+    80,
+  );
+  expect(outcome.outcome).toBe("success_partial");
+  expect(outcome.failedCount).toBe(1);
 });
 
 test("persona prompt includes caller focus when provided", async () => {
@@ -508,6 +668,101 @@ test("args.personas selects only subset of configured personas", async () => {
     expect(result.ok).toBe(true);
     expect(result.personas.map((p) => p.name)).toEqual(["security"]);
     expect(dispatch).toHaveBeenCalledTimes(2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("persona selection dynamically includes vision_verify only for UI diffs when configured", async () => {
+  const uiDiff = `diff --git a/packages/console/src/App.tsx b/packages/console/src/App.tsx
+--- a/packages/console/src/App.tsx
++++ b/packages/console/src/App.tsx
+@@ -1,3 +1,3 @@
+-<button onClick={save}>Save</button>
++<button>Save</button>`;
+  const nonUiDiff = `diff --git a/packages/core/src/index.ts b/packages/core/src/index.ts
+--- a/packages/core/src/index.ts
++++ b/packages/core/src/index.ts
+@@ -1 +1 @@
+-export const value = 1;
++export const value = 2;
+diff --git a/docs/review.md b/docs/review.md
+--- a/docs/review.md
++++ b/docs/review.md
+@@ -1 +1 @@
+-old
++new`;
+  const configured = loadFixtureConfig();
+
+  const withVision = makeCtx();
+  try {
+    withVision.ctx.config = configured;
+    const result = (await fn(withVision.ctx, recallWithDiff(uiDiff))) as {
+      ok: boolean;
+      personas: Array<{ name: string }>;
+    };
+    expect(result.ok).toBe(true);
+    expect(result.personas.map((persona) => persona.name)).toContain("vision_verify");
+  } finally {
+    rmSync(withVision.root, { recursive: true, force: true });
+  }
+
+  const nonUi = makeCtx();
+  try {
+    nonUi.ctx.config = configured;
+    const result = (await fn(nonUi.ctx, recallWithDiff(nonUiDiff))) as {
+      ok: boolean;
+      personas: Array<{ name: string }>;
+    };
+    expect(result.ok).toBe(true);
+    expect(result.personas.map((persona) => persona.name)).not.toContain("vision_verify");
+  } finally {
+    rmSync(nonUi.root, { recursive: true, force: true });
+  }
+
+  const withoutVision = makeCtx();
+  try {
+    withoutVision.ctx.config = {
+      ...configured,
+      personas: Object.fromEntries(
+        Object.entries(configured.personas ?? {}).filter(([key]) => key !== "vision_verify"),
+      ),
+    };
+    const result = (await fn(withoutVision.ctx, recallWithDiff(uiDiff))) as {
+      ok: boolean;
+      personas: Array<{ name: string }>;
+    };
+    expect(result.ok).toBe(true);
+    expect(result.personas.map((persona) => persona.name)).not.toContain("vision_verify");
+  } finally {
+    rmSync(withoutVision.root, { recursive: true, force: true });
+  }
+});
+
+test("vision_verify dispatch failure does not fail an otherwise successful UI review", async () => {
+  const uiDiff = `diff --git a/packages/console/src/App.tsx b/packages/console/src/App.tsx
+--- a/packages/console/src/App.tsx
++++ b/packages/console/src/App.tsx
+@@ -1,3 +1,3 @@
+-<button onClick={save}>Save</button>
++<button>Save</button>`;
+  const configured = loadFixtureConfig();
+  const { ctx, root } = makeCtx({
+    dispatchImpl: async ({ agent }) => {
+      if (agent === "google-gemini-pro-acp") throw new Error("vision worker unavailable");
+      return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
+    },
+  });
+  try {
+    ctx.config = configured;
+    const result = (await fn(ctx, recallWithDiff(uiDiff))) as {
+      ok: boolean;
+      outcome: string;
+      failed_personas: string[];
+    };
+    expect(result.ok).toBe(true);
+    expect(result.outcome).toBe("success_partial");
+    expect(result.failed_personas).toEqual(["vision_verify"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
