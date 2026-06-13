@@ -29,6 +29,8 @@ export const AgentOptionsSchema = z.looseObject({
   warm_pool_idle_grace_ms: z.number().int().min(1000).max(3600000).optional(),
   warm_pool_max_age_ms: z.number().int().min(10000).max(86400000).optional(),
   warm_pool_max_entries: z.number().int().min(1).max(10).optional(),
+  /** Per-agent warm slots per `(agent, repoRoot/cwd)` pool key. Default: 1. */
+  warm_pool_size: z.number().int().min(1).max(10).optional(),
   /** Eagerly pre-warm a connection for this agent at worker boot so warm reuse
    *  engages regardless of first-poll-wins worker spread. Requires warm_pool.
    *  Default: off. */

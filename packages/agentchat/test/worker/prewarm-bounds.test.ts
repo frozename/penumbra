@@ -31,6 +31,7 @@ describe("prewarm loop bounds (Phase 4)", () => {
     const targets: PrewarmTarget[] = Array.from({ length: 10 }, (_, i) => ({
       agent: `a${i}`,
       repoRoot: "/repos/penumbra",
+      slot: 0,
     }));
     const loop = createPrewarmLoop({
       computeTargets: () => targets,
@@ -55,8 +56,8 @@ describe("prewarm loop bounds (Phase 4)", () => {
     let coldEntries = 2; // two processes already deposited by cold dispatches
     const loop = createPrewarmLoop({
       computeTargets: () => [
-        { agent: "a0", repoRoot: "/r" },
-        { agent: "a1", repoRoot: "/r" },
+        { agent: "a0", repoRoot: "/r", slot: 0 },
+        { agent: "a1", repoRoot: "/r", slot: 0 },
       ],
       prewarmOne: async (t) => {
         prewarmed.push(t.agent);
@@ -79,7 +80,7 @@ describe("prewarm loop bounds (Phase 4)", () => {
     const fc = fakeClock();
     const attempts: number[] = [];
     const loop = createPrewarmLoop({
-      computeTargets: () => [{ agent: "x", repoRoot: "/r" }],
+      computeTargets: () => [{ agent: "x", repoRoot: "/r", slot: 0 }],
       prewarmOne: async () => {
         attempts.push(fcNow());
         throw new Error("boom");
@@ -117,7 +118,7 @@ describe("prewarm loop bounds (Phase 4)", () => {
     const fc = fakeClock();
     let attempts = 0;
     const loop = createPrewarmLoop({
-      computeTargets: () => [{ agent: "x", repoRoot: "/r" }],
+      computeTargets: () => [{ agent: "x", repoRoot: "/r", slot: 0 }],
       prewarmOne: async () => {
         attempts += 1;
         throw new Error("boom");

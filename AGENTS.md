@@ -151,6 +151,12 @@ After a daemon kickstart, in-flight ticks die mid-session and trip the agent's c
 - Boot recovery: managed extras get `PENUMBRA_BOOT_RECONCILE=0` so only daemon does all-workers orphan recovery and avoids duplicate reconcile races.
 - Kill-switch: `PENUMBRA_EXTRA_WORKERS_ENABLED=0` disables the supervisor.
 
+## Warm-pool sizing
+
+For `stdio-acp` agents with `options.warm_pool: true`, `options.warm_pool_size` controls how many warm ACP processes a worker may keep for one `(agent, repoRoot/cwd)` pool key. The default is `1`, preserving the historical single-slot behavior where a second concurrent acquire reports `warm_miss: "in_use"` and cold-starts. Set `warm_pool_size: 2` or higher only for high-traffic premium agents that see concurrent same-agent fan-out.
+
+`options.warm_pool_max_entries` remains the per-agent pool's total process ceiling, and `PENUMBRA_WARM_PREWARM_CAP` is the worker-level absolute cap across all warm slots. The effective total is clamped by the env cap when it is set, so configured per-agent slots can never push the worker above the global warm-process budget.
+
 ## Workflows
 
 Penumbra hosts a memory-aware workflow runtime. Workflows are authored as either:

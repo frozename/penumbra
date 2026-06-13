@@ -46,6 +46,8 @@ export interface AcpWarmPool {
   /** True if at least one live (running) entry exists for `key`. Lets the
    *  pre-warm loop self-heal a crashed pre-warm without waiting for the refresh. */
   has(key: string): boolean;
+  /** Count live (running) entries for `key`. Used by multi-slot prewarm. */
+  liveEntryCount(key: string): number;
   /** Diagnostic (optional): why `acquire(key, specHash)` would currently miss,
    *  or "would_hit" if an acquirable entry exists. Computed WITHOUT mutating the
    *  pool, so call it BEFORE acquire (acquire tears down stale candidates).
@@ -79,12 +81,15 @@ export function createAcpWarmPool(
     graceMs?: number;
     maxAgeMs?: number;
     maxEntries?: number;
+    maxEntriesPerKey?: number;
+    canAddEntry?: () => boolean;
   } = {},
 ): AcpWarmPool {
   const now = deps.now ?? Date.now;
   const graceMs = deps.graceMs ?? 5 * 60_000;
   const maxAgeMs = deps.maxAgeMs ?? 30 * 60_000;
   const maxEntries = deps.maxEntries ?? 3;
+  const maxEntriesPerKey = deps.maxEntriesPerKey ?? 1;
   const entries = new Map<string, AcpWarmPoolEntry[]>();
   let closed = false;
   const sweepTimer = setInterval(() => {
@@ -126,6 +131,40 @@ export function createAcpWarmPool(
 
   function idleEntriesFor(key: string): AcpWarmPoolEntry[] {
     return (entries.get(key) ?? []).filter((entry) => entry.refs.size === 0);
+  }
+
+  function allIdleEntries(): Array<{ key: string; entry: AcpWarmPoolEntry }> {
+    const out: Array<{ key: string; entry: AcpWarmPoolEntry }> = [];
+    for (const [key, list] of entries) {
+      for (const entry of list) {
+        if (entry.refs.size === 0) out.push({ key, entry });
+      }
+    }
+    return out;
+  }
+
+  function oldestIdle(
+    candidates: Array<{ key: string; entry: AcpWarmPoolEntry }>,
+  ): { key: string; entry: AcpWarmPoolEntry } | undefined {
+    return candidates.sort(
+      (a, b) =>
+        (a.entry.lastReleaseAt ?? a.entry.spawnedAt) - (b.entry.lastReleaseAt ?? b.entry.spawnedAt),
+    )[0];
+  }
+
+  function totalEntries(): number {
+    let total = 0;
+    for (const list of entries.values()) total += list.length;
+    return total;
+  }
+
+  function rejectDeposit(entry: AcpWarmPoolDeposit): null {
+    try {
+      entry.handle.kill();
+    } catch {
+      /* ignore */
+    }
+    return null;
   }
 
   function sweep(): void {
@@ -170,31 +209,20 @@ export function createAcpWarmPool(
 
   function deposit(key: string, depositEntry: AcpWarmPoolDeposit): AcpWarmPoolEntry | null {
     if (closed) {
-      try {
-        depositEntry.handle.kill();
-      } catch {
-        /* ignore */
-      }
-      return null;
-    }
-    if (depositEntry.pinned) {
-      // Replace-before-evict: a pinned (pre-warmed) deposit supersedes any
-      // existing IDLE pinned entry for this key, so at most one idle pinned
-      // connection is kept warm per (agent, repoRoot) — the refresh loop can
-      // re-warm without accumulating duplicate processes. In-use pinned entries
-      // (a dispatch holds one) are left alone and reaped at max-age once idle.
-      for (const candidate of [...(entries.get(key) ?? [])]) {
-        if (candidate.pinned && candidate.refs.size === 0) teardown(key, candidate);
-      }
+      return rejectDeposit(depositEntry);
     }
     const list = entries.get(key) ?? [];
-    if (list.length >= maxEntries) {
-      const oldest = idleEntriesFor(key).sort(
-        (a, b) => (a.lastReleaseAt ?? a.spawnedAt) - (b.lastReleaseAt ?? b.spawnedAt),
-      )[0];
-      if (!oldest) return null;
-      teardown(key, oldest);
+    if (list.length >= maxEntriesPerKey) {
+      const oldest = oldestIdle(idleEntriesFor(key).map((entry) => ({ key, entry })));
+      if (!oldest) return rejectDeposit(depositEntry);
+      teardown(oldest.key, oldest.entry);
     }
+    if (totalEntries() >= maxEntries) {
+      const oldest = oldestIdle(allIdleEntries());
+      if (!oldest) return rejectDeposit(depositEntry);
+      teardown(oldest.key, oldest.entry);
+    }
+    if (deps.canAddEntry && !deps.canAddEntry()) return rejectDeposit(depositEntry);
     const entry: AcpWarmPoolEntry = {
       ...depositEntry,
       refs: new Set(),
@@ -240,13 +268,15 @@ export function createAcpWarmPool(
   }
 
   function size(): number {
-    let total = 0;
-    for (const list of entries.values()) total += list.length;
-    return total;
+    return totalEntries();
   }
 
   function has(key: string): boolean {
     return (entries.get(key) ?? []).some((entry) => isRunning(entry));
+  }
+
+  function liveEntryCount(key: string): number {
+    return (entries.get(key) ?? []).filter((entry) => isRunning(entry)).length;
   }
 
   // Diagnostic mirror of acquire()'s match logic — read-only, no teardown — so a
@@ -283,6 +313,7 @@ export function createAcpWarmPool(
     shutdown,
     size,
     has,
+    liveEntryCount,
     peekMissReason,
     debugKeys,
     _sweep: sweep,

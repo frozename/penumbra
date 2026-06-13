@@ -217,6 +217,7 @@ export function createStdioAcpAdapter(
       warmPoolIdleGraceMs: opts.warmPoolIdleGraceMs,
       warmPoolMaxAgeMs: opts.warmPoolMaxAgeMs,
       warmPoolMaxEntries: opts.warmPoolMaxEntries,
+      warmPoolSize: opts.warmPoolSize,
     },
     {
       startServer: startStdioAcpServer,
@@ -228,6 +229,7 @@ export function createStdioAcpAdapter(
               warmPoolIdleGraceMs: opts.warmPoolIdleGraceMs,
               warmPoolMaxAgeMs: opts.warmPoolMaxAgeMs,
               warmPoolMaxEntries: opts.warmPoolMaxEntries,
+              warmPoolSize: opts.warmPoolSize,
             }),
           }
         : {}),

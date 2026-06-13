@@ -248,7 +248,7 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   PENUMBRA_WARM_PREWARM_CAP: {
     schema: PosInt,
     default: 4,
-    description: "Max concurrent warm-pool pre-warm dispatches at worker boot.",
+    description: "Worker-level absolute cap on warm-pool processes across all pre-warmed slots.",
   },
   PENUMBRA_CLAIM_AFFINITY_GRACE_MS: {
     schema: NonNegInt,

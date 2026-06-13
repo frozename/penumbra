@@ -42,6 +42,47 @@ describe("AcpWarmPool", () => {
     expect(reused?.sessionId).toBe("s1");
   });
 
+  test("per-key max size 2 gives two warm concurrent acquires, then reports in_use", () => {
+    const pool = createAcpWarmPool({ now: () => 0, maxEntries: 8, maxEntriesPerKey: 2 });
+    pool.deposit(key, {
+      handle: handle(),
+      client,
+      sessionId: "s1",
+      specHash: "spec-a",
+      pinned: true,
+    });
+    pool.deposit(key, {
+      handle: handle(),
+      client,
+      sessionId: "s2",
+      specHash: "spec-a",
+      pinned: true,
+    });
+
+    const first = pool.acquire("h1", key, "spec-a");
+    const second = pool.acquire("h2", key, "spec-a");
+
+    expect(first?.sessionId).toBe("s1");
+    expect(second?.sessionId).toBe("s2");
+    expect(pool.peekMissReason?.(key, "spec-a")).toBe("in_use");
+    expect(pool.acquire("h3", key, "spec-a")).toBeNull();
+  });
+
+  test("default per-key size 1 preserves in_use on a second concurrent acquire", () => {
+    const pool = createAcpWarmPool({ now: () => 0, maxEntries: 8 });
+    pool.deposit(key, {
+      handle: handle(),
+      client,
+      sessionId: "s1",
+      specHash: "spec-a",
+      pinned: true,
+    });
+
+    expect(pool.acquire("h1", key, "spec-a")?.sessionId).toBe("s1");
+    expect(pool.peekMissReason?.(key, "spec-a")).toBe("in_use");
+    expect(pool.acquire("h2", key, "spec-a")).toBeNull();
+  });
+
   test("release marks lastReleaseAt and sweep evicts after grace", () => {
     let now = 1000;
     const pool = createAcpWarmPool({ now: () => now, graceMs: 5000 });
@@ -213,15 +254,18 @@ describe("AcpWarmPool pinned (pre-warm) entries", () => {
     expect(pool.has(key)).toBe(true);
   });
 
-  test("a pinned deposit does NOT evict an in-use pinned entry (a dispatch holds it)", () => {
+  test("a pinned deposit preserves an in-use size-1 slot and rejects the extra handle", () => {
     const pool = createAcpWarmPool({ now: () => 0 });
     const inUse = handle();
     pool.deposit(key, { handle: inUse, client, specHash: "spec-a", pinned: true });
     pool.acquire("h1", key, "spec-a"); // now held by a dispatch
 
     const fresh = handle();
-    pool.deposit(key, { handle: fresh, client, specHash: "spec-a", pinned: true });
+    expect(pool.deposit(key, { handle: fresh, client, specHash: "spec-a", pinned: true })).toBe(
+      null,
+    );
     expect(inUse.kill).not.toHaveBeenCalled();
-    expect(pool.size()).toBe(2); // held one preserved + the fresh pinned entry
+    expect(fresh.kill).toHaveBeenCalledTimes(1);
+    expect(pool.size()).toBe(1);
   });
 });

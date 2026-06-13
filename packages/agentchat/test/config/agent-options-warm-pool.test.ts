@@ -22,4 +22,12 @@ describe("AgentOptionsSchema warm_pool options", () => {
     expect(() => AgentOptionsSchema.parse({ warm_pool_idle_grace_ms: 999 })).toThrow();
     expect(() => AgentOptionsSchema.parse({ warm_pool_idle_grace_ms: 3_600_001 })).toThrow();
   });
+
+  test("validates per-agent warm pool size", () => {
+    expect(AgentOptionsSchema.parse({ warm_pool_size: 1 }).warm_pool_size).toBe(1);
+    expect(AgentOptionsSchema.parse({ warm_pool_size: 10 }).warm_pool_size).toBe(10);
+
+    expect(() => AgentOptionsSchema.parse({ warm_pool_size: 0 })).toThrow();
+    expect(() => AgentOptionsSchema.parse({ warm_pool_size: 11 })).toThrow();
+  });
 });

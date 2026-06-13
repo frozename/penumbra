@@ -33,7 +33,7 @@ describe("computePrewarmTargets", () => {
       mainRepoPath,
       cap: 10,
     });
-    expect(out).toEqual([{ agent: "a-both", repoRoot: "/repos/penumbra" }]);
+    expect(out).toEqual([{ agent: "a-both", repoRoot: "/repos/penumbra", slot: 0 }]);
   });
 
   test("(b) hard worker yields tuples at its pinned project root", () => {
@@ -46,7 +46,7 @@ describe("computePrewarmTargets", () => {
       mainRepoPath,
       cap: 10,
     });
-    expect(out).toEqual([{ agent: "x", repoRoot: "/repos/omlx" }]);
+    expect(out).toEqual([{ agent: "x", repoRoot: "/repos/omlx", slot: 0 }]);
   });
 
   test("(c) sticky yields its home repoRoot; shared (no project) falls back to mainRepoPath", () => {
@@ -59,7 +59,7 @@ describe("computePrewarmTargets", () => {
       mainRepoPath,
       cap: 10,
     });
-    expect(sticky).toEqual([{ agent: "x", repoRoot: "/repos/omlx" }]);
+    expect(sticky).toEqual([{ agent: "x", repoRoot: "/repos/omlx", slot: 0 }]);
 
     const shared = computePrewarmTargets({
       agents,
@@ -69,7 +69,7 @@ describe("computePrewarmTargets", () => {
       mainRepoPath,
       cap: 10,
     });
-    expect(shared).toEqual([{ agent: "x", repoRoot: "/repos/penumbra" }]); // mainRepoPath fallback
+    expect(shared).toEqual([{ agent: "x", repoRoot: "/repos/penumbra", slot: 0 }]); // mainRepoPath fallback
   });
 
   test("(d) truncates to cap with stable (config) ordering", () => {
@@ -87,8 +87,29 @@ describe("computePrewarmTargets", () => {
       cap: 2,
     });
     expect(out).toEqual([
-      { agent: "a1", repoRoot: "/repos/penumbra" },
-      { agent: "a2", repoRoot: "/repos/penumbra" },
+      { agent: "a1", repoRoot: "/repos/penumbra", slot: 0 },
+      { agent: "a2", repoRoot: "/repos/penumbra", slot: 0 },
+    ]);
+  });
+
+  test("expands warm_pool_size into bounded per-agent slots", () => {
+    const agents = [
+      agent("premium", { warm_pool: true, warm_pool_prewarm: true, warm_pool_size: 3 }),
+      agent("standard", { warm_pool: true, warm_pool_prewarm: true }),
+    ];
+    const out = computePrewarmTargets({
+      agents,
+      isolation: "sticky",
+      workerProjectId: "penumbra",
+      resolveProjectRoot,
+      mainRepoPath,
+      cap: 3,
+    });
+
+    expect(out).toEqual([
+      { agent: "premium", repoRoot: "/repos/penumbra", slot: 0 },
+      { agent: "premium", repoRoot: "/repos/penumbra", slot: 1 },
+      { agent: "premium", repoRoot: "/repos/penumbra", slot: 2 },
     ]);
   });
 
@@ -131,7 +152,7 @@ describe("computePrewarmTargets", () => {
       mainRepoPath,
       cap: 10,
     });
-    expect(out).toEqual([{ agent: "dup", repoRoot: "/repos/penumbra" }]);
+    expect(out).toEqual([{ agent: "dup", repoRoot: "/repos/penumbra", slot: 0 }]);
   });
 
   test("isolation-invariant property: result is bounded and repoRoot equals home across all isolation modes", () => {

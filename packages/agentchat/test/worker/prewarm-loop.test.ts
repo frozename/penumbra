@@ -35,6 +35,7 @@ function fakeClock(start = 0) {
 const target = (agent: string, repoRoot = "/repos/penumbra"): PrewarmTarget => ({
   agent,
   repoRoot,
+  slot: 0,
 });
 
 describe("createPrewarmLoop (Phase 3)", () => {

@@ -59,6 +59,7 @@ function normalizeWarmPoolOptions(options: AdapterOptions): AdapterOptions {
     ["warm_pool_idle_grace_ms", "warmPoolIdleGraceMs"],
     ["warm_pool_max_age_ms", "warmPoolMaxAgeMs"],
     ["warm_pool_max_entries", "warmPoolMaxEntries"],
+    ["warm_pool_size", "warmPoolSize"],
   ];
   for (const [from, to] of mapping) {
     if (mapped[from] !== undefined && mapped[to] === undefined) {

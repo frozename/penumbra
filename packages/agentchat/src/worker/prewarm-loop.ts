@@ -84,7 +84,7 @@ interface TargetState {
 }
 
 function keyOf(t: PrewarmTarget): string {
-  return JSON.stringify([t.agent, t.repoRoot]);
+  return JSON.stringify([t.agent, t.repoRoot, t.slot]);
 }
 
 export function createPrewarmLoop(deps: PrewarmLoopDeps): PrewarmLoop {

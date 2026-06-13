@@ -18,13 +18,14 @@
 
 export type PrewarmIsolation = "hard" | "sticky" | "shared";
 
-export type PrewarmTarget = { agent: string; repoRoot: string };
+export type PrewarmTarget = { agent: string; repoRoot: string; slot: number };
 
 export interface PrewarmAgent {
   name: string;
   options?: {
     warm_pool?: boolean;
     warm_pool_prewarm?: boolean;
+    warm_pool_size?: number;
   } | null;
 }
 
@@ -60,7 +61,14 @@ export function computePrewarmTargets(input: ComputePrewarmTargetsInput): Prewar
     if (seen.has(key)) continue;
     seen.add(key);
 
-    targets.push({ agent: agent.name, repoRoot: homeRepoRoot });
+    const slots =
+      Number.isInteger(options.warm_pool_size) && options.warm_pool_size! > 0
+        ? options.warm_pool_size!
+        : 1;
+    for (let slot = 0; slot < slots; slot += 1) {
+      targets.push({ agent: agent.name, repoRoot: homeRepoRoot, slot });
+      if (targets.length >= cap) break;
+    }
     if (targets.length >= cap) break;
   }
 

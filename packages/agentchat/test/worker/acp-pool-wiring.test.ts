@@ -24,6 +24,7 @@ function handle() {
 
 afterEach(() => {
   resetAcpWarmPoolRegistryForTest();
+  delete process.env.PENUMBRA_WARM_PREWARM_CAP;
 });
 
 describe("ACP warm pool worker wiring", () => {
@@ -84,6 +85,7 @@ describe("ACP warm pool worker wiring", () => {
         warm_pool_idle_grace_ms: 1000,
         warm_pool_max_age_ms: 20000,
         warm_pool_max_entries: 2,
+        warm_pool_size: 3,
       },
       roles: [],
       auto_approve_to: [],
@@ -94,6 +96,7 @@ describe("ACP warm pool worker wiring", () => {
       warmPoolIdleGraceMs: 1000,
       warmPoolMaxAgeMs: 20000,
       warmPoolMaxEntries: 2,
+      warmPoolSize: 3,
     });
   });
 
@@ -162,6 +165,22 @@ describe("ACP warm pool worker wiring", () => {
 
     drainAgent("codex-acp-deep");
     expect(totalAcpWarmPoolEntryCount()).toBe(1);
+  });
+
+  test("PENUMBRA_WARM_PREWARM_CAP is a worker-wide cap across agent pools", () => {
+    process.env.PENUMBRA_WARM_PREWARM_CAP = "2";
+    const a = getOrCreateAcpWarmPool("a", { warmPoolSize: 2 });
+    const b = getOrCreateAcpWarmPool("b", { warmPoolSize: 2 });
+    a.deposit("a\0/repo", { handle: handle(), client: {} as any, specHash: "spec-a" });
+    b.deposit("b\0/repo", { handle: handle(), client: {} as any, specHash: "spec-a" });
+
+    const rejected = handle();
+    expect(
+      a.deposit("a\0/other", { handle: rejected, client: {} as any, specHash: "spec-a" }),
+    ).toBe(null);
+
+    expect(rejected.kill).toHaveBeenCalledTimes(1);
+    expect(totalAcpWarmPoolEntryCount()).toBe(2);
   });
 
   test("installAcpWarmPoolShutdownHandlers wires SIGTERM and SIGINT to shutdownAll", () => {

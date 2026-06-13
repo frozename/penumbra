@@ -4,9 +4,25 @@ export interface AcpWarmPoolRegistryOptions {
   warmPoolIdleGraceMs?: number;
   warmPoolMaxAgeMs?: number;
   warmPoolMaxEntries?: number;
+  warmPoolSize?: number;
 }
 
 const pools = new Map<string, AcpWarmPool>();
+const DEFAULT_WARM_PREWARM_CAP = 4;
+
+function positiveInt(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function resolveMaxEntries(opts: AcpWarmPoolRegistryOptions): number | undefined {
+  const envCap = positiveInt(process.env.PENUMBRA_WARM_PREWARM_CAP) ?? DEFAULT_WARM_PREWARM_CAP;
+  if (opts.warmPoolMaxEntries !== undefined && envCap !== undefined) {
+    return Math.min(opts.warmPoolMaxEntries, envCap);
+  }
+  return opts.warmPoolMaxEntries ?? envCap;
+}
 
 export function getOrCreateAcpWarmPool(
   agent: string,
@@ -14,10 +30,13 @@ export function getOrCreateAcpWarmPool(
 ): AcpWarmPool {
   const existing = pools.get(agent);
   if (existing) return existing;
+  const envCap = positiveInt(process.env.PENUMBRA_WARM_PREWARM_CAP) ?? DEFAULT_WARM_PREWARM_CAP;
   const pool = createAcpWarmPool({
     graceMs: opts.warmPoolIdleGraceMs,
     maxAgeMs: opts.warmPoolMaxAgeMs,
-    maxEntries: opts.warmPoolMaxEntries,
+    maxEntries: resolveMaxEntries(opts),
+    maxEntriesPerKey: opts.warmPoolSize,
+    canAddEntry: () => totalAcpWarmPoolEntryCount() < envCap,
   });
   pools.set(agent, pool);
   return pool;
@@ -59,6 +78,11 @@ export function totalAcpWarmPoolEntryCount(): number {
 export function acpWarmPoolHasLiveEntry(agent: string, key: string): boolean {
   const pool = pools.get(agent);
   return pool ? pool.has(key) : false;
+}
+
+export function acpWarmPoolLiveEntryCount(agent: string, key: string): number {
+  const pool = pools.get(agent);
+  return pool ? pool.liveEntryCount(key) : 0;
 }
 
 export function resetAcpWarmPoolRegistryForTest(): void {

@@ -23,7 +23,7 @@ import {
   drainAgent,
   shutdownAllAcpWarmPools,
   totalAcpWarmPoolEntryCount,
-  acpWarmPoolHasLiveEntry,
+  acpWarmPoolLiveEntryCount,
 } from "../src/adapters/acp-warm-pool-registry.js";
 import { poolKeyFor } from "../src/adapters/acp-warm-pool.js";
 import { normalizeAdapterOptions } from "../src/cli/adapter-options.js";
@@ -894,7 +894,11 @@ const computePrewarmTargetsNow = (): PrewarmTarget[] =>
   computePrewarmTargets({
     agents: config.agents.map((a) => ({
       name: a.name,
-      options: a.options as { warm_pool?: boolean; warm_pool_prewarm?: boolean } | null,
+      options: a.options as {
+        warm_pool?: boolean;
+        warm_pool_prewarm?: boolean;
+        warm_pool_size?: number;
+      } | null,
     })),
     isolation: workerIsolation,
     workerProjectId,
@@ -983,10 +987,10 @@ const refreshPrewarmLoop = (): void => {
     countEntries: totalAcpWarmPoolEntryCount,
     // Pool registry key = agentName (cfg.name); entry key = (agentName, repoRoot).
     hasLiveEntry: (target) =>
-      acpWarmPoolHasLiveEntry(
+      acpWarmPoolLiveEntryCount(
         target.agent,
         poolKeyFor({ agent: target.agent, cwd: target.repoRoot }),
-      ),
+      ) > target.slot,
     clock: {
       now: () => Date.now(),
       setInterval: (fn, ms) => setInterval(fn, ms),
