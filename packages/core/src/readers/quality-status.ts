@@ -8,6 +8,7 @@ export interface QualityStatusInput {
   window_hours?: number;
   min_samples?: number;
   task_type?: string;
+  now?: Date;
 }
 
 export interface QualityStatusSnapshot {
@@ -49,8 +50,9 @@ export function qualityStatus(db: Database, input: QualityStatusInput = {}): Qua
   const windowHours = input.window_hours ?? 24;
   const minSamples = input.min_samples ?? 3;
   const taskType = input.task_type ?? "implement_substantial";
-  const generatedAt = new Date().toISOString();
-  const cutoff = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString();
+  const now = input.now ?? new Date();
+  const generatedAt = now.toISOString();
+  const cutoff = new Date(now.getTime() - windowHours * 60 * 60 * 1000).toISOString();
   const errors: string[] = [];
 
   let lanes: QualityStatusSnapshot["lanes"] = null;

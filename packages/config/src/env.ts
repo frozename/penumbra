@@ -732,6 +732,20 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: 5,
     description: "Max PRs to close per reconciler sweep.",
   },
+  PENUMBRA_GATE_QUALITY_DIGEST_DIR: {
+    schema: OptStr,
+    description: "Directory for gate-quality digest output.",
+  },
+  PENUMBRA_GATE_QUALITY_T2_WRITES: {
+    schema: Bool,
+    default: false,
+    description:
+      "Enable gate-quality digest writes to t2 memory. Off by default; digest generation still runs.",
+  },
+  PENUMBRA_GATE_QUALITY_DIGEST_INTERVAL_MS: {
+    schema: OptNonNegInt,
+    description: "Interval for the gate-quality digest sweeper in milliseconds.",
+  },
   PENUMBRA_RECONCILE_TEST_TIMEOUT_S: {
     schema: OptNonNegInt,
     description: "Timeout for reconcile tests in seconds.",

@@ -228,6 +228,7 @@ import { buildActionGateCallbacks } from "./long-lived/action-gate-callbacks.js"
 import { createPlanRuntimeSweeper } from "./sweepers/plan-runtime.js";
 import { createOrchestrateDeferralSweeper } from "./sweepers/orchestrate-deferral.js";
 import { startNotificationSweeper } from "./sweepers/notification-sweeper.js";
+import { startGateQualityDigestSweeper } from "./sweepers/gate-quality-digest.js";
 import { installPrOrphanSweeper } from "./sweepers/pr-orphan-sweeper.js";
 import { loadExtraWorkersConfig, type ExtraWorkerConfig } from "./workers/config.js";
 import { ExtraWorkerSupervisor } from "./workers/supervisor.js";
@@ -1484,6 +1485,13 @@ export function serve(opts: ServeOpts): DaemonHandle {
     now: () => opts.services.clock().getTime(),
     log: opts.services.log as any,
   });
+  const stopGateQualityDigestSweeper = startGateQualityDigestSweeper({
+    services: opts.services,
+    outDir: process.env.PENUMBRA_GATE_QUALITY_DIGEST_DIR ?? join(homedir(), ".penumbra"),
+    now: () => opts.services.clock(),
+    getEnv: (key: string) => process.env[key],
+    log: opts.services.log as any,
+  });
   const stopWorkflowSweeper = (() => {
     const reg = opts.services.workflowRegistry;
     if (!reg) {
@@ -1642,6 +1650,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       await longLivedReactor.shutdown();
       stopWorkflowSweeper();
       stopNotificationSweeper();
+      stopGateQualityDigestSweeper();
       ghTaskSyncSweeper.stop();
       stopDreaming?.();
       stopDigest?.();
