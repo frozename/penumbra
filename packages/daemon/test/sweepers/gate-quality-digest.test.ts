@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
@@ -67,6 +67,7 @@ describe("gate-quality-digest sweeper", () => {
     expect(digest).toContain("| dispatch-event-stream-gap | 2 |");
     expect(digest).toContain("| alpha\\|beta | implement\\|small | 66.7% | 0.0 pp |");
     expect(digest).toContain("Malformed lane metadata skipped: 1");
+    const firstStat = statSync(first.digestPath).mtimeMs;
 
     const cursorRows = db
       .query<{ n: number }, []>(`SELECT COUNT(*) AS n FROM db_meta WHERE key LIKE '%cursor%'`)
@@ -75,10 +76,66 @@ describe("gate-quality-digest sweeper", () => {
     expect(countGateQualityDigestMemories()).toBe(0);
 
     const second = await runGateQualityDigestSweep({ services, outDir: dir, now: () => NOW });
-    expect(second.lanesProcessed).toBe(5);
+    expect(second.lanesProcessed).toBe(0);
     expect(second.t2Writes).toBe(0);
     expect(readFileSync(first.digestPath, "utf8")).toBe(digest);
+    expect(statSync(first.digestPath).mtimeMs).toBe(firstStat);
     expect(countGateQualityDigestMemories()).toBe(0);
+  });
+
+  it("does not read lane rows or run T2 writes again on same-day rerun", async () => {
+    seedLanes();
+    seedRecurringLanes(25, "dispatch-event-stream-gap");
+
+    const { runGateQualityDigestSweep } = await import("../../src/sweepers/gate-quality-digest.js");
+    const env = (key: string) => (key === "PENUMBRA_GATE_QUALITY_T2_WRITES" ? "true" : undefined);
+    let laneReads = 0;
+    const originalQuery = (db as any).query.bind(db);
+    (db as any).query = (...args: any[]) => {
+      const statement = originalQuery(...args);
+      const sql = String(args[0]);
+      if (sql.includes("FROM lane_ledger")) {
+        return {
+          ...statement,
+          all: (...allArgs: any[]) => {
+            laneReads += 1;
+            return (statement as any).all(...allArgs);
+          },
+        };
+      }
+      return statement;
+    };
+
+    try {
+      const first = await runGateQualityDigestSweep({
+        services,
+        outDir: dir,
+        now: () => NOW,
+        getEnv: env,
+        recurrenceThreshold: 3,
+      });
+      const firstDigest = readFileSync(first.digestPath, "utf8");
+      const firstMemoryCount = countGateQualityDigestMemories();
+      const firstMtime = statSync(first.digestPath).mtimeMs;
+      expect(laneReads).toBe(1);
+
+      const second = await runGateQualityDigestSweep({
+        services,
+        outDir: dir,
+        now: () => NOW,
+        getEnv: env,
+        recurrenceThreshold: 3,
+      });
+
+      expect(second.lanesProcessed).toBe(0);
+      expect(second.t2Writes).toBe(0);
+      expect(statSync(second.digestPath).mtimeMs).toBe(firstMtime);
+      expect(readFileSync(second.digestPath, "utf8")).toBe(firstDigest);
+      expect(laneReads).toBe(1);
+      expect(countGateQualityDigestMemories()).toBe(firstMemoryCount);
+    } finally {
+      (db as any).query = originalQuery;
+    }
   });
 
   it("counts gate status from the closed-lane window, not the opened-lane window", async () => {

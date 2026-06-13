@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -67,6 +68,17 @@ export async function runGateQualityDigestSweep(
   deps: GateQualityDigestSweepDeps,
 ): Promise<GateQualityDigestSweepResult> {
   const now = (deps.now ?? (() => new Date()))();
+  const date = formatDate(now);
+  const digestPath = getGateQualityDigestPath(deps.outDir, date);
+  if (existsSync(digestPath)) {
+    return {
+      lanesProcessed: 0,
+      malformedMetadata: 0,
+      t2Writes: 0,
+      digestPath,
+    };
+  }
+
   const db = deps.services.db;
   const rows = readClosedLanesInWindow(db, now, deps.log);
   const analysis = analyzeFailures(rows);
@@ -75,14 +87,15 @@ export async function runGateQualityDigestSweep(
   const t2Writes = t2WritesEnabled
     ? await writeRecurringFailureMemories({
         services: deps.services,
-        date: formatDate(now),
+        date,
         failures: analysis.failures.filter((failure) => failure.count >= threshold),
       })
     : 0;
 
-  const digestPath = await writeGateQualityDigest({
+  const digestPathWritten = await writeGateQualityDigest({
+    digestPath,
     outDir: deps.outDir,
-    now,
+    date,
     byStatus: aggregateGateStatusCounts(rows),
     failures: analysis.failures,
     malformedMetadata: analysis.malformedMetadata,
@@ -93,7 +106,7 @@ export async function runGateQualityDigestSweep(
     lanesProcessed: rows.length,
     malformedMetadata: analysis.malformedMetadata,
     t2Writes,
-    digestPath,
+    digestPath: digestPathWritten,
   };
 }
 
@@ -293,14 +306,15 @@ function aggregateGateStatusCounts(rows: LaneCloseRow[]): GateStatusCounts {
 
 async function writeGateQualityDigest(opts: {
   outDir: string;
-  now: Date;
+  date: string;
+  digestPath: string;
   byStatus: GateStatusCounts;
   failures: FailureSummary[];
   malformedMetadata: number;
   trends: AgentGateRateTrend[];
 }): Promise<string> {
-  const date = formatDate(opts.now);
-  const filepath = join(opts.outDir, `gate-quality-digest-${date}.md`);
+  const filepath = opts.digestPath;
+  const date = opts.date;
   const byStatus = opts.byStatus;
 
   const lines: string[] = [
@@ -349,8 +363,13 @@ async function writeGateQualityDigest(opts: {
   lines.push("");
 
   await mkdir(opts.outDir, { recursive: true });
+  if (existsSync(filepath)) return filepath;
   await writeFile(filepath, lines.join("\n"), "utf8");
   return filepath;
+}
+
+function getGateQualityDigestPath(outDir: string, date: string): string {
+  return join(outDir, `gate-quality-digest-${date}.md`);
 }
 
 function readAgentGateTrends(db: Database, now: Date): AgentGateRateTrend[] {
