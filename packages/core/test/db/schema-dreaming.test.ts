@@ -70,6 +70,18 @@ it("dream_actions: status is sole state field; untrusted_source, expires_at, rev
   expect(cols).toContain("status");
 });
 
+it("dream_actions has queued link target index", async () => {
+  const db = await openTestDb();
+  const row = db
+    .prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_dream_actions_queued_link_target'",
+    )
+    .get() as { sql: string } | null;
+  expect(row?.sql).toContain(
+    "CREATE INDEX idx_dream_actions_queued_link_target ON dream_actions(target_ids) WHERE action_type = 'link' AND status = 'queued'",
+  );
+});
+
 it("memory_links UNIQUE(src_id, dst_id, link_type) prevents duplicate edges from concurrent cycles", async () => {
   const db = await openTestDb();
   seedCycleAndMemories(db);

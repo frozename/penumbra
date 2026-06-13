@@ -314,6 +314,55 @@ it("P2 queues semantic_near link when cosine < LINK_AUTO_THRESHOLD", async () =>
   expect(action).toBeDefined();
 });
 
+it("P2 does not queue duplicate semantic_near link actions across cycles", async () => {
+  const db = openTestDb();
+  seedMemoryWithVector(db, { id: "M-A", vector: [1, 0, 0] });
+  seedMemoryWithVector(db, { id: "M-B", vector: [0.5, 0.5, 0] }); // cosine in queued band
+
+  await runDreamCycle(db, testConfig());
+  await runDreamCycle(db, testConfig());
+
+  const queued = db
+    .prepare(
+      `SELECT COUNT(*) AS n
+         FROM dream_actions
+        WHERE phase='P2'
+          AND action_type='link'
+          AND status='queued'
+          AND target_ids IN (?, ?)`,
+    )
+    .get(JSON.stringify(["M-A", "M-B"]), JSON.stringify(["M-B", "M-A"])) as { n: number };
+  expect(queued.n).toBe(1);
+
+  const reversedDb = openTestDb();
+  seedMemoryWithVector(reversedDb, { id: "M-A", vector: [1, 0, 0] });
+  seedMemoryWithVector(reversedDb, { id: "M-B", vector: [0.5, 0.5, 0] });
+  ensureSeedCycle(reversedDb);
+  reversedDb
+    .prepare(
+      `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
+       VALUES(?, 'seed-cycle', 'P2', 'link', 0.7, 'queued', ?, ?)`,
+    )
+    .run(
+      crypto.randomUUID(),
+      JSON.stringify(["M-B", "M-A"]),
+      JSON.stringify({ link_type: "semantic_near" }),
+    );
+
+  await runDreamCycle(reversedDb, testConfig());
+  const reversedQueued = reversedDb
+    .prepare(
+      `SELECT COUNT(*) AS n
+         FROM dream_actions
+        WHERE phase='P2'
+          AND action_type='link'
+          AND status='queued'
+          AND target_ids IN (?, ?)`,
+    )
+    .get(JSON.stringify(["M-A", "M-B"]), JSON.stringify(["M-B", "M-A"])) as { n: number };
+  expect(reversedQueued.n).toBe(1);
+});
+
 it("P8 sets completed outcome with non-null ended_at and non-empty phases_run", async () => {
   const db = openTestDb();
   const cycleId = await runDreamCycle(db, testConfig());

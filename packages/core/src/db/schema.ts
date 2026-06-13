@@ -957,6 +957,7 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
       CREATE INDEX IF NOT EXISTS idx_dream_actions_status  ON dream_actions(status);
       CREATE INDEX IF NOT EXISTS idx_dream_actions_cycle   ON dream_actions(cycle_id);
       CREATE INDEX IF NOT EXISTS idx_dream_actions_expires ON dream_actions(expires_at) WHERE status = 'queued';
+      CREATE INDEX IF NOT EXISTS idx_dream_actions_queued_link_target ON dream_actions(target_ids) WHERE action_type = 'link' AND status = 'queued';
 
       CREATE TABLE IF NOT EXISTS memory_links (
         link_id          TEXT PRIMARY KEY,

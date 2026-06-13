@@ -166,6 +166,13 @@ export async function runDreamCycle(
   const p4QueueCountStmt = db.prepare(
     `SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND status='queued'`,
   );
+  const p2QueuedLinkExistsStmt = db.prepare(
+    `SELECT 1 FROM dream_actions
+      WHERE action_type='link'
+        AND status='queued'
+        AND target_ids IN (?, ?)
+      LIMIT 1`,
+  );
 
   function emitDreamEvent(kind: DispatchEventInput["kind"], meta: Record<string, unknown>): void {
     if (!deps.dispatchEventLog) return;
@@ -645,6 +652,11 @@ export async function runDreamCycle(
             );
           }
         } else if (cosine >= LINK_QUEUE_FLOOR) {
+          const targetIds = JSON.stringify([src.memory_id, dst.memory_id]);
+          const reverseTargetIds = JSON.stringify([dst.memory_id, src.memory_id]);
+          const existingQueuedLink = p2QueuedLinkExistsStmt.get(targetIds, reverseTargetIds);
+          if (existingQueuedLink) continue;
+
           db.prepare(
             `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
              VALUES(?, ?, 'P2', 'link', ?, 'queued', ?, ?)`,
@@ -652,7 +664,7 @@ export async function runDreamCycle(
             crypto.randomUUID(),
             cycleId,
             cosine,
-            JSON.stringify([src.memory_id, dst.memory_id]),
+            targetIds,
             JSON.stringify({ link_type: "semantic_near" }),
           );
         }
