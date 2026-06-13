@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { AgentTaskType } from "../schemas/agent-performance.js";
 import {
   GATE_OUTCOME_PASS_VALUES,
+  resolveClassifierDeclineCutoverIso,
   resolveGateOutcomeCutoverIso,
   routeAgent,
   SUCCESS_OUTCOME_VALUES,
@@ -18,6 +19,7 @@ const RECENT_FAILURE_DEMOTION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 type RecentOutcomeRow = {
   outcome: string;
+  failure_class: string | null;
   gate_outcome: string | null;
   ts: string;
 };
@@ -35,16 +37,24 @@ function isNeutral(row: RecentOutcomeRow): boolean {
 function recentlyFailingAgents(pool: string[], db: Database, taskType: AgentTaskType): Set<string> {
   const demoted = new Set<string>();
   const gateOutcomeCutover = resolveGateOutcomeCutoverIso();
+  const classifierDeclineCutover = resolveClassifierDeclineCutoverIso();
   const recencyFloor = new Date(Date.now() - RECENT_FAILURE_DEMOTION_MAX_AGE_MS).toISOString();
-  const stmt = db.query<RecentOutcomeRow, [string, string, string, number]>(
-    `SELECT outcome, gate_outcome, ts
+  const stmt = db.query<RecentOutcomeRow, [string, string, string, string, number]>(
+    `SELECT outcome, failure_class, gate_outcome, ts
      FROM agent_performance
      WHERE task_type = ? AND agent_name = ? AND ts >= ?
+       AND (failure_class IS NULL OR failure_class != 'classifier_declined' OR ts < ?)
      ORDER BY ts DESC
      LIMIT ?`,
   );
   for (const agent of pool) {
-    const rows = stmt.all(taskType, agent, recencyFloor, RECENT_FAILURE_DEMOTION_WINDOW);
+    const rows = stmt.all(
+      taskType,
+      agent,
+      recencyFloor,
+      classifierDeclineCutover,
+      RECENT_FAILURE_DEMOTION_WINDOW,
+    );
     if (rows.length < RECENT_FAILURE_DEMOTION_WINDOW) continue;
     if (rows.every((row) => !isSuccess(row, gateOutcomeCutover) && !isNeutral(row))) {
       demoted.add(agent);

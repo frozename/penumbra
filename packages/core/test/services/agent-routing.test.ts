@@ -80,6 +80,65 @@ describe("routeAgent", () => {
     expect(betaOn.score).toBeCloseTo(betaOff.score * 0.2, 2);
   });
 
+  test("classifier-declined rows after cutover are excluded from rank scoring", () => {
+    const writer = new AgentPerformanceWriter(db);
+    writer.upsert({
+      performance_id: "classifier-alpha-success",
+      ts: "2026-06-13T10:00:00.000Z",
+      handoff_id: "h-classifier-alpha-success",
+      conversation_id: "c-classifier-alpha-success",
+      project_id: "proj",
+      agent_name: "alpha",
+      task_type: "implement_substantial",
+      outcome: "merged",
+      gate_outcome: "passed",
+      rounds: 1,
+      smoke_pass: "y",
+      reviewer_findings: 0,
+      maestro_score: 5,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: 1000,
+      source: "reconciler",
+      notes: null,
+      metadata_json: "{}",
+    });
+    writer.upsert({
+      performance_id: "classifier-alpha-declined",
+      ts: "2026-06-13T10:01:00.000Z",
+      handoff_id: "h-classifier-alpha-declined",
+      conversation_id: "c-classifier-alpha-declined",
+      project_id: "proj",
+      agent_name: "alpha",
+      task_type: "implement_substantial",
+      outcome: "failed",
+      failure_class: "classifier_declined",
+      gate_outcome: null,
+      rounds: 1,
+      smoke_pass: "n",
+      reviewer_findings: 10,
+      maestro_score: 0,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: 1000,
+      source: "worker",
+      notes: null,
+      metadata_json: "{}",
+    });
+
+    const out = routeAgent({
+      db,
+      detail: "rank",
+      taskType: "implement_substantial",
+      since: "2026-06-13T00:00:00.000Z",
+    });
+    const alpha = (out as any).candidates.candidates.find((c: any) => c.agent_name === "alpha");
+
+    expect(alpha.samples).toBe(1);
+    expect(alpha.failures).toBe(0);
+    expect(alpha.success_rate).toBe(1);
+  });
+
   let db: Database;
 
   beforeEach(() => {

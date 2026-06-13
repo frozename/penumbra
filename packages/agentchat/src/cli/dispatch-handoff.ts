@@ -4,6 +4,7 @@ import { runChatTurn as realRunChatTurn } from "./loop.js";
 import { buildNextPrompt } from "./transcript.js";
 import { isAutoApproved } from "./trust.js";
 import type { WriteToolsExecutor } from "../worker/write-tools-executor.js";
+import { classifierDeclineMetaFromUnknown } from "../classifier-decline.js";
 
 export interface DispatchHandoffOpts {
   handoff: {
@@ -96,6 +97,7 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
 
   const delay = opts.delay ?? defaultDelay;
   let lastErrMsg: string | null = null;
+  let lastErrMeta: ChatTurnResult["meta"] | undefined;
   let turn: ChatTurnResult | null = null;
   for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt++) {
     try {
@@ -120,9 +122,12 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
         },
       });
       lastErrMsg = extractTurnErrorMessage(turn);
+      if (turn.meta?.classifier_declined) lastErrMeta = turn.meta;
       if (!lastErrMsg) break;
     } catch (err) {
       lastErrMsg = err instanceof Error ? err.message : String(err);
+      const classifierDecline = classifierDeclineMetaFromUnknown(err);
+      if (classifierDecline) lastErrMeta = classifierDecline;
     }
 
     // Exhausted retries: mark failed (best-effort). If we have a persisted handoff
@@ -138,6 +143,7 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
             cappedHandoffId: opts.handoff.handoff_id,
             text: "",
             agent: targetAgent,
+            ...(lastErrMeta ? { meta: lastErrMeta } : {}),
           };
         } catch {
           // Fall through: surface the error if we couldn't mark the row failed.

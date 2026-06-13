@@ -3,6 +3,7 @@ import type { DispatchEventInput } from "@penumbra/core";
 import type { DispatchHandoffResult } from "../cli/dispatch-handoff.js";
 import { PenumbraHttpError, isTerminalHttpStatus } from "../penumbra-client.js";
 import type { DiscordNotificationEvent } from "./discord-events.js";
+import { detectClassifierDecline } from "../classifier-decline.js";
 
 export interface WorkerDispatcherDeps {
   claim: (handoff_id: string) => Promise<{ status: string }>;
@@ -226,6 +227,7 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
       let capturedDirty: boolean | null | undefined = undefined;
       let capturedCommitted: boolean | null | undefined = undefined;
       let dispatchResult: any = null;
+      let dispatchErrorText: string | null = null;
       const dispatchStartEvent: DispatchEventInput = {
         handoff_id: handoff.handoff_id,
         worker_id: deps.workerId,
@@ -461,6 +463,7 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
         }
       } catch (err) {
         dispatchStatus = abort.signal.aborted ? "aborted" : "error";
+        dispatchErrorText = err instanceof Error ? err.message : String(err);
         const status = err instanceof PenumbraHttpError ? err.status : null;
         if (status === 410) {
           deps.log.debug(
@@ -476,7 +479,7 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
             project_id: handoff.project_id ?? undefined,
             agent: handoff.to_agent,
             worker_id: deps.workerId,
-            error_summary: err instanceof Error ? err.message : String(err),
+            error_summary: dispatchErrorText,
           });
         }
       } finally {
@@ -502,6 +505,19 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
         const worktreeChanged = capturedWorktreeChanged ?? null;
         const dirty = capturedDirty ?? null;
         const committed = capturedCommitted ?? null;
+        const classifierDecline =
+          dispatchResult?.meta?.classifier_declined === true
+            ? {
+                classifier_declined: true as const,
+                decline_reason:
+                  dispatchResult.meta.decline_reason === "provider_safety_refusal"
+                    ? "provider_safety_refusal"
+                    : "provider_safety_refusal",
+              }
+            : detectClassifierDecline({
+                finalText: dispatchResult?.text ?? null,
+                errorText: dispatchErrorText,
+              });
         deps.onEvent?.({
           handoff_id: handoff.handoff_id,
           worker_id: deps.workerId,
@@ -517,6 +533,7 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
             ...(worktreeChanged !== null ? { worktree_changed: worktreeChanged } : {}),
             ...(dirty !== null ? { dirty } : {}),
             ...(committed !== null ? { committed } : {}),
+            ...(classifierDecline ?? {}),
           },
         });
         try {

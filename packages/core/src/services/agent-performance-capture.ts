@@ -168,7 +168,12 @@ function computeDispatchSignals(
   useWorktree: boolean,
   worktreeChangedHint: boolean | null | undefined,
   parsedDispatchEndMeta: Record<string, unknown> | null,
-): { silent_failure: boolean; tool_failure_count: number } {
+): {
+  silent_failure: boolean;
+  tool_failure_count: number;
+  classifier_declined: boolean;
+  decline_reason: string | null;
+} {
   const countRow = db
     .prepare<
       { count: number },
@@ -192,7 +197,19 @@ function computeDispatchSignals(
   // dispatch.end (commit 090adb1); reading it here keeps the agent-rank
   // outcome aligned with the reliability classifier's no_worktree_activity.
   const silentFailure = useWorktree && worktreeChanged === false;
-  return { silent_failure: silentFailure, tool_failure_count: toolFailureCount };
+  const classifierDeclined = parsedDispatchEndMeta?.classifier_declined === true;
+  const declineReason =
+    classifierDeclined && typeof parsedDispatchEndMeta?.decline_reason === "string"
+      ? parsedDispatchEndMeta.decline_reason
+      : classifierDeclined
+        ? "provider_safety_refusal"
+        : null;
+  return {
+    silent_failure: silentFailure,
+    tool_failure_count: toolFailureCount,
+    classifier_declined: classifierDeclined,
+    decline_reason: declineReason,
+  };
 }
 
 function detectRecoveryCancel(
@@ -383,10 +400,18 @@ export function captureAgentPerformanceFromDispatch(opts: {
     gate_outcome: lookupLatestLaneGateOutcome(opts.db, input.handoff_id),
     notes,
     reliability_status: reliabilityReport.status,
+    failure_class: signals.classifier_declined ? "classifier_declined" : null,
     maestro_takeover_required: recoveryCancel ? "y" : handoff.cancel_requested_at ? "n" : null,
     metadata_json: JSON.stringify({
       reason: input.reason,
-      ...signals,
+      silent_failure: signals.silent_failure,
+      tool_failure_count: signals.tool_failure_count,
+      ...(signals.classifier_declined
+        ? {
+            classifier_declined: true,
+            decline_reason: signals.decline_reason,
+          }
+        : {}),
       ...(taskTypeMismatch
         ? {
             caller_task_type: input.task_type,

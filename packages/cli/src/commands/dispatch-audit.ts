@@ -40,14 +40,22 @@ function resolveDaemon(storageRoot: string): { baseUrl: string; token: string } 
 }
 
 export function formatDispatchAudit(report: DispatchReliabilityReport): string {
-  return [
+  const lines = [
     `handoff: ${report.handoff_id}`,
     `status: ${report.status}`,
     `trustworthy: ${report.trustworthy ? "yes" : "no"}`,
     `summary: ${report.summary}`,
     `recommended_action: ${report.recommended_action}`,
     `missing_events: ${report.missing_events.length > 0 ? report.missing_events.join(", ") : "none"}`,
-  ].join("\n");
+  ];
+  if (report.classifier_decline?.classifier_declined === true) {
+    lines.push(
+      "safety_classifier:",
+      "  classifier_declined: yes",
+      `  decline_reason: ${report.classifier_decline.decline_reason ?? "unknown"}`,
+    );
+  }
+  return lines.join("\n");
 }
 
 export async function runDispatchAudit(opts: RunDispatchAuditOpts): Promise<void> {

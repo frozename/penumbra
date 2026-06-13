@@ -57,6 +57,41 @@ describe("runDispatchTimeline", () => {
     expect(printed.join("\n")).toContain('"agent":"codex"');
   });
 
+  test("prints classifier declines as a dedicated safety-classifier block", async () => {
+    const printed: string[] = [];
+
+    await runDispatchTimeline({
+      handoffId: "handoff-classifier",
+      json: false,
+      storageRoot,
+      fetch: async () =>
+        new Response(
+          JSON.stringify({
+            events: [
+              {
+                handoff_id: "handoff-classifier",
+                worker_id: "worker-a",
+                source: "worker",
+                kind: "dispatch.end",
+                ts: "2026-06-13T12:00:00.000Z",
+                meta: {
+                  status: "error",
+                  classifier_declined: true,
+                  decline_reason: "provider_safety_refusal",
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      print: (line) => printed.push(line),
+    });
+
+    expect(printed.join("\n")).toContain("safety_classifier:");
+    expect(printed.join("\n")).toContain("  classifier_declined: yes");
+    expect(printed.join("\n")).toContain("  decline_reason: provider_safety_refusal");
+  });
+
   test("--json prints the raw response pretty-printed", async () => {
     let printed = "";
 

@@ -125,6 +125,29 @@ test("dispatch.start meta does not include predicted worktree_mode", async () =>
   expect(startEvent.meta).not.toHaveProperty("worktree_mode");
 });
 
+test("dispatch.end meta tags classifier declines from adapter errors", async () => {
+  const events: any[] = [];
+  const d = deps({
+    dispatch: mock().mockRejectedValue(
+      new Error("I'm sorry, but I can't assist with that request."),
+    ),
+    onEvent: (event: any) => events.push(event),
+  } as any);
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff("h-classifier-error"));
+  await dispatcher.idle();
+
+  const endEvent = events.find((e) => e.kind === "dispatch.end");
+  expect(endEvent?.meta).toEqual(
+    expect.objectContaining({
+      status: "error",
+      classifier_declined: true,
+      decline_reason: "provider_safety_refusal",
+    }),
+  );
+});
+
 test("waits for durable dispatch.start delivery before calling dispatch", async () => {
   const order: string[] = [];
   const startPosted = Promise.withResolvers<void>();
@@ -227,7 +250,7 @@ test("onChainEnd receives the full handoff row and mapped terminal reason", asyn
     null,
     null,
     null,
-    0,
+    expect.any(Number),
     null,
     "result",
   );

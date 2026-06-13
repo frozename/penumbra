@@ -188,6 +188,21 @@ function seedParentHandoff(services: Services, input: { handoff_id: string; to: 
   });
 }
 
+function recordClassifierDecline(services: Services, handoffId: string): void {
+  services.dispatchEventLog.record({
+    handoff_id: handoffId,
+    worker_id: "worker-1",
+    source: "worker",
+    kind: "dispatch.end",
+    ts: NOW.toISOString(),
+    meta: {
+      status: "error",
+      classifier_declined: true,
+      decline_reason: "provider_safety_refusal",
+    },
+  });
+}
+
 function startChain(
   services: Services,
   input: {
@@ -555,6 +570,49 @@ test("sub-agent refuse falls back to top recommendation when pressure passes", a
       exhausted_reason: null,
     }),
   ]);
+});
+
+test("classifier-declined parent falls back exactly once to the top recommendation", async () => {
+  const services = tempServices({
+    agents: [
+      { name: "maestro", pricing_mode: "subscription", subscription_provider: "anthropic" },
+      { name: "planner", pricing_mode: "subscription", subscription_provider: "openai" },
+      { name: "codex", pricing_mode: "subscription", subscription_provider: "google" },
+    ],
+    providerQuotas: [],
+  });
+  seedParentHandoff(services, { handoff_id: "h-parent-classifier-decline", to: "maestro" });
+  recordClassifierDecline(services, "h-parent-classifier-decline");
+  seedPerformance(services, {
+    performance_id: "perf-classifier-fallback",
+    handoff_id: "handoff-classifier-fallback",
+    agent_name: "codex",
+    task_type: "implement_substantial",
+    outcome: "merged",
+    latency_ms: 1200,
+  });
+
+  const res = await startChain(services, {
+    initial_agent: "planner",
+    parent_handoff_id: "h-parent-classifier-decline",
+    task_type: "implement_substantial",
+  });
+
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { handoff_id: string };
+  const handoff = services.db
+    .query<{ to_agent: string }, [string]>(`SELECT to_agent FROM handoffs WHERE handoff_id=?`)
+    .get(body.handoff_id);
+  expect(handoff?.to_agent).toBe("codex");
+
+  recordClassifierDecline(services, body.handoff_id);
+  const retryRes = await startChain(services, {
+    initial_agent: "planner",
+    parent_handoff_id: body.handoff_id,
+    task_type: "implement_substantial",
+  });
+  expect(retryRes.status).toBe(409);
+  expect((await retryRes.json()).error.code).toBe("classifier_decline_retry_exhausted");
 });
 
 test("sub-agent refuse skips refused top-1 and selects top-2 fallback", async () => {

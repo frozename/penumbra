@@ -70,6 +70,10 @@ export interface DispatchReliabilityReport {
     adapter_streaming: boolean | null;
   };
   recommended_action: DispatchRecommendedAction;
+  classifier_decline?: {
+    classifier_declined: true;
+    decline_reason: string | null;
+  };
 }
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "rejected", "expired"]);

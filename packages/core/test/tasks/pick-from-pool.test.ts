@@ -39,6 +39,7 @@ function writePerf(
   taskType: AgentTaskType,
   overrides: Partial<{
     outcome: "merged" | "pr_opened" | "failed";
+    failure_class: string | null;
     rounds: number;
     latency_ms: number;
     ts: string;
@@ -55,6 +56,7 @@ function writePerf(
     agent_name: agent,
     task_type: taskType,
     outcome: overrides.outcome ?? "merged",
+    failure_class: overrides.failure_class,
     rounds: overrides.rounds ?? 1,
     smoke_pass: "y",
     reviewer_findings: 0,
@@ -201,6 +203,44 @@ describe("pickFromPool", () => {
     });
 
     expect(pickFromPool(["a", "b"], db, config(), undefined, "review_adversarial")).toBe("b");
+  });
+
+  test("does not demote agents whose recent failures are classifier declines after cutover", () => {
+    const previousCutover = process.env.PENUMBRA_CLASSIFIER_DECLINE_CUTOVER_ISO;
+    process.env.PENUMBRA_CLASSIFIER_DECLINE_CUTOVER_ISO = "2026-06-13T00:00:00.000Z";
+    try {
+      const db = freshDb();
+      writePerf(db, "a", "review_adversarial", {
+        outcome: "merged",
+        rounds: 1,
+        latency_ms: 10_000,
+        ts: recentIso(60),
+        id_suffix: "baseline-success",
+      });
+      db.query(`UPDATE agent_performance SET gate_outcome='passed' WHERE handoff_id=?`).run(
+        "handoff-review_adversarial-a-baseline-success",
+      );
+      for (let i = 0; i < 3; i += 1) {
+        writePerf(db, "a", "review_adversarial", {
+          outcome: "failed",
+          failure_class: "classifier_declined",
+          rounds: 1,
+          latency_ms: 10_000,
+          ts: recentIso(30 - i),
+          id_suffix: `classifier-decline-${i}`,
+        });
+      }
+      writePerf(db, "b", "review_adversarial", {
+        outcome: "merged",
+        rounds: 10,
+        latency_ms: 60_000,
+      });
+
+      expect(pickFromPool(["a", "b"], db, config(), undefined, "review_adversarial")).toBe("a");
+    } finally {
+      if (previousCutover === undefined) delete process.env.PENUMBRA_CLASSIFIER_DECLINE_CUTOVER_ISO;
+      else process.env.PENUMBRA_CLASSIFIER_DECLINE_CUTOVER_ISO = previousCutover;
+    }
   });
 
   test("keeps a fallback when every pool agent has recent workload failures", () => {

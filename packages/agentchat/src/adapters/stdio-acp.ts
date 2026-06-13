@@ -16,6 +16,14 @@ import {
 } from "./acp-warm-pool.js";
 import type { CapturePort } from "../worker/capture-port.js";
 import { registerSession, unregisterSession } from "../worker/session-registry.js";
+import { detectClassifierDecline, type ClassifierDeclineMeta } from "../classifier-decline.js";
+
+export function detectStdioAcpClassifierDecline(input: {
+  finalText: string | null | undefined;
+  errorText: string | null | undefined;
+}): ClassifierDeclineMeta | null {
+  return detectClassifierDecline(input);
+}
 
 const ERROR_CODE_MAP: Record<string, number> = {
   outside_worktree: -32001,
@@ -474,6 +482,7 @@ export class StdioAcpAdapter implements Adapter {
     let pooledEntry: AcpWarmPoolEntry | null = null;
     let errorThrown = false;
     let retriedCold = false;
+    let accumulatedText = "";
 
     try {
       const mergedEnv = this.buildMergedEnv();
@@ -907,7 +916,6 @@ export class StdioAcpAdapter implements Adapter {
       //      `session/update` notifications during the turn (each is a SessionUpdate
       //      whose `sessionUpdate === "agent_message_chunk"` carries a ContentChunk
       //      with `content: TextContent`). Accumulate those.
-      let accumulatedText = "";
       const toolNameById = new Map<string, string>();
       let toolUseRejector: ((err: Error) => void) | null = null;
       const toolUseRejection = new Promise<never>((_, reject) => {
@@ -1094,9 +1102,10 @@ export class StdioAcpAdapter implements Adapter {
         }
       }, 60_000);
 
+      let promptResponse: unknown = null;
       try {
         // PromptResponse carries stopReason; the actual text lives in accumulatedText.
-        const promptResponse = await Promise.race([
+        promptResponse = await Promise.race([
           promptPromise,
           toolUseRejection,
           promptTimeoutPromise,
@@ -1117,12 +1126,19 @@ export class StdioAcpAdapter implements Adapter {
         }
       }
 
+      const classifierDecline = detectStdioAcpClassifierDecline({
+        finalText: accumulatedText,
+        errorText:
+          accumulatedText.trim().length === 0 ? JSON.stringify(promptResponse ?? null) : null,
+      });
+
       yield {
         type: "done",
         result: {
           text: accumulatedText,
           meta: {
             framework_overhead_ms: frameworkOverheadMs,
+            ...(classifierDecline ?? {}),
           },
         },
       };
@@ -1154,6 +1170,13 @@ export class StdioAcpAdapter implements Adapter {
       if (server && err instanceof Error && !err.message.includes("[child stderr tail]")) {
         const tail = server.getStderrTail?.() ?? "";
         if (tail) err.message = `${err.message}\n[child stderr tail]\n${tail}`;
+      }
+      if (err instanceof Error) {
+        const classifierDecline = detectStdioAcpClassifierDecline({
+          finalText: accumulatedText,
+          errorText: err.message,
+        });
+        if (classifierDecline) Object.assign(err, classifierDecline);
       }
       errorThrown = true;
       throw err;

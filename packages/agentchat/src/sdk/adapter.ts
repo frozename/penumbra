@@ -36,6 +36,8 @@ export interface DispatchOutput {
     tokens_out?: number;
     raw_response?: unknown;
     framework_overhead_ms?: number;
+    classifier_declined?: true;
+    decline_reason?: "provider_safety_refusal";
   };
 }
 

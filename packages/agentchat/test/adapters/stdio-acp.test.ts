@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "bun:test";
 import { PassThrough } from "node:stream";
 import {
   StdioAcpAdapter,
+  detectStdioAcpClassifierDecline,
   isClaudeHostEnvKey,
   resolveHostEnvPolicy,
   shouldScrubHostEnvKey,
@@ -10,6 +11,27 @@ import type { HostEnvPolicy } from "../../src/adapters/stdio-acp.js";
 import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
 import type { DispatchInput, DispatchOutput } from "../../src/sdk/adapter.js";
 import { ThoughtCapture } from "../../src/worker/thought-capture.js";
+
+describe("detectStdioAcpClassifierDecline", () => {
+  it("detects conservative provider safety refusals only in failed or empty-output turns", () => {
+    expect(
+      detectStdioAcpClassifierDecline({
+        finalText: "",
+        errorText: "I'm sorry, but I can't assist with that request.",
+      }),
+    ).toEqual({
+      classifier_declined: true,
+      decline_reason: "provider_safety_refusal",
+    });
+
+    expect(
+      detectStdioAcpClassifierDecline({
+        finalText: 'The phrase "I can\'t assist with that request" appears in the test fixture.',
+        errorText: null,
+      }),
+    ).toBeNull();
+  });
+});
 
 function mockClient(client: {
   onRequest: StdioAcpClient["onRequest"];

@@ -9,6 +9,7 @@ import { CapturePort } from "../worker/capture-port.js";
 import { buildMaestroRedactorFromEnv } from "../worker/maestro-output-redactor.js";
 import { normalizeAdapterOptions } from "./adapter-options.js";
 import { shutdownAllAcpWarmPools } from "../adapters/acp-warm-pool-registry.js";
+import { classifierDeclineMetaFromUnknown } from "../classifier-decline.js";
 
 export function installAcpWarmPoolShutdownHandlers(
   proc: Pick<NodeJS.Process, "on"> = process,
@@ -118,6 +119,7 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
   let outText = "";
   let outMeta: DispatchOutput["meta"];
   let dispatchError: { message: string } | undefined;
+  let dispatchErrorMeta: DispatchOutput["meta"] | undefined;
   try {
     try {
       const dispatchInput = {
@@ -152,6 +154,8 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
       }
     } catch (err) {
       dispatchError = { message: err instanceof Error ? err.message : String(err) };
+      const classifierDecline = classifierDeclineMetaFromUnknown(err);
+      if (classifierDecline) dispatchErrorMeta = classifierDecline;
     }
   } finally {
     await capturePort.close();
@@ -255,7 +259,7 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
     response_event_id: responseEvent.event_id,
     next_mention: next,
     mentions,
-    ...(outMeta ? { meta: outMeta } : {}),
+    ...(outMeta ? { meta: outMeta } : dispatchErrorMeta ? { meta: dispatchErrorMeta } : {}),
     ...(dispatchError ? { error: dispatchError } : {}),
   };
 }

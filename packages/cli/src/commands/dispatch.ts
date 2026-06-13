@@ -274,6 +274,11 @@ export async function runDispatchTimeline(opts: RunDispatchTimelineOpts): Promis
   for (const event of body.events) {
     const meta = event.meta == null ? "-" : JSON.stringify(event.meta);
     print(`${event.ts}  ${event.source}  ${event.kind}  ${meta}`);
+    if (event.kind === "dispatch.end" && event.meta?.classifier_declined === true) {
+      print("safety_classifier:");
+      print("  classifier_declined: yes");
+      print(`  decline_reason: ${String(event.meta.decline_reason ?? "unknown")}`);
+    }
   }
 }
 

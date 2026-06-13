@@ -45,6 +45,24 @@ describe("formatDispatchAudit", () => {
       "missing_events: none",
     );
   });
+
+  test("formats classifier declines as a dedicated safety-classifier block", () => {
+    expect(
+      formatDispatchAudit({
+        ...report,
+        classifier_decline: {
+          classifier_declined: true,
+          decline_reason: "provider_safety_refusal",
+        },
+      } as any),
+    ).toContain(
+      [
+        "safety_classifier:",
+        "  classifier_declined: yes",
+        "  decline_reason: provider_safety_refusal",
+      ].join("\n"),
+    );
+  });
 });
 
 describe("runDispatchAudit", () => {

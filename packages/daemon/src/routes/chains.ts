@@ -578,6 +578,56 @@ export async function chainStartInternal(
   let routedAgent = route?.agent ?? initialAgent;
   let routedRole = route?.role ?? null;
 
+  if (
+    input.parent_handoff_id &&
+    input.task_type &&
+    parentClassifierDeclined(services, input.parent_handoff_id)
+  ) {
+    if (hasClassifierDeclinedAncestor(services, input.parent_handoff_id)) {
+      return json(
+        {
+          error: {
+            code: "classifier_decline_retry_exhausted",
+            parent_handoff_id: input.parent_handoff_id,
+            message: "classifier-decline fallback already attempted",
+          },
+        },
+        409,
+      );
+    }
+    const cfg = services.agentchatConfig;
+    const fallback = cfg
+      ? maybeSelectClassifierDeclineFallback({
+          services,
+          input,
+          cfg,
+        })
+      : null;
+    if (!fallback) {
+      return json(
+        {
+          error: {
+            code: "classifier_decline_no_fallback",
+            parent_handoff_id: input.parent_handoff_id,
+            message: "classifier-declined dispatch has no fallback candidate",
+          },
+        },
+        409,
+      );
+    }
+    initialAgent = fallback;
+    input.initial_agent = fallback;
+    route = resolveInitialRoute({
+      initialAgent,
+      message: input.message,
+      taskType: input.task_type,
+      forceExactAgent: true,
+      services,
+    });
+    routedAgent = route?.agent ?? initialAgent;
+    routedRole = route?.role ?? null;
+  }
+
   if (applyMaestroBudgetGate) {
     const maestroSessions =
       services.maestroSessions ??
@@ -1092,6 +1142,68 @@ function maybeSelectSubDispatchFallback(opts: {
     exhaustedReason,
   });
   return { selectedAgent: null, refusedOutcomes };
+}
+
+function parseDispatchEndMetaForHandoff(
+  services: Services,
+  handoffId: string,
+): Record<string, unknown> | null {
+  const row = services.db
+    .query<{ meta_json: string | null }, [string]>(
+      `SELECT meta_json
+         FROM dispatch_events
+        WHERE handoff_id = ? AND kind = 'dispatch.end'
+        ORDER BY ts DESC, id DESC
+        LIMIT 1`,
+    )
+    .get(handoffId);
+  if (!row?.meta_json) return null;
+  try {
+    return JSON.parse(row.meta_json) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function parentClassifierDeclined(services: Services, handoffId: string): boolean {
+  return parseDispatchEndMetaForHandoff(services, handoffId)?.classifier_declined === true;
+}
+
+function hasClassifierDeclinedAncestor(services: Services, handoffId: string): boolean {
+  const stmt = services.db.query<{ parent_handoff_id: string | null }, [string]>(
+    `SELECT parent_handoff_id FROM handoffs WHERE handoff_id = ?`,
+  );
+  let cursor = stmt.get(handoffId)?.parent_handoff_id ?? null;
+  const seen = new Set<string>();
+  while (cursor && !seen.has(cursor)) {
+    seen.add(cursor);
+    if (parentClassifierDeclined(services, cursor)) return true;
+    cursor = stmt.get(cursor)?.parent_handoff_id ?? null;
+  }
+  return false;
+}
+
+function maybeSelectClassifierDeclineFallback(opts: {
+  services: Services;
+  input: ChainStartRequestWithLongLived;
+  cfg: AgentChatConfigLike;
+}): string | null {
+  if (!opts.input.task_type) return null;
+  const route = routeAgent({
+    db: opts.services.db,
+    detail: "summary",
+    taskType: opts.input.task_type,
+    windowDays: 7,
+    now: opts.services.clock(),
+  });
+  if (route.detail !== "summary")
+    throw new Error("unexpected routeAgent detail for classifier fallback recommendations");
+
+  const configAgents = new Set((opts.cfg.agents ?? []).map((agent) => agent.name));
+  const fallback = route.recommendations
+    .filter((recommendation) => recommendation.agent_name !== opts.input.initial_agent)
+    .find((recommendation) => configAgents.has(recommendation.agent_name));
+  return fallback?.agent_name ?? null;
 }
 
 function earliestResetsAtForRefusals(outcomes: CapCheckRefuse[]): number | null {

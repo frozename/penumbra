@@ -561,6 +561,41 @@ describe("captureAgentPerformanceFromReconciler", () => {
     });
   });
 
+  it("tags classifier declines from dispatch.end meta without changing the failed outcome enum", () => {
+    db.prepare(
+      `
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `,
+    ).run(
+      "h1",
+      "worker-1",
+      "dispatch.end",
+      "2026-04-30T12:02:00Z",
+      JSON.stringify({
+        status: "error",
+        classifier_declined: true,
+        decline_reason: "provider_safety_refusal",
+      }),
+    );
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-classifier-declined",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: { handoff_id: "h1", reason: "error" },
+    });
+
+    expect(row.outcome).toBe("failed");
+    expect(row.failure_class).toBe("classifier_declined");
+    expect(JSON.parse(row.metadata_json)).toEqual(
+      expect.objectContaining({
+        classifier_declined: true,
+        decline_reason: "provider_safety_refusal",
+      }),
+    );
+  });
+
   it("counts agent.tool_call.failed events into metadata even when worktree did change", () => {
     db.prepare(`UPDATE handoffs SET use_worktree=1 WHERE handoff_id=?`).run("h1");
     const insertEvt = db.prepare(`

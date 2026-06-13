@@ -98,6 +98,7 @@ interface PerformanceRow {
   ts: string;
   agent_kind: string | null;
   gate_outcome: string | null;
+  failure_class: string | null;
   trust_score: number | null;
 }
 
@@ -126,11 +127,13 @@ interface CandidateSummary {
 }
 
 export const DEFAULT_GATE_OUTCOME_CUTOVER_ISO = "2026-06-12T00:00:00.000Z";
+export const DEFAULT_CLASSIFIER_DECLINE_CUTOVER_ISO = "2026-06-13T00:00:00.000Z";
 
 // Graduation plan: once every pre-cutover NULL verdict has been reconciled to
 // an explicit gate outcome, retire the `ts < cutover` branch and remove the
 // env override. Keep the warning loud so any earlier override is intentional.
 let loggedGateOutcomeCutoverIso: string | null = null;
+let loggedClassifierDeclineCutoverIso: string | null = null;
 
 export function resolveGateOutcomeCutoverIso(): string {
   const raw = process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO;
@@ -151,6 +154,30 @@ export function resolveGateOutcomeCutoverIso(): string {
       );
     }
     loggedGateOutcomeCutoverIso = resolved;
+  }
+  return resolved;
+}
+
+export function resolveClassifierDeclineCutoverIso(): string {
+  const raw = process.env.PENUMBRA_CLASSIFIER_DECLINE_CUTOVER_ISO;
+  const candidate =
+    raw === undefined || raw.trim() === "" ? DEFAULT_CLASSIFIER_DECLINE_CUTOVER_ISO : raw;
+  const parsed = new Date(candidate);
+  const resolved = Number.isNaN(parsed.getTime())
+    ? DEFAULT_CLASSIFIER_DECLINE_CUTOVER_ISO
+    : parsed.toISOString();
+  if (loggedClassifierDeclineCutoverIso !== resolved) {
+    if (
+      raw !== undefined &&
+      raw.trim() !== "" &&
+      resolved < DEFAULT_CLASSIFIER_DECLINE_CUTOVER_ISO &&
+      resolved === parsed.toISOString()
+    ) {
+      console.warn(
+        `[agent-routing] PENUMBRA_CLASSIFIER_DECLINE_CUTOVER_ISO=${resolved} is earlier than default ${DEFAULT_CLASSIFIER_DECLINE_CUTOVER_ISO}; this relaxes the legacy classifier-decline exemption predicate.`,
+      );
+    }
+    loggedClassifierDeclineCutoverIso = resolved;
   }
   return resolved;
 }
@@ -232,6 +259,12 @@ function isSuccessOutcome(outcome: string): boolean {
 function rowPassesGateOutcome(row: PerformanceRow, gateOutcomeCutover: string): boolean {
   if (row.gate_outcome == null) return row.ts < gateOutcomeCutover;
   return (GATE_OUTCOME_PASS_VALUES as readonly string[]).includes(row.gate_outcome);
+}
+
+function isClassifierDeclineExempt(row: Pick<PerformanceRow, "failure_class" | "ts">): boolean {
+  return (
+    row.failure_class === "classifier_declined" && row.ts >= resolveClassifierDeclineCutoverIso()
+  );
 }
 
 function rowOutcomeScore(row: PerformanceRow, gateOutcomeCutover: string): number {
@@ -530,15 +563,16 @@ function queryRows(
 ): PerformanceRow[] {
   const rows = db
     .query<PerformanceRow, [string, string]>(
-      `SELECT agent_name, task_type, outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, latency_ms, exec_ms, framework_overhead_ms, ts, agent_kind, gate_outcome, trust_score
+      `SELECT agent_name, task_type, outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, latency_ms, exec_ms, framework_overhead_ms, ts, agent_kind, gate_outcome, failure_class, trust_score
      FROM agent_performance
      WHERE task_type = ? AND COALESCE(agent_kind, '${DEFAULT_AGENT_KIND}') = ?
      ORDER BY ts DESC`,
     )
     .all(taskType, agentKind);
+  const filteredRows = rows.filter((row) => !isClassifierDeclineExempt(row));
   return allowedAgents == null
-    ? rows
-    : rows.filter((row) => allowedAgents.includes(row.agent_name));
+    ? filteredRows
+    : filteredRows.filter((row) => allowedAgents.includes(row.agent_name));
 }
 
 function buildRank(
@@ -670,11 +704,13 @@ function buildRecommendations(
         $cutoff: string;
         $agentKind: string;
         $gateOutcomeCutover: string;
+        $classifierDeclineCutover: string;
       }
     >(
       `SELECT agent_name, task_type, COUNT(*) AS samples, SUM(CASE WHEN ${successPredicate.sql} THEN 1 ELSE 0 END) AS successes, SUM(CASE WHEN gate_outcome IS NOT NULL THEN 1 ELSE 0 END) AS gate_outcome_count, SUM(CASE WHEN gate_outcome IN (${sqlInList(GATE_OUTCOME_PASS_VALUES)}) THEN 1 ELSE 0 END) AS gate_pass_count, AVG(latency_ms) AS avg_latency_ms, MAX(ts) AS last_observed_at
      FROM agent_performance
      WHERE task_type = $taskType AND ts >= $cutoff AND COALESCE(agent_kind, '${DEFAULT_AGENT_KIND}') = $agentKind
+       AND (failure_class IS NULL OR failure_class != 'classifier_declined' OR ts < $classifierDeclineCutover)
      GROUP BY agent_name
      ORDER BY (CAST(SUM(CASE WHEN ${successPredicate.sql} THEN 1 ELSE 0 END) AS REAL) / COUNT(*)) DESC, (AVG(latency_ms) IS NULL) ASC, AVG(latency_ms) ASC`,
     )
@@ -682,6 +718,7 @@ function buildRecommendations(
       $taskType: taskType,
       $cutoff: cutoff,
       $agentKind: agentKind,
+      $classifierDeclineCutover: resolveClassifierDeclineCutoverIso(),
       ...successPredicate.params,
     });
   const filtered =

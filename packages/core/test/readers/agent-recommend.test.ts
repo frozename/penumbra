@@ -599,4 +599,71 @@ describe("agent recommendations", () => {
       else process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO = previousCutover;
     }
   });
+
+  test("success predicate excludes post-cutover classifier declines from SQL recommendation denominators", () => {
+    const previousCutover = process.env.PENUMBRA_CLASSIFIER_DECLINE_CUTOVER_ISO;
+    process.env.PENUMBRA_CLASSIFIER_DECLINE_CUTOVER_ISO = "2026-06-13T00:00:00.000Z";
+    try {
+      const writer = new AgentPerformanceWriter(db);
+      writer.upsert({
+        performance_id: "classifier-sql-success",
+        ts: "2026-06-13T10:00:00.000Z",
+        handoff_id: "h-classifier-sql-success",
+        conversation_id: "c-classifier-sql-success",
+        project_id: "proj",
+        agent_name: "classifier-sql-agent",
+        task_type: "health_check",
+        outcome: "completed_with_output",
+        gate_outcome: "passed",
+        rounds: 1,
+        smoke_pass: "n/a",
+        reviewer_findings: 0,
+        maestro_score: null,
+        cost_usd: null,
+        tokens_used: null,
+        latency_ms: 1000,
+        source: "reconciler",
+        notes: null,
+        metadata_json: "{}",
+      });
+      writer.upsert({
+        performance_id: "classifier-sql-declined",
+        ts: "2026-06-13T10:01:00.000Z",
+        handoff_id: "h-classifier-sql-declined",
+        conversation_id: "c-classifier-sql-declined",
+        project_id: "proj",
+        agent_name: "classifier-sql-agent",
+        task_type: "health_check",
+        outcome: "failed",
+        failure_class: "classifier_declined",
+        gate_outcome: null,
+        rounds: 1,
+        smoke_pass: "n",
+        reviewer_findings: 0,
+        maestro_score: null,
+        cost_usd: null,
+        tokens_used: null,
+        latency_ms: 1000,
+        source: "worker",
+        notes: null,
+        metadata_json: "{}",
+      });
+
+      const out = routeAgent({
+        db,
+        detail: "summary",
+        taskType: "health_check",
+        now: new Date("2026-06-13T12:00:00.000Z"),
+      });
+      const agent = (out as any).recommendations.find(
+        (r: any) => r.agent_name === "classifier-sql-agent",
+      );
+
+      expect(agent.samples).toBe(1);
+      expect(agent.success_rate).toBe(1);
+    } finally {
+      if (previousCutover === undefined) delete process.env.PENUMBRA_CLASSIFIER_DECLINE_CUTOVER_ISO;
+      else process.env.PENUMBRA_CLASSIFIER_DECLINE_CUTOVER_ISO = previousCutover;
+    }
+  });
 });

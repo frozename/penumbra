@@ -26,6 +26,20 @@ function readDispatchEndCommitted(events: Array<{ kind: string; meta: unknown }>
   return null;
 }
 
+function readClassifierDecline(
+  events: Array<{ kind: string; meta: unknown }>,
+): { classifier_declined: true; decline_reason: string | null } | undefined {
+  const dispatchEnd = events.filter((e) => e.kind === "dispatch.end").at(-1);
+  const meta = dispatchEnd?.meta;
+  if (!meta || typeof meta !== "object") return undefined;
+  const record = meta as Record<string, unknown>;
+  if (record.classifier_declined !== true) return undefined;
+  return {
+    classifier_declined: true,
+    decline_reason: typeof record.decline_reason === "string" ? record.decline_reason : null,
+  };
+}
+
 export async function dispatchAuditRoute(req: Request, services: Services): Promise<Response> {
   const url = new URL(req.url);
   const handoffId = url.searchParams.get("handoff_id");
@@ -64,6 +78,8 @@ export async function dispatchAuditRoute(req: Request, services: Services): Prom
     adapterStreaming: null,
     now: services.clock(),
   });
+  const classifierDecline = readClassifierDecline(events);
+  if (classifierDecline) report.classifier_decline = classifierDecline;
 
   return json({ report });
 }
