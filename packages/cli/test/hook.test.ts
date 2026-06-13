@@ -215,6 +215,47 @@ test("runHook forwards PreToolUse:Read events as pre-tool-use lifecycle with fil
   }
 });
 
+test("runHook forwards transcript_path for Stop lifecycle events", async () => {
+  const triggerCalls: any[] = [];
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === "/workflows/trigger") {
+        triggerCalls.push(await req.json());
+        return Response.json({ matched: [], additionalContext: null });
+      }
+      if (url.pathname === "/sessions/touch") {
+        return Response.json({});
+      }
+      return new Response("not found", { status: 404 });
+    },
+  });
+  const root = mkdtempSync(join(tmpdir(), "penumbra-hook-stop-"));
+  writeFileSync(join(root, "port"), `${server.port}\n`);
+  writeFileSync(join(root, "token"), "tk\n");
+
+  try {
+    const exit = await runHook({
+      storageRoot: root,
+      rawEvent: JSON.stringify({
+        hook_event_name: "Stop",
+        session_id: "cc-stop-1",
+        transcript_path: "/tmp/cc-session-transcript.log",
+      }),
+      project: null,
+      sessionId: null,
+    });
+    expect(exit).toBe(0);
+    expect(triggerCalls).toHaveLength(1);
+    expect(triggerCalls[0]!.transcript_path).toBe("/tmp/cc-session-transcript.log");
+    expect(triggerCalls[0]!.session_id).toBe("cc-stop-1");
+    expect(triggerCalls[0]!.event.event).toBe("stop");
+  } finally {
+    server.stop(true);
+  }
+});
+
 test("classifyOrigin tags conv- session_id as dispatch", () => {
   expect(classifyOrigin("conv-7f3a-...")).toBe("dispatch");
 });

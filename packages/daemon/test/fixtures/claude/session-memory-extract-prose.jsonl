@@ -1,0 +1,3 @@
+{"type":"assistant","message":{"role":"user","content":[{"type":"text","text":"Can we summarize the session now?"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"The daemon bounced to pid 80048 after the local swap. The unique-suffix sink is verified live by a stop-hook assertion."}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Another summary: session had to recover with minimal tool calls."}]} }

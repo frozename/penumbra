@@ -1,11 +1,16 @@
 import { z } from "zod";
+import { closeSync, fstatSync, openSync, readSync, statSync, type Stats } from "node:fs";
 import { extractSessionCandidates, type Services } from "@penumbra/core";
 import { resolveT2ExtractionJudge } from "../workers/t2-promotion.js";
 import { bodyJson, json } from "./_helpers.js";
 
+const MAX_TRANSCRIPT_FILE_BYTES = 1_048_576;
+const MAX_TRANSCRIPT_FILE_TAIL_BYTES = 262_144;
+
 const MemorySessionExtractSchema = z
   .object({
     session_id: z.string().min(1).max(200),
+    transcript_path: z.string().min(1).optional(),
     project_id: z.string().nullable().optional(),
     max_candidates: z.number().int().min(1).max(50).optional(),
   })
@@ -52,7 +57,11 @@ export async function memorySessionExtractRoute(
     );
   }
 
-  const transcript = readSessionTranscript(services, parsed.data.session_id);
+  const transcript = readSessionTranscript(
+    services,
+    parsed.data.session_id,
+    parsed.data.transcript_path,
+  );
   let candidates: Awaited<ReturnType<typeof extractSessionCandidates>>;
   try {
     candidates = await extractSessionCandidates(
@@ -84,7 +93,18 @@ export async function memorySessionExtractRoute(
   });
 }
 
-function readSessionTranscript(services: Services, sessionId: string): string {
+function readSessionTranscript(
+  services: Services,
+  sessionId: string,
+  transcriptPath: string | undefined,
+): string {
+  if (transcriptPath) {
+    const fromClaude = readClaudeTranscript(transcriptPath);
+    if (fromClaude !== null) {
+      return fromClaude;
+    }
+  }
+
   const events = services.db
     .query<
       { event_type: string; payload_summary: string | null; payload_json: string | null },
@@ -101,6 +121,150 @@ function readSessionTranscript(services: Services, sessionId: string): string {
     })
     .filter((line): line is string => Boolean(line))
     .join("\n\n");
+}
+
+function readClaudeTranscript(path: string): string | null {
+  if (!isReadableFile(path)) return null;
+  const content = readFileHeadTail(path, MAX_TRANSCRIPT_FILE_BYTES, MAX_TRANSCRIPT_FILE_TAIL_BYTES);
+  if (content === null) return null;
+  return parseClaudeTranscript(content);
+}
+
+function isReadableFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function readFileHeadTail(path: string, maxBytes: number, tailBytes: number): string | null {
+  let fd: number | null = null;
+  try {
+    fd = openSync(path, "r");
+    const stats: Stats = fstatSync(fd);
+    const fileSize = stats.size;
+    if (fileSize <= 0) return "";
+    if (fileSize <= maxBytes) {
+      const buf = Buffer.alloc(fileSize);
+      const bytesRead = readSync(fd, buf, 0, fileSize, 0);
+      return buf.subarray(0, bytesRead).toString("utf8");
+    }
+
+    const headBytes = Math.max(1, maxBytes - tailBytes);
+    const head = Buffer.alloc(headBytes);
+    const headBytesRead = readSync(fd, head, 0, headBytes, 0);
+
+    const safeTailBytes = Math.min(tailBytes, maxBytes - headBytesRead);
+    const tailOffset = Math.max(0, fileSize - safeTailBytes);
+    const tail = Buffer.alloc(safeTailBytes);
+    const tailBytesRead = readSync(fd, tail, 0, safeTailBytes, tailOffset);
+
+    const headText = head.subarray(0, headBytesRead).toString("utf8").trimStart();
+    const tailText = tail.subarray(0, tailBytesRead).toString("utf8").trimEnd();
+    return `${headText}\n\n…\n\n${tailText}`.trim();
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {}
+    }
+  }
+}
+
+function parseClaudeTranscript(raw: string): string {
+  const lines = raw.split(/\r?\n/);
+  const rows: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const entry = parseJsonLine(trimmed);
+    if (!entry) continue;
+
+    const role = normalizeRole(
+      readMessageField(entry, ["role"]) ?? readMessageField(entry, ["message", "role"]),
+    );
+    if (!role) continue;
+
+    const message = readMessageField(entry, ["message"]) ?? entry;
+    const content = readMessageField(message, ["content"]);
+    const text = extractTextBlocks(content).map(scrubTranscriptMarkup).filter(Boolean);
+    for (const item of text) rows.push(`${role}: ${item}`);
+
+    if (text.length > 0) continue;
+
+    const fallback = extractTextBlocks(message).join(" ");
+    const fixedFallback = scrubTranscriptMarkup(fallback);
+    if (fixedFallback) rows.push(`${role}: ${fixedFallback}`);
+  }
+
+  return rows.join("\n\n");
+}
+
+function parseJsonLine(line: string): Record<string, unknown> | null {
+  try {
+    const value = JSON.parse(line);
+    return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function readMessageField(value: unknown, path: string[]): unknown {
+  let current: unknown = value;
+  for (const key of path) {
+    if (!current || typeof current !== "object") return null;
+    const record = current as Record<string, unknown>;
+    current = record[key];
+  }
+  return current;
+}
+
+function normalizeRole(value: unknown): "User" | "Assistant" | null {
+  if (typeof value !== "string") return null;
+  const role = value.toLowerCase();
+  if (role === "user") return "User";
+  if (role === "assistant") return "Assistant";
+  return null;
+}
+
+function extractTextBlocks(value: unknown): string[] {
+  if (!value) return [];
+  if (typeof value === "string") {
+    return [value.trim()].filter(Boolean);
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap(extractTextFromBlock).filter(Boolean);
+  }
+  if (typeof value === "object") {
+    const message = value as Record<string, unknown>;
+    const role = normalizeRole(message.role);
+    if (role && typeof message.content === "string") return [message.content];
+    if (Array.isArray(message.content))
+      return message.content.flatMap(extractTextFromBlock).filter(Boolean);
+    const direct = message.text ?? message.message;
+    if (typeof direct === "string") return [direct];
+    return [];
+  }
+  return [];
+}
+
+function extractTextFromBlock(block: unknown): string[] {
+  if (!block || typeof block !== "object") return [];
+  const record = block as Record<string, unknown>;
+  const type = typeof record.type === "string" ? record.type : "";
+  if (type && type !== "text") return [];
+  const text = readMessageField(record, ["text"]);
+  if (typeof text === "string") return [text];
+  if (text && typeof text === "object") {
+    const nested = readMessageField(text, ["text"]);
+    if (typeof nested === "string") return [nested];
+  }
+  if (record.content && typeof record.content === "string") return [record.content];
+  return [];
 }
 
 function pickTranscriptContent(payloadSummary: string | null, payloadJson: string | null): string {

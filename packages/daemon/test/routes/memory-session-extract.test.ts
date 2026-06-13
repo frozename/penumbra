@@ -16,6 +16,7 @@ try {
 }
 
 const SHARED_TOKEN = "shared-token";
+const fixturesDir = join(import.meta.dir, "../fixtures/claude");
 
 let previousJudgeUrl: string | undefined;
 let previousSiriusUrl: string | undefined;
@@ -379,5 +380,151 @@ describe("POST /memory/session-extract", () => {
         message: expect.stringContaining("Sirius returned 500: backend offline"),
       },
     });
+  });
+
+  test("uses transcript_path to build judge transcript from assistant text blocks", async () => {
+    const configRoot = mkdtempSync(join(tmpdir(), "session-memory-extract-config-"));
+    process.env.PENUMBRA_CONFIG_DIR = writeAgentchatConfigWithoutJudge(configRoot);
+    process.env.PENUMBRA_SIRIUS_BASE_URL = "http://judge.local";
+    delete process.env.SIRIUS_URL;
+    const daemon = makeDaemon();
+    handles.push({ db: daemon.db, root: daemon.root });
+    seedT0(daemon.db, "session-extract-transcript");
+    const toolTranscript =
+      "Implementation artifact summary from tool output that should not be used when transcript_path is present. ".repeat(
+        6,
+      );
+    daemon.db.run(
+      `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+       VALUES (?, ?, ?, 'mcp', 'u1', 'm1', 'session-extract-transcript', 'agent-response', 'local', '{}', ?)`,
+      [
+        "e-session-extract-3",
+        "2026-06-11T10:02:00.000Z",
+        "2026-06-11T10:02:00.000Z",
+        toolTranscript,
+      ],
+    );
+
+    let judgePrompt = "";
+    let fetchCalls = 0;
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      fetchCalls += 1;
+      let bodyText = "";
+      if (typeof init?.body === "string") {
+        bodyText = init.body;
+      } else if (_input instanceof Request && !_input.bodyUsed) {
+        try {
+          bodyText = await _input.text();
+        } catch {}
+      }
+      if (bodyText) {
+        judgePrompt = bodyText;
+      }
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  memories: [
+                    {
+                      title: "Session Transcript Candidate",
+                      body: "This durable fact was extracted from assistant prose in the transcript.",
+                      kind: "decision",
+                      why: "Unique-suffix sink stability is useful across sessions.",
+                      source_quote: "unique-suffix sink is verified live",
+                      depth: 2,
+                    },
+                  ],
+                }),
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof globalThis.fetch;
+
+    const res = await daemon.fetch("http://x/memory/session-extract", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${SHARED_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        session_id: "session-extract-transcript",
+        project_id: "proj",
+        transcript_path: join(fixturesDir, "session-memory-extract-prose.jsonl"),
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(fetchCalls).toBe(1);
+    expect(judgePrompt).toContain("daemon bounced to pid 80048");
+    expect(judgePrompt).toContain("unique-suffix sink is verified live");
+    expect(judgePrompt).not.toContain(toolTranscript.slice(0, 24));
+
+    const payload = (await res.json()) as {
+      candidates: Array<{ title: string; body: string; why: string }>;
+    };
+    expect(payload.candidates).toContainEqual(
+      expect.objectContaining({ title: "Session Transcript Candidate" }),
+    );
+  });
+
+  test("returns zero candidates for transcript_path with no durable assistant prose", async () => {
+    const daemon = makeDaemon();
+    handles.push({ db: daemon.db, root: daemon.root });
+    const toolTranscript =
+      "Implementation artifact summary for tool-heavy execution that should not produce durable memory. ".repeat(
+        8,
+      );
+    daemon.db.run(
+      `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+       VALUES (?, ?, ?, 'mcp', 'u1', 'm1', 'session-extract-trivial', 'agent-response', 'local', '{}', ?)`,
+      [
+        "e-session-extract-4",
+        "2026-06-11T10:03:00.000Z",
+        "2026-06-11T10:03:00.000Z",
+        toolTranscript,
+      ],
+    );
+
+    let judgeCalled = false;
+    globalThis.fetch = (async () => {
+      judgeCalled = true;
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  memories: [{ title: "unused", body: "n/a", kind: "fact", why: "skip", depth: 2 }],
+                }),
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof globalThis.fetch;
+
+    const res = await daemon.fetch("http://x/memory/session-extract", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${SHARED_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        session_id: "session-extract-trivial",
+        project_id: "proj",
+        transcript_path: join(fixturesDir, "session-memory-extract-trivial.jsonl"),
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const payload = (await res.json()) as { candidates: Array<{ title: string }> };
+    expect(payload.candidates).toEqual([]);
+    expect(judgeCalled).toBe(false);
   });
 });

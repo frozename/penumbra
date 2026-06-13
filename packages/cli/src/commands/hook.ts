@@ -21,6 +21,7 @@ interface ClaudeCodeHookEvent {
   tool_name?: string;
   tool_input?: unknown;
   tool_response?: unknown;
+  transcript_path?: string | null;
 }
 
 function resolveDaemon(storageRoot: string): { baseUrl: string; token: string } {
@@ -100,7 +101,11 @@ export function claudeCodeEventToLifecycle(name: string | undefined | null): Lif
 export async function defaultLifecycleForwardFn(
   storageRoot: string,
   cwd: string,
-  sessionContext?: { sessionId?: string | null; projectId?: string | null },
+  sessionContext?: {
+    sessionId?: string | null;
+    projectId?: string | null;
+    transcriptPath?: string | null;
+  },
 ): Promise<LifecycleForwardFn> {
   const daemon = resolveDaemon(storageRoot);
   return async (event) => {
@@ -116,6 +121,7 @@ export async function defaultLifecycleForwardFn(
             file_path: event.hookContext?.file_path ?? null,
           },
           session_id: sessionContext?.sessionId ?? null,
+          transcript_path: sessionContext?.transcriptPath ?? null,
         }),
       });
       const data = (await res.json().catch(() => null)) as { additionalContext?: unknown } | null;
@@ -291,6 +297,8 @@ export async function runHook(opts: RunHookOpts): Promise<number> {
   const lifecycleEvent = claudeCodeEventToLifecycle(ev?.hook_event_name);
   if (lifecycleEvent) {
     const cwd = cwdForResolve;
+    const transcriptPath =
+      typeof ev?.transcript_path === "string" ? ev.transcript_path : (ev?.transcript_path ?? null);
     const toolNameForCtx = typeof ev?.tool_name === "string" ? ev.tool_name : null;
     const toolInputForCtx = ev?.tool_input as { file_path?: unknown } | null | undefined;
     const filePathForCtx =
@@ -301,6 +309,7 @@ export async function runHook(opts: RunHookOpts): Promise<number> {
       const forwardFn = await defaultLifecycleForwardFn(opts.storageRoot, cwd, {
         sessionId,
         projectId: projectIdForTouch,
+        transcriptPath,
       });
       await runLifecycleForward({
         event: lifecycleEvent,

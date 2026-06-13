@@ -633,6 +633,7 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
     cwd?: string;
     args?: Record<string, unknown>;
     hookContext?: { tool_name?: string | null; file_path?: string | null };
+    transcript_path?: string | null;
   } | null;
   const sessionIdFromBody = (body as { session_id?: string | null } | null)?.session_id ?? null;
   const filePathFromBody =
@@ -666,6 +667,9 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
     const args = {
       ...argsResult.args,
       ...(sessionIdFromBody ? { session_id: sessionIdFromBody } : {}),
+      ...(typeof body?.transcript_path === "string" && body.transcript_path.length > 0
+        ? { transcript_path: body.transcript_path }
+        : {}),
     };
     const start = Date.now();
     const sessionStart = resolveSessionStart((services as any).db, sessionIdFromBody, start);

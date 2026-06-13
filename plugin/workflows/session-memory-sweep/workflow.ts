@@ -25,8 +25,10 @@ type Args = {
   db?: Database;
   session_id?: string;
   project_id?: string | null;
+  transcript_path?: string;
   extractSessionCandidates?: (body: {
     session_id: string;
+    transcript_path?: string;
     project_id?: string | null;
     max_candidates: number;
   }) => Promise<{ candidates: Candidate[] }>;
@@ -206,7 +208,12 @@ function resolveStorageRoot(storageRoot: string): string {
 
 async function fetchCandidates(
   storageRoot: string,
-  body: { session_id: string; project_id?: string | null; max_candidates: number },
+  body: {
+    session_id: string;
+    project_id?: string | null;
+    transcript_path?: string;
+    max_candidates: number;
+  },
 ): Promise<{ candidates: Candidate[] }> {
   const daemon = resolveDaemon(storageRoot);
   const res = await fetch(`${daemon.baseUrl}/memory/session-extract`, {
@@ -279,6 +286,7 @@ export const fn: WorkflowFn<Args> = async (ctx) => {
     ctx.args.extractSessionCandidates ?? ((body) => fetchCandidates(ctx.storageRoot, body));
   const result = await extract({
     session_id: transcript.sessionId,
+    ...(ctx.args.transcript_path ? { transcript_path: ctx.args.transcript_path } : {}),
     project_id: projectId,
     max_candidates: maxCandidates,
   });
