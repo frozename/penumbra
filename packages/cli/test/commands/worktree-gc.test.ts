@@ -144,7 +144,7 @@ describe("runWorktreeGc", () => {
     const teardownCalls: string[] = [];
     const wm = {
       listWorktrees: () => [],
-      discoverOrphanWorktrees: () => [makeOrphan("h-orphan-old"), makeOrphan("h-orphan-new")],
+      discoverOrphanWorktrees: async () => [makeOrphan("h-orphan-old"), makeOrphan("h-orphan-new")],
       teardownWorktree: async (id: string) => {
         teardownCalls.push(id);
       },
@@ -171,7 +171,7 @@ describe("runWorktreeGc", () => {
     const teardownCalls: string[] = [];
     const wm = {
       listWorktrees: () => [],
-      discoverOrphanWorktrees: () => [missing, makeOrphan("h-orphan-active")],
+      discoverOrphanWorktrees: async () => [missing, makeOrphan("h-orphan-active")],
       teardownWorktree: async (id: string) => {
         teardownCalls.push(id);
       },

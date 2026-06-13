@@ -43,7 +43,7 @@ function makeServices(
     log: { info: () => {}, warn: () => {} },
     worktreeManager: {
       listWorktrees: () => worktreeHandles,
-      discoverOrphanWorktrees: () => orphanHandles,
+      discoverOrphanWorktrees: async () => orphanHandles,
       teardownWorktree: teardownSpy,
     },
   } as unknown as Services;

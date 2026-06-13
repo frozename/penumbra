@@ -292,7 +292,8 @@ export class PenumbraClient {
     worktree_changed?: boolean | null;
     wall_ms?: number | null;
     framework_overhead_ms?: number | null;
-    final_response_text?: string;
+    final_response_chars?: number;
+    has_meaningful_output?: boolean;
   }): Promise<{
     performance: {
       outcome: string;
@@ -304,7 +305,7 @@ export class PenumbraClient {
   }> {
     // Worker token, not the shared bearer: the capture route's ownership
     // guard binds caller-supplied hints (task_type / worktree_changed /
-    // final_response_text) to the worker principal that owns the handoff —
+    // final response summary) to the worker principal that owns the handoff —
     // posting with the shared bearer would leave that guard inert.
     return this.postWorker("/agents/performance/dispatch", body) as Promise<{
       performance: {

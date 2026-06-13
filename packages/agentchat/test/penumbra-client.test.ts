@@ -54,7 +54,7 @@ test("createHandoff POSTs /handoffs and returns the new id", async () => {
   expect(r.status).toBe("pending");
 });
 
-test("captureAgentPerformanceFromDispatch sends final_response_text", async () => {
+test("captureAgentPerformanceFromDispatch sends final response summary fields", async () => {
   let received: any = null;
   const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
     const req = input instanceof Request ? input : new Request(String(input), init);
@@ -81,14 +81,16 @@ test("captureAgentPerformanceFromDispatch sends final_response_text", async () =
   await client.captureAgentPerformanceFromDispatch({
     handoff_id: "h-final",
     reason: "completed",
-    final_response_text: "final text from the worker",
+    final_response_chars: 22,
+    has_meaningful_output: false,
   });
 
   expect(received).toEqual(
     expect.objectContaining({
       handoff_id: "h-final",
       reason: "completed",
-      final_response_text: "final text from the worker",
+      final_response_chars: 22,
+      has_meaningful_output: false,
     }),
   );
   rmSync(root, { recursive: true, force: true });

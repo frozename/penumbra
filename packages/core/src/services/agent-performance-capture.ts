@@ -263,11 +263,6 @@ export function captureAgentPerformanceFromDispatch(opts: {
   uuid: Uuid;
   clock: () => Date;
   input: AgentPerformanceCaptureFromDispatch;
-  caller?: {
-    worker_id: string;
-    handoff_worker_id: string | null;
-    handoff_owner_mismatch: boolean;
-  };
 }): AgentPerformanceRow {
   const input = AgentPerformanceCaptureFromDispatchSchema.parse(opts.input);
   const handoff = new HandoffReader({ db: opts.db }).get(input.handoff_id);
@@ -297,14 +292,23 @@ export function captureAgentPerformanceFromDispatch(opts: {
   // capture occurs. Breaking this ordering invariant causes getResponses
   // to return empty, leading to silent misclassification of outcomes
   // (e.g. valid non-mutating reviews scored as 'no_changes' failures).
-  const responses =
-    typeof input.final_response_text === "string"
-      ? ([
-          { text: input.final_response_text, ts: nowIso, agent: handoff.to_agent },
-        ] as AgentResponseEvent[])
-      : new ChainReader(opts.db).getResponses(handoff.conversation_id, "final", {
-          handoff_id: input.handoff_id,
-        });
+  const responseSummary =
+    typeof input.has_meaningful_output === "boolean"
+      ? ({
+          hasMeaningfulOutput: input.has_meaningful_output,
+          finalResponseChars: input.final_response_chars ?? 0,
+        } as const)
+      : null;
+  const responses = responseSummary
+    ? []
+    : new ChainReader(opts.db).getResponses(handoff.conversation_id, "final", {
+        handoff_id: input.handoff_id,
+      });
+  const finalResponseText = responseSummary
+    ? responseSummary.hasMeaningfulOutput
+      ? "output"
+      : null
+    : responses.map((r) => r.text).join("\n");
 
   const reliabilityReport = classifyDispatchReliabilityFromDb(
     opts.db,
@@ -312,7 +316,9 @@ export function captureAgentPerformanceFromDispatch(opts: {
     handoff,
     input.worktree_changed,
     parsedDispatchEndMeta,
-    responses,
+    responseSummary?.hasMeaningfulOutput
+      ? ([{ text: "output", ts: nowIso, agent: handoff.to_agent }] as AgentResponseEvent[])
+      : responses,
   );
   const baseNotes = signals.silent_failure
     ? `${input.reason} (silent_failure: empty worktree)`
@@ -326,12 +332,11 @@ export function captureAgentPerformanceFromDispatch(opts: {
   );
   const notes = recoveryCancel ? `${baseNotes} (maestro_takeover: recovery_cancel)` : baseNotes;
 
-  const finalResponseText = input.final_response_text ?? responses.map((r) => r.text).join("\n");
-
   const MIN_RESPONSE_CHARS = 40;
   const has_non_empty_response =
-    typeof finalResponseText === "string" &&
-    finalResponseText.replace(/\s/g, "").length >= MIN_RESPONSE_CHARS;
+    responseSummary?.hasMeaningfulOutput ??
+    (typeof finalResponseText === "string" &&
+      finalResponseText.replace(/\s/g, "").length >= MIN_RESPONSE_CHARS);
 
   const explicitTaskType = handoff.chain_task_type ?? input.task_type;
   const taskType = explicitTaskType ?? inferAgentTaskTypeForRole(handoff.message, handoff.to_role);
@@ -389,11 +394,10 @@ export function captureAgentPerformanceFromDispatch(opts: {
             task_type_mismatch: true,
           }
         : {}),
-      ...(opts.caller?.handoff_owner_mismatch
+      ...(responseSummary
         ? {
-            caller_worker_id: opts.caller.worker_id,
-            handoff_worker_id: opts.caller.handoff_worker_id,
-            caller_handoff_owner_mismatch: true,
+            final_response_chars: responseSummary.finalResponseChars,
+            has_meaningful_output: responseSummary.hasMeaningfulOutput,
           }
         : {}),
     }),

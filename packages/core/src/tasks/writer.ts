@@ -737,7 +737,7 @@ export class TaskWriter {
   ): { status: TaskStatus } {
     const emittedEvents: TaskEvent[] = [];
 
-    const completion = this.db.transaction(() => {
+    const completeTx = this.db.transaction(() => {
       const taskRow = this.db
         .query<
           {
@@ -962,12 +962,11 @@ export class TaskWriter {
         );
       }
 
-      if (taskRow.kind === "review") {
-        this.db.run(`UPDATE tasks SET updated_at = ? WHERE id = ?`, [now, validated.task_id]);
-      }
-
       return { status: nextStatus };
-    })();
+    });
+    // Lease-less completion must take the write lock before reading task status;
+    // otherwise a concurrent lease can slip between the status read and update.
+    const completion = completeTx.immediate();
     publishEvents(this.bus, emittedEvents);
     return completion;
   }

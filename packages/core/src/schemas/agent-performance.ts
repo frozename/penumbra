@@ -131,7 +131,8 @@ export const AgentPerformanceCaptureFromDispatchSchema = z.object({
   worktree_changed: z.boolean().nullable().optional(),
   wall_ms: z.number().nonnegative().nullable().optional(),
   framework_overhead_ms: z.number().nonnegative().nullable().optional(),
-  final_response_text: z.string().max(65536).optional(),
+  final_response_chars: z.number().int().nonnegative().max(65536).optional(),
+  has_meaningful_output: z.boolean().optional(),
 });
 export type AgentPerformanceCaptureFromDispatch = z.infer<
   typeof AgentPerformanceCaptureFromDispatchSchema

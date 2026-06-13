@@ -631,7 +631,9 @@ async function maybeCaptureDispatchOutcome(
       worktree_changed: worktreeChanged,
       wall_ms: wallMs,
       framework_overhead_ms: frameworkOverheadMs,
-      final_response_text: finalResponseText ?? undefined,
+      final_response_chars: finalResponseText ? finalResponseText.replace(/\s/g, "").length : 0,
+      has_meaningful_output:
+        finalResponseText !== null && finalResponseText.replace(/\s/g, "").length >= 40,
     });
     perf = response.performance;
   } catch (err) {
@@ -1587,6 +1589,7 @@ const shutdown = createWorkerShutdown({
   heartbeatLoop,
   prewarmAbort,
   prewarmLoop,
+  getPrewarmLoop: () => prewarmLoop,
   usagePoller,
   notificationScheduler,
   shutdownAllAcpWarmPools,

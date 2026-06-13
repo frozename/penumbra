@@ -29,9 +29,10 @@ export async function runWorktreeGcTick(
   const nowMs = now().getTime();
 
   const handles = services.worktreeManager.listWorktrees();
+  const orphanHandles = await services.worktreeManager.discoverOrphanWorktrees();
   const gcCandidates = selectWorktreeGcCandidates({
     trackedHandles: handles,
-    orphanHandles: services.worktreeManager.discoverOrphanWorktrees(),
+    orphanHandles,
     handoffReader: services.handoffReader,
     gracePeriodMs,
     nowMs,

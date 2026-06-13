@@ -163,6 +163,8 @@ export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpSe
   const onChildError = (err: Error) => {
     if (!bootSettled) {
       rejectChildError(err);
+    } else {
+      console.warn("[acp-server] child process error after boot", err);
     }
   };
   child.on("error", onChildError);

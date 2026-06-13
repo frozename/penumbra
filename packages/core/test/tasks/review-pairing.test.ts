@@ -122,6 +122,46 @@ describe("TaskWriter review pairing", () => {
     });
   });
 
+  test("lease-less completion uses an immediate transaction", () => {
+    const modes: string[] = [];
+    const observedDb = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop === "transaction") {
+          return ((fn: () => unknown) => {
+            const tx = target.transaction(fn) as (() => unknown) & {
+              immediate: () => unknown;
+            };
+            const wrapped = (() => {
+              modes.push("default");
+              return tx();
+            }) as typeof tx;
+            wrapped.immediate = () => {
+              modes.push("immediate");
+              return tx.immediate();
+            };
+            return wrapped;
+          }) as typeof db.transaction;
+        }
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const observedWriter = new TaskWriter(observedDb);
+    const { task_id: parentTaskId } = observedWriter.file(baseInput({ requires_review: false }));
+    modes.length = 0;
+
+    observedWriter.completeWithoutLease(
+      {
+        task_id: parentTaskId,
+        result_summary: "implemented without lease",
+      },
+      "shared:config",
+    );
+
+    expect(modes).toContain("immediate");
+    expect(modes).not.toContain("default");
+  });
+
   test("appends review_filed event on parent with review task id payload", () => {
     const { task_id: parentTaskId } = writer.file(baseInput());
     const lease = writer.lease({ task_id: parentTaskId, agent_id: "agent-doer" });

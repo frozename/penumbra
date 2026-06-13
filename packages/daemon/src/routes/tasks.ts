@@ -526,7 +526,10 @@ export async function tasksCompleteRoute(
     // Positive allowlist: only the shared (operator/maestro) principal may
     // complete without a lease; any future principal kind must opt in here.
     if (principal.kind === "shared" && parsed.data.lease_id === undefined) {
-      const result = writer.completeWithoutLease({ task_id, ...parsed.data }, "maestro");
+      const result = writer.completeWithoutLease(
+        { task_id, ...parsed.data },
+        principalActor(principal),
+      );
       return json(result);
     }
 
@@ -597,6 +600,11 @@ export async function tasksCommentGhRoute(
     }
     return mapTaskError(err);
   }
+}
+
+function principalActor(principal: NonNullable<ReturnType<typeof getPrincipal>>): string {
+  if (principal.kind === "shared") return `shared:${principal.via}`;
+  return `worker:${principal.worker_id}`;
 }
 
 function buildGhIssueUrl(repo: string, issue_number: number): string {

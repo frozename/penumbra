@@ -339,7 +339,8 @@ export async function agentsPerformanceDispatchRoute(
       // capture falls back to server-derived values (scoped t0 read,
       // chain_task_type, computed worktree signals) instead of rejecting the
       // capture outright.
-      delete (input as Record<string, unknown>).final_response_text;
+      delete (input as Record<string, unknown>).final_response_chars;
+      delete (input as Record<string, unknown>).has_meaningful_output;
       delete (input as Record<string, unknown>).task_type;
       delete (input as Record<string, unknown>).worktree_changed;
     }

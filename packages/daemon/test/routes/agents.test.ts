@@ -105,8 +105,8 @@ describe("agent routes", () => {
           reason: "completed",
           task_type: "implement_substantial",
           worktree_changed: false,
-          final_response_text:
-            "This spoofed final text is long enough to promote output if it is trusted.",
+          final_response_chars: 66,
+          has_meaningful_output: true,
         }),
       }),
     );
@@ -144,7 +144,8 @@ describe("agent routes", () => {
           reason: "error",
           task_type: "review_adversarial",
           worktree_changed: false,
-          final_response_text: "caller supplied text must never reach capture",
+          final_response_chars: 39,
+          has_meaningful_output: false,
         }),
       }),
     );

@@ -16,9 +16,10 @@ try {
 } catch {}
 
 const DEFAULT_GRACE_MS = 2 * 60 * 60_000;
+type MaybePromise<T> = T | Promise<T>;
 type WorktreeGcManager = {
   listWorktrees(): WorktreeHandle[];
-  discoverOrphanWorktrees?(): Array<{ path: string; handoffId: string }>;
+  discoverOrphanWorktrees?(): MaybePromise<Array<{ path: string; handoffId: string }>>;
   teardownWorktree(handoffId: string, force?: boolean): Promise<unknown>;
 };
 
@@ -57,10 +58,11 @@ export async function runWorktreeGc(opts: WorktreeGcOpts): Promise<WorktreeGcRes
 
   const worktreeManager: WorktreeGcManager = opts.worktreeManager ?? new WorktreeManager();
   const handles = worktreeManager.listWorktrees();
+  const orphanHandles = (await worktreeManager.discoverOrphanWorktrees?.()) ?? [];
 
   const candidates = selectWorktreeGcCandidates({
     trackedHandles: handles,
-    orphanHandles: worktreeManager.discoverOrphanWorktrees?.() ?? [],
+    orphanHandles,
     handoffReader,
     gracePeriodMs,
     nowMs,

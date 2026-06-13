@@ -46,7 +46,6 @@ export interface WorktreeHandle {
 export interface OrphanWorktreeHandle {
   path: string;
   handoffId: string;
-  state?: "not_ready";
 }
 
 export interface CreateOpts {
@@ -96,7 +95,9 @@ function spawnSilent(
     let stderrText = "";
     const stderrCap = opts.maxBuffer ?? SPAWN_STDERR_CAP;
     child.stderr?.on("data", (chunk: Buffer | string) => {
-      if (stderrText.length < stderrCap) stderrText += String(chunk);
+      if (stderrText.length < stderrCap) {
+        stderrText = (stderrText + String(chunk)).slice(0, stderrCap);
+      }
     });
     // On timeout the child is killed but the rejection waits for the exit
     // event: rejecting early would let the caller tear the worktree down
@@ -214,7 +215,7 @@ export class WorktreeManager {
             const branchName = `agent/${handoffId}`;
             const storageRoot = path.join(wtPath, ".test-storage");
             const worktreeMode = inferWorktreeMode(wtPath);
-            if (!isWorktreeReady(wtPath, worktreeMode)) continue;
+            if (!isWorktreeReadySync(wtPath, worktreeMode, handoffId)) continue;
 
             let createdAt = new Date().toISOString();
             try {
@@ -307,12 +308,12 @@ export class WorktreeManager {
           cleanedUpPartialWorktree = true;
           throw err;
         }
-        writeWorktreeReady(wtPath);
+        writeWorktreeReady(wtPath, handoffId);
       } else {
         // Bun workspaces create root and per-package node_modules. Mirroring
         // all of them keeps the default fast path byte-for-byte compatible.
         mirrorNodeModuleSymlinks(repoRoot, wtPath, this.log);
-        writeWorktreeReady(wtPath);
+        writeWorktreeReady(wtPath, handoffId);
       }
 
       const handle: WorktreeHandle = {
@@ -445,7 +446,7 @@ export class WorktreeManager {
     const wtPath = path.join(base, handoffId);
     if (!fs.existsSync(path.join(wtPath, ".git"))) return null;
     const worktreeMode = inferWorktreeMode(wtPath);
-    if (!isWorktreeReady(wtPath, worktreeMode)) return null;
+    if (!isWorktreeReadySync(wtPath, worktreeMode, handoffId)) return null;
     const branchName = `agent/${handoffId}`;
     const storageRoot = path.join(wtPath, ".test-storage");
     let createdAt = new Date().toISOString();
@@ -472,12 +473,17 @@ export class WorktreeManager {
     return Array.from(this.worktrees.values());
   }
 
-  discoverOrphanWorktrees(): OrphanWorktreeHandle[] {
+  async discoverOrphanWorktrees(): Promise<OrphanWorktreeHandle[]> {
     const orphans: OrphanWorktreeHandle[] = [];
     for (const base of this.discoveryBases()) {
-      if (!fs.existsSync(base)) continue;
+      try {
+        const baseStat = await fs.promises.stat(base);
+        if (!baseStat.isDirectory()) continue;
+      } catch {
+        continue;
+      }
 
-      const entries = fs.readdirSync(base, { withFileTypes: true });
+      const entries = await fs.promises.readdir(base, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
         const handoffId = entry.name;
@@ -485,11 +491,15 @@ export class WorktreeManager {
         if (this.worktrees.has(handoffId)) continue;
 
         const wtPath = path.join(base, handoffId);
-        if (!fs.existsSync(path.join(wtPath, ".git"))) continue;
+        try {
+          await fs.promises.access(path.join(wtPath, ".git"));
+        } catch {
+          continue;
+        }
         const worktreeMode = inferWorktreeMode(wtPath);
-        if (!isWorktreeReady(wtPath, worktreeMode)) {
-          if (isUnreadyWorktreePastGrace(wtPath)) {
-            orphans.push({ path: wtPath, handoffId, state: "not_ready" });
+        if (!(await isWorktreeReady(wtPath, worktreeMode, handoffId))) {
+          if (await isUnreadyWorktreePastGrace(wtPath)) {
+            orphans.push({ path: wtPath, handoffId });
           }
           continue;
         }
@@ -619,9 +629,9 @@ function writeWorktreeMode(wtRoot: string, mode: WorktreeMode): void {
   fs.writeFileSync(path.join(wtRoot, WORKTREE_MODE_FILE), `${mode}\n`);
 }
 
-function writeWorktreeReady(wtRoot: string): void {
+function writeWorktreeReady(wtRoot: string, handoffId: string): void {
   fs.mkdirSync(path.dirname(path.join(wtRoot, WORKTREE_READY_FILE)), { recursive: true });
-  fs.writeFileSync(path.join(wtRoot, WORKTREE_READY_FILE), "ready\n");
+  fs.writeFileSync(path.join(wtRoot, WORKTREE_READY_FILE), `${handoffId}\n`);
 }
 
 function inferWorktreeMode(wtRoot: string): WorktreeMode {
@@ -644,9 +654,31 @@ function inferWorktreeMode(wtRoot: string): WorktreeMode {
 // re-mirroring on rediscovery is idempotent and self-heals a crash
 // mid-setup, and demanding one would orphan every worktree created before
 // the sentinel existed. Isolated installs cannot self-heal, hence the marker.
-function isWorktreeReady(wtRoot: string, mode: WorktreeMode): boolean {
+async function isWorktreeReady(
+  wtRoot: string,
+  mode: WorktreeMode,
+  handoffId: string,
+): Promise<boolean> {
   if (mode === "symlink_mirror") return true;
-  return fs.existsSync(path.join(wtRoot, WORKTREE_READY_FILE));
+  try {
+    const readyFor = (
+      await fs.promises.readFile(path.join(wtRoot, WORKTREE_READY_FILE), "utf8")
+    ).trim();
+    return readyFor === handoffId;
+  } catch (err) {
+    if (isMissingError(err)) return false;
+    throw err;
+  }
+}
+
+function isWorktreeReadySync(wtRoot: string, mode: WorktreeMode, handoffId: string): boolean {
+  if (mode === "symlink_mirror") return true;
+  try {
+    return fs.readFileSync(path.join(wtRoot, WORKTREE_READY_FILE), "utf8").trim() === handoffId;
+  } catch (err) {
+    if (isMissingError(err)) return false;
+    throw err;
+  }
 }
 
 // An unready worktree may still be mid-install: the reap grace must always
@@ -659,9 +691,10 @@ function unreadyWorktreeGraceMs(): number {
   return Math.max(UNREADY_WORKTREE_ORPHAN_GRACE_MS, installTimeoutMs + 5 * 60_000);
 }
 
-function isUnreadyWorktreePastGrace(wtRoot: string): boolean {
+async function isUnreadyWorktreePastGrace(wtRoot: string): Promise<boolean> {
   try {
-    return Date.now() - fs.statSync(wtRoot).mtimeMs > unreadyWorktreeGraceMs();
+    const stat = await fs.promises.stat(wtRoot);
+    return Date.now() - stat.birthtimeMs > unreadyWorktreeGraceMs();
   } catch {
     return false;
   }

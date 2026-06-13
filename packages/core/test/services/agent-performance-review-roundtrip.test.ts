@@ -288,7 +288,7 @@ describe("review_adversarial performance roundtrip", () => {
     expect(row.outcome).toBe("completed_with_output");
   });
 
-  test("final_response_text field bypasses db read", () => {
+  test("final response summary fields bypass db read", () => {
     db.prepare(
       `
       INSERT INTO handoffs (handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message, status, resolved_by, resolved_at, use_worktree)
@@ -319,7 +319,8 @@ describe("review_adversarial performance roundtrip", () => {
         reason: "completed",
         wall_ms: 1000,
         worktree_changed: false,
-        final_response_text: "This string is forty chars or more, enough to pass the check!!!",
+        final_response_chars: 57,
+        has_meaningful_output: true,
       },
     });
 

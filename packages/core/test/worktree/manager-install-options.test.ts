@@ -136,7 +136,7 @@ test("isolated install writes readiness marker only after bun install succeeds",
       "isolated_install\n",
     );
     expect(fs.readFileSync(path.join(handle.storageRoot, "worktree-ready"), "utf8")).toBe(
-      "ready\n",
+      "h-install-mode\n",
     );
   } finally {
     fs.rmSync(repoDir, { recursive: true, force: true });
@@ -162,7 +162,7 @@ test("rediscovery skips isolated worktrees with a mode marker but no readiness m
     });
 
     expect(manager.getWorktree(handoffId)).toBeNull();
-    expect(manager.discoverOrphanWorktrees()).toEqual([]);
+    await expect(manager.discoverOrphanWorktrees()).resolves.toEqual([]);
   } finally {
     fs.rmSync(repoDir, { recursive: true, force: true });
     fs.rmSync(rootDir, { recursive: true, force: true });

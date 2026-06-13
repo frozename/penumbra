@@ -72,6 +72,57 @@ describe("createWorkerShutdown", () => {
     ]);
   });
 
+  test("stops the current prewarm loop from a dynamic getter", async () => {
+    const calls: string[] = [];
+    const staleLoop = { stop: mock(() => calls.push("stale.stop")) };
+    const currentLoop = { stop: mock(() => calls.push("current.stop")) };
+    const shutdown = createWorkerShutdown({
+      log: { info: mock(() => {}) },
+      controlAbort: { abort: mock(() => {}) },
+      heartbeatLoop: { stop: mock(() => {}) },
+      prewarmAbort: { abort: mock(() => {}) },
+      prewarmLoop: staleLoop,
+      getPrewarmLoop: () => currentLoop,
+      shutdownAllAcpWarmPools: mock(() => {}),
+      eventSource: { stop: mock(async () => {}) },
+      permissionDaemonClient: { stop: mock(() => {}) },
+      dispatcher: { stop: mock(() => {}), idle: mock(async () => {}) },
+      eventQueue: { stop: mock(async () => {}) },
+      exit: mock(() => {}),
+    });
+
+    await shutdown("SIGTERM");
+
+    expect(calls).toEqual(["current.stop"]);
+  });
+
+  test("forces exit(1) when shutdown exceeds the hard timeout", async () => {
+    const calls: string[] = [];
+    const shutdown = createWorkerShutdown({
+      log: {
+        info: mock(() => {}),
+        error: mock((meta, msg) => calls.push(`error:${msg}:${meta.sig}`)),
+      },
+      controlAbort: { abort: mock(() => {}) },
+      heartbeatLoop: { stop: mock(() => calls.push("heartbeatLoop.stop")) },
+      prewarmAbort: { abort: mock(() => {}) },
+      shutdownAllAcpWarmPools: mock(() => {}),
+      eventSource: { stop: mock(async () => {}) },
+      permissionDaemonClient: { stop: mock(() => {}) },
+      dispatcher: {
+        stop: mock(() => {}),
+        idle: mock(() => new Promise<void>(() => {})),
+      },
+      eventQueue: { stop: mock(async () => {}) },
+      exit: mock((code) => calls.push(`exit:${code}`)),
+      shutdownTimeoutMs: 5,
+    });
+
+    await shutdown("SIGTERM");
+
+    expect(calls).toEqual(["error:worker shutdown timed out:SIGTERM", "exit:1"]);
+  });
+
   test("worker signal handlers catch shutdown rejections before exiting", () => {
     const source = readFileSync("packages/agentchat/bin/agentchat-worker.ts", "utf8");
 

@@ -1832,6 +1832,45 @@ test("POST /tasks/:id/complete shared without lease_id uses writer side effects 
   }
 });
 
+test("POST /tasks/:id/complete shared without lease_id records the shared principal actor", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const taskId = await fileTask(daemon, { requires_review: true });
+
+    const complete = await postJson(daemon, `/tasks/${taskId}/complete`, {
+      result_summary: "landed via shared principal",
+    });
+    expect(complete.status).toBe(200);
+
+    const event = daemon.services.db
+      .query<{ actor: string | null }, [string]>(
+        `SELECT actor
+         FROM task_events
+         WHERE task_id = ? AND kind = 'completed'
+         ORDER BY id DESC
+         LIMIT 1`,
+      )
+      .get(taskId);
+    expect(event?.actor).toBe("shared:config");
+
+    const reviewTaskId = (await (
+      await daemon.fetch(`/tasks/${taskId}?include=descendants`, {
+        headers: authHeaders(daemon.token),
+      })
+    ).json()) as { descendants?: { ids: string[] } };
+    const childId = reviewTaskId.descendants?.ids[0];
+    expect(childId).toBeString();
+    const child = (await (
+      await daemon.fetch(`/tasks/${childId}`, {
+        headers: authHeaders(daemon.token),
+      })
+    ).json()) as { eligibility: { deny_agents?: string[] } };
+    expect(child.eligibility.deny_agents).toContain("shared:config");
+  } finally {
+    daemon.stop();
+  }
+});
+
 test("POST /tasks/:id/complete shared without lease_id rejects active leased tasks", async () => {
   const daemon = startTestDaemon();
   try {

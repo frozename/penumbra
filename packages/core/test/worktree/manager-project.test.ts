@@ -207,12 +207,14 @@ describe("WorktreeManager — project parameterization", () => {
     fs.mkdirSync(nonUuidPath, { recursive: true });
     fs.writeFileSync(path.join(nonUuidPath, ".git"), "gitdir: /tmp/not-a-uuid.git\n");
 
-    expect(manager.discoverOrphanWorktrees()).toEqual([{ path: orphanPath, handoffId: orphanId }]);
+    await expect(manager.discoverOrphanWorktrees()).resolves.toEqual([
+      { path: orphanPath, handoffId: orphanId },
+    ]);
 
     await manager.teardownWorktree(trackedId, true);
   });
 
-  it("discovers stale unready uuid-named git worktrees for cleanup", () => {
+  it("discovers stale unready uuid-named git worktrees for cleanup", async () => {
     const orphanId = "44444444-4444-4444-8444-444444444444";
     const orphanPath = path.join(homeRoot, orphanId);
     fs.mkdirSync(path.join(orphanPath, ".test-storage"), { recursive: true });
@@ -223,8 +225,8 @@ describe("WorktreeManager — project parameterization", () => {
 
     const manager = new WorktreeManager({ rootDir: homeRoot, mainRepoDir: homeRepo });
 
-    expect(manager.discoverOrphanWorktrees()).toEqual([
-      { path: orphanPath, handoffId: orphanId, state: "not_ready" },
+    await expect(manager.discoverOrphanWorktrees()).resolves.toEqual([
+      { path: orphanPath, handoffId: orphanId },
     ]);
   });
 
@@ -238,11 +240,11 @@ describe("WorktreeManager — project parameterization", () => {
     const manager = new WorktreeManager({ mainRepoDir: homeRepo });
 
     expect(manager.listWorktrees().map((handle) => handle.handoffId)).toContain(orphanId);
-    expect(manager.discoverOrphanWorktrees()).toEqual([]);
+    await expect(manager.discoverOrphanWorktrees()).resolves.toEqual([]);
 
     const orphanOnlyManager = new WorktreeManager({ mainRepoDir: homeRepo });
     (orphanOnlyManager as any).worktrees.clear();
-    expect(orphanOnlyManager.discoverOrphanWorktrees()).toEqual([
+    await expect(orphanOnlyManager.discoverOrphanWorktrees()).resolves.toEqual([
       { path: orphanPath, handoffId: orphanId },
     ]);
   });

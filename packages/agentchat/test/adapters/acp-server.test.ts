@@ -150,6 +150,45 @@ serviceTest("startAcpServer rejects spawn errors through the boot promise", asyn
   expect(child.kill).toHaveBeenCalledWith("SIGTERM");
 });
 
+test("startAcpServer logs child errors after boot settles", async () => {
+  const child = new FakeChildProcess(5433);
+  let assignedPort = 0;
+  const dummyServer = net.createServer((socket) => socket.destroy());
+  const warn = console.warn;
+  const warnings: unknown[][] = [];
+  console.warn = mock((...args: unknown[]) => {
+    warnings.push(args);
+  }) as unknown as typeof console.warn;
+
+  try {
+    const spawn = createSpawn(child, (args) => {
+      const portIdx = args.indexOf("--port") + 1;
+      assignedPort = Number(args[portIdx]);
+      dummyServer.listen(assignedPort, "127.0.0.1");
+    });
+
+    const handle = await startAcpServer({
+      cwd: "/tmp/penumbra-acp",
+      spawn,
+      bootTimeoutMs: 250,
+    });
+
+    child.emit("error", new Error("post-boot EIO"));
+    await new Promise((resolve) => queueMicrotask(resolve));
+
+    expect(warnings.some((args) => args.some((arg) => String(arg).includes("post-boot EIO")))).toBe(
+      true,
+    );
+    await new Promise<void>((resolve) => dummyServer.close(() => resolve()));
+    await handle.kill();
+  } finally {
+    console.warn = warn;
+    try {
+      dummyServer.close();
+    } catch {}
+  }
+});
+
 const integrationEnabled =
   process.env.PENUMBRA_RUN_OPENCODE_INTEGRATION === "1" && Boolean(Bun.which("opencode"));
 
