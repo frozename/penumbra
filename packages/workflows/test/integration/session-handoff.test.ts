@@ -35,12 +35,22 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
   const root = mkdtempSync(join(tmpdir(), "sh-int-"));
   const repo = seedRepo(mkdtempSync(join(tmpdir(), "sh-repo-")));
   const playbookSrc = join(import.meta.dir, "../../../../plugin/playbooks/session-handoff");
+  const stopPlaybookSrc = join(
+    import.meta.dir,
+    "../../../../plugin/playbooks/session-handoff-stop",
+  );
   try {
     const pbDir = join(root, "playbooks/session-handoff");
     mkdirSync(pbDir, { recursive: true });
     writeFileSync(
       join(pbDir, "playbook.md"),
       readFileSync(join(playbookSrc, "playbook.md"), "utf8"),
+    );
+    const stopPbDir = join(root, "playbooks/session-handoff-stop");
+    mkdirSync(stopPbDir, { recursive: true });
+    writeFileSync(
+      join(stopPbDir, "playbook.md"),
+      readFileSync(join(stopPlaybookSrc, "playbook.md"), "utf8"),
     );
     mkdirSync(join(root, "workflows"), { recursive: true });
 
@@ -51,6 +61,13 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
     expect(reg.errors).toEqual([]);
     const matched = evaluateTriggerEvent(reg, { kind: "lifecycle", event: "pre-compact" });
     expect(matched.map((s) => s.name)).toEqual(["session-handoff"]);
+    const stopped = evaluateTriggerEvent(reg, { kind: "lifecycle", event: "stop" });
+    expect(stopped.map((s) => s.name)).toEqual(["session-handoff-stop"]);
+    const slashed = evaluateTriggerEvent(reg, {
+      kind: "slash",
+      command: "handoff",
+    });
+    expect(slashed.map((s) => s.name)).toEqual(["session-handoff"]);
 
     const db = new Database(":memory:");
     loadSqliteVec(db);
@@ -164,6 +181,95 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
     ]);
 
     expect(existsSync(join(root, "pending-handoff.md"))).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("stop trigger writes lightweight checkpoint, while pre-compact keeps full handoff composer", async () => {
+  const root = mkdtempSync(join(tmpdir(), "sh-int2-"));
+  const repo = seedRepo(mkdtempSync(join(tmpdir(), "sh-repo-")));
+  const pbRoot = join(import.meta.dir, "../../../../plugin/playbooks");
+  try {
+    const pbDir = join(root, "playbooks/session-handoff");
+    const stopPbDir = join(root, "playbooks/session-handoff-stop");
+    mkdirSync(pbDir, { recursive: true });
+    mkdirSync(stopPbDir, { recursive: true });
+    writeFileSync(
+      join(pbDir, "playbook.md"),
+      readFileSync(join(pbRoot, "session-handoff/playbook.md"), "utf8"),
+    );
+    writeFileSync(
+      join(stopPbDir, "playbook.md"),
+      readFileSync(join(pbRoot, "session-handoff-stop/playbook.md"), "utf8"),
+    );
+    mkdirSync(join(root, "workflows"), { recursive: true });
+
+    const reg = await buildRegistry({
+      playbooksDir: join(root, "playbooks"),
+      workflowsDir: join(root, "workflows"),
+    });
+    expect(reg.errors).toEqual([]);
+
+    const preSpec = evaluateTriggerEvent(reg, { kind: "lifecycle", event: "pre-compact" })[0]!;
+    const stopSpec = evaluateTriggerEvent(reg, { kind: "lifecycle", event: "stop" })[0]!;
+
+    const db = new Database(":memory:");
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+
+    const fullBundle = await composeRecall({
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      cwd: repo,
+      project: "penumbra",
+      sources: preSpec.recall,
+      budgetTokens: preSpec.recall_budget_tokens,
+    });
+    const stopBundle = await composeRecall({
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      cwd: repo,
+      project: "penumbra",
+      sources: stopSpec.recall,
+      budgetTokens: stopSpec.recall_budget_tokens,
+    });
+
+    const fullOut = join(root, "maestro-continuation.md");
+    const fullResult = await executeWorkflow({
+      spec: {
+        ...preSpec,
+        output: [{ kind: "file" as const, path: fullOut }],
+      },
+      bundle: fullBundle,
+      storageRoot: root,
+      captureCtx: { db, project: "penumbra", sessionId: "s1", userId: "u", machineId: "m" },
+    });
+
+    const stopResult = await executeWorkflow({
+      spec: stopSpec,
+      bundle: stopBundle,
+      storageRoot: root,
+      captureCtx: { db, project: "penumbra", sessionId: "s1", userId: "u", machineId: "m" },
+    });
+
+    expect(fullResult.outcome).toBe("success");
+    expect(stopResult.outcome).toBe("success");
+    expect(existsSync(fullOut)).toBe(true);
+    expect(existsSync(join(root, "pending-handoff.md"))).toBe(true);
+
+    const fullBody = readFileSync(fullOut, "utf8");
+    expect(fullBody).toContain("Maestro continuation prompt");
+    expect(fullBody).toContain("### Commits since midnight");
+
+    const stopBody = readFileSync(join(root, "pending-handoff.md"), "utf8");
+    expect(stopBody).toContain("Session handoff checkpoint");
+    expect(stopBody).toContain("### Pending handoffs");
+    expect(stopBody).not.toContain("Maestro continuation prompt");
+    expect(stopBody).not.toContain("### Commit context");
+    expect(stopBody).not.toContain("## First moves");
+    expect(stopBundle.estimatedTokens).toBeLessThan(300);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(repo, { recursive: true, force: true });

@@ -1,11 +1,9 @@
 ---
 name: session-handoff
-description: Compose a continuation prompt at end-of-session, capturing recent state, dispatch outcomes, and pending work. Triggered by Claude Code PreCompact/Stop or /handoff slash.
+description: Compose a continuation prompt at end-of-session, capturing recent state, dispatch outcomes, and pending work. Triggered by Claude Code PreCompact or /handoff slash.
 triggers:
   - kind: lifecycle
     event: pre-compact
-  - kind: lifecycle
-    event: stop
   - kind: slash
     command: handoff
   - kind: state-threshold
@@ -55,10 +53,6 @@ process_gates:
 output:
   - kind: file
     path: docs/notes/maestro-continuation-{{date}}-{{period}}.md
-    # skip-if-exists, NOT unique-suffix: this playbook fires on the stop
-    # lifecycle hook (every turn end), so a suffix-advancing mode writes a
-    # new note per turn (40 notes on 2026-06-11). The same-day clobber this
-    # tried to fix came from the model-written path, not this sink.
     mode: skip-if-exists
   - kind: next-session-prompt
 run:
