@@ -49,7 +49,7 @@ describe("startHeartbeatLoop", () => {
     });
 
     expect(scheduler.tasks).toHaveLength(1);
-    expect(scheduler.tasks[0].delayMs).toBe(0);
+    expect(scheduler.tasks.at(0)?.delayMs).toBe(0);
 
     for (let i = 0; i < MAX_HEARTBEAT_ATTEMPTS; i++) {
       await runNextScheduled(scheduler.tasks);
@@ -106,7 +106,7 @@ describe("startHeartbeatLoop", () => {
     expect(emitDelays[3]).toBe(15_000);
     expect(exitCalls).toEqual([]);
     expect(scheduler.tasks).toHaveLength(1);
-    expect(scheduler.tasks[0].delayMs).toBe(15_000);
+    expect(scheduler.tasks.at(0)?.delayMs).toBe(15_000);
 
     loop.stop();
   });

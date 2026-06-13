@@ -61,7 +61,7 @@ notifications:
           PENUMBRA_DISCORD_WEBHOOK_URL: "https://discord.test/api/webhooks/default/token",
           PENUMBRA_DISCORD_PROJECT_WEBHOOK_URL: "https://discord.test/api/webhooks/project/token",
         },
-        fetch: mock(async () => new Response(null, { status: 204 })) as typeof fetch,
+        fetch: mock(async () => new Response(null, { status: 204 })),
       }),
     );
 
@@ -95,7 +95,7 @@ notifications:
           AGENTCHAT_CONFIG: configPath,
           PENUMBRA_DISCORD_WEBHOOK_URL: "https://discord.test/api/webhooks/default/token",
         },
-        fetch: mock(async () => new Response(null, { status: 204 })) as typeof fetch,
+        fetch: mock(async () => new Response(null, { status: 204 })),
       }),
     );
 
@@ -125,7 +125,7 @@ notifications:
             AGENTCHAT_CONFIG: configPath,
             PENUMBRA_DISCORD_WEBHOOK_URL: "https://discord.test/api/webhooks/default/token",
           },
-          fetch: mock(async () => new Response(null, { status: 204 })) as typeof fetch,
+          fetch: mock(async () => new Response(null, { status: 204 })),
         },
       ),
     );
@@ -155,7 +155,7 @@ notifications:
           AGENTCHAT_CONFIG: configPath,
           PENUMBRA_DISCORD_WEBHOOK_URL: "https://discord.test/api/webhooks/default/token",
         },
-        fetch: fetchMock as typeof fetch,
+        fetch: fetchMock,
       }),
     );
 

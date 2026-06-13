@@ -171,6 +171,7 @@ async function createIntegrationHarness(opts: HarnessOptions = {}): Promise<Inte
           adapterToServer.destroy();
           stdinReader.close();
         },
+        getStderrTail: () => "",
         exited: Promise.resolve(0),
       }),
       createClient: (handle) =>
@@ -241,7 +242,7 @@ describe("ACP write-tools integration", () => {
           path: "notes.txt",
           content: "hello world",
         });
-        expect(response).toEqual({ jsonrpc: "2.0", id: 1, result: {} });
+        expect(response as Record<string, unknown>).toEqual({ jsonrpc: "2.0", id: 1, result: {} });
         return { stopReason: "end_turn" };
       });
 

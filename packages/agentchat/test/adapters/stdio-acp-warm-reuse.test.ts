@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "bun:test";
 import { PassThrough } from "node:stream";
 import { StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
 import { createAcpWarmPool } from "../../src/adapters/acp-warm-pool.js";

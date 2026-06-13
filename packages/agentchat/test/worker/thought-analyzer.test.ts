@@ -79,9 +79,9 @@ describe("runThoughtAnalyzer", () => {
       async (input: {
         initial_agent: string;
         message: string;
-        parent_handoff_id: string;
-        project_id: string | null;
-        task_type: string;
+        parent_handoff_id?: string;
+        project_id?: string | null;
+        task_type?: string;
       }) => {
         calls.push(input);
         return { conversation_id: `conv-${calls.length}`, handoff_id: `h-sub-${calls.length}` };

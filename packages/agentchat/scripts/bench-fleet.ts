@@ -72,7 +72,7 @@ function resolveDefaultJudgeToken(
   const executor = config.agents.find((a) => a.name === "executor");
   if (!executor) return undefined;
   try {
-    return deps.resolveAdapterApiKey(pickApiKeyOpts(executor.options), {
+    return deps.resolveAdapterApiKey(pickApiKeyOpts(executor.options ?? {}), {
       hostPlatform: process.platform,
     });
   } catch {
@@ -135,10 +135,11 @@ async function runFleetBench(opts: FleetBenchOpts = {}) {
       continue;
     }
 
-    const baseUrl = typeof agent.options.baseUrl === "string" ? agent.options.baseUrl : undefined;
-    const model = typeof agent.options.model === "string" ? agent.options.model : undefined;
-    const caPath = typeof agent.options.caPath === "string" ? agent.options.caPath : undefined;
-    const extraBody = isRecord(agent.options.extraBody) ? agent.options.extraBody : undefined;
+    const options = agent.options ?? {};
+    const baseUrl = typeof options.baseUrl === "string" ? options.baseUrl : undefined;
+    const model = typeof options.model === "string" ? options.model : undefined;
+    const caPath = typeof options.caPath === "string" ? options.caPath : undefined;
+    const extraBody = isRecord(options.extraBody) ? options.extraBody : undefined;
 
     if (!baseUrl || !model) {
       console.warn(`Skipping agent ${agent.name}: missing baseUrl or model`);
@@ -148,7 +149,7 @@ async function runFleetBench(opts: FleetBenchOpts = {}) {
 
     let apiKey = "";
     try {
-      apiKey = deps.resolveAdapterApiKey(pickApiKeyOpts(agent.options), {
+      apiKey = deps.resolveAdapterApiKey(pickApiKeyOpts(options), {
         hostPlatform: process.platform,
       });
     } catch (err) {
@@ -198,7 +199,8 @@ async function runFleetBench(opts: FleetBenchOpts = {}) {
             }),
           timeoutMs,
         );
-        fleetResults[agent.name].grades = grades;
+        const result = fleetResults[agent.name];
+        if (result) result.grades = grades;
       }
     } catch (err) {
       if (err instanceof TimeoutError || (err instanceof Error && err.name === "TimeoutError")) {
@@ -279,7 +281,7 @@ function printSummaryTable(
 
     const bench = data.bench ?? [];
     const latencies = bench.map((r) => r.latencyMs).sort((a, b) => a - b);
-    const p50 = latencies.length > 0 ? latencies[Math.floor(latencies.length / 2)] : 0;
+    const p50 = latencies.length > 0 ? (latencies[Math.floor(latencies.length / 2)] ?? 0) : 0;
 
     let net = "";
     const taskVerdicts = taskIds.map((taskId) => {

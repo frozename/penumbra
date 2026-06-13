@@ -6,7 +6,7 @@ export type Resolution =
   | { kind: "unknown"; target: string };
 
 export function resolveMention(target: string, cfg: AgentChatConfig): Resolution {
-  const roleBinding = cfg.default_roles[target];
+  const roleBinding = (cfg.default_roles ?? {})[target];
   if (roleBinding) {
     const exists = cfg.agents.some((a) => a.name === roleBinding);
     if (exists) return { kind: "role", agent_name: roleBinding, role: target };

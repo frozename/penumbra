@@ -13,6 +13,12 @@ function makeClient(fetchImpl: typeof fetch): { client: PenumbraClient; cleanup:
   return { client, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
+function at<T>(items: T[], index: number): T {
+  const item = items[index];
+  if (item === undefined) throw new Error(`expected item at index ${index}`);
+  return item;
+}
+
 test("PenumbraClient.registerWorker calls /worker/register with shared bearer and captures worker_token", async () => {
   const captured: { url: string; auth: string | null; body: any }[] = [];
   const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
@@ -33,10 +39,11 @@ test("PenumbraClient.registerWorker calls /worker/register with shared bearer an
     expect(result.worker_token).toBe("wt-alpha");
     expect(result.worker_id).toBe("W-A");
     expect(captured).toHaveLength(1);
-    expect(captured[0].url).toBe("/worker/register");
-    expect(captured[0].auth).toBe("Bearer shared-tok");
-    expect(captured[0].body.worker_id).toBe("W-A");
-    expect(captured[0].body.metadata).toEqual({ host: "mac-mini" });
+    const request = at(captured, 0);
+    expect(request.url).toBe("/worker/register");
+    expect(request.auth).toBe("Bearer shared-tok");
+    expect(request.body.worker_id).toBe("W-A");
+    expect(request.body.metadata).toEqual({ host: "mac-mini" });
     expect(client.getWorkerToken()).toBe("wt-alpha");
   } finally {
     cleanup();
@@ -62,7 +69,7 @@ test("PenumbraClient.postHeartbeat requires worker_token before posting", async 
     await client.registerWorker({ worker_id: "W-A" });
 
     await client.postHeartbeat("W-A");
-    expect(captured[1]).toMatchObject({ url: "/worker/heartbeat", auth: "Bearer wt-hb" });
+    expect(at(captured, 1)).toMatchObject({ url: "/worker/heartbeat", auth: "Bearer wt-hb" });
   } finally {
     cleanup();
   }
@@ -124,7 +131,10 @@ test("PenumbraClient.reconcileDispatchOrphans requires worker_token before posti
 
     await client.registerWorker({ worker_id: "W-A" });
     await client.reconcileDispatchOrphans("W-A");
-    expect(captured[1]).toMatchObject({ url: "/worker/reconcile-orphans", auth: "Bearer wt-rec" });
+    expect(at(captured, 1)).toMatchObject({
+      url: "/worker/reconcile-orphans",
+      auth: "Bearer wt-rec",
+    });
   } finally {
     cleanup();
   }
@@ -359,11 +369,11 @@ describe("401 auto-re-register + retry", () => {
 
       const hbCalls = calls.filter((c) => c.url === "/worker/heartbeat");
       expect(hbCalls).toHaveLength(2);
-      expect(hbCalls[1].auth).toBe("Bearer wt-refreshed");
+      expect(at(hbCalls, 1).auth).toBe("Bearer wt-refreshed");
 
       const regCalls = calls.filter((c) => c.url === "/worker/register");
       expect(regCalls).toHaveLength(2);
-      expect(regCalls[1].auth).toBe("Bearer shared-tok");
+      expect(at(regCalls, 1).auth).toBe("Bearer shared-tok");
     } finally {
       cleanup();
     }
@@ -404,7 +414,7 @@ describe("401 auto-re-register + retry", () => {
       await client.postHeartbeat("W-A");
       const reregisterLogs = logs.filter((l) => l.msg === "worker auto-reregistered");
       expect(reregisterLogs).toHaveLength(1);
-      expect(reregisterLogs[0].meta).toMatchObject({
+      expect(at(reregisterLogs, 0).meta).toMatchObject({
         worker_id: "W-A",
         reason: "401_retry",
         status: 401,

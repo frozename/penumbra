@@ -65,7 +65,10 @@ describe("agentchat.yaml long-lived extension", () => {
         env: [{ name: "TOKEN", value: "" }],
       },
     ]);
-    expect(home.long_lived_config!.mcp_allowlist_sdk_patterns).toEqual(["mcp__ha__state.*"]);
+    const longLivedConfig = home.long_lived_config as
+      | (NonNullable<typeof home.long_lived_config> & { mcp_allowlist_sdk_patterns?: string[] })
+      | undefined;
+    expect(longLivedConfig?.mcp_allowlist_sdk_patterns).toEqual(["mcp__ha__state.*"]);
   });
 
   it("parses task-refiner-escalation long-lived config", () => {

@@ -88,7 +88,7 @@ describe("DispatchEventQueue", () => {
     await stopPromise;
 
     expect(send).toHaveBeenCalledTimes(2);
-    expect(send.mock.calls[1]![0][0].kind).toBe("dispatch.end");
+    expect(send.mock.calls.at(1)?.[0].at(0)?.kind).toBe("dispatch.end");
   });
 
   test("flush rejects-and-recovers when send hangs beyond send_timeout_ms", async () => {

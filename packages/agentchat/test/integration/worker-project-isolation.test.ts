@@ -59,7 +59,7 @@ test("hard-isolated worker only keeps project-scoped claims", async () => {
   await stop();
 
   expect(calls.length).toBeGreaterThan(0);
-  expect(calls[0].project_id).toBe("project-a");
+  expect(calls.at(0)?.project_id).toBe("project-a");
   expect(claimed).toContain("alpha-1");
   expect(rejected).toContain("beta-1");
 });

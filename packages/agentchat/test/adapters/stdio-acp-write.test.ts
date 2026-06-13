@@ -17,6 +17,7 @@ function createHarness(options: Record<string, unknown> = {}, executor: Record<s
     stdout: new PassThrough(),
     kill: () => {},
     exited: Promise.resolve(0),
+    getStderrTail: () => "",
   });
 
   const client = {

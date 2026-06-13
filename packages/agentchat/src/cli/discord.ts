@@ -2,13 +2,13 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../config/load.js";
 import { renderDiscordEvent, type DiscordNotificationEvent } from "../worker/discord-events.js";
-import { postToDiscord } from "../worker/discord-notifier.js";
+import { postToDiscord, type DiscordFetch } from "../worker/discord-notifier.js";
 import { loadNotificationConfig } from "../worker/notification-config.js";
 import { resolveNotificationRoute } from "../worker/notification-router.js";
 
 export interface DiscordCliDeps {
   env: Record<string, string | undefined>;
-  fetch: typeof globalThis.fetch;
+  fetch: DiscordFetch;
 }
 
 function getConfigPath(env: Record<string, string | undefined>): string {
@@ -90,6 +90,12 @@ function buildSampleEvent(input: {
         max_attempts: 3,
         error_summary: "sample exhaustion",
       };
+    case "autocommit_on_chain_end":
+      return {
+        ...base,
+        kind: "autocommit_on_chain_end",
+        error_summary: "sample autocommit failed",
+      };
     case "permission_requested":
       return {
         ...base,
@@ -132,6 +138,10 @@ function buildSampleEvent(input: {
         budget_usd: 20,
         usage_summary: "sample usage summary",
       };
+    default: {
+      const exhaustive: never = input.kind;
+      throw new Error(`unsupported sample event kind: ${exhaustive}`);
+    }
   }
 }
 

@@ -77,15 +77,18 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
   });
 
   const lane: "local" | "cloud" | "cli-subscription" | "unknown" = "cli-subscription";
-  const hostedSpecs = cfg.long_lived_config?.hosted_mcp_servers ?? [];
+  const longLivedConfig = cfg.long_lived_config as
+    | (NonNullable<typeof cfg.long_lived_config> & { mcp_allowlist_sdk_patterns?: string[] })
+    | undefined;
+  const hostedSpecs = longLivedConfig?.hosted_mcp_servers ?? [];
   // TODO: hard-filter unavailable hosted MCP servers here once the CLI has a
   // daemon health client available in this process. The daemon owns the mcpPool
   // and this loop currently only receives config, so prompt-stamper warnings are
   // the only availability signal exposed without a new health plumbing path.
   const adapterOptions = normalizeAdapterOptions(
-    cfg,
+    { ...cfg, options: cfg.options ?? {} },
     hostedSpecs,
-    cfg.long_lived_config?.mcp_allowlist_sdk_patterns ?? cfg.long_lived_config?.mcp_allowlist ?? [],
+    longLivedConfig?.mcp_allowlist_sdk_patterns ?? longLivedConfig?.mcp_allowlist ?? [],
   );
   const { provider, model } = resolveCaptureAttribution(cfg);
   const knownAgents = new Set(input.config.agents.map((a) => a.name));
@@ -239,7 +242,7 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
   // empty/garbage or intentionally withheld.
   const knownTargets = [
     ...input.config.agents.map((a) => a.name),
-    ...Object.keys(input.config.default_roles),
+    ...Object.keys(input.config.default_roles ?? {}),
   ];
   const mentions = dispatchError || blockedHits ? [] : parseMentions(outText, { knownTargets });
   const next = mentions[0]

@@ -1061,7 +1061,7 @@ const reconcileWorktree = createMergeReconciler({
   worktreeManager,
   postProgress: (id, payload) => client.postProgress(id, payload),
   captureResult: (id, result) =>
-    client.captureAgentPerformanceFromReconciler({ handoff_id: id, result }),
+    client.captureAgentPerformanceFromReconciler({ handoff_id: id, result: { ...result } }),
   reconcilerAutoRebase: config.reconcilerAutoRebase,
   settings,
   emitVerdict: (verdict) =>
@@ -1489,7 +1489,7 @@ if (process.env.PENUMBRA_USAGE_POLL_DISABLED !== "1") {
   log.info({ readers: usageReaders.length, workerId, singletonGate }, "usage-poller started");
 }
 
-let notificationScheduler: { stop: () => void } | null = null;
+let notificationScheduler: ReturnType<typeof createNotificationScheduler> | null = null;
 if (process.env.PENUMBRA_NOTIFICATION_SCHEDULER_DISABLED !== "1") {
   notificationScheduler = createNotificationScheduler({
     now: () => Date.now(),

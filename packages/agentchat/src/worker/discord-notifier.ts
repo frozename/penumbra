@@ -21,6 +21,8 @@ export interface DiscordWebhookIdentity {
   avatar_url?: string;
 }
 
+export type DiscordFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
 export interface HandoffNotificationContext {
   handoff_id: string;
   agent: string;
@@ -115,7 +117,7 @@ export function formatMergeResultEmbed(
 export async function postToDiscord(
   webhookUrl: string | undefined,
   contentOrEmbed: string | DiscordEmbedsPayload,
-  fetchFn: typeof fetch = fetch,
+  fetchFn: DiscordFetch = fetch,
   sleep: (ms: number) => Promise<void> = defaultSleep,
   identity?: DiscordWebhookIdentity,
 ): Promise<boolean> {

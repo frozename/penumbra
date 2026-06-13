@@ -13,7 +13,7 @@ class FakeEventSource {
   closed = false;
   addEventListener(name: string, fn: (evt: any) => void) {
     if (name === "onReconnect") {
-      this.reconnectListeners.add(fn);
+      this.reconnectListeners.add(() => fn(undefined));
       return;
     }
     if (!this.listeners.has(name)) this.listeners.set(name, new Set());

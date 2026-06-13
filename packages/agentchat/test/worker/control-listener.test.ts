@@ -38,7 +38,9 @@ test("handleControlEvent sends ping ACK only for matching worker", () => {
     { type: "ping", worker_id: "w1", probe_id: "p1" },
     {
       client: {
-        sendProbeAck: async (worker_id, probe_id) => acks.push([worker_id, probe_id]),
+        sendProbeAck: async (worker_id, probe_id) => {
+          acks.push([worker_id, probe_id]);
+        },
         subscribeWorkerControl: async function* () {},
       },
       dispatcher: { cancel: () => {} },
@@ -65,8 +67,11 @@ test("handleControlEvent logs probe-ack failures without throwing", async () => 
         dispatcher: { cancel: () => {} },
         workerId: "w1",
         log: {
-          warn: (obj, msg) => warns.push({ obj, msg }),
+          warn: (obj: Record<string, unknown>, msg: string) => {
+            warns.push({ obj, msg });
+          },
           error: () => {},
+          info: () => {},
         },
       },
     ),
@@ -103,10 +108,11 @@ test("handleControlEvent logs malformed cancel event and does not call cancel", 
       workerId: "w1",
       onEvent: () => {},
       log: {
-        warn: (obj, msg) => {
+        warn: (obj: Record<string, unknown>, msg: string) => {
           warns.push({ obj, msg });
         },
         error: () => {},
+        info: () => {},
       },
     },
   );
@@ -130,7 +136,9 @@ test("handleControlEvent ignores ping not addressed to this worker", () => {
     { type: "ping", worker_id: "w2", probe_id: "p1" },
     {
       client: {
-        sendProbeAck: async (worker_id, probe_id) => acks.push([worker_id, probe_id]),
+        sendProbeAck: async (worker_id, probe_id) => {
+          acks.push([worker_id, probe_id]);
+        },
         subscribeWorkerControl: async function* () {},
       },
       dispatcher: { cancel: () => {} },
@@ -163,7 +171,7 @@ test("reconnects when control stream ends cleanly", async () => {
       cancel: (conversation_id, handoff_id) => cancels.push({ conversation_id, handoff_id }),
     },
     signal: abort.signal,
-    log: { warn: () => {}, error: () => {} },
+    log: { warn: () => {}, error: () => {}, info: () => {} },
     sleep: async () => {},
   });
 
@@ -174,8 +182,11 @@ test("reconnects when control stream ends cleanly", async () => {
 test("throttles control-listener reconnect log to once per window and reports suppressedCount", async () => {
   const warns: any[] = [];
   const log = {
-    warn: (obj: any, msg: string) => warns.push({ obj, msg }),
+    warn: (obj: Record<string, unknown>, msg: string) => {
+      warns.push({ obj, msg });
+    },
     error: () => {},
+    info: () => {},
   };
 
   let subscribeCalls = 0;
@@ -232,10 +243,12 @@ test("handleControlEvent triggers onConfigReload on agentchat_reload", () => {
         reloads++;
       },
       log: {
-        warn: (obj, msg) => warns.push({ obj, msg }),
+        warn: (obj: Record<string, unknown>, msg: string) => {
+          warns.push({ obj, msg });
+        },
         error: () => {},
         info: () => {},
-      } as any,
+      },
     },
   );
 

@@ -64,8 +64,8 @@ afterAll(() => {
 
 interface Proxy {
   write: (msg: object) => void;
-  readNext: (timeoutMs?: number) => Promise<unknown>;
-  readBatch: (timeoutMs?: number) => Promise<unknown[]>;
+  readNext: (timeoutMs?: number) => Promise<Record<string, unknown>>;
+  readBatch: (timeoutMs?: number) => Promise<Array<Record<string, unknown>>>;
   kill: () => void;
 }
 
@@ -98,25 +98,25 @@ function spawnProxy(allowlist: string, extraEnv: Record<string, string> = {}): P
 
   const write = (msg: object) => proc.stdin!.write(JSON.stringify(msg) + "\n");
 
-  const readNext = (timeoutMs = 4000): Promise<unknown> =>
+  const readNext = (timeoutMs = 4000): Promise<Record<string, unknown>> =>
     new Promise((resolve, reject) => {
       const t = setTimeout(() => reject(new Error("readNext timed out")), timeoutMs);
       const next = lines.shift();
       if (next !== undefined) {
         clearTimeout(t);
-        resolve(JSON.parse(next));
+        resolve(JSON.parse(next) as Record<string, unknown>);
         return;
       }
       waiters.push((line) => {
         clearTimeout(t);
-        resolve(JSON.parse(line));
+        resolve(JSON.parse(line) as Record<string, unknown>);
       });
     });
 
-  const readBatch = async (timeoutMs = 4000): Promise<unknown[]> => {
+  const readBatch = async (timeoutMs = 4000): Promise<Array<Record<string, unknown>>> => {
     const msg = await readNext(timeoutMs);
     expect(Array.isArray(msg)).toBe(true);
-    return msg as unknown[];
+    return msg as unknown as Array<Record<string, unknown>>;
   };
 
   const kill = () => {
@@ -160,7 +160,7 @@ test("tools/call allowed: call passes through; response returns to client", asyn
     expect(resp["id"]).toBe(2);
     const result = resp["result"] as Record<string, unknown>;
     const content = result["content"] as Array<Record<string, unknown>>;
-    expect(content[0]["text"]).toBe("called:alpha");
+    expect(content.at(0)?.["text"]).toBe("called:alpha");
   } finally {
     p.kill();
   }
@@ -204,8 +204,8 @@ test("batch tools/call mixed allowlist: rejects forbidden call and forwards allo
       { jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "beta", arguments: {} } },
     ]);
     const resp = await p.readBatch();
-    expect(resp.map((r) => (r as Record<string, unknown>)["id"]).sort()).toEqual([4, 5, 6]);
-    for (const item of resp as Array<Record<string, unknown>>) {
+    expect(resp.map((r) => r["id"]).sort()).toEqual([4, 5, 6]);
+    for (const item of resp) {
       expect((item["error"] as Record<string, unknown>)["code"]).toBe(-32601);
     }
     await new Promise((r) => setTimeout(r, 150));
@@ -258,7 +258,7 @@ test("batch tools/call all allowed: batch passthrough and batch responses", asyn
     ]);
     const resp = await p.readNext();
     expect(Array.isArray(resp)).toBe(true);
-    const batch = resp as Array<Record<string, unknown>>;
+    const batch = resp as unknown as Array<Record<string, unknown>>;
     expect(batch.map((r) => r["id"]).sort()).toEqual([10, 11, 12]);
   } finally {
     p.kill();

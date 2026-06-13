@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { spawn as nodeSpawn } from "node:child_process";
+import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -110,7 +110,11 @@ describe.skipIf(!RUN_AGENTCHAT_SERVICE_TESTS)("startAcpServer process group clea
       let pidsPromise: Promise<{ childPid: number; grandchildPid: number }> | null = null;
 
       const spawn: AcpServerSpawner = (_command, args, options) => {
-        const child = nodeSpawn(process.execPath, [fakeOpencode, ...args], options);
+        const child = nodeSpawn(
+          process.execPath,
+          [fakeOpencode, ...args],
+          options,
+        ) as ChildProcessWithoutNullStreams;
         pidsPromise = readProcessPids(child.stdout);
         return child;
       };

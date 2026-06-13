@@ -336,7 +336,7 @@ export const NotificationConfigSchema = z
       }),
   })
   .optional();
-export type NotificationConfig = z.infer<typeof NotificationConfigSchema>;
+export type NotificationConfig = z.input<typeof NotificationConfigSchema>;
 
 export const ThoughtSignalDefinitionSchema = z.object({
   name: z.string().min(1),
@@ -494,4 +494,5 @@ export const AgentChatConfigSchema = z.object({
   thoughts: ThoughtsConfigSchema,
   shell: ShellConfigSchema,
 });
-export type AgentChatConfig = z.infer<typeof AgentChatConfigSchema>;
+export type AgentChatConfig = z.input<typeof AgentChatConfigSchema>;
+export type ParsedAgentChatConfig = z.output<typeof AgentChatConfigSchema>;

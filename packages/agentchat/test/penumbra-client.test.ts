@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { Database } from "bun:sqlite";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { createDaemonFetchHandler } from "../../daemon/test-utils.ts";
+import { createDaemonFetchHandler } from "@penumbra/daemon/test-utils";
 import { PenumbraClient } from "../src/penumbra-client.js";
 import { serviceTest } from "./helpers/service-gates.js";
 
@@ -289,7 +289,7 @@ test("PenumbraClient.listHandoffs encodes global project scope as project_scope=
       const req = input instanceof Request ? input : new Request(String(input));
       capturedUrl = req.url;
       return Response.json({ handoffs: [] });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
     await client.listHandoffs({ statuses: ["approved"], project_scope: "global" });
@@ -314,7 +314,7 @@ test("PenumbraClient.listHandoffs preserves encoding for project_id string", asy
       const req = input instanceof Request ? input : new Request(String(input));
       capturedUrl = req.url;
       return Response.json({ handoffs: [] });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
     await client.listHandoffs({ statuses: ["approved"], project_id: "proj/alpha one" });
@@ -333,7 +333,8 @@ serviceTest("PenumbraClient.subscribeHandoffEvents yields each approved handoff"
   const { client, stop } = withDaemon();
   try {
     const it = client.subscribeHandoffEvents();
-    const first = it[Symbol.asyncIterator]().next();
+    const iterator = it[Symbol.asyncIterator]();
+    const first = iterator.next();
     const start = await client.startChain({ initial_agent: "planner", message: "hi" });
     const event = await Promise.race([
       first,
@@ -343,7 +344,7 @@ serviceTest("PenumbraClient.subscribeHandoffEvents yields each approved handoff"
     ]);
     expect((event as any).value).toBeDefined();
     expect((event as any).value.handoff_id).toBe(start.handoff_id);
-    await it.return?.();
+    await iterator.return?.();
   } finally {
     stop();
   }

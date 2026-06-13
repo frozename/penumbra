@@ -17,6 +17,12 @@ function writeJsonl(rootDir: string, project: string, sessionId: string, lines: 
   return path;
 }
 
+function first<T>(items: T[]): T {
+  const item = items[0];
+  if (item === undefined) throw new Error("expected at least one item");
+  return item;
+}
+
 describe("ClaudeJsonlReader", () => {
   it("aggregates input + output tokens by model from assistant rows", async () => {
     const { rootDir } = setupProjectsDir();
@@ -49,13 +55,14 @@ describe("ClaudeJsonlReader", () => {
     const reader = new ClaudeJsonlReader({ rootDir });
     const r = await reader.read(null);
     expect(r.usage_deltas).toHaveLength(1);
-    expect(r.usage_deltas[0].provider).toBe("anthropic");
-    expect(r.usage_deltas[0].model).toBe("claude-opus-4-7");
-    expect(r.usage_deltas[0].tokens_input).toBe(40);
-    expect(r.usage_deltas[0].tokens_output).toBe(60);
-    expect(r.usage_deltas[0].tokens_cache_read).toBe(15);
-    expect(r.usage_deltas[0].tokens_cache_write).toBe(2);
-    expect(r.usage_deltas[0].cost_usd).toBeNull();
+    const delta = first(r.usage_deltas);
+    expect(delta.provider).toBe("anthropic");
+    expect(delta.model).toBe("claude-opus-4-7");
+    expect(delta.tokens_input).toBe(40);
+    expect(delta.tokens_output).toBe(60);
+    expect(delta.tokens_cache_read).toBe(15);
+    expect(delta.tokens_cache_write).toBe(2);
+    expect(delta.cost_usd).toBeNull();
   });
 
   it("cursor advances by file byte_offset; second call returns nothing for same content", async () => {
@@ -87,7 +94,7 @@ describe("ClaudeJsonlReader", () => {
     const reader = new ClaudeJsonlReader({ rootDir });
     const r = await reader.read(null);
     expect(r.usage_deltas).toHaveLength(1);
-    expect(r.usage_deltas[0].tokens_input).toBe(1);
+    expect(first(r.usage_deltas).tokens_input).toBe(1);
   });
 
   it("returns rate_limit_snapshots as an empty array even when JSONL includes rate_limits", async () => {

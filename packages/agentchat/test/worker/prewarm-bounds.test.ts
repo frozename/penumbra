@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "bun:test";
 import { createPrewarmLoop, type PrewarmLoopClock } from "../../src/worker/prewarm-loop.js";
 import type { PrewarmTarget } from "../../src/worker/prewarm-targets.js";
 

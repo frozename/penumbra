@@ -3,12 +3,12 @@ import { readFileSync } from "node:fs";
 import { load as parseYaml } from "js-yaml";
 import {
   AgentChatConfigSchema,
-  type AgentChatConfig,
   type LongLivedConfigWithPrecomputedAllowlist,
+  type ParsedAgentChatConfig,
 } from "./types.js";
 import { colonFormToSdkPattern } from "../worker/mcp-tool-name.js";
 
-export function loadConfig(path: string): AgentChatConfig {
+export function loadConfig(path: string): ParsedAgentChatConfig {
   const raw = readFileSync(path, "utf8");
   const parsed = parseYaml(raw);
   const result = AgentChatConfigSchema.safeParse(parsed);
@@ -19,7 +19,7 @@ export function loadConfig(path: string): AgentChatConfig {
   return stampPrecomputedAllowlist(result.data);
 }
 
-function stampPrecomputedAllowlist(config: AgentChatConfig): AgentChatConfig {
+function stampPrecomputedAllowlist(config: ParsedAgentChatConfig): ParsedAgentChatConfig {
   return {
     ...config,
     agents: config.agents.map((agent) => {

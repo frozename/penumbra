@@ -7,6 +7,7 @@
   "references": [
     { "path": "./packages/api-contract" },
     { "path": "./packages/core" },
+    { "path": "./packages/agentchat" },
     { "path": "./packages/daemon" },
     { "path": "./packages/mcp" },
     { "path": "./packages/cli" },

@@ -109,7 +109,9 @@ export async function autocommitOnChainEnd(
     ["-C", wt.path, "status", "--porcelain", "--untracked-files=all"],
     { maxBuffer: 1024 * 1024 },
   );
-  const filtered = filterAutocommitPaths(parseGitStatusPaths(stdout));
+  const statusText =
+    typeof stdout === "string" ? stdout : Buffer.isBuffer(stdout) ? stdout.toString("utf8") : "";
+  const filtered = filterAutocommitPaths(parseGitStatusPaths(statusText));
 
   if (filtered.length === 0) {
     deps.log.warn(

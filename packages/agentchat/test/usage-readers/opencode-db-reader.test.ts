@@ -24,6 +24,12 @@ function insertAssistant(db: Database, id: string, time_created: number, body: a
   );
 }
 
+function first<T>(items: T[]): T {
+  const item = items[0];
+  if (item === undefined) throw new Error("expected at least one item");
+  return item;
+}
+
 describe("OpenCodeDbReader", () => {
   it("emits usage_deltas grouped by (provider, model) with cost_usd populated", async () => {
     const { db, path } = makeOpencodeDb();
@@ -57,11 +63,12 @@ describe("OpenCodeDbReader", () => {
     const reader = new OpenCodeDbReader({ dbPath: path });
     const r = await reader.read(null);
     expect(r.usage_deltas).toHaveLength(1);
-    expect(r.usage_deltas[0].provider).toBe("opencode-go");
-    expect(r.usage_deltas[0].model).toBe("deepseek-v4-pro");
-    expect(r.usage_deltas[0].cost_usd).toBeCloseTo(0.0024, 4);
-    expect(r.usage_deltas[0].tokens_input).toBe(250);
-    expect(r.usage_deltas[0].tokens_output).toBe(450);
+    const delta = first(r.usage_deltas);
+    expect(delta.provider).toBe("opencode-go");
+    expect(delta.model).toBe("deepseek-v4-pro");
+    expect(delta.cost_usd).toBeCloseTo(0.0024, 4);
+    expect(delta.tokens_input).toBe(250);
+    expect(delta.tokens_output).toBe(450);
   });
 
   it("cursor advances by max time_created; second call returns nothing for same data", async () => {
@@ -100,7 +107,7 @@ describe("OpenCodeDbReader", () => {
     const reader = new OpenCodeDbReader({ dbPath: path });
     const r = await reader.read(null);
     expect(r.usage_deltas).toHaveLength(1);
-    expect(r.usage_deltas[0].tokens_input).toBe(1);
+    expect(first(r.usage_deltas).tokens_input).toBe(1);
   });
 
   it("returns empty when db file is absent", async () => {

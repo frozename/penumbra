@@ -212,7 +212,7 @@ async function waitForTerminalStatus(
     }
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
-  return last;
+  return last ?? (await client.getHandoffStatus(handoffId));
 }
 
 async function waitForDispatchEndFlush(

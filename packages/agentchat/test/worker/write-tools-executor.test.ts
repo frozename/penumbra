@@ -151,7 +151,7 @@ describe("WriteToolsExecutor.writeTextFile", () => {
       );
       const writeEvents = events.filter((e) => e.type === "fs.write_applied");
       expect(writeEvents.length).toBe(2);
-      expect((writeEvents[1].payload as any).prev_sha256).toBe(
+      expect((writeEvents.at(1)?.payload as any).prev_sha256).toBe(
         createHash("sha256").update("a").digest("hex"),
       );
     });
@@ -167,7 +167,7 @@ describe("WriteToolsExecutor.writeTextFile", () => {
           dispatchId: "d-test",
         },
       );
-      expect((events[0].payload as any).prev_sha256).toBeNull();
+      expect((events.at(0)?.payload as any).prev_sha256).toBeNull();
     });
   });
 

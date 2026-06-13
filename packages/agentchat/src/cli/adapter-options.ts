@@ -4,7 +4,7 @@ import { colonFormToSdkPattern } from "../worker/mcp-tool-name.js";
 export type AdapterOptions = Record<string, unknown>;
 
 export function normalizeAdapterOptions(
-  cfg: AgentConfig,
+  cfg: { options?: AgentConfig["options"] },
   hostedSpecs: readonly {
     name: string;
     command: string;

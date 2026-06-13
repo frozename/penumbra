@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildServices, loadSqliteVec, migrate, createLogger, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { createDaemonFetchHandler } from "../../../daemon/test-utils.ts";
+import { createDaemonFetchHandler } from "@penumbra/daemon/test-utils";
 import { PenumbraClient, PenumbraHttpError } from "../../src/penumbra-client.js";
 import { dispatchHandoff } from "../../src/cli/dispatch-handoff.js";
 import { startEventSource } from "../../src/worker/event-source.js";
@@ -90,7 +90,9 @@ serviceTest(
       concurrency: 1,
       claim: (id) => client.claimHandoff(id, "test-worker"),
       postProgress: (id, payload) => client.postProgress(id, payload),
-      complete: (id) => client.completeHandoff(id),
+      complete: async (id) => {
+        await client.completeHandoff(id);
+      },
       dispatch: async (h) => {
         const transcript: { agent: string; text: string }[] = [];
         const { handoffs } = await client.listHandoffs({
@@ -159,7 +161,7 @@ serviceTest(
       const events = services.db
         .query<
           { event_type: string; user_id: string },
-          []
+          [string]
         >(`SELECT event_type, user_id FROM t0_events WHERE session_id=? ORDER BY ts ASC`)
         .all(res.conversation_id);
       const types = events.map((e) => e.event_type);

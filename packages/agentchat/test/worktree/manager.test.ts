@@ -16,7 +16,8 @@ function getWorkspaceDirs(mainRepoDir: string): string[] {
   const dirs = new Set<string>();
 
   for (const pattern of packageJson.workspaces ?? []) {
-    const [parentDir] = pattern.split("*");
+    const parentDir = pattern.split("*").at(0);
+    if (!parentDir) continue;
     const workspaceParent = path.join(mainRepoDir, parentDir);
     if (!fs.existsSync(workspaceParent)) continue;
     for (const entry of fs.readdirSync(workspaceParent, { withFileTypes: true })) {

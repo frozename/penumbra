@@ -34,7 +34,7 @@ export async function runBenchAcp(opts: RunBenchAcpOpts) {
     }
   }
 
-  async function processItem(item: { agent: string; task: (typeof BENCH_TASKS)[0] }) {
+  async function processItem(item: { agent: string; task: (typeof BENCH_TASKS)[number] }) {
     const fixturePath = join(import.meta.dirname, item.task.fixturePath);
     const fixtureBody = readFileSync(fixturePath, "utf8");
     const prompt = `--- File: ${item.task.fixtureLabel} ---\n${fixtureBody}\n\n---\n\n${item.task.question}`;
@@ -98,6 +98,7 @@ export async function runBenchAcp(opts: RunBenchAcpOpts) {
   async function worker() {
     while (index < queue.length) {
       const item = queue[index++];
+      if (!item) continue;
       try {
         const res = await processItem(item);
         rawResults.push(res);

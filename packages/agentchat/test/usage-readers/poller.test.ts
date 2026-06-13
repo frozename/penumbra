@@ -22,7 +22,7 @@ class StubReader implements UsageReader {
 class ThrowingReader implements UsageReader {
   readonly id = "throws";
   reads = 0;
-  async read() {
+  async read(): Promise<UsageReaderResult> {
     this.reads++;
     throw new Error("boom");
   }

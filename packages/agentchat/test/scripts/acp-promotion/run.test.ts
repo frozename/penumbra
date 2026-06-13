@@ -318,7 +318,7 @@ describe("runAcpPromotion", () => {
         status: "failed",
         artifact_verified: false,
       });
-      expect(result.rows[0].failure_reason).toMatch(
+      expect(result.rows.at(0)?.failure_reason).toMatch(
         /untrusted reliability status|artifact mismatch/,
       );
     } finally {

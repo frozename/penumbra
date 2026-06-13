@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "bun:test";
 import { PassThrough } from "node:stream";
 import { buildAdapter } from "../../src/adapters/registry.js";
 import { normalizeAdapterOptions } from "../../src/cli/adapter-options.js";
@@ -78,6 +78,7 @@ describe("ACP warm pool worker wiring", () => {
     const cfg: AgentConfig = {
       name: "codex-acp-fast",
       adapter: "stdio-acp",
+      pricing_mode: "api",
       options: {
         warm_pool: true,
         warm_pool_idle_grace_ms: 1000,

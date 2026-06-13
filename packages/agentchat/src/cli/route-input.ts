@@ -24,11 +24,12 @@ export function resolveInitialAgent(
     }
     return opts.explicit;
   }
-  const knownTargets = [...config.agents.map((a) => a.name), ...Object.keys(config.default_roles)];
+  const defaultRoles = config.default_roles ?? {};
+  const knownTargets = [...config.agents.map((a) => a.name), ...Object.keys(defaultRoles)];
   const mentions = parseMentions(userMessage, { knownTargets });
   if (mentions.length > 0) {
     const r = resolveMention(mentions[0]!.target, config);
     if (r.kind === "role" || r.kind === "name") return r.agent_name;
   }
-  return config.default_roles.planner ?? "";
+  return defaultRoles.planner ?? "";
 }

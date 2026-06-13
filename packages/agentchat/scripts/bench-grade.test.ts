@@ -3,6 +3,10 @@ import { gradeSchemaTask, runGrade } from "./bench-grade.js";
 import { writeFileSync, unlinkSync } from "node:fs";
 import type { BenchTask } from "./bench-prompts.js";
 
+interface ChatCompletionRequestBody {
+  messages: Array<{ content: string }>;
+}
+
 test("runGrade: parses JSONL and dispatches grading prompts to mock HTTP", async () => {
   const jsonlPath = "test-bench-results.jsonl";
   const testEntries = [
@@ -18,9 +22,9 @@ test("runGrade: parses JSONL and dispatches grading prompts to mock HTTP", async
   const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
     callCount++;
     const req = input instanceof Request ? input : new Request(String(input), init);
-    const body = await req.json();
-    expect(body.messages[0].content).toContain("GROUND TRUTH:");
-    expect(body.messages[0].content).toContain("MODEL ANSWER:");
+    const body = (await req.json()) as ChatCompletionRequestBody;
+    expect(body.messages.at(0)?.content).toContain("GROUND TRUTH:");
+    expect(body.messages.at(0)?.content).toContain("MODEL ANSWER:");
 
     return new Response(
       JSON.stringify({
@@ -70,7 +74,8 @@ test("runGrade: handles PARTIAL and FAIL verdicts correctly", async () => {
   try {
     const url = `http://stub/v1`;
     const results = await runGrade({ inputPath: jsonlPath, url, model: "j", fetch: fetchImpl });
-    expect(results[0].verdict).toBe("PARTIAL");
+    const [result] = results;
+    expect(result?.verdict).toBe("PARTIAL");
   } finally {
     unlinkSync(jsonlPath);
   }

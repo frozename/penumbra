@@ -37,7 +37,7 @@ describe("ClaudeStatusLineBridge", () => {
     const reader = new ClaudeStatusLineBridge({ cachePath: path });
     const r = await reader.read(null);
     expect(r.rate_limit_snapshots).toHaveLength(1);
-    expect(r.rate_limit_snapshots[0].used_pct).toBe(25);
+    expect(r.rate_limit_snapshots.at(0)?.used_pct).toBe(25);
   });
 
   it("does not re-emit when file mtime is unchanged", async () => {

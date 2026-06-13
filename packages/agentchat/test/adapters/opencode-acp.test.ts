@@ -4,7 +4,7 @@ import { join } from "node:path";
 import * as os from "node:os";
 import { tmpdir } from "node:os";
 import { OpencodeAcpAdapter } from "../../src/adapters/opencode-acp.js";
-import type { AcpServerHandle } from "../../src/adapters/acp-server.js";
+import type { AcpServerHandle, StartAcpServerOptions } from "../../src/adapters/acp-server.js";
 import type { AcpClientOptions } from "../../src/adapters/acp-client.js";
 import type { DispatchInput } from "../../src/sdk/adapter.js";
 
@@ -69,7 +69,7 @@ function createClient(events: readonly unknown[]) {
 
 test("opencode-acp concatenates SSE text deltas into a single response", async () => {
   const handle = createServerHandle();
-  const startServer = mock(async () => handle);
+  const startServer = mock(async (_opts: StartAcpServerOptions) => handle);
   const client = createClient([
     {
       type: "message.part.updated",
@@ -106,10 +106,11 @@ test("opencode-acp concatenates SSE text deltas into a single response", async (
 
   expect(out).toEqual({ text: "pong" });
   expect(startServer).toHaveBeenCalledTimes(1);
-  expect(startServer.mock.calls[0]?.[0]).toEqual({
+  const startOptions = startServer.mock.calls[0]?.[0];
+  expect(startOptions).toEqual({
     cwd: "/tmp/opencode-acp",
     pure: true,
-    signal: startServer.mock.calls[0]?.[0].signal,
+    signal: startOptions?.signal,
     opencodeBinary: "custom-opencode",
     bootTimeoutMs: 1_234,
   });
@@ -125,7 +126,7 @@ test("opencode-acp concatenates SSE text deltas into a single response", async (
 
 test("opencode-acp rejects when ACP requests a tool call", async () => {
   const handle = createServerHandle();
-  const startServer = mock(async () => handle);
+  const startServer = mock(async (_opts: StartAcpServerOptions) => handle);
   const rejectionMessage = "opencode-acp: tool calls not supported in Commit 3 (requested grep)";
   const client = createClient([
     {
@@ -154,7 +155,7 @@ test("opencode-acp rejects when ACP requests a tool call", async () => {
 });
 
 test("opencode-acp surfaces ACP server boot failures cleanly", async () => {
-  const startServer = mock(async () => {
+  const startServer = mock(async (_opts: StartAcpServerOptions) => {
     throw new Error("ACP server did not report a port within 10ms");
   });
   const createClientMock = mock((_opts: AcpClientOptions) => {
@@ -176,7 +177,7 @@ test("opencode-acp sets a per-dispatch XDG_CONFIG_HOME when mcpServers are provi
   let capturedConfig: Record<string, unknown> | null = null;
   let capturedConfigPath: string | null = null;
   const handle = createServerHandle();
-  const startServer = mock(async (opts: { env?: Record<string, string> }) => {
+  const startServer = mock(async (opts: StartAcpServerOptions) => {
     const xdgConfigHome = opts.env?.XDG_CONFIG_HOME;
     if (!xdgConfigHome) {
       throw new Error("missing XDG_CONFIG_HOME");
@@ -209,7 +210,7 @@ test("opencode-acp sets a per-dispatch XDG_CONFIG_HOME when mcpServers are provi
 
   await withTempHome(() => adapter.dispatch(createInput()));
 
-  expect(capturedConfig).toEqual({
+  expect(capturedConfig as unknown as Record<string, unknown>).toEqual({
     $schema: "https://opencode.ai/config.json",
     mcp: {
       penumbra: {
@@ -220,8 +221,9 @@ test("opencode-acp sets a per-dispatch XDG_CONFIG_HOME when mcpServers are provi
       },
     },
   });
-  expect(capturedConfigPath).toBeDefined();
-  expect(capturedConfigPath && (await Bun.file(capturedConfigPath).exists())).toBe(false);
+  const configPath = capturedConfigPath as string | null;
+  expect(configPath).toBeDefined();
+  expect(configPath ? await Bun.file(configPath).exists() : true).toBe(false);
   expect(startServer).toHaveBeenCalledTimes(1);
 });
 

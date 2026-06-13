@@ -1,5 +1,6 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessByStdio } from "node:child_process";
 import readline from "node:readline";
+import type { Readable, Writable } from "node:stream";
 
 export function parseShellArgs(s: string): string[] {
   const out: string[] = [];
@@ -7,6 +8,7 @@ export function parseShellArgs(s: string): string[] {
   let quote: '"' | "'" | null = null;
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
+    if (c === undefined) continue;
     if (quote) {
       if (c === quote) {
         quote = null;
@@ -59,6 +61,8 @@ function must(k: string): string {
 
 if (import.meta.main) {
   const upstreamCmd = parseShellArgs(must("MCP_PROXY_UPSTREAM"));
+  const [command, ...args] = upstreamCmd;
+  if (!command) throw new Error("MCP_PROXY_UPSTREAM did not include a command");
   const allowlist = new Set(
     must("MCP_PROXY_ALLOWLIST")
       .split(",")
@@ -66,15 +70,15 @@ if (import.meta.main) {
       .filter(Boolean),
   );
 
-  const child = spawn(upstreamCmd[0], upstreamCmd.slice(1), {
+  const child = spawn(command, args, {
     stdio: ["pipe", "pipe", "inherit"],
     env: process.env,
-  });
+  }) as ChildProcessByStdio<Writable, Readable, null>;
 
   const pendingMethod = new Map<string | number, string>();
 
   const clientLines = readline.createInterface({ input: process.stdin });
-  const upstreamLines = readline.createInterface({ input: child.stdout! });
+  const upstreamLines = readline.createInterface({ input: child.stdout });
 
   function writeJsonRpc(value: unknown) {
     process.stdout.write(JSON.stringify(value) + "\n");
@@ -128,7 +132,7 @@ if (import.meta.main) {
           if (!queuePendingMethod(item.id, item.method)) return;
         }
       }
-      child.stdin!.write(JSON.stringify(msg) + "\n");
+      child.stdin.write(JSON.stringify(msg) + "\n");
       return;
     }
     if (msg["method"] === "tools/call") {
@@ -148,7 +152,7 @@ if (import.meta.main) {
     if (msg["id"] !== undefined && msg["method"]) {
       if (!queuePendingMethod(msg["id"] as string | number, msg["method"] as string)) return;
     }
-    child.stdin!.write(JSON.stringify(msg) + "\n");
+    child.stdin.write(JSON.stringify(msg) + "\n");
   }
 
   function processUpstreamMessage(msg: JsonRpcMessage | JsonRpcMessage[]) {
@@ -183,7 +187,7 @@ if (import.meta.main) {
     try {
       msg = JSON.parse(line) as JsonRpcMessage | JsonRpcMessage[];
     } catch {
-      child.stdin!.write(line + "\n");
+      child.stdin.write(line + "\n");
       return;
     }
     processClientMessage(msg);
@@ -201,7 +205,7 @@ if (import.meta.main) {
     processUpstreamMessage(msg);
   });
 
-  child.on("exit", (code) => process.exit(code ?? 0));
+  child.on("exit", (code: number | null) => process.exit(code ?? 0));
   process.on("SIGTERM", () => child.kill("SIGTERM"));
   process.on("SIGINT", () => child.kill("SIGINT"));
 }

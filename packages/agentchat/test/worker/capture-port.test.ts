@@ -29,6 +29,12 @@ function makeFakeObserve() {
   return { observe, calls, resolveAll, rejectNext };
 }
 
+function observed(calls: any[], index: number): any {
+  const call = calls[index];
+  if (call === undefined) throw new Error(`expected observe call at index ${index}`);
+  return call;
+}
+
 const baseOpts = {
   chainId: "c-abc",
   handoffId: "h-xyz",
@@ -47,9 +53,10 @@ test("1. single thought chunk → close → one observe call (agent-thought)", a
   f.resolveAll();
   await closing;
   expect(f.calls).toHaveLength(1);
-  expect(f.calls[0].event_type).toBe("agent-thought");
-  expect(f.calls[0].payload_json.text).toBe("hello");
-  expect(f.calls[0].session_id).toBe("c-abc");
+  const call = observed(f.calls, 0);
+  expect(call.event_type).toBe("agent-thought");
+  expect(call.payload_json.text).toBe("hello");
+  expect(call.session_id).toBe("c-abc");
 });
 
 test("2. N thought chunks → one coalesced observe call", async () => {
@@ -60,7 +67,7 @@ test("2. N thought chunks → one coalesced observe call", async () => {
   f.resolveAll();
   await closing;
   expect(f.calls).toHaveLength(1);
-  expect(f.calls[0].payload_json.text).toBe("abcd");
+  expect(observed(f.calls, 0).payload_json.text).toBe("abcd");
 });
 
 test("3. thought chunks then a tool_call → flush boundaries respected", async () => {
@@ -78,8 +85,8 @@ test("3. thought chunks then a tool_call → flush boundaries respected", async 
   f.resolveAll();
   await closing;
   expect(f.calls).toHaveLength(2);
-  expect(f.calls[0].event_type).toBe("agent-thought");
-  expect(f.calls[1].event_type).toBe("agent-tool-use");
+  expect(observed(f.calls, 0).event_type).toBe("agent-thought");
+  expect(observed(f.calls, 1).event_type).toBe("agent-tool-use");
 });
 
 test("4. tool_call start + terminal update → merged row with latency_ms", async () => {
@@ -215,9 +222,10 @@ test("10. observe rejection logs serialized body payload", async () => {
   await port.flush();
 
   expect(consoleError).toHaveBeenCalledTimes(1);
-  expect(String(consoleError.mock.calls[0][0])).toMatch(/observe failed/);
-  expect(String(consoleError.mock.calls[0][0])).toMatch(/body=/);
-  expect(String(consoleError.mock.calls[0][0])).toContain("field_errors");
+  const message = String(consoleError.mock.calls.at(0)?.[0]);
+  expect(message).toMatch(/observe failed/);
+  expect(message).toMatch(/body=/);
+  expect(message).toContain("field_errors");
   consoleError.mockRestore();
 });
 

@@ -5,6 +5,7 @@ import {
   filterAutocommitPaths,
   parseGitStatusPaths,
 } from "../../src/worker/autocommit-on-chain-end.js";
+import type { execFile as nodeExecFile } from "node:child_process";
 
 const handoff = {
   handoff_id: "h-auto",
@@ -37,6 +38,7 @@ function expectOnChainEndCall(
 ) {
   expect(onChainEnd).toHaveBeenCalledTimes(1);
   const call = onChainEnd.mock.calls[0];
+  if (!call) throw new Error("expected onChainEnd call");
 
   expect(call.slice(0, 5)).toEqual([
     expected.handoff,
@@ -50,6 +52,16 @@ function expectOnChainEndCall(
   expect(call[5]).toBeGreaterThanOrEqual(expected.minWallMs ?? 0);
   expect(call[6]).toBeNull();
   expect(call[7]).toBe("result");
+}
+
+function asExecFile(fn: ReturnType<typeof mock>): typeof nodeExecFile {
+  return fn as unknown as typeof nodeExecFile;
+}
+
+function callArg(fn: ReturnType<typeof mock>, callIndex: number, argIndex: number): unknown {
+  const call = fn.mock.calls[callIndex];
+  if (!call) throw new Error(`expected call ${callIndex}`);
+  return call[argIndex];
 }
 
 function deps(over: Partial<WorkerDispatcherDeps> = {}): WorkerDispatcherDeps {
@@ -312,7 +324,7 @@ test("autocommit skips malformed handoff ids", async () => {
   const committed = await autocommitOnChainEnd(
     { handoff_id: "../../etc/passwd", conversation_id: "conv-1", to_agent: "executor" },
     { path: "/tmp/repo" },
-    { execFile, log: { warn, debug: mock() } as any },
+    { execFile: asExecFile(execFile), log: { warn, debug: mock() } as any },
   );
 
   expect(committed).toBe(false);
@@ -340,26 +352,26 @@ test("autocommit stages only allowed paths and skips empty filtered sets", async
       to_agent: "executor",
     },
     { path: "/tmp/repo" },
-    { execFile, log: { warn, debug: mock() } as any },
+    { execFile: asExecFile(execFile), log: { warn, debug: mock() } as any },
   );
 
   expect(committed).toBe(true);
-  expect(execFile.mock.calls[0]![1]).toEqual([
+  expect(callArg(execFile, 0, 1)).toEqual([
     "-C",
     "/tmp/repo",
     "status",
     "--porcelain",
     "--untracked-files=all",
   ]);
-  expect(execFile.mock.calls[1]![1]).toEqual([
+  expect(callArg(execFile, 1, 1)).toEqual([
     "-C",
     "/tmp/repo",
     "add",
     "--",
     "packages/app/src/index.ts",
   ]);
-  expect(execFile.mock.calls[2]![1]).toEqual(["-C", "/tmp/repo", "add", "--", "docs/notes.md"]);
-  expect(execFile.mock.calls[3]![1][2]).toBe("commit");
+  expect(callArg(execFile, 2, 1)).toEqual(["-C", "/tmp/repo", "add", "--", "docs/notes.md"]);
+  expect((callArg(execFile, 3, 1) as string[])[2]).toBe("commit");
   expect(execFile.mock.calls.some((call) => String(call[1]).includes(".env"))).toBe(false);
 
   const emptyExecFile = mock().mockResolvedValueOnce({ stdout: " M .env\n" });
@@ -370,7 +382,7 @@ test("autocommit stages only allowed paths and skips empty filtered sets", async
       to_agent: "executor",
     },
     { path: "/tmp/repo" },
-    { execFile: emptyExecFile, log: { warn, debug: mock() } as any },
+    { execFile: asExecFile(emptyExecFile), log: { warn, debug: mock() } as any },
   );
 
   expect(skipped).toBe(false);

@@ -53,10 +53,11 @@ test("loop wiring: hosted_mcp_servers arrive as mcpServers in adapter options", 
     },
   });
 
-  const servers = capturedOpts?.mcpServers as any[];
+  const opts = capturedOpts as unknown as Record<string, unknown>;
+  const servers = opts.mcpServers as any[];
   expect(servers.find((s: any) => s.name === "ha")).toBeDefined();
   expect(servers.find((s: any) => s.name === "ha")?.command).toBe("uvx");
-  expect(capturedOpts?.claudeCodeAllowedTools).toEqual([
+  expect(opts.claudeCodeAllowedTools).toEqual([
     "mcp__ha__ha_pulse",
     "mcp__ha__ha_get_state",
     "mcp__ha__ha_call_service",
@@ -65,7 +66,7 @@ test("loop wiring: hosted_mcp_servers arrive as mcpServers in adapter options", 
 
 test("allowlist gate approves mcp__ha__ha_pulse when allowlist has ha:ha_pulse", async () => {
   const cb = createPermissionCallback({
-    trustMode: "config",
+    trustMode: "config" as const,
     allowedTools: ["ha:ha_pulse", "ha:ha_get_state", "ha:ha_call_service"],
     handoffId: "h1",
     conversationId: "c1",
@@ -76,7 +77,7 @@ test("allowlist gate approves mcp__ha__ha_pulse when allowlist has ha:ha_pulse",
         throw new Error("should not reach daemon");
       },
     },
-    perDispatchAllowlist: new Set(),
+    perDispatchAllowlist: new Set<string>(),
   });
 
   expect(await cb({ toolName: "mcp__ha__ha_pulse", rawInput: {}, dispatchId: "h1" })).toBe(
@@ -89,7 +90,7 @@ test("allowlist gate approves mcp__ha__ha_pulse when allowlist has ha:ha_pulse",
 
 test("allowlist gate rejects unlisted ha tool", async () => {
   const cb = createPermissionCallback({
-    trustMode: "config",
+    trustMode: "config" as const,
     allowedTools: ["ha:ha_pulse"],
     handoffId: "h1",
     conversationId: "c1",
@@ -100,7 +101,7 @@ test("allowlist gate rejects unlisted ha tool", async () => {
         throw new Error("network");
       },
     },
-    perDispatchAllowlist: new Set(),
+    perDispatchAllowlist: new Set<string>(),
   });
 
   expect(await cb({ toolName: "mcp__ha__ha_call_service", rawInput: {}, dispatchId: "h1" })).toBe(

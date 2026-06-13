@@ -5,7 +5,7 @@ import { startEventSource } from "../../src/worker/event-source.js";
 import { createWorkerDispatcher } from "../../src/worker/dispatcher.js";
 import { registerAdapter, clearCustomAdapters } from "../../src/adapters/registry.js";
 import type { AgentChatConfig } from "../../src/config/types.js";
-import { withDaemon } from "../../../e2e/test/helpers/with-daemon.js";
+import { withDaemon } from "../helpers/with-daemon.js";
 import { serviceTest } from "../helpers/service-gates.js";
 
 serviceTest(
@@ -51,7 +51,9 @@ serviceTest(
       concurrency: 1,
       claim: (id) => client.claimHandoff(id, "thin-worker"),
       postProgress: (id, payload) => client.postProgress(id, payload),
-      complete: (id) => client.completeHandoff(id),
+      complete: async (id) => {
+        await client.completeHandoff(id);
+      },
       dispatch: async (h, onChunk, signal) => {
         const transcript: { agent: string; text: string }[] = [];
         const { handoffs } = await client.listHandoffs({

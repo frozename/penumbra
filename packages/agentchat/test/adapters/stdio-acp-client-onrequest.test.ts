@@ -18,6 +18,12 @@ async function flush() {
   await new Promise((r) => setTimeout(r, 10));
 }
 
+function parseWritten(written: string[], index = 0): any {
+  const line = written[index];
+  if (line === undefined) throw new Error(`expected written line at index ${index}`);
+  return JSON.parse(line.trim());
+}
+
 describe("StdioAcpClient onRequest", () => {
   it("routes incoming request to handler and sends back response with same id", async () => {
     const { stdin, stdout, written } = pair();
@@ -37,7 +43,7 @@ describe("StdioAcpClient onRequest", () => {
     await flush();
 
     expect(written.length).toBe(1);
-    const reply = JSON.parse(written[0].trim());
+    const reply = parseWritten(written);
     expect(reply.id).toBe(42);
     expect(reply.result).toEqual({ content: "hello" });
     expect(reply.error).toBeUndefined();
@@ -54,7 +60,7 @@ describe("StdioAcpClient onRequest", () => {
     send(stdout, { jsonrpc: "2.0", method: "fs/read_text_file", params: {}, id: 7 });
     await flush();
 
-    const reply = JSON.parse(written[0].trim());
+    const reply = parseWritten(written);
     expect(reply.id).toBe(7);
     expect(reply.error).toBeDefined();
     expect(reply.error.message).toMatch(/outside worktree/);
@@ -74,7 +80,7 @@ describe("StdioAcpClient onRequest", () => {
     send(stdout, { jsonrpc: "2.0", method: "fs/write_text_file", params: {}, id: 8 });
     await flush();
 
-    const reply = JSON.parse(written[0].trim());
+    const reply = parseWritten(written);
     expect(reply.id).toBe(8);
     expect(reply.error?.code).toBe(-32004);
     expect(reply.error?.message).toBe("denied");
@@ -87,7 +93,7 @@ describe("StdioAcpClient onRequest", () => {
     send(stdout, { jsonrpc: "2.0", method: "unknown/method", params: {}, id: 99 });
     await flush();
 
-    const reply = JSON.parse(written[0].trim());
+    const reply = parseWritten(written);
     expect(reply.id).toBe(99);
     expect(reply.error?.code).toBe(-32601);
     expect(reply.error?.message).toMatch(/method not found|unknown\/method/i);
@@ -115,7 +121,7 @@ describe("StdioAcpClient onRequest", () => {
 
     const promise = client.request("initialize", { protocolVersion: 1 });
     await flush();
-    const sent = JSON.parse(written[0].trim());
+    const sent = parseWritten(written);
     expect(sent.method).toBe("initialize");
     const id = sent.id;
 

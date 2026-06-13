@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi } from "bun:test";
 import { PassThrough } from "node:stream";
 import {
   StdioAcpAdapter,
@@ -8,7 +8,28 @@ import {
 } from "../../src/adapters/stdio-acp.js";
 import type { HostEnvPolicy } from "../../src/adapters/stdio-acp.js";
 import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
+import type { DispatchInput, DispatchOutput } from "../../src/sdk/adapter.js";
 import { ThoughtCapture } from "../../src/worker/thought-capture.js";
+
+function mockClient(client: {
+  onRequest: StdioAcpClient["onRequest"];
+  on: StdioAcpClient["on"];
+  request: StdioAcpClient["request"];
+}): StdioAcpClient {
+  return client as StdioAcpClient;
+}
+
+function dispatch(
+  adapter: StdioAcpAdapter,
+  input: Omit<DispatchInput, "conversation" | "config"> &
+    Partial<Pick<DispatchInput, "conversation" | "config">>,
+): Promise<DispatchOutput> {
+  return adapter.dispatch({
+    conversation: { id: "conv-1", project_id: null },
+    config: {},
+    ...input,
+  });
+}
 
 function createWarmPoolHarness(opts: {
   warmPool?: boolean;
@@ -48,11 +69,12 @@ function createWarmPoolHarness(opts: {
     { binary: "mock-acp", warmPool: opts.warmPool } as any,
     {
       startServer,
-      createClient: () => ({
-        onRequest: vi.fn(),
-        on: vi.fn(),
-        request,
-      }),
+      createClient: () =>
+        mockClient({
+          onRequest: vi.fn(),
+          on: vi.fn(),
+          request,
+        }),
       pool,
     } as any,
   );
@@ -107,15 +129,16 @@ function createPermissionHarness(
     { binary: "mock-acp", ...adapterOptions },
     {
       startServer,
-      createClient: () => ({
-        onRequest: (method: string, handler: (params: any) => Promise<any> | any) => {
-          if (method === "session/request_permission") {
-            requestHandler = handler;
-          }
-        },
-        on: vi.fn(),
-        request: mockClientRequest,
-      }),
+      createClient: () =>
+        mockClient({
+          onRequest: (method: string, handler: (params: any) => Promise<any> | any) => {
+            if (method === "session/request_permission") {
+              requestHandler = handler;
+            }
+          },
+          on: vi.fn(),
+          request: mockClientRequest,
+        }),
     },
   );
 
@@ -134,7 +157,7 @@ describe("StdioAcpAdapter", () => {
     for (const warmPool of [undefined, false]) {
       const { adapter, pool, mockKill } = createWarmPoolHarness({ warmPool });
 
-      await adapter.dispatch({
+      await dispatch(adapter, {
         prompt: "hello",
         signal: new AbortController().signal,
       });
@@ -154,7 +177,7 @@ describe("StdioAcpAdapter", () => {
     });
 
     await expect(
-      adapter.dispatch({
+      dispatch(adapter, {
         prompt: "hello",
         signal: new AbortController().signal,
       }),
@@ -170,7 +193,7 @@ describe("StdioAcpAdapter", () => {
   it("warm_pool enabled deposits and releases a clean cold-started session without killing it", async () => {
     const { adapter, pool, mockKill } = createWarmPoolHarness({ warmPool: true });
 
-    await adapter.dispatch({
+    await dispatch(adapter, {
       prompt: "hello",
       signal: new AbortController().signal,
     });
@@ -189,7 +212,7 @@ describe("StdioAcpAdapter", () => {
     });
 
     await expect(
-      adapter.dispatch({
+      dispatch(adapter, {
         prompt: "hello",
         signal: new AbortController().signal,
       }),
@@ -242,20 +265,21 @@ describe("StdioAcpAdapter", () => {
               exited: Promise.resolve(0),
             };
           }),
-          createClient: () => ({
-            onRequest: vi.fn(),
-            on: vi.fn(),
-            request: vi.fn().mockImplementation(async (method: string) => {
-              if (method === "initialize") return { protocolVersion: 1 };
-              if (method === "session/new") return { sessionId: "session-123" };
-              if (method === "session/prompt") return { stopReason: "end_turn" };
-              return {};
+          createClient: () =>
+            mockClient({
+              onRequest: vi.fn(),
+              on: vi.fn(),
+              request: vi.fn().mockImplementation(async (method: string) => {
+                if (method === "initialize") return { protocolVersion: 1 };
+                if (method === "session/new") return { sessionId: "session-123" };
+                if (method === "session/prompt") return { stopReason: "end_turn" };
+                return {};
+              }),
             }),
-          }),
         },
       );
 
-      await adapter.dispatch({
+      await dispatch(adapter, {
         prompt: "hello",
         signal: new AbortController().signal,
       });
@@ -304,7 +328,7 @@ describe("StdioAcpAdapter", () => {
       resolveHostEnvPolicy({
         hostEnvPolicy: { unknown: false } as unknown as HostEnvPolicy,
       }),
-    ).toEqual({ unknown: false });
+    ).toEqual({ unknown: false } as unknown as HostEnvPolicy);
   });
 
   it("shouldScrubHostEnvKey returns false for an unregistered provider", () => {
@@ -344,7 +368,7 @@ describe("StdioAcpAdapter", () => {
     const requestPermission = vi.fn().mockResolvedValue("approve" as const);
     const { adapter, getOutcome } = createPermissionHarness();
 
-    await adapter.dispatch({
+    await dispatch(adapter, {
       prompt: "hello",
       signal: new AbortController().signal,
       requestPermission,
@@ -363,7 +387,7 @@ describe("StdioAcpAdapter", () => {
     const requestPermission = vi.fn().mockResolvedValue("approve" as const);
     const { adapter, getOutcome } = createPermissionHarness({ fsWriteTextFile: true });
 
-    await adapter.dispatch({
+    await dispatch(adapter, {
       prompt: "hello",
       signal: new AbortController().signal,
       requestPermission,
@@ -377,7 +401,7 @@ describe("StdioAcpAdapter", () => {
     const requestPermission = vi.fn().mockResolvedValue("approve" as const);
     const { adapter, getOutcome } = createPermissionHarness({ terminal: true });
 
-    await adapter.dispatch({
+    await dispatch(adapter, {
       prompt: "hello",
       signal: new AbortController().signal,
       requestPermission,
@@ -427,19 +451,20 @@ describe("StdioAcpAdapter", () => {
       },
       {
         startServer,
-        createClient: () => ({
-          onRequest: (method: string, handler: (params: any) => Promise<any> | any) => {
-            if (method === "session/request_permission") {
-              requestHandler = handler;
-            }
-          },
-          on: vi.fn(),
-          request: mockClientRequest,
-        }),
+        createClient: () =>
+          mockClient({
+            onRequest: (method: string, handler: (params: any) => Promise<any> | any) => {
+              if (method === "session/request_permission") {
+                requestHandler = handler;
+              }
+            },
+            on: vi.fn(),
+            request: mockClientRequest,
+          }),
       },
     );
 
-    await adapter.dispatch({
+    await dispatch(adapter, {
       prompt: "hello",
       signal: new AbortController().signal,
       requestPermission,
@@ -498,19 +523,20 @@ describe("StdioAcpAdapter", () => {
       },
       {
         startServer,
-        createClient: () => ({
-          onRequest: (method: string, handler: (params: any) => Promise<any> | any) => {
-            if (method === "session/request_permission") {
-              requestHandler = handler;
-            }
-          },
-          on: vi.fn(),
-          request: mockClientRequest,
-        }),
+        createClient: () =>
+          mockClient({
+            onRequest: (method: string, handler: (params: any) => Promise<any> | any) => {
+              if (method === "session/request_permission") {
+                requestHandler = handler;
+              }
+            },
+            on: vi.fn(),
+            request: mockClientRequest,
+          }),
       },
     );
 
-    await adapter.dispatch({
+    await dispatch(adapter, {
       prompt: "hello",
       signal: new AbortController().signal,
       requestPermission,
@@ -560,19 +586,20 @@ describe("StdioAcpAdapter", () => {
       },
       {
         startServer,
-        createClient: () => ({
-          onRequest: (method: string, handler: (params: any) => Promise<any> | any) => {
-            if (method === "session/request_permission") {
-              requestHandler = handler;
-            }
-          },
-          on: vi.fn(),
-          request: mockClientRequest,
-        }),
+        createClient: () =>
+          mockClient({
+            onRequest: (method: string, handler: (params: any) => Promise<any> | any) => {
+              if (method === "session/request_permission") {
+                requestHandler = handler;
+              }
+            },
+            on: vi.fn(),
+            request: mockClientRequest,
+          }),
       },
     );
 
-    await adapter.dispatch({
+    await dispatch(adapter, {
       prompt: "hello",
       signal: new AbortController().signal,
     });
@@ -602,7 +629,7 @@ describe("StdioAcpAdapter", () => {
       },
     );
 
-    const dispatchPromise = adapter.dispatch({
+    const dispatchPromise = dispatch(adapter, {
       prompt: "hello",
       signal: new AbortController().signal,
     });
@@ -707,7 +734,7 @@ describe("StdioAcpAdapter", () => {
       },
     );
 
-    const dispatchPromise = adapter.dispatch({
+    const dispatchPromise = dispatch(adapter, {
       prompt: "hello",
       conversation: { id: "c-1", project_id: null },
       config: {},
@@ -794,7 +821,7 @@ describe("StdioAcpAdapter", () => {
       },
     );
 
-    await adapter.dispatch({
+    await dispatch(adapter, {
       prompt: "hello",
       conversation: { id: "c-1", project_id: null },
       config: {},
@@ -843,7 +870,7 @@ describe("StdioAcpAdapter", () => {
       },
     );
 
-    const dispatchPromise = adapter.dispatch({
+    const dispatchPromise = dispatch(adapter, {
       prompt: "hello",
       conversation: { id: "c-1", project_id: null },
       config: {},
@@ -941,7 +968,7 @@ describe("StdioAcpAdapter", () => {
       },
     );
 
-    const dispatchPromise = adapter.dispatch({
+    const dispatchPromise = dispatch(adapter, {
       prompt: "hello",
       signal: new AbortController().signal,
     });
@@ -1006,7 +1033,7 @@ describe("StdioAcpAdapter", () => {
       },
     );
 
-    const dispatchPromise = adapter.dispatch({
+    const dispatchPromise = dispatch(adapter, {
       prompt: "hello",
       signal: new AbortController().signal,
     });
@@ -1070,7 +1097,7 @@ describe("StdioAcpAdapter", () => {
       },
     );
 
-    const dispatchPromise = adapter.dispatch({
+    const dispatchPromise = dispatch(adapter, {
       prompt: "hi",
       conversation: { id: "c-1", project_id: null },
       config: {},
@@ -1153,7 +1180,7 @@ describe("StdioAcpAdapter", () => {
       },
     );
 
-    const dispatchPromise = adapter.dispatch({
+    const dispatchPromise = dispatch(adapter, {
       prompt: "hello",
       signal: new AbortController().signal,
     });
@@ -1213,7 +1240,7 @@ describe("StdioAcpAdapter", () => {
     );
 
     await expect(
-      adapter.dispatch({
+      dispatch(adapter, {
         prompt: "hello",
         signal: new AbortController().signal,
       }),
@@ -1266,12 +1293,14 @@ describe("StdioAcpAdapter", () => {
       },
     );
 
-    await adapter.dispatch({
+    await dispatch(adapter, {
       prompt: "hello",
       signal: new AbortController().signal,
     });
 
-    const passedEnv = startServer.mock.calls[0][0].env;
+    const firstCall = startServer.mock.calls[0];
+    if (!firstCall) throw new Error("expected startServer to be called");
+    const passedEnv = firstCall[0].env;
     expect(passedEnv.FOO).toBe("bar");
     expect(passedEnv.OPENAI_API_KEY).toBeUndefined();
 
@@ -1314,7 +1343,7 @@ describe("StdioAcpAdapter", () => {
     );
 
     await withClaudeCodeHostEnv(async () => {
-      await adapter.dispatch({
+      await dispatch(adapter, {
         prompt: "hello",
         signal: new AbortController().signal,
       });
@@ -1370,7 +1399,7 @@ describe("StdioAcpAdapter", () => {
     );
 
     await withClaudeCodeHostEnv(async () => {
-      await adapter.dispatch({
+      await dispatch(adapter, {
         prompt: "hello",
         signal: new AbortController().signal,
       });
@@ -1417,7 +1446,7 @@ describe("StdioAcpAdapter", () => {
     );
 
     await withClaudeCodeHostEnv(async () => {
-      await adapter.dispatch({
+      await dispatch(adapter, {
         prompt: "hello",
         signal: new AbortController().signal,
       });
@@ -1468,7 +1497,7 @@ describe("StdioAcpAdapter", () => {
     );
 
     await withClaudeCodeHostEnv(async () => {
-      await adapter.dispatch({
+      await dispatch(adapter, {
         prompt: "hello",
         signal: new AbortController().signal,
       });
@@ -1516,7 +1545,7 @@ describe("StdioAcpAdapter", () => {
     const previous = process.env.CLAUDE_CODE_FUTURE_FLAG;
     process.env.CLAUDE_CODE_FUTURE_FLAG = "1";
     try {
-      await adapter.dispatch({
+      await dispatch(adapter, {
         prompt: "hello",
         signal: new AbortController().signal,
       });
@@ -1578,7 +1607,7 @@ describe("StdioAcpAdapter", () => {
       },
     );
 
-    await adapter.dispatch({
+    await dispatch(adapter, {
       prompt: "hello",
       signal: new AbortController().signal,
     });
@@ -1619,7 +1648,7 @@ describe("StdioAcpAdapter", () => {
       },
     );
 
-    await adapter.dispatch({
+    await dispatch(adapter, {
       prompt: "hello world",
       signal: new AbortController().signal,
     });
@@ -1674,7 +1703,7 @@ describe("StdioAcpAdapter", () => {
       },
     );
 
-    await adapter.dispatch({
+    await dispatch(adapter, {
       prompt: "hello",
       signal: new AbortController().signal,
     });
@@ -1735,7 +1764,7 @@ describe("StdioAcpAdapter", () => {
       },
     );
 
-    await adapter.dispatch({
+    await dispatch(adapter, {
       prompt: "hi",
       conversation: { id: "c1", project_id: null },
       config: {},
@@ -1803,7 +1832,7 @@ describe("StdioAcpAdapter", () => {
       },
     );
 
-    await adapter.dispatch({
+    await dispatch(adapter, {
       prompt: "hi",
       conversation: { id: "c1", project_id: null },
       config: {},
@@ -1897,7 +1926,7 @@ describe("StdioAcpAdapter", () => {
       },
     );
 
-    await adapter.dispatch({
+    await dispatch(adapter, {
       prompt: "hi",
       conversation: { id: "c1", project_id: null },
       config: {},
@@ -1942,20 +1971,21 @@ describe("StdioAcpAdapter", () => {
             kill: vi.fn(),
             exited: new Promise<number | null>(() => {}),
           }),
-          createClient: () => ({
-            onRequest: vi.fn(),
-            on: vi.fn(),
-            request: vi.fn().mockImplementation(async (method: string) => {
-              if (method === "initialize") return { protocolVersion: 1 };
-              if (method === "session/new") return { sessionId: "hb-session" };
-              if (method === "session/prompt") return promptHang;
-              return {};
+          createClient: () =>
+            mockClient({
+              onRequest: vi.fn(),
+              on: vi.fn(),
+              request: vi.fn().mockImplementation(async (method: string) => {
+                if (method === "initialize") return { protocolVersion: 1 };
+                if (method === "session/new") return { sessionId: "hb-session" };
+                if (method === "session/prompt") return promptHang;
+                return {};
+              }),
             }),
-          }),
         },
       );
 
-      const dispatchPromise = adapter.dispatch({
+      const dispatchPromise = dispatch(adapter, {
         prompt: "heartbeat test",
         signal: new AbortController().signal,
         eventContext: { handoffId: "h-hb", workerId: "w-hb" },
@@ -2000,20 +2030,21 @@ describe("StdioAcpAdapter", () => {
             kill: vi.fn(),
             exited: Promise.resolve(1), // subprocess already dead
           }),
-          createClient: () => ({
-            onRequest: vi.fn(),
-            on: vi.fn(),
-            request: vi.fn().mockImplementation(async (method: string) => {
-              if (method === "initialize") return { protocolVersion: 1 };
-              if (method === "session/new") return { sessionId: "hb-session-dead" };
-              if (method === "session/prompt") return promptHang;
-              return {};
+          createClient: () =>
+            mockClient({
+              onRequest: vi.fn(),
+              on: vi.fn(),
+              request: vi.fn().mockImplementation(async (method: string) => {
+                if (method === "initialize") return { protocolVersion: 1 };
+                if (method === "session/new") return { sessionId: "hb-session-dead" };
+                if (method === "session/prompt") return promptHang;
+                return {};
+              }),
             }),
-          }),
         },
       );
 
-      const dispatchPromise = adapter.dispatch({
+      const dispatchPromise = dispatch(adapter, {
         prompt: "heartbeat test",
         signal: new AbortController().signal,
         eventContext: { handoffId: "h-hb-dead", workerId: "w-hb" },
@@ -2052,22 +2083,23 @@ describe("StdioAcpAdapter", () => {
             kill: vi.fn(),
             exited: new Promise<number | null>(() => {}),
           }),
-          createClient: () => ({
-            onRequest: vi.fn(),
-            on: (method: string, handler: any) => {
-              if (method === "session/update") sessionUpdateHandler = handler;
-            },
-            request: vi.fn().mockImplementation(async (method: string) => {
-              if (method === "initialize") return { protocolVersion: 1 };
-              if (method === "session/new") return { sessionId: "hb-session-active" };
-              if (method === "session/prompt") return promptHang;
-              return {};
+          createClient: () =>
+            mockClient({
+              onRequest: vi.fn(),
+              on: (method: string, handler: any) => {
+                if (method === "session/update") sessionUpdateHandler = handler;
+              },
+              request: vi.fn().mockImplementation(async (method: string) => {
+                if (method === "initialize") return { protocolVersion: 1 };
+                if (method === "session/new") return { sessionId: "hb-session-active" };
+                if (method === "session/prompt") return promptHang;
+                return {};
+              }),
             }),
-          }),
         },
       );
 
-      const dispatchPromise = adapter.dispatch({
+      const dispatchPromise = dispatch(adapter, {
         prompt: "heartbeat test",
         signal: new AbortController().signal,
         eventContext: { handoffId: "h-hb-active", workerId: "w-hb" },
@@ -2078,7 +2110,7 @@ describe("StdioAcpAdapter", () => {
 
       // Simulate a session/update at 30s — refreshes lastSessionUpdateTs
       vi.advanceTimersByTime(30_000);
-      sessionUpdateHandler?.({
+      (sessionUpdateHandler as ((params: any) => void) | null)?.({
         update: {
           sessionUpdate: "agent_message_chunk",
           content: { type: "text", text: "still working" },
@@ -2111,24 +2143,26 @@ describe("StdioAcpAdapter", () => {
             kill: vi.fn(),
             exited: new Promise<number | null>(() => {}),
           }),
-          createClient: () => ({
-            onRequest: vi.fn(),
-            on: vi.fn(),
-            request: vi.fn().mockImplementation((method: string) => {
-              if (method === "initialize") return Promise.resolve({ protocolVersion: 1 });
-              if (method === "session/new") return Promise.resolve({ sessionId: "hb-session-end" });
-              if (method === "session/prompt") {
-                return new Promise<{ stopReason: string }>((resolve) =>
-                  setTimeout(() => resolve({ stopReason: "end_turn" }), 5_000),
-                );
-              }
-              return Promise.resolve({});
+          createClient: () =>
+            mockClient({
+              onRequest: vi.fn(),
+              on: vi.fn(),
+              request: vi.fn().mockImplementation((method: string) => {
+                if (method === "initialize") return Promise.resolve({ protocolVersion: 1 });
+                if (method === "session/new")
+                  return Promise.resolve({ sessionId: "hb-session-end" });
+                if (method === "session/prompt") {
+                  return new Promise<{ stopReason: string }>((resolve) =>
+                    setTimeout(() => resolve({ stopReason: "end_turn" }), 5_000),
+                  );
+                }
+                return Promise.resolve({});
+              }),
             }),
-          }),
         },
       );
 
-      const dispatchPromise = adapter.dispatch({
+      const dispatchPromise = dispatch(adapter, {
         prompt: "heartbeat test",
         signal: new AbortController().signal,
         eventContext: { handoffId: "h-hb-end", workerId: "w-hb" },

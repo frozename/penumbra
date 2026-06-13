@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildServices, loadSqliteVec, migrate, createLogger, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { serve } from "../../../daemon/test-utils.ts";
+import { serve } from "@penumbra/daemon/test-utils";
 import { PenumbraClient } from "../../src/penumbra-client.js";
 import { dispatchHandoff } from "../../src/cli/dispatch-handoff.js";
 import { createWorkerDispatcher } from "../../src/worker/dispatcher.js";
@@ -71,7 +71,9 @@ serviceTest(
         concurrency: 1,
         claim: (hid) => workerClient.claimHandoff(hid, id),
         postProgress: (hid, payload) => workerClient.postProgress(hid, payload),
-        complete: (id) => workerClient.completeHandoff(id),
+        complete: async (id) => {
+          await workerClient.completeHandoff(id);
+        },
         dispatch: async (h) => {
           const result = await dispatchHandoff({
             handoff: h,

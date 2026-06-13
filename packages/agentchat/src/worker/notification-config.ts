@@ -98,7 +98,9 @@ function normalizeChannels(
 ): RuntimeNotificationChannelConfig {
   const configuredChannels = cfg?.channels ?? {};
   const entries = Object.entries(configuredChannels);
-  const sourceEntries =
+  const sourceEntries: Array<
+    [string, { kind: "discord_webhook"; default_webhook_url_env?: string }]
+  > =
     entries.length > 0
       ? entries
       : [
@@ -114,10 +116,11 @@ function normalizeChannels(
   const channels: RuntimeNotificationChannelConfig = {};
   for (const [name, channel] of sourceEntries) {
     if (channel.kind !== "discord_webhook") continue;
+    const defaultWebhookUrlEnv = channel.default_webhook_url_env ?? "PENUMBRA_DISCORD_WEBHOOK_URL";
     channels[name] = {
       kind: "discord_webhook",
-      defaultWebhookUrl: env[channel.default_webhook_url_env],
-      defaultWebhookUrlEnv: channel.default_webhook_url_env,
+      defaultWebhookUrl: env[defaultWebhookUrlEnv],
+      defaultWebhookUrlEnv,
     };
   }
   return channels;
@@ -130,7 +133,7 @@ function normalizeRoutes(
   const routes: Record<string, RuntimeNotificationProjectRoute> = {};
   for (const [projectId, route] of Object.entries(cfg?.routes?.projects ?? {})) {
     routes[projectId] = {
-      channel: route.channel,
+      channel: route.channel ?? "discord",
       webhookUrl: route.webhook_url_env ? env[route.webhook_url_env] : undefined,
       webhookUrlEnv: route.webhook_url_env,
       includePrompt: route.include_prompt,
@@ -157,19 +160,29 @@ export function loadNotificationConfig(
   const quiet = envConfig.PENUMBRA_DISCORD_QUIET;
   const cfg = input.agentchat.notifications ?? undefined;
 
-  const includePromptEnv = envConfig.PENUMBRA_DISCORD_INCLUDE_PROMPT;
+  const includePromptEnv = Boolean(envConfig.PENUMBRA_DISCORD_INCLUDE_PROMPT);
   const promptPolicy = resolvePromptPolicy({ cfg, includePromptEnv });
 
   const channels = normalizeChannels(cfg, input.env);
   const routes = normalizeRoutes(cfg, input.env);
 
   const enabledByConfig = cfg?.enabled ?? true;
-  const enabled = !quiet && enabledByConfig && hasAnyWebhook({ channels, routes });
+  const enabled = Boolean(!quiet && enabledByConfig && hasAnyWebhook({ channels, routes }));
 
   const events: RuntimeNotificationEventConfig = {
     ...DEFAULT_NOTIFICATION_EVENTS,
     ...(cfg?.events ?? {}),
   };
+  const agentIdentities = Object.fromEntries(
+    Object.entries(cfg?.identities?.agents ?? {}).map(([agent, identity]) => [
+      agent,
+      {
+        displayName: identity.display_name,
+        avatarUrl: identity.avatar_url,
+        avatarUrlEnv: identity.avatar_url_env,
+      },
+    ]),
+  );
 
   return {
     enabled,
@@ -180,7 +193,7 @@ export function loadNotificationConfig(
       projects: routes,
     },
     identities: {
-      agents: cfg?.identities?.agents ?? {},
+      agents: agentIdentities,
     },
     summaries: {
       costQuota: {

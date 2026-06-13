@@ -9,6 +9,7 @@ export function parseAttachFlags(argv: string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
+    if (arg === undefined) continue;
     if (arg === "--attach") {
       const next = argv[i + 1];
       // Values starting with '-' are usually flags. To avoid accidental

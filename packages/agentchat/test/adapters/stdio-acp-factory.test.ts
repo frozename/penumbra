@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "bun:test";
 import { createStdioAcpAdapter } from "../../src/adapters/registry.js";
 import { resetAcpWarmPoolRegistryForTest } from "../../src/adapters/acp-warm-pool-registry.js";
 

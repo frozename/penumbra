@@ -9,6 +9,12 @@ import {
 } from "@penumbra/core";
 import { createHash } from "node:crypto";
 
+function at<T>(items: T[], index: number): T {
+  const item = items[index];
+  if (item === undefined) throw new Error(`expected item at index ${index}`);
+  return item;
+}
+
 describe("Phase 1d audit events end-to-end", () => {
   // 1. fs.write_applied schema
   test("fs.write_applied event matches FsWriteAppliedPayload schema", async () => {
@@ -140,8 +146,8 @@ describe("Phase 1d audit events end-to-end", () => {
       );
       const writes = events.filter((e) => e.type === "fs.write_applied");
       expect(writes.length).toBe(2);
-      const sha1 = (writes[0].payload as any).sha256;
-      const sha2 = (writes[1].payload as any).sha256;
+      const sha1 = (at(writes, 0).payload as any).sha256;
+      const sha2 = (at(writes, 1).payload as any).sha256;
       expect(sha1).toBe(sha2);
       expect(sha1).toBe(createHash("sha256").update("stable").digest("hex"));
     });
@@ -346,8 +352,8 @@ describe("Phase 1d audit events end-to-end", () => {
       );
       const writes = events.filter((e) => e.type === "fs.write_applied");
       expect(writes.length).toBe(2);
-      expect((writes[0].payload as any).path).toBe("a.txt");
-      expect((writes[1].payload as any).path).toBe("b.txt");
+      expect((at(writes, 0).payload as any).path).toBe("a.txt");
+      expect((at(writes, 1).payload as any).path).toBe("b.txt");
     });
   });
 });

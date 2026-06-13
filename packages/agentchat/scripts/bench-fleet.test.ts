@@ -1,6 +1,7 @@
 import { expect, test, describe } from "bun:test";
 import { runFleetBench } from "./bench-fleet.js";
 import type { AgentChatConfig } from "../src/config/types.js";
+import type { BenchTask } from "./bench-prompts.js";
 
 const config: AgentChatConfig = {
   agents: [
@@ -35,17 +36,26 @@ test("runFleetBench: enumerates only HTTP agents and aggregates results", async 
         resolveAdapterApiKey: () => "mock-api-key",
         runBench: async (opts: any) => {
           runBenchCalls++;
-          return [
-            { task: "T4", latencyMs: 100, label: opts.label, model: opts.model },
-            { task: "T5", latencyMs: 200, label: opts.label, model: opts.model },
-            { task: "T6", latencyMs: 300, label: opts.label, model: opts.model },
-            { task: "T7", latencyMs: 400, label: opts.label, model: opts.model },
-            { task: "T8", latencyMs: 500, label: opts.label, model: opts.model },
-            { task: "T9", latencyMs: 600, label: opts.label, model: opts.model },
-            { task: "T10", latencyMs: 700, label: opts.label, model: opts.model },
-            { task: "T11", latencyMs: 800, label: opts.label, model: opts.model },
-            { task: "T12", latencyMs: 900, label: opts.label, model: opts.model },
-          ];
+          return (
+            [
+              ["T4", 100],
+              ["T5", 200],
+              ["T6", 300],
+              ["T7", 400],
+              ["T8", 500],
+              ["T9", 600],
+              ["T10", 700],
+              ["T11", 800],
+              ["T12", 900],
+            ] satisfies Array<[BenchTask["id"], number]>
+          ).map(([task, latencyMs]) => ({
+            task,
+            latencyMs,
+            label: opts.label,
+            model: opts.model,
+            description: task,
+            groundTruth: task,
+          }));
         },
         gradeResults: async (opts: any) => {
           gradeResultsCalls++;

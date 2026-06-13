@@ -50,7 +50,7 @@ describe("createPermissionCallback (v2 form, with allowlist + daemon)", () => {
           return { decision: "reject", remember: null, reason: null };
         },
       } as any,
-      perDispatchAllowlist: new Set(),
+      perDispatchAllowlist: new Set<string>(),
     });
     expect(await cb({ toolName: "fs.readTextFile", rawInput: {}, dispatchId: "test" })).toBe(
       "approve",
@@ -73,7 +73,7 @@ describe("createPermissionCallback (v2 form, with allowlist + daemon)", () => {
           return { decision: "reject", remember: null, reason: null };
         },
       } as any,
-      perDispatchAllowlist: new Set(),
+      perDispatchAllowlist: new Set<string>(),
     });
     expect(
       await cb({ toolName: "mcp__penumbra__chain.list_agents", rawInput: {}, dispatchId: "test" }),
@@ -90,7 +90,7 @@ describe("createPermissionCallback (v2 form, with allowlist + daemon)", () => {
       agentName: "a",
       ttlSeconds: 300,
       daemonClient: makeFakeDaemon("approve"),
-      perDispatchAllowlist: new Set(),
+      perDispatchAllowlist: new Set<string>(),
     });
     expect(
       await cb({ toolName: "mcp__sirius__chat", rawInput: { msg: "hi" }, dispatchId: "test" }),
@@ -140,7 +140,7 @@ describe("createPermissionCallback (v2 form, with allowlist + daemon)", () => {
           throw new Error("expired");
         },
       } as any,
-      perDispatchAllowlist: new Set(),
+      perDispatchAllowlist: new Set<string>(),
     });
     expect(await cb({ toolName: "fs.readTextFile", rawInput: {}, dispatchId: "test" })).toBe(
       "reject",
@@ -191,7 +191,7 @@ describe("createPermissionCallback (v2 form, with allowlist + daemon)", () => {
           reason: "operator denied",
         }),
       } as any,
-      perDispatchAllowlist: new Set(),
+      perDispatchAllowlist: new Set<string>(),
     });
     expect(await cb({ toolName: "mcp__sirius__chat", rawInput: {}, dispatchId: "test" })).toBe(
       "reject",

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { runReliabilitySmokeScenario } from "../../scripts/reliability-smoke/run";
+import { runReliabilitySmokeScenario } from "../../scripts/reliability-smoke/run.js";
 
 describe("reliability smoke scenario classifier expectations", () => {
   test("success_with_output classifies complete", async () => {

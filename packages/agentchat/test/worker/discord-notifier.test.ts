@@ -5,6 +5,18 @@ import {
   postToDiscord,
 } from "../../src/worker/discord-notifier.js";
 
+function firstCall<T extends unknown[]>(calls: T[]): T {
+  const call = calls[0];
+  if (call === undefined) throw new Error("expected mock to be called");
+  return call;
+}
+
+function fetchCall(fetchMock: ReturnType<typeof mock>): [string | URL | Request, RequestInit?] {
+  return firstCall(
+    fetchMock.mock.calls as unknown as Array<[string | URL | Request, RequestInit?]>,
+  );
+}
+
 describe("postToDiscord", () => {
   it("no-ops when webhookUrl is undefined", async () => {
     const fetchMock = mock(async () => new Response("", { status: 200 }));
@@ -22,7 +34,7 @@ describe("postToDiscord", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(ok).toBe(true);
-    const [url, init] = fetchMock.mock.calls[0]!;
+    const [url, init] = fetchCall(fetchMock);
     expect(url).toBe("https://discord.com/api/webhooks/abc");
     expect((init as RequestInit | undefined)?.method).toBe("POST");
     const body = JSON.parse(String((init as RequestInit | undefined)?.body));
@@ -71,7 +83,8 @@ describe("postToDiscord", () => {
       { username: "Penumbra / Codex", avatar_url: "https://example.com/codex.png" },
     );
 
-    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    const [, init] = fetchCall(fetchMock);
+    const body = JSON.parse(String((init as RequestInit | undefined)?.body));
     expect(body.username).toBe("Penumbra / Codex");
     expect(body.avatar_url).toBe("https://example.com/codex.png");
   });
