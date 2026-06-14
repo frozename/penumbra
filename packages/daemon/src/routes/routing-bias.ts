@@ -8,15 +8,19 @@ import {
 import { z } from "zod";
 import { json, bodyJson } from "./_helpers.js";
 
-const SetInputSchema = z.object({
-  scope: z.enum(["provider", "agent"]),
-  value: z.string().min(1),
-  mode: z.enum(["boost", "divert", "exclude"]),
-  weight: z.number().min(0).max(2.0).optional(),
-  ttl_seconds: z.number().int().positive().optional(),
-  expires_at: z.string().datetime().optional(),
-  reason: z.string().optional(),
-});
+const SetInputSchema = z
+  .object({
+    scope: z.enum(["provider", "agent"]),
+    value: z.string().min(1),
+    mode: z.enum(["boost", "divert", "exclude"]),
+    weight: z.number().min(0).max(2.0).optional(),
+    ttl_seconds: z.number().int().positive().optional(),
+    expires_at: z.string().datetime().optional(),
+    reason: z.string().optional(),
+  })
+  .refine((data) => data.ttl_seconds != null || data.expires_at != null, {
+    message: "Set requires either ttl_seconds or expires_at",
+  });
 
 const ListInputSchema = z.object({
   scope: z.enum(["provider", "agent"]).optional(),
