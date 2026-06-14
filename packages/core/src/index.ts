@@ -285,6 +285,18 @@ export {
   type ReadSubscriptionPressureOpts,
 } from "./readers/subscription-pressure.js";
 export {
+  readRoutingBiases,
+  type RoutingBias,
+  type ReadRoutingBiasesOpts,
+} from "./readers/routing-bias.js";
+export {
+  setRoutingBias,
+  clearRoutingBias,
+  type SetRoutingBiasArgs,
+  type ClearRoutingBiasArgs,
+  type ClearRoutingBiasResult,
+} from "./writers/routing-bias.js";
+export {
   createSubscriptionPressureCache,
   type SubscriptionPressureCache,
   type SubscriptionPressureCacheOptions,

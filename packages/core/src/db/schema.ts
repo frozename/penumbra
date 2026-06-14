@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 
 // 34 = isolated_install handoff column (this branch) + one-open-lane unique
 // index with dedupe (main's 33); the dedupe marker re-runs once, idempotently.
-export const SCHEMA_VERSION = 34;
+export const SCHEMA_VERSION = 35;
 const LANE_LEDGER_OPEN_DEDUPE_SCHEMA_META_KEY = "lane_ledger_open_dedupe_schema_version";
 
 export interface ReleaseT1RollupClaimsOpts {
@@ -1071,7 +1071,24 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
         value      TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       );
+
+      -- Fleet-global routing bias store. No user_context/RBAC column by decision.
+      CREATE TABLE IF NOT EXISTS routing_bias (
+        bias_id    TEXT PRIMARY KEY,
+        scope      TEXT NOT NULL,
+        value      TEXT NOT NULL,
+        mode       TEXT NOT NULL,
+        weight     REAL,
+        reason     TEXT,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        UNIQUE(scope, value, mode)
+      );
     `);
+
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_routing_bias_scope_expiry ON routing_bias(scope, expires_at)`,
+    );
 
     addColumnIfMissing(db, "notification_outbox", "attempt_count", "INTEGER NOT NULL DEFAULT 0");
     addColumnIfMissing(db, "notification_outbox", "deliver_after", "INTEGER");
