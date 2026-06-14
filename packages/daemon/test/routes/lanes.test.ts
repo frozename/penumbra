@@ -82,7 +82,12 @@ function insertHandoff(
   daemon: ReturnType<typeof startTestDaemon>,
   handoffId: string,
   agent: string,
-  opts: { parent_handoff_id?: string | null; root_handoff_id?: string | null } = {},
+  opts: {
+    parent_handoff_id?: string | null;
+    root_handoff_id?: string | null;
+    message?: string;
+    project_id?: string | null;
+  } = {},
 ): void {
   daemon.services.db
     .prepare(
@@ -96,12 +101,12 @@ function insertHandoff(
     .run(
       handoffId,
       "2026-04-23T12:00:00.000Z",
-      "proj",
+      opts.project_id ?? "proj",
       "conv",
       "maestro",
       agent,
       null,
-      "Task type: implement_small",
+      opts.message ?? "Task type: implement_small",
       "completed",
       "worker",
       "2026-04-23T12:01:00.000Z",
@@ -789,6 +794,71 @@ test("manual open with a mismatched task_class returns 409 instead of adopting t
     expect(matching.status).toBe(200);
     const matchingBody = (await matching.json()) as { lane_id: string };
     expect(matchingBody.lane_id).toBe("lane-class-original");
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("manual open stores recalled_memory_ids from implementer handoff recall hits", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const recallArgs: unknown[] = [];
+    daemon.services.recallReader.recall = async (args) => {
+      recallArgs.push(args);
+      return [
+        { id: "manual-m1", title: "manual memo 1", body: "first" },
+        { id: "manual-m2", title: "manual memo 2", body: "second" },
+      ] as any;
+    };
+    insertHandoff(daemon, "h-manual-recall", "codex", {
+      message: "Fix lane memory authorization",
+      project_id: "penumbra",
+    });
+
+    const opened = await postJson(daemon, "/lanes/open", {
+      lane_id: "lane-manual-recall",
+      implementer_handoff: "h-manual-recall",
+      task_class: "BOUNDARY",
+    });
+
+    expect(opened.status).toBe(200);
+    expect(await opened.json()).toMatchObject({
+      lane_id: "lane-manual-recall",
+      recalled_memory_ids: ["manual-m1", "manual-m2"],
+      recalled_query: "Fix lane memory authorization task_class:BOUNDARY",
+    });
+    expect(recallArgs).toHaveLength(1);
+    expect(recallArgs[0]).toMatchObject({
+      query: "Fix lane memory authorization task_class:BOUNDARY",
+      limit: 8,
+      project_id: "penumbra",
+    });
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("manual open stores empty recalled_memory_ids when implementer handoff recall has no hits", async () => {
+  const daemon = startTestDaemon();
+  try {
+    daemon.services.recallReader.recall = async () => [] as any;
+    insertHandoff(daemon, "h-manual-no-recall", "codex", {
+      message: "No matching memories",
+      project_id: "penumbra",
+    });
+
+    const opened = await postJson(daemon, "/lanes/open", {
+      lane_id: "lane-manual-no-recall",
+      implementer_handoff: "h-manual-no-recall",
+      task_class: "STANDARD",
+    });
+
+    expect(opened.status).toBe(200);
+    expect(await opened.json()).toMatchObject({
+      lane_id: "lane-manual-no-recall",
+      recalled_memory_ids: [],
+      recalled_query: "No matching memories task_class:STANDARD",
+    });
   } finally {
     daemon.stop();
   }

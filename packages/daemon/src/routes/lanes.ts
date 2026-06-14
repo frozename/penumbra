@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Services, TaskClass } from "@penumbra/core";
 import {
+  RecallRequestSchema,
   TaskClassSchema,
   closeLane,
   getClosedLaneRoundCountForHandoffLineage,
@@ -12,8 +13,10 @@ import {
   type LaneGateStatus,
   LaneCloseMetadataSchema,
   LANE_CLOSE_METADATA_MAX_SERIALIZED_BYTES,
+  type RecallResult,
 } from "@penumbra/core";
 
+import { autoRecallForDispatch } from "../dispatch/auto-recall.js";
 import { json } from "./_helpers.js";
 const OpenLaneBodySchema = z.object({
   lane_id: z.string().min(1),
@@ -90,6 +93,11 @@ export async function lanesOpenRoute(req: Request, services: Services): Promise<
   }
 
   const ts_opened = services.clock().toISOString();
+  const recall = await recallForManualOpen(
+    services,
+    parsed.data.implementer_handoff,
+    parsed.data.task_class as TaskClass,
+  );
   try {
     insertLane(services.db, {
       lane_id: parsed.data.lane_id,
@@ -97,7 +105,8 @@ export async function lanesOpenRoute(req: Request, services: Services): Promise<
       task_class: parsed.data.task_class as TaskClass,
       implementer_handoff: parsed.data.implementer_handoff,
       gate_status: "open",
-      recalled_memory_ids: [],
+      recalled_memory_ids: recall.recalled_memory_ids,
+      recalled_query: recall.recalled_query,
       metadata_json: "{}",
     });
   } catch (err) {
@@ -113,6 +122,54 @@ export async function lanesOpenRoute(req: Request, services: Services): Promise<
     throw new Error(`lane not found after insert: ${parsed.data.lane_id}`);
   }
   return json(opened);
+}
+
+async function recallForManualOpen(
+  services: Services,
+  implementer_handoff: string,
+  task_class: TaskClass,
+): Promise<{ recalled_memory_ids: string[]; recalled_query: string | null }> {
+  const handoff = services.db
+    .query<
+      { message: string; project_id: string | null },
+      [string]
+    >(`SELECT message, project_id FROM handoffs WHERE handoff_id = ? LIMIT 1`)
+    .get(implementer_handoff);
+  if (!handoff?.project_id) {
+    return { recalled_memory_ids: [], recalled_query: null };
+  }
+
+  const auto = await autoRecallForDispatch(
+    {
+      prompt: handoff.message,
+      task_class,
+      project_id: handoff.project_id,
+    },
+    {
+      memoryRecall: async (args) => {
+        const recallReq = RecallRequestSchema.parse({
+          query: args.query,
+          limit: args.top_k,
+          project_id: args.project_id ?? null,
+        });
+        const results: RecallResult[] = await services.recallReader.recall(recallReq);
+        return {
+          hits: results.map((r) => ({
+            id: r.id,
+            title: r.title ?? "",
+            snippet: r.body,
+            tier: r.tier,
+          })),
+        };
+      },
+      logger: (level, msg, meta) =>
+        services.log[level]?.({ ...meta, event: "lane.open.auto_recall" }, msg),
+    },
+  );
+  return {
+    recalled_memory_ids: auto.recalled_memory_ids,
+    recalled_query: auto.recalled_query || null,
+  };
 }
 
 export async function lanesCloseRoute(req: Request, services: Services): Promise<Response> {
