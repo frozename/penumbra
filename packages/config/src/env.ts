@@ -888,6 +888,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: 1,
     description: "Oversampling multiplier for T2 candidate retrieval.",
   },
+  PENUMBRA_RECALL_VERIFIED_BOOST: {
+    schema: Bool,
+    default: false,
+    description: "Boost recently verified T2 memories during recall ranking.",
+  },
   PENUMBRA_T2_REEMBED_ENABLED: {
     schema: Bool,
     default: false,

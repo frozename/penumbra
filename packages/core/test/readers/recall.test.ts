@@ -316,13 +316,21 @@ test("oversampling retrieves a crowded-out t2 row and lets it survive fusion", a
 
   for (let i = 1; i <= 19; i++) {
     const value = i / 1000;
-    await seedT1WithVector(`t1-rank-${i.toString().padStart(2, "0")}`, vectorWithHead(value), "2026-04-20T00:00:00Z");
+    await seedT1WithVector(
+      `t1-rank-${i.toString().padStart(2, "0")}`,
+      vectorWithHead(value),
+      "2026-04-20T00:00:00Z",
+    );
   }
   await seedT1WithVector("shared-crowded", vectorWithHead(0.02), "2026-04-20T00:00:00Z");
 
   for (let i = 1; i <= 21; i++) {
     const value = i / 1000;
-    await seedT2WithVector(`t2-rank-${i.toString().padStart(2, "0")}`, vectorWithHead(value), "2026-04-21T00:00:00Z");
+    await seedT2WithVector(
+      `t2-rank-${i.toString().padStart(2, "0")}`,
+      vectorWithHead(value),
+      "2026-04-21T00:00:00Z",
+    );
   }
   await seedT2WithVector("shared-crowded", vectorWithHead(0.022), "2026-04-21T00:00:00Z");
 
@@ -354,6 +362,66 @@ test("oversampling retrieves a crowded-out t2 row and lets it survive fusion", a
   } finally {
     if (prev === undefined) delete process.env.PENUMBRA_T2_OVERSAMPLE_FACTOR;
     else process.env.PENUMBRA_T2_OVERSAMPLE_FACTOR = prev;
+  }
+});
+
+test("verified t2 boost is flag-gated and preserves default RRF ordering", async () => {
+  const queryVec = vectorWithHead(0);
+  const fixedEmbedder = {
+    name: "fixed-embedder",
+    dim: 384,
+    async embed(_texts: string[]) {
+      return [queryVec];
+    },
+  };
+
+  await seedT1WithVector("unverified-t1", vectorWithHead(0.001), "2026-04-20T00:00:00Z");
+  await seedT2WithVector("verified-t2", vectorWithHead(0.001), "2026-04-20T00:00:00Z");
+  db.run("UPDATE t2_memories SET last_verified_at = ? WHERE memory_id = ?", [
+    new Date().toISOString(),
+    "verified-t2",
+  ]);
+  db.run(
+    `INSERT INTO t2_memory_verification_events(
+       event_id, memory_id, verifier_actor, session_id, verified_at
+     ) VALUES (?, ?, ?, ?, ?)`,
+    [
+      "verify-verified-t2",
+      "verified-t2",
+      "tester",
+      "session-verified-t2",
+      new Date().toISOString(),
+    ],
+  );
+
+  const prev = process.env.PENUMBRA_RECALL_VERIFIED_BOOST;
+  try {
+    delete process.env.PENUMBRA_RECALL_VERIFIED_BOOST;
+    const readerDefault = new RecallReader({ db, embedder: fixedEmbedder as any });
+    const baseline = await readerDefault.recall({
+      query: "verified boost query",
+      project_id: "p1",
+      limit: 10,
+      include_raw: false,
+      min_score: 0,
+    });
+    expect(baseline.map((r) => r.id).slice(0, 2)).toEqual(["unverified-t1", "verified-t2"]);
+
+    process.env.PENUMBRA_RECALL_VERIFIED_BOOST = "1";
+    const readerBoosted = new RecallReader({ db, embedder: fixedEmbedder as any });
+    const boosted = await readerBoosted.recall({
+      query: "verified boost query",
+      project_id: "p1",
+      limit: 10,
+      include_raw: false,
+      min_score: 0,
+    });
+
+    expect(boosted.map((r) => r.id).slice(0, 2)).toEqual(["verified-t2", "unverified-t1"]);
+    expect(boosted[0]?.fusedScore).toBe(baseline[1]?.fusedScore);
+  } finally {
+    if (prev === undefined) delete process.env.PENUMBRA_RECALL_VERIFIED_BOOST;
+    else process.env.PENUMBRA_RECALL_VERIFIED_BOOST = prev;
   }
 });
 

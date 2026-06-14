@@ -5,6 +5,11 @@ import type { RecallRequest, RecallResult } from "../schemas/recall.js";
 import { fuseRRF, type RankedResult } from "./rrf.js";
 import { hybridSearch } from "./hybrid.js";
 
+type RecallPayload = RecallResult & { verification_count?: number };
+
+const VERIFIED_BOOST_MULTIPLIER = 1.05;
+const VERIFIED_RECENCY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
 export class RecallReader {
   private readonly db: Database;
   private readonly embedder: Embedder;
@@ -66,7 +71,7 @@ export class RecallReader {
       [qvec] = await this.embedder.embed([req.query]);
     }
 
-    let t0Results: RankedResult<RecallResult>[] = [];
+    let t0Results: RankedResult<RecallPayload>[] = [];
     if (requestedSources.includes("t0")) {
       const raw = queryT0(this.db, {
         query: req.query,
@@ -99,7 +104,7 @@ export class RecallReader {
         }));
     }
 
-    let t1Results: RankedResult<RecallResult>[] = [];
+    let t1Results: RankedResult<RecallPayload>[] = [];
     if (requestedSources.includes("t1") && qvec) {
       type T1Row = {
         rollup_id: string;
@@ -136,7 +141,7 @@ export class RecallReader {
         );
 
       t1Results = t1Rows
-        .map((r): RankedResult<RecallResult> => {
+        .map((r): RankedResult<RecallPayload> => {
           const score = toScore(r.distance);
           return {
             id: r.rollup_id,
@@ -162,7 +167,7 @@ export class RecallReader {
         .filter((r) => r.score >= req.min_score);
     }
 
-    let t2Results: RankedResult<RecallResult>[] = [];
+    let t2Results: RankedResult<RecallPayload>[] = [];
     if (requestedSources.includes("t2") && qvec) {
       type T2Row = {
         memory_id: string;
@@ -175,15 +180,22 @@ export class RecallReader {
         source_quote: string | null;
         learned_at: string | null;
         last_verified_at: string | null;
+        verification_count: number;
         distance: number;
       };
       const t2Rows = this.db
         .query<T2Row, [Float32Array, number, string | null, string | null]>(
           `SELECT m.memory_id, m.project_id, m.title, m.body, m.created_at, m.source_session_ids,
                   m.why, m.source_quote, m.learned_at, m.last_verified_at,
+                  COALESCE(ve.verification_count, 0) AS verification_count,
                   v.distance
              FROM t2_vec v
              JOIN t2_memories m ON m.rowid = v.rowid
+        LEFT JOIN (
+                  SELECT memory_id, COUNT(*) AS verification_count
+                    FROM t2_memory_verification_events
+                   GROUP BY memory_id
+                  ) ve ON ve.memory_id = m.memory_id
             WHERE v.embedding MATCH ?
               AND k = ?
               AND (? IS NULL OR m.project_id = ?)
@@ -193,7 +205,7 @@ export class RecallReader {
         .all(qvec, perTierLimit, req.project_id, req.project_id);
 
       t2Results = t2Rows
-        .map((r): RankedResult<RecallResult> => {
+        .map((r): RankedResult<RecallPayload> => {
           const score = toScore(r.distance);
           return {
             id: r.memory_id,
@@ -214,6 +226,7 @@ export class RecallReader {
               source_quote: r.source_quote,
               learned_at: r.learned_at,
               last_verified_at: r.last_verified_at,
+              verification_count: r.verification_count,
               payload: { memory_id: r.memory_id },
             },
           };
@@ -224,14 +237,55 @@ export class RecallReader {
     const lists = [t0Results, t1Results, t2Results];
     const sourceMap = ["t0", "t1", "t2"] as const;
 
-    const fused = fuseRRF(lists, { k: req.rrf_k });
+    const fused = applyVerifiedBoost(
+      fuseRRF(lists, { k: req.rrf_k }),
+      isVerifiedBoostEnabled(process.env),
+    );
 
-    return fused.slice(0, limit).map((f) => ({
-      ...f.payload,
-      fusedScore: f.fusedScore,
-      sources: f.sources.map((idx) => sourceMap[idx]!),
-    }));
+    return fused.slice(0, limit).map((f) => {
+      const { verification_count: _verificationCount, ...payload } = f.payload;
+      return {
+        ...payload,
+        fusedScore: f.fusedScore,
+        sources: f.sources.map((idx) => sourceMap[idx]!),
+      };
+    });
   }
+}
+
+function applyVerifiedBoost<T extends RecallPayload>(
+  fused: Array<RankedResult<T> & { fusedScore: number; sources: number[] }>,
+  enabled: boolean,
+): Array<RankedResult<T> & { fusedScore: number; sources: number[] }> {
+  if (!enabled || fused.length < 2) return fused;
+  const now = Date.now();
+  return [...fused].sort((a, b) => {
+    const aScore = boostedScore(a, now);
+    const bScore = boostedScore(b, now);
+    if (aScore !== bScore) return bScore - aScore;
+    return 0;
+  });
+}
+
+function boostedScore<T extends RecallPayload>(
+  item: RankedResult<T> & { fusedScore: number },
+  now: number,
+): number {
+  return isVerifiedBoostEligible(item.payload, now)
+    ? item.fusedScore * VERIFIED_BOOST_MULTIPLIER
+    : item.fusedScore;
+}
+
+function isVerifiedBoostEligible(payload: RecallPayload, now: number): boolean {
+  if (payload.tier !== "t2") return false;
+  if ((payload.verification_count ?? 0) > 0) return true;
+  if (!payload.last_verified_at) return false;
+  const verifiedAt = new Date(payload.last_verified_at).getTime();
+  return Number.isFinite(verifiedAt) && now - verifiedAt <= VERIFIED_RECENCY_WINDOW_MS;
+}
+
+function isVerifiedBoostEnabled(env: NodeJS.ProcessEnv): boolean {
+  return ["1", "true", "yes"].includes((env.PENUMBRA_RECALL_VERIFIED_BOOST ?? "").toLowerCase());
 }
 
 export interface QueryT0Options {
