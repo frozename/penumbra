@@ -121,6 +121,12 @@ function isEnvTruthy(value: string | undefined): boolean {
   return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
 }
 
+function renderProjectBriefInjectedText(briefMd: string): string | null {
+  const brief = briefMd.trim();
+  if (brief.length === 0) return null;
+  return ["## Project brief", "", brief].join("\n");
+}
+
 type LongLivedTickExemptionResult =
   | { ok: true; tick: { id: string; agent_id: string } }
   | { ok: false; reason: string };
@@ -866,6 +872,19 @@ export async function chainStartInternal(
       );
     } else if (autoRecallEnabled) {
       const AUTO_RECALL_TIMEOUT_MS = 1500;
+      const injectedSections: string[] = [];
+      if (isEnvTruthy(process.env.PENUMBRA_AUTO_RECALL_PROJECT_BRIEF)) {
+        const projectBrief = services.db
+          .query<
+            { brief_md: string },
+            [string]
+          >(`SELECT brief_md FROM project_briefs WHERE project_id=? ORDER BY generated_at DESC LIMIT 1`)
+          .get(input.project_id);
+        if (projectBrief?.brief_md) {
+          const injectedProjectBrief = renderProjectBriefInjectedText(projectBrief.brief_md);
+          if (injectedProjectBrief) injectedSections.push(injectedProjectBrief);
+        }
+      }
       const autoPromise = autoRecallForDispatch(
         {
           prompt: input.message,
@@ -907,8 +926,11 @@ export async function chainStartInternal(
         recalled_memories = auto.recalled_memories;
         recalled_query = auto.recalled_query || null;
         if (auto.injected_text) {
-          handoffMessage = `${auto.injected_text}\n\n${stamped.message}`;
+          injectedSections.push(auto.injected_text);
         }
+      }
+      if (injectedSections.length > 0) {
+        handoffMessage = `${injectedSections.join("\n\n")}\n\n${stamped.message}`;
       }
     }
   }

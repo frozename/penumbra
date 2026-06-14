@@ -64,6 +64,18 @@ function getLane(services: Services, lane_id: string): any {
   return services.db.query<any, [string]>(`SELECT * FROM lane_ledger WHERE lane_id=?`).get(lane_id);
 }
 
+function insertProjectBrief(services: Services, projectId: string, briefMd: string): void {
+  services.db.exec(
+    "INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run) VALUES('cycle-brief', 1, 'manual', 0, 'complete', '[]')",
+  );
+  services.db
+    .prepare(
+      `INSERT INTO project_briefs(project_id, brief_md, source_memory_ids, generated_at, generated_by_cycle)
+       VALUES(?, ?, '[]', 2, 'cycle-brief')`,
+    )
+    .run(projectId, briefMd);
+}
+
 test("POST /chains/start auto-recalls STANDARD context and opens a lane", async () => {
   const services = tempServices(true);
   services.recallReader.recall = async () =>
@@ -112,6 +124,122 @@ test("POST /chains/start auto-recalls STANDARD context and opens a lane", async 
   const lane = getLane(services, body.lane_id);
   expect(lane.gate_status).toBe("open");
   expect(JSON.parse(lane.recalled_memory_ids)).toEqual(["m1", "m2", "m3"]);
+});
+
+test("POST /chains/start prepends project brief when auto-recall project brief flag is enabled", async () => {
+  const services = tempServices(true);
+  insertProjectBrief(
+    services,
+    "penumbra",
+    "# Project Brief: penumbra\n\nCurrent architectural brief.",
+  );
+  services.recallReader.recall = async () => [{ id: "m1", title: "memo1" }] as any;
+  const previous = process.env.PENUMBRA_AUTO_RECALL_PROJECT_BRIEF;
+  process.env.PENUMBRA_AUTO_RECALL_PROJECT_BRIEF = "true";
+
+  try {
+    const res = await chainsStartRoute(
+      new Request("http://x/chains/start", {
+        method: "POST",
+        body: JSON.stringify({
+          initial_agent: "planner",
+          message: "do the thing",
+          task_class: "STANDARD",
+          project_id: "penumbra",
+        }),
+      }),
+      services,
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { handoff_id: string };
+    const handoff = getHandoff(services, body.handoff_id);
+    expect(handoff.message).toStartWith(
+      "## Project brief\n\n# Project Brief: penumbra\n\nCurrent architectural brief.",
+    );
+    expect(handoff.message.indexOf("## Project brief")).toBeLessThan(
+      handoff.message.indexOf("## Relevant prior context"),
+    );
+  } finally {
+    if (previous === undefined) {
+      delete process.env.PENUMBRA_AUTO_RECALL_PROJECT_BRIEF;
+    } else {
+      process.env.PENUMBRA_AUTO_RECALL_PROJECT_BRIEF = previous;
+    }
+  }
+});
+
+test("POST /chains/start does not inject project brief when project brief flag is disabled", async () => {
+  const services = tempServices(true);
+  insertProjectBrief(
+    services,
+    "penumbra",
+    "# Project Brief: penumbra\n\nCurrent architectural brief.",
+  );
+  services.recallReader.recall = async () => [{ id: "m1", title: "memo1" }] as any;
+  const previous = process.env.PENUMBRA_AUTO_RECALL_PROJECT_BRIEF;
+  delete process.env.PENUMBRA_AUTO_RECALL_PROJECT_BRIEF;
+
+  try {
+    const res = await chainsStartRoute(
+      new Request("http://x/chains/start", {
+        method: "POST",
+        body: JSON.stringify({
+          initial_agent: "planner",
+          message: "do the thing",
+          task_class: "STANDARD",
+          project_id: "penumbra",
+        }),
+      }),
+      services,
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { handoff_id: string };
+    const handoff = getHandoff(services, body.handoff_id);
+    expect(handoff.message).not.toContain("## Project brief");
+    expect(handoff.message).toContain("## Relevant prior context");
+  } finally {
+    if (previous === undefined) {
+      delete process.env.PENUMBRA_AUTO_RECALL_PROJECT_BRIEF;
+    } else {
+      process.env.PENUMBRA_AUTO_RECALL_PROJECT_BRIEF = previous;
+    }
+  }
+});
+
+test("POST /chains/start does not inject project brief when no brief exists", async () => {
+  const services = tempServices(true);
+  services.recallReader.recall = async () => [{ id: "m1", title: "memo1" }] as any;
+  const previous = process.env.PENUMBRA_AUTO_RECALL_PROJECT_BRIEF;
+  process.env.PENUMBRA_AUTO_RECALL_PROJECT_BRIEF = "true";
+
+  try {
+    const res = await chainsStartRoute(
+      new Request("http://x/chains/start", {
+        method: "POST",
+        body: JSON.stringify({
+          initial_agent: "planner",
+          message: "do the thing",
+          task_class: "STANDARD",
+          project_id: "penumbra",
+        }),
+      }),
+      services,
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { handoff_id: string };
+    const handoff = getHandoff(services, body.handoff_id);
+    expect(handoff.message).not.toContain("## Project brief");
+    expect(handoff.message).toContain("## Relevant prior context");
+  } finally {
+    if (previous === undefined) {
+      delete process.env.PENUMBRA_AUTO_RECALL_PROJECT_BRIEF;
+    } else {
+      process.env.PENUMBRA_AUTO_RECALL_PROJECT_BRIEF = previous;
+    }
+  }
 });
 
 test("POST /chains/start with TRIVIAL opens a lane and calls recall with top_k=3", async () => {
