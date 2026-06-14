@@ -70,6 +70,9 @@ import {
   SubscriptionPressureStatusInputShape,
   subscriptionPressureStatusHandler,
 } from "./subscription-pressure-status.js";
+import { RoutingBiasListInputShape, routingBiasListHandler } from "./routing-bias-list.js";
+import { RoutingBiasSetInputShape, routingBiasSetHandler } from "./routing-bias-set.js";
+import { RoutingBiasClearInputShape, routingBiasClearHandler } from "./routing-bias-clear.js";
 import { AgentRankInputShape, agentRankHandler } from "./agent-rank.js";
 import { FleetLatencyInputShape, fleetLatencyHandler } from "./fleet-latency.js";
 import { AgentRecommendInputShape, agentRecommendHandler } from "./agent-recommend.js";
@@ -836,6 +839,33 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     },
     makeHandler: subscriptionPressureStatusHandler as unknown as ToolDef["makeHandler"],
     readOnly: true,
+  },
+  routing_bias_list: {
+    descriptor: {
+      description:
+        "List active routing biases with human-readable time_remaining. Optionally filter by scope or value.",
+      inputSchema: RoutingBiasListInputShape,
+    },
+    makeHandler: routingBiasListHandler as unknown as ToolDef["makeHandler"],
+    readOnly: true,
+  },
+  routing_bias_set: {
+    descriptor: {
+      description:
+        "Set a routing bias (boost, divert, exclude) for an agent or provider. Idempotent at the (scope, value, mode) key.",
+      inputSchema: RoutingBiasSetInputShape,
+    },
+    makeHandler: routingBiasSetHandler as unknown as ToolDef["makeHandler"],
+    readOnly: false,
+  },
+  routing_bias_clear: {
+    descriptor: {
+      description:
+        "Clear routing biases by bias_id, (scope + value), or all:true with confirm:true guard.",
+      inputSchema: RoutingBiasClearInputShape,
+    },
+    makeHandler: routingBiasClearHandler as unknown as ToolDef["makeHandler"],
+    readOnly: false,
   },
   agent_rank: {
     descriptor: {

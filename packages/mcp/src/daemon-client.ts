@@ -363,6 +363,39 @@ export class DaemonClient {
     return this.get(q ? `/usage/subscription_pressure?${q}` : "/usage/subscription_pressure");
   }
 
+  async routingBiasList(req: {
+    scope?: string;
+    value?: string;
+  }): Promise<{ biases: Array<Record<string, unknown>> }> {
+    const qs = new URLSearchParams();
+    if (req.scope) qs.set("scope", req.scope);
+    if (req.value) qs.set("value", req.value);
+    const q = qs.toString();
+    return this.get(q ? `/routing/bias?${q}` : "/routing/bias");
+  }
+
+  async routingBiasSet(req: {
+    scope: string;
+    value: string;
+    mode: string;
+    weight?: number;
+    ttl_seconds?: number;
+    expires_at?: string;
+    reason?: string;
+  }): Promise<Record<string, unknown>> {
+    return this.post("/routing/bias", req);
+  }
+
+  async routingBiasClear(req: {
+    bias_id?: string;
+    scope?: string;
+    value?: string;
+    all?: boolean;
+    confirm?: boolean;
+  }): Promise<{ cleared_count: number }> {
+    return this.post("/routing/bias/clear", req);
+  }
+
   async agentRank(req: {
     task_type: string;
     since?: string;

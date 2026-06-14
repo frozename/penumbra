@@ -66,6 +66,11 @@ import {
   usageSubscriptionPressureRoute,
 } from "./routes/usage.js";
 import {
+  routingBiasListRoute,
+  routingBiasSetRoute,
+  routingBiasClearRoute,
+} from "./routes/routing-bias.js";
+import {
   agentsPerformanceDispatchRoute,
   agentsPerformanceImportMarkdownRoute,
   agentsPerformanceMarkdownRoute,
@@ -609,6 +614,15 @@ export function createDaemonFetchHandler(opts: {
     }
     if (req.method === "GET" && url.pathname === "/usage/subscription_pressure") {
       return usageSubscriptionPressureRoute(req, opts.services);
+    }
+    if (req.method === "GET" && url.pathname === "/routing/bias") {
+      return routingBiasListRoute(req, opts.services);
+    }
+    if (req.method === "POST" && url.pathname === "/routing/bias") {
+      return routingBiasSetRoute(req, opts.services);
+    }
+    if (req.method === "POST" && url.pathname === "/routing/bias/clear") {
+      return routingBiasClearRoute(req, opts.services);
     }
     if (req.method === "POST" && url.pathname === "/agents/performance/reconciler") {
       return agentsPerformanceReconcilerRoute(req, opts.services);
