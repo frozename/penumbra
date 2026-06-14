@@ -1,7 +1,7 @@
 import { beforeAll, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { applySchema, loadSqliteVec } from "@penumbra/core";
-import { runDreamCycle } from "../../src/dreaming/cycle.js";
+import { isDreamSpendAffordable, runDreamCycle } from "../../src/dreaming/cycle.js";
 import type { DreamConfig } from "../../src/dreaming/config.js";
 
 try {
@@ -64,6 +64,79 @@ function testConfig(overrides?: Partial<DreamConfig>): DreamConfig {
   };
 }
 
+it("treats zero dream spend caps as disabled and enforces positive caps independently", () => {
+  expect(
+    isDreamSpendAffordable({
+      perCycleUsd: 0,
+      dailyUsd: 0,
+      laneFraction: 0.65,
+      cycleSpentLaneUsd: 999,
+      dailySpentLaneUsd: 999,
+      usd: 0.01,
+    }),
+  ).toBe(true);
+  expect(
+    isDreamSpendAffordable({
+      perCycleUsd: 1,
+      dailyUsd: 20,
+      laneFraction: 0.65,
+      cycleSpentLaneUsd: 0,
+      dailySpentLaneUsd: 0,
+      usd: 0.01,
+    }),
+  ).toBe(true);
+  expect(
+    isDreamSpendAffordable({
+      perCycleUsd: 1,
+      dailyUsd: 20,
+      laneFraction: 0.65,
+      cycleSpentLaneUsd: 0.65,
+      dailySpentLaneUsd: 0,
+      usd: 0.01,
+    }),
+  ).toBe(false);
+  expect(
+    isDreamSpendAffordable({
+      perCycleUsd: 0,
+      dailyUsd: 20,
+      laneFraction: 0.25,
+      cycleSpentLaneUsd: 999,
+      dailySpentLaneUsd: 5.0,
+      usd: 0.01,
+    }),
+  ).toBe(false);
+  expect(
+    isDreamSpendAffordable({
+      perCycleUsd: 10,
+      dailyUsd: 0,
+      laneFraction: 0.5,
+      cycleSpentLaneUsd: 0,
+      dailySpentLaneUsd: 999,
+      usd: 1,
+    }),
+  ).toBe(true);
+  expect(
+    isDreamSpendAffordable({
+      perCycleUsd: 1,
+      dailyUsd: 1,
+      laneFraction: 0.5,
+      cycleSpentLaneUsd: 1,
+      dailySpentLaneUsd: 1,
+      usd: 0,
+    }),
+  ).toBe(true);
+  expect(
+    isDreamSpendAffordable({
+      perCycleUsd: 1,
+      dailyUsd: 1,
+      laneFraction: 0.5,
+      cycleSpentLaneUsd: 1,
+      dailySpentLaneUsd: 1,
+      usd: -1,
+    }),
+  ).toBe(true);
+});
+
 it("records llm spend on dream_cycles and trips daily cap on the next cycle", async () => {
   const db = openTestDb();
   seedMemory(db, "quality scoring candidate");
@@ -83,9 +156,13 @@ it("records llm spend on dream_cycles and trips daily cap on the next cycle", as
     .get(firstCycleId) as { llm_spent_usd: number };
   expect(firstCycle.llm_spent_usd).toBeGreaterThan(0);
 
-  const secondCycleId = await runDreamCycle(db, testConfig({ dailyUsd: firstCycle.llm_spent_usd }), {
-    scorer,
-  } as any);
+  const secondCycleId = await runDreamCycle(
+    db,
+    testConfig({ dailyUsd: firstCycle.llm_spent_usd }),
+    {
+      scorer,
+    } as any,
+  );
   const secondCycle = db
     .prepare(`SELECT outcome, bail_reason FROM dream_cycles WHERE cycle_id=?`)
     .get(secondCycleId) as { outcome: string; bail_reason: string | null };
@@ -112,9 +189,9 @@ it("defers a phase when its per-phase budget would be exceeded and still complet
     testConfig({
       perCycleUsd: 0.2,
       dailyUsd: 5,
-      ...( {
+      ...({
         phaseBudgetFractions: { llm: 0.1, embedding: 0.45, research: 0.45 },
-      } as any ),
+      } as any),
     }),
     { scorer } as any,
   );

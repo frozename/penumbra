@@ -93,6 +93,27 @@ export interface DreamCostMeter {
   record(phase: string, lane: DreamSpendLane, usd: number): void;
 }
 
+export function isDreamSpendAffordable(opts: {
+  perCycleUsd: number;
+  dailyUsd: number;
+  laneFraction: number;
+  cycleSpentLaneUsd: number;
+  dailySpentLaneUsd: number;
+  usd: number;
+}): boolean {
+  if (opts.usd <= 0) return true;
+  if (
+    opts.perCycleUsd > 0 &&
+    opts.cycleSpentLaneUsd + opts.usd > opts.perCycleUsd * opts.laneFraction
+  ) {
+    return false;
+  }
+  if (opts.dailyUsd > 0 && opts.dailySpentLaneUsd + opts.usd > opts.dailyUsd * opts.laneFraction) {
+    return false;
+  }
+  return true;
+}
+
 type RewriteLlmInvoker = <T extends z.ZodTypeAny>(
   input: LlmInvokeInput<T>,
 ) => Promise<LlmInvokeResult<T>>;
@@ -226,13 +247,15 @@ export async function runDreamCycle(
       const cycleSpend = getCycleSpend(db, cycleId);
       const dailySpend = getTodayLaneSpend(db, lane, todayStartMs);
       const laneFraction = budgetFractions[lane];
-      const perCycleLaneCap = config.perCycleUsd * laneFraction;
-      const dailyLaneCap = config.dailyUsd * laneFraction;
-      if (cycleSpend[lane] + normalizedUsd > perCycleLaneCap) {
-        deferredPhases.add(phase);
-        return false;
-      }
-      if (dailySpend + normalizedUsd > dailyLaneCap) {
+      const affordable = isDreamSpendAffordable({
+        perCycleUsd: config.perCycleUsd,
+        dailyUsd: config.dailyUsd,
+        laneFraction,
+        cycleSpentLaneUsd: cycleSpend[lane],
+        dailySpentLaneUsd: dailySpend,
+        usd: normalizedUsd,
+      });
+      if (!affordable) {
         deferredPhases.add(phase);
         return false;
       }
