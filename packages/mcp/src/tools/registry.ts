@@ -109,6 +109,7 @@ import { WorktreeCleanupInputShape, worktreeCleanupHandler } from "./worktree-cl
 import { FsGlobInputShape, fsGlobHandler } from "./fs-glob.js";
 import { FsGrepInputShape, fsGrepHandler } from "./fs-grep.js";
 import { FsReadInputShape, fsReadHandler } from "./fs-read.js";
+import { FsWriteInputShape, fsWriteHandler } from "./fs-write.js";
 import {
   PermissionListPendingInputShape,
   permissionListPendingHandler,
@@ -1183,6 +1184,15 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     },
     makeHandler: fsReadHandler as unknown as ToolDef["makeHandler"],
     readOnly: true,
+  },
+  fs_write: {
+    descriptor: {
+      description:
+        "Create or overwrite a single file scoped to a dispatch worktree. Creates missing parent directories. Writes atomically (temp-then-rename). Returns {path, bytes_written, created}. handoff_id defaults to PENUMBRA_HANDOFF_ID env var.",
+      inputSchema: FsWriteInputShape,
+    },
+    makeHandler: fsWriteHandler as unknown as ToolDef["makeHandler"],
+    readOnly: false,
   },
   daemon_reload_config: {
     descriptor: {

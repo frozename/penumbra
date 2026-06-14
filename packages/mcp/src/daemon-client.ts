@@ -635,6 +635,13 @@ export class DaemonClient {
     return this.post(`/worktrees/${encodeURIComponent(handoff_id)}/read`, args);
   }
 
+  async writeInWorktree(
+    handoff_id: string,
+    args: { path: string; content: string },
+  ): Promise<{ path: string; bytes_written: number; created: boolean }> {
+    return this.post(`/worktrees/${encodeURIComponent(handoff_id)}/write`, args);
+  }
+
   async cleanupWorktree(
     handoff_id: string,
     force?: boolean,

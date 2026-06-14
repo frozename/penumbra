@@ -167,7 +167,12 @@ import {
   workflowsHistoryRoute,
   workflowsSuggestRoute,
 } from "./routes/workflows.js";
-import { worktreesGlobRoute, worktreesGrepRoute, worktreesReadRoute } from "./routes/fs.js";
+import {
+  worktreesGlobRoute,
+  worktreesGrepRoute,
+  worktreesReadRoute,
+  worktreesWriteRoute,
+} from "./routes/fs.js";
 import { reloadConfigRoute } from "./routes/reload-config.js";
 import { reconcilerSweepOrphanPrsRoute, reconcilerVerdictsRoute } from "./routes/reconciler.js";
 import { otlpLogsRoute, otlpMetricsRoute, otlpTracesRoute } from "./routes/otlp.js";
@@ -898,6 +903,10 @@ export function createDaemonFetchHandler(opts: {
     const worktreeReadMatch = url.pathname.match(/^\/worktrees\/([^/]+)\/read$/);
     if (worktreeReadMatch && req.method === "POST") {
       return worktreesReadRoute(req, worktreeReadMatch[1]!, opts.services);
+    }
+    const worktreeWriteMatch = url.pathname.match(/^\/worktrees\/([^/]+)\/write$/);
+    if (worktreeWriteMatch && req.method === "POST") {
+      return worktreesWriteRoute(req, worktreeWriteMatch[1]!, opts.services);
     }
     if (req.method === "GET" && url.pathname === "/handoffs") {
       return handoffsListPendingRoute(req, daemonServices);
