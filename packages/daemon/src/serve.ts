@@ -172,6 +172,7 @@ import {
   worktreesGrepRoute,
   worktreesReadRoute,
   worktreesWriteRoute,
+  worktreesEditRoute,
 } from "./routes/fs.js";
 import { reloadConfigRoute } from "./routes/reload-config.js";
 import { reconcilerSweepOrphanPrsRoute, reconcilerVerdictsRoute } from "./routes/reconciler.js";
@@ -907,6 +908,10 @@ export function createDaemonFetchHandler(opts: {
     const worktreeWriteMatch = url.pathname.match(/^\/worktrees\/([^/]+)\/write$/);
     if (worktreeWriteMatch && req.method === "POST") {
       return worktreesWriteRoute(req, worktreeWriteMatch[1]!, opts.services);
+    }
+    const worktreeEditMatch = url.pathname.match(/^\/worktrees\/([^/]+)\/edit$/);
+    if (worktreeEditMatch && req.method === "POST") {
+      return worktreesEditRoute(req, worktreeEditMatch[1]!, opts.services);
     }
     if (req.method === "GET" && url.pathname === "/handoffs") {
       return handoffsListPendingRoute(req, daemonServices);

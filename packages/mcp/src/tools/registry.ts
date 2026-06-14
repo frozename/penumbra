@@ -110,6 +110,7 @@ import { FsGlobInputShape, fsGlobHandler } from "./fs-glob.js";
 import { FsGrepInputShape, fsGrepHandler } from "./fs-grep.js";
 import { FsReadInputShape, fsReadHandler } from "./fs-read.js";
 import { FsWriteInputShape, fsWriteHandler } from "./fs-write.js";
+import { FsEditInputShape, fsEditHandler } from "./fs-edit.js";
 import {
   PermissionListPendingInputShape,
   permissionListPendingHandler,
@@ -1192,6 +1193,15 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: FsWriteInputShape,
     },
     makeHandler: fsWriteHandler as unknown as ToolDef["makeHandler"],
+    readOnly: false,
+  },
+  fs_edit: {
+    descriptor: {
+      description:
+        "Perform an exact string-replace edit on an existing file scoped to a dispatch worktree. Writes atomically (temp-then-rename). Returns {path, replacements}. handoff_id defaults to PENUMBRA_HANDOFF_ID env var.",
+      inputSchema: FsEditInputShape,
+    },
+    makeHandler: fsEditHandler as unknown as ToolDef["makeHandler"],
     readOnly: false,
   },
   daemon_reload_config: {

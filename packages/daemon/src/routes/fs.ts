@@ -171,6 +171,107 @@ export async function worktreesWriteRoute(
   }
 }
 
+export async function worktreesEditRoute(
+  req: Request,
+  handoff_id: string,
+  services: Services,
+): Promise<Response> {
+  const wt = resolveWorktreeForHandoff(services, handoff_id);
+  if (!wt) {
+    return json(
+      { error: { code: "not_found", message: `worktree for handoff ${handoff_id} not found` } },
+      404,
+    );
+  }
+
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
+    body = {};
+  }
+
+  if (!body?.path || typeof body.path !== "string") {
+    return json({ error: { code: "invalid_args", message: "path (string) required" } }, 400);
+  }
+  if (typeof body.old_string !== "string") {
+    return json({ error: { code: "invalid_args", message: "old_string (string) required" } }, 400);
+  }
+  if (typeof body.new_string !== "string") {
+    return json({ error: { code: "invalid_args", message: "new_string (string) required" } }, 400);
+  }
+  if (body.old_string === body.new_string) {
+    return json(
+      { error: { code: "no_op", message: "old_string and new_string are identical" } },
+      400,
+    );
+  }
+
+  const replace_all = body.replace_all === true;
+
+  let resolvedPath: string;
+  try {
+    resolvedPath = await resolveInsideWorktree(body.path, wt.path);
+  } catch (err) {
+    if (err instanceof FsPathError) {
+      return json(
+        { error: { code: err.code, message: err.message } },
+        err.code === "outside_worktree" ? 400 : 404,
+      );
+    }
+    throw err;
+  }
+
+  try {
+    const content = fsNode.readFileSync(resolvedPath, "utf8");
+
+    let count = 0;
+    let idx = 0;
+    while ((idx = content.indexOf(body.old_string, idx)) !== -1) {
+      count++;
+      idx += body.old_string.length;
+    }
+
+    if (count === 0) {
+      return json(
+        { error: { code: "string_not_found", message: `old_string not found in file` } },
+        422,
+      );
+    }
+    if (count > 1 && !replace_all) {
+      return json(
+        {
+          error: {
+            code: "string_not_unique",
+            message: `old_string appears ${count} times; pass replace_all:true to replace all`,
+          },
+        },
+        422,
+      );
+    }
+
+    const updated = replace_all
+      ? content.split(body.old_string).join(body.new_string)
+      : content.replace(body.old_string, body.new_string);
+
+    const dir = path.dirname(resolvedPath);
+    const tmpFile = path.join(dir, `.penumbra-edit-${process.pid}-${Date.now()}.tmp`);
+    try {
+      fsNode.writeFileSync(tmpFile, updated, "utf8");
+      fsNode.renameSync(tmpFile, resolvedPath);
+    } catch (err) {
+      try {
+        fsNode.unlinkSync(tmpFile);
+      } catch {}
+      throw err;
+    }
+
+    return json({ path: body.path, replacements: count });
+  } catch (err: any) {
+    return json({ error: { code: "internal_error", message: err?.message ?? String(err) } }, 500);
+  }
+}
+
 export async function worktreesGlobRoute(
   req: Request,
   handoff_id: string,

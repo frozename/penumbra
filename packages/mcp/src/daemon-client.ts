@@ -642,6 +642,13 @@ export class DaemonClient {
     return this.post(`/worktrees/${encodeURIComponent(handoff_id)}/write`, args);
   }
 
+  async editInWorktree(
+    handoff_id: string,
+    args: { path: string; old_string: string; new_string: string; replace_all?: boolean },
+  ): Promise<{ path: string; replacements: number }> {
+    return this.post(`/worktrees/${encodeURIComponent(handoff_id)}/edit`, args);
+  }
+
   async cleanupWorktree(
     handoff_id: string,
     force?: boolean,
