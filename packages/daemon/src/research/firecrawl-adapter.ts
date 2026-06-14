@@ -33,6 +33,40 @@ export interface FirecrawlScrapeResponse {
   source_billed_usd?: number;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
+}
+
+export function normalizeFirecrawlSearchResponse(json: unknown): FirecrawlSearchResponse {
+  const root = asRecord(json);
+  const data = asRecord(root?.data);
+  const rawItems = Array.isArray(data?.web) ? data.web : Array.isArray(root?.data) ? root.data : [];
+
+  return {
+    data: rawItems
+      .map((rawItem) => {
+        const item = asRecord(rawItem) ?? {};
+        const url = String(item.url ?? "");
+        const markdown =
+          typeof item.markdown === "string" && item.markdown.length > 0
+            ? item.markdown
+            : typeof item.description === "string"
+              ? item.description
+              : undefined;
+
+        return {
+          url,
+          title: typeof item.title === "string" ? item.title : undefined,
+          markdown,
+          source_billed_usd:
+            typeof item.source_billed_usd === "number" ? item.source_billed_usd : undefined,
+        };
+      })
+      .filter((item) => item.url.length > 0),
+    source_billed_usd: undefined,
+  };
+}
+
 class DefaultFirecrawlTransport implements FirecrawlTransport {
   private apiKey: string;
   private baseUrl: string;
@@ -64,7 +98,8 @@ class DefaultFirecrawlTransport implements FirecrawlTransport {
       });
       throw err;
     }
-    return res.json() as Promise<FirecrawlSearchResponse>;
+    const json = await res.json();
+    return normalizeFirecrawlSearchResponse(json);
   }
 
   async scrape(args: { url: string }): Promise<FirecrawlScrapeResponse> {

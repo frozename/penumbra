@@ -2,6 +2,7 @@ import { expect, it } from "bun:test";
 import {
   FirecrawlAdapter,
   createResearchAdapter,
+  normalizeFirecrawlSearchResponse,
   type FirecrawlTransport,
   type FirecrawlSearchResponse,
   type FirecrawlScrapeResponse,
@@ -145,4 +146,72 @@ it("search without allowed_domains passes bare query to transport", async () => 
   expect(args?.query).toBe("allSettled");
   expect(args?.includeDomains).toBeUndefined();
   expect(args?.ignoreInvalidURLs).toBe(true);
+});
+
+it("normalizes Firecrawl v2 search web results using description as markdown", () => {
+  const response = normalizeFirecrawlSearchResponse({
+    success: true,
+    data: {
+      web: [{ url: "https://sqlite.org/wal.html", title: "WAL", description: "snippet text" }],
+    },
+    creditsUsed: 2,
+  });
+
+  expect(response).toEqual({
+    data: [{ url: "https://sqlite.org/wal.html", title: "WAL", markdown: "snippet text" }],
+    source_billed_usd: undefined,
+  });
+});
+
+it("normalizes legacy Firecrawl search arrays without changing markdown", () => {
+  const response = normalizeFirecrawlSearchResponse({
+    data: [{ url: "u", title: "t", markdown: "m" }],
+  });
+
+  expect(response).toEqual({
+    data: [{ url: "u", title: "t", markdown: "m" }],
+    source_billed_usd: undefined,
+  });
+});
+
+it("normalizes empty or malformed Firecrawl search payloads to no results", () => {
+  expect(normalizeFirecrawlSearchResponse({ data: { web: [] } })).toEqual({
+    data: [],
+    source_billed_usd: undefined,
+  });
+  expect(normalizeFirecrawlSearchResponse({})).toEqual({
+    data: [],
+    source_billed_usd: undefined,
+  });
+});
+
+it("normalizes Firecrawl search items with markdown precedence and drops empty URLs", () => {
+  const response = normalizeFirecrawlSearchResponse({
+    data: {
+      web: [
+        {
+          url: "https://example.com/markdown",
+          title: "Markdown preferred",
+          markdown: "markdown text",
+          description: "description text",
+          source_billed_usd: 0.01,
+        },
+        { url: 123, title: 456, markdown: "", description: "fallback snippet" },
+        { title: "No URL", description: "drop me" },
+      ],
+    },
+  });
+
+  expect(response).toEqual({
+    data: [
+      {
+        url: "https://example.com/markdown",
+        title: "Markdown preferred",
+        markdown: "markdown text",
+        source_billed_usd: 0.01,
+      },
+      { url: "123", markdown: "fallback snippet" },
+    ],
+    source_billed_usd: undefined,
+  });
 });
