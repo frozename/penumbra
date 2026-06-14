@@ -649,6 +649,19 @@ export class DaemonClient {
     return this.post(`/worktrees/${encodeURIComponent(handoff_id)}/edit`, args);
   }
 
+  async execInWorktree(
+    handoff_id: string,
+    args: { command: string; timeout_ms?: number },
+  ): Promise<{
+    stdout: string;
+    stderr: string;
+    exit_code: number | null;
+    timed_out: boolean;
+    truncated: boolean;
+  }> {
+    return this.post(`/worktrees/${encodeURIComponent(handoff_id)}/exec`, args);
+  }
+
   async cleanupWorktree(
     handoff_id: string,
     force?: boolean,

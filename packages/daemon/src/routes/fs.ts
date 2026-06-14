@@ -3,6 +3,7 @@ import { resolveInsideWorktree, FsPathError } from "@penumbra/core";
 import { executeGlob, executeGrep, GrepError } from "../fs-search.js";
 import * as fsNode from "node:fs";
 import * as path from "node:path";
+import { spawn } from "node:child_process";
 
 import { json } from "./_helpers.js";
 import { resolveWorktreeForHandoff } from "./worktree-resolve.js";
@@ -396,4 +397,141 @@ export async function worktreesGrepRoute(
       500,
     );
   }
+}
+
+const EXEC_DEFAULT_TIMEOUT_MS = 120_000;
+const EXEC_MAX_TIMEOUT_MS = 600_000;
+const EXEC_OUTPUT_MAX_BYTES = 1024 * 1024;
+
+export async function worktreesExecRoute(
+  req: Request,
+  handoff_id: string,
+  services: Services,
+): Promise<Response> {
+  const wt = resolveWorktreeForHandoff(services, handoff_id);
+  if (!wt) {
+    return json(
+      { error: { code: "not_found", message: `worktree for handoff ${handoff_id} not found` } },
+      404,
+    );
+  }
+
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
+    body = {};
+  }
+
+  if (!body?.command || typeof body.command !== "string" || body.command.trim() === "") {
+    return json(
+      { error: { code: "invalid_args", message: "command (non-empty string) required" } },
+      400,
+    );
+  }
+
+  const rawTimeout =
+    typeof body.timeout_ms === "number" ? body.timeout_ms : EXEC_DEFAULT_TIMEOUT_MS;
+  const timeout_ms = Math.min(Math.max(1, rawTimeout), EXEC_MAX_TIMEOUT_MS);
+
+  const shellConfig = (services as any).shellConfig;
+  const handoff = services.handoffReader.get(handoff_id);
+  const agentName = (handoff as any)?.to_agent ?? null;
+  const dangerousPatterns: string[] = shellConfig?.dangerousCommandsForAgent?.(agentName) ?? [];
+  const normalizedCommand = body.command.replace(/\s+/g, " ");
+  const matched = dangerousPatterns.filter((pattern: string) =>
+    new RegExp(pattern).test(normalizedCommand),
+  );
+  if (matched.length > 0) {
+    return json({ error: { code: "dangerous_command", matched } }, 403);
+  }
+
+  const cwd = (() => {
+    try {
+      return fsNode.realpathSync(wt.path);
+    } catch {
+      return wt.path;
+    }
+  })();
+
+  return new Promise<Response>((resolve) => {
+    const child = spawn(body.command, { shell: true, cwd });
+
+    const stdoutChunks: Buffer[] = [];
+    let stdoutBytes = 0;
+    let stdoutTruncated = false;
+
+    const stderrChunks: Buffer[] = [];
+    let stderrBytes = 0;
+    let stderrTruncated = false;
+
+    child.stdout!.on("data", (chunk: Buffer) => {
+      if (stdoutBytes < EXEC_OUTPUT_MAX_BYTES) {
+        const remaining = EXEC_OUTPUT_MAX_BYTES - stdoutBytes;
+        if (chunk.length > remaining) {
+          stdoutChunks.push(chunk.subarray(0, remaining));
+          stdoutBytes += remaining;
+          stdoutTruncated = true;
+        } else {
+          stdoutChunks.push(chunk);
+          stdoutBytes += chunk.length;
+        }
+      }
+    });
+
+    child.stderr!.on("data", (chunk: Buffer) => {
+      if (stderrBytes < EXEC_OUTPUT_MAX_BYTES) {
+        const remaining = EXEC_OUTPUT_MAX_BYTES - stderrBytes;
+        if (chunk.length > remaining) {
+          stderrChunks.push(chunk.subarray(0, remaining));
+          stderrBytes += remaining;
+          stderrTruncated = true;
+        } else {
+          stderrChunks.push(chunk);
+          stderrBytes += chunk.length;
+        }
+      }
+    });
+
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        child.kill("SIGKILL");
+      } catch {}
+      resolve(
+        json({
+          stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+          stderr: Buffer.concat(stderrChunks).toString("utf8"),
+          exit_code: null,
+          timed_out: true,
+          truncated: stdoutTruncated || stderrTruncated,
+        }),
+      );
+    }, timeout_ms);
+
+    child.on("close", (code: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(
+        json({
+          stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+          stderr: Buffer.concat(stderrChunks).toString("utf8"),
+          exit_code: code,
+          timed_out: false,
+          truncated: stdoutTruncated || stderrTruncated,
+        }),
+      );
+    });
+
+    child.on("error", (err: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(json({ error: { code: "internal_error", message: err.message } }, 500));
+    });
+  });
 }

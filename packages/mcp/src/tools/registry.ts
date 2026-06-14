@@ -111,6 +111,7 @@ import { FsGrepInputShape, fsGrepHandler } from "./fs-grep.js";
 import { FsReadInputShape, fsReadHandler } from "./fs-read.js";
 import { FsWriteInputShape, fsWriteHandler } from "./fs-write.js";
 import { FsEditInputShape, fsEditHandler } from "./fs-edit.js";
+import { FsExecInputShape, fsExecHandler } from "./fs-exec.js";
 import {
   PermissionListPendingInputShape,
   permissionListPendingHandler,
@@ -1202,6 +1203,15 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: FsEditInputShape,
     },
     makeHandler: fsEditHandler as unknown as ToolDef["makeHandler"],
+    readOnly: false,
+  },
+  fs_exec: {
+    descriptor: {
+      description:
+        "Run a shell command scoped to a dispatch worktree (cwd is the worktree root). Dangerous-command patterns are blocked before execution. Returns {stdout, stderr, exit_code, timed_out, truncated}. handoff_id defaults to PENUMBRA_HANDOFF_ID env var.",
+      inputSchema: FsExecInputShape,
+    },
+    makeHandler: fsExecHandler as unknown as ToolDef["makeHandler"],
     readOnly: false,
   },
   daemon_reload_config: {
