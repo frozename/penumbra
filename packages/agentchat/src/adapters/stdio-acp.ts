@@ -46,7 +46,14 @@ function mapWriteToolsError(err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
 }
 
-const DEFAULT_REQUEST_TIMEOUT_MS = 300_000;
+// Idle / no-wire-activity stall timeout for stdio-acp dispatches. Raised from 5min
+// to 20min (2026-06-14): 5min was too tight for substantial reasoning/tool turns —
+// a single long LLM turn or a multi-minute test/typecheck run emits no wire activity
+// (session/update or onRequest) for minutes, tripping a false "agent stalled mid-turn"
+// kill on large multi-file tasks (observed killing both sonnet-acp and opus-acp on the
+// usage-steering Phase-4 build). A genuinely hung agent is still caught within 20min.
+// Per-seat `requestTimeoutMs` (agentchat options, schema-capped at 900_000) overrides this.
+const DEFAULT_REQUEST_TIMEOUT_MS = 1_200_000;
 const LONG_LIVED_SELF_TOOL_NAMES = [
   "long_lived_self_state_get",
   "long_lived_self_state_set",
