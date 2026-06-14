@@ -21,6 +21,13 @@ export const DispatchLandInputShape = {
     .describe(
       "Bypass verdict_unverified gate manually. Default false. Without force, the gate auto-passes when dispatch_audit is trustworthy and recommends accept.",
     ),
+  reject_if_held: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe(
+      "When true and the git-write lock is held by another in-flight land, return a structured { ok:false, error:{ code:'lifecycle_busy', holder, retry_after_ms } } immediately instead of queuing. Default false (serialize behind the lock).",
+    ),
 };
 
 export function dispatchLandHandler(daemon: Pick<DaemonClient, "dispatchLand">) {
@@ -30,6 +37,7 @@ export function dispatchLandHandler(daemon: Pick<DaemonClient, "dispatchLand">) 
     mode?: "squash" | "ff";
     delete_branch?: boolean;
     force?: boolean;
+    reject_if_held?: boolean;
   }) => {
     const out = await daemon.dispatchLand({
       handoff_id: input.handoff_id,
@@ -37,6 +45,7 @@ export function dispatchLandHandler(daemon: Pick<DaemonClient, "dispatchLand">) 
       mode: input.mode,
       delete_branch: input.delete_branch,
       force: input.force,
+      reject_if_held: input.reject_if_held,
     });
     return {
       content: [

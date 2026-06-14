@@ -48,6 +48,7 @@ export const EventTypeSchema = z.enum([
   "reconciler.pr.swept",
   "lane.orphan-swept",
   "dispatch.landed",
+  "lifecycle_lock_held",
   "task.gh_state_pulled",
   ...TASK_DRAFT_LIFECYCLE_EVENT_TYPES,
   "gh_issue_comment",

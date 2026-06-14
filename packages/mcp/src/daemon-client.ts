@@ -484,6 +484,7 @@ export class DaemonClient {
     mode?: "squash" | "ff";
     delete_branch?: boolean;
     force?: boolean;
+    reject_if_held?: boolean;
   }): Promise<unknown> {
     const { baseUrl, token } = this.resolve();
     const res = await fetch(`${baseUrl}/dispatch/land`, {

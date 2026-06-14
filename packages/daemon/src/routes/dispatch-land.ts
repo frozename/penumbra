@@ -4,6 +4,7 @@ import { captureAgentPerformanceFromReconciler, type Services } from "@penumbra/
 import { createGhCliClient, type GhClient } from "../services/gh-client.js";
 import { memoryVerifyAuthorizeRoute } from "./memory-verify.js";
 import { dispatchAuditRoute } from "./dispatch-audit.js";
+import { lifecycleLock } from "../dispatch/lifecycle-lock.js";
 
 import { json } from "./_helpers.js";
 const DispatchLandInputSchema = z.object({
@@ -12,6 +13,7 @@ const DispatchLandInputSchema = z.object({
   mode: z.enum(["squash", "ff"]).optional().default("squash"),
   delete_branch: z.boolean().optional().default(true),
   force: z.boolean().optional().default(false),
+  reject_if_held: z.boolean().optional().default(false),
 });
 
 interface GitExecResult {
@@ -305,7 +307,7 @@ export async function dispatchLandRoute(
     return json({ error: { code: "invalid_params", issues: parsed.error.issues } }, 400);
   }
 
-  const { handoff_id, commit_message, mode, delete_branch, force } = parsed.data;
+  const { handoff_id, commit_message, mode, delete_branch, force, reject_if_held } = parsed.data;
   const now = deps?.now ?? services.clock;
   const handoff = services.handoffReader.get(handoff_id);
   if (!handoff) {
@@ -335,6 +337,36 @@ export async function dispatchLandRoute(
   }
   if (!force && verdictFailed(verdict) && !(await isAuditTrustedAccept(services, handoff_id))) {
     return json({ error: { code: "verdict_unverified", verdict } }, 409);
+  }
+
+  // Idempotency: return the existing in-flight task for this handoff.
+  for (const [existingTaskId, existingTask] of dispatchLandTasks.entries()) {
+    if (
+      existingTask.handoff_id === handoff_id &&
+      (existingTask.status === "queued" || existingTask.status === "running")
+    ) {
+      return json(
+        { ok: true, task_id: existingTaskId, status: existingTask.status, idempotent: true },
+        202,
+      );
+    }
+  }
+
+  // Fast-reject when the git-write lock is held and the caller opts into immediate refusal.
+  if (reject_if_held && lifecycleLock.isHeld()) {
+    const holder = lifecycleLock.getHolder();
+    const elapsed = holder ? Date.now() - holder.acquired_at : 0;
+    return json(
+      {
+        ok: false,
+        error: {
+          code: "lifecycle_busy",
+          holder: holder?.handoff_id ?? "unknown",
+          retry_after_ms: Math.max(1000, lifecycleLock.ttlMs - elapsed),
+        },
+      },
+      200,
+    );
   }
 
   const task_id = services.uuid();
@@ -456,141 +488,184 @@ async function executeLand(input: {
     resolvedCommitMessage = commitMessageFromBranch.stdout.trim();
   }
   const message_subject = subjectFromCommitMessage(resolvedCommitMessage);
-  const beforeMain = await deps.runGit(["rev-parse", "main"]);
-  if (beforeMain.code !== 0) {
-    return {
-      status: 500,
-      error: {
-        code: "git_failed",
-        step: "rev_parse_main_before",
-        stderr: beforeMain.stderr.trim() || undefined,
-      },
-    };
-  }
 
-  if (mode === "squash") {
-    const checkout = await deps.runGit(["checkout", "main"]);
-    if (checkout.code !== 0) {
+  // Acquire the lifecycle lock before any git writes to main.
+  // The lock serializes cross-call git writes; the dispatchLandQueue is the
+  // same-process fast path. The finally block always releases, so a mid-land
+  // crash or throw cannot wedge the lock indefinitely.
+  const lockAcquiredAt = Date.now();
+  const releaseLock = await lifecycleLock.acquire(handoff_id);
+  let commit_sha = "";
+  try {
+    const beforeMain = await deps.runGit(["rev-parse", "main"]);
+    if (beforeMain.code !== 0) {
       return {
         status: 500,
         error: {
           code: "git_failed",
-          step: "checkout_main",
-          stderr: checkout.stderr.trim() || undefined,
+          step: "rev_parse_main_before",
+          stderr: beforeMain.stderr.trim() || undefined,
         },
       };
     }
 
-    const merge = await deps.runGit(["merge", "--squash", branch]);
-    if (merge.code !== 0) {
-      const conflicts = await deps.runGit(["diff", "--name-only", "--diff-filter=U"]);
-      const files = conflicts.stdout
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean);
-      if (files.length > 0) {
+    if (mode === "squash") {
+      const checkout = await deps.runGit(["checkout", "main"]);
+      if (checkout.code !== 0) {
+        return {
+          status: 500,
+          error: {
+            code: "git_failed",
+            step: "checkout_main",
+            stderr: checkout.stderr.trim() || undefined,
+          },
+        };
+      }
+
+      const merge = await deps.runGit(["merge", "--squash", branch]);
+      if (merge.code !== 0) {
+        const conflicts = await deps.runGit(["diff", "--name-only", "--diff-filter=U"]);
+        const files = conflicts.stdout
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean);
+        if (files.length > 0) {
+          const cleanup = await resetMergeAndVerifyClean(deps);
+          if (!cleanup.ok) {
+            return {
+              status: 500,
+              error: {
+                code: "merge_conflict_cleanup_failed",
+                files,
+                hint: `rebase ${branch} onto main and retry`,
+                manual_repair: "run git reset --merge in the target repo before retrying",
+                ...cleanup,
+              },
+            };
+          }
+          return {
+            status: 409,
+            error: {
+              code: "merge_conflict",
+              files,
+              hint: `rebase ${branch} onto main and retry`,
+            },
+          };
+        }
+        // A failed squash can leave partial staged state even when no unmerged
+        // paths are reported (or when the conflict read itself failed) — clean
+        // up before surfacing the error so the next land never starts dirty.
+        const fallbackCleanup = await resetMergeAndVerifyClean(deps);
+        return {
+          status: 500,
+          error: {
+            code: "git_failed",
+            step: "merge_squash",
+            stderr: merge.stderr.trim() || undefined,
+            ...(fallbackCleanup.ok ? {} : fallbackCleanup),
+          },
+        };
+      }
+
+      const commit = await deps.runGit(["commit", "-F", "-"], { stdin: resolvedCommitMessage });
+      if (commit.code !== 0) {
+        const stderr = commit.stderr.trim();
         const cleanup = await resetMergeAndVerifyClean(deps);
         if (!cleanup.ok) {
           return {
             status: 500,
             error: {
-              code: "merge_conflict_cleanup_failed",
-              files,
-              hint: `rebase ${branch} onto main and retry`,
+              code: commitFailureLooksLikeHook(stderr)
+                ? "commit_hook_cleanup_failed"
+                : "commit_cleanup_failed",
+              step: "commit_squash",
+              stderr: stderr || undefined,
               manual_repair: "run git reset --merge in the target repo before retrying",
               ...cleanup,
             },
           };
         }
-        return {
-          status: 409,
-          error: {
-            code: "merge_conflict",
-            files,
-            hint: `rebase ${branch} onto main and retry`,
-          },
-        };
-      }
-      // A failed squash can leave partial staged state even when no unmerged
-      // paths are reported (or when the conflict read itself failed) — clean
-      // up before surfacing the error so the next land never starts dirty.
-      const fallbackCleanup = await resetMergeAndVerifyClean(deps);
-      return {
-        status: 500,
-        error: {
-          code: "git_failed",
-          step: "merge_squash",
-          stderr: merge.stderr.trim() || undefined,
-          ...(fallbackCleanup.ok ? {} : fallbackCleanup),
-        },
-      };
-    }
-
-    const commit = await deps.runGit(["commit", "-F", "-"], { stdin: resolvedCommitMessage });
-    if (commit.code !== 0) {
-      const stderr = commit.stderr.trim();
-      const cleanup = await resetMergeAndVerifyClean(deps);
-      if (!cleanup.ok) {
+        if (commitFailureLooksLikeHook(stderr)) {
+          return {
+            status: 500,
+            error: {
+              code: "commit_hook_failed",
+              step: "commit_squash",
+              stderr: stderr || undefined,
+            },
+          };
+        }
         return {
           status: 500,
           error: {
-            code: commitFailureLooksLikeHook(stderr)
-              ? "commit_hook_cleanup_failed"
-              : "commit_cleanup_failed",
-            step: "commit_squash",
-            stderr: stderr || undefined,
-            manual_repair: "run git reset --merge in the target repo before retrying",
-            ...cleanup,
-          },
-        };
-      }
-      if (commitFailureLooksLikeHook(stderr)) {
-        return {
-          status: 500,
-          error: {
-            code: "commit_hook_failed",
+            code: "git_failed",
             step: "commit_squash",
             stderr: stderr || undefined,
           },
         };
       }
+    } else {
+      const merge = await deps.runGit(["merge", "--ff-only", `agent/${handoff_id}`]);
+      if (merge.code !== 0) {
+        return {
+          status: 500,
+          error: {
+            code: "git_failed",
+            step: "merge_ff_only",
+            stderr: merge.stderr.trim() || undefined,
+          },
+        };
+      }
+    }
+
+    // No cleanup on this exit by design: the merge/commit already succeeded, so
+    // there is no staged residue — this is a read failure after a complete land.
+    const afterMain = await deps.runGit(["rev-parse", "main"]);
+    if (afterMain.code !== 0) {
       return {
         status: 500,
         error: {
           code: "git_failed",
-          step: "commit_squash",
-          stderr: stderr || undefined,
+          step: "rev_parse_main_after",
+          stderr: afterMain.stderr.trim() || undefined,
         },
       };
     }
-  } else {
-    const merge = await deps.runGit(["merge", "--ff-only", `agent/${handoff_id}`]);
-    if (merge.code !== 0) {
-      return {
-        status: 500,
-        error: {
-          code: "git_failed",
-          step: "merge_ff_only",
-          stderr: merge.stderr.trim() || undefined,
-        },
-      };
+    commit_sha = afterMain.stdout.trim();
+  } finally {
+    const held_ms = Date.now() - lockAcquiredAt;
+    releaseLock();
+    try {
+      const metricTs = new Date().toISOString();
+      // Cast: "lifecycle_lock_held" is added to schemas/event.ts but core dist predates it in this worktree.
+      (services.t0Writer.write as unknown as (e: Record<string, unknown>) => void)({
+        event_id: services.uuid(),
+        ts: metricTs,
+        ingest_ts: metricTs,
+        source: "mcp",
+        source_detail: "dispatch-land",
+        project_id: handoff.project_id,
+        user_id: "penumbra",
+        machine_id: services.machineId.get(),
+        session_id: handoff.conversation_id,
+        event_type: "lifecycle_lock_held",
+        lane: "local",
+        provider: null,
+        model: null,
+        tokens_in: null,
+        tokens_out: null,
+        cost_usd: null,
+        latency_ms: held_ms,
+        request_id: null,
+        origin: "dispatch",
+        payload_json: { handoff_id, held_ms },
+        payload_summary: `lifecycle lock held ${held_ms}ms for ${handoff_id}`,
+      });
+    } catch {
+      // metric failure is non-fatal
     }
   }
 
-  // No cleanup on this exit by design: the merge/commit already succeeded, so
-  // there is no staged residue — this is a read failure after a complete land.
-  const afterMain = await deps.runGit(["rev-parse", "main"]);
-  if (afterMain.code !== 0) {
-    return {
-      status: 500,
-      error: {
-        code: "git_failed",
-        step: "rev_parse_main_after",
-        stderr: afterMain.stderr.trim() || undefined,
-      },
-    };
-  }
-  const commit_sha = afterMain.stdout.trim();
   const landed_at = now().toISOString();
 
   services.t0Writer.write({
