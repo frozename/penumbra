@@ -1,5 +1,6 @@
 import {
   inferAgentTaskTypeForRole,
+  readRoutingBiases,
   readSubscriptionPressure,
   routeAgent,
   type AgentRoutingConfig,
@@ -36,6 +37,12 @@ export function resolveSingleRoute(
   try {
     pressure = readSubscriptionPressure(services.db);
   } catch {}
+  // User-driven usage-steering biases. Degrade to unsteered routing on any read
+  // error, mirroring the pressure read above.
+  let activeBiases: ReturnType<typeof readRoutingBiases> | undefined;
+  try {
+    activeBiases = readRoutingBiases(services.db, { now: services.clock() });
+  } catch {}
   const out = routeAgent({
     db: services.db,
     detail: "single",
@@ -50,6 +57,7 @@ export function resolveSingleRoute(
     roleExplorationPolicy: agentRouting.role_exploration_policy,
     defaultRoles: agentRouting.default_roles,
     applyPressure: pressure,
+    activeBiases,
     now: services.clock(),
   });
   return out.detail === "single" ? out.route : null;
