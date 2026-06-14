@@ -3,6 +3,41 @@ import { Database } from "bun:sqlite";
 import { applySchema, loadSqliteVec } from "@penumbra/core";
 import { buildDreamCycleDeps } from "../../src/dreaming/deps.js";
 
+function insertPressureSnapshot(
+  db: Database,
+  input: {
+    eventId: string;
+    provider: string;
+    usedPct: number;
+    sourceKind?: string;
+    ageSeconds?: number;
+  },
+): void {
+  // Default to a fresh snapshot (age 0); pass ageSeconds to simulate a stale one
+  // (older than the reader's 30-min freshness window).
+  const ts = new Date(Date.now() - (input.ageSeconds ?? 0) * 1000).toISOString();
+  db.prepare(
+    `
+    INSERT INTO t0_events (
+      event_id, ts, ingest_ts, source, user_id, machine_id,
+      event_type, lane, provider, payload_json
+    ) VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'rate-limit-snapshot', 'cli-subscription', ?, ?)
+  `,
+  ).run(
+    input.eventId,
+    ts,
+    ts,
+    input.provider,
+    JSON.stringify({
+      window_label: "24h",
+      model: null,
+      used_pct: input.usedPct,
+      resets_at: null,
+      source_kind: input.sourceKind ?? "subscription",
+    }),
+  );
+}
+
 describe("buildDreamCycleDeps", () => {
   let db: Database;
   let savedApiKey: string | undefined;
@@ -77,6 +112,46 @@ describe("buildDreamCycleDeps", () => {
     expect(deps.onReembed).toBeUndefined();
     expect(typeof deps.getResearchAdapter).toBe("function");
     expect(typeof deps.memoryObserve).toBe("function");
+  });
+
+  test("pressureGuard reports whether any subscription provider is over pressure", async () => {
+    const deps = buildDreamCycleDeps({}, db, {} as any);
+
+    expect(typeof deps.pressureGuard?.check).toBe("function");
+
+    insertPressureSnapshot(db, {
+      eventId: "pressure-openai",
+      provider: "openai",
+      usedPct: 0.05,
+    });
+    expect(await deps.pressureGuard!.check()).toEqual({ anyThrottled: false });
+
+    insertPressureSnapshot(db, {
+      eventId: "pressure-anthropic",
+      provider: "anthropic",
+      usedPct: 0.95,
+    });
+    expect(await deps.pressureGuard!.check()).toEqual({ anyThrottled: true });
+  });
+
+  test("pressureGuard fails OPEN on a STALE over-pressure snapshot (no permanent wedge)", async () => {
+    const deps = buildDreamCycleDeps({}, db, {} as any);
+
+    // A snapshot older than the reader's 30-min freshness window that reads as
+    // over-pressure must NOT throttle dreaming — otherwise a single forgotten/stale
+    // reading would wedge dreaming forever.
+    insertPressureSnapshot(db, {
+      eventId: "pressure-stale-anthropic",
+      provider: "anthropic",
+      usedPct: 0.99,
+      ageSeconds: 3600,
+    });
+    expect(await deps.pressureGuard!.check()).toEqual({ anyThrottled: false });
+  });
+
+  test("pressureGuard reports not-throttled when no pressure data exists (fail open)", async () => {
+    const deps = buildDreamCycleDeps({}, db, {} as any);
+    expect(await deps.pressureGuard!.check()).toEqual({ anyThrottled: false });
   });
 
   test("uses webfetch adapter when project specifies webfetch provider", () => {
