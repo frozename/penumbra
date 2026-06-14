@@ -628,6 +628,13 @@ export class DaemonClient {
     return this.post(`/worktrees/${encodeURIComponent(handoff_id)}/grep`, args);
   }
 
+  async readInWorktree(
+    handoff_id: string,
+    args: { path: string },
+  ): Promise<{ content: string; path: string; bytes: number; truncated: boolean }> {
+    return this.post(`/worktrees/${encodeURIComponent(handoff_id)}/read`, args);
+  }
+
   async cleanupWorktree(
     handoff_id: string,
     force?: boolean,

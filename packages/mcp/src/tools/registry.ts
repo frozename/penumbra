@@ -108,6 +108,7 @@ import { WorktreeInspectInputShape, worktreeInspectHandler } from "./worktree-in
 import { WorktreeCleanupInputShape, worktreeCleanupHandler } from "./worktree-cleanup.js";
 import { FsGlobInputShape, fsGlobHandler } from "./fs-glob.js";
 import { FsGrepInputShape, fsGrepHandler } from "./fs-grep.js";
+import { FsReadInputShape, fsReadHandler } from "./fs-read.js";
 import {
   PermissionListPendingInputShape,
   permissionListPendingHandler,
@@ -1172,6 +1173,15 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: FsGrepInputShape,
     },
     makeHandler: fsGrepHandler as unknown as ToolDef["makeHandler"],
+    readOnly: true,
+  },
+  fs_read: {
+    descriptor: {
+      description:
+        "Read a single file's content scoped to a dispatch worktree. Returns {content, path, bytes, truncated}. Files larger than 1 MiB are truncated. handoff_id defaults to PENUMBRA_HANDOFF_ID env var.",
+      inputSchema: FsReadInputShape,
+    },
+    makeHandler: fsReadHandler as unknown as ToolDef["makeHandler"],
     readOnly: true,
   },
   daemon_reload_config: {
