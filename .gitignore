@@ -27,3 +27,13 @@ local_cache/
 
 # Bench scratch
 /test-bench-*.jsonl
+
+# Session churn — machine-generated handoff/summary notes, not source docs.
+# Authored plan/spec/runbook notes under docs/notes/ stay tracked.
+docs/notes/maestro-continuation-*.md
+docs/notes/session-summary-*.md
+docs/notes/gc-backup-*/
+docs/notes/gc-recovery-manifest-*.txt
+
+# Stray local agent/editor config symlinks
+.antigravitycli/
