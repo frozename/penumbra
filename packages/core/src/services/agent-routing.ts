@@ -6,6 +6,7 @@ import {
   type AgentRankOutput,
   type AgentTaskType,
 } from "../schemas/agent-performance.js";
+import type { RoutingBias } from "../readers/routing-bias.js";
 
 type AgentRoutePressureSnapshot = {
   snapshots: Array<{
@@ -75,6 +76,9 @@ export interface RouteAgentInput {
     snapshots: AgentRoutePressureSnapshot["snapshots"];
     warnings?: unknown[];
   };
+  // User-driven routing-bias steers (usage steering). Injected by the caller
+  // (daemon reads readRoutingBiases); the scorer never reads the DB itself.
+  activeBiases?: RoutingBias[];
   now?: Date;
 }
 
@@ -538,6 +542,40 @@ function isOverPressure(
   );
 }
 
+// User-driven routing-bias ("usage steering") effect for one candidate.
+// Default weights apply when a bias omits one: boost raises a candidate's score,
+// divert lowers it. Precedence is exclude > divert > boost — an exclude removes
+// the candidate outright (subject to the caller's safe-fallback re-admission),
+// while boost/divert weights multiply cumulatively into a single factor. A
+// candidate matches a bias by exact agent name (scope=agent) or by its resolved
+// provider (scope=provider).
+const DEFAULT_BOOST_WEIGHT = 1.25;
+const DEFAULT_DIVERT_WEIGHT = 0.5;
+
+function resolveBiasEffect(
+  agentName: string,
+  provider: string | null,
+  biases: RoutingBias[] | undefined,
+): { factor: number; exclude: boolean } {
+  if (!biases || biases.length === 0) return { factor: 1, exclude: false };
+  let factor = 1;
+  let exclude = false;
+  for (const bias of biases) {
+    const matches =
+      (bias.scope === "agent" && bias.value === agentName) ||
+      (bias.scope === "provider" && provider != null && bias.value === provider);
+    if (!matches) continue;
+    if (bias.mode === "exclude") {
+      exclude = true;
+    } else if (bias.mode === "divert") {
+      factor *= bias.weight ?? DEFAULT_DIVERT_WEIGHT;
+    } else if (bias.mode === "boost") {
+      factor *= bias.weight ?? DEFAULT_BOOST_WEIGHT;
+    }
+  }
+  return { factor, exclude };
+}
+
 function getAllowedAgents(input: RouteAgentInput): string[] | null {
   const role = input.role;
   const roleAgents =
@@ -615,55 +653,74 @@ function buildRank(
     : [];
   const minExecMs = execMsRange.length > 0 ? Math.min(...execMsRange) : null;
   const maxExecMs = execMsRange.length > 0 ? Math.max(...execMsRange) : null;
+  const hasBiases = !!input.activeBiases && input.activeBiases.length > 0;
+  const ranked = summaries.map((s) => {
+    let score = scoreCandidate(s, {
+      includeCost: input.includeCost ?? false,
+      minCost,
+      maxCost,
+      latencyWeighting,
+      minExecMs,
+      maxExecMs,
+    });
+    if (input.agentchatConfig?.role_routing?.headroom_weighting && input.applyPressure) {
+      const agentConf = input.agentchatConfig.agents.find((a) => a.name === s.agent_name);
+      const provider = agentConf ? resolveProvider(agentConf) : null;
+      if (provider) {
+        const snaps = input.applyPressure.snapshots.filter((snap) => snap.provider === provider);
+        if (snaps.length > 0) {
+          const maxUsedPct = Math.max(...snaps.map((snap) => snap.used_pct));
+          const factor = clamp01(1 - maxUsedPct);
+          score = clamp01(Math.round(score * factor * 10000) / 10000);
+        }
+      }
+    }
+    // Usage-steering bias factor composes AFTER the pressure factor (single final clamp).
+    let biasExclude = false;
+    if (hasBiases) {
+      const agentConf = input.agentchatConfig?.agents.find((a) => a.name === s.agent_name);
+      const provider = agentConf ? resolveProvider(agentConf) : null;
+      const effect = resolveBiasEffect(s.agent_name, provider, input.activeBiases);
+      if (effect.exclude) {
+        biasExclude = true;
+      } else if (effect.factor !== 1) {
+        score = clamp01(Math.round(score * effect.factor * 10000) / 10000);
+      }
+    }
+    return {
+      candidate: {
+        agent_name: s.agent_name,
+        samples: s.samples,
+        successes: s.successes,
+        failures: s.failures,
+        neutral: s.neutral,
+        success_rate: s.success_rate,
+        avg_rounds: s.avg_rounds,
+        avg_latency_ms: s.avg_latency_ms,
+        avg_exec_ms: s.avg_exec_ms,
+        cost_per_success_usd: s.cost_per_success_usd,
+        avg_reviewer_findings: s.avg_reviewer_findings,
+        avg_trust_score: s.avg_trust_score,
+        gate_verdict_coverage: s.samples > 0 ? s.gate_verdict_count / s.samples : 0,
+        gate_pass_rate: s.samples > 0 ? s.gate_pass_count / s.samples : 0,
+        last_outcome_at: s.last_outcome_at,
+        score,
+      },
+      biasExclude,
+    };
+  });
+  // Hard-prefer with safe fallback: drop exclude-steered candidates, but if that
+  // would empty the ranking, re-admit them rather than return nothing.
+  const kept = hasBiases ? ranked.filter((r) => !r.biasExclude) : ranked;
+  const visible = kept.length > 0 ? kept : ranked;
   return {
     task_type: taskType,
     window: {
       from: input.since ? new Date(input.since).toISOString() : null,
       to: now.toISOString(),
     },
-    candidates: summaries
-      .map((s) => {
-        let score = scoreCandidate(s, {
-          includeCost: input.includeCost ?? false,
-          minCost,
-          maxCost,
-          latencyWeighting,
-          minExecMs,
-          maxExecMs,
-        });
-        if (input.agentchatConfig?.role_routing?.headroom_weighting && input.applyPressure) {
-          const agentConf = input.agentchatConfig.agents.find((a) => a.name === s.agent_name);
-          const provider = agentConf ? resolveProvider(agentConf) : null;
-          if (provider) {
-            const snaps = input.applyPressure.snapshots.filter(
-              (snap) => snap.provider === provider,
-            );
-            if (snaps.length > 0) {
-              const maxUsedPct = Math.max(...snaps.map((snap) => snap.used_pct));
-              const factor = clamp01(1 - maxUsedPct);
-              score = clamp01(Math.round(score * factor * 10000) / 10000);
-            }
-          }
-        }
-        return {
-          agent_name: s.agent_name,
-          samples: s.samples,
-          successes: s.successes,
-          failures: s.failures,
-          neutral: s.neutral,
-          success_rate: s.success_rate,
-          avg_rounds: s.avg_rounds,
-          avg_latency_ms: s.avg_latency_ms,
-          avg_exec_ms: s.avg_exec_ms,
-          cost_per_success_usd: s.cost_per_success_usd,
-          avg_reviewer_findings: s.avg_reviewer_findings,
-          avg_trust_score: s.avg_trust_score,
-          gate_verdict_coverage: s.samples > 0 ? s.gate_verdict_count / s.samples : 0,
-          gate_pass_rate: s.samples > 0 ? s.gate_pass_count / s.samples : 0,
-          last_outcome_at: s.last_outcome_at,
-          score,
-        };
-      })
+    candidates: visible
+      .map((r) => r.candidate)
       .sort(
         (a, b) =>
           b.score - a.score ||
@@ -768,14 +825,29 @@ function chooseSingle(input: RouteAgentInput, allowedAgents: string[] | null): R
           roleAgents[0] ?? null,
         ];
 
-  const filteredAgent =
+  const hasBiases = !!input.activeBiases && input.activeBiases.length > 0;
+  const isBiasExcluded = (agentName: string): boolean => {
+    if (!hasBiases) return false;
+    const agent = input.agentchatConfig?.agents.find((candidate) => candidate.name === agentName);
+    const provider = agent ? resolveProvider(agent) : null;
+    return resolveBiasEffect(agentName, provider, input.activeBiases).exclude;
+  };
+  const passesPressure = (agentName: string): boolean => {
+    if (!input.applyPressure) return true;
+    const agent = input.agentchatConfig?.agents.find((candidate) => candidate.name === agentName);
+    const provider = agent ? resolveProvider(agent) : null;
+    return !provider || !isOverPressure(provider, input.applyPressure);
+  };
+  const pick = (applyBiasExclude: boolean): string | null =>
     candidateOrder.find((agentName): agentName is string => {
       if (!agentName || !roleAgentSet.has(agentName)) return false;
-      if (!input.applyPressure) return true;
-      const agent = input.agentchatConfig?.agents.find((candidate) => candidate.name === agentName);
-      const provider = agent ? resolveProvider(agent) : null;
-      return !provider || !isOverPressure(provider, input.applyPressure);
+      if (applyBiasExclude && isBiasExcluded(agentName)) return false;
+      return passesPressure(agentName);
     }) ?? null;
+
+  // Hard-prefer with safe fallback: honor exclude steers first; if that leaves no
+  // candidate, re-admit the excluded set rather than wedge the role.
+  const filteredAgent = pick(true) ?? (hasBiases ? pick(false) : null);
 
   return filteredAgent ? { agent: filteredAgent, role: input.role, taskType } : null;
 }

@@ -860,3 +860,161 @@ describe("latency_weighting routing", () => {
     );
   });
 });
+
+describe("routing bias (usage steering)", () => {
+  let db: Database;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+    const w = new AgentPerformanceWriter(db);
+    const seed = (agent: string, n: number, outcome: "merged" | "failed") =>
+      w.upsert({
+        performance_id: `${agent}-${n}`,
+        ts: `2026-06-13T10:0${n}:00.000Z`,
+        handoff_id: `h-${agent}-${n}`,
+        conversation_id: `c-${agent}-${n}`,
+        project_id: "proj",
+        agent_name: agent,
+        task_type: "implement_substantial",
+        outcome,
+        gate_outcome: outcome === "merged" ? "passed" : null,
+        rounds: 1,
+        smoke_pass: outcome === "merged" ? "y" : "n",
+        reviewer_findings: 0,
+        maestro_score: outcome === "merged" ? 5 : 0,
+        cost_usd: null,
+        tokens_used: null,
+        latency_ms: 1000,
+        source: "reconciler",
+        notes: null,
+        metadata_json: "{}",
+      });
+    // Mixed outcomes => mid/low base scores with headroom so a boost factor does
+    // not clamp at 1.0 and a divert factor stays > 0.
+    for (const a of ["alpha", "beta", "gamma"]) {
+      seed(a, 1, "merged");
+      seed(a, 2, "failed");
+      seed(a, 3, "failed");
+    }
+  });
+
+  const AGENTS = [
+    {
+      name: "alpha",
+      roles: ["coder"],
+      pricing_mode: "subscription" as const,
+      subscription_provider: "prov-a",
+    },
+    {
+      name: "beta",
+      roles: ["coder"],
+      pricing_mode: "subscription" as const,
+      subscription_provider: "prov-b",
+    },
+    {
+      name: "gamma",
+      roles: ["coder"],
+      pricing_mode: "subscription" as const,
+      subscription_provider: "prov-a",
+    },
+  ];
+
+  const bias = (
+    scope: "provider" | "agent",
+    value: string,
+    mode: "boost" | "divert" | "exclude",
+    weight: number | null = null,
+  ) => ({
+    bias_id: `${scope}-${value}-${mode}`,
+    scope,
+    value,
+    mode,
+    weight,
+    reason: null,
+    created_at: "2026-06-14T00:00:00.000Z",
+    expires_at: "2099-01-01T00:00:00.000Z",
+  });
+
+  const rankInput = (activeBiases?: any[]) => ({
+    db,
+    detail: "rank" as const,
+    taskType: "implement_substantial" as const,
+    agentchatConfig: { agents: AGENTS },
+    activeBiases,
+    now: NOW,
+  });
+  const cands = (out: any) => out.candidates.candidates;
+  const findC = (out: any, name: string) => cands(out).find((c: any) => c.agent_name === name);
+
+  const singleInput = (activeBiases?: any[]) => ({
+    db,
+    detail: "single" as const,
+    role: "coder",
+    taskType: "implement_substantial" as const,
+    agentchatConfig: { agents: AGENTS },
+    defaultRoles: { coder: "alpha" },
+    activeBiases,
+    now: NOW,
+  });
+
+  test("GUARD: empty biases produce byte-identical output to no biases (rank + single)", () => {
+    expect(routeAgent(rankInput([]))).toEqual(routeAgent(rankInput(undefined)));
+    expect(routeAgent(singleInput([]))).toEqual(routeAgent(singleInput(undefined)));
+  });
+
+  test("boost raises a candidate score; divert lowers it", () => {
+    const base = routeAgent(rankInput(undefined));
+    const boosted = routeAgent(rankInput([bias("agent", "alpha", "boost", 1.5)]));
+    expect(findC(boosted, "alpha").score).toBeGreaterThan(findC(base, "alpha").score);
+    const diverted = routeAgent(rankInput([bias("agent", "beta", "divert", 0.5)]));
+    expect(findC(diverted, "beta").score).toBeLessThan(findC(base, "beta").score);
+  });
+
+  test("exclude removes a candidate from the ranking", () => {
+    const out = routeAgent(rankInput([bias("agent", "gamma", "exclude")]));
+    expect(
+      cands(out)
+        .map((c: any) => c.agent_name)
+        .sort(),
+    ).toEqual(["alpha", "beta"]);
+  });
+
+  test("provider-scope exclude matches all agents of that provider", () => {
+    const out = routeAgent(rankInput([bias("provider", "prov-a", "exclude")]));
+    // prov-a = alpha + gamma excluded; only beta (prov-b) remains
+    expect(cands(out).map((c: any) => c.agent_name)).toEqual(["beta"]);
+  });
+
+  test("exclude > boost precedence: exclude wins on the same agent", () => {
+    const out = routeAgent(
+      rankInput([bias("agent", "alpha", "boost", 2.0), bias("agent", "alpha", "exclude")]),
+    );
+    expect(findC(out, "alpha")).toBeUndefined();
+  });
+
+  test("safe fallback: excluding ALL candidates re-admits rather than emptying the ranking", () => {
+    const out = routeAgent(
+      rankInput([bias("provider", "prov-a", "exclude"), bias("provider", "prov-b", "exclude")]),
+    );
+    expect(cands(out).length).toBe(3);
+  });
+
+  test("single mode: exclude steers selection away from the excluded agent", () => {
+    const out = routeAgent(singleInput([bias("agent", "alpha", "exclude")]));
+    expect(out.detail).toBe("single");
+    if (out.detail !== "single") return;
+    expect(out.route).not.toBeNull();
+    expect(out.route!.agent).not.toBe("alpha");
+  });
+
+  test("single mode safe fallback: excluding ALL role agents still returns a route", () => {
+    const out = routeAgent(
+      singleInput([bias("provider", "prov-a", "exclude"), bias("provider", "prov-b", "exclude")]),
+    );
+    expect(out.detail).toBe("single");
+    if (out.detail !== "single") return;
+    expect(out.route).not.toBeNull();
+  });
+});
