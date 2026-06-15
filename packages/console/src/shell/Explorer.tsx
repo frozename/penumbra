@@ -71,13 +71,16 @@ function MissionSidebar(): JSX.Element {
 export function Explorer(): JSX.Element {
   const location = useLocation();
   const projectName = "penumbra";
-  const projectId =
-    "/Volumes/WorkSSD/repos/penumbra-worktrees/9adf5379-d159-4904-9d65-0a59e87a67fa";
-  const branch = "main";
-  const dirty = 0;
+  // Real workspace values await a daemon /workspace endpoint (TODO below). Until
+  // then render neutral placeholders rather than a hardcoded machine-specific
+  // worktree path + a fabricated always-"main"/always-clean git badge, which
+  // shipped one developer's absolute path and a fake git state to every install.
+  const projectId: string | null = null;
+  const branch: string | null = null;
+  const dirty: number | null = null;
   const isMission = location.pathname === "/mission";
 
-  // TODO: wire from daemon /workspace endpoint when it exists.
+  // TODO: wire projectId/branch/dirty from a daemon /workspace endpoint when it exists.
   return (
     <aside className="exp">
       <div className="exp-proj">
@@ -88,7 +91,7 @@ export function Explorer(): JSX.Element {
           <span className="pdot" />
           <div className="ptxt">
             <div className="pname">{projectName}</div>
-            <div className="ppath">{projectId}</div>
+            <div className="ppath">{projectId ?? "—"}</div>
           </div>
           <span className="pchev">▾</span>
         </div>
@@ -102,9 +105,13 @@ export function Explorer(): JSX.Element {
           }}
         >
           <span className="mono t-tertiary" style={{ fontSize: 10 }}>
-            ⎇ {branch}
+            ⎇ {branch ?? "—"}
           </span>
-          {dirty > 0 ? (
+          {dirty == null ? (
+            <span className="mono t-ghost" style={{ fontSize: 10 }}>
+              —
+            </span>
+          ) : dirty > 0 ? (
             <span className="mono" style={{ fontSize: 10, color: "var(--color-warn)" }}>
               {dirty} dirty
             </span>
