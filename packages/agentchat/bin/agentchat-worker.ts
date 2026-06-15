@@ -1098,6 +1098,7 @@ const reconcileWorktree = createMergeReconciler({
   emitVerdict: (verdict) =>
     client
       .observe({
+        ts: new Date().toISOString(),
         source: "agentchat",
         source_detail: "merge-reconciler",
         project_id: null,
