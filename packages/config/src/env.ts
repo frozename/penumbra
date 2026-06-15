@@ -873,6 +873,12 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: 30,
     description: "Days to retain t0 observations.",
   },
+  PENUMBRA_DISPATCH_EVENTS_RETENTION_DAYS: {
+    schema: PosInt,
+    default: 14,
+    description:
+      "Days to retain dispatch_events telemetry rows before the retention worker prunes them.",
+  },
   PENUMBRA_T1_ROLLUP_INTERVAL_SEC: {
     schema: PosInt,
     default: 60,

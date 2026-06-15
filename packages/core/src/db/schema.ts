@@ -56,6 +56,9 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
       );
       CREATE INDEX IF NOT EXISTS t0_by_project_session ON t0_events(project_id, session_id, ts);
       CREATE INDEX IF NOT EXISTS t0_by_ingest_ts        ON t0_events(ingest_ts);
+      -- Cost reader's per_handoff CTEs filter t0_events by event_type='usage-update'
+      -- over a time window; without this they full-scan the (multi-GB) table.
+      CREATE INDEX IF NOT EXISTS t0_by_type_ts          ON t0_events(event_type, ts);
       CREATE INDEX IF NOT EXISTS t0_events_task_draft_lookup
         ON t0_events(project_id, event_type, ts, event_id)
         WHERE event_type IN (

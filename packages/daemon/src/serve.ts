@@ -233,6 +233,7 @@ import { createRefiningStuckRecoverySweeper } from "./sweepers/refining-stuck-re
 import { createRollupWorker } from "./workers/t1-rollup.js";
 import { createT2PromotionWorker } from "./workers/t2-promotion.js";
 import { createT0RetentionWorker } from "./workers/t0-retention.js";
+import { createDispatchEventsRetentionWorker } from "./workers/dispatch-events-retention.js";
 import { createHandoffSweeperWorker } from "./workers/handoff-sweeper.js";
 import { createMemoryEfficacyJobRunner } from "./workers/memory-efficacy-job-runner.js";
 import { createOrchestrateReactor } from "./reactors/orchestrate-reactor.js";
@@ -1177,6 +1178,10 @@ export function serve(opts: ServeOpts): DaemonHandle {
     services: opts.services,
     retentionDays: opts.services.settings.t0RetentionDays,
   });
+  const dispatchEventsRetention = createDispatchEventsRetentionWorker({
+    services: opts.services,
+    retentionDays: opts.services.settings.dispatchEventsRetentionDays,
+  });
   const sweeper = createHandoffSweeperWorker({
     services: opts.services,
   });
@@ -1582,6 +1587,11 @@ export function serve(opts: ServeOpts): DaemonHandle {
     name: "t0-retention",
     intervalMs: 3600 * 1000,
     tick: retention.tick,
+  });
+  opts.services.supervisor.register({
+    name: "dispatch-events-retention",
+    intervalMs: 3600 * 1000,
+    tick: dispatchEventsRetention.tick,
   });
   opts.services.supervisor.register({
     name: "handoff-sweeper",
