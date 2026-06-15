@@ -21,7 +21,10 @@ jobs:
       - name: typecheck
         run: bun run typecheck
       - name: test
-        run: bun test
+        # Wrapper gates on reported pass/fail, not the raw exit code, to tolerate a
+        # known upstream bun NAPI-teardown panic (exit 133 after a clean summary).
+        # Real failures / load errors / pre-summary crashes still fail. See the script.
+        run: bun scripts/bun-test-gate.ts
       - name: lint (advisory - currently has known violations, see plan Phase 5.2)
         run: bun run lint || true
         continue-on-error: true
