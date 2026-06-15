@@ -58,9 +58,17 @@ await server.connect(transport);
 // unambiguously means the parent is gone: close the server (flush) and exit, with
 // a hard-exit fallback if close() stalls so we can never hang as an orphan.
 let shuttingDown = false;
-const shutdown = (): void => {
+const shutdown = (reason: string): void => {
   if (shuttingDown) return;
   shuttingDown = true;
+  // Diagnose the stdin-EOF path on stderr (inherited by the parent's logs): a
+  // spec-compliant client keeps stdin open as the request channel, so an EOF
+  // here is a gone parent — but a misconfigured spawner that hands us /dev/null
+  // (pre-closed) stdin trips the same path at startup. Logging makes that
+  // misconfig diagnosable instead of a silent no-op. SIGTERM/SIGINT are clean.
+  if (reason === "stdin-eof") {
+    console.error("penumbra-mcp: stdin closed (parent gone or stdin not piped) — shutting down");
+  }
   const hardExit = setTimeout(() => process.exit(0), 2000);
   void Promise.resolve(server.close())
     .catch(() => {})
@@ -69,7 +77,7 @@ const shutdown = (): void => {
       process.exit(0);
     });
 };
-process.stdin.on("end", shutdown);
-process.stdin.on("close", shutdown);
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+process.stdin.on("end", () => shutdown("stdin-eof"));
+process.stdin.on("close", () => shutdown("stdin-eof"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
