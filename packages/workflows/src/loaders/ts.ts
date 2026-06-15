@@ -1,6 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { WorkflowSpecSchema, type WorkflowSpec } from "../schema.js";
 import type { WorkflowFn } from "../exec.js";
 import type { ZodTypeAny } from "zod";
@@ -17,10 +16,17 @@ export type LoadedTsWorkflow = {
 // imports get inlined, package + node:* imports stay external so identity
 // matches the host process (zod schemas remain instanceof-comparable). The
 // temp dir is removed after import; the loaded module stays in memory.
+//
+// The temp dir lives ALONGSIDE the source workflow.ts (not in the OS tmpdir),
+// so the externalized `import "zod"` / `@penumbra/*` resolve against the same
+// node_modules ancestry the source file itself sees. Emitting into the OS
+// tmpdir put the bundle outside any node_modules tree, so zod failed to
+// resolve at import time (the temp path canonicalizes through /private/var,
+// diverging from any tmpdir-rooted node_modules symlink).
 const EXTERNAL = ["zod", "@penumbra/*", "node:*"];
 
 export async function loadTsWorkflow(path: string): Promise<LoadedTsWorkflow> {
-  const outDir = mkdtempSync(join(tmpdir(), "penumbra-workflow-"));
+  const outDir = mkdtempSync(join(dirname(path), ".penumbra-workflow-"));
   let mod: Record<string, unknown>;
   try {
     const build = await Bun.build({

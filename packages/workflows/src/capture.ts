@@ -62,9 +62,16 @@ function insertT0(
 }
 
 export function captureWorkflowOutcome(input: CaptureInput): void {
-  const ts = input.now().toISOString();
-  const baseEvent = {
-    ts,
+  const now = input.now();
+  const ts = now.toISOString();
+  // The three lifecycle events (run, recall, outcome) are emitted in one
+  // synchronous burst, so a single `now()` would stamp them with an identical
+  // ts. Consumers read them back with `ORDER BY ts`, where ties have an
+  // undefined order in SQLite — which surfaced as the events coming back
+  // reversed. Stagger each event by 1ms in causal order so the persisted order
+  // is deterministic; payload/stats semantics keep the canonical `ts`.
+  const eventTs = (offsetMs: number): string => new Date(now.getTime() + offsetMs).toISOString();
+  const base = {
     project: input.project,
     sessionId: input.sessionId,
     userId: input.userId,
@@ -72,13 +79,15 @@ export function captureWorkflowOutcome(input: CaptureInput): void {
   };
 
   insertT0(input.db, {
-    ...baseEvent,
+    ...base,
+    ts: eventTs(0),
     event_id: randomUUID(),
     event_type: "workflow.run",
     payload: { workflow_name: input.workflowName, started_at: ts },
   });
   insertT0(input.db, {
-    ...baseEvent,
+    ...base,
+    ts: eventTs(1),
     event_id: randomUUID(),
     event_type: "workflow.recall",
     payload: {
@@ -89,7 +98,8 @@ export function captureWorkflowOutcome(input: CaptureInput): void {
     },
   });
   insertT0(input.db, {
-    ...baseEvent,
+    ...base,
+    ts: eventTs(2),
     event_id: randomUUID(),
     event_type: "workflow.outcome",
     payload: {

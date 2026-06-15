@@ -130,7 +130,15 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
             c
               .replace(/\bt\.project_id\b/g, "r.project_id")
               .replace(/\bt\.created_at\b/g, "COALESCE(r.ended_at, r.started_at)")
-              .replace(/\bt\.obs_type\b/g, "1=1"),
+              .replace(/\bt\.obs_type\b/g, "1=1")
+              // t1_rollups has no metadata_json column, so the trust filter cannot
+              // apply on the t1 branch — neutralize it to 1=1 (then it is dropped
+              // by the filter below) rather than referencing a nonexistent column,
+              // which would raise a SQL error and silently return zero t1 hits.
+              .replace(
+                /COALESCE\(json_extract\(t\.metadata_json[^)]*\)[^)]*\)\s*!=\s*'untrusted'/g,
+                "1=1",
+              ),
           )
           .filter((c) => c !== "1=1");
         const sql =
