@@ -73,6 +73,11 @@ if (import.meta.main) {
   const child = spawn(command, args, {
     stdio: ["pipe", "pipe", "inherit"],
     env: process.env,
+    // Own process group (group leader) so teardown can group-kill the WHOLE
+    // upstream tree — a uvx/python wrapper plus its grandchildren — not just the
+    // direct child. Without this, killing child.pid reparents grandchildren to
+    // pid 1: the orphan-accumulation leak. Mirrors acp-server.ts / stdio-acp-server.ts.
+    detached: process.platform !== "win32",
   }) as ChildProcessByStdio<Writable, Readable, null>;
 
   const pendingMethod = new Map<string | number, string>();
@@ -205,7 +210,35 @@ if (import.meta.main) {
     processUpstreamMessage(msg);
   });
 
-  child.on("exit", (code: number | null) => process.exit(code ?? 0));
+  // Signal the upstream child's whole PROCESS GROUP. The child is spawned
+  // detached (its own group leader), so a uvx/python wrapper's grandchildren
+  // share its group and a negative-pid kill reaps the entire tree. Gated by
+  // PENUMBRA_OPENCODE_GROUP_KILL so a single env flip falls back to a
+  // direct-child kill (mirrors acp-server.ts:189-200). Wrapped in try/catch: a
+  // negative-pid kill of an already-reaped group throws ESRCH, and a missing pid
+  // would throw TypeError.
+  const signalProcess = (signal: NodeJS.Signals) => {
+    if (!child.pid) return;
+    try {
+      if (process.platform !== "win32" && process.env.PENUMBRA_OPENCODE_GROUP_KILL !== "0") {
+        process.kill(-child.pid, signal);
+      } else {
+        child.kill(signal);
+      }
+    } catch {
+      /* process/group may already be gone */
+    }
+  };
+
+  // When the direct child exits, sweep its group once more before we exit: a
+  // wrapper that spawns-and-abandons a grandchild could otherwise exit first and
+  // leave the grandchild alive (the process group persists while any member
+  // lives). The group SIGKILL is a no-op (swallowed ESRCH) when the tree is
+  // already gone — the common cooperative case.
+  child.on("exit", (code: number | null) => {
+    signalProcess("SIGKILL");
+    process.exit(code ?? 0);
+  });
 
   // Teardown shared by parent-death (stdin EOF), SIGTERM, and SIGINT.
   //
@@ -213,31 +246,23 @@ if (import.meta.main) {
   // agent process. If that parent dies ABRUPTLY (worker server.kill on eviction,
   // a seat crash, or a daemon/worker restart) without a clean signal reaching us,
   // our stdin (the JSON-RPC request channel) hits EOF. Without teardown the proxy
-  // — and its upstream child — run forever, reparented to ppid=1: the
+  // — and its upstream child tree — run forever, reparented to ppid=1: the
   // orphan-accumulation leak. stdin stays open for the whole session during
   // normal operation, so EOF unambiguously means the parent is gone.
   //
-  // SIGTERM the upstream child; child.on("exit") above exits us the instant it
-  // dies (the cooperative penumbra-mcp upstream does this immediately). If the
-  // child traps or delays SIGTERM — e.g. a third-party uvx/python MCP wrapped as
-  // upstream — escalate to SIGKILL after a grace window so it can't itself
-  // re-orphan, then exit regardless. Never exit while the child may still be
-  // alive and un-signalled.
+  // Group-SIGTERM the upstream tree; child.on("exit") above exits us the instant
+  // the direct child dies (the cooperative penumbra-mcp upstream does this
+  // immediately). If the tree traps or delays SIGTERM — e.g. a third-party
+  // uvx/python MCP wrapped as upstream — escalate to a group SIGKILL after a
+  // grace window so it can't itself re-orphan, then exit regardless. Never exit
+  // while the child tree may still be alive and un-signalled.
   let shuttingDown = false;
   const teardownAndExit = () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    try {
-      child.kill("SIGTERM");
-    } catch {
-      /* ignore */
-    }
+    signalProcess("SIGTERM");
     setTimeout(() => {
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        /* ignore */
-      }
+      signalProcess("SIGKILL");
       process.exit(0);
     }, 1000);
   };

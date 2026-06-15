@@ -476,3 +476,97 @@ setInterval(() => {}, 60000);
     }
   }
 }, 20000);
+
+test("group-kills upstream grandchildren on parent death (uvx-style wrapper, no orphan)", async () => {
+  const wrapperPath = join(tmpdir(), `gc-wrapper-${Date.now()}.ts`);
+  const gcPidFile = join(tmpdir(), `gc-pid-${Date.now()}.txt`);
+  // Upstream WRAPPER that spawns a long-lived GRANDCHILD, modelling uvx -> python:
+  // the proxy's DIRECT child is the wrapper; the real MCP is the grandchild.
+  // Killing only the direct child reparents the grandchild to pid 1 — the orphan
+  // leak. The proxy must group-kill so the whole process tree dies.
+  writeFileSync(
+    wrapperPath,
+    `import { spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import readline from "node:readline";
+readline.createInterface({ input: process.stdin });
+const gc = spawn("sleep", ["600"], { stdio: "ignore" });
+writeFileSync(process.env.GC_PID_FILE, String(gc.pid));
+setInterval(() => {}, 60000);
+`,
+  );
+  try {
+    const proc = spawn("bun", [PROXY], {
+      stdio: ["pipe", "pipe", "inherit"],
+      env: {
+        ...process.env,
+        MCP_PROXY_UPSTREAM: `bun "${wrapperPath}"`,
+        MCP_PROXY_ALLOWLIST: "alpha",
+        GC_PID_FILE: gcPidFile,
+      },
+    });
+    const exited = new Promise<number | null>((resolve) =>
+      proc.on("exit", (code) => resolve(code)),
+    );
+
+    // Wait until the grandchild has spawned and recorded its pid.
+    let gcPid = 0;
+    for (let i = 0; i < 50 && !gcPid; i++) {
+      if (existsSync(gcPidFile)) {
+        const v = parseInt(readFileSync(gcPidFile, "utf8").trim(), 10);
+        if (Number.isInteger(v) && v > 0) gcPid = v;
+      }
+      if (!gcPid) await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(gcPid).toBeGreaterThan(0);
+    // The grandchild is alive right now.
+    expect(() => process.kill(gcPid, 0)).not.toThrow();
+
+    // Parent ACP seat dies → proxy stdin EOF → the proxy must group-kill the
+    // whole upstream tree (wrapper + grandchild) and exit, leaving no orphan.
+    proc.stdin!.end();
+    const outcome = await Promise.race([
+      exited.then(() => "exited" as const),
+      new Promise<"timeout">((r) => setTimeout(() => r("timeout"), 8000)),
+    ]);
+    if (outcome === "timeout") {
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        /* ignore */
+      }
+    }
+    expect(outcome).toBe("exited");
+
+    // The grandchild must have been reaped, not left orphaned to pid 1.
+    let alive = true;
+    for (let i = 0; i < 30 && alive; i++) {
+      try {
+        process.kill(gcPid, 0);
+        await new Promise((r) => setTimeout(r, 100));
+      } catch {
+        alive = false;
+      }
+    }
+    if (alive) {
+      // Clean up the leaked grandchild so a RED run does not leave a stray sleep.
+      try {
+        process.kill(gcPid, "SIGKILL");
+      } catch {
+        /* ignore */
+      }
+    }
+    expect(alive).toBe(false);
+  } finally {
+    try {
+      rmSync(wrapperPath);
+    } catch {
+      /* ignore */
+    }
+    try {
+      rmSync(gcPidFile);
+    } catch {
+      /* ignore */
+    }
+  }
+}, 20000);
