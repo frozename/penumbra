@@ -37,6 +37,7 @@ export const DispatchEventKindSchema = z.enum([
   "shell.session.open",
   "shell.run",
   "shell.session.close",
+  "worktree.gc",
   "worker.recovery.requeued",
   "worker.recovery.exhausted",
   "lane.override",
