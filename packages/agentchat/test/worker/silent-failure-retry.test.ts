@@ -5,6 +5,10 @@ import {
   buildRetryPayloadOrNull,
   shouldRetryForSilentFailure,
   shouldRetryHandoffForSilentFailure,
+  selectRetryAgent,
+  resolveAgentProvider,
+  type RetryAgentCandidate,
+  type RoutingBiasLike,
 } from "../../src/worker/silent-failure-retry.js";
 
 describe("shouldRetryForSilentFailure", () => {
@@ -187,5 +191,167 @@ describe("buildRetryPayloadOrNull", () => {
       initial_agent: "codex-acp-fast",
       project_id: "penumbra",
     });
+  });
+});
+
+describe("resolveAgentProvider", () => {
+  test("subscription agents key off subscription_provider", () => {
+    expect(
+      resolveAgentProvider({
+        pricing_mode: "subscription",
+        subscription_provider: "anthropic",
+        api_provider: "openai",
+      }),
+    ).toBe("anthropic");
+  });
+
+  test("api agents key off api_provider, falling back to subscription_provider", () => {
+    expect(resolveAgentProvider({ pricing_mode: "api", api_provider: "openai" })).toBe("openai");
+    expect(resolveAgentProvider({ pricing_mode: "api", subscription_provider: "anthropic" })).toBe(
+      "anthropic",
+    );
+  });
+
+  test("returns null when no provider is resolvable", () => {
+    expect(resolveAgentProvider({ pricing_mode: "subscription" })).toBeNull();
+    expect(resolveAgentProvider({ pricing_mode: "api" })).toBeNull();
+  });
+});
+
+describe("selectRetryAgent", () => {
+  const candidates: RetryAgentCandidate[] = [
+    { agent_name: "anthropic-claude-sonnet-acp", score: 0.9 },
+    { agent_name: "openai-codex-mini-cli", score: 0.7 },
+    { agent_name: "anthropic-claude-opus-acp", score: 0.5 },
+  ];
+  const validAgents = new Set([
+    "anthropic-claude-sonnet-acp",
+    "openai-codex-mini-cli",
+    "anthropic-claude-opus-acp",
+  ]);
+  const agentProviders = new Map<string, string | null>([
+    ["anthropic-claude-sonnet-acp", "anthropic"],
+    ["openai-codex-mini-cli", "openai"],
+    ["anthropic-claude-opus-acp", "anthropic"],
+  ]);
+
+  test("picks the highest-ranked candidate that is not the failed agent", () => {
+    expect(
+      selectRetryAgent({
+        candidates,
+        failedAgent: "anthropic-claude-sonnet-acp",
+        validAgents,
+        agentProviders,
+        activeBiases: [],
+      }),
+    ).toBe("openai-codex-mini-cli");
+  });
+
+  test("never re-selects the failed agent even if top-ranked", () => {
+    expect(
+      selectRetryAgent({
+        candidates,
+        failedAgent: "openai-codex-mini-cli",
+        validAgents,
+        agentProviders,
+        activeBiases: [],
+      }),
+    ).toBe("anthropic-claude-sonnet-acp");
+  });
+
+  test("Mode B: drops non-dispatchable display-label rows not in the registry", () => {
+    const polluted: RetryAgentCandidate[] = [
+      { agent_name: "maestro (claude-opus-4.7)", score: 1.0 },
+      { agent_name: "anthropic-claude-opus-acp", score: 0.5 },
+    ];
+    expect(
+      selectRetryAgent({
+        candidates: polluted,
+        failedAgent: "anthropic-claude-sonnet-acp",
+        validAgents,
+        agentProviders,
+        activeBiases: [],
+      }),
+    ).toBe("anthropic-claude-opus-acp");
+  });
+
+  test("Mode A: honors a provider-scope exclude bias (anthropic-only steer)", () => {
+    const excludeOpenai: RoutingBiasLike[] = [
+      { scope: "provider", value: "openai", mode: "exclude" },
+    ];
+    // sonnet failed → next best is openai-codex-mini, but it is steered out →
+    // falls through to the opus seat rather than a steered provider.
+    expect(
+      selectRetryAgent({
+        candidates,
+        failedAgent: "anthropic-claude-sonnet-acp",
+        validAgents,
+        agentProviders,
+        activeBiases: excludeOpenai,
+      }),
+    ).toBe("anthropic-claude-opus-acp");
+  });
+
+  test("honors an agent-scope exclude bias", () => {
+    const excludeAgent: RoutingBiasLike[] = [
+      { scope: "agent", value: "openai-codex-mini-cli", mode: "exclude" },
+    ];
+    expect(
+      selectRetryAgent({
+        candidates,
+        failedAgent: "anthropic-claude-sonnet-acp",
+        validAgents,
+        agentProviders,
+        activeBiases: excludeAgent,
+      }),
+    ).toBe("anthropic-claude-opus-acp");
+  });
+
+  test("boost/divert biases do not exclude (only exclude-mode filters)", () => {
+    const nonExclude: RoutingBiasLike[] = [
+      { scope: "provider", value: "openai", mode: "divert" },
+      { scope: "provider", value: "anthropic", mode: "boost" },
+    ];
+    expect(
+      selectRetryAgent({
+        candidates,
+        failedAgent: "anthropic-claude-sonnet-acp",
+        validAgents,
+        agentProviders,
+        activeBiases: nonExclude,
+      }),
+    ).toBe("openai-codex-mini-cli");
+  });
+
+  test("skips candidates with score <= 0", () => {
+    const lowScores: RetryAgentCandidate[] = [
+      { agent_name: "openai-codex-mini-cli", score: 0 },
+      { agent_name: "anthropic-claude-opus-acp", score: -0.1 },
+      { agent_name: "anthropic-claude-sonnet-acp", score: 0.3 },
+    ];
+    expect(
+      selectRetryAgent({
+        candidates: lowScores,
+        failedAgent: "x",
+        validAgents,
+        agentProviders,
+        activeBiases: [],
+      }),
+    ).toBe("anthropic-claude-sonnet-acp");
+  });
+
+  test("returns null when every candidate is filtered out", () => {
+    expect(
+      selectRetryAgent({
+        candidates,
+        failedAgent: "anthropic-claude-sonnet-acp",
+        validAgents,
+        agentProviders,
+        activeBiases: [
+          { scope: "provider", value: "openai", mode: "exclude" },
+          { scope: "provider", value: "anthropic", mode: "exclude" },
+        ],
+      }),
+    ).toBeNull();
   });
 });

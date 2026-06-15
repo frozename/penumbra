@@ -70,10 +70,12 @@ import { loadThoughtsConfig } from "../src/worker/thought-config.js";
 import { RecallEnricher } from "../src/worker/recall-enricher.js";
 import { workerInjectRoute } from "../src/worker/inject-route.js";
 import {
-  buildSilentRetryPayload,
   buildRetryPayloadOrNull,
   SILENT_RETRY_PREFIX,
   shouldRetryHandoffForSilentFailure,
+  selectRetryAgent,
+  resolveAgentProvider,
+  type RoutingBiasLike,
 } from "../src/worker/silent-failure-retry.js";
 import { resolveUsageCursorPath, startUsagePoller } from "../src/usage-readers/poller.js";
 import {
@@ -681,9 +683,32 @@ async function tryAutoRetrySilentFailure(
       min_samples: 1,
       include_neutral: false,
     });
-    nextAgent =
-      ranked.candidates.find((c) => c.agent_name !== failedHandoff.to_agent && c.score > 0)
-        ?.agent_name ?? null;
+    // Constrain the alternate to a real, dispatchable, non-steered agent:
+    //  - validAgents drops display-label rows (e.g. "maestro (...)") that 400 at
+    //    chain start;
+    //  - activeBiases honors operator usage-steering excludes so the retry does
+    //    not bypass a steer the first-pass route obeyed.
+    // Both degrade open: an empty registry/bias set just relaxes the guard.
+    const validAgents = new Set(config.agents.map((a) => a.name));
+    const agentProviders = new Map(
+      config.agents.map((a) => [a.name, resolveAgentProvider(a)] as const),
+    );
+    let activeBiases: RoutingBiasLike[] = [];
+    try {
+      activeBiases = await client.listRoutingBiases();
+    } catch (err) {
+      log.warn(
+        { handoff_id: failedHandoff.handoff_id, err: String(err) },
+        "silent-failure retry: routing-bias fetch failed; selecting unbiased",
+      );
+    }
+    nextAgent = selectRetryAgent({
+      candidates: ranked.candidates,
+      failedAgent: failedHandoff.to_agent,
+      validAgents,
+      agentProviders,
+      activeBiases,
+    });
   } catch (err) {
     log.warn(
       { handoff_id: failedHandoff.handoff_id, err: String(err) },

@@ -341,6 +341,36 @@ export class PenumbraClient {
       }>;
     }>;
   }
+  async listRoutingBiases(query?: { scope?: "provider" | "agent"; value?: string }): Promise<
+    Array<{
+      bias_id: string;
+      scope: "provider" | "agent";
+      value: string;
+      mode: "boost" | "divert" | "exclude";
+      weight: number | null;
+      reason: string | null;
+      created_at: string;
+      expires_at: string;
+    }>
+  > {
+    const params = new URLSearchParams();
+    if (query?.scope) params.set("scope", query.scope);
+    if (query?.value) params.set("value", query.value);
+    const qs = params.toString();
+    const res = (await this.get(`/routing/bias${qs ? `?${qs}` : ""}`)) as {
+      biases: Array<{
+        bias_id: string;
+        scope: "provider" | "agent";
+        value: string;
+        mode: "boost" | "divert" | "exclude";
+        weight: number | null;
+        reason: string | null;
+        created_at: string;
+        expires_at: string;
+      }>;
+    };
+    return res.biases;
+  }
   async postHeartbeat(worker_id: string, signal?: AbortSignal): Promise<void> {
     return this.postWorker("/worker/heartbeat", { worker_id }, { signal });
   }
