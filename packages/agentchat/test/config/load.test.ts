@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadConfig } from "../../src/config/load.js";
+import { loadConfig, loadConfigFromDir, loadConfigPathOrDir } from "../../src/config/load.js";
 
 test("loadConfig parses a valid YAML config", () => {
   const dir = mkdtempSync(join(tmpdir(), "agentchat-cfg-"));
@@ -364,5 +364,85 @@ describe("ProviderQuotaConfig per-model", () => {
       ].join("\n"),
     );
     expect(() => loadConfig(yamlPath)).toThrow(/five_hour/);
+  });
+});
+
+describe("loadConfigFromDir (split config dir = single source of truth)", () => {
+  function writeSplitDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), "penumbra-split-"));
+    writeFileSync(
+      join(dir, "agents.yaml"),
+      `
+agents:
+  - name: planner
+    adapter: claude-cli
+    options: { command: claude }
+    roles: [planner]
+  - name: home
+    adapter: stdio-acp
+    long_lived_config:
+      standing_brief: manage the home
+      bounds:
+        wall_clock_ms: 60000
+        cost_cents: 100
+        max_sub_dispatches: 3
+      mcp_allowlist:
+        - "ha:get_state"
+        - "ha:call_service"
+`,
+    );
+    writeFileSync(
+      join(dir, "routing.yaml"),
+      `
+default_roles:
+  planner: planner
+role_routing:
+  exploration_policy: ranked-first
+`,
+    );
+    writeFileSync(
+      join(dir, "quotas.yaml"),
+      `
+providers:
+  - name: anthropic
+    quota_usd_per_24h: 200
+`,
+    );
+    return dir;
+  }
+
+  test("merges agents.yaml + routing.yaml + quotas.yaml into one config", () => {
+    const cfg = loadConfigFromDir(writeSplitDir());
+    expect(cfg.agents.map((a) => a.name).sort()).toEqual(["home", "planner"]);
+    expect(cfg.default_roles.planner).toBe("planner");
+    expect(cfg.role_routing?.exploration_policy).toBe("ranked-first");
+    expect(cfg.providers[0]!.name).toBe("anthropic");
+  });
+
+  test("stamps mcp_allowlist_sdk_patterns for long-lived agents (same as loadConfig)", () => {
+    const cfg = loadConfigFromDir(writeSplitDir());
+    const home = cfg.agents.find((a) => a.name === "home");
+    expect((home?.long_lived_config as any)?.mcp_allowlist_sdk_patterns).toBeDefined();
+    expect(Array.isArray((home?.long_lived_config as any)?.mcp_allowlist_sdk_patterns)).toBe(true);
+  });
+
+  test("throws a dir-scoped error on invalid merged shape", () => {
+    const dir = mkdtempSync(join(tmpdir(), "penumbra-split-bad-"));
+    writeFileSync(join(dir, "agents.yaml"), `agents: []`);
+    writeFileSync(join(dir, "routing.yaml"), `default_roles: {}`);
+    writeFileSync(join(dir, "quotas.yaml"), `providers: []`);
+    expect(() => loadConfigFromDir(dir)).toThrow(/split dir/);
+  });
+
+  test("loadConfigPathOrDir dispatches: directory -> dir loader, file -> file loader", () => {
+    const splitDir = writeSplitDir();
+    const fromDir = loadConfigPathOrDir(splitDir);
+    expect(fromDir.agents.length).toBe(2);
+
+    const fileDir = mkdtempSync(join(tmpdir(), "penumbra-file-"));
+    const filePath = join(fileDir, "agentchat.yaml");
+    writeFileSync(filePath, `agents:\n  - name: only\n    adapter: claude-cli\n`);
+    const fromFile = loadConfigPathOrDir(filePath);
+    expect(fromFile.agents.map((a) => a.name)).toEqual(["only"]);
   });
 });

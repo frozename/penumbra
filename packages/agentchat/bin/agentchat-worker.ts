@@ -6,7 +6,7 @@ import type { CapturePort } from "../src/worker/capture-port.js";
 import { defaultProjectRegistryPath, loadProjectRegistry, SettingsDefaults } from "@penumbra/core";
 import type { AgentChatConfig } from "../src/config/types.js";
 import { PermissionDaemonClient } from "../src/worker/permission-daemon-client.js";
-import { loadConfig } from "../src/config/load.js";
+import { loadConfigPathOrDir } from "../src/config/load.js";
 import { PenumbraClient } from "../src/penumbra-client.js";
 import { dispatchHandoff } from "../src/cli/dispatch-handoff.js";
 import type { McpServer } from "../src/adapters/acp-types.js";
@@ -300,8 +300,11 @@ function registerThoughtAwareAdapters(thoughtCapture: ThoughtCapture | null): vo
   );
 }
 
-const configPath =
-  process.env.AGENTCHAT_CONFIG ?? join(homedir(), ".config/agentchat/agentchat.yaml");
+// Single source of truth: default to the split config DIR the daemon already
+// reads (~/.config/penumbra/{agents,routing,quotas}.yaml). AGENTCHAT_CONFIG may
+// still point at a single legacy agentchat.yaml file (loadConfigPathOrDir
+// dispatches on file-vs-dir), so overrides/tests keep working.
+const configPath = process.env.AGENTCHAT_CONFIG ?? join(homedir(), ".config/penumbra");
 const explicitRoot = flag("storage-root", process.env.PENUMBRA_STORAGE_ROOT);
 const bootstrapLog = createLogger({ component: "agentchat-worker" });
 let storageRoot: string;
@@ -356,7 +359,7 @@ const recallEnricher = new RecallEnricher({ client, log });
 const eventQueue = new DispatchEventQueue({
   send: (events, signal) => client.postDispatchEvents(events, signal),
 });
-let config = loadConfig(configPath);
+let config = loadConfigPathOrDir(configPath);
 const settings = SettingsDefaults.build({ env: process.env, input: {} });
 const projectRegistry = loadProjectRegistry(
   process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath(),
@@ -1586,7 +1589,7 @@ void runWorkerControlListener({
   onEvent,
   onConfigReload: () => {
     const previousConfig = config;
-    config = loadConfig(configPath);
+    config = loadConfigPathOrDir(configPath);
     const previousWarmAgents = new Set(
       previousConfig.agents
         .filter(
