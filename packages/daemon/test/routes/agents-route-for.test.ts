@@ -51,12 +51,27 @@ describe("computeRouteForRole", () => {
       }
     };
 
-    // Use dates relative to now to avoid tests failing when time passes
-    makeRows("high-perf", new Date(Date.now() - 1 * 86400000).toISOString(), 10, 9);
-    makeRows("mid", new Date(Date.now() - 2 * 86400000).toISOString(), 5, 3);
-    makeRows("low", new Date(Date.now() - 3 * 86400000).toISOString(), 8, 3);
-    makeRows("tiny", new Date(Date.now() - 4 * 86400000).toISOString(), 2, 2);
-    makeRows("outsider", new Date(Date.now() - 5 * 86400000).toISOString(), 12, 8);
+    // Anchor fixtures to FIXED ISO timestamps strictly before the gate-outcome
+    // cutover (DEFAULT_GATE_OUTCOME_CUTOVER_ISO = 2026-06-12T00:00:00Z). These
+    // rows carry no gate_outcome (NULL), so they only count as success-eligible
+    // via the legacy `ts < cutover AND gate_outcome IS NULL` predicate. Using
+    // Date.now()-N*day made the recent rows land *after* the cutover once the
+    // wall clock passed 2026-06-12, dropping success_rate to 0 and breaking the
+    // assertions. Fixed pre-cutover timestamps deterministically exercise the
+    // NULL-verdict path.
+    // SEAM: these must also fall inside the routing window (now - windowDays).
+    // With windowDays:14 the floor is `now - 14d`; 2026-06-05 stays inside the
+    // window while the suite runs on/before ~2026-06-19. If the wall clock
+    // advances past that, bump this base forward (still keeping it < cutover) or
+    // raise windowDays in the calls below.
+    const tsBase = "2026-06-05T00:00:00.000Z";
+    const preCutover = (hourOffset: number) =>
+      new Date(Date.parse(tsBase) + hourOffset * 3600000).toISOString();
+    makeRows("high-perf", preCutover(1), 10, 9);
+    makeRows("mid", preCutover(2), 5, 3);
+    makeRows("low", preCutover(3), 8, 3);
+    makeRows("tiny", preCutover(4), 2, 2);
+    makeRows("outsider", preCutover(5), 12, 8);
   });
 
   test("routes to the best eligible agent and explains rejections", () => {
@@ -154,7 +169,9 @@ describe("computeRouteForRole", () => {
         );
       }
     };
-    makePlannerRows("best-planner", new Date(Date.now() - 2 * 86400000).toISOString(), 10, 8);
+    // Fixed pre-cutover timestamp (see beforeEach note): keeps the NULL-verdict
+    // rows on the legacy success-eligible side of DEFAULT_GATE_OUTCOME_CUTOVER_ISO.
+    makePlannerRows("best-planner", "2026-06-05T02:00:00.000Z", 10, 8);
 
     const out = computeRouteForRole({
       db,
