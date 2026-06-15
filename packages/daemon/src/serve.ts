@@ -221,6 +221,7 @@ import {
 import { permissionsEventsRoute } from "./routes/permissions-events.js";
 import { startPermissionTtlSweeper } from "./sweepers/permission-ttl.js";
 import { startOrphanLanesSweeper } from "./sweepers/orphan-lanes.js";
+import { startWorktreeGcSweeper } from "./sweepers/worktree-gc.js";
 import { startWorkflowTriggerSweeper } from "./sweepers/workflow-trigger.js";
 import { startStaleHandoffSweeper } from "./sweepers/stale-handoff.js";
 import { startStaleWorkerTokensSweeper } from "./sweepers/stale-worker-tokens.js";
@@ -1209,6 +1210,10 @@ export function serve(opts: ServeOpts): DaemonHandle {
   })();
   const stopPermissionSweeper = startPermissionTtlSweeper(opts.services);
   const stopOrphanLanesSweeper = startOrphanLanesSweeper(opts.services);
+  const stopWorktreeGcSweeper = startWorktreeGcSweeper({
+    services: opts.services,
+    log: opts.services.log as any,
+  });
   const stopStaleWorkerTokensSweeper = startStaleWorkerTokensSweeper({
     db: opts.services.db,
     log: opts.services.log as any,
@@ -1685,6 +1690,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       server.stop(true);
       stopPermissionSweeper();
       stopOrphanLanesSweeper();
+      stopWorktreeGcSweeper();
       stopStaleWorkerTokensSweeper();
       stopStaleHandoffSweeper();
       stopOrphanHandoffRecovery();
