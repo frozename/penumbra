@@ -12,6 +12,8 @@ import {
   reloadAgentChatConfig,
 } from "../../../config/src/files/load.ts";
 import spec, {
+  buildMemoryQuery,
+  buildPriorFindingsBlock,
   diffTouchesUI,
   fn,
   inputSchema,
@@ -116,6 +118,7 @@ function makeCtx(opts?: {
     final_agent: string | null;
     response_text: string | null;
   }>;
+  db?: () => Database;
 }) {
   const root = mkdtempSync(join(tmpdir(), "adv-review-"));
   const writes: Array<{ path: string; body: string }> = [];
@@ -150,6 +153,7 @@ function makeCtx(opts?: {
     storageRoot: root,
     project: "penumbra",
     args: inputSchema.parse(opts?.args ?? {}),
+    db: opts?.db,
   };
   return { ctx, root, writes, dispatch, awaitChain };
 }
@@ -1411,6 +1415,174 @@ test("caps synthesis failover when every pool agent returns a failure marker", a
     expect(synthesis).toContain("> Synthesizer failover: codex -> gemini");
     expect(synthesis).toContain("<synthesizer failed: failed>");
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ── Prior-findings (memory recall) integration ──────────────────────────────
+
+function insertT2Memory(
+  db: Database,
+  id: string,
+  title: string,
+  body: string,
+  ts: string = "2026-05-05T00:00:00Z",
+): void {
+  db.prepare(
+    `INSERT INTO t2_memories (
+       memory_id, project_id, user_id, kind,
+       source_session_ids, window_start, window_end,
+       title, body, metadata_json, created_at, updated_at,
+       obs_type, concepts, severity
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id,
+    null,
+    "u1",
+    "observation",
+    JSON.stringify([id]),
+    ts,
+    ts,
+    title,
+    body,
+    "{}",
+    ts,
+    ts,
+    "note",
+    JSON.stringify([]),
+    "low",
+  );
+}
+
+test("buildPriorFindingsBlock: empty hits returns null", () => {
+  expect(buildPriorFindingsBlock([])).toBeNull();
+});
+
+test("buildPriorFindingsBlock: formats hits into advisory block", () => {
+  const block = buildPriorFindingsBlock([
+    { title: "Auth bypass found", snippet: "JWT tokens not validated in middleware" },
+    { title: "SQL injection risk", snippet: "User input concatenated directly into query" },
+  ]);
+  expect(block).not.toBeNull();
+  expect(block).toContain("Prior related findings (advisory — verify against current code)");
+  expect(block).toContain("**Auth bypass found**");
+  expect(block).toContain("JWT tokens not validated");
+  expect(block).toContain("**SQL injection risk**");
+});
+
+test("buildPriorFindingsBlock: byte budget caps output", () => {
+  // "- **Finding A**: " prefix (~17 chars) + 1940 chars = 1957 ≤ 2000 budget → included
+  // After that bytes=1958; "- **Finding B**: short..." (~57 chars) → 2015 > 2000 → excluded
+  const longSnippet = "x".repeat(1940);
+  const hits = [
+    { title: "Finding A", snippet: longSnippet },
+    { title: "Finding B", snippet: "short snippet that would exceed budget" },
+  ];
+  const block = buildPriorFindingsBlock(hits);
+  expect(block).not.toBeNull();
+  expect(block).toContain("Finding A");
+  expect(block).not.toContain("Finding B");
+});
+
+test("buildMemoryQuery: returns focus when provided", () => {
+  const recall = baseRecall();
+  const args = inputSchema.parse({ focus: "security vulnerabilities in auth" });
+  expect(buildMemoryQuery(recall, args)).toBe("security vulnerabilities in auth");
+});
+
+test("buildMemoryQuery: extracts paths from diff when no focus", () => {
+  const recall = recallWithDiff(
+    `diff --git a/src/auth.ts b/src/auth.ts\n--- a/src/auth.ts\n+++ b/src/auth.ts\n@@ -1 +1 @@\n-old\n+new`,
+  );
+  const args = inputSchema.parse({});
+  const query = buildMemoryQuery(recall, args);
+  expect(query).toContain("src/auth.ts");
+});
+
+test("buildMemoryQuery: falls back to default when diff has no paths", () => {
+  const recall = recallWithDiff("");
+  const args = inputSchema.parse({});
+  expect(buildMemoryQuery(recall, args)).toBe("code review findings");
+});
+
+test("fn: PENUMBRA_REVIEW_MEMORY_CONTEXT unset -> no prior findings in dispatch message", async () => {
+  delete process.env.PENUMBRA_REVIEW_MEMORY_CONTEXT;
+  const db = freshDb();
+  insertT2Memory(db, "m1", "Old auth bug", "JWT tokens were not validated");
+  const { ctx, root, dispatch } = makeCtx({
+    args: { personas: ["security"] },
+    db: () => db,
+  });
+  try {
+    await fn(ctx, baseRecall());
+    const messages: string[] = dispatch.mock.calls.map((c: unknown[]) => {
+      const arg = c[0] as { message?: string };
+      return arg?.message ?? "";
+    });
+    expect(messages.some((m) => m.includes("Prior related findings"))).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("fn: PENUMBRA_REVIEW_MEMORY_CONTEXT=1, DB has matches -> prior findings block in dispatch message", async () => {
+  process.env.PENUMBRA_REVIEW_MEMORY_CONTEXT = "1";
+  const db = freshDb();
+  // FTS5 requires ALL query tokens to appear somewhere in the row; put all three in body
+  insertT2Memory(
+    db,
+    "m1",
+    "Auth bypass security finding",
+    "JWT tokens not validated in auth security middleware",
+  );
+  const { ctx, root, dispatch } = makeCtx({
+    args: { personas: ["security"], focus: "auth security JWT" },
+    db: () => db,
+  });
+  try {
+    await fn(ctx, baseRecall());
+    const personaMessages: string[] = dispatch.mock.calls
+      .filter((c: unknown[]) => {
+        const arg = c[0] as { task_type?: string };
+        return arg?.task_type === "review_adversarial";
+      })
+      .map((c: unknown[]) => {
+        const arg = c[0] as { message?: string };
+        return arg?.message ?? "";
+      });
+    expect(personaMessages.length).toBeGreaterThan(0);
+    expect(personaMessages.every((m) => m.includes("Prior related findings"))).toBe(true);
+    expect(personaMessages.every((m) => m.includes("advisory — verify against current code"))).toBe(
+      true,
+    );
+  } finally {
+    delete process.env.PENUMBRA_REVIEW_MEMORY_CONTEXT;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("fn: PENUMBRA_REVIEW_MEMORY_CONTEXT=1, empty DB -> no prior findings block", async () => {
+  process.env.PENUMBRA_REVIEW_MEMORY_CONTEXT = "1";
+  const db = freshDb();
+  const { ctx, root, dispatch } = makeCtx({
+    args: { personas: ["security"], focus: "auth security" },
+    db: () => db,
+  });
+  try {
+    await fn(ctx, baseRecall());
+    const personaMessages: string[] = dispatch.mock.calls
+      .filter((c: unknown[]) => {
+        const arg = c[0] as { task_type?: string };
+        return arg?.task_type === "review_adversarial";
+      })
+      .map((c: unknown[]) => {
+        const arg = c[0] as { message?: string };
+        return arg?.message ?? "";
+      });
+    expect(personaMessages.length).toBeGreaterThan(0);
+    expect(personaMessages.every((m) => !m.includes("Prior related findings"))).toBe(true);
+  } finally {
+    delete process.env.PENUMBRA_REVIEW_MEMORY_CONTEXT;
     rmSync(root, { recursive: true, force: true });
   }
 });

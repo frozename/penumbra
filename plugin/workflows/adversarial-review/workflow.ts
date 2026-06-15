@@ -356,7 +356,93 @@ function fileContentsBody(recall: RecallBundle): string {
   return typeof body === "string" ? body : "";
 }
 
-function renderPersonaPrompt(persona: ReviewPersona, recall: RecallBundle, args: Input): string {
+const REVIEW_MEMORY_TOP_K = 5;
+const REVIEW_MEMORY_BYTE_BUDGET = 2000;
+
+export function buildPriorFindingsBlock(
+  hits: Array<{ title: string; snippet: string }>,
+): string | null {
+  if (hits.length === 0) return null;
+  const header = "## Prior related findings (advisory — verify against current code)\n";
+  let bytes = 0;
+  const lines: string[] = [];
+  for (const hit of hits) {
+    const line = `- **${hit.title}**: ${hit.snippet}`;
+    if (bytes + line.length > REVIEW_MEMORY_BYTE_BUDGET) break;
+    lines.push(line);
+    bytes += line.length + 1;
+  }
+  if (lines.length === 0) return null;
+  return header + lines.join("\n");
+}
+
+export function buildMemoryQuery(recall: RecallBundle, args: Input): string {
+  if (typeof args.focus === "string" && args.focus.length > 0) return args.focus;
+  const gitDiff =
+    typeof recall.byKey["git.diff"] === "string" ? (recall.byKey["git.diff"] as string) : "";
+  const paths = new Set<string>();
+  const changedPathHeaderPattern =
+    /^---[ \t]+("(?:[^"\r\n]|\\.)*"|[^\r\n]+)\r?\n\+\+\+[ \t]+("(?:[^"\r\n]|\\.)*"|[^\r\n]+)/gm;
+  let match: RegExpExecArray | null;
+  while ((match = changedPathHeaderPattern.exec(gitDiff)) !== null) {
+    for (const rawPath of [match[1], match[2]]) {
+      if (!rawPath) continue;
+      const normalized = normalizeDiffPath(rawPath);
+      if (normalized) paths.add(normalized);
+    }
+  }
+  if (typeof args.content_path === "string" && args.content_path.length > 0) {
+    paths.add(args.content_path);
+  }
+  const pathList = [...paths].slice(0, 5);
+  return pathList.length > 0 ? pathList.join(" ") : "code review findings";
+}
+
+function sanitizeFtsQuery(q: string): string {
+  return q
+    .replace(/[^A-Za-z0-9\s]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function fetchPriorFindings(ctx: WorkflowCtx, query: string): Promise<string | null> {
+  if (!process.env.PENUMBRA_REVIEW_MEMORY_CONTEXT) return null;
+  if (!ctx.db) return null;
+  const sanitized = sanitizeFtsQuery(query);
+  if (!sanitized) return null;
+  // OR-join terms: any matching term surfaces a hit. A bare multi-word FTS5 MATCH
+  // is implicit-AND (every term required), which misses relevant prior findings.
+  const ftsQuery = sanitized.split(/\s+/).filter(Boolean).join(" OR ");
+  if (!ftsQuery) return null;
+  try {
+    const db = ctx.db();
+    const rows = db
+      .query(
+        `SELECT t.title, t.body
+         FROM t2_fts f
+         JOIN t2_memories t ON t.rowid = f.rowid
+         WHERE t2_fts MATCH ?
+           AND COALESCE(json_extract(t.metadata_json, '$.trust'), '') != 'untrusted'
+         ORDER BY bm25(t2_fts)
+         LIMIT ?`,
+      )
+      .all(ftsQuery, REVIEW_MEMORY_TOP_K) as Array<{ title: string; body: string }>;
+    const hits = rows.map((r) => ({
+      title: (r.title ?? "").slice(0, 120),
+      snippet: (r.body ?? "").slice(0, 240),
+    }));
+    return buildPriorFindingsBlock(hits);
+  } catch {
+    return null;
+  }
+}
+
+function renderPersonaPrompt(
+  persona: ReviewPersona,
+  recall: RecallBundle,
+  args: Input,
+  priorFindings?: string | null,
+): string {
   const gitDiff =
     typeof recall.byKey["git.diff"] === "string" ? (recall.byKey["git.diff"] as string) : "";
   const commits = formatGitShow(recall);
@@ -381,6 +467,7 @@ function renderPersonaPrompt(persona: ReviewPersona, recall: RecallBundle, args:
       ? `\n## Caller's focus\n${args.focus}\n`
       : "";
   const commitsSection = useContent ? "" : `\n## Recent commits\n${commits}\n`;
+  const priorFindingsSection = priorFindings ? `\n${priorFindings}\n` : "";
 
   const contentModePreamble = useContent
     ? `**Content-mode review** — The target below is a prose document, not a code diff.
@@ -405,7 +492,7 @@ ${focusSection}
 \`\`\`diff
 ${diffBody}
 \`\`\`
-${commitsSection}
+${commitsSection}${priorFindingsSection}
 ## Output format
 Return your review as markdown, then a fenced \`\`\`json [...]\`\`\` block at the very end with an array of findings:
 
@@ -514,6 +601,7 @@ function synthesisPrompt(
   selected: ReviewPersona[],
   personaResults: PersonaRunResult[],
   args: Input,
+  priorFindings?: string | null,
 ): string {
   const sections = selected.map((persona) => {
     const result = personaResults.find((r) => r.persona === persona.name);
@@ -529,11 +617,13 @@ function synthesisPrompt(
       ? `Caller focus: ${args.focus}\n\n`
       : "";
 
+  const priorFindingsSection = priorFindings ? `${priorFindings}\n\n` : "";
+
   return `${synth.system_prompt}
 
 You are synthesizing ${selected.length} adversarial reviews. Each persona reviewed the same diff with a different lens.
 
-${focusPrefix}## Reviews
+${focusPrefix}${priorFindingsSection}## Reviews
 ${sections.join("\n\n")}
 
 ## Output
@@ -673,6 +763,9 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     await ctx.fileWrite(mdPath, mdBody);
   };
 
+  const memoryQuery = buildMemoryQuery(recall, parsedArgs);
+  const priorFindings = await fetchPriorFindings(ctx, memoryQuery);
+
   const personaResults = await Promise.all(
     resolvedPersonas.resolved.map(async (key): Promise<PersonaRunResult> => {
       const persona = personasByKey[key]!;
@@ -688,7 +781,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           try {
             dispatch = await ctx.dispatch({
               agent: persona.preferred_agent,
-              message: `cd ${ctx.cwd}\n\n${renderPersonaPrompt(persona, recall, parsedArgs)}`,
+              message: `cd ${ctx.cwd}\n\n${renderPersonaPrompt(persona, recall, parsedArgs, priorFindings)}`,
               task_type: "review_adversarial",
               use_worktree: false,
             });
@@ -817,7 +910,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
         attempts += 1;
         const dispatch = await ctx.dispatch({
           agent: currentAgent,
-          message: `cd ${ctx.cwd}\n\n${synthesisPrompt(synthesizer, selected, personaResults, parsedArgs)}`,
+          message: `cd ${ctx.cwd}\n\n${synthesisPrompt(synthesizer, selected, personaResults, parsedArgs, priorFindings)}`,
           task_type: "review_adversarial",
           use_worktree: false,
         });

@@ -17,6 +17,8 @@ export type { CaptureInput } from "./capture.js";
 export { renderTemplate } from "./template.js";
 export { resolveTemplateVars } from "./template-vars.js";
 export type { TemplateVarContext } from "./template-vars.js";
+export { runMemorySearchSource } from "./recall-sources/memory.js";
+export type { MemoryHit, MemorySearchOutput } from "./recall-sources/memory.js";
 export { loadMarkdownPlaybook } from "./loaders/markdown.js";
 export { loadTsWorkflow } from "./loaders/ts.js";
 export { writeSlashCommands } from "./slash-bridge.js";
