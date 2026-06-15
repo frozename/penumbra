@@ -172,6 +172,43 @@ describe("TaskDraftReader.listPending", () => {
     }
   });
 
+  test("warns at most once per event_id for a chronically malformed payload", () => {
+    // A draft whose payload fails TaskDraftPayloadSchema (missing prompt +
+    // affects_projects). It is skipped on every listPending call; without dedupe
+    // it re-logs the same ZodError indefinitely (the observed ~1.5k-line spam).
+    insertDraft(db, {
+      event_id: "bad-1",
+      ts: "2026-05-16T00:00:00.000Z",
+      ingest_ts: "2026-05-16T00:00:01.000Z",
+      project_id: "p1",
+      event_type: "task_draft",
+      draft_id: "77777777-7777-4777-8777-777777777777",
+      payload: {
+        draft_id: "77777777-7777-4777-8777-777777777777",
+        evidence: {},
+        auto_ok: true,
+        filed_by_agent: "agent",
+        filed_via: "skill_inline",
+        parent_draft_id: null,
+      },
+    });
+
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    };
+    try {
+      reader.listPending({ latest_event_type: "task_draft", project_id: "p1" });
+      reader.listPending({ latest_event_type: "task_draft", project_id: "p1" });
+      reader.listPending({ latest_event_type: "task_draft", project_id: "p1" });
+    } finally {
+      console.warn = originalWarn;
+    }
+    const skipWarns = warnings.filter((w) => w.includes("skipped invalid payload"));
+    expect(skipWarns).toHaveLength(1);
+  });
+
   test("FIFO tie-break: equal ts ordered by ingest_ts ASC", () => {
     const draftIdA = "55555555-5555-4555-8555-555555555555";
     const draftIdB = "66666666-6666-4666-8666-666666666666";

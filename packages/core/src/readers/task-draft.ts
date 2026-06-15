@@ -105,6 +105,13 @@ export function getTaskDraftPromotionInfo(
 }
 
 export class TaskDraftReader {
+  // Event-ids already warned about for an unparseable payload. A chronically
+  // malformed draft is skipped on every listPending/escalation call, which
+  // otherwise re-logs the same ZodError indefinitely (observed ~1.5k lines from
+  // a handful of stuck drafts). Dedupe so each bad event warns at most once per
+  // process lifetime.
+  private readonly warnedInvalidPayloadEventIds = new Set<string>();
+
   constructor(private readonly opts: { db: Database }) {}
 
   getPromotionInfo(draftId: string): {
@@ -129,7 +136,13 @@ export class TaskDraftReader {
         const payload = this.parseRowPayload(row);
         out.push(mapPendingTaskDraft(row, payload));
       } catch (err) {
-        console.warn("task draft reader skipped invalid payload", { event_id: row.event_id, err });
+        if (!this.warnedInvalidPayloadEventIds.has(row.event_id)) {
+          this.warnedInvalidPayloadEventIds.add(row.event_id);
+          console.warn("task draft reader skipped invalid payload", {
+            event_id: row.event_id,
+            err,
+          });
+        }
       }
     }
     return out;
@@ -169,11 +182,14 @@ export class TaskDraftReader {
           escalation_ts: row.escalation_ts,
         });
       } catch (err) {
-        console.warn("task draft escalation reader skipped invalid payload", {
-          escalation_event_id: row.escalation_event_id,
-          original_event_id: row.original_event_id,
-          err,
-        });
+        if (!this.warnedInvalidPayloadEventIds.has(row.escalation_event_id)) {
+          this.warnedInvalidPayloadEventIds.add(row.escalation_event_id);
+          console.warn("task draft escalation reader skipped invalid payload", {
+            escalation_event_id: row.escalation_event_id,
+            original_event_id: row.original_event_id,
+            err,
+          });
+        }
       }
     }
     return out;
