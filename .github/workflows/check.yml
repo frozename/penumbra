@@ -33,7 +33,18 @@ jobs:
         # Wrapper gates on reported pass/fail, not the raw exit code, to tolerate a
         # known upstream bun NAPI-teardown panic (exit 133 after a clean summary).
         # Real failures / load errors / pre-summary crashes still fail. See the script.
-        run: bun scripts/bun-test-gate.ts
+        #
+        # path-ignore-patterns excludes files that `bun test` would otherwise glob
+        # but that are not bun unit/integration tests: Playwright specs under e2e/
+        # and visual/ (different runner — they error on load under bun), the
+        # full-stack e2e package (needs a live daemon), benchmark scripts, and any
+        # compiled dist/ copies. Colocated src/**/*.test.ts still run.
+        run: >-
+          bun scripts/bun-test-gate.ts
+          --path-ignore-patterns='**/e2e/**'
+          --path-ignore-patterns='**/visual/**'
+          --path-ignore-patterns='**/dist/**'
+          --path-ignore-patterns='**/scripts/bench*.test.ts'
       - name: lint (advisory - currently has known violations, see plan Phase 5.2)
         run: bun run lint || true
         continue-on-error: true
