@@ -78,7 +78,12 @@ for (const result of results) {
 }
 
 const today = formatDate(new Date());
-const outputPath = `docs/quality/lint-baseline-${today}.json`;
+// Output path is overridable via LINT_BASELINE_OUT so the test suite can capture
+// the baseline into a temp dir instead of dropping a fresh dated file into the
+// tracked docs/quality/ tree on every run (which showed up as perpetual
+// untracked churn). Manual runs still default to the committed
+// docs/quality/lint-baseline-<today>.json snapshot path.
+const outputPath = process.env.LINT_BASELINE_OUT ?? `docs/quality/lint-baseline-${today}.json`;
 mkdirSync(dirname(outputPath), { recursive: true });
-writeFileSync(`${outputPath}`, JSON.stringify(baseline, null, 2) + "\n", "utf8");
+writeFileSync(outputPath, JSON.stringify(baseline, null, 2) + "\n", "utf8");
 process.stdout.write(`wrote ${outputPath}\n`);
