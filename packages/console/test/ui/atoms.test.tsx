@@ -1,6 +1,6 @@
 import "../setup";
 import { describe, expect, test } from "bun:test";
-import { render, screen } from "@testing-library/react";
+import { render, within } from "@testing-library/react";
 import { Badge } from "../../src/ui/Badge";
 import { Button } from "../../src/ui/Button";
 import { Card, CardHead } from "../../src/ui/Card";
@@ -21,7 +21,13 @@ describe("Badge", () => {
 
     const { container } = render(<Badge>default</Badge>);
     expect(container.querySelector(".badge")?.className).toBe("badge badge-info");
-    expect(screen.getByText("default")).toBeTruthy();
+    // `within(container)` binds the query at call time. `screen` from
+    // @testing-library/dom captures document.body at module-eval time, which
+    // is undefined before happy-dom registers when the suite runs from the
+    // repo root (root bunfig preloads a non-DOM setup), permanently poisoning
+    // every `screen.*` into a throwing stub. Querying the render container
+    // sidesteps that ordering trap.
+    expect(within(container).getByText("default")).toBeTruthy();
   });
 });
 

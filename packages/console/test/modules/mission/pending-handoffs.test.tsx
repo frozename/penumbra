@@ -52,6 +52,23 @@ function fakeRow(overrides: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
+// Drive a controlled <input>'s React onChange under happy-dom.
+//
+// happy-dom 18 + React 18 do not fire React's controlled-input `onChange`
+// for a bare `fireEvent.change(input, { target: { value } })`: the value
+// reaches the DOM node but React's ChangeEventPlugin never re-syncs state,
+// so the component keeps reading the empty initial value. A real keystroke
+// envelope (focus -> keyDown -> input(value) -> keyUp) does drive onChange.
+// Do not "simplify" this back to a single fireEvent.change — it silently
+// stops exercising the typed value and the assertion below would pass
+// against the "" fallback instead of the user's input.
+function typeIntoInput(input: HTMLInputElement, value: string): void {
+  fireEvent.focus(input);
+  fireEvent.keyDown(input, { key: value.slice(-1) || "x" });
+  fireEvent.input(input, { target: { value } });
+  fireEvent.keyUp(input, { key: value.slice(-1) || "x" });
+}
+
 afterEach(() => {
   cleanup();
 });
@@ -306,7 +323,7 @@ describe("PendingHandoffs", () => {
       return found;
     })) as HTMLInputElement;
 
-    fireEvent.change(input, { target: { value: "looks bad" } });
+    typeIntoInput(input, "looks bad");
     const submit = within(container).getByText("Submit deny") as HTMLButtonElement;
     fireEvent.click(submit);
 

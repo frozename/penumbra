@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 function runScript(code: string): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn("bun", ["-e", code], {
-      cwd: process.cwd(),
+      cwd: import.meta.dir + "/..",
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";

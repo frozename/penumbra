@@ -1,5 +1,6 @@
+import "../../setup";
 import { describe, expect, mock, test } from "bun:test";
-import { render, screen } from "@testing-library/react";
+import { render, within } from "@testing-library/react";
 import { PressureGrid } from "../../../src/modules/mission/PressureGrid";
 
 describe("PressureGrid", () => {
@@ -65,8 +66,12 @@ describe("PressureGrid", () => {
       usePressureSnapshot: () => ({ windows: [], peakUsedPct: 0, isLoading: false }),
     }));
 
-    render(<PressureGrid />);
-    expect(screen.getByText("No pressure data available.")).toBeTruthy();
+    const { container } = render(<PressureGrid />);
+    // Query the render container (bound at call time) rather than `screen`,
+    // whose document.body binding is captured at module-eval time and is
+    // undefined when the suite runs from the repo root before happy-dom
+    // registers — see the note in test/ui/atoms.test.tsx.
+    expect(within(container).getByText("No pressure data available.")).toBeTruthy();
   });
 
   test("renders card head title", () => {
