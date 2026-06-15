@@ -48,3 +48,28 @@ const daemon = new DaemonClient({
 const server = await buildServer({ daemon });
 const transport = new StdioServerTransport();
 await server.connect(transport);
+
+// Parent-death teardown. This MCP server runs as a child of an ACP agent (or the
+// mcp-allowlist-proxy). The SDK's StdioServerTransport listens for stdin
+// 'data'/'error' but not 'end', so on abrupt parent death (no clean SIGTERM
+// reaching us) this process would reparent to ppid=1 and run forever — the same
+// orphan-accumulation class fixed in mcp-allowlist-proxy. Our stdin is the
+// JSON-RPC request channel and stays open for the whole session, so EOF
+// unambiguously means the parent is gone: close the server (flush) and exit, with
+// a hard-exit fallback if close() stalls so we can never hang as an orphan.
+let shuttingDown = false;
+const shutdown = (): void => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  const hardExit = setTimeout(() => process.exit(0), 2000);
+  void Promise.resolve(server.close())
+    .catch(() => {})
+    .finally(() => {
+      clearTimeout(hardExit);
+      process.exit(0);
+    });
+};
+process.stdin.on("end", shutdown);
+process.stdin.on("close", shutdown);
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
