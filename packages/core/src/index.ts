@@ -93,6 +93,10 @@ export {
 } from "./db/schema.js";
 export { assertEmbedderDim, migrate, type MigrateOpts } from "./db/migrations.js";
 export {
+  checkEmbeddingModelVersion,
+  readStoredEmbeddingModelVersion,
+} from "./db/embedding-version-guard.js";
+export {
   resolveStorageDbPath,
   assertTestDbPathIsolation,
   type ResolveStorageDbPathOpts,

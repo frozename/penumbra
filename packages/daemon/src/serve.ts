@@ -7,6 +7,8 @@ import {
   type Watchdog,
   type Services as CoreServices,
   runStartupZombieSweep,
+  checkEmbeddingModelVersion,
+  readStoredEmbeddingModelVersion,
 } from "@penumbra/core";
 import { getConfig } from "@penumbra/config";
 import { startDreamingCron, startDailyDigestCron } from "./dreaming/index.js";
@@ -1152,6 +1154,14 @@ export function serve(opts: ServeOpts): DaemonHandle {
   // Sweep any dream_cycles left in 'running' state from a previous daemon crash
   // before any cron scheduler can start a new cycle.
   runStartupZombieSweep(opts.services.db);
+
+  const embeddingVersionWarning = checkEmbeddingModelVersion(
+    process.env.PENUMBRA_EMBEDDING_MODEL_VERSION ?? "v1",
+    readStoredEmbeddingModelVersion(opts.services.db),
+  );
+  if (embeddingVersionWarning) {
+    opts.services.log.warn({ event: "embedding_model_version_mismatch" }, embeddingVersionWarning);
+  }
 
   const rollup = createRollupWorker({
     services: opts.services,
