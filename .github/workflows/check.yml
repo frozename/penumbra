@@ -25,6 +25,11 @@ jobs:
         # clone needs no token. Tracks nova main; pin a SHA here if reproducibility
         # against a specific nova revision becomes necessary.
         run: git clone --depth 1 https://github.com/frozename/nova.git ../nova
+      - name: install ripgrep
+        # The fs_grep feature (packages/daemon/src/fs-search.ts) shells out to
+        # `rg`, and an import-guard test greps source via `rg`. ripgrep is not
+        # preinstalled on the runner, so without this those suites fail to spawn.
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: install
         run: bun install --frozen-lockfile
       - name: typecheck
