@@ -1,11 +1,7 @@
 import { randomUUID } from "crypto";
 import type { Database } from "bun:sqlite";
-import {
-  readSubscriptionPressure,
-  type DispatchEventInput,
-  type Logger,
-  type PressureResult,
-} from "@penumbra/core";
+import { readSubscriptionPressure, type DispatchEventInput, type Logger } from "@penumbra/core";
+import { isAnyProviderOverPressure } from "../pressure.js";
 import { createResearchAdapter } from "../research/firecrawl-adapter.js";
 import { StubJudgePool } from "./judge-pool.js";
 import { createDreamingJudgePoolFromAgentchat } from "./dreaming-judge-pool.js";
@@ -13,23 +9,6 @@ import { createBriefSynthesizerFromAgentchat } from "./brief-synthesizer.js";
 import { ContentQualityJudge } from "./curator/content-quality-judge.js";
 import type { DreamCycleDeps } from "./cycle.js";
 import type { DreamConfig } from "./config.js";
-
-function isAnyProviderOverPressure(pressure: PressureResult): boolean {
-  // Fail OPEN: a snapshot flagged stale (reported in warnings as `stale_snapshot`)
-  // must NOT throttle dreaming. Otherwise a single forgotten/stale over-pressure
-  // reading would wedge dreaming permanently. Only FRESH snapshots count toward
-  // over-pressure; if every snapshot is stale (or none exist) we report
-  // not-throttled and let dreaming proceed.
-  const staleKeys = new Set(
-    pressure.warnings
-      .filter((w) => w.code === "stale_snapshot")
-      .map((w) => `${w.provider} ${w.window_label}`),
-  );
-  return pressure.snapshots.some((snapshot) => {
-    if (staleKeys.has(`${snapshot.provider} ${snapshot.window_label}`)) return false;
-    return snapshot.used_pct >= 0.9 || snapshot.source_kind === "cooldown";
-  });
-}
 
 export function buildDreamCycleDeps(
   services: {

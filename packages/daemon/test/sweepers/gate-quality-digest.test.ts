@@ -375,6 +375,68 @@ describe("gate-quality-digest sweeper", () => {
     }
   }
 
+  it("startGateQualityDigestSweeper: defers sweep when pressure guard enabled and provider is over threshold", async () => {
+    const deferLogs: string[] = [];
+    const { startGateQualityDigestSweeper } =
+      await import("../../src/sweepers/gate-quality-digest.js");
+
+    const stop = startGateQualityDigestSweeper(
+      {
+        services,
+        outDir: dir,
+        now: () => NOW,
+        getEnv: (key) => (key === "PENUMBRA_GATE_QUALITY_PRESSURE_GUARD" ? "true" : undefined),
+        checkPressure: () => true,
+        log: { info: (_obj, msg) => deferLogs.push(msg) },
+      },
+      10_000,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    stop();
+
+    expect(existsSync(join(dir, "gate-quality-digest-2026-06-13.md"))).toBe(false);
+    expect(deferLogs.some((m) => m.includes("deferred"))).toBe(true);
+  });
+
+  it("startGateQualityDigestSweeper: runs normally when pressure guard enabled but pressure is low", async () => {
+    const { startGateQualityDigestSweeper } =
+      await import("../../src/sweepers/gate-quality-digest.js");
+
+    const stop = startGateQualityDigestSweeper(
+      {
+        services,
+        outDir: dir,
+        now: () => NOW,
+        getEnv: (key) => (key === "PENUMBRA_GATE_QUALITY_PRESSURE_GUARD" ? "true" : undefined),
+        checkPressure: () => false,
+      },
+      10_000,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    stop();
+
+    expect(existsSync(join(dir, "gate-quality-digest-2026-06-13.md"))).toBe(true);
+  });
+
+  it("startGateQualityDigestSweeper: always runs when pressure guard flag is off, even if checkPressure returns true", async () => {
+    const { startGateQualityDigestSweeper } =
+      await import("../../src/sweepers/gate-quality-digest.js");
+
+    const stop = startGateQualityDigestSweeper(
+      {
+        services,
+        outDir: dir,
+        now: () => NOW,
+        checkPressure: () => true,
+      },
+      10_000,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    stop();
+
+    expect(existsSync(join(dir, "gate-quality-digest-2026-06-13.md"))).toBe(true);
+  });
+
   function countGateQualityDigestMemories(): number {
     return db
       .query<

@@ -1191,6 +1191,9 @@ export function serve(opts: ServeOpts): DaemonHandle {
       judgeChat,
       model: cfg.model,
       intervalMs: 5000,
+      pressureGuardEnabled:
+        process.env.PENUMBRA_MEMORY_EFFICACY_PRESSURE_GUARD === "1" ||
+        process.env.PENUMBRA_MEMORY_EFFICACY_PRESSURE_GUARD === "true",
       log: opts.services.log as any,
     });
   })();

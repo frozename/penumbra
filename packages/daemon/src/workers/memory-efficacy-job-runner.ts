@@ -7,6 +7,7 @@ import {
   completeJob as defaultCompleteJob,
   heartbeatJob as defaultHeartbeatJob,
 } from "@penumbra/core";
+import { checkDbPressure } from "../pressure.js";
 
 type ClaimNextJobFn = typeof defaultClaimNextJob;
 type HeartbeatJobFn = typeof defaultHeartbeatJob;
@@ -21,6 +22,7 @@ export interface MemoryEfficacyJobRunnerOpts {
   intervalMs?: number;
   leaseTtlMs?: number;
   heartbeatIntervalMs?: number;
+  pressureGuardEnabled?: boolean;
   log?: { info: (obj: object, msg: string) => void; error: (obj: object, msg: string) => void };
   collaborators?: Partial<MemoryEfficacyJobRunnerCollaborators>;
 }
@@ -30,6 +32,7 @@ export interface MemoryEfficacyJobRunnerCollaborators {
   heartbeatJob: HeartbeatJobFn;
   completeJob: CompleteJobFn;
   buildMemoryEfficacyCache: BuildMemoryEfficacyCacheFn;
+  checkPressure?: () => boolean;
 }
 
 export interface JobRunnerHandle {
@@ -55,6 +58,13 @@ export function createMemoryEfficacyJobRunner(opts: MemoryEfficacyJobRunnerOpts)
 
   async function tick() {
     if (running) return;
+    if (opts.pressureGuardEnabled) {
+      const check = collab.checkPressure ?? (() => checkDbPressure(opts.db));
+      if (check()) {
+        log.info({}, "memory-efficacy-job-runner: deferred due to subscription pressure");
+        return;
+      }
+    }
     running = true;
     try {
       const now = new Date().toISOString();

@@ -746,6 +746,18 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: OptNonNegInt,
     description: "Interval for the gate-quality digest sweeper in milliseconds.",
   },
+  PENUMBRA_GATE_QUALITY_PRESSURE_GUARD: {
+    schema: Bool,
+    default: false,
+    description:
+      "Defer the gate-quality digest sweep when subscription pressure is over threshold. Off by default.",
+  },
+  PENUMBRA_MEMORY_EFFICACY_PRESSURE_GUARD: {
+    schema: Bool,
+    default: false,
+    description:
+      "Defer memory-efficacy job runs when subscription pressure is over threshold. Off by default.",
+  },
   PENUMBRA_RECONCILE_TEST_TIMEOUT_S: {
     schema: OptNonNegInt,
     description: "Timeout for reconcile tests in seconds.",

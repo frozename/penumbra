@@ -76,3 +76,106 @@ test("memory efficacy job runner completes failed jobs with an error payload whe
   expect(completeCalls).toHaveLength(1);
   expect(completeCalls[0]?.result).toEqual({ error: "judge backend unreachable" });
 });
+
+test("memory-efficacy-job-runner: defers tick when pressure guard enabled and provider is over threshold", async () => {
+  let claimCallCount = 0;
+  const services = { memoryEfficacyRunnerHeartbeatAt: 0 } as any;
+
+  const runner = createMemoryEfficacyJobRunner({
+    db: {} as any,
+    services,
+    judgeChat: async () => "[]",
+    model: "test",
+    intervalMs: 1,
+    pressureGuardEnabled: true,
+    collaborators: {
+      claimNextJob: mock(() => {
+        claimCallCount++;
+        return null;
+      }),
+      heartbeatJob: mock(() => true) as any,
+      completeJob: mock(() => true) as any,
+      buildMemoryEfficacyCache: mock(async () => ({
+        scanned: 0,
+        classified: 0,
+        skipped: 0,
+      })) as any,
+      checkPressure: () => true,
+    },
+  });
+
+  runner.start();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  runner.stop();
+
+  expect(claimCallCount).toBe(0);
+});
+
+test("memory-efficacy-job-runner: runs normally when pressure guard enabled but pressure is low", async () => {
+  let claimed = false;
+  const services = { memoryEfficacyRunnerHeartbeatAt: 0 } as any;
+
+  const runner = createMemoryEfficacyJobRunner({
+    db: {} as any,
+    services,
+    judgeChat: async () => "[]",
+    model: "test",
+    intervalMs: 1,
+    pressureGuardEnabled: true,
+    collaborators: {
+      claimNextJob: mock(() => {
+        if (claimed) return null;
+        claimed = true;
+        return { job_id: "job-1", reviews_dir: "/tmp/reviews", since_iso: null } as any;
+      }),
+      heartbeatJob: mock(() => true) as any,
+      completeJob: mock(() => true) as any,
+      buildMemoryEfficacyCache: mock(async () => ({
+        scanned: 0,
+        classified: 0,
+        skipped: 0,
+      })) as any,
+      checkPressure: () => false,
+    },
+  });
+
+  runner.start();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  runner.stop();
+
+  expect(claimed).toBe(true);
+});
+
+test("memory-efficacy-job-runner: always runs when pressure guard flag is off, even if checkPressure returns true", async () => {
+  let claimed = false;
+  const services = { memoryEfficacyRunnerHeartbeatAt: 0 } as any;
+
+  const runner = createMemoryEfficacyJobRunner({
+    db: {} as any,
+    services,
+    judgeChat: async () => "[]",
+    model: "test",
+    intervalMs: 1,
+    collaborators: {
+      claimNextJob: mock(() => {
+        if (claimed) return null;
+        claimed = true;
+        return { job_id: "job-1", reviews_dir: "/tmp/reviews", since_iso: null } as any;
+      }),
+      heartbeatJob: mock(() => true) as any,
+      completeJob: mock(() => true) as any,
+      buildMemoryEfficacyCache: mock(async () => ({
+        scanned: 0,
+        classified: 0,
+        skipped: 0,
+      })) as any,
+      checkPressure: () => true,
+    },
+  });
+
+  runner.start();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  runner.stop();
+
+  expect(claimed).toBe(true);
+});

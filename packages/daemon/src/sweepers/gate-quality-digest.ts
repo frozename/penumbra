@@ -8,6 +8,7 @@ import {
   writeDirectT2Memory,
   type Services,
 } from "@penumbra/core";
+import { checkDbPressure } from "../pressure.js";
 
 const DEFAULT_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_RECURRENCE_THRESHOLD = 3;
@@ -30,6 +31,7 @@ export interface GateQualityDigestSweepDeps {
   getEnv?: (key: string) => string | undefined;
   recurrenceThreshold?: number;
   log?: Log;
+  checkPressure?: () => boolean;
 }
 
 export interface GateQualityDigestSweepResult {
@@ -125,6 +127,13 @@ export function startGateQualityDigestSweeper(
 
   const tick = async () => {
     if (gateQualityDigestInFlight) return;
+    if (resolvePressureGuardEnabled(deps.getEnv)) {
+      const check = deps.checkPressure ?? (() => checkDbPressure(deps.services.db));
+      if (check()) {
+        deps.log?.info?.({}, "gate-quality-digest: deferred due to subscription pressure");
+        return;
+      }
+    }
     gateQualityDigestInFlight = true;
     try {
       await runGateQualityDigestSweep(deps);
@@ -458,6 +467,12 @@ function escapeMarkdownTableCell(value: string): string {
 
 function resolveT2WritesEnabled(getEnv?: (key: string) => string | undefined): boolean {
   const key = "PENUMBRA_GATE_QUALITY_T2_WRITES";
+  const raw = getEnv?.(key) ?? process.env[key];
+  return raw === "1" || raw === "true";
+}
+
+function resolvePressureGuardEnabled(getEnv?: (key: string) => string | undefined): boolean {
+  const key = "PENUMBRA_GATE_QUALITY_PRESSURE_GUARD";
   const raw = getEnv?.(key) ?? process.env[key];
   return raw === "1" || raw === "true";
 }
