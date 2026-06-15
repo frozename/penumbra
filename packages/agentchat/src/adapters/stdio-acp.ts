@@ -507,6 +507,12 @@ export class StdioAcpAdapter implements Adapter {
     let server: StdioAcpHandle | null = null;
     let pooledEntry: AcpWarmPoolEntry | null = null;
     let errorThrown = false;
+    // A warmup-prompt TIMEOUT (vs a clean reject) abandons the underlying
+    // session/prompt in the client's pendingRequests map. Such a connection is
+    // unsafe to reuse, so it is evicted (not released) at end-of-dispatch rather
+    // than returned to the warm pool. Only the timeout poisons; a normal warmup
+    // error resolves the request and leaves the connection clean.
+    let warmupTimedOut = false;
     let retriedCold = false;
     let accumulatedText = "";
 
@@ -1119,10 +1125,12 @@ export class StdioAcpAdapter implements Adapter {
               prompt: [{ type: "text", text: this.opts.modelWarmupPrompt }],
             }),
             new Promise<never>((_, reject) => {
-              warmupTimer = setTimeout(
-                () => reject(new Error("model warmup timeout")),
-                MODEL_WARMUP_TIMEOUT_MS,
-              );
+              warmupTimer = setTimeout(() => {
+                // Mark the connection poisoned: the session/prompt above is now
+                // abandoned-but-pending, so this connection must not be pooled.
+                warmupTimedOut = true;
+                reject(new Error("model warmup timeout"));
+              }, MODEL_WARMUP_TIMEOUT_MS);
             }),
           ]);
           emitLifecycle(input, "acp.model_warmup", {
@@ -1258,9 +1266,12 @@ export class StdioAcpAdapter implements Adapter {
       if (input.handoff_id) {
         unregisterSession(input.handoff_id);
       }
-      if (warmPoolEnabled && pooledEntry && !errorThrown) {
+      if (warmPoolEnabled && pooledEntry && !errorThrown && !warmupTimedOut) {
         this.deps.pool!.release(holderId, poolKey);
       } else {
+        // errorThrown OR warmupTimedOut: tear the connection down instead of
+        // returning it to the pool. A warmup timeout leaves an abandoned pending
+        // request on this client, so reusing it could leak/confuse a later turn.
         if (warmPoolEnabled && pooledEntry) {
           this.deps.pool!.evict(poolKey, pooledEntry);
         }

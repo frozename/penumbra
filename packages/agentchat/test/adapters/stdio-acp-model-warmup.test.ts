@@ -128,4 +128,99 @@ describe("StdioAcpAdapter model-warmup prompt", () => {
     expect(startServer).toHaveBeenCalledTimes(1); // process reused
     expect(events.filter((e) => e.kind === "acp.model_warmup")).toHaveLength(1); // only the cold one
   });
+
+  it("evicts (never releases) a connection whose warmup timed out, so it is not pooled", async () => {
+    vi.useFakeTimers();
+    try {
+      // Mock pool with evict/release spies (mirrors createWarmPoolHarness in
+      // stdio-acp.test.ts). deposit returns an idle entry the cold path refs.
+      const pool = {
+        acquire: vi.fn().mockReturnValue(null), // no warm hit → cold spawn
+        deposit: vi.fn().mockReturnValue({ refs: new Set(), sessionId: "session-1" }),
+        release: vi.fn(),
+        evict: vi.fn(),
+        peekMissReason: vi.fn(),
+        debugKeys: vi.fn().mockReturnValue([]),
+      };
+      // The warmup (first session/prompt) hangs forever; the caller's 120s
+      // timeout fires it. The real task (second prompt) resolves cleanly.
+      let promptCount = 0;
+      const request = vi.fn(async (method: string) => {
+        if (method === "initialize") return { protocolVersion: 1, authMethods: [] };
+        if (method === "session/new") return { sessionId: "session-1" };
+        if (method === "session/prompt") {
+          promptCount += 1;
+          if (promptCount === 1) return new Promise(() => {}); // warmup hangs
+          return { stopReason: "end_turn" }; // real task
+        }
+        return {};
+      });
+      const adapter = new StdioAcpAdapter(
+        { binary: "mock-acp", warmPool: true, modelWarmupPrompt: "Reply READY." } as any,
+        {
+          startServer: vi.fn().mockResolvedValue(makeServer()),
+          createClient: () => ({ onRequest: vi.fn(), on: vi.fn(), request }) as any,
+          pool,
+        } as any,
+      );
+
+      const events: any[] = [];
+      const dispatchPromise = adapter.dispatch(dispatchInput("do the task", events) as any);
+
+      // Settle init/session-new/deposit + warmup send, then fire the 120s timeout.
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      vi.advanceTimersByTime(120_000);
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      await dispatchPromise;
+
+      expect(events.filter((e) => e.kind === "acp.model_warmup.failed")).toHaveLength(1);
+      expect(events.filter((e) => e.kind === "acp.model_warmup")).toHaveLength(0);
+      // Poisoned connection: torn down, never returned to the pool.
+      expect(pool.evict).toHaveBeenCalledTimes(1);
+      expect(pool.release).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("releases (does NOT evict) after a clean warmup error — only a timeout poisons the connection", async () => {
+    // The asymmetry the fix deliberately preserves: a warmup that REJECTS
+    // cleanly (vs hangs) resolves its request, leaving the connection reusable.
+    // errorThrown stays false (the catch swallows it into model_warmup.failed)
+    // and warmupTimedOut stays false, so the connection is released, not evicted.
+    const pool = {
+      acquire: vi.fn().mockReturnValue(null),
+      deposit: vi.fn().mockReturnValue({ refs: new Set(), sessionId: "session-1" }),
+      release: vi.fn(),
+      evict: vi.fn(),
+      peekMissReason: vi.fn(),
+      debugKeys: vi.fn().mockReturnValue([]),
+    };
+    let promptCount = 0;
+    const request = vi.fn(async (method: string) => {
+      if (method === "initialize") return { protocolVersion: 1, authMethods: [] };
+      if (method === "session/new") return { sessionId: "session-1" };
+      if (method === "session/prompt") {
+        promptCount += 1;
+        if (promptCount === 1) throw new Error("warmup boom"); // clean reject, not a hang
+        return { stopReason: "end_turn" }; // real task succeeds
+      }
+      return {};
+    });
+    const adapter = new StdioAcpAdapter(
+      { binary: "mock-acp", warmPool: true, modelWarmupPrompt: "Reply READY." } as any,
+      {
+        startServer: vi.fn().mockResolvedValue(makeServer()),
+        createClient: () => ({ onRequest: vi.fn(), on: vi.fn(), request }) as any,
+        pool,
+      } as any,
+    );
+
+    const events: any[] = [];
+    await adapter.dispatch(dispatchInput("do the task", events) as any);
+
+    expect(events.filter((e) => e.kind === "acp.model_warmup.failed")).toHaveLength(1);
+    expect(pool.release).toHaveBeenCalledTimes(1);
+    expect(pool.evict).not.toHaveBeenCalled();
+  });
 });
