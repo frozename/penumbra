@@ -86,6 +86,141 @@ describe("gh-task-sync sweeper/service", () => {
     expect(JSON.parse(event?.payload_json ?? "{}").task_id).toBe(task_id);
   });
 
+  test("GH CLOSED+COMPLETED pulls to done", async () => {
+    const { db, writer, setNow } = setup();
+    const { task_id } = writer.file({
+      prompt: "completed issue",
+      created_by_kind: "human",
+      created_by_id: "cli",
+    });
+    writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 12 });
+
+    const ghClient: GhClient = {
+      createIssue: async () => {
+        throw new Error("not used");
+      },
+      viewIssue: async () => ({
+        number: 12,
+        state: "CLOSED",
+        stateReason: "COMPLETED",
+        updatedAt: "2026-05-08T01:00:00.000Z",
+        title: "Issue 12",
+        url: "https://github.com/acordeiro/penumbra/issues/12",
+      }),
+      closeIssue: async () => {},
+      reopenIssue: async () => {},
+      commentIssue: async () => ({
+        comment_url: "https://github.com/acordeiro/penumbra/issues/12#issuecomment-1",
+      }),
+      listComments: async () => [],
+    };
+
+    setNow(Date.parse("2026-05-08T01:30:00.000Z"));
+    const sync = createGhTaskSyncService({
+      taskWriter: writer,
+      ghClient,
+      t0Writer: new T0Writer(db),
+      now: () => new Date("2026-05-08T01:30:00.000Z"),
+      uuid: () => crypto.randomUUID(),
+      userId: "test-user",
+      machineId: "test-machine",
+    });
+    const out = await sync.syncLinkedTask(task_id);
+
+    expect(out.action).toBe("pulled");
+    expect(writer.get(task_id).status).toBe("done");
+  });
+
+  test("GH CLOSED+NOT_PLANNED pulls to cancelled", async () => {
+    const { db, writer, setNow } = setup();
+    const { task_id } = writer.file({
+      prompt: "not planned issue",
+      created_by_kind: "human",
+      created_by_id: "cli",
+    });
+    writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 13 });
+
+    const ghClient: GhClient = {
+      createIssue: async () => {
+        throw new Error("not used");
+      },
+      viewIssue: async () => ({
+        number: 13,
+        state: "CLOSED",
+        stateReason: "NOT_PLANNED",
+        updatedAt: "2026-05-08T01:00:00.000Z",
+        title: "Issue 13",
+        url: "https://github.com/acordeiro/penumbra/issues/13",
+      }),
+      closeIssue: async () => {},
+      reopenIssue: async () => {},
+      commentIssue: async () => ({
+        comment_url: "https://github.com/acordeiro/penumbra/issues/13#issuecomment-1",
+      }),
+      listComments: async () => [],
+    };
+
+    setNow(Date.parse("2026-05-08T01:30:00.000Z"));
+    const sync = createGhTaskSyncService({
+      taskWriter: writer,
+      ghClient,
+      t0Writer: new T0Writer(db),
+      now: () => new Date("2026-05-08T01:30:00.000Z"),
+      uuid: () => crypto.randomUUID(),
+      userId: "test-user",
+      machineId: "test-machine",
+    });
+    const out = await sync.syncLinkedTask(task_id);
+
+    expect(out.action).toBe("pulled");
+    expect(writer.get(task_id).status).toBe("cancelled");
+  });
+
+  test("GH CLOSED+null stateReason pulls to cancelled (safe default)", async () => {
+    const { db, writer, setNow } = setup();
+    const { task_id } = writer.file({
+      prompt: "unknown close reason",
+      created_by_kind: "human",
+      created_by_id: "cli",
+    });
+    writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 14 });
+
+    const ghClient: GhClient = {
+      createIssue: async () => {
+        throw new Error("not used");
+      },
+      viewIssue: async () => ({
+        number: 14,
+        state: "CLOSED",
+        stateReason: null,
+        updatedAt: "2026-05-08T01:00:00.000Z",
+        title: "Issue 14",
+        url: "https://github.com/acordeiro/penumbra/issues/14",
+      }),
+      closeIssue: async () => {},
+      reopenIssue: async () => {},
+      commentIssue: async () => ({
+        comment_url: "https://github.com/acordeiro/penumbra/issues/14#issuecomment-1",
+      }),
+      listComments: async () => [],
+    };
+
+    setNow(Date.parse("2026-05-08T01:30:00.000Z"));
+    const sync = createGhTaskSyncService({
+      taskWriter: writer,
+      ghClient,
+      t0Writer: new T0Writer(db),
+      now: () => new Date("2026-05-08T01:30:00.000Z"),
+      uuid: () => crypto.randomUUID(),
+      userId: "test-user",
+      machineId: "test-machine",
+    });
+    const out = await sync.syncLinkedTask(task_id);
+
+    expect(out.action).toBe("pulled");
+    expect(writer.get(task_id).status).toBe("cancelled");
+  });
+
   test("linked done task newer than GH open pushes closeIssue(reason=completed)", async () => {
     const { db, writer, setNow } = setup();
     const { task_id } = writer.file({

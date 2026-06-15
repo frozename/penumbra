@@ -61,6 +61,10 @@ interface GhTaskSyncServiceOpts {
   taskWriter: {
     get(task_id: string): TaskRecordLike;
     cancel(input: { task_id: string; reason?: string }): { status: string };
+    completeWithoutLease(
+      input: { task_id: string; result_summary: string },
+      actor: string,
+    ): { status: string };
     reopenFromGh(task_id: string): { status: "pending" };
     linkGhIssue(
       task_id: string,
@@ -582,11 +586,23 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
           direction = "push";
         } else {
           if (gh.state === "CLOSED") {
-            if (task.status !== "cancelled") {
-              opts.taskWriter.cancel({
-                task_id: task.id,
-                reason: `github issue closed: ${task.gh_issue_repo}#${task.gh_issue_number}`,
-              });
+            if (gh.stateReason === "COMPLETED") {
+              if (task.status !== "done") {
+                opts.taskWriter.completeWithoutLease(
+                  {
+                    task_id: task.id,
+                    result_summary: `github issue completed: ${task.gh_issue_repo}#${task.gh_issue_number}`,
+                  },
+                  "gh-task-sync",
+                );
+              }
+            } else {
+              if (task.status !== "cancelled") {
+                opts.taskWriter.cancel({
+                  task_id: task.id,
+                  reason: `github issue closed: ${task.gh_issue_repo}#${task.gh_issue_number}`,
+                });
+              }
             }
           } else {
             opts.taskWriter.reopenFromGh(task.id);
