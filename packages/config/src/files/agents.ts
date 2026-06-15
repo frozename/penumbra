@@ -1,4 +1,8 @@
 import { z } from "zod";
+import { CANONICAL_PROVIDER_VALUE_RE } from "../provider-format.js";
+
+const CANONICAL_PROVIDER_MESSAGE =
+  'provider must be canonical lowercase-hyphen (e.g. "openai", "nvidia-nim") so routing-bias matching resolves it';
 
 /**
  * Schema for the agent-focused config split file.
@@ -124,9 +128,17 @@ export const AgentConfigSchema = z
     roles: z.array(z.string().min(1)).default([]),
     auto_approve_to: z.array(z.string().min(1)).default([]),
     pricing_mode: z.enum(["api", "subscription"]).default("api"),
-    subscription_provider: z.string().min(1).optional(),
+    subscription_provider: z
+      .string()
+      .min(1)
+      .regex(CANONICAL_PROVIDER_VALUE_RE, { message: CANONICAL_PROVIDER_MESSAGE })
+      .optional(),
     subscription_model: z.string().min(1).optional(),
-    api_provider: z.string().min(1).optional(),
+    api_provider: z
+      .string()
+      .min(1)
+      .regex(CANONICAL_PROVIDER_VALUE_RE, { message: CANONICAL_PROVIDER_MESSAGE })
+      .optional(),
     tier: z.string().optional(),
     cost_cents_per_run: z.number().nonnegative().optional(),
     maestro_capable: z.boolean().optional(),

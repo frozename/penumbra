@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   AgentChatConfigSchema,
+  AgentConfigSchema,
   AgentOptionsSchema,
   PlanSynthesizerSchema,
   PlannerPersonaSchema,
@@ -270,6 +271,40 @@ describe("AgentChatConfigSchema — adversarial review config blocks", () => {
         bias: "risk",
         system_prompt: "Review with risk lens.",
         preferred_agent: "",
+      }),
+    ).toThrow();
+  });
+});
+
+describe("AgentConfigSchema — canonical provider values (fail-closed at config load)", () => {
+  const base = { name: "a", adapter: "stdio-acp" };
+
+  test("accepts a canonical api_provider", () => {
+    expect(AgentConfigSchema.parse({ ...base, api_provider: "nvidia-nim" }).api_provider).toBe(
+      "nvidia-nim",
+    );
+  });
+
+  test("accepts a canonical subscription provider", () => {
+    const parsed = AgentConfigSchema.parse({
+      ...base,
+      pricing_mode: "subscription",
+      subscription_provider: "anthropic",
+    });
+    expect(parsed.subscription_provider).toBe("anthropic");
+  });
+
+  test("rejects a non-canonical api_provider (would silently never match a bias)", () => {
+    expect(() => AgentConfigSchema.parse({ ...base, api_provider: "OpenAI" })).toThrow();
+    expect(() => AgentConfigSchema.parse({ ...base, api_provider: "nvidia_nim" })).toThrow();
+  });
+
+  test("rejects a non-canonical subscription_provider", () => {
+    expect(() =>
+      AgentConfigSchema.parse({
+        ...base,
+        pricing_mode: "subscription",
+        subscription_provider: "Anthropic",
       }),
     ).toThrow();
   });

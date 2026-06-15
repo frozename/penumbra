@@ -127,6 +127,52 @@ describe("POST /routing/bias (set)", () => {
     expect(body2.bias_id).toBe(body1.bias_id);
     expect(body2.weight).toBe(2.0);
   });
+
+  it("returns 400 on a non-canonical provider-scope value (would never match a provider)", async () => {
+    for (const value of ["OpenAI", "nvidia_nim", "openai "]) {
+      const req = new Request("http://x/routing/bias", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ scope: "provider", value, mode: "exclude", ttl_seconds: 3600 }),
+      });
+      const res = await routingBiasSetRoute(req, services);
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error.code).toBe("invalid_params");
+    }
+  });
+
+  it("accepts a canonical provider-scope value", async () => {
+    const req = new Request("http://x/routing/bias", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        scope: "provider",
+        value: "nvidia-nim",
+        mode: "divert",
+        ttl_seconds: 3600,
+      }),
+    });
+    const res = await routingBiasSetRoute(req, services);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.value).toBe("nvidia-nim");
+  });
+
+  it("leaves agent-scope values unconstrained (agent names need not be canonical)", async () => {
+    const req = new Request("http://x/routing/bias", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        scope: "agent",
+        value: "claude-opus-4.7",
+        mode: "boost",
+        ttl_seconds: 3600,
+      }),
+    });
+    const res = await routingBiasSetRoute(req, services);
+    expect(res.status).toBe(200);
+  });
 });
 
 describe("GET /routing/bias (list)", () => {

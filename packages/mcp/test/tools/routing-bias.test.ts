@@ -291,3 +291,40 @@ describe("tool registry entries", () => {
     expect(entry.readOnly).toBe(false);
   });
 });
+
+describe("routing_bias_set canonical provider guard (MCP edge)", () => {
+  it("rejects a non-canonical provider-scope value before the daemon round-trip", () => {
+    for (const value of ["OpenAI", "nvidia_nim", "openai "]) {
+      expect(
+        RoutingBiasSetInputSchema.safeParse({
+          scope: "provider",
+          value,
+          mode: "exclude",
+          ttl_seconds: 3600,
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("accepts a canonical provider-scope value", () => {
+    expect(
+      RoutingBiasSetInputSchema.safeParse({
+        scope: "provider",
+        value: "nvidia-nim",
+        mode: "divert",
+        ttl_seconds: 3600,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("leaves agent-scope values unconstrained", () => {
+    expect(
+      RoutingBiasSetInputSchema.safeParse({
+        scope: "agent",
+        value: "claude-opus-4.7",
+        mode: "boost",
+        ttl_seconds: 3600,
+      }).success,
+    ).toBe(true);
+  });
+});

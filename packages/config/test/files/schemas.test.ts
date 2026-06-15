@@ -3,7 +3,11 @@ import { join } from "node:path";
 import { describe, expect, expectTypeOf, test } from "bun:test";
 import { parse as parseYaml } from "yaml";
 import type { AgentChatConfig as LegacyAgentChatConfig } from "../../../agentchat/src/config/types.js";
-import { AgentsConfigSchema, type AgentsConfig } from "../../src/files/agents.js";
+import {
+  AgentConfigSchema,
+  AgentsConfigSchema,
+  type AgentsConfig,
+} from "../../src/files/agents.js";
 import { type AgentChatConfig } from "../../src/files/agentchat-types.js";
 import { QuotasConfigSchema, type QuotasConfig } from "../../src/files/quotas.js";
 import { RoutingConfigSchema, type RoutingConfig } from "../../src/files/routing.js";
@@ -328,5 +332,30 @@ describe("AgentChatConfig type compatibility", () => {
     >;
 
     expectTypeOf<AgentChatConfig>().toMatchObjectType<LegacyComparable>();
+  });
+});
+
+describe("AgentConfigSchema — canonical provider values (daemon config-load boundary)", () => {
+  const base = { name: "a", adapter: "stdio-acp" };
+
+  test("accepts a canonical api_provider", () => {
+    expect(AgentConfigSchema.parse({ ...base, api_provider: "nvidia-nim" }).api_provider).toBe(
+      "nvidia-nim",
+    );
+  });
+
+  test("rejects a non-canonical api_provider (the daemon scorer would silently never match it)", () => {
+    expect(() => AgentConfigSchema.parse({ ...base, api_provider: "OpenAI" })).toThrow();
+    expect(() => AgentConfigSchema.parse({ ...base, api_provider: "nvidia_nim" })).toThrow();
+  });
+
+  test("rejects a non-canonical subscription_provider", () => {
+    expect(() =>
+      AgentConfigSchema.parse({
+        ...base,
+        pricing_mode: "subscription",
+        subscription_provider: "Anthropic",
+      }),
+    ).toThrow();
   });
 });

@@ -80,6 +80,14 @@ export function resolveAgentProvider(agent: {
   return agent.api_provider ?? agent.subscription_provider ?? null;
 }
 
+/**
+ * Deliberate byte-for-byte mirror of the daemon scorer's exclude matching
+ * (resolveBiasEffect in @penumbra/core agent-routing). Matching is strict
+ * equality with NO normalization — kept identical so a retry never diverges from
+ * first-pass routing. The canonical-provider invariant that makes strict `===`
+ * correct is enforced at the write boundaries (config load + routing_bias_set),
+ * so this module stays dependency-free.
+ */
 function isBiasExcluded(
   agentName: string,
   provider: string | null,

@@ -5,6 +5,7 @@ import {
   clearRoutingBias,
   type RoutingBias,
 } from "@penumbra/core";
+import { isCanonicalProviderValue } from "@penumbra/config";
 import { z } from "zod";
 import { json, bodyJson } from "./_helpers.js";
 
@@ -20,6 +21,15 @@ const SetInputSchema = z
   })
   .refine((data) => data.ttl_seconds != null || data.expires_at != null, {
     message: "Set requires either ttl_seconds or expires_at",
+  })
+  // Provider-scope bias values are matched with strict `===` against an agent's
+  // resolved provider (always canonical, enforced at config load). Reject a
+  // non-canonical value here rather than storing a bias that would silently
+  // never match — fail closed at the write boundary. See @penumbra/core
+  // provider-format. Agent-scope values are agent names, left unconstrained.
+  .refine((data) => data.scope !== "provider" || isCanonicalProviderValue(data.value), {
+    path: ["value"],
+    message: 'provider bias value must be canonical lowercase-hyphen (e.g. "openai", "nvidia-nim")',
   });
 
 const ListInputSchema = z.object({

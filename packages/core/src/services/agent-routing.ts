@@ -559,7 +559,11 @@ function isOverPressure(
 // the candidate outright (subject to the caller's safe-fallback re-admission),
 // while boost/divert weights multiply cumulatively into a single factor. A
 // candidate matches a bias by exact agent name (scope=agent) or by its resolved
-// provider (scope=provider).
+// provider (scope=provider). Matching is strict equality with NO normalization
+// — the silent-failure-retry selector mirrors this byte-for-byte, so normalizing
+// one side would drift them apart. The canonical-provider invariant that makes
+// strict `===` correct is enforced at the write boundaries (config load +
+// routing_bias_set); see @penumbra/config provider-format.
 const DEFAULT_BOOST_WEIGHT = 1.25;
 const DEFAULT_DIVERT_WEIGHT = 0.5;
 

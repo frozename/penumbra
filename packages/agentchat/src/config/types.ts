@@ -1,5 +1,9 @@
 // packages/agentchat/src/config/types.ts
 import { z } from "zod";
+import { CANONICAL_PROVIDER_VALUE_RE } from "@penumbra/config";
+
+const CANONICAL_PROVIDER_MESSAGE =
+  'provider must be canonical lowercase-hyphen (e.g. "openai", "nvidia-nim") so routing-bias matching resolves it';
 
 export const AgentOptionsSchema = z.looseObject({
   /** Tool name allowlist for chain_trust_mode='config'. Strings without glob chars are exact-matched; strings containing *?[ are matched as picomatch globs. Default: undefined ⇒ treated as []. */
@@ -180,9 +184,17 @@ export const AgentConfigSchema = z
     roles: z.array(z.string().min(1)).default([]),
     auto_approve_to: z.array(z.string().min(1)).default([]),
     pricing_mode: z.enum(["api", "subscription"]).default("api"),
-    subscription_provider: z.string().min(1).optional(),
+    subscription_provider: z
+      .string()
+      .min(1)
+      .regex(CANONICAL_PROVIDER_VALUE_RE, { message: CANONICAL_PROVIDER_MESSAGE })
+      .optional(),
     subscription_model: z.string().min(1).optional(),
-    api_provider: z.string().min(1).optional(),
+    api_provider: z
+      .string()
+      .min(1)
+      .regex(CANONICAL_PROVIDER_VALUE_RE, { message: CANONICAL_PROVIDER_MESSAGE })
+      .optional(),
     /** Relative tier used by task eligibility (cheap < oc < premium). */
     tier: z.string().optional(),
     /** Estimated per-run cost in cents used by task eligibility filtering. */

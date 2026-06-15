@@ -9,6 +9,7 @@ export {
 export { getConfig, resetConfigForTest, type ConfigBundle, type ConfigSource } from "./load.js";
 export { formatEnvConfig, type FormatOptions } from "./show.js";
 export { AgentsConfigSchema, type AgentsConfig } from "./files/agents.js";
+export { CANONICAL_PROVIDER_VALUE_RE, isCanonicalProviderValue } from "./provider-format.js";
 export { RoutingConfigSchema, type RoutingConfig } from "./files/routing.js";
 export { WORKLOADS, WorkloadSchema, type Workload } from "./files/workload.js";
 export { QuotasConfigSchema, type QuotasConfig } from "./files/quotas.js";
