@@ -1011,6 +1011,102 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: 1_800_000,
     description: "Maximum stale handoff grace period while the owning worker is alive.",
   },
+  // ── isolated install ────────────────────────────────────────────────
+  PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY: {
+    schema: Bool,
+    default: false,
+    description:
+      "Auto-enable isolated install for BOUNDARY-class dispatches (read via isEnvTruthy in daemon/routes/chains.ts).",
+  },
+  PENUMBRA_ISOLATED_INSTALL_TIMEOUT_MS: {
+    schema: PosInt,
+    default: 120_000,
+    description:
+      "Timeout in milliseconds for the isolated `bun install` run on a new worktree (core/worktree/manager.ts).",
+  },
+
+  // ── auto-recall ─────────────────────────────────────────────────────
+  PENUMBRA_AUTO_RECALL_PROJECT_BRIEF: {
+    schema: Bool,
+    default: false,
+    description:
+      "Inject the latest project brief into the auto-recall block on chain_start (isEnvTruthy, daemon/routes/chains.ts).",
+  },
+
+  // ── t2 judge (chunking + pool) ──────────────────────────────────────
+  PENUMBRA_T2_JUDGE_MAX_CHARS_PER_CHUNK: {
+    schema: PosInt,
+    default: 80_000,
+    description:
+      "Max characters per transcript chunk sent to the t2 extraction judge before splitting (workers/t2-promotion.ts).",
+  },
+  PENUMBRA_T2_JUDGE_TIMEOUT_MS: {
+    schema: PosInt,
+    default: 900_000,
+    description:
+      "HTTP request timeout in milliseconds for the t2 judge pool (workers/t2-judge-pool.ts).",
+  },
+
+  // ── notification sweeper ────────────────────────────────────────────
+  PENUMBRA_PENDING_ACTION_TTL_MS: {
+    schema: NonNegNum,
+    default: 7 * 24 * 60 * 60 * 1000,
+    description:
+      "TTL in milliseconds for pending notification actions; the sweeper uses 2x this as the discovery cutoff (sweepers/notification-sweeper.ts).",
+  },
+  PENUMBRA_NOTIFICATION_SWEEP_INTERVAL_MS: {
+    schema: NonNegNum,
+    default: 5 * 60 * 1000,
+    description:
+      "Interval in milliseconds between notification sweeps (sweepers/notification-sweeper.ts).",
+  },
+
+  // ── dispatch lifecycle lock ─────────────────────────────────────────
+  PENUMBRA_LIFECYCLE_LOCK_TIMEOUT_MS: {
+    schema: PosInt,
+    default: 300_000,
+    description:
+      "Hold timeout in milliseconds for the dispatch lifecycle lock before it is forcibly released (dispatch/lifecycle-lock.ts).",
+  },
+
+  // ── memory digest (cli) ─────────────────────────────────────────────
+  PENUMBRA_MEMORY_DIGEST_MAX_LINES: {
+    schema: PosInt,
+    default: 200,
+    description:
+      "Max memory rows the `penumbra memory digest` command emits (cli/commands/memory.ts).",
+  },
+  PENUMBRA_MEMORY_DIGEST_STATUS_ROWS: {
+    schema: NonNegInt,
+    default: 20,
+    description: "Number of status rows in the memory digest (cli/commands/memory.ts).",
+  },
+  PENUMBRA_MEMORY_DIGEST_PATTERN_ROWS: {
+    schema: NonNegInt,
+    default: 180,
+    description: "Number of pattern rows in the memory digest (cli/commands/memory.ts).",
+  },
+
+  // ── adversarial review ──────────────────────────────────────────────
+  PENUMBRA_REVIEW_MEMORY_CONTEXT: {
+    schema: Bool,
+    default: false,
+    description:
+      "Inject prior review findings recalled from memory into the adversarial-review dispatch message.",
+  },
+
+  // ── agent routing cutovers ──────────────────────────────────────────
+  PENUMBRA_GATE_OUTCOME_CUTOVER_ISO: {
+    schema: OptStr,
+    description:
+      "ISO timestamp overriding the gate-outcome cutover used by the legacy NULL-verdict predicate (core/services/agent-routing.ts). Invalid values fall back to the built-in default.",
+  },
+  PENUMBRA_CLASSIFIER_DECLINE_CUTOVER_ISO: {
+    schema: OptStr,
+    description:
+      "ISO timestamp overriding the classifier-decline exemption cutover (core/services/agent-routing.ts). Invalid values fall back to the built-in default.",
+  },
+
   // ── e2e test gates ────────────────────────────────────────────────
   PENUMBRA_E2E: {
     schema: Bool,
