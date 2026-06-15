@@ -99,6 +99,7 @@ import {
 } from "./routes/curator.js";
 import { sessionEndRoute } from "./routes/session-end.js";
 import { sessionsTouchRoute, sessionCurrentRoute } from "./routes/sessions.js";
+import { workspaceRoute } from "./routes/workspace.js";
 import { lanesCloseRoute, lanesOpenRoute, lanesRecentRoute } from "./routes/lanes.js";
 import {
   handoffsCreateRoute,
@@ -886,6 +887,9 @@ export function createDaemonFetchHandler(opts: {
     }
     if (req.method === "POST" && url.pathname === "/workflows/suggest") {
       return workflowsSuggestRoute(req, opts.services as never);
+    }
+    if (url.pathname === "/workspace") {
+      if (req.method === "GET") return workspaceRoute(req, opts.services);
     }
     if (url.pathname === "/worktrees") {
       if (req.method === "GET") return worktreesListRoute(req, opts.services);

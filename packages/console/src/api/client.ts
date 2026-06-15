@@ -12,6 +12,11 @@ import { DaemonContractError, DaemonHttpError } from "./errors.js";
 import { buildRequestUrl } from "../lib/url";
 
 const HealthResponseSchema = z.object({ status: z.literal("ok") });
+const WorkspaceSchema = z.object({
+  projectId: z.string().nullable(),
+  branch: z.string().nullable(),
+  dirty: z.number().nullable(),
+});
 const ApproveHandoffResponseSchemaLoose = z
   .object({
     handoff_id: z.string(),
@@ -28,6 +33,7 @@ export type UsageSubscriptionPressureResponse = z.infer<
   typeof UsageSubscriptionPressureResponseSchema
 >;
 export type MissionSession = z.infer<typeof MissionSessionSchema>;
+export type Workspace = z.infer<typeof WorkspaceSchema>;
 
 export interface DaemonClientDeps {
   getConfig: () => { baseUrl: string; token: string };
@@ -150,6 +156,13 @@ export class DaemonClient {
     return this.request({
       path: "/session/current",
       schema: MissionSessionSchema,
+    });
+  }
+
+  async getWorkspace(): Promise<Workspace> {
+    return this.request({
+      path: "/workspace",
+      schema: WorkspaceSchema,
     });
   }
 

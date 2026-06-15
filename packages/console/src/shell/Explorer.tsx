@@ -4,7 +4,7 @@ import { useLocation } from "react-router-dom";
 import { useSession } from "../hooks/useSession";
 import { DaemonClient } from "../api/client";
 import { useDaemonStore } from "../stores/daemon-store";
-import { chainsByStatus, handoffsPending } from "../lib/query-keys";
+import { chainsByStatus, handoffsPending, workspace } from "../lib/query-keys";
 import { summarizeWords } from "../lib/format";
 import { HEARTBEAT_MS } from "../lib/timing";
 
@@ -71,16 +71,22 @@ function MissionSidebar(): JSX.Element {
 export function Explorer(): JSX.Element {
   const location = useLocation();
   const projectName = "penumbra";
-  // Real workspace values await a daemon /workspace endpoint (TODO below). Until
-  // then render neutral placeholders rather than a hardcoded machine-specific
-  // worktree path + a fabricated always-"main"/always-clean git badge, which
-  // shipped one developer's absolute path and a fake git state to every install.
-  const projectId: string | null = null;
-  const branch: string | null = null;
-  const dirty: number | null = null;
+  // Workspace identity + git state come from the daemon's /workspace endpoint,
+  // which fails CLOSED to null for any field it cannot resolve. Rendering null
+  // as "—" preserves the anti-fabrication invariant (01bc1f71): never a
+  // hardcoded path or a fabricated always-"main"/always-clean badge.
+  const client = useMemo(() => makeDefaultClient(), []);
+  const workspaceQuery = useQuery({
+    queryKey: workspace(),
+    queryFn: () => client.getWorkspace(),
+    refetchInterval: HEARTBEAT_MS,
+  });
+  const ws = workspaceQuery.data;
+  const projectId: string | null = ws?.projectId ?? null;
+  const branch: string | null = ws?.branch ?? null;
+  const dirty: number | null = ws?.dirty ?? null;
   const isMission = location.pathname === "/mission";
 
-  // TODO: wire projectId/branch/dirty from a daemon /workspace endpoint when it exists.
   return (
     <aside className="exp">
       <div className="exp-proj">

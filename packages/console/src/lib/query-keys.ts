@@ -17,6 +17,11 @@ export function handoffsPending(): readonly ["handoffs", "pending"] {
   return ["handoffs", "pending"] as const;
 }
 
+/** Daemon workspace (repo identity + git state) for the Explorer PROJECT card. */
+export function workspace(): readonly ["workspace"] {
+  return ["workspace"] as const;
+}
+
 /** Chains list, scoped by latest_status. */
 export function chainsByStatus(
   status: HandoffStatus,
