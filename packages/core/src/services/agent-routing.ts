@@ -32,6 +32,7 @@ type AgentRouteAgentchatConfig = {
   role_routing?: {
     headroom_weighting?: boolean;
     latency_weighting?: boolean;
+    warm_pool_reuse_weighting?: boolean;
     exploration_policy?: string;
   };
 };
@@ -79,6 +80,10 @@ export interface RouteAgentInput {
   // User-driven routing-bias steers (usage steering). Injected by the caller
   // (daemon reads readRoutingBiases); the scorer never reads the DB itself.
   activeBiases?: RoutingBias[];
+  // Per-agent ACP warm-pool session reuse rates from fleet-latency. Values in [0,1].
+  // When warm_pool_reuse_weighting is enabled, agents with higher rates receive a
+  // mild multiplicative score preference. Absent means no adjustment.
+  warmPoolReuseRates?: Record<string, number>;
   now?: Date;
 }
 
@@ -231,6 +236,12 @@ function clamp01(value: number): number {
  * its score — so a fast-but-failing agent is never promoted on speed alone.
  */
 const LATENCY_MIN_SUCCESS_FLOOR = 0.2;
+/**
+ * Maximum multiplicative score lift a perfect warm-pool reuse rate (1.0) can
+ * apply. Bounded so the reuse signal is a mild preference, never a dominance
+ * signal — a 5% lift cannot overcome a meaningfully worse outcome record.
+ */
+const WARM_POOL_REUSE_MAX_BOOST = 0.05;
 /** Fraction trimmed from each tail before averaging exec_ms (outlier guard). */
 const EXEC_WINSOR_TRIM_FRAC = 0.1;
 
@@ -673,6 +684,21 @@ function buildRank(
           const factor = clamp01(1 - maxUsedPct);
           score = clamp01(Math.round(score * factor * 10000) / 10000);
         }
+      }
+    }
+    // Warm-pool reuse preference (flag-gated, safe-fallback). Applies a mild
+    // multiplicative lift (at most WARM_POOL_REUSE_MAX_BOOST = 5%) for agents
+    // with higher ACP session reuse rates. When the flag is off or the signal is
+    // absent for a candidate, the score is byte-identical to the unflagged path.
+    if (
+      input.agentchatConfig?.role_routing?.warm_pool_reuse_weighting &&
+      input.warmPoolReuseRates
+    ) {
+      const reuseRate = input.warmPoolReuseRates[s.agent_name];
+      if (reuseRate != null) {
+        const clampedRate = Math.max(0, Math.min(1, reuseRate));
+        const reuseFactor = 1 + WARM_POOL_REUSE_MAX_BOOST * clampedRate;
+        score = clamp01(Math.round(score * reuseFactor * 10000) / 10000);
       }
     }
     // Usage-steering bias factor composes AFTER the pressure factor (single final clamp).

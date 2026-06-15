@@ -861,6 +861,115 @@ describe("latency_weighting routing", () => {
   });
 });
 
+describe("warm_pool_reuse_weighting routing", () => {
+  let db: Database;
+
+  const baseRow = {
+    project_id: "proj",
+    rounds: 1,
+    smoke_pass: "y" as const,
+    reviewer_findings: 0,
+    maestro_score: null,
+    cost_usd: null,
+    tokens_used: null,
+    latency_ms: null,
+    source: "reconciler" as const,
+    notes: null,
+    metadata_json: "{}",
+  };
+
+  const seed = (
+    writer: AgentPerformanceWriter,
+    agent: string,
+    i: number,
+    outcome: "merged" | "failed",
+  ) => {
+    writer.upsert({
+      ...baseRow,
+      performance_id: `${agent}-${i}`,
+      ts: `2026-04-30T1${i % 10}:00:00Z`,
+      handoff_id: `h-${agent}-${i}`,
+      conversation_id: `c-${agent}-${i}`,
+      agent_name: agent,
+      task_type: "implement_substantial",
+      outcome,
+    });
+  };
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+  });
+
+  const rank = (
+    warm_pool_reuse_weighting: boolean,
+    warmPoolReuseRates?: Record<string, number>,
+  ) => {
+    const out = routeAgent({
+      db,
+      detail: "rank" as const,
+      taskType: "implement_substantial" as const,
+      minSamples: 1,
+      includeNeutral: false,
+      now: NOW,
+      agentchatConfig: { role_routing: { warm_pool_reuse_weighting }, agents: [] },
+      warmPoolReuseRates,
+    });
+    if (out.detail !== "rank") throw new Error("expected rank");
+    return out.candidates.candidates;
+  };
+
+  const find = (cands: ReturnType<typeof rank>, name: string) => {
+    const c = cands.find((x) => x.agent_name === name);
+    if (!c) throw new Error(`candidate ${name} not found`);
+    return c;
+  };
+
+  test("flag OFF: reuse rates do not affect scores (regression-safe)", () => {
+    const w = new AgentPerformanceWriter(db);
+    seed(w, "alpha", 1, "merged");
+    seed(w, "beta", 1, "merged");
+    const reuseRates = { alpha: 1.0, beta: 0.0 };
+    const offWithRates = rank(false, reuseRates);
+    const offNoRates = rank(false, undefined);
+    expect(find(offWithRates, "alpha").score).toBeCloseTo(find(offNoRates, "alpha").score, 6);
+    expect(find(offWithRates, "beta").score).toBeCloseTo(find(offNoRates, "beta").score, 6);
+  });
+
+  test("flag ON: higher reuse-rate candidate ranks above equal-merit lower-reuse candidate", () => {
+    const w = new AgentPerformanceWriter(db);
+    seed(w, "alpha", 1, "merged");
+    seed(w, "beta", 1, "merged");
+    // confirm equal scores with flag OFF
+    const off = rank(false, { alpha: 1.0, beta: 0.0 });
+    expect(find(off, "alpha").score).toBeCloseTo(find(off, "beta").score, 6);
+    // with flag ON, alpha (reuse=1.0) should score above beta (reuse=0.0)
+    const on = rank(true, { alpha: 1.0, beta: 0.0 });
+    expect(find(on, "alpha").score).toBeGreaterThan(find(on, "beta").score);
+  });
+
+  test("flag ON + signal absent: falls back to baseline without crash", () => {
+    const w = new AgentPerformanceWriter(db);
+    seed(w, "alpha", 1, "merged");
+    const noSignal = rank(true, undefined);
+    const baseline = rank(false, undefined);
+    expect(find(noSignal, "alpha").score).toBeCloseTo(find(baseline, "alpha").score, 6);
+  });
+
+  test("factor is bounded: high-reuse mediocre agent does not surpass a clearly stronger low-reuse agent", () => {
+    const w = new AgentPerformanceWriter(db);
+    // strong-beta: 3 merged, reuse 0.0
+    for (let i = 1; i <= 3; i++) seed(w, "strong-beta", i, "merged");
+    // weak-alpha: 1 merged + 2 failed, reuse 1.0
+    seed(w, "weak-alpha", 1, "merged");
+    seed(w, "weak-alpha", 2, "failed");
+    seed(w, "weak-alpha", 3, "failed");
+    const cands = rank(true, { "strong-beta": 0.0, "weak-alpha": 1.0 });
+    expect(cands[0]!.agent_name).toBe("strong-beta");
+  });
+});
+
 describe("routing bias (usage steering)", () => {
   let db: Database;
 
