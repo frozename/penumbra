@@ -182,6 +182,7 @@ test("defaultLifecycleForwardFn forwards hookContext.tool_name in the request bo
       cwd: "/tmp",
       hookContext: { tool_name: "Edit", file_path: null },
       session_id: null,
+      transcript_path: null,
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
