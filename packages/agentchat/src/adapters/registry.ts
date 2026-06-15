@@ -218,6 +218,7 @@ export function createStdioAcpAdapter(
       warmPoolMaxAgeMs: opts.warmPoolMaxAgeMs,
       warmPoolMaxEntries: opts.warmPoolMaxEntries,
       warmPoolSize: opts.warmPoolSize,
+      modelWarmupPrompt: opts.modelWarmupPrompt,
     },
     {
       startServer: startStdioAcpServer,

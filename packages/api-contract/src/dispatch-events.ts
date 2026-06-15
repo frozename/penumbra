@@ -9,6 +9,8 @@ export const DispatchEventKindSchema = z.enum([
   "acp.session.start",
   "acp.session.reuse",
   "acp.session.end",
+  "acp.model_warmup",
+  "acp.model_warmup.failed",
   "http.server.start",
   "http.session.start",
   "http.session.end",

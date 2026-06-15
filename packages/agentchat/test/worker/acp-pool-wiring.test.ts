@@ -86,6 +86,7 @@ describe("ACP warm pool worker wiring", () => {
         warm_pool_max_age_ms: 20000,
         warm_pool_max_entries: 2,
         warm_pool_size: 3,
+        model_warmup_prompt: "Reply READY.",
       },
       roles: [],
       auto_approve_to: [],
@@ -97,6 +98,7 @@ describe("ACP warm pool worker wiring", () => {
       warmPoolMaxAgeMs: 20000,
       warmPoolMaxEntries: 2,
       warmPoolSize: 3,
+      modelWarmupPrompt: "Reply READY.",
     });
   });
 

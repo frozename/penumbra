@@ -54,6 +54,11 @@ function mapWriteToolsError(err: unknown): Error {
 // usage-steering Phase-4 build). A genuinely hung agent is still caught within 20min.
 // Per-seat `requestTimeoutMs` (agentchat options, schema-capped at 900_000) overrides this.
 const DEFAULT_REQUEST_TIMEOUT_MS = 1_200_000;
+// Upper bound for the optional model-warmup prompt (modelWarmupPrompt). The
+// `/model` acknowledgment turn is fast (~5-10s observed), but a cold model load
+// can be slower; cap at 2min and fall through to the real task prompt regardless
+// so warmup is never able to wedge a dispatch.
+const MODEL_WARMUP_TIMEOUT_MS = 120_000;
 const LONG_LIVED_SELF_TOOL_NAMES = [
   "long_lived_self_state_get",
   "long_lived_self_state_set",
@@ -276,6 +281,20 @@ export interface StdioAcpOptions {
   warmPoolMaxAgeMs?: number;
   warmPoolMaxEntries?: number;
   warmPoolSize?: number;
+  /**
+   * When set (non-empty), a fresh (non-reused) claude-agent-acp process is sent
+   * this throwaway prompt ONCE, before the real task, to absorb the per-process
+   * `/model` handshake that an `ANTHROPIC_MODEL` env pin triggers.
+   *
+   * claude-agent-acp injects a `/model <ANTHROPIC_MODEL>` slash command on the
+   * first prompt a fresh process handles and ends THAT turn with `end_turn`
+   * WITHOUT running the task — so the first dispatch on every cold process (and
+   * the first dispatch on each warm-pool process) was recorded as
+   * `no_worktree_activity` even though the seat was healthy. The warmup prompt
+   * takes that hit so the real task prompt runs on a model-settled session.
+   * Skipped on warm-connection reuse (the process already absorbed `/model`).
+   */
+  modelWarmupPrompt?: string;
 }
 
 export interface StdioAcpThoughtCapture {
@@ -1077,6 +1096,54 @@ export class StdioAcpAdapter implements Adapter {
           // ignore: agent_thought_chunk, plan, available_commands_update, etc.
         }
       });
+
+      // Absorb the per-process `/model` handshake before the real task. See the
+      // `modelWarmupPrompt` option docs: on a fresh claude-agent-acp process the
+      // first prompt is consumed by the `/model <ANTHROPIC_MODEL>` injection
+      // (responds, then `end_turn`, having run nothing). A throwaway warmup
+      // prompt takes that hit so the task prompt below runs on a model-settled
+      // session. Only fresh connections need it — a warm-reused process already
+      // absorbed `/model` on its first dispatch — and it is best-effort: a stall
+      // or error falls through to the real prompt rather than wedging.
+      if (
+        !reusedSession &&
+        typeof this.opts.modelWarmupPrompt === "string" &&
+        this.opts.modelWarmupPrompt.length > 0
+      ) {
+        const warmupStart = Date.now();
+        let warmupTimer: ReturnType<typeof setTimeout> | null = null;
+        try {
+          await Promise.race([
+            client.request("session/prompt", {
+              sessionId,
+              prompt: [{ type: "text", text: this.opts.modelWarmupPrompt }],
+            }),
+            new Promise<never>((_, reject) => {
+              warmupTimer = setTimeout(
+                () => reject(new Error("model warmup timeout")),
+                MODEL_WARMUP_TIMEOUT_MS,
+              );
+            }),
+          ]);
+          emitLifecycle(input, "acp.model_warmup", {
+            adapter: this.kind,
+            session_id: sessionId,
+            duration_ms: Date.now() - warmupStart,
+          });
+        } catch (err) {
+          emitLifecycle(input, "acp.model_warmup.failed", {
+            adapter: this.kind,
+            session_id: sessionId,
+            error: String(err),
+          });
+        } finally {
+          if (warmupTimer !== null) clearTimeout(warmupTimer);
+        }
+        // Drop whatever the warmup turn accumulated (the `/model` ack) so the
+        // task response below starts from a clean buffer.
+        accumulatedText = "";
+        lastSessionUpdateTs = Date.now();
+      }
 
       const promptParams: any = {
         sessionId,

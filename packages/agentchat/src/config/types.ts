@@ -40,6 +40,11 @@ export const AgentOptionsSchema = z.looseObject({
   warm_pool_prewarm_max_targets: z.number().int().min(1).max(10).optional(),
   /** Deprecated and ignored; retained so older configs still parse. */
   warm_pool_health_ping: z.boolean().optional(),
+  /** Throwaway prompt sent once to a fresh claude-agent-acp process before the
+   *  real task, to absorb the per-process `/model` handshake an `ANTHROPIC_MODEL`
+   *  env pin triggers (which otherwise eats the first task turn → spurious
+   *  `no_worktree_activity`). Skipped on warm-connection reuse. Default: unset. */
+  model_warmup_prompt: z.string().optional(),
 });
 export type AgentOptions = z.infer<typeof AgentOptionsSchema>;
 
