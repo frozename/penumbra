@@ -43,6 +43,7 @@ export function loadConfigFromDir(dir: string): ParsedAgentChatConfig {
   return stampPrecomputedAllowlist(result.data);
 }
 
+// Worker entrypoint for the single-source split config dir — routes to dir or file loader.
 /**
  * Dispatch on whether `pathOrDir` is a directory (split config dir) or a file
  * (legacy single agentchat.yaml). Lets `AGENTCHAT_CONFIG` keep pointing at a
