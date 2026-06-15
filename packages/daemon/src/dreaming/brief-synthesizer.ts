@@ -126,14 +126,26 @@ class BriefSynthesizerImpl implements BriefSynthesizer {
     input: BriefSynthesizerInput,
   ): Promise<{ markdown: string; source_memory_ids: string[] }> {
     const prompt = buildBriefPrompt(input);
-    const idx = this.nextIndex % this.agents.length;
-    this.nextIndex = (idx + 1) % this.agents.length;
-    const agent = this.agents[idx]!;
-    const markdown = await this.callAgent(agent, prompt);
-    return {
-      markdown,
-      source_memory_ids: input.recent_memories.map((m) => m.memory_id),
-    };
+    const start = this.nextIndex % this.agents.length;
+    this.nextIndex = (start + 1) % this.agents.length;
+    // Try the round-robin pick first, then fail over to the remaining agents in
+    // order. A single down seat (e.g. an unreachable local MLX endpoint) must not
+    // degrade the brief to a stub when a healthy sibling is one retry away — only
+    // throw (caller falls back to stub) when EVERY seat fails.
+    const errors: string[] = [];
+    for (let i = 0; i < this.agents.length; i += 1) {
+      const agent = this.agents[(start + i) % this.agents.length]!;
+      try {
+        const markdown = await this.callAgent(agent, prompt);
+        return {
+          markdown,
+          source_memory_ids: input.recent_memories.map((m) => m.memory_id),
+        };
+      } catch (err) {
+        errors.push(`${agent.name}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    throw new Error(`all brief synthesizer agents failed: ${errors.join("; ")}`);
   }
 }
 

@@ -173,6 +173,41 @@ describe("BriefSynthesizer.synthesize", () => {
       synthesizer.synthesize({ project_id: "proj", recent_memories: [] }),
     ).rejects.toThrow();
   });
+
+  it("fails over to a healthy agent when the first is down", async () => {
+    const callLog: string[] = [];
+    const fakeFetch = async (url: string): Promise<Response> => {
+      callLog.push(url);
+      if (url.includes("1111")) throw new Error("ConnectionRefused");
+      return makeMarkdownResponse("# Project Brief: proj\n\nFrom the healthy seat.");
+    };
+    const synthesizer = createBriefSynthesizer(
+      [
+        { name: "down", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" },
+        { name: "up", baseUrl: "http://localhost:2222/v1", apiKey: "", model: "local" },
+      ],
+      fakeFetch as typeof fetch,
+    );
+    const result = await synthesizer.synthesize({ project_id: "proj", recent_memories: [] });
+    expect(result.markdown).toContain("From the healthy seat.");
+    expect(callLog.some((u) => u.includes("1111"))).toBe(true); // tried the down seat
+    expect(callLog.some((u) => u.includes("2222"))).toBe(true); // failed over to the healthy one
+  });
+
+  it("throws only when EVERY agent fails (caller then falls back to stub)", async () => {
+    const fakeFetch = async (_url: string): Promise<Response> =>
+      new Response("err", { status: 502 });
+    const synthesizer = createBriefSynthesizer(
+      [
+        { name: "a", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" },
+        { name: "b", baseUrl: "http://localhost:2222/v1", apiKey: "", model: "local" },
+      ],
+      fakeFetch as typeof fetch,
+    );
+    await expect(
+      synthesizer.synthesize({ project_id: "proj", recent_memories: [] }),
+    ).rejects.toThrow(/all brief synthesizer agents failed/);
+  });
 });
 
 // --- factory: agentchat config integration ---
