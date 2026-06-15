@@ -345,3 +345,134 @@ test("parseShellArgs: single-quoted arg preserves interior spaces", () => {
 test("parseShellArgs: throws on unbalanced quote", () => {
   expect(() => parseShellArgs('"unclosed')).toThrow("unbalanced quote");
 });
+
+test("exits when its stdin closes (parent ACP seat died) — prevents orphaned proxies", async () => {
+  const proc = spawn("bun", [PROXY], {
+    stdio: ["pipe", "pipe", "inherit"],
+    env: {
+      ...process.env,
+      MCP_PROXY_UPSTREAM: `bun "${FIXTURE_PATH}"`,
+      MCP_PROXY_ALLOWLIST: "alpha",
+    },
+  });
+  const exited = new Promise<number | null>((resolve) => proc.on("exit", (code) => resolve(code)));
+
+  // Confirm the proxy + its upstream child are live (round-trip a tools/list).
+  let buf = "";
+  const gotResponse = new Promise<void>((resolve) => {
+    proc.stdout!.on("data", (chunk: Buffer) => {
+      buf += chunk.toString();
+      if (buf.includes('"result"')) resolve();
+    });
+  });
+  proc.stdin!.write(
+    JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) + "\n",
+  );
+  await Promise.race([gotResponse, new Promise((r) => setTimeout(r, 4000))]);
+
+  // Simulate the parent ACP seat dying: its end of the stdio pipe closes, so the
+  // proxy's process.stdin reaches EOF. The proxy must then tear down (kill its
+  // upstream child) and exit, rather than orphaning to ppid=1 and running forever.
+  proc.stdin!.end();
+
+  const outcome = await Promise.race([
+    exited.then(() => "exited" as const),
+    new Promise<"timeout">((r) => setTimeout(() => r("timeout"), 5000)),
+  ]);
+  if (outcome === "timeout") {
+    try {
+      proc.kill("SIGKILL");
+    } catch {
+      /* ignore */
+    }
+  }
+  expect(outcome).toBe("exited");
+}, 15000);
+
+test("force-kills a SIGTERM-ignoring upstream child on parent death (no re-orphan)", async () => {
+  const trapPath = join(tmpdir(), `trap-fixture-${Date.now()}.ts`);
+  const pidFile = join(tmpdir(), `trap-pid-${Date.now()}.txt`);
+  // Upstream that TRAPS SIGTERM (ignores it) and stays alive — models a
+  // third-party uvx/python MCP. Without SIGKILL escalation it would re-orphan.
+  writeFileSync(
+    trapPath,
+    `import { writeFileSync } from "node:fs";
+import readline from "node:readline";
+process.on("SIGTERM", () => {});
+readline.createInterface({ input: process.stdin });
+writeFileSync(process.env.TRAP_PID_FILE, String(process.pid));
+setInterval(() => {}, 60000);
+`,
+  );
+  try {
+    const proc = spawn("bun", [PROXY], {
+      stdio: ["pipe", "pipe", "inherit"],
+      env: {
+        ...process.env,
+        MCP_PROXY_UPSTREAM: `bun "${trapPath}"`,
+        MCP_PROXY_ALLOWLIST: "alpha",
+        TRAP_PID_FILE: pidFile,
+      },
+    });
+    const exited = new Promise<number | null>((resolve) =>
+      proc.on("exit", (code) => resolve(code)),
+    );
+
+    // Wait until the upstream child has spawned and recorded its pid.
+    let childPid = 0;
+    for (let i = 0; i < 50 && !childPid; i++) {
+      if (existsSync(pidFile)) {
+        const v = parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+        if (Number.isInteger(v) && v > 0) childPid = v;
+      }
+      if (!childPid) await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(childPid).toBeGreaterThan(0);
+
+    // Parent dies → proxy stdin EOF. SIGTERM is trapped, so the proxy must
+    // escalate to SIGKILL and only then exit — leaving no orphaned child.
+    proc.stdin!.end();
+    const outcome = await Promise.race([
+      exited.then(() => "exited" as const),
+      new Promise<"timeout">((r) => setTimeout(() => r("timeout"), 8000)),
+    ]);
+    if (outcome === "timeout") {
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        /* ignore */
+      }
+    }
+    expect(outcome).toBe("exited");
+
+    // The trapping child must have been reaped (SIGKILL), not left orphaned.
+    let alive = true;
+    for (let i = 0; i < 30 && alive; i++) {
+      try {
+        process.kill(childPid, 0);
+        await new Promise((r) => setTimeout(r, 100));
+      } catch {
+        alive = false;
+      }
+    }
+    if (alive) {
+      try {
+        process.kill(childPid, "SIGKILL");
+      } catch {
+        /* ignore */
+      }
+    }
+    expect(alive).toBe(false);
+  } finally {
+    try {
+      rmSync(trapPath);
+    } catch {
+      /* ignore */
+    }
+    try {
+      rmSync(pidFile);
+    } catch {
+      /* ignore */
+    }
+  }
+}, 20000);

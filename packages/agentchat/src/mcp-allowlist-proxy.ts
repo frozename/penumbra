@@ -206,6 +206,43 @@ if (import.meta.main) {
   });
 
   child.on("exit", (code: number | null) => process.exit(code ?? 0));
-  process.on("SIGTERM", () => child.kill("SIGTERM"));
-  process.on("SIGINT", () => child.kill("SIGINT"));
+
+  // Teardown shared by parent-death (stdin EOF), SIGTERM, and SIGINT.
+  //
+  // This proxy is spawned as an ACP seat's MCP server, so its parent is the ACP
+  // agent process. If that parent dies ABRUPTLY (worker server.kill on eviction,
+  // a seat crash, or a daemon/worker restart) without a clean signal reaching us,
+  // our stdin (the JSON-RPC request channel) hits EOF. Without teardown the proxy
+  // — and its upstream child — run forever, reparented to ppid=1: the
+  // orphan-accumulation leak. stdin stays open for the whole session during
+  // normal operation, so EOF unambiguously means the parent is gone.
+  //
+  // SIGTERM the upstream child; child.on("exit") above exits us the instant it
+  // dies (the cooperative penumbra-mcp upstream does this immediately). If the
+  // child traps or delays SIGTERM — e.g. a third-party uvx/python MCP wrapped as
+  // upstream — escalate to SIGKILL after a grace window so it can't itself
+  // re-orphan, then exit regardless. Never exit while the child may still be
+  // alive and un-signalled.
+  let shuttingDown = false;
+  const teardownAndExit = () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      /* ignore */
+    }
+    setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        /* ignore */
+      }
+      process.exit(0);
+    }, 1000);
+  };
+  process.stdin.on("end", teardownAndExit);
+  clientLines.on("close", teardownAndExit);
+  process.on("SIGTERM", teardownAndExit);
+  process.on("SIGINT", teardownAndExit);
 }
