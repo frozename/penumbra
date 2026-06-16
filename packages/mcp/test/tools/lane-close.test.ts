@@ -284,6 +284,33 @@ test("lane_close round-trips through the live daemon contract and authorizes mem
     });
     expect(opened.status).toBe(200);
 
+    // The lane_close guardrail (added after this test, commit 2be61b5c) requires
+    // both the lane's implementer_handoff and the reviewer_handoff to resolve to
+    // known handoffs, with the reviewer agent differing from the implementer.
+    // Seed both so the close exercises the real with-reviewer authorize path.
+    const seedHandoff = (handoff_id: string, to: string) =>
+      live.services.handoffWriter.createApproved({
+        handoff_id,
+        ts: "2026-05-12T00:00:00.000Z",
+        project_id: null,
+        conversation_id: "c-live",
+        from: "user",
+        to,
+        to_role: null,
+        message: "seed",
+        triggered_by_event_id: `e-${handoff_id}`,
+        resolved_by: "test",
+        resolved_at: null,
+        chain_max_hops: null,
+        chain_trust_mode: null,
+        chain_task_type: null,
+        use_worktree: null,
+        parent_handoff_id: null,
+        branch_base: null,
+      });
+    seedHandoff("h-live-impl", "codex");
+    seedHandoff("h-live-review", "gemini");
+
     const out = parseToolResult(
       await laneCloseHandler(live.daemon)({
         lane_id: "lane-live",
