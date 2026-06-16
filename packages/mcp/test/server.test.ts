@@ -361,6 +361,33 @@ describe("buildServer tool registration", () => {
     }
   });
 
+  it("uses the global response-budget wrapper for retired envelope tools", async () => {
+    process.env.PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS = "1";
+    delete process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED;
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = "memory_search,read_handle";
+    const large = { hits: [{ body: "x".repeat(256) }], total: 1 };
+    const daemon = {
+      memorySearch: async () => large,
+    } as any;
+
+    const server = (await buildServer({ daemon })) as any;
+    const out = await server._registeredTools.memory_search.handler({ query: "budget" }, {});
+
+    expect("envelope" in TOOL_REGISTRY.memory_search.descriptor.inputSchema).toBe(false);
+    expect(isEnvelopeResult(out)).toBe(true);
+    expect(out._meta.handle_id).toBeTruthy();
+    expect(out._meta.token_budget.truncated).toBe(true);
+    expect(out.content[0].text).toContain(`read_handle ${out._meta.handle_id}`);
+
+    const readOut = await server._registeredTools.read_handle.handler({
+      handle_id: out._meta.handle_id,
+    });
+    expect(readOut.isError).toBeUndefined();
+    expect(readOut.content[0].text).toBe(
+      JSON.stringify({ content: [{ type: "text", text: JSON.stringify(large, null, 2) }] }),
+    );
+  });
+
   it("applies response budget to federated tools through the real MCP client path", async () => {
     process.env.PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS = "1";
     delete process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED;
