@@ -46,10 +46,8 @@ function resolveProjectIdCached(repoRoot: string): string | null {
  */
 export async function workspaceRoute(_req: Request, services: Services): Promise<Response> {
   // mainRepoDir is threaded into the WorktreeManager (BuildServicesOpts), not
-  // onto the Services object itself — read it where it actually lives, the way
-  // memory-verify/basis.ts does.
-  const repoRoot =
-    (services.worktreeManager as unknown as { mainRepoDir?: string }).mainRepoDir ?? process.cwd();
+  // onto the Services object itself — read it where it actually lives.
+  const repoRoot = services.worktreeManager.mainRepoDir;
 
   const projectId = resolveProjectIdCached(repoRoot);
 

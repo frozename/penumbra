@@ -42,9 +42,7 @@ export const BasisSchema = z.discriminatedUnion("kind", [
 export type Basis = z.infer<typeof BasisSchema>;
 
 function getMainRepoDir(services: Services): string {
-  return (
-    (services.worktreeManager as unknown as { mainRepoDir?: string }).mainRepoDir ?? process.cwd()
-  );
+  return services.worktreeManager.mainRepoDir;
 }
 
 function getReviewDir(services: Services): string {

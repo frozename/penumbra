@@ -152,13 +152,13 @@ function spawnSilent(
 export class WorktreeManager {
   private worktrees = new Map<string, WorktreeHandle>();
   private rootDir: string;
-  private mainRepoDir: string;
+  #mainRepoDir: string;
   private log: Logger;
   private resolveProjectRoot?: ResolveProjectRoot;
   private runner: WorktreeCommandRunner;
 
   constructor(opts?: WorktreeManagerOpts) {
-    this.mainRepoDir = opts?.mainRepoDir || process.cwd();
+    this.#mainRepoDir = opts?.mainRepoDir || process.cwd();
     this.log = opts?.log ?? NOOP_LOG;
     this.resolveProjectRoot = opts?.resolveProjectRoot;
     this.runner = opts?.runner ?? defaultRunner;
@@ -167,6 +167,10 @@ export class WorktreeManager {
       process.env.PENUMBRA_WORKTREE_ROOT ||
       `${this.repoRootFor(undefined)}-worktrees`;
     this.rediscoverWorktrees();
+  }
+
+  public get mainRepoDir(): string {
+    return this.#mainRepoDir;
   }
 
   private git(args: string[], opts?: { cwd?: string }) {
@@ -186,7 +190,7 @@ export class WorktreeManager {
       const root = this.resolveProjectRoot(project_id);
       if (root !== undefined) return root;
     }
-    return this.mainRepoDir;
+    return this.#mainRepoDir;
   }
 
   public projectRootFor(project_id?: string): string | undefined {
@@ -235,7 +239,7 @@ export class WorktreeManager {
               worktreeMode,
             });
             if (worktreeMode === "symlink_mirror") {
-              mirrorNodeModuleSymlinks(this.mainRepoDir, wtPath, this.log);
+              mirrorNodeModuleSymlinks(this.#mainRepoDir, wtPath, this.log);
             }
           }
         }
