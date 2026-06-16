@@ -38,6 +38,7 @@ export function handleTickTeardown(db: Database, input: TeardownInput): void {
       agent_name: input.agent_id,
       task_type: "health_check",
       outcome: input.outcome === "success" ? "merged" : "failed",
+      gate_outcome: input.outcome === "success" ? "skipped" : null,
       rounds: null,
       smoke_pass: null,
       reviewer_findings: null,

@@ -1,5 +1,9 @@
 import type { Database } from "bun:sqlite";
 import type { Uuid } from "../utils/uuid.js";
+import {
+  stampAgentPerformanceGateOutcomeForHandoff,
+  type ClosedLaneGateStatus,
+} from "../db/lane-ledger.js";
 import { HandoffReader } from "../readers/handoff.js";
 import { ChainReader, type AgentResponseEvent } from "../readers/chain.js";
 import type { HandoffRow } from "../schemas/handoff.js";
@@ -19,6 +23,16 @@ import {
   classifyDispatchReliability,
   type DispatchReliabilityReport,
 } from "./dispatch-reliability.js";
+
+export const MIN_RESPONSE_CHARS = 40;
+
+export function meaningfulOutput(text: string | null | undefined): {
+  chars: number;
+  meaningful: boolean;
+} {
+  const chars = typeof text === "string" ? text.replace(/\s/g, "").length : 0;
+  return { chars, meaningful: chars >= MIN_RESPONSE_CHARS };
+}
 
 export function aggregateHandoffUsage(
   db: Database,
@@ -67,8 +81,8 @@ function normalizeNonnegativeInteger(value: unknown): number | null {
     : null;
 }
 
-function lookupLatestLaneGateOutcome(db: Database, handoffId: string): string | null {
-  type Row = { gate_status: string };
+function lookupLatestLaneGateOutcome(db: Database, handoffId: string): ClosedLaneGateStatus | null {
+  type Row = { gate_status: ClosedLaneGateStatus };
   const row = db
     .prepare<
       Row,
@@ -76,6 +90,23 @@ function lookupLatestLaneGateOutcome(db: Database, handoffId: string): string | 
     >(`SELECT gate_status FROM lane_ledger WHERE implementer_handoff = ? AND ts_closed IS NOT NULL ORDER BY ts_closed DESC LIMIT 1`)
     .get(handoffId);
   return row?.gate_status ?? null;
+}
+
+function upsertAgentPerformanceWithGuardedGateOutcome(
+  db: Database,
+  row: AgentPerformanceRow,
+): AgentPerformanceRow {
+  const writer = new AgentPerformanceWriter(db);
+  writer.upsert(row);
+  if (row.gate_outcome == null) return row;
+  return {
+    ...row,
+    gate_outcome: stampAgentPerformanceGateOutcomeForHandoff(
+      db,
+      row.handoff_id,
+      row.gate_outcome as ClosedLaneGateStatus,
+    ),
+  };
 }
 
 export function captureAgentPerformanceFromReconciler(opts: {
@@ -124,7 +155,7 @@ export function captureAgentPerformanceFromReconciler(opts: {
     notes: input.result.regression_summary ?? null,
     metadata_json: JSON.stringify(metadata),
   };
-  return new AgentPerformanceWriter(opts.db).upsert(row);
+  return upsertAgentPerformanceWithGuardedGateOutcome(opts.db, row);
 }
 
 function getParsedDispatchEndMeta(db: Database, handoffId: string): Record<string, unknown> | null {
@@ -349,11 +380,8 @@ export function captureAgentPerformanceFromDispatch(opts: {
   );
   const notes = recoveryCancel ? `${baseNotes} (maestro_takeover: recovery_cancel)` : baseNotes;
 
-  const MIN_RESPONSE_CHARS = 40;
   const has_non_empty_response =
-    responseSummary?.hasMeaningfulOutput ??
-    (typeof finalResponseText === "string" &&
-      finalResponseText.replace(/\s/g, "").length >= MIN_RESPONSE_CHARS);
+    responseSummary?.hasMeaningfulOutput ?? meaningfulOutput(finalResponseText).meaningful;
 
   const explicitTaskType = handoff.chain_task_type ?? input.task_type;
   const taskType = explicitTaskType ?? inferAgentTaskTypeForRole(handoff.message, handoff.to_role);
@@ -427,5 +455,5 @@ export function captureAgentPerformanceFromDispatch(opts: {
         : {}),
     }),
   };
-  return new AgentPerformanceWriter(opts.db).upsert(row);
+  return upsertAgentPerformanceWithGuardedGateOutcome(opts.db, row);
 }

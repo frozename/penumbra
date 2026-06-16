@@ -111,6 +111,61 @@ describe("agent performance gate outcome wiring", () => {
     expect(row.gate_outcome).toBe("failed");
   });
 
+  it("does not downgrade an existing passed gate_outcome on later capture", () => {
+    db.exec(`
+      INSERT INTO handoffs (
+        handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message,
+        status, resolved_by, resolved_at, triggered_by_event_id
+      ) VALUES (
+        'h-precedence', '2026-05-12T12:00:00Z', 'proj', 'conv', 'maestro', 'claude', NULL, 'Task type: implement_small',
+        'completed', 'worker', '2026-05-12T12:02:00Z', 'event-precedence'
+      );
+      INSERT INTO lane_ledger (
+        lane_id, ts_opened, ts_closed, task_class, implementer_handoff, reviewer_handoff, gate_status, metadata_json
+      ) VALUES (
+        'lane-precedence', '2026-05-12T12:00:30Z', '2026-05-12T12:01:00Z', 'STANDARD', 'h-precedence', 'reviewer-precedence', 'failed', '{}'
+      );
+    `);
+
+    new AgentPerformanceWriter(db).upsert({
+      performance_id: "perf-precedence-existing",
+      ts: "2026-05-12T12:01:30Z",
+      handoff_id: "h-precedence",
+      conversation_id: "conv",
+      project_id: "proj",
+      agent_name: "claude",
+      task_type: "implement_small",
+      outcome: "merged",
+      gate_outcome: "passed",
+      rounds: null,
+      smoke_pass: null,
+      reviewer_findings: null,
+      maestro_score: null,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: null,
+      source: "reconciler",
+      notes: null,
+      metadata_json: "{}",
+    });
+
+    const row = captureAgentPerformanceFromReconciler({
+      db,
+      uuid: () => "perf-precedence-new",
+      clock: () => new Date("2026-05-12T12:03:00Z"),
+      input: { handoff_id: "h-precedence", result: { status: "merged" } },
+    });
+
+    const persisted = db
+      .query<
+        { gate_outcome: string | null },
+        [string]
+      >(`SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?`)
+      .get("h-precedence");
+    expect(row.gate_outcome).toBe("passed");
+    expect(persisted?.gate_outcome).toBe("passed");
+  });
+
   it("excludes failed gate outcomes from recommendation successes", () => {
     const writer = new AgentPerformanceWriter(db);
     writer.upsert({

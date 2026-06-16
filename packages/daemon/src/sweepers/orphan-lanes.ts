@@ -100,14 +100,7 @@ export function runOrphanLanesSweep(
   }
 
   if (lane_ids.length > 0) {
-    // TODO(maestro): remove this cast post-merge. The worktree's node_modules/@penumbra/core
-    // symlinks to the home checkout, which won't have the new 'lane.orphan-swept' EventType
-    // value until this branch lands on main. Once on main, services.t0Writer.write directly
-    // accepts the typed event and this cast becomes dead code.
-    const writeAudit = (
-      services.t0Writer.write as unknown as (e: Record<string, unknown>) => void
-    ).bind(services.t0Writer);
-    writeAudit({
+    services.t0Writer.write({
       event_id: services.uuid(),
       ts: now_iso,
       ingest_ts: now_iso,
@@ -129,7 +122,7 @@ export function runOrphanLanesSweep(
       origin: null,
       payload_json: { lane_ids, grace_ms: graceMs, scanned: rows.length },
       payload_summary: `orphan-lane sweep closed ${lane_ids.length} of ${rows.length} candidates`,
-    } as Record<string, unknown>);
+    });
   }
 
   return { scanned: rows.length, closed: lane_ids.length, lane_ids };

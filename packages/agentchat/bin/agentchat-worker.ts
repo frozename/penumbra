@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import type { CapturePort } from "../src/worker/capture-port.js";
 import { defaultProjectRegistryPath, loadProjectRegistry, SettingsDefaults } from "@penumbra/core";
+import { meaningfulOutput } from "../../core/src/services/agent-performance-capture.js";
 import type { AgentChatConfig } from "../src/config/types.js";
 import { PermissionDaemonClient } from "../src/worker/permission-daemon-client.js";
 import { loadConfigPathOrDir } from "../src/config/load.js";
@@ -626,6 +627,7 @@ async function maybeCaptureDispatchOutcome(
     reliability_status?: string | null;
   } | null = null;
   try {
+    const finalResponseSummary = meaningfulOutput(finalResponseText);
     const response = await client.captureAgentPerformanceFromDispatch({
       handoff_id: handoff.handoff_id,
       task_type: handoff.chain_task_type ?? undefined,
@@ -636,9 +638,8 @@ async function maybeCaptureDispatchOutcome(
       worktree_changed: worktreeChanged,
       wall_ms: wallMs,
       framework_overhead_ms: frameworkOverheadMs,
-      final_response_chars: finalResponseText ? finalResponseText.replace(/\s/g, "").length : 0,
-      has_meaningful_output:
-        finalResponseText !== null && finalResponseText.replace(/\s/g, "").length >= 40,
+      final_response_chars: finalResponseSummary.chars,
+      has_meaningful_output: finalResponseSummary.meaningful,
     });
     perf = response.performance;
   } catch (err) {

@@ -1417,6 +1417,64 @@ describe("dispatchLandRoute", () => {
     ]);
   });
 
+  test("successful land stamps passed gate_outcome when the lane is still open", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-open-lane", "c-open-lane");
+    insertLane(svc.db, {
+      lane_id: "lane-open-land",
+      ts_opened: "2026-05-08T00:00:00.000Z",
+      task_class: "STANDARD",
+      implementer_handoff: "h-open-lane",
+    });
+    writeVerdictEvent(svc, {
+      eventId: "v-open-lane",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-open-lane",
+      conversationId: "c-open-lane",
+      typecheck: "pass",
+      tests: "pass",
+    });
+
+    (svc.worktreeManager as any).teardownWorktree = async () => ({
+      worktreeRemoved: true,
+      branchDeleted: true,
+    });
+
+    const res = await dispatchLandRoute(
+      new Request("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-open-lane",
+          commit_message: "feat: open lane land",
+          mode: "squash",
+          delete_branch: false,
+        }),
+      }),
+      svc,
+      {
+        runGit: async (args: string[]) => {
+          if (args[0] === "rev-parse") return { code: 0, stdout: "sha-open-lane\n", stderr: "" };
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: { listOpenPullRequestsByHead: async () => [], closePullRequest: async () => {} },
+        now: () => new Date("2026-05-08T00:04:00.000Z"),
+      } as any,
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = (await res.json()) as any;
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe("done");
+
+    const perf = svc.db
+      .query<
+        { outcome: string; gate_outcome: string | null },
+        [string]
+      >(`SELECT outcome, gate_outcome FROM agent_performance WHERE handoff_id = ?`)
+      .get("h-open-lane");
+    expect(perf).toEqual({ outcome: "merged", gate_outcome: "passed" });
+  });
+
   test("teardownWorktree failure is logged but does not fail the land", async () => {
     const svc = services();
     seedHandoff(svc, "h-wt-2", "c-wt-2");

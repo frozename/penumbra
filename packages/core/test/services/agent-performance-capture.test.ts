@@ -4,6 +4,8 @@ import { loadSqliteVec, migrate } from "../../src/index.js";
 import {
   captureAgentPerformanceFromDispatch,
   captureAgentPerformanceFromReconciler,
+  meaningfulOutput,
+  MIN_RESPONSE_CHARS,
 } from "../../src/services/agent-performance-capture.js";
 import { ChainReader } from "../../src/readers/chain.js";
 
@@ -367,6 +369,105 @@ describe("captureAgentPerformanceFromReconciler", () => {
     });
 
     expect(row.framework_overhead_ms).toBe(88);
+  });
+
+  it("classifies meaningful output at the shared stripped-length threshold", () => {
+    const cases: {
+      name: string;
+      text: string | null | undefined;
+      chars: number;
+      meaningful: boolean;
+    }[] = [
+      { name: "null", text: null, chars: 0, meaningful: false },
+      { name: "empty", text: "", chars: 0, meaningful: false },
+      { name: "whitespace", text: " \n\t ", chars: 0, meaningful: false },
+      {
+        name: "below threshold",
+        text: "x".repeat(MIN_RESPONSE_CHARS - 1),
+        chars: 39,
+        meaningful: false,
+      },
+      { name: "at threshold", text: "x".repeat(MIN_RESPONSE_CHARS), chars: 40, meaningful: true },
+    ];
+
+    for (const entry of cases) {
+      expect(meaningfulOutput(entry.text), entry.name).toEqual({
+        chars: entry.chars,
+        meaningful: entry.meaningful,
+      });
+    }
+  });
+
+  it("keeps daemon fallback and worker-provided meaningful-output classification aligned", () => {
+    db.prepare(`UPDATE handoffs SET chain_task_type = ? WHERE handoff_id = ?`).run(
+      "review_adversarial",
+      "h1",
+    );
+    const text = "x".repeat(MIN_RESPONSE_CHARS);
+    const workerSummary = meaningfulOutput(text);
+    db.prepare(
+      `
+      INSERT INTO t0_events (event_id, ts, ingest_ts, source, source_detail, user_id, machine_id, event_type, lane, session_id, payload_json)
+      VALUES (?, ?, ?, 'agentchat', 'claude', 'claude', 'm', 'agent-response', 'cli-subscription', ?, ?)
+    `,
+    ).run(
+      "threshold-r1",
+      "2026-04-30T12:01:55Z",
+      "2026-04-30T12:01:55Z",
+      "conv",
+      JSON.stringify({
+        response: text,
+      }),
+    );
+
+    const fallbackRow = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-threshold-response",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: { handoff_id: "h1", reason: "completed" },
+    });
+    db.prepare(`DELETE FROM agent_performance WHERE handoff_id = ?`).run("h1");
+    db.prepare(`DELETE FROM t0_events WHERE event_id = ?`).run("threshold-r1");
+
+    const workerRow = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-threshold-worker",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: {
+        handoff_id: "h1",
+        reason: "completed",
+        final_response_chars: workerSummary.chars,
+        has_meaningful_output: workerSummary.meaningful,
+      },
+    });
+
+    expect(fallbackRow.outcome).toBe("completed_with_output");
+    expect(workerRow.outcome).toBe(fallbackRow.outcome);
+  });
+
+  it("treats worker-provided meaningful-output fields as authoritative", () => {
+    db.prepare(`UPDATE handoffs SET chain_task_type = ? WHERE handoff_id = ?`).run(
+      "review_adversarial",
+      "h1",
+    );
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-worker-meaningful",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: {
+        handoff_id: "h1",
+        reason: "completed",
+        final_response_chars: MIN_RESPONSE_CHARS - 1,
+        has_meaningful_output: true,
+      },
+    });
+
+    expect(row.outcome).toBe("completed_with_output");
+    expect(JSON.parse(row.metadata_json)).toMatchObject({
+      final_response_chars: MIN_RESPONSE_CHARS - 1,
+      has_meaningful_output: true,
+    });
   });
 
   it("falls through to worker-provided framework_overhead_ms when the session value is invalid", () => {

@@ -3,6 +3,7 @@ import { TaskClassSchema, type TaskClass } from "../schemas/task-class.js";
 import type { LaneCloseMetadata } from "../schemas/lane-close-metadata.js";
 
 export type LaneGateStatus = "open" | "passed" | "failed" | "skipped" | "review_debt";
+export type ClosedLaneGateStatus = Exclude<LaneGateStatus, "open">;
 
 export interface LaneRow {
   lane_id: string;
@@ -31,7 +32,7 @@ export interface InsertLaneInput {
 
 export interface CloseLaneInput {
   ts_closed: string;
-  gate_status: Exclude<LaneGateStatus, "open">;
+  gate_status: ClosedLaneGateStatus;
   reviewer_handoff?: string | null;
   override_reason?: string | null;
   metadata?: LaneCloseMetadata | null;
@@ -58,19 +59,11 @@ type StatementWithAll<T> = {
   all: (...params: string[]) => T[];
 };
 
-function stampAgentPerformanceGateOutcome(
+export function stampAgentPerformanceGateOutcomeForHandoff(
   db: Database,
-  lane_id: string,
-  gate_status: Exclude<LaneGateStatus, "open">,
-): void {
-  const row = db
-    .query<{ implementer_handoff: string }, [string]>(
-      `SELECT implementer_handoff FROM lane_ledger WHERE lane_id=?`,
-    )
-    .get(lane_id);
-  if (row == null) {
-    throw new Error(`not found: lane ${lane_id}`);
-  }
+  handoffId: string,
+  gate_status: ClosedLaneGateStatus,
+): string | null {
   db.prepare(
     `UPDATE agent_performance
      SET gate_outcome = CASE
@@ -79,7 +72,31 @@ function stampAgentPerformanceGateOutcome(
        ELSE ?
      END
      WHERE handoff_id = ?`,
-  ).run(gate_status, gate_status, gate_status, row.implementer_handoff);
+  ).run(gate_status, gate_status, gate_status, handoffId);
+  const row = db
+    .query<
+      { gate_outcome: string | null },
+      [string]
+    >(`SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?`)
+    .get(handoffId);
+  return row?.gate_outcome ?? null;
+}
+
+export function stampAgentPerformanceGateOutcome(
+  db: Database,
+  lane_id: string,
+  gate_status: ClosedLaneGateStatus,
+): void {
+  const row = db
+    .query<
+      { implementer_handoff: string },
+      [string]
+    >(`SELECT implementer_handoff FROM lane_ledger WHERE lane_id=?`)
+    .get(lane_id);
+  if (row == null) {
+    throw new Error(`not found: lane ${lane_id}`);
+  }
+  stampAgentPerformanceGateOutcomeForHandoff(db, row.implementer_handoff, gate_status);
 }
 
 function parseLaneRow(row: {

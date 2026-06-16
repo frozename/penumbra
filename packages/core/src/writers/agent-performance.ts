@@ -29,7 +29,6 @@ export class AgentPerformanceWriter {
         agent_name=excluded.agent_name,
         task_type=excluded.task_type,
         outcome=excluded.outcome,
-        gate_outcome=excluded.gate_outcome,
         rounds=excluded.rounds,
         smoke_pass=excluded.smoke_pass,
         reviewer_findings=excluded.reviewer_findings,

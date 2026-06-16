@@ -109,6 +109,9 @@ export {
   getLane,
   insertLane,
   recentLanes,
+  stampAgentPerformanceGateOutcome,
+  stampAgentPerformanceGateOutcomeForHandoff,
+  type ClosedLaneGateStatus,
   type CloseLaneInput,
   type InsertLaneInput,
   type LaneGateStatus,
@@ -499,6 +502,8 @@ export {
   aggregateHandoffUsage,
   captureAgentPerformanceFromDispatch,
   captureAgentPerformanceFromReconciler,
+  meaningfulOutput,
+  MIN_RESPONSE_CHARS,
 } from "./services/agent-performance-capture.js";
 export {
   parseAgentPerformanceMarkdownRows,

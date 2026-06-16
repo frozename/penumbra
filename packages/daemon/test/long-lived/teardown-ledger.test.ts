@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec, applySchema } from "@penumbra/core";
+import { loadSqliteVec, applySchema, routeAgent } from "@penumbra/core";
 import { handleTickTeardown } from "../../src/long-lived/teardown.js";
 
 describe("handleTickTeardown ledger write", () => {
@@ -36,5 +36,35 @@ describe("handleTickTeardown ledger write", () => {
     expect(row?.agent_kind).toBe("long_lived");
     expect(row?.handoff_id).toBe("t1");
     expect(row?.notes).toBe("boom");
+  });
+
+  it("stamps successful ungated ticks as skipped so post-cutover routing scores them as success", () => {
+    const now = Date.parse("2026-06-16T12:00:00.000Z");
+    handleTickTeardown(db, {
+      tick_id: "t1",
+      agent_id: "a",
+      outcome: "success",
+      now,
+    });
+
+    const row = db
+      .query<
+        { gate_outcome: string | null },
+        []
+      >(`SELECT gate_outcome FROM agent_performance WHERE handoff_id='t1'`)
+      .get();
+    expect(row?.gate_outcome).toBe("skipped");
+
+    const routed = routeAgent({
+      db,
+      taskType: "health_check",
+      detail: "rank",
+      agentKind: "long_lived",
+      now: new Date("2026-06-16T13:00:00.000Z"),
+      gateOutcomeCutoverIso: "2026-01-01T00:00:00.000Z",
+    });
+    expect(routed.detail).toBe("rank");
+    if (routed.detail !== "rank") return;
+    expect(routed.candidates.candidates[0]?.success_rate).toBe(1);
   });
 });

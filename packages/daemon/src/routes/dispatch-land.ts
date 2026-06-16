@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { z } from "zod";
 import { captureAgentPerformanceFromReconciler, type Services } from "@penumbra/core";
+import { stampAgentPerformanceGateOutcomeForHandoff } from "../../../core/src/db/lane-ledger.js";
 import { createGhCliClient, type GhClient } from "../services/gh-client.js";
 import { memoryVerifyAuthorizeRoute } from "./memory-verify.js";
 import { dispatchAuditRoute } from "./dispatch-audit.js";
@@ -338,6 +339,7 @@ export async function dispatchLandRoute(
   if (!force && verdictFailed(verdict) && !(await isAuditTrustedAccept(services, handoff_id))) {
     return json({ error: { code: "verdict_unverified", verdict } }, 409);
   }
+  const stampPassedGateOutcome = !force && !verdictFailed(verdict);
 
   // Idempotency: return the existing in-flight task for this handoff.
   for (const [existingTaskId, existingTask] of dispatchLandTasks.entries()) {
@@ -399,6 +401,7 @@ export async function dispatchLandRoute(
         commit_message,
         mode,
         delete_branch,
+        stampPassedGateOutcome,
       });
       task.finished_at = now().toISOString();
       if ("error" in outcome) {
@@ -461,8 +464,18 @@ async function executeLand(input: {
   commit_message?: string;
   mode: "squash" | "ff";
   delete_branch: boolean;
+  stampPassedGateOutcome: boolean;
 }): Promise<DispatchLandSuccess | DispatchLandFailure> {
-  const { services, deps, now, handoff_id, commit_message, mode, delete_branch } = input;
+  const {
+    services,
+    deps,
+    now,
+    handoff_id,
+    commit_message,
+    mode,
+    delete_branch,
+    stampPassedGateOutcome,
+  } = input;
   const handoff = input.handoff;
   if (!handoff) {
     return {
@@ -637,8 +650,7 @@ async function executeLand(input: {
     releaseLock();
     try {
       const metricTs = new Date().toISOString();
-      // Cast: "lifecycle_lock_held" is added to schemas/event.ts but core dist predates it in this worktree.
-      (services.t0Writer.write as unknown as (e: Record<string, unknown>) => void)({
+      services.t0Writer.write({
         event_id: services.uuid(),
         ts: metricTs,
         ingest_ts: metricTs,
@@ -732,6 +744,9 @@ async function executeLand(input: {
         result: { status: "merged", timed_out: false },
       },
     });
+    if (stampPassedGateOutcome) {
+      stampAgentPerformanceGateOutcomeForHandoff(services.db, handoff_id, "passed");
+    }
   } catch (err) {
     services.log?.warn?.(
       { handoff_id, err: String(err) },
