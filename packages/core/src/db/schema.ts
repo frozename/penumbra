@@ -1,9 +1,9 @@
 import { Database } from "bun:sqlite";
 
-// 34 = isolated_install handoff column (this branch) + one-open-lane unique
-// index with dedupe (main's 33); the dedupe marker re-runs once, idempotently.
-export const SCHEMA_VERSION = 35;
+// 36 = t0_fts external-content FTS5 table backed by t0_fts_src view.
+export const SCHEMA_VERSION = 36;
 const LANE_LEDGER_OPEN_DEDUPE_SCHEMA_META_KEY = "lane_ledger_open_dedupe_schema_version";
+const T0_FTS_EXTERNAL_CONTENT_SCHEMA_META_KEY = "t0_fts_external_content_v1";
 
 export interface ReleaseT1RollupClaimsOpts {
   terminalOutcomes?: readonly string[];
@@ -450,67 +450,7 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
       );
     `);
 
-    db.exec(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS t0_fts USING fts5(
-        content,
-        event_id UNINDEXED
-      );
-    `);
-
-    db.exec(`
-      CREATE TRIGGER IF NOT EXISTS t0_fts_insert AFTER INSERT ON t0_events BEGIN
-        INSERT INTO t0_fts (rowid, content, event_id) VALUES (
-          new.rowid,
-          CASE
-            WHEN json_valid(new.payload_json) THEN coalesce(
-              json_extract(new.payload_json, '$.text'),
-              json_extract(new.payload_json, '$.message'),
-              json_extract(new.payload_json, '$.prompt'),
-              json_extract(new.payload_json, '$.message_excerpt'),
-              json_extract(new.payload_json, '$.response[0].text'),
-              json_extract(new.payload_json, '$.response'),
-              json_extract(new.payload_json, '$.input.text'),
-              json_extract(new.payload_json, '$.input.message'),
-              json_extract(new.payload_json, '$.input.prompt'),
-              new.payload_summary,
-              ''
-            )
-            ELSE coalesce(new.payload_summary, new.payload_json, '')
-          END,
-          new.event_id
-        );
-      END;
-    `);
-
-    db.exec(`
-      CREATE TRIGGER IF NOT EXISTS t0_fts_delete AFTER DELETE ON t0_events BEGIN
-        DELETE FROM t0_fts WHERE rowid = old.rowid;
-      END;
-    `);
-
-    db.exec(`
-      INSERT INTO t0_fts (rowid, content, event_id)
-        SELECT t.rowid,
-               CASE
-                 WHEN json_valid(t.payload_json) THEN coalesce(
-                   json_extract(t.payload_json, '$.text'),
-                   json_extract(t.payload_json, '$.message'),
-                   json_extract(t.payload_json, '$.prompt'),
-                   json_extract(t.payload_json, '$.message_excerpt'),
-                   json_extract(t.payload_json, '$.response[0].text'),
-                   json_extract(t.payload_json, '$.response'),
-                   json_extract(t.payload_json, '$.input.text'),
-                   json_extract(t.payload_json, '$.input.message'),
-                   json_extract(t.payload_json, '$.input.prompt'),
-                   t.payload_summary,
-                   ''
-                 )
-                 ELSE coalesce(t.payload_summary, t.payload_json, '')
-               END,
-               t.event_id
-          FROM t0_events t
-         WHERE NOT EXISTS (SELECT 1 FROM t0_fts f WHERE f.rowid = t.rowid);
-    `);
+    migrateT0FtsToExternalContentOnce(db);
 
     db.exec(`
       CREATE TABLE IF NOT EXISTS t0_file_refs (
@@ -1188,6 +1128,116 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
+    throw err;
+  }
+}
+
+function createT0FtsSrcView(db: Database): void {
+  db.exec(`
+    CREATE VIEW IF NOT EXISTS t0_fts_src AS
+      SELECT t0_events.rowid AS rowid,
+             CASE
+               WHEN json_valid(payload_json) THEN coalesce(
+                 json_extract(payload_json, '$.text'),
+                 json_extract(payload_json, '$.message'),
+                 json_extract(payload_json, '$.prompt'),
+                 json_extract(payload_json, '$.message_excerpt'),
+                 json_extract(payload_json, '$.response[0].text'),
+                 json_extract(payload_json, '$.response'),
+                 json_extract(payload_json, '$.input.text'),
+                 json_extract(payload_json, '$.input.message'),
+                 json_extract(payload_json, '$.input.prompt'),
+                 payload_summary,
+                 ''
+               )
+               ELSE coalesce(payload_summary, payload_json, '')
+             END AS content,
+             event_id
+        FROM t0_events;
+  `);
+}
+
+export function migrateT0FtsToExternalContentOnce(db: Database): void {
+  const marker = db
+    .query<{ value: string }, [string]>("SELECT value FROM db_meta WHERE key = ?")
+    .get(T0_FTS_EXTERNAL_CONTENT_SCHEMA_META_KEY);
+  if (marker) {
+    createT0FtsSrcView(db);
+    return;
+  }
+
+  db.exec("SAVEPOINT t0_fts_external_content_migration");
+  try {
+    createT0FtsSrcView(db);
+    db.exec(`
+      DROP TRIGGER IF EXISTS t0_fts_insert;
+      DROP TRIGGER IF EXISTS t0_fts_delete;
+      DROP TABLE IF EXISTS t0_fts;
+
+      CREATE VIRTUAL TABLE t0_fts USING fts5(
+        content,
+        event_id UNINDEXED,
+        content='t0_fts_src',
+        content_rowid='rowid'
+      );
+
+      INSERT INTO t0_fts(t0_fts) VALUES('rebuild');
+
+      CREATE TRIGGER t0_fts_insert AFTER INSERT ON t0_events BEGIN
+        INSERT INTO t0_fts (rowid, content, event_id) VALUES (
+          new.rowid,
+          CASE
+            WHEN json_valid(new.payload_json) THEN coalesce(
+              json_extract(new.payload_json, '$.text'),
+              json_extract(new.payload_json, '$.message'),
+              json_extract(new.payload_json, '$.prompt'),
+              json_extract(new.payload_json, '$.message_excerpt'),
+              json_extract(new.payload_json, '$.response[0].text'),
+              json_extract(new.payload_json, '$.response'),
+              json_extract(new.payload_json, '$.input.text'),
+              json_extract(new.payload_json, '$.input.message'),
+              json_extract(new.payload_json, '$.input.prompt'),
+              new.payload_summary,
+              ''
+            )
+            ELSE coalesce(new.payload_summary, new.payload_json, '')
+          END,
+          new.event_id
+        );
+      END;
+
+      CREATE TRIGGER t0_fts_delete AFTER DELETE ON t0_events BEGIN
+        INSERT INTO t0_fts (t0_fts, rowid, content, event_id) VALUES (
+          'delete',
+          old.rowid,
+          CASE
+            WHEN json_valid(old.payload_json) THEN coalesce(
+              json_extract(old.payload_json, '$.text'),
+              json_extract(old.payload_json, '$.message'),
+              json_extract(old.payload_json, '$.prompt'),
+              json_extract(old.payload_json, '$.message_excerpt'),
+              json_extract(old.payload_json, '$.response[0].text'),
+              json_extract(old.payload_json, '$.response'),
+              json_extract(old.payload_json, '$.input.text'),
+              json_extract(old.payload_json, '$.input.message'),
+              json_extract(old.payload_json, '$.input.prompt'),
+              old.payload_summary,
+              ''
+            )
+            ELSE coalesce(old.payload_summary, old.payload_json, '')
+          END,
+          old.event_id
+        );
+      END;
+    `);
+    db.run("INSERT OR REPLACE INTO db_meta(key, value) VALUES(?, ?)", [
+      T0_FTS_EXTERNAL_CONTENT_SCHEMA_META_KEY,
+      "1",
+    ]);
+    db.exec("RELEASE SAVEPOINT t0_fts_external_content_migration");
+  } catch (err) {
+    db.exec("ROLLBACK TO SAVEPOINT t0_fts_external_content_migration");
+    db.exec("RELEASE SAVEPOINT t0_fts_external_content_migration");
     throw err;
   }
 }
