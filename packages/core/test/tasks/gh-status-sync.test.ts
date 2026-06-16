@@ -85,6 +85,48 @@ describe("TaskWriter centralized gh status-sync enqueue", () => {
     expect(got[1]!.payload).toEqual({ from_status: "pending", to_status: "leased" });
   });
 
+  test("gh outbox attempt claims a pending row exactly once and stale processing rows requeue", async () => {
+    const task_id = linkedTask();
+    const { id } = writer.enqueueGhOutbox(task_id, "gh_push_status", {});
+
+    const [first, second] = await Promise.all([
+      Promise.resolve(writer.markGhOutboxAttempt(id)),
+      Promise.resolve(writer.markGhOutboxAttempt(id)),
+    ]);
+
+    expect([first, second].filter(Boolean)).toHaveLength(1);
+
+    const processing = db
+      .query<
+        { status: string; attempted_at: number | null },
+        [number]
+      >(`SELECT status, attempted_at FROM gh_outbox WHERE id = ?`)
+      .get(id);
+    expect(processing?.status).toBe("processing");
+    expect(typeof processing?.attempted_at).toBe("number");
+
+    type GhOutboxRequeueCapableWriter = TaskWriter & {
+      requeueStaleGhOutboxProcessing?: (staleBefore: number) => number;
+    };
+    const requeueStaleGhOutboxProcessing = (
+      writer as GhOutboxRequeueCapableWriter
+    ).requeueStaleGhOutboxProcessing?.bind(writer);
+    expect(typeof requeueStaleGhOutboxProcessing).toBe("function");
+    if (typeof requeueStaleGhOutboxProcessing !== "function") return;
+
+    expect(requeueStaleGhOutboxProcessing(0)).toBe(0);
+    expect(requeueStaleGhOutboxProcessing(Date.now() + 1_000)).toBe(1);
+
+    const requeued = db
+      .query<
+        { status: string; attempted_at: number | null },
+        [number]
+      >(`SELECT status, attempted_at FROM gh_outbox WHERE id = ?`)
+      .get(id);
+    expect(requeued?.status).toBe("pending");
+    expect(requeued?.attempted_at).toBe(processing?.attempted_at);
+  });
+
   test("transitions on a NON-linked task enqueue nothing", () => {
     const { task_id } = writer.file({
       prompt: "unlinked",

@@ -1438,13 +1438,28 @@ export class TaskWriter {
       .all(finalLimit);
   }
 
-  markGhOutboxAttempt(id: number): void {
-    this.db.run(
-      `UPDATE gh_outbox
-       SET status = 'processing', attempted_at = ?, error = NULL
-       WHERE id = ?`,
-      [this.now(), id],
-    );
+  markGhOutboxAttempt(id: number): boolean {
+    const result = this.db
+      .query<unknown, [number, number]>(
+        `UPDATE gh_outbox
+         SET status = 'processing', attempted_at = ?, error = NULL
+         WHERE id = ? AND status = 'pending'`,
+      )
+      .run(this.now(), id);
+    return result.changes === 1;
+  }
+
+  requeueStaleGhOutboxProcessing(staleBefore: number): number {
+    const result = this.db
+      .query<unknown, [number]>(
+        `UPDATE gh_outbox
+         SET status = 'pending'
+         WHERE status = 'processing'
+           AND attempted_at IS NOT NULL
+           AND attempted_at <= ?`,
+      )
+      .run(staleBefore);
+    return result.changes;
   }
 
   markGhOutboxDone(id: number): void {

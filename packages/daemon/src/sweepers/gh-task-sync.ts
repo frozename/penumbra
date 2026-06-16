@@ -95,7 +95,7 @@ interface GhTaskSyncServiceOpts {
         | "gh_post_dispatch_failure_comment",
       payload: unknown,
     ): { id: number };
-    listPendingGhOutbox(limit?: number): Array<{
+    listPendingGhOutbox(limit?: number): {
       id: number;
       task_id: string;
       op:
@@ -106,8 +106,9 @@ interface GhTaskSyncServiceOpts {
         | "gh_post_verdict_comment"
         | "gh_post_dispatch_failure_comment";
       payload_json: string;
-    }>;
-    markGhOutboxAttempt(id: number): void;
+    }[];
+    markGhOutboxAttempt(id: number): boolean;
+    requeueStaleGhOutboxProcessing(staleBefore: number): number;
     markGhOutboxDone(id: number): void;
     markGhOutboxFailed(id: number, error: string): void;
   };
@@ -172,6 +173,7 @@ interface SyncDecision {
 }
 
 const GH_TASK_SYNC_BATCH_SIZE = 6;
+const GH_OUTBOX_PROCESSING_STALE_MS_DEFAULT = 10 * 60 * 1000;
 
 function toDecision(status: TaskStatusLike): SyncDecision {
   switch (status) {
@@ -419,7 +421,8 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
   const processGhOutbox = async (): Promise<void> => {
     const rows = opts.taskWriter.listPendingGhOutbox(100);
     for (const row of rows) {
-      opts.taskWriter.markGhOutboxAttempt(row.id);
+      const won = opts.taskWriter.markGhOutboxAttempt(row.id);
+      if (won === false) continue;
       try {
         const payload = JSON.parse(row.payload_json || "{}") as Record<string, unknown>;
         switch (row.op) {
@@ -729,6 +732,9 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
       // Always drain the outbox (status pushes stay prompt). The heavy
       // listLinkedTasks() per-task reconcile (the GitHub→local pull / drift path)
       // is skipped when the caller throttles it via fullReconcile:false.
+      opts.taskWriter.requeueStaleGhOutboxProcessing?.(
+        opts.now().getTime() - GH_OUTBOX_PROCESSING_STALE_MS_DEFAULT,
+      );
       await processGhOutbox();
       if (options?.fullReconcile === false) {
         return { linked: 0, pushed: 0, pulled: 0, errored: 0, skipped: false, results: [] };
