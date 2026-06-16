@@ -175,6 +175,87 @@ function createPermissionHarness(
 }
 
 describe("StdioAcpAdapter", () => {
+  it("kills a silent child when initialize exceeds bootTimeoutMs", async () => {
+    const mockKill = vi.fn();
+    const startServer = vi.fn().mockResolvedValue({
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      pid: 123,
+      kill: mockKill,
+      exited: new Promise<number | null>(() => {}),
+      getStderrTail: () => "",
+    });
+    const adapter = new StdioAcpAdapter(
+      { binary: "mock-acp", bootTimeoutMs: 20 },
+      {
+        startServer,
+        createClient: (handle) =>
+          new StdioAcpClient({ stdin: handle.stdin, stdout: handle.stdout }),
+      },
+    );
+
+    const result = dispatch(adapter, {
+      prompt: "hello",
+      signal: new AbortController().signal,
+    });
+    const guardedResult = Promise.race([
+      result,
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("test safety timeout")), 500);
+      }),
+    ]);
+
+    await expect(guardedResult).rejects.toThrow(
+      "stdio-acp: boot timed out after 20ms while waiting for initialize",
+    );
+    expect(mockKill).toHaveBeenCalled();
+  });
+
+  it("allows normal boot requests that complete before bootTimeoutMs", async () => {
+    const mockKill = vi.fn();
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === "initialize") {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return { protocolVersion: 1, authMethods: [] };
+      }
+      if (method === "session/new") {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return { sessionId: "session-123" };
+      }
+      if (method === "session/prompt") return { stopReason: "end_turn" };
+      return {};
+    });
+    const adapter = new StdioAcpAdapter(
+      { binary: "mock-acp", bootTimeoutMs: 100 },
+      {
+        startServer: vi.fn().mockResolvedValue({
+          stdin: new PassThrough(),
+          stdout: new PassThrough(),
+          pid: 123,
+          kill: mockKill,
+          exited: new Promise<number | null>(() => {}),
+          getStderrTail: () => "",
+        }),
+        createClient: () =>
+          mockClient({
+            onRequest: vi.fn(),
+            on: vi.fn(),
+            request,
+          }),
+      },
+    );
+
+    const result = await dispatch(adapter, {
+      prompt: "hello",
+      signal: new AbortController().signal,
+    });
+
+    expect(result.text).toBe("");
+    expect(request).toHaveBeenCalledWith("initialize", expect.any(Object));
+    expect(request).toHaveBeenCalledWith("session/new", expect.any(Object));
+    expect(mockKill).toHaveBeenCalled();
+  });
+
   it("keeps warm_pool disabled path cold and never calls the pool", async () => {
     for (const warmPool of [undefined, false]) {
       const { adapter, pool, mockKill } = createWarmPoolHarness({ warmPool });

@@ -54,6 +54,7 @@ function mapWriteToolsError(err: unknown): Error {
 // usage-steering Phase-4 build). A genuinely hung agent is still caught within 20min.
 // Per-seat `requestTimeoutMs` (agentchat options, schema-capped at 900_000) overrides this.
 const DEFAULT_REQUEST_TIMEOUT_MS = 1_200_000;
+const DEFAULT_BOOT_TIMEOUT_MS = 120_000;
 // Upper bound for the optional model-warmup prompt (modelWarmupPrompt). The
 // `/model` acknowledgment turn is fast (~5-10s observed), but a cold model load
 // can be slower; cap at 2min and fall through to the real task prompt regardless
@@ -315,6 +316,11 @@ interface StdioAcpAdapterDeps {
   thoughtCapture?: StdioAcpThoughtCapture;
 }
 
+interface StdioAcpBootDeadline {
+  expiresAt: number;
+  timeoutMs: number;
+}
+
 export class StdioAcpAdapter implements Adapter {
   readonly kind = "stdio-acp";
 
@@ -376,6 +382,49 @@ export class StdioAcpAdapter implements Adapter {
     return { server, client };
   }
 
+  private createBootDeadline(): StdioAcpBootDeadline {
+    const timeoutMs = this.opts.bootTimeoutMs ?? DEFAULT_BOOT_TIMEOUT_MS;
+    return {
+      expiresAt: Date.now() + timeoutMs,
+      timeoutMs,
+    };
+  }
+
+  private async requestWithBootDeadline<T>(
+    server: StdioAcpHandle,
+    client: StdioAcpClient,
+    deadline: StdioAcpBootDeadline,
+    method: string,
+    params?: unknown,
+  ): Promise<T> {
+    const remainingMs = deadline.expiresAt - Date.now();
+    if (remainingMs <= 0) {
+      server.kill();
+      throw new Error(
+        `stdio-acp: boot timed out after ${String(deadline.timeoutMs)}ms while waiting for ${method}`,
+      );
+    }
+
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    try {
+      return await Promise.race([
+        client.request(method, params) as Promise<T>,
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => {
+            server.kill();
+            reject(
+              new Error(
+                `stdio-acp: boot timed out after ${String(deadline.timeoutMs)}ms while waiting for ${method}`,
+              ),
+            );
+          }, remainingMs);
+        }),
+      ]);
+    } finally {
+      if (timeout !== null) clearTimeout(timeout);
+    }
+  }
+
   /**
    * Initialize + authenticate the connection, then deposit the warm connection
    * into the pool (when enabled). Returns the deposited (idle, ref-less) entry,
@@ -394,8 +443,10 @@ export class StdioAcpAdapter implements Adapter {
       /** Mark the deposited entry as a kept-warm pre-warm (exempt from the
        *  idle-grace sweep). Only prewarm() sets this; cold dispatch leaves it off. */
       pinned?: boolean;
+      bootDeadline?: StdioAcpBootDeadline;
     },
   ): Promise<AcpWarmPoolEntry | null> {
+    const bootDeadline = args.bootDeadline ?? this.createBootDeadline();
     // 1. Initialize
     const clientCapabilities: any = {};
     if (this.opts.fsReadTextFile || this.opts.fsWriteTextFile) {
@@ -407,11 +458,17 @@ export class StdioAcpAdapter implements Adapter {
     if (this.opts.terminal) {
       clientCapabilities.terminal = true;
     }
-    const initResponse = await client.request("initialize", {
-      protocolVersion: 1,
-      clientCapabilities,
-      clientInfo: { name: "penumbra", version: "1.0.0" },
-    });
+    const initResponse = await this.requestWithBootDeadline<any>(
+      server,
+      client,
+      bootDeadline,
+      "initialize",
+      {
+        protocolVersion: 1,
+        clientCapabilities,
+        clientInfo: { name: "penumbra", version: "1.0.0" },
+      },
+    );
 
     // 1.5 Authenticate
     const authMethods = initResponse.authMethods ?? [];
@@ -428,7 +485,9 @@ export class StdioAcpAdapter implements Adapter {
           chosenAuthId = nonEnvVar ? nonEnvVar.id : authMethods[0].id;
         }
       }
-      await client.request("authenticate", { methodId: chosenAuthId });
+      await this.requestWithBootDeadline(server, client, bootDeadline, "authenticate", {
+        methodId: chosenAuthId,
+      });
     }
 
     if (!args.warmPoolEnabled) return null;
@@ -474,12 +533,14 @@ export class StdioAcpAdapter implements Adapter {
     });
     const mergedEnv = this.buildMergedEnv();
     const { server, client } = await this.spawnAcpServer(cwd, mergedEnv, signal);
+    const bootDeadline = this.createBootDeadline();
     const entry = await this.handshakeAndDeposit(server, client, {
       mergedEnv,
       specHash,
       poolKey,
       warmPoolEnabled,
       pinned: true,
+      bootDeadline,
     });
     return { deposited: entry !== null, poolKey };
   }
@@ -522,6 +583,7 @@ export class StdioAcpAdapter implements Adapter {
       let client: StdioAcpClient;
       let sessionId = "";
       let reusedSession = false;
+      const bootDeadline = this.createBootDeadline();
       // Diagnostic snapshot of the pool's match decision BEFORE acquire() (which
       // tears down stale candidates), so a cold start records exactly why warm
       // reuse missed — no_entry / not_running / aged / spec_mismatch / in_use, or
@@ -814,6 +876,7 @@ export class StdioAcpAdapter implements Adapter {
           specHash,
           poolKey,
           warmPoolEnabled,
+          bootDeadline,
         });
         pooledEntry?.refs.add(holderId);
       }
@@ -918,7 +981,13 @@ export class StdioAcpAdapter implements Adapter {
             },
           };
         }
-        const session = await client.request("session/new", sessionParams);
+        const session = await this.requestWithBootDeadline<any>(
+          server,
+          client,
+          bootDeadline,
+          "session/new",
+          sessionParams,
+        );
         sessionId = session.sessionId;
         emitLifecycle(input, "acp.session.start", {
           adapter: this.kind,
