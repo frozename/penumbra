@@ -55,8 +55,8 @@ function resolveMaestroProjectId(opts: {
   return { ok: true, project_id: undefined };
 }
 
-function getMaestroCwd(services: Services): string {
-  return (services as { mainRepoDir?: string }).mainRepoDir ?? process.cwd();
+export function getMaestroCwd(services: Services): string {
+  return services.worktreeManager.mainRepoDir;
 }
 const StartMaestroSessionRequestSchema = z
   .object({
