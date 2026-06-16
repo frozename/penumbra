@@ -285,8 +285,8 @@ export async function lanesCloseRoute(req: Request, services: Services): Promise
 
   const ts_closed = services.clock().toISOString();
   try {
-    // The close and the ranking stamp commit atomically: a crash between them
-    // would otherwise leave the lane closed while agent_performance diverges.
+    // The close commits atomically inside the transaction; closeLane stamps the
+    // matching agent_performance row as part of the same mutation path.
     // The live-bus override events publish AFTER the commit — event delivery
     // is not rollbackable and must not fire for a rolled-back close.
     services.db.transaction(() => {
@@ -297,26 +297,6 @@ export async function lanesCloseRoute(req: Request, services: Services): Promise
         override_reason: parsed.data.override_reason ?? null,
         metadata: parsed.data.metadata ?? undefined,
       });
-
-      services.db
-        .prepare(
-          // Substantive terminal verdicts must survive stale duplicate closes:
-          // 'passed' is never downgraded, and 'failed'/'review_debt' cannot be
-          // clobbered by a later 'skipped' (duplicate auto-lane residue).
-          `UPDATE agent_performance
-           SET gate_outcome = CASE
-             WHEN gate_outcome = 'passed' AND ? != 'passed' THEN gate_outcome
-             WHEN gate_outcome IN ('failed', 'review_debt') AND ? = 'skipped' THEN gate_outcome
-             ELSE ?
-           END
-           WHERE handoff_id = ?`,
-        )
-        .run(
-          parsed.data.gate_status,
-          parsed.data.gate_status,
-          parsed.data.gate_status,
-          beforeClose.implementer_handoff,
-        );
     })();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

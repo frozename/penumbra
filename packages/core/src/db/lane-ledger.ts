@@ -51,12 +51,36 @@ const CLOSED_STATUSES = new Set<Exclude<LaneGateStatus, "open">>([
 ]);
 
 type StatementWithRun = {
-  run: (...params: Array<string | null>) => { changes: number };
+  run: (...params: (string | null)[]) => { changes: number };
 };
 
 type StatementWithAll<T> = {
   all: (...params: string[]) => T[];
 };
+
+function stampAgentPerformanceGateOutcome(
+  db: Database,
+  lane_id: string,
+  gate_status: Exclude<LaneGateStatus, "open">,
+): void {
+  const row = db
+    .query<{ implementer_handoff: string }, [string]>(
+      `SELECT implementer_handoff FROM lane_ledger WHERE lane_id=?`,
+    )
+    .get(lane_id);
+  if (row == null) {
+    throw new Error(`not found: lane ${lane_id}`);
+  }
+  db.prepare(
+    `UPDATE agent_performance
+     SET gate_outcome = CASE
+       WHEN gate_outcome = 'passed' AND ? != 'passed' THEN gate_outcome
+       WHEN gate_outcome IN ('failed', 'review_debt') AND ? = 'skipped' THEN gate_outcome
+       ELSE ?
+     END
+     WHERE handoff_id = ?`,
+  ).run(gate_status, gate_status, gate_status, row.implementer_handoff);
+}
 
 function parseLaneRow(row: {
   lane_id: string;
@@ -136,6 +160,7 @@ export function closeLane(db: Database, lane_id: string, fields: CloseLaneInput)
     }
     throw new Error(`not found: lane ${lane_id}`);
   }
+  stampAgentPerformanceGateOutcome(db, lane_id, fields.gate_status);
 }
 
 export function getLane(db: Database, lane_id: string): LaneRow | null {
