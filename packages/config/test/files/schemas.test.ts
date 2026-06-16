@@ -322,6 +322,68 @@ describe("QuotasConfigSchema", () => {
       ),
     ).toThrow();
   });
+
+  test("live-shaped config with multiple canonical providers parses", () => {
+    const live = {
+      providers: [
+        { name: "anthropic", model: "claude-sonnet-4-20250514", quota_usd_per_24h: 100 },
+        { name: "openai", model: "gpt-4o", quota_usd_per_24h: 50 },
+        {
+          name: "google",
+          model: "gemini-2.5-pro-preview-06-05",
+          quota_usd_per_24h: 80,
+          pressure_caps: { throttle_at: { warn: 70, refuse: 90 } },
+        },
+        {
+          name: "opencode-go",
+          opencode_console: {
+            workspace_id: "ws-live",
+            base_url: "https://opencode.ai",
+            cookie_file: "~/.config/penumbra/secrets/opencode-go.cookie",
+          },
+        },
+      ],
+    };
+    expect(() => QuotasConfigSchema.parse(live)).not.toThrow();
+  });
+
+  test("accepts synthetic_cap and cost_budget fields (legacy compat)", () => {
+    const withLegacy = {
+      providers: [
+        {
+          name: "anthropic",
+          synthetic_cap: { max_dispatches: 10, window_seconds: 3600 },
+          cost_budget_usd_per_5h: 5.0,
+          cost_budget_usd_per_week: 50.0,
+          cost_budget_usd_per_month: 150.0,
+        },
+      ],
+    };
+    const parsed = QuotasConfigSchema.parse(withLegacy);
+    expect(parsed.providers[0]?.synthetic_cap?.max_dispatches).toBe(10);
+    expect(parsed.providers[0]?.cost_budget_usd_per_5h).toBe(5.0);
+    expect(parsed.providers[0]?.cost_budget_usd_per_week).toBe(50.0);
+    expect(parsed.providers[0]?.cost_budget_usd_per_month).toBe(150.0);
+  });
+
+  test("rejects unknown/typo'd key on provider (strict)", () => {
+    expect(() =>
+      QuotasConfigSchema.parse({
+        providers: [{ name: "anthropic", quota_usd_per_24h: 50, typo_field: 123 }],
+      }),
+    ).toThrow(/typo_field/);
+  });
+
+  test("rejects non-canonical name 'OpenAI' with name-path error", () => {
+    const result = QuotasConfigSchema.safeParse({
+      providers: [{ name: "OpenAI", quota_usd_per_24h: 50 }],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const nameIssue = result.error.issues.find((i) => i.path[i.path.length - 1] === "name");
+      expect(nameIssue).toBeDefined();
+    }
+  });
 });
 
 describe("AgentChatConfig type compatibility", () => {

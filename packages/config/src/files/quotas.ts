@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CANONICAL_PROVIDER_VALUE_RE } from "../provider-format.js";
 
 /**
  * Schema for the quota-focused config split file.
@@ -49,15 +50,26 @@ export const OpenCodeConsoleConfigSchema = z
   .strict();
 export type OpenCodeConsoleConfig = z.infer<typeof OpenCodeConsoleConfigSchema>;
 
-export const ProviderQuotaConfigSchema = z.object({
-  name: z.string().min(1),
-  model: z.string().min(1).optional(),
-  quota_usd_per_24h: z.number().positive().optional(),
-  quota_tokens_per_24h: z.number().int().positive().optional(),
-  quota_tokens_per_5h: z.number().int().positive().optional(),
-  pressure_caps: z.record(z.string().min(1), PressureCapWindowSchema).optional(),
-  opencode_console: OpenCodeConsoleConfigSchema.optional(),
-});
+export const ProviderQuotaConfigSchema = z
+  .object({
+    name: z.string().min(1).regex(CANONICAL_PROVIDER_VALUE_RE),
+    model: z.string().min(1).optional(),
+    quota_usd_per_24h: z.number().positive().optional(),
+    quota_tokens_per_24h: z.number().int().positive().optional(),
+    quota_tokens_per_5h: z.number().int().positive().optional(),
+    pressure_caps: z.record(z.string().min(1), PressureCapWindowSchema).optional(),
+    opencode_console: OpenCodeConsoleConfigSchema.optional(),
+    synthetic_cap: z
+      .object({
+        max_dispatches: z.number().int().positive(),
+        window_seconds: z.number().int().positive(),
+      })
+      .optional(),
+    cost_budget_usd_per_5h: z.number().positive().optional(),
+    cost_budget_usd_per_week: z.number().positive().optional(),
+    cost_budget_usd_per_month: z.number().positive().optional(),
+  })
+  .strict();
 export type ProviderQuotaConfig = z.infer<typeof ProviderQuotaConfigSchema>;
 
 export const QuotasConfigSchema = z
