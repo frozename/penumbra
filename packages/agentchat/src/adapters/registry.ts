@@ -14,6 +14,17 @@ import { getOrCreateAcpWarmPool } from "./acp-warm-pool-registry.js";
 
 export type AdapterFactory = (options: Record<string, unknown>) => Adapter;
 
+export const BUILT_IN_ADAPTER_KINDS = [
+  "openai-compat-http",
+  "claude-cli",
+  "gemini-cli",
+  "agy-cli",
+  "codex-cli",
+  "opencode-cli",
+  "opencode-acp",
+  "stdio-acp",
+] as const;
+
 const builtIns: Record<string, AdapterFactory> = {
   "stdio-acp": (o) => createStdioAcpAdapter(o),
   "openai-compat-http": (o) => {
@@ -251,18 +262,7 @@ export function registerAdapter(kind: string, factory: AdapterFactory): void {
 
 export function clearCustomAdapters(): void {
   for (const key of Object.keys(builtIns)) {
-    if (
-      ![
-        "openai-compat-http",
-        "claude-cli",
-        "gemini-cli",
-        "agy-cli",
-        "codex-cli",
-        "opencode-cli",
-        "opencode-acp",
-        "stdio-acp",
-      ].includes(key)
-    ) {
+    if (!(BUILT_IN_ADAPTER_KINDS as readonly string[]).includes(key)) {
       delete builtIns[key];
     }
   }

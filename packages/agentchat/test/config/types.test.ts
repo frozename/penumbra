@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  ADAPTER_SPECIFIC_OPTION_KEYS,
+  AgentOptionsSchema as ConfigAgentOptionsSchema,
+} from "@penumbra/config";
+import { BUILT_IN_ADAPTER_KINDS } from "../../src/adapters/registry.js";
+import {
   AgentChatConfigSchema,
   AgentConfigSchema,
   AgentOptionsSchema,
@@ -8,6 +13,29 @@ import {
   ReviewPersonaSchema,
   ReviewSynthesizerSchema,
 } from "../../src/config/types.js";
+
+describe("AgentOptionsSchema — config single source of truth", () => {
+  test("agentchat re-exports the canonical config schema object", () => {
+    expect(AgentOptionsSchema).toBe(ConfigAgentOptionsSchema);
+    expect(() => AgentOptionsSchema.parse({ warm_pool_siez: true })).toThrow(/warm_pool_siez/);
+  });
+
+  test("adapter-specific option mapping covers every built-in adapter kind", () => {
+    expect(Object.keys(ADAPTER_SPECIFIC_OPTION_KEYS).sort()).toEqual(
+      [...BUILT_IN_ADAPTER_KINDS].sort(),
+    );
+  });
+
+  test("agentchat rejects options not consumed by a known adapter", () => {
+    expect(() =>
+      AgentConfigSchema.parse({
+        name: "opencode",
+        adapter: "opencode-acp",
+        options: { model: "gpt-5", warm_pool: true },
+      }),
+    ).toThrow(/warm_pool.*opencode-acp/);
+  });
+});
 
 describe("AgentOptionsSchema — Phase 1d boolean opt-ins", () => {
   test("fsReadTextFile defaults to undefined", () => {

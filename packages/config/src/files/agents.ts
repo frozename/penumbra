@@ -77,6 +77,116 @@ export const AgentOptionsSchema = z.strictObject({
 });
 export type AgentOptions = z.infer<typeof AgentOptionsSchema>;
 
+export const UNIVERSAL_OPTION_KEYS = [
+  "allowed_tools",
+  "cwd",
+  "env",
+  "fsReadTextFile",
+  "fsWriteTextFile",
+  "mcpServers",
+  "mcpWriteTools",
+  "model",
+  "permission_ttl_s",
+  "provider",
+  "requestTimeoutMs",
+  "terminal",
+  "terminal_max_concurrent",
+  "terminal_output_max_bytes",
+  "terminal_path",
+  "terminal_timeout_s",
+  "unsetEnv",
+  "unset_env",
+] as const;
+
+const CLI_OPTION_KEYS = [
+  "args",
+  "capturePort",
+  "command",
+  "emit_stdout_thoughts",
+  "pass_via",
+  "strip_patterns",
+] as const;
+
+const STDIO_ACP_WARM_OPTION_KEYS = [
+  "modelWarmupPrompt",
+  "model_warmup_prompt",
+  "warmPool",
+  "warmPoolIdleGraceMs",
+  "warmPoolMaxAgeMs",
+  "warmPoolMaxEntries",
+  "warmPoolSize",
+  "warm_pool",
+  "warm_pool_health_ping",
+  "warm_pool_idle_grace_ms",
+  "warm_pool_max_age_ms",
+  "warm_pool_max_entries",
+  "warm_pool_prewarm",
+  "warm_pool_prewarm_max_targets",
+  "warm_pool_size",
+] as const;
+
+export const ADAPTER_SPECIFIC_OPTION_KEYS = {
+  "agy-cli": CLI_OPTION_KEYS,
+  "claude-cli": CLI_OPTION_KEYS,
+  "codex-cli": CLI_OPTION_KEYS,
+  "gemini-cli": CLI_OPTION_KEYS,
+  "openai-compat-http": [
+    "apiKey",
+    "apiKeyEnv",
+    "apiKeyFile",
+    "apiKeyKeychain",
+    "api_key_env",
+    "baseUrl",
+    "caPath",
+    "extraBody",
+    "maxTokens",
+    "systemPrompt",
+  ],
+  "opencode-acp": ["bootTimeoutMs", "opencodeBinary"],
+  "opencode-cli": CLI_OPTION_KEYS,
+  "stdio-acp": [
+    "agentName",
+    "args",
+    "authMethodId",
+    "binary",
+    "bootTimeoutMs",
+    "capturePort",
+    "claudeCodeAllowedTools",
+    "claudeCodeDisallowedTools",
+    "claudeCodeSettingSources",
+    "claudeCodeStrictMcpConfig",
+    "claudeCodeTools",
+    "framing",
+    "hostEnvPolicy",
+    "repoRoot",
+    "sanitizeClaudeHostEnv",
+    ...STDIO_ACP_WARM_OPTION_KEYS,
+  ],
+} as const satisfies Record<string, readonly string[]>;
+
+export function allowedKeysFor(adapter: string): ReadonlySet<string> | null {
+  const adapterKeys =
+    ADAPTER_SPECIFIC_OPTION_KEYS[adapter as keyof typeof ADAPTER_SPECIFIC_OPTION_KEYS];
+  if (!adapterKeys) return null;
+  return new Set([...UNIVERSAL_OPTION_KEYS, ...adapterKeys]);
+}
+
+export function refineAgentConfigAdapterOptions(
+  data: { adapter: string; options?: Record<string, unknown> },
+  ctx: z.RefinementCtx,
+): void {
+  const allowedKeys = allowedKeysFor(data.adapter);
+  if (!allowedKeys) return;
+  for (const key of Object.keys(data.options ?? {})) {
+    if (allowedKeys.has(key)) continue;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["options", key],
+      message: `option '${key}' is not used by adapter '${data.adapter}'`,
+    });
+  }
+}
+
 export const RecallContextConfigSchema = z.object({
   enabled: z.boolean().default(false),
   k: z.number().int().positive().max(20).default(3),
@@ -204,6 +314,7 @@ export const AgentConfigSchema = z
     long_lived_config: LongLivedConfigSchema.optional(),
   })
   .superRefine((data, ctx) => {
+    refineAgentConfigAdapterOptions(data, ctx);
     if (data.pricing_mode === "subscription" && !data.subscription_provider) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

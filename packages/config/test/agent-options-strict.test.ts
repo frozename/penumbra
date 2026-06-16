@@ -2,7 +2,7 @@ import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { parse as parseYaml } from "yaml";
-import { AgentOptionsSchema } from "../src/files/agents.js";
+import { AgentConfigSchema, AgentOptionsSchema } from "../src/files/agents.js";
 
 const fullAgentOptions = {
   agentName: "codex-acp-fast",
@@ -108,6 +108,11 @@ describe("AgentOptionsSchema strict key coverage", () => {
     expect(Object.keys(parsed).sort()).toEqual(fullAgentOptionKeys);
   });
 
+  test("full-options fixture covers the exact declared schema keys", () => {
+    const schemaKeys = Object.keys(AgentOptionsSchema.shape).sort();
+    expect(fullAgentOptionKeys).toEqual(schemaKeys);
+  });
+
   test("rejects typoed option keys", () => {
     expect(() => AgentOptionsSchema.parse({ warm_pool_siez: true })).toThrow(/warm_pool_siez/);
   });
@@ -120,5 +125,37 @@ describe("AgentOptionsSchema strict key coverage", () => {
     for (const options of fixtureOptions) {
       expect(() => AgentOptionsSchema.parse(options)).not.toThrow();
     }
+  });
+});
+
+describe("AgentConfigSchema adapter-aware options", () => {
+  test("rejects warm_pool on opencode-acp because that adapter does not consume it", () => {
+    expect(() =>
+      AgentConfigSchema.parse({
+        name: "opencode",
+        adapter: "opencode-acp",
+        options: { model: "gpt-5", warm_pool: true },
+      }),
+    ).toThrow(/warm_pool.*opencode-acp/);
+  });
+
+  test("accepts warm_pool on stdio-acp", () => {
+    expect(() =>
+      AgentConfigSchema.parse({
+        name: "stdio",
+        adapter: "stdio-acp",
+        options: { binary: "codex", warm_pool: true },
+      }),
+    ).not.toThrow();
+  });
+
+  test("leaves unknown adapters forward-compatible", () => {
+    expect(() =>
+      AgentConfigSchema.parse({
+        name: "future",
+        adapter: "future-acp",
+        options: { model: "future", warm_pool: true },
+      }),
+    ).not.toThrow();
   });
 });

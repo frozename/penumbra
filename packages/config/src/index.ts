@@ -8,7 +8,18 @@ export {
 } from "./env.js";
 export { getConfig, resetConfigForTest, type ConfigBundle, type ConfigSource } from "./load.js";
 export { formatEnvConfig, type FormatOptions } from "./show.js";
-export { AgentsConfigSchema, type AgentsConfig } from "./files/agents.js";
+export {
+  ADAPTER_SPECIFIC_OPTION_KEYS,
+  AgentConfigSchema,
+  AgentOptionsSchema,
+  AgentsConfigSchema,
+  UNIVERSAL_OPTION_KEYS,
+  allowedKeysFor,
+  refineAgentConfigAdapterOptions,
+  type AgentConfig,
+  type AgentOptions,
+  type AgentsConfig,
+} from "./files/agents.js";
 export { CANONICAL_PROVIDER_VALUE_RE, isCanonicalProviderValue } from "./provider-format.js";
 export { RoutingConfigSchema, type RoutingConfig } from "./files/routing.js";
 export { WORKLOADS, WorkloadSchema, type Workload } from "./files/workload.js";

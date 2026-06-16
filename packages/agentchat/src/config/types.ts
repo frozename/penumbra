@@ -1,56 +1,17 @@
 // packages/agentchat/src/config/types.ts
 import { z } from "zod";
-import { CANONICAL_PROVIDER_VALUE_RE } from "@penumbra/config";
+import {
+  AgentOptionsSchema,
+  CANONICAL_PROVIDER_VALUE_RE,
+  refineAgentConfigAdapterOptions,
+  type AgentOptions,
+} from "@penumbra/config";
+
+export { AgentOptionsSchema };
+export type { AgentOptions };
 
 const CANONICAL_PROVIDER_MESSAGE =
   'provider must be canonical lowercase-hyphen (e.g. "openai", "nvidia-nim") so routing-bias matching resolves it';
-
-export const AgentOptionsSchema = z.looseObject({
-  /** Tool name allowlist for chain_trust_mode='config'. Strings without glob chars are exact-matched; strings containing *?[ are matched as picomatch globs. Default: undefined ⇒ treated as []. */
-  allowed_tools: z.array(z.string()).optional(),
-  /** Override of PENUMBRA_PERMISSION_TTL_S for this agent. Seconds. */
-  permission_ttl_s: z.number().int().positive().optional(),
-  /** Phase 1b.1: advertise fs.readTextFile capability. */
-  fsReadTextFile: z.boolean().optional(),
-  /** Phase 1d: advertise fs.writeTextFile capability (ACP wire). */
-  fsWriteTextFile: z.boolean().optional(),
-  /** Phase 1d: advertise terminal/* capability (ACP wire). */
-  terminal: z.boolean().optional(),
-  /** Phase 1d: expose write tools via penumbra-mcp. */
-  mcpWriteTools: z.boolean().optional(),
-  /** ACP session/prompt watchdog in milliseconds. Default is adapter-specific. */
-  requestTimeoutMs: z.number().int().min(1_000).max(900_000).optional(),
-  /** Sandbox PATH for terminal commands. Default: '/usr/bin:/bin'. */
-  terminal_path: z.string().optional(),
-  /** Per-command timeout in seconds. Default: 30. */
-  terminal_timeout_s: z.number().int().min(1).max(300).optional(),
-  /** Terminal output cap in bytes. Default: 1 MiB. */
-  terminal_output_max_bytes: z.number().int().min(1024).max(8388608).optional(),
-  /** Max concurrent terminals per dispatch. Default: 3. */
-  terminal_max_concurrent: z.number().int().min(1).max(8).optional(),
-  /** Keep ACP subprocess sessions warm between dispatches. Default: off. */
-  warm_pool: z.boolean().optional(),
-  warm_pool_idle_grace_ms: z.number().int().min(1000).max(3600000).optional(),
-  warm_pool_max_age_ms: z.number().int().min(10000).max(86400000).optional(),
-  warm_pool_max_entries: z.number().int().min(1).max(10).optional(),
-  /** Per-agent warm slots per `(agent, repoRoot/cwd)` pool key. Default: 1. */
-  warm_pool_size: z.number().int().min(1).max(10).optional(),
-  /** Eagerly pre-warm a connection for this agent at worker boot so warm reuse
-   *  engages regardless of first-poll-wins worker spread. Requires warm_pool.
-   *  Default: off. */
-  warm_pool_prewarm: z.boolean().optional(),
-  /** Per-agent cap on pre-warm targets this agent may contribute on one worker.
-   *  Bounded further by the worker-level cap. */
-  warm_pool_prewarm_max_targets: z.number().int().min(1).max(10).optional(),
-  /** Deprecated and ignored; retained so older configs still parse. */
-  warm_pool_health_ping: z.boolean().optional(),
-  /** Throwaway prompt sent once to a fresh claude-agent-acp process before the
-   *  real task, to absorb the per-process `/model` handshake an `ANTHROPIC_MODEL`
-   *  env pin triggers (which otherwise eats the first task turn → spurious
-   *  `no_worktree_activity`). Skipped on warm-connection reuse. Default: unset. */
-  model_warmup_prompt: z.string().optional(),
-});
-export type AgentOptions = z.infer<typeof AgentOptionsSchema>;
 
 /**
  * Per-agent recall-context enrichment. When `enabled: true`, the worker
@@ -217,6 +178,7 @@ export const AgentConfigSchema = z
     long_lived_config: LongLivedConfigSchema.optional(),
   })
   .superRefine((data, ctx) => {
+    refineAgentConfigAdapterOptions(data, ctx);
     if (data.pricing_mode === "subscription" && !data.subscription_provider) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

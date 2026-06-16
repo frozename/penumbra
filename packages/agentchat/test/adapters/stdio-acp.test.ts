@@ -1684,6 +1684,8 @@ describe("StdioAcpAdapter", () => {
   });
 
   it("passes mcpServers from options into session/new params", async () => {
+    const originalStorageRoot = process.env.PENUMBRA_STORAGE_ROOT;
+    delete process.env.PENUMBRA_STORAGE_ROOT;
     const mockStdin = new PassThrough();
     const mockStdout = new PassThrough();
     const mockKill = vi.fn();
@@ -1725,10 +1727,18 @@ describe("StdioAcpAdapter", () => {
       },
     );
 
-    await dispatch(adapter, {
-      prompt: "hello",
-      signal: new AbortController().signal,
-    });
+    try {
+      await dispatch(adapter, {
+        prompt: "hello",
+        signal: new AbortController().signal,
+      });
+    } finally {
+      if (originalStorageRoot === undefined) {
+        delete process.env.PENUMBRA_STORAGE_ROOT;
+      } else {
+        process.env.PENUMBRA_STORAGE_ROOT = originalStorageRoot;
+      }
+    }
 
     const sessionNewCall = mockClientRequest.mock.calls.find((c: any[]) => c[0] === "session/new");
     expect(sessionNewCall).toBeDefined();
@@ -1736,6 +1746,8 @@ describe("StdioAcpAdapter", () => {
   });
 
   it("injects PENUMBRA_HANDOFF_ID only for penumbra-mcp stdio servers, even when env is omitted", async () => {
+    const originalStorageRoot = process.env.PENUMBRA_STORAGE_ROOT;
+    process.env.PENUMBRA_STORAGE_ROOT = "/tmp/penumbra-test-storage";
     const mockStdin = new PassThrough();
     const mockStdout = new PassThrough();
     const mockKill = vi.fn();
@@ -1786,18 +1798,27 @@ describe("StdioAcpAdapter", () => {
       },
     );
 
-    await dispatch(adapter, {
-      prompt: "hi",
-      conversation: { id: "c1", project_id: null },
-      config: {},
-      signal: new AbortController().signal,
-      handoff_id: "HANDOFF_ABC",
-    });
+    try {
+      await dispatch(adapter, {
+        prompt: "hi",
+        conversation: { id: "c1", project_id: null },
+        config: {},
+        signal: new AbortController().signal,
+        handoff_id: "HANDOFF_ABC",
+      });
+    } finally {
+      if (originalStorageRoot === undefined) {
+        delete process.env.PENUMBRA_STORAGE_ROOT;
+      } else {
+        process.env.PENUMBRA_STORAGE_ROOT = originalStorageRoot;
+      }
+    }
 
     expect(capturedSessionParams.mcpServers).toBeDefined();
     expect(capturedSessionParams.mcpServers[0].env).toEqual([
       { name: "PENUMBRA_HANDOFF_ID", value: "HANDOFF_ABC" },
       { name: "PENUMBRA_MCP_ORIGIN", value: "fleet-worker" },
+      { name: "PENUMBRA_STORAGE_ROOT", value: "/tmp/penumbra-test-storage" },
     ]);
     expect(capturedSessionParams.mcpServers[1].env).toEqual([{ name: "TOKEN", value: "abc123" }]);
   });
