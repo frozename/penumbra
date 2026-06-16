@@ -18,7 +18,8 @@ try {
 let dir = "";
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "penumbra-cli-detach-"));
-  await runInit({ storageRoot: dir, uuid: () => "tok" });
+  // claudeUserDir under the temp storage root so runInit's CLAUDE.md install never writes the real ~/.claude.
+  await runInit({ storageRoot: dir, uuid: () => "tok", claudeUserDir: join(dir, "claude-user") });
 });
 afterEach(async () => {
   // best-effort stop in case a test failed before reaching its own stop

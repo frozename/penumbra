@@ -13,6 +13,8 @@ import {
   runHooksUninstallClaudeOtel,
   runHooksInstallClaudeMemory,
   runHooksUninstallClaudeMemory,
+  runHooksInstallClaudeMd,
+  runHooksUninstallClaudeMd,
 } from "../../src/commands/hooks.js";
 
 function tmpClaudeDir(initial?: any): string {
@@ -564,5 +566,114 @@ describe("PENUMBRA_HOOK_EVENTS", () => {
     expect(PENUMBRA_HOOK_EVENTS).toContain("SessionStart");
     expect(PENUMBRA_HOOK_EVENTS).toContain("PreCompact");
     expect(PENUMBRA_HOOK_EVENTS).toContain("Stop");
+  });
+});
+
+describe("hooks install --claude-md (dispatch-discipline managed block)", () => {
+  const MD = "CLAUDE.md";
+
+  it("creates CLAUDE.md with the managed block when absent", async () => {
+    const claudeDir = tmpClaudeDir();
+    const r = await runHooksInstallClaudeMd({ claudeDir });
+    expect(r.installed).toBe(true);
+    const body = readFileSync(join(claudeDir, MD), "utf8");
+    expect(body).toContain("managed [dispatch-discipline] block");
+    expect(body).toContain("Dispatch discipline (penumbra)");
+    expect(body).toContain("ultracode");
+    expect(body).toContain("SOLO-OK");
+  });
+
+  it("is idempotent: a second run is a no-op (byte-identical)", async () => {
+    const claudeDir = tmpClaudeDir();
+    await runHooksInstallClaudeMd({ claudeDir });
+    const first = readFileSync(join(claudeDir, MD), "utf8");
+    const r2 = await runHooksInstallClaudeMd({ claudeDir });
+    expect(r2.installed).toBe(false);
+    expect(r2.idempotent).toBe(true);
+    const second = readFileSync(join(claudeDir, MD), "utf8");
+    expect(second).toBe(first);
+  });
+
+  it("preserves text outside the markers (non-clobbering)", async () => {
+    const claudeDir = tmpClaudeDir();
+    const userText = "# My personal notes\n\nDo not delete this.\n";
+    writeFileSync(join(claudeDir, MD), userText);
+    await runHooksInstallClaudeMd({ claudeDir });
+    const body = readFileSync(join(claudeDir, MD), "utf8");
+    expect(body).toContain("# My personal notes");
+    expect(body).toContain("Do not delete this.");
+    expect(body).toContain("managed [dispatch-discipline] block");
+    // user text appears before the managed block
+    expect(body.indexOf("My personal notes")).toBeLessThan(
+      body.indexOf("managed [dispatch-discipline] block"),
+    );
+  });
+
+  it("replaces the block in place rather than appending a second copy", async () => {
+    const claudeDir = tmpClaudeDir();
+    // Seed a stale block (different version marker) so install rewrites it.
+    const stale = [
+      "<!-- penumbra: managed [dispatch-discipline] block — do not edit between markers -->",
+      "<!-- v0 -->",
+      "stale body",
+      "<!-- penumbra: end managed [dispatch-discipline] block -->",
+      "",
+    ].join("\n");
+    writeFileSync(join(claudeDir, MD), stale);
+    const r = await runHooksInstallClaudeMd({ claudeDir });
+    expect(r.installed).toBe(true);
+    const body = readFileSync(join(claudeDir, MD), "utf8");
+    const headerCount = body.split("managed [dispatch-discipline] block — do not edit").length - 1;
+    expect(headerCount).toBe(1);
+    expect(body).not.toContain("stale body");
+    expect(body).toContain("Dispatch discipline (penumbra)");
+  });
+
+  it("rewrites a stale block even when the current version string appears OUTSIDE it (FIX 4)", async () => {
+    const claudeDir = tmpClaudeDir();
+    // A stale block (v0 marker) AND the CURRENT version string written as user text
+    // outside the block. The old whole-file scan would see `<!-- v1 -->` and skip the
+    // needed rewrite; the in-block extraction must rewrite the stale block.
+    const seeded = [
+      "# My notes",
+      "I once pasted the marker <!-- v1 --> here as a note.",
+      "",
+      "<!-- penumbra: managed [dispatch-discipline] block — do not edit between markers -->",
+      "<!-- v0 -->",
+      "stale body",
+      "<!-- penumbra: end managed [dispatch-discipline] block -->",
+      "",
+    ].join("\n");
+    writeFileSync(join(claudeDir, MD), seeded);
+    const r = await runHooksInstallClaudeMd({ claudeDir });
+    expect(r.installed).toBe(true);
+    expect(r.idempotent).not.toBe(true);
+    const body = readFileSync(join(claudeDir, MD), "utf8");
+    expect(body).not.toContain("stale body");
+    expect(body).toContain("Dispatch discipline (penumbra)");
+    // Exactly one managed block after the rewrite.
+    const headerCount = body.split("managed [dispatch-discipline] block — do not edit").length - 1;
+    expect(headerCount).toBe(1);
+    // User's note text outside the block is preserved.
+    expect(body).toContain("I once pasted the marker");
+  });
+
+  it("uninstall removes the block, preserving surrounding text", async () => {
+    const claudeDir = tmpClaudeDir();
+    const userText = "# Keep me\n";
+    writeFileSync(join(claudeDir, MD), userText);
+    await runHooksInstallClaudeMd({ claudeDir });
+    const r = await runHooksUninstallClaudeMd({ claudeDir });
+    expect(r.removed).toBe(true);
+    const body = readFileSync(join(claudeDir, MD), "utf8");
+    expect(body).toContain("# Keep me");
+    expect(body).not.toContain("managed [dispatch-discipline] block");
+  });
+
+  it("uninstall is a no-op when no block exists", async () => {
+    const claudeDir = tmpClaudeDir();
+    writeFileSync(join(claudeDir, MD), "# unrelated\n");
+    const r = await runHooksUninstallClaudeMd({ claudeDir });
+    expect(r.removed).toBe(false);
   });
 });

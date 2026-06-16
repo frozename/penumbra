@@ -28,7 +28,12 @@ afterEach(() => {
 });
 
 test("init creates storage root, token, and DB file", async () => {
-  const exit = await runInit({ storageRoot: dir, uuid: () => "tok-123", claudeUserDir, workflowsSourceDir });
+  const exit = await runInit({
+    storageRoot: dir,
+    uuid: () => "tok-123",
+    claudeUserDir,
+    workflowsSourceDir,
+  });
   expect(exit).toBe(0);
   expect(existsSync(join(dir, "token"))).toBe(true);
   expect(readFileSync(join(dir, "token"), "utf8").trim()).toBe("tok-123");
@@ -41,6 +46,23 @@ test("init is idempotent — running twice keeps the same token", async () => {
   await runInit({ storageRoot: dir, uuid: () => "tok-2", claudeUserDir, workflowsSourceDir });
   const second = readFileSync(join(dir, "token"), "utf8").trim();
   expect(second).toBe(first);
+});
+
+test("init installs the dispatch-discipline CLAUDE.md block in the temp claudeUserDir", async () => {
+  // Covers the runInit -> runHooksInstallClaudeMd path (called unconditionally), and
+  // confirms it writes into the supplied claudeUserDir, never the real ~/.claude.
+  const exit = await runInit({
+    storageRoot: dir,
+    uuid: () => "tok-md",
+    claudeUserDir,
+    workflowsSourceDir,
+  });
+  expect(exit).toBe(0);
+  const mdPath = join(claudeUserDir, "CLAUDE.md");
+  expect(existsSync(mdPath)).toBe(true);
+  const body = readFileSync(mdPath, "utf8");
+  expect(body).toContain("managed [dispatch-discipline] block");
+  expect(body).toContain("Dispatch discipline (penumbra)");
 });
 
 test("init copies bundled penumbra workflows into claude user workflows dir", async () => {
@@ -59,8 +81,12 @@ test("init copies bundled penumbra workflows into claude user workflows dir", as
     workflowsSourceDir,
   });
   expect(exit).toBe(0);
-  expect(readFileSync(join(targetDir, "penumbra-fanout.js"), "utf8")).toBe("export default 'fanout';\n");
-  expect(readFileSync(join(targetDir, "penumbra-swarm.js"), "utf8")).toBe("export default 'swarm';\n");
+  expect(readFileSync(join(targetDir, "penumbra-fanout.js"), "utf8")).toBe(
+    "export default 'fanout';\n",
+  );
+  expect(readFileSync(join(targetDir, "penumbra-swarm.js"), "utf8")).toBe(
+    "export default 'swarm';\n",
+  );
   expect(existsSync(join(targetDir, "other.js"))).toBe(false);
   expect(readFileSync(join(targetDir, "keep-me.js"), "utf8")).toBe("export default 'keep';\n");
 });

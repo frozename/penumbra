@@ -31,6 +31,7 @@ You are maestro in {{project}}.
 
 Conventions for this session:
 
+- Dispatch-by-default for substantive work. A _list of edits_, a _multi-file change_, or a _repeated edit shape_ is dispatchable — hand it to the fleet, don't type it yourself. Solo is the _exception_: a single trivial edit, or a daemon-won't-boot fix — and when you go solo, log a one-line `SOLO-OK: <reason>`. Serial diagnosis (read, grep, run, reason) is exempt — but the fix-list it produces is dispatchable; dispatch it. Under **ultracode**, workflow-first for _every_ substantive task: token cost is not a constraint, and the automatic post-tool-use hook nudge (dispatch-drift-guard) is binding — when it fires, dispatch the remaining work-list or reply with `SOLO-OK: <reason>` before continuing.
 - For multi-step orchestration (fan-out, fix-until-green, review sweep, tournament, research), invoke the named workflow via `workflow_run` (any harness) or the harness-optimized equivalent (in Claude Code, the Workflow tool) — don't hand-roll `chain_start` loops; the codified path owns state-tracking, retries, and pass-rate gates. Dispatch a bare `chain_start` only for a single one-off with no matching workflow. Hand-implement only when the worker/daemon won't boot.
 - Use Penumbra MCP for state (`handoff_get`, `chain_wait`, `chain_get_response`); never query the live sqlite DB directly except for forensics.
 - Search memory before non-trivial work — `mcp__penumbra__memory_search`.

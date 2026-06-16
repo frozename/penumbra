@@ -58,7 +58,8 @@ test("on a corrupt DB, repair falls back to the most recent backup", async () =>
 test("repair refuses while a daemon is running", async () => {
   // Boot daemon via runStart (which loads vec0 and binds Bun.serve).
   // We need init first to materialize token.
-  await runInit({ storageRoot: dir, uuid: () => "tok" });
+  // claudeUserDir under the temp storage root so runInit's CLAUDE.md install never writes the real ~/.claude.
+  await runInit({ storageRoot: dir, uuid: () => "tok", claudeUserDir: join(dir, "claude-user") });
   const handle = await runStart({ storageRoot: dir });
   try {
     await expect(runRepair({ storageRoot: dir })).rejects.toThrow(/Daemon is running/);

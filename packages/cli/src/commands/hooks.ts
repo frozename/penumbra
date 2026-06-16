@@ -209,6 +209,19 @@ function stripManagedBlock(content: string, header: string, footer: string): str
   return parts.join("\n") + (parts.length ? "\n" : "");
 }
 
+// Extract the text BETWEEN the managed header and footer markers (exclusive). Returns
+// null when no complete block is present. The version-idempotency check must read the
+// marker from inside the managed block, not the whole file — a user writing the version
+// comment outside the block must not let a stale block survive a needed rewrite.
+function extractManagedBlock(content: string, header: string, footer: string): string | null {
+  const lines = content.split("\n");
+  const headerIdx = lines.indexOf(header);
+  if (headerIdx < 0) return null;
+  const footerIdx = lines.indexOf(footer, headerIdx);
+  if (footerIdx < 0) return null;
+  return lines.slice(headerIdx + 1, footerIdx).join("\n");
+}
+
 export async function runHooksInstallCodexOtel(
   opts: InstallCodexOtelOpts = {},
 ): Promise<InstallCodexOtelResult> {
@@ -272,6 +285,93 @@ export async function runHooksUninstallCodexOtel(
   const stripped = stripManagedBlock(current, CODEX_OTEL_HEADER, CODEX_OTEL_FOOTER);
   if (stripped === current) return { removed: false };
   writeFileSync(configPath, stripped);
+  return { removed: true };
+}
+
+// --- Claude Code CLAUDE.md dispatch-discipline managed block ---
+//
+// Merges a marker-delimited block into homedir()/.claude/CLAUDE.md stating the
+// WHETHER rule for dispatch (dispatch-by-default; solo is the exception). Uses the
+// same stripManagedBlock primitive as the Codex OTEL block so it is idempotent and
+// non-clobbering: text outside the markers is preserved, and re-running replaces the
+// block in place rather than appending a second copy.
+
+const CLAUDE_MD_HEADER =
+  "<!-- penumbra: managed [dispatch-discipline] block — do not edit between markers -->";
+const CLAUDE_MD_FOOTER = "<!-- penumbra: end managed [dispatch-discipline] block -->";
+
+// Bump this when CLAUDE_MD_BODY changes so an installed-but-stale block is rewritten.
+const CLAUDE_MD_VERSION = "v1";
+
+const CLAUDE_MD_BODY = [
+  CLAUDE_MD_HEADER,
+  `<!-- ${CLAUDE_MD_VERSION} -->`,
+  "## Dispatch discipline (penumbra)",
+  "",
+  "Dispatch-by-default for substantive work. A *list of edits*, a *multi-file change*, or a *repeated edit shape* is dispatchable — author/run a workflow (`workflow_run` / a CC Workflow: penumbra-fanout, fix-until-green, fleet-verify, swarm) or a `chain_start`, rather than hand-implementing solo.",
+  "",
+  "Solo is the *exception*, not the default. Hand-implement only for a single trivial edit, a daemon-won't-boot fix, or scaffolding an agent will build on — and log a one-line `SOLO-OK: <reason>` when you do.",
+  "",
+  "Serial diagnosis is exempt (read, grep, run, reason) — but the fix-list it produces is dispatchable; dispatch it.",
+  "",
+  "Under **ultracode**, workflow-first for *every* substantive task: token cost is not a constraint. The automatic post-tool-use hook nudge (dispatch-drift-guard) is binding — when it fires, either dispatch the remaining work-list or reply with one line `SOLO-OK: <reason>` before continuing.",
+  CLAUDE_MD_FOOTER,
+  "",
+].join("\n");
+
+export interface InstallClaudeMdOpts {
+  claudeDir?: string;
+}
+
+export interface InstallClaudeMdResult {
+  installed: boolean;
+  idempotent?: boolean;
+  path: string;
+}
+
+export async function runHooksInstallClaudeMd(
+  opts: InstallClaudeMdOpts = {},
+): Promise<InstallClaudeMdResult> {
+  const claudeDir = opts.claudeDir ?? join(homedir(), ".claude");
+  mkdirSync(claudeDir, { recursive: true });
+  const mdPath = join(claudeDir, "CLAUDE.md");
+  const current = existsSync(mdPath) ? readFileSync(mdPath, "utf8") : "";
+
+  const stripped = stripManagedBlock(current, CLAUDE_MD_HEADER, CLAUDE_MD_FOOTER);
+  const hadBlock = stripped !== current;
+  // Idempotent: an existing block carrying the current version is left untouched.
+  // Read the version marker from INSIDE the managed block, not the whole file — a
+  // stale block stays stale even if the version string happens to appear elsewhere
+  // in the user's CLAUDE.md (FIX 4: version-idempotency false-positive).
+  const blockBody = extractManagedBlock(current, CLAUDE_MD_HEADER, CLAUDE_MD_FOOTER);
+  if (hadBlock && blockBody !== null && blockBody.includes(`<!-- ${CLAUDE_MD_VERSION} -->`)) {
+    return { installed: false, idempotent: true, path: mdPath };
+  }
+
+  const sep =
+    stripped === "" || stripped.endsWith("\n\n") ? "" : stripped.endsWith("\n") ? "\n" : "\n\n";
+  const next = stripped + sep + CLAUDE_MD_BODY;
+  writeFileSync(mdPath, next);
+  return { installed: true, path: mdPath };
+}
+
+export interface UninstallClaudeMdOpts {
+  claudeDir?: string;
+}
+export interface UninstallClaudeMdResult {
+  removed: boolean;
+}
+
+export async function runHooksUninstallClaudeMd(
+  opts: UninstallClaudeMdOpts = {},
+): Promise<UninstallClaudeMdResult> {
+  const claudeDir = opts.claudeDir ?? join(homedir(), ".claude");
+  const mdPath = join(claudeDir, "CLAUDE.md");
+  if (!existsSync(mdPath)) return { removed: false };
+  const current = readFileSync(mdPath, "utf8");
+  const stripped = stripManagedBlock(current, CLAUDE_MD_HEADER, CLAUDE_MD_FOOTER);
+  if (stripped === current) return { removed: false };
+  writeFileSync(mdPath, stripped);
   return { removed: true };
 }
 
