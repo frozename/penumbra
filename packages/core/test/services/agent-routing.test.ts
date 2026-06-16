@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { loadSqliteVec, migrate, routeAgent } from "../../src/index.js";
 import { AgentPerformanceWriter } from "../../src/writers/agent-performance.js";
@@ -56,6 +56,7 @@ describe("routeAgent", () => {
           },
         ],
       },
+      now: NOW,
     };
 
     // With flag on, alpha score * 0.8, beta score * 0.2
@@ -265,6 +266,93 @@ describe("routeAgent", () => {
     expect(out.candidates.candidates.map((candidate) => candidate.agent_name)).toEqual(
       expect.arrayContaining(["alpha", "beta"]),
     );
+  });
+
+  test("rank mode defaults the hot-path query to a 30 day window", () => {
+    const querySpy = spyOn(db, "query");
+    const out = routeAgent({
+      db,
+      detail: "rank",
+      taskType: "implement_small",
+      minSamples: 1,
+      includeNeutral: false,
+      now: NOW,
+    });
+
+    expect(out.detail).toBe("rank");
+    if (out.detail !== "rank") return;
+    const rankQuery = querySpy.mock.calls
+      .map((call) => String(call[0]))
+      .find((sql) => sql.includes("FROM agent_performance") && sql.includes("ORDER BY ts DESC"));
+    expect(rankQuery).toContain("ts >= ?");
+    expect(out.candidates.window.from).toBe("2026-04-01T12:00:00.000Z");
+  });
+
+  test("single mode treats agents with only out-of-window samples as unsampled", () => {
+    const writer = new AgentPerformanceWriter(db);
+    writer.upsert({
+      performance_id: "stale-coder-1",
+      ts: "2026-03-31T12:00:00Z",
+      handoff_id: "h-stale-coder-1",
+      conversation_id: "c-stale-coder-1",
+      project_id: "proj",
+      agent_name: "stale-coder",
+      task_type: "implement_small",
+      outcome: "merged",
+      rounds: 1,
+      smoke_pass: "y",
+      reviewer_findings: 0,
+      maestro_score: null,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: 60000,
+      source: "reconciler",
+      notes: null,
+      metadata_json: "{}",
+    });
+    writer.upsert({
+      performance_id: "fresh-coder-1",
+      ts: "2026-04-30T12:00:00Z",
+      handoff_id: "h-fresh-coder-1",
+      conversation_id: "c-fresh-coder-1",
+      project_id: "proj",
+      agent_name: "fresh-coder",
+      task_type: "implement_small",
+      outcome: "merged",
+      rounds: 1,
+      smoke_pass: "y",
+      reviewer_findings: 0,
+      maestro_score: null,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: 1000,
+      source: "reconciler",
+      notes: null,
+      metadata_json: "{}",
+    });
+
+    const out = routeAgent({
+      db,
+      detail: "single",
+      role: "coder",
+      taskType: "implement_small",
+      agentchatConfig: {
+        agents: [
+          { name: "stale-coder", roles: ["coder"], api_provider: "openai" },
+          { name: "fresh-coder", roles: ["coder"], api_provider: "openai" },
+        ],
+      },
+      roleExplorationPolicy: "unsampled-first",
+      now: NOW,
+    });
+
+    expect(out.detail).toBe("single");
+    if (out.detail !== "single") return;
+    expect(out.route).toEqual({
+      agent: "stale-coder",
+      role: "coder",
+      taskType: "implement_small",
+    });
   });
 
   test("summary mode returns the current recommendation rows", () => {

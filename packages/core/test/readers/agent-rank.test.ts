@@ -140,6 +140,7 @@ describe("routeAgent rank mode", () => {
       db: isolatedDb,
       taskType: "review_adversarial",
       minSamples: 1,
+      now: new Date("2026-04-30T12:00:00Z"),
     });
     const candidate = out.candidates.find((c) => c.agent_name === "reviewer");
     expect(candidate).toBeDefined();
@@ -219,7 +220,7 @@ describe("routeAgent rank mode", () => {
     const writer = new AgentPerformanceWriter(isolatedDb);
     writer.upsert({
       performance_id: "p-old-strong",
-      ts: "2026-03-01T12:00:00Z",
+      ts: "2026-04-02T12:00:00Z",
       handoff_id: "h-old-strong",
       conversation_id: "c-old-strong",
       project_id: "proj",
@@ -266,7 +267,7 @@ describe("routeAgent rank mode", () => {
       now: new Date("2026-05-01T12:00:00Z"),
     });
 
-    expect(out.window.from).toBeNull();
+    expect(out.window.from).toBe("2026-04-01T12:00:00.000Z");
     expect(out.candidates.map((c) => c.agent_name)).toEqual(["historic-strong", "recent-weak"]);
     expect(out.candidates[0]!.score).toBeGreaterThan(out.candidates[1]!.score);
   });

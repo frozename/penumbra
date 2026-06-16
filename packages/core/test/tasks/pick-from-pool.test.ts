@@ -49,7 +49,7 @@ function writePerf(
   const idSuffix = overrides.id_suffix ? `-${overrides.id_suffix}` : "";
   new AgentPerformanceWriter(db).upsert({
     performance_id: `${taskType}-${agent}${idSuffix}`,
-    ts: overrides.ts ?? NOW,
+    ts: overrides.ts ?? recentIso(60),
     handoff_id: `handoff-${taskType}-${agent}${idSuffix}`,
     conversation_id: "conv",
     project_id: "proj",

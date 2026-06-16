@@ -242,6 +242,7 @@ const LATENCY_MIN_SUCCESS_FLOOR = 0.2;
  * signal — a 5% lift cannot overcome a meaningfully worse outcome record.
  */
 const WARM_POOL_REUSE_MAX_BOOST = 0.05;
+const DEFAULT_RANK_WINDOW_DAYS = 30;
 /** Fraction trimmed from each tail before averaging exec_ms (outlier guard). */
 const EXEC_WINSOR_TRIM_FRAC = 0.1;
 
@@ -612,16 +613,17 @@ function queryRows(
   db: Database,
   taskType: string,
   agentKind: string,
+  sinceIso: string,
   allowedAgents: string[] | null,
 ): PerformanceRow[] {
   const rows = db
-    .query<PerformanceRow, [string, string]>(
+    .query<PerformanceRow, [string, string, string]>(
       `SELECT agent_name, task_type, outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, latency_ms, exec_ms, framework_overhead_ms, ts, agent_kind, gate_outcome, failure_class, trust_score
      FROM agent_performance
-     WHERE task_type = ? AND COALESCE(agent_kind, '${DEFAULT_AGENT_KIND}') = ?
+     WHERE task_type = ? AND ts >= ? AND COALESCE(agent_kind, '${DEFAULT_AGENT_KIND}') = ?
      ORDER BY ts DESC`,
     )
-    .all(taskType, agentKind);
+    .all(taskType, sinceIso, agentKind);
   const filteredRows = rows.filter((row) => !isClassifierDeclineExempt(row));
   return allowedAgents == null
     ? filteredRows
@@ -636,9 +638,11 @@ function buildRank(
 ): AgentRankOutput {
   const now = input.now ?? new Date();
   const agentKind = input.agentKind ?? DEFAULT_AGENT_KIND;
-  const rows = queryRows(db, taskType, agentKind, allowedAgents).filter((row) =>
-    input.since ? row.ts >= new Date(input.since).toISOString() : true,
-  );
+  const sinceIso =
+    input.since != null
+      ? new Date(input.since).toISOString()
+      : new Date(now.getTime() - DEFAULT_RANK_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const rows = queryRows(db, taskType, agentKind, sinceIso, allowedAgents);
   const gateOutcomeCutover = resolveGateOutcomeCutoverIso();
   const visibleRows = input.includeNeutral
     ? rows
@@ -746,7 +750,7 @@ function buildRank(
   return {
     task_type: taskType,
     window: {
-      from: input.since ? new Date(input.since).toISOString() : null,
+      from: sinceIso,
       to: now.toISOString(),
     },
     candidates: visible
