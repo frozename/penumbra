@@ -35,21 +35,53 @@ jobs:
       - name: typecheck
         run: bun run typecheck
       - name: test
-        # Wrapper gates on reported pass/fail, not the raw exit code, to tolerate a
-        # known upstream bun NAPI-teardown panic (exit 133 after a clean summary).
-        # Real failures / load errors / pre-summary crashes still fail. See the script.
+        # Sharded: each package's tests run in their OWN bun process, plus a final
+        # shard for non-package tests (root test/, scripts/). A single monolithic
+        # `bun test` accumulated native resources across ~95 in-process daemon boots
+        # (embedder + sqlite-vec) and crashed mid-run on Linux before a summary;
+        # per-package processes bound that and isolate any single crash. Each shard
+        # goes through the gate, which gates on reported pass/fail (tolerating the
+        # known post-summary NAPI-teardown panic, exit 133, only when 0 failures).
         #
-        # path-ignore-patterns excludes files that `bun test` would otherwise glob
-        # but that are not bun unit/integration tests: Playwright specs under e2e/
-        # and visual/ (different runner — they error on load under bun), the
-        # full-stack e2e package (needs a live daemon), benchmark scripts, and any
-        # compiled dist/ copies. Colocated src/**/*.test.ts still run.
-        run: >-
-          bun scripts/bun-test-gate.ts
-          --path-ignore-patterns='**/e2e/**'
-          --path-ignore-patterns='**/visual/**'
-          --path-ignore-patterns='**/dist/**'
-          --path-ignore-patterns='**/scripts/bench*.test.ts'
+        # path-ignore-patterns excludes files `bun test` would otherwise glob but
+        # that are not bun unit/integration tests: Playwright specs under e2e/ and
+        # visual/ (different runner), the full-stack e2e package (needs a live
+        # daemon), benchmark scripts, and compiled dist/ copies. Colocated
+        # src/**/*.test.ts still run. Packages left with no applicable tests are
+        # skipped (bun exits non-zero on a no-files-matched filter).
+        run: |
+          set -uo pipefail
+          IGNORE=(
+            --path-ignore-patterns='**/e2e/**'
+            --path-ignore-patterns='**/visual/**'
+            --path-ignore-patterns='**/dist/**'
+            --path-ignore-patterns='**/scripts/bench*.test.ts'
+          )
+          has_tests() {
+            find "$1" -name '*.test.ts' \
+              -not -path '*/node_modules/*' -not -path '*/dist/*' \
+              -not -path '*/e2e/*' -not -path '*/visual/*' 2>/dev/null \
+              | grep -vE '/bench[^/]*\.test\.ts$' | grep -q .
+          }
+          failed=()
+          for pkg in packages/*/; do
+            pkg="${pkg%/}"
+            if ! has_tests "$pkg"; then
+              echo "skip ${pkg} (no applicable tests)"
+              continue
+            fi
+            echo "::group::shard ${pkg}"
+            bun scripts/bun-test-gate.ts "$pkg" "${IGNORE[@]}" || failed+=("$pkg")
+            echo "::endgroup::"
+          done
+          echo "::group::shard root (test/ + scripts/)"
+          bun scripts/bun-test-gate.ts --path-ignore-patterns='packages/**' "${IGNORE[@]}" || failed+=("root")
+          echo "::endgroup::"
+          if [ "${#failed[@]}" -ne 0 ]; then
+            echo "::error::failing test shards: ${failed[*]}"
+            exit 1
+          fi
+          echo "all test shards passed"
       - name: lint (advisory - currently has known violations, see plan Phase 5.2)
         run: bun run lint || true
         continue-on-error: true
