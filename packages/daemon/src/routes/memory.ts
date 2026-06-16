@@ -24,6 +24,7 @@ import {
   listRecentJobs,
   BasisSchema,
   validateBasis,
+  SafeProjectIdSchema,
 } from "@penumbra/core";
 import { buildT2EmbedText } from "@penumbra/core";
 import { getPrincipal } from "../auth.js";
@@ -155,7 +156,7 @@ const MemoryWriteT2Schema = z
     obs_type: z.string().optional().nullable(),
     durability: z.string().optional().nullable(),
     is_episodic: z.boolean().optional().nullable(),
-    project_id: z.string().nullable().optional(),
+    project_id: SafeProjectIdSchema.nullable().optional(),
     session_id: z
       .string()
       .min(1)

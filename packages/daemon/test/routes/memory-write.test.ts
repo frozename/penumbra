@@ -184,6 +184,60 @@ describe("POST /memory/write", () => {
     expect(Number.isNaN(Date.parse(row!.window_end))).toBe(false);
   });
 
+  test("POST /memory/write rejects path-traversal project_id values", async () => {
+    const invalidProjectIds = ["../etc", "../../etc/cron.d", "/etc/passwd", "..\\evil", "bad\0id"];
+
+    for (const projectId of invalidProjectIds) {
+      const { db, fetch, root } = makeServices();
+      handles.push({ db, root });
+
+      const res = await fetch("http://x/memory/write", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${SHARED_TOKEN}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          title: "Unsafe project",
+          body: "blocked",
+          project_id: projectId,
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("validation_error");
+    }
+  });
+
+  test("POST /memory/write accepts safe project_id values", async () => {
+    const { db, fetch, root } = makeServices();
+    handles.push({ db, root });
+
+    const res = await fetch("http://x/memory/write", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${SHARED_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        title: "Safe project",
+        body: "stored",
+        project_id: "proj-safe",
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const written = (await res.json()) as { memory_id: string };
+    const row = db
+      .query<
+        { project_id: string | null },
+        [string]
+      >(`SELECT project_id FROM t2_memories WHERE memory_id = ?`)
+      .get(written.memory_id);
+    expect(row?.project_id).toBe("proj-safe");
+  });
+
   test("2) POST /memory/write re-imports the same slug (UPSERT, same memory_id, updated body)", async () => {
     const { services, db, fetch, root } = makeServices();
     handles.push({ db, root });
