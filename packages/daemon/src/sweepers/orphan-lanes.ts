@@ -89,17 +89,6 @@ export function runOrphanLanesSweep(
             notes: `orphan-lane sweep on ${now_iso}; implementer ${row.implementer_handoff} ${row.handoff_status}`,
           },
         });
-        services.db
-          .prepare(
-            `UPDATE agent_performance
-             SET gate_outcome = CASE
-               WHEN gate_outcome = 'passed' AND ? != 'passed' THEN gate_outcome
-               WHEN gate_outcome IN ('failed', 'review_debt') AND ? = 'skipped' THEN gate_outcome
-               ELSE ?
-             END
-             WHERE handoff_id = ?`,
-          )
-          .run("skipped", "skipped", "skipped", row.implementer_handoff);
       })();
       lane_ids.push(row.lane_id);
     } catch (err) {
