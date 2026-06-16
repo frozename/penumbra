@@ -85,7 +85,10 @@ export class OrphanHandoffRecoveryService {
     return this.recoverAllInner();
   }
 
-  private recoverForWorkerIds(staleWorkerIds: string[]): RecoveryResult {
+  private recoverForWorkerIds(
+    staleWorkerIds: string[],
+    additionalVeryStaleWorkerIds: string[] = [],
+  ): RecoveryResult {
     let requeued = 0;
     let exhausted = 0;
     const _exhaustedRows: HandoffRow[] = [];
@@ -123,9 +126,10 @@ export class OrphanHandoffRecoveryService {
     // base threshold and the worker is usually still alive — requeueing then
     // double-dispatches the handoff. A dead worker's staleness keeps growing,
     // so the deeper threshold rescues genuinely stuck work.
-    const veryStaleWorkers = new Set(
-      this.services.watchdog.getStaleWorkers(this.staleMs * POST_START_STALENESS_MULTIPLIER),
-    );
+    const veryStaleWorkers = new Set([
+      ...this.services.watchdog.getStaleWorkers(this.staleMs * POST_START_STALENESS_MULTIPLIER),
+      ...additionalVeryStaleWorkerIds,
+    ]);
 
     // Perf: wrap per-orphan write+event in a single transaction.
     // Trades a small lock per orphan for atomicity (event row only exists if state transition won the CAS).
@@ -204,8 +208,32 @@ export class OrphanHandoffRecoveryService {
   }
 
   private recoverAllInner(): RecoveryResult {
-    const staleWorkerIds = this.services.watchdog.getStaleWorkers(this.staleMs);
-    return this.recoverForWorkerIds(staleWorkerIds);
+    const deepStaleWorkerIds = this.listDeepStaleNeverHeartbeatWorkerIds();
+    const staleWorkerIds = [
+      ...new Set([...this.services.watchdog.getStaleWorkers(this.staleMs), ...deepStaleWorkerIds]),
+    ];
+    return this.recoverForWorkerIds(staleWorkerIds, deepStaleWorkerIds);
+  }
+
+  private listDeepStaleNeverHeartbeatWorkerIds(): string[] {
+    const cutoff = new Date(
+      Date.now() - this.staleMs * POST_START_STALENESS_MULTIPLIER,
+    ).toISOString();
+    const rows = this.services.db
+      .query<{ worker_id: string }, [string]>(
+        `SELECT DISTINCT worker_id FROM handoffs
+          WHERE status='dispatched'
+            AND worker_id IS NOT NULL
+            AND last_dispatch_started_at IS NOT NULL
+            AND last_dispatch_started_at < ?`,
+      )
+      .all(cutoff);
+    return rows.map((row) => row.worker_id).filter((workerId) => !this.hasWatchdogWorker(workerId));
+  }
+
+  private hasWatchdogWorker(workerId: string): boolean {
+    const watchdog = this.services.watchdog as { hasWorker?: (workerId: string) => boolean };
+    return typeof watchdog.hasWorker === "function" ? watchdog.hasWorker(workerId) : false;
   }
 
   private hasDispatchStarted(handoffId: string): boolean {

@@ -35,6 +35,104 @@ function tempServices(): Services {
   return services;
 }
 
+async function createDispatchedHandoff(services: Services, workerId: string) {
+  const created = await (
+    await handoffsCreateRoute(
+      new Request("http://x", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "m",
+          conversation_id: "c",
+          triggered_by_event_id: "e",
+          max_dispatch_attempts: 3,
+        }),
+      }),
+      services,
+    )
+  ).json();
+
+  await handoffsApproveRoute(
+    new Request("http://x", { method: "POST", body: "{}" }),
+    created.handoff_id,
+    services,
+  );
+  services.handoffWriter.claimDispatch(created.handoff_id, workerId);
+  return created.handoff_id as string;
+}
+
+function setLastDispatchStartedAt(services: Services, handoffId: string, ts: string) {
+  services.db
+    .query("UPDATE handoffs SET last_dispatch_started_at=? WHERE handoff_id=?")
+    .run(ts, handoffId);
+}
+
+function recordDispatchStart(services: Services, handoffId: string, workerId: string, ts: string) {
+  services.dispatchEventLog.record({
+    handoff_id: handoffId,
+    source: "agent",
+    kind: "dispatch.start",
+    ts,
+    worker_id: workerId,
+  });
+}
+
+test("OrphanHandoffRecoveryService requeues never-heartbeat workers with deep-stale current dispatch start", async () => {
+  const services = tempServices();
+  const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 1000 });
+
+  const workerId = "never-heartbeat-deep-stale";
+  const handoffId = await createDispatchedHandoff(services, workerId);
+  const deepStale = new Date(Date.now() - 10_000).toISOString();
+  setLastDispatchStartedAt(services, handoffId, deepStale);
+  recordDispatchStart(services, handoffId, workerId, deepStale);
+
+  const result = recovery.runOnce();
+  expect(result).toMatchObject({ requeued: 1, exhausted: 0 });
+
+  const row = services.handoffReader.get(handoffId);
+  expect(row?.status).toBe("approved");
+  expect(row?.worker_id).toBeNull();
+});
+
+test("OrphanHandoffRecoveryService ignores never-heartbeat workers with recent current dispatch start", async () => {
+  const services = tempServices();
+  const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 60_000 });
+
+  const workerId = "never-heartbeat-recent";
+  const handoffId = await createDispatchedHandoff(services, workerId);
+  const recent = new Date(Date.now()).toISOString();
+  setLastDispatchStartedAt(services, handoffId, recent);
+  recordDispatchStart(services, handoffId, workerId, recent);
+
+  const result = recovery.runOnce();
+  expect(result).toMatchObject({ requeued: 0, exhausted: 0 });
+
+  const row = services.handoffReader.get(handoffId);
+  expect(row?.status).toBe("dispatched");
+  expect(row?.worker_id).toBe(workerId);
+});
+
+test("OrphanHandoffRecoveryService ignores old dispatch.start events when current dispatch start is recent", async () => {
+  const services = tempServices();
+  const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 60_000 });
+
+  const workerId = "redispatched-fresh-worker";
+  const handoffId = await createDispatchedHandoff(services, workerId);
+  const oldDeadAttempt = new Date(Date.now() - 600_000).toISOString();
+  const recent = new Date(Date.now()).toISOString();
+  setLastDispatchStartedAt(services, handoffId, recent);
+  recordDispatchStart(services, handoffId, "old-dead-worker", oldDeadAttempt);
+
+  const result = recovery.runOnce();
+  expect(result).toMatchObject({ requeued: 0, exhausted: 0 });
+
+  const row = services.handoffReader.get(handoffId);
+  expect(row?.status).toBe("dispatched");
+  expect(row?.worker_id).toBe(workerId);
+});
+
 test("OrphanHandoffRecoveryService requeues when attempts < max", async () => {
   const services = tempServices();
   const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0 }); // 0 ms means everything is stale
