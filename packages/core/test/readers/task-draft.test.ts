@@ -916,7 +916,7 @@ describe("TaskDraftReader.listPendingEscalations", () => {
     expect(out[0]!.event_id).toBe("a");
   });
 
-  test("EXPLAIN QUERY PLAN mentions t0_events_task_draft_id_lookup for escalation join", () => {
+  test("escalation join reaches t0_events through an index, not a full table scan", () => {
     const sql = `WITH ranked AS (
         SELECT
           event_id, ts, ingest_ts, project_id, event_type, payload_json,
@@ -965,6 +965,12 @@ describe("TaskDraftReader.listPendingEscalations", () => {
       detail: string;
     }>;
     const allDetail = planRows.map((row) => row.detail).join(" ");
-    expect(allDetail).toContain("t0_events_task_draft_id_lookup");
+    // The escalation LIST query must not full-scan the multi-GB t0_events base
+    // table — it reaches t0_events through an index (the event_type filter picks
+    // t0_by_type_ts). The draft_id index (t0_events_task_draft_id_lookup) serves
+    // single-draft SEEKs elsewhere; this query scans many drafts and windows by
+    // draft_id, so the planner correctly uses the event_type index, not that one.
+    expect(allDetail).toContain("SEARCH t0_events USING INDEX");
+    expect(allDetail).not.toMatch(/SCAN t0_events\b/);
   });
 });
