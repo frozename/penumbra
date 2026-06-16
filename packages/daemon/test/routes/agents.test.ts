@@ -170,7 +170,8 @@ describe("agent routes", () => {
     );
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.window.from).toBeNull();
+    // rank now defaults to a bounded 30-day window, so window.from is the cutoff, not null.
+    expect(typeof body.window.from).toBe("string");
     expect(body.candidates[0].agent_name).toBe("claude");
   });
 
