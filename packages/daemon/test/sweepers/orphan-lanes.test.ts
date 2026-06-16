@@ -84,6 +84,37 @@ function insertDispatchMemory(db: Database, handoffId: string, memoryId: string)
   );
 }
 
+function insertPerformance(db: Database, handoffId: string, gateOutcome: string | null): void {
+  db.run(
+    `INSERT INTO agent_performance (
+       performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type,
+       outcome, gate_outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd,
+       tokens_used, latency_ms, source, notes, metadata_json
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      `perf-${handoffId}`,
+      "2026-01-01T10:00:00.000Z",
+      handoffId,
+      "conv",
+      "proj",
+      "agent",
+      "implement_small",
+      "merged",
+      gateOutcome,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      "worker",
+      null,
+      "{}",
+    ],
+  );
+}
+
 test("closes orphan lane whose implementer handoff completed past grace window", () => {
   const db = setupDb();
   const t0Sink: unknown[] = [];
@@ -91,6 +122,7 @@ test("closes orphan lane whose implementer handoff completed past grace window",
 
   insertHandoff(db, "h-impl", "completed", PAST_GRACE);
   openLane(db, "lane-1", "h-impl");
+  insertPerformance(db, "h-impl", null);
 
   const result = runOrphanLanesSweep(services, { nowIso: NOW, graceMs: 30 * 60_000 });
 
@@ -105,6 +137,13 @@ test("closes orphan lane whose implementer handoff completed past grace window",
   const metadata = JSON.parse(lane?.metadata_json ?? "{}") as { notes?: string };
   expect(metadata.notes).toContain("orphan-lane sweep");
   expect(metadata.notes).toContain("h-impl");
+
+  const perf = db
+    .query<{ gate_outcome: string | null }, [string]>(
+      `SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?`,
+    )
+    .get("h-impl");
+  expect(perf?.gate_outcome).toBe("skipped");
 });
 
 test("skips lane within grace window", () => {

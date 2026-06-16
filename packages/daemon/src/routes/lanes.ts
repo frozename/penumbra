@@ -285,8 +285,8 @@ export async function lanesCloseRoute(req: Request, services: Services): Promise
 
   const ts_closed = services.clock().toISOString();
   try {
-    // The close and the ranking stamp commit atomically: a crash between them
-    // would otherwise leave the lane closed while agent_performance diverges.
+    // The close commits atomically inside the transaction; closeLane stamps the
+    // matching agent_performance row as part of the same mutation path.
     // The live-bus override events publish AFTER the commit — event delivery
     // is not rollbackable and must not fire for a rolled-back close.
     services.db.transaction(() => {

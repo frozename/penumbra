@@ -36,12 +36,37 @@ const CREATE_HANDOFFS_SQL = `
   );
 `;
 
+const CREATE_AGENT_PERFORMANCE_SQL = `
+  CREATE TABLE IF NOT EXISTS agent_performance (
+    performance_id TEXT PRIMARY KEY,
+    ts TEXT NOT NULL,
+    handoff_id TEXT NOT NULL,
+    conversation_id TEXT,
+    project_id TEXT,
+    agent_name TEXT NOT NULL,
+    task_type TEXT NOT NULL,
+    outcome TEXT,
+    gate_outcome TEXT,
+    rounds INTEGER,
+    smoke_pass TEXT,
+    reviewer_findings INTEGER,
+    maestro_score REAL,
+    cost_usd REAL,
+    tokens_used INTEGER,
+    latency_ms INTEGER,
+    source TEXT,
+    notes TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}'
+  );
+`;
+
 describe("lane-ledger dao", () => {
   let db: Database;
 
   beforeEach(() => {
     db = new Database(":memory:");
     db.exec(CREATE_HANDOFFS_SQL);
+    db.exec(CREATE_AGENT_PERFORMANCE_SQL);
     db.exec(CREATE_LANE_LEDGER_SQL);
   });
 
@@ -125,6 +150,96 @@ describe("lane-ledger dao", () => {
       override_reason: "approved by reviewer",
       metadata_json: "{}",
     });
+  });
+
+  it("stamps agent_performance gate_outcome on close and preserves stronger verdicts", () => {
+    const insertPerf = (handoffId: string, gateOutcome: string | null) => {
+      db.run(
+        `INSERT INTO agent_performance (
+           performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type,
+           outcome, gate_outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd,
+           tokens_used, latency_ms, source, notes, metadata_json
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          `${handoffId}-perf`,
+          "2026-05-12T10:13:00.000Z",
+          handoffId,
+          "conv",
+          "proj",
+          "agent",
+          "implement_small",
+          "merged",
+          gateOutcome,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "worker",
+          null,
+          "{}",
+        ],
+      );
+    };
+
+    insertLane(db, {
+      lane_id: "lane-perf-skipped",
+      ts_opened: "2026-05-12T10:12:00.000Z",
+      task_class: "STANDARD",
+      implementer_handoff: "handoff-perf-skipped",
+      gate_status: "open",
+    });
+    insertPerf("handoff-perf-skipped", null);
+    closeLane(db, "lane-perf-skipped", {
+      ts_closed: "2026-05-12T10:15:00.000Z",
+      gate_status: "skipped",
+    });
+    const skipped = db
+      .query<{ gate_outcome: string | null }, [string]>(
+        `SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?`,
+      )
+      .get("handoff-perf-skipped");
+    expect(skipped?.gate_outcome).toBe("skipped");
+
+    insertLane(db, {
+      lane_id: "lane-perf-passed",
+      ts_opened: "2026-05-12T10:16:00.000Z",
+      task_class: "STANDARD",
+      implementer_handoff: "handoff-perf-passed",
+      gate_status: "open",
+    });
+    insertPerf("handoff-perf-passed", "passed");
+    closeLane(db, "lane-perf-passed", {
+      ts_closed: "2026-05-12T10:20:00.000Z",
+      gate_status: "skipped",
+    });
+    const passed = db
+      .query<{ gate_outcome: string | null }, [string]>(
+        `SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?`,
+      )
+      .get("handoff-perf-passed");
+    expect(passed?.gate_outcome).toBe("passed");
+
+    insertLane(db, {
+      lane_id: "lane-perf-failed",
+      ts_opened: "2026-05-12T10:21:00.000Z",
+      task_class: "STANDARD",
+      implementer_handoff: "handoff-perf-failed",
+      gate_status: "open",
+    });
+    insertPerf("handoff-perf-failed", "failed");
+    closeLane(db, "lane-perf-failed", {
+      ts_closed: "2026-05-12T10:25:00.000Z",
+      gate_status: "skipped",
+    });
+    const failed = db
+      .query<{ gate_outcome: string | null }, [string]>(
+        `SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?`,
+      )
+      .get("handoff-perf-failed");
+    expect(failed?.gate_outcome).toBe("failed");
   });
 
   it("throws on double-close", () => {
