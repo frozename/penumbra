@@ -261,6 +261,21 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: 8,
     description: "Max recursion depth for chain dispatches.",
   },
+  PENUMBRA_DISPATCH_DRIFT_ENABLED: {
+    schema: Bool,
+    default: true,
+    description: "Enable the dispatch-drift reminder workflow.",
+  },
+  PENUMBRA_SOLO_DRIFT_THRESHOLD: {
+    schema: PosInt,
+    default: 8,
+    description: "Consecutive non-dispatch tool calls before dispatch-drift reminder fires.",
+  },
+  PENUMBRA_SOLO_DRIFT_RENAG: {
+    schema: PosInt,
+    default: 4,
+    description: "Additional non-dispatch tool calls between dispatch-drift reminder repeats.",
+  },
   PENUMBRA_MCP_BIN: {
     schema: OptStr,
     description: "Path to the penumbra MCP server binary.",
