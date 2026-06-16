@@ -133,6 +133,35 @@ export function runStaleHandoffSweep(
     }
   }
 
+  const resolveStaleHandoff = services.db.transaction((handoffId: string, tsIso: string): void => {
+    services.db
+      .query<
+        unknown,
+        [string, string | null, string, string, string, string]
+      >(`INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json) VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(
+        handoffId,
+        null,
+        "sweeper",
+        "dispatch.end",
+        tsIso,
+        JSON.stringify({
+          status: "failed",
+          reason: "stale_force_resolve",
+          classifier_status: "non_terminal_stale",
+        }),
+      );
+
+    const markedFailed = services.handoffWriter.markFailed(handoffId, {
+      reason: "stale_force_resolve",
+      ts: tsIso,
+      resolved_by: "stale-handoff-sweeper",
+    });
+    if (!markedFailed) {
+      throw new Error(`failed to mark stale handoff ${handoffId} as failed`);
+    }
+  });
+
   for (const { handoff_id, handoff, staleAfterMs } of candidatesForDecision) {
     const events = eventsByHandoff.get(handoff_id) ?? [];
 
@@ -165,30 +194,7 @@ export function runStaleHandoffSweep(
     if (events.some((event) => event.kind === "dispatch.end")) continue;
 
     const tsIso = nowDate.toISOString();
-    services.db
-      .query<
-        unknown,
-        [string, string | null, string, string, string, string]
-      >(`INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json) VALUES (?, ?, ?, ?, ?, ?)`)
-      .run(
-        handoff_id,
-        null,
-        "sweeper",
-        "dispatch.end",
-        tsIso,
-        JSON.stringify({
-          status: "failed",
-          reason: "stale_force_resolve",
-          classifier_status: "non_terminal_stale",
-        }),
-      );
-
-    services.handoffWriter.markFailed(handoff_id, {
-      reason: "stale_force_resolve",
-      ts: tsIso,
-      resolved_by: "stale-handoff-sweeper",
-    });
-
+    resolveStaleHandoff(handoff_id, tsIso);
     resolved.push(handoff_id);
   }
 

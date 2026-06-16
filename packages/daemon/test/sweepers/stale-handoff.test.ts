@@ -179,6 +179,40 @@ test("stale dispatched handoff with no dispatch.end → force-resolved", () => {
   expect(handoff?.resolved_by).toBe("stale-handoff-sweeper");
 });
 
+test("markFailed crash rolls back synthetic dispatch.end", () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  const originalMarkFailed = services.handoffWriter.markFailed.bind(services.handoffWriter);
+  services.handoffWriter.markFailed = mock(() => {
+    throw new Error("markFailed crashed");
+  }) as typeof services.handoffWriter.markFailed;
+
+  insertDispatchedHandoff(db, "h-rollback", "2026-05-04T11:50:00.000Z");
+  insertEvent(db, "h-rollback", "dispatch.start", "2026-05-04T11:50:01.000Z");
+
+  const state = { lastSwept: new Map<string, number>() };
+  expect(() =>
+    runStaleHandoffSweep(makeOpts(services), state, () => new Date("2026-05-04T12:00:00.000Z")),
+  ).toThrow("markFailed crashed");
+
+  const endCount = db
+    .query<
+      { count: number },
+      [string]
+    >(`SELECT COUNT(*) as count FROM dispatch_events WHERE handoff_id = ? AND kind = 'dispatch.end'`)
+    .get("h-rollback");
+  expect(endCount?.count).toBe(0);
+  expect(services.handoffReader.get("h-rollback")?.status).toBe("dispatched");
+
+  services.handoffWriter.markFailed = originalMarkFailed;
+  const retry = runStaleHandoffSweep(
+    makeOpts(services),
+    { lastSwept: new Map<string, number>() },
+    () => new Date("2026-05-04T12:01:01.000Z"),
+  );
+  expect(retry.resolved).toEqual(["h-rollback"]);
+});
+
 test("multiple stale candidates are classified consistently with batched dispatch event lookup", () => {
   const db = setupDb();
   const services = makeServices(db);
