@@ -227,7 +227,10 @@ const plan = await agent(
     `- TEST-FIRST: the new/changed test that must go RED before the fix and GREEN after (and would go RED again if the fix were reverted);`,
     `- the minimal fix, fail-safe by construction, with a tight scope guard (which files may change; do NOT touch unrelated behavior or pre-existing tests);`,
     `- "commit on your branch with a NEUTRAL message (no AI/assistant/co-authored attribution); do NOT land/push/merge".`,
-    `'check_command' is the SINGLE shell command that gates green — a focused test slice plus a typecheck of the touched packages (e.g. "bun test packages/foo/test/bar.test.ts && bun run typecheck"). Keep it fast and specific, not the whole suite.`,
+    `'check_command' is the SINGLE shell command that gates green. It MUST use only commands that already work in this repo — do NOT invent scripts or flags (a malformed check wastes every fix round):`,
+    `  - tests: \`bun test <path/to/test.ts>\` with the DEFAULT reporter. Do NOT pass --reporter=spec (bun supports only junit/dots, so omit --reporter entirely).`,
+    `  - typecheck: \`bun run typecheck\` (the existing root script). Do NOT use \`tsc --build ... --noEmit\` (contradictory flags) or \`bun run --cwd <pkg> typecheck\` (per-package scripts may not exist).`,
+    `  Combine with && and keep it fast and specific (a focused test slice), e.g. "bun test packages/foo/test/bar.test.ts && bun run typecheck" — not the whole suite.`,
   ].join('\n'),
   { label: 'plan', phase: 'Plan', schema: PLAN_SCHEMA, model: plannerModel },
 )
