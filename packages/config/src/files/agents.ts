@@ -10,6 +10,9 @@ const CANONICAL_PROVIDER_MESSAGE =
  * Mirrors legacy AgentChatConfig fields for these sections.
  */
 
+// This strict key union is the universal option gate for every adapter.
+// Unknown adapters skip adapter-specific refinement, but still cannot introduce
+// option keys that are absent from this schema.
 export const AgentOptionsSchema = z.strictObject({
   agentName: z.string().optional(),
   allowed_tools: z.array(z.string()).optional(),
@@ -175,6 +178,7 @@ export function refineAgentConfigAdapterOptions(
   data: { adapter: string; options?: Record<string, unknown> },
   ctx: z.RefinementCtx,
 ): void {
+  // Known adapters get a second pass that rejects schema-valid keys they do not consume.
   const allowedKeys = allowedKeysFor(data.adapter);
   if (!allowedKeys) return;
   for (const key of Object.keys(data.options ?? {})) {
