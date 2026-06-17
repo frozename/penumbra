@@ -137,6 +137,24 @@ describe("t0_fts external-content migration", () => {
     expect(externalContentMarker(db)).toBe("1");
   });
 
+  test("payload_json updates are rejected while inserts remain searchable", () => {
+    const db = openDb();
+    applySchema(db, { embeddingDim: 384 });
+
+    insertT0Event(db, "immutable-payload", JSON.stringify({ text: "charlie immutable payload" }));
+
+    expect(queryHits(db, "charlie").map((hit) => hit.event_id)).toEqual(["immutable-payload"]);
+    expect(() =>
+      db
+        .query<
+          unknown,
+          [string, string]
+        >(`UPDATE t0_events SET payload_json = ? WHERE event_id = ?`)
+        .run(JSON.stringify({ text: "mutated payload" }), "immutable-payload"),
+    ).toThrow(/payload_json is immutable post-insert/);
+    expect(queryHits(db, "charlie").map((hit) => hit.event_id)).toEqual(["immutable-payload"]);
+  });
+
   test("existing stored-content t0_fts is converted and delete triggers keep the index current", () => {
     const db = openDb();
     applySchema(db, { embeddingDim: 384 });

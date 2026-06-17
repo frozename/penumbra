@@ -2700,12 +2700,9 @@ test("GET /chains/responses handles malformed payload_json rows without 500ing",
     ) VALUES (
       'ev-bad', '2026-04-26T12:00:00Z', '2026-04-26T12:00:00Z', 'agentchat', NULL, NULL, 'planner', 'm1', 'c1',
       'agent-response', 'local', NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-      '{"response":"ok"}', 'response'
+      '{bad json', 'response'
     );
   `);
-  services.db
-    .query<unknown, [string, string]>(`UPDATE t0_events SET payload_json=? WHERE event_id=?`)
-    .run("{bad json", "ev-bad");
 
   const res = await chainsResponsesRoute(
     new Request("http://x/chains/responses?conversation_id=c1"),
@@ -2836,11 +2833,8 @@ test("GET /chains/messages parses malformed JSON safely as null", async () => {
       event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms, request_id,
       payload_json, payload_summary
     ) VALUES 
-    ('ev1', '2026-04-26T12:00:00Z', '2026-04-26T12:00:00Z', 'agentchat', NULL, NULL, 'u1', 'm1', 'c1', 'user-prompt', 'local', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{"prompt":"ok"}', 'hi')
+    ('ev1', '2026-04-26T12:00:00Z', '2026-04-26T12:00:00Z', 'agentchat', NULL, NULL, 'u1', 'm1', 'c1', 'user-prompt', 'local', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{bad', 'hi')
   `);
-  services.db
-    .query<unknown, [string, string]>(`UPDATE t0_events SET payload_json=? WHERE event_id=?`)
-    .run("{bad", "ev1");
 
   const { chainsMessagesRoute } = await import("../../src/routes/chains.js");
   const res = await chainsMessagesRoute(

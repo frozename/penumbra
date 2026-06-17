@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 
-// 36 = t0_fts external-content FTS5 table backed by t0_fts_src view.
-export const SCHEMA_VERSION = 36;
+// 37 = t0_events payload immutability guard for external-content t0_fts.
+export const SCHEMA_VERSION = 37;
 const LANE_LEDGER_OPEN_DEDUPE_SCHEMA_META_KEY = "lane_ledger_open_dedupe_schema_version";
 const T0_FTS_EXTERNAL_CONTENT_SCHEMA_META_KEY = "t0_fts_external_content_v1";
 
@@ -72,8 +72,14 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
           'task_draft','task_draft_refining','task_draft_promoted',
           'task_draft_stale','task_draft_duplicate','task_draft_escalation'
         );
-      CREATE INDEX IF NOT EXISTS t0_events_task_draft_id_lookup
-        ON t0_events(json_extract(payload_json, '$.draft_id'), event_type, project_id, ts)
+      DROP INDEX IF EXISTS t0_events_task_draft_id_lookup;
+      CREATE INDEX t0_events_task_draft_id_lookup
+        ON t0_events(
+          CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.draft_id') END,
+          event_type,
+          project_id,
+          ts
+        )
         WHERE event_type IN (
           'task_draft','task_draft_refining','task_draft_promoted',
           'task_draft_stale','task_draft_duplicate','task_draft_escalation'
@@ -466,8 +472,10 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
       -- Single-file shape: { tool_input: { file_path: "..." } }
       -- We deliberately keep this narrow; multi-file extraction comes via the writer path
       -- when it has explicit knowledge of the schema.
-      CREATE TRIGGER IF NOT EXISTS t0_file_refs_insert AFTER INSERT ON t0_events
-      WHEN json_extract(new.payload_json, '$.tool_input.file_path') IS NOT NULL
+      DROP TRIGGER IF EXISTS t0_file_refs_insert;
+      CREATE TRIGGER t0_file_refs_insert AFTER INSERT ON t0_events
+      WHEN json_valid(new.payload_json)
+        AND json_extract(new.payload_json, '$.tool_input.file_path') IS NOT NULL
       BEGIN
         INSERT OR IGNORE INTO t0_file_refs(event_id, file_path)
         VALUES (new.event_id, json_extract(new.payload_json, '$.tool_input.file_path'));
@@ -1158,12 +1166,23 @@ function createT0FtsSrcView(db: Database): void {
   `);
 }
 
+function createT0PayloadImmutabilityTrigger(db: Database): void {
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS t0_events_payload_immutable_before_update
+    BEFORE UPDATE OF payload_json, payload_summary ON t0_events
+    BEGIN
+      SELECT RAISE(ABORT, 'payload_json is immutable post-insert; payload_summary is immutable post-insert; external-content t0_fts would corrupt');
+    END;
+  `);
+}
+
 export function migrateT0FtsToExternalContentOnce(db: Database): void {
   const marker = db
     .query<{ value: string }, [string]>("SELECT value FROM db_meta WHERE key = ?")
     .get(T0_FTS_EXTERNAL_CONTENT_SCHEMA_META_KEY);
   if (marker) {
     createT0FtsSrcView(db);
+    createT0PayloadImmutabilityTrigger(db);
     return;
   }
 
@@ -1173,6 +1192,7 @@ export function migrateT0FtsToExternalContentOnce(db: Database): void {
     db.exec(`
       DROP TRIGGER IF EXISTS t0_fts_insert;
       DROP TRIGGER IF EXISTS t0_fts_delete;
+      DROP TRIGGER IF EXISTS t0_events_payload_immutable_before_update;
       DROP TABLE IF EXISTS t0_fts;
 
       CREATE VIRTUAL TABLE t0_fts USING fts5(
@@ -1207,6 +1227,7 @@ export function migrateT0FtsToExternalContentOnce(db: Database): void {
         );
       END;
 
+      -- Delete balancing assumes payload_json/payload_summary never change after insert.
       CREATE TRIGGER t0_fts_delete AFTER DELETE ON t0_events BEGIN
         INSERT INTO t0_fts (t0_fts, rowid, content, event_id) VALUES (
           'delete',
@@ -1231,6 +1252,7 @@ export function migrateT0FtsToExternalContentOnce(db: Database): void {
         );
       END;
     `);
+    createT0PayloadImmutabilityTrigger(db);
     db.run("INSERT OR REPLACE INTO db_meta(key, value) VALUES(?, ?)", [
       T0_FTS_EXTERNAL_CONTENT_SCHEMA_META_KEY,
       "1",
