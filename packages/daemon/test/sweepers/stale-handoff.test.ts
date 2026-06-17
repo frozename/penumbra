@@ -179,7 +179,7 @@ test("stale dispatched handoff with no dispatch.end → force-resolved", () => {
   expect(handoff?.resolved_by).toBe("stale-handoff-sweeper");
 });
 
-test("markFailed crash rolls back synthetic dispatch.end", () => {
+test("markFailed crash rolls back synthetic dispatch.end but does not throw", () => {
   const db = setupDb();
   const services = makeServices(db);
   const originalMarkFailed = services.handoffWriter.markFailed.bind(services.handoffWriter);
@@ -191,9 +191,12 @@ test("markFailed crash rolls back synthetic dispatch.end", () => {
   insertEvent(db, "h-rollback", "dispatch.start", "2026-05-04T11:50:01.000Z");
 
   const state = { lastSwept: new Map<string, number>() };
-  expect(() =>
-    runStaleHandoffSweep(makeOpts(services), state, () => new Date("2026-05-04T12:00:00.000Z")),
-  ).toThrow("markFailed crashed");
+  const result = runStaleHandoffSweep(
+    makeOpts(services),
+    state,
+    () => new Date("2026-05-04T12:00:00.000Z"),
+  );
+  expect(result.resolved).toEqual([]);
 
   const endCount = db
     .query<
@@ -211,6 +214,82 @@ test("markFailed crash rolls back synthetic dispatch.end", () => {
     () => new Date("2026-05-04T12:01:01.000Z"),
   );
   expect(retry.resolved).toEqual(["h-rollback"]);
+});
+
+test("candidate flipping to terminal mid-loop skips gracefully without throwing", () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  const originalMarkFailed = services.handoffWriter.markFailed.bind(services.handoffWriter);
+
+  insertDispatchedHandoff(db, "h-flip", "2026-05-04T11:50:00.000Z");
+  insertDispatchedHandoff(db, "h-next", "2026-05-04T11:50:00.000Z");
+  insertEvent(db, "h-flip", "dispatch.start", "2026-05-04T11:50:01.000Z");
+  insertEvent(db, "h-next", "dispatch.start", "2026-05-04T11:50:01.000Z");
+
+  services.handoffWriter.markFailed = mock((handoffId, opts) => {
+    if (handoffId === "h-flip") {
+      db.run("UPDATE handoffs SET status = 'completed' WHERE handoff_id = ?", [handoffId]);
+    }
+    return originalMarkFailed(handoffId, opts);
+  }) as typeof services.handoffWriter.markFailed;
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    makeOpts(services),
+    state,
+    () => new Date("2026-05-04T12:00:00.000Z"),
+  );
+
+  expect(result.candidates.sort()).toEqual(["h-flip", "h-next"].sort());
+  expect(result.resolved).toEqual(["h-next"]);
+
+  const endCount = db
+    .query<
+      { count: number },
+      [string]
+    >(`SELECT COUNT(*) as count FROM dispatch_events WHERE handoff_id = ? AND kind = 'dispatch.end'`)
+    .get("h-flip");
+  expect(endCount?.count).toBe(0);
+
+  const hNext = services.handoffReader.get("h-next");
+  expect(hNext?.status).toBe("failed");
+  expect(hNext?.resolution_reason).toBe("stale_force_resolve");
+});
+
+test("markFailed genuine exception skips candidate but continues to others", () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  const originalMarkFailed = services.handoffWriter.markFailed.bind(services.handoffWriter);
+
+  insertDispatchedHandoff(db, "h-crash", "2026-05-04T11:50:00.000Z");
+  insertDispatchedHandoff(db, "h-ok", "2026-05-04T11:50:00.000Z");
+  insertEvent(db, "h-crash", "dispatch.start", "2026-05-04T11:50:01.000Z");
+  insertEvent(db, "h-ok", "dispatch.start", "2026-05-04T11:50:01.000Z");
+
+  services.handoffWriter.markFailed = mock((handoffId, opts) => {
+    if (handoffId === "h-crash") {
+      throw new Error("markFailed crashed");
+    }
+    return originalMarkFailed(handoffId, opts);
+  }) as typeof services.handoffWriter.markFailed;
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    makeOpts(services),
+    state,
+    () => new Date("2026-05-04T12:00:00.000Z"),
+  );
+
+  expect(result.candidates.sort()).toEqual(["h-crash", "h-ok"].sort());
+  expect(result.resolved).toEqual(["h-ok"]);
+
+  const endCount = db
+    .query<
+      { count: number },
+      [string]
+    >(`SELECT COUNT(*) as count FROM dispatch_events WHERE handoff_id = ? AND kind = 'dispatch.end'`)
+    .get("h-crash");
+  expect(endCount?.count).toBe(0);
 });
 
 test("multiple stale candidates are classified consistently with batched dispatch event lookup", () => {

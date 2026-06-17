@@ -133,34 +133,48 @@ export function runStaleHandoffSweep(
     }
   }
 
-  const resolveStaleHandoff = services.db.transaction((handoffId: string, tsIso: string): void => {
-    services.db
-      .query<
-        unknown,
-        [string, string | null, string, string, string, string]
-      >(`INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json) VALUES (?, ?, ?, ?, ?, ?)`)
-      .run(
-        handoffId,
-        null,
-        "sweeper",
-        "dispatch.end",
-        tsIso,
-        JSON.stringify({
-          status: "failed",
-          reason: "stale_force_resolve",
-          classifier_status: "non_terminal_stale",
-        }),
-      );
+  const resolveStaleHandoff = services.db.transaction(
+    (handoffId: string, tsIso: string): boolean => {
+      const markedFailed = services.handoffWriter.markFailed(handoffId, {
+        reason: "stale_force_resolve",
+        ts: tsIso,
+        resolved_by: "stale-handoff-sweeper",
+      });
+      if (!markedFailed) {
+        const current = services.handoffReader.get(handoffId);
+        if (
+          current &&
+          (current.status === "completed" ||
+            current.status === "failed" ||
+            current.status === "rejected" ||
+            current.status === "canceled")
+        ) {
+          return false;
+        }
+        throw new Error(`failed to mark stale handoff ${handoffId} as failed`);
+      }
 
-    const markedFailed = services.handoffWriter.markFailed(handoffId, {
-      reason: "stale_force_resolve",
-      ts: tsIso,
-      resolved_by: "stale-handoff-sweeper",
-    });
-    if (!markedFailed) {
-      throw new Error(`failed to mark stale handoff ${handoffId} as failed`);
-    }
-  });
+      services.db
+        .query<
+          unknown,
+          [string, string | null, string, string, string, string]
+        >(`INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json) VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(
+          handoffId,
+          null,
+          "sweeper",
+          "dispatch.end",
+          tsIso,
+          JSON.stringify({
+            status: "failed",
+            reason: "stale_force_resolve",
+            classifier_status: "non_terminal_stale",
+          }),
+        );
+
+      return true;
+    },
+  );
 
   for (const { handoff_id, handoff, staleAfterMs } of candidatesForDecision) {
     const events = eventsByHandoff.get(handoff_id) ?? [];
@@ -194,8 +208,14 @@ export function runStaleHandoffSweep(
     if (events.some((event) => event.kind === "dispatch.end")) continue;
 
     const tsIso = nowDate.toISOString();
-    resolveStaleHandoff(handoff_id, tsIso);
-    resolved.push(handoff_id);
+    try {
+      const didResolve = resolveStaleHandoff(handoff_id, tsIso);
+      if (didResolve) {
+        resolved.push(handoff_id);
+      }
+    } catch (err) {
+      opts.log?.warn?.({ handoff_id, err: String(err) }, "failed to force-resolve stale handoff");
+    }
   }
 
   return { candidates, resolved };
