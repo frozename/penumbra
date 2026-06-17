@@ -68,7 +68,7 @@ export function stampAgentPerformanceGateOutcomeForHandoff(
     `UPDATE agent_performance
      SET gate_outcome = CASE
        WHEN gate_outcome = 'passed' AND ? != 'passed' THEN gate_outcome
-       WHEN gate_outcome IN ('failed', 'review_debt') AND ? = 'skipped' THEN gate_outcome
+       WHEN gate_outcome IN ('failed', 'review_debt') AND ? IN ('skipped', 'passed') THEN gate_outcome
        ELSE ?
      END
      WHERE handoff_id = ?`,
