@@ -10,7 +10,7 @@ type ReviewVerdict = {
   notes: string;
 };
 
-export type FormatPenumbraCommentInput =
+export type FormatPenumbraCommentInput = (
   | {
       task_id: string;
       kind: "status_change";
@@ -34,12 +34,19 @@ export type FormatPenumbraCommentInput =
       kind: "manual";
       ts: string;
       body: string;
-    };
+    }
+) & { idempotency_key?: string };
 
 const PENUMBRA_MARKER_PREFIX = "<!-- penumbra:source=task:";
 
-function markerLine(task_id: string, kind: PenumbraCommentKind, ts: string): string {
-  return `${PENUMBRA_MARKER_PREFIX}${task_id} kind=${kind} ts=${ts} -->`;
+function markerLine(
+  task_id: string,
+  kind: PenumbraCommentKind,
+  ts: string,
+  idempotency_key?: string,
+): string {
+  const ik = idempotency_key ? ` idempotency_key=${idempotency_key}` : "";
+  return `${PENUMBRA_MARKER_PREFIX}${task_id} kind=${kind} ts=${ts}${ik} -->`;
 }
 
 function normalizeStatus(status: string): string {
@@ -93,7 +100,7 @@ function renderBody(input: FormatPenumbraCommentInput): string {
 }
 
 export function formatPenumbraComment(input: FormatPenumbraCommentInput): string {
-  return `${markerLine(input.task_id, input.kind, input.ts)}\n\n${renderBody(input)}`;
+  return `${markerLine(input.task_id, input.kind, input.ts, input.idempotency_key)}\n\n${renderBody(input)}`;
 }
 
 export function isPenumbraAuthoredComment(input: {

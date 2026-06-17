@@ -5,6 +5,7 @@ import type { GhClient } from "../../src/services/gh-client.js";
 import {
   createGhTaskSyncService,
   createGhTaskSyncSweeper,
+  createGhTaskSyncSingleFlight,
 } from "../../src/sweepers/gh-task-sync.js";
 
 try {
@@ -517,6 +518,13 @@ describe("gh-task-sync sweeper/service", () => {
       .query<{ status: string }, []>(`SELECT status FROM gh_outbox ORDER BY id DESC LIMIT 1`)
       .get();
     expect(row?.status).toBe("pending");
+
+    await sync.syncAllLinkedTasks({ fullReconcile: false });
+    expect(createCalls).toHaveLength(1);
+    const row2 = db
+      .query<{ status: string }, []>(`SELECT status FROM gh_outbox ORDER BY id DESC LIMIT 1`)
+      .get();
+    expect(row2?.status).toBe("done");
   });
 
   test("syncAllLinkedTasks skips GitHub side effects when real gh_outbox claim loses", async () => {
@@ -934,5 +942,62 @@ describe("gh-task-sync sweeper/service", () => {
         (row: any) => row?.event === "sweeper.skip_tick" && row?.sweeper === "gh-task-sync",
       ),
     ).toBe(true);
+  });
+
+  test("createDaemonFetchHandler uses provided ghTaskSyncService without re-wrapping (Bug A)", async () => {
+    // Import here to avoid polluting the whole test file if not needed,
+    // but typically we can just import at the top. Since we're injecting,
+    // we'll require it.
+    const { createDaemonFetchHandler } = require("../../src/serve.ts");
+
+    let callCount = 0;
+    const baseService = {
+      syncAllLinkedTasks: async () => {
+        callCount++;
+        await Bun.sleep(10);
+        return {
+          linked: 0,
+          pushed: 0,
+          pulled: 0,
+          errored: 0,
+          skipped: false,
+          results: [],
+        };
+      },
+    } as any;
+
+    const singleFlightService = createGhTaskSyncSingleFlight(baseService);
+
+    const { db, writer } = setup();
+
+    // Mock services enough to pass createDaemonFetchHandler
+    const mockServices = {
+      log: { warn: () => {} },
+      db,
+      workerManager: {
+        getWorkers: () => [],
+      },
+    } as any;
+
+    const handler = createDaemonFetchHandler({
+      services: mockServices,
+      token: "test-token",
+      ghTaskSyncService: singleFlightService,
+      taskWriter: writer,
+    });
+
+    const p1 = singleFlightService.syncAllLinkedTasks();
+    const req = new Request("http://localhost/tasks/sync-gh-now", {
+      method: "POST",
+      headers: { Authorization: "Bearer test-token" },
+    });
+    const p2 = handler(req);
+
+    await Promise.all([p1, p2]);
+
+    // Because singleFlightService is shared and NOT re-wrapped, the second call
+    // (the HTTP request) immediately hits the single flight lock and returns the skipped summary.
+    // The inner baseService is only called once.
+    expect(callCount).toBe(1);
   });
 });

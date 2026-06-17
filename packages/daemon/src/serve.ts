@@ -506,13 +506,12 @@ export function createDaemonFetchHandler(opts: {
           : undefined;
       },
     });
-  const rawGhTaskSyncService =
+  const ghTaskSyncService =
     opts.ghTaskSyncService ??
-    createDefaultGhTaskSyncService(opts.services, taskWriter, opts.ghClient);
-  const ghTaskSyncService = createGhTaskSyncSingleFlight(
-    rawGhTaskSyncService,
-    opts.services.log as any,
-  );
+    createGhTaskSyncSingleFlight(
+      createDefaultGhTaskSyncService(opts.services, taskWriter, opts.ghClient),
+      opts.services.log as any,
+    );
   startTaskLedgerCapture({ services: opts.services, taskEvents, taskWriter });
   const dispatchRefineHandler = (() => {
     const cfg = resolveJudgeConfig(process.env, { extraModelEnv: ["PENUMBRA_REFINER_MODEL"] });

@@ -459,6 +459,10 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
         const payload = JSON.parse(row.payload_json || "{}") as Record<string, unknown>;
         switch (row.op) {
           case "gh_create_issue": {
+            const task = opts.taskWriter.get(row.task_id);
+            if (isLinked(task)) {
+              break;
+            }
             const repo = String(payload.repo ?? "").trim();
             const title = clampGhIssueTitle(String(payload.title ?? ""));
             const body = String(payload.body ?? "");
@@ -487,7 +491,7 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
             const from_status = String(payload.from_status ?? "");
             const to_status = String(payload.to_status ?? "");
             if (from_status && to_status) {
-              await postStatusChangeComment(row.task_id, from_status, to_status);
+              await postStatusChangeComment(row.task_id, from_status, to_status, String(row.id));
             }
             break;
           }
@@ -500,12 +504,16 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
             ) {
               throw new Error("gh_post_verdict_comment missing verdict payload");
             }
-            await postVerdictComment(row.task_id, { passed: verdict.passed, notes: verdict.notes });
+            await postVerdictComment(
+              row.task_id,
+              { passed: verdict.passed, notes: verdict.notes },
+              String(row.id),
+            );
             break;
           }
           case "gh_post_dispatch_failure_comment": {
             const reason = String(payload.reason ?? "").trim();
-            if (reason) await postDispatchFailureComment(row.task_id, reason);
+            if (reason) await postDispatchFailureComment(row.task_id, reason, String(row.id));
             break;
           }
           default:
@@ -573,6 +581,26 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
   ): Promise<{ comment_url: string } | null> => {
     const task = opts.taskWriter.get(task_id);
     if (!isLinked(task)) return null;
+
+    if (input.idempotency_key) {
+      const existingComments = await ghClient.listComments(
+        task.gh_issue_repo,
+        task.gh_issue_number,
+      );
+      const expectedAuthorLogin = await resolvePenumbraLogin();
+      const alreadyPosted = existingComments.some(
+        (c) =>
+          isPenumbraAuthoredComment({
+            body: c.body,
+            author_login: c.author_login,
+            expected_author_login: expectedAuthorLogin,
+          }) && c.body.includes(`idempotency_key=${input.idempotency_key}`),
+      );
+      if (alreadyPosted) {
+        return null;
+      }
+    }
+
     return ghClient.commentIssue(
       task.gh_issue_repo,
       task.gh_issue_number,
@@ -722,6 +750,7 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
     task_id: string,
     from_status: string,
     to_status: string,
+    idempotency_key?: string,
   ): Promise<{ comment_url: string } | null> => {
     if (from_status === to_status) return null;
     const nowIso = opts.now().toISOString();
@@ -730,24 +759,28 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
       kind: "status_change",
       ts: nowIso,
       status_transition: { from_status, to_status },
+      idempotency_key,
     });
   };
 
   const postVerdictComment = async (
     task_id: string,
     verdict: { passed: boolean; notes: string },
+    idempotency_key?: string,
   ): Promise<{ comment_url: string } | null> => {
     return postCommentForLinkedTask(task_id, {
       task_id,
       kind: "verdict",
       ts: opts.now().toISOString(),
       verdict,
+      idempotency_key,
     });
   };
 
   const postDispatchFailureComment = async (
     task_id: string,
     reason: string,
+    idempotency_key?: string,
   ): Promise<{ comment_url: string } | null> => {
     const normalized = reason.trim();
     if (!normalized) return null;
@@ -756,6 +789,7 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
       kind: "dispatch_failure",
       ts: opts.now().toISOString(),
       reason: normalized,
+      idempotency_key,
     });
   };
 
