@@ -1466,7 +1466,7 @@ export class TaskWriter {
     this.db.run(
       `UPDATE gh_outbox
        SET status = 'done', completed_at = ?, error = NULL
-       WHERE id = ?`,
+       WHERE id = ? AND status = 'processing'`,
       [this.now(), id],
     );
   }
@@ -1476,7 +1476,7 @@ export class TaskWriter {
     this.db.run(
       `UPDATE gh_outbox
        SET status = 'failed', error = ?, attempted_at = ?
-       WHERE id = ?`,
+       WHERE id = ? AND status = 'processing'`,
       [msg, this.now(), id],
     );
   }

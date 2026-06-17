@@ -114,7 +114,7 @@ test("OrphanHandoffRecoveryService ignores never-heartbeat workers with recent c
   expect(row?.worker_id).toBe(workerId);
 });
 
-test("OrphanHandoffRecoveryService ignores old dispatch.start events when current dispatch start is recent", async () => {
+test("OrphanHandoffRecoveryService ignores old dispatch.start events for a never-heartbeat worker when current dispatch start column is recent", async () => {
   const services = tempServices();
   const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 60_000 });
 
@@ -123,7 +123,7 @@ test("OrphanHandoffRecoveryService ignores old dispatch.start events when curren
   const oldDeadAttempt = new Date(Date.now() - 600_000).toISOString();
   const recent = new Date(Date.now()).toISOString();
   setLastDispatchStartedAt(services, handoffId, recent);
-  recordDispatchStart(services, handoffId, "old-dead-worker", oldDeadAttempt);
+  recordDispatchStart(services, handoffId, workerId, oldDeadAttempt);
 
   const result = recovery.runOnce();
   expect(result).toMatchObject({ requeued: 0, exhausted: 0 });

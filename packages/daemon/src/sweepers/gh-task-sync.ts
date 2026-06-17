@@ -386,12 +386,42 @@ async function runInBatches<T, R>(
   return results;
 }
 
+function skippedGhTaskSyncSummary(): GhTaskSyncSummary {
+  return { linked: 0, pushed: 0, pulled: 0, errored: 0, skipped: true, results: [] };
+}
+
+export function createGhTaskSyncSingleFlight(
+  service: GhTaskSyncService,
+  log?: { warn?: (obj: unknown, msg?: string) => void },
+): GhTaskSyncService {
+  let inFlight = false;
+  return {
+    ...service,
+    async syncAllLinkedTasks(options?: { fullReconcile?: boolean }): Promise<GhTaskSyncSummary> {
+      if (inFlight) {
+        log?.warn?.(
+          { event: "gh-task-sync.skip_in_flight", sweeper: "gh-task-sync" },
+          "gh-task-sync.skip_in_flight",
+        );
+        return skippedGhTaskSyncSummary();
+      }
+      inFlight = true;
+      try {
+        return await service.syncAllLinkedTasks(options);
+      } finally {
+        inFlight = false;
+      }
+    },
+  };
+}
+
 export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSyncService {
   const ghClient = opts.ghClient ?? createGhCliClient();
   const userId = opts.userId ?? "penumbra";
   const machineId = opts.machineId ?? process.env.HOSTNAME ?? "unknown";
   let knownPenumbraLogin: string | null | undefined;
   const inFlightByTask = new Set<string>();
+  const inFlightOutboxIds = new Set<number>();
 
   const resolvePenumbraLogin = async (): Promise<string | null> => {
     if (knownPenumbraLogin !== undefined) return knownPenumbraLogin;
@@ -421,8 +451,10 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
   const processGhOutbox = async (): Promise<void> => {
     const rows = opts.taskWriter.listPendingGhOutbox(100);
     for (const row of rows) {
+      if (inFlightOutboxIds.has(row.id)) continue;
       const won = opts.taskWriter.markGhOutboxAttempt(row.id);
       if (won === false) continue;
+      inFlightOutboxIds.add(row.id);
       try {
         const payload = JSON.parse(row.payload_json || "{}") as Record<string, unknown>;
         switch (row.op) {
@@ -490,6 +522,8 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
         } else {
           opts.taskWriter.markGhOutboxFailed(row.id, message);
         }
+      } finally {
+        inFlightOutboxIds.delete(row.id);
       }
     }
   };
@@ -854,14 +888,7 @@ export function createGhTaskSyncSweeper(opts: {
         { event: "sweeper.skip_tick", sweeper: "gh-task-sync" },
         "sweeper.skip_tick",
       );
-      return {
-        linked: 0,
-        pushed: 0,
-        pulled: 0,
-        errored: 0,
-        skipped: true,
-        results: [],
-      };
+      return skippedGhTaskSyncSummary();
     }
     inFlight = true;
     try {

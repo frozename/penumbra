@@ -69,6 +69,8 @@ interface GhExecResult {
 
 export type GhExec = (args: string[]) => Promise<GhExecResult>;
 
+export const GH_EXEC_TIMEOUT_MS = 120_000;
+
 function normalizeState(value: string): GhIssueState {
   return value.toUpperCase() === "CLOSED" ? "CLOSED" : "OPEN";
 }
@@ -81,7 +83,11 @@ function normalizeReason(value: unknown): GhIssueStateReason {
   return null;
 }
 
-async function defaultExec(args: string[], cwd?: string): Promise<GhExecResult> {
+async function defaultExec(
+  args: string[],
+  cwd?: string,
+  timeoutMs = GH_EXEC_TIMEOUT_MS,
+): Promise<GhExecResult> {
   // Bun.spawn (NOT spawnSync): `gh` makes a network round-trip to GitHub
   // (~0.6s each). spawnSync blocks the daemon's single-threaded event loop for
   // that whole duration, so a sweep that runs N `gh` calls back-to-back (e.g.
@@ -95,12 +101,30 @@ async function defaultExec(args: string[], cwd?: string): Promise<GhExecResult> 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  return { stdout, stderr, exitCode };
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    proc.kill();
+  }, timeoutMs);
+  try {
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    if (timedOut) {
+      const timeoutMessage = `gh ${args.join(" ")} timed out after ${timeoutMs}ms`;
+      const trimmed = stderr.trim();
+      return {
+        stdout,
+        stderr: trimmed ? `${trimmed}\n${timeoutMessage}` : timeoutMessage,
+        exitCode: exitCode === 0 ? 124 : exitCode,
+      };
+    }
+    return { stdout, stderr, exitCode };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function runOrThrow(exec: GhExec, args: string[]): Promise<string> {
@@ -176,8 +200,10 @@ function parseGhIssueComments(text: string): GhIssueComment[] {
   return comments;
 }
 
-export function createGhCliClient(opts: { exec?: GhExec; repoDir?: string } = {}): GhClient {
-  const exec = opts.exec ?? ((args) => defaultExec(args, opts.repoDir));
+export function createGhCliClient(
+  opts: { exec?: GhExec; repoDir?: string; execTimeoutMs?: number } = {},
+): GhClient {
+  const exec = opts.exec ?? ((args) => defaultExec(args, opts.repoDir, opts.execTimeoutMs));
   return {
     async createIssue(input: GhCreateIssueInput): Promise<{ number: number; url: string }> {
       const baseArgs = ["issue", "create", "--repo", input.repo, "--title", input.title];

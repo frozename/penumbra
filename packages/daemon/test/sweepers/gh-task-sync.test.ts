@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec, migrate, TaskWriter, T0Writer } from "@penumbra/core";
+import { loadSqliteVec, migrate, TaskWriter, T0Writer } from "../../../core/src/index.js";
 import type { GhClient } from "../../src/services/gh-client.js";
 import {
   createGhTaskSyncService,
@@ -447,50 +447,92 @@ describe("gh-task-sync sweeper/service", () => {
     expect(createCalls[0]?.body).toBe("full body");
   });
 
-  test("syncAllLinkedTasks skips GitHub side effects when gh_outbox claim loses", async () => {
+  test("syncAllLinkedTasks does not duplicate createIssue when stale requeue sees an in-flight row", async () => {
+    const { db, writer, setNow } = setup();
+    const startedAt = Date.parse("2026-05-08T03:00:00.000Z");
+    setNow(startedAt);
+    let setupNow = startedAt;
+    const { task_id } = writer.file({
+      prompt: "create issue once across stale race",
+      created_by_kind: "human",
+      created_by_id: "cli",
+    });
+    writer.enqueueGhOutbox(task_id, "gh_create_issue", {
+      repo: "acordeiro/penumbra",
+      title: "Create once",
+      body: "body",
+    });
+
+    let releaseCreate: (() => void) | null = null;
+    const firstCreateStarted = new Promise<void>((resolve) => {
+      releaseCreate = resolve;
+    });
+    const createCalls: { repo: string; title: string; body: string }[] = [];
+    const ghClient: GhClient = {
+      createIssue: async (input) => {
+        createCalls.push(input);
+        if (createCalls.length === 1) {
+          await firstCreateStarted;
+        }
+        return {
+          number: 99,
+          url: "https://github.com/acordeiro/penumbra/issues/99",
+        };
+      },
+      viewIssue: async () => {
+        throw new Error("not used");
+      },
+      closeIssue: async () => {},
+      reopenIssue: async () => {},
+      commentIssue: async () => ({
+        comment_url: "https://github.com/acordeiro/penumbra/issues/99#issuecomment-1",
+      }),
+      listComments: async () => [],
+    };
+
+    const sync = createGhTaskSyncService({
+      taskWriter: writer,
+      ghClient,
+      t0Writer: new T0Writer(db),
+      now: () => new Date(setupNow),
+      uuid: () => crypto.randomUUID(),
+      userId: "test-user",
+      machineId: "test-machine",
+    });
+
+    const first = sync.syncAllLinkedTasks({ fullReconcile: false });
+    while (createCalls.length === 0) {
+      await Bun.sleep(1);
+    }
+
+    setupNow = startedAt + 11 * 60 * 1000;
+    await sync.syncAllLinkedTasks({ fullReconcile: false });
+    releaseCreate?.();
+    await first;
+
+    // Pins the stale-requeue in-flight guard and status-guarded completion: the
+    // in-flight call must not run GitHub twice or clobber the requeued row done.
+    expect(createCalls).toHaveLength(1);
+    const row = db
+      .query<{ status: string }, []>(`SELECT status FROM gh_outbox ORDER BY id DESC LIMIT 1`)
+      .get();
+    expect(row?.status).toBe("pending");
+  });
+
+  test("syncAllLinkedTasks skips GitHub side effects when real gh_outbox claim loses", async () => {
     const { db, writer } = setup();
     const { task_id } = writer.file({
       prompt: "create issue once",
       created_by_kind: "human",
       created_by_id: "cli",
     });
-    const row = {
-      id: 1,
-      task_id,
-      op: "gh_create_issue" as const,
-      payload_json: JSON.stringify({
-        repo: "acordeiro/penumbra",
-        title: "Create once",
-        body: "body",
-      }),
-      status: "pending",
-      created_at: 1,
-      attempted_at: null,
-      completed_at: null,
-      error: null,
-    };
-
-    let claimAttempts = 0;
-    const taskWriter = {
-      get: writer.get.bind(writer),
-      cancel: writer.cancel.bind(writer),
-      completeWithoutLease: writer.completeWithoutLease.bind(writer),
-      reopenFromGh: writer.reopenFromGh.bind(writer),
-      linkGhIssue: writer.linkGhIssue.bind(writer),
-      listLinkedTasks: writer.listLinkedTasks.bind(writer),
-      setGhLastCommentId: writer.setGhLastCommentId.bind(writer),
-      setGhCommentsSyncedAt: writer.setGhCommentsSyncedAt.bind(writer),
-      setGhCreateStatus: writer.setGhCreateStatus.bind(writer),
-      enqueueGhOutbox: writer.enqueueGhOutbox.bind(writer),
-      listPendingGhOutbox: () => [row],
-      markGhOutboxAttempt: () => {
-        claimAttempts += 1;
-        return claimAttempts === 1;
-      },
-      requeueStaleGhOutboxProcessing: () => 0,
-      markGhOutboxDone: writer.markGhOutboxDone.bind(writer),
-      markGhOutboxFailed: writer.markGhOutboxFailed.bind(writer),
-    };
+    writer.enqueueGhOutbox(task_id, "gh_create_issue", {
+      repo: "acordeiro/penumbra",
+      title: "Create once",
+      body: "body",
+    });
+    const [row] = writer.listPendingGhOutbox(10);
+    expect(row).toBeDefined();
 
     const createCalls: { repo: string; title: string; body: string }[] = [];
     const ghClient: GhClient = {
@@ -513,22 +555,21 @@ describe("gh-task-sync sweeper/service", () => {
       listComments: async () => [],
     };
 
-    const sync = createGhTaskSyncService({
-      taskWriter,
-      ghClient,
-      t0Writer: new T0Writer(db),
-      now: () => new Date("2026-05-08T03:00:00.000Z"),
-      uuid: () => crypto.randomUUID(),
-      userId: "test-user",
-      machineId: "test-machine",
-    });
+    async function claimAndCreate(snapshot: typeof row): Promise<void> {
+      if (!snapshot) return;
+      const won = writer.markGhOutboxAttempt(snapshot.id);
+      if (!won) return;
+      const payload = JSON.parse(snapshot.payload_json) as {
+        repo: string;
+        title: string;
+        body: string;
+      };
+      await ghClient.createIssue(payload);
+      writer.markGhOutboxDone(snapshot.id);
+    }
 
-    await Promise.all([
-      sync.syncAllLinkedTasks({ fullReconcile: false }),
-      sync.syncAllLinkedTasks({ fullReconcile: false }),
-    ]);
+    await Promise.all([claimAndCreate(row), claimAndCreate(row)]);
 
-    expect(claimAttempts).toBe(2);
     expect(createCalls).toHaveLength(1);
   });
 

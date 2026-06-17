@@ -1,7 +1,26 @@
 import { describe, expect, spyOn, test } from "bun:test";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createGhCliClient, type GhExec } from "../../src/services/gh-client.js";
 
 describe("createGhCliClient", () => {
+  test("default gh exec times out slow subprocesses", async () => {
+    const binDir = mkdtempSync(join(tmpdir(), "gh-client-timeout-"));
+    const ghPath = join(binDir, "gh");
+    writeFileSync(ghPath, "#!/usr/bin/env bun\nawait Bun.sleep(200);\nconsole.log('octocat');\n");
+    chmodSync(ghPath, 0o755);
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    try {
+      const client = createGhCliClient({ repoDir: binDir, execTimeoutMs: 20 });
+      await expect(client.getAuthenticatedLogin?.()).rejects.toThrow("timed out after 20ms");
+    } finally {
+      process.env.PATH = originalPath;
+      rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
   test("createIssue returns number/url from gh issue create stdout URL", async () => {
     const calls: string[][] = [];
     const exec: GhExec = async (args) => {

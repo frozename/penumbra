@@ -252,6 +252,7 @@ import { ExtraWorkerSupervisor } from "./workers/supervisor.js";
 import { createWorkerHealthController, WorkerHealthProbe } from "./services/worker-health-probe.js";
 import {
   createDefaultGhTaskSyncService,
+  createGhTaskSyncSingleFlight,
   createGhTaskSyncSweeper,
   type GhTaskSyncService,
 } from "./sweepers/gh-task-sync.js";
@@ -505,9 +506,13 @@ export function createDaemonFetchHandler(opts: {
           : undefined;
       },
     });
-  const ghTaskSyncService =
+  const rawGhTaskSyncService =
     opts.ghTaskSyncService ??
     createDefaultGhTaskSyncService(opts.services, taskWriter, opts.ghClient);
+  const ghTaskSyncService = createGhTaskSyncSingleFlight(
+    rawGhTaskSyncService,
+    opts.services.log as any,
+  );
   startTaskLedgerCapture({ services: opts.services, taskEvents, taskWriter });
   const dispatchRefineHandler = (() => {
     const cfg = resolveJudgeConfig(process.env, { extraModelEnv: ["PENUMBRA_REFINER_MODEL"] });
@@ -1316,7 +1321,10 @@ export function serve(opts: ServeOpts): DaemonHandle {
         console.warn("[task.cancel] chainCancel failed", err),
       ),
   });
-  const ghTaskSyncService = createDefaultGhTaskSyncService(opts.services, taskWriter);
+  const ghTaskSyncService = createGhTaskSyncSingleFlight(
+    createDefaultGhTaskSyncService(opts.services, taskWriter),
+    opts.services.log as any,
+  );
   const ghTaskSyncSweeper = createGhTaskSyncSweeper({
     service: ghTaskSyncService,
     fullReconcileIntervalMs: daemonSettings.ghTaskSyncFullReconcileIntervalMs ?? 300_000,
