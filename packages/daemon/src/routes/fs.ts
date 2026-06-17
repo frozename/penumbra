@@ -7,8 +7,31 @@ import { spawn } from "node:child_process";
 
 import { json } from "./_helpers.js";
 import { resolveWorktreeForHandoff } from "./worktree-resolve.js";
+import { getPrincipal } from "../auth.js";
 
 const FS_READ_MAX_BYTES = 1024 * 1024; // 1 MiB
+
+function checkWorkerOwnership(
+  req: Request,
+  handoffWorkerId: string | null | undefined,
+): Response | null {
+  const principal = getPrincipal(req);
+  if (principal === null || principal.kind !== "worker") {
+    return null;
+  }
+  if (handoffWorkerId == null || principal.worker_id !== handoffWorkerId) {
+    return Response.json(
+      {
+        error: {
+          code: "ownership_mismatch",
+          message: "worker token does not match the handoff owner",
+        },
+      },
+      { status: 403 },
+    );
+  }
+  return null;
+}
 
 export async function worktreesReadRoute(
   req: Request,
@@ -22,6 +45,11 @@ export async function worktreesReadRoute(
       404,
     );
   }
+  const ownershipDenied = checkWorkerOwnership(
+    req,
+    services.handoffReader.get(handoff_id)?.worker_id,
+  );
+  if (ownershipDenied !== null) return ownershipDenied;
 
   let body: any;
   try {
@@ -84,6 +112,11 @@ export async function worktreesWriteRoute(
       404,
     );
   }
+  const ownershipDenied = checkWorkerOwnership(
+    req,
+    services.handoffReader.get(handoff_id)?.worker_id,
+  );
+  if (ownershipDenied !== null) return ownershipDenied;
 
   let body: any;
   try {
@@ -184,6 +217,11 @@ export async function worktreesEditRoute(
       404,
     );
   }
+  const ownershipDenied = checkWorkerOwnership(
+    req,
+    services.handoffReader.get(handoff_id)?.worker_id,
+  );
+  if (ownershipDenied !== null) return ownershipDenied;
 
   let body: any;
   try {
@@ -285,6 +323,11 @@ export async function worktreesGlobRoute(
       404,
     );
   }
+  const ownershipDenied = checkWorkerOwnership(
+    req,
+    services.handoffReader.get(handoff_id)?.worker_id,
+  );
+  if (ownershipDenied !== null) return ownershipDenied;
 
   let body: any;
   try {
@@ -340,6 +383,11 @@ export async function worktreesGrepRoute(
       404,
     );
   }
+  const ownershipDenied = checkWorkerOwnership(
+    req,
+    services.handoffReader.get(handoff_id)?.worker_id,
+  );
+  if (ownershipDenied !== null) return ownershipDenied;
 
   let body: any;
   try {
@@ -415,6 +463,9 @@ export async function worktreesExecRoute(
       404,
     );
   }
+  const handoff = services.handoffReader.get(handoff_id);
+  const ownershipDenied = checkWorkerOwnership(req, handoff?.worker_id);
+  if (ownershipDenied !== null) return ownershipDenied;
 
   let body: any;
   try {
@@ -435,7 +486,6 @@ export async function worktreesExecRoute(
   const timeout_ms = Math.min(Math.max(1, rawTimeout), EXEC_MAX_TIMEOUT_MS);
 
   const shellConfig = (services as any).shellConfig;
-  const handoff = services.handoffReader.get(handoff_id);
   const agentName = (handoff as any)?.to_agent ?? null;
   const dangerousPatterns: string[] = shellConfig?.dangerousCommandsForAgent?.(agentName) ?? [];
   const normalizedCommand = body.command.replace(/\s+/g, " ");
