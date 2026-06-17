@@ -136,6 +136,30 @@ describe("TaskWriter lifecycle", () => {
     expect(() => writer.heartbeat({ task_id, lease_id: "lease_missing" })).toThrow(LeaseInvalid);
   });
 
+  test("heartbeat ttl stays constant across multiple beats — no drift", () => {
+    let fakeNow = 1_000_000;
+    const db2 = freshDb();
+    const writer2 = new TaskWriter(db2, () => fakeNow);
+
+    const { task_id } = writer2.file(baseInput());
+    const TTL = 60_000;
+
+    const lease = writer2.lease({ task_id, agent_id: "agent-b", ttl_ms: TTL });
+    expect(lease.expires_at).toBe(fakeNow + TTL);
+
+    fakeNow += 15_000;
+    const hb1 = writer2.heartbeat({ task_id, lease_id: lease.lease_id });
+    expect(hb1.expires_at).toBe(fakeNow + TTL);
+
+    fakeNow += 15_000;
+    const hb2 = writer2.heartbeat({ task_id, lease_id: lease.lease_id });
+    expect(hb2.expires_at).toBe(fakeNow + TTL);
+
+    fakeNow += 15_000;
+    const hb3 = writer2.heartbeat({ task_id, lease_id: lease.lease_id });
+    expect(hb3.expires_at).toBe(fakeNow + TTL);
+  });
+
   test("complete on work task without review marks done, releases lease, emits completed event", () => {
     const { task_id } = writer.file(baseInput());
     const lease = writer.lease({ task_id, agent_id: "agent-a" });

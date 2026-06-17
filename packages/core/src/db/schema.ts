@@ -595,6 +595,7 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
     db.exec(
       `CREATE INDEX IF NOT EXISTS tasks_by_gh ON tasks(gh_issue_repo, gh_issue_number) WHERE gh_issue_number IS NOT NULL;`,
     );
+    addColumnIfMissing(db, "task_leases", "original_ttl_ms", "INTEGER");
 
     // Additive migration for agent reliability evidence captured after the
     // original performance ledger shipped.

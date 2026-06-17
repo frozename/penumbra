@@ -576,9 +576,9 @@ export class TaskWriter {
 
         this.db.run(
           `INSERT INTO task_leases (
-             id, task_id, agent_id, claimed_at, expires_at, released_at, release_reason, auction_score
-           ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)`,
-          [lease_id, candidate.id, input.agent_id, now, expires_at, callerScore],
+             id, task_id, agent_id, claimed_at, expires_at, released_at, release_reason, auction_score, original_ttl_ms
+           ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+          [lease_id, candidate.id, input.agent_id, now, expires_at, callerScore, ttl_ms],
         );
         this.db.run(`UPDATE tasks SET status = 'leased', updated_at = ? WHERE id = ?`, [
           now,
@@ -648,9 +648,9 @@ export class TaskWriter {
 
       this.db.run(
         `INSERT INTO task_leases (
-           id, task_id, agent_id, claimed_at, expires_at, released_at, release_reason, auction_score
-         ) VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL)`,
-        [lease_id, validated.task_id, validated.agent_id, now, expires_at],
+           id, task_id, agent_id, claimed_at, expires_at, released_at, release_reason, auction_score, original_ttl_ms
+         ) VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?)`,
+        [lease_id, validated.task_id, validated.agent_id, now, expires_at, ttl_ms],
       );
       this.db.run(`UPDATE tasks SET status = 'leased', updated_at = ? WHERE id = ?`, [
         now,
@@ -683,10 +683,17 @@ export class TaskWriter {
     const heartbeat = this.db.transaction(() => {
       const leaseRow = this.db
         .query<
-          { id: string; task_id: string; agent_id: string; claimed_at: number; expires_at: number },
+          {
+            id: string;
+            task_id: string;
+            agent_id: string;
+            claimed_at: number;
+            expires_at: number;
+            original_ttl_ms: number | null;
+          },
           [string]
         >(
-          `SELECT id, task_id, agent_id, claimed_at, expires_at
+          `SELECT id, task_id, agent_id, claimed_at, expires_at, original_ttl_ms
            FROM task_leases
            WHERE id = ? AND released_at IS NULL`,
         )
@@ -696,7 +703,7 @@ export class TaskWriter {
       }
 
       const now = this.now();
-      const ttl_ms = leaseRow.expires_at - leaseRow.claimed_at;
+      const ttl_ms = leaseRow.original_ttl_ms ?? DEFAULT_LEASE_TTL_MS;
       const expires_at = now + ttl_ms;
 
       this.db.run(`UPDATE task_leases SET expires_at = ? WHERE id = ?`, [expires_at, leaseRow.id]);
