@@ -124,7 +124,7 @@ phase("Verify");
 
 // Verify against the HOME checkout — the landed handoff's worktree is torn
 // down by dispatch_land, and main only moves in the home repo.
-const REPO = ((typeof args === "string" ? (() => { try { return JSON.parse(args); } catch { return {}; } })() : (args || {})).repo) || (process.env.PENUMBRA_REPO || process.cwd());
+const REPO = ((typeof args === "string" ? (() => { try { return JSON.parse(args); } catch { return {}; } })() : (args || {})).repo) || (typeof process !== "undefined" ? (process.env.PENUMBRA_REPO || process.cwd()) : ".");
 
 const verifyRes = await agent(
   [

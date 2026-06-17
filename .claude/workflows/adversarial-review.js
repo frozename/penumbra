@@ -42,7 +42,7 @@ const graderModel = a && a.graderModel;
 const taskIntent =
   (a && a.taskIntent) ||
   `Preserve the intent of the pre-fix diff ${base_ref}..${target_ref}: address only the HIGH review findings without reverting, weakening, or deleting unrelated existing behavior.`;
-const REPO = ((typeof args === "string" ? (() => { try { return JSON.parse(args); } catch { return {}; } })() : (args || {})).repo) || (process.env.PENUMBRA_REPO || process.cwd());
+const REPO = ((typeof args === "string" ? (() => { try { return JSON.parse(args); } catch { return {}; } })() : (args || {})).repo) || (typeof process !== "undefined" ? (process.env.PENUMBRA_REPO || process.cwd()) : ".");
 
 // ---- schemas (typed findings — the primary payoff over parsing synthesis.md) ----
 const FINDING = {
