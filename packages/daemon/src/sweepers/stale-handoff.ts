@@ -146,8 +146,7 @@ export function runStaleHandoffSweep(
           current &&
           (current.status === "completed" ||
             current.status === "failed" ||
-            current.status === "rejected" ||
-            current.status === "canceled")
+            current.status === "rejected")
         ) {
           return false;
         }
