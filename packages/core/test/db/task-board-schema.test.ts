@@ -122,6 +122,7 @@ test("applySchema creates task board tables and indexes", () => {
     "released_at",
     "release_reason",
     "auction_score",
+    "original_ttl_ms",
   ]);
   expect(taskLeasesCols.map((col) => col.type)).toEqual([
     "TEXT",
@@ -132,6 +133,7 @@ test("applySchema creates task board tables and indexes", () => {
     "INTEGER",
     "TEXT",
     "REAL",
+    "INTEGER",
   ]);
 
   const taskEventsCols = db

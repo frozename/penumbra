@@ -14,7 +14,7 @@ if (process.platform === "darwin") {
   } catch {}
 }
 
-const NOW = "2026-05-01T12:00:00Z";
+const NOW = new Date().toISOString();
 
 function freshDb(): Database {
   const db = new Database(":memory:");

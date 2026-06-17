@@ -87,11 +87,12 @@ describe("routing_bias schema", () => {
     db.close();
   });
 
-  it("SCHEMA_VERSION is 35", () => {
-    expect(SCHEMA_VERSION).toBe(35);
+  it("SCHEMA_VERSION is expected", () => {
+    // SCHEMA_VERSION is defined in packages/core/src/db/schema.ts
+    expect(SCHEMA_VERSION).toBe(37);
   });
 
-  it("db_meta marker re-stamps to 35 after applySchema", () => {
+  it("db_meta marker re-stamps to current SCHEMA_VERSION after applySchema", () => {
     const db = new Database(":memory:");
     loadSqliteVec(db);
     applySchema(db);
