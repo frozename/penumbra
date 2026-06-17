@@ -3,7 +3,7 @@ export interface LockHolder {
   acquired_at: number;
 }
 
-class LifecycleLock {
+export class LifecycleLock {
   private holder: LockHolder | null = null;
   private waiters: Array<() => void> = [];
   readonly ttlMs: number;
@@ -44,8 +44,13 @@ class LifecycleLock {
 
   private _makeRelease(): () => void {
     let released = false;
+    const grantedHolder = this.holder;
     return () => {
       if (released) return;
+      // A release from a holder that was since TTL-evicted (and replaced by a new
+      // holder) must be a no-op: clearing this.holder here would wipe the current
+      // holder's lease and open a concurrent-land window.
+      if (this.holder !== grantedHolder) return;
       released = true;
       this.holder = null;
       this._drain();

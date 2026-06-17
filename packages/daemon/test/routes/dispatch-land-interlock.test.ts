@@ -7,7 +7,11 @@ import {
   dispatchLandTaskRoute,
   type DispatchLandDeps,
 } from "../../src/routes/dispatch-land.js";
-import { lifecycleLock, resetLifecycleLock } from "../../src/dispatch/lifecycle-lock.js";
+import {
+  LifecycleLock,
+  lifecycleLock,
+  resetLifecycleLock,
+} from "../../src/dispatch/lifecycle-lock.js";
 
 function services(): Services {
   const db = new Database(":memory:");
@@ -432,5 +436,31 @@ describe("dispatch-land lifecycle interlock", () => {
     releaseMergeLatch();
     const t1 = await waitForLandTask(svc, b1.task_id);
     expect(t1.status).toBe("done");
+  });
+
+  test("stale release from a TTL-evicted holder does not clear the current holder", async () => {
+    // Direct unit test: the singleton's 5-min TTL is too long to exercise
+    // eviction, so construct a short-TTL instance.
+    const lock = new LifecycleLock(40);
+
+    // H0 takes the lock, then its lifecycle op overruns the TTL.
+    const releaseH0 = await lock.acquire("h0");
+    expect(lock.getHolder()?.handoff_id).toBe("h0");
+    await Bun.sleep(60);
+    expect(lock.isHeld()).toBe(false); // reclaimIfExpired evicts H0
+
+    // W1 legitimately acquires after the eviction.
+    const releaseW1 = await lock.acquire("w1");
+    expect(lock.getHolder()?.handoff_id).toBe("w1");
+
+    // H0's finally-block release fires LATE. It must be a no-op — clearing
+    // W1's hold here would open a concurrent-land window (two holders, no lock).
+    releaseH0();
+    expect(lock.isHeld()).toBe(true);
+    expect(lock.getHolder()?.handoff_id).toBe("w1");
+
+    // W1's own release still works normally.
+    releaseW1();
+    expect(lock.isHeld()).toBe(false);
   });
 });
