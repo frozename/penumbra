@@ -3,7 +3,7 @@ export const meta = {
   description:
     'The full improvement loop as one codified run: DISCOVER (multi-lens finders sweep a scope for the next real bug/debt) -> PLAN (a phased TDD fix spec + a concrete check command for the top candidate) -> IMPLEMENT + FIX-UNTIL-GREEN (dispatch to the fleet via penumbra-fanout and loop on the check until it passes) -> REVIEW (compose adversarial-review: the daemon multi-persona review on the green branch, with an optional fix-round + independent grade for HIGH findings). Returns a typed land recommendation. Lands NOTHING — maestro runs the authoritative land-check + dispatch_land.',
   whenToUse:
-    'When you want the whole discover->plan->implement->review->fix-until-green cycle run end to end on the fleet as a rerunnable script (e.g. "do another improvement round"). Pass args.scope (where DISCOVER hunts) and optionally args.exclude, args.fixAgent, args.maxFixRounds, args.candidates, args.base, args.dryRunPlan. The codified augmentation of the penumbra loop-discover-to-green skill.',
+    'When you want the whole discover->plan->implement->review->fix-until-green cycle run end to end on the fleet as a rerunnable script (e.g. "do another improvement round"). Pass args.scope (where DISCOVER hunts) and optionally args.exclude, args.fixAgent, args.maxFixRounds, args.candidates, args.base, args.dryRunPlan. SEED MODE: pass args.seedCandidates = [{ title, severity, file, why_real, fix_sketch, suggested_check }] to SKIP discover and drive the plan->implement->review->fix-until-green tail on an already-triaged backlog (top-1 per run; seeds must already be verified). The codified augmentation of the penumbra loop-discover-to-green skill.',
   phases: [
     { title: 'Discover', detail: 'multi-lens finders sweep the scope; dedupe + rank worst-first; pick the top candidate' },
     { title: 'Plan', detail: 'a planner turns the top candidate into a phased TDD fix spec + a concrete check command' },
@@ -49,6 +49,12 @@ const dispatcherModel = a.dispatcherModel || 'sonnet'
 const finderModel = a.finderModel || 'sonnet'
 const plannerModel = a.plannerModel || 'sonnet'
 const graderModel = a.graderModel
+// Seed mode: skip DISCOVER and drive the plan->implement->review->fix-until-green tail
+// directly on already-discovered candidates (e.g. a triaged backlog). Pass
+// args.seedCandidates = [{ title, severity, file, why_real, fix_sketch, suggested_check, confidence }].
+// Seeds should already be verified — this workflow does NOT re-verify them; top-1 goes through the loop.
+const seedCandidates = Array.isArray(a.seedCandidates) ? a.seedCandidates.filter(Boolean) : []
+const seedMode = seedCandidates.length > 0
 
 const REPO = '/Volumes/WorkSSD/repos/personal/penumbra'
 
@@ -117,10 +123,27 @@ const PLAN_SCHEMA = {
   },
 }
 
-// ============================ DISCOVER ============================
-phase('Discover')
+// ============================ DISCOVER / SEED ============================
+let ranked
+let top
+if (seedMode) {
+  phase('Seed')
+  ranked = seedCandidates.map((c, i) => ({
+    rank: c.rank || i + 1,
+    title: c.title || c.id || 'seeded candidate',
+    severity: c.severity || 'MEDIUM',
+    file: c.refined_file || c.file || '',
+    why_real: c.why_real || c.reasoning || c.claim || '',
+    fix_sketch: c.fix_sketch || c.refined_fix || '',
+    suggested_check: c.suggested_check || '',
+    confidence: c.confidence || 'high',
+  }))
+  top = ranked[0]
+  log(`Seed: ${ranked.length} pre-verified candidate(s); top [${top.severity}/${top.confidence}] ${top.title} (${top.file})`)
+} else {
+  phase('Discover')
 
-const LENSES = [
+  const LENSES = [
   {
     key: 'concurrency',
     focus:
@@ -205,12 +228,14 @@ const ranking = await agent(
   { label: 'rank', phase: 'Discover', schema: RANK_SCHEMA, model: plannerModel },
 )
 
-const ranked = (ranking && ranking.ranked) || []
-if (!ranked.length) {
-  return { ok: true, stage: 'discover', candidates: rawCandidates, verdict: 'CLEAN after ranking — all candidates deduped/dropped.', notes: ranking && ranking.notes }
+  const rk = (ranking && ranking.ranked) || []
+  if (!rk.length) {
+    return { ok: true, stage: 'discover', candidates: rawCandidates, verdict: 'CLEAN after ranking — all candidates deduped/dropped.', notes: ranking && ranking.notes }
+  }
+  ranked = rk
+  top = rk[0]
+  log(`Discover: top candidate [${top.severity}/${top.confidence}] ${top.title} (${top.file})`)
 }
-const top = ranked[0]
-log(`Discover: top candidate [${top.severity}/${top.confidence}] ${top.title} (${top.file})`)
 
 // ============================ PLAN ============================
 phase('Plan')
@@ -226,7 +251,7 @@ const plan = await agent(
     `- the root cause (file:line) and the concrete failure it produces;`,
     `- TEST-FIRST: the new/changed test that must go RED before the fix and GREEN after (and would go RED again if the fix were reverted);`,
     `- the minimal fix, fail-safe by construction, with a tight scope guard (which files may change; do NOT touch unrelated behavior or pre-existing tests);`,
-    `- "commit on your branch with a NEUTRAL message (no AI/assistant/co-authored attribution); do NOT land/push/merge".`,
+    `- "commit on the branch ALREADY checked out in your worktree; do NOT create, switch, or name a NEW branch — the fleet already isolated you on your own branch, and a new branch strands the work where landing cannot find it. Use a NEUTRAL message (no AI/assistant/co-authored attribution). Do NOT land/push/merge."`,
     `'check_command' is the SINGLE shell command that gates green. It MUST use only commands that already work in this repo — do NOT invent scripts or flags (a malformed check wastes every fix round):`,
     `  - tests: \`bun test <path/to/test.ts>\` with the DEFAULT reporter. Do NOT pass --reporter=spec (bun supports only junit/dots, so omit --reporter entirely).`,
     `  - typecheck: \`bun run typecheck\` (the existing root script). Do NOT use \`tsc --build ... --noEmit\` (contradictory flags) or \`bun run --cwd <pkg> typecheck\` (per-package scripts may not exist).`,
