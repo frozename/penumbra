@@ -5,10 +5,10 @@ import {
   ChainListAgentsInputShape,
 } from "../../src/tools/chain-list-agents.js";
 
-test("ChainListAgentsInputShape accepts optional envelope", () => {
+test("ChainListAgentsInputShape exposes no retired envelope flag", () => {
   const schema = z.object(ChainListAgentsInputShape);
   expect(schema.parse({})).toEqual({});
-  expect(schema.parse({ envelope: true }).envelope).toBe(true);
+  expect("envelope" in ChainListAgentsInputShape).toBe(false);
 });
 
 test("chainListAgentsHandler calls daemon.listChainAgents and formats output", async () => {
