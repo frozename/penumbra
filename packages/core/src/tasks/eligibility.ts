@@ -53,7 +53,7 @@ export function isEligible(
   if (taskId && opts.cooldowns) {
     const now = opts.now ?? Date.now();
     const byAgent = opts.cooldowns.get(taskId);
-    if (byAgent && [...byAgent.values()].some((expiresAt) => expiresAt > now)) return false;
+    if (byAgent && (byAgent.get(agent.name) ?? 0) > now) return false;
   }
 
   return true;

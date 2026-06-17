@@ -129,12 +129,13 @@ describe("TaskWriter.list({ eligible_for })", () => {
     expect(rows.map((r) => r.id)).toEqual([y]);
   });
 
-  test("blocks different agents while a task cooldown is active", () => {
+  test("does not block a different agent while only another agent has a task cooldown", () => {
     const taskId = writer.file(baseInput({ prompt: "task-x" })).task_id;
     const cooldowns = new Map<string, Map<string, number>>([
       [taskId, new Map<string, number>([["agent-a", 2_000]])],
     ]);
 
+    // agent-b has no cooldown on this task - must be eligible
     expect(
       isEligible(
         {
@@ -146,11 +147,34 @@ describe("TaskWriter.list({ eligible_for })", () => {
         {},
         { now: 1_000, cooldowns, task_id: taskId },
       ),
-    ).toBe(false);
+    ).toBe(true);
+  });
+
+  test("blocks the cooled-down agent itself while its own cooldown is active", () => {
+    const taskId = writer.file(baseInput({ prompt: "task-x" })).task_id;
+    const cooldowns = new Map<string, Map<string, number>>([
+      [taskId, new Map<string, number>([["agent-a", 2_000]])],
+    ]);
+
+    // agent-a is on cooldown - must be blocked
     expect(
       isEligible(
         {
-          name: "agent-b",
+          name: "agent-a",
+          tags: ["backend"],
+          tier: "oc",
+          cost_cents_per_run: 10,
+        },
+        {},
+        { now: 1_000, cooldowns, task_id: taskId },
+      ),
+    ).toBe(false);
+
+    // agent-a's cooldown has expired - now eligible
+    expect(
+      isEligible(
+        {
+          name: "agent-a",
           tags: ["backend"],
           tier: "oc",
           cost_cents_per_run: 10,
