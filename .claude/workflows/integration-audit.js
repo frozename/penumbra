@@ -10,6 +10,9 @@ export const meta = {
 
 phase('Probe')
 
+const REPO = ((typeof args === "string" ? (() => { try { return JSON.parse(args); } catch { return {}; } })() : (args || {})).repo) || (process.env.PENUMBRA_REPO || process.cwd())
+const HOME = "~"
+
 const FINDING_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -27,19 +30,19 @@ const FINDING_SCHEMA = {
 const PROBES = [
   {
     key: 'protocol',
-    prompt: `Read /Users/acordeiro/.claude/CLAUDE.md. Confirm whether an "Anti-fabrication protocol" section exists and is loaded every turn (global CLAUDE.md is always in context). Report its concrete rules verbatim. surface="anti-fabrication-protocol". wired=true only if it is in the GLOBAL ~/.claude/CLAUDE.md (always loaded), not a project file.`,
+    prompt: `Read ${HOME}/.claude/CLAUDE.md. Confirm whether an "Anti-fabrication protocol" section exists and is loaded every turn (global CLAUDE.md is always in context). Report its concrete rules verbatim. surface="anti-fabrication-protocol". wired=true only if it is in the GLOBAL ~/.claude/CLAUDE.md (always loaded), not a project file.`,
   },
   {
     key: 'guard',
-    prompt: `Inspect /Users/acordeiro/.claude/hooks/penumbra-agent-gc-guard.sh AND /Users/acordeiro/.claude/settings.json. Confirm: (a) the guard script exists and has Safe(1) ancestor, Safe(2) diff-empty, Safe(3) own-files-in-main checks; (b) it is WIRED into settings.json hooks.PreToolUse with a "Bash" matcher (grep for penumbra-agent-gc-guard). Report the matcher list and the guard's three safe-conditions verbatim. surface="data-loss-guard-hook". wired=true only if referenced in settings.json PreToolUse.`,
+    prompt: `Inspect ${HOME}/.claude/hooks/penumbra-agent-gc-guard.sh AND ${HOME}/.claude/settings.json. Confirm: (a) the guard script exists and has Safe(1) ancestor, Safe(2) diff-empty, Safe(3) own-files-in-main checks; (b) it is WIRED into settings.json hooks.PreToolUse with a "Bash" matcher (grep for penumbra-agent-gc-guard). Report the matcher list and the guard's three safe-conditions verbatim. surface="data-loss-guard-hook". wired=true only if referenced in settings.json PreToolUse.`,
   },
   {
     key: 'lifecycle',
-    prompt: `Read /Volumes/WorkSSD/repos/personal/penumbra/.claude/workflows/penumbra-token-opt-migrate.js. Confirm it (a) parses args when args is a JSON string, (b) dispatches via a sub-agent that returns a schema-validated object (DISPATCH_SCHEMA), (c) verifies via a second schema (VERIFY_SCHEMA), (d) does NOT auto-land (returns a land_hint instead). Quote the schema field names. surface="cc-workflow-lifecycle". wired=true if the script is syntactically a valid Workflow (has meta + phase/agent calls) and returns structured data.`,
+    prompt: `Read ${REPO}/.claude/workflows/penumbra-token-opt-migrate.js. Confirm it (a) parses args when args is a JSON string, (b) dispatches via a sub-agent that returns a schema-validated object (DISPATCH_SCHEMA), (c) verifies via a second schema (VERIFY_SCHEMA), (d) does NOT auto-land (returns a land_hint instead). Quote the schema field names. surface="cc-workflow-lifecycle". wired=true if the script is syntactically a valid Workflow (has meta + phase/agent calls) and returns structured data.`,
   },
   {
     key: 'evidence',
-    prompt: `Run: cd /Volumes/WorkSSD/repos/personal/penumbra && git log --oneline -8. Confirm how many recent commits are token-opt envelope migrations landed THIS session (dispatch_timeline, chain_history, reconciler_verdicts, chain_list_agents+dispatch_audit, permission_get, fs_grep, fs_glob). These are the proof the CC-Workflow-drives-penumbra-fleet loop actually produced landed, pushed, verified work. surface="proof-of-loop". wired=true if >=3 such commits are on main. Quote the commit subjects.`,
+    prompt: `Run: cd ${REPO} && git log --oneline -8. Confirm how many recent commits are token-opt envelope migrations landed THIS session (dispatch_timeline, chain_history, reconciler_verdicts, chain_list_agents+dispatch_audit, permission_get, fs_grep, fs_glob). These are the proof the CC-Workflow-drives-penumbra-fleet loop actually produced landed, pushed, verified work. surface="proof-of-loop". wired=true if >=3 such commits are on main. Quote the commit subjects.`,
   },
   {
     key: 'reinforce',

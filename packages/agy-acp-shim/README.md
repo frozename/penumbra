@@ -10,7 +10,7 @@ Why the shim? `agy` is the only current path to Gemini 3.5 Flash (Code Assist su
 
 1. **`agy` binary installed and authenticated**
    - Download/install [antigravity-cli](https://github.com/google-cloud-ai/code-assist-cli) v1.0.0 or later.
-   - Ensure it's reachable at `/Users/acordeiro/.local/bin/agy` (or override via `AGY_BINARY` environment variable).
+   - Ensure it's reachable at `~/.local/bin/agy` (or override via `AGY_BINARY` environment variable).
    - Authenticate with `agy -i` at least once. OAuth tokens are stored in macOS keyring and inherited by the shim subprocess automatically.
 
 2. **penumbra running on the same machine**
@@ -39,7 +39,7 @@ Add this to your `~/.config/agentchat/agentchat.yaml` (or equivalent fleet confi
   tags: [cloud, gemini, gemini-3-5, flash, no-tools, pilot]
 ```
 
-**Replace `/abs/path/to/` with your actual checkout path** (e.g., `/Volumes/WorkSSD/repos/personal/penumbra`).
+**Replace `/abs/path/to/` with your actual checkout path** (e.g., `~/code/penumbra`).
 
 Field names match the live fleet config as of 2026-05-20:
 

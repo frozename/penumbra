@@ -39,7 +39,7 @@ for (const t of tasks) {
   }
 }
 
-const REPO = '/Volumes/WorkSSD/repos/personal/penumbra'
+const REPO = ((typeof args === "string" ? (() => { try { return JSON.parse(args); } catch { return {}; } })() : (args || {})).repo) || (process.env.PENUMBRA_REPO || process.cwd())
 
 const DISPATCH_SCHEMA = {
   type: 'object',

@@ -1,6 +1,6 @@
 # penumbra
 
-Local-first observability + cross-agent dispatch + workflow runtime. Records LLM activity (t0 events, t1 rollups, t2 long-term memories), brokers handoffs between AI agents (Claude / Gemini / Codex / OpenCode / local LLMs) via `@mention` syntax with a human-in-the-loop approval gate, runs memory-aware workflows, and supervises long-lived agents that tick on cron.
+Local-first observability + cross-agent dispatch + workflow runtime. Records LLM activity (t0 events, t1 rollups, t2 long-term memories), brokers handoffs between AI agents (Claude / Gemini / Codex / OpenCode / local LLMs) via the MCP `chain_start` surface with a human-in-the-loop approval gate, runs memory-aware workflows, and supervises long-lived agents that tick on cron.
 
 The memory-digest workflow renders the t2 digest into a derived read-only `MEMORY.md` per project.
 
@@ -10,13 +10,15 @@ Bun + TypeScript monorepo (`bun` package manager, workspaces). Top-level package
 
 - `packages/core` — shared primitives: schemas (zod), writers (HandoffWriter, T0Writer, T1Rollup), readers, in-memory event bus (HandoffEventBus), context-file generator (ContextFileWriter), `WorktreeManager`, dispatch-reliability classifier, supervisor for periodic workers, long-lived state writer (with notes tail-truncation).
 - `packages/daemon` — long-running HTTP server. Hosts the t0 ingest endpoint, recall over t1+t2 vectors, handoffs CRUD + claim/complete/SSE routes, `chains/start`, `dispatch/land`, the workflow runtime, long-lived reactor, and the sweeper layer (`stale-handoff`, `handoff-sweeper`, `worktree-gc`, `reconciler-sweep`).
-- `packages/agentchat` — `@mention`-driven chat orchestrator. Bin: `agentchat new` (interactive + `--auto`); separate `agentchat-worker` headless process dispatches approved handoffs out-of-bin via ACP adapters (`stdio-acp`, `claude-cli`, `gemini-cli`, `codex-cli`, `openai-compat-http`).
+- `packages/agentchat` — the ACP adapter layer + the headless `agentchat-worker` that dispatches approved handoffs out-of-bin via ACP adapters (`stdio-acp`, `claude-cli`, `gemini-cli`, `codex-cli`, `opencode-cli`, `opencode-acp`, `agy-cli`, `openai-compat-http`). Also ships the **deprecated** interactive `@mention` chat (`agentchat new`); prefer MCP `chain_start`.
 - `packages/cli` — `penumbra` operator CLI. `start --detach`, `stop`, `status`, `repair`, `init`, `worktree gc`, `notes rotate`, `plan {list,start,status,…}`, `task`, export/import.
-- `packages/console` — local web UI (Storybook-built, served from the daemon). Mission view (in-flight chains, pending handoffs, recent verdicts) consumes `@penumbra/api-contract`.
+- `packages/console` — local web UI (Vite-built, with a Storybook component workbench, served from the daemon). Mission view (in-flight chains, pending handoffs, recent verdicts) consumes `@penumbra/api-contract`.
 - `packages/api-contract` — type-only shared shapes (handoffs, sessions, dispatch events, tasks, errors). Frontend / future MCP / e2e all import from here.
 - `packages/mcp` — Model Context Protocol server exposing memory, handoff, chain, agent, dispatch_land, lane, long_lived, workflow, worktree, task, and ops tools to agentic harnesses.
 - `packages/workflows` — workflow runtime. Recall budget, dispatch fan-out, synthesis. Hosts adversarial-review + adversarial-plan multi-persona workflows.
-- `packages/integrations/sirius-middleware` — fastify middleware for sirius-gateway → t0 fan-in.
+- `packages/integrations/sirius-middleware` — fastify middleware for sirius-gateway → t0 fan-in (package name `@penumbra/sirius-middleware`).
+- `packages/config` — operator config resolution + the split-config loader (`~/.config/penumbra/{agents,routing,quotas}.yaml`), `workers.yaml` path resolution, legacy `~/.penumbra` fallback.
+- `packages/agy-acp-shim` — ACP shim for the `agy` CLI adapter.
 - `packages/e2e` — full-stack smoke tests against a real daemon.
 
 ## Quick reference
@@ -64,7 +66,7 @@ bun packages/cli/bin/penumbra.ts notes rotate --apply  # actually archive
 
 ## Conventions
 
-- **Conventional commits**, no AI / agent attribution. The user takes attribution.
+- **Conventional commits** — neutral, imperative subject lines scoped by package (e.g. `fix(core): …`).
 - **TDD discipline** for new code: failing test → minimal implementation → green → commit per logical chunk.
 - **Default to no comments.** Only add a comment when the WHY is non-obvious (a hidden constraint, a workaround, surprising behavior).
 - **No backward-compat hacks** for unused code. If something's unused, delete it.
@@ -94,7 +96,8 @@ Penumbra ships an MCP server at `packages/mcp/bin/penumbra-mcp.ts`. The tool sur
 
 **Tasks / plans** — `task.{list,next,get,file,complete,fail,cancel,heartbeat,sync_gh_now,comment_gh,link_gh,unlink_gh,draft_list_pending,draft_list_pending_escalations}`, `plan.{list,open,start,cancel,status}`.
 
-**Filesystem helpers** — `fs.glob`, `fs.grep`, `shell.{run,list,close}`.
+**Filesystem helpers** — `fs.{glob,grep,read,write,edit,exec}`, `shell.{run,list,close}`.
+**Routing bias** — `routing.bias_{set,list,clear}`. **Fleet/health** — `fleet.latency`, `dreaming.health`, `read_handle` (resolves spilled `workflow_wait` payload ids).
 
 **Ops** — `cost.{recent,quota_status}`, `subscription.pressure_status`, `quality.status`, `daemon.reload_config`, `permission.{list_pending,get,approve}`, `maestro.{session_get,session_start,session_start_adhoc,capabilities}`, `brainstorm`.
 
@@ -114,9 +117,9 @@ For the token-opt S3 `workflow_wait` bounding move, restart MCP shims on the new
 
 Dispatches are tracked end-to-end via `dispatch_events` rows (`acp.session.start`, `agent.thought`, `agent.tool_call.failed`, `agent.heartbeat`, `acp.session.end`, `dispatch.start`/`dispatch.end`, …). The reliability classifier (`packages/core/src/services/dispatch-reliability.ts`) reads those events and emits a `report` with status (`complete` / `non_terminal_stale` / `non_terminal_recoverable` / …) and a recommended action (`accept` / `wait` / `cancel` / `inspect_worktree`).
 
-Three sweepers cooperate:
+Four sweepers cooperate:
 
-- **`stale-handoff-sweeper`** (event-aware): per-task-class threshold (`debug_diagnose` / `review_adversarial` 45 min, `implement_substantial` 60 min, `implement_small` 60 min, `plan_refine` 45 min, `docs_mechanical` 20 min, `smoke_test` 10 min, `health_check` 5 min) AND ≥ 5 min idle since last event → force-fail with `reason: stale_force_resolve`.
+- **`stale-handoff-sweeper`** (event-aware): per-task-class threshold (`debug_diagnose` / `review_adversarial` 45 min, `implement_substantial` 90 min, `implement_small` 60 min, `plan_refine` 45 min, `docs_mechanical` 20 min, `smoke_test` 10 min, `health_check` 5 min; default 30 min) AND ≥ 5 min idle since last event → force-fail with `reason: stale_force_resolve`.
 - **`handoff-sweeper-worker`** (TTL, also event-aware as of `b3590ce`): if a `dispatched` handoff exceeds its task-class TTL AND no `dispatch_events` rows for that handoff are within the TTL window → mark `status: expired`. `implement_small` uses 30 min and `plan_refine` uses 45 min here; the `implement_small` TTL intentionally differs from the stale-handoff sweep threshold (60 min). Streaming dispatches survive wall-clock-only thresholds.
 - **`worktree-gc`**: every 30 min, remove worktrees whose handoff has been terminal for > 2 h. Emits `worktree.gc` dispatch events for forensics. Defaults configurable via `PENUMBRA_WORKTREE_GC_INTERVAL_MS` and `PENUMBRA_WORKTREE_GC_GRACE_MS`. The MCP `dispatch.land` success path also tears down the worktree inline.
 - **`reconciler-sweep`**: every 30 min, runs `runPrOrphanSweepForDaemon` to close PRs whose handoff terminated. Configurable via `PENUMBRA_RECONCILER_SWEEP_INTERVAL_MS` and `PENUMBRA_RECONCILER_SWEEP_MAX_CLOSE`.
@@ -127,9 +130,9 @@ The `stdio-acp` adapter emits a synthetic `agent.heartbeat` lifecycle event ever
 
 Long-lived agents run on cron via the daemon's reactor. They have their own MCP allowlist + approval gate. Built-in roster:
 
-- `home-mgmt` (10 min) — Home Assistant monitor. Pulses entity state, flags anomalies, requests config changes via approval gate.
-- `task-refiner-primary` (15 min) — promotes pending task drafts. Currently cloud-Haiku; restores to local Qwen3-8B when llamactl is back.
-- `task-refiner-escalation` (15 min) — escalates stale or unresolvable drafts.
+- `home-mgmt` — Home Assistant monitor. Pulses entity state, flags anomalies, requests config changes via approval gate.
+- `task-refiner-primary` — promotes pending task drafts. Model is configurable per the fleet roster.
+- `task-refiner-escalation` — escalates stale or unresolvable drafts.
 
 Working memory is stored in `long_lived_state.working_memory_json`. Per-thread `notes` are server-side tail-truncated at 4096 chars (configurable via `PENUMBRA_LONG_LIVED_THREAD_NOTES_MAX_CHARS`) to prevent unbounded growth from append-only tick logs. Truncation is idempotent and aligned on a newline boundary.
 
@@ -137,7 +140,7 @@ After a daemon kickstart, in-flight ticks die mid-session and trip the agent's c
 
 ## Daemon-supervised extra workers
 
-- Config path: `~/.penumbra/workers.yaml`, override with `PENUMBRA_WORKERS_CONFIG_PATH`.
+- Config path: `~/.config/penumbra/workers.yaml` (legacy fallback `~/.penumbra/workers.yaml`), override with `PENUMBRA_WORKERS_CONFIG_PATH` (or relocate the whole dir via `PENUMBRA_CONFIG_DIR`).
 - Schema: `extras: [{ id, concurrency?, project_id?, isolation? }]`, max 32 extras.
 - Defaults/caps: `concurrency` defaults 4 and is capped at 32; `isolation` defaults to `sticky` when `project_id` is set, otherwise `shared`.
 - Isolation semantics:
@@ -146,7 +149,7 @@ After a daemon kickstart, in-flight ticks die mid-session and trip the agent's c
   - `shared` has no project filter (current behavior).
 - Scope: only daemon-supervised extras; primary launchd worker is out of scope.
 - Log path: `~/.penumbra/workers/<id>.log` under storage root.
-- Reload flow: edit `~/.penumbra/workers.yaml`, run `penumbra daemon_reload_config` (or MCP `daemon.reload_config`), inspect `worker_extras`.
+- Reload flow: edit `~/.config/penumbra/workers.yaml`, run `penumbra daemon_reload_config` (or MCP `daemon.reload_config`), inspect `worker_extras`.
 - Probe: `PENUMBRA_WORKER_PROBE_ENABLED=0` disables probes; default is 15s probe interval via `PENUMBRA_WORKER_PROBE_INTERVAL_MS`; 3 misses triggers eviction + orphan requeue.
 - Boot recovery: managed extras get `PENUMBRA_BOOT_RECONCILE=0` so only daemon does all-workers orphan recovery and avoids duplicate reconcile races.
 - Kill-switch: `PENUMBRA_EXTRA_WORKERS_ENABLED=0` disables the supervisor.
@@ -179,7 +182,7 @@ A workflow that fails three runs in a row is auto-quarantined: triggers stop fir
 - **Content-mode preamble** — when `content_path` is set (prose review), personas get a "Content-mode review" preamble that redirects them to engage with the substance the document describes rather than critiquing the document's structure.
 - **Partial-failure outcome** — when N personas fail/timeout, the workflow returns `outcome: success_partial` (banner in synthesis.md, `ok: true`) if the pass rate is ≥ `review_min_personas_pass_pct` (default 80 %), otherwise `outcome: failed` (`ok: false`). 100 % pass still returns plain `success`.
 
-Specs: `docs/superpowers/specs/2026-05-04-workflow-runtime-design.md`. Plans: `docs/superpowers/plans/2026-05-04-workflow-runtime.md`.
+See [`docs/concepts.md`](./docs/concepts.md) ("Workflows") and [`docs/architecture.md`](./docs/architecture.md) for the workflow-runtime design.
 
 ### Claude Code dynamic workflows → penumbra fan-out
 
@@ -212,21 +215,25 @@ Boundaries baked into the design (do not loosen without intent):
 
 **The workflow family** (`.claude/workflows/`, all route through the dispatch proxy / `chain_start`; none land — landing stays with maestro):
 
-| Workflow                   | Shape                                                                                                                                 | Key args                                                                                       |
-| :------------------------- | :------------------------------------------------------------------------------------------------------------------------------------ | :--------------------------------------------------------------------------------------------- |
-| `penumbra-fanout`          | N independent tasks → fleet; collect results + `agent/<id>` branches                                                                  | `tasks: [{ initial_agent, task_class, task_type, message, branch_base? }]`                     |
-| `penumbra-swarm`           | goal → planner decomposes into independent tasks → `workflow('penumbra-fanout')`                                                      | `goal` string, or `{ goal, maxTasks?, plannerModel? }`                                         |
-| `penumbra-tournament`      | same task → K agents in parallel → judge inspects each worktree (`worktree_inspect`) → winner                                         | `{ task: { message }, agents: [...], judgeModel? }`                                            |
-| `penumbra-fix-until-green` | dispatch → worker runs `check` → on FAIL re-dispatch on the prior branch (`branch_base`) with the failure log → until green or capped | `{ task: { message }, check, maxRounds?, escalateTo? }`                                        |
-| `penumbra-review-sweep`    | wraps penumbra's native `adversarial-review` across N targets (`workflow_run`, keeps its routing/gates/capture)                       | `{ targets: [{ target_ref, base_ref?, focus? }] }`                                             |
-| `penumbra-research`        | memory-augmented research: prime with t2 `memory_search` → sourced web fan-out → cited report → persist to t2 `memory_observe`        | `question` string, or `{ question, angles?, persist? }` (needs WebSearch/WebFetch allowlisted) |
+| Workflow                          | Shape                                                                                                                                 | Key args                                                                                       |
+| :-------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------ | :--------------------------------------------------------------------------------------------- |
+| `penumbra-fanout`                 | N independent tasks → fleet; collect results + `agent/<id>` branches                                                                  | `tasks: [{ initial_agent, task_class, task_type, message, branch_base? }]`                     |
+| `penumbra-swarm`                  | goal → planner decomposes into independent tasks → `workflow('penumbra-fanout')`                                                      | `goal` string, or `{ goal, maxTasks?, plannerModel? }`                                         |
+| `penumbra-tournament`             | same task → K agents in parallel → judge inspects each worktree (`worktree_inspect`) → winner                                         | `{ task: { message }, agents: [...], judgeModel? }`                                            |
+| `penumbra-fix-until-green`        | dispatch → worker runs `check` → on FAIL re-dispatch on the prior branch (`branch_base`) with the failure log → until green or capped | `{ task: { message }, check, maxRounds?, escalateTo? }`                                        |
+| `penumbra-review-sweep`           | wraps penumbra's native `adversarial-review` across N targets (`workflow_run`, keeps its routing/gates/capture)                       | `{ targets: [{ target_ref, base_ref?, focus? }] }`                                             |
+| `penumbra-research`               | memory-augmented research: prime with t2 `memory_search` → sourced web fan-out → cited report → persist to t2 `memory_observe`        | `question` string, or `{ question, angles?, persist? }` (needs WebSearch/WebFetch allowlisted) |
+| `penumbra-fleet-verify`           | N independent tasks → fleet in parallel → verify each branch against a generic schema → structured evidence (lands nothing)           | `tasks: [...]`                                                                                 |
+| `penumbra-loop-discover-to-green` | discover next defect → plan TDD fix → implement + fix-until-green on the fleet → adversarial review → typed land recommendation       | `{ scope, exclude?, seedCandidates?, maxFixRounds? }`                                          |
+| `penumbra-token-opt-batch`        | batch token-opt envelope migrations: parallel dispatch+verify across N tools → sequential in-workflow land                            | tool list                                                                                      |
+| `penumbra-token-opt-migrate`      | single token-opt envelope migration: dispatch → wait → verify worktree against schema → structured evidence (lands nothing)           | one tool                                                                                       |
 
 Operational notes:
 
 - **Models.** The dispatch proxy is glue and defaults to `haiku` (`dispatcherModel`); planners/judges keep the session model (`plannerModel` / `judgeModel`, `'inherit'` to follow the session). The real work runs on the fleet agent, not the proxy. Set `agentType: 'penumbra-dispatcher'` (after a session restart loads the subagent) to also tool-lock the proxy.
 - **args.** The Workflow `args` field is untyped, so a passed object can reach the script stringified; every script accepts an object OR a JSON string (`penumbra-swarm` also accepts a bare goal string).
 - **Nesting.** `swarm` / `tournament` / `fix-until-green` call `penumbra-fanout` via `workflow()` — one level only; don't chain them into each other (a 2nd nesting level throws).
-- **Scope / distribution.** The dispatcher agent ships via the user-global penumbra plugin (`plugin/agents/`), so `agentType: 'penumbra-dispatcher'` resolves in every project. Plugins can't ship dynamic workflows (not a plugin component type), so the 6 `.js` workflows live in the repo (`.claude/workflows/`, the tracked source of truth) and are copied to `~/.claude/workflows/` for cross-project availability; `~/.claude/settings.json` carries the dispatch + `WebSearch`/`WebFetch` allowlist so unattended runs don't stall outside this repo. `penumbra init` installs the `penumbra-*.js` scripts into `~/.claude/workflows/` (best-effort, non-destructive) — the cross-project install path on a fresh machine. Re-run it (or re-copy) after editing the repo originals, since the user-scope copies are snapshots.
+- **Scope / distribution.** The dispatcher agent ships via the user-global penumbra plugin (`plugin/agents/`), so `agentType: 'penumbra-dispatcher'` resolves in every project. Plugins can't ship dynamic workflows (not a plugin component type), so the `penumbra-*.js` workflows live in the repo (`.claude/workflows/`, the tracked source of truth) and are copied to `~/.claude/workflows/` for cross-project availability; `~/.claude/settings.json` carries the dispatch + `WebSearch`/`WebFetch` allowlist so unattended runs don't stall outside this repo. `penumbra init` installs the `penumbra-*.js` scripts into `~/.claude/workflows/` (best-effort, non-destructive) — the cross-project install path on a fresh machine. Re-run it (or re-copy) after editing the repo originals, since the user-scope copies are snapshots.
 
 **Deliberately NOT reimplemented:** penumbra's 7 lifecycle/state-threshold workflows (`delegate-suggest`, `file-context`, `session-summarize`, `prompt-classify`, `session-handoff`, `maestro-context-prime`, `memory-digest`) are event hooks → they map to Claude Code _hooks_, not Workflows. `brainstorm` / `write-plan` are single-shot generative (no fan-out gain). `adversarial-review` / `adversarial-plan` are mature daemon workflows with persona routing, pass-rate gates, and capture — `penumbra-review-sweep` _wraps_ the former rather than duplicating it. The only bundled CC-native workflow, `/deep-research`, needs nothing from penumbra for its web-search core; the worthwhile augmentation — shipped as `penumbra-research` — bookends research with penumbra memory: it primes from t2 `memory_search` and persists the cited report back via `memory_observe` for cross-session recall.
 
@@ -239,21 +246,20 @@ Operational notes:
 - `openai-compat-keys.md` — `apiKey` / `apiKeyEnv` / `apiKeyKeychain` / `apiKeyFile` resolution precedence.
 - `scripts/bench.ts` / `bench-grade.ts` / `bench-fleet.ts` — per-model bench-2, grading, and fleet sweep.
 
-Agentchat config now lives at `~/.config/penumbra/{agents,routing,quotas}.yaml`; run `penumbra config split` to migrate from the legacy single-file `~/.config/agentchat/agentchat.yaml`.
+The daemon and headless worker read the split agentchat config at `~/.config/penumbra/{agents,routing,quotas}.yaml`. Note: the interactive `agentchat new` bin and `penumbra init` still default to the legacy single-file `~/.config/agentchat/agentchat.yaml` (override both with `AGENTCHAT_CONFIG`); run `penumbra config split --source <agentchat.yaml> --dest ~/.config/penumbra` to migrate.
 The live fleet roster lives in `~/.config/penumbra/agents.yaml` (with `review_personas` and related routing metadata in `~/.config/penumbra/routing.yaml`). It carries `description` / `tags` / `quirks` / `terminal_timeout_s` / `caps` per agent and is the source of truth for fleet composition: CLI agents (`@gemini`, `@gemini-flash`, `@claude`, `@codex`, `@codex-frontier`, `@codex-mini`), ACP agents (`claude-acp-sonnet`, `codex-acp-deep`, `codex-acp-fast`, `gemini-acp-pro`, `gemini-acp-flash`, `oc-deepseek-v4-pro`, …), direct-HTTP Gemini variants, local swap targets, and provider-hosted NVIDIA/Groq agents. Read those files before dispatching; do not mirror agent counts here.
 
 ## Related fleet tools
 
-- **llamactl** (`/Volumes/WorkSSD/repos/personal/llamactl`) — runs local llama-server instances (`server start <gguf>`), manages the model catalog, registers cloud nodes (NVIDIA NIM lives here as `nvidia-nim`). The agentchat `local-*` agents talk to whatever model llamactl currently serves at `127.0.0.1:8080`.
-- **sirius-gateway** (`/Volumes/WorkSSD/repos/personal/sirius-gateway`) — multi-provider OpenAI-compat gateway. Penumbra has a dedicated `packages/integrations/sirius-middleware` for fanning sirius traffic into t0.
-- **embersynth** (`/Volumes/WorkSSD/repos/personal/embersynth`) — local-first distributed AI orchestration runtime; see its AGENTS.md.
-- **nova** (`/Volumes/WorkSSD/repos/personal/nova`) — AI-provider SDK (`@nova/contracts`, `@nova/mcp-shared`) plus a unified operator MCP facade (`@nova/mcp`) that proxies llamactl + sirius + embersynth tools under one stdio entry. Penumbra is a sibling in the MCP fleet, not a downstream — both register as their own `mcpServers.*` entries in harness configs.
+- **[llamactl](https://github.com/frozename/llamactl)** — runs local llama-server instances (`server start <gguf>`), manages the model catalog, registers cloud nodes (NVIDIA NIM lives here as `nvidia-nim`). The agentchat `local-*` agents talk to whatever model llamactl currently serves at `127.0.0.1:8080`.
+- **[sirius-gateway](https://github.com/frozename/sirius-gateway)** — multi-provider OpenAI-compat gateway. Penumbra has a dedicated `packages/integrations/sirius-middleware` for fanning sirius traffic into t0.
+- **[embersynth](https://github.com/frozename/embersynth)** — local-first distributed AI orchestration runtime; see its AGENTS.md.
+- **[nova](https://github.com/frozename/nova)** — AI-provider SDK (`@nova/contracts`, `@nova/mcp-shared`) plus a unified operator MCP facade (`@nova/mcp`) that proxies llamactl + sirius + embersynth tools under one stdio entry. Penumbra is a sibling in the MCP fleet, not a downstream — both register as their own `mcpServers.*` entries in harness configs.
 
 ## Where to dig deeper
 
 - `README.md` (top-level) — vision and package list.
+- `docs/architecture.md` — component map, data flow, and the local-first model.
+- `docs/concepts.md` — memory tiers, dispatch & handoffs, workflows, long-lived agents.
+- `docs/mcp-tools.md` — the full MCP tool reference, grouped by surface.
 - `packages/agentchat/README.md` — agentchat's full operator surface.
-- `docs/superpowers/specs/2026-04-26-agentchat-daemon-worker-design.md` — daemon-worker (phase 1) spec.
-- `docs/superpowers/specs/2026-05-04-workflow-runtime-design.md` — workflow runtime spec.
-- `docs/superpowers/plans/` — implementation plans; one per significant feature.
-- `docs/notes/` — session notes + per-issue triage reports (rotate older notes via `penumbra notes rotate --apply`).

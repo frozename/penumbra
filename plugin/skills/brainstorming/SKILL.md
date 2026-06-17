@@ -72,7 +72,7 @@ session; the savings is avoiding unmeasurable evals.
 2. **Ask clarifying questions** — one at a time, understand purpose/constraints/success criteria
 3. **Propose 2-3 approaches** — with trade-offs and your recommendation
 4. **Present design** — in sections scaled to their complexity, get user approval after each section
-5. **Write design doc** — save to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md` and commit
+5. **Write design doc** — save to `docs/specs/YYYY-MM-DD-<topic>-design.md` and commit
 6. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
 7. **User reviews written spec** — ask user to review the spec file before proceeding
 8. **Transition to implementation** — invoke the penumbra `writing-plans` skill to create an implementation plan
@@ -154,7 +154,7 @@ digraph brainstorming {
 
 **Documentation:**
 
-- Write the validated design (spec) to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`
+- Write the validated design (spec) to `docs/specs/YYYY-MM-DD-<topic>-design.md`
   - (User preferences for spec location override this default)
 - Use elements-of-style:writing-clearly-and-concisely skill if available
 - Commit the design document to git
@@ -196,7 +196,7 @@ Wait for the user's response. If they request changes, make them and re-run the 
 
 **Slash trigger:** `/brainstorm` invokes the playbook at
 `plugin/playbooks/brainstorm/playbook.md`, which pre-loads
-`docs/superpowers/specs/*.md` globs and recent brainstorm-tagged t2
+`docs/specs/*.md` globs and recent brainstorm-tagged t2
 memory before the process begins. You do not need to run those steps
 manually when invoked via the slash.
 

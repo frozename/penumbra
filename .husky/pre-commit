@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
 # pre-push hook intentionally not installed yet - `bun run lint` has ~16k violations
 # from the calibrated rule set that need cleanup or rule-by-rule ratcheting first.
-# See docs/superpowers/plans/2026-05-28-strict-lint-toolchain.md Phase 5.2.
+# See the strict-lint-toolchain plan Phase 5.2.
 bunx lint-staged

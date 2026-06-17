@@ -34,6 +34,8 @@ if (!dispatchPrompt) {
   throw new Error('args.dispatchPrompt is required (the chain_start migration contract)')
 }
 
+const REPO = ((typeof args === "string" ? (() => { try { return JSON.parse(args); } catch { return {}; } })() : (args || {})).repo) || (process.env.PENUMBRA_REPO || process.cwd())
+
 phase('Dispatch')
 
 // Phase 1: dispatch + wait + collect the REAL handoff/branch facts, via a sub-agent
@@ -62,7 +64,7 @@ const dispatch = await agent(
     `  initial_agent: "openai-codex-deep-acp"`,
     `  task_class: "STANDARD"`,
     `  task_type: "implement_small"`,
-    `  caller_cwd: "/Volumes/WorkSSD/repos/personal/penumbra"`,
+    `  caller_cwd: "${REPO}"`,
     `  message: <<<the EXACT migration contract below>>>`,
     ``,
     `--- MIGRATION CONTRACT (verbatim message) ---`,
@@ -71,7 +73,7 @@ const dispatch = await agent(
     ``,
     `STEP 2: copy the handoff_id and conversation_id verbatim from the chain_start result.`,
     `STEP 3: poll mcp__penumbra__chain_status with that handoff_id until status is terminal (completed/failed). Use chain_wait on the conversation_id in <=150s increments; never bundle more than one wait per step.`,
-    `STEP 4: in the home checkout /Volumes/WorkSSD/repos/personal/penumbra run (report exact values, no rounding):`,
+    `STEP 4: in the home checkout ${REPO} run (report exact values, no rounding):`,
     `  git rev-parse --verify --quiet agent/<handoff_id>   (branch tip short sha; "MISSING" if absent)`,
     `  git rev-list --count main..agent/<handoff_id>        (commit_count)`,
     `  git worktree list | grep <handoff_id>                (worktree_path)`,
@@ -123,7 +125,7 @@ const VERIFY_SCHEMA = {
 const verify = await agent(
   [
     `You are independently VERIFYING a token-opt envelope migration for tool "${tool}" on branch ${dispatch.branch} (tip ${dispatch.branch_tip}). DO NOT land, push, edit, or delete anything. Report only measured values.`,
-    `The agent worktree is at: ${dispatch.worktree_path || `/Volumes/WorkSSD/repos/personal/penumbra-worktrees/${dispatch.handoff_id}`}`,
+    `The agent worktree is at: ${dispatch.worktree_path || `${REPO}-worktrees/${dispatch.handoff_id}`}`,
     ``,
     `Run and report EXACT values:`,
     `1. In the worktree: bunx tsc --build packages/mcp/tsconfig.json ; capture exit code -> typecheck_exit.`,

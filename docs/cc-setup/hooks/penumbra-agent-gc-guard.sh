@@ -93,9 +93,9 @@ uuid='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 refs="$(printf '%s' "$cmd" | grep -oE "agent/${uuid}" | sort -u)"
 [ -n "$refs" ] || exit 0
 
-# --- resolve the repo dir (hook cwd, else the known penumbra checkout) --------
+# --- resolve the repo dir (hook cwd, else the surrounding git checkout) -------
 repo="${cwd:-}"
-[ -d "$repo/.git" ] || repo="/Volumes/WorkSSD/repos/personal/penumbra"
+[ -d "$repo/.git" ] || repo="${PENUMBRA_REPO:-$(git rev-parse --show-toplevel 2>/dev/null)}"
 [ -d "$repo/.git" ] || exit 0   # can't verify → fail-open
 
 # --- resolve the integration base branch -------------------------------------

@@ -12,10 +12,10 @@ recall:
       limit: 5
   - source: fs_glob
     args:
-      pattern: docs/superpowers/plans/*.md
+      pattern: docs/plans/*.md
   - source: fs_glob
     args:
-      pattern: docs/superpowers/specs/*.md
+      pattern: docs/specs/*.md
   - source: agents
 output:
   - kind: clipboard
@@ -42,8 +42,8 @@ Pre-fetched agents available for `preferred_agent` / `fallback_agent` - see regi
 
 Follow `writing-plans` for the TDD discipline. The output format is dispatch-aware: every task carries a `yaml meta` block, every phase carries a dispatch graph, every phase ends with integration notes.
 
-1. Pick the most recent design spec from `docs/superpowers/specs/`.
-2. Create the plan at `docs/superpowers/plans/{{date}}-<feature>.md`.
+1. Pick the most recent design spec from `docs/specs/`.
+2. Create the plan at `docs/plans/{{date}}-<feature>.md`.
 3. Bite-sized TDD steps. No placeholders. Real code in every step. Frequent commits.
 
 ### Per-task meta block
@@ -89,6 +89,6 @@ Integration: <one or two sentences on cherry-pick / FF-merge / verification comm
 
 ### Validator gate
 
-After writing, run `penumbra plan validate docs/superpowers/plans/{{date}}-<feature>.md` until it passes. The validator checks `parallel_with` reciprocity, `depends_on` cycles, `file_scope: new` collisions, and `preferred_agent` / `fallback_agent` membership in the registry.
+After writing, run `penumbra plan validate docs/plans/{{date}}-<feature>.md` until it passes. The validator checks `parallel_with` reciprocity, `depends_on` cycles, `file_scope: new` collisions, and `preferred_agent` / `fallback_agent` membership in the registry.
 
 After validation passes, do the spec self-review and offer Subagent-Driven vs Inline execution to the user.

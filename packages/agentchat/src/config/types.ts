@@ -72,9 +72,8 @@ const longLivedCronRegex = /^[\d*\-,/]+(\s+[\d*\-,/]+){4}$/;
 
 /**
  * Config for an MCP server that the daemon owns and spawns on behalf of a
- * long-lived agent. Consumed by the daemon's mcp-pool (Phase 2 of the
- * action-gate federation rollout — plan at
- * `docs/superpowers/plans/2026-05-11-action-gate-federation.md`).
+ * long-lived agent. Consumed by the daemon's mcp-pool (part of the
+ * action-gate federation rollout).
  *
  * The shape mirrors `McpServerStdio` in
  * `packages/agentchat/src/adapters/acp-types.ts` so future migrations can

@@ -18,6 +18,10 @@ bun.lockb
 # to source; bun then resolves `./foo.js` to the stale emit instead of the .ts.
 packages/*/src/**/*.js
 packages/*/src/**/*.d.ts
+# Also reject stray emits dropped at a package root (e.g. a bare `tsc` on a
+# root-level test-utils.ts) — the src/ globs above don't reach package roots.
+packages/*/*.js
+packages/*/*.d.ts
 
 # Local state
 .penumbra/
@@ -28,12 +32,11 @@ local_cache/
 # Bench scratch
 /test-bench-*.jsonl
 
-# Session churn — machine-generated handoff/summary notes, not source docs.
-# Authored plan/spec/runbook notes under docs/notes/ stay tracked.
-docs/notes/maestro-continuation-*.md
-docs/notes/session-summary-*.md
-docs/notes/gc-backup-*/
-docs/notes/gc-recovery-manifest-*.txt
+# Runtime / tooling output, not source: session notes (notes rotate),
+# plan-writer output, and lint baselines. Kept out of the public repo.
+docs/notes/
+docs/plans/
+docs/quality/
 
 # Stray local agent/editor config symlinks
 .antigravitycli/

@@ -15,7 +15,7 @@ Assume they are a skilled developer, but know almost nothing about our toolset o
 
 **Context:** If working in an isolated worktree, it was created by the penumbra worker via `worktree_*` MCP tools, not by hand.
 
-**Save plans to:** `docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md`
+**Save plans to:** `docs/plans/YYYY-MM-DD-<feature-name>.md`
 
 - (User preferences for plan location override this default)
 
@@ -164,7 +164,7 @@ After plan validation and self-review pass, present the two execution options an
 1. **Subagent-Driven (recommended)** - dispatch a fresh subagent per task, with review between tasks for fast iteration.
 2. **Inline Execution** - execute tasks in this session using `executing-plans`, with batch execution and checkpoints.
 
-**Penumbra default:** In penumbra, filed plans under `docs/superpowers/plans/` are picked up by plan-runtime, which dispatches each task's `kind=orchestrate` leaf to its `preferred_agent` (fan-out, default).
+**Penumbra default:** In penumbra, filed plans under `docs/plans/` are picked up by plan-runtime, which dispatches each task's `kind=orchestrate` leaf to its `preferred_agent` (fan-out, default).
 
 **If Subagent-Driven chosen:**
 
@@ -260,4 +260,4 @@ Confirm the returned name exists via `mcp__penumbra__chain_list_agents` before w
 
 ### Slash trigger
 
-`/write-plan` invokes the playbook at `plugin/playbooks/write-plan/playbook.md`, which pre-loads recent specs (`docs/superpowers/specs/*.md`), existing plans (`docs/superpowers/plans/*.md`), recent writing-plans memory, and the live agent registry before the process begins.
+`/write-plan` invokes the playbook at `plugin/playbooks/write-plan/playbook.md`, which pre-loads recent specs (`docs/specs/*.md`), existing plans (`docs/plans/*.md`), recent writing-plans memory, and the live agent registry before the process begins.

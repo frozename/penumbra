@@ -5,17 +5,17 @@ Use this template when dispatching a spec document reviewer subagent.
 **Purpose:** Verify the spec is complete, consistent, and ready for implementation planning.
 
 **Path constraint:** `[SPEC_FILE_PATH]` MUST be a relative path under
-`docs/superpowers/specs/` ending in `.md`. Reject any path that:
+`docs/specs/` ending in `.md`. Reject any path that:
 
 - starts with `/` (absolute path)
 - contains `..` (path traversal)
-- resolves outside `docs/superpowers/specs/*.md`
+- resolves outside `docs/specs/*.md`
 - matches any glob outside the allowed prefix
 
 If the spec is genuinely outside this prefix, escalate to the human instead
 of dispatching.
 
-**Dispatch after:** Spec document is written to docs/superpowers/specs/
+**Dispatch after:** Spec document is written to docs/specs/
 
 ```
 Task tool (general-purpose):

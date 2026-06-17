@@ -1050,7 +1050,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
   chain_start_simple: {
     descriptor: {
       description:
-        "Minimal-schema wrapper for chain_start. Takes {initial_agent, message[, project_id]}; hardcodes task_class=STANDARD, task_type=debug_diagnose, use_worktree=false, max_hops=2, trust_mode=config. Set PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID=1 requires project_id. See docs/notes/chain-start-caller-audit-2026-05-16.md.",
+        "Minimal-schema wrapper for chain_start. Takes {initial_agent, message[, project_id]}; hardcodes task_class=STANDARD, task_type=debug_diagnose, use_worktree=false, max_hops=2, trust_mode=config. Set PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID=1 requires project_id.",
       inputSchema: ChainStartSimpleInputShape,
     },
     makeHandler: chainStartSimpleHandler as unknown as ToolDef["makeHandler"],

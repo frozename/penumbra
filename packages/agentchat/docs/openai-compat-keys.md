@@ -66,7 +66,7 @@ The bin throws if `process.env.OPENAI_API_KEY` is unset/empty — the error name
 
 ```yaml
 options:
-  apiKeyFile: /Users/acordeiro/.llamactl/secrets/sirius-dev.key
+  apiKeyFile: /path/to/secret.key
 ```
 
 The file's full content is read and trimmed (handles trailing newlines from text editors). No additional escaping or format requirement.

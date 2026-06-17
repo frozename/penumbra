@@ -12,7 +12,7 @@ recall:
       limit: 10
   - source: fs_glob
     args:
-      pattern: docs/superpowers/specs/*.md
+      pattern: docs/specs/*.md
 output:
   - kind: clipboard
 run:

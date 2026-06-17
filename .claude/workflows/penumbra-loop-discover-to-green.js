@@ -76,7 +76,7 @@ const graderModel = a.graderModel;
 const seedCandidates = Array.isArray(a.seedCandidates) ? a.seedCandidates.filter(Boolean) : [];
 const seedMode = seedCandidates.length > 0;
 
-const REPO = "/Volumes/WorkSSD/repos/personal/penumbra";
+const REPO = ((typeof args === "string" ? (() => { try { return JSON.parse(args); } catch { return {}; } })() : (args || {})).repo) || (process.env.PENUMBRA_REPO || process.cwd());
 
 // ---- schemas ----
 const CANDIDATES_SCHEMA = {

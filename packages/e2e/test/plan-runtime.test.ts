@@ -61,7 +61,7 @@ test("cross-repo plan runs end-to-end: 3 leaf tasks fire across 2 repos with rea
 
   const planRoot = mkdtempSync(join(tmpdir(), "e2e-plan-runtime-meta-"));
   cleanupDirs.push(planRoot);
-  const demoSrc = join(process.cwd(), "docs/superpowers/plans/v2-cross-repo-smoke.md");
+  const demoSrc = join(__dirname, "fixtures/v2-cross-repo-smoke.md");
   const demoBytes = readFileSync(demoSrc);
   const planPath = join(planRoot, "v2-cross-repo-smoke.md");
   writeFileSync(planPath, demoBytes);

@@ -3,10 +3,7 @@ import { expect, test } from "bun:test";
 import { runPlanValidate } from "../../src/commands/plan.js";
 
 test("validator fires on legacy workflow-runtime plan with no yaml meta blocks", async () => {
-  const planPath = resolve(
-    __dirname,
-    "../../../../docs/superpowers/plans/2026-05-04-workflow-runtime.md",
-  );
+  const planPath = resolve(__dirname, "../fixtures/2026-05-04-workflow-runtime.md");
   const errs: string[] = [];
   const out: string[] = [];
   const code = await runPlanValidate({
