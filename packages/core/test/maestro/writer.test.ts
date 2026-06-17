@@ -206,6 +206,42 @@ describe("MaestroSessionWriter", () => {
     }
   });
 
+  test("start succeeds when a terminated session already exists for the same task_id", () => {
+    const writer = new MaestroSessionWriter({ db, now: () => 2_000 });
+    const taskId = "task-terminated-retry";
+    seedTask(db, taskId);
+
+    writer.start({
+      task_id: taskId,
+      chain_handoff_id: "handoff-first",
+      agent_id: "agent-a",
+      wall_clock_budget_ms: 3_000,
+      cost_budget_cents: 250,
+      sub_dispatch_budget: 5,
+    });
+    writer.terminate(taskId, "completed");
+
+    let secondSession: ReturnType<typeof writer.start> | null = null;
+    expect(() => {
+      secondSession = writer.start({
+        task_id: taskId,
+        chain_handoff_id: "handoff-second",
+        agent_id: "agent-b",
+        wall_clock_budget_ms: 3_000,
+        cost_budget_cents: 250,
+        sub_dispatch_budget: 5,
+      });
+    }).not.toThrow();
+    expect(secondSession).not.toBeNull();
+    expect((secondSession as NonNullable<typeof secondSession>).chain_handoff_id).toBe(
+      "handoff-second",
+    );
+    expect((secondSession as NonNullable<typeof secondSession>).agent_id).toBe("agent-b");
+    const live = writer.get(taskId);
+    expect(live?.chain_handoff_id).toBe("handoff-second");
+    expect(live?.terminated_at).toBeNull();
+  });
+
   test("get returns a hydrated row and null when missing", () => {
     const writer = new MaestroSessionWriter({ db, now: () => 1_000 });
     const taskId = "task-get";

@@ -211,6 +211,99 @@ test("orchestrateOneTask leases for the full wall-clock budget, not the 90s defa
   db.close();
 });
 
+test("orchestrateOneTask: lease conflict short-circuits before chainStart is called", async () => {
+  const db = setupDb();
+  const bus = new TaskEventBus();
+  const sessions = new MaestroSessionWriter({ db });
+  const taskWriter = new TaskWriter(db, {
+    bus,
+    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+  });
+
+  const { task_id } = taskWriter.file({
+    prompt: "lease conflict task",
+    kind: "orchestrate",
+    eligibility: { allow_agents: [MAESTRO_AGENT.name] },
+    created_by_kind: "human",
+    created_by_id: "cli",
+  });
+
+  taskWriter.lease({
+    task_id,
+    agent_id: MAESTRO_AGENT.name,
+    ttl_ms: 60_000,
+  });
+
+  const chainStartCalls: ChainStartRequest[] = [];
+  const result = await orchestrateOneTask(task_id, {
+    db,
+    sessions,
+    taskWriter,
+    chainStart: async (req) => {
+      chainStartCalls.push(req);
+      return { handoff_id: "should-not-happen", conversation_id: "should-not-happen" };
+    },
+    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    defaults: DEFAULT_BOUNDS,
+  });
+
+  expect(chainStartCalls).toHaveLength(0);
+  expect(result.status).toBe("short_circuited");
+  if (result.status !== "short_circuited") throw new Error("expected short_circuited");
+  expect(result.reason).toBe("already_dispatched");
+  expect(sessions.get(task_id)).toBeNull();
+  db.close();
+});
+
+test("orchestrateOneTask: chainStart succeeds but sessions.start throws -> chain cancelled and task not stuck leased", async () => {
+  const db = setupDb();
+  const bus = new TaskEventBus();
+  const sessions = new MaestroSessionWriter({ db });
+  const taskWriter = new TaskWriter(db, {
+    bus,
+    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+  });
+
+  const { task_id } = taskWriter.file({
+    prompt: "sessions.start failure task",
+    kind: "orchestrate",
+    eligibility: { allow_agents: [MAESTRO_AGENT.name] },
+    created_by_kind: "human",
+    created_by_id: "cli",
+  });
+
+  const cancelledHandoffs: string[] = [];
+  let chainStartCallCount = 0;
+
+  const result = await orchestrateOneTask(task_id, {
+    db,
+    sessions: {
+      get: (id) => sessions.get(id),
+      start: () => {
+        throw new Error("db_write_failure");
+      },
+      markDispatched: (id, hid) => sessions.markDispatched(id, hid),
+    } as unknown as MaestroSessionWriter,
+    taskWriter,
+    chainStart: async () => {
+      chainStartCallCount++;
+      return { handoff_id: "orphan-chain-handoff", conversation_id: "conv-orphan" };
+    },
+    chainCancel: async (handoff_id: string) => {
+      cancelledHandoffs.push(handoff_id);
+    },
+    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    defaults: DEFAULT_BOUNDS,
+  });
+
+  expect(chainStartCallCount).toBe(1);
+  expect(cancelledHandoffs).toEqual(["orphan-chain-handoff"]);
+  expect(result.status).toBe("failed");
+  const task = taskWriter.get(task_id);
+  expect(task.status).toBe("failed");
+  db.close();
+});
+
 test("orchestrateOneTask fails with unknown_agent when selected agent does not resolve", async () => {
   const db = setupDb();
   const taskWriter = new TaskWriter(db, {

@@ -27,6 +27,7 @@ export interface CreateOrchestrateReactorOpts {
   sessions: MaestroSessionWriter;
   taskWriter: TaskWriter;
   chainStart: (req: ChainStartRequest) => Promise<{ handoff_id: string; conversation_id: string }>;
+  chainCancel?: (chain_handoff_id: string) => Promise<void>;
   resolveAgent: (name: string) => AgentDescriptor | undefined;
   defaults: ReactorBounds;
   routeAgent?: typeof routeAgent;
@@ -214,6 +215,7 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): {
       sessions: opts.sessions,
       taskWriter: opts.taskWriter,
       chainStart: opts.chainStart,
+      chainCancel: opts.chainCancel,
       resolveAgent: opts.resolveAgent,
       defaults: opts.defaults,
       routeAgent: opts.routeAgent ?? routeAgent,

@@ -6,6 +6,9 @@ import type {
   TaskWriter,
 } from "@penumbra/core";
 import {
+  InvalidTaskStatus,
+  LeaseConflict,
+  enqueueGhStatusSyncOnDb,
   MaestroSessionAlreadyDispatched,
   MaestroSessionExists,
   MaestroSessionWriter,
@@ -34,6 +37,7 @@ export type OrchestrateOneTaskOpts = {
   sessions: MaestroSessionWriter;
   taskWriter: TaskWriter;
   chainStart: (req: ChainStartRequest) => Promise<{ handoff_id: string; conversation_id: string }>;
+  chainCancel?: (chain_handoff_id: string) => Promise<void>;
   resolveAgent: (name: string) => AgentDescriptor | undefined;
   defaults: OrchestrateDefaults;
   routeAgent?: typeof routeAgent;
@@ -175,7 +179,23 @@ export async function orchestrateOneTask(
     sub_dispatch_budget,
   });
 
-  let chain;
+  let leaseId: string;
+  try {
+    const leaseResult = opts.taskWriter.lease({
+      task_id: taskId,
+      agent_id: agentName,
+      ttl_ms: wall_clock_budget_ms + LEASE_TTL_MARGIN_MS,
+    });
+    leaseId = leaseResult.lease_id;
+  } catch (error) {
+    if (error instanceof LeaseConflict || error instanceof InvalidTaskStatus) {
+      return { status: "short_circuited", reason: "already_dispatched" };
+    }
+    return { status: "failed", error: String(error), agent_name: agentName };
+  }
+
+  let chain: { handoff_id: string; conversation_id: string };
+  let chainIsOurs = false;
   try {
     chain = await opts.chainStart({
       initial_agent: agentName,
@@ -190,7 +210,37 @@ export async function orchestrateOneTask(
       // self-complete this task. See agentchat withOrchestrateTools.
       dispatch_kind: "orchestrate",
     });
+    chainIsOurs = true;
   } catch (error) {
+    // chainStart failed AFTER we won the lease. Release the lease and revert the
+    // task to `pending` for a clean retry (NOT `failed`) — mirrors the lease-expiry
+    // sweeper's raw reclaim. The reactor's terminated-backstop then sees no open
+    // lease and leaves the task retryable, while still recording the
+    // orchestrate_terminated event from the `failed` status returned below.
+    try {
+      const releasedAt = now();
+      const leaseRelease = opts.db.run(
+        `UPDATE task_leases SET released_at = ?, release_reason = 'chain_start_failed' WHERE task_id = ? AND released_at IS NULL`,
+        [releasedAt, taskId],
+      );
+      // Only revert + emit if we actually closed the open lease (guards against a
+      // concurrent release). Mirror the lease-sweeper: flip the task to pending,
+      // keep the gh status-sync invariant, and record a 'released' audit event.
+      if (leaseRelease.changes > 0) {
+        opts.db.run(
+          `UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ? AND status = 'leased'`,
+          [releasedAt, taskId],
+        );
+        enqueueGhStatusSyncOnDb(opts.db, releasedAt, taskId, "leased", "pending");
+        opts.db.run(
+          `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+           VALUES (?, ?, 'released', NULL, ?)`,
+          [taskId, releasedAt, JSON.stringify({ reason: "chain_start_failed", lease_id: leaseId })],
+        );
+      }
+    } catch {
+      // best-effort; the lease sweeper reclaims the task on TTL expiry if this fails
+    }
     const parsed = parseSubscriptionPressureError(error);
     if (parsed && parsed.earliest_resets_at !== null) {
       let resumeAtMs = parsed.earliest_resets_at;
@@ -213,17 +263,10 @@ export async function orchestrateOneTask(
     };
   }
 
-  if (preboundSession) {
-    try {
+  try {
+    if (preboundSession) {
       opts.sessions.markDispatched(taskId, chain.handoff_id);
-    } catch (error) {
-      if (error instanceof MaestroSessionAlreadyDispatched) {
-        return { status: "short_circuited", reason: "already_dispatched" };
-      }
-      return { status: "failed", error: String(error), agent_name: agentName };
-    }
-  } else {
-    try {
+    } else {
       opts.sessions.start({
         task_id: taskId,
         chain_handoff_id: chain.handoff_id,
@@ -232,21 +275,21 @@ export async function orchestrateOneTask(
         cost_budget_cents,
         sub_dispatch_budget,
       });
-    } catch (error) {
-      if (error instanceof MaestroSessionExists) {
-        return { status: "short_circuited", reason: "already_dispatched" };
-      }
-      return { status: "failed", error: String(error), agent_name: agentName };
     }
-  }
-
-  try {
-    opts.taskWriter.lease({
-      task_id: taskId,
-      agent_id: agentName,
-      ttl_ms: wall_clock_budget_ms + LEASE_TTL_MARGIN_MS,
-    });
   } catch (error) {
+    if (chainIsOurs && opts.chainCancel) {
+      opts
+        .chainCancel(chain.handoff_id)
+        .catch((err) => console.warn("[orchestrate-one-task] best-effort chainCancel failed", err));
+    }
+    try {
+      opts.taskWriter.fail({ task_id: taskId, lease_id: leaseId, reason: "session_start_failed" });
+    } catch {
+      // best-effort; the lease sweeper can reclaim the task if fail() also fails
+    }
+    if (error instanceof MaestroSessionExists || error instanceof MaestroSessionAlreadyDispatched) {
+      return { status: "short_circuited", reason: "already_dispatched" };
+    }
     return { status: "failed", error: String(error), agent_name: agentName };
   }
 

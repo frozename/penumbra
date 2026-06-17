@@ -61,7 +61,7 @@ export class MaestroSessionWriter {
         .query<
           { task_id: string },
           [string]
-        >("SELECT task_id FROM maestro_sessions WHERE task_id = ?")
+        >("SELECT task_id FROM maestro_sessions WHERE task_id = ? AND terminated_at IS NULL")
         .get(params.task_id);
       if (existing) {
         throw new MaestroSessionExists(params.task_id);
@@ -73,7 +73,20 @@ export class MaestroSessionWriter {
           `INSERT INTO maestro_sessions (
             task_id, chain_handoff_id, agent_id, started_at,
             wall_clock_budget_ms, cost_budget_cents, sub_dispatch_budget
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(task_id) DO UPDATE SET
+            chain_handoff_id = excluded.chain_handoff_id,
+            agent_id = excluded.agent_id,
+            started_at = excluded.started_at,
+            wall_clock_budget_ms = excluded.wall_clock_budget_ms,
+            cost_budget_cents = excluded.cost_budget_cents,
+            sub_dispatch_budget = excluded.sub_dispatch_budget,
+            cost_consumed_cents = 0,
+            sub_dispatches_consumed = 0,
+            soft_warned_at = NULL,
+            terminated_at = NULL,
+            termination_reason = NULL
+          WHERE maestro_sessions.terminated_at IS NOT NULL`,
         )
         .run(
           params.task_id,

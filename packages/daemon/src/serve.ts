@@ -1377,6 +1377,8 @@ export function serve(opts: ServeOpts): DaemonHandle {
     bus: taskEvents,
     sessions: maestroSessions,
     taskWriter,
+    chainCancel: (chain_handoff_id: string) =>
+      cancelChainByHandoffId(opts.services, chain_handoff_id),
     chainStart: async (request: ChainStartRequest) => {
       const response = await chainStartInternal(request, opts.services, {
         applyMaestroBudgetGate: false,
