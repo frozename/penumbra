@@ -368,10 +368,17 @@ const highCount = (review && review.high_count) || 0
 const landCandidate = (review && review.land_candidate) || greenBranch
 const reviewVerdict = (review && review.verdict) || 'unknown'
 const fixRejected = !!(review && review.fix_rejected)
+// The daemon adversarial-review can return 0 completed personas (unavailable / transient):
+// high_count is then 0 not because the branch is clean but because nothing reviewed it.
+// Treat that as NOT clean — the review must have actually run.
+const reviewPersonas = review && Array.isArray(review.completed_personas) ? review.completed_personas.length : 0
+const reviewRan = reviewPersonas > 0
 
-log(`Review: verdict="${reviewVerdict}" high=${highCount} land_candidate=${landCandidate} fix_rejected=${fixRejected}`)
+log(
+  `Review: verdict="${reviewVerdict}" high=${highCount} personas=${reviewPersonas} land_candidate=${landCandidate} fix_rejected=${fixRejected}`,
+)
 
-const clean = green && highCount === 0 && !fixRejected
+const clean = green && highCount === 0 && !fixRejected && reviewRan
 
 return {
   ok: true,
@@ -383,6 +390,8 @@ return {
   fix_until_green: { green, final_branch: greenBranch, rounds_used: roundsUsed, rounds: fixRounds, check: plan.check_command },
   review: {
     verdict: reviewVerdict,
+    ran: reviewRan,
+    completed_personas: reviewPersonas,
     high_count: highCount,
     medium_count: (review && review.medium_count) || 0,
     low_count: (review && review.low_count) || 0,
@@ -393,8 +402,10 @@ return {
   green_for_land: clean,
   land_candidate: landCandidate,
   next: clean
-    ? `CLEAN: check green + 0 HIGH findings. Maestro: run the authoritative land-check on ${landCandidate} (sibling-worktree/own-install if cross-package), then dispatch_land -> verify HEAD+content in main -> push -> teardown.`
-    : fixRejected
-      ? `Review fix-round was rejected by the independent grader; land candidate stays the pre-review branch ${landCandidate}. Maestro decides.`
-      : `${highCount} HIGH finding(s) remain after the review fix-round (2-round cap). Maestro: lane_close review_debt, or run another targeted fix round before landing.`,
+    ? `CLEAN: check green + review ran (${reviewPersonas} personas) + 0 HIGH findings. Maestro: run the authoritative land-check on ${landCandidate} (sibling-worktree/own-install if cross-package), then dispatch_land -> verify HEAD+content in main -> push -> teardown.`
+    : !reviewRan
+      ? `Check is green but the daemon adversarial-review did NOT run (0 personas) — the branch is UNREVIEWED. Maestro must review ${landCandidate} manually (or re-run the review) before landing; do NOT treat high_count=0 as clean.`
+      : fixRejected
+        ? `Review fix-round was rejected by the independent grader; land candidate stays the pre-review branch ${landCandidate}. Maestro decides.`
+        : `${highCount} HIGH finding(s) remain after the review fix-round (2-round cap). Maestro: lane_close review_debt, or run another targeted fix round before landing.`,
 }
