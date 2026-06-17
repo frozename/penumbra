@@ -409,12 +409,13 @@ describe("TaskWriter lifecycle", () => {
     expect(leaseRow!.release_reason).toBe("cancelled");
   });
 
-  test("cancel on done task throws InvalidTaskStatus", () => {
+  test("cancel on a completed task throws and does not overwrite done", () => {
     const { task_id } = writer.file(baseInput());
     const lease = writer.lease({ task_id, agent_id: "agent-a" });
-    writer.complete({ task_id, lease_id: lease.lease_id, result_summary: "done" });
+    writer.complete({ task_id, lease_id: lease.lease_id, result_summary: "finished" });
 
     expect(() => writer.cancel({ task_id })).toThrow(InvalidTaskStatus);
+    expect(writer.get(task_id).status).toBe("done");
   });
 
   test("complete/fail/cancel on unknown task throws TaskNotFound", () => {

@@ -625,53 +625,55 @@ export class TaskWriter {
     const lease_id = `lease_${crypto.randomUUID().toLowerCase()}`;
     const emittedEvents: TaskEvent[] = [];
 
-    const lease = this.db.transaction(() => {
-      const taskRow = this.db
-        .query<{ status: string }, [string]>(`SELECT status FROM tasks WHERE id = ?`)
-        .get(validated.task_id);
-      if (!taskRow) throw new TaskNotFound(validated.task_id);
+    const lease = this.db
+      .transaction(() => {
+        const taskRow = this.db
+          .query<{ status: string }, [string]>(`SELECT status FROM tasks WHERE id = ?`)
+          .get(validated.task_id);
+        if (!taskRow) throw new TaskNotFound(validated.task_id);
 
-      const openLease = this.db
-        .query<
-          { one: number },
-          [string]
-        >(`SELECT 1 AS one FROM task_leases WHERE task_id = ? AND released_at IS NULL LIMIT 1`)
-        .get(validated.task_id);
-      if (openLease) throw new LeaseConflict(validated.task_id);
+        const openLease = this.db
+          .query<
+            { one: number },
+            [string]
+          >(`SELECT 1 AS one FROM task_leases WHERE task_id = ? AND released_at IS NULL LIMIT 1`)
+          .get(validated.task_id);
+        if (openLease) throw new LeaseConflict(validated.task_id);
 
-      if (taskRow.status !== "pending") {
-        throw new InvalidTaskStatus(validated.task_id, taskRow.status as TaskStatus);
-      }
+        if (taskRow.status !== "pending") {
+          throw new InvalidTaskStatus(validated.task_id, taskRow.status as TaskStatus);
+        }
 
-      const now = this.now();
-      const expires_at = now + ttl_ms;
+        const now = this.now();
+        const expires_at = now + ttl_ms;
 
-      this.db.run(
-        `INSERT INTO task_leases (
+        this.db.run(
+          `INSERT INTO task_leases (
            id, task_id, agent_id, claimed_at, expires_at, released_at, release_reason, auction_score, original_ttl_ms
          ) VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?)`,
-        [lease_id, validated.task_id, validated.agent_id, now, expires_at, ttl_ms],
-      );
-      this.db.run(`UPDATE tasks SET status = 'leased', updated_at = ? WHERE id = ?`, [
-        now,
-        validated.task_id,
-      ]);
-      this.enqueueGhStatusSync(validated.task_id, "pending", "leased");
-      this.db.run(
-        `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+          [lease_id, validated.task_id, validated.agent_id, now, expires_at, ttl_ms],
+        );
+        this.db.run(`UPDATE tasks SET status = 'leased', updated_at = ? WHERE id = ?`, [
+          now,
+          validated.task_id,
+        ]);
+        this.enqueueGhStatusSync(validated.task_id, "pending", "leased");
+        this.db.run(
+          `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
          VALUES (?, ?, 'leased', ?, ?)`,
-        [validated.task_id, now, validated.agent_id, JSON.stringify({ lease_id, ttl_ms })],
-      );
-      recordEvent(emittedEvents, {
-        task_id: validated.task_id,
-        at: now,
-        kind: "leased",
-        actor: validated.agent_id,
-        payload: { lease_id, ttl_ms },
-      });
+          [validated.task_id, now, validated.agent_id, JSON.stringify({ lease_id, ttl_ms })],
+        );
+        recordEvent(emittedEvents, {
+          task_id: validated.task_id,
+          at: now,
+          kind: "leased",
+          actor: validated.agent_id,
+          payload: { lease_id, ttl_ms },
+        });
 
-      return { lease_id, expires_at };
-    })();
+        return { lease_id, expires_at };
+      })
+      .immediate();
     publishEvents(this.bus, emittedEvents);
     return lease;
   }
@@ -1159,87 +1161,100 @@ export class TaskWriter {
 
   cancel(input: CancelTaskInput): { status: "cancelled" } {
     const validated = CancelTaskInputSchema.parse(input);
-    const task = this.get(validated.task_id);
-    const session =
-      task.kind === "orchestrate" && this.maestroSessions
-        ? this.maestroSessions.get(validated.task_id)
-        : null;
     const emittedEvents: TaskEvent[] = [];
+    let sessionTerminatedHere = false;
+    let terminatedChainHandoffId: string | null = null;
 
-    const cancelled = this.db.transaction(() => {
-      if (task.status === "done" || task.status === "failed" || task.status === "cancelled") {
-        throw new InvalidTaskStatus(validated.task_id, task.status);
-      }
+    const cancelled = this.db
+      .transaction(() => {
+        const taskRow = this.db
+          .query<
+            { id: string; kind: TaskKind; status: TaskStatus },
+            [string]
+          >(`SELECT id, kind, status FROM tasks WHERE id = ?`)
+          .get(validated.task_id);
+        if (!taskRow) throw new TaskNotFound(validated.task_id);
 
-      const now = this.now();
-      const openLease = this.db
-        .query<
-          { id: string },
-          [string]
-        >(`SELECT id FROM task_leases WHERE task_id = ? AND released_at IS NULL LIMIT 1`)
-        .get(validated.task_id);
-      if (openLease) {
-        this.db.run(
-          `UPDATE task_leases
+        if (
+          taskRow.status === "done" ||
+          taskRow.status === "failed" ||
+          taskRow.status === "cancelled"
+        ) {
+          throw new InvalidTaskStatus(validated.task_id, taskRow.status);
+        }
+
+        const now = this.now();
+        const openLease = this.db
+          .query<
+            { id: string },
+            [string]
+          >(`SELECT id FROM task_leases WHERE task_id = ? AND released_at IS NULL LIMIT 1`)
+          .get(validated.task_id);
+        if (openLease) {
+          this.db.run(
+            `UPDATE task_leases
            SET released_at = ?, release_reason = 'cancelled'
            WHERE id = ?`,
-          [now, openLease.id],
-        );
-      }
+            [now, openLease.id],
+          );
+        }
 
-      this.db.run(
-        `UPDATE tasks
+        const cancelResult = this.db.run(
+          `UPDATE tasks
          SET status = 'cancelled', failure_reason = ?, updated_at = ?
-         WHERE id = ?`,
-        [validated.reason ?? null, now, validated.task_id],
-      );
-      this.enqueueGhStatusSync(validated.task_id, task.status, "cancelled");
-      this.db.run(
-        `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
-         VALUES (?, ?, 'cancelled', NULL, ?)`,
-        [validated.task_id, now, JSON.stringify({ reason: validated.reason })],
-      );
-      recordEvent(emittedEvents, {
-        task_id: validated.task_id,
-        at: now,
-        kind: "cancelled",
-        actor: null,
-        payload: { reason: validated.reason },
-      });
+         WHERE id = ? AND status NOT IN ('done','failed','cancelled')`,
+          [validated.reason ?? null, now, validated.task_id],
+        );
+        // Defend the terminal-state invariant if another writer won the race.
+        if (cancelResult.changes === 0) {
+          const currentStatus = this.db
+            .query<{ status: TaskStatus }, [string]>(`SELECT status FROM tasks WHERE id = ?`)
+            .get(validated.task_id);
+          throw new InvalidTaskStatus(validated.task_id, currentStatus?.status ?? taskRow.status);
+        }
 
-      if (
-        task.kind === "orchestrate" &&
-        this.maestroSessions &&
-        session &&
-        session.terminated_at === null
-      ) {
-        this.maestroSessions.terminate(validated.task_id, "cancelled");
+        this.enqueueGhStatusSync(validated.task_id, taskRow.status, "cancelled");
         this.db.run(
-          `INSERT INTO task_events (task_id, maestro_session_task_id, at, kind, actor, payload_json)
-           VALUES (?, ?, ?, 'orchestrate_terminated', NULL, ?)`,
-          [validated.task_id, validated.task_id, now, JSON.stringify({ reason: "cancelled" })],
+          `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+         VALUES (?, ?, 'cancelled', NULL, ?)`,
+          [validated.task_id, now, JSON.stringify({ reason: validated.reason })],
         );
         recordEvent(emittedEvents, {
           task_id: validated.task_id,
           at: now,
-          kind: "orchestrate_terminated",
+          kind: "cancelled",
           actor: null,
-          payload: { reason: "cancelled" },
+          payload: { reason: validated.reason },
         });
-      }
 
-      return { status: "cancelled" as const };
-    })();
+        if (taskRow.kind === "orchestrate" && this.maestroSessions) {
+          const session = this.maestroSessions.get(validated.task_id);
+          if (session && session.terminated_at === null) {
+            terminatedChainHandoffId = session.chain_handoff_id;
+            this.maestroSessions.terminate(validated.task_id, "cancelled");
+            sessionTerminatedHere = true;
+            this.db.run(
+              `INSERT INTO task_events (task_id, maestro_session_task_id, at, kind, actor, payload_json)
+             VALUES (?, ?, ?, 'orchestrate_terminated', NULL, ?)`,
+              [validated.task_id, validated.task_id, now, JSON.stringify({ reason: "cancelled" })],
+            );
+            recordEvent(emittedEvents, {
+              task_id: validated.task_id,
+              at: now,
+              kind: "orchestrate_terminated",
+              actor: null,
+              payload: { reason: "cancelled" },
+            });
+          }
+        }
+
+        return { status: "cancelled" as const };
+      })
+      .immediate();
     publishEvents(this.bus, emittedEvents);
-    if (
-      task.kind === "orchestrate" &&
-      session &&
-      session.terminated_at === null &&
-      session.chain_handoff_id &&
-      this.onOrchestrateCancel
-    ) {
+    if (sessionTerminatedHere && terminatedChainHandoffId && this.onOrchestrateCancel) {
       try {
-        this.onOrchestrateCancel(session.chain_handoff_id);
+        this.onOrchestrateCancel(terminatedChainHandoffId);
       } catch (error) {
         console.warn("[task.cancel] onOrchestrateCancel failed", error);
       }
