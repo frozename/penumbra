@@ -78,9 +78,20 @@ export async function runWorktreeGc(opts: WorktreeGcOpts): Promise<WorktreeGcRes
     const writableDb = new Database(resolveStorageDbPath(storageRoot));
     loadSqliteVec(writableDb);
     const gcManager: WorktreeGcManager = opts.worktreeManager ?? new WorktreeManager();
+    const writableHandoffReader = new HandoffReader({ db: writableDb });
 
     for (const candidate of candidates) {
       try {
+        const activeHandoff = writableHandoffReader
+          .listByStatus({
+            statuses: ["dispatched", "pending", "approved"],
+          })
+          .find((handoff) => handoff.handoff_id === candidate.handoff_id);
+
+        if (activeHandoff) {
+          continue;
+        }
+
         await gcManager.teardownWorktree(candidate.handoff_id, /*force=*/ true);
         const ts = new Date().toISOString();
         writableDb

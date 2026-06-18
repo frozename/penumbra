@@ -44,6 +44,22 @@ function seedHandoff(
   db.close();
 }
 
+function updateHandoffStatus(
+  storageRoot: string,
+  handoff_id: string,
+  status: string,
+  resolved_at: string | null,
+): void {
+  const db = new Database(join(storageRoot, "db.sqlite"));
+  db.run(
+    `UPDATE handoffs
+        SET status = ?, resolved_at = ?
+      WHERE handoff_id = ?`,
+    [status, resolved_at, handoff_id],
+  );
+  db.close();
+}
+
 function makeHandle(handoffId: string): WorktreeHandle {
   return {
     handoffId,
@@ -114,6 +130,33 @@ describe("runWorktreeGc", () => {
     expect(result.n_removed).toBe(2);
     expect(result.n_failed).toBe(0);
     expect(teardownCalls.sort()).toEqual(["h-apply-1", "h-apply-2"].sort());
+  });
+
+  test("skips a candidate that becomes active again before teardown", async () => {
+    seedHandoff(storageRoot, "h-race-old", "completed", OLD_RESOLVED);
+    seedHandoff(storageRoot, "h-race-live", "completed", OLD_RESOLVED);
+
+    const teardownCalls: string[] = [];
+    const wm = {
+      listWorktrees: () => [makeHandle("h-race-old"), makeHandle("h-race-live")],
+      teardownWorktree: async (id: string) => {
+        teardownCalls.push(id);
+        if (id === "h-race-old") {
+          updateHandoffStatus(storageRoot, "h-race-live", "dispatched", null);
+        }
+      },
+    };
+
+    const result = await runWorktreeGc({
+      storageRoot,
+      apply: true,
+      gracePeriodMs: GRACE_MS,
+      worktreeManager: wm,
+    });
+
+    expect(result.n_removed).toBe(1);
+    expect(result.n_failed).toBe(0);
+    expect(teardownCalls).toEqual(["h-race-old"]);
   });
 
   test("pending handoffs cause both dry-run and apply to throw PendingHandoffsError", async () => {
