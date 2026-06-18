@@ -1,5 +1,9 @@
 import { describe, expect, test, beforeEach } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { Database } from "bun:sqlite";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { spawn } from "node:child_process";
 import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { migrate } from "../../src/db/migrations.js";
 import { TaskWriter } from "../../src/tasks/writer.js";
@@ -22,6 +26,17 @@ function freshDb(): Database {
   migrate(db, { embeddingDim: 384 });
   return db;
 }
+
+function freshDbFile(): string {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-auction-race-"));
+  const dbPath = join(dir, "race.sqlite");
+  const db = new Database(dbPath);
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  db.close();
+  return dbPath;
+}
+const WRITER_URL = new URL("../../src/tasks/writer.js", import.meta.url).href;
 
 function baseInput(overrides: Partial<FileTaskInput> = {}): FileTaskInput {
   return {
@@ -191,6 +206,178 @@ describe("TaskWriter.next auction window", () => {
       .get(task_id);
     expect(rows).not.toBeNull();
     expect(rows!.n).toBe(1);
+  });
+
+  test("50 concurrent next() calls: exactly one lease is created", async () => {
+    const dbPath = freshDbFile();
+    const dbDir = dbPath.slice(0, dbPath.lastIndexOf("/"));
+    const workerScript = join(tmpdir(), `penumbra-auction-race-${crypto.randomUUID()}.mjs`);
+    const startAt = Date.now() + 500;
+    const { task_id } = (() => {
+      const writer = new TaskWriter(new Database(dbPath), {
+        now: () => 10_000,
+        resolveAgent: (name) => agents.get(name),
+        routeAgent: () => ({
+          detail: "rank" as const,
+          candidates: {
+            task_type: "implement_substantial",
+            window: { from: null, to: "" },
+            candidates: [
+              {
+                agent_name: "A",
+                samples: 1,
+                successes: 1,
+                failures: 0,
+                neutral: 0,
+                success_rate: 1,
+                avg_rounds: null,
+                avg_latency_ms: null,
+                cost_per_success_usd: null,
+                avg_reviewer_findings: null,
+                avg_trust_score: null,
+                score: 90,
+                last_outcome_at: "",
+              },
+              {
+                agent_name: "B",
+                samples: 1,
+                successes: 1,
+                failures: 0,
+                neutral: 0,
+                success_rate: 1,
+                avg_rounds: null,
+                avg_latency_ms: null,
+                cost_per_success_usd: null,
+                avg_reviewer_findings: null,
+                avg_trust_score: null,
+                score: 30,
+                last_outcome_at: "",
+              },
+            ],
+          },
+        }),
+      });
+      const created = writer.file(baseInput());
+      return created;
+    })();
+
+    writeFileSync(
+      workerScript,
+      `import { Database } from "bun:sqlite";
+import { TaskWriter } from ${JSON.stringify(WRITER_URL)};
+
+try {
+  const dbPath = process.argv[2];
+  const startAt = Number(process.argv[3]);
+  const taskId = process.argv[4];
+  const agentId = process.argv[5];
+  const db = new Database(dbPath);
+  const writer = new TaskWriter(db, {
+    now: () => 10_000,
+    resolveAgent: (name) => new Map([
+      ["A", { name: "A", tags: ["core"], tier: "oc", cost_cents_per_run: 25 }],
+      ["B", { name: "B", tags: ["core"], tier: "oc", cost_cents_per_run: 25 }],
+    ]).get(name),
+    routeAgent: () => ({
+      detail: "rank",
+      candidates: {
+        task_type: "implement_substantial",
+        window: { from: null, to: "" },
+        candidates: [
+          {
+            agent_name: "A",
+            samples: 1,
+            successes: 1,
+            failures: 0,
+            neutral: 0,
+            success_rate: 1,
+            avg_rounds: null,
+            avg_latency_ms: null,
+            cost_per_success_usd: null,
+            avg_reviewer_findings: null,
+            avg_trust_score: null,
+            score: 90,
+            last_outcome_at: "",
+          },
+          {
+            agent_name: "B",
+            samples: 1,
+            successes: 1,
+            failures: 0,
+            neutral: 0,
+            success_rate: 1,
+            avg_rounds: null,
+            avg_latency_ms: null,
+            cost_per_success_usd: null,
+            avg_reviewer_findings: null,
+            avg_trust_score: null,
+            score: 30,
+            last_outcome_at: "",
+          },
+        ],
+      },
+    }),
+  });
+  while (Date.now() < startAt) {}
+  const result = await writer.next({ agent_id: agentId });
+  console.log(JSON.stringify(result));
+  db.close();
+} catch (err) {
+  console.error(err instanceof Error ? err.stack ?? err.message : String(err));
+  process.exit(1);
+}
+`,
+    );
+
+    const attempts = Array.from(
+      { length: 50 },
+      (_, i) =>
+        new Promise<string | null>((resolve, reject) => {
+          const child = spawn(process.execPath, [
+            workerScript,
+            dbPath,
+            String(startAt),
+            task_id,
+            i % 2 === 0 ? "A" : "B",
+          ]);
+          let stdout = "";
+          let stderr = "";
+          child.stdout.on("data", (chunk) => {
+            stdout += chunk.toString();
+          });
+          child.stderr.on("data", (chunk) => {
+            stderr += chunk.toString();
+          });
+          child.on("exit", (code) => {
+            if (code === 0) resolve(stdout.trim() === "null" ? null : JSON.parse(stdout.trim()));
+            else reject(stderr || `worker exited ${code}`);
+          });
+        }),
+    );
+
+    try {
+      const results = await Promise.allSettled(attempts);
+      const fulfilled = results
+        .filter((r): r is PromiseFulfilledResult<string | null> => r.status === "fulfilled")
+        .map((r) => r.value)
+        .filter((value): value is string => value !== null);
+
+      expect(fulfilled).toHaveLength(1);
+
+      const verificationDb = new Database(dbPath);
+      const openLeases = verificationDb
+        .query<
+          { n: number },
+          [string]
+        >(`SELECT COUNT(*) AS n FROM task_leases WHERE task_id = ? AND released_at IS NULL`)
+        .get(task_id);
+      verificationDb.close();
+      expect(openLeases!.n).toBe(1);
+    } finally {
+      rmSync(workerScript, { force: true });
+      rmSync(dbPath, { force: true });
+      rmSync(dbDir, { recursive: true, force: true });
+    }
   });
 });
 

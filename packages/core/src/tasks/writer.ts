@@ -554,52 +554,54 @@ export class TaskWriter {
       }
       callerScore = rankings.find((row) => row.agent_name === input.agent_id)?.score ?? null;
 
-      const leased = this.db.transaction(() => {
-        const taskRow = this.db
-          .query<{ status: TaskStatus }, [string]>(`SELECT status FROM tasks WHERE id = ?`)
-          .get(candidate.id);
-        if (!taskRow || taskRow.status !== "pending") return null;
+      const leased = this.db
+        .transaction(() => {
+          const taskRow = this.db
+            .query<{ status: TaskStatus }, [string]>(`SELECT status FROM tasks WHERE id = ?`)
+            .get(candidate.id);
+          if (!taskRow || taskRow.status !== "pending") return null;
 
-        const openLease = this.db
-          .query<{ one: number }, [string]>(
-            `SELECT 1 AS one
+          const openLease = this.db
+            .query<{ one: number }, [string]>(
+              `SELECT 1 AS one
              FROM task_leases
              WHERE task_id = ? AND released_at IS NULL
              LIMIT 1`,
-          )
-          .get(candidate.id);
-        if (openLease) return null;
+            )
+            .get(candidate.id);
+          if (openLease) return null;
 
-        const ttl_ms = candidate.eligibility.heartbeat_ttl_ms ?? DEFAULT_LEASE_TTL_MS;
-        const lease_id = `lease_${crypto.randomUUID().toLowerCase()}`;
-        const expires_at = now + ttl_ms;
+          const ttl_ms = candidate.eligibility.heartbeat_ttl_ms ?? DEFAULT_LEASE_TTL_MS;
+          const lease_id = `lease_${crypto.randomUUID().toLowerCase()}`;
+          const expires_at = now + ttl_ms;
 
-        this.db.run(
-          `INSERT INTO task_leases (
+          this.db.run(
+            `INSERT INTO task_leases (
              id, task_id, agent_id, claimed_at, expires_at, released_at, release_reason, auction_score, original_ttl_ms
            ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
-          [lease_id, candidate.id, input.agent_id, now, expires_at, callerScore, ttl_ms],
-        );
-        this.db.run(`UPDATE tasks SET status = 'leased', updated_at = ? WHERE id = ?`, [
-          now,
-          candidate.id,
-        ]);
-        this.enqueueGhStatusSync(candidate.id, "pending", "leased");
-        this.db.run(
-          `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+            [lease_id, candidate.id, input.agent_id, now, expires_at, callerScore, ttl_ms],
+          );
+          this.db.run(`UPDATE tasks SET status = 'leased', updated_at = ? WHERE id = ?`, [
+            now,
+            candidate.id,
+          ]);
+          this.enqueueGhStatusSync(candidate.id, "pending", "leased");
+          this.db.run(
+            `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
            VALUES (?, ?, 'leased', ?, ?)`,
-          [candidate.id, now, input.agent_id, JSON.stringify({ lease_id, ttl_ms })],
-        );
-        recordEvent(emittedEvents, {
-          task_id: candidate.id,
-          at: now,
-          kind: "leased",
-          actor: input.agent_id,
-          payload: { lease_id, ttl_ms },
-        });
+            [candidate.id, now, input.agent_id, JSON.stringify({ lease_id, ttl_ms })],
+          );
+          recordEvent(emittedEvents, {
+            task_id: candidate.id,
+            at: now,
+            kind: "leased",
+            actor: input.agent_id,
+            payload: { lease_id, ttl_ms },
+          });
 
-        return { lease_id, expires_at };
-      })();
+          return { lease_id, expires_at };
+        })
+        .immediate();
 
       if (!leased) continue;
 
