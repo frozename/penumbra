@@ -68,7 +68,7 @@ test("init installs the dispatch-discipline CLAUDE.md block in the temp claudeUs
 test("init copies bundled penumbra workflows into claude user workflows dir", async () => {
   writeFileSync(join(workflowsSourceDir, "penumbra-fanout.js"), "export default 'fanout';\n");
   writeFileSync(join(workflowsSourceDir, "penumbra-swarm.js"), "export default 'swarm';\n");
-  writeFileSync(join(workflowsSourceDir, "other.js"), "export default 'other';\n");
+  writeFileSync(join(workflowsSourceDir, "other.md"), "# other\n");
 
   const targetDir = join(claudeUserDir, "workflows");
   mkdirSync(targetDir, { recursive: true });
@@ -87,6 +87,36 @@ test("init copies bundled penumbra workflows into claude user workflows dir", as
   expect(readFileSync(join(targetDir, "penumbra-swarm.js"), "utf8")).toBe(
     "export default 'swarm';\n",
   );
-  expect(existsSync(join(targetDir, "other.js"))).toBe(false);
+  expect(existsSync(join(targetDir, "other.md"))).toBe(false);
   expect(readFileSync(join(targetDir, "keep-me.js"), "utf8")).toBe("export default 'keep';\n");
+});
+
+test("init copies all .js workflows including non-prefixed ones", async () => {
+  writeFileSync(join(workflowsSourceDir, "penumbra-fanout.js"), "export default 'fanout';\n");
+  writeFileSync(join(workflowsSourceDir, "land-and-close.js"), "export default 'land';\n");
+  writeFileSync(join(workflowsSourceDir, "adversarial-review.js"), "export default 'ar';\n");
+  writeFileSync(join(workflowsSourceDir, "integration-audit.js"), "export default 'ia';\n");
+  writeFileSync(join(workflowsSourceDir, "README.md"), "# docs\n");
+
+  const targetDir = join(claudeUserDir, "workflows");
+  const exit = await runInit({
+    storageRoot: dir,
+    uuid: () => "tok-all",
+    claudeUserDir,
+    workflowsSourceDir,
+  });
+  expect(exit).toBe(0);
+  expect(readFileSync(join(targetDir, "penumbra-fanout.js"), "utf8")).toBe(
+    "export default 'fanout';\n",
+  );
+  expect(readFileSync(join(targetDir, "land-and-close.js"), "utf8")).toBe(
+    "export default 'land';\n",
+  );
+  expect(readFileSync(join(targetDir, "adversarial-review.js"), "utf8")).toBe(
+    "export default 'ar';\n",
+  );
+  expect(readFileSync(join(targetDir, "integration-audit.js"), "utf8")).toBe(
+    "export default 'ia';\n",
+  );
+  expect(existsSync(join(targetDir, "README.md"))).toBe(false);
 });

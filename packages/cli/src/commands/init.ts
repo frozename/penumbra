@@ -72,12 +72,10 @@ export async function runInit(opts: RunInitOpts): Promise<number> {
       `penumbra: warning: workflows source dir not found at ${workflowsSourceDir}; skipping bundled workflow install\n`,
     );
   } else {
-    const workflowFiles = readdirSync(workflowsSourceDir).filter((name) =>
-      /^penumbra-.*\.js$/.test(name),
-    );
+    const workflowFiles = readdirSync(workflowsSourceDir).filter((name) => /\.js$/.test(name));
     if (workflowFiles.length === 0) {
       process.stdout.write(
-        `penumbra: warning: no bundled workflows matching penumbra-*.js in ${workflowsSourceDir}; skipping install\n`,
+        `penumbra: warning: no bundled .js workflows found in ${workflowsSourceDir}; skipping bundled workflow install\n`,
       );
     } else {
       mkdirSync(workflowsTargetDir, { recursive: true });
