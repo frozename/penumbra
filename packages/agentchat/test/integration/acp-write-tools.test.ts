@@ -234,6 +234,96 @@ describe("ACP write-tools integration", () => {
     }
   });
 
+  test("fs/write_text_file correctly extracts text from content block objects", async () => {
+    const harness = await createIntegrationHarness({ fsWriteTextFile: true });
+    try {
+      harness.setPromptHandler(async (server) => {
+        const response = await server.sendRequest("fs/write_text_file", {
+          path: "notes-obj.txt",
+          content: { type: "text", text: "hello world" },
+        });
+        expect(response as Record<string, unknown>).toEqual({ jsonrpc: "2.0", id: 1, result: {} });
+        return { stopReason: "end_turn" };
+      });
+
+      await harness.runDispatch();
+      const content = await readFile(join(harness.worktreeRoot, "notes-obj.txt"), "utf8");
+      expect(content).toBe("hello world");
+      expect(content).not.toContain("[object Object]");
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test("fs/write_text_file correctly extracts text from content block arrays", async () => {
+    const harness = await createIntegrationHarness({ fsWriteTextFile: true });
+    try {
+      harness.setPromptHandler(async (server) => {
+        const response = await server.sendRequest("fs/write_text_file", {
+          path: "notes-arr.txt",
+          content: [
+            { type: "text", text: "a" },
+            { type: "text", text: "b" },
+          ],
+        });
+        expect(response as Record<string, unknown>).toEqual({ jsonrpc: "2.0", id: 1, result: {} });
+        return { stopReason: "end_turn" };
+      });
+
+      await harness.runDispatch();
+      const content = await readFile(join(harness.worktreeRoot, "notes-arr.txt"), "utf8");
+      expect(content).toBe("ab");
+      expect(content).not.toContain("[object Object]");
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test("fs/write_text_file rejects bare objects without text", async () => {
+    const harness = await createIntegrationHarness({ fsWriteTextFile: true });
+    try {
+      harness.setPromptHandler(async (server) => {
+        const response = await server.sendRequest("fs/write_text_file", {
+          path: "notes-bad-obj.txt",
+          content: { foo: 1 },
+        });
+        expect((response as any).error).toBeDefined();
+        expect((response as any).error.message).toContain("invalid content type: object");
+        return { stopReason: "end_turn" };
+      });
+
+      await harness.runDispatch();
+      let exists = true;
+      try {
+        await readFile(join(harness.worktreeRoot, "notes-bad-obj.txt"), "utf8");
+      } catch (err: any) {
+        if (err.code === "ENOENT") exists = false;
+      }
+      expect(exists).toBe(false);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test("fs/write_text_file rejects primitives (null, number)", async () => {
+    const harness = await createIntegrationHarness({ fsWriteTextFile: true });
+    try {
+      harness.setPromptHandler(async (server) => {
+        const response = await server.sendRequest("fs/write_text_file", {
+          path: "notes-prim.txt",
+          content: null,
+        });
+        expect((response as any).error).toBeDefined();
+        expect((response as any).error.message).toContain("invalid content type: object");
+        return { stopReason: "end_turn" };
+      });
+
+      await harness.runDispatch();
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   test("fs/write_text_file round-trip writes the file and returns an empty JSON-RPC result", async () => {
     const harness = await createIntegrationHarness({ fsWriteTextFile: true });
     try {

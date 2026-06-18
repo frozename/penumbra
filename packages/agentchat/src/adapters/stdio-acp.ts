@@ -703,7 +703,10 @@ export class StdioAcpAdapter implements Adapter {
                 toolName: "fs.write_text_file",
                 rawInput: {
                   path: params?.path,
-                  content_bytes: Buffer.byteLength(params?.content ?? "", "utf8"),
+                  content_bytes:
+                    typeof params?.content === "string"
+                      ? Buffer.byteLength(params.content, "utf8")
+                      : 0,
                 },
                 dispatchId: (input as any).dispatchId ?? (input as any).handoff_id ?? "unknown",
               },

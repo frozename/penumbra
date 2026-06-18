@@ -50,6 +50,42 @@ interface TerminalHandle {
   startedAt: number;
 }
 
+export function normalizeWriteTextContent(content: unknown): string {
+  if (typeof content === "string") return content;
+
+  if (Array.isArray(content)) {
+    let result = "";
+    for (const item of content) {
+      if (typeof item === "string") {
+        result += item;
+      } else if (
+        item &&
+        typeof item === "object" &&
+        "text" in item &&
+        typeof (item as any).text === "string"
+      ) {
+        result += (item as any).text;
+      } else {
+        const preview = JSON.stringify(content).slice(0, 200);
+        throw new IoError(
+          `invalid array element in content: ${typeof item}. content preview: ${preview}`,
+        );
+      }
+    }
+    return result;
+  }
+
+  if (content && typeof content === "object") {
+    const obj = content as any;
+    if ("text" in obj && typeof obj.text === "string") {
+      return obj.text;
+    }
+  }
+
+  const preview = JSON.stringify(content)?.slice(0, 200) ?? "undefined";
+  throw new IoError(`invalid content type: ${typeof content}. content preview: ${preview}`);
+}
+
 export class WriteToolsExecutor {
   private readonly oneShots = new Map<string, TerminalHandle>();
   private disposed = false;
@@ -57,9 +93,10 @@ export class WriteToolsExecutor {
   constructor(private readonly opts: WriteToolsExecutorOpts) {}
 
   async writeTextFile(
-    args: { path: string; content: string },
+    args: { path: string; content: unknown },
     ctx: ToolCallContext,
   ): Promise<{ bytesWritten: number; sha256: string }> {
+    const normalizedContent = normalizeWriteTextContent(args.content);
     await this.gate(ctx);
     const real = await this.resolvePath(args.path);
     let prev_sha256: string | null = null;
@@ -78,14 +115,14 @@ export class WriteToolsExecutor {
 
     const tmp = `${real}.tmp.${randomUUID()}`;
     try {
-      await writeFile(tmp, args.content, "utf8");
+      await writeFile(tmp, normalizedContent, "utf8");
       await rename(tmp, real);
     } catch (err: any) {
       throw new IoError(`failed to write ${args.path}: ${err?.message ?? err}`);
     }
 
-    const sha256 = createHash("sha256").update(args.content, "utf8").digest("hex");
-    const bytesWritten = Buffer.byteLength(args.content, "utf8");
+    const sha256 = createHash("sha256").update(normalizedContent, "utf8").digest("hex");
+    const bytesWritten = Buffer.byteLength(normalizedContent, "utf8");
 
     await this.opts.auditEmitter.emit("fs.write_applied", {
       path: args.path,
