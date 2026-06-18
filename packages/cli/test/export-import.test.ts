@@ -62,3 +62,56 @@ test("export dumps JSONL, import restores it idempotently", async () => {
   db4.close();
   expect(count2).toBe(1);
 });
+
+test("import quotes column identifiers instead of executing injected SQL", async () => {
+  const { db, path } = freshDb();
+  db.run(
+    `INSERT INTO t0_events(event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id,
+      session_id, event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms,
+      request_id, payload_json, payload_summary)
+     VALUES('e2','2026-04-23T00:00:00Z','2026-04-23T00:00:00Z','mcp',null,'p','u','m','s','agent-prompt','local',
+            null,null,null,null,null,null,null,'{}',null)`,
+  );
+  const before = db.query<{ c: number }, []>("SELECT COUNT(*) c FROM t0_events").get()!.c;
+  db.close();
+
+  const inPath = join(dir, "malicious.jsonl");
+  writeFileSync(
+    inPath,
+    [
+      JSON.stringify({
+        table: "t0_events",
+        row: {
+          event_id: "e3",
+          ts: "2026-04-23T00:00:00Z",
+          ingest_ts: "2026-04-23T00:00:00Z",
+          source: "mcp",
+          source_detail: null,
+          project_id: "p",
+          user_id: "u",
+          machine_id: "m",
+          session_id: "s",
+          event_type: "agent-prompt",
+          lane: "local",
+          provider: null,
+          model: null,
+          tokens_in: null,
+          tokens_out: null,
+          cost_usd: null,
+          latency_ms: null,
+          request_id: null,
+          payload_json: "{}",
+          payload_summary: null,
+          'evil"name': "boom",
+        },
+      }),
+    ].join("\n"),
+  );
+
+  await expect(runImport({ dbPath: path, inPath })).rejects.toThrow(/column named evil"name/i);
+
+  const db2 = new Database(path);
+  const after = db2.query<{ c: number }, []>("SELECT COUNT(*) c FROM t0_events").get()!.c;
+  db2.close();
+  expect(after).toBe(before);
+});

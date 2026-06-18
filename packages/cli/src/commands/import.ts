@@ -13,6 +13,10 @@ const PK: Record<string, string> = {
   t2_memories: "memory_id",
 };
 
+function quoteIdentifier(identifier: string): string {
+  return `"${identifier.replace(/"/g, '""')}"`;
+}
+
 export async function runImport(opts: RunImportOpts): Promise<number> {
   const db = new Database(opts.dbPath);
   try {
@@ -25,9 +29,10 @@ export async function runImport(opts: RunImportOpts): Promise<number> {
         const pk = PK[table];
         if (!pk) continue;
         const cols = Object.keys(row);
+        const quotedCols = cols.map((c) => quoteIdentifier(c)).join(",");
         const placeholders = cols.map(() => "?").join(",");
         db.run(
-          `INSERT INTO ${table}(${cols.join(",")}) VALUES(${placeholders}) ON CONFLICT(${pk}) DO NOTHING`,
+          `INSERT INTO ${table}(${quotedCols}) VALUES(${placeholders}) ON CONFLICT(${quoteIdentifier(pk)}) DO NOTHING`,
           cols.map((c) => row[c] as string | number | null) as (string | number | null)[],
         );
       }
