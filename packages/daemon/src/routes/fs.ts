@@ -1,4 +1,5 @@
 import type { Services } from "@penumbra/core";
+import type { DaemonServices } from "../serve.js";
 import { resolveInsideWorktree, FsPathError } from "@penumbra/core";
 import { executeGlob, executeGrep, GrepError } from "../fs-search.js";
 import * as fsNode from "node:fs";
@@ -36,8 +37,9 @@ function checkWorkerOwnership(
 export async function worktreesReadRoute(
   req: Request,
   handoff_id: string,
-  services: Services,
+  _services: Services,
 ): Promise<Response> {
+  const services = _services as DaemonServices;
   const wt = resolveWorktreeForHandoff(services, handoff_id);
   if (!wt) {
     return json(
@@ -103,8 +105,9 @@ export async function worktreesReadRoute(
 export async function worktreesWriteRoute(
   req: Request,
   handoff_id: string,
-  services: Services,
+  _services: Services,
 ): Promise<Response> {
+  const services = _services as DaemonServices;
   const wt = resolveWorktreeForHandoff(services, handoff_id);
   if (!wt) {
     return json(
@@ -208,8 +211,9 @@ export async function worktreesWriteRoute(
 export async function worktreesEditRoute(
   req: Request,
   handoff_id: string,
-  services: Services,
+  _services: Services,
 ): Promise<Response> {
+  const services = _services as DaemonServices;
   const wt = resolveWorktreeForHandoff(services, handoff_id);
   if (!wt) {
     return json(
@@ -314,8 +318,9 @@ export async function worktreesEditRoute(
 export async function worktreesGlobRoute(
   req: Request,
   handoff_id: string,
-  services: Services,
+  _services: Services,
 ): Promise<Response> {
+  const services = _services as DaemonServices;
   const wt = resolveWorktreeForHandoff(services, handoff_id);
   if (!wt) {
     return json(
@@ -374,8 +379,9 @@ export async function worktreesGlobRoute(
 export async function worktreesGrepRoute(
   req: Request,
   handoff_id: string,
-  services: Services,
+  _services: Services,
 ): Promise<Response> {
+  const services = _services as DaemonServices;
   const wt = resolveWorktreeForHandoff(services, handoff_id);
   if (!wt) {
     return json(
@@ -454,8 +460,9 @@ const EXEC_OUTPUT_MAX_BYTES = 1024 * 1024;
 export async function worktreesExecRoute(
   req: Request,
   handoff_id: string,
-  services: Services,
+  _services: Services,
 ): Promise<Response> {
+  const services = _services as DaemonServices;
   const wt = resolveWorktreeForHandoff(services, handoff_id);
   if (!wt) {
     return json(
@@ -485,9 +492,20 @@ export async function worktreesExecRoute(
     typeof body.timeout_ms === "number" ? body.timeout_ms : EXEC_DEFAULT_TIMEOUT_MS;
   const timeout_ms = Math.min(Math.max(1, rawTimeout), EXEC_MAX_TIMEOUT_MS);
 
-  const shellConfig = (services as any).shellConfig;
+  const shellConfig = services.shellConfig;
+  if (!shellConfig || typeof shellConfig.dangerousCommandsForAgent !== "function") {
+    return json(
+      {
+        error: {
+          code: "shell_config_unavailable",
+          message: "service temporarily unavailable",
+        },
+      },
+      503,
+    );
+  }
   const agentName = (handoff as any)?.to_agent ?? null;
-  const dangerousPatterns: string[] = shellConfig?.dangerousCommandsForAgent?.(agentName) ?? [];
+  const dangerousPatterns: string[] = shellConfig.dangerousCommandsForAgent(agentName);
   const normalizedCommand = body.command.replace(/\s+/g, " ");
   const matched = dangerousPatterns.filter((pattern: string) =>
     new RegExp(pattern).test(normalizedCommand),

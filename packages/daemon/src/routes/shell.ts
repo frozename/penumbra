@@ -1,4 +1,5 @@
 import type { Services } from "@penumbra/core";
+import type { DaemonServices } from "../serve.js";
 import { z } from "zod";
 
 import { json } from "./_helpers.js";
@@ -42,7 +43,7 @@ function clearApproved(handoffId: string, sessionId?: string): void {
 }
 
 async function requestPermission(
-  services: Services,
+  services: DaemonServices,
   input: {
     handoffId: string;
     agentName: string;
@@ -50,10 +51,10 @@ async function requestPermission(
     context: Record<string, unknown>;
   },
 ): Promise<"approve" | "reject"> {
-  const agentchatConfig = (services as any).agentchatConfig;
+  const agentchatConfig = services.agentchatConfig;
   const permissionService = (services as any).permissionService;
   const cfg = agentchatConfig?.agents?.find((agent: any) => agent.name === input.agentName);
-  if (input.toolName === "shell_run" && cfg?.auto_approve_to?.includes("shell_run")) {
+  if (input.toolName === "shell_run" && (cfg as any)?.auto_approve_to?.includes("shell_run")) {
     return "approve";
   }
   if (!permissionService?.requestPermission) {
@@ -78,7 +79,7 @@ async function safeJson(req: Request): Promise<unknown | null> {
 }
 
 function recordShellEvent(
-  services: Services,
+  services: DaemonServices,
   event: {
     handoff_id: string;
     kind: "shell.session.open" | "shell.run" | "shell.session.close";
@@ -95,11 +96,25 @@ function recordShellEvent(
   });
 }
 
-export async function shellRunRoute(req: Request, services: Services): Promise<Response> {
-  const shellSessionPool = (services as any).shellSessionPool;
-  const shellConfig = (services as any).shellConfig;
+export async function shellRunRoute(req: Request, _services: Services): Promise<Response> {
+  const services = _services as DaemonServices;
+  const shellSessionPool = services.shellSessionPool;
+  const shellConfig = services.shellConfig;
+
   if (!shellSessionPool) {
     return json({ error: { code: "shell_disabled" } }, 503);
+  }
+
+  if (!shellConfig || typeof shellConfig.dangerousCommandsForAgent !== "function") {
+    return json(
+      {
+        error: {
+          code: "shell_config_unavailable",
+          message: "service temporarily unavailable",
+        },
+      },
+      503,
+    );
   }
 
   const body = await safeJson(req);
@@ -188,7 +203,7 @@ export async function shellRunRoute(req: Request, services: Services): Promise<R
     markApproved(handoff_id, resolvedSessionId!);
   }
 
-  const dangerousPatterns = shellConfig?.dangerousCommandsForAgent?.(agent_name) ?? [];
+  const dangerousPatterns = shellConfig.dangerousCommandsForAgent(agent_name);
   const normalizedCommand = command.replace(/\s+/g, " ");
   const matchedPatterns = dangerousPatterns.filter((pattern: string) =>
     new RegExp(pattern).test(normalizedCommand),
@@ -218,7 +233,7 @@ export async function shellRunRoute(req: Request, services: Services): Promise<R
   const startedAt = Date.now();
   const result = await shellSessionPool.runCommand({
     handoffId: handoff_id,
-    sessionId: resolvedSessionId,
+    sessionId: resolvedSessionId!,
     command,
     stdin,
     agentName: agent_name,
@@ -240,8 +255,9 @@ export async function shellRunRoute(req: Request, services: Services): Promise<R
   return json(response);
 }
 
-export async function shellCloseRoute(req: Request, services: Services): Promise<Response> {
-  const shellSessionPool = (services as any).shellSessionPool;
+export async function shellCloseRoute(req: Request, _services: Services): Promise<Response> {
+  const services = _services as DaemonServices;
+  const shellSessionPool = services.shellSessionPool;
   if (!shellSessionPool) {
     return json({ error: { code: "shell_disabled" } }, 503);
   }
@@ -278,8 +294,9 @@ export async function shellCloseRoute(req: Request, services: Services): Promise
   return json(result);
 }
 
-export async function shellListRoute(req: Request, services: Services): Promise<Response> {
-  const shellSessionPool = (services as any).shellSessionPool;
+export async function shellListRoute(req: Request, _services: Services): Promise<Response> {
+  const services = _services as DaemonServices;
+  const shellSessionPool = services.shellSessionPool;
   if (!shellSessionPool) {
     return json({ error: { code: "shell_disabled" } }, 503);
   }

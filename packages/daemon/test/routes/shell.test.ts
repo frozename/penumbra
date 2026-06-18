@@ -52,6 +52,8 @@ afterEach(async () => {
 
 async function startTestDaemon(opts: {
   shellEnabled: boolean;
+  shellConfigLoaded?: boolean;
+  shellConfigMalformed?: boolean;
   shellMaxSessions?: number;
   requireShellPermission?: boolean;
   handoffs?: Array<{ handoff_id: string; to_agent: string; status?: string }>;
@@ -116,7 +118,11 @@ async function startTestDaemon(opts: {
     };
   }
   (services as any).shellSessionPool = pool;
-  (services as any).shellConfig = makeShellConfig(opts.shellMaxSessions ?? 4);
+  if (opts.shellConfigMalformed) {
+    (services as any).shellConfig = {};
+  } else if (opts.shellConfigLoaded !== false) {
+    (services as any).shellConfig = makeShellConfig(opts.shellMaxSessions ?? 4);
+  }
   (services as any).agentchatConfig = {
     agents: [
       { name: "a", auto_approve_to: opts.requireShellPermission ? [] : ["shell_run"] },
@@ -348,6 +354,40 @@ describe("shell routes", () => {
       body: JSON.stringify({ handoff_id: "h-1", agent_name: "a", command: "echo hi" }),
     });
     expect(post.status).toBe(503);
+  });
+
+  it("POST /shell/run returns 503 shell_config_unavailable when shellConfig is absent", async () => {
+    const { url, token, fetch } = await startTestDaemon({
+      shellEnabled: true,
+      shellConfigLoaded: false,
+      handoffs: [{ handoff_id: "h-1", to_agent: "a" }],
+    });
+    const post = await fetch(`${url}/shell/run`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ handoff_id: "h-1", agent_name: "a", command: "echo safe" }),
+    });
+    expect(post.status).toBe(503);
+    const body = (await post.json()) as any;
+    expect(body.error.code).toBe("shell_config_unavailable");
+    expect(body.error.message).toBe("service temporarily unavailable");
+  });
+
+  it("POST /shell/run returns 503 shell_config_unavailable when shellConfig is truthy but malformed", async () => {
+    const { url, token, fetch } = await startTestDaemon({
+      shellEnabled: true,
+      shellConfigMalformed: true,
+      handoffs: [{ handoff_id: "h-1", to_agent: "a" }],
+    });
+    const post = await fetch(`${url}/shell/run`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ handoff_id: "h-1", agent_name: "a", command: "echo safe" }),
+    });
+    expect(post.status).toBe(503);
+    const body = (await post.json()) as any;
+    expect(body.error.code).toBe("shell_config_unavailable");
+    expect(body.error.message).toBe("service temporarily unavailable");
   });
 });
 

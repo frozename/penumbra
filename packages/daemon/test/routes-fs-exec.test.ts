@@ -18,12 +18,9 @@ function fakeServices(
     handoffReader: {
       get: (id: string) => opts.handoffs?.[id] ?? null,
     },
-    shellConfig: opts.dangerousPatterns
-      ? {
-          dangerousCommandsForAgent: (agentName: string) =>
-            opts.dangerousPatterns?.[agentName] ?? [],
-        }
-      : undefined,
+    shellConfig: {
+      dangerousCommandsForAgent: (agentName: string) => opts.dangerousPatterns?.[agentName] ?? [],
+    },
   };
 }
 
@@ -157,5 +154,52 @@ describe("worktrees exec route", () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error.code).toBe("invalid_args");
+  });
+
+  it("returns 503 shell_config_unavailable when shellConfig is undefined, even for a benign command", async () => {
+    // Simulate a daemon that booted with a broken agentchat config:
+    // shellConfig is undefined on the services object.
+    const services: any = {
+      worktreeManager: {
+        getWorktree: (id: string) => (id === "H1" ? { handoffId: "H1", path: tmp } : null),
+      },
+      handoffReader: {
+        get: (_id: string) => null,
+      },
+      // shellConfig deliberately absent -- mirrors a failed config load
+    };
+
+    const req = new Request("http://x/worktrees/H1/exec", {
+      method: "POST",
+      body: JSON.stringify({ command: "echo safe" }),
+    });
+    const res = await worktreesExecRoute(req, "H1", services);
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error.code).toBe("shell_config_unavailable");
+    expect(body.error.message).toBe("service temporarily unavailable");
+  });
+
+  it("returns 503 shell_config_unavailable when shellConfig is truthy but malformed", async () => {
+    const services: any = {
+      worktreeManager: {
+        getWorktree: (id: string) => (id === "H1" ? { handoffId: "H1", path: tmp } : null),
+      },
+      handoffReader: {
+        get: (_id: string) => null,
+      },
+      // truthy but malformed shellConfig missing dangerousCommandsForAgent
+      shellConfig: {},
+    };
+
+    const req = new Request("http://x/worktrees/H1/exec", {
+      method: "POST",
+      body: JSON.stringify({ command: "echo safe" }),
+    });
+    const res = await worktreesExecRoute(req, "H1", services);
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error.code).toBe("shell_config_unavailable");
+    expect(body.error.message).toBe("service temporarily unavailable");
   });
 });
