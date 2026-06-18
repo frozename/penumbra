@@ -474,7 +474,7 @@ export const PENUMBRA_HOOK_EVENTS = [
   "PreCompact",
   "Stop",
 ] as const;
-const PENUMBRA_HOOK_RE = /penumbra(?:\.ts)?\s+hook\s+claude-code/;
+const PENUMBRA_HOOK_RE = /penumbra(?:\.ts)?'?\s+hook\s+claude-code/;
 
 function isPenumbraHookCommand(cmd: unknown): cmd is string {
   return typeof cmd === "string" && PENUMBRA_HOOK_RE.test(cmd);
@@ -500,6 +500,11 @@ export interface InstallClaudeMemoryResult {
   storageRoot: string;
 }
 
+/** Wrap a value in single quotes, escaping any embedded single quotes. */
+function shellQuote(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
 export async function runHooksInstallClaudeMemory(
   opts: InstallClaudeMemoryOpts = {},
 ): Promise<InstallClaudeMemoryResult> {
@@ -516,7 +521,7 @@ export async function runHooksInstallClaudeMemory(
     }
   }
 
-  const command = `PENUMBRA_STORAGE_ROOT=${storageRoot} bun ${binPath} hook claude-code`;
+  const command = `PENUMBRA_STORAGE_ROOT=${shellQuote(storageRoot)} bun ${shellQuote(binPath)} hook claude-code`;
 
   mkdirSync(claudeDir, { recursive: true });
   const settingsPath = join(claudeDir, "settings.json");

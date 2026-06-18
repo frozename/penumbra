@@ -438,8 +438,12 @@ describe("hooks install --claude-memory", () => {
       "Stop",
     ]) {
       const cmds = settings.hooks[ev].flatMap((e: any) => e.hooks.map((h: any) => h.command));
-      expect(cmds.some((c: string) => c.includes("penumbra.ts hook claude-code"))).toBe(true);
-      expect(cmds.some((c: string) => c.includes(`PENUMBRA_STORAGE_ROOT=${FAKE_ROOT}`))).toBe(true);
+      expect(
+        cmds.some((c: string) => c.includes("penumbra.ts") && c.includes("hook claude-code")),
+      ).toBe(true);
+      expect(
+        cmds.some((c: string) => c.includes("PENUMBRA_STORAGE_ROOT=") && c.includes(FAKE_ROOT)),
+      ).toBe(true);
     }
   });
 
@@ -497,9 +501,10 @@ describe("hooks install --claude-memory", () => {
     // The penumbra entry was updated in place — no duplicate appended.
     const penumbraCmds = ups
       .flatMap((e: any) => e.hooks.map((h: any) => h.command))
-      .filter((c: string) => c.includes("penumbra.ts hook claude-code"));
+      .filter((c: string) => c.includes("penumbra.ts") && c.includes("hook claude-code"));
     expect(penumbraCmds).toHaveLength(1);
-    expect(penumbraCmds[0]).toContain(`PENUMBRA_STORAGE_ROOT=${FAKE_ROOT}`);
+    expect(penumbraCmds[0]).toContain("PENUMBRA_STORAGE_ROOT=");
+    expect(penumbraCmds[0]).toContain(FAKE_ROOT);
     expect(penumbraCmds[0]).toContain(FAKE_BIN);
   });
 
@@ -509,6 +514,36 @@ describe("hooks install --claude-memory", () => {
     await expect(
       runHooksInstallClaudeMemory({ claudeDir, storageRoot: root, binPath: FAKE_BIN }),
     ).rejects.toThrow(/daemon port file/);
+  });
+
+  it("shell-quotes a storageRoot containing spaces so the command is safe to execute", async () => {
+    const claudeDir = tmpClaudeDir({});
+    const r = await runHooksInstallClaudeMemory({
+      claudeDir,
+      storageRoot: "/opt/my storage root/penumbra",
+      binPath: "/opt/penumbra/bin/penumbra.ts",
+      skipDaemonCheck: true,
+    });
+    expect(r.installed).toBe(true);
+    expect(r.command).toBe(
+      `PENUMBRA_STORAGE_ROOT='/opt/my storage root/penumbra' bun '/opt/penumbra/bin/penumbra.ts' hook claude-code`,
+    );
+    const settings = JSON.parse(readFileSync(join(claudeDir, "settings.json"), "utf8"));
+    const cmd = settings.hooks["UserPromptSubmit"][0].hooks[0].command;
+    expect(cmd).toBe(r.command);
+  });
+
+  it("shell-quotes a storageRoot containing single-quotes by escaping them", async () => {
+    const claudeDir = tmpClaudeDir({});
+    const r = await runHooksInstallClaudeMemory({
+      claudeDir,
+      storageRoot: "/tmp/it's here",
+      binPath: "/opt/penumbra/bin/penumbra.ts",
+      skipDaemonCheck: true,
+    });
+    expect(r.command).toBe(
+      `PENUMBRA_STORAGE_ROOT='/tmp/it'\\''s here' bun '/opt/penumbra/bin/penumbra.ts' hook claude-code`,
+    );
   });
 });
 
@@ -543,7 +578,7 @@ describe("hooks uninstall --claude-memory", () => {
     expect(
       ups
         .flatMap((e: any) => e.hooks.map((h: any) => h.command))
-        .filter((c: string) => c.includes("penumbra.ts hook claude-code")),
+        .filter((c: string) => c.includes("penumbra.ts") && c.includes("hook claude-code")),
     ).toHaveLength(0);
     expect(ups[0].hooks[0].command).toBe("~/.claude/hooks/some-other-tool.sh");
   });
