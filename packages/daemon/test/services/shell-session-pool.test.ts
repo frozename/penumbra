@@ -88,6 +88,45 @@ describe("ShellSessionPool", () => {
     expect(rb.stdout).toBe("second\n");
   });
 
+  it("clears all created setTimeouts during a fast command execution", async () => {
+    const { sessionId } = await pool.createSession({
+      handoffId: "h-1",
+      cwd: "/tmp",
+      env: {},
+      pty: false,
+    });
+
+    const originalSetTimeout = global.setTimeout;
+    const originalClearTimeout = global.clearTimeout;
+
+    const activeTimeouts = new Set<any>();
+
+    global.setTimeout = ((...args: any[]) => {
+      const id = (originalSetTimeout as any)(...args);
+      activeTimeouts.add(id);
+      return id;
+    }) as any;
+
+    global.clearTimeout = (id: any) => {
+      activeTimeouts.delete(id);
+      originalClearTimeout(id);
+    };
+
+    try {
+      const result = await pool.runCommand({ handoffId: "h-1", sessionId, command: "echo fast" });
+      expect(result.exit_code).toBe(0);
+      // Let the promise race settle fully
+      await new Promise((r) => originalSetTimeout(r, 0));
+      expect(activeTimeouts.size).toBe(0);
+    } finally {
+      global.setTimeout = originalSetTimeout;
+      global.clearTimeout = originalClearTimeout;
+      for (const id of activeTimeouts) {
+        originalClearTimeout(id);
+      }
+    }
+  });
+
   it("returns exit_code 124 on per-command timeout and keeps session alive", async () => {
     const cfg = makeConfig({ maxCommandDurationMs: 200 });
     const localPool = new ShellSessionPool({ config: cfg, uuid: () => "sess-t1" });

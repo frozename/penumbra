@@ -507,9 +507,14 @@ export async function worktreesExecRoute(
   const agentName = (handoff as any)?.to_agent ?? null;
   const dangerousPatterns: string[] = shellConfig.dangerousCommandsForAgent(agentName);
   const normalizedCommand = body.command.replace(/\s+/g, " ");
-  const matched = dangerousPatterns.filter((pattern: string) =>
-    new RegExp(pattern).test(normalizedCommand),
-  );
+  const matched = dangerousPatterns.filter((pattern: string) => {
+    try {
+      return new RegExp(pattern).test(normalizedCommand);
+    } catch (err) {
+      console.warn(`[fs-exec] Malformed dangerous command pattern "${pattern}":`, err);
+      return true; // Fail closed
+    }
+  });
   if (matched.length > 0) {
     return json({ error: { code: "dangerous_command", matched } }, 403);
   }

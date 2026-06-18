@@ -287,13 +287,20 @@ export class ShellSessionPool {
       endMarker,
       () => timedOut,
     );
-    const result = await Promise.race([
-      completion,
-      this.sleep(this.deps.config.maxCommandDurationMs).then(() => {
+    let timeoutId: any;
+    const timeoutPromise = new Promise<typeof COMMAND_TIMED_OUT>((resolve) => {
+      timeoutId = setTimeout(() => {
         timedOut = true;
-        return COMMAND_TIMED_OUT;
-      }),
-    ]);
+        resolve(COMMAND_TIMED_OUT);
+      }, this.deps.config.maxCommandDurationMs);
+    });
+
+    let result;
+    try {
+      result = await Promise.race([completion, timeoutPromise]);
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (result === COMMAND_TIMED_OUT) {
       try {

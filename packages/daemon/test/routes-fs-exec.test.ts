@@ -100,6 +100,28 @@ describe("worktrees exec route", () => {
     expect(commandRan).toBe(false);
   });
 
+  it("returns 403 dangerous_command (fail closed) for malformed regex pattern", async () => {
+    let commandRan = false;
+    const services = fakeServices(
+      { H1: tmp },
+      {
+        handoffs: { H1: { to_agent: "agent-x" } },
+        dangerousPatterns: { "agent-x": ["["] }, // Malformed regex
+      },
+    );
+
+    const req = new Request("http://x/worktrees/H1/exec", {
+      method: "POST",
+      body: JSON.stringify({ command: "echo safe" }),
+    });
+    const res = await worktreesExecRoute(req, "H1", services);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error.code).toBe("dangerous_command");
+    expect(Array.isArray(body.error.matched)).toBe(true);
+    expect(body.error.matched).toContain("[");
+  });
+
   it("allows a benign command when agent has dangerous patterns configured", async () => {
     const services = fakeServices(
       { H1: tmp },

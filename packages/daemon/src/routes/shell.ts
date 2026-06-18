@@ -205,9 +205,14 @@ export async function shellRunRoute(req: Request, _services: Services): Promise<
 
   const dangerousPatterns = shellConfig.dangerousCommandsForAgent(agent_name);
   const normalizedCommand = command.replace(/\s+/g, " ");
-  const matchedPatterns = dangerousPatterns.filter((pattern: string) =>
-    new RegExp(pattern).test(normalizedCommand),
-  );
+  const matchedPatterns = dangerousPatterns.filter((pattern: string) => {
+    try {
+      return new RegExp(pattern).test(normalizedCommand);
+    } catch (err) {
+      console.warn(`[shell-run] Malformed dangerous command pattern "${pattern}":`, err);
+      return true; // Fail closed
+    }
+  });
   if (matchedPatterns.length > 0) {
     const decision = await requestPermission(services, {
       handoffId: handoff_id,

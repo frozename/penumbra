@@ -22,8 +22,10 @@ interface QueuedPermissionDecision {
   approved: boolean;
 }
 
-function makeShellConfig(maxSessionsPerHandoff = 4): RuntimeShellConfig {
-  const baseDangerous = ["sudo\\b"];
+function makeShellConfig(
+  maxSessionsPerHandoff = 4,
+  baseDangerous = ["sudo\\b"],
+): RuntimeShellConfig {
   return {
     enabled: true,
     maxSessionsPerHandoff,
@@ -54,6 +56,7 @@ async function startTestDaemon(opts: {
   shellEnabled: boolean;
   shellConfigLoaded?: boolean;
   shellConfigMalformed?: boolean;
+  shellDangerousPatterns?: string[];
   shellMaxSessions?: number;
   requireShellPermission?: boolean;
   handoffs?: Array<{ handoff_id: string; to_agent: string; status?: string }>;
@@ -93,7 +96,7 @@ async function startTestDaemon(opts: {
   const sessionPrefix = Math.random().toString(36).slice(2, 10);
   const pool = opts.shellEnabled
     ? new ShellSessionPool({
-        config: makeShellConfig(opts.shellMaxSessions ?? 4),
+        config: makeShellConfig(opts.shellMaxSessions ?? 4, opts.shellDangerousPatterns),
         uuid: (() => {
           let i = 0;
           return () => `${sessionPrefix}-sess-${++i}`;
@@ -121,7 +124,10 @@ async function startTestDaemon(opts: {
   if (opts.shellConfigMalformed) {
     (services as any).shellConfig = {};
   } else if (opts.shellConfigLoaded !== false) {
-    (services as any).shellConfig = makeShellConfig(opts.shellMaxSessions ?? 4);
+    (services as any).shellConfig = makeShellConfig(
+      opts.shellMaxSessions ?? 4,
+      opts.shellDangerousPatterns,
+    );
   }
   (services as any).agentchatConfig = {
     agents: [
@@ -392,6 +398,36 @@ describe("shell routes", () => {
 });
 
 describe("shell routes — permission gating", () => {
+  it("treats malformed regex pattern as a match (fail closed) and routes to dangerous gate", async () => {
+    const { url, token, fetch, countPermissionRequests, rejectPermission } = await startTestDaemon({
+      shellEnabled: true,
+      requireShellPermission: false, // normally shell_run is auto-approved
+      shellDangerousPatterns: ["[", "sudo\\b"], // Malformed regex
+      handoffs: [{ handoff_id: "h-1", to_agent: "a" }],
+    });
+
+    // Queue rejection for the dangerous command permission request
+    rejectPermission({ handoff_id: "h-1", agent_name: "a", tool_name: "shell_run.dangerous" });
+
+    // This command is safe, but the malformed regex fails closed, triggering dangerous gate
+    const danger = fetch(`${url}/shell/run`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        handoff_id: "h-1",
+        agent_name: "a",
+        command: "echo safe",
+      }),
+    });
+
+    const json = (await (await danger).json()) as any;
+    expect(json.exit_code).toBe(-2);
+    expect(json.stderr).toContain("permission denied");
+
+    // It should request "shell_run.dangerous" permission
+    expect(countPermissionRequests("shell_run.dangerous")).toBe(1);
+  });
+
   it("first shell_run for a session triggers a permission request and waits for approval", async () => {
     const { url, token, fetch, approvePermission } = await startTestDaemon({
       shellEnabled: true,
