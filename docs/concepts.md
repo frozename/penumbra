@@ -201,9 +201,10 @@ It distinguishes "actively thinking" from "wedged" using the event stream, not t
 
 ### The sweepers
 
-Three background sweepers (`AGENTS.md` → "Dispatch reliability") cooperate to keep state clean without killing live work:
+Four background sweepers (`AGENTS.md` → "Dispatch reliability") cooperate to keep state clean without killing live work:
 
 - **`stale-handoff-sweeper`** — event-aware. It force-fails a non-terminal handoff only when it exceeds its **per-task-class** threshold **and** has been idle for ≥ 5 minutes since its last event. The threshold scales with the task: `smoke_test` 10 min, `debug_diagnose` and `review_adversarial` 45 min, `implement_substantial` 90 min (default 30 min). A 45-minute diagnostic dispatch is not killed at the same threshold as a 10-minute smoke test, and a session still emitting events is never force-killed.
+- **`handoff-sweeper`** — TTL-based and event-aware: a `dispatched` handoff past its per-task-class TTL with no `dispatch_events` in the window is marked `expired`; streaming dispatches survive wall-clock-only thresholds.
 - **`worktree-gc`** — every 30 minutes, removes worktrees whose handoff has been terminal for more than 2 hours, emitting `worktree.gc` events for forensics (intervals configurable via `PENUMBRA_WORKTREE_GC_*`). `dispatch_land` also tears down the worktree inline on success.
 - **`reconciler-sweep`** — every 30 minutes, closes orphaned GitHub PRs whose handoff has terminated (`reconciler_sweep_orphan_prs`, `reconciler_verdicts`).
 
