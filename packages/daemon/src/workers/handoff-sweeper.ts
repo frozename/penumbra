@@ -67,10 +67,6 @@ export function createHandoffSweeperWorker(opts: HandoffSweeperOpts) {
           >(`SELECT handoff_id, ts, chain_task_type FROM handoffs WHERE status = 'dispatched' AND ts < ?`)
           .all(sqlCutoff);
 
-        const activityQuery = opts.services.db.query<{ found: 1 }, [string, string]>(
-          `SELECT 1 AS found FROM dispatch_events WHERE handoff_id = ? AND ts >= ? LIMIT 1`,
-        );
-
         const toExpire: Array<{
           handoff_id: string;
           ttlMs: number;
@@ -84,10 +80,6 @@ export function createHandoffSweeperWorker(opts: HandoffSweeperOpts) {
           // Not old enough by per-row TTL — skip.
           if (row.ts >= threshold) continue;
 
-          // Has recent dispatch_events activity within the same window — still live.
-          const recentEvent = activityQuery.get(row.handoff_id, threshold);
-          if (recentEvent) continue;
-
           toExpire.push({
             handoff_id: row.handoff_id,
             ttlMs: effectiveTtlMs,
@@ -98,17 +90,20 @@ export function createHandoffSweeperWorker(opts: HandoffSweeperOpts) {
         const expireDispatched = opts.services.db.transaction(() => {
           if (toExpire.length === 0) return 0;
           const stmt = opts.services.db.query(
-            `UPDATE handoffs SET status = 'expired', resolved_at = ?1, resolution_reason = ?2 WHERE handoff_id = ?3 AND status = 'dispatched'`,
+            `UPDATE handoffs SET status = 'expired', resolved_at = ?1, resolution_reason = ?2 WHERE handoff_id = ?3 AND status = 'dispatched' AND NOT EXISTS (SELECT 1 FROM dispatch_events WHERE handoff_id = ?3 AND ts >= ?4)`,
           );
+          let changes = 0;
           for (const { handoff_id, ttlMs, chain_task_type } of toExpire) {
             const suffix = chain_task_type ? ` (task_type=${chain_task_type})` : "";
-            stmt.run(
+            const threshold = new Date(now.getTime() - ttlMs).toISOString();
+            changes += stmt.run(
               nowIso,
               `expired by sweeper after ${ttlMs}ms in dispatched${suffix}`,
               handoff_id,
-            );
+              threshold,
+            ).changes;
           }
-          return toExpire.length;
+          return changes;
         });
 
         const count = expirePending() + expireDispatched();

@@ -133,8 +133,21 @@ export function runStaleHandoffSweep(
     }
   }
 
+  const activityIdleMs = opts.activityIdleMs ?? 300_000;
+
   const resolveStaleHandoff = services.db.transaction(
     (handoffId: string, tsIso: string): boolean => {
+      const activeCheck = services.db
+        .query<
+          { found: 1 },
+          [string, string]
+        >(`SELECT 1 AS found FROM dispatch_events WHERE handoff_id=? AND (kind='dispatch.end' OR ts >= ?) LIMIT 1`)
+        .get(handoffId, new Date(nowMs - activityIdleMs).toISOString());
+
+      if (activeCheck) {
+        return false;
+      }
+
       const markedFailed = services.handoffWriter.markFailed(handoffId, {
         reason: "stale_force_resolve",
         ts: tsIso,

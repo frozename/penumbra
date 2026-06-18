@@ -686,3 +686,88 @@ test("liveness probe errors fail closed and do not block stale resolution", () =
   expect(result.resolved).toEqual(["h-live-throw"]);
   expect(services.handoffReader.get("h-live-throw")?.status).toBe("failed");
 });
+
+test("TOCTOU race closed: dispatch.end injected before markFailed prevents stale resolution", () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  insertDispatchedHandoff(db, "h-race-end", "2026-05-04T11:50:00.000Z");
+  insertEvent(db, "h-race-end", "dispatch.start", "2026-05-04T11:50:01.000Z");
+
+  const originalTransaction = services.db.transaction.bind(services.db);
+  let injected = false;
+  services.db.transaction = mock((fn: any) => {
+    return originalTransaction((...args: any[]) => {
+      if (!injected) {
+        insertEvent(db, "h-race-end", "dispatch.end", "2026-05-04T11:59:59.000Z");
+        injected = true;
+      }
+      return fn(...args);
+    });
+  }) as any;
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    makeOpts(services),
+    state,
+    () => new Date("2026-05-04T12:00:00.000Z"),
+  );
+
+  expect(result.resolved).toEqual([]);
+  const handoff = services.handoffReader.get("h-race-end");
+  expect(handoff?.status).toBe("dispatched");
+});
+
+test("TOCTOU race closed: recent heartbeat injected before markFailed prevents stale resolution", () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  insertDispatchedHandoff(db, "h-race-heartbeat", "2026-05-04T11:50:00.000Z");
+  insertEvent(db, "h-race-heartbeat", "dispatch.start", "2026-05-04T11:50:01.000Z");
+
+  const originalTransaction = services.db.transaction.bind(services.db);
+  let injected = false;
+  services.db.transaction = mock((fn: any) => {
+    return originalTransaction((...args: any[]) => {
+      if (!injected) {
+        // Inject heartbeat within the 5-min activityIdle window
+        insertEvent(db, "h-race-heartbeat", "agent.heartbeat", "2026-05-04T11:58:00.000Z");
+        injected = true;
+      }
+      return fn(...args);
+    });
+  }) as any;
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    makeOpts(services),
+    state,
+    () => new Date("2026-05-04T12:00:00.000Z"),
+  );
+
+  expect(result.resolved).toEqual([]);
+  const handoff = services.handoffReader.get("h-race-heartbeat");
+  expect(handoff?.status).toBe("dispatched");
+});
+
+test("REGRESSION: barely-stale SHORT-TTL handoff is still swept", () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  // smoke_test TTL is 10m.
+  // Handoff created at 11:49:50.
+  insertDispatchedHandoff(db, "h-regress-short", "2026-05-04T11:49:50.000Z", "smoke_test");
+  // dispatch.start slightly after creation
+  insertEvent(db, "h-regress-short", "dispatch.start", "2026-05-04T11:49:53.000Z");
+
+  const state = { lastSwept: new Map<string, number>() };
+  // At 12:00:00, handoff age is 10m10s (past 10m TTL).
+  // Age of last event is 10m07s, which is > activityIdleMs (5m).
+  const result = runStaleHandoffSweep(
+    makeTaskTypeAwareOpts(services),
+    state,
+    () => new Date("2026-05-04T12:00:00.000Z"),
+  );
+
+  // Must still be swept.
+  expect(result.resolved).toEqual(["h-regress-short"]);
+  const handoff = services.handoffReader.get("h-regress-short");
+  expect(handoff?.status).toBe("failed");
+});

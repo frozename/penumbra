@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test, mock } from "bun:test";
 import { Database } from "bun:sqlite";
 import {
   type Services,
@@ -153,4 +153,30 @@ test("pending handoffs still expire after pending TTL (60min)", async () => {
 
 test("resolveDispatchedTtlMs returns 45min for plan_refine", () => {
   expect(resolveDispatchedTtlMs("plan_refine")).toBe(45 * 60_000);
+});
+
+test("TOCTOU race closed: event injected between candidate scan and update prevents expiration", async () => {
+  const db = setupDb();
+  const services = makeServices(db, NOW);
+  insertDispatchedHandoff(db, "h-race", m(35));
+
+  const originalTransaction = services.db.transaction.bind(services.db);
+  let injected = false;
+  services.db.transaction = mock((fn: any) => {
+    return originalTransaction((...args: any[]) => {
+      if (!injected) {
+        // Inject a recent event just as the transaction starts, simulating a race where
+        // a worker heartbeat arrived after the candidate scan but before the UPDATE.
+        insertDispatchEvent(db, "h-race", "agent.heartbeat", s(10));
+        injected = true;
+      }
+      return fn(...args);
+    });
+  }) as any;
+
+  const worker = createHandoffSweeperWorker({ services });
+  await worker.tick();
+
+  const handoff = (services as any).handoffReader.get("h-race");
+  expect(handoff?.status).toBe("dispatched");
 });
