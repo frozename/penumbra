@@ -1,5 +1,6 @@
-import { expect, test, beforeEach, afterEach } from "bun:test";
+import { expect, test, beforeEach, afterEach, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
+import * as fs from "node:fs";
 import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,7 +25,7 @@ beforeEach(async () => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 test("start writes port + pid files; stop removes them", async () => {
-  const handle = await runStart({ storageRoot: dir });
+  const handle = await runStart({ storageRoot: dir, port: 51379 });
   try {
     expect(existsSync(join(dir, "port"))).toBe(true);
     expect(existsSync(join(dir, "pid"))).toBe(true);
@@ -45,6 +46,59 @@ test("start refuses if a live daemon is already running", async () => {
     await expect(runStart({ storageRoot: dir })).rejects.toThrow(/already running/);
   } finally {
     await runStop({ storageRoot: dir, handle });
+  }
+});
+
+test("start retries pid claim after a stale takeover loses the race", async () => {
+  const pidPath = join(dir, "pid");
+  const stalePid = 2147483640;
+  const port = 51381;
+  writeFileSync(pidPath, `${stalePid}\n`);
+
+  const originalOpenSync = fs.openSync;
+  const originalReadFileSync = fs.readFileSync;
+  const originalUnlinkSync = fs.unlinkSync;
+
+  let wxCalls = 0;
+  const openSpy = spyOn(fs, "openSync").mockImplementation(
+    (path: fs.PathLike, flags: fs.OpenMode, mode?: fs.Mode) => {
+      if (path === pidPath && flags === "wx") {
+        wxCalls += 1;
+        if (wxCalls <= 2) {
+          const err = new Error("EEXIST") as NodeJS.ErrnoException;
+          err.code = "EEXIST";
+          throw err;
+        }
+      }
+      return originalOpenSync(path, flags, mode);
+    },
+  );
+
+  const readSpy = spyOn(fs, "readFileSync").mockImplementation(
+    (path: fs.PathLike, options?: BufferEncoding | { encoding?: BufferEncoding | null }) => {
+      if (path === pidPath) return `${stalePid}\n`;
+      return originalReadFileSync(path, options as any);
+    },
+  );
+
+  const unlinkSpy = spyOn(fs, "unlinkSync").mockImplementation((path: fs.PathLike) =>
+    originalUnlinkSync(path),
+  );
+
+  try {
+    const handle = await runStart({ storageRoot: dir, port });
+    try {
+      expect(wxCalls).toBe(3);
+      expect(readSpy).toHaveBeenCalled();
+      expect(existsSync(pidPath)).toBe(true);
+      expect(Number(originalReadFileSync(pidPath, "utf8").trim())).toBe(process.pid);
+    } finally {
+      await runStop({ storageRoot: dir, handle });
+    }
+  } finally {
+    openSpy.mockRestore();
+    readSpy.mockRestore();
+    unlinkSpy.mockRestore();
   }
 });
 

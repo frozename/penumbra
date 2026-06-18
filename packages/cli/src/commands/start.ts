@@ -292,37 +292,35 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
 }
 
 function claimPidFile(pidPath: string): void {
-  try {
-    const fd = openSync(pidPath, "wx");
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      writeSync(fd, `${process.pid}\n`);
-    } finally {
-      closeSync(fd);
+      const fd = openSync(pidPath, "wx");
+      try {
+        writeSync(fd, `${process.pid}\n`);
+      } finally {
+        closeSync(fd);
+      }
+      return;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
     }
-    return;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+
+    // EEXIST: someone else has the file. Check liveness.
+    const existing = Number(readFileSync(pidPath, "utf8"));
+    if (Number.isInteger(existing) && existing > 0 && isAlive(existing)) {
+      throw new Error(`penumbra already running (pid=${existing})`);
+    }
+
+    // Stale. Best-effort takeover. unlink+open('wx') still has a tiny race
+    // window if another stale-takeover runs concurrently, so retry a bounded
+    // number of times and re-check liveness each time.
+    try {
+      unlinkSync(pidPath);
+    } catch {
+      /* concurrent winner already removed it */
+    }
   }
-  // EEXIST: someone else has the file. Check liveness.
-  const existing = Number(readFileSync(pidPath, "utf8"));
-  if (Number.isInteger(existing) && existing > 0 && isAlive(existing)) {
-    throw new Error(`penumbra already running (pid=${existing})`);
-  }
-  // Stale. Best-effort takeover. unlink+open('wx') still has a tiny race
-  // window if another stale-takeover runs concurrently — the loser will
-  // hit EEXIST again on the second openSync and retry the liveness check.
-  // One retry is enough for the practical case.
-  try {
-    unlinkSync(pidPath);
-  } catch {
-    /* concurrent winner already removed it */
-  }
-  const fd = openSync(pidPath, "wx");
-  try {
-    writeSync(fd, `${process.pid}\n`);
-  } finally {
-    closeSync(fd);
-  }
+  throw new Error("failed to claim pid file after concurrent takeover");
 }
 
 function isAlive(pid: number): boolean {
