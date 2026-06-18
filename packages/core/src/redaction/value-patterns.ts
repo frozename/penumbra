@@ -115,8 +115,7 @@ export class ValuePatternRedactor {
           const sampled = utf8Prefix(input, maxStringBytes);
           const result = this.redactString(sampled);
           mergeHits(hitCounts, result.hits);
-          // Oversized strings are sampled for audit/blocking only; preserve original bytes.
-          return { value: input, rewritten: false };
+          return { value: result.redacted, rewritten: true };
         }
 
         const result = this.redactString(input);

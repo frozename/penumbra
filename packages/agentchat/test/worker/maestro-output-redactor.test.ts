@@ -86,3 +86,34 @@ test("checkAnyValue bypass preserves original value and records hits", () => {
   expect(walked.value).toBe(value);
   expect(walked.hits.find((h) => h.rule_id === "destructive_shell_rmrf")?.count).toBe(1);
 });
+
+test("checkAnyValue rewrites oversized values that contain soft secrets", () => {
+  const m = new MaestroOutputRedactor({
+    knownAgents: new Set(["planner"]),
+    bypass: false,
+    extraRules: [{ id: "soft_token", pattern: /token/g, replacement: "#" }],
+  });
+  (m as any).redactor = {
+    redactValue(value: string) {
+      return {
+        redacted: value.replace("token", "#").slice(0, 64 * 1024),
+        hits: [{ rule_id: "soft_token", count: 1 }],
+        rewritten: true,
+      };
+    },
+  };
+  const value = `${"x".repeat(10_000)} token ${"y".repeat(60_000)}`;
+  const walked = m.checkAnyValue(value);
+  expect(walked.decision).toBe("rewritten");
+  expect(walked.value).not.toContain("token");
+});
+
+test("checkAnyValue still blocks oversized fail-closed values", () => {
+  const m = new MaestroOutputRedactor({
+    knownAgents: new Set(["planner"]),
+    bypass: false,
+  });
+  const value = `${"x".repeat(10_000)} git push --force-with-lease origin main ${"y".repeat(60_000)}`;
+  const walked = m.checkAnyValue(value);
+  expect(walked.decision).toBe("blocked");
+});

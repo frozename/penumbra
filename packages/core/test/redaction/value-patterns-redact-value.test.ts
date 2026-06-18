@@ -46,7 +46,30 @@ test("redactValue: oversize string records synthetic hit and preserves original 
   const walked = r.redactValue(value, { maxStringBytes: MAX_WALKER_STRING_BYTES });
 
   expect(walked.hits.find((h) => h.rule_id === "walker_string_oversize")?.count).toBe(1);
-  expect((walked.redacted as any).msg).toBe(value.msg);
+  expect((walked.redacted as any).msg).not.toContain(".ssh/id_ed25519");
+  expect(Buffer.byteLength((walked.redacted as any).msg, "utf8")).toBeLessThanOrEqual(
+    MAX_WALKER_STRING_BYTES,
+  );
+});
+
+test("redactValue: oversize string redacts secrets within the sampled prefix", () => {
+  const r = new ValuePatternRedactor([{ id: "soft_token", pattern: /token/g, replacement: "#" }]);
+
+  const value = `${"x".repeat(10_000)} token ${"y".repeat(60_000)}`;
+  const walked = r.redactValue(value, { maxStringBytes: MAX_WALKER_STRING_BYTES });
+
+  expect(walked.rewritten).toBe(true);
+  expect(walked.redacted).not.toContain("token");
+  expect(Buffer.byteLength(walked.redacted, "utf8")).toBeLessThanOrEqual(MAX_WALKER_STRING_BYTES);
+});
+
+test("redactValue: oversize string truncates secrets beyond the sampled prefix", () => {
+  const r = new ValuePatternRedactor([{ id: "soft_token", pattern: /token/g, replacement: "#" }]);
+
+  const value = `${"x".repeat(MAX_WALKER_STRING_BYTES + 1)}token`;
+  const walked = r.redactValue(value, { maxStringBytes: MAX_WALKER_STRING_BYTES });
+
+  expect(walked.redacted).not.toContain("token");
 });
 
 test("redactValue: rewrites string leaves across mixed arrays/objects", () => {
