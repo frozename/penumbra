@@ -1,6 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve, extname } from "node:path";
+import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 
 export type FileOutputMode = "overwrite" | "append" | "skip-if-exists" | "unique-suffix";
 export type FileOutputResult = { warnings: string[]; path?: string; skipped?: boolean };
@@ -17,6 +17,53 @@ export async function emitFileOutput(input: {
     : input.repoRoot !== undefined
       ? join(input.repoRoot, input.path)
       : resolve(process.cwd(), input.path);
+
+  if (input.repoRoot !== undefined) {
+    const resolvedRoot = resolve(input.repoRoot);
+    const resolvedTarget = resolve(targetPath);
+    const realRoot = (() => {
+      try {
+        return realpathSync(input.repoRoot);
+      } catch {
+        return resolvedRoot;
+      }
+    })();
+    const isContained = (root: string, path: string): boolean => {
+      const rootRelativePath = relative(root, path);
+      return (
+        rootRelativePath === "" ||
+        (!rootRelativePath.startsWith("..") && !isAbsolute(rootRelativePath))
+      );
+    };
+    const resolvedForCheck = (() => {
+      if (!isContained(resolvedRoot, resolvedTarget)) {
+        return resolvedTarget;
+      }
+      let check = resolvedTarget;
+      while (true) {
+        try {
+          return realpathSync(check);
+        } catch {
+          if (check === resolvedRoot) {
+            return realRoot;
+          }
+          const parent = dirname(check);
+          if (parent === check) {
+            return resolve(check);
+          }
+          check = parent;
+        }
+      }
+    })();
+    if (!isContained(realRoot, resolvedForCheck)) {
+      return {
+        warnings: [
+          `output file: path is outside the allowed root (${input.repoRoot}): ${input.path}`,
+        ],
+      };
+    }
+  }
+
   try {
     await mkdir(dirname(targetPath), { recursive: true });
     if (mode === "skip-if-exists" && existsSync(targetPath)) {
