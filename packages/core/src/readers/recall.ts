@@ -4,6 +4,7 @@ import type { Embedder } from "../embedder/interface.js";
 import type { RecallRequest, RecallResult } from "../schemas/recall.js";
 import { fuseRRF, type RankedResult } from "./rrf.js";
 import { hybridSearch } from "./hybrid.js";
+import { toScore } from "./vec-score.js";
 
 type RecallPayload = RecallResult & { verification_count?: number };
 
@@ -411,12 +412,6 @@ export function queryT0(db: Database, opts: QueryT0Options): T0RecallResult[] {
     project_id: r.project_id,
     session_id: r.session_id,
   }));
-}
-
-function toScore(distance: number): number {
-  // sqlite-vec returns L2 distance on normalized vectors in [0, 2].
-  // Convert to a [0, 1]-ish similarity: 1 - distance/2.
-  return Math.max(0, Math.min(1, 1 - distance / 2));
 }
 
 function bm25ToScore(bm25: number, bestBm25: number | undefined): number {

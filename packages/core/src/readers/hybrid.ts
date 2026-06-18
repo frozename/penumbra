@@ -8,6 +8,7 @@ import {
   projectFilter,
   typeFilter,
 } from "./filters/index.js";
+import { toScore } from "./vec-score.js";
 
 export interface HybridRequest {
   query: string;
@@ -107,7 +108,7 @@ export async function hybridSearch(
         obs_type: c.obs_type,
         title: c.title,
         body: c.body,
-        score: 1 - r.distance, // distance → similarity for caller convenience
+        score: toScore(r.distance),
         project_id: c.project_id,
         source_session_ids: parseSourceSessionIds(c.source_session_ids),
         why: c.why,

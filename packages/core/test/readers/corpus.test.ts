@@ -9,6 +9,15 @@ import { migrate } from "../../src/db/migrations.js";
 import { TestEmbedder } from "../../src/embedder/test-embedder.js";
 import { buildCorpus, listCorpora, queryCorpus, removeCorpus } from "../../src/readers/corpus.js";
 
+class FixedEmbedder {
+  readonly name = "fixed";
+  readonly dim = 2;
+
+  async embed(texts: string[]): Promise<Float32Array[]> {
+    return texts.map(() => new Float32Array([1, 0]));
+  }
+}
+
 const insertT2 = (
   db: Database,
   id: string,
@@ -127,5 +136,31 @@ describe("corpus", () => {
       db.query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM corpus_members`).get()?.c ?? 0;
     expect(memberCount).toBe(0);
     expect(removeCorpus(db, "tmp")).toBe(false);
+  });
+
+  test("uses the canonical L2 distance to similarity mapping", async () => {
+    const db = new Database(":memory:");
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 2 });
+    insertT2(db, "same", { obs_type: "feature", body: "same", vec: [1, 0] });
+    insertT2(db, "distance1", { obs_type: "feature", body: "distance1", vec: [0.5, 0.8660254] });
+    insertT2(db, "orthogonal", { obs_type: "feature", body: "orthogonal", vec: [0, 1] });
+    insertT2(db, "opposite", { obs_type: "feature", body: "opposite", vec: [-1, 0] });
+
+    await buildCorpus(db, new FixedEmbedder() as unknown as TestEmbedder, {
+      name: "all",
+      filter: { obs_type: "feature" },
+    });
+    const out = await queryCorpus(db, new FixedEmbedder() as unknown as TestEmbedder, {
+      name: "all",
+      query: "ignored",
+      limit: 4,
+    });
+
+    expect(out.find((h) => h.id === "same")?.score).toBe(1);
+    expect(out.find((h) => h.id === "distance1")?.score).toBeCloseTo(0.5, 10);
+    expect(out.find((h) => h.id === "orthogonal")?.score).toBeCloseTo(0.2928932188, 6);
+    expect(out.find((h) => h.id === "opposite")?.score).toBe(0);
+    expect(out.every((h) => h.score >= 0 && h.score <= 1)).toBe(true);
   });
 });

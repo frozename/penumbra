@@ -10,6 +10,7 @@ import {
   projectFilter,
   typeFilter,
 } from "./filters/index.js";
+import { toScore } from "./vec-score.js";
 
 export interface CorpusFilter {
   project_id?: string | null;
@@ -189,7 +190,7 @@ export async function queryCorpus(
         obs_type: c.obs_type,
         title: c.title,
         body: c.body,
-        score: 1 - r.distance,
+        score: toScore(r.distance),
         project_id: c.project_id,
         source_session_ids: parseSourceSessionIds(c.source_session_ids),
       };
