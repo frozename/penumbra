@@ -136,7 +136,7 @@ for (let i = 0; i < maxRounds; i++) {
   }
 
   const fan = await workflow(
-    { scriptPath: '.claude/workflows/penumbra-fanout.js' },
+    'penumbra-fanout',
     { tasks: [t], defaults, dispatcherModel },
   )
   const r = ((fan && fan.results) || [])[0]

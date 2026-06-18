@@ -65,7 +65,7 @@ const tasks = agents.map((a) => ({
   message: task.message,
 }))
 const fan = await workflow(
-  { scriptPath: '.claude/workflows/penumbra-fanout.js' },
+  'penumbra-fanout',
   { tasks, defaults, dispatcherModel },
 )
 const candidates = ((fan && fan.results) || []).filter((r) => r && r.ok && r.branch && r.handoff_id)

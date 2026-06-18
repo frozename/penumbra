@@ -41,7 +41,7 @@ export const meta = {
 // }
 //
 // NOTE on composition: this workflow composes penumbra-fanout and adversarial-review via
-// workflow({scriptPath}). It deliberately does NOT compose penumbra-fix-until-green via
+// workflow(name). It deliberately does NOT compose penumbra-fix-until-green via
 // workflow() — that workflow itself calls workflow(penumbra-fanout), and workflow() nesting
 // is one level only (a child's own workflow() call throws). So the fix-until-green loop is
 // inlined here directly on top of penumbra-fanout. penumbra-fanout and adversarial-review are
@@ -384,7 +384,7 @@ for (let i = 0; i < maxFixRounds; i++) {
   }
 
   const fan = await workflow(
-    { scriptPath: ".claude/workflows/penumbra-fanout.js" },
+    'penumbra-fanout',
     { tasks: [t], dispatcherModel },
   );
   const r = ((fan && fan.results) || [])[0];
@@ -436,7 +436,7 @@ log(`Implement: green on ${greenBranch} after ${roundsUsed} round(s).`);
 phase("Review");
 
 const review = await workflow(
-  { scriptPath: ".claude/workflows/adversarial-review.js" },
+  'adversarial-review',
   {
     target_ref: greenBranch,
     base_ref: base,

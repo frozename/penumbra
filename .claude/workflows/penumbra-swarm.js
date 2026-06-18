@@ -107,7 +107,7 @@ log(`penumbra-swarm: planner produced ${tasks.length} task(s)${plan.summary ? ' 
 phase('Dispatch')
 // Reuse the fan-out primitive rather than re-implementing the dispatch proxy.
 const fan = await workflow(
-  { scriptPath: '.claude/workflows/penumbra-fanout.js' },
+  'penumbra-fanout',
   { tasks, defaults, dispatcherModel, ...(agentType ? { agentType } : {}) },
 )
 
