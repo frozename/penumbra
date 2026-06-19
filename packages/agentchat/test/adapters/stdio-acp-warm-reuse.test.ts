@@ -99,18 +99,23 @@ describe("StdioAcpAdapter warm-connection reuse (Option B)", () => {
     expect(sessionNews.map((c) => c.cwd)).toEqual(["/repo/wt-a", "/repo/wt-b"]); // fresh session per cwd
   });
 
-  it("re-injects each dispatch's PENUMBRA_STORAGE_ROOT into session/new across reuse (no stale worktree DB)", async () => {
+  it("re-injects each dispatch's handoff identity into session/new across reuse", async () => {
     const pool = createAcpWarmPool({ now: () => 0 });
-    const storageRoots: (string | undefined)[] = [];
+    const identities: Array<{ handoffId: string | undefined; storageRoot: string | undefined }> =
+      [];
     const request = vi.fn(async (method: string, params?: any) => {
       if (method === "initialize") return { protocolVersion: 1, authMethods: [] };
       if (method === "session/new") {
         const penumbra = (params?.mcpServers ?? []).find((s: any) =>
           /penumbra/.test(s?.name ?? ""),
         );
-        const sr = (penumbra?.env ?? []).find((e: any) => e?.name === "PENUMBRA_STORAGE_ROOT");
-        storageRoots.push(sr?.value);
-        return { sessionId: `s-${storageRoots.length}` };
+        const env = Array.isArray(penumbra?.env) ? penumbra.env : [];
+        const envValue = (name: string) => env.find((e: any) => e?.name === name)?.value;
+        identities.push({
+          handoffId: envValue("PENUMBRA_HANDOFF_ID"),
+          storageRoot: envValue("PENUMBRA_STORAGE_ROOT"),
+        });
+        return { sessionId: `s-${identities.length}` };
       }
       if (method === "session/prompt") return { stopReason: "end_turn" };
       return {};
@@ -145,7 +150,10 @@ describe("StdioAcpAdapter warm-connection reuse (Option B)", () => {
     } as any);
 
     expect(startServer).toHaveBeenCalledTimes(1); // process reused
-    // The reused process must NOT freeze wt-a's storage root onto wt-b's dispatch.
-    expect(storageRoots).toEqual(["/repo/wt-a/.test-storage", "/repo/wt-b/.test-storage"]);
+    // The reused process must NOT freeze wt-a's identity onto wt-b's dispatch.
+    expect(identities).toEqual([
+      { handoffId: "hA", storageRoot: "/repo/wt-a/.test-storage" },
+      { handoffId: "hB", storageRoot: "/repo/wt-b/.test-storage" },
+    ]);
   });
 });
