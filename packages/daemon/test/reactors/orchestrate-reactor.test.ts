@@ -175,6 +175,7 @@ async function dispatchLeasedOrchestrateTask(opts: {
   bus: TaskEventBus;
   sessions: MaestroSessionWriter;
   taskWriter: TaskWriter;
+  log?: { warn: (obj: Record<string, unknown>, msg: string) => void };
 }): Promise<{ reactor: ReturnType<typeof createOrchestrateReactor>; task_id: string }> {
   const reactor = createOrchestrateReactor({
     db: opts.db,
@@ -184,6 +185,7 @@ async function dispatchLeasedOrchestrateTask(opts: {
     chainStart: async () => ({ handoff_id: "handoff-bk", conversation_id: "conv-bk" }),
     resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
     defaults: DEFAULT_BOUNDS,
+    ...(opts.log ? { log: opts.log } : {}),
   });
   reactor.start();
   const { task_id } = opts.taskWriter.file({
@@ -274,6 +276,73 @@ test("completion backstop: still-leased task whose chain failed is failed with c
   expect(task.status).toBe("failed");
   expect(task.failure_reason).toBe("chain_failed");
   db.close();
+});
+
+test("completion backstop: logs and retries recordTerminated failures", async () => {
+  const db = setupDb();
+  const bus = new TaskEventBus();
+  const sessions = new MaestroSessionWriter({ db });
+  const taskWriter = new TaskWriter(db, {
+    bus,
+    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+  });
+
+  const failOnce = new Error("terminate busy");
+  const originalTerminate = sessions.terminate.bind(sessions);
+  let terminateCalls = 0;
+  sessions.terminate = ((taskId, reason) => {
+    terminateCalls += 1;
+    if (terminateCalls === 1) throw failOnce;
+    originalTerminate(taskId, reason);
+  }) as MaestroSessionWriter["terminate"];
+
+  const warnCalls: Array<[Record<string, unknown>, string]> = [];
+  const { reactor, task_id } = await dispatchLeasedOrchestrateTask({
+    db,
+    bus,
+    sessions,
+    taskWriter,
+    log: {
+      warn: (obj, msg) => warnCalls.push([obj, msg]),
+    },
+  });
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => {
+    unhandled.push(reason);
+  };
+
+  insertTerminalHandoff(db, "completed");
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    (reactor as ReturnType<typeof createOrchestrateReactor>).reconcileChainCompletions();
+    await Bun.sleep(20);
+
+    expect(unhandled).toEqual([]);
+    expect(warnCalls).toHaveLength(1);
+    expect(warnCalls[0]?.[0]).toMatchObject({ err: failOnce, task_id });
+    expect(warnCalls[0]?.[1]).toBe("reconcile recordTerminated backstop failed");
+
+    let terminated = db
+      .query<
+        { n: number },
+        [string]
+      >(`SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND kind = 'orchestrate_terminated'`)
+      .get(task_id);
+    expect(terminated?.n).toBe(0);
+
+    reactor.reconcileChainCompletions();
+    terminated = db
+      .query<
+        { n: number },
+        [string]
+      >(`SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND kind = 'orchestrate_terminated'`)
+      .get(task_id);
+    expect(terminated?.n).toBe(1);
+    expect(taskWriter.get(task_id).status).toBe("failed");
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+    db.close();
+  }
 });
 
 test("completion backstop: leaves a task the agent already self-completed untouched", async () => {

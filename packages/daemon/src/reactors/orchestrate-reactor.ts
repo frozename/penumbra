@@ -2,14 +2,16 @@ import type { Database } from "bun:sqlite";
 import type {
   AgentDescriptor,
   ChainStartRequest,
+  Logger,
   MaestroTerminationReason,
   TaskEventBus,
   TaskWriter,
 } from "@penumbra/core";
-import { MaestroSessionWriter, routeAgent } from "@penumbra/core";
+import { createLogger, MaestroSessionWriter, routeAgent } from "@penumbra/core";
 import { orchestrateOneTask } from "../maestro/orchestrate-one-task.js";
 
 const ORCHESTRATE_BACKSTOP_INTERVAL_MS = 30_000;
+const defaultLog = createLogger({ component: "daemon:orchestrate-reactor" });
 
 interface TaskKindRow {
   kind: string;
@@ -32,6 +34,7 @@ export interface CreateOrchestrateReactorOpts {
   defaults: ReactorBounds;
   routeAgent?: typeof routeAgent;
   now?: () => number;
+  log?: Pick<Logger, "warn">;
 }
 
 interface SpawnedRow {
@@ -58,6 +61,7 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): {
   reconcileChainCompletions(): void;
 } {
   const now = opts.now ?? Date.now;
+  const log = opts.log ?? defaultLog;
   let iterator: AsyncIterableIterator<{
     task_id: string;
     at: number;
@@ -124,7 +128,9 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): {
           chain_status: handoff.status,
         },
         terminationReason,
-      );
+      ).catch((err) => {
+        log.warn({ err, task_id: row.task_id }, "reconcile recordTerminated backstop failed");
+      });
     }
   }
 
