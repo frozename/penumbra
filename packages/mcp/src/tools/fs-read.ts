@@ -1,7 +1,6 @@
 import { z } from "zod";
 import type { DaemonClient } from "../daemon-client.js";
-import { makeEnvelopeResult } from "../responses/envelope.js";
-import { estimateTokens, truncateToTokens, DEFAULT_BUDGET } from "../responses/budget.js";
+import { makeFsEnvelopeResult, type FsEnvelopeHandlerOpts } from "./fs-envelope.js";
 
 export const FsReadInputShape = {
   path: z.string().min(1).describe("File path inside the worktree to read."),
@@ -30,7 +29,7 @@ function toErrorContent(err: any) {
   return errorContent(code, message);
 }
 
-export function fsReadHandler(daemon: DaemonClient) {
+export function fsReadHandler(daemon: DaemonClient, opts?: FsEnvelopeHandlerOpts) {
   return async (input: any) => {
     const handoff_id = input.handoff_id || process.env.PENUMBRA_HANDOFF_ID;
     if (!handoff_id) {
@@ -43,14 +42,7 @@ export function fsReadHandler(daemon: DaemonClient) {
       const result = await daemon.readInWorktree(handoff_id, { path: input.path });
       const rawJson = JSON.stringify(result);
       if (input.envelope) {
-        const resultBytes = Buffer.byteLength(rawJson, "utf8");
-        const { text, truncated } = truncateToTokens(rawJson, DEFAULT_BUDGET);
-        return makeEnvelopeResult([{ type: "text", text }], {
-          usedTokens: estimateTokens(text),
-          limitTokens: DEFAULT_BUDGET,
-          truncated,
-          resultBytes,
-        });
+        return makeFsEnvelopeResult(rawJson, opts);
       }
       return { content: [{ type: "text" as const, text: rawJson }] };
     } catch (err) {

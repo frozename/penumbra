@@ -1167,6 +1167,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: FsGlobInputShape,
     },
     makeHandler: fsGlobHandler as unknown as ToolDef["makeHandler"],
+    handlerOpts: (ctx?: ToolBuildContext) => ({ handleStore: ctx?.handleStore }),
     readOnly: true,
   },
   fs_grep: {
@@ -1176,6 +1177,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: FsGrepInputShape,
     },
     makeHandler: fsGrepHandler as unknown as ToolDef["makeHandler"],
+    handlerOpts: (ctx?: ToolBuildContext) => ({ handleStore: ctx?.handleStore }),
     readOnly: true,
   },
   fs_read: {
@@ -1185,6 +1187,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: FsReadInputShape,
     },
     makeHandler: fsReadHandler as unknown as ToolDef["makeHandler"],
+    handlerOpts: (ctx?: ToolBuildContext) => ({ handleStore: ctx?.handleStore }),
     readOnly: true,
   },
   fs_write: {
@@ -1194,6 +1197,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: FsWriteInputShape,
     },
     makeHandler: fsWriteHandler as unknown as ToolDef["makeHandler"],
+    handlerOpts: (ctx?: ToolBuildContext) => ({ handleStore: ctx?.handleStore }),
     readOnly: false,
   },
   fs_edit: {
@@ -1203,6 +1207,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: FsEditInputShape,
     },
     makeHandler: fsEditHandler as unknown as ToolDef["makeHandler"],
+    handlerOpts: (ctx?: ToolBuildContext) => ({ handleStore: ctx?.handleStore }),
     readOnly: false,
   },
   fs_exec: {
@@ -1212,6 +1217,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: FsExecInputShape,
     },
     makeHandler: fsExecHandler as unknown as ToolDef["makeHandler"],
+    handlerOpts: (ctx?: ToolBuildContext) => ({ handleStore: ctx?.handleStore }),
     readOnly: false,
   },
   daemon_reload_config: {

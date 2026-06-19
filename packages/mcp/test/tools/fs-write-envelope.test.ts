@@ -1,6 +1,8 @@
 import { describe, it, expect, afterEach } from "bun:test";
+import { HandleStore } from "../../src/handle-store.js";
 import { isEnvelopeResult } from "../../src/responses/envelope.js";
 import { fsWriteHandler } from "../../src/tools/fs-write.js";
+import { readHandleHandler } from "../../src/tools/read-handle.js";
 
 function fakeDaemon(writeInWorktree?: (handoffId: string, opts: unknown) => Promise<unknown>): any {
   return {
@@ -35,6 +37,43 @@ describe("fs.write handler - envelope opt-in", () => {
 
     expect(isEnvelopeResult(out)).toBe(false);
     expect(out.content[0].text).toBe(JSON.stringify(result));
+  });
+
+  it("spills truncated envelope payload to a handle with a valid visible preview", async () => {
+    const result = {
+      path: "file.txt",
+      bytes_written: 40_000,
+      created: true,
+      diagnostics: "x".repeat(40_000),
+    };
+    const rawJson = JSON.stringify(result);
+    const store = new HandleStore();
+    try {
+      const handler = fsWriteHandler(
+        fakeDaemon(async () => result),
+        { handleStore: store },
+      );
+      const out: any = await handler({
+        path: "file.txt",
+        content: "hello",
+        handoff_id: "H1",
+        envelope: true,
+      });
+
+      expect(isEnvelopeResult(out)).toBe(true);
+      expect(out._meta.token_budget.truncated).toBe(true);
+      expect(typeof out._meta.handle_id).toBe("string");
+      expect(JSON.parse(out.content[0].text)).toEqual({
+        truncated: true,
+        preview: expect.any(String),
+      });
+      expect(out._meta.result_bytes).toBe(Buffer.byteLength(rawJson, "utf8"));
+
+      const full: any = await readHandleHandler(store)({ handle_id: out._meta.handle_id });
+      expect(full.content[0].text).toBe(rawJson);
+    } finally {
+      store.close();
+    }
   });
 
   it("keeps no_handoff_context error shape even when envelope=true", async () => {

@@ -1,6 +1,8 @@
 import { describe, it, expect, afterEach } from "bun:test";
+import { HandleStore } from "../../src/handle-store.js";
 import { isEnvelopeResult } from "../../src/responses/envelope.js";
 import { fsGrepHandler } from "../../src/tools/fs-grep.js";
+import { readHandleHandler } from "../../src/tools/read-handle.js";
 
 function fakeDaemon(grepInWorktree?: (handoffId: string, opts: unknown) => Promise<unknown>): any {
   return {
@@ -58,7 +60,7 @@ describe("fs_grep - envelope opt-in", () => {
     expect(result.content[0].text).toBe(JSON.stringify(grepResult));
   });
 
-  it("truncates envelope text for over-budget payloads and reports full result_bytes", async () => {
+  it("spills truncated envelope payload to a handle with a valid visible preview", async () => {
     const grepResult = {
       results: Array.from({ length: 4000 }, (_, i) => ({
         path: `src/file-${i}.ts`,
@@ -67,13 +69,29 @@ describe("fs_grep - envelope opt-in", () => {
       })),
       truncated: false,
     };
-    const handler = fsGrepHandler(fakeDaemon(async () => grepResult));
-    const result: any = await handler({ pattern: "x", handoff_id: "H1", envelope: true });
+    const rawJson = JSON.stringify(grepResult);
+    const store = new HandleStore();
+    try {
+      const handler = fsGrepHandler(
+        fakeDaemon(async () => grepResult),
+        { handleStore: store },
+      );
+      const result: any = await handler({ pattern: "x", handoff_id: "H1", envelope: true });
 
-    expect(isEnvelopeResult(result)).toBe(true);
-    expect(result._meta.token_budget.truncated).toBe(true);
-    expect(result.content[0].text.length).toBe(8000 * 4);
-    expect(result._meta.result_bytes).toBe(Buffer.byteLength(JSON.stringify(grepResult), "utf8"));
+      expect(isEnvelopeResult(result)).toBe(true);
+      expect(result._meta.token_budget.truncated).toBe(true);
+      expect(typeof result._meta.handle_id).toBe("string");
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        truncated: true,
+        preview: expect.any(String),
+      });
+      expect(result._meta.result_bytes).toBe(Buffer.byteLength(rawJson, "utf8"));
+
+      const full: any = await readHandleHandler(store)({ handle_id: result._meta.handle_id });
+      expect(full.content[0].text).toBe(rawJson);
+    } finally {
+      store.close();
+    }
   });
 
   it("keeps no_handoff_context error byte-identical even when envelope=true", async () => {
