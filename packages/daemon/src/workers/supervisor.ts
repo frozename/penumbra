@@ -429,17 +429,7 @@ export class ExtraWorkerSupervisor {
     if (Date.now() - state.lastStartedAt >= STABLE_WORKER_LIFETIME_MS) {
       state.restartCount = 0;
     }
-    const delay = Math.min(MAX_RESTART_DELAY_MS, BASE_RESTART_DELAY_MS * 2 ** state.restartCount);
-    state.restartCount += 1;
-
-    if (state.restartTimer) {
-      clearTimeout(state.restartTimer);
-    }
-    state.restartTimer = setTimeout(() => {
-      if (this.stopped) return;
-      state.restartTimer = null;
-      this.spawnExtraWorker(extra);
-    }, delay);
+    const delay = this.scheduleExtraWorkerRestart(extra, state);
 
     this.log.warn(
       {
@@ -455,6 +445,39 @@ export class ExtraWorkerSupervisor {
     if (this.orphanHandoffRecovery) {
       await this.orphanHandoffRecovery.recoverForWorker(extra.id);
     }
+  }
+
+  private scheduleExtraWorkerRestart(
+    extra: ExtraWorkerConfig,
+    state: ExtraWorkerProcessState,
+  ): number {
+    const delay = Math.min(MAX_RESTART_DELAY_MS, BASE_RESTART_DELAY_MS * 2 ** state.restartCount);
+    state.restartCount += 1;
+
+    if (state.restartTimer) {
+      clearTimeout(state.restartTimer);
+    }
+    state.restartTimer = setTimeout(() => {
+      if (this.stopped) return;
+      state.restartTimer = null;
+      try {
+        this.spawnExtraWorker(extra);
+      } catch (err: unknown) {
+        this.log.error(
+          {
+            event: "extra_worker_spawn_failed",
+            worker_id: extra.id,
+            error: err instanceof Error ? err.message : String(err),
+          },
+          "extra worker failed to spawn during restart",
+        );
+        if (!this.stopped) {
+          this.scheduleExtraWorkerRestart(extra, state);
+        }
+      }
+    }, delay);
+
+    return delay;
   }
 
   private async pipeStreamToLog(

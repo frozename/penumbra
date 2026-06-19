@@ -283,6 +283,53 @@ describe("extra worker supervisor", () => {
     }
   });
 
+  test("crash restart recovers when timer respawn throws synchronously", async () => {
+    vi.useFakeTimers();
+    try {
+      let failNextSpawn = false;
+      let pidSeq = 1;
+      const { supervisor, processes, log } = createSupervisor(
+        [{ id: "worker-a", concurrency: 4, isolation: "shared" }],
+        undefined,
+        {
+          spawnImpl: () => {
+            if (failNextSpawn) {
+              failNextSpawn = false;
+              throw new Error("transient spawn failure");
+            }
+            return createFakeProcess(() => pidSeq++);
+          },
+        },
+      );
+      await supervisor.start();
+
+      const first = processes[0]!;
+      failNextSpawn = true;
+      first.exit(1);
+      await flushPromises();
+      expect(() => vi.advanceTimersByTime(1000)).not.toThrow();
+      await flushPromises();
+      expect(processes).toHaveLength(1);
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: "extra_worker_spawn_failed",
+          worker_id: "worker-a",
+          error: "transient spawn failure",
+        }),
+        "extra worker failed to spawn during restart",
+      );
+
+      vi.advanceTimersByTime(1999);
+      await flushPromises();
+      expect(processes).toHaveLength(1);
+      vi.advanceTimersByTime(1);
+      await flushPromises();
+      expect(processes).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("backoff reset after stable lifetime", async () => {
     vi.useFakeTimers();
     try {
