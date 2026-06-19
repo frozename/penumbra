@@ -81,10 +81,18 @@ export async function dreamingRevertRoute(req: Request, services: Services): Pro
     revertDreamAction(services.db, body.action_id, body.cascade || "none");
     return json({ ok: true });
   } catch (err: any) {
+    const status =
+      typeof err === "object" && err !== null && "status" in err && typeof err.status === "number"
+        ? err.status
+        : undefined;
+    const code =
+      typeof err === "object" && err !== null && "code" in err && typeof err.code === "string"
+        ? err.code
+        : undefined;
     if (err.message && err.message.includes("has_dependents")) {
       return json({ error: "has_dependents", details: err.message }, 409);
     }
-    return json({ error: err.message }, 500);
+    return json({ error: err.message, ...(code ? { code } : {}) }, status ?? 500);
   }
 }
 

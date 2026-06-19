@@ -222,4 +222,37 @@ describe("dream action apply route", () => {
       cleanup();
     }
   });
+
+  test("returns 4xx for malformed dream action JSON during revert", async () => {
+    const { services, cleanup } = createTestServices();
+    try {
+      const cycleId = "cycle-malformed";
+      const actionId = "action-malformed";
+
+      seedCycle(services, cycleId);
+      services.db
+        .prepare(
+          `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
+           VALUES(?, ?, 'P3', 'retire', 1.0, 'auto_applied', 'not json', '{}')`,
+        )
+        .run(actionId, cycleId);
+
+      const handler = createDaemonFetchHandler({ services, token: "tok" });
+      const revertRes = await handler(
+        new Request("http://x/dreaming/revert", {
+          method: "POST",
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ action_id: actionId }),
+        }),
+      );
+
+      expect(revertRes.status).toBeGreaterThanOrEqual(400);
+      expect(revertRes.status).toBeLessThan(500);
+    } finally {
+      cleanup();
+    }
+  });
 });

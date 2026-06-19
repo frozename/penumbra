@@ -231,6 +231,44 @@ describe("revertDreamAction — per-phase compensation", () => {
     expect(action.reverted_by).toBe("user");
   });
 
+  it("P3 retire revert is idempotent after the action has already been reverted", () => {
+    const memId = crypto.randomUUID();
+    seedMemory(db, { memory_id: memId, retired_at: Date.now() - 1000 });
+
+    seedAction(db, {
+      action_id: "p3-retire-idempotent",
+      phase: "P3",
+      action_type: "retire",
+      status: "auto_applied",
+      target_ids: [memId],
+      payload: { source: "quality_signal" },
+    });
+
+    revertDreamAction(db, "p3-retire-idempotent", "none");
+
+    db.prepare("UPDATE t2_memories SET retired_at = ? WHERE memory_id = ?").run(Date.now(), memId);
+    db.prepare("UPDATE dream_actions SET reverted_by = 'user' WHERE action_id = ?").run(
+      "p3-retire-idempotent",
+    );
+
+    const retiredBefore = db
+      .prepare("SELECT retired_at FROM t2_memories WHERE memory_id = ?")
+      .get(memId) as any;
+    expect(retiredBefore.retired_at).not.toBeNull();
+
+    revertDreamAction(db, "p3-retire-idempotent", "none");
+
+    const retiredAfter = db
+      .prepare("SELECT retired_at FROM t2_memories WHERE memory_id = ?")
+      .get(memId) as any;
+    expect(retiredAfter.retired_at).toBe(retiredBefore.retired_at);
+
+    const action = db
+      .prepare("SELECT reverted_by FROM dream_actions WHERE action_id = ?")
+      .get("p3-retire-idempotent") as any;
+    expect(action.reverted_by).toBe("user");
+  });
+
   // ── P6 ──────────────────────────────────────────────────────────────────
 
   it("P6 revert: deletes the project_briefs row, preserving newer ones", () => {

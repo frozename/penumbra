@@ -118,6 +118,7 @@ type DreamActionRow = {
   target_ids: string;
   payload_json: string;
   decided_at: number | null;
+  reverted_by: string | null;
 };
 
 class DreamActionApplyError extends Error {
@@ -134,13 +135,13 @@ class DreamActionApplyError extends Error {
 function getDreamAction(db: Database, actionId: string): DreamActionRow | null {
   return db
     .prepare(
-      "SELECT phase, action_type, status, target_ids, payload_json, decided_at FROM dream_actions WHERE action_id = ?",
+      "SELECT phase, action_type, status, target_ids, payload_json, decided_at, reverted_by FROM dream_actions WHERE action_id = ?",
     )
     .get(actionId) as DreamActionRow | null;
 }
 
 function parseTargetIds(targetIdsRaw: string): string[] {
-  const parsed = JSON.parse(targetIdsRaw) as unknown;
+  const parsed = safeParseJson(targetIdsRaw);
   if (!Array.isArray(parsed) || !parsed.every((id) => typeof id === "string")) {
     throw new DreamActionApplyError(
       "invalid_target_ids",
@@ -148,6 +149,29 @@ function parseTargetIds(targetIdsRaw: string): string[] {
     );
   }
   return parsed;
+}
+
+function safeParseJson(value: string): unknown {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseDreamActionPayload<T extends Record<string, unknown>>(
+  raw: string | null,
+  actionId: string,
+): T {
+  const parsed = safeParseJson(raw ?? "{}");
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    return parsed as T;
+  }
+  throw new DreamActionApplyError(
+    "invalid_payload_json",
+    `dream action payload_json must be a JSON object: ${actionId}`,
+    422,
+  );
 }
 
 function markDreamActionReverted(db: Database, actionId: string, previousStatus: string): void {
@@ -219,6 +243,7 @@ export function revertDreamAction(
   const action = getDreamAction(db, actionId);
 
   if (!action) throw new Error("Action not found: " + actionId);
+  if (action.reverted_by != null) return;
   const canCompensateState = action.status === "auto_applied" || action.status === "applied";
 
   const deps = db
@@ -239,7 +264,7 @@ export function revertDreamAction(
   }
 
   if (action.phase === "P7" && canCompensateState) {
-    const targetIds = JSON.parse(action.target_ids) as string[];
+    const targetIds = parseTargetIds(action.target_ids);
     if (targetIds.length !== 1)
       throw new Error("Expected exactly 1 target memory for P7 action, got " + targetIds.length);
 
@@ -274,9 +299,12 @@ export function revertDreamAction(
       markDreamActionReverted(db, actionId, action.status);
     })();
   } else if (action.phase === "P1" && action.action_type === "promote_t1" && canCompensateState) {
-    const targetIds = JSON.parse(action.target_ids) as string[];
+    const targetIds = parseTargetIds(action.target_ids);
     const rollupId = targetIds[0] as string;
-    const payload = JSON.parse(action.payload_json ?? "{}") as { t2_memory_id?: string };
+    const payload = parseDreamActionPayload<{ t2_memory_id?: string }>(
+      action.payload_json,
+      actionId,
+    );
 
     let t2MemoryId = payload.t2_memory_id;
     if (!t2MemoryId) {
@@ -297,10 +325,10 @@ export function revertDreamAction(
       markDreamActionReverted(db, actionId, action.status);
     })();
   } else if (action.phase === "P2" && action.action_type === "link" && canCompensateState) {
-    const targetIds = JSON.parse(action.target_ids) as string[];
+    const targetIds = parseTargetIds(action.target_ids);
     const srcId = targetIds[0] as string;
     const dstId = targetIds[1] as string;
-    const payload = JSON.parse(action.payload_json ?? "{}") as { link_type?: string };
+    const payload = parseDreamActionPayload<{ link_type?: string }>(action.payload_json, actionId);
     const linkType = payload.link_type ?? "semantic_near";
 
     db.transaction(() => {
@@ -310,7 +338,7 @@ export function revertDreamAction(
       markDreamActionReverted(db, actionId, action.status);
     })();
   } else if (action.phase === "P3" && action.action_type === "retire" && canCompensateState) {
-    const targetIds = JSON.parse(action.target_ids) as string[];
+    const targetIds = parseTargetIds(action.target_ids);
     const memoryId = targetIds[0] as string;
 
     db.transaction(() => {
@@ -318,19 +346,19 @@ export function revertDreamAction(
       markDreamActionReverted(db, actionId, action.status);
     })();
   } else if (action.action_type === "ephemera_retire" && canCompensateState) {
-    const memoryId = (JSON.parse(action.target_ids) as string[])[0] as string;
+    const memoryId = parseTargetIds(action.target_ids)[0] as string;
     db.transaction(() => {
       db.prepare("UPDATE t2_memories SET retired_at = NULL WHERE memory_id = ?").run(memoryId);
       markDreamActionReverted(db, actionId, action.status);
     })();
   } else if (action.action_type === "cluster_retire" && canCompensateState) {
-    const memoryId = (JSON.parse(action.target_ids) as string[])[0] as string;
+    const memoryId = parseTargetIds(action.target_ids)[0] as string;
     db.transaction(() => {
       db.prepare("UPDATE t2_memories SET retired_at = NULL WHERE memory_id = ?").run(memoryId);
       markDreamActionReverted(db, actionId, action.status);
     })();
   } else if (action.phase === "P6" && canCompensateState) {
-    const targetIds = JSON.parse(action.target_ids) as string[];
+    const targetIds = parseTargetIds(action.target_ids);
     const projectId = targetIds[0] as string;
 
     db.transaction(() => {
