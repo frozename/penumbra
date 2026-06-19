@@ -80,7 +80,7 @@ function startTestDaemon(
         tags: ["typescript"],
         tier: "oc",
         cost_cents_per_run: 15,
-        maestro_capable: true,
+        maestro_capable: false,
       },
       {
         name: "x",
@@ -715,8 +715,148 @@ test("POST /tasks upgrades trusted auto-approved refiner promotions to orchestra
       origin: "draft:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
     });
     expect(JSON.parse(task.eligibility)).toEqual({
-      allow_agents: ["openai-codex-deep-acp", "anthropic-claude-sonnet-acp", "google-gemini-cli"],
+      allow_agents: ["openai-codex-deep-acp", "anthropic-claude-sonnet-acp"],
     });
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /tasks returns 4xx for explicit non-maestro-capable allow_agents during trusted auto-promote", async () => {
+  const daemon = startTestDaemon({
+    ghTaskSyncService: {
+      enqueueTaskGhCreate: () => {},
+      enqueueSyncLinkedTask: () => {},
+      queueStatusUpdate: () => {},
+      syncLinkedTaskNow: async () => ({
+        task_id: "task-1",
+        repo: "acordeiro/penumbra",
+        issue_number: 53,
+        gh_state: "OPEN",
+        action: "noop",
+        last_sync_ts: "2026-04-23T12:00:00.000Z",
+      }),
+      pushStatusNow: async () => ({
+        task_id: "task-1",
+        repo: "acordeiro/penumbra",
+        issue_number: 53,
+        gh_state: "OPEN",
+        action: "pushed",
+        direction: "push",
+        last_sync_ts: "2026-04-23T12:00:00.000Z",
+      }),
+      syncAllLinkedTasks: async () => [],
+    },
+  });
+  insertTaskDraftEvent(daemon.services.db, {
+    event_id: "draft-created-explicit-non-capable",
+    ts: "2026-04-23T11:59:00.000Z",
+    ingest_ts: "2026-04-23T11:59:01.000Z",
+    project_id: "p1",
+    event_type: "task_draft",
+    draft_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+    payload: {
+      draft_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      prompt: "draft prompt",
+      affects_projects: ["p1"],
+      evidence: {},
+      auto_ok: true,
+      filed_by_agent: "task-refiner-primary",
+      filed_via: "skill_inline",
+      parent_draft_id: null,
+    },
+  });
+  try {
+    const create = await postJson(daemon, "/tasks", {
+      prompt: "refiner task file",
+      project_id: "p1",
+      created_by_kind: "human",
+      created_by_id: "cli",
+      origin: "draft:eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      eligibility: { allow_agents: ["google-gemini-cli"] },
+    });
+    expect(create.status).toBe(422);
+    const body = (await create.json()) as {
+      error: string;
+      agent_name?: string;
+      reason?: string;
+    };
+    expect(body).toMatchObject({
+      error: "OrchestrateAgentNotMaestroCapable",
+      agent_name: "google-gemini-cli",
+      reason: "not_maestro_capable",
+    });
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /tasks fails closed when no default auto-promote agents are maestro capable", async () => {
+  const daemon = startTestDaemon({
+    ghTaskSyncService: {
+      enqueueTaskGhCreate: () => {},
+      enqueueSyncLinkedTask: () => {},
+      queueStatusUpdate: () => {},
+      syncLinkedTaskNow: async () => ({
+        task_id: "task-1",
+        repo: "acordeiro/penumbra",
+        issue_number: 54,
+        gh_state: "OPEN",
+        action: "noop",
+        last_sync_ts: "2026-04-23T12:00:00.000Z",
+      }),
+      pushStatusNow: async () => ({
+        task_id: "task-1",
+        repo: "acordeiro/penumbra",
+        issue_number: 54,
+        gh_state: "OPEN",
+        action: "pushed",
+        direction: "push",
+        last_sync_ts: "2026-04-23T12:00:00.000Z",
+      }),
+      syncAllLinkedTasks: async () => [],
+    },
+  });
+  (daemon.services as Services & { agentchatConfig?: any }).agentchatConfig = {
+    agents: [
+      { name: "openai-codex-deep-acp", maestro_capable: false },
+      { name: "anthropic-claude-sonnet-acp", maestro_capable: false },
+      { name: "google-gemini-cli", maestro_capable: false },
+    ],
+  };
+  insertTaskDraftEvent(daemon.services.db, {
+    event_id: "draft-created-no-defaults",
+    ts: "2026-04-23T11:59:00.000Z",
+    ingest_ts: "2026-04-23T11:59:01.000Z",
+    project_id: "p1",
+    event_type: "task_draft",
+    draft_id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+    payload: {
+      draft_id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      prompt: "draft prompt",
+      affects_projects: ["p1"],
+      evidence: {},
+      auto_ok: true,
+      filed_by_agent: "task-refiner-primary",
+      filed_via: "skill_inline",
+      parent_draft_id: null,
+    },
+  });
+  try {
+    const create = await postJson(daemon, "/tasks", {
+      prompt: "refiner task file",
+      project_id: "p1",
+      created_by_kind: "human",
+      created_by_id: "cli",
+      origin: "draft:ffffffff-ffff-4fff-8fff-ffffffffffff",
+    });
+    expect(create.status).toBe(400);
+    const body = (await create.json()) as { error: string };
+    expect(body.error).toBe("invalid_input");
+    const written = daemon.services.db
+      .query<{ count: number }, [string]>(`SELECT count(*) AS count FROM tasks WHERE origin = ?`)
+      .get("draft:ffffffff-ffff-4fff-8fff-ffffffffffff");
+    expect(written?.count).toBe(0);
   } finally {
     daemon.stop();
   }

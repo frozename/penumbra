@@ -23,7 +23,11 @@ import {
   type Services,
   TaskDraftPromotedPayloadSchema,
   getGithubRepo,
+  OrchestrateAgentNotMaestroCapable,
+  OrchestrateRequiresAllowAgents,
+  OrchestrateRecursionForbidden,
 } from "@penumbra/core";
+import { getAgentDescriptor } from "@penumbra/agentchat";
 import { getPrincipal } from "../auth.js";
 import type { GhTaskSyncService, GhTaskSyncSummary } from "../sweepers/gh-task-sync.js";
 import { bodyJson, json } from "./_helpers.js";
@@ -125,6 +129,23 @@ function mapTaskError(err: unknown): Response {
       429,
     );
   }
+  if (err instanceof OrchestrateAgentNotMaestroCapable) {
+    return json(
+      {
+        error: err.name,
+        message: err.message,
+        agent_name: err.agent_name,
+        reason: err.reason,
+      },
+      422,
+    );
+  }
+  if (
+    err instanceof OrchestrateRequiresAllowAgents ||
+    err instanceof OrchestrateRecursionForbidden
+  ) {
+    return json({ error: err.name, message: err.message }, 422);
+  }
   throw err;
 }
 
@@ -162,6 +183,7 @@ export async function tasksFileRoute(
     | "clock"
     | "machineId"
     | "log"
+    | "agentchatConfig"
   >,
   ghSync?: GhTaskSyncService,
 ): Promise<Response> {
@@ -195,10 +217,36 @@ export async function tasksFileRoute(
       info.filed_by_agent !== null &&
       TRUSTED_PROMOTERS.has(info.filed_by_agent);
     if (autoPromote) {
-      const allowAgents =
-        input.eligibility?.allow_agents?.length && input.eligibility.allow_agents.length > 0
-          ? input.eligibility.allow_agents
-          : [...DEFAULT_ORCHESTRATE_ALLOW_AGENTS];
+      let allowAgents = input.eligibility?.allow_agents?.length
+        ? input.eligibility.allow_agents
+        : undefined;
+      if (!allowAgents) {
+        const cfg = services.agentchatConfig;
+        const capable = DEFAULT_ORCHESTRATE_ALLOW_AGENTS.filter((name) =>
+          cfg
+            ? getAgentDescriptor(name, cfg as Parameters<typeof getAgentDescriptor>[1])
+                ?.maestro_capable === true
+            : false,
+        );
+        const dropped = DEFAULT_ORCHESTRATE_ALLOW_AGENTS.filter((name) => !capable.includes(name));
+        if (dropped.length > 0) {
+          services.log?.warn?.(
+            { dropped_agents: dropped },
+            "task_file: dropped non-maestro-capable default orchestrate auto-promote agents",
+          );
+        }
+        if (capable.length === 0) {
+          return invalidInput([
+            {
+              message:
+                "trusted refiner auto-promote default allow_agents resolved to no maestro-capable agents",
+              path: ["eligibility", "allow_agents"],
+              dropped_agents: dropped,
+            },
+          ]);
+        }
+        allowAgents = capable;
+      }
       inputForFile = {
         ...input,
         kind: "orchestrate",
