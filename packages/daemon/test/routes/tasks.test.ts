@@ -68,6 +68,27 @@ function startTestDaemon(
         cost_cents_per_run: 15,
         maestro_capable: true,
       },
+      {
+        name: "anthropic-claude-sonnet-acp",
+        tags: ["typescript"],
+        tier: "oc",
+        cost_cents_per_run: 15,
+        maestro_capable: true,
+      },
+      {
+        name: "google-gemini-cli",
+        tags: ["typescript"],
+        tier: "oc",
+        cost_cents_per_run: 15,
+        maestro_capable: true,
+      },
+      {
+        name: "x",
+        tags: ["typescript"],
+        tier: "oc",
+        cost_cents_per_run: 15,
+        maestro_capable: true,
+      },
     ],
   };
 
@@ -693,7 +714,81 @@ test("POST /tasks upgrades trusted auto-approved refiner promotions to orchestra
       kind: "orchestrate",
       origin: "draft:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
     });
-    expect(JSON.parse(task.eligibility)).toEqual({ allow_agents: ["openai-codex-deep-acp"] });
+    expect(JSON.parse(task.eligibility)).toEqual({
+      allow_agents: ["openai-codex-deep-acp", "anthropic-claude-sonnet-acp", "google-gemini-cli"],
+    });
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /tasks preserves explicit allow_agents during trusted auto-approved refiner promotions", async () => {
+  const daemon = startTestDaemon({
+    ghTaskSyncService: {
+      enqueueTaskGhCreate: () => {},
+      enqueueSyncLinkedTask: () => {},
+      queueStatusUpdate: () => {},
+      syncLinkedTaskNow: async () => ({
+        task_id: "task-1",
+        repo: "acordeiro/penumbra",
+        issue_number: 53,
+        gh_state: "OPEN",
+        action: "noop",
+        last_sync_ts: "2026-04-23T12:00:00.000Z",
+      }),
+      pushStatusNow: async () => ({
+        task_id: "task-1",
+        repo: "acordeiro/penumbra",
+        issue_number: 53,
+        gh_state: "OPEN",
+        action: "pushed",
+        direction: "push",
+        last_sync_ts: "2026-04-23T12:00:00.000Z",
+      }),
+      syncAllLinkedTasks: async () => [],
+    },
+  });
+  insertTaskDraftEvent(daemon.services.db, {
+    event_id: "draft-created",
+    ts: "2026-04-23T11:59:00.000Z",
+    ingest_ts: "2026-04-23T11:59:01.000Z",
+    project_id: "p1",
+    event_type: "task_draft",
+    draft_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    payload: {
+      draft_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      prompt: "draft prompt",
+      affects_projects: ["p1"],
+      evidence: {},
+      auto_ok: true,
+      filed_by_agent: "task-refiner-primary",
+      filed_via: "skill_inline",
+      parent_draft_id: null,
+    },
+  });
+  try {
+    const create = await postJson(daemon, "/tasks", {
+      prompt: "refiner task file",
+      project_id: "p1",
+      created_by_kind: "human",
+      created_by_id: "cli",
+      origin: "draft:cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      eligibility: { allow_agents: ["x"] },
+    });
+    expect(create.status).toBe(201);
+    const created = (await create.json()) as { task_id: string };
+    const task = daemon.services.db
+      .query(
+        `SELECT kind, eligibility, origin
+           FROM tasks
+          WHERE id = ?`,
+      )
+      .get(created.task_id) as { kind: string; eligibility: string; origin: string | null };
+    expect(task).toMatchObject({
+      kind: "orchestrate",
+      origin: "draft:cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    });
+    expect(JSON.parse(task.eligibility)).toEqual({ allow_agents: ["x"] });
   } finally {
     daemon.stop();
   }

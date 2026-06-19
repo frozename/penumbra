@@ -81,7 +81,11 @@ const TRUSTED_PROMOTERS = new Set([
   "task-refiner-escalation",
   "claude",
 ]);
-const DEFAULT_ORCHESTRATE_ALLOW_AGENT = "openai-codex-deep-acp";
+const DEFAULT_ORCHESTRATE_ALLOW_AGENTS = [
+  "openai-codex-deep-acp",
+  "anthropic-claude-sonnet-acp",
+  "google-gemini-cli",
+];
 
 function noContent(): Response {
   return new Response(null, { status: 204 });
@@ -194,7 +198,7 @@ export async function tasksFileRoute(
       const allowAgents =
         input.eligibility?.allow_agents?.length && input.eligibility.allow_agents.length > 0
           ? input.eligibility.allow_agents
-          : [DEFAULT_ORCHESTRATE_ALLOW_AGENT];
+          : [...DEFAULT_ORCHESTRATE_ALLOW_AGENTS];
       inputForFile = {
         ...input,
         kind: "orchestrate",
