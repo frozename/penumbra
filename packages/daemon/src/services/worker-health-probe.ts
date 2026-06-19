@@ -15,7 +15,7 @@ export interface WorkerHealthController {
    * Probe guarantees one `onSignal` callback per miss streak while a worker is unresponsive.
    * Callers should not assume idempotency beyond that contract.
    */
-  onSignal(signal: WorkerHealthSignal): void;
+  onSignal(signal: WorkerHealthSignal): void | Promise<void>;
 }
 
 interface WorkerHealthProbeServices extends Services {
@@ -145,6 +145,9 @@ export class WorkerHealthProbe {
 }
 
 export interface WorkerHealthControllerDeps {
+  extraWorkerSupervisor: {
+    restartWorkerById(workerId: string): Promise<boolean>;
+  };
   dispatchEventLog: {
     record(event: {
       handoff_id: string;
@@ -177,7 +180,7 @@ export function createWorkerHealthController(
   services: WorkerHealthControllerDeps,
 ): WorkerHealthController {
   return {
-    onSignal: (signal) => {
+    onSignal: async (signal) => {
       const dispatchEvent = {
         handoff_id: "",
         worker_id: signal.worker_id,
@@ -193,7 +196,11 @@ export function createWorkerHealthController(
         },
       };
       services.dispatchEventLog.record(dispatchEvent);
-      services.orphanHandoffRecovery.recoverForWorker(signal.worker_id);
+      try {
+        await services.extraWorkerSupervisor.restartWorkerById(signal.worker_id);
+      } finally {
+        services.orphanHandoffRecovery.recoverForWorker(signal.worker_id);
+      }
     },
   };
 }

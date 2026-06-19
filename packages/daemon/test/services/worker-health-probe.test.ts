@@ -301,7 +301,7 @@ test("concurrent probes emit per worker and ACK only touches that worker", async
   expect(signals).toHaveLength(0);
 });
 
-test("default worker health controller records forensic event and recovers worker once per signal", async () => {
+test("default worker health controller evicts wedged worker before orphan recovery on threshold miss", async () => {
   const recorded: Array<{
     kind: string;
     worker_id: string;
@@ -310,7 +310,17 @@ test("default worker health controller records forensic event and recovers worke
     event: string;
   }> = [];
   const recovered: string[] = [];
+  const actions: string[] = [];
+  const knownWorkers = new Set(["worker-a"]);
+
   const controller = createWorkerHealthController({
+    extraWorkerSupervisor: {
+      restartWorkerById: async (workerId: string) => {
+        actions.push(`restart:${workerId}`);
+        knownWorkers.delete(workerId);
+        return true;
+      },
+    },
     dispatchEventLog: {
       record: (event) => {
         recorded.push({
@@ -324,6 +334,7 @@ test("default worker health controller records forensic event and recovers worke
     },
     orphanHandoffRecovery: {
       recoverForWorker: (workerId: string) => {
+        actions.push(`recover:${workerId}`);
         recovered.push(workerId);
         return {
           requeued: 0,
@@ -345,7 +356,7 @@ test("default worker health controller records forensic event and recovers worke
     probe_interval_ms: 100,
   };
 
-  controller.onSignal(signal);
+  await controller.onSignal(signal);
   expect(recorded).toHaveLength(1);
   expect(recovered).toEqual(["worker-a"]);
   expect(recorded[0]).toEqual({
@@ -355,9 +366,17 @@ test("default worker health controller records forensic event and recovers worke
     misses: 3,
     event: "probe_timeout",
   });
+  expect(actions).toEqual(["restart:worker-a", "recover:worker-a"]);
+  expect(knownWorkers.has("worker-a")).toBe(false);
 
-  controller.onSignal(signal);
+  await controller.onSignal(signal);
   expect(recorded).toHaveLength(2);
   expect(recovered).toHaveLength(2);
   expect(recovered[1]).toBe("worker-a");
+  expect(actions).toEqual([
+    "restart:worker-a",
+    "recover:worker-a",
+    "restart:worker-a",
+    "recover:worker-a",
+  ]);
 });

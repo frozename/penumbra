@@ -1269,6 +1269,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     intervalMs: Number(process.env.PENUMBRA_WORKER_PROBE_INTERVAL_MS || "15000") || 15_000,
     missThreshold: Number(process.env.PENUMBRA_WORKER_PROBE_MISS_THRESHOLD || "3") || 3,
     controller: createWorkerHealthController({
+      extraWorkerSupervisor,
       dispatchEventLog: daemonServices.dispatchEventLog,
       orphanHandoffRecovery,
     }),
