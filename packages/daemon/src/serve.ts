@@ -1280,8 +1280,11 @@ export function serve(opts: ServeOpts): DaemonHandle {
   const stopEfficacyJobReclaimSweeper = startEfficacyJobReclaimSweeper({
     services: opts.services,
   });
+  // PR-orphan closing is owned by installPrOrphanSweeper; reconciler sweeps stay dry-run for visibility.
+  const reconcilerDryRun = true;
   const stopReconcilerSweeper = startReconcilerSweeper({
     services: opts.services,
+    dryRun: reconcilerDryRun,
     log: opts.services.log as any,
   });
   const daemonSettings = opts.services.settings as any;

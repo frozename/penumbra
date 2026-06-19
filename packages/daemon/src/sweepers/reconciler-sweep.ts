@@ -5,6 +5,7 @@ import type { PrSweepResult } from "./pr-orphan-sweeper.js";
 export interface ReconcilerSweepOpts {
   services: Services;
   maxClose?: number;
+  dryRun?: boolean;
   log?: { warn?: (obj: unknown, msg?: string) => void };
   /** Injection point for testing — defaults to runPrOrphanSweepForDaemon. */
   runSweep?: (input: {
@@ -37,10 +38,11 @@ export async function runReconcilerSweepTick(
     (process.env.PENUMBRA_RECONCILER_SWEEP_MAX_CLOSE
       ? Number(process.env.PENUMBRA_RECONCILER_SWEEP_MAX_CLOSE)
       : DEFAULT_MAX_CLOSE);
+  const dryRun = opts.dryRun ?? (services.settings as any)?.prOrphanSweeperDryRun ?? true;
   const runSweep = opts.runSweep ?? runPrOrphanSweepForDaemon;
 
   try {
-    const result = await runSweep({ services, dryRun: false, maxClose });
+    const result = await runSweep({ services, dryRun, maxClose });
 
     const closed = result.superseded + result.stale;
     const scanned = result.scanned;

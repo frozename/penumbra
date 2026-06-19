@@ -2,6 +2,7 @@ import { describe, expect, test, mock } from "bun:test";
 import { Database } from "bun:sqlite";
 import { migrate, loadSqliteVec, type Services } from "@penumbra/core";
 import { runReconcilerSweepTick } from "../../src/sweepers/reconciler-sweep.js";
+import { installPrOrphanSweeper, runPrOrphanSweep } from "../../src/sweepers/pr-orphan-sweeper.js";
 
 try {
   if (process.platform === "darwin") {
@@ -16,10 +17,11 @@ function setupDb(): Database {
   return db;
 }
 
-function makeServices(db: Database): Services {
+function makeServices(db: Database, settings?: Record<string, unknown>): Services {
   return {
     db,
     log: { warn: () => {} },
+    settings,
   } as unknown as Services;
 }
 
@@ -30,17 +32,128 @@ function makeSweepResult(
 }
 
 describe("runReconcilerSweepTick", () => {
-  test("calls runSweep with dryRun:false and the configured maxClose", async () => {
+  test("uses opts.dryRun and the configured maxClose", async () => {
     const db = setupDb();
     const svc = makeServices(db);
     const sweepFn = mock(async () => makeSweepResult());
 
-    await runReconcilerSweepTick({ services: svc, maxClose: 15, runSweep: sweepFn });
+    await runReconcilerSweepTick({
+      services: svc,
+      dryRun: false,
+      maxClose: 15,
+      runSweep: sweepFn,
+    });
 
     expect(sweepFn).toHaveBeenCalledTimes(1);
     const call = sweepFn.mock.calls[0][0] as { dryRun: boolean; maxClose: number };
     expect(call.dryRun).toBe(false);
     expect(call.maxClose).toBe(15);
+  });
+
+  test("reads dry-run from settings and never closes PRs when enabled", async () => {
+    const db = setupDb();
+    const svc = makeServices(db, { prOrphanSweeperDryRun: true });
+    const closePullRequest = mock(async () => {});
+    const sweepFn = mock(async ({ dryRun }: { dryRun: boolean }) => {
+      if (!dryRun) {
+        await closePullRequest({ number: 10, comment: "", deleteBranch: true });
+      }
+      return makeSweepResult();
+    });
+
+    await runReconcilerSweepTick({ services: svc, runSweep: sweepFn, maxClose: 7 });
+
+    expect(sweepFn).toHaveBeenCalledTimes(1);
+    const call = sweepFn.mock.calls[0][0] as { dryRun: boolean; maxClose: number };
+    expect(call.dryRun).toBe(true);
+    expect(closePullRequest).toHaveBeenCalledTimes(0);
+  });
+
+  test("concurrent reconciler and installPrOrphanSweeper close the same PR only once", async () => {
+    const db = setupDb();
+    const svc = makeServices(db, { prOrphanSweeperDryRun: true });
+    const closedPrs: number[] = [];
+    let listOpenCalls = 0;
+    let openAll: (() => void) | null = null;
+    const openGate = new Promise<void>((resolve) => {
+      openAll = resolve;
+    });
+
+    const ghClient = {
+      listOpenPullRequests: mock(async () => {
+        listOpenCalls += 1;
+        await openGate;
+        if (listOpenCalls > 2) return [];
+        return [
+          {
+            number: 404,
+            title: "agent dispatch",
+            headRefName: "agent/11111111-1111-1111-1111-111111111111",
+            headRefOid: "sha-superseded",
+            updatedAt: "2026-06-01T00:00:00.000Z",
+          },
+        ];
+      }),
+      closePullRequest: mock(async (input: { number: number }) => {
+        closedPrs.push(input.number);
+      }),
+    };
+    const gitClient = {
+      resolveMainSha: async () => "main-sha",
+      isAncestorOfMain: async () => true,
+      isObjectReachable: async () => true,
+      fetchHeadRef: async () => {},
+      isThreeDotDiffEmptyVsMain: async () => false,
+    };
+    const sharedDeps = {
+      t0Writer: { write: () => {} },
+      uuid: () => "evt-1",
+      clock: () => new Date("2026-06-14T12:00:00.000Z"),
+      machineId: { get: () => "machine-test" },
+      log: { info: () => {}, warn: () => {} },
+    };
+    const handle = installPrOrphanSweeper({
+      db: db as any,
+      intervalMs: 1,
+      dryRun: false,
+      applyDefault: true,
+      t0Writer: sharedDeps.t0Writer,
+      uuid: sharedDeps.uuid,
+      clock: sharedDeps.clock,
+      machineId: sharedDeps.machineId,
+      ghClient: ghClient as any,
+      gitClient: gitClient as any,
+      log: sharedDeps.log,
+    });
+
+    try {
+      let attempts = 0;
+      while (listOpenCalls < 1 && attempts < 200) {
+        await Bun.sleep(1);
+        attempts += 1;
+      }
+      expect(listOpenCalls).toBeGreaterThan(0);
+
+      const reconcilerSweep = runReconcilerSweepTick({
+        services: svc,
+        runSweep: async ({ maxClose, services, dryRun }) =>
+          runPrOrphanSweep({
+            ...sharedDeps,
+            ghClient: ghClient as any,
+            gitClient: gitClient as any,
+            dryRun,
+            maxClose,
+          }),
+      });
+
+      openAll?.();
+      await reconcilerSweep;
+      await Bun.sleep(10);
+
+      expect(closedPrs).toEqual([404]);
+    } finally {
+      handle.stop();
+    }
   });
 
   test("successful sweep emits reconciler.sweep.tick event with expected meta shape", async () => {
