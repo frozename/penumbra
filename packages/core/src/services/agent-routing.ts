@@ -21,6 +21,118 @@ type AgentRoutePressureSnapshot = {
   warnings?: unknown[];
 };
 
+export type ResolvedAgentPoolMember = { agent: string; tier: "local" | "cloud" };
+export type AgentPoolDropReason = "not-in-registry" | "unhealthy";
+export type DroppedAgentPoolMember = { agent: string; reason: AgentPoolDropReason };
+export type ResolveAgentPoolContext = {
+  registry: Set<string> | string[];
+  isLocal?: (agent: string) => boolean;
+  isHealthy?: (agent: string) => boolean;
+  rank?: (agents: string[]) => string[];
+};
+export type ResolveAgentPoolResult = {
+  ordered: ResolvedAgentPoolMember[];
+  dropped: DroppedAgentPoolMember[];
+};
+export type AgentPool =
+  | string
+  | string[]
+  | {
+      members: Array<{ agent: string; tier?: "local" | "cloud" }>;
+      select?: "rank" | "round_robin" | "order";
+      fallback_to_cloud?: boolean;
+    };
+
+type NormalizedAgentPool = {
+  members: ResolvedAgentPoolMember[];
+  select: "rank" | "round_robin" | "order";
+  fallback_to_cloud: boolean;
+};
+
+function normalizeAgentPool(
+  pool: AgentPool,
+  isLocal: (agent: string) => boolean,
+): NormalizedAgentPool {
+  if (typeof pool === "string") {
+    return {
+      members: [{ agent: pool, tier: isLocal(pool) ? "local" : "cloud" }],
+      select: "rank",
+      fallback_to_cloud: true,
+    };
+  }
+  if (Array.isArray(pool)) {
+    return {
+      members: pool.map((agent) => ({ agent, tier: isLocal(agent) ? "local" : "cloud" })),
+      select: "rank",
+      fallback_to_cloud: true,
+    };
+  }
+  return {
+    members: pool.members.map((member) => ({
+      agent: member.agent,
+      tier: member.tier ?? (isLocal(member.agent) ? "local" : "cloud"),
+    })),
+    select: pool.select ?? "rank",
+    fallback_to_cloud: pool.fallback_to_cloud ?? true,
+  };
+}
+
+function orderAgentPoolPartition(
+  members: ResolvedAgentPoolMember[],
+  select: NormalizedAgentPool["select"],
+  rank: ((agents: string[]) => string[]) | undefined,
+): ResolvedAgentPoolMember[] {
+  if (select === "order" || members.length <= 1) return members;
+  if (select === "round_robin") return [...members.slice(1), members[0]!];
+  const byName = new Map(members.map((member) => [member.agent, member]));
+  const ranked = (
+    rank?.(members.map((member) => member.agent)) ?? members.map((member) => member.agent)
+  )
+    .map((agent) => byName.get(agent))
+    .filter((member): member is ResolvedAgentPoolMember => member != null);
+  const rankedNames = new Set(ranked.map((member) => member.agent));
+  return [...ranked, ...members.filter((member) => !rankedNames.has(member.agent))];
+}
+
+export function resolveAgentPool(
+  pool: AgentPool,
+  ctx: ResolveAgentPoolContext,
+): ResolveAgentPoolResult | null {
+  const registry = ctx.registry instanceof Set ? ctx.registry : new Set(ctx.registry);
+  const isLocal = ctx.isLocal ?? (() => false);
+  const isHealthy = ctx.isHealthy ?? (() => true);
+  const normalized = normalizeAgentPool(pool, isLocal);
+  const dropped: DroppedAgentPoolMember[] = [];
+  const survivors: ResolvedAgentPoolMember[] = [];
+
+  for (const member of normalized.members) {
+    if (!registry.has(member.agent)) {
+      dropped.push({ agent: member.agent, reason: "not-in-registry" });
+      continue;
+    }
+    // Future seam: callers can fold cloud volume caps or circuit breakers into isHealthy.
+    if (!isHealthy(member.agent)) {
+      dropped.push({ agent: member.agent, reason: "unhealthy" });
+      continue;
+    }
+    survivors.push(member);
+  }
+
+  const local = orderAgentPoolPartition(
+    survivors.filter((member) => member.tier === "local"),
+    normalized.select,
+    ctx.rank,
+  );
+  const cloud = orderAgentPoolPartition(
+    survivors.filter((member) => member.tier === "cloud"),
+    normalized.select,
+    ctx.rank,
+  );
+  const ordered = local.length > 0 ? local : normalized.fallback_to_cloud ? cloud : [];
+
+  return ordered.length > 0 ? { ordered, dropped } : null;
+}
+
 type AgentRouteAgentchatConfig = {
   agents: Array<{
     name: string;

@@ -1,6 +1,7 @@
 import { z } from "zod";
+import { AgentPinSchema, AgentPoolSchema } from "./agent-pool.js";
 
-const AgentPinSchema = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]);
+export { AgentPinSchema, AgentPoolSchema };
 
 export const WORKLOADS = [
   "plan_refine",

@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { AgentChatConfigSchema } from "@penumbra/agentchat/config/types";
 import { AgentsConfigSchema, QuotasConfigSchema, RoutingConfigSchema } from "@penumbra/config";
-import type { AgentChatConfig } from "@penumbra/agentchat/config/types";
+import type { ParsedAgentChatConfig } from "@penumbra/agentchat/config/types";
+import type { AgentPool } from "@penumbra/config";
 
 export interface ConfigSplitOpts {
   source?: string;
@@ -73,9 +74,7 @@ function normalizeLegacyShape(value: unknown): unknown {
   return normalized;
 }
 
-function splitLegacyConfig(source: AgentChatConfig) {
-  const legacy = source as AgentChatConfig;
-
+function splitLegacyConfig(legacy: ParsedAgentChatConfig) {
   const reviewWorkload = legacy.review_personas
     ? {
         eligible_roles: ["reviewer"],
@@ -110,7 +109,7 @@ function splitLegacyConfig(source: AgentChatConfig) {
   const personas: Record<
     string,
     {
-      preferred_agent: string | string[];
+      preferred_agent: AgentPool;
       bias: string;
       system_prompt: string;
       category_hints?: string[];

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AgentPinSchema, AgentPoolSchema } from "./agent-pool.js";
 import { WORKLOADS, WorkloadSchema } from "./workload.js";
 
 /**
@@ -17,7 +18,7 @@ export const RoleRoutingConfigSchema = z
   .default({ exploration_policy: "unsampled-first" });
 export type RoleRoutingConfig = z.infer<typeof RoleRoutingConfigSchema>;
 
-const AgentPinSchema = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]);
+export { AgentPinSchema, AgentPoolSchema };
 
 export const PersonaSchema = z
   .object({

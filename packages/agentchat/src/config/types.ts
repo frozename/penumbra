@@ -2,12 +2,15 @@
 import { z } from "zod";
 import {
   AgentOptionsSchema,
+  AgentPinSchema,
+  AgentPoolSchema,
   CANONICAL_PROVIDER_VALUE_RE,
   refineAgentConfigAdapterOptions,
   type AgentOptions,
 } from "@penumbra/config";
 
 export { AgentOptionsSchema };
+export { AgentPinSchema, AgentPoolSchema };
 export type { AgentOptions };
 
 const CANONICAL_PROVIDER_MESSAGE =
@@ -423,8 +426,6 @@ export const RoleRoutingConfigSchema = z
     latency_weighting: false,
   });
 export type RoleRoutingConfig = z.infer<typeof RoleRoutingConfigSchema>;
-
-const AgentPinSchema = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]);
 
 export const ReviewPersonaSchema = z
   .object({
