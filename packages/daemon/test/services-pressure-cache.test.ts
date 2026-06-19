@@ -1,7 +1,14 @@
 import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import {
+  buildServices,
+  loadSqliteVec,
+  migrate,
+  type PressureResult,
+  type Services,
+} from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { isAnyProviderOverPressure } from "../src/pressure.js";
 
 try {
   if (process.platform === "darwin") {
@@ -59,6 +66,25 @@ function insertSnapshotRow(
 }
 
 describe("buildServices subscription pressure cache", () => {
+  it("does not treat a fresh 50 percent usage snapshot as over pressure", () => {
+    const pressure: PressureResult = {
+      warnings: [],
+      snapshots: [
+        {
+          provider: "anthropic",
+          window_label: "five_hour",
+          model: null,
+          used_pct: 50,
+          resets_at: null,
+          observed_at: "2026-05-08T00:00:00Z",
+          source_kind: "local-state-claude-statusline",
+        },
+      ],
+    };
+
+    expect(isAnyProviderOverPressure(pressure)).toBe(false);
+  });
+
   it("exposes subscriptionPressureCache with the cache API", () => {
     const { db, services } = makeServices();
 

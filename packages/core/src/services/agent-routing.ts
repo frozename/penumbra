@@ -550,7 +550,7 @@ function isOverPressure(
   return pressureSnapshot.snapshots.some(
     (snapshot) =>
       snapshot.provider === provider &&
-      (snapshot.used_pct >= 0.9 || snapshot.source_kind === "cooldown"),
+      (snapshot.used_pct >= 90 || snapshot.source_kind === "cooldown"),
   );
 }
 
@@ -689,7 +689,7 @@ function buildRank(
         const snaps = input.applyPressure.snapshots.filter((snap) => snap.provider === provider);
         if (snaps.length > 0) {
           const maxUsedPct = Math.max(...snaps.map((snap) => snap.used_pct));
-          const factor = clamp01(1 - maxUsedPct);
+          const factor = clamp01(1 - maxUsedPct / 100);
           score = clamp01(Math.round(score * factor * 10000) / 10000);
         }
       }

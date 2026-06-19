@@ -122,14 +122,14 @@ describe("buildDreamCycleDeps", () => {
     insertPressureSnapshot(db, {
       eventId: "pressure-openai",
       provider: "openai",
-      usedPct: 0.05,
+      usedPct: 5,
     });
     expect(await deps.pressureGuard!.check()).toEqual({ anyThrottled: false });
 
     insertPressureSnapshot(db, {
       eventId: "pressure-anthropic",
       provider: "anthropic",
-      usedPct: 0.95,
+      usedPct: 95,
     });
     expect(await deps.pressureGuard!.check()).toEqual({ anyThrottled: true });
   });
@@ -143,7 +143,7 @@ describe("buildDreamCycleDeps", () => {
     insertPressureSnapshot(db, {
       eventId: "pressure-stale-anthropic",
       provider: "anthropic",
-      usedPct: 0.99,
+      usedPct: 99,
       ageSeconds: 3600,
     });
     expect(await deps.pressureGuard!.check()).toEqual({ anyThrottled: false });

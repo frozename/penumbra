@@ -55,7 +55,7 @@ describe("checkPressureCap", () => {
     });
     expect(resultPass.state).toBe("pass");
 
-    // Over cap
+    // At cap
     const resultRefuse = checkPressureCap({
       cache: { forProvider: () => [] },
       agent: {
@@ -65,12 +65,14 @@ describe("checkPressureCap", () => {
       },
       providerCaps: {},
       syntheticCaps: { anthropic: { max_dispatches: 10, window_seconds: 60 } },
-      getRecentDispatchCount: (p, w) => 12,
+      getRecentDispatchCount: (p, w) => 10,
     });
     expect(resultRefuse.state).toBe("refuse");
     if (resultRefuse.state === "refuse") {
       expect(resultRefuse.reason).toBe("provider_synthetic_cap" as any);
       expect((resultRefuse as any).provider).toBe("anthropic");
+      expect(resultRefuse.used_pct).toBe(100);
+      expect(resultRefuse.cap_pct).toBe(100);
     }
   });
 

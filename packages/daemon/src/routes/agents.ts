@@ -150,7 +150,7 @@ function isOverPressure(provider: string, pressureSnapshot?: AgentRoutePressureS
   return pressureSnapshot.snapshots.some(
     (snapshot) =>
       snapshot.provider === provider &&
-      (snapshot.used_pct >= 0.9 || snapshot.source_kind === "cooldown"),
+      (snapshot.used_pct >= 90 || snapshot.source_kind === "cooldown"),
   );
 }
 

@@ -11,7 +11,7 @@ export function isAnyProviderOverPressure(pressure: PressureResult): boolean {
   );
   return pressure.snapshots.some((snapshot) => {
     if (staleKeys.has(`${snapshot.provider} ${snapshot.window_label}`)) return false;
-    return snapshot.used_pct >= 0.9 || snapshot.source_kind === "cooldown";
+    return snapshot.used_pct >= 90 || snapshot.source_kind === "cooldown";
   });
 }
 

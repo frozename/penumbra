@@ -131,9 +131,9 @@ describe("pickFromPool", () => {
     writePerf(db, "a", "implement_small", { rounds: 1, latency_ms: 10_000 });
     writePerf(db, "b", "implement_small", { rounds: 5, latency_ms: 60_000 });
 
-    expect(
-      pickFromPool(["a", "b"], db, agentchatConfig, pressure(0.95, 0.1), "implement_small"),
-    ).toBe("b");
+    expect(pickFromPool(["a", "b"], db, agentchatConfig, pressure(95, 10), "implement_small")).toBe(
+      "b",
+    );
     expect(agentchatConfig.role_routing?.headroom_weighting).toBe(false);
   });
 
@@ -156,9 +156,7 @@ describe("pickFromPool", () => {
     writePerf(db, "a", "implement_small", { rounds: 1, latency_ms: 10_000 });
     writePerf(db, "b", "implement_small", { rounds: 5, latency_ms: 60_000 });
 
-    expect(pickFromPool(["a", "b"], db, config(), pressure(0.95, 0.97), "implement_small")).toBe(
-      "a",
-    );
+    expect(pickFromPool(["a", "b"], db, config(), pressure(95, 97), "implement_small")).toBe("a");
   });
 
   test("empty pool throws", () => {

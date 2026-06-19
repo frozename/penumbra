@@ -60,10 +60,8 @@ describe("computeRouteForRole", () => {
     // assertions. Fixed pre-cutover timestamps deterministically exercise the
     // NULL-verdict path.
     // SEAM: these must also fall inside the routing window (now - windowDays).
-    // With windowDays:14 the floor is `now - 14d`; 2026-06-05 stays inside the
-    // window while the suite runs on/before ~2026-06-19. If the wall clock
-    // advances past that, bump this base forward (still keeping it < cutover) or
-    // raise windowDays in the calls below.
+    // The calls below use a wider window because these fixed pre-cutover rows
+    // cannot also stay "recent" forever as the wall clock advances.
     const tsBase = "2026-06-05T00:00:00.000Z";
     const preCutover = (hourOffset: number) =>
       new Date(Date.parse(tsBase) + hourOffset * 3600000).toISOString();
@@ -78,7 +76,7 @@ describe("computeRouteForRole", () => {
     const out = computeRouteForRole({
       db,
       role: "reviewer",
-      windowDays: 14,
+      windowDays: 365,
       minSamples: 3,
       agentKind: "coding",
       pressureSnapshot: {
@@ -87,7 +85,7 @@ describe("computeRouteForRole", () => {
             provider: "anthropic",
             window_label: "24h",
             model: null,
-            used_pct: 0.95,
+            used_pct: 95,
             resets_at: null,
             observed_at: new Date(Date.now() - 1000).toISOString(),
             source_kind: "subscription",
@@ -129,7 +127,7 @@ describe("computeRouteForRole", () => {
     const noMatch = computeRouteForRole({
       db,
       role: "does_not_exist",
-      windowDays: 14,
+      windowDays: 365,
       minSamples: 3,
       agentKind: "coding",
       pressureSnapshot: { snapshots: [], warnings: [] },
@@ -176,7 +174,7 @@ describe("computeRouteForRole", () => {
     const out = computeRouteForRole({
       db,
       role: "planner",
-      windowDays: 14,
+      windowDays: 365,
       minSamples: 3,
       agentKind: "coding",
       pressureSnapshot: { snapshots: [], warnings: [] },
@@ -197,7 +195,7 @@ describe("computeRouteForRole", () => {
     const out = computeRouteForRole({
       db,
       role: "reviewer",
-      windowDays: 14,
+      windowDays: 365,
       minSamples: 3,
       agentKind: "coding",
       pressureSnapshot: { snapshots: [], warnings: [] },
@@ -217,7 +215,7 @@ describe("computeRouteForRole", () => {
     const rankedFirst = computeRouteForRole({
       db,
       role: "reviewer",
-      windowDays: 14,
+      windowDays: 365,
       minSamples: 3,
       agentKind: "coding",
       pressureSnapshot: { snapshots: [], warnings: [] },

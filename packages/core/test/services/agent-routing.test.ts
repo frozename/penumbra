@@ -40,7 +40,7 @@ describe("routeAgent", () => {
             provider: "prov1",
             window_label: "five_minute",
             model: null,
-            used_pct: 0.2,
+            used_pct: 20,
             resets_at: null,
             observed_at: NOW.toISOString(),
             source_kind: "test",
@@ -49,7 +49,7 @@ describe("routeAgent", () => {
             provider: "prov2",
             window_label: "five_minute",
             model: null,
-            used_pct: 0.8,
+            used_pct: 80,
             resets_at: null,
             observed_at: NOW.toISOString(),
             source_kind: "test",
@@ -79,6 +79,105 @@ describe("routeAgent", () => {
     // Using simple precision check
     expect(alphaOn.score).toBeCloseTo(alphaOff.score * 0.8, 2);
     expect(betaOn.score).toBeCloseTo(betaOff.score * 0.2, 2);
+  });
+
+  test("headroom weighting keeps a ten percent provider viable and prefers it over high pressure", () => {
+    const writer = new AgentPerformanceWriter(db);
+    writer.upsert({
+      performance_id: "low-pressure-1",
+      ts: "2026-04-30T11:30:00Z",
+      handoff_id: "h-low-pressure-1",
+      conversation_id: "c-low-pressure-1",
+      project_id: "proj",
+      agent_name: "low-pressure",
+      task_type: "implement_substantial",
+      outcome: "pr_opened",
+      rounds: 2,
+      smoke_pass: "y",
+      reviewer_findings: 1,
+      maestro_score: null,
+      cost_usd: 0.2,
+      tokens_used: 100,
+      latency_ms: 90000,
+      source: "reconciler",
+      notes: null,
+      metadata_json: "{}",
+    });
+    writer.upsert({
+      performance_id: "high-pressure-1",
+      ts: "2026-04-30T11:31:00Z",
+      handoff_id: "h-high-pressure-1",
+      conversation_id: "c-high-pressure-1",
+      project_id: "proj",
+      agent_name: "high-pressure",
+      task_type: "implement_substantial",
+      outcome: "merged",
+      rounds: 1,
+      smoke_pass: "y",
+      reviewer_findings: 0,
+      maestro_score: null,
+      cost_usd: 0.1,
+      tokens_used: 100,
+      latency_ms: 30000,
+      source: "reconciler",
+      notes: null,
+      metadata_json: "{}",
+    });
+
+    const out = routeAgent({
+      db,
+      detail: "rank",
+      taskType: "implement_substantial",
+      since: "2026-04-29T00:00:00Z",
+      agentRegistry: ["low-pressure", "high-pressure"],
+      agentchatConfig: {
+        role_routing: { headroom_weighting: true },
+        agents: [
+          {
+            name: "low-pressure",
+            roles: ["coder"],
+            pricing_mode: "subscription" as const,
+            subscription_provider: "low-provider",
+          },
+          {
+            name: "high-pressure",
+            roles: ["coder"],
+            pricing_mode: "subscription" as const,
+            subscription_provider: "high-provider",
+          },
+        ],
+      },
+      applyPressure: {
+        snapshots: [
+          {
+            provider: "low-provider",
+            window_label: "five_minute",
+            model: null,
+            used_pct: 10,
+            resets_at: null,
+            observed_at: NOW.toISOString(),
+            source_kind: "test",
+          },
+          {
+            provider: "high-provider",
+            window_label: "five_minute",
+            model: null,
+            used_pct: 95,
+            resets_at: null,
+            observed_at: NOW.toISOString(),
+            source_kind: "test",
+          },
+        ],
+      },
+      now: NOW,
+    });
+
+    const candidates = (out as any).candidates.candidates;
+    const low = candidates.find((candidate: any) => candidate.agent_name === "low-pressure");
+    const high = candidates.find((candidate: any) => candidate.agent_name === "high-pressure");
+    expect(low.score).toBeGreaterThan(0);
+    expect(candidates[0].agent_name).toBe("low-pressure");
+    expect(low.score).toBeGreaterThan(high.score);
   });
 
   test("classifier-declined rows after cutover are excluded from rank scoring", () => {
@@ -603,7 +702,7 @@ describe("routeAgent", () => {
             provider: "anthropic",
             window_label: "24h",
             model: null,
-            used_pct: 0.95,
+            used_pct: 95,
             resets_at: null,
             observed_at: "2026-05-01T11:00:00Z",
             source_kind: "subscription",
@@ -748,7 +847,7 @@ describe("routeAgent", () => {
             provider: "anthropic",
             window_label: "24h",
             model: null,
-            used_pct: 0.95,
+            used_pct: 95,
             resets_at: null,
             observed_at: "2026-05-01T11:00:00Z",
             source_kind: "subscription",
