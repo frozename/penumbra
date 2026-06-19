@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 
@@ -66,9 +66,6 @@ export async function emitFileOutput(input: {
 
   try {
     await mkdir(dirname(targetPath), { recursive: true });
-    if (mode === "skip-if-exists" && existsSync(targetPath)) {
-      return { warnings: [], path: targetPath, skipped: true };
-    }
     if (mode === "unique-suffix") {
       const ext = extname(targetPath);
       const base = ext.length > 0 ? targetPath.slice(0, -ext.length) : targetPath;
@@ -99,6 +96,15 @@ export async function emitFileOutput(input: {
     }
     if (mode === "append") {
       await appendFile(targetPath, input.body, "utf8");
+    } else if (mode === "skip-if-exists") {
+      try {
+        await writeFile(targetPath, input.body, { flag: "wx", encoding: "utf8" });
+      } catch (err: any) {
+        if (err?.code === "EEXIST") {
+          return { warnings: [], path: targetPath, skipped: true };
+        }
+        throw err;
+      }
     } else {
       await writeFile(targetPath, input.body, "utf8");
     }
