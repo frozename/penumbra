@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { AgentPool } from "@penumbra/config";
 import {
   DEFAULT_AGENT_KIND,
   inferAgentTaskTypeForRole,
@@ -34,47 +35,47 @@ export type ResolveAgentPoolResult = {
   ordered: ResolvedAgentPoolMember[];
   dropped: DroppedAgentPoolMember[];
 };
-export type AgentPool =
-  | string
-  | string[]
-  | {
-      members: Array<{ agent: string; tier?: "local" | "cloud" }>;
-      select?: "rank" | "round_robin" | "order";
-      fallback_to_cloud?: boolean;
-    };
 
 type NormalizedAgentPool = {
-  members: ResolvedAgentPoolMember[];
-  select: "rank" | "round_robin" | "order";
+  members: Array<{ agent: string; tier?: "local" | "cloud" }>;
+  select: "rank" | "order";
   fallback_to_cloud: boolean;
 };
 
-function normalizeAgentPool(
-  pool: AgentPool,
-  isLocal: (agent: string) => boolean,
-): NormalizedAgentPool {
+function normalizeAgentPool(pool: AgentPool): NormalizedAgentPool {
   if (typeof pool === "string") {
     return {
-      members: [{ agent: pool, tier: isLocal(pool) ? "local" : "cloud" }],
-      select: "rank",
+      members: [{ agent: pool }],
+      select: "order",
       fallback_to_cloud: true,
     };
   }
   if (Array.isArray(pool)) {
     return {
-      members: pool.map((agent) => ({ agent, tier: isLocal(agent) ? "local" : "cloud" })),
-      select: "rank",
+      members: pool.map((agent) => ({ agent })),
+      select: "order",
       fallback_to_cloud: true,
     };
   }
   return {
-    members: pool.members.map((member) => ({
-      agent: member.agent,
-      tier: member.tier ?? (isLocal(member.agent) ? "local" : "cloud"),
-    })),
-    select: pool.select ?? "rank",
+    members: pool.members,
+    select: pool.select === "rank" ? "rank" : "order",
     fallback_to_cloud: pool.fallback_to_cloud ?? true,
   };
+}
+
+function resolveMemberTier(
+  member: { agent: string; tier?: "local" | "cloud" },
+  isLocal: ((agent: string) => boolean) | undefined,
+): "local" | "cloud" {
+  if (!isLocal) return member.tier ?? "cloud";
+  const probedTier = isLocal(member.agent) ? "local" : "cloud";
+  if (member.tier && member.tier !== probedTier) {
+    console.warn(
+      `agent pool tier mismatch for ${member.agent}: config=${member.tier} probe=${probedTier}`,
+    );
+  }
+  return probedTier;
 }
 
 function orderAgentPoolPartition(
@@ -83,11 +84,9 @@ function orderAgentPoolPartition(
   rank: ((agents: string[]) => string[]) | undefined,
 ): ResolvedAgentPoolMember[] {
   if (select === "order" || members.length <= 1) return members;
-  if (select === "round_robin") return [...members.slice(1), members[0]!];
+  if (!rank) return members;
   const byName = new Map(members.map((member) => [member.agent, member]));
-  const ranked = (
-    rank?.(members.map((member) => member.agent)) ?? members.map((member) => member.agent)
-  )
+  const ranked = rank(members.map((member) => member.agent))
     .map((agent) => byName.get(agent))
     .filter((member): member is ResolvedAgentPoolMember => member != null);
   const rankedNames = new Set(ranked.map((member) => member.agent));
@@ -97,11 +96,10 @@ function orderAgentPoolPartition(
 export function resolveAgentPool(
   pool: AgentPool,
   ctx: ResolveAgentPoolContext,
-): ResolveAgentPoolResult | null {
+): ResolveAgentPoolResult {
   const registry = ctx.registry instanceof Set ? ctx.registry : new Set(ctx.registry);
-  const isLocal = ctx.isLocal ?? (() => false);
   const isHealthy = ctx.isHealthy ?? (() => true);
-  const normalized = normalizeAgentPool(pool, isLocal);
+  const normalized = normalizeAgentPool(pool);
   const dropped: DroppedAgentPoolMember[] = [];
   const survivors: ResolvedAgentPoolMember[] = [];
 
@@ -115,7 +113,10 @@ export function resolveAgentPool(
       dropped.push({ agent: member.agent, reason: "unhealthy" });
       continue;
     }
-    survivors.push(member);
+    survivors.push({
+      agent: member.agent,
+      tier: resolveMemberTier(member, ctx.isLocal),
+    });
   }
 
   const local = orderAgentPoolPartition(
@@ -128,9 +129,9 @@ export function resolveAgentPool(
     normalized.select,
     ctx.rank,
   );
-  const ordered = local.length > 0 ? local : normalized.fallback_to_cloud ? cloud : [];
+  const ordered = [...local, ...(normalized.fallback_to_cloud ? cloud : [])];
 
-  return ordered.length > 0 ? { ordered, dropped } : null;
+  return { ordered, dropped };
 }
 
 type AgentRouteAgentchatConfig = {

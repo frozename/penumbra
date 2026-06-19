@@ -100,14 +100,41 @@ function ctx(overrides: Partial<WorkflowCtx> = {}): WorkflowCtx {
 }
 
 describe("parseAgentField", () => {
-  test("parses strings and non-empty arrays", () => {
+  test("parses strings, non-empty arrays, and object pools", () => {
     expect(parseAgentField("a")).toEqual({ kind: "single", agent: "a" });
     expect(parseAgentField(["a", "b"])).toEqual({ kind: "pool", agents: ["a", "b"] });
+    expect(
+      parseAgentField({
+        members: [{ agent: "a" }, { agent: "b", tier: "cloud" }],
+        select: "order",
+        fallback_to_cloud: true,
+      }),
+    ).toEqual({ kind: "pool", agents: ["a", "b"] });
   });
 
   test("returns null for absent or empty values", () => {
     expect(parseAgentField(undefined)).toBeNull();
     expect(parseAgentField([])).toBeNull();
+    expect(parseAgentField({ members: [] })).toBeNull();
+  });
+});
+
+describe("agentPoolToNames", () => {
+  test("normalizes every agent pool form to declaration-order names", async () => {
+    const { agentPoolToNames } =
+      (await import("./pool-resolver.js")) as typeof import("./pool-resolver.js") & {
+        agentPoolToNames?: (pool: unknown) => string[];
+      };
+    expect(agentPoolToNames).toBeFunction();
+
+    expect(agentPoolToNames("a")).toEqual(["a"]);
+    expect(agentPoolToNames(["a", "b"])).toEqual(["a", "b"]);
+    expect(
+      agentPoolToNames?.({
+        members: [{ agent: "a", tier: "local" }, { agent: "b" }],
+        select: "rank",
+      }),
+    ).toEqual(["a", "b"]);
   });
 });
 
@@ -130,8 +157,8 @@ describe("resolveAgent", () => {
     const db = freshDb();
     writePerf(db, "a");
     writePerf(db, "b");
-    writePressure(db, "anthropic", 0.95);
-    writePressure(db, "openai", 0.1);
+    writePressure(db, "anthropic", 95);
+    writePressure(db, "openai", 10);
 
     expect(
       resolveAgent({ kind: "pool", agents: ["a", "b"] }, "review_adversarial", {

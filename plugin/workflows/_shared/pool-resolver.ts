@@ -3,15 +3,29 @@ import { readSubscriptionPressure } from "../../../packages/core/src/readers/sub
 import type { WorkflowCtx } from "@penumbra/workflows";
 
 export type AgentField = { kind: "single"; agent: string } | { kind: "pool"; agents: string[] };
+type AgentPoolLike =
+  | string
+  | string[]
+  | {
+      members?: Array<{ agent?: unknown }>;
+    };
 
-export function parseAgentField(raw: string | string[] | undefined): AgentField | null {
-  if (typeof raw === "string" && raw.length > 0) return { kind: "single", agent: raw };
-  if (Array.isArray(raw)) {
-    const agents = raw.filter(
-      (value): value is string => typeof value === "string" && value.length > 0,
-    );
-    if (agents.length > 0) return { kind: "pool", agents };
-  }
+export function agentPoolToNames(pool: unknown): string[] {
+  if (typeof pool === "string") return pool.length > 0 ? [pool] : [];
+  if (Array.isArray(pool))
+    return pool.filter((value): value is string => typeof value === "string" && value.length > 0);
+  if (!pool || typeof pool !== "object" || Array.isArray(pool)) return [];
+  const members = (pool as AgentPoolLike).members;
+  if (!Array.isArray(members)) return [];
+  return members
+    .map((member) => member.agent)
+    .filter((agent): agent is string => typeof agent === "string" && agent.length > 0);
+}
+
+export function parseAgentField(raw: unknown): AgentField | null {
+  const agents = agentPoolToNames(raw);
+  if (agents.length === 1 && typeof raw === "string") return { kind: "single", agent: agents[0]! };
+  if (agents.length > 0) return { kind: "pool", agents };
   return null;
 }
 

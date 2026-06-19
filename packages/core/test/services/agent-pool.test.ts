@@ -3,12 +3,15 @@ import { AgentPoolSchema } from "../../../config/src/files/agent-pool.js";
 import { resolveAgentPool } from "../../src/services/agent-routing.js";
 
 describe("resolveAgentPool", () => {
-  test("returns null when every member is dropped", () => {
+  test("returns an empty ordered list and drop reasons when every member is dropped", () => {
     const result = resolveAgentPool(["removed-seat"], {
       registry: new Set(["local-granite-3b-q8-http"]),
     });
 
-    expect(result).toBeNull();
+    expect(result).toEqual({
+      ordered: [],
+      dropped: [{ agent: "removed-seat", reason: "not-in-registry" }],
+    });
   });
 
   test("drops unregistered members and preserves surviving local member", () => {
@@ -23,7 +26,7 @@ describe("resolveAgentPool", () => {
     });
   });
 
-  test("withholds cloud while a local member survives, then falls back to cloud", () => {
+  test("orders surviving local members before cloud fallback members", () => {
     const pool = AgentPoolSchema.parse({
       members: [{ agent: "local-granite-3b-q8-http" }, { agent: "gemini-acp-pro", tier: "cloud" }],
       fallback_to_cloud: true,
@@ -35,7 +38,10 @@ describe("resolveAgentPool", () => {
       isLocal: (agent) => agent.startsWith("local-"),
     });
     expect(localHealthy).toEqual({
-      ordered: [{ agent: "local-granite-3b-q8-http", tier: "local" }],
+      ordered: [
+        { agent: "local-granite-3b-q8-http", tier: "local" },
+        { agent: "gemini-acp-pro", tier: "cloud" },
+      ],
       dropped: [],
     });
 
@@ -67,10 +73,13 @@ describe("resolveAgentPool", () => {
       },
     );
 
-    expect(result).toBeNull();
+    expect(result).toEqual({
+      ordered: [],
+      dropped: [{ agent: "local-granite-3b-q8-http", reason: "unhealthy" }],
+    });
   });
 
-  test("resolves scalar and array pools as one-member and two-member pools", () => {
+  test("resolves scalar and array pools in declaration order by default", () => {
     expect(
       resolveAgentPool("x", {
         registry: ["x"],
@@ -87,33 +96,70 @@ describe("resolveAgentPool", () => {
       }),
     ).toEqual({
       ordered: [
-        { agent: "b", tier: "cloud" },
         { agent: "a", tier: "cloud" },
+        { agent: "b", tier: "cloud" },
       ],
       dropped: [],
     });
   });
 
-  test("supports round-robin and rank selection within local and cloud partitions", () => {
-    const roundRobin = resolveAgentPool(
+  test("honors fallback_to_cloud false when local members survive or do not survive", () => {
+    const registry = ["local-a", "cloud-a"];
+
+    expect(
+      resolveAgentPool(
+        {
+          members: [
+            { agent: "local-a", tier: "local" },
+            { agent: "cloud-a", tier: "cloud" },
+          ],
+          fallback_to_cloud: false,
+        },
+        { registry },
+      ),
+    ).toEqual({
+      ordered: [{ agent: "local-a", tier: "local" }],
+      dropped: [],
+    });
+
+    expect(
+      resolveAgentPool(
+        {
+          members: [
+            { agent: "local-a", tier: "local" },
+            { agent: "cloud-a", tier: "cloud" },
+          ],
+          fallback_to_cloud: false,
+        },
+        {
+          registry,
+          isHealthy: (agent) => agent !== "local-a",
+        },
+      ),
+    ).toEqual({
+      ordered: [],
+      dropped: [{ agent: "local-a", reason: "unhealthy" }],
+    });
+  });
+
+  test("uses cloud when no local member exists and fallback to cloud is enabled", () => {
+    const result = resolveAgentPool(
       {
-        members: [
-          { agent: "local-a", tier: "local" },
-          { agent: "local-b", tier: "local" },
-          { agent: "cloud-a", tier: "cloud" },
-        ],
-        select: "round_robin",
+        members: [{ agent: "cloud-a", tier: "cloud" }],
         fallback_to_cloud: true,
       },
       {
-        registry: ["local-a", "local-b", "cloud-a"],
+        registry: ["cloud-a"],
       },
     );
-    expect(roundRobin?.ordered).toEqual([
-      { agent: "local-b", tier: "local" },
-      { agent: "local-a", tier: "local" },
-    ]);
 
+    expect(result).toEqual({
+      ordered: [{ agent: "cloud-a", tier: "cloud" }],
+      dropped: [],
+    });
+  });
+
+  test("rank selection reorders within local and cloud partitions", () => {
     const ranked = resolveAgentPool(
       {
         members: [
@@ -129,9 +175,56 @@ describe("resolveAgentPool", () => {
         rank: (agents) => [...agents].reverse(),
       },
     );
-    expect(ranked?.ordered).toEqual([
+    expect(ranked.ordered).toEqual([
       { agent: "local-b", tier: "local" },
       { agent: "local-a", tier: "local" },
+      { agent: "cloud-a", tier: "cloud" },
+    ]);
+  });
+
+  test("prefers isLocal probe over tier labels and warns when they disagree", () => {
+    const warnings: unknown[][] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args);
+    };
+    try {
+      const result = resolveAgentPool(
+        {
+          members: [{ agent: "local-a", tier: "cloud" }],
+          fallback_to_cloud: false,
+        },
+        {
+          registry: ["local-a"],
+          isLocal: (agent) => agent === "local-a",
+        },
+      );
+
+      expect(result.ordered).toEqual([{ agent: "local-a", tier: "local" }]);
+      expect(warnings.length).toBe(1);
+      expect(String(warnings[0]?.[0])).toContain("agent pool tier mismatch");
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  test("does not call rank when rank selection has no ranker", () => {
+    const result = resolveAgentPool(
+      {
+        members: [
+          { agent: "local-a", tier: "local" },
+          { agent: "local-b", tier: "local" },
+        ],
+        select: "rank",
+        fallback_to_cloud: true,
+      },
+      {
+        registry: ["local-a", "local-b"],
+      },
+    );
+    expect(result.ordered).toEqual([
+      { agent: "local-a", tier: "local" },
+      { agent: "local-b", tier: "local" },
     ]);
   });
 });

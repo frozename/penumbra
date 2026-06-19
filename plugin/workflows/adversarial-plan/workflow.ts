@@ -3,13 +3,18 @@ import { join } from "node:path";
 import type { WorkflowFn, WorkflowSpec, RecallBundle, WorkflowCtx } from "@penumbra/workflows";
 import { z } from "zod";
 import { resolveOutDir, sanitizeFileStem } from "../_shared/io.js";
-import { parseAgentField, resolveAgent, type AgentField } from "../_shared/pool-resolver.js";
+import {
+  agentPoolToNames,
+  parseAgentField,
+  resolveAgent,
+  type AgentField,
+} from "../_shared/pool-resolver.js";
 
 type PlannerPersona = {
   name: string;
   bias: string;
   system_prompt: string;
-  preferred_agent: string;
+  preferred_agent: AgentField;
   timeout_ms?: number;
 };
 
@@ -21,7 +26,7 @@ type PlanSynthesizer = {
 type PlanWorkloadConfig = {
   eligible_agents: string[];
   fan_out?: number;
-  synthesizer?: string | string[];
+  synthesizer?: unknown;
 };
 
 type PersonaResolution =
@@ -100,11 +105,7 @@ function getPlanWorkload(ctx: WorkflowCtx): PlanWorkloadConfig | null {
     Number.isInteger(row.fan_out) && (row.fan_out as number) > 0
       ? (row.fan_out as number)
       : undefined;
-  const synthesizer =
-    (typeof row.synthesizer === "string" && row.synthesizer.length > 0) ||
-    (Array.isArray(row.synthesizer) && row.synthesizer.length > 0)
-      ? (row.synthesizer as string | string[])
-      : undefined;
+  const synthesizer = agentPoolToNames(row.synthesizer).length > 0 ? row.synthesizer : undefined;
   return {
     eligible_agents: eligibleAgents,
     fan_out: fanOut,
@@ -120,9 +121,9 @@ function getConfiguredPersonas(ctx: WorkflowCtx): Record<string, PlannerPersona>
   ) as Array<[string, Record<string, unknown>]>;
   const out: Record<string, PlannerPersona> = {};
   for (const [key, value] of entries) {
+    const preferredAgent = parseAgentField(value.preferred_agent);
     if (
-      typeof value.preferred_agent !== "string" ||
-      value.preferred_agent.length === 0 ||
+      !preferredAgent ||
       typeof value.bias !== "string" ||
       value.bias.length === 0 ||
       typeof value.system_prompt !== "string" ||
@@ -132,7 +133,7 @@ function getConfiguredPersonas(ctx: WorkflowCtx): Record<string, PlannerPersona>
     }
     out[key] = {
       name: key,
-      preferred_agent: value.preferred_agent,
+      preferred_agent: preferredAgent,
       bias: value.bias,
       system_prompt: value.system_prompt,
       timeout_ms:
@@ -391,10 +392,11 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       try {
         let dispatch: { conversation_id: string; handoff_id: string };
         let wait: { status: "completed" | "failed" | "timeout"; response_text: string | null };
+        const personaAgent = resolveAgent(persona.preferred_agent, "plan_refine", ctx);
         while (true) {
           try {
             dispatch = await ctx.dispatch({
-              agent: persona.preferred_agent,
+              agent: personaAgent,
               message: `cd ${ctx.cwd}\n\n${renderPersonaPrompt(persona, parsedArgs, recall)}`,
               task_type: "plan_refine",
               use_worktree: false,

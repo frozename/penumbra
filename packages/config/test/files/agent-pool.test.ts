@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { AgentPinSchema as AgentChatAgentPinSchema } from "../../../agentchat/src/config/types.js";
 import { AgentPinSchema, AgentPoolSchema, RoutingConfigSchema } from "../../src/files/routing.js";
 import {
   AgentPinSchema as WorkloadAgentPinSchema,
@@ -7,10 +6,9 @@ import {
 } from "../../src/files/workload.js";
 
 describe("AgentPoolSchema", () => {
-  test("canonicalizes agent pin schema across split config and agentchat config", () => {
+  test("canonicalizes agent pin schema across split config schemas", () => {
     expect(AgentPinSchema).toBe(AgentPoolSchema);
     expect(WorkloadAgentPinSchema).toBe(AgentPoolSchema);
-    expect(AgentChatAgentPinSchema).toBe(AgentPoolSchema);
   });
 
   test("keeps scalar and array agent pins backward compatible", () => {
@@ -50,14 +48,26 @@ describe("AgentPoolSchema", () => {
 
     expect(parsed).toEqual({
       members: [{ agent: "local-granite-3b-q8-http", tier: "local" }, { agent: "gemini-acp-pro" }],
-      select: "rank",
+      select: "order",
       fallback_to_cloud: true,
     });
   });
 
-  test("rejects empty scalar, array, and structured pools", () => {
+  test("rejects empty scalar, array, structured pools, round-robin selection, and long names", () => {
     expect(() => AgentPoolSchema.parse("")).toThrow();
     expect(() => AgentPoolSchema.parse([])).toThrow();
     expect(() => AgentPoolSchema.parse({ members: [] })).toThrow();
+    expect(() =>
+      AgentPoolSchema.parse({
+        members: [{ agent: "a" }],
+        select: "round_robin",
+      }),
+    ).toThrow();
+    expect(() => AgentPoolSchema.parse("a".repeat(257))).toThrow();
+    expect(() =>
+      AgentPoolSchema.parse({
+        members: [{ agent: "a".repeat(257) }],
+      }),
+    ).toThrow();
   });
 });

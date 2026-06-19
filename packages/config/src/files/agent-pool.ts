@@ -1,24 +1,27 @@
 import { z } from "zod";
 
+const AgentNameSchema = z.string().min(1).max(256);
+
 export const AgentPoolMemberSchema = z
   .object({
-    agent: z.string().min(1),
+    agent: AgentNameSchema,
     tier: z.enum(["local", "cloud"]).optional(),
   })
   .strict();
 
 export const AgentPoolSchema = z.union([
-  z.string().min(1),
-  z.array(z.string().min(1)).min(1),
+  AgentNameSchema,
+  z.array(AgentNameSchema).min(1),
   z
     .object({
       members: z.array(AgentPoolMemberSchema).min(1),
-      select: z.enum(["rank", "round_robin", "order"]).default("rank"),
+      select: z.enum(["rank", "order"]).default("order"),
       fallback_to_cloud: z.boolean().default(true),
     })
     .strict(),
 ]);
 
+// Back-compat alias; prefer AgentPoolSchema for new code.
 export const AgentPinSchema = AgentPoolSchema;
 
 export type AgentPoolMember = z.infer<typeof AgentPoolMemberSchema>;
