@@ -10,7 +10,7 @@ import {
 import { buildRegistry as buildWorkflowRegistry } from "@penumbra/workflows";
 import {
   formatAgentChatConfigError,
-  loadAgentChatConfig,
+  loadAgentChatConfigUncached,
   loadAgentRoutingFromConfig,
   resolveAgentChatConfigPath,
 } from "../agentchat-config.js";
@@ -40,6 +40,7 @@ type AgentChatConfigReloaded = {
   subsystem: "agentchat_config";
   status: "reloaded";
   error?: never;
+  snapshot: AgentChatConfigSnapshot;
   meta: {
     config_path: string;
     prev_count: number;
@@ -51,6 +52,7 @@ type WorkflowAndProjectRegistryReloaded = {
   subsystem: "workflow_and_project_registry";
   status: "reloaded";
   error?: never;
+  snapshot: WorkflowProjectSnapshot;
   meta: {
     workflow_count: number;
     project_registry_count: number;
@@ -146,6 +148,19 @@ export type ExtraWorkersReloadResult =
   | ExtraWorkersFailed
   | ExtraWorkersAbsent;
 
+type AgentChatConfigSnapshot = {
+  agentRegistry: string[];
+  agentRouting: ReturnType<typeof loadAgentRoutingFromConfig>;
+  providerQuotas: DaemonServices["providerQuotas"];
+  agentchatConfig: DaemonServices["agentchatConfig"];
+  shellConfig: NonNullable<DaemonServices["shellConfig"]>;
+};
+
+type WorkflowProjectSnapshot = {
+  workflowRegistry: NonNullable<DaemonServices["workflowRegistry"]>;
+  projectRegistry: ProjectRegistry;
+};
+
 interface WorkflowDirs {
   playbooksDir: string;
   workflowsDir: string;
@@ -166,28 +181,30 @@ export async function reloadAgentChatConfigSubsystem(
   const configPath = resolveAgentChatConfigPath(process.env);
 
   try {
-    reloadAgentChatConfig();
     const prevCount = services.agentRegistry?.length ?? 0;
-    const cfg = loadAgentChatConfig(process.env);
-    services.agentRegistry = cfg.agents.map((agent) => agent.name);
-    services.agentRouting = loadAgentRoutingFromConfig(cfg);
-    services.providerQuotas = cfg.providers.map((provider) => ({
-      provider: provider.name,
-      model: provider.model,
-      quota_usd_per_24h: provider.quota_usd_per_24h,
-      quota_tokens_per_24h: provider.quota_tokens_per_24h,
-      quota_tokens_per_5h: provider.quota_tokens_per_5h,
-      pressure_caps: provider.pressure_caps,
-    }));
-    services.agentchatConfig = cfg as any;
-    services.shellConfig = loadShellConfig({ agentchat: cfg as any });
+    const cfg = loadAgentChatConfigUncached(process.env);
+    const snapshot: AgentChatConfigSnapshot = {
+      agentRegistry: cfg.agents.map((agent) => agent.name),
+      agentRouting: loadAgentRoutingFromConfig(cfg),
+      providerQuotas: cfg.providers.map((provider) => ({
+        provider: provider.name,
+        model: provider.model,
+        quota_usd_per_24h: provider.quota_usd_per_24h,
+        quota_tokens_per_24h: provider.quota_tokens_per_24h,
+        quota_tokens_per_5h: provider.quota_tokens_per_5h,
+        pressure_caps: provider.pressure_caps,
+      })),
+      agentchatConfig: cfg as any,
+      shellConfig: loadShellConfig({ agentchat: cfg as any }),
+    };
     return {
       subsystem: "agentchat_config",
       status: "reloaded",
+      snapshot,
       meta: {
         config_path: configPath,
         prev_count: prevCount,
-        agent_count: services.agentRegistry.length,
+        agent_count: snapshot.agentRegistry.length,
       },
     };
   } catch (err: unknown) {
@@ -202,6 +219,18 @@ export async function reloadAgentChatConfigSubsystem(
   }
 }
 
+export function commitAgentChatConfigSubsystem(
+  services: DaemonServices,
+  snapshot: AgentChatConfigSnapshot,
+): void {
+  reloadAgentChatConfig();
+  services.agentRegistry = snapshot.agentRegistry;
+  services.agentRouting = snapshot.agentRouting;
+  services.providerQuotas = snapshot.providerQuotas;
+  services.agentchatConfig = snapshot.agentchatConfig;
+  services.shellConfig = snapshot.shellConfig;
+}
+
 export async function reloadWorkflowAndProjectRegistrySubsystem(
   services: DaemonServices,
 ): Promise<WorkflowProjectReloadResult> {
@@ -209,12 +238,12 @@ export async function reloadWorkflowAndProjectRegistrySubsystem(
   const projectRegistryPath = process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath();
   try {
     const workflowRegistry = await buildWorkflowRegistry(dirs);
-    services.workflowRegistry = workflowRegistry;
     const projectRegistry = loadProjectRegistry(projectRegistryPath);
-    services.projectRegistry = projectRegistry;
+    const snapshot: WorkflowProjectSnapshot = { workflowRegistry, projectRegistry };
     return {
       subsystem: "workflow_and_project_registry",
       status: "reloaded",
+      snapshot,
       meta: {
         workflow_count: workflowRegistry.list().length,
         project_registry_count: projectRegistry.list().length,
@@ -237,6 +266,14 @@ export async function reloadWorkflowAndProjectRegistrySubsystem(
       },
     };
   }
+}
+
+export function commitWorkflowAndProjectRegistrySubsystem(
+  services: DaemonServices,
+  snapshot: WorkflowProjectSnapshot,
+): void {
+  services.workflowRegistry = snapshot.workflowRegistry;
+  services.projectRegistry = snapshot.projectRegistry;
 }
 
 export async function reloadLongLivedReactorSubsystem(

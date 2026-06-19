@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { loadAgentChatConfigFromDir } from "@penumbra/config";
 import { buildRegistry as buildWorkflowRegistry } from "@penumbra/workflows";
 import { load as parseYaml, dump as stringifyYaml } from "js-yaml";
 import { reloadConfigRoute } from "../../src/routes/reload-config.js";
@@ -577,6 +578,26 @@ test("POST /agentchat/reload returns 500 and keeps old workflow registry on rebu
   });
   const originalRegistry = services.workflowRegistry;
   expect(originalRegistry?.get("alpha")?.description).toBe("v1");
+  const yamlPath = join(root, "agentchat.yaml");
+  writeAgentchat(
+    yamlPath,
+    `
+agents:
+  - name: old-agent
+    adapter: mock
+`,
+  );
+  expect(loadAgentChatConfigFromDir(yamlPath).agents[0]?.name).toBe("old-agent");
+  services.agentRegistry = ["old-agent"];
+  services.agentchatConfig = {
+    agents: [{ name: "old-agent", adapter: "mock" }],
+    default_roles: {},
+    role_routing: {},
+    providers: [],
+  } as any;
+  const originalAgentchatConfig = services.agentchatConfig;
+  const emitSpy = vi.fn();
+  (services as any).workerControl = { emit: emitSpy };
 
   // Now point the route at a path that's a regular file, not a directory —
   // existsSync passes but readdirSync throws ENOTDIR, which buildRegistry
@@ -590,8 +611,14 @@ test("POST /agentchat/reload returns 500 and keeps old workflow registry on rebu
     workflowsDir,
   };
 
-  const yamlPath = join(root, "agentchat.yaml");
-  writeAgentchat(yamlPath);
+  writeAgentchat(
+    yamlPath,
+    `
+agents:
+  - name: new-agent
+    adapter: mock
+`,
+  );
   process.env.PENUMBRA_CONFIG_DIR = yamlPath;
   const errSpy = spyOn(services.log, "error").mockImplementation(() => undefined as any);
   try {
@@ -604,6 +631,10 @@ test("POST /agentchat/reload returns 500 and keeps old workflow registry on rebu
     expect(body.error).toContain("workflow registry rebuild failed");
     expect(services.workflowRegistry).toBe(originalRegistry);
     expect(services.workflowRegistry?.get("alpha")?.description).toBe("v1");
+    expect(services.agentRegistry).toEqual(["old-agent"]);
+    expect(services.agentchatConfig).toBe(originalAgentchatConfig);
+    expect(loadAgentChatConfigFromDir(yamlPath).agents[0]?.name).toBe("old-agent");
+    expect(emitSpy).not.toHaveBeenCalled();
     expect(errSpy).toHaveBeenCalled();
   } finally {
     rmSync(root, { recursive: true, force: true });

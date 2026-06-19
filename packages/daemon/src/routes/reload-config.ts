@@ -1,4 +1,6 @@
 import {
+  commitAgentChatConfigSubsystem,
+  commitWorkflowAndProjectRegistrySubsystem,
   reloadAgentChatConfigSubsystem,
   reloadExtraWorkersSubsystem,
   reloadLongLivedReactorSubsystem,
@@ -42,10 +44,6 @@ export async function reloadConfigRoute(
     return json({ error: agentchatSubsystem.error }, status);
   }
 
-  if (agentchatSubsystem.status === "reloaded") {
-    services.workerControl?.emit({ type: "agentchat_reload" });
-  }
-
   const workflowProjectSubsystem = await reloadWorkflowAndProjectRegistrySubsystem(services);
   if (workflowProjectSubsystem.status === "failed") {
     services.log.error(
@@ -62,6 +60,10 @@ export async function reloadConfigRoute(
       500,
     );
   }
+
+  commitAgentChatConfigSubsystem(services, agentchatSubsystem.snapshot);
+  commitWorkflowAndProjectRegistrySubsystem(services, workflowProjectSubsystem.snapshot);
+  services.workerControl?.emit({ type: "agentchat_reload" });
 
   const reactorSubsystem = await reloadLongLivedReactorSubsystem(services);
   const workersSubsystem = await reloadExtraWorkersSubsystem(
