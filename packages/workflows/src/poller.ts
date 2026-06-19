@@ -61,8 +61,9 @@ export function computeStateMetrics(opts: ComputeStateMetricsOpts): StateMetrics
     const counter = opts.gitLogSince ?? defaultGitLogSinceCounter;
     try {
       commitsSinceLastHandoff = counter(lastSessionHandoff.ts);
-    } catch {
-      commitsSinceLastHandoff = 0;
+    } catch (error) {
+      console.warn("failed to compute commits-since-last-handoff", error);
+      commitsSinceLastHandoff = Number.MAX_SAFE_INTEGER;
     }
   }
   const transcriptReader = opts.transcriptReader ?? ((o) => findActiveTranscriptForCwd(o));

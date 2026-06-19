@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 try {
   if (process.platform === "darwin") {
@@ -8,7 +11,9 @@ try {
 } catch {}
 
 import { loadSqliteVec, migrate } from "@penumbra/core";
+import { buildRegistry } from "../src/registry.js";
 import { computeStateMetrics, type GitLogSinceCounter } from "../src/poller.js";
+import { evaluateStateThresholds } from "../src/triggers.js";
 
 function freshDb() {
   const db = new Database(":memory:");
@@ -127,7 +132,7 @@ test("commits-since-last-handoff uses gitLogSince counter when prior outcome exi
   expect(m["commits-since-last-handoff"]).toBe(3);
 });
 
-test("commits-since-last-handoff returns 0 when gitLogSince throws", () => {
+test("commits-since-last-handoff is MAX_SAFE_INTEGER when gitLogSince throws", () => {
   const db = freshDb();
   insertHandoffOutcome(db, "e1", "2026-05-04T10:00:00Z");
 
@@ -141,7 +146,56 @@ test("commits-since-last-handoff returns 0 when gitLogSince throws", () => {
     gitLogSince: stub,
     transcriptReader: () => null,
   });
-  expect(m["commits-since-last-handoff"]).toBe(0);
+  expect(m["commits-since-last-handoff"]).toBe(Number.MAX_SAFE_INTEGER);
+});
+
+test("throwing gitLogSince still fires commits-since-last-handoff thresholds", async () => {
+  const db = freshDb();
+  insertHandoffOutcome(db, "e1", "2026-05-04T10:00:00Z");
+
+  const stub: GitLogSinceCounter = () => {
+    throw new Error("git not available");
+  };
+
+  const metrics = computeStateMetrics({
+    db,
+    now: () => new Date("2026-05-04T12:00:00Z"),
+    gitLogSince: stub,
+    transcriptReader: () => null,
+  });
+
+  const root = mkdtempSync(join(tmpdir(), "poller-threshold-"));
+  const playbooks = join(root, "playbooks");
+  const workflows = join(root, "workflows");
+  mkdirSync(join(playbooks, "threshold"), { recursive: true });
+  mkdirSync(workflows, { recursive: true });
+  writeFileSync(
+    join(playbooks, "threshold", "playbook.md"),
+    `---
+name: threshold
+description: d
+triggers:
+  - kind: state-threshold
+    metric: commits-since-last-handoff
+    op: ">"
+    value: 100
+recall: []
+output:
+  - kind: clipboard
+run:
+  kind: markdown-template
+---
+body
+`,
+  );
+
+  try {
+    const reg = await buildRegistry({ playbooksDir: playbooks, workflowsDir: workflows });
+    const matched = evaluateStateThresholds(reg, metrics);
+    expect(matched.map((s) => s.name)).toEqual(["threshold"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("commits-since-last-handoff uses most recent session-handoff outcome ts", () => {
