@@ -8,7 +8,7 @@ export type AgentDescriptor = {
   maestro_capable?: boolean;
 };
 
-export const TIER_ORDER = ["cheap", "oc", "premium"] as const;
+export const TIER_ORDER = ["economy", "standard", "premium"] as const;
 
 function tierRank(tier: string | undefined): number {
   if (!tier) return -1;

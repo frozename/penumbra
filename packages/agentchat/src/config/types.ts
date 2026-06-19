@@ -155,7 +155,7 @@ export const AgentConfigSchema = z
       .min(1)
       .regex(CANONICAL_PROVIDER_VALUE_RE, { message: CANONICAL_PROVIDER_MESSAGE })
       .optional(),
-    /** Relative tier used by task eligibility (cheap < oc < premium). */
+    /** Relative tier used by task eligibility (economy < standard < premium). */
     tier: z.string().optional(),
     /** Estimated per-run cost in cents used by task eligibility filtering. */
     cost_cents_per_run: z.number().nonnegative().optional(),

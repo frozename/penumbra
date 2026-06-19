@@ -51,8 +51,8 @@ type AgentRegistry = Map<string, AgentDescriptor>;
 
 function defaultAgents(): AgentRegistry {
   return new Map<string, AgentDescriptor>([
-    ["A", { name: "A", tags: ["core"], tier: "oc", cost_cents_per_run: 25 }],
-    ["B", { name: "B", tags: ["core"], tier: "oc", cost_cents_per_run: 25 }],
+    ["A", { name: "A", tags: ["core"], tier: "standard", cost_cents_per_run: 25 }],
+    ["B", { name: "B", tags: ["core"], tier: "standard", cost_cents_per_run: 25 }],
     ["C", { name: "C", tags: ["core"], tier: "premium", cost_cents_per_run: 50 }],
   ]);
 }
@@ -275,8 +275,8 @@ try {
   const writer = new TaskWriter(db, {
     now: () => 10_000,
     resolveAgent: (name) => new Map([
-      ["A", { name: "A", tags: ["core"], tier: "oc", cost_cents_per_run: 25 }],
-      ["B", { name: "B", tags: ["core"], tier: "oc", cost_cents_per_run: 25 }],
+      ["A", { name: "A", tags: ["core"], tier: "standard", cost_cents_per_run: 25 }],
+      ["B", { name: "B", tags: ["core"], tier: "standard", cost_cents_per_run: 25 }],
     ]).get(name),
     routeAgent: () => ({
       detail: "rank",
@@ -389,8 +389,8 @@ describe("pickPreferred", () => {
         { agent_name: "aardvark-fast", score: 10, avg_latency_ms: 1000 },
       ],
       [
-        { name: "zulu-slow", tags: ["core"], tier: "oc", cost_cents_per_run: 25 },
-        { name: "aardvark-fast", tags: ["core"], tier: "oc", cost_cents_per_run: 25 },
+        { name: "zulu-slow", tags: ["core"], tier: "standard", cost_cents_per_run: 25 },
+        { name: "aardvark-fast", tags: ["core"], tier: "standard", cost_cents_per_run: 25 },
       ],
     );
 
@@ -406,8 +406,8 @@ describe("pickPreferred public export", () => {
         { agent_name: "b", score: 0.4 },
       ],
       [
-        { name: "a", tags: ["core"], tier: "oc", cost_cents_per_run: 25 },
-        { name: "b", tags: ["core"], tier: "oc", cost_cents_per_run: 25 },
+        { name: "a", tags: ["core"], tier: "standard", cost_cents_per_run: 25 },
+        { name: "b", tags: ["core"], tier: "standard", cost_cents_per_run: 25 },
       ],
     );
 

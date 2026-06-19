@@ -156,11 +156,11 @@ describe("TaskWriter.file + .get + .list", () => {
   test("JSON round-trip: eligibility object survives file → get", () => {
     const { task_id } = writer.file(
       baseInput({
-        eligibility: { required_tags: ["x"], min_tier: "oc" },
+        eligibility: { required_tags: ["x"], min_tier: "standard" },
       }),
     );
     const row = writer.get(task_id);
-    expect(row.eligibility).toEqual({ required_tags: ["x"], min_tier: "oc" });
+    expect(row.eligibility).toEqual({ required_tags: ["x"], min_tier: "standard" });
     expect(typeof row.eligibility).toBe("object");
   });
 });
