@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite";
 import {
   AgentPerformanceWriter,
   buildServices,
+  ChainStartRequestSchema,
   loadSqliteVec,
   migrate,
   type AgentRoutingConfig,
@@ -94,6 +95,62 @@ afterEach(() => {
     delete process.env.PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY;
   } else {
     process.env.PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY = previousIsolatedInstallAutoBoundary;
+  }
+});
+
+test("chainStartFromInput accepts every canonical dispatch_kind value", async () => {
+  const canonicalDispatchKinds = ChainStartRequestSchema.shape.dispatch_kind.unwrap().options;
+
+  for (const dispatchKind of canonicalDispatchKinds) {
+    const services = tempServices();
+    const longLivedFields =
+      dispatchKind === "long_lived_tick"
+        ? {
+            long_lived_agent_id: "agent-42",
+            long_lived_tick_id: "tick-42",
+          }
+        : {};
+    if (dispatchKind === "long_lived_tick") {
+      services.db
+        .query(
+          `INSERT INTO long_lived_agents (
+          id, display_name, working_memory_json, standing_brief, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "agent-42",
+          "Home Assistant",
+          JSON.stringify({
+            version: 1,
+            updated_at: 1715385600000,
+            pending_goals: [],
+            open_threads: [],
+            watches: [],
+            recent_decisions: [],
+          }),
+          "Keep home automations healthy",
+          1715385600000,
+          1715385600000,
+        );
+      services.db
+        .query(
+          `INSERT INTO long_lived_ticks (
+          id, agent_id, trigger_kind, started_at
+        ) VALUES (?, ?, ?, ?)`,
+        )
+        .run("tick-42", "agent-42", "manual", 1715385600000);
+    }
+    const res = await chainStartFromInput(
+      {
+        initial_agent: "codex",
+        message: "hi",
+        dispatch_kind: dispatchKind,
+        ...longLivedFields,
+      },
+      services,
+    );
+
+    expect(res.status, dispatchKind).toBe(200);
   }
 });
 

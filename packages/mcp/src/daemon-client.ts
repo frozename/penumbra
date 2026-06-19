@@ -1,6 +1,7 @@
 import type {
   AgentRankOutput,
   Basis,
+  ChainStartRequest,
   DispatchReliabilityReport,
   FleetLatencyOutput,
   MaestroSessionRecord,
@@ -576,7 +577,7 @@ export class DaemonClient {
     use_worktree?: boolean;
     task_type?: string;
     parent_handoff_id?: string;
-    dispatch_kind?: "long_lived_tick" | "workflow";
+    dispatch_kind?: ChainStartRequest["dispatch_kind"];
     long_lived_agent_id?: string;
     long_lived_tick_id?: string;
     branch_base?: string;

@@ -9,6 +9,14 @@ type ChainStartDaemonBody = Parameters<DaemonClient["startChain"]>[0] & {
   workflow_run_id?: string;
 };
 type Workload = (typeof WORKLOADS)[number];
+type DispatchKind = NonNullable<z.infer<typeof ChainStartRequestSchema>["dispatch_kind"]>;
+const DISPATCH_KIND_SET = {
+  long_lived_tick: true,
+  workflow: true,
+  thought_analyzer: true,
+  orchestrate: true,
+} satisfies Record<DispatchKind, true>;
+const DISPATCH_KIND_VALUES = Object.keys(DISPATCH_KIND_SET) as [DispatchKind, ...DispatchKind[]];
 type ChainStartDeprecationLogger = { info: (message: string) => void };
 const taskTypeDeprecationLogged = new Set<ChainStartDeprecationLogger>();
 
@@ -66,9 +74,9 @@ export const ChainStartInputShape = {
       "Optional handoff ID this dispatch is spawned from. Used by ACP agents calling chain.start during their turn so penumbra can enforce a recursion depth cap. Omit for user-initiated dispatches.",
     ),
   dispatch_kind: z
-    .enum(["long_lived_tick", "workflow"])
+    .enum(DISPATCH_KIND_VALUES)
     .optional()
-    .describe("Optional dispatch classification for long-lived ticks or workflow dispatches."),
+    .describe("Optional dispatch classification for internal dispatches."),
   workflow_run_id: z
     .string()
     .min(1)

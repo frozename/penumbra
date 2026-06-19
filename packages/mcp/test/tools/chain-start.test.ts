@@ -1,4 +1,5 @@
 import { expect, test, mock } from "bun:test";
+import { ChainStartRequestSchema } from "@penumbra/core";
 import {
   chainStartHandler,
   ChainStartInputShape,
@@ -13,6 +14,12 @@ test("ChainStartInputShape requires initial_agent and message", () => {
 
 test("ChainStartInputShape requires task_class", () => {
   expect(() => ChainStartInputShape.task_class.parse(undefined)).toThrow();
+});
+
+test("ChainStartInputShape exposes the canonical dispatch_kind enum", () => {
+  expect(ChainStartInputShape.dispatch_kind.unwrap().options).toEqual(
+    ChainStartRequestSchema.shape.dispatch_kind.unwrap().options,
+  );
 });
 
 test.each(["BOUNDARY", "STANDARD", "TRIVIAL"] as const)(

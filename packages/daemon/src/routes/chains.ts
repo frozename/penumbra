@@ -52,7 +52,16 @@ type ChainStartRequestWithLongLived = Omit<ChainStartRequest, "dispatch_kind"> &
 };
 type Workload = (typeof WORKLOADS)[number];
 
-type DispatchKind = "long_lived_tick" | "workflow" | "thought_analyzer" | "orchestrate";
+type DispatchKind = NonNullable<ChainStartRequest["dispatch_kind"]>;
+const DISPATCH_KIND_SET = {
+  long_lived_tick: true,
+  workflow: true,
+  thought_analyzer: true,
+  orchestrate: true,
+} satisfies Record<DispatchKind, true>;
+const DISPATCH_KIND_ERROR_LIST = Object.keys(DISPATCH_KIND_SET)
+  .map((kind) => `'${kind}'`)
+  .join(", ");
 
 interface LongLivedPromptAgentRow {
   id: string;
@@ -1652,15 +1661,10 @@ function readOptionalDispatchKindField(
   const parsed = readOptionalStringField(raw, field);
   if (parsed.error) return { value: undefined, error: parsed.error };
   if (parsed.value === undefined) return { value: undefined };
-  if (
-    parsed.value === "long_lived_tick" ||
-    parsed.value === "workflow" ||
-    parsed.value === "thought_analyzer"
-  )
-    return { value: parsed.value as DispatchKind };
+  if (parsed.value in DISPATCH_KIND_SET) return { value: parsed.value as DispatchKind };
   return {
     value: undefined,
-    error: "Invalid input: expected 'long_lived_tick', 'workflow', or 'thought_analyzer'",
+    error: `Invalid input: expected one of ${DISPATCH_KIND_ERROR_LIST}`,
   };
 }
 
