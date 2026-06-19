@@ -14,16 +14,33 @@ describe("thoughts config schema", () => {
         analyze: {
           enabled: true,
           only_when: ["pr_opened"],
-          digest: { enabled: true, agent: "local-gemma26" },
+          digest: {
+            enabled: true,
+            agent: {
+              members: [
+                { agent: "local-gemma26", tier: "local" },
+                { agent: "codex-acp-fast", tier: "cloud" },
+              ],
+            },
+          },
           signals: {
             enabled: true,
-            agent: "local-gemma26",
+            agent: ["local-gemma26", "codex-acp-fast"],
             definitions: [{ name: "uncertainty", prompt: "list doubts" }],
           },
         },
       },
     });
     expect(parsed.thoughts?.enabled).toBe(true);
+    expect(parsed.thoughts?.analyze?.digest?.agent).toEqual({
+      members: [
+        { agent: "local-gemma26", tier: "local" },
+        { agent: "codex-acp-fast", tier: "cloud" },
+      ],
+      select: "order",
+      fallback_to_cloud: true,
+    });
+    expect(parsed.thoughts?.analyze?.signals?.agent).toEqual(["local-gemma26", "codex-acp-fast"]);
     expect(parsed.thoughts?.analyze?.signals?.definitions?.[0]?.name).toBe("uncertainty");
   });
 });
@@ -89,10 +106,50 @@ describe("loadThoughtsConfig", () => {
     expect(cfg.capture.adapters["cli-spawn"]).toBe(false);
     expect(cfg.capture.perAgentOverrides["gemini-acp-pro"]).toBe(false);
     expect(cfg.analyze.onlyWhen).toEqual(["pr_opened", "test_failed"]);
-    expect(cfg.analyze.digest.agent).toBe("local-gemma26");
+    expect(cfg.analyze.digest.pool).toBe("local-gemma26");
     expect(cfg.analyze.digest.maxInputChars).toBe(4000);
+    expect(cfg.analyze.signals.pool).toBe("local-gemma31");
     expect(cfg.analyze.signals.definitions).toHaveLength(2);
     expect(cfg.analyze.signals.definitions[1]?.name).toBe("security");
+  });
+
+  it("preserves object pools and does not default missing analyzer agents", () => {
+    const cfg = loadThoughtsConfig({
+      agentchat: {
+        agents: [
+          { name: "codex", adapter: "codex-cli", options: {}, roles: [], auto_approve_to: [] },
+        ],
+        default_roles: {},
+        providers: [],
+        thoughts: {
+          enabled: true,
+          analyze: {
+            enabled: true,
+            digest: {
+              enabled: true,
+              agent: {
+                members: [
+                  { agent: "local-a", tier: "local" },
+                  { agent: "cloud-b", tier: "cloud" },
+                ],
+              },
+            },
+            signals: {
+              enabled: true,
+              definitions: [{ name: "uncertainty", prompt: "list doubts" }],
+            },
+          },
+        },
+      },
+    });
+
+    expect(cfg.analyze.digest.pool).toEqual({
+      members: [
+        { agent: "local-a", tier: "local" },
+        { agent: "cloud-b", tier: "cloud" },
+      ],
+    });
+    expect(cfg.analyze.signals.pool).toBeNull();
   });
 
   it("disables analyze when capture is disabled", () => {

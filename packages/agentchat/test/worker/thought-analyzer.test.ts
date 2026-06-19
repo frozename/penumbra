@@ -8,10 +8,10 @@ const baseConfig: RuntimeThoughtsConfig = {
   analyze: {
     enabled: true,
     onlyWhen: ["pr_opened"],
-    digest: { enabled: true, agent: "local-gemma26", maxInputChars: 1000, timeoutMs: 5000 },
+    digest: { enabled: true, pool: "local-gemma26", maxInputChars: 1000, timeoutMs: 5000 },
     signals: {
       enabled: true,
-      agent: "local-gemma26",
+      pool: "local-gemma26",
       timeoutMs: 5000,
       maxInputChars: null,
       definitions: [
@@ -21,6 +21,17 @@ const baseConfig: RuntimeThoughtsConfig = {
     },
   },
 };
+
+function digestOnlyConfig(pool: RuntimeThoughtsConfig["analyze"]["digest"]["pool"]) {
+  return {
+    ...baseConfig,
+    analyze: {
+      ...baseConfig.analyze,
+      digest: { ...baseConfig.analyze.digest, pool },
+      signals: { ...baseConfig.analyze.signals, enabled: false, definitions: [] },
+    },
+  };
+}
 
 const sampleThoughts = [
   {
@@ -36,6 +47,12 @@ const sampleThoughts = [
     text: "thinking about B",
   },
 ];
+
+const localGemmaPool = {
+  registry: ["local-gemma26"],
+  isLocal: () => true,
+  isHealthy: () => true,
+};
 
 describe("runThoughtAnalyzer", () => {
   it("dispatches digest and one signal per definition in parallel", async () => {
@@ -60,10 +77,22 @@ describe("runThoughtAnalyzer", () => {
       thoughts: sampleThoughts,
       mergeStatus: "pr_opened",
       config: baseConfig,
-      deps: { chainStart, chainWait, chainResponse, recordEvent, log: console },
+      deps: {
+        chainStart,
+        chainWait,
+        chainResponse,
+        recordEvent,
+        log: console,
+        agentPool: localGemmaPool,
+      },
     });
 
     expect(chainStart).toHaveBeenCalledTimes(3);
+    expect(calls.map((call) => call.initial_agent).sort()).toEqual([
+      "local-gemma26",
+      "local-gemma26",
+      "local-gemma26",
+    ]);
     const recordedKinds = recorded.map((r) => r.kind);
     expect(recordedKinds.filter((k) => k === "agent.thought.digest")).toHaveLength(1);
     expect(recordedKinds.filter((k) => k === "agent.thought.signal")).toHaveLength(2);
@@ -71,6 +100,204 @@ describe("runThoughtAnalyzer", () => {
       .filter((r) => r.kind === "agent.thought.signal")
       .map((r) => r.meta.signal_name);
     expect(signalNames.sort()).toEqual(["security", "uncertainty"]);
+  });
+
+  it("uses the first healthy local pool member and does not dispatch the cloud fallback", async () => {
+    const calls: any[] = [];
+    const recorded: any[] = [];
+    const chainStart = mock(async (input: { initial_agent: string }) => {
+      calls.push(input);
+      return { conversation_id: `conv-${input.initial_agent}`, handoff_id: "h-sub" };
+    });
+
+    await runThoughtAnalyzer({
+      handoffId: "h-1",
+      thoughts: sampleThoughts,
+      mergeStatus: "pr_opened",
+      config: digestOnlyConfig({
+        members: [
+          { agent: "local-a", tier: "local" },
+          { agent: "cloud-b", tier: "cloud" },
+        ],
+      }),
+      deps: {
+        chainStart,
+        chainWait: mock(async () => ({ status: "completed" as const })),
+        chainResponse: mock(async () => ({ responses: [{ text: "local digest" }] })),
+        recordEvent: mock(async (e: any) => {
+          recorded.push(e);
+        }),
+        log: console,
+        agentPool: {
+          registry: ["local-a", "cloud-b"],
+          isLocal: (agent) => agent === "local-a",
+          isHealthy: (agent) => agent === "local-a",
+        },
+      },
+    });
+
+    expect(calls.map((call) => call.initial_agent)).toEqual(["local-a"]);
+    expect(recorded[0]?.meta).toMatchObject({
+      digester_agent: "local-a",
+      digest_text: "local digest",
+    });
+  });
+
+  it("fails over to the cloud pool member when the local dispatch does not complete", async () => {
+    const calls: any[] = [];
+    const recorded: any[] = [];
+    const chainStart = mock(async (input: { initial_agent: string }) => {
+      calls.push(input);
+      return { conversation_id: `conv-${input.initial_agent}`, handoff_id: "h-sub" };
+    });
+    const chainWait = mock(async (input: { conversation_id: string }) => ({
+      status:
+        input.conversation_id === "conv-local-a" ? ("failed" as const) : ("completed" as const),
+    }));
+
+    await runThoughtAnalyzer({
+      handoffId: "h-1",
+      thoughts: sampleThoughts,
+      mergeStatus: "pr_opened",
+      config: digestOnlyConfig({
+        members: [
+          { agent: "local-a", tier: "local" },
+          { agent: "cloud-b", tier: "cloud" },
+        ],
+      }),
+      deps: {
+        chainStart,
+        chainWait,
+        chainResponse: mock(async () => ({ responses: [{ text: "cloud digest" }] })),
+        recordEvent: mock(async (e: any) => {
+          recorded.push(e);
+        }),
+        log: console,
+        agentPool: {
+          registry: ["local-a", "cloud-b"],
+          isLocal: (agent) => agent === "local-a",
+          isHealthy: () => true,
+        },
+      },
+    });
+
+    expect(calls.map((call) => call.initial_agent)).toEqual(["local-a", "cloud-b"]);
+    expect(recorded[0]?.meta).toMatchObject({
+      digester_agent: "cloud-b",
+      digest_text: "cloud digest",
+    });
+  });
+
+  it("records an empty-pool marker and skips dispatch when every pool member is dropped", async () => {
+    const recorded: any[] = [];
+    const warnings: any[] = [];
+    const chainStart = mock(async () => ({ conversation_id: "x", handoff_id: "y" }));
+
+    await runThoughtAnalyzer({
+      handoffId: "h-1",
+      thoughts: sampleThoughts,
+      mergeStatus: "pr_opened",
+      config: digestOnlyConfig({
+        members: [
+          { agent: "missing-a", tier: "local" },
+          { agent: "local-b", tier: "local" },
+        ],
+      }),
+      deps: {
+        chainStart,
+        chainWait: mock(async () => ({ status: "completed" as const })),
+        chainResponse: mock(async () => ({ responses: [{ text: "never" }] })),
+        recordEvent: mock(async (e: any) => {
+          recorded.push(e);
+        }),
+        log: { warn: (...args: unknown[]) => warnings.push(args) },
+        agentPool: {
+          registry: ["local-b"],
+          isLocal: () => true,
+          isHealthy: () => false,
+        },
+      },
+    });
+
+    expect(chainStart).not.toHaveBeenCalled();
+    expect(recorded[0]?.meta.digest_text).toBe("<no analyzer available: pool empty>");
+    expect(warnings).toHaveLength(1);
+    expect(JSON.stringify(warnings[0])).toContain("not-in-registry");
+    expect(JSON.stringify(warnings[0])).toContain("unhealthy");
+  });
+
+  it("records all-failed marker after every resolved pool member fails", async () => {
+    const calls: any[] = [];
+    const recorded: any[] = [];
+    const chainStart = mock(async (input: { initial_agent: string }) => {
+      calls.push(input);
+      return { conversation_id: `conv-${input.initial_agent}`, handoff_id: "h-sub" };
+    });
+
+    await runThoughtAnalyzer({
+      handoffId: "h-1",
+      thoughts: sampleThoughts,
+      mergeStatus: "pr_opened",
+      config: digestOnlyConfig(["local-a", "cloud-b"]),
+      deps: {
+        chainStart,
+        chainWait: mock(async () => ({ status: "failed" as const })),
+        chainResponse: mock(async () => ({ responses: [{ text: "never" }] })),
+        recordEvent: mock(async (e: any) => {
+          recorded.push(e);
+        }),
+        log: { warn: () => {} },
+        agentPool: {
+          registry: ["local-a", "cloud-b"],
+          isLocal: (agent) => agent === "local-a",
+          isHealthy: () => true,
+        },
+      },
+    });
+
+    expect(calls.map((call) => call.initial_agent)).toEqual(["local-a", "cloud-b"]);
+    expect(recorded[0]?.meta.digest_text).toBe("<analyzer failed: all 2 pool members failed>");
+  });
+
+  it("skips an unhealthy local member and falls through to the next pool member", async () => {
+    const calls: any[] = [];
+    const recorded: any[] = [];
+    const chainStart = mock(async (input: { initial_agent: string }) => {
+      calls.push(input);
+      return { conversation_id: `conv-${input.initial_agent}`, handoff_id: "h-sub" };
+    });
+
+    await runThoughtAnalyzer({
+      handoffId: "h-1",
+      thoughts: sampleThoughts,
+      mergeStatus: "pr_opened",
+      config: digestOnlyConfig({
+        members: [
+          { agent: "local-a", tier: "local" },
+          { agent: "cloud-b", tier: "cloud" },
+        ],
+      }),
+      deps: {
+        chainStart,
+        chainWait: mock(async () => ({ status: "completed" as const })),
+        chainResponse: mock(async () => ({ responses: [{ text: "cloud digest" }] })),
+        recordEvent: mock(async (e: any) => {
+          recorded.push(e);
+        }),
+        log: console,
+        agentPool: {
+          registry: ["local-a", "cloud-b"],
+          isLocal: (agent) => agent === "local-a",
+          isHealthy: (agent) => agent !== "local-a",
+        },
+      },
+    });
+
+    expect(calls.map((call) => call.initial_agent)).toEqual(["cloud-b"]);
+    expect(recorded[0]?.meta).toMatchObject({
+      digester_agent: "cloud-b",
+      digest_text: "cloud digest",
+    });
   });
 
   it("passes parent handoff project_id into sub-dispatches", async () => {
@@ -100,6 +327,7 @@ describe("runThoughtAnalyzer", () => {
         recordEvent: mock(async () => {}),
         log: console,
         getHandoff: async () => ({ project_id: "parent-proj" }),
+        agentPool: localGemmaPool,
       },
     });
 
@@ -120,6 +348,7 @@ describe("runThoughtAnalyzer", () => {
         chainResponse: mock(async () => ({ responses: [] })),
         recordEvent: mock(async () => {}),
         log: console,
+        agentPool: localGemmaPool,
       },
     });
     expect(chainStart).not.toHaveBeenCalled();
@@ -144,7 +373,14 @@ describe("runThoughtAnalyzer", () => {
       thoughts: sampleThoughts,
       mergeStatus: "pr_opened",
       config: baseConfig,
-      deps: { chainStart, chainWait, chainResponse, recordEvent, log: console },
+      deps: {
+        chainStart,
+        chainWait,
+        chainResponse,
+        recordEvent,
+        log: console,
+        agentPool: localGemmaPool,
+      },
     });
 
     const digestRow = recorded.find((r) => r.kind === "agent.thought.digest");
@@ -182,6 +418,7 @@ describe("runThoughtAnalyzer", () => {
         chainResponse: mock(async () => ({ responses: [{ text: "ok" }] })),
         recordEvent: mock(async () => {}),
         log: console,
+        agentPool: localGemmaPool,
       },
     });
     const digestPrompt = captured.find((m) => m.includes("list")) ?? captured[0]!;

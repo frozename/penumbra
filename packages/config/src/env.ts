@@ -216,6 +216,12 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: OptStr,
     description: "Path to projects.yaml registry.",
   },
+  PENUMBRA_LOCAL_NODE_HOSTS: {
+    schema: OptStr,
+    default: "",
+    description:
+      "Comma-separated hostnames treated as local model nodes for analyzer health checks.",
+  },
   PENUMBRA_HANDOFF_ID: {
     schema: OptStr,
     description: "Current handoff ID (set by dispatch).",

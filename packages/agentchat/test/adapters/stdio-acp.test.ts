@@ -803,10 +803,10 @@ describe("StdioAcpAdapter", () => {
         analyze: {
           enabled: false,
           onlyWhen: [],
-          digest: { enabled: false, agent: "x", maxInputChars: 50000, timeoutMs: 60000 },
+          digest: { enabled: false, pool: "x", maxInputChars: 50000, timeoutMs: 60000 },
           signals: {
             enabled: false,
-            agent: "x",
+            pool: "x",
             timeoutMs: 60000,
             maxInputChars: null,
             definitions: [],

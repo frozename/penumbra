@@ -1,4 +1,10 @@
-import type { DispatchEventInput } from "@penumbra/core";
+import { type DispatchEventInput } from "@penumbra/core";
+import {
+  resolveAgentPool,
+  type DroppedAgentPoolMember,
+  type ResolveAgentPoolContext,
+} from "../../../core/src/services/agent-routing.js";
+import type { AgentPool } from "@penumbra/config";
 import type { RuntimeThoughtsConfig } from "./thought-config.js";
 
 export interface ThoughtRow {
@@ -28,6 +34,9 @@ export interface ThoughtAnalyzerDeps {
   recordEvent: (event: DispatchEventInput) => Promise<void> | void;
   log: { warn: (...args: unknown[]) => void; info?: (...args: unknown[]) => void } | typeof console;
   getHandoff?: (handoffId: string) => Promise<{ project_id: string | null } | null>;
+  agentPool?: ResolveAgentPoolContext & {
+    prepare?: (pool: AgentPool | null) => Promise<void>;
+  };
   workerId?: string | null;
   now?: () => Date;
 }
@@ -88,6 +97,70 @@ async function runOneSubHandoff(
   return resp.responses[resp.responses.length - 1]?.text ?? "";
 }
 
+async function runPooledAnalyzerHandoff(input: {
+  pool: AgentPool | null;
+  prompt: string;
+  parentHandoffId: string;
+  timeoutMs: number;
+  projectId: string | null | undefined;
+  deps: ThoughtAnalyzerDeps;
+  logContext: Record<string, unknown>;
+  label: "digest" | "signal";
+}): Promise<
+  | { status: "ok"; agent: string; text: string }
+  | {
+      status: "empty";
+      dropped: DroppedAgentPoolMember[];
+    }
+  | { status: "failed"; tried: number }
+> {
+  const { pool, prompt, parentHandoffId, timeoutMs, projectId, deps, logContext, label } = input;
+  if (pool == null) {
+    deps.log.warn?.(`thought analyzer ${label} pool empty`, {
+      ...logContext,
+      dropped: [],
+      reason: "missing-pool",
+    });
+    return { status: "empty", dropped: [] };
+  }
+
+  await deps.agentPool?.prepare?.(pool);
+  const resolved = resolveAgentPool(pool, deps.agentPool ?? { registry: [] });
+  if (resolved.ordered.length === 0) {
+    deps.log.warn?.(`thought analyzer ${label} pool empty`, {
+      ...logContext,
+      dropped: resolved.dropped,
+    });
+    return { status: "empty", dropped: resolved.dropped };
+  }
+
+  for (const member of resolved.ordered) {
+    try {
+      const text = await runOneSubHandoff(
+        member.agent,
+        prompt,
+        parentHandoffId,
+        timeoutMs,
+        projectId,
+        deps,
+      );
+      if (text.trim().length > 0) return { status: "ok", agent: member.agent, text };
+      deps.log.warn?.(`thought analyzer ${label} member produced no output`, {
+        ...logContext,
+        agent: member.agent,
+      });
+    } catch (err) {
+      deps.log.warn?.(`thought analyzer ${label} member failed`, {
+        ...logContext,
+        agent: member.agent,
+        err: String(err),
+      });
+    }
+  }
+
+  return { status: "failed", tried: resolved.ordered.length };
+}
+
 export async function runThoughtAnalyzer(input: ThoughtAnalyzerInput): Promise<void> {
   const { handoffId, thoughts, mergeStatus, config, deps } = input;
   if (!config.analyze.enabled) return;
@@ -119,22 +192,33 @@ export async function runThoughtAnalyzer(input: ThoughtAnalyzerInput): Promise<v
       .join("\n");
 
     tasks.push(
-      runOneSubHandoff(
-        config.analyze.digest.agent,
+      runPooledAnalyzerHandoff({
+        pool: config.analyze.digest.pool,
         prompt,
-        handoffId,
-        config.analyze.digest.timeoutMs,
-        parentProjectId,
+        parentHandoffId: handoffId,
+        timeoutMs: config.analyze.digest.timeoutMs,
+        projectId: parentProjectId,
         deps,
-      )
-        .then(async (text) => {
+        label: "digest",
+        logContext: { handoffId },
+      })
+        .then(async (result) => {
+          const digestText =
+            result.status === "ok"
+              ? result.text
+              : result.status === "empty"
+                ? "<no analyzer available: pool empty>"
+                : `<analyzer failed: all ${result.tried} pool members failed>`;
           await deps.recordEvent({
             handoff_id: handoffId,
             worker_id: deps.workerId ?? null,
             source: "worker",
             kind: "agent.thought.digest",
             ts,
-            meta: { digester_agent: config.analyze.digest.agent, digest_text: text },
+            meta: {
+              digester_agent: result.status === "ok" ? result.agent : null,
+              digest_text: digestText,
+            },
           });
         })
         .catch(async (err) => {
@@ -146,7 +230,7 @@ export async function runThoughtAnalyzer(input: ThoughtAnalyzerInput): Promise<v
             kind: "agent.thought.digest",
             ts,
             meta: {
-              digester_agent: config.analyze.digest.agent,
+              digester_agent: null,
               digest_text: `<analyzer failed: ${String(err)}>`,
             },
           });
@@ -167,15 +251,23 @@ export async function runThoughtAnalyzer(input: ThoughtAnalyzerInput): Promise<v
         .filter(Boolean)
         .join("\n");
       tasks.push(
-        runOneSubHandoff(
-          config.analyze.signals.agent,
+        runPooledAnalyzerHandoff({
+          pool: config.analyze.signals.pool,
           prompt,
-          handoffId,
-          config.analyze.signals.timeoutMs,
-          parentProjectId,
+          parentHandoffId: handoffId,
+          timeoutMs: config.analyze.signals.timeoutMs,
+          projectId: parentProjectId,
           deps,
-        )
-          .then(async (text) => {
+          label: "signal",
+          logContext: { handoffId, signal: def.name },
+        })
+          .then(async (result) => {
+            const evidenceText =
+              result.status === "ok"
+                ? result.text
+                : result.status === "empty"
+                  ? "<no analyzer available: pool empty>"
+                  : `<analyzer failed: all ${result.tried} pool members failed>`;
             await deps.recordEvent({
               handoff_id: handoffId,
               worker_id: deps.workerId ?? null,
@@ -184,8 +276,8 @@ export async function runThoughtAnalyzer(input: ThoughtAnalyzerInput): Promise<v
               ts,
               meta: {
                 signal_name: def.name,
-                evidence_text: text,
-                extractor_agent: config.analyze.signals.agent,
+                evidence_text: evidenceText,
+                extractor_agent: result.status === "ok" ? result.agent : null,
               },
             });
           })
@@ -204,7 +296,7 @@ export async function runThoughtAnalyzer(input: ThoughtAnalyzerInput): Promise<v
               meta: {
                 signal_name: def.name,
                 evidence_text: `<analyzer failed: ${String(err)}>`,
-                extractor_agent: config.analyze.signals.agent,
+                extractor_agent: null,
               },
             });
           }),

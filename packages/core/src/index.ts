@@ -186,13 +186,18 @@ export {
   type FleetLatencyOutput,
 } from "./readers/fleet-latency.js";
 export {
+  resolveAgentPool,
   routeAgent,
   resolveGateOutcomeCutoverIso,
   type DetailMode,
+  type DroppedAgentPoolMember,
   type RouteAgentInput,
   type RouteAgentOutput,
   type RoleRoute,
   type AgentRecommendation,
+  type ResolveAgentPoolContext,
+  type ResolveAgentPoolResult,
+  type ResolvedAgentPoolMember,
 } from "./services/agent-routing.js";
 export {
   extractStumblesFromSession,

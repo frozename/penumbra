@@ -105,6 +105,11 @@ describe("thoughts e2e", () => {
           },
           log: console,
           workerId: "worker-test",
+          agentPool: {
+            registry: ["local-gemma26"],
+            isLocal: () => true,
+            isHealthy: () => true,
+          },
         },
       });
 

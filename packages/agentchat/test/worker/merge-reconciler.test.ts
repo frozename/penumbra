@@ -179,10 +179,10 @@ function thoughtsConfigEnabled(onlyWhen: string[] = ["pr_opened"]): RuntimeThoug
     analyze: {
       enabled: true,
       onlyWhen,
-      digest: { enabled: true, agent: "local-gemma26", maxInputChars: 1000, timeoutMs: 5000 },
+      digest: { enabled: true, pool: "local-gemma26", maxInputChars: 1000, timeoutMs: 5000 },
       signals: {
         enabled: false,
-        agent: "local-gemma26",
+        pool: "local-gemma26",
         timeoutMs: 5000,
         maxInputChars: null,
         definitions: [],

@@ -25,4 +25,6 @@ export const AgentPoolSchema = z.union([
 export const AgentPinSchema = AgentPoolSchema;
 
 export type AgentPoolMember = z.infer<typeof AgentPoolMemberSchema>;
-export type AgentPool = z.infer<typeof AgentPoolSchema>;
+// Input shape (select / fallback_to_cloud optional before Zod defaults); resolveAgentPool
+// normalizes these internally, so consumers may pass an unnormalized pool literal.
+export type AgentPool = z.input<typeof AgentPoolSchema>;

@@ -15,10 +15,10 @@ function makeConfig(overrides: Partial<RuntimeThoughtsConfig> = {}): RuntimeThou
     analyze: {
       enabled: false,
       onlyWhen: [],
-      digest: { enabled: false, agent: "local-gemma26", maxInputChars: 50000, timeoutMs: 60000 },
+      digest: { enabled: false, pool: "local-gemma26", maxInputChars: 50000, timeoutMs: 60000 },
       signals: {
         enabled: false,
-        agent: "local-gemma26",
+        pool: "local-gemma26",
         timeoutMs: 60000,
         maxInputChars: null,
         definitions: [],

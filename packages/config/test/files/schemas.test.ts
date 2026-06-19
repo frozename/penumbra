@@ -52,6 +52,42 @@ describe("AgentsConfigSchema", () => {
     parsed.agents[0]!.options = { requestTimeoutMs: "60000" };
     expect(() => AgentsConfigSchema.parse(parsed)).toThrow(/requestTimeoutMs/);
   });
+
+  test("thought analyzer agents accept scalar, array, and structured pools", () => {
+    const parsed = AgentsConfigSchema.parse({
+      agents: [{ name: "claude-acp-sonnet", adapter: "stdio-acp" }],
+      thoughts: {
+        enabled: true,
+        analyze: {
+          enabled: true,
+          digest: {
+            enabled: true,
+            agent: {
+              members: [
+                { agent: "local-a", tier: "local" },
+                { agent: "cloud-b", tier: "cloud" },
+              ],
+            },
+          },
+          signals: {
+            enabled: true,
+            agent: ["local-a", "cloud-b"],
+            definitions: [{ name: "uncertainty", prompt: "list doubts" }],
+          },
+        },
+      },
+    });
+
+    expect(parsed.thoughts?.analyze?.digest?.agent).toEqual({
+      members: [
+        { agent: "local-a", tier: "local" },
+        { agent: "cloud-b", tier: "cloud" },
+      ],
+      select: "order",
+      fallback_to_cloud: true,
+    });
+    expect(parsed.thoughts?.analyze?.signals?.agent).toEqual(["local-a", "cloud-b"]);
+  });
 });
 
 describe("RoutingConfigSchema", () => {

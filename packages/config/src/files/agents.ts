@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AgentPoolSchema } from "./agent-pool.js";
 import { CANONICAL_PROVIDER_VALUE_RE } from "../provider-format.js";
 
 const CANONICAL_PROVIDER_MESSAGE =
@@ -355,7 +356,7 @@ export type ThoughtCaptureConfig = z.infer<typeof ThoughtCaptureConfigSchema>;
 export const ThoughtDigestConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
-    agent: z.string().min(1).default("local-gemma26"),
+    agent: AgentPoolSchema.optional(),
     max_input_chars: z.number().int().positive().default(50000),
     timeout_ms: z.number().int().positive().default(60000),
   })
@@ -365,7 +366,7 @@ export type ThoughtDigestConfig = z.infer<typeof ThoughtDigestConfigSchema>;
 export const ThoughtSignalsConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
-    agent: z.string().min(1).default("local-gemma26"),
+    agent: AgentPoolSchema.optional(),
     timeout_ms: z.number().int().positive().default(60000),
     max_input_chars: z.number().int().positive().optional(),
     definitions: z.array(ThoughtSignalDefinitionSchema).default([]),

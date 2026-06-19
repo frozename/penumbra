@@ -6,6 +6,7 @@ import type { CapturePort } from "../src/worker/capture-port.js";
 import { defaultProjectRegistryPath, loadProjectRegistry, SettingsDefaults } from "@penumbra/core";
 import { meaningfulOutput } from "../../core/src/services/agent-performance-capture.js";
 import type { AgentChatConfig } from "../src/config/types.js";
+import type { AgentPool } from "@penumbra/config";
 import { PermissionDaemonClient } from "../src/worker/permission-daemon-client.js";
 import { loadConfigPathOrDir } from "../src/config/load.js";
 import { PenumbraClient } from "../src/penumbra-client.js";
@@ -1075,6 +1076,110 @@ const permissionDaemonClient = new PermissionDaemonClient({
 });
 await permissionDaemonClient.start();
 
+function agentNamesForPool(pool: AgentPool | null): string[] {
+  if (pool == null) return [];
+  if (typeof pool === "string") return [pool];
+  if (Array.isArray(pool)) return pool;
+  return pool.members.map((member) => member.agent);
+}
+
+function localHostnamesFromEnv(): Set<string> {
+  return new Set(
+    (process.env.PENUMBRA_LOCAL_NODE_HOSTS ?? "")
+      .split(",")
+      .map((host) => host.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+const configuredLocalHostnames = localHostnamesFromEnv();
+
+function isLocalModelHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  if (configuredLocalHostnames.has(host)) return true;
+  if (host === "localhost" || host === "::1") return true;
+  if (host === "127.0.0.1" || host.startsWith("127.")) return true;
+  if (host.startsWith("192.168.")) return true;
+  if (host.endsWith(".local")) return true;
+  return false;
+}
+
+function openAiCompatSeat(
+  agentName: string,
+): { baseUrl: string; model: string; options: Record<string, unknown> } | null {
+  const seat = config.agents.find((agent) => agent.name === agentName);
+  if (!seat || seat.adapter !== "openai-compat-http") return null;
+  const options = (seat.options ?? {}) as Record<string, unknown>;
+  const baseUrl = typeof options.baseUrl === "string" ? options.baseUrl : null;
+  const model = typeof options.model === "string" ? options.model : null;
+  if (!baseUrl || !model) return null;
+  return { baseUrl, model, options };
+}
+
+function isLocalAnalyzerAgent(agentName: string): boolean {
+  const seat = openAiCompatSeat(agentName);
+  if (!seat) return false;
+  try {
+    return isLocalModelHost(new URL(seat.baseUrl).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function modelsUrlFor(baseUrl: string): string {
+  const base = baseUrl.replace(/\/+$/, "");
+  return base.endsWith("/v1") ? `${base}/models` : `${base}/v1/models`;
+}
+
+const analyzerHealthCache = new Map<string, { checkedAtMs: number; healthy: boolean }>();
+const ANALYZER_HEALTH_TTL_MS = 20_000;
+
+async function probeLocalAnalyzerSeat(agentName: string): Promise<boolean> {
+  const seat = openAiCompatSeat(agentName);
+  if (!seat) return false;
+  const headers: Record<string, string> = {};
+  try {
+    const apiKey = resolveAdapterApiKey({
+      apiKey: seat.options.apiKey as string | undefined,
+      apiKeyEnv: seat.options.apiKeyEnv as string | undefined,
+      apiKeyKeychain: seat.options.apiKeyKeychain as string | undefined,
+      apiKeyFile: seat.options.apiKeyFile as string | undefined,
+    });
+    if (apiKey) headers.authorization = `Bearer ${apiKey}`;
+  } catch {
+    // Local anonymous endpoints are common; missing credentials should not block the probe attempt.
+  }
+
+  try {
+    const res = await fetch(modelsUrlFor(seat.baseUrl), {
+      headers,
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) return false;
+    const body = (await res.json()) as { data?: Array<{ id?: unknown }> };
+    return (body.data ?? []).some((model) => model.id === seat.model);
+  } catch {
+    return false;
+  }
+}
+
+async function prepareThoughtAnalyzerHealth(pool: AgentPool | null): Promise<void> {
+  const nowMs = Date.now();
+  const localAgents = agentNamesForPool(pool).filter((agentName) =>
+    isLocalAnalyzerAgent(agentName),
+  );
+  await Promise.all(
+    localAgents.map(async (agentName) => {
+      const cached = analyzerHealthCache.get(agentName);
+      if (cached && nowMs - cached.checkedAtMs < ANALYZER_HEALTH_TTL_MS) return;
+      analyzerHealthCache.set(agentName, {
+        checkedAtMs: nowMs,
+        healthy: await probeLocalAnalyzerSeat(agentName),
+      });
+    }),
+  );
+}
+
 const thoughtAnalyzerDeps: ThoughtAnalyzerDeps = {
   chainStart: (input) => client.chainStart(input),
   chainWait: (input) => client.chainWait(input),
@@ -1089,6 +1194,18 @@ const thoughtAnalyzerDeps: ThoughtAnalyzerDeps = {
     } catch {
       return null;
     }
+  },
+  agentPool: {
+    get registry() {
+      return config.agents.map((agent) => agent.name);
+    },
+    isLocal: (agentName) => isLocalAnalyzerAgent(agentName),
+    isHealthy: (agentName) => {
+      if (!isLocalAnalyzerAgent(agentName)) return true;
+      const cached = analyzerHealthCache.get(agentName);
+      return cached?.healthy === true && Date.now() - cached.checkedAtMs < ANALYZER_HEALTH_TTL_MS;
+    },
+    prepare: (pool) => prepareThoughtAnalyzerHealth(pool),
   },
 };
 

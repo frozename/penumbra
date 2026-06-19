@@ -1,3 +1,4 @@
+import type { AgentPool } from "@penumbra/config";
 import type { AgentChatConfig } from "../config/types.js";
 
 export interface RuntimeThoughtCaptureConfig {
@@ -14,14 +15,14 @@ export interface RuntimeThoughtSignalDefinition {
 
 export interface RuntimeThoughtDigestConfig {
   enabled: boolean;
-  agent: string;
+  pool: AgentPool | null;
   maxInputChars: number;
   timeoutMs: number;
 }
 
 export interface RuntimeThoughtSignalsConfig {
   enabled: boolean;
-  agent: string;
+  pool: AgentPool | null;
   timeoutMs: number;
   maxInputChars: number | null;
   definitions: RuntimeThoughtSignalDefinition[];
@@ -54,13 +55,13 @@ export function loadThoughtsConfig(input: { agentchat: AgentChatConfig }): Runti
   const analyzeRequested = enabled && t?.analyze?.enabled === true;
   const digest: RuntimeThoughtDigestConfig = {
     enabled: analyzeRequested && t?.analyze?.digest?.enabled === true,
-    agent: t?.analyze?.digest?.agent ?? "local-gemma26",
+    pool: t?.analyze?.digest?.agent ?? null,
     maxInputChars: t?.analyze?.digest?.max_input_chars ?? 50000,
     timeoutMs: t?.analyze?.digest?.timeout_ms ?? 60000,
   };
   const signals: RuntimeThoughtSignalsConfig = {
     enabled: analyzeRequested && t?.analyze?.signals?.enabled === true,
-    agent: t?.analyze?.signals?.agent ?? "local-gemma26",
+    pool: t?.analyze?.signals?.agent ?? null,
     timeoutMs: t?.analyze?.signals?.timeout_ms ?? 60000,
     maxInputChars: t?.analyze?.signals?.max_input_chars ?? null,
     definitions: (t?.analyze?.signals?.definitions ?? []).map((d) => ({
