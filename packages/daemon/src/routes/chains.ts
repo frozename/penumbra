@@ -189,6 +189,57 @@ function resolveWorkflowDispatchExemption(
   return { ok: true, workflow_run_id: input.workflow_run_id };
 }
 
+function longestCommonPrefix(a: string, b: string): number {
+  const limit = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < limit && a[i] === b[i]) i++;
+  return i;
+}
+
+function editDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  let curr = new Array<number>(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j]! + 1, curr[j - 1]! + 1, prev[j - 1]! + cost);
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[b.length]!;
+}
+
+function getNearestAgents(initialAgent: string, registry: string[]): string[] {
+  const seen = new Set<string>();
+  const lowerInitial = initialAgent.toLowerCase();
+  const add = (name: string) => {
+    if (!seen.has(name)) seen.add(name);
+  };
+
+  for (const name of registry) {
+    if (name.toLowerCase() === lowerInitial) add(name);
+  }
+  for (const name of registry) {
+    const lowerName = name.toLowerCase();
+    if (lowerName.includes(lowerInitial) || lowerInitial.includes(lowerName)) add(name);
+  }
+
+  const scored = registry
+    .map((name) => ({
+      name,
+      distance: editDistance(lowerInitial, name.toLowerCase()),
+      prefix: longestCommonPrefix(lowerInitial, name.toLowerCase()),
+    }))
+    .sort((a, b) => a.distance - b.distance || b.prefix - a.prefix || a.name.localeCompare(b.name));
+  for (const entry of scored) add(entry.name);
+  return [...seen].slice(0, 3);
+}
+
 function resolveThoughtAnalyzerDispatchExemption(input: {
   dispatch_kind?: DispatchKind;
 }): { ok: true } | { ok: false; reason: string } {
@@ -574,11 +625,25 @@ export async function chainStartInternal(
 
   // P0.3a: Validate initial_agent against registry
   if (!route && services.agentRegistry && !services.agentRegistry.includes(initialAgent)) {
+    const nearest = getNearestAgents(initialAgent, services.agentRegistry);
+    services.log.warn(
+      {
+        event: "chain_start.unknown_agent",
+        initial_agent: initialAgent,
+        force_exact_agent: forceExactAgent,
+        task_type: input.task_type ?? null,
+        parent_handoff_id: input.parent_handoff_id ?? null,
+        registry_size: services.agentRegistry.length,
+        nearest,
+      },
+      "chain-start unknown agent rejected",
+    );
     return json(
       {
         error: {
           code: "unknown_agent",
           agent: initialAgent,
+          did_you_mean: nearest,
           hint: "use chain.list_agents to enumerate valid agents",
         },
       },

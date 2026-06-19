@@ -213,6 +213,7 @@ async function createHandoff(services: Services, conversation_id: string): Promi
 
 test("POST /chains/start returns 400 if initial_agent is not in registry", async () => {
   const services = tempServices({ agentRegistry: ["planner", "executor"] });
+  const warnSpy = spyOn(services.log, "warn").mockImplementation(() => undefined as any);
   const res = await chainsStartRoute(
     new Request("http://x/chains/start", {
       method: "POST",
@@ -225,6 +226,13 @@ test("POST /chains/start returns 400 if initial_agent is not in registry", async
   expect(body.error.code).toBe("unknown_agent");
   expect(body.error.agent).toBe("bogus-agent");
   expect(body.error.hint).toBe("use chain.list_agents to enumerate valid agents");
+  expect(warnSpy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      initial_agent: "bogus-agent",
+      registry_size: 2,
+    }),
+    expect.stringContaining("unknown agent"),
+  );
 });
 
 test("POST /chains/start does not run DDL on the request path", async () => {
@@ -1972,6 +1980,7 @@ test("POST /chains/start strips only the first leading @ before registry validat
     error: {
       code: "unknown_agent",
       agent: "@gemini-flash",
+      did_you_mean: ["gemini-flash"],
       hint: "use chain.list_agents to enumerate valid agents",
     },
   });
