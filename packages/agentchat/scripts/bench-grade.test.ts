@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { gradeSchemaTask, runGrade } from "./bench-grade.js";
-import { writeFileSync, unlinkSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { BenchTask } from "./bench-prompts.js";
 
 interface ChatCompletionRequestBody {
@@ -51,7 +53,7 @@ test("runGrade: parses JSONL and dispatches grading prompts to mock HTTP", async
       expect(r.label).toBe("test-run");
     }
   } finally {
-    unlinkSync(jsonlPath);
+    rmSync(jsonlPath);
   }
 });
 
@@ -77,7 +79,39 @@ test("runGrade: handles PARTIAL and FAIL verdicts correctly", async () => {
     const [result] = results;
     expect(result?.verdict).toBe("PARTIAL");
   } finally {
-    unlinkSync(jsonlPath);
+    rmSync(jsonlPath);
+  }
+});
+
+test("gradeResults: short-circuits empty answers and errors before judge", async () => {
+  const jsonlDir = mkdtempSync(join(tmpdir(), "bench-grade-"));
+  const jsonlPath = join(jsonlDir, "results.jsonl");
+  writeFileSync(
+    jsonlPath,
+    [
+      JSON.stringify({ task: "T4", answer: "   ", model: "m", label: "l" }),
+      JSON.stringify({ task: "T5", answer: "ok", error: "timeout", model: "m", label: "l" }),
+    ].join("\n"),
+  );
+
+  const fetchImpl: typeof fetch = (async () => {
+    throw new Error("judge should not be called for empty/error results");
+  }) as any;
+
+  try {
+    const results = await runGrade({
+      inputPath: jsonlPath,
+      url: "http://stub/v1",
+      model: "judge",
+      fetch: fetchImpl,
+    });
+
+    expect(results).toEqual([
+      { task: "T4", verdict: "FAIL", model: "m", label: "l" },
+      { task: "T5", verdict: "FAIL", model: "m", label: "l" },
+    ]);
+  } finally {
+    rmSync(jsonlDir, { recursive: true, force: true });
   }
 });
 

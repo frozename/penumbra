@@ -128,6 +128,16 @@ export async function gradeResults(opts: GradeResultsOpts): Promise<GradeResult[
       };
     }
 
+    const answer = typeof entry.answer === "string" ? entry.answer.trim() : "";
+    if (answer === "" || (typeof entry.error === "string" && entry.error.trim() !== "")) {
+      return {
+        task: entry.task,
+        verdict: "FAIL",
+        model: entry.model,
+        label: entry.label,
+      };
+    }
+
     const prompt = `Grade ONE bench-2 task. Output STRICTLY one of: PASS / FAIL / PARTIAL — nothing else, no period, no explanation.
 
 GROUND TRUTH:
