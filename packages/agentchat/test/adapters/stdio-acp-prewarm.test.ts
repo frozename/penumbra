@@ -79,6 +79,36 @@ describe("StdioAcpAdapter.prewarm (Phase 2)", () => {
     expect(startServer).not.toHaveBeenCalled();
   });
 
+  it("prewarm tears down the spawned child when handshake rejects for a non-timeout error", async () => {
+    const pool = createAcpWarmPool({ now: () => 0 });
+    const server = makeServer();
+    const request = vi.fn(async (method: string) => {
+      if (method === "initialize") throw new Error("boom");
+      return {};
+    });
+    const startServer = vi.fn().mockResolvedValue(server);
+    const adapter = new StdioAcpAdapter(
+      { binary: "mock-acp", agentName: "codex-acp-fast", warmPool: true, repoRoot: "/repo" } as any,
+      {
+        startServer,
+        createClient: () => ({ onRequest: vi.fn(), on: vi.fn(), request }) as any,
+        pool,
+      } as any,
+    );
+
+    await expect(adapter.prewarm()).rejects.toThrow("boom");
+
+    expect(startServer).toHaveBeenCalledTimes(1);
+    expect(server.kill).toHaveBeenCalledTimes(1);
+    expect(
+      pool.acquire(
+        "h-test",
+        poolKeyFor({ agent: "codex-acp-fast", cwd: "/repo" }),
+        acpSpecHash({ binary: "mock-acp" }),
+      ),
+    ).toBeNull();
+  });
+
   it("a dispatch after prewarm is a reuse hit: no second startServer, fresh session/new at the dispatch cwd, storage root re-injected", async () => {
     const pool = createAcpWarmPool({ now: () => 0 });
     const storageRoots: (string | undefined)[] = [];

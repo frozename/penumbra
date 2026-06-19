@@ -533,16 +533,21 @@ export class StdioAcpAdapter implements Adapter {
     });
     const mergedEnv = this.buildMergedEnv();
     const { server, client } = await this.spawnAcpServer(cwd, mergedEnv, signal);
-    const bootDeadline = this.createBootDeadline();
-    const entry = await this.handshakeAndDeposit(server, client, {
-      mergedEnv,
-      specHash,
-      poolKey,
-      warmPoolEnabled,
-      pinned: true,
-      bootDeadline,
-    });
-    return { deposited: entry !== null, poolKey };
+    try {
+      const bootDeadline = this.createBootDeadline();
+      const entry = await this.handshakeAndDeposit(server, client, {
+        mergedEnv,
+        specHash,
+        poolKey,
+        warmPoolEnabled,
+        pinned: true,
+        bootDeadline,
+      });
+      return { deposited: entry !== null, poolKey };
+    } catch (err) {
+      server.kill();
+      throw err;
+    }
   }
 
   async *dispatchStream(input: DispatchInput): AsyncIterable<DispatchEvent> {
