@@ -9,11 +9,19 @@
  *
  * usage:
  *   bun bench-cli.ts --command <bin> --model "<model>" [--label L]
- *                    [--extra-args a,b,c] [--timeout-ms N] [--limit K]
+ *                    [--pre-args a,b,c] [--extra-args a,b,c] [--timeout-ms N] [--limit K]
  *
- * example:
+ * --pre-args are inserted BEFORE --model (for CLIs that take a leading
+ * subcommand, e.g. opencode's `run`); --extra-args go AFTER --model.
+ *
+ * examples:
+ *   # agy / claude shape: bin --model X --print <prompt>
  *   bun bench-cli.ts --command /Users/acordeiro/.local/bin/agy \
  *     --model "Gemini 3.1 Pro (High)" --label google-gemini-cli > results.jsonl
+ *   # opencode shape: opencode run --model X <prompt>
+ *   bun bench-cli.ts --command /Users/acordeiro/.opencode/bin/opencode \
+ *     --model "opencode-go/glm-5.2" --pre-args run --extra-args "" \
+ *     --label opencode-glm-52 > results.jsonl
  */
 import { readFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
@@ -34,19 +42,21 @@ const label = arg("label") ?? model ?? "cli";
 const extraArgs = (arg("extra-args") ?? "--dangerously-skip-permissions,--print")
   .split(",")
   .filter(Boolean);
+// Args inserted BEFORE --model, e.g. a leading subcommand like opencode's `run`.
+const preArgs = (arg("pre-args") ?? "").split(",").filter(Boolean);
 const timeoutMs = Number(arg("timeout-ms") ?? "180000");
 const limit = arg("limit") ? Number(arg("limit")) : BENCH_TASKS.length;
 
 if (!command || !model) {
   console.error(
-    "usage: bun bench-cli.ts --command <bin> --model <model> [--label L] [--extra-args a,b] [--timeout-ms N] [--limit K]",
+    "usage: bun bench-cli.ts --command <bin> --model <model> [--label L] [--pre-args a,b] [--extra-args a,b] [--timeout-ms N] [--limit K]",
   );
   process.exit(1);
 }
 
 function runOnce(prompt: string): Promise<{ out: string; err?: string }> {
   return new Promise((res) => {
-    const child = spawn(command!, ["--model", model!, ...extraArgs, prompt], {
+    const child = spawn(command!, [...preArgs, "--model", model!, ...extraArgs, prompt], {
       stdio: ["ignore", "pipe", "pipe"],
     });
     let out = "";
