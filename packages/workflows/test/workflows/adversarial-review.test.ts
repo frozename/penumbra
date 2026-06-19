@@ -26,7 +26,7 @@ if (process.platform === "darwin") {
   } catch {}
 }
 
-const NOW = "2026-05-01T12:00:00Z";
+const NOW = new Date(Date.now() - 60_000).toISOString();
 
 function baseRecall(): RecallBundle {
   return {
@@ -1153,8 +1153,8 @@ test("synthesizer pool resolves through pressure without changing persona fan-ou
   const db = freshDb();
   writePerf(db, "claude-acp-sonnet", "review_adversarial");
   writePerf(db, "codex-acp-deep", "review_adversarial");
-  writePressure(db, "anthropic", 0.95);
-  writePressure(db, "openai", 0.05);
+  writePressure(db, "anthropic", 95);
+  writePressure(db, "openai", 5);
   const { ctx, root, dispatch } = makeCtx({ args: { personas: ["security"] } });
   try {
     ctx.db = () => db;

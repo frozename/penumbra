@@ -123,8 +123,8 @@ describe("resolveSingleRoute", () => {
   test("skips a pressured provider and routes to an alternate role agent", () => {
     const db = freshDb();
     writePerf(db, "alpha");
-    writePressure(db, "anthropic", 0.95);
-    writePressure(db, "openai", 0.05);
+    writePressure(db, "anthropic", 95);
+    writePressure(db, "openai", 5);
 
     expect(
       resolveSingleRoute(services(db), "reviewer", "review this", "review_adversarial"),
