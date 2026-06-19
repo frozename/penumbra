@@ -74,7 +74,20 @@ function isValidGitPathspec(pathspec: string): boolean {
   return true;
 }
 
-function hasInvalidGitInput(args: { range?: string; since?: string; pathspec?: string }): boolean {
+function isValidGitFormat(format: string): boolean {
+  if (format.length === 0) return false;
+  if (hasForbiddenRefChars(format)) return false;
+  if (format.includes("%x00")) return false;
+  if (format.includes("%(")) return false;
+  return true;
+}
+
+function hasInvalidGitInput(args: {
+  range?: string;
+  since?: string;
+  pathspec?: string;
+  format?: string;
+}): boolean {
   if (args.range !== undefined && !isValidGitRef(args.range)) return true;
   if (args.since !== undefined && !isValidGitSince(args.since)) return true;
   if (args.pathspec !== undefined && !isValidGitPathspec(args.pathspec)) return true;
@@ -92,6 +105,9 @@ export async function runGitLog(input: GitSourceInput): Promise<GitSourceOutput>
   const { cwd, args } = input;
   if (hasInvalidGitInput(args)) {
     return { text: "", warnings: ["git.log: invalid ref"] };
+  }
+  if (args.format !== undefined && !isValidGitFormat(args.format)) {
+    return { text: "", warnings: ["git.log: invalid format"] };
   }
   const fmt = args.format ?? "%h %s";
   const gitArgs = ["-C", cwd, "log", `--pretty=format:${fmt}`];

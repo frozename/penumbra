@@ -99,3 +99,29 @@ test("git sources reject invalid refs without executing git", async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("git.log rejects unsafe format strings", async () => {
+  const dir = initRepo();
+  try {
+    const nulFormat = await runGitLog({ cwd: dir, args: { format: "%x00" } });
+    expect(nulFormat.text).toBe("");
+    expect(nulFormat.warnings).toEqual(["git.log: invalid format"]);
+
+    const literalNulFormat = await runGitLog({
+      cwd: dir,
+      args: { format: `bad${String.fromCharCode(0)}fmt` },
+    });
+    expect(literalNulFormat.text).toBe("");
+    expect(literalNulFormat.warnings).toEqual(["git.log: invalid format"]);
+
+    const directiveFormat = await runGitLog({ cwd: dir, args: { format: "%(trailers)" } });
+    expect(directiveFormat.text).toBe("");
+    expect(directiveFormat.warnings).toEqual(["git.log: invalid format"]);
+
+    const defaultFormat = await runGitLog({ cwd: dir, args: { range: "HEAD~1..HEAD" } });
+    expect(defaultFormat.text).toContain("second commit");
+    expect(defaultFormat.warnings).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
