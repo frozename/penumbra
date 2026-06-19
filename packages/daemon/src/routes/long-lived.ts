@@ -365,19 +365,37 @@ export async function longLivedApproveActionRoute(
   services: Services,
 ): Promise<Response> {
   try {
+    const action = services.db
+      .query<
+        { agent_id: string },
+        [string]
+      >("SELECT agent_id FROM long_lived_pending_actions WHERE id = ?")
+      .get(actionId);
+    if (!action) return json(errorBody("not_found"), 404);
+
     const body = (await req.json().catch(() => null)) as { decided_by?: unknown } | null;
     const decidedBy =
       typeof body?.decided_by === "string" && body.decided_by.length > 0 ? body.decided_by : "user";
-    return json(
-      await handleLongLivedApproveAction(
-        services.db,
-        {
-          emit: () => {},
-          now: () => services.clock().getTime(),
+    const injectedGoalTick = services.longLivedReactor
+      ? (services.longLivedReactor as { injectedGoalTick?: (agentId: string) => unknown })
+          .injectedGoalTick
+      : undefined;
+    const response = await handleLongLivedApproveAction(
+      services.db,
+      {
+        emit: (event) => {
+          services.handoffEvents.emit({
+            event: event.type,
+            payload: event.payload,
+            agent_id: event.agent_id,
+          } as unknown as never);
         },
-        { action_id: actionId, decided_by: decidedBy },
-      ),
+        now: () => services.clock().getTime(),
+      },
+      { action_id: actionId, decided_by: decidedBy },
     );
+    injectedGoalTick?.(action.agent_id);
+    return json(response);
   } catch (error) {
     return errorJson(error, 400);
   }
@@ -421,12 +439,18 @@ export async function longLivedInjectGoalRoute(
   services: Services,
 ): Promise<Response> {
   try {
+    const injectedGoalTick = services.longLivedReactor
+      ? (services.longLivedReactor as { injectedGoalTick?: (agentId: string) => unknown })
+          .injectedGoalTick
+      : undefined;
     const body = (await req.json()) as Record<string, unknown>;
     return json(
       await handleLongLivedInjectGoal(
         services.db,
         {
-          fireTick: () => {},
+          fireTick: ({ agent_id }) => {
+            injectedGoalTick?.(agent_id);
+          },
           now: () => services.clock().getTime(),
         },
         { id, goal: String(body.goal ?? "") },

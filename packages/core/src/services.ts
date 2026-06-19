@@ -152,6 +152,11 @@ export interface LongLivedReactorLike {
     tick_id?: string;
     chain_id?: string;
   };
+  injectedGoalTick?(agent_id: string): {
+    outcome: string;
+    tick_id?: string;
+    chain_id?: string;
+  };
   reload(): Promise<void>;
   shutdown(): Promise<void>;
 }

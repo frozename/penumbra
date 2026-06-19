@@ -26,6 +26,7 @@ export interface LongLivedReactor {
   _cronList(): string[];
   _cronTestFire(agent_id: string): void;
   manualTick(agent_id: string): TickGateResult;
+  injectedGoalTick(agent_id: string): TickGateResult;
 }
 
 export interface LongLivedReactorDeps {
@@ -271,6 +272,10 @@ export function createLongLivedReactor(deps: LongLivedReactorDeps): LongLivedRea
 
     manualTick(agent_id: string): TickGateResult {
       return tickGate.attempt({ agent_id, trigger_kind: "manual" });
+    },
+
+    injectedGoalTick(agent_id: string): TickGateResult {
+      return tickGate.attempt({ agent_id, trigger_kind: "injected_goal" });
     },
   };
 }

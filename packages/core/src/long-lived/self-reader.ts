@@ -2,6 +2,55 @@ import type { Database } from "bun:sqlite";
 import { WorkingMemorySchema, type WorkingMemory } from "./types.js";
 import { trimWorkingMemoryThreadNotes } from "./thread-notes-trim.js";
 
+type Goal = WorkingMemory["pending_goals"][number];
+
+interface WorkingMemoryRow {
+  working_memory_json: string;
+}
+
+interface TickStartRow {
+  started_at: number;
+}
+
+interface UpdateContext {
+  running_tick_id?: string;
+}
+
+function parseWorkingMemory(value: string): WorkingMemory | null {
+  try {
+    return WorkingMemorySchema.parse(JSON.parse(value));
+  } catch {
+    return null;
+  }
+}
+
+function goalAppendedAfterTick(goal: Goal, tickStartedAt: number): boolean {
+  if (goal === null || typeof goal !== "object") return false;
+  const createdAt = (goal as { created_at?: unknown }).created_at;
+  return typeof createdAt === "number" && createdAt > tickStartedAt;
+}
+
+function mergePendingGoals(base: Goal[], preserve: Goal[]): Goal[] {
+  const seen = new Set<string>();
+  const next: Goal[] = [];
+
+  for (const goal of base) {
+    const key = JSON.stringify(goal);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    next.push(goal);
+  }
+
+  for (const goal of preserve) {
+    const key = JSON.stringify(goal);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    next.push(goal);
+  }
+
+  return next;
+}
+
 export function readLongLivedAgentWorkingMemory(db: Database, agent_id: string): WorkingMemory {
   const row = db
     .query<
@@ -22,13 +71,45 @@ export function updateLongLivedAgentState(
   db: Database,
   agent_id: string,
   patch: LongLivedAgentStateUpdate,
+  context: UpdateContext = {},
 ): void {
   const now = Date.now();
   if (patch.working_memory) {
-    const trimmed = trimWorkingMemoryThreadNotes(patch.working_memory);
+    const workingMemoryFromAgent = trimWorkingMemoryThreadNotes(patch.working_memory);
+    let nextWorkingMemory = workingMemoryFromAgent;
+
+    if (context.running_tick_id) {
+      const tick = db
+        .query<
+          TickStartRow,
+          [string]
+        >("SELECT started_at FROM long_lived_ticks WHERE id = ? LIMIT 1")
+        .get(context.running_tick_id);
+      if (tick) {
+        const current = db
+          .query<
+            WorkingMemoryRow,
+            [string]
+          >("SELECT working_memory_json FROM long_lived_agents WHERE id = ?")
+          .get(agent_id);
+        if (current) {
+          const currentWorkingMemory = parseWorkingMemory(current.working_memory_json);
+          const existingGoals =
+            currentWorkingMemory?.pending_goals?.filter((goal) =>
+              goalAppendedAfterTick(goal, tick.started_at),
+            ) ?? [];
+          nextWorkingMemory = {
+            ...workingMemoryFromAgent,
+            pending_goals: mergePendingGoals(workingMemoryFromAgent.pending_goals, existingGoals),
+          };
+        }
+      }
+    }
+
+    const persisted = trimWorkingMemoryThreadNotes({ ...nextWorkingMemory, updated_at: now });
     db.query(
       "UPDATE long_lived_agents SET working_memory_json = ?, updated_at = ? WHERE id = ?",
-    ).run(JSON.stringify({ ...trimmed, updated_at: now }), now, agent_id);
+    ).run(JSON.stringify(persisted), now, agent_id);
   }
   if (patch.intent_summary !== undefined) {
     db.query(

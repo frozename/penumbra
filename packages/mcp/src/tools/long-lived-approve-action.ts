@@ -59,6 +59,7 @@ export async function handleLongLivedApproveAction(
         kind: "approved_action",
         pending_action_id: action_id,
         original_payload: JSON.parse(row.payload_json),
+        created_at: now,
       });
       workingMemory.updated_at = now;
       db.query("UPDATE long_lived_agents SET working_memory_json=?, updated_at=? WHERE id=?").run(

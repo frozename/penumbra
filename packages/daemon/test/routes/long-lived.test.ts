@@ -709,3 +709,146 @@ test("POST /long-lived/:id/tick rate-limits consecutive manual ticks", async () 
   expect(body.error.retry_after_ms).toBeGreaterThan(0);
   expect(body.error.retry_after_ms).toBeLessThanOrEqual(1_000);
 });
+
+test("POST /long-lived/:id/inject-goal fires an injected_goal tick for cron-less agents", async () => {
+  const services = tempServices();
+  seedAgent(services);
+  services.db.query("UPDATE long_lived_agents SET schedule_cron = NULL WHERE id='home-mgmt'").run();
+
+  const ticks: string[] = [];
+  const now = services.clock().getTime();
+  services.longLivedReactor = {
+    injectedGoalTick: (agentId: string) => {
+      ticks.push(agentId);
+      services.db
+        .query(
+          "INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES (?, ?, ?, ?)",
+        )
+        .run(`tick-injected-${agentId}`, agentId, "injected_goal", now);
+      return { outcome: `injected:${agentId}`, tick_id: "tick-injected" };
+    },
+    reload: async () => {},
+    shutdown: () => {},
+  };
+
+  const injectGoalRes = await longLivedInjectGoalRoute(
+    new Request("http://x/long-lived/home-mgmt/inject-goal", {
+      method: "POST",
+      body: JSON.stringify({ goal: "check the basement" }),
+    }),
+    "home-mgmt",
+    services,
+  );
+  expect(injectGoalRes.status).toBe(200);
+  expect(await injectGoalRes.json()).toEqual({ ok: true });
+  expect(ticks).toEqual(["home-mgmt"]);
+  const row = services.db
+    .query(
+      "SELECT COUNT(*) as c FROM long_lived_ticks WHERE agent_id='home-mgmt' AND trigger_kind='injected_goal'",
+    )
+    .get() as { c: number };
+  expect(row.c).toBe(1);
+});
+
+test("POST /long-lived/pending-actions/:id/approve publishes decision event and fires injected_goal tick", async () => {
+  const services = tempServices();
+  seedAgent(services);
+  services.db
+    .query(
+      `INSERT INTO long_lived_ticks (
+      id, agent_id, chain_id, trigger_kind, trigger_payload_json, intent_summary, started_at,
+      completed_at, outcome, cost_cents, error_summary, working_memory_diff_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      "tick-for-action",
+      "home-mgmt",
+      "chain-1",
+      "manual",
+      JSON.stringify({ manual: true }),
+      "review queue",
+      1000,
+      null,
+      null,
+      null,
+      null,
+      null,
+    );
+  services.db
+    .query(
+      `INSERT INTO long_lived_pending_actions (
+      id, agent_id, tick_id, action_kind, action_target, payload_json, rationale,
+      status, expires_at, decided_by, decided_at, executed_in_tick_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      "approve-action",
+      "home-mgmt",
+      "tick-for-action",
+      "notify",
+      "ha:state",
+      JSON.stringify({ message: "ping" }),
+      "needs attention",
+      "pending",
+      999999,
+      null,
+      null,
+      null,
+      1500,
+    );
+
+  const decidedEvents: Array<{
+    event: string;
+    agent_id: string;
+    payload: { action_id: string; decision: string };
+  }> = [];
+  const unsubscribe = services.handoffEvents.subscribe((evt) => {
+    if ((evt as { event?: string }).event === "long_lived_action_decided") {
+      decidedEvents.push(
+        evt as { event: string; payload: { action_id: string; decision: string } },
+      );
+    }
+  });
+
+  const fired: string[] = [];
+  const now = services.clock().getTime();
+  services.longLivedReactor = {
+    injectedGoalTick: (agentId: string) => {
+      fired.push(agentId);
+      services.db
+        .query(
+          "INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES (?, ?, ?, ?)",
+        )
+        .run(`tick-injected-${agentId}-approve`, agentId, "injected_goal", now);
+      return { outcome: `injected:${agentId}`, tick_id: "tick-injected-2" };
+    },
+    reload: async () => {},
+    shutdown: () => {},
+  };
+
+  const approveRes = await longLivedApproveActionRoute(
+    new Request("http://x/long-lived/pending-actions/approve-action/approve", {
+      method: "POST",
+      body: JSON.stringify({ decided_by: "test" }),
+    }),
+    "approve-action",
+    services,
+  );
+
+  unsubscribe();
+  expect(approveRes.status).toBe(200);
+  expect(await approveRes.json()).toEqual({ ok: true });
+  expect(fired).toEqual(["home-mgmt"]);
+  expect(decidedEvents).toHaveLength(1);
+  expect(decidedEvents[0]).toEqual({
+    event: "long_lived_action_decided",
+    agent_id: "home-mgmt",
+    payload: { action_id: "approve-action", decision: "approved" },
+  });
+  const row = services.db
+    .query(
+      "SELECT COUNT(*) as c FROM long_lived_ticks WHERE agent_id='home-mgmt' AND trigger_kind='injected_goal'",
+    )
+    .get() as { c: number };
+  expect(row.c).toBe(1);
+});

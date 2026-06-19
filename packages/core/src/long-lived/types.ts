@@ -4,11 +4,13 @@ export const PendingGoalSchema = z.union([
   z.object({
     kind: z.literal("user_goal"),
     text: z.string().optional(),
+    created_at: z.number().int().nonnegative().optional(),
   }),
   z.object({
     kind: z.literal("approved_action"),
     pending_action_id: z.string(),
     original_payload: z.unknown(),
+    created_at: z.number().int().nonnegative().optional(),
   }),
 ]);
 

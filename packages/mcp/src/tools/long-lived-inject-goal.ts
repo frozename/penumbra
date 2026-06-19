@@ -29,7 +29,7 @@ export async function handleLongLivedInjectGoal(
   const now = deps.now();
   const workingMemory = JSON.parse(row.working_memory_json);
   workingMemory.pending_goals = workingMemory.pending_goals ?? [];
-  workingMemory.pending_goals.push({ kind: "user_goal", text: goal });
+  workingMemory.pending_goals.push({ kind: "user_goal", text: goal, created_at: now });
   workingMemory.updated_at = now;
   db.query("UPDATE long_lived_agents SET working_memory_json=?, updated_at=? WHERE id=?").run(
     JSON.stringify(workingMemory),

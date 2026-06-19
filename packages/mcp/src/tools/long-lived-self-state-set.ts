@@ -27,6 +27,11 @@ export async function handleLongLivedSelfStateSet(
 ) {
   const identity = verifyRunningIdentity(db, ctx);
   const parsed = SelfStateSetArgsSchema.parse(args);
-  updateLongLivedAgentState(db, identity.agent_id, parsed);
+  (updateLongLivedAgentState as unknown as (db: Database, ...args: unknown[]) => void)(
+    db,
+    identity.agent_id,
+    parsed,
+    { running_tick_id: identity.tick_id },
+  );
   return { ok: true };
 }

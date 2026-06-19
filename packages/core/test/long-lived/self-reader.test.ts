@@ -77,6 +77,91 @@ describe("long-lived self reader/writer helpers", () => {
     expect(after).toEqual(before);
   });
 
+  it("flushes consumed pending goals when tick read snapshot omits them", () => {
+    const db = new Database(":memory:");
+    seed(db);
+    const beforeRead = {
+      version: 1,
+      updated_at: 2,
+      pending_goals: [{ kind: "user_goal", text: "relevant", created_at: 0 }],
+      open_threads: [],
+      watches: [],
+      recent_decisions: [],
+    };
+    db.query("UPDATE long_lived_agents SET working_memory_json = ? WHERE id='a'").run(
+      JSON.stringify(beforeRead),
+    );
+
+    updateLongLivedAgentState(
+      db,
+      "a",
+      {
+        working_memory: {
+          version: 1,
+          updated_at: 3,
+          pending_goals: [],
+          open_threads: [],
+          watches: [],
+          recent_decisions: [],
+        },
+      },
+      { running_tick_id: "tick-a" },
+    );
+
+    const row = db
+      .query("SELECT working_memory_json FROM long_lived_agents WHERE id='a'")
+      .get() as { working_memory_json: string };
+    expect(JSON.parse(row.working_memory_json).pending_goals).toEqual([]);
+  });
+
+  it("preserves concurrent appended pending goals while flushing old snapshot goals", () => {
+    const db = new Database(":memory:");
+    seed(db);
+    const baseRead = {
+      version: 1,
+      updated_at: 2,
+      pending_goals: [{ kind: "user_goal", text: "stale", created_at: 0 }],
+      open_threads: [],
+      watches: [],
+      recent_decisions: [],
+    };
+    db.query("UPDATE long_lived_agents SET working_memory_json = ? WHERE id='a'").run(
+      JSON.stringify(baseRead),
+    );
+
+    const concurrentGoal = { kind: "user_goal", text: "fresh", created_at: 1500 };
+    const withConcurrent = {
+      ...baseRead,
+      updated_at: 4,
+      pending_goals: [baseRead.pending_goals[0], concurrentGoal],
+    };
+    db.query("UPDATE long_lived_agents SET working_memory_json = ? WHERE id='a'").run(
+      JSON.stringify(withConcurrent),
+    );
+
+    updateLongLivedAgentState(
+      db,
+      "a",
+      {
+        working_memory: {
+          version: 1,
+          updated_at: 5,
+          pending_goals: [],
+          open_threads: [],
+          watches: [],
+          recent_decisions: [],
+        },
+      },
+      { running_tick_id: "tick-a" },
+    );
+
+    const row = db
+      .query("SELECT working_memory_json FROM long_lived_agents WHERE id='a'")
+      .get() as { working_memory_json: string };
+    const workingMemory = JSON.parse(row.working_memory_json);
+    expect(workingMemory.pending_goals).toEqual([concurrentGoal]);
+  });
+
   it("lists only pending actions for the agent in descending created_at order", () => {
     const db = new Database(":memory:");
     loadSqliteVec(db);
