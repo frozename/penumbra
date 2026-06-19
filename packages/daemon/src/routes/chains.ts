@@ -513,7 +513,11 @@ export async function chainStartInternal(
             ? "chain-start internal hop prompt/project mismatch"
             : "chain-start prompt/project mismatch",
         );
-        if (isEnvTruthy(process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH) && !isInternalHop) {
+        if (
+          isEnvTruthy(process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH) &&
+          !isInternalHop &&
+          guardResult.suggested_project_id !== undefined
+        ) {
           return json(
             {
               error: routingWarning,

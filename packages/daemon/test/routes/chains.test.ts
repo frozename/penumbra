@@ -1290,6 +1290,55 @@ test("chain-start rejects prompt_project_mismatch in strict mode for user-initia
   });
 });
 
+test("chain-start warns and dispatches in strict mode when the mismatch has no suggested project", async () => {
+  const services = tempServices({
+    agentRegistry: ["planner"],
+    projectRegistry: new ProjectRegistry(
+      new Map([
+        [
+          "penumbra",
+          { project_id: "penumbra", root_path: "/Volumes/WorkSSD/repos/personal/penumbra" },
+        ],
+        ["alpha", { project_id: "alpha", root_path: "/tmp/projects/shared" }],
+        ["beta", { project_id: "beta", root_path: "/tmp/projects/shared" }],
+      ]),
+    ),
+  });
+  process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = "true";
+  const warnSpy = spyOn(services.log, "warn").mockImplementation(() => undefined as any);
+
+  const req = new Request("http://t/chains/start", {
+    method: "POST",
+    body: JSON.stringify({
+      initial_agent: "planner",
+      message: "inspect /tmp/projects/shared/src/foo.ts",
+      project_id: "penumbra",
+      task_class: "STANDARD",
+    }),
+  });
+  const res = await chainsStartRoute(req, services);
+  expect(res.status).toBe(200);
+  const body: any = await res.json();
+  expect(body.routing_warning).toEqual(
+    expect.objectContaining({
+      code: "prompt_project_mismatch",
+      project_id: "penumbra",
+      mentioned_paths: ["/tmp/projects/shared/src/foo.ts"],
+      missing_in_project: [],
+      hint: "pass project_id explicitly or update prompt paths",
+    }),
+  );
+  expect(body.routing_warning.suggested_project_id).toBeUndefined();
+  expect(warnSpy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: "chain_start.routing_guard.mismatch",
+      project_id: "penumbra",
+      suggested_project_id: undefined,
+    }),
+    expect.any(String),
+  );
+});
+
 test("chain-start allows strict workflow dispatches to cross project prompts", async () => {
   const services = tempServices({
     agentRegistry: ["planner"],
