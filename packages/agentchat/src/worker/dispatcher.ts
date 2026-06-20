@@ -245,10 +245,40 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
         try {
           await deps.dispatchStartBarrier(dispatchStartEvent);
         } catch (err) {
+          const errText = err instanceof Error ? err.message : String(err);
           deps.log.warn(
-            { handoff_id: handoff.handoff_id, err: String(err) },
+            { handoff_id: handoff.handoff_id, err: errText },
             "dispatch.start barrier failed; not spawning dispatch",
           );
+          // The handoff is CLAIMED but dispatch never ran. Don't return
+          // silently — that strands the row until the orphan sweeper picks
+          // it up. Mirror the regular dispatch-error finally: emit a
+          // dispatch.end with status=error so the lifecycle is observable,
+          // then mark the row terminal via complete(). If complete() also
+          // fails (the daemon is likely the reason the barrier failed),
+          // fall back to onClaimRetryable so the worker forgets dedup
+          // state and re-picks the row on the next SSE/poll event.
+          deps.onEvent?.({
+            handoff_id: handoff.handoff_id,
+            worker_id: deps.workerId,
+            source: "worker",
+            kind: "dispatch.end",
+            ts: new Date().toISOString(),
+            meta: {
+              status: "error",
+              wall_ms: Date.now() - dispatchStart,
+              error_summary: `dispatch_start_barrier_failed: ${errText}`,
+            },
+          });
+          try {
+            await deps.complete(handoff.handoff_id);
+          } catch (completeErr) {
+            deps.log.debug(
+              { handoff_id: handoff.handoff_id, err: String(completeErr) },
+              "complete after dispatch.start barrier failure also failed; marking retryable",
+            );
+            deps.onClaimRetryable?.(handoff.handoff_id);
+          }
           return;
         }
       } else {
