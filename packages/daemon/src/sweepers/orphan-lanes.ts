@@ -36,6 +36,7 @@ export function runOrphanLanesSweep(
     .query<
       {
         lane_id: string;
+        task_class: string;
         implementer_handoff: string;
         reviewer_handoff: string | null;
         handoff_status: string;
@@ -47,6 +48,7 @@ export function runOrphanLanesSweep(
       `
     SELECT
       l.lane_id,
+      l.task_class,
       l.implementer_handoff,
       l.reviewer_handoff,
       h.status AS handoff_status,
@@ -82,7 +84,7 @@ export function runOrphanLanesSweep(
       services.db.transaction(() => {
         closeLane(services.db, row.lane_id, {
           ts_closed: now_iso,
-          gate_status: "skipped",
+          gate_status: row.task_class === "TRIVIAL" ? "skipped" : "review_debt",
           reviewer_handoff: row.reviewer_handoff,
           override_reason: reason,
           metadata: {

@@ -47,11 +47,16 @@ function insertHandoff(
   );
 }
 
-function openLane(db: Database, lane_id: string, implementer_handoff: string): void {
+function openLane(
+  db: Database,
+  lane_id: string,
+  implementer_handoff: string,
+  task_class = "STANDARD",
+): void {
   insertLane(db, {
     lane_id,
     ts_opened: "2026-01-01T09:00:00.000Z",
-    task_class: "STANDARD",
+    task_class,
     implementer_handoff,
   });
 }
@@ -131,7 +136,8 @@ test("closes orphan lane whose implementer handoff completed past grace window",
   expect(result.lane_ids).toEqual(["lane-1"]);
 
   const lane = getLane(db, "lane-1");
-  expect(lane?.gate_status).toBe("skipped");
+  // Non-trivial orphan lanes must not receive success-eligible skipped credit.
+  expect(lane?.gate_status).toBe("review_debt");
   expect(lane?.override_reason).toContain("orphan-lane sweeper");
   expect(lane?.override_reason).toContain("completed");
   const metadata = JSON.parse(lane?.metadata_json ?? "{}") as { notes?: string };
@@ -139,9 +145,34 @@ test("closes orphan lane whose implementer handoff completed past grace window",
   expect(metadata.notes).toContain("h-impl");
 
   const perf = db
-    .query<{ gate_outcome: string | null }, [string]>(
-      `SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?`,
-    )
+    .query<
+      { gate_outcome: string | null },
+      [string]
+    >(`SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?`)
+    .get("h-impl");
+  expect(perf?.gate_outcome).toBe("review_debt");
+});
+
+test("closes trivial orphan lane as skipped", () => {
+  const db = setupDb();
+  const services = makeServices(db);
+
+  insertHandoff(db, "h-impl", "completed", PAST_GRACE);
+  openLane(db, "lane-1", "h-impl", "TRIVIAL");
+  insertPerformance(db, "h-impl", null);
+
+  const result = runOrphanLanesSweep(services, { nowIso: NOW, graceMs: 30 * 60_000 });
+
+  expect(result.scanned).toBe(1);
+  expect(result.closed).toBe(1);
+  expect(result.lane_ids).toEqual(["lane-1"]);
+  expect(getLane(db, "lane-1")?.gate_status).toBe("skipped");
+
+  const perf = db
+    .query<
+      { gate_outcome: string | null },
+      [string]
+    >(`SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?`)
     .get("h-impl");
   expect(perf?.gate_outcome).toBe("skipped");
 });
@@ -202,7 +233,7 @@ test("closes lane whose reviewer handoff is terminal", () => {
   const result = runOrphanLanesSweep(services, { nowIso: NOW, graceMs: 30 * 60_000 });
 
   expect(result.closed).toBe(1);
-  expect(getLane(db, "lane-1")?.gate_status).toBe("skipped");
+  expect(getLane(db, "lane-1")?.gate_status).toBe("review_debt");
   expect(getLane(db, "lane-1")?.reviewer_handoff).toBe("h-reviewer");
 });
 
@@ -251,7 +282,7 @@ test("closes orphan lane whose implementer handoff was rejected past grace windo
   expect(result.scanned).toBe(1);
   expect(result.closed).toBe(1);
   expect(result.lane_ids).toEqual(["lane-1"]);
-  expect(getLane(db, "lane-1")?.gate_status).toBe("skipped");
+  expect(getLane(db, "lane-1")?.gate_status).toBe("review_debt");
 });
 
 test("closes orphan lane whose implementer handoff was expired past grace window", () => {
@@ -266,7 +297,7 @@ test("closes orphan lane whose implementer handoff was expired past grace window
   expect(result.scanned).toBe(1);
   expect(result.closed).toBe(1);
   expect(result.lane_ids).toEqual(["lane-1"]);
-  expect(getLane(db, "lane-1")?.gate_status).toBe("skipped");
+  expect(getLane(db, "lane-1")?.gate_status).toBe("review_debt");
 });
 
 test("closes lane with rejected reviewer handoff + terminal-past-grace implementer", () => {
@@ -282,7 +313,7 @@ test("closes lane with rejected reviewer handoff + terminal-past-grace implement
 
   expect(result.scanned).toBe(1);
   expect(result.closed).toBe(1);
-  expect(getLane(db, "lane-1")?.gate_status).toBe("skipped");
+  expect(getLane(db, "lane-1")?.gate_status).toBe("review_debt");
 });
 
 test("emits one audit t0 event per sweep cycle covering all closed lane_ids", () => {
