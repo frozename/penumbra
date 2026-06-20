@@ -91,7 +91,7 @@ export const AgentPerformanceRowSchema = z.object({
 });
 export type AgentPerformanceRow = z.infer<typeof AgentPerformanceRowSchema>;
 
-const MergeResultStatusSchema = z.enum([
+export const MergeResultStatusSchema = z.enum([
   "pr_opened",
   "pr_creation_failed",
   "typecheck_failed",
@@ -100,6 +100,7 @@ const MergeResultStatusSchema = z.enum([
   "rebased",
   "rebase_conflict",
   "no_changes",
+  "verified",
 ]);
 
 export const AgentPerformanceCaptureFromReconcilerSchema = z.object({
@@ -231,6 +232,8 @@ export function mapMergeStatusToAgentOutcome(status: string): AgentOutcome {
     case "merged":
     case "rebased":
       return "merged";
+    case "verified":
+      return "completed_with_output";
     case "rebase_conflict":
       return "failed";
     default:

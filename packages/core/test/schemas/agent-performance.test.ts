@@ -6,6 +6,7 @@ import {
   AgentRankInputSchema,
   AgentRankOutputSchema,
   AgentTaskTypeSchema,
+  MergeResultStatusSchema,
   mapMergeStatusToAgentOutcome,
   mapDispatchReasonToAgentOutcome,
   inferAgentTaskType,
@@ -53,10 +54,18 @@ describe("agent performance schemas", () => {
     expect(parsed.result.status).toBe("pr_opened");
   });
 
+  it("accepts verified reconciler status as a merge result status", () => {
+    expect(MergeResultStatusSchema.safeParse("verified").success).toBe(true);
+  });
+
   it("maps pr_opened separately from merged", () => {
     expect(mapMergeStatusToAgentOutcome("pr_opened")).toBe("pr_opened");
     expect(mapMergeStatusToAgentOutcome("merged")).toBe("merged");
     expect(mapMergeStatusToAgentOutcome("rebase_conflict")).toBe("failed");
+  });
+
+  it("maps verified reconciler status to completed_with_output", () => {
+    expect(mapMergeStatusToAgentOutcome("verified")).toBe("completed_with_output");
   });
 
   it("supports legacy ledger outcome signals", () => {

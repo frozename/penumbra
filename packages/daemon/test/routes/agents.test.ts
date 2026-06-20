@@ -76,6 +76,33 @@ describe("agent routes", () => {
     expect(body.performance.outcome).toBe("pr_opened");
   });
 
+  it("captures verified reconciler results as a success outcome", async () => {
+    const req = new Request("http://x/agents/performance/reconciler", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        handoff_id: "h1",
+        result: { status: "verified" },
+      }),
+    });
+
+    const res = await agentsPerformanceReconcilerRoute(req, services);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.performance.outcome).toBe("completed_with_output");
+
+    const row = db
+      .query<
+        { outcome: string; source: string },
+        [string]
+      >("SELECT outcome, source FROM agent_performance WHERE handoff_id=?")
+      .get("h1");
+    expect(row).toEqual({
+      outcome: "completed_with_output",
+      source: "reconciler",
+    });
+  });
+
   it("rejects dispatch performance capture when worker token does not own the handoff", async () => {
     const handler = createDaemonFetchHandler({ services, token: "tok" });
     const registered = await registerWorkerForTest({
