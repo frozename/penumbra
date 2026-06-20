@@ -27,12 +27,13 @@ function MissionSidebar(): JSX.Element {
   });
 
   const sessionData = session.data;
+  const hasRealSession = Boolean(sessionData && sessionData.id !== "no-session");
   const pending = pendingHandoffs.data?.handoffs ?? [];
   const chains = liveChains.data?.chains ?? [];
 
   return (
     <>
-      {sessionData ? (
+      {hasRealSession && sessionData ? (
         <div className="exp-section">
           <h2>SESSION</h2>
           <div className="exp-row">
