@@ -108,7 +108,7 @@ function countModifiedCandidates(rootDir: string, relativeFiles: string[]): numb
     .split("\n")
     .map((line) => line.trimEnd())
     .filter(Boolean)
-    .filter((line) => line.length >= 2 && line[0] !== "?" && line[1] === "M").length;
+    .filter((line) => line.length >= 2 && line[0] !== "?").length;
 }
 
 function existsLike(path: string): boolean {
