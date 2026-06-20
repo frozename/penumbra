@@ -155,7 +155,7 @@ export class HandoffReader {
         [string]
       >(`SELECT * FROM handoffs WHERE conversation_id = ? AND parent_handoff_id IS NULL ORDER BY ts ASC LIMIT 1`)
       .get(conversation_id);
-    return row ?? null;
+    return row ? normalizeHandoffRow(row) : null;
   }
 
   /** Lists active handoffs (non-terminal) that have a cancel request. */

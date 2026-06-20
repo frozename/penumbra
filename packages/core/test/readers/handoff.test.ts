@@ -196,6 +196,38 @@ test("getRootForConversation returns null when conversation has no root", () => 
   expect(reader.getRootForConversation("missing-conv")).toBeNull();
 });
 
+test("getRootForConversation normalizes raw SQLite boolean columns", () => {
+  db.run(
+    `INSERT INTO handoffs (
+       handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role,
+       message, status, triggered_by_event_id, use_worktree, isolated_install,
+       open_pr_on_review, parent_handoff_id, root_handoff_id
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      "root-bool",
+      isoAt(0),
+      null,
+      "conv-root-bool",
+      "planner",
+      "gemini",
+      null,
+      "m",
+      "approved",
+      "e-root-bool",
+      1,
+      1,
+      0,
+      null,
+      "root-bool",
+    ],
+  );
+
+  const root = reader.getRootForConversation("conv-root-bool");
+  expect(root?.use_worktree).toBe(true);
+  expect(root?.isolated_install).toBe(true);
+  expect(root?.open_pr_on_review).toBe(false);
+});
+
 test("EXPLAIN QUERY PLAN mentions handoffs_root_by_conv for root lookup query", () => {
   insertHandoffRow({
     handoff_id: "r-1",
