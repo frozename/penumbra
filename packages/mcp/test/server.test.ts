@@ -127,8 +127,113 @@ describe("buildServer tool registration", () => {
         .find((row) => row?.event === "mcp_allowlist_read_handle_missing");
       expect(warning).toBeDefined();
       expect(warning.allowlisted_tools).toEqual(["workflow_wait"]);
+      expect(warning.handle_producing_allowlisted).toEqual(["workflow_wait"]);
     } finally {
       console.error = original;
+    }
+  });
+
+  it("warns for any handle-producing tool (not just workflow_wait) when read_handle excluded", async () => {
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = "fs_read,fs_write";
+    const lines: string[] = [];
+    const original = console.error;
+    console.error = ((msg: string) => {
+      lines.push(msg);
+    }) as any;
+    try {
+      await buildServer({ daemon: {} as any });
+      const warning = lines
+        .map((line) => {
+          try {
+            return JSON.parse(line);
+          } catch {
+            return null;
+          }
+        })
+        .find((row) => row?.event === "mcp_allowlist_read_handle_missing");
+      expect(warning).toBeDefined();
+      expect(warning.handle_producing_allowlisted).toEqual(["fs_read", "fs_write"]);
+    } finally {
+      console.error = original;
+    }
+  });
+
+  it("warns when env budget is set but read_handle is excluded", async () => {
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = "cost_recent";
+    process.env.PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS = "1024";
+    const lines: string[] = [];
+    const original = console.error;
+    console.error = ((msg: string) => {
+      lines.push(msg);
+    }) as any;
+    try {
+      await buildServer({ daemon: {} as any });
+      const warning = lines
+        .map((line) => {
+          try {
+            return JSON.parse(line);
+          } catch {
+            return null;
+          }
+        })
+        .find((row) => row?.event === "mcp_allowlist_read_handle_missing");
+      expect(warning).toBeDefined();
+      expect(warning.central_budget_disabled).toBe(true);
+      expect(warning.handle_producing_allowlisted).toEqual([]);
+    } finally {
+      console.error = original;
+    }
+  });
+
+  it("does NOT warn when read_handle is excluded but no budget and no handle-producing tools are allowlisted", async () => {
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = "cost_recent";
+    delete process.env.PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS;
+    const lines: string[] = [];
+    const original = console.error;
+    console.error = ((msg: string) => {
+      lines.push(msg);
+    }) as any;
+    try {
+      await buildServer({ daemon: {} as any });
+      const warning = lines
+        .map((line) => {
+          try {
+            return JSON.parse(line);
+          } catch {
+            return null;
+          }
+        })
+        .find((row) => row?.event === "mcp_allowlist_read_handle_missing");
+      expect(warning).toBeUndefined();
+    } finally {
+      console.error = original;
+    }
+  });
+
+  it("disables central response budgeting (no envelope/handle) when read_handle is excluded", async () => {
+    process.env.PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS = "1";
+    delete process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED;
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = "__no_read_handle_budget_smoke_tool";
+    const large = { blob: "x".repeat(512) };
+    const original = (TOOL_REGISTRY as any).__no_read_handle_budget_smoke_tool;
+    (TOOL_REGISTRY as any).__no_read_handle_budget_smoke_tool = {
+      descriptor: { description: "no-read-handle budget smoke fixture", inputSchema: {} },
+      makeHandler: () => async () => large,
+      readOnly: true,
+    };
+    try {
+      const server = (await buildServer({ daemon: {} as any })) as any;
+      const out = await server._registeredTools.__no_read_handle_budget_smoke_tool.handler({}, {});
+      // Budget should be disabled — result passes through untruncated, not wrapped.
+      expect(isEnvelopeResult(out)).toBe(false);
+      expect(out).toEqual(large);
+    } finally {
+      if (original === undefined) {
+        delete (TOOL_REGISTRY as any).__no_read_handle_budget_smoke_tool;
+      } else {
+        (TOOL_REGISTRY as any).__no_read_handle_budget_smoke_tool = original;
+      }
+      delete process.env.PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS;
     }
   });
 

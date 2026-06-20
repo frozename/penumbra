@@ -21,6 +21,23 @@ type ToolBuildContext = {
   handleStore: HandleStore;
 };
 
+/**
+ * Tools that can spill payloads into the HandleStore independent of the central
+ * response budget (workflow_*: explicit `result_handle_id`/`error_handle_id` fields;
+ * fs_*: `envelope: true` callers). If `read_handle` is excluded from the allowlist
+ * but any of these are allowlisted, the emitted handle_ids will be unresolvable.
+ */
+const HANDLE_PRODUCING_TOOLS: ReadonlySet<string> = new Set([
+  "workflow_wait",
+  "workflow_status",
+  "fs_glob",
+  "fs_grep",
+  "fs_read",
+  "fs_write",
+  "fs_edit",
+  "fs_exec",
+]);
+
 export function canonicalToolId(rawId: string): string | null {
   const trimmed = rawId.trim();
   if (trimmed.length === 0) return null;
@@ -65,16 +82,29 @@ export async function buildServer(opts: {
   // Parsed ONCE here via the central env registry and passed explicitly to every
   // instrumentHandler call site (registry loop, read_handle, federated tools).
   // instrumentHandler itself never reads the env.
-  const responseBudgetTokens = getMcpResponseBudgetTokens();
-  if (allowlist?.has("workflow_wait") && !allowlist.has("read_handle")) {
-    console.error(
-      JSON.stringify({
-        event: "mcp_allowlist_read_handle_missing",
-        warning:
-          "workflow_wait is allowlisted but read_handle is excluded; truncated handle ids will be unresolvable.",
-        allowlisted_tools: [...allowlist].sort(),
-      }),
+  const envResponseBudgetTokens = getMcpResponseBudgetTokens();
+  const readHandleExcluded = allowlist !== null && !allowlist.has("read_handle");
+  // Fail closed: if read_handle is not allowlisted, central budget truncation
+  // would still wrap large results with handle_ids the client cannot resolve.
+  // Disable budgeting entirely in that case so results pass through untruncated.
+  const responseBudgetTokens = readHandleExcluded ? null : envResponseBudgetTokens;
+  if (readHandleExcluded && allowlist !== null) {
+    const handleProducingAllowlisted = [...HANDLE_PRODUCING_TOOLS].filter((tool) =>
+      allowlist.has(tool),
     );
+    const centralBudgetDisabled = envResponseBudgetTokens !== null;
+    if (handleProducingAllowlisted.length > 0 || centralBudgetDisabled) {
+      console.error(
+        JSON.stringify({
+          event: "mcp_allowlist_read_handle_missing",
+          warning:
+            "read_handle is excluded from the tool allowlist; central response budgeting has been disabled, and any allowlisted handle-producing tools (workflow_wait/_status, fs_* envelope outputs) may still emit handle_ids the client cannot resolve.",
+          allowlisted_tools: [...allowlist].sort(),
+          handle_producing_allowlisted: handleProducingAllowlisted.sort(),
+          central_budget_disabled: centralBudgetDisabled,
+        }),
+      );
+    }
   }
   // Read the flag ONCE per server build. Pass it explicitly into instrumentHandler so
   // the registration and runtime sides can't disagree if env mutates mid-process.
