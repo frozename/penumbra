@@ -22,6 +22,32 @@ describe("parseEnv", () => {
     );
   });
 
+  test("boolean tolerates KEY='' opt-out and falls back to its default", () => {
+    const result = parseEnv({ PENUMBRA_DREAMING_ENABLED: "" });
+    expect(result.PENUMBRA_DREAMING_ENABLED).toBe(false);
+
+    const whitespace = parseEnv({ PENUMBRA_DREAMING_ENABLED: "   " });
+    expect(whitespace.PENUMBRA_DREAMING_ENABLED).toBe(false);
+
+    const onTrueDefault = parseEnv({ PENUMBRA_AUTO_RECALL_ENABLED: "" });
+    expect(onTrueDefault.PENUMBRA_AUTO_RECALL_ENABLED).toBe(true);
+  });
+
+  test("NonNegInt rejects KEY='' instead of silently coercing to 0", () => {
+    expect(() => parseEnv({ PENUMBRA_EVENT_LOOP_LAG_THRESHOLD_MS: "" })).toThrow(
+      /PENUMBRA_EVENT_LOOP_LAG_THRESHOLD_MS/,
+    );
+    expect(() => parseEnv({ PENUMBRA_EVENT_LOOP_LAG_THRESHOLD_MS: "   " })).toThrow(
+      /PENUMBRA_EVENT_LOOP_LAG_THRESHOLD_MS/,
+    );
+  });
+
+  test("NonNegNum rejects KEY='' instead of silently coercing to 0", () => {
+    expect(() => parseEnv({ PENUMBRA_DREAMING_PER_CYCLE_USD: "" })).toThrow(
+      /PENUMBRA_DREAMING_PER_CYCLE_USD/,
+    );
+  });
+
   test("t2 embed recipe defaults to title_plus_concise", () => {
     const result = parseEnv({});
     expect(result.PENUMBRA_T2_EMBED_RECIPE).toBe("title_plus_concise");

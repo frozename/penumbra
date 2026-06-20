@@ -7,18 +7,33 @@ export type EnvEntry<T> = {
   isSensitive?: boolean;
 };
 
+// KEY='' contract (see load.ts): an operator who exports KEY='' opts out of
+// any inherited value. Per-type semantics:
+//   Bool      empty -> undefined so the field's .default() (or .optional())
+//                      applies instead of crashing the enum match.
+//   NonNeg*   empty -> NaN so the coercion chain fails strictly, matching
+//                      PosInt (which already rejects '' via min(1)) instead of
+//                      silently coercing Number('') === 0 and masking misconfig.
+const emptyToUndefined = (v: unknown): unknown =>
+  typeof v === "string" && v.trim() === "" ? undefined : v;
+const emptyToNaN = (v: unknown): unknown =>
+  typeof v === "string" && v.trim() === "" ? Number.NaN : v;
+
 const Bool = z
   .enum(["true", "1", "yes", "false", "0", "no"])
   .transform((v) => v === "true" || v === "1" || v === "yes");
 const T2EmbedRecipe = z.enum(["body_v1", "title_only", "title_plus_concise"]);
 
-const NonNegInt = z.coerce
-  .number()
-  .int()
-  .min(0)
-  .refine((v) => !Number.isNaN(v), {
-    message: "must be a valid number",
-  });
+const NonNegInt = z.preprocess(
+  emptyToNaN,
+  z.coerce
+    .number()
+    .int()
+    .min(0)
+    .refine((v) => !Number.isNaN(v), {
+      message: "must be a valid number",
+    }),
+);
 const PosInt = z.coerce
   .number()
   .int()
@@ -26,12 +41,15 @@ const PosInt = z.coerce
   .refine((v) => !Number.isNaN(v), {
     message: "must be a valid number",
   });
-const NonNegNum = z.coerce
-  .number()
-  .min(0)
-  .refine((v) => !Number.isNaN(v), {
-    message: "must be a valid number",
-  });
+const NonNegNum = z.preprocess(
+  emptyToNaN,
+  z.coerce
+    .number()
+    .min(0)
+    .refine((v) => !Number.isNaN(v), {
+      message: "must be a valid number",
+    }),
+);
 const Port = z.coerce
   .number()
   .int()
@@ -189,6 +207,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   PENUMBRA_WORKERS_CONFIG_PATH: {
     schema: OptStr,
     description: "Path to workers.yaml config file.",
+  },
+  PENUMBRA_INJECT_TIMEOUT_MS: {
+    schema: OptPosInt,
+    description:
+      "Timeout in milliseconds for mid-session message injection into a worker ACP session (agentchat/worker/inject-route.ts). Unset uses the 30s built-in default.",
   },
   PENUMBRA_EXTRA_WORKERS_ENABLED: {
     schema: Bool,
@@ -1147,8 +1170,12 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
 
 const shape: Record<string, ZodTypeAny> = {};
 for (const [key, entry] of Object.entries(ENV_REGISTRY)) {
-  shape[key] =
+  const base =
     entry.default !== undefined ? entry.schema.default(entry.default) : entry.schema.optional();
+  // Bool is an enum that does not include ""; without this wrapper, KEY=''
+  // crashes the parse with a confusing "expected one of ..." error instead
+  // of honoring the documented empty-string opt-out (load.ts).
+  shape[key] = entry.schema === Bool ? z.preprocess(emptyToUndefined, base) : base;
 }
 
 export const EnvSchema = z.object(shape);
