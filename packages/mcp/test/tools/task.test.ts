@@ -43,7 +43,7 @@ function sampleTask(taskId: string) {
     expected_artifacts: [{ type: "commit" as const, ref: "abc123" }],
     eligibility: {
       required_tags: ["typescript"],
-      min_tier: "oc",
+      min_tier: "standard",
       max_cost_cents: 50,
       deny_agents: [],
       allow_agents: ["codex"],
