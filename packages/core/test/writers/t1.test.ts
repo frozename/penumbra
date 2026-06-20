@@ -154,6 +154,48 @@ function appendEventWithType(
   );
 }
 
+test("rollupSession appends after t0 pruning when a newer event arrives", async () => {
+  seed("s_prune", 3);
+  const roll = new T1Rollup({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date("2026-04-23T12:30:00Z"),
+    uuid: () => "r_prune",
+  });
+
+  await roll.rollupSession("s_prune");
+  const before = db
+    .query<
+      { n_events: number; ended_at: string },
+      [string]
+    >("SELECT n_events, ended_at FROM t1_rollups WHERE session_id=?")
+    .get("s_prune")!;
+  expect(before.n_events).toBe(3);
+
+  // Simulate t0 pruning: drop two of the three source events. After this,
+  // the surviving rows.length (1) is below the stored n_events (3), and the
+  // old count-based guard would permanently block any future append.
+  db.run("DELETE FROM t0_events WHERE event_id IN ('e-s_prune-0','e-s_prune-1')");
+
+  // A new event arrives with a ts strictly after the stored ended_at.
+  appendEvent("s_prune", 4, "cloud");
+
+  const written = await roll.rollupSession("s_prune");
+  expect(written).toBe("r_prune");
+
+  const after = db
+    .query<
+      { n_events: number; ended_at: string; lane_breakdown_json: string },
+      [string]
+    >("SELECT n_events, ended_at, lane_breakdown_json FROM t1_rollups WHERE session_id=?")
+    .get("s_prune")!;
+  // Rollup is recomputed from currently-visible t0 rows: 1 surviving + 1 new.
+  expect(after.n_events).toBe(2);
+  expect(JSON.parse(after.lane_breakdown_json)).toEqual({ local: 1, cloud: 1 });
+  // ended_at advanced to the new event's ts.
+  expect(after.ended_at > before.ended_at).toBe(true);
+});
+
 test("rollupSession append branch re-embeds t1_vec when last_response_excerpt changes", async () => {
   appendEventWithType("s_embed", 0, "agent-prompt", "the first prompt");
   appendEventWithType("s_embed", 1, "agent-response", "first response text");

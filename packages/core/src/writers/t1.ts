@@ -52,9 +52,9 @@ export class T1Rollup {
     const finalOverwrite = overwriteOnReroll ?? this.opts.overwriteOnReroll;
     const existing = this.opts.db
       .query<
-        { rollup_id: string; n_events: number; rowid: number },
+        { rollup_id: string; n_events: number; rowid: number; ended_at: string },
         [string]
-      >("SELECT rollup_id, n_events, rowid FROM t1_rollups WHERE session_id=?")
+      >("SELECT rollup_id, n_events, rowid, ended_at FROM t1_rollups WHERE session_id=?")
       .get(sessionId);
 
     const rows = this.opts.db
@@ -74,9 +74,13 @@ export class T1Rollup {
         this.opts.db.run("DELETE FROM t1_vec WHERE rowid=?", [existing.rowid]);
         this.opts.db.run("DELETE FROM t1_rollups WHERE session_id=?", [sessionId]);
       } else {
-        if (rows.length <= existing.n_events) return null; // No new events, nothing to append
-
         const last = rows[rows.length - 1]!;
+        // Compare event recency, not raw row count. If t0 has been pruned below
+        // the stored n_events, rows.length stays under it forever and append
+        // never fires again for this rollup. last.ts > existing.ended_at fires
+        // whenever a newer event arrives, regardless of how many old events
+        // have been pruned.
+        if (last.ts <= existing.ended_at) return null;
         const laneBreakdown: Record<string, number> = {};
         const providerBreakdown: Record<string, number> = {};
         const toolCounts: Record<string, number> = {};
