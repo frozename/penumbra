@@ -12,7 +12,11 @@ try {
 
 import { loadSqliteVec, migrate } from "@penumbra/core";
 import { buildRegistry } from "../src/registry.js";
-import { computeStateMetrics, type GitLogSinceCounter } from "../src/poller.js";
+import {
+  computeStateMetrics,
+  defaultGitLogSinceCounter,
+  type GitLogSinceCounter,
+} from "../src/poller.js";
 import { evaluateStateThresholds } from "../src/triggers.js";
 
 function freshDb() {
@@ -130,6 +134,36 @@ test("commits-since-last-handoff uses gitLogSince counter when prior outcome exi
     transcriptReader: () => null,
   });
   expect(m["commits-since-last-handoff"]).toBe(3);
+});
+
+test("git failure modes agree: non-zero exit and thrown exception both fail open to MAX_SAFE_INTEGER", () => {
+  const db = freshDb();
+  insertHandoffOutcome(db, "e1", "2026-05-04T10:00:00Z");
+
+  const throwingStub: GitLogSinceCounter = () => {
+    throw new Error("git not available");
+  };
+  const fromThrow = computeStateMetrics({
+    db,
+    now: () => new Date("2026-05-04T12:00:00Z"),
+    gitLogSince: throwingStub,
+    transcriptReader: () => null,
+  })["commits-since-last-handoff"];
+
+  const prevCwd = process.cwd();
+  const nonGitDir = mkdtempSync(join(tmpdir(), "poller-no-git-"));
+  let fromExitCode: number;
+  try {
+    process.chdir(nonGitDir);
+    fromExitCode = defaultGitLogSinceCounter("2026-05-04T10:00:00Z");
+  } finally {
+    process.chdir(prevCwd);
+    rmSync(nonGitDir, { recursive: true, force: true });
+  }
+
+  expect(fromThrow).toBe(Number.MAX_SAFE_INTEGER);
+  expect(fromExitCode).toBe(Number.MAX_SAFE_INTEGER);
+  expect(fromExitCode).toBe(fromThrow);
 });
 
 test("commits-since-last-handoff is MAX_SAFE_INTEGER when gitLogSince throws", () => {

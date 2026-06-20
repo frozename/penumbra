@@ -22,13 +22,13 @@ export type ComputeStateMetricsOpts = {
   cwd?: string;
 };
 
-const defaultGitLogSinceCounter: GitLogSinceCounter = (sinceIso) => {
+export const defaultGitLogSinceCounter: GitLogSinceCounter = (sinceIso) => {
   const proc = Bun.spawnSync({
     cmd: ["git", "log", "--since", sinceIso, "--pretty=format:%H"],
     stdout: "pipe",
     stderr: "pipe",
   });
-  if (proc.exitCode !== 0) return 0;
+  if (proc.exitCode !== 0) return Number.MAX_SAFE_INTEGER;
   const out = proc.stdout.toString("utf8").trim();
   return out.length === 0 ? 0 : out.split("\n").length;
 };
