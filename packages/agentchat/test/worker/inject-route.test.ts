@@ -53,6 +53,30 @@ test("POST /sessions/:handoff_id/inject returns 404 for an unknown handoff", asy
   expect(res.status).toBe(404);
 });
 
+test("POST /sessions/:handoff_id/inject returns 504 when session.inject hangs past timeout", async () => {
+  registerSession("h-hang", {
+    adapter: "stdio-acp",
+    inject: () => new Promise<void>(() => {}),
+  });
+  try {
+    const res = await workerInjectRoute(
+      new Request("http://x/sessions/h-hang/inject", {
+        method: "POST",
+        headers: { authorization: "Bearer token" },
+        body: JSON.stringify({ content: "hello there" }),
+      }),
+      "h-hang",
+      { token: "token", injectTimeoutMs: 50 },
+    );
+    expect(res.status).toBe(504);
+    const body = (await res.json()) as { error: string; timeout_ms: number };
+    expect(body.error).toBe("inject_timeout");
+    expect(body.timeout_ms).toBe(50);
+  } finally {
+    unregisterSession("h-hang");
+  }
+});
+
 test("POST /sessions/:handoff_id/inject returns 409 for unsupported adapter sessions", async () => {
   registerSession("h-1", { adapter: "unknown-adapter" });
   try {
