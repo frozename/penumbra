@@ -790,6 +790,33 @@ switch (cmd) {
         const boundsCostCents = boundsCostCentsRaw == null ? undefined : Number(boundsCostCentsRaw);
         const boundsSubDispatches =
           boundsSubDispatchesRaw == null ? undefined : Number(boundsSubDispatchesRaw);
+        if (
+          boundsWallClockMin != null &&
+          (!Number.isInteger(boundsWallClockMin) || boundsWallClockMin < 1)
+        ) {
+          console.error(
+            `penumbra task new: --bounds-wall-clock-min must be a positive integer (got: ${boundsWallClockMinRaw})`,
+          );
+          process.exit(1);
+        }
+        if (
+          boundsCostCents != null &&
+          (!Number.isInteger(boundsCostCents) || boundsCostCents < 0)
+        ) {
+          console.error(
+            `penumbra task new: --bounds-cost-cents must be a non-negative integer (got: ${boundsCostCentsRaw})`,
+          );
+          process.exit(1);
+        }
+        if (
+          boundsSubDispatches != null &&
+          (!Number.isInteger(boundsSubDispatches) || boundsSubDispatches < 1)
+        ) {
+          console.error(
+            `penumbra task new: --bounds-sub-dispatches must be a positive integer (got: ${boundsSubDispatchesRaw})`,
+          );
+          process.exit(1);
+        }
         if (kind === "orchestrate" && allowAgents.length === 0) {
           console.error("penumbra task new: kind=orchestrate requires at least one --allow-agent");
           process.exit(1);
