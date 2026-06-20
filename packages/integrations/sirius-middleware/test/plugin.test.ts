@@ -419,6 +419,67 @@ describe("penumbraObservePlugin execution", () => {
     expect(last.dropped_observations_total).toBeGreaterThanOrEqual(1);
   });
 
+  test("prompt observe does not block the request path when daemon is slow/hung", async () => {
+    const fastify = Fastify();
+    let promptFetchStarted = false;
+    let promptFetchResolve: (() => void) | null = null;
+    const promptFetchPending = new Promise<void>((resolve) => {
+      promptFetchResolve = resolve;
+    });
+
+    const mockFetch = mock((_url: string | URL | Request, init?: RequestInit) => {
+      const parsedBody = init?.body ? JSON.parse(init.body as string) : {};
+      if (parsedBody.event_type === "agent-prompt") {
+        promptFetchStarted = true;
+        // Hang the prompt observe — never resolve until the test releases it.
+        return promptFetchPending.then(() => new Response(JSON.stringify({ status: "ok" })));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ status: "ok" })));
+    });
+    global.fetch = mockFetch as any;
+
+    await fastify.register(penumbraObservePlugin, {
+      baseUrl: "http://mock-daemon",
+      token: "fake-token",
+      logger: { warn: () => {}, info: () => {} } as any,
+    });
+
+    let handlerRan = false;
+    fastify.post("/v1/chat/completions", async () => {
+      handlerRan = true;
+      return {
+        id: "chatcmpl-hang",
+        model: "gpt-3.5-turbo",
+        choices: [{ message: { role: "assistant", content: "fast response" } }],
+      };
+    });
+
+    const start = Date.now();
+    const response = await fastify.inject({
+      method: "POST",
+      url: "/v1/chat/completions",
+      headers: {
+        "x-penumbra-project": "test-project",
+        "x-request-id": "req-hang-1",
+      },
+      payload: {
+        model: "gpt-3.5-turbo",
+        messages: [{ role: "user", content: "should not block" }],
+      },
+    });
+    const elapsed = Date.now() - start;
+
+    // Request completes quickly despite the prompt observe still hanging.
+    expect(response.statusCode).toBe(200);
+    expect(handlerRan).toBe(true);
+    expect(promptFetchStarted).toBe(true);
+    expect(elapsed).toBeLessThan(500);
+
+    // Release the hung prompt observe so the test doesn't leak the pending promise.
+    promptFetchResolve?.();
+    await new Promise((r) => setTimeout(r, 10));
+  });
+
   test("captures agent-response even if agent-prompt fails (disjoint failure)", async () => {
     const fastify = Fastify();
     const mockFetch = mock((url: string | URL | Request, init?: RequestInit) => {

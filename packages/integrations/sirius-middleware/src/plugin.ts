@@ -128,19 +128,19 @@ export const penumbraObservePlugin: FastifyPluginAsync<PenumbraPluginOptions> = 
 
       const promptEvent = buildPromptEvent(promptInput);
 
-      try {
-        await client.observe(promptEvent);
-      } catch (err: unknown) {
-        dropped_observations++;
-        logger.warn({
-          msg: "penumbra observe failed — dropping event",
-          project_id: projectId,
-          request_id: sessionId,
-          route: req.url,
-          error: err instanceof Error ? err.message : String(err),
-          dropped_observations_total: dropped_observations,
+      queueMicrotask(() => {
+        client.observe(promptEvent).catch((err: unknown) => {
+          dropped_observations++;
+          logger.warn({
+            msg: "penumbra observe failed — dropping event",
+            project_id: projectId,
+            request_id: sessionId,
+            route: req.url,
+            error: err instanceof Error ? err.message : String(err),
+            dropped_observations_total: dropped_observations,
+          });
         });
-      }
+      });
     });
 
     fastify.addHook("onSend", (req, reply, payload, done) => {
