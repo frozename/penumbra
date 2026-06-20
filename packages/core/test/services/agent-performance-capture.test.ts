@@ -972,6 +972,137 @@ describe("captureAgentPerformanceFromReconciler", () => {
     expect(row.maestro_takeover_required).toBeNull();
   });
 
+  it("preserves classifier-decline failure_class when reconciler reports no_changes", () => {
+    db.prepare(
+      `
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `,
+    ).run(
+      "h1",
+      "worker-1",
+      "dispatch.end",
+      "2026-04-30T12:02:00Z",
+      JSON.stringify({
+        status: "error",
+        classifier_declined: true,
+        decline_reason: "provider_safety_refusal",
+      }),
+    );
+
+    captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-classifier-declined",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: { handoff_id: "h1", reason: "error" },
+    });
+
+    captureAgentPerformanceFromReconciler({
+      db,
+      uuid: () => "perf-reconciler-no-changes",
+      clock: () => new Date("2026-04-30T12:04:00Z"),
+      input: {
+        handoff_id: "h1",
+        result: { status: "no_changes" },
+      },
+    });
+
+    // Reconciler no_changes must not erase prior dispatch trust signals.
+    const persisted = db
+      .query<
+        { failure_class: string | null },
+        []
+      >(`SELECT failure_class FROM agent_performance WHERE handoff_id = 'h1'`)
+      .get();
+    expect(persisted?.failure_class).toBe("classifier_declined");
+  });
+
+  it("keeps a silent-failure outcome failed when reconciler reports no_changes", () => {
+    db.prepare(`UPDATE handoffs SET use_worktree=1 WHERE handoff_id=?`).run("h1");
+    const insertEvt = db.prepare(`
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `);
+    insertEvt.run("h1", "w", "dispatch.start", "2026-04-30T12:00:01Z", null);
+    insertEvt.run("h1", "w", "proc.spawn", "2026-04-30T12:00:02Z", null);
+    insertEvt.run(
+      "h1",
+      "w",
+      "dispatch.end",
+      "2026-04-30T12:01:50Z",
+      JSON.stringify({ status: "ok", worktree_changed: false }),
+    );
+    db.prepare(
+      `
+      INSERT INTO t0_events (event_id, ts, ingest_ts, source, source_detail, user_id, machine_id, event_type, lane, session_id, payload_json)
+      VALUES (?, ?, ?, 'agentchat', 'claude', 'claude', 'm', 'agent-response', 'cli-subscription', ?, ?)
+    `,
+    ).run(
+      "r1",
+      "2026-04-30T12:01:55Z",
+      "2026-04-30T12:01:55Z",
+      "conv",
+      JSON.stringify({ handoff_id: "h1", response: "done" }),
+    );
+
+    captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-empty",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: { handoff_id: "h1", reason: "completed" },
+    });
+
+    const row = captureAgentPerformanceFromReconciler({
+      db,
+      uuid: () => "perf-reconciler-no-changes",
+      clock: () => new Date("2026-04-30T12:04:00Z"),
+      input: {
+        handoff_id: "h1",
+        result: { status: "no_changes" },
+      },
+    });
+
+    expect(row.outcome).toBe("failed");
+    const persisted = db
+      .query<
+        { outcome: string; reliability_status: string | null },
+        []
+      >(`SELECT outcome, reliability_status FROM agent_performance WHERE handoff_id = 'h1'`)
+      .get();
+    expect(persisted).toEqual({
+      outcome: "failed",
+      reliability_status: "no_worktree_activity",
+    });
+  });
+
+  it("still lets reconciler merged replace a non-failed dispatch outcome", () => {
+    captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-dispatch",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: { handoff_id: "h1", reason: "completed" },
+    });
+
+    const row = captureAgentPerformanceFromReconciler({
+      db,
+      uuid: () => "perf-reconciler-merged",
+      clock: () => new Date("2026-04-30T12:04:00Z"),
+      input: {
+        handoff_id: "h1",
+        result: { status: "merged" },
+      },
+    });
+
+    expect(row.outcome).toBe("merged");
+    const persisted = db
+      .query<
+        { outcome: string },
+        []
+      >(`SELECT outcome FROM agent_performance WHERE handoff_id = 'h1'`)
+      .get();
+    expect(persisted?.outcome).toBe("merged");
+  });
+
   it("lets reconciler capture replace the worker terminal placeholder for the same handoff", () => {
     captureAgentPerformanceFromDispatch({
       db,

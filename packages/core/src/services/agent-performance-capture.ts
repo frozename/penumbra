@@ -10,6 +10,7 @@ import type { HandoffRow } from "../schemas/handoff.js";
 import {
   AgentPerformanceCaptureFromReconcilerSchema,
   AgentPerformanceCaptureFromDispatchSchema,
+  type AgentOutcome,
   inferAgentTaskTypeForRole,
   mapDispatchReasonToAgentOutcome,
   mapMergeStatusToAgentOutcome,
@@ -109,6 +110,21 @@ function upsertAgentPerformanceWithGuardedGateOutcome(
   };
 }
 
+function carryForwardFailedOutcomeForReconcilerNoChanges(
+  db: Database,
+  handoffId: string,
+  outcome: AgentOutcome,
+): AgentOutcome {
+  if (outcome !== "no_changes") return outcome;
+  const existing = db
+    .prepare<
+      { outcome: string },
+      [string]
+    >(`SELECT outcome FROM agent_performance WHERE handoff_id = ?`)
+    .get(handoffId);
+  return existing?.outcome === "failed" ? "failed" : outcome;
+}
+
 export function captureAgentPerformanceFromReconciler(opts: {
   db: Database;
   uuid: Uuid;
@@ -126,6 +142,11 @@ export function captureAgentPerformanceFromReconciler(opts: {
   const metadata: Record<string, unknown> = {};
   if (input.result.pr_url) metadata.pr_url = input.result.pr_url;
   if (input.result.timed_out !== undefined) metadata.timed_out = input.result.timed_out;
+  const outcome = carryForwardFailedOutcomeForReconcilerNoChanges(
+    opts.db,
+    input.handoff_id,
+    mapMergeStatusToAgentOutcome(input.result.status),
+  );
   const row: AgentPerformanceRow = {
     performance_id: opts.uuid(),
     ts: nowIso,
@@ -137,7 +158,7 @@ export function captureAgentPerformanceFromReconciler(opts: {
       input.task_type ??
       handoff.chain_task_type ??
       inferAgentTaskTypeForRole(handoff.message, handoff.to_role, input.result.status),
-    outcome: mapMergeStatusToAgentOutcome(input.result.status),
+    outcome,
     rounds: null,
     smoke_pass: null,
     reviewer_findings: null,
