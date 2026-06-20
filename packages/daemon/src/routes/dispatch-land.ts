@@ -42,6 +42,7 @@ interface DispatchLandSuccess {
   branch_deleted: boolean;
   pr_closed: boolean;
   worktree_torn_down: boolean;
+  already_landed?: boolean;
 }
 
 interface DispatchLandFailure {
@@ -509,6 +510,7 @@ async function executeLand(input: {
   const lockAcquiredAt = Date.now();
   const releaseLock = await lifecycleLock.acquire(handoff_id);
   let commit_sha = "";
+  let already_landed = false;
   try {
     const beforeMain = await deps.runGit(["rev-parse", "main"]);
     if (beforeMain.code !== 0) {
@@ -521,6 +523,7 @@ async function executeLand(input: {
         },
       };
     }
+    const beforeMainSha = beforeMain.stdout.trim();
 
     if (mode === "squash") {
       const checkout = await deps.runGit(["checkout", "main"]);
@@ -618,6 +621,18 @@ async function executeLand(input: {
         };
       }
     } else {
+      const checkout = await deps.runGit(["checkout", "main"]);
+      if (checkout.code !== 0) {
+        return {
+          status: 500,
+          error: {
+            code: "git_failed",
+            step: "checkout_main",
+            stderr: checkout.stderr.trim() || undefined,
+          },
+        };
+      }
+
       const merge = await deps.runGit(["merge", "--ff-only", `agent/${handoff_id}`]);
       if (merge.code !== 0) {
         return {
@@ -644,7 +659,27 @@ async function executeLand(input: {
         },
       };
     }
-    commit_sha = afterMain.stdout.trim();
+    const afterMainSha = afterMain.stdout.trim();
+    commit_sha = afterMainSha;
+
+    const moved = afterMainSha !== beforeMainSha;
+    if (!moved && mode === "ff") {
+      const ancestor = await deps.runGit(["merge-base", "--is-ancestor", branch, "main"]);
+      if (ancestor.code === 0) {
+        already_landed = true;
+      } else {
+        return {
+          status: 500,
+          error: {
+            code: "land_not_in_main",
+            step: "verify_landed",
+            beforeMain: beforeMainSha,
+            afterMain: afterMainSha,
+            stderr: ancestor.stderr.trim() || undefined,
+          },
+        };
+      }
+    }
   } finally {
     const held_ms = Date.now() - lockAcquiredAt;
     releaseLock();
@@ -680,41 +715,43 @@ async function executeLand(input: {
 
   const landed_at = now().toISOString();
 
-  services.t0Writer.write({
-    event_id: services.uuid(),
-    ts: landed_at,
-    ingest_ts: landed_at,
-    source: "mcp",
-    source_detail: "dispatch-land",
-    project_id: handoff.project_id,
-    user_id: "penumbra",
-    machine_id: services.machineId.get(),
-    session_id: handoff.conversation_id,
-    event_type: "dispatch.landed",
-    lane: "local",
-    provider: null,
-    model: null,
-    tokens_in: null,
-    tokens_out: null,
-    cost_usd: null,
-    latency_ms: null,
-    request_id: null,
-    origin: "dispatch",
-    payload_json: {
-      handoff_id,
-      conversation_id: handoff.conversation_id,
-      mode,
-      commit_sha,
-      branch,
-      message_subject,
-      landed_at,
-    },
-    payload_summary: `landed ${handoff_id} via ${mode} -> ${commit_sha.slice(0, 8)}`,
-  });
+  if (!already_landed) {
+    services.t0Writer.write({
+      event_id: services.uuid(),
+      ts: landed_at,
+      ingest_ts: landed_at,
+      source: "mcp",
+      source_detail: "dispatch-land",
+      project_id: handoff.project_id,
+      user_id: "penumbra",
+      machine_id: services.machineId.get(),
+      session_id: handoff.conversation_id,
+      event_type: "dispatch.landed",
+      lane: "local",
+      provider: null,
+      model: null,
+      tokens_in: null,
+      tokens_out: null,
+      cost_usd: null,
+      latency_ms: null,
+      request_id: null,
+      origin: "dispatch",
+      payload_json: {
+        handoff_id,
+        conversation_id: handoff.conversation_id,
+        mode,
+        commit_sha,
+        branch,
+        message_subject,
+        landed_at,
+      },
+      payload_summary: `landed ${handoff_id} via ${mode} -> ${commit_sha.slice(0, 8)}`,
+    });
+  }
 
-  const pr_closed = await closeOpenPrIfAny(deps.gh, `agent/${handoff_id}`, commit_sha).catch(
-    () => false,
-  );
+  const pr_closed = already_landed
+    ? false
+    : await closeOpenPrIfAny(deps.gh, `agent/${handoff_id}`, commit_sha).catch(() => false);
 
   let branch_deleted = false;
   let worktree_torn_down = false;
@@ -734,34 +771,38 @@ async function executeLand(input: {
     );
   }
 
-  try {
-    captureAgentPerformanceFromReconciler({
-      db: services.db,
-      uuid: services.uuid,
-      clock: services.clock,
-      input: {
-        handoff_id,
-        result: { status: "merged", timed_out: false },
-      },
-    });
-    if (stampPassedGateOutcome) {
-      stampAgentPerformanceGateOutcomeForHandoff(services.db, handoff_id, "passed");
+  if (!already_landed) {
+    try {
+      captureAgentPerformanceFromReconciler({
+        db: services.db,
+        uuid: services.uuid,
+        clock: services.clock,
+        input: {
+          handoff_id,
+          result: { status: "merged", timed_out: false },
+        },
+      });
+      if (stampPassedGateOutcome) {
+        stampAgentPerformanceGateOutcomeForHandoff(services.db, handoff_id, "passed");
+      }
+    } catch (err) {
+      services.log?.warn?.(
+        { handoff_id, err: String(err) },
+        "dispatch-land agent_performance re-stamp failed",
+      );
     }
-  } catch (err) {
-    services.log?.warn?.(
-      { handoff_id, err: String(err) },
-      "dispatch-land agent_performance re-stamp failed",
-    );
   }
 
-  const reviewerHandoff = resolveReviewerHandoffForDispatchLand(services, handoff_id);
-  if (reviewerHandoff) {
-    await authorizeDispatchLandMemoryVerify({
-      services,
-      handoffId: handoff_id,
-      reviewerHandoff,
-      commitSha: commit_sha,
-    });
+  if (!already_landed) {
+    const reviewerHandoff = resolveReviewerHandoffForDispatchLand(services, handoff_id);
+    if (reviewerHandoff) {
+      await authorizeDispatchLandMemoryVerify({
+        services,
+        handoffId: handoff_id,
+        reviewerHandoff,
+        commitSha: commit_sha,
+      });
+    }
   }
 
   return {
@@ -771,5 +812,6 @@ async function executeLand(input: {
     branch_deleted,
     pr_closed,
     worktree_torn_down,
+    ...(already_landed ? { already_landed: true } : {}),
   };
 }

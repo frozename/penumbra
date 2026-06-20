@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import {
@@ -100,6 +103,28 @@ function seedDispatchMemory(db: Database, handoffId: string, memoryId: string): 
      VALUES (?, NULL, 'worker', 'memory_recall_injected', '2026-05-08T00:01:30.000Z', ?)`,
     [handoffId, JSON.stringify({ memory_id: memoryId })],
   );
+}
+
+function runGitSync(
+  repoDir: string,
+  args: string[],
+): { code: number; stdout: string; stderr: string } {
+  const result = Bun.spawnSync({
+    cmd: ["git", "-C", repoDir, ...args],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return {
+    code: result.exitCode,
+    stdout: result.stdout.toString(),
+    stderr: result.stderr.toString(),
+  };
+}
+
+function expectGitOk(repoDir: string, args: string[]): string {
+  const result = runGitSync(repoDir, args);
+  expect(result.code, `git ${args.join(" ")} stderr=${result.stderr}`).toBe(0);
+  return result.stdout.trim();
 }
 
 function writeVerdictEvent(
@@ -821,7 +846,281 @@ describe("dispatchLandRoute", () => {
     expect(body.result.commit_sha).toBe("ff-main");
     expect(body.result.branch_deleted).toBe(false);
     expect(body.result.pr_closed).toBe(false);
-    expect(gitCalls).toEqual(["rev-parse main", "merge --ff-only agent/h-2", "rev-parse main"]);
+    expect(gitCalls).toEqual([
+      "rev-parse main",
+      "checkout main",
+      "merge --ff-only agent/h-2",
+      "rev-parse main",
+    ]);
+  });
+
+  test("ff mode checks out main before merging when ambient HEAD is another branch", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-ff-non-main", "c-ff-non-main", "project-ff-non-main");
+    writeVerdictEvent(svc, {
+      eventId: "v-ff-non-main",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-ff-non-main",
+      conversationId: "c-ff-non-main",
+      typecheck: "pass",
+      tests: "pass",
+    });
+
+    const repoDir = mkdtempSync(join(tmpdir(), "dispatch-land-ff-"));
+    expectGitOk(repoDir, ["init", "--initial-branch", "main"]);
+    expectGitOk(repoDir, ["config", "user.email", "penumbra@example.test"]);
+    expectGitOk(repoDir, ["config", "user.name", "Penumbra Test"]);
+    writeFileSync(join(repoDir, "base.txt"), "base\n");
+    expectGitOk(repoDir, ["add", "base.txt"]);
+    expectGitOk(repoDir, ["commit", "-m", "base"]);
+    const baseMain = expectGitOk(repoDir, ["rev-parse", "main"]);
+
+    expectGitOk(repoDir, ["branch", "other"]);
+    expectGitOk(repoDir, ["checkout", "-b", "agent/h-ff-non-main", "main"]);
+    writeFileSync(join(repoDir, "agent.txt"), "agent\n");
+    expectGitOk(repoDir, ["add", "agent.txt"]);
+    expectGitOk(repoDir, ["commit", "-m", "feat: ff land"]);
+    const agentTip = expectGitOk(repoDir, ["rev-parse", "agent/h-ff-non-main"]);
+    expectGitOk(repoDir, ["checkout", "other"]);
+
+    (svc as any).projectRegistry = {
+      get: (projectId: string) =>
+        projectId === "project-ff-non-main" ? { root_path: repoDir } : undefined,
+      list: () => [{ project_id: "project-ff-non-main", root_path: repoDir }],
+    };
+    (svc.worktreeManager as any).teardownWorktree = async () => ({
+      worktreeRemoved: false,
+      branchDeleted: false,
+    });
+
+    const gitCalls: string[] = [];
+    const res = await dispatchLandRoute(
+      new Request("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-ff-non-main",
+          commit_message: "feat: ff land",
+          mode: "ff",
+          delete_branch: false,
+        }),
+      }),
+      svc,
+      {
+        runGit: async (args: string[], opts?: { cwd?: string }) => {
+          gitCalls.push(args.join(" "));
+          return runGitSync(opts?.cwd ?? repoDir, args);
+        },
+        gh: {
+          listOpenPullRequestsByHead: async () => [],
+          closePullRequest: async () => {},
+        },
+        now: () => new Date("2026-05-08T00:03:00.000Z"),
+      } as any,
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = (await res.json()) as any;
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe("done");
+    expect(body.result.commit_sha).toBe(agentTip);
+    expect(expectGitOk(repoDir, ["rev-parse", "main"])).toBe(agentTip);
+    expect(expectGitOk(repoDir, ["rev-parse", "other"])).toBe(baseMain);
+    expect(gitCalls).toEqual([
+      "rev-parse main",
+      "checkout main",
+      "merge --ff-only agent/h-ff-non-main",
+      "rev-parse main",
+    ]);
+  });
+
+  test("ff re-land already in main returns idempotent success without restamping", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-ff-reland", "c-ff-reland");
+    writeVerdictEvent(svc, {
+      eventId: "v-ff-reland",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-ff-reland",
+      conversationId: "c-ff-reland",
+      typecheck: "pass",
+      tests: "pass",
+    });
+    seedAgentPerformanceRow(svc, {
+      performanceId: "perf-ff-reland",
+      ts: "2026-05-08T00:01:30.000Z",
+      handoffId: "h-ff-reland",
+      conversationId: "c-ff-reland",
+      projectId: null,
+      agentName: "codex",
+      taskType: "implement_small",
+      outcome: "no_changes",
+    });
+
+    (svc.worktreeManager as any).teardownWorktree = async () => ({
+      worktreeRemoved: true,
+      branchDeleted: true,
+    });
+
+    const gitCalls: string[] = [];
+    const closed: number[] = [];
+    let revParseCount = 0;
+    const res = await dispatchLandRoute(
+      new Request("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-ff-reland",
+          commit_message: "feat: already landed",
+          mode: "ff",
+          delete_branch: true,
+        }),
+      }),
+      svc,
+      {
+        runGit: async (args: string[]) => {
+          gitCalls.push(args.join(" "));
+          if (args[0] === "rev-parse" && args[1] === "main") {
+            revParseCount += 1;
+            return { code: 0, stdout: "same-main\n", stderr: "" };
+          }
+          if (args[0] === "merge-base" && args[1] === "--is-ancestor") {
+            return { code: 0, stdout: "", stderr: "" };
+          }
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: {
+          listOpenPullRequestsByHead: async () => [{ number: 88 }],
+          closePullRequest: async (input: { number: number }) => {
+            closed.push(input.number);
+          },
+        },
+        now: () => new Date("2026-05-08T00:03:00.000Z"),
+      } as any,
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = (await res.json()) as any;
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe("done");
+    expect(body.result).toMatchObject({
+      ok: true,
+      commit_sha: "same-main",
+      already_landed: true,
+      branch_deleted: true,
+      worktree_torn_down: true,
+      pr_closed: false,
+    });
+    expect(revParseCount).toBe(2);
+    expect(gitCalls).toEqual([
+      "rev-parse main",
+      "checkout main",
+      "merge --ff-only agent/h-ff-reland",
+      "rev-parse main",
+      "merge-base --is-ancestor agent/h-ff-reland main",
+    ]);
+    expect(closed).toEqual([]);
+
+    const landedCount = svc.db
+      .query<
+        { count: number },
+        []
+      >(`SELECT COUNT(*) AS count FROM t0_events WHERE event_type='dispatch.landed'`)
+      .get();
+    expect(landedCount?.count).toBe(0);
+    const perf = svc.db
+      .query<
+        { outcome: string; gate_outcome: string | null },
+        [string]
+      >(`SELECT outcome, gate_outcome FROM agent_performance WHERE handoff_id = ?`)
+      .get("h-ff-reland");
+    expect(perf).toEqual({ outcome: "no_changes", gate_outcome: null });
+  });
+
+  test("ff merge that does not advance main or leave branch in main fails verification", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-ff-not-in-main", "c-ff-not-in-main");
+    writeVerdictEvent(svc, {
+      eventId: "v-ff-not-in-main",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-ff-not-in-main",
+      conversationId: "c-ff-not-in-main",
+      typecheck: "pass",
+      tests: "pass",
+    });
+    seedAgentPerformanceRow(svc, {
+      performanceId: "perf-ff-not-in-main",
+      ts: "2026-05-08T00:01:30.000Z",
+      handoffId: "h-ff-not-in-main",
+      conversationId: "c-ff-not-in-main",
+      projectId: null,
+      agentName: "codex",
+      taskType: "implement_small",
+      outcome: "no_changes",
+    });
+
+    let teardownCalled = false;
+    (svc.worktreeManager as any).teardownWorktree = async () => {
+      teardownCalled = true;
+      return { worktreeRemoved: true, branchDeleted: true };
+    };
+
+    const res = await dispatchLandRoute(
+      new Request("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-ff-not-in-main",
+          commit_message: "feat: impossible merge",
+          mode: "ff",
+          delete_branch: true,
+        }),
+      }),
+      svc,
+      {
+        runGit: async (args: string[]) => {
+          if (args[0] === "rev-parse" && args[1] === "main") {
+            return { code: 0, stdout: "stale-main\n", stderr: "" };
+          }
+          if (args[0] === "merge-base" && args[1] === "--is-ancestor") {
+            return { code: 1, stdout: "", stderr: "" };
+          }
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: {
+          listOpenPullRequestsByHead: async () => {
+            throw new Error("PR close should not run");
+          },
+          closePullRequest: async () => {
+            throw new Error("PR close should not run");
+          },
+        },
+        now: () => new Date("2026-05-08T00:03:00.000Z"),
+      } as any,
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = (await res.json()) as any;
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe("failed");
+    expect(body.error).toMatchObject({
+      code: "land_not_in_main",
+      step: "verify_landed",
+      beforeMain: "stale-main",
+      afterMain: "stale-main",
+    });
+    expect(teardownCalled).toBe(false);
+
+    const landedCount = svc.db
+      .query<
+        { count: number },
+        []
+      >(`SELECT COUNT(*) AS count FROM t0_events WHERE event_type='dispatch.landed'`)
+      .get();
+    expect(landedCount?.count).toBe(0);
+    const perf = svc.db
+      .query<
+        { outcome: string; gate_outcome: string | null },
+        [string]
+      >(`SELECT outcome, gate_outcome FROM agent_performance WHERE handoff_id = ?`)
+      .get("h-ff-not-in-main");
+    expect(perf).toEqual({ outcome: "no_changes", gate_outcome: null });
   });
 
   test("returns 409 verdict_unverified when reconciler verdict failed", async () => {
