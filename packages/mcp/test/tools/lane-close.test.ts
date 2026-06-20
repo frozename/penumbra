@@ -508,6 +508,53 @@ test("lane_close still rejects a passed close missing implementer_handoff", asyn
   }
 });
 
+test("lane_close still returns the persisted close response when memory-verify authorize fails", async () => {
+  const receivedPaths: string[] = [];
+  const { daemon, restore } = makeDaemon(async (input) => {
+    const path = new URL(String(input)).pathname;
+    receivedPaths.push(path);
+    if (path === "/lanes/close") {
+      return Response.json({
+        lane_id: "lane-authfail",
+        ts_opened: "2026-05-12T00:00:00Z",
+        ts_closed: "2026-05-12T00:00:00Z",
+        task_class: "STANDARD",
+        implementer_handoff: "h-impl",
+        reviewer_handoff: "h-review",
+        gate_status: "passed",
+        recalled_memory_ids: [],
+        recalled_query: null,
+        override_reason: null,
+        metadata_json: "{}",
+      });
+    }
+    return new Response(JSON.stringify({ error: { code: "internal" } }), {
+      status: 500,
+      headers: { "content-type": "application/json" },
+    });
+  });
+
+  try {
+    const out = parseToolResult(
+      await laneCloseHandler(daemon)({
+        lane_id: "lane-authfail",
+        gate_status: "passed",
+        reviewer_handoff_id: "h-review",
+      }),
+    );
+    expect(receivedPaths).toEqual(["/lanes/close", "/memory-verify/authorize"]);
+    expect(out).toMatchObject({
+      lane_id: "lane-authfail",
+      gate_status: "passed",
+      implementer_handoff: "h-impl",
+      reviewer_handoff: "h-review",
+      memory_verify_authorization: "authorize_failed",
+    });
+  } finally {
+    restore();
+  }
+});
+
 test("lane_close round-trips a reviewer-less passed close through the live daemon", async () => {
   const live = makeLiveDaemon();
   const originalFetch = globalThis.fetch;

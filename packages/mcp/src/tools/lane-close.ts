@@ -32,8 +32,11 @@ export function laneCloseHandler(daemon: DaemonClient) {
       reviewer_handoff?: string | null;
     };
 
-    let memory_verify_authorization: "authorized" | "skipped_no_reviewer" | "not_applicable" =
-      "not_applicable";
+    let memory_verify_authorization:
+      | "authorized"
+      | "skipped_no_reviewer"
+      | "not_applicable"
+      | "authorize_failed" = "not_applicable";
     if (response.gate_status !== "skipped" && response.gate_status !== "review_debt") {
       if (!response.implementer_handoff) {
         throw new Error("daemon /lanes/close: missing implementer_handoff in response");
@@ -44,17 +47,25 @@ export function laneCloseHandler(daemon: DaemonClient) {
       // step is skipped instead of failing a close that already persisted. The
       // skip is surfaced in the result so reviewer-less closes stay observable.
       if (response.reviewer_handoff) {
-        await postToDaemon(daemon, "/memory-verify/authorize", {
-          handoff_id: response.implementer_handoff,
-          verdict: response.gate_status,
-          basis: {
-            kind: "lane_close",
-            lane_id: response.lane_id,
-            reviewer_handoff: response.reviewer_handoff,
-          },
-          authorized_by_handoff: response.reviewer_handoff,
-        });
-        memory_verify_authorization = "authorized";
+        // The lane row is already persisted by /lanes/close above. If the
+        // secondary memory-verify authorize call fails, surface the failure in
+        // the result instead of throwing — otherwise a caller may retry an
+        // already-committed close.
+        try {
+          await postToDaemon(daemon, "/memory-verify/authorize", {
+            handoff_id: response.implementer_handoff,
+            verdict: response.gate_status,
+            basis: {
+              kind: "lane_close",
+              lane_id: response.lane_id,
+              reviewer_handoff: response.reviewer_handoff,
+            },
+            authorized_by_handoff: response.reviewer_handoff,
+          });
+          memory_verify_authorization = "authorized";
+        } catch {
+          memory_verify_authorization = "authorize_failed";
+        }
       } else {
         memory_verify_authorization = "skipped_no_reviewer";
       }
