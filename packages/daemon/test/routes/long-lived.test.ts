@@ -750,6 +750,201 @@ test("POST /long-lived/:id/inject-goal fires an injected_goal tick for cron-less
   expect(row.c).toBe(1);
 });
 
+test("operator routes return 404 for unknown agent ids", async () => {
+  const services = tempServices();
+
+  const pauseRes = await longLivedPauseRoute(
+    new Request("http://x/long-lived/missing/pause"),
+    "missing",
+    services,
+  );
+  expect(pauseRes.status).toBe(404);
+  expect(await pauseRes.json()).toEqual({ error: { code: "agent_not_found" } });
+
+  const resumeRes = await longLivedResumeRoute(
+    new Request("http://x/long-lived/missing/resume"),
+    "missing",
+    services,
+  );
+  expect(resumeRes.status).toBe(404);
+  expect(await resumeRes.json()).toEqual({ error: { code: "agent_not_found" } });
+
+  const retireRes = await longLivedRetireRoute(
+    new Request("http://x/long-lived/missing/retire"),
+    "missing",
+    services,
+  );
+  expect(retireRes.status).toBe(404);
+  expect(await retireRes.json()).toEqual({ error: { code: "agent_not_found" } });
+
+  const stateGetRes = await longLivedStateGetRoute(
+    new Request("http://x/long-lived/missing/state"),
+    "missing",
+    services,
+  );
+  expect(stateGetRes.status).toBe(404);
+  expect(await stateGetRes.json()).toEqual({ error: { code: "agent_not_found" } });
+
+  const stateSetRes = await longLivedStateSetRoute(
+    new Request("http://x/long-lived/missing/state", {
+      method: "POST",
+      body: JSON.stringify({ partial: { intent_summary: "noop" } }),
+    }),
+    "missing",
+    services,
+  );
+  expect(stateSetRes.status).toBe(404);
+  expect(await stateSetRes.json()).toEqual({ error: { code: "agent_not_found" } });
+
+  const injectRes = await longLivedInjectGoalRoute(
+    new Request("http://x/long-lived/missing/inject-goal", {
+      method: "POST",
+      body: JSON.stringify({ goal: "anything" }),
+    }),
+    "missing",
+    services,
+  );
+  expect(injectRes.status).toBe(404);
+  expect(await injectRes.json()).toEqual({ error: { code: "not_found" } });
+
+  const approveRes = await longLivedApproveActionRoute(
+    new Request("http://x/long-lived/pending-actions/missing-action/approve", {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+    "missing-action",
+    services,
+  );
+  expect(approveRes.status).toBe(404);
+  expect(await approveRes.json()).toEqual({ error: { code: "not_found" } });
+
+  const rejectRes = await longLivedRejectActionRoute(
+    new Request("http://x/long-lived/pending-actions/missing-action/reject", {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+    "missing-action",
+    services,
+  );
+  expect(rejectRes.status).toBe(404);
+  expect(await rejectRes.json()).toEqual({ error: { code: "not_found" } });
+});
+
+test("operator routes return 409 for invalid state transitions", async () => {
+  const services = tempServices();
+  seedAgent(services);
+  services.db.query("UPDATE long_lived_agents SET status='paused' WHERE id='home-mgmt'").run();
+
+  const pauseRes = await longLivedPauseRoute(
+    new Request("http://x/long-lived/home-mgmt/pause"),
+    "home-mgmt",
+    services,
+  );
+  expect(pauseRes.status).toBe(409);
+  expect(await pauseRes.json()).toEqual({
+    error: { code: "invalid_long_lived_status_transition" },
+  });
+
+  services.db.query("UPDATE long_lived_agents SET status='active' WHERE id='home-mgmt'").run();
+
+  const resumeRes = await longLivedResumeRoute(
+    new Request("http://x/long-lived/home-mgmt/resume"),
+    "home-mgmt",
+    services,
+  );
+  expect(resumeRes.status).toBe(409);
+  expect(await resumeRes.json()).toEqual({
+    error: { code: "invalid_long_lived_status_transition" },
+  });
+
+  services.db.query("UPDATE long_lived_agents SET status='paused' WHERE id='home-mgmt'").run();
+
+  const injectRes = await longLivedInjectGoalRoute(
+    new Request("http://x/long-lived/home-mgmt/inject-goal", {
+      method: "POST",
+      body: JSON.stringify({ goal: "noop" }),
+    }),
+    "home-mgmt",
+    services,
+  );
+  expect(injectRes.status).toBe(409);
+  expect(await injectRes.json()).toEqual({ error: { code: "not_active" } });
+});
+
+test("approve/reject return 409 for already-decided actions", async () => {
+  const services = tempServices();
+  seedAgent(services);
+  services.db
+    .query(
+      `INSERT INTO long_lived_ticks (
+      id, agent_id, chain_id, trigger_kind, started_at
+    ) VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run("tick-decided", "home-mgmt", "chain-decided", "cron", 1000);
+  services.db
+    .query(
+      `INSERT INTO long_lived_pending_actions (
+      id, agent_id, tick_id, action_kind, action_target, payload_json, rationale,
+      status, expires_at, decided_by, decided_at, executed_in_tick_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      "decided-action",
+      "home-mgmt",
+      "tick-decided",
+      "notify",
+      "ha:state",
+      JSON.stringify({ message: "x" }),
+      null,
+      "approved",
+      999999,
+      "user",
+      1000,
+      null,
+      1500,
+    );
+
+  const approveRes = await longLivedApproveActionRoute(
+    new Request("http://x/long-lived/pending-actions/decided-action/approve", {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+    "decided-action",
+    services,
+  );
+  expect(approveRes.status).toBe(409);
+  expect(await approveRes.json()).toEqual({ error: { code: "not_pending" } });
+
+  const rejectRes = await longLivedRejectActionRoute(
+    new Request("http://x/long-lived/pending-actions/decided-action/reject", {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+    "decided-action",
+    services,
+  );
+  expect(rejectRes.status).toBe(409);
+  expect(await rejectRes.json()).toEqual({ error: { code: "not_pending" } });
+});
+
+test("GET /long-lived/:id/state surfaces corrupt working_memory as 500", async () => {
+  const services = tempServices();
+  seedAgent(services);
+  services.db
+    .query("UPDATE long_lived_agents SET working_memory_json=? WHERE id='home-mgmt'")
+    .run(JSON.stringify({ version: 99, broken: true }));
+
+  const res = await longLivedStateGetRoute(
+    new Request("http://x/long-lived/home-mgmt/state"),
+    "home-mgmt",
+    services,
+  );
+  expect(res.status).toBe(500);
+  const body = (await res.json()) as { error: { code: string; issues?: unknown } };
+  expect(body.error.code).toBe("corrupt_working_memory");
+  expect(Array.isArray(body.error.issues)).toBe(true);
+});
+
 test("POST /long-lived/pending-actions/:id/approve publishes decision event and fires injected_goal tick", async () => {
   const services = tempServices();
   seedAgent(services);

@@ -12,6 +12,7 @@ import {
   handleLongLivedStateSet,
   handleLongLivedTicks,
 } from "@penumbra/mcp";
+import { ZodError } from "zod";
 import { reconcileOrphanTickRows } from "../long-lived/tick-gate.js";
 
 import { json } from "./_helpers.js";
@@ -97,9 +98,27 @@ function errorBody(
   return { error: { code, ...(details ?? {}) } };
 }
 
-function errorJson(error: unknown, status = 400): Response {
-  const code = error instanceof Error ? error.message : String(error);
-  return json(errorBody(code), status);
+function classifyErrorStatus(code: string, fallback: number): number {
+  if (code === "not_found" || code === "agent_not_found") return 404;
+  if (
+    code === "not_active" ||
+    code === "not_pending" ||
+    code === "invalid_long_lived_status_transition"
+  ) {
+    return 409;
+  }
+  return fallback;
+}
+
+function errorJson(error: unknown, fallbackStatus = 500): Response {
+  if (error instanceof ZodError) {
+    return json(errorBody("validation_error", { issues: error.issues }), 400);
+  }
+  if (error instanceof Error) {
+    const code = error.message;
+    return json(errorBody(code), classifyErrorStatus(code, fallbackStatus));
+  }
+  return json(errorBody(String(error)), fallbackStatus);
 }
 
 const MANUAL_TICK_RATE_LIMIT_MS = 1_000;
@@ -255,7 +274,7 @@ export async function longLivedPauseRoute(
   try {
     return json(await handleLongLivedPause(services.db, { id }));
   } catch (error) {
-    return errorJson(error, 400);
+    return errorJson(error);
   }
 }
 
@@ -267,7 +286,7 @@ export async function longLivedResumeRoute(
   try {
     return json(await handleLongLivedResume(services.db, { id }));
   } catch (error) {
-    return errorJson(error, 400);
+    return errorJson(error);
   }
 }
 
@@ -279,7 +298,7 @@ export async function longLivedRetireRoute(
   try {
     return json(await handleLongLivedRetire(services.db, { id }));
   } catch (error) {
-    return errorJson(error, 400);
+    return errorJson(error);
   }
 }
 
@@ -301,7 +320,7 @@ export async function longLivedTickRoute(
     }
     return json(services.longLivedReactor.manualTick(id));
   } catch (error) {
-    return errorJson(error, 400);
+    return errorJson(error);
   }
 }
 
@@ -312,7 +331,7 @@ export async function longLivedReconcileOrphansRoute(
   try {
     return json({ reconciled: reconcileOrphanTickRows(services.db, services.clock().getTime()) });
   } catch (error) {
-    return errorJson(error, 400);
+    return errorJson(error);
   }
 }
 
@@ -324,7 +343,10 @@ export async function longLivedStateGetRoute(
   try {
     return json(await handleLongLivedStateGet(services.db, { id }));
   } catch (error) {
-    return errorJson(error, 400);
+    if (error instanceof ZodError) {
+      return json(errorBody("corrupt_working_memory", { issues: error.issues }), 500);
+    }
+    return errorJson(error);
   }
 }
 
@@ -337,7 +359,7 @@ export async function longLivedStateSetRoute(
     const body = (await req.json()) as Record<string, unknown>;
     return json(await handleLongLivedStateSet(services.db, { id, ...body }));
   } catch (error) {
-    return errorJson(error, 400);
+    return errorJson(error);
   }
 }
 
@@ -355,7 +377,7 @@ export async function longLivedPendingActionsRoute(
       }),
     );
   } catch (error) {
-    return errorJson(error, 400);
+    return errorJson(error);
   }
 }
 
@@ -397,7 +419,7 @@ export async function longLivedApproveActionRoute(
     injectedGoalTick?.(action.agent_id);
     return json(response);
   } catch (error) {
-    return errorJson(error, 400);
+    return errorJson(error);
   }
 }
 
@@ -429,7 +451,7 @@ export async function longLivedRejectActionRoute(
       ),
     );
   } catch (error) {
-    return errorJson(error, 400);
+    return errorJson(error);
   }
 }
 
@@ -457,7 +479,7 @@ export async function longLivedInjectGoalRoute(
       ),
     );
   } catch (error) {
-    return errorJson(error, 400);
+    return errorJson(error);
   }
 }
 
@@ -478,7 +500,7 @@ export async function longLivedAuditRoute(
       }),
     );
   } catch (error) {
-    return errorJson(error, 400);
+    return errorJson(error);
   }
 }
 
@@ -499,6 +521,6 @@ export async function longLivedTicksRoute(
       }),
     );
   } catch (error) {
-    return errorJson(error, 400);
+    return errorJson(error);
   }
 }
