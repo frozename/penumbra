@@ -527,6 +527,75 @@ test("PenumbraClient dispatch and worktree read methods call daemon routes", asy
   }
 });
 
+describe("PenumbraClient.chainWait terminal status", () => {
+  function makeChainWaitFetch(terminalRows: Array<{ status: string }>): typeof fetch {
+    return (async (input: any, init?: any) => {
+      const req = input instanceof Request ? input : new Request(String(input), init);
+      const url = new URL(req.url);
+      if (url.pathname === "/handoffs") {
+        const status = url.searchParams.get("status") ?? "";
+        const requested = status.split(",");
+        const isActive = requested.some((s) =>
+          ["pending", "approved", "redirected", "dispatched"].includes(s),
+        );
+        if (isActive) return Response.json({ handoffs: [] });
+        return Response.json({ handoffs: terminalRows });
+      }
+      return Response.json({});
+    }) as any;
+  }
+
+  test("reports failed when a work hop failed even if a completed row is last by creation order", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pen-chainwait-"));
+    writeFileSync(join(root, "port"), "1\n");
+    writeFileSync(join(root, "token"), "tk\n");
+    try {
+      const client = new PenumbraClient({
+        storageRoot: root,
+        // creation-ordered rows: failed first, then completed.
+        // Old at(-1) logic would report "completed"; resolution-order truth is "failed".
+        fetch: makeChainWaitFetch([{ status: "failed" }, { status: "completed" }]),
+      });
+      const result = await client.chainWait({ conversation_id: "c-1", timeout_ms: 1_000 });
+      expect(result.status).toBe("failed");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("reports completed when at least one row is completed and no row failed", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pen-chainwait-"));
+    writeFileSync(join(root, "port"), "1\n");
+    writeFileSync(join(root, "token"), "tk\n");
+    try {
+      const client = new PenumbraClient({
+        storageRoot: root,
+        fetch: makeChainWaitFetch([{ status: "completed" }, { status: "completed" }]),
+      });
+      const result = await client.chainWait({ conversation_id: "c-2", timeout_ms: 1_000 });
+      expect(result.status).toBe("completed");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("reports failed when no terminal row is completed", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pen-chainwait-"));
+    writeFileSync(join(root, "port"), "1\n");
+    writeFileSync(join(root, "token"), "tk\n");
+    try {
+      const client = new PenumbraClient({
+        storageRoot: root,
+        fetch: makeChainWaitFetch([{ status: "rejected" }, { status: "expired" }]),
+      });
+      const result = await client.chainWait({ conversation_id: "c-3", timeout_ms: 1_000 });
+      expect(result.status).toBe("failed");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("PenumbraClient permission methods", () => {
   test("createPermission posts the body and returns the response", async () => {
     const root = mkdtempSync(join(tmpdir(), "pen-perm-"));

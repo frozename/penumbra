@@ -417,8 +417,10 @@ export class PenumbraClient {
           statuses: ["completed", "failed", "rejected", "expired"],
           conversation_id: input.conversation_id,
         });
-        const last = terminal.at(-1) as { status?: string } | undefined;
-        return { status: last?.status === "completed" ? "completed" : "failed" };
+        const rows = terminal as Array<{ status?: string }>;
+        const anyCompleted = rows.some((h) => h?.status === "completed");
+        const anyFailed = rows.some((h) => h?.status === "failed");
+        return { status: anyCompleted && !anyFailed ? "completed" : "failed" };
       }
       await new Promise((resolve) =>
         setTimeout(resolve, Math.min(250, Math.max(1, deadline - Date.now()))),
