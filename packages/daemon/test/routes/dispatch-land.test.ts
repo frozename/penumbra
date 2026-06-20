@@ -468,6 +468,9 @@ describe("dispatchLandRoute", () => {
               stderr: "",
             };
           }
+          if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--quiet") {
+            return { code: 1, stdout: "", stderr: "" };
+          }
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {
@@ -572,6 +575,9 @@ describe("dispatchLandRoute", () => {
           revParseCount += 1;
           return { code: 0, stdout: revParseCount === 1 ? "old-main\n" : "new-main\n", stderr: "" };
         }
+        if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--quiet") {
+          return { code: 1, stdout: "", stderr: "" };
+        }
         return { code: 0, stdout: "", stderr: "" };
       },
       gh: {
@@ -612,10 +618,11 @@ describe("dispatchLandRoute", () => {
       "rev-parse main",
       "checkout main",
       "merge --squash agent/h-1",
+      "diff --cached --quiet",
       "commit -F -",
       "rev-parse main",
     ]);
-    expect(gitCalls[3]?.stdin).toBe("feat(core): curated subject\n\nbody details");
+    expect(gitCalls[4]?.stdin).toBe("feat(core): curated subject\n\nbody details");
 
     const landed = svc.db
       .query<
@@ -679,6 +686,9 @@ describe("dispatchLandRoute", () => {
               stderr: "",
             };
           }
+          if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--quiet") {
+            return { code: 1, stdout: "", stderr: "" };
+          }
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {
@@ -705,6 +715,108 @@ describe("dispatchLandRoute", () => {
       outcome: "merged",
       source: "reconciler",
     });
+  });
+
+  test("squash re-land with no staged changes returns already_landed without restamping performance", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-squash-reland", "c-squash-reland");
+    writeVerdictEvent(svc, {
+      eventId: "v-squash-reland",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-squash-reland",
+      conversationId: "c-squash-reland",
+      typecheck: "pass",
+      tests: "pass",
+    });
+    seedAgentPerformanceRow(svc, {
+      performanceId: "perf-squash-reland",
+      ts: "2026-05-08T00:01:30.000Z",
+      handoffId: "h-squash-reland",
+      conversationId: "c-squash-reland",
+      projectId: null,
+      agentName: "codex",
+      taskType: "implement_small",
+      outcome: "no_changes",
+    });
+
+    (svc.worktreeManager as any).teardownWorktree = async () => ({
+      worktreeRemoved: true,
+      branchDeleted: true,
+    });
+
+    const gitCalls: string[] = [];
+    const closed: number[] = [];
+    const res = await dispatchLandRoute(
+      new Request("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-squash-reland",
+          commit_message: "feat: already landed squash",
+          mode: "squash",
+          delete_branch: true,
+        }),
+      }),
+      svc,
+      {
+        runGit: async (args: string[]) => {
+          const cmd = args.join(" ");
+          gitCalls.push(cmd);
+          if (cmd === "rev-parse main") {
+            return { code: 0, stdout: "same-main\n", stderr: "" };
+          }
+          if (cmd === "diff --cached --quiet") {
+            return { code: 0, stdout: "", stderr: "" };
+          }
+          if (cmd === "commit -F -") {
+            return { code: 1, stdout: "", stderr: "nothing to commit, working tree clean\n" };
+          }
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: {
+          listOpenPullRequestsByHead: async () => [{ number: 88 }],
+          closePullRequest: async (input: { number: number }) => {
+            closed.push(input.number);
+          },
+        },
+        now: () => new Date("2026-05-08T00:04:00.000Z"),
+      } as any,
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = (await res.json()) as any;
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe("done");
+    expect(body.result).toMatchObject({
+      ok: true,
+      commit_sha: "same-main",
+      already_landed: true,
+      branch_deleted: true,
+      worktree_torn_down: true,
+      pr_closed: false,
+    });
+    expect(gitCalls).toEqual([
+      "rev-parse main",
+      "checkout main",
+      "merge --squash agent/h-squash-reland",
+      "diff --cached --quiet",
+      "rev-parse main",
+    ]);
+    expect(closed).toEqual([]);
+
+    const landedCount = svc.db
+      .query<
+        { count: number },
+        []
+      >(`SELECT COUNT(*) AS count FROM t0_events WHERE event_type='dispatch.landed'`)
+      .get();
+    expect(landedCount?.count).toBe(0);
+    const perf = svc.db
+      .query<
+        { outcome: string; gate_outcome: string | null },
+        [string]
+      >(`SELECT outcome, gate_outcome FROM agent_performance WHERE handoff_id = ?`)
+      .get("h-squash-reland");
+    expect(perf).toEqual({ outcome: "no_changes", gate_outcome: null });
   });
 
   test("post-merge auto-authorizes memory verify with dispatch_land basis", async () => {
@@ -751,6 +863,9 @@ describe("dispatchLandRoute", () => {
         runGit: async (args: string[]) => {
           if (args[0] === "rev-parse" && args[1] === "main") {
             return { code: 0, stdout: `${realCommit}\n`, stderr: "" };
+          }
+          if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--quiet") {
+            return { code: 1, stdout: "", stderr: "" };
           }
           return { code: 0, stdout: "", stderr: "" };
         },
@@ -1250,6 +1365,9 @@ describe("dispatchLandRoute", () => {
               stderr: "",
             };
           }
+          if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--quiet") {
+            return { code: 1, stdout: "", stderr: "" };
+          }
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {
@@ -1321,6 +1439,7 @@ describe("dispatchLandRoute", () => {
         if (cmd === "status --porcelain --untracked-files=no")
           return { code: 0, stdout: dirtyIndex ? "UU a.txt\n" : "", stderr: "" };
         if (cmd === "merge --squash agent/h-4-clean") return { code: 0, stdout: "", stderr: "" };
+        if (cmd === "diff --cached --quiet") return { code: 1, stdout: "", stderr: "" };
         if (cmd === "commit -F -") return { code: 0, stdout: "", stderr: "" };
         return { code: 0, stdout: "", stderr: "" };
       },
@@ -1542,6 +1661,7 @@ describe("dispatchLandRoute", () => {
             stagedSquashResidue = true;
             return { code: 0, stdout: "", stderr: "" };
           }
+          if (cmd === "diff --cached --quiet") return { code: 1, stdout: "", stderr: "" };
           if (cmd === "commit -F -")
             return {
               code: 1,
@@ -1579,6 +1699,7 @@ describe("dispatchLandRoute", () => {
       "rev-parse main",
       "checkout main",
       "merge --squash agent/h-hook-fails",
+      "diff --cached --quiet",
       "commit -F -",
       "reset --merge",
       "status --porcelain --untracked-files=no",
@@ -1698,6 +1819,9 @@ describe("dispatchLandRoute", () => {
       {
         runGit: async (args: string[]) => {
           if (args[0] === "rev-parse") return { code: 0, stdout: "sha-wt-1\n", stderr: "" };
+          if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--quiet") {
+            return { code: 1, stdout: "", stderr: "" };
+          }
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: { listOpenPullRequestsByHead: async () => [], closePullRequest: async () => {} },
@@ -1753,6 +1877,9 @@ describe("dispatchLandRoute", () => {
       {
         runGit: async (args: string[]) => {
           if (args[0] === "rev-parse") return { code: 0, stdout: "sha-open-lane\n", stderr: "" };
+          if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--quiet") {
+            return { code: 1, stdout: "", stderr: "" };
+          }
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: { listOpenPullRequestsByHead: async () => [], closePullRequest: async () => {} },
@@ -1807,6 +1934,9 @@ describe("dispatchLandRoute", () => {
       {
         runGit: async (args: string[]) => {
           if (args[0] === "rev-parse") return { code: 0, stdout: "sha-wt-2\n", stderr: "" };
+          if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--quiet") {
+            return { code: 1, stdout: "", stderr: "" };
+          }
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: { listOpenPullRequestsByHead: async () => [], closePullRequest: async () => {} },
@@ -1856,6 +1986,9 @@ describe("dispatchLandRoute", () => {
       {
         runGit: async (args: string[]) => {
           if (args[0] === "rev-parse") return { code: 0, stdout: "sha-wt-3\n", stderr: "" };
+          if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--quiet") {
+            return { code: 1, stdout: "", stderr: "" };
+          }
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: { listOpenPullRequestsByHead: async () => [], closePullRequest: async () => {} },
@@ -1897,6 +2030,9 @@ describe("dispatchLandRoute", () => {
       {
         runGit: async (args: string[]) => {
           if (args[0] === "rev-parse") return { code: 0, stdout: "same-main\n", stderr: "" };
+          if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--quiet") {
+            return { code: 1, stdout: "", stderr: "" };
+          }
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {

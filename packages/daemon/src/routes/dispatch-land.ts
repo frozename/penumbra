@@ -583,42 +583,47 @@ async function executeLand(input: {
         };
       }
 
-      const commit = await deps.runGit(["commit", "-F", "-"], { stdin: resolvedCommitMessage });
-      if (commit.code !== 0) {
-        const stderr = commit.stderr.trim();
-        const cleanup = await resetMergeAndVerifyClean(deps);
-        if (!cleanup.ok) {
+      const stagedChanges = await deps.runGit(["diff", "--cached", "--quiet"]);
+      if (stagedChanges.code === 0) {
+        already_landed = true;
+      } else {
+        const commit = await deps.runGit(["commit", "-F", "-"], { stdin: resolvedCommitMessage });
+        if (commit.code !== 0) {
+          const stderr = commit.stderr.trim();
+          const cleanup = await resetMergeAndVerifyClean(deps);
+          if (!cleanup.ok) {
+            return {
+              status: 500,
+              error: {
+                code: commitFailureLooksLikeHook(stderr)
+                  ? "commit_hook_cleanup_failed"
+                  : "commit_cleanup_failed",
+                step: "commit_squash",
+                stderr: stderr || undefined,
+                manual_repair: "run git reset --merge in the target repo before retrying",
+                ...cleanup,
+              },
+            };
+          }
+          if (commitFailureLooksLikeHook(stderr)) {
+            return {
+              status: 500,
+              error: {
+                code: "commit_hook_failed",
+                step: "commit_squash",
+                stderr: stderr || undefined,
+              },
+            };
+          }
           return {
             status: 500,
             error: {
-              code: commitFailureLooksLikeHook(stderr)
-                ? "commit_hook_cleanup_failed"
-                : "commit_cleanup_failed",
-              step: "commit_squash",
-              stderr: stderr || undefined,
-              manual_repair: "run git reset --merge in the target repo before retrying",
-              ...cleanup,
-            },
-          };
-        }
-        if (commitFailureLooksLikeHook(stderr)) {
-          return {
-            status: 500,
-            error: {
-              code: "commit_hook_failed",
+              code: "git_failed",
               step: "commit_squash",
               stderr: stderr || undefined,
             },
           };
         }
-        return {
-          status: 500,
-          error: {
-            code: "git_failed",
-            step: "commit_squash",
-            stderr: stderr || undefined,
-          },
-        };
       }
     } else {
       const checkout = await deps.runGit(["checkout", "main"]);
