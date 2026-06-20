@@ -130,6 +130,81 @@ test("rollupSession rerolls append-only by default when new events exist", async
   expect(JSON.parse(row.lane_breakdown_json)).toEqual({ local: 2, cloud: 1 });
 });
 
+function appendEventWithType(
+  sessionId: string,
+  i: number,
+  eventType: string,
+  payloadSummary: string,
+  lane = "local",
+) {
+  db.run(
+    `INSERT INTO t0_events(event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id,
+      session_id, event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms,
+      request_id, payload_json, payload_summary)
+     VALUES(?, ?, ?, 'mcp', null, 'p1', 'u', 'm', ?, ?, ?, null, null, null, null, null, null, null, '{}', ?)`,
+    [
+      `e-${sessionId}-${i}`,
+      `2026-04-23T12:0${i}:00Z`,
+      `2026-04-23T12:0${i}:00Z`,
+      sessionId,
+      eventType,
+      lane,
+      payloadSummary,
+    ],
+  );
+}
+
+test("rollupSession append branch re-embeds t1_vec when last_response_excerpt changes", async () => {
+  appendEventWithType("s_embed", 0, "agent-prompt", "the first prompt");
+  appendEventWithType("s_embed", 1, "agent-response", "first response text");
+
+  const roll = new T1Rollup({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date("2026-04-23T12:30:00Z"),
+    uuid: () => "r_embed",
+  });
+
+  await roll.rollupSession("s_embed");
+
+  const rowidRow = db
+    .query<{ rowid: number }, [string]>("SELECT rowid FROM t1_rollups WHERE rollup_id=?")
+    .get("r_embed")!;
+  const before = db
+    .query<{ embedding: Uint8Array }, [number]>("SELECT embedding FROM t1_vec WHERE rowid=?")
+    .get(rowidRow.rowid)!;
+  const beforeBuf = Buffer.from(before.embedding);
+
+  // Append a new response — the appended payload_summary changes embedText.
+  appendEventWithType("s_embed", 2, "agent-response", "completely different second response");
+  const written = await roll.rollupSession("s_embed");
+  expect(written).toBe("r_embed");
+
+  const updated = db
+    .query<
+      { last_response_excerpt: string | null },
+      [string]
+    >("SELECT last_response_excerpt FROM t1_rollups WHERE rollup_id=?")
+    .get("r_embed")!;
+  expect(updated.last_response_excerpt).toBe("completely different second response");
+
+  const after = db
+    .query<{ embedding: Uint8Array }, [number]>("SELECT embedding FROM t1_vec WHERE rowid=?")
+    .get(rowidRow.rowid)!;
+  const afterBuf = Buffer.from(after.embedding);
+
+  // The embedding must reflect the updated text. If the append branch leaves
+  // t1_vec stale, these bytes are identical and recall fuses against a vector
+  // that no longer matches the rollup body.
+  expect(afterBuf.equals(beforeBuf)).toBe(false);
+
+  // Exactly one t1_vec row for this rollup — the row was replaced, not duplicated.
+  const vecCount = db
+    .query<{ c: number }, [number]>("SELECT COUNT(*) c FROM t1_vec WHERE rowid=?")
+    .get(rowidRow.rowid)!;
+  expect(vecCount.c).toBe(1);
+});
+
 test("rollupSession fully overwrites when overwriteOnReroll is true", async () => {
   seed("s_over", 2);
   let idx = 0;

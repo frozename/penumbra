@@ -76,7 +76,6 @@ export class T1Rollup {
       } else {
         if (rows.length <= existing.n_events) return null; // No new events, nothing to append
 
-        const first = rows[0]!;
         const last = rows[rows.length - 1]!;
         const laneBreakdown: Record<string, number> = {};
         const providerBreakdown: Record<string, number> = {};
@@ -84,6 +83,7 @@ export class T1Rollup {
         let tokensIn = 0;
         let tokensOut = 0;
         let cost = 0;
+        let firstPrompt: string | null = null;
         let lastResponse: string | null = null;
 
         for (const row of rows) {
@@ -93,6 +93,9 @@ export class T1Rollup {
           if (row.event_type === "agent-tool-use" && row.payload_summary) {
             const toolName = row.payload_summary.split(" ")[0]!;
             toolCounts[toolName] = (toolCounts[toolName] ?? 0) + 1;
+          }
+          if (row.event_type === "agent-prompt" && firstPrompt === null) {
+            firstPrompt = row.payload_summary;
           }
           if (row.event_type === "agent-response") lastResponse = row.payload_summary;
           tokensIn += row.tokens_in ?? 0;
@@ -105,28 +108,49 @@ export class T1Rollup {
           .map(([name, n]) => `${n} ${name}`)
           .join(", ");
 
-        this.opts.db.run(
-          `UPDATE t1_rollups SET
-             ended_at=?, n_events=?, lane_breakdown_json=?, provider_breakdown_json=?,
-             cost_usd_total=?, tokens_in_total=?, tokens_out_total=?,
-             last_response_excerpt=?, tool_calls_summary=?, source_event_ids=?,
-             origin=?
-           WHERE session_id=?`,
-          [
-            last.ts,
-            rows.length,
-            JSON.stringify(laneBreakdown),
-            JSON.stringify(providerBreakdown),
-            cost || null,
-            tokensIn || null,
-            tokensOut || null,
-            lastResponse,
-            toolCallsSummary || null,
-            JSON.stringify(rows.map((r) => r.event_id)),
-            pickOrigin(rows),
-            sessionId,
-          ],
-        );
+        // Recompute the embedding for the appended window. The append branch used
+        // to update last_response_excerpt but leave t1_vec stale — recall would
+        // then score this rollup against an embedding that no longer matched its
+        // body text. Mirror the fresh-insert path: re-embed and DELETE+INSERT the
+        // t1_vec row inside the same transaction.
+        const embedText =
+          [firstPrompt, lastResponse].filter(Boolean).join("\n\n") || "empty session";
+        const [vec] = await this.opts.embedder.embed([embedText]);
+
+        this.opts.db.exec("BEGIN");
+        try {
+          this.opts.db.run(
+            `UPDATE t1_rollups SET
+               ended_at=?, n_events=?, lane_breakdown_json=?, provider_breakdown_json=?,
+               cost_usd_total=?, tokens_in_total=?, tokens_out_total=?,
+               last_response_excerpt=?, tool_calls_summary=?, source_event_ids=?,
+               origin=?
+             WHERE session_id=?`,
+            [
+              last.ts,
+              rows.length,
+              JSON.stringify(laneBreakdown),
+              JSON.stringify(providerBreakdown),
+              cost || null,
+              tokensIn || null,
+              tokensOut || null,
+              lastResponse,
+              toolCallsSummary || null,
+              JSON.stringify(rows.map((r) => r.event_id)),
+              pickOrigin(rows),
+              sessionId,
+            ],
+          );
+          this.opts.db.run("DELETE FROM t1_vec WHERE rowid=?", [existing.rowid]);
+          this.opts.db.run("INSERT INTO t1_vec(rowid, embedding) VALUES(?, ?)", [
+            existing.rowid,
+            vec!,
+          ]);
+          this.opts.db.exec("COMMIT");
+        } catch (err) {
+          this.opts.db.exec("ROLLBACK");
+          throw err;
+        }
         return existing.rollup_id;
       }
     }
