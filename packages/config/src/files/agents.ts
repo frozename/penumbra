@@ -192,22 +192,24 @@ export function refineAgentConfigAdapterOptions(
   }
 }
 
-export const RecallContextConfigSchema = z.object({
-  enabled: z.boolean().default(false),
-  k: z.number().int().positive().max(20).default(3),
-  scope: z
-    .union([
-      z.enum(["project", "global"]),
-      z
-        .string()
-        .regex(
-          /^corpus:[A-Za-z0-9_-]+$/,
-          "corpus scope must be `corpus:<name>` with name matching [A-Za-z0-9_-]+",
-        ),
-    ])
-    .default("project"),
-  max_chars_per_result: z.number().int().positive().max(8000).default(800),
-});
+export const RecallContextConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    k: z.number().int().positive().max(20).default(3),
+    scope: z
+      .union([
+        z.enum(["project", "global"]),
+        z
+          .string()
+          .regex(
+            /^corpus:[A-Za-z0-9_-]+$/,
+            "corpus scope must be `corpus:<name>` with name matching [A-Za-z0-9_-]+",
+          ),
+      ])
+      .default("project"),
+    max_chars_per_result: z.number().int().positive().max(8000).default(800),
+  })
+  .strict();
 export type RecallContextConfig = z.infer<typeof RecallContextConfigSchema>;
 
 export const LongLivedSubscriptionSchema = z.object({
@@ -216,11 +218,13 @@ export const LongLivedSubscriptionSchema = z.object({
 });
 export type LongLivedSubscription = z.infer<typeof LongLivedSubscriptionSchema>;
 
-export const LongLivedBoundsSchema = z.object({
-  wall_clock_ms: z.number().int().positive(),
-  cost_cents: z.number().int().nonnegative(),
-  max_sub_dispatches: z.number().int().nonnegative(),
-});
+export const LongLivedBoundsSchema = z
+  .object({
+    wall_clock_ms: z.number().int().positive(),
+    cost_cents: z.number().int().nonnegative(),
+    max_sub_dispatches: z.number().int().nonnegative(),
+  })
+  .strict();
 export type LongLivedBounds = z.infer<typeof LongLivedBoundsSchema>;
 
 export const LongLivedActionTiersSchema = z
@@ -274,6 +278,7 @@ export const LongLivedConfigSchema = z
     action_tiers: LongLivedActionTiersSchema.optional(),
     standing_brief: z.string().min(1),
   })
+  .strict()
   .refine(
     (cfg) =>
       !cfg.require_snapshot || (cfg.snapshot_tool !== undefined && cfg.snapshot_tool.length > 0),
@@ -318,6 +323,7 @@ export const AgentConfigSchema = z
     long_lived: z.boolean().optional(),
     long_lived_config: LongLivedConfigSchema.optional(),
   })
+  .strict()
   .superRefine((data, ctx) => {
     refineAgentConfigAdapterOptions(data, ctx);
     if (data.pricing_mode === "subscription" && !data.subscription_provider) {
@@ -337,10 +343,12 @@ export const AgentConfigSchema = z
   });
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
-export const ThoughtSignalDefinitionSchema = z.object({
-  name: z.string().min(1),
-  prompt: z.string().min(1),
-});
+export const ThoughtSignalDefinitionSchema = z
+  .object({
+    name: z.string().min(1),
+    prompt: z.string().min(1),
+  })
+  .strict();
 export type ThoughtSignalDefinition = z.infer<typeof ThoughtSignalDefinitionSchema>;
 
 export const ThoughtCaptureConfigSchema = z
@@ -350,6 +358,7 @@ export const ThoughtCaptureConfigSchema = z
     adapters: z.record(z.string(), z.boolean()).default({}),
     per_agent_overrides: z.record(z.string(), z.boolean()).default({}),
   })
+  .strict()
   .optional();
 export type ThoughtCaptureConfig = z.infer<typeof ThoughtCaptureConfigSchema>;
 
@@ -360,6 +369,7 @@ export const ThoughtDigestConfigSchema = z
     max_input_chars: z.number().int().positive().default(50000),
     timeout_ms: z.number().int().positive().default(60000),
   })
+  .strict()
   .optional();
 export type ThoughtDigestConfig = z.infer<typeof ThoughtDigestConfigSchema>;
 
@@ -371,6 +381,7 @@ export const ThoughtSignalsConfigSchema = z
     max_input_chars: z.number().int().positive().optional(),
     definitions: z.array(ThoughtSignalDefinitionSchema).default([]),
   })
+  .strict()
   .optional();
 export type ThoughtSignalsConfig = z.infer<typeof ThoughtSignalsConfigSchema>;
 
@@ -381,6 +392,7 @@ export const ThoughtAnalyzeConfigSchema = z
     digest: ThoughtDigestConfigSchema,
     signals: ThoughtSignalsConfigSchema,
   })
+  .strict()
   .optional();
 export type ThoughtAnalyzeConfig = z.infer<typeof ThoughtAnalyzeConfigSchema>;
 
@@ -390,6 +402,7 @@ export const ThoughtsConfigSchema = z
     capture: ThoughtCaptureConfigSchema,
     analyze: ThoughtAnalyzeConfigSchema,
   })
+  .strict()
   .optional();
 export type ThoughtsConfig = z.infer<typeof ThoughtsConfigSchema>;
 
@@ -398,6 +411,7 @@ export const ShellPerAgentOverrideSchema = z
     dangerous_commands_extra: z.array(z.string()).optional(),
     redact_output: z.boolean().optional(),
   })
+  .strict()
   .optional();
 export type ShellPerAgentOverride = z.infer<typeof ShellPerAgentOverrideSchema>;
 
@@ -427,6 +441,7 @@ export const ShellConfigSchema = z
       ]),
     per_agent_overrides: z.record(z.string(), ShellPerAgentOverrideSchema).default({}),
   })
+  .strict()
   .optional();
 export type ShellConfig = z.infer<typeof ShellConfigSchema>;
 

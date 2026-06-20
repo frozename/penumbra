@@ -53,6 +53,71 @@ describe("AgentsConfigSchema", () => {
     expect(() => AgentsConfigSchema.parse(parsed)).toThrow(/requestTimeoutMs/);
   });
 
+  test("rejects unknown keys in nested config objects (strict)", () => {
+    expect(() =>
+      AgentConfigSchema.parse({
+        name: "a",
+        adapter: "stdio-acp",
+        long_lived: true,
+        long_lived_config: {
+          standing_brief: "sb",
+          bounds: { wall_clock_ms: 1, cost_cents: 0, max_sub_dispatches: 0 },
+          typo_field: "x",
+        },
+      }),
+    ).toThrow(/typo_field/);
+
+    expect(() =>
+      AgentConfigSchema.parse({
+        name: "a",
+        adapter: "stdio-acp",
+        long_lived: true,
+        long_lived_config: {
+          standing_brief: "sb",
+          bounds: {
+            wall_clock_ms: 1,
+            cost_cents: 0,
+            max_sub_dispatches: 0,
+            walll_clock_ms: 2,
+          },
+        },
+      }),
+    ).toThrow(/walll_clock_ms/);
+
+    expect(() =>
+      AgentConfigSchema.parse({
+        name: "a",
+        adapter: "stdio-acp",
+        recall_context: { enabledd: true },
+      }),
+    ).toThrow(/enabledd/);
+
+    expect(() =>
+      AgentConfigSchema.parse({
+        name: "a",
+        adapter: "stdio-acp",
+        rogue_top_level_field: 1,
+      }),
+    ).toThrow(/rogue_top_level_field/);
+
+    expect(() =>
+      AgentsConfigSchema.parse({
+        agents: [{ name: "a", adapter: "stdio-acp" }],
+        shell: { enabled: true, dangerous_commandz: [] },
+      }),
+    ).toThrow(/dangerous_commandz/);
+
+    expect(() =>
+      AgentsConfigSchema.parse({
+        agents: [{ name: "a", adapter: "stdio-acp" }],
+        thoughts: {
+          enabled: true,
+          analyze: { enabled: true, signals: { enabledd: true } },
+        },
+      }),
+    ).toThrow(/enabledd/);
+  });
+
   test("thought analyzer agents accept scalar, array, and structured pools", () => {
     const parsed = AgentsConfigSchema.parse({
       agents: [{ name: "claude-acp-sonnet", adapter: "stdio-acp" }],
