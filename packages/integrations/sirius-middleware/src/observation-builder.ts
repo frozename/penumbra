@@ -72,8 +72,12 @@ export function buildResponseEvent(input: BuildResponseInput): T0EventInput {
     lane: "unknown",
     provider: input.response.provider ?? null,
     model: input.model,
-    tokens_in: typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : null,
-    tokens_out: typeof usage.completion_tokens === "number" ? usage.completion_tokens : null,
+    tokens_in: Number.isFinite(usage.prompt_tokens)
+      ? Math.round(usage.prompt_tokens as number)
+      : null,
+    tokens_out: Number.isFinite(usage.completion_tokens)
+      ? Math.round(usage.completion_tokens as number)
+      : null,
     cost_usd: null,
     latency_ms: input.completionTs - input.captureStartTs,
     request_id: input.requestId,
@@ -106,7 +110,7 @@ export function extractUserMessageText(messages: ChatMessage[]): string {
       }
       return parts.join(" ");
     }
-    return "";
+    continue;
   }
   return "";
 }

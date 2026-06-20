@@ -146,4 +146,32 @@ describe("extractUserMessageText", () => {
   test("handles missing content gracefully", () => {
     expect(extractUserMessageText([{ role: "user" }])).toBe("");
   });
+
+  test("skips a non-string/non-array user message and falls back to an earlier user message", () => {
+    expect(
+      extractUserMessageText([
+        { role: "user", content: "earlier text" },
+        { role: "assistant", content: "hi" },
+        // Latest user message has unusable content shape; should not short-circuit.
+        { role: "user", content: 42 as unknown as string },
+      ]),
+    ).toBe("earlier text");
+  });
+});
+
+describe("buildResponseEvent token coercion", () => {
+  test("fractional usage counts are rounded to integers (not dropped)", () => {
+    const ev = buildResponseEvent({
+      ...baseInput,
+      assistantText: "ok",
+      response: {
+        provider: "openai",
+        choices: [],
+        usage: { prompt_tokens: 10.4, completion_tokens: 5.6, total_tokens: 16 },
+      },
+      completionTs: 1_777_000_000_100,
+    });
+    expect(ev.tokens_in).toBe(10);
+    expect(ev.tokens_out).toBe(6);
+  });
 });
