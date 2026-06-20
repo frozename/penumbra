@@ -1,5 +1,5 @@
 import { afterEach, expect, mock, test } from "bun:test";
-import { DaemonClient } from "../src/daemon-client.js";
+import { DaemonClient, DaemonHttpError } from "../src/daemon-client.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -181,6 +181,40 @@ test("longLivedStateSet POSTs to /long-lived/<id>/state with body wrapped under 
   await c.longLivedStateSet("home-mgmt", { intent_summary: "probe" });
   expect(received?.path).toBe("/long-lived/home-mgmt/state");
   expect(received?.body).toEqual({ partial: { intent_summary: "probe" } });
+});
+
+test("dispatchLand throws DaemonHttpError when the async task reports status=failed", async () => {
+  let postCount = 0;
+  mockFetch(
+    mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (init?.method === "POST" && url.pathname === "/dispatch/land") {
+        postCount += 1;
+        return Response.json({ task_id: "task-async-1" }, { status: 202 });
+      }
+      if (url.pathname === "/dispatch/land/task-async-1") {
+        return Response.json({
+          status: "failed",
+          error: { code: "lifecycle_busy", message: "another land in flight" },
+        });
+      }
+      throw new Error(`unexpected fetch: ${url.pathname}`);
+    }),
+  );
+  const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
+  let thrown: unknown = null;
+  try {
+    await c.dispatchLand({ handoff_id: "h-1", commit_message: "feat: msg" });
+  } catch (err) {
+    thrown = err;
+  }
+  expect(postCount).toBe(1);
+  expect(thrown).toBeInstanceOf(DaemonHttpError);
+  const httpErr = thrown as DaemonHttpError;
+  expect(httpErr.status).toBe(500);
+  expect(httpErr.message).toContain("task-async-1");
+  expect(httpErr.message).toContain("lifecycle_busy");
+  expect(httpErr.body).toEqual({ code: "lifecycle_busy", message: "another land in flight" });
 });
 
 test("mcpCall POSTs to /long-lived/mcp/call with the request body", async () => {

@@ -518,7 +518,18 @@ export class DaemonClient {
         error?: unknown;
       };
       if (body.status === "done") return body.result;
-      if (body.status === "failed") return { error: body.error ?? { code: "unknown" } };
+      if (body.status === "failed") {
+        const errorBody = body.error ?? { code: "unknown" };
+        const errorCode =
+          typeof errorBody === "object" && errorBody !== null && "code" in errorBody
+            ? String((errorBody as { code: unknown }).code)
+            : "unknown";
+        throw new DaemonHttpError(
+          `daemon /dispatch/land task failed: ${taskId} (${errorCode})`,
+          500,
+          errorBody,
+        );
+      }
     }
     throw new Error(`dispatch land task timed out: ${taskId}`);
   }
