@@ -145,6 +145,40 @@ test("default kind is intentional", () => {
   expect(row.intentional_runs).toBe(1);
 });
 
+test("preserves last_failure_at and last_failure_reason on success after failure", () => {
+  const db = freshDb();
+  const args = {
+    db,
+    workflowName: "sticky",
+    latencyMs: 10,
+    artifacts: [],
+    warnings: [],
+    recallSummary: { sources: [], itemCount: 0 },
+    project: "t",
+    sessionId: "s",
+    userId: "u",
+    machineId: "m",
+    now: () => new Date(),
+  };
+  captureWorkflowOutcome({ ...args, outcome: "run_error", errorMessage: "kaboom" });
+  const afterFailure = db
+    .query(
+      "SELECT last_failure_at, last_failure_reason FROM workflow_stats WHERE workflow_name='sticky'",
+    )
+    .get() as any;
+  expect(afterFailure.last_failure_at).not.toBeNull();
+  expect(afterFailure.last_failure_reason).toBe("kaboom");
+
+  captureWorkflowOutcome({ ...args, outcome: "success" });
+  const afterSuccess = db
+    .query(
+      "SELECT last_failure_at, last_failure_reason FROM workflow_stats WHERE workflow_name='sticky'",
+    )
+    .get() as any;
+  expect(afterSuccess.last_failure_at).toBe(afterFailure.last_failure_at);
+  expect(afterSuccess.last_failure_reason).toBe("kaboom");
+});
+
 test("resets consecutive_failures on success after failures", () => {
   const db = freshDb();
   const args = {

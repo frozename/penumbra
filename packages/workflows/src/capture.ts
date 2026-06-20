@@ -122,6 +122,7 @@ export function captureWorkflowOutcome(input: CaptureInput): void {
         avg_latency_ms: number;
         consecutive_failures: number;
         last_failure_at: string | null;
+        last_failure_reason: string | null;
         refresh_runs: number;
         intentional_runs: number;
       }
@@ -174,7 +175,7 @@ export function captureWorkflowOutcome(input: CaptureInput): void {
       avgLatency,
       ts,
       isFailure ? ts : (existing?.last_failure_at ?? null),
-      isFailure ? (input.errorMessage ?? input.outcome) : null,
+      isFailure ? (input.errorMessage ?? input.outcome) : (existing?.last_failure_reason ?? null),
       consecutive,
       quarantined ? 1 : 0,
       quarantineReason,
