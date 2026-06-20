@@ -2,7 +2,12 @@ import { z } from "zod";
 import { toTextContent } from "@nova/mcp-shared";
 import type { DaemonClient } from "../daemon-client.js";
 import type { HandleStore } from "../handle-store.js";
-import { DEFAULT_BUDGET, estimateTokens, truncateToTokens } from "../responses/budget.js";
+import {
+  DEFAULT_BUDGET,
+  estimateTokens,
+  sliceSurrogateSafe,
+  truncateToTokens,
+} from "../responses/budget.js";
 import { makeEnvelopeResult } from "../responses/envelope.js";
 
 const WORKFLOW_WAIT_INLINE_BYTE_LIMIT = DEFAULT_BUDGET * 4;
@@ -82,11 +87,32 @@ export function workflowWaitHandler(daemon: DaemonClient, opts?: { handleStore?:
     const spilledError = boundField(out, payload, "error", handleStore);
 
     if (spilledResult || spilledError) {
-      const text = JSON.stringify(out);
+      // Each spilled preview was independently truncated to DEFAULT_BUDGET, so a
+      // dual-spill envelope can otherwise reach ~2x the budget. Re-shrink the
+      // spilled previews jointly until the combined JSON fits.
+      const spilledPreviewKeys: string[] = [];
+      if (spilledResult) spilledPreviewKeys.push("result_preview");
+      if (spilledError) spilledPreviewKeys.push("error_preview");
+      let text = JSON.stringify(out);
+      while (estimateTokens(text) > DEFAULT_BUDGET) {
+        let shrunk = false;
+        for (const key of spilledPreviewKeys) {
+          const current = out[key];
+          if (typeof current === "string" && current.length > 0) {
+            const next = sliceSurrogateSafe(current, Math.floor(current.length * 0.9));
+            if (next.length < current.length) {
+              out[key] = next;
+              shrunk = true;
+            }
+          }
+        }
+        if (!shrunk) break;
+        text = JSON.stringify(out);
+      }
       return makeEnvelopeResult([{ type: "text", text }], {
         usedTokens: estimateTokens(text),
         limitTokens: DEFAULT_BUDGET,
-        truncated: false,
+        truncated: spilledResult || spilledError,
         resultBytes: Buffer.byteLength(text, "utf8"),
       });
     }

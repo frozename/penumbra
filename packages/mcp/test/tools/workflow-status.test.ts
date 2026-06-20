@@ -1,7 +1,7 @@
 import { expect, mock, test } from "bun:test";
 import { HandleStore } from "../../src/handle-store.js";
 import { instrumentHandler } from "../../src/instrumentation.js";
-import { DEFAULT_BUDGET, truncateToTokens } from "../../src/responses/budget.js";
+import { DEFAULT_BUDGET, estimateTokens } from "../../src/responses/budget.js";
 import { isEnvelopeResult } from "../../src/responses/envelope.js";
 import { readHandleHandler } from "../../src/tools/read-handle.js";
 import { workflowStatusHandler, workflowWaitHandler } from "../../src/tools/workflow-status.js";
@@ -166,17 +166,13 @@ test("workflow_wait spills oversized result/error into independent handles with 
     expect(body.result).toBeNull();
     expect(body.result_truncated).toBe(true);
     expect(typeof body.result_preview).toBe("string");
-    expect(body.result_preview).toBe(
-      truncateToTokens(JSON.stringify(result).slice(0, DEFAULT_BUDGET * 10), DEFAULT_BUDGET).text,
-    );
+    expect((body.result_preview as string).length).toBeGreaterThan(0);
     expect(typeof body.result_handle_id).toBe("string");
 
     expect(body.error).toBeNull();
     expect(body.error_truncated).toBe(true);
     expect(typeof body.error_preview).toBe("string");
-    expect(body.error_preview).toBe(
-      truncateToTokens(JSON.stringify(error).slice(0, DEFAULT_BUDGET * 10), DEFAULT_BUDGET).text,
-    );
+    expect((body.error_preview as string).length).toBeGreaterThan(0);
     expect(typeof body.error_handle_id).toBe("string");
     expect(body.result_handle_id).not.toBe(body.error_handle_id);
 
@@ -187,6 +183,41 @@ test("workflow_wait spills oversized result/error into independent handles with 
     expect(errorRead.isError).toBeUndefined();
     expect(JSON.parse(resultRead.content[0].text)).toEqual(result);
     expect(JSON.parse(errorRead.content[0].text)).toEqual(error);
+  } finally {
+    store.close();
+  }
+});
+
+test("workflow_wait dual-spill envelope stays within DEFAULT_BUDGET and marks truncated", async () => {
+  const result = { payload: "a".repeat(DEFAULT_BUDGET * 8) };
+  const error = { reason: "b".repeat(DEFAULT_BUDGET * 8) };
+  const daemon = {
+    workflowWait: mock(async () => ({
+      status: "failed",
+      started_at: 1,
+      finished_at: 2,
+      result,
+      error,
+      result_bytes: Buffer.byteLength(JSON.stringify(result), "utf8"),
+      error_bytes: Buffer.byteLength(JSON.stringify(error), "utf8"),
+    })),
+  };
+  const store = new HandleStore();
+  try {
+    const wait = workflowWaitHandler(daemon as any, { handleStore: store });
+    const res: any = await wait({ workflow_run_id: "wfrun-dual", timeout_ms: 1234 });
+
+    expect(isEnvelopeResult(res)).toBe(true);
+    const text = res.content[0].text as string;
+    expect(estimateTokens(text)).toBeLessThanOrEqual(DEFAULT_BUDGET);
+    expect(res._meta.token_budget.truncated).toBe(true);
+    expect(res._meta.token_budget.used).toBeLessThanOrEqual(DEFAULT_BUDGET);
+
+    const body = JSON.parse(text) as Record<string, unknown>;
+    expect(body.result_truncated).toBe(true);
+    expect(body.error_truncated).toBe(true);
+    expect(typeof body.result_handle_id).toBe("string");
+    expect(typeof body.error_handle_id).toBe("string");
   } finally {
     store.close();
   }
