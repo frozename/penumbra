@@ -80,7 +80,7 @@ export class ExtraWorkerSupervisor {
   private logDirEnsured = false;
   private readonly states: Map<string, ExtraWorkerProcessState> = new Map();
   private reconcileGate = Promise.resolve();
-  private reconcileInFlight = false;
+  private lifecycleInFlight = false;
   private started = false;
   private stopped = false;
 
@@ -142,28 +142,45 @@ export class ExtraWorkerSupervisor {
   }
 
   public reconcile(nextExtras: ExtraWorkerConfig[]): Promise<ReconcileSummary> {
-    // Start the new pass synchronously when no prior pass is in flight so callers
-    // (and tests using fake timers) can rely on internal setTimeouts being
-    // scheduled before they advance the clock. When a prior pass IS in flight,
-    // chain off the gate to preserve serialization.
-    const prevGate = this.reconcileGate;
-    if (this.reconcileInFlight) {
-      const run = prevGate.then(() => this.reconcileUnlocked(nextExtras));
+    return this.runLifecycleSerial(() => this.reconcileUnlocked(nextExtras));
+  }
+
+  // Single mutex for every lifecycle entry point (reconcile + restartWorkerById).
+  // Sync-start when nothing is in flight so callers (and tests using fake timers)
+  // can rely on internal setTimeouts being scheduled before they advance the clock;
+  // otherwise chain behind the gate so concurrent entry points serialize.
+  private runLifecycleSerial<T>(work: () => Promise<T>): Promise<T> {
+    if (!this.lifecycleInFlight) {
+      this.lifecycleInFlight = true;
+      let run: Promise<T>;
+      try {
+        run = work();
+      } catch (err) {
+        this.lifecycleInFlight = false;
+        throw err;
+      }
       this.reconcileGate = run.then(
         () => undefined,
         () => undefined,
       );
+      void run.finally(() => {
+        this.lifecycleInFlight = false;
+      });
       return run;
     }
-    this.reconcileInFlight = true;
-    const run = this.reconcileUnlocked(nextExtras);
+    const prevGate = this.reconcileGate;
+    const run = prevGate.then(async () => {
+      this.lifecycleInFlight = true;
+      try {
+        return await work();
+      } finally {
+        this.lifecycleInFlight = false;
+      }
+    });
     this.reconcileGate = run.then(
       () => undefined,
       () => undefined,
     );
-    run.finally(() => {
-      this.reconcileInFlight = false;
-    });
     return run;
   }
 
@@ -243,33 +260,29 @@ export class ExtraWorkerSupervisor {
     this.spawnExtraWorker(nextExtra);
   }
 
-  public async restartWorkerById(workerId: string): Promise<boolean> {
+  public restartWorkerById(workerId: string): Promise<boolean> {
+    if (this.stopped) return Promise.resolve(false);
+    return this.runLifecycleSerial(() => this.restartWorkerByIdUnlocked(workerId));
+  }
+
+  private async restartWorkerByIdUnlocked(workerId: string): Promise<boolean> {
     if (this.stopped) return false;
-    const prevGate = this.reconcileGate;
-    const run = prevGate.then(async (): Promise<boolean> => {
-      if (this.stopped) return false;
-      const next = this.extras.find((extra) => extra.id === workerId);
-      if (!next) return false;
-      try {
-        await this.restartWorker(next);
-        return true;
-      } catch (err) {
-        this.log.warn(
-          {
-            event: "restart_worker_by_id_failed",
-            worker_id: workerId,
-            error: err instanceof Error ? err.message : String(err),
-          },
-          "restartWorkerById failed",
-        );
-        return false;
-      }
-    });
-    this.reconcileGate = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
+    const next = this.extras.find((extra) => extra.id === workerId);
+    if (!next) return false;
+    try {
+      await this.restartWorker(next);
+      return true;
+    } catch (err) {
+      this.log.warn(
+        {
+          event: "restart_worker_by_id_failed",
+          worker_id: workerId,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        "restartWorkerById failed",
+      );
+      return false;
+    }
   }
 
   private isWorkerChanged(current: ExtraWorkerConfig, next: ExtraWorkerConfig): boolean {

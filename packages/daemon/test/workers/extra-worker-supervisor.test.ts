@@ -835,6 +835,64 @@ describe("extra worker supervisor", () => {
     }
   });
 
+  test("restartWorkerById serializes with a concurrent reconcile — critical sections never overlap", async () => {
+    vi.useFakeTimers();
+    try {
+      const { supervisor, spawnCalls } = createSupervisor([
+        { id: "worker-a", concurrency: 4, isolation: "shared" },
+      ]);
+      await supervisor.start();
+      expect(spawnCalls).toHaveLength(1);
+
+      // Instrument restartWorker — the shared inner routine that mutates worker
+      // process state. Both lifecycle entry points (reconcile when the worker
+      // changed, and restartWorkerById) funnel through it, so an overlap here
+      // means the gate let two passes interleave.
+      let active = 0;
+      let maxConcurrent = 0;
+      const originalRestartWorker = (supervisor as any).restartWorker.bind(supervisor);
+      (supervisor as any).restartWorker = async function (
+        ...args: Parameters<typeof originalRestartWorker>
+      ) {
+        active += 1;
+        maxConcurrent = Math.max(maxConcurrent, active);
+        try {
+          // Yield once so a concurrent caller, if let through, has a chance to
+          // enter and bump `active` to 2 before we decrement.
+          await flushPromises();
+          return await originalRestartWorker(...args);
+        } finally {
+          active -= 1;
+        }
+      };
+
+      // Order matters: issue restartWorkerById FIRST so it queues behind the
+      // (resolved) gate, then issue a reconcile that mutates the worker. Before
+      // the fix, the restart chained off the gate without setting the in-flight
+      // flag, and the reconcile took the synchronous-start path concurrently —
+      // both ran restartWorker on the same worker in parallel.
+      const restartP = supervisor.restartWorkerById("worker-a");
+      const reconcileP = supervisor.reconcile([
+        { id: "worker-a", concurrency: 8, isolation: "shared" },
+      ]);
+
+      // Two stopWorker grace timers will fire in sequence (one per restart),
+      // so pump the clock + microtasks repeatedly until both lifecycle calls
+      // resolve.
+      for (let i = 0; i < 5; i += 1) {
+        for (let j = 0; j < 20; j += 1) await flushPromises();
+        vi.advanceTimersByTime(10_000);
+      }
+      for (let j = 0; j < 20; j += 1) await flushPromises();
+      await Promise.all([restartP, reconcileP]);
+
+      expect(maxConcurrent).toBe(1);
+      expect(spawnCalls).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("restartWorkerById returns false and does not throw when spawn fails", async () => {
     const { supervisor } = createSupervisor(
       [{ id: "alpha", concurrency: 4, isolation: "shared" }],
