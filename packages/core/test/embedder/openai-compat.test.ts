@@ -83,6 +83,61 @@ test("honors custom authHeader/authScheme", async () => {
   }
 });
 
+test("throws when response length does not match request length", async () => {
+  const restoreFetch = mockFetch(async () =>
+    Response.json({
+      data: [{ embedding: [0, 1, 2, 3], index: 0, object: "embedding" }],
+    }),
+  );
+  try {
+    const e = new OpenAICompatEmbedder({
+      baseUrl: "http://embedder.test",
+      token: "t",
+      model: "m",
+      dim: 4,
+    });
+    await expect(e.embed(["a", "b"])).rejects.toThrow(
+      /response length 1 does not match request length 2/,
+    );
+  } finally {
+    restoreFetch();
+  }
+});
+
+test("throws when a vector has the wrong dimension", async () => {
+  const restoreFetch = mockFetch(async () =>
+    Response.json({
+      data: [{ embedding: [0, 1, 2], index: 0, object: "embedding" }],
+    }),
+  );
+  try {
+    const e = new OpenAICompatEmbedder({
+      baseUrl: "http://embedder.test",
+      token: "t",
+      model: "m",
+      dim: 4,
+    });
+    await expect(e.embed(["a"])).rejects.toThrow(/dim 3, expected 4/);
+  } finally {
+    restoreFetch();
+  }
+});
+
+test("throws when response body has no data array", async () => {
+  const restoreFetch = mockFetch(async () => Response.json({ error: "nope" }));
+  try {
+    const e = new OpenAICompatEmbedder({
+      baseUrl: "http://embedder.test",
+      token: "t",
+      model: "m",
+      dim: 4,
+    });
+    await expect(e.embed(["a"])).rejects.toThrow(/malformed response/);
+  } finally {
+    restoreFetch();
+  }
+});
+
 test("throws on non-2xx", async () => {
   const restoreFetch = mockFetch(async () => new Response("boom", { status: 500 }));
   try {

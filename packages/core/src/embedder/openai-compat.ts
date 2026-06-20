@@ -55,8 +55,24 @@ export class OpenAICompatEmbedder implements Embedder {
     if (!res.ok) {
       throw new Error(`openai-compatible embeddings: HTTP ${res.status}`);
     }
-    const body = (await res.json()) as { data: { embedding: number[]; index: number }[] };
+    const body = (await res.json()) as { data?: { embedding: number[]; index: number }[] };
+    if (!Array.isArray(body?.data)) {
+      throw new Error(`openai-compatible embeddings: malformed response (data is not an array)`);
+    }
+    if (body.data.length !== texts.length) {
+      throw new Error(
+        `openai-compatible embeddings: response length ${body.data.length} does not match request length ${texts.length}`,
+      );
+    }
     const sorted = [...body.data].sort((a, b) => a.index - b.index);
+    for (let i = 0; i < sorted.length; i++) {
+      const d = sorted[i]!;
+      if (!Array.isArray(d.embedding) || d.embedding.length !== this.dim) {
+        throw new Error(
+          `openai-compatible embeddings: vector at index ${i} has dim ${Array.isArray(d.embedding) ? d.embedding.length : "n/a"}, expected ${this.dim}`,
+        );
+      }
+    }
     return sorted.map((d) => new Float32Array(d.embedding));
   }
 }
