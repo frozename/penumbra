@@ -76,6 +76,14 @@ function nestDottedKeys(flat: Record<string, unknown>): Record<string, unknown> 
   return out;
 }
 
+// Gates whose required GateInput fields are populated by executeWorkflow.
+// Anything outside this set is structurally unsatisfiable here: the gate
+// verifier would either silently pass (false assurance) or trip its
+// internal "inert" branch. Fail-closed: reject the spec instead.
+const EXECUTOR_SATISFIABLE_GATES: ReadonlySet<GateName> = new Set<GateName>([
+  "verification-before-complete",
+]);
+
 export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult> {
   const start = Date.now();
   const { spec, bundle, fn, storageRoot } = opts;
@@ -87,6 +95,21 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
     (sum, v) => sum + (Array.isArray(v) ? v.length : v ? 1 : 0),
     0,
   );
+
+  const unsatisfiableGates = (spec.process_gates ?? []).filter(
+    (g) => !EXECUTOR_SATISFIABLE_GATES.has(g),
+  );
+  if (unsatisfiableGates.length > 0) {
+    const result: ExecuteResult = {
+      outcome: "run_error",
+      artifacts,
+      warnings,
+      errorMessage: `spec lists process_gates the executor cannot satisfy: ${unsatisfiableGates.join(", ")}`,
+      latencyMs: Date.now() - start,
+    };
+    await runCapture(opts, result, recallSourceNames, itemCount);
+    return result;
+  }
 
   const tplCtx: TemplateVarContext = opts.templateCtx ?? {
     now: () => new Date(),

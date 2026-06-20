@@ -149,6 +149,29 @@ test("passing gate keeps success outcome", async () => {
   expect(result.outcome).toBe("success");
 });
 
+test("spec listing unsatisfiable process_gate → outcome=run_error (fail-closed)", async () => {
+  for (const gate of ["tdd", "brainstorm-first", "worktree-isolation"] as const) {
+    const spec: WorkflowSpec = {
+      name: `unsat-${gate}`,
+      description: "u",
+      triggers: [{ kind: "manual" }],
+      recall: [],
+      output: [],
+      process_gates: [gate],
+      run: { kind: "markdown-template", template: "anything" },
+    };
+    const result = await executeWorkflow({
+      spec,
+      bundle: { byKey: {}, warnings: [], estimatedTokens: 0 },
+      storageRoot: "/tmp",
+    });
+    expect(result.outcome).toBe("run_error");
+    expect(result.errorMessage).toContain("executor cannot satisfy");
+    expect(result.errorMessage).toContain(gate);
+    expect(result.artifacts).toEqual([]);
+  }
+});
+
 test("captureCtx wires capture and writes t0 + workflow_stats rows", async () => {
   if (process.platform === "darwin") {
     try {
