@@ -18,10 +18,18 @@
  */
 import { spawnSync } from "node:child_process";
 
-const res = spawnSync("bun", ["test", ...process.argv.slice(2)], {
-  encoding: "utf8",
-  stdio: ["inherit", "pipe", "pipe"],
-});
+// Always exclude stale compiled test shadows in dist/ — the package tsconfigs are
+// noEmit, so any packages/*/dist/test/*.test.js are leftover artifacts that bun
+// would otherwise glob (failing on relative imports and inflating the count).
+// bun accepts multiple --path-ignore-patterns flags, so caller-supplied patterns still apply.
+const res = spawnSync(
+  "bun",
+  ["test", "--path-ignore-patterns=**/dist/**", ...process.argv.slice(2)],
+  {
+    encoding: "utf8",
+    stdio: ["inherit", "pipe", "pipe"],
+  },
+);
 const raw = (res.stdout ?? "") + (res.stderr ?? "");
 // Echo the child's output so CI logs are unchanged.
 if (res.stdout) process.stdout.write(res.stdout);
