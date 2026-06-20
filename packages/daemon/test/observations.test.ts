@@ -50,14 +50,50 @@ serviceTest("POST /observations writes a T0 row and returns event_id", async () 
   }
 });
 
-serviceTest("POST /observations returns 200 when a residual SQLiteError bubbles up", async () => {
+serviceTest(
+  "POST /observations returns 500 when a SQLiteError bubbles up from the writer",
+  async () => {
+    const d = makeTempDaemon();
+    const originalWrite = d.services.t0Writer.write.bind(d.services.t0Writer);
+    d.services.t0Writer.write = () => {
+      const err = new Error("disk I/O error") as Error & { name: string; code?: string };
+      err.name = "SQLiteError";
+      err.code = "SQLITE_IOERR";
+      throw err;
+    };
+    try {
+      const res = await fetch(`${d.url}/observations`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${d.token}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          ts: "2026-04-23T11:59:59Z",
+          source: "mcp",
+          source_detail: "claude-code",
+          session_id: "s1",
+          user_id: "ignored",
+          machine_id: "ignored",
+          event_type: "agent-prompt",
+          lane: "local",
+          payload_json: { prompt: "hi" },
+        }),
+      });
+      expect(res.status).toBe(500);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("sqlite_write_failed");
+    } finally {
+      d.services.t0Writer.write = originalWrite;
+      d.stop();
+    }
+  },
+);
+
+serviceTest("POST /observations returns 503 when the writer reports SQLITE_BUSY", async () => {
   const d = makeTempDaemon();
   const originalWrite = d.services.t0Writer.write.bind(d.services.t0Writer);
   d.services.t0Writer.write = () => {
-    const err = new Error("UNIQUE constraint failed: t0_events.event_id") as Error & {
-      name: string;
-    };
+    const err = new Error("database is locked") as Error & { name: string; code?: string };
     err.name = "SQLiteError";
+    err.code = "SQLITE_BUSY";
     throw err;
   };
   try {
@@ -69,14 +105,16 @@ serviceTest("POST /observations returns 200 when a residual SQLiteError bubbles 
         source: "mcp",
         source_detail: "claude-code",
         session_id: "s1",
+        user_id: "ignored",
+        machine_id: "ignored",
         event_type: "agent-prompt",
         lane: "local",
         payload_json: { prompt: "hi" },
       }),
     });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { event_id?: string };
-    expect(body.event_id).toBeDefined();
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("sqlite_busy");
   } finally {
     d.services.t0Writer.write = originalWrite;
     d.stop();
