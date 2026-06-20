@@ -40,9 +40,12 @@ export function MissionControl(): JSX.Element {
 
   const capTrip = pressure.windows.find((window) => window.used_pct >= window.refuse_pct);
   const sessionData = session.data;
+  const hasRealSession = Boolean(sessionData && sessionData.id !== "no-session");
   const startedAt = sessionData ? new Date(sessionData.started_at).getTime() : NaN;
-  const elapsed = Number.isFinite(startedAt) ? fmtDur((Date.now() - startedAt) / 1000) : "0m";
-  const hasRealSession = sessionData && sessionData.id !== "no-session";
+  const elapsed =
+    hasRealSession && Number.isFinite(startedAt)
+      ? fmtDur((Date.now() - startedAt) / 1000)
+      : "0m";
   const liveChains = liveChainCount(dispatchedChains.data?.chains);
   const pendingCount = pendingHandoffs.data?.handoffs.length ?? 0;
 
@@ -64,7 +67,8 @@ export function MissionControl(): JSX.Element {
                 {capTrip.window_label}
               </>
             )}
-            . Maestro session {hasRealSession ? sessionData.id : "no-session"}, {elapsed} in.
+            . Maestro session {hasRealSession ? sessionData.id : "no-session"}
+            {hasRealSession ? `, ${elapsed} in.` : "."}
           </p>
           <div className="heads-row">
             <span className="chip">session · {hasRealSession ? sessionData.id : "no-session"}</span>
