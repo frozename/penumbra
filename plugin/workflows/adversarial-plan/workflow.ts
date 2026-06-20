@@ -81,6 +81,17 @@ async function sleep(ms: number): Promise<void> {
   });
 }
 
+export function dedupePersonas(names: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const name of names) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    out.push(name);
+  }
+  return out;
+}
+
 const spec: WorkflowSpec = {
   name: "adversarial-plan",
   description:
@@ -325,7 +336,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   }
 
   const personaKeys = Object.keys(personasByKey);
-  const requestedPersonas = parsedArgs.personas ?? personaKeys;
+  const requestedPersonas = dedupePersonas(parsedArgs.personas ?? personaKeys);
   const missing = requestedPersonas.filter((name) => !personasByKey[name]);
   if (missing.length > 0) {
     return {
