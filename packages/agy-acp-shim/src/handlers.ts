@@ -38,6 +38,7 @@ export interface Handlers {
 
 export function makeHandlers(opts: HandlersOptions): Handlers {
   const inFlight = new Map<string, AgyHandle>();
+  const cancelled = new Set<string>();
 
   async function handleInitialize(_params: InitializeParams): Promise<InitializeResult> {
     return {
@@ -85,9 +86,11 @@ export function makeHandlers(opts: HandlersOptions): Handlers {
     });
 
     inFlight.set(params.sessionId, handle);
+    cancelled.delete(params.sessionId);
 
+    let code: number | null = null;
     try {
-      await handle.exited;
+      code = await handle.exited;
       opts.notify("done", {});
     } finally {
       if (inFlight.get(params.sessionId) === handle) {
@@ -95,6 +98,12 @@ export function makeHandlers(opts: HandlersOptions): Handlers {
       }
     }
 
+    if (cancelled.delete(params.sessionId)) {
+      return { stopReason: "cancelled" };
+    }
+    if (code !== 0) {
+      return { stopReason: "failed" };
+    }
     return { stopReason: "end_turn" };
   }
 
@@ -106,6 +115,7 @@ export function makeHandlers(opts: HandlersOptions): Handlers {
       throw err;
     }
 
+    cancelled.add(params.sessionId);
     inFlight.delete(params.sessionId);
     handle.kill();
     return {};

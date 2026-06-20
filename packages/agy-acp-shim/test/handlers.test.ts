@@ -2,13 +2,13 @@ import { describe, expect, it } from "bun:test";
 import { makeHandlers } from "../src/handlers.js";
 import type { AgyHandle } from "../src/handlers.js";
 
-function mockSpawnAgy(lines: string[]) {
+function mockSpawnAgy(lines: string[], exitCode = 0) {
   return (opts: { onLine: (l: string) => void; prompt?: string }): AgyHandle => {
     expect(typeof opts.prompt).toBe("string");
     const exited = new Promise<number>((res) => {
       Promise.resolve().then(() => {
         for (const l of lines) opts.onLine(l);
-        res(0);
+        res(exitCode);
       });
     });
     return { exited, kill: () => {} };
@@ -93,6 +93,20 @@ describe("session/prompt (mocked agy)", () => {
     expect(result).toEqual({ stopReason: "end_turn" });
   });
 
+  it("returns stopReason 'failed' when agy exits with a non-zero code", async () => {
+    const { handleSessionPrompt } = makeHandlers({
+      spawnAgy: mockSpawnAgy(["boom"], 1) as any,
+      notify: () => {},
+    });
+
+    const result = await handleSessionPrompt({
+      sessionId: "s-crash",
+      prompt: [{ type: "text", text: "hi" }],
+    });
+
+    expect(result).toEqual({ stopReason: "failed" });
+  });
+
   it("emits a done notification after agy exits", async () => {
     const notifications: Array<{ method: string; params: unknown }> = [];
     const { handleSessionPrompt } = makeHandlers({
@@ -129,6 +143,23 @@ describe("session/cancel", () => {
     await promptPromise.catch(() => {});
 
     expect(killed).toBe(true);
+  });
+
+  it("returns stopReason 'cancelled' for a cancelled prompt instead of 'end_turn'", async () => {
+    const { handleSessionPrompt, handleSessionCancel } = makeHandlers({
+      spawnAgy: mockSlowSpawnAgy(() => {}) as any,
+      notify: () => {},
+    });
+
+    const promptPromise = handleSessionPrompt({
+      sessionId: "s-cancel",
+      prompt: [{ type: "text", text: "sleep" }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await handleSessionCancel({ sessionId: "s-cancel" });
+    const result = await promptPromise;
+
+    expect(result).toEqual({ stopReason: "cancelled" });
   });
 
   it("rejects with an error if no active prompt exists for sessionId", async () => {
