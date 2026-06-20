@@ -127,6 +127,57 @@ test("memory.search tiers=t1 returns only t1 rows", async () => {
   expect(out.hits.map((h) => h.id)).toEqual(["t1:m1"]);
 });
 
+test("memory.search tiers=t1 still returns hits when obs_type filter is supplied", async () => {
+  // Regression: a previous in-place column substitution mapped `t.obs_type`
+  // into `1=1` on the t1 branch, producing the broken WHERE fragment
+  // `1=1 = ?` and silently zeroing all t1 hits whenever obs_type was set.
+  const db = freshDb();
+  const ts = "2026-05-05T10:00:00Z";
+  insertT1Memory(db, "r1", ts, "rollout summary");
+  insertT2Memory(db, "m1", ts, "rollout note");
+
+  const out = await runMemorySearchSource({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    args: {
+      query: "rollout",
+      dateStart: "2026-05-05T00:00:00Z",
+      obs_type: "session",
+      tiers: ["t1", "t2"],
+      limit: 10,
+    },
+  });
+
+  const ids = out.hits.map((h) => h.id).sort();
+  // t1 has no obs_type column, so the filter must not exclude t1 rows; t2
+  // rows must still honor the filter and only "session" rows survive.
+  expect(ids).toContain("t1:r1");
+  expect(ids).toContain("t2:m1");
+  expect(out.warnings).toEqual([]);
+});
+
+test("memory.search tiers=t1 returns hits when obs_type filter would otherwise exclude them", async () => {
+  // Even with an obs_type that no t2 row matches, t1 hits must still come back.
+  const db = freshDb();
+  const ts = "2026-05-05T10:00:00Z";
+  insertT1Memory(db, "r1", ts, "rollout summary");
+
+  const out = await runMemorySearchSource({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    args: {
+      query: "rollout",
+      dateStart: "2026-05-05T00:00:00Z",
+      obs_type: "bugfix",
+      tiers: ["t1"],
+      limit: 10,
+    },
+  });
+
+  expect(out.hits.map((h) => h.id)).toEqual(["t1:r1"]);
+  expect(out.warnings).toEqual([]);
+});
+
 test("memory.search tiers=t1 uses the real t1_rollups schema", async () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);

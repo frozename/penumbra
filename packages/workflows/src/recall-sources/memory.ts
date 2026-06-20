@@ -86,7 +86,15 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
     conditions.push("t.created_at <= ?");
     params.push(args.dateEnd);
   }
+  // Track obs_type's position so the t1 branch can drop it from both the
+  // condition list AND tierParams — t1_rollups has no obs_type column, and the
+  // previous in-place column substitution produced a broken `1=1 = ?` WHERE
+  // clause that silently zeroed every t1 recall hit whenever obs_type was set.
+  // At this point params.length === conditions.length (the earlier filters are
+  // strictly 1-condition-to-1-param), so a single index identifies both.
+  let obsTypeIdx: number | null = null;
   if (args.obs_type) {
+    obsTypeIdx = conditions.length;
     conditions.push("t.obs_type = ?");
     params.push(args.obs_type);
   }
@@ -125,12 +133,17 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
       const tierParams: unknown[] = [...params];
 
       if (tier === "t1") {
+        // Drop obs_type entirely on the t1 branch — both the WHERE fragment and
+        // its bound param — so the placeholder count stays aligned with params.
+        if (obsTypeIdx !== null) {
+          tierConditions.splice(obsTypeIdx, 1);
+          tierParams.splice(obsTypeIdx, 1);
+        }
         const whereConditions = tierConditions
           .map((c) =>
             c
               .replace(/\bt\.project_id\b/g, "r.project_id")
               .replace(/\bt\.created_at\b/g, "COALESCE(r.ended_at, r.started_at)")
-              .replace(/\bt\.obs_type\b/g, "1=1")
               // t1_rollups has no metadata_json column, so the trust filter cannot
               // apply on the t1 branch — neutralize it to 1=1 (then it is dropped
               // by the filter below) rather than referencing a nonexistent column,
