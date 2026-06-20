@@ -39,4 +39,16 @@ describe("spawnAgy", () => {
     const code = await proc.exited;
     expect(code).toBe(0);
   });
+
+  it("preserves leading indentation on forwarded lines", async () => {
+    const lines: string[] = [];
+    const indented = "    indented line";
+    const proc = spawnAgy({
+      binary: "printf",
+      args: ["%s\\n", indented],
+      onLine: (l) => lines.push(l),
+    });
+    await proc.exited;
+    expect(lines).toContain(indented);
+  });
 });

@@ -30,9 +30,8 @@ export function spawnAgy(opts: {
       terminal: false,
     });
     rl.on("line", (line: string) => {
-      const trimmed = line.trim();
-      if (!trimmed) return;
-      opts.onLine(trimmed);
+      if (!line.trim()) return;
+      opts.onLine(line);
     });
   }
 
