@@ -1,16 +1,21 @@
 import { selectWorktreeGcCandidates, type Services } from "@penumbra/core";
+import { lifecycleLock } from "../dispatch/lifecycle-lock.js";
 
 export interface WorktreeGcOpts {
   services: Services;
   /** How old (ms) a terminal worktree must be before GC. Default 2h. */
   gracePeriodMs?: number;
-  log?: { warn?: (obj: unknown, msg?: string) => void };
+  log?: {
+    warn?: (obj: unknown, msg?: string) => void;
+    debug?: (obj: unknown, msg?: string) => void;
+  };
 }
 
 export interface WorktreeGcTickResult {
   candidates: string[];
   removed: string[];
   failed: string[];
+  deferred: string[];
 }
 
 const DEFAULT_GRACE_PERIOD_MS = 2 * 60 * 60_000;
@@ -40,9 +45,19 @@ export async function runWorktreeGcTick(
   const candidates = gcCandidates.map((candidate) => candidate.handoff_id);
   const removed: string[] = [];
   const failed: string[] = [];
+  const deferred: string[] = [];
 
   for (const candidate of gcCandidates) {
     try {
+      if (lifecycleLock.isHeld()) {
+        deferred.push(candidate.handoff_id);
+        opts.log?.debug?.(
+          { handoff_id: candidate.handoff_id },
+          "worktree-gc teardown deferred while lifecycle lock is held",
+        );
+        continue;
+      }
+
       await services.worktreeManager.teardownWorktree(candidate.handoff_id, /*force=*/ true);
 
       const ts = now().toISOString();
@@ -73,7 +88,7 @@ export async function runWorktreeGcTick(
     }
   }
 
-  return { candidates, removed, failed };
+  return { candidates, removed, failed, deferred };
 }
 
 /** Schedules the GC sweep on a recurring interval. Returns a cancel function. */

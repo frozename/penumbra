@@ -9,6 +9,7 @@ import {
   type WorktreeHandle,
 } from "@penumbra/core";
 import { runWorktreeGcTick } from "../../src/sweepers/worktree-gc.js";
+import { lifecycleLock, resetLifecycleLock } from "../../src/dispatch/lifecycle-lock.js";
 
 try {
   if (process.platform === "darwin") {
@@ -124,6 +125,32 @@ describe("runWorktreeGcTick", () => {
     expect(result.removed).toEqual(["h-old"]);
     expect(result.failed).toEqual([]);
     expect(teardownCalls).toEqual(["h-old"]);
+  });
+
+  test("completed worktree resolved beyond grace is deferred while lifecycle lock is held", async () => {
+    resetLifecycleLock();
+    const release = await lifecycleLock.acquire("h-landing");
+    try {
+      const db = setupDb();
+      const resolvedAt = new Date(NOW.getTime() - 3 * 60 * 60_000).toISOString();
+      insertHandoff(db, "h-deferred", "completed", resolvedAt);
+
+      const teardownCalls: string[] = [];
+      const svc = makeServices(db, [makeHandle("h-deferred")], async (id) => {
+        teardownCalls.push(id);
+      });
+
+      const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
+
+      expect(result.candidates).toEqual(["h-deferred"]);
+      expect(result.removed).toEqual([]);
+      expect(result.failed).toEqual([]);
+      expect(result.deferred).toEqual(["h-deferred"]);
+      expect(teardownCalls).toEqual([]);
+    } finally {
+      release();
+      resetLifecycleLock();
+    }
   });
 
   test("dispatched worktree (in-flight) is NOT removed", async () => {
