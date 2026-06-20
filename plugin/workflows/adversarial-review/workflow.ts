@@ -542,7 +542,7 @@ function levenshtein(a: string, b: string): number {
   return prev[b.length]!;
 }
 
-function resolveRequestedPersonas(
+export function resolveRequestedPersonas(
   requested: string[],
   availableKeys: string[],
 ): {
@@ -551,11 +551,27 @@ function resolveRequestedPersonas(
   warnings: string[];
 } {
   const resolved: string[] = [];
+  const seen = new Set<string>();
   const missing: string[] = [];
   const warnings: string[] = [];
+  const pushResolved = (canonical: string, requestedName: string, fuzzy: boolean): void => {
+    if (seen.has(canonical)) {
+      warnings.push(
+        fuzzy
+          ? `skipped duplicate persona '${requestedName}' (resolves to '${canonical}')`
+          : `skipped duplicate persona '${requestedName}'`,
+      );
+      return;
+    }
+    seen.add(canonical);
+    resolved.push(canonical);
+    if (fuzzy) {
+      warnings.push(`resolved '${requestedName}' to '${canonical}'`);
+    }
+  };
   for (const requestedName of requested) {
     if (availableKeys.includes(requestedName)) {
-      resolved.push(requestedName);
+      pushResolved(requestedName, requestedName, false);
       continue;
     }
 
@@ -578,9 +594,7 @@ function resolveRequestedPersonas(
       continue;
     }
 
-    const matched = best[0]!.candidate;
-    resolved.push(matched);
-    warnings.push(`resolved '${requestedName}' to '${matched}'`);
+    pushResolved(best[0]!.candidate, requestedName, true);
   }
   return { resolved, missing, warnings };
 }
