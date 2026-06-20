@@ -391,6 +391,178 @@ describe("T0Tail", () => {
     client.clear();
   });
 
+  test("resume after pause surfaces events that arrived during the pause", async () => {
+    const { emit, subscribeImpl } = makeHarness();
+    const { Wrapper, client } = makeWrapper();
+
+    const { container, unmount } = render(
+      <Wrapper>
+        <T0Tail subscribeImpl={subscribeImpl} />
+      </Wrapper>,
+    );
+    const scroll = container.querySelector(".t0-tail-scroll") as HTMLElement;
+    scroll.getBoundingClientRect = () =>
+      ({
+        width: 600,
+        height: 280,
+        top: 0,
+        left: 0,
+        right: 600,
+        bottom: 280,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    const ts = new Date().toISOString();
+    act(() => {
+      emit({
+        event: "claim",
+        data: {
+          kind: "claim",
+          handoff_id: "pre-1",
+          source: "daemon",
+          ts,
+          worker_id: null,
+          meta: null,
+        },
+        raw: rawMsg(),
+      });
+    });
+
+    await waitFor(() => {
+      const rows = container.querySelectorAll('[data-testid="t0-row"]');
+      expect(rows.length).toBe(1);
+    });
+
+    act(() => {
+      useMissionStore.setState({ pausedTail: true });
+    });
+
+    act(() => {
+      for (let i = 0; i < 3; i += 1) {
+        emit({
+          event: "claim",
+          data: {
+            kind: "claim",
+            handoff_id: `mid-${i}`,
+            source: "daemon",
+            ts,
+            worker_id: null,
+            meta: null,
+          },
+          raw: rawMsg(),
+        });
+      }
+    });
+
+    // Still paused: count stays frozen at the pre-pause snapshot.
+    expect(container.querySelectorAll('[data-testid="t0-row"]').length).toBe(1);
+
+    act(() => {
+      useMissionStore.setState({ pausedTail: false });
+    });
+
+    // After resume, the 3 during-pause events are now visible alongside the
+    // pre-pause row.
+    await waitFor(() => {
+      const rows = container.querySelectorAll('[data-testid="t0-row"]');
+      expect(rows.length).toBe(4);
+    });
+
+    unmount();
+    client.clear();
+  });
+
+  test("pause invariant survives an SSE reconnect (frozen view stays frozen)", async () => {
+    const { emit, subscribeImpl } = makeHarness();
+    const { Wrapper, client } = makeWrapper();
+
+    const { container, unmount } = render(
+      <Wrapper>
+        <T0Tail subscribeImpl={subscribeImpl} />
+      </Wrapper>,
+    );
+    const scroll = container.querySelector(".t0-tail-scroll") as HTMLElement;
+    scroll.getBoundingClientRect = () =>
+      ({
+        width: 600,
+        height: 280,
+        top: 0,
+        left: 0,
+        right: 600,
+        bottom: 280,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    const ts = new Date().toISOString();
+    act(() => {
+      for (let i = 0; i < 2; i += 1) {
+        emit({
+          event: "claim",
+          data: {
+            kind: "claim",
+            handoff_id: `pre-${i}`,
+            source: "daemon",
+            ts,
+            worker_id: null,
+            meta: null,
+          },
+          raw: rawMsg(),
+        });
+      }
+    });
+
+    await waitFor(() => {
+      const rows = container.querySelectorAll('[data-testid="t0-row"]');
+      expect(rows.length).toBe(2);
+    });
+
+    act(() => {
+      useMissionStore.setState({ pausedTail: true });
+    });
+
+    // Reconnect lands while paused — useStream resets its buffer and bumps
+    // reconnectCount. Without the pause-invariant fix, frozenRef would be
+    // nulled and the memo would fall through to the (now-live) stream,
+    // letting post-reconnect events leak into the display while paused.
+    act(() => {
+      emit({
+        event: "__reconnect__",
+        data: { reconnect: true } as unknown,
+        raw: { reconnect: true },
+      });
+    });
+
+    act(() => {
+      for (let i = 0; i < 3; i += 1) {
+        emit({
+          event: "claim",
+          data: {
+            kind: "claim",
+            handoff_id: `post-${i}`,
+            source: "daemon",
+            ts,
+            worker_id: null,
+            meta: null,
+          },
+          raw: rawMsg(),
+        });
+      }
+    });
+
+    // Pause invariant: while paused, the row count must not grow even after
+    // a reconnect + subsequent events. The frozen view holds whatever was
+    // captured at the reconnect tick (post-reset, so the count goes to 0).
+    const rowsAfter = container.querySelectorAll('[data-testid="t0-row"]');
+    expect(rowsAfter.length).toBe(0);
+
+    unmount();
+    client.clear();
+  });
+
   test("pause button toggles useMissionStore.pausedTail", async () => {
     const { subscribeImpl } = makeHarness();
     const { Wrapper, client } = makeWrapper();

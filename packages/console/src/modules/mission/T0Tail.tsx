@@ -76,7 +76,10 @@ export function T0Tail(props: T0TailProps = {}): JSX.Element {
     if (stream.reconnectCount > lastReconnectSeen.current) {
       lastReconnectSeen.current = stream.reconnectCount;
       setShowReconnected(true);
-      frozenRef.current = null;
+      // Preserve the pause invariant across reconnects: while paused, re-seed
+      // frozenRef to the post-reset snapshot so the memo keeps returning a
+      // frozen view instead of falling through to the live buffer.
+      frozenRef.current = pausedTail ? stream.messages : null;
       postResumeStartRef.current = null;
       void queryClient.invalidateQueries({ queryKey: chainsByStatus("dispatched") });
       void queryClient.invalidateQueries({ queryKey: handoffsPending() });
@@ -84,15 +87,18 @@ export function T0Tail(props: T0TailProps = {}): JSX.Element {
       return () => clearTimeout(handle);
     }
     return undefined;
+    // Intentionally read the latest `pausedTail` and `stream.messages` from
+    // the render that bumped reconnectCount, not from later renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream.reconnectCount, queryClient]);
 
   // Frozen snapshot when paused: capture once at the moment pause flips on.
   useEffect(() => {
     if (pausedTail) {
       frozenRef.current = stream.messages;
+    } else {
+      frozenRef.current = null;
       postResumeStartRef.current = null;
-    } else if (frozenRef.current) {
-      postResumeStartRef.current = stream.messages.length;
     }
     // Intentionally only depend on `pausedTail` — we want the snapshot to
     // capture whatever messages are present at the instant pause flips on,
@@ -103,9 +109,6 @@ export function T0Tail(props: T0TailProps = {}): JSX.Element {
   const sourceMessages: ReadonlyArray<StreamMessage<DispatchEvent>> = useMemo(() => {
     if (pausedTail && frozenRef.current) {
       return frozenRef.current;
-    }
-    if (!pausedTail && frozenRef.current && postResumeStartRef.current != null) {
-      return [...frozenRef.current, ...stream.messages.slice(postResumeStartRef.current)];
     }
     return stream.messages;
   }, [pausedTail, stream.messages]);
