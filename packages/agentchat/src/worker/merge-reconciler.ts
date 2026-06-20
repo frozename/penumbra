@@ -399,6 +399,12 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
     let rebaseOutcome: RebaseOutcome = { attempted: false, result: "skipped" };
     const packageJsonCache = new Map<string, WorkspacePackageJson | null>();
 
+    // Compute baseRef up front so the rebase/verdict/no-changes/diffStats closures
+    // all close over the same value. Validation happens later, once
+    // emitInvalidInputResult is in scope.
+    const baseRef =
+      handoff?.branch_base && handoff.branch_base !== "main" ? handoff.branch_base : "main";
+
     const runCmd = async (argv: CommandArgs, cwd: string, timeoutSeconds?: number) => {
       return runCommand(argv, cwd, deps.log, deps.exec, timeoutSeconds);
     };
@@ -411,6 +417,27 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         return await runGit(args, cwd);
       } catch {
         return null;
+      }
+    };
+
+    // Probe variant that returns the process exit code so callers can distinguish
+    // "command ran and reported the expected non-zero answer" (e.g. is-ancestor → 1)
+    // from "command errored out" (e.g. unknown ref → 128). Returns exitCode = -1
+    // when the underlying error has no numeric code attached (rare; mostly test mocks).
+    const runGitProbe = async (
+      args: string[],
+      cwd: string,
+    ): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
+      try {
+        const res = await runGit(args, cwd);
+        return { exitCode: 0, stdout: res.stdout, stderr: res.stderr };
+      } catch (err: any) {
+        const exitCode = typeof err?.code === "number" ? err.code : -1;
+        return {
+          exitCode,
+          stdout: typeof err?.stdout === "string" ? err.stdout : "",
+          stderr: typeof err?.stderr === "string" ? err.stderr : "",
+        };
       }
     };
 
@@ -575,11 +602,29 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         rebaseOutcome = { attempted: false, result: "skipped" };
         return;
       }
-      const ffStatus = await runGitSafe(
-        ["merge-base", "--is-ancestor", "main", wt.branchName],
+      const ffProbe = await runGitProbe(
+        ["merge-base", "--is-ancestor", baseRef, wt.branchName],
         deps.mainRepoDir,
       );
-      if (ffStatus !== null) {
+      if (ffProbe.exitCode === 0) {
+        // baseRef is already an ancestor of the branch → ff-mergeable, no rebase.
+        rebaseOutcome = { attempted: false, result: "skipped" };
+        return;
+      }
+      if (ffProbe.exitCode !== 1) {
+        // Any other exit code (e.g. 128 unknown-ref) means git itself errored.
+        // Do not assume a rebase is needed against a base we could not probe;
+        // the previous null-on-any-failure path conflated this with not-ancestor.
+        deps.log.warn(
+          {
+            handoffId,
+            baseRef,
+            branch: wt.branchName,
+            exitCode: ffProbe.exitCode,
+            stderr: ffProbe.stderr.slice(0, 200),
+          },
+          "merge-base is-ancestor probe failed; skipping auto-rebase",
+        );
         rebaseOutcome = { attempted: false, result: "skipped" };
         return;
       }
@@ -593,10 +638,10 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
       await rm(scratchPath, { recursive: true, force: true }).catch(() => {});
 
       try {
-        await runGit(["worktree", "add", "--detach", scratchPath, "main"], deps.mainRepoDir);
+        await runGit(["worktree", "add", "--detach", scratchPath, baseRef], deps.mainRepoDir);
         await runGit(["checkout", wt.branchName], scratchPath);
         try {
-          await runGit(["rebase", "main"], scratchPath);
+          await runGit(["rebase", baseRef], scratchPath);
         } catch {
           const conflictRes = await runGitSafe(
             ["diff", "--name-only", "--diff-filter=U"],
@@ -617,21 +662,37 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         }
 
         const rebasedTip = (await runGit(["rev-parse", wt.branchName], scratchPath)).stdout.trim();
-        await runGit(["merge-base", "--is-ancestor", "main", rebasedTip], scratchPath);
-        try {
-          await runGit(
-            ["push", "--force-with-lease", "origin", `${wt.branchName}:${wt.branchName}`],
-            scratchPath,
-          );
-          rebaseOutcome = {
-            attempted: true,
-            result: "success",
-            rebasedBranch: wt.branchName,
-          };
-        } catch (err) {
-          deps.log.warn(
-            { handoffId, err: String(err) },
-            "auto-rebase push failed; keeping local rebase",
+        await runGit(["merge-base", "--is-ancestor", baseRef, rebasedTip], scratchPath);
+        if (baseRef === "main") {
+          try {
+            await runGit(
+              ["push", "--force-with-lease", "origin", `${wt.branchName}:${wt.branchName}`],
+              scratchPath,
+            );
+            rebaseOutcome = {
+              attempted: true,
+              result: "success",
+              rebasedBranch: wt.branchName,
+            };
+          } catch (err) {
+            deps.log.warn(
+              { handoffId, err: String(err) },
+              "auto-rebase push failed; keeping local rebase",
+            );
+            rebaseOutcome = {
+              attempted: true,
+              result: "success_local_only",
+              rebasedBranch: wt.branchName,
+            };
+          }
+        } else {
+          // Guard: only force-push when baseRef is the canonical main branch.
+          // Pushing a rebase against a non-main base could silently rewrite a
+          // sibling agent/stage branch on origin (the old behavior hardcoded
+          // 'main', which rebased onto main regardless of the intended base).
+          deps.log.info(
+            { handoffId, baseRef, branch: wt.branchName },
+            "auto-rebase succeeded locally; skipping force-push because baseRef is not main",
           );
           rebaseOutcome = {
             attempted: true,
@@ -648,16 +709,33 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
     };
 
     const buildVerdict = async (result: MergeResult): Promise<ReconcilerVerdict> => {
-      const [headShaRes, baseShaRes, ffRes] = await Promise.all([
+      const [headShaRes, baseShaRes, ffProbe] = await Promise.all([
         runGitSafe(["rev-parse", wt.branchName], deps.mainRepoDir),
-        runGitSafe(["rev-parse", "main"], deps.mainRepoDir),
-        runGitSafe(["merge-base", "--is-ancestor", "main", wt.branchName], deps.mainRepoDir),
+        runGitSafe(["rev-parse", baseRef], deps.mainRepoDir),
+        runGitProbe(["merge-base", "--is-ancestor", baseRef, wt.branchName], deps.mainRepoDir),
       ]);
 
       const head_sha = headShaRes?.stdout.trim() || "unknown";
       const base_sha = baseShaRes?.stdout.trim() || "unknown";
-      const ff_mergeable = ffRes !== null;
-      const rebase_required = !ff_mergeable;
+      // exit 0 → baseRef is ancestor → ff-mergeable.
+      // exit 1 → not ancestor → rebase required.
+      // Any other exit (e.g. 128 unknown ref) is an error: surface as
+      // not-ff-mergeable but do NOT claim a rebase is required against a
+      // base we could not probe.
+      const ff_mergeable = ffProbe.exitCode === 0;
+      const rebase_required = ffProbe.exitCode === 1;
+      if (ffProbe.exitCode !== 0 && ffProbe.exitCode !== 1) {
+        deps.log.warn(
+          {
+            handoffId,
+            baseRef,
+            branch: wt.branchName,
+            exitCode: ffProbe.exitCode,
+            stderr: ffProbe.stderr.slice(0, 200),
+          },
+          "verdict merge-base probe errored; treating ancestry as unknown",
+        );
+      }
       const pr_url = result.pr_url ?? null;
       const duration_ms = Date.now() - startedAtMs;
       const summaryParts = [
@@ -788,9 +866,6 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
       return emitInvalidInputResult("invalid_branch", { field: "branch", value: wt.branchName });
     }
 
-    const baseRef =
-      handoff?.branch_base && handoff.branch_base !== "main" ? handoff.branch_base : "main";
-
     if (!isValidGitRef(baseRef)) {
       return emitInvalidInputResult("invalid_branch_base", {
         field: "branch_base",
@@ -803,8 +878,12 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
     let packagesToBuild: string[] | null = null;
     let changedFiles = new Set<string>();
     try {
+      // Use the symmetric-difference operator (`A...B`) consistently with the
+      // no-changes gate and shortstat below so that scoping (which packages to
+      // typecheck/test) and gating (does the branch differ?) measure the SAME
+      // file set: changes B introduced since branching from A.
       const diffRes = await runGit(
-        ["diff", "--name-only", `${baseRef}..${wt.branchName}`],
+        ["diff", "--name-only", `${baseRef}...${wt.branchName}`],
         deps.mainRepoDir,
         timeout,
       );
@@ -1011,7 +1090,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         const agentName = handoff?.to_agent ?? "<unknown>";
         const conversationId = handoff?.conversation_id ?? null;
         const diffNames = await runGit(
-          ["diff", "--name-only", `main...${wt.branchName}`],
+          ["diff", "--name-only", `${baseRef}...${wt.branchName}`],
           deps.mainRepoDir,
         );
         if (!diffNames.stdout.trim()) {
@@ -1024,7 +1103,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
           return result;
         }
         const diffStatsRes = await runGit(
-          ["diff", `main...${wt.branchName}`, "--shortstat"],
+          ["diff", `${baseRef}...${wt.branchName}`, "--shortstat"],
           wt.path,
         );
         diffStats = parseShortStat(diffStatsRes.stdout);
@@ -1046,7 +1125,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         const prResult = await createPR(
           {
             branch: wt.branchName,
-            baseBranch: "main",
+            baseBranch: baseRef,
             title: `[${agentName}] ${titleLine.slice(0, 60)}`,
             body: renderDispatchPRBody({
               agentName,

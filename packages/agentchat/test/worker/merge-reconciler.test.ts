@@ -277,7 +277,7 @@ test("ff_mergeable=false rebase success emits success verdict with rebased branc
     if (cmd.startsWith("git diff") && cmd.includes("--shortstat")) return defaultShortStat;
     if (cmd === "git merge-base --is-ancestor main agent/h_rebase_ok") {
       mergeBaseCalls += 1;
-      if (mergeBaseCalls === 1) throw { stderr: "not-ancestor" };
+      if (mergeBaseCalls === 1) throw { stderr: "not-ancestor", code: 1 };
       return { stdout: "", stderr: "" };
     }
     if (cmd === "git rev-parse agent/h_rebase_ok") {
@@ -314,6 +314,7 @@ test("ff_mergeable=false rebase success emits success verdict with rebased branc
 test("ff_mergeable=false rebase conflict emits conflict verdict with file list", async () => {
   execFailures["git merge-base --is-ancestor main agent/h_rebase_conflict"] = {
     stderr: "not-ancestor",
+    code: 1,
   };
   mockDeps.exec.mockImplementation(async (argv: string[]) => {
     const cmd = argv.join(" ");
@@ -356,6 +357,7 @@ test("ff_mergeable=false rebase conflict emits conflict verdict with file list",
 test("reconcilerAutoRebase=false skips rebase even when ff_mergeable=false", async () => {
   execFailures["git merge-base --is-ancestor main agent/h_rebase_disabled"] = {
     stderr: "not-ancestor",
+    code: 1,
   };
   const reconcileNoAuto = createMergeReconciler({
     ...mockDeps,
@@ -691,7 +693,6 @@ test("Empty branch diff returns no_changes and skips PR creation", async () => {
   expect(result.status).toBe("no_changes");
   expect(execHistory.find((cmd) => cmd.startsWith("bun tsc -b"))).toBeUndefined();
   expect(execHistory.find((cmd) => cmd.startsWith("bun test"))).toBeUndefined();
-  expect(execHistory).toContain("git diff --name-only main..agent/h_empty");
   expect(execHistory).toContain("git diff --name-only main...agent/h_empty");
   expect(prCalls).toHaveLength(0);
   expect(progressCalls).toContainEqual({
@@ -740,7 +741,7 @@ describe("branch_base diff scoping", () => {
 
     await reconcile("h_branch_null");
 
-    expect(execHistory).toContain("git diff --name-only main..agent/h_branch_null");
+    expect(execHistory).toContain("git diff --name-only main...agent/h_branch_null");
   });
 
   test("uses main when branch_base is main", async () => {
@@ -748,7 +749,7 @@ describe("branch_base diff scoping", () => {
 
     await reconcile("h_branch_main");
 
-    expect(execHistory).toContain("git diff --name-only main..agent/h_branch_main");
+    expect(execHistory).toContain("git diff --name-only main...agent/h_branch_main");
   });
 
   test("uses agent branch_base when present", async () => {
@@ -756,7 +757,7 @@ describe("branch_base diff scoping", () => {
 
     await reconcile("h_branch_agent");
 
-    expect(execHistory).toContain("git diff --name-only agent/abc-123..agent/h_branch_agent");
+    expect(execHistory).toContain("git diff --name-only agent/abc-123...agent/h_branch_agent");
   });
 
   test("uses stage branch_base when present", async () => {
@@ -764,7 +765,31 @@ describe("branch_base diff scoping", () => {
 
     await reconcile("h_branch_stage");
 
-    expect(execHistory).toContain("git diff --name-only stage/plan__1.3..agent/h_branch_stage");
+    expect(execHistory).toContain("git diff --name-only stage/plan__1.3...agent/h_branch_stage");
+  });
+
+  test("non-main branch_base threads through no-changes gate, shortstat, and verdict", async () => {
+    setHandoffBranchBase("h_branch_full_scope", "stage/plan__2.7");
+
+    await reconcile("h_branch_full_scope");
+
+    // Both the early scoping diff and the no-changes gate use baseRef + the
+    // same `...` operator, so they appear at least twice.
+    const scopedDiff = "git diff --name-only stage/plan__2.7...agent/h_branch_full_scope";
+    expect(execHistory.filter((c) => c === scopedDiff).length).toBeGreaterThanOrEqual(2);
+    // Shortstat measured against baseRef.
+    expect(execHistory).toContain(
+      "git diff stage/plan__2.7...agent/h_branch_full_scope --shortstat",
+    );
+    // Verdict rev-parses baseRef and checks is-ancestor against baseRef.
+    expect(execHistory).toContain("git rev-parse stage/plan__2.7");
+    expect(execHistory).toContain(
+      "git merge-base --is-ancestor stage/plan__2.7 agent/h_branch_full_scope",
+    );
+    // Critically: nothing in this run should still reference main.
+    expect(execHistory.some((c) => c === "git rev-parse main")).toBe(false);
+    expect(execHistory.some((c) => c.startsWith("git merge-base --is-ancestor main "))).toBe(false);
+    expect(execHistory.some((c) => c.includes("main...agent/h_branch_full_scope"))).toBe(false);
   });
 
   test.each([
@@ -897,6 +922,50 @@ test("Test timeout returns timed_out: true", async () => {
   const result = await reconcile("h_timeout_2");
   expect(result.status).toBe("test_failed");
   expect(result.timed_out).toBe(true);
+});
+
+test("merge-base probe exit 128 is treated as error, not 'rebase needed'", async () => {
+  mockDeps.exec.mockImplementation(async (argv: string[]) => {
+    const cmd = argv.join(" ");
+    execHistory.push(cmd);
+    if (cmd.startsWith("git diff --name-only")) return defaultDiffResult;
+    if (cmd.startsWith("git diff") && cmd.includes("--shortstat")) return defaultShortStat;
+    if (cmd.startsWith("git merge-base --is-ancestor")) {
+      // Simulate git itself failing (e.g. bad/unknown ref) with exit 128.
+      throw { stderr: "fatal: bad revision", code: 128 };
+    }
+    return nextExecResult;
+  });
+
+  const result = await reconcile("h_probe_err");
+
+  // Auto-rebase must NOT be attempted when the probe errored — the old code
+  // conflated exit 128 with "not ancestor" and would proceed to rebase against
+  // a base it could not even resolve.
+  expect(result.status).toBe("verified");
+  expect(execHistory.some((cmd) => cmd.includes("git worktree add --detach"))).toBe(false);
+  expect(execHistory.some((cmd) => cmd === "git rebase main")).toBe(false);
+
+  // Verdict surfaces the probe failure as ff_mergeable=false but does NOT claim
+  // a rebase is required against a base we could not probe.
+  expect(verdictCalls).toHaveLength(1);
+  expect(verdictCalls[0]).toMatchObject({
+    handoff_id: "h_probe_err",
+    ff_mergeable: false,
+    rebase_required: false,
+    rebase_attempted: false,
+    rebase_result: "skipped",
+  });
+
+  // Both the rebase guard and the verdict log the underlying exitCode for forensics.
+  expect(mockLog.warn).toHaveBeenCalledWith(
+    expect.objectContaining({ exitCode: 128 }),
+    expect.stringMatching(/merge-base is-ancestor probe failed/),
+  );
+  expect(mockLog.warn).toHaveBeenCalledWith(
+    expect.objectContaining({ exitCode: 128 }),
+    expect.stringMatching(/verdict merge-base probe errored/),
+  );
 });
 
 describe("resolveAffectedPackages", () => {
