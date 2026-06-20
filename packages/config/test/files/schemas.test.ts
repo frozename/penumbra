@@ -286,6 +286,18 @@ describe("RoutingConfigSchema", () => {
     expect(parsed.role_routing?.headroom_weighting).toBe(true);
   });
 
+  test("role_routing unknown keys throw", () => {
+    expect(() =>
+      RoutingConfigSchema.parse({
+        default_roles: {},
+        role_routing: {
+          exploration_policy: "unsampled-first",
+          typo_weighting: true,
+        },
+      }),
+    ).toThrow(/typo_weighting/);
+  });
+
   test("workloads persona keys must exist in personas map", () => {
     const parsed = parseYaml(loadFixture("routing")) as {
       personas: Record<string, unknown>;

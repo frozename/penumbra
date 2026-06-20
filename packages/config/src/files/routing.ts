@@ -15,6 +15,7 @@ export const RoleRoutingConfigSchema = z
     latency_weighting: z.boolean().optional(),
     warm_pool_reuse_weighting: z.boolean().optional(),
   })
+  .strict()
   .default({ exploration_policy: "unsampled-first" });
 export type RoleRoutingConfig = z.infer<typeof RoleRoutingConfigSchema>;
 
