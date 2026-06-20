@@ -44,7 +44,7 @@ export function synthesizeReviewTask(
         deny_agents: [...new Set(denyAgents)].sort(),
       }
     : {
-        min_tier: "premium",
+        min_tier: "premium" as const,
         deny_agents: [...new Set(denyAgents)].sort(),
       };
 

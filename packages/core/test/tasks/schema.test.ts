@@ -123,6 +123,25 @@ describe("task board schemas", () => {
     ).toThrow();
   });
 
+  test("FileTaskInputSchema rejects unknown min_tier values", () => {
+    expect(() =>
+      FileTaskInputSchema.parse({
+        prompt: "x",
+        created_by_kind: "human",
+        created_by_id: "cli",
+        eligibility: { min_tier: "platinum" },
+      }),
+    ).toThrow();
+    expect(() =>
+      FileTaskInputSchema.parse({
+        prompt: "x",
+        created_by_kind: "human",
+        created_by_id: "cli",
+        review_eligibility: { min_tier: "vip" },
+      }),
+    ).toThrow();
+  });
+
   test("LeaseTaskInputSchema parses minimal payload", () => {
     expect(() =>
       LeaseTaskInputSchema.parse({

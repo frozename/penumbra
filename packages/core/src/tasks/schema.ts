@@ -53,10 +53,13 @@ export const TaskEventKindSchema = z.enum([
 ]);
 export type TaskEventKind = z.infer<typeof TaskEventKindSchema>;
 
+export const TIER_ORDER = ["economy", "standard", "premium"] as const;
+export type Tier = (typeof TIER_ORDER)[number];
+
 export const EligibilitySchema = z
   .object({
     required_tags: z.array(z.string()).optional(),
-    min_tier: z.string().optional(),
+    min_tier: z.enum([...TIER_ORDER]).optional(),
     max_cost_cents: z.number().nonnegative().optional(),
     deny_agents: z.array(z.string()).optional(),
     allow_agents: z.array(z.string()).optional(),

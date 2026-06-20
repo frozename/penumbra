@@ -192,7 +192,7 @@ describe("TaskWriter review pairing", () => {
   test("review_eligibility is honored and deny_agents merges doer with dedupe + sorting", () => {
     const { task_id: parentTaskId } = writer.file(
       baseInput({
-        review_eligibility: { min_tier: "oc", deny_agents: ["x"] },
+        review_eligibility: { min_tier: "standard", deny_agents: ["x"] },
       }),
     );
     const lease = writer.lease({ task_id: parentTaskId, agent_id: "a-doer" });
@@ -206,7 +206,7 @@ describe("TaskWriter review pairing", () => {
     expect(reviewTaskId).not.toBeNull();
     const reviewTask = writer.get(reviewTaskId!);
     expect(reviewTask.eligibility).toEqual({
-      min_tier: "oc",
+      min_tier: "standard",
       deny_agents: ["a-doer", "x"],
     });
   });

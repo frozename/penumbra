@@ -34,7 +34,7 @@ describe("isEligible", () => {
   const agent: AgentDescriptor = {
     name: "agent-a",
     tags: ["backend", "review"],
-    tier: "oc",
+    tier: "standard",
     cost_cents_per_run: 25,
   };
 
@@ -44,9 +44,9 @@ describe("isEligible", () => {
     expect(isEligible(agent, { required_tags: ["backend", "frontend"] })).toBe(false);
   });
 
-  test("min_tier: equal and higher pass, lower fails", () => {
-    expect(isEligible(agent, { min_tier: "oc" })).toBe(true);
-    expect(isEligible(agent, { min_tier: "cheap" })).toBe(true);
+  test("min_tier: equal and lower pass, higher fails", () => {
+    expect(isEligible(agent, { min_tier: "standard" })).toBe(true);
+    expect(isEligible(agent, { min_tier: "economy" })).toBe(true);
     expect(isEligible(agent, { min_tier: "premium" })).toBe(false);
   });
 
