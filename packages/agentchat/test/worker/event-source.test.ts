@@ -268,6 +268,96 @@ test("forget(id) drops the dedup entry so a future event for that id re-fires th
   await stop();
 });
 
+test("dedup set stays bounded by dedupCapacity under a flood of distinct ids", async () => {
+  const handler = mock();
+  const capacity = 5;
+  const flood = 200;
+  let pollCount = 0;
+  const client = makeClient({
+    listHandoffs: mock().mockImplementation(async () => {
+      // Emit a fresh batch of distinct ids on each poll so the dedup set
+      // would grow unbounded without an LRU cap.
+      const start = pollCount * 50;
+      pollCount++;
+      if (pollCount > 4) return { handoffs: [] };
+      return {
+        handoffs: Array.from({ length: 50 }, (_, i) => ({
+          handoff_id: `flood-${start + i}`,
+          status: "approved",
+        })),
+      };
+    }),
+    subscribeHandoffEvents: mock().mockImplementation(async function* () {
+      throw new Error("sse-down");
+    }),
+  });
+  const handle = startEventSource({
+    client,
+    statuses: ["approved"],
+    onEvent: handler,
+    pollIntervalMs: 5,
+    sseBackoffStartMs: 1000,
+    sseBackoffCapMs: 1000,
+    dedupCapacity: capacity,
+  });
+  await new Promise((r) => setTimeout(r, 120));
+  // Handler fired for every distinct id seen
+  expect(handler.mock.calls.length).toBeGreaterThanOrEqual(flood);
+  // But the dedup set never exceeded its capacity
+  expect(handle._dedupSize()).toBeLessThanOrEqual(capacity);
+  await handle.stop();
+});
+
+test("evicted ids re-fire the handler; recently-seen ids stay hot", async () => {
+  const handler = mock();
+  const capacity = 3;
+  let batch: any[] = [];
+  const client = makeClient({
+    listHandoffs: mock().mockImplementation(async () => ({ handoffs: batch })),
+    subscribeHandoffEvents: mock().mockImplementation(async function* () {
+      throw new Error("sse-down");
+    }),
+  });
+  const handle = startEventSource({
+    client,
+    statuses: ["approved"],
+    onEvent: handler,
+    pollIntervalMs: 10,
+    sseBackoffStartMs: 1000,
+    sseBackoffCapMs: 1000,
+    dedupCapacity: capacity,
+  });
+
+  // Fill the dedup set with ids a,b,c
+  batch = [
+    { handoff_id: "a", status: "approved" },
+    { handoff_id: "b", status: "approved" },
+    { handoff_id: "c", status: "approved" },
+  ];
+  await new Promise((r) => setTimeout(r, 40));
+  expect(handler.mock.calls.length).toBe(3);
+
+  // Touch 'c' to refresh its recency (it is currently the newest already),
+  // then push 'd' and 'e' which evicts 'a' and 'b'.
+  batch = [
+    { handoff_id: "c", status: "approved" },
+    { handoff_id: "d", status: "approved" },
+    { handoff_id: "e", status: "approved" },
+  ];
+  await new Promise((r) => setTimeout(r, 40));
+  // 'd' and 'e' are new → 2 more handler calls; 'c' was hot → no re-fire
+  expect(handler.mock.calls.length).toBe(5);
+
+  // 'a' was evicted → re-emitting it should re-fire the handler
+  batch = [{ handoff_id: "a", status: "approved" }];
+  await new Promise((r) => setTimeout(r, 40));
+  expect(handler.mock.calls.length).toBe(6);
+  expect(handler.mock.calls.at(-1)?.[0].handoff_id).toBe("a");
+
+  expect(handle._dedupSize()).toBeLessThanOrEqual(capacity);
+  await handle.stop();
+});
+
 test("logs daemon unreachable on poll failure when log is provided, throttled to once per window", async () => {
   const warns: any[] = [];
   const log = { warn: (obj: any, msg: string) => warns.push({ obj, msg }) };

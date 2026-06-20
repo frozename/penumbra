@@ -28,16 +28,53 @@ export interface EventSourceOpts {
   log?: EventSourceLogger;
   /** Internal: override the throttle window. Tests use a small value to avoid sleep. */
   unreachableLogThrottleMs?: number;
+  /** Max retained dedup entries before LRU eviction. Default 2048. */
+  dedupCapacity?: number;
 }
 
 export interface EventSourceHandle {
   stop(): Promise<void>;
   /** Drop a handoff_id from the dedup set so a future SSE/poll event for the same id triggers the handler again. Use this when the handler had a transient failure and wants the row re-tried on next surfacing. */
   forget(handoff_id: string): void;
+  /** @internal Test-only: current dedup set size. */
+  _dedupSize(): number;
+}
+
+/**
+ * Bounded LRU-by-insertion dedup set. Leans on JS Set's insertion-ordered
+ * iteration: when capacity is exceeded, the oldest entry is evicted. A hit
+ * refreshes recency by re-inserting at the tail, so ids that keep surfacing
+ * stay hot while truly-stale ids age out.
+ */
+class BoundedSeen {
+  private readonly set = new Set<string>();
+  constructor(private readonly capacity: number) {}
+  has(id: string): boolean {
+    if (!this.set.has(id)) return false;
+    this.set.delete(id);
+    this.set.add(id);
+    return true;
+  }
+  add(id: string): void {
+    if (this.set.has(id)) {
+      this.set.delete(id);
+    } else if (this.set.size >= this.capacity) {
+      const oldest = this.set.values().next().value;
+      if (oldest !== undefined) this.set.delete(oldest);
+    }
+    this.set.add(id);
+  }
+  delete(id: string): boolean {
+    return this.set.delete(id);
+  }
+  get size(): number {
+    return this.set.size;
+  }
 }
 
 export function startEventSource(opts: EventSourceOpts): EventSourceHandle {
-  const seen = new Set<string>();
+  const capacity = Math.max(1, opts.dedupCapacity ?? 2048);
+  const seen = new BoundedSeen(capacity);
   const startMs = opts.sseBackoffStartMs ?? 500;
   const capMs = opts.sseBackoffCapMs ?? 5000;
   const throttleMs = opts.unreachableLogThrottleMs ?? 60_000;
@@ -130,6 +167,9 @@ export function startEventSource(opts: EventSourceOpts): EventSourceHandle {
     },
     forget(handoff_id: string) {
       seen.delete(handoff_id);
+    },
+    _dedupSize() {
+      return seen.size;
     },
   };
 }
