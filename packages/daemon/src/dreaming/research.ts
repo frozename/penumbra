@@ -119,14 +119,17 @@ export async function runP5Phase(
       .prepare(`SELECT * FROM dream_research_cache WHERE cache_key=?`)
       .get(cacheKey) as any;
 
-    if (cached) {
-      if (Number(cached.is_negative) === 1 && cached.expires_at > now) {
-        db.prepare(
-          `UPDATE dream_actions SET status='failed', decided_by='negative-cache-hit', decided_at=? WHERE action_id=?`,
-        ).run(Date.now(), action.action_id);
-        continue;
-      }
+    const isLiveNegative = cached && Number(cached.is_negative) === 1 && cached.expires_at > now;
+    const hasPositiveCache = cached && Number(cached.is_negative) !== 1;
 
+    if (isLiveNegative) {
+      db.prepare(
+        `UPDATE dream_actions SET status='failed', decided_by='negative-cache-hit', decided_at=? WHERE action_id=?`,
+      ).run(Date.now(), action.action_id);
+      continue;
+    }
+
+    if (hasPositiveCache) {
       rawResults = [
         {
           url: cached.url,

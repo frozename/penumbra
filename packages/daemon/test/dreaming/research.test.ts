@@ -280,6 +280,59 @@ describe("P5: Active Research", () => {
     ]);
   });
 
+  test("expired negative cache row triggers re-fetch (does not serve empty positive result)", async () => {
+    const db = new Database(":memory:");
+    loadSqliteVec(db);
+    applySchema(db);
+
+    db.prepare(
+      "INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run) VALUES('cycle1', 1, 'cron', 10, 'running', '[]')",
+    ).run();
+    db.prepare(
+      "INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('a1', 'cycle1', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', '{\"query\":\"expired neg query\"}')",
+    ).run();
+
+    // Seed an EXPIRED negative cache row for the same cache_key the phase will compute.
+    const cacheKey = createHash("sha256")
+      .update("expired neg query|expired neg query")
+      .digest("hex");
+    db.prepare(
+      `INSERT INTO dream_research_cache(cache_key, provider, project_id, url, query_hash, title, markdown, fetched_at, expires_at, source_billed_usd, is_negative)
+       VALUES(?, 'negative', 'proj1', 'expired neg query', ?, '', '', 1, 1, 0, 1)`,
+    ).run(cacheKey, cacheKey);
+
+    const searchMock = mock(async () => [
+      {
+        url: "https://example.com/fresh",
+        title: "Fresh",
+        markdown: "fresh body",
+        source_provider: "webfetch",
+      },
+    ]);
+    const deps = {
+      projectRegistry: { get: () => ({ dreaming: { research_provider: "webfetch" } }) },
+      getResearchAdapter: () => ({ search: searchMock }),
+    };
+
+    await runP5Phase(db, "cycle1", {} as any, deps as any);
+
+    // Expired negative should have been treated as cache MISS → re-fetch.
+    expect(searchMock.mock.calls.length).toBe(1);
+
+    const p4 = db
+      .prepare("SELECT status, decided_by FROM dream_actions WHERE action_id='a1'")
+      .get() as { status: string; decided_by: string | null };
+    expect(p4.status).toBe("completed");
+    expect(p4.decided_by).not.toBe("negative-cache-hit");
+
+    // A real enrichment row with the freshly-fetched markdown should have been minted.
+    const enrichment = db
+      .prepare("SELECT payload_json FROM dream_actions WHERE phase='P5'")
+      .all() as Array<{ payload_json: string }>;
+    expect(enrichment.length).toBe(1);
+    expect(enrichment[0]!.payload_json).toContain("fresh body");
+  });
+
   test("search action results cache hits on a second cycle with the same query (no re-bill)", async () => {
     const db = new Database(":memory:");
     loadSqliteVec(db);
