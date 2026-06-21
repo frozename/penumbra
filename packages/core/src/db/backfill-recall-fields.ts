@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-const EMOJI_TO_OBS_TYPE: Array<[string, string]> = [
+const EMOJI_TO_OBS_TYPE: [string, string][] = [
   ["🔴", "bugfix"],
   ["🟣", "feature"],
   ["🔄", "refactor"],
@@ -28,6 +28,111 @@ export interface BackfillStats {
   t2_learned_at_set: number;
 }
 
+interface MetaShape {
+  concepts?: string[];
+  severity?: string;
+  file_paths?: string[];
+}
+
+interface T2Row {
+  memory_id: string;
+  title: string;
+  metadata_json: string;
+  obs_type: string | null;
+  concepts: string | null;
+  severity: string | null;
+  file_paths: string | null;
+  created_at: string;
+  learned_at: string | null;
+}
+
+interface ResolvedRow {
+  obs_type: string | null;
+  concepts: string;
+  severity: string | null;
+  file_paths: string;
+  learned_at: string;
+}
+
+function parseMeta(raw: string): MetaShape {
+  const source = raw || "{}";
+  try {
+    const parsed: unknown = JSON.parse(source);
+    if (typeof parsed === "object" && parsed !== null) {
+      return parsed;
+    }
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+function resolveObsType(row: T2Row, stats: BackfillStats): string | null {
+  if (row.obs_type) return row.obs_type;
+  const fromEmoji = emojiToObsType(row.title);
+  if (fromEmoji) {
+    stats.t2_obs_type_set += 1;
+    return fromEmoji;
+  }
+  return null;
+}
+
+function resolveConcepts(row: T2Row, meta: MetaShape, stats: BackfillStats): string {
+  if (row.concepts && row.concepts !== "[]") return row.concepts;
+  const fromMeta = Array.isArray(meta.concepts) ? meta.concepts : [];
+  if (fromMeta.length > 0) {
+    stats.t2_concepts_set += 1;
+    return JSON.stringify(fromMeta);
+  }
+  return row.concepts ?? "[]";
+}
+
+function resolveSeverity(row: T2Row, meta: MetaShape, stats: BackfillStats): string | null {
+  if (row.severity) return row.severity;
+  if (typeof meta.severity === "string") {
+    stats.t2_severity_set += 1;
+    return meta.severity;
+  }
+  return null;
+}
+
+function resolveFilePaths(row: T2Row, meta: MetaShape, stats: BackfillStats): string {
+  if (row.file_paths && row.file_paths !== "[]") return row.file_paths;
+  const fromMeta = Array.isArray(meta.file_paths) ? meta.file_paths : [];
+  if (fromMeta.length > 0) {
+    stats.t2_file_paths_set += 1;
+    return JSON.stringify(fromMeta);
+  }
+  return row.file_paths ?? "[]";
+}
+
+function resolveLearnedAt(row: T2Row, stats: BackfillStats): string {
+  if (row.learned_at) return row.learned_at;
+  stats.t2_learned_at_set += 1;
+  return row.created_at;
+}
+
+function resolveRow(row: T2Row, stats: BackfillStats): ResolvedRow {
+  const meta = parseMeta(row.metadata_json);
+  return {
+    obs_type: resolveObsType(row, stats),
+    concepts: resolveConcepts(row, meta, stats),
+    severity: resolveSeverity(row, meta, stats),
+    file_paths: resolveFilePaths(row, meta, stats),
+    learned_at: resolveLearnedAt(row, stats),
+  };
+}
+
+function rowIsUnchanged(row: T2Row, resolved: ResolvedRow): boolean {
+  return (
+    resolved.obs_type === row.obs_type &&
+    resolved.concepts === row.concepts &&
+    resolved.severity === row.severity &&
+    resolved.file_paths === row.file_paths &&
+    resolved.learned_at === row.learned_at
+  );
+}
+
 export function backfillRecallFields(db: Database): BackfillStats {
   const stats: BackfillStats = {
     t2_obs_type_set: 0,
@@ -39,21 +144,9 @@ export function backfillRecallFields(db: Database): BackfillStats {
 
   const rows = db
     .query<
-      {
-        memory_id: string;
-        title: string;
-        metadata_json: string;
-        obs_type: string | null;
-        concepts: string | null;
-        severity: string | null;
-        file_paths: string | null;
-        created_at: string;
-        learned_at: string | null;
-      },
+      T2Row,
       []
-    >(
-      `SELECT memory_id, title, metadata_json, obs_type, concepts, severity, file_paths, created_at, learned_at FROM t2_memories`,
-    )
+    >(`SELECT memory_id, title, metadata_json, obs_type, concepts, severity, file_paths, created_at, learned_at FROM t2_memories`)
     .all();
 
   const updateStmt = db.prepare(
@@ -62,75 +155,14 @@ export function backfillRecallFields(db: Database): BackfillStats {
 
   const backfillTx = db.transaction(() => {
     for (const row of rows) {
-      let meta: { concepts?: string[]; severity?: string; file_paths?: string[] } = {};
-      try {
-        meta = JSON.parse(row.metadata_json || "{}");
-      } catch {
-        meta = {};
-      }
-
-      let obsType = row.obs_type;
-      if (!obsType) {
-        obsType = emojiToObsType(row.title);
-        if (obsType) stats.t2_obs_type_set += 1;
-      }
-
-      let concepts = row.concepts;
-      if (!concepts || concepts === "[]") {
-        const fromMeta = Array.isArray(meta.concepts) ? meta.concepts : [];
-        if (fromMeta.length > 0) {
-          concepts = JSON.stringify(fromMeta);
-          stats.t2_concepts_set += 1;
-        } else if (concepts === null) {
-          concepts = "[]";
-        }
-      }
-
-      let severity = row.severity;
-      if (!severity && typeof meta.severity === "string") {
-        severity = meta.severity;
-        stats.t2_severity_set += 1;
-      }
-
-      let filePaths = row.file_paths;
-      if (!filePaths || filePaths === "[]") {
-        const fromMeta = Array.isArray(meta.file_paths) ? meta.file_paths : [];
-        if (fromMeta.length > 0) {
-          filePaths = JSON.stringify(fromMeta);
-          stats.t2_file_paths_set += 1;
-        } else if (filePaths === null) {
-          filePaths = "[]";
-        }
-      }
-
-      let learnedAt = row.learned_at;
-      if (!learnedAt) {
-        learnedAt = row.created_at;
-        stats.t2_learned_at_set += 1;
-      }
-
-      const nextObsType = obsType ?? null;
-      const nextConcepts = concepts ?? "[]";
-      const nextSeverity = severity ?? null;
-      const nextFilePaths = filePaths ?? "[]";
-      const nextLearnedAt = learnedAt ?? null;
-
-      if (
-        nextObsType === row.obs_type &&
-        nextConcepts === row.concepts &&
-        nextSeverity === row.severity &&
-        nextFilePaths === row.file_paths &&
-        nextLearnedAt === row.learned_at
-      ) {
-        continue;
-      }
-
+      const resolved = resolveRow(row, stats);
+      if (rowIsUnchanged(row, resolved)) continue;
       updateStmt.run(
-        nextObsType,
-        nextConcepts,
-        nextSeverity,
-        nextFilePaths,
-        nextLearnedAt,
+        resolved.obs_type,
+        resolved.concepts,
+        resolved.severity,
+        resolved.file_paths,
+        resolved.learned_at,
         row.memory_id,
       );
     }

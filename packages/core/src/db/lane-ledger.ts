@@ -1,6 +1,8 @@
 import type { Database } from "bun:sqlite";
-import { TaskClassSchema, type TaskClass } from "../schemas/task-class.js";
+
 import type { LaneCloseMetadata } from "../schemas/lane-close-metadata.js";
+
+import { type TaskClass, TaskClassSchema } from "../schemas/task-class.js";
 
 export type LaneGateStatus = "open" | "passed" | "failed" | "skipped" | "review_debt";
 export type ClosedLaneGateStatus = Exclude<LaneGateStatus, "open">;
@@ -93,7 +95,7 @@ export function stampAgentPerformanceGateOutcome(
       [string]
     >(`SELECT implementer_handoff FROM lane_ledger WHERE lane_id=?`)
     .get(lane_id);
-  if (row == null) {
+  if (row === null) {
     throw new Error(`not found: lane ${lane_id}`);
   }
   stampAgentPerformanceGateOutcomeForHandoff(db, row.implementer_handoff, gate_status);
@@ -152,7 +154,10 @@ export function closeLane(db: Database, lane_id: string, fields: CloseLaneInput)
     throw new Error(`invalid lane gate_status: ${fields.gate_status}`);
   }
   // null → COALESCE preserves prior value; undefined also maps to null (same semantic)
-  const metadata_json_value = fields.metadata == null ? null : JSON.stringify(fields.metadata);
+  const metadata_json_value =
+    fields.metadata === null || fields.metadata === undefined
+      ? null
+      : JSON.stringify(fields.metadata);
   const changes = (
     db.query(
       `UPDATE lane_ledger
@@ -263,7 +268,7 @@ export function getClosedLaneRoundCountForHandoffLineage(
 
 export function recentLanes(db: Database, filter: RecentLaneFilter, limit = 50): LaneRow[] {
   const where: string[] = [];
-  const args: Array<string | number> = [];
+  const args: (string | number)[] = [];
   if (filter.gate_status) {
     where.push("gate_status = ?");
     args.push(filter.gate_status);

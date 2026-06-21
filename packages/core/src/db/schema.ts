@@ -5,17 +5,7 @@ export const SCHEMA_VERSION = 37;
 const LANE_LEDGER_OPEN_DEDUPE_SCHEMA_META_KEY = "lane_ledger_open_dedupe_schema_version";
 const T0_FTS_EXTERNAL_CONTENT_SCHEMA_META_KEY = "t0_fts_external_content_v1";
 
-export interface ReleaseT1RollupClaimsOpts {
-  terminalOutcomes?: readonly string[];
-  staleBeforeMs?: number;
-  cycleIds?: readonly string[];
-}
-
-export function applySchema(db: Database, opts: { embeddingDim?: number } = {}): void {
-  const dim = opts.embeddingDim ?? 384;
-  db.exec("BEGIN");
-  try {
-    db.exec(`
+const SCHEMA_DDL_BLOCK_01 = `
       CREATE TABLE IF NOT EXISTS db_meta (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -403,9 +393,8 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
       CREATE INDEX IF NOT EXISTS idx_worker_tokens_worker
         ON worker_tokens(worker_id) WHERE revoked_at IS NULL;
 
-    `);
-
-    db.exec(`
+`;
+const SCHEMA_DDL_BLOCK_02 = `
       CREATE TABLE IF NOT EXISTS plans (
         plan_id TEXT PRIMARY KEY,
         file_path TEXT NOT NULL,
@@ -426,9 +415,8 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
 
       CREATE INDEX IF NOT EXISTS plan_tasks_status ON plan_tasks(plan_id, status);
       CREATE INDEX IF NOT EXISTS plan_tasks_task_id_in_board ON plan_tasks(task_id_in_board);
-    `);
-
-    db.exec(`
+`;
+const SCHEMA_DDL_BLOCK_03 = `
       CREATE TABLE IF NOT EXISTS claude_code_sessions (
         session_id        TEXT PRIMARY KEY,
         session_start_at  TEXT NOT NULL,
@@ -437,9 +425,8 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
       );
       CREATE INDEX IF NOT EXISTS claude_code_sessions_by_last_seen
         ON claude_code_sessions(last_seen_at DESC);
-    `);
-
-    db.exec(`
+`;
+const SCHEMA_DDL_BLOCK_04 = `
       CREATE TABLE IF NOT EXISTS workflow_stats (
         workflow_name          TEXT PRIMARY KEY,
         samples                INTEGER NOT NULL DEFAULT 0,
@@ -455,11 +442,8 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
         refresh_runs           INTEGER NOT NULL DEFAULT 0,
         intentional_runs       INTEGER NOT NULL DEFAULT 0
       );
-    `);
-
-    migrateT0FtsToExternalContentOnce(db);
-
-    db.exec(`
+`;
+const SCHEMA_DDL_BLOCK_05 = `
       CREATE TABLE IF NOT EXISTS t0_file_refs (
         event_id   TEXT NOT NULL,
         file_path  TEXT NOT NULL,
@@ -481,11 +465,8 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
         INSERT OR IGNORE INTO t0_file_refs(event_id, file_path)
         VALUES (new.event_id, json_extract(new.payload_json, '$.tool_input.file_path'));
       END;
-    `);
-
-    // t1_fts — keyword index over per-session prompt + summary excerpts so
-    // "what was I asking about ACP" becomes a deterministic query.
-    db.exec(`
+`;
+const SCHEMA_DDL_BLOCK_06 = `
       CREATE VIRTUAL TABLE IF NOT EXISTS t1_fts USING fts5(
         first_prompt_excerpt,
         last_response_excerpt,
@@ -507,15 +488,8 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
         INSERT INTO t1_fts (rowid, first_prompt_excerpt, last_response_excerpt, tool_calls_summary)
         VALUES (new.rowid, new.first_prompt_excerpt, new.last_response_excerpt, new.tool_calls_summary);
       END;
-    `);
-    const taskColumns = db.query<{ name: string }, []>("PRAGMA table_info(tasks)").all();
-    if (!taskColumns.some((column) => column.name === "project_id")) {
-      db.exec("ALTER TABLE tasks ADD COLUMN project_id TEXT");
-    }
-
-    // t2_fts — multi-field FTS over the title/body and the new typed metadata.
-    // Query like FTS5: t2_fts MATCH 'title:codex OR concepts:acp'
-    db.exec(`
+`;
+const SCHEMA_DDL_BLOCK_07 = `
       CREATE VIRTUAL TABLE IF NOT EXISTS t2_fts USING fts5(
         title,
         body,
@@ -539,191 +513,12 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
         INSERT INTO t2_fts (rowid, title, body, obs_type, concepts, file_paths)
         VALUES (new.rowid, new.title, new.body, new.obs_type, new.concepts, new.file_paths);
       END;
-    `);
-
-    // Backfill the contentless FTS5 indexes for rows that existed before the
-    // virtual tables were created. On a fresh DB both tables are empty so the
-    // rebuild is a no-op; on an upgraded DB it indexes existing rows so the
-    // delete-marker triggers in t1_fts/t2_fts have something to delete.
-    db.exec(`
+`;
+const SCHEMA_DDL_BLOCK_08 = `
       INSERT INTO t1_fts(t1_fts) VALUES('rebuild');
       INSERT INTO t2_fts(t2_fts) VALUES('rebuild');
-    `);
-
-    db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS t1_vec USING vec0(embedding FLOAT[${dim}])`);
-    db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS t2_vec USING vec0(embedding FLOAT[${dim}])`);
-
-    // Additive migration: columns added after the original handoffs table
-    // landed. CREATE TABLE IF NOT EXISTS is a no-op on existing databases, so
-    // these run as ALTER TABLE on every apply. SQLite raises "duplicate column"
-    // when the column is already present; swallow that and continue.
-    addColumnIfMissing(db, "handoffs", "chain_max_hops", "INTEGER");
-    addColumnIfMissing(db, "handoffs", "chain_trust_mode", "TEXT");
-    addColumnIfMissing(db, "handoffs", "chain_task_type", "TEXT");
-    addColumnIfMissing(db, "handoffs", "dispatch_kind", "TEXT");
-    addColumnIfMissing(db, "handoffs", "long_lived_agent_id", "TEXT");
-    addColumnIfMissing(db, "handoffs", "long_lived_tick_id", "TEXT");
-    addColumnIfMissing(db, "handoffs", "use_worktree", "INTEGER");
-    addColumnIfMissing(db, "handoffs", "isolated_install", "INTEGER");
-    addColumnIfMissing(db, "handoffs", "open_pr_on_review", "INTEGER");
-    addColumnIfMissing(db, "handoffs", "branch_base", "TEXT");
-    addColumnIfMissing(db, "handoffs", "resolution_reason", "TEXT");
-    addColumnIfMissing(db, "handoffs", "error_message", "TEXT");
-    addColumnIfMissing(db, "handoffs", "cancel_requested_at", "TEXT");
-    addColumnIfMissing(db, "handoffs", "worker_id", "TEXT");
-    addColumnIfMissing(db, "handoffs", "parent_handoff_id", "TEXT");
-    addColumnIfMissing(db, "handoffs", "root_handoff_id", "TEXT");
-    addColumnIfMissing(db, "handoffs", "dispatch_attempts", "INTEGER NOT NULL DEFAULT 0");
-    addColumnIfMissing(db, "handoffs", "max_dispatch_attempts", "INTEGER NOT NULL DEFAULT 3");
-    addColumnIfMissing(db, "handoffs", "last_dispatch_started_at", "TEXT");
-    addColumnIfMissing(db, "handoffs", "workflow_run_id", "TEXT");
-    db.exec(
-      `CREATE INDEX IF NOT EXISTS handoffs_status_worker_ts ON handoffs(status, worker_id, ts);`,
-    );
-    db.exec(
-      `CREATE INDEX IF NOT EXISTS idx_handoffs_root_status ON handoffs(status, root_handoff_id);`,
-    );
-    db.exec(
-      `CREATE INDEX IF NOT EXISTS handoffs_root_by_conv ON handoffs(conversation_id, ts) WHERE parent_handoff_id IS NULL;`,
-    );
-    backfillHandoffRoots(db);
-    dedupeOpenLaneLedgerRowsOnce(db);
-    db.exec(
-      `CREATE UNIQUE INDEX IF NOT EXISTS lane_ledger_one_open_per_implementer
-       ON lane_ledger(implementer_handoff)
-       WHERE ts_closed IS NULL;`,
-    );
-
-    addColumnIfMissing(db, "tasks", "branch_base", "TEXT");
-    addColumnIfMissing(db, "tasks", "gh_issue_number", "INTEGER");
-    addColumnIfMissing(db, "tasks", "gh_issue_repo", "TEXT");
-    addColumnIfMissing(db, "tasks", "gh_last_comment_id", "TEXT");
-    addColumnIfMissing(db, "tasks", "gh_comments_synced_at", "INTEGER");
-    addColumnIfMissing(db, "tasks", "gh_create_status", "TEXT");
-    addColumnIfMissing(db, "tasks", "gh_create_error", "TEXT");
-    db.exec(
-      `CREATE INDEX IF NOT EXISTS tasks_by_gh ON tasks(gh_issue_repo, gh_issue_number) WHERE gh_issue_number IS NOT NULL;`,
-    );
-    addColumnIfMissing(db, "task_leases", "original_ttl_ms", "INTEGER");
-
-    // Additive migration for agent reliability evidence captured after the
-    // original performance ledger shipped.
-    addColumnIfMissing(db, "agent_performance", "reliability_status", "TEXT");
-    addColumnIfMissing(db, "agent_performance", "failure_class", "TEXT");
-    addColumnIfMissing(db, "agent_performance", "artifact_present", "TEXT");
-    addColumnIfMissing(db, "agent_performance", "verification_present", "TEXT");
-    addColumnIfMissing(db, "agent_performance", "maestro_takeover_required", "TEXT");
-    addColumnIfMissing(db, "agent_performance", "empty_response", "TEXT");
-    addColumnIfMissing(db, "agent_performance", "worktree_changed", "TEXT");
-    addColumnIfMissing(db, "agent_performance", "reconcile_status", "TEXT");
-    addColumnIfMissing(db, "agent_performance", "environment_failure", "TEXT");
-    addColumnIfMissing(db, "agent_performance", "trust_score", "REAL");
-    addColumnIfMissing(db, "agent_performance", "agent_kind", "TEXT");
-    addColumnIfMissing(db, "agent_performance", "gate_outcome", "TEXT");
-    addColumnIfMissing(db, "agent_performance", "exec_ms", "INTEGER");
-    addColumnIfMissing(db, "agent_performance", "framework_overhead_ms", "INTEGER");
-
-    addColumnIfMissing(db, "workflow_stats", "refresh_runs", "INTEGER NOT NULL DEFAULT 0");
-    addColumnIfMissing(db, "workflow_stats", "intentional_runs", "INTEGER NOT NULL DEFAULT 0");
-    addColumnIfMissing(db, "workflow_runs", "result_spill_path", "TEXT");
-    addColumnIfMissing(db, "workflow_runs", "error_spill_path", "TEXT");
-    addColumnIfMissing(db, "workflow_runs", "expires_at", "INTEGER NOT NULL DEFAULT 0");
-    addColumnIfMissing(db, "workflow_runs", "result_bytes", "INTEGER NOT NULL DEFAULT 0");
-    addColumnIfMissing(db, "workflow_runs", "error_bytes", "INTEGER NOT NULL DEFAULT 0");
-    db.exec(
-      `UPDATE workflow_runs
-          SET result_bytes = length(CAST(result_json AS BLOB))
-        WHERE result_json IS NOT NULL
-          AND result_bytes = 0;`,
-    );
-    db.exec(
-      `UPDATE workflow_runs
-          SET error_bytes = length(CAST(error_json AS BLOB))
-        WHERE error_json IS NOT NULL
-          AND error_bytes = 0;`,
-    );
-    db.exec(
-      `CREATE INDEX IF NOT EXISTS workflow_runs_project_id ON workflow_runs(project_id, status, started_at DESC);`,
-    );
-    db.exec(`CREATE INDEX IF NOT EXISTS workflow_runs_expires_at ON workflow_runs(expires_at);`);
-    ensureNullableMaestroSessionChainHandoffId(db);
-
-    // Origin tagging — categorical session lineage so recall can filter
-    // out dispatched-agent transcripts without brittle deny-list patterns.
-    // Values: 'maestro' | 'dispatch' | 'unknown' | NULL (legacy rows treated as unknown).
-    addColumnIfMissing(db, "t0_events", "origin", "TEXT");
-    addColumnIfMissing(db, "t1_rollups", "origin", "TEXT");
-    addColumnIfMissing(db, "t2_memories", "origin", "TEXT");
-    db.exec(
-      `CREATE INDEX IF NOT EXISTS idx_t2_origin ON t2_memories(origin) WHERE origin IS NOT NULL`,
-    );
-
-    // Additive migration for t1_rollups
-    addColumnIfMissing(db, "t1_rollups", "t2_promoted_at", "TEXT");
-    addColumnIfMissing(db, "t1_rollups", "failed_promotion_attempts", "INTEGER NOT NULL DEFAULT 0");
-    addColumnIfMissing(db, "t1_rollups", "promotion_filtered_at", "TEXT");
-    const legacyPromotionSkippedColumn = db
-      .query<
-        { count: number },
-        [string, string]
-      >(`SELECT COUNT(*) as count FROM pragma_table_info(?) WHERE name=?`)
-      .get("t1_rollups", "promotion_skipped_at");
-    if (legacyPromotionSkippedColumn && legacyPromotionSkippedColumn.count > 0) {
-      db.exec(`
-        UPDATE t1_rollups
-           SET promotion_filtered_at = promotion_skipped_at
-         WHERE promotion_filtered_at IS NULL
-           AND promotion_skipped_at IS NOT NULL;
-      `);
-    }
-
-    // Index for t2 promotion polling
-    db.exec(
-      `CREATE INDEX IF NOT EXISTS t1_unpromoted_idx ON t1_rollups(ended_at) WHERE t2_promoted_at IS NULL`,
-    );
-
-    // Additive migration for t2_memories — promote opaque metadata to first-class
-    // columns so recall can filter without parsing JSON.
-    addColumnIfMissing(db, "t2_memories", "slug", "TEXT");
-    addColumnIfMissing(db, "t2_memories", "hook", "TEXT");
-    addColumnIfMissing(db, "t2_memories", "sub_kind", "TEXT");
-    addColumnIfMissing(db, "t2_memories", "cc_kind", "TEXT");
-    addColumnIfMissing(db, "t2_memories", "obs_type", "TEXT");
-    addColumnIfMissing(db, "t2_memories", "concepts", "TEXT"); // JSON array, FTS-indexed below
-    addColumnIfMissing(db, "t2_memories", "severity", "TEXT"); // 'info' | 'warn' | 'error' | NULL
-    addColumnIfMissing(db, "t2_memories", "file_paths", "TEXT"); // JSON array of repo-relative paths
-    addColumnIfMissing(db, "t2_memories", "last_verified_at", "TEXT");
-    addColumnIfMissing(db, "t2_memories", "last_verified_by", "TEXT");
-    addColumnIfMissing(db, "t2_memories", "last_verified_actor", "TEXT");
-    addColumnIfMissing(db, "t2_memories", "last_verified_reason", "TEXT");
-    addColumnIfMissing(db, "t2_memories", "last_verified_session_id", "TEXT");
-    addColumnIfMissing(db, "t2_memories", "why", "TEXT");
-    addColumnIfMissing(db, "t2_memories", "source_quote", "TEXT");
-    // SQLite ALTER TABLE ADD COLUMN does not support non-constant/expression
-    // defaults; legacy rows are backfilled from created_at and new writes
-    // must set learned_at explicitly.
-    addColumnIfMissing(db, "t2_memories", "learned_at", "TEXT");
-    addColumnIfMissing(db, "t2_memories", "durability", "TEXT");
-    addColumnIfMissing(db, "t2_memories", "depth", "INTEGER");
-    addColumnIfMissing(db, "t2_memories", "is_episodic", "INTEGER NOT NULL DEFAULT 0");
-    addColumnIfMissing(db, "t2_memories", "decay_score", "REAL");
-    addColumnIfMissing(db, "t2_memories", "decay_scored_at", "TEXT");
-    addColumnIfMissing(db, "t2_memories", "archived_at", "TEXT");
-    addColumnIfMissing(db, "t2_memory_verification_events", "basis", "TEXT");
-    addColumnIfMissing(db, "t2_memory_verification_events", "basis_type", "TEXT");
-    addColumnIfMissing(db, "t2_memory_verification_events", "basis_detail", "TEXT");
-    addColumnIfMissing(db, "t2_memory_verification_events", "authorized_by_handoff", "TEXT");
-    db.exec(
-      `CREATE INDEX IF NOT EXISTS idx_t2_obs_type ON t2_memories(obs_type) WHERE obs_type IS NOT NULL`,
-    );
-    db.exec(
-      `CREATE INDEX IF NOT EXISTS idx_t2_severity ON t2_memories(severity) WHERE severity IS NOT NULL`,
-    );
-    db.exec(`CREATE INDEX IF NOT EXISTS t2_memory_verification_events_basis_type
-      ON t2_memory_verification_events(basis_type)
-      WHERE basis_type IS NOT NULL`);
-
-    db.exec(`
+`;
+const SCHEMA_DDL_BLOCK_09 = `
       CREATE TABLE IF NOT EXISTS corpora (
         corpus_id    TEXT PRIMARY KEY,
         name         TEXT NOT NULL UNIQUE,
@@ -861,23 +656,8 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
         enqueued_by       TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_memory_efficacy_jobs_status ON memory_efficacy_jobs(status, ts_enqueued);
-    `);
-
-    // Migrations on long_lived_agents must run AFTER its CREATE TABLE above —
-    // the table lives inside this second db.exec block, so addColumnIfMissing
-    // calls placed in the earlier migration cluster (~line 515) would ALTER a
-    // table that does not yet exist on a fresh DB.
-    addColumnIfMissing(db, "long_lived_agents", "snapshot_tool", "TEXT");
-    addColumnIfMissing(db, "long_lived_agents", "require_snapshot", "INTEGER NOT NULL DEFAULT 0");
-    addColumnIfMissing(db, "long_lived_agents", "project_id", "TEXT");
-    addColumnIfMissing(db, "long_lived_pending_actions", "meta_json", "TEXT");
-    addColumnIfMissing(db, "memory_efficacy_jobs", "claimed_at", "TEXT");
-    addColumnIfMissing(db, "memory_efficacy_jobs", "claimed_by", "TEXT");
-    addColumnIfMissing(db, "memory_efficacy_jobs", "heartbeat_at", "TEXT");
-    addColumnIfMissing(db, "memory_efficacy_jobs", "lease_expires_at", "TEXT");
-    db.exec(`UPDATE memory_efficacy_jobs SET status = 'queued' WHERE status = 'pending'`);
-
-    db.exec(`
+`;
+const SCHEMA_DDL_BLOCK_10 = `
       CREATE TABLE IF NOT EXISTS dream_cycles (
         cycle_id              TEXT PRIMARY KEY,
         started_at            INTEGER NOT NULL,
@@ -1044,153 +824,19 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
         expires_at TEXT NOT NULL,
         UNIQUE(scope, value, mode)
       );
-    `);
-
-    db.exec(
-      `CREATE INDEX IF NOT EXISTS idx_routing_bias_scope_expiry ON routing_bias(scope, expires_at)`,
-    );
-
-    addColumnIfMissing(db, "notification_outbox", "attempt_count", "INTEGER NOT NULL DEFAULT 0");
-    addColumnIfMissing(db, "notification_outbox", "deliver_after", "INTEGER");
-
-    addColumnIfMissing(db, "dream_research_cache", "is_negative", "INTEGER NOT NULL DEFAULT 0");
-    migrateDreamQueryRewritesToModelScopedKeys(db);
-    db.exec(
-      `CREATE INDEX IF NOT EXISTS idx_dream_research_cache_negative ON dream_research_cache(cache_key) WHERE is_negative = 1`,
-    );
-
-    addColumnIfMissing(db, "t1_rollups", "claimed_at", "INTEGER");
-    addColumnIfMissing(db, "t1_rollups", "claimed_by_cycle", "TEXT");
-    addColumnIfMissing(db, "t1_rollups", "embedding_model_version", "TEXT");
-    addColumnIfMissing(db, "t2_memories", "embedding_model_version", "TEXT");
-    addColumnIfMissing(db, "t2_memories", "retired_at", "INTEGER");
-    // Phase 1b: replace the original retired-filtered partial index with a UNIQUE
-    // partial index. Slug must be globally unique among populated rows (including
-    // retired) so re-imports UPSERT against a stable target and don't conflict
-    // with previously-retired entries of the same slug.
-    db.exec(`DROP INDEX IF EXISTS idx_t2_memories_slug`);
-    db.exec(`DROP INDEX IF EXISTS idx_t2_slug`);
-    addColumnIfMissing(db, "memory_links", "raw_slug", "TEXT");
-    db.exec(
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_t2_slug ON t2_memories(COALESCE(project_id, '__none__'), slug) WHERE slug IS NOT NULL`,
-    );
-    db.exec(`
+`;
+const SCHEMA_DDL_BLOCK_11 = `
       CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_links_unresolved
       ON memory_links(src_id, link_type, raw_slug)
       WHERE dst_id IS NULL AND raw_slug IS NOT NULL
-    `);
-
-    // Phase 1c: relax memory_links.dst_id NOT NULL for legacy DBs. The DDL above
-    // already creates new DBs with nullable dst_id (needed for wiki_unresolved
-    // backlinks), but DBs created before Phase 1 still have NOT NULL — SQLite
-    // doesn't support ALTER COLUMN, so we recreate the table. Nothing references
-    // memory_links by FK, so the rename is safe inside the existing transaction.
-    const dstIdNotNull = db
-      .query<
-        { notnull: number },
-        []
-      >(`SELECT "notnull" FROM pragma_table_info('memory_links') WHERE name='dst_id'`)
-      .get();
-    if (dstIdNotNull && dstIdNotNull.notnull === 1) {
-      db.exec(`
-        CREATE TABLE memory_links_new (
-          link_id          TEXT PRIMARY KEY,
-          src_id           TEXT NOT NULL,
-          dst_id           TEXT,
-          link_type        TEXT NOT NULL,
-          weight           REAL NOT NULL,
-          minted_at        INTEGER NOT NULL,
-          minted_by_cycle  TEXT NOT NULL,
-          retired_at       INTEGER,
-          metadata_json    TEXT NOT NULL DEFAULT '{}',
-          raw_slug         TEXT,
-          FOREIGN KEY (src_id)          REFERENCES t2_memories(memory_id),
-          FOREIGN KEY (dst_id)          REFERENCES t2_memories(memory_id),
-          FOREIGN KEY (minted_by_cycle) REFERENCES dream_cycles(cycle_id),
-          UNIQUE(src_id, dst_id, link_type)
-        )
-      `);
-      db.exec(`INSERT INTO memory_links_new SELECT * FROM memory_links`);
-      db.exec(`DROP TABLE memory_links`);
-      db.exec(`ALTER TABLE memory_links_new RENAME TO memory_links`);
-      db.exec(
-        `CREATE INDEX IF NOT EXISTS idx_memory_links_src ON memory_links(src_id) WHERE retired_at IS NULL`,
-      );
-      db.exec(
-        `CREATE INDEX IF NOT EXISTS idx_memory_links_dst ON memory_links(dst_id) WHERE retired_at IS NULL`,
-      );
-      db.exec(`
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_links_unresolved
-        ON memory_links(src_id, link_type, raw_slug)
-        WHERE dst_id IS NULL AND raw_slug IS NOT NULL
-      `);
-    }
-
-    // F16: normalize legacy mixed-case raw slugs so project-scoped link
-    // resolution remains stable with the wiki-link pattern's case sensitivity.
-    db.exec(`
+`;
+const SCHEMA_DDL_BLOCK_12 = `
       UPDATE memory_links
       SET raw_slug = lower(raw_slug)
       WHERE raw_slug IS NOT NULL
         AND raw_slug != lower(raw_slug)
-    `);
-
-    db.exec("COMMIT");
-  } catch (err) {
-    db.exec("ROLLBACK");
-    throw err;
-  }
-}
-
-function createT0FtsSrcView(db: Database): void {
-  db.exec(`
-    CREATE VIEW IF NOT EXISTS t0_fts_src AS
-      SELECT t0_events.rowid AS rowid,
-             CASE
-               WHEN json_valid(payload_json) THEN coalesce(
-                 json_extract(payload_json, '$.text'),
-                 json_extract(payload_json, '$.message'),
-                 json_extract(payload_json, '$.prompt'),
-                 json_extract(payload_json, '$.message_excerpt'),
-                 json_extract(payload_json, '$.response[0].text'),
-                 json_extract(payload_json, '$.response'),
-                 json_extract(payload_json, '$.input.text'),
-                 json_extract(payload_json, '$.input.message'),
-                 json_extract(payload_json, '$.input.prompt'),
-                 payload_summary,
-                 ''
-               )
-               ELSE coalesce(payload_summary, payload_json, '')
-             END AS content,
-             event_id
-        FROM t0_events;
-  `);
-}
-
-function createT0PayloadImmutabilityTrigger(db: Database): void {
-  db.exec(`
-    CREATE TRIGGER IF NOT EXISTS t0_events_payload_immutable_before_update
-    BEFORE UPDATE OF payload_json, payload_summary ON t0_events
-    BEGIN
-      SELECT RAISE(ABORT, 'payload_json is immutable post-insert; payload_summary is immutable post-insert; external-content t0_fts would corrupt');
-    END;
-  `);
-}
-
-export function migrateT0FtsToExternalContentOnce(db: Database): void {
-  const marker = db
-    .query<{ value: string }, [string]>("SELECT value FROM db_meta WHERE key = ?")
-    .get(T0_FTS_EXTERNAL_CONTENT_SCHEMA_META_KEY);
-  if (marker) {
-    createT0FtsSrcView(db);
-    createT0PayloadImmutabilityTrigger(db);
-    return;
-  }
-
-  db.exec("SAVEPOINT t0_fts_external_content_migration");
-  try {
-    createT0FtsSrcView(db);
-    db.exec(`
+`;
+const SCHEMA_DDL_BLOCK_13 = `
       DROP TRIGGER IF EXISTS t0_fts_insert;
       DROP TRIGGER IF EXISTS t0_fts_delete;
       DROP TRIGGER IF EXISTS t0_events_payload_immutable_before_update;
@@ -1252,24 +898,504 @@ export function migrateT0FtsToExternalContentOnce(db: Database): void {
           old.event_id
         );
       END;
+`;
+
+export interface ReleaseT1RollupClaimsOpts {
+  terminalOutcomes?: readonly string[];
+  staleBeforeMs?: number;
+  cycleIds?: readonly string[];
+}
+
+const HANDOFFS_ADDITIVE_COLUMNS: [string, string][] = [
+  ["chain_max_hops", "INTEGER"],
+  ["chain_trust_mode", "TEXT"],
+  ["chain_task_type", "TEXT"],
+  ["dispatch_kind", "TEXT"],
+  ["long_lived_agent_id", "TEXT"],
+  ["long_lived_tick_id", "TEXT"],
+  ["use_worktree", "INTEGER"],
+  ["isolated_install", "INTEGER"],
+  ["open_pr_on_review", "INTEGER"],
+  ["branch_base", "TEXT"],
+  ["resolution_reason", "TEXT"],
+  ["error_message", "TEXT"],
+  ["cancel_requested_at", "TEXT"],
+  ["worker_id", "TEXT"],
+  ["parent_handoff_id", "TEXT"],
+  ["root_handoff_id", "TEXT"],
+  ["dispatch_attempts", "INTEGER NOT NULL DEFAULT 0"],
+  ["max_dispatch_attempts", "INTEGER NOT NULL DEFAULT 3"],
+  ["last_dispatch_started_at", "TEXT"],
+  ["workflow_run_id", "TEXT"],
+];
+
+const TASKS_ADDITIVE_COLUMNS: [string, string][] = [
+  ["branch_base", "TEXT"],
+  ["gh_issue_number", "INTEGER"],
+  ["gh_issue_repo", "TEXT"],
+  ["gh_last_comment_id", "TEXT"],
+  ["gh_comments_synced_at", "INTEGER"],
+  ["gh_create_status", "TEXT"],
+  ["gh_create_error", "TEXT"],
+];
+
+const AGENT_PERFORMANCE_ADDITIVE_COLUMNS: [string, string][] = [
+  ["reliability_status", "TEXT"],
+  ["failure_class", "TEXT"],
+  ["artifact_present", "TEXT"],
+  ["verification_present", "TEXT"],
+  ["maestro_takeover_required", "TEXT"],
+  ["empty_response", "TEXT"],
+  ["worktree_changed", "TEXT"],
+  ["reconcile_status", "TEXT"],
+  ["environment_failure", "TEXT"],
+  ["trust_score", "REAL"],
+  ["agent_kind", "TEXT"],
+  ["gate_outcome", "TEXT"],
+  ["exec_ms", "INTEGER"],
+  ["framework_overhead_ms", "INTEGER"],
+];
+
+const WORKFLOW_STATS_ADDITIVE_COLUMNS: [string, string][] = [
+  ["refresh_runs", "INTEGER NOT NULL DEFAULT 0"],
+  ["intentional_runs", "INTEGER NOT NULL DEFAULT 0"],
+];
+
+const WORKFLOW_RUNS_ADDITIVE_COLUMNS: [string, string][] = [
+  ["result_spill_path", "TEXT"],
+  ["error_spill_path", "TEXT"],
+  ["expires_at", "INTEGER NOT NULL DEFAULT 0"],
+  ["result_bytes", "INTEGER NOT NULL DEFAULT 0"],
+  ["error_bytes", "INTEGER NOT NULL DEFAULT 0"],
+];
+
+const T2_MEMORIES_ADDITIVE_COLUMNS: [string, string][] = [
+  ["slug", "TEXT"],
+  ["hook", "TEXT"],
+  ["sub_kind", "TEXT"],
+  ["cc_kind", "TEXT"],
+  ["obs_type", "TEXT"],
+  ["concepts", "TEXT"],
+  ["severity", "TEXT"],
+  ["file_paths", "TEXT"],
+  ["last_verified_at", "TEXT"],
+  ["last_verified_by", "TEXT"],
+  ["last_verified_actor", "TEXT"],
+  ["last_verified_reason", "TEXT"],
+  ["last_verified_session_id", "TEXT"],
+  ["why", "TEXT"],
+  ["source_quote", "TEXT"],
+  ["learned_at", "TEXT"],
+  ["durability", "TEXT"],
+  ["depth", "INTEGER"],
+  ["is_episodic", "INTEGER NOT NULL DEFAULT 0"],
+  ["decay_score", "REAL"],
+  ["decay_scored_at", "TEXT"],
+  ["archived_at", "TEXT"],
+];
+
+const T2_MEMORY_VERIFICATION_ADDITIVE_COLUMNS: [string, string][] = [
+  ["basis", "TEXT"],
+  ["basis_type", "TEXT"],
+  ["basis_detail", "TEXT"],
+  ["authorized_by_handoff", "TEXT"],
+];
+
+const LONG_LIVED_ADDITIVE_COLUMNS: [string, [string, string][]][] = [
+  [
+    "long_lived_agents",
+    [
+      ["snapshot_tool", "TEXT"],
+      ["require_snapshot", "INTEGER NOT NULL DEFAULT 0"],
+      ["project_id", "TEXT"],
+    ],
+  ],
+  ["long_lived_pending_actions", [["meta_json", "TEXT"]]],
+  [
+    "memory_efficacy_jobs",
+    [
+      ["claimed_at", "TEXT"],
+      ["claimed_by", "TEXT"],
+      ["heartbeat_at", "TEXT"],
+      ["lease_expires_at", "TEXT"],
+    ],
+  ],
+];
+
+const T1_ROLLUPS_LATE_ADDITIVE_COLUMNS: [string, string][] = [
+  ["claimed_at", "INTEGER"],
+  ["claimed_by_cycle", "TEXT"],
+  ["embedding_model_version", "TEXT"],
+];
+
+function addColumnsIfMissing(db: Database, table: string, cols: [string, string][]): void {
+  for (const [name, type] of cols) {
+    addColumnIfMissing(db, table, name, type);
+  }
+}
+
+function applyHandoffsMigration(db: Database): void {
+  addColumnsIfMissing(db, "handoffs", HANDOFFS_ADDITIVE_COLUMNS);
+  db.run(
+    `CREATE INDEX IF NOT EXISTS handoffs_status_worker_ts ON handoffs(status, worker_id, ts);`,
+  );
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_handoffs_root_status ON handoffs(status, root_handoff_id);`,
+  );
+  db.run(
+    `CREATE INDEX IF NOT EXISTS handoffs_root_by_conv ON handoffs(conversation_id, ts) WHERE parent_handoff_id IS NULL;`,
+  );
+  backfillHandoffRoots(db);
+  dedupeOpenLaneLedgerRowsOnce(db);
+  db.run(
+    `CREATE UNIQUE INDEX IF NOT EXISTS lane_ledger_one_open_per_implementer
+       ON lane_ledger(implementer_handoff)
+       WHERE ts_closed IS NULL;`,
+  );
+}
+
+function applyTasksMigration(db: Database): void {
+  addColumnsIfMissing(db, "tasks", TASKS_ADDITIVE_COLUMNS);
+  db.run(
+    `CREATE INDEX IF NOT EXISTS tasks_by_gh ON tasks(gh_issue_repo, gh_issue_number) WHERE gh_issue_number IS NOT NULL;`,
+  );
+  addColumnIfMissing(db, "task_leases", "original_ttl_ms", "INTEGER");
+}
+
+function applyWorkflowsMigration(db: Database): void {
+  addColumnsIfMissing(db, "workflow_stats", WORKFLOW_STATS_ADDITIVE_COLUMNS);
+  addColumnsIfMissing(db, "workflow_runs", WORKFLOW_RUNS_ADDITIVE_COLUMNS);
+  db.run(
+    `UPDATE workflow_runs
+        SET result_bytes = length(CAST(result_json AS BLOB))
+      WHERE result_json IS NOT NULL
+        AND result_bytes = 0;`,
+  );
+  db.run(
+    `UPDATE workflow_runs
+        SET error_bytes = length(CAST(error_json AS BLOB))
+      WHERE error_json IS NOT NULL
+        AND error_bytes = 0;`,
+  );
+  db.run(
+    `CREATE INDEX IF NOT EXISTS workflow_runs_project_id ON workflow_runs(project_id, status, started_at DESC);`,
+  );
+  db.run(`CREATE INDEX IF NOT EXISTS workflow_runs_expires_at ON workflow_runs(expires_at);`);
+  ensureNullableMaestroSessionChainHandoffId(db);
+}
+
+function applyOriginTaggingMigration(db: Database): void {
+  addColumnIfMissing(db, "t0_events", "origin", "TEXT");
+  addColumnIfMissing(db, "t1_rollups", "origin", "TEXT");
+  addColumnIfMissing(db, "t2_memories", "origin", "TEXT");
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_t2_origin ON t2_memories(origin) WHERE origin IS NOT NULL`,
+  );
+}
+
+function applyT1RollupsMigration(db: Database): void {
+  addColumnIfMissing(db, "t1_rollups", "t2_promoted_at", "TEXT");
+  addColumnIfMissing(db, "t1_rollups", "failed_promotion_attempts", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "t1_rollups", "promotion_filtered_at", "TEXT");
+  const legacyPromotionSkippedColumn = db
+    .query<
+      { count: number },
+      [string, string]
+    >(`SELECT COUNT(*) as count FROM pragma_table_info(?) WHERE name=?`)
+    .get("t1_rollups", "promotion_skipped_at");
+  if (legacyPromotionSkippedColumn && legacyPromotionSkippedColumn.count > 0) {
+    db.run(`
+      UPDATE t1_rollups
+         SET promotion_filtered_at = promotion_skipped_at
+       WHERE promotion_filtered_at IS NULL
+         AND promotion_skipped_at IS NOT NULL;
     `);
+  }
+  db.run(
+    `CREATE INDEX IF NOT EXISTS t1_unpromoted_idx ON t1_rollups(ended_at) WHERE t2_promoted_at IS NULL`,
+  );
+}
+
+function applyT2MemoriesMigration(db: Database): void {
+  addColumnsIfMissing(db, "t2_memories", T2_MEMORIES_ADDITIVE_COLUMNS);
+  addColumnsIfMissing(db, "t2_memory_verification_events", T2_MEMORY_VERIFICATION_ADDITIVE_COLUMNS);
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_t2_obs_type ON t2_memories(obs_type) WHERE obs_type IS NOT NULL`,
+  );
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_t2_severity ON t2_memories(severity) WHERE severity IS NOT NULL`,
+  );
+  db.run(`CREATE INDEX IF NOT EXISTS t2_memory_verification_events_basis_type
+    ON t2_memory_verification_events(basis_type)
+    WHERE basis_type IS NOT NULL`);
+}
+
+function applyLongLivedMigration(db: Database): void {
+  for (const [table, cols] of LONG_LIVED_ADDITIVE_COLUMNS) {
+    addColumnsIfMissing(db, table, cols);
+  }
+  db.run(`UPDATE memory_efficacy_jobs SET status = 'queued' WHERE status = 'pending'`);
+}
+
+function applyRoutingAndNotificationsMigration(db: Database): void {
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_routing_bias_scope_expiry ON routing_bias(scope, expires_at)`,
+  );
+  addColumnIfMissing(db, "notification_outbox", "attempt_count", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "notification_outbox", "deliver_after", "INTEGER");
+  addColumnIfMissing(db, "dream_research_cache", "is_negative", "INTEGER NOT NULL DEFAULT 0");
+  migrateDreamQueryRewritesToModelScopedKeys(db);
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_dream_research_cache_negative ON dream_research_cache(cache_key) WHERE is_negative = 1`,
+  );
+}
+
+function applyLateMemoryMigration(db: Database): void {
+  addColumnsIfMissing(db, "t1_rollups", T1_ROLLUPS_LATE_ADDITIVE_COLUMNS);
+  addColumnIfMissing(db, "t2_memories", "embedding_model_version", "TEXT");
+  addColumnIfMissing(db, "t2_memories", "retired_at", "INTEGER");
+  db.run(`DROP INDEX IF EXISTS idx_t2_memories_slug`);
+  db.run(`DROP INDEX IF EXISTS idx_t2_slug`);
+  addColumnIfMissing(db, "memory_links", "raw_slug", "TEXT");
+  db.run(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_t2_slug ON t2_memories(COALESCE(project_id, '__none__'), slug) WHERE slug IS NOT NULL`,
+  );
+}
+
+function applyMemoryLinksNullableMigration(db: Database): void {
+  const dstIdNotNull = db
+    .query<
+      { notnull: number },
+      []
+    >(`SELECT "notnull" FROM pragma_table_info('memory_links') WHERE name='dst_id'`)
+    .get();
+  if (dstIdNotNull?.notnull !== 1) return;
+  db.run(`
+    CREATE TABLE memory_links_new (
+      link_id          TEXT PRIMARY KEY,
+      src_id           TEXT NOT NULL,
+      dst_id           TEXT,
+      link_type        TEXT NOT NULL,
+      weight           REAL NOT NULL,
+      minted_at        INTEGER NOT NULL,
+      minted_by_cycle  TEXT NOT NULL,
+      retired_at       INTEGER,
+      metadata_json    TEXT NOT NULL DEFAULT '{}',
+      raw_slug         TEXT,
+      FOREIGN KEY (src_id)          REFERENCES t2_memories(memory_id),
+      FOREIGN KEY (dst_id)          REFERENCES t2_memories(memory_id),
+      FOREIGN KEY (minted_by_cycle) REFERENCES dream_cycles(cycle_id),
+      UNIQUE(src_id, dst_id, link_type)
+    )
+  `);
+  db.run(`INSERT INTO memory_links_new SELECT * FROM memory_links`);
+  db.run(`DROP TABLE memory_links`);
+  db.run(`ALTER TABLE memory_links_new RENAME TO memory_links`);
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_memory_links_src ON memory_links(src_id) WHERE retired_at IS NULL`,
+  );
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_memory_links_dst ON memory_links(dst_id) WHERE retired_at IS NULL`,
+  );
+  db.run(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_links_unresolved
+    ON memory_links(src_id, link_type, raw_slug)
+    WHERE dst_id IS NULL AND raw_slug IS NOT NULL
+  `);
+}
+
+function applyTasksProjectIdColumn(db: Database): void {
+  const taskColumns = db.query<{ name: string }, []>("PRAGMA table_info(tasks)").all();
+  if (!taskColumns.some((column) => column.name === "project_id")) {
+    db.run("ALTER TABLE tasks ADD COLUMN project_id TEXT");
+  }
+}
+
+export function applySchema(db: Database, opts: { embeddingDim?: number } = {}): void {
+  const dim = opts.embeddingDim ?? 384;
+  db.run("BEGIN");
+  try {
+    db.run(SCHEMA_DDL_BLOCK_01);
+    db.run(SCHEMA_DDL_BLOCK_02);
+    db.run(SCHEMA_DDL_BLOCK_03);
+    db.run(SCHEMA_DDL_BLOCK_04);
+    migrateT0FtsToExternalContentOnce(db);
+    db.run(SCHEMA_DDL_BLOCK_05);
+    db.run(SCHEMA_DDL_BLOCK_06);
+    applyTasksProjectIdColumn(db);
+    db.run(SCHEMA_DDL_BLOCK_07);
+    db.run(SCHEMA_DDL_BLOCK_08);
+    db.run(`CREATE VIRTUAL TABLE IF NOT EXISTS t1_vec USING vec0(embedding FLOAT[${String(dim)}])`);
+    db.run(`CREATE VIRTUAL TABLE IF NOT EXISTS t2_vec USING vec0(embedding FLOAT[${String(dim)}])`);
+    applyHandoffsMigration(db);
+    applyTasksMigration(db);
+    addColumnsIfMissing(db, "agent_performance", AGENT_PERFORMANCE_ADDITIVE_COLUMNS);
+    applyWorkflowsMigration(db);
+    applyOriginTaggingMigration(db);
+    applyT1RollupsMigration(db);
+    applyT2MemoriesMigration(db);
+    db.run(SCHEMA_DDL_BLOCK_09);
+    applyLongLivedMigration(db);
+    db.run(SCHEMA_DDL_BLOCK_10);
+    applyRoutingAndNotificationsMigration(db);
+    applyLateMemoryMigration(db);
+    db.run(SCHEMA_DDL_BLOCK_11);
+    applyMemoryLinksNullableMigration(db);
+    db.run(SCHEMA_DDL_BLOCK_12);
+    db.run("COMMIT");
+  } catch (err) {
+    db.run("ROLLBACK");
+    throw err;
+  }
+}
+
+function createT0FtsSrcView(db: Database): void {
+  db.run(`
+    CREATE VIEW IF NOT EXISTS t0_fts_src AS
+      SELECT t0_events.rowid AS rowid,
+             CASE
+               WHEN json_valid(payload_json) THEN coalesce(
+                 json_extract(payload_json, '$.text'),
+                 json_extract(payload_json, '$.message'),
+                 json_extract(payload_json, '$.prompt'),
+                 json_extract(payload_json, '$.message_excerpt'),
+                 json_extract(payload_json, '$.response[0].text'),
+                 json_extract(payload_json, '$.response'),
+                 json_extract(payload_json, '$.input.text'),
+                 json_extract(payload_json, '$.input.message'),
+                 json_extract(payload_json, '$.input.prompt'),
+                 payload_summary,
+                 ''
+               )
+               ELSE coalesce(payload_summary, payload_json, '')
+             END AS content,
+             event_id
+        FROM t0_events;
+  `);
+}
+
+function createT0PayloadImmutabilityTrigger(db: Database): void {
+  db.run(`
+    CREATE TRIGGER IF NOT EXISTS t0_events_payload_immutable_before_update
+    BEFORE UPDATE OF payload_json, payload_summary ON t0_events
+    BEGIN
+      SELECT RAISE(ABORT, 'payload_json is immutable post-insert; payload_summary is immutable post-insert; external-content t0_fts would corrupt');
+    END;
+  `);
+}
+
+export function migrateT0FtsToExternalContentOnce(db: Database): void {
+  const marker = db
+    .query<{ value: string }, [string]>("SELECT value FROM db_meta WHERE key = ?")
+    .get(T0_FTS_EXTERNAL_CONTENT_SCHEMA_META_KEY);
+  if (marker) {
+    createT0FtsSrcView(db);
+    createT0PayloadImmutabilityTrigger(db);
+    return;
+  }
+
+  db.run("SAVEPOINT t0_fts_external_content_migration");
+  try {
+    createT0FtsSrcView(db);
+    db.run(SCHEMA_DDL_BLOCK_13);
     createT0PayloadImmutabilityTrigger(db);
     db.run("INSERT OR REPLACE INTO db_meta(key, value) VALUES(?, ?)", [
       T0_FTS_EXTERNAL_CONTENT_SCHEMA_META_KEY,
       "1",
     ]);
-    db.exec("RELEASE SAVEPOINT t0_fts_external_content_migration");
+    db.run("RELEASE SAVEPOINT t0_fts_external_content_migration");
   } catch (err) {
-    db.exec("ROLLBACK TO SAVEPOINT t0_fts_external_content_migration");
-    db.exec("RELEASE SAVEPOINT t0_fts_external_content_migration");
+    db.run("ROLLBACK TO SAVEPOINT t0_fts_external_content_migration");
+    db.run("RELEASE SAVEPOINT t0_fts_external_content_migration");
     throw err;
+  }
+}
+
+interface HandoffRootRow {
+  handoff_id: string;
+  parent_handoff_id: string | null;
+  root_handoff_id: string | null;
+}
+
+interface RootWalkResult {
+  resolvedRoot: string | null;
+  visited: string[];
+  fallback: "depth" | "orphan" | null;
+}
+
+const HANDOFF_ROOT_MAX_DEPTH = 16;
+
+function walkRootForHandoff(
+  row: HandoffRootRow,
+  parentMap: Map<string, string | null>,
+  rootMap: Map<string, string | null>,
+): RootWalkResult {
+  const visited: string[] = [row.handoff_id];
+  let cursor: string | null = row.parent_handoff_id;
+
+  for (;;) {
+    if (cursor === null) {
+      const last = visited[visited.length - 1];
+      return { resolvedRoot: last ?? row.handoff_id, visited, fallback: null };
+    }
+    const upstream = rootMap.get(cursor) ?? null;
+    if (upstream !== null) {
+      return { resolvedRoot: upstream, visited, fallback: null };
+    }
+    if (!parentMap.has(cursor)) {
+      return { resolvedRoot: null, visited, fallback: "orphan" };
+    }
+    if (visited.length >= HANDOFF_ROOT_MAX_DEPTH) {
+      return { resolvedRoot: null, visited, fallback: "depth" };
+    }
+    visited.push(cursor);
+    cursor = parentMap.get(cursor) ?? null;
+  }
+}
+
+function resolveHandoffRoot(
+  row: HandoffRootRow,
+  parentMap: Map<string, string | null>,
+  rootMap: Map<string, string | null>,
+  updates: [string, string][],
+): void {
+  if ((rootMap.get(row.handoff_id) ?? null) !== null) return;
+
+  if (row.parent_handoff_id === null) {
+    updates.push([row.handoff_id, row.handoff_id]);
+    rootMap.set(row.handoff_id, row.handoff_id);
+    return;
+  }
+
+  const walk = walkRootForHandoff(row, parentMap, rootMap);
+
+  if (walk.fallback === "orphan") {
+    console.warn(`[handoff-root-backfill] orphaned parent fallback: ${row.handoff_id}`);
+    updates.push([row.handoff_id, row.handoff_id]);
+    rootMap.set(row.handoff_id, row.handoff_id);
+    return;
+  }
+  if (walk.fallback === "depth") {
+    console.warn(`[handoff-root-backfill] depth-cap fallback: ${row.handoff_id}`);
+    updates.push([row.handoff_id, row.handoff_id]);
+    rootMap.set(row.handoff_id, row.handoff_id);
+    return;
+  }
+
+  const resolved = walk.resolvedRoot;
+  if (resolved === null) return;
+  for (const id of walk.visited) {
+    if ((rootMap.get(id) ?? null) === null) {
+      updates.push([id, resolved]);
+      rootMap.set(id, resolved);
+    }
   }
 }
 
 function backfillHandoffRoots(db: Database): void {
   const allRows = db
     .query<
-      { handoff_id: string; parent_handoff_id: string | null; root_handoff_id: string | null },
+      HandoffRootRow,
       []
     >(`SELECT handoff_id, parent_handoff_id, root_handoff_id FROM handoffs`)
     .all();
@@ -1281,67 +1407,12 @@ function backfillHandoffRoots(db: Database): void {
     rootMap.set(r.handoff_id, r.root_handoff_id);
   }
 
-  const needs = allRows.filter((r) => r.root_handoff_id == null);
+  const needs = allRows.filter((r) => r.root_handoff_id === null);
   if (needs.length === 0) return;
 
-  const MAX_DEPTH = 16;
-  const updates: Array<[string, string]> = [];
-
+  const updates: [string, string][] = [];
   for (const row of needs) {
-    if (rootMap.get(row.handoff_id) != null) continue;
-
-    if (row.parent_handoff_id == null) {
-      updates.push([row.handoff_id, row.handoff_id]);
-      rootMap.set(row.handoff_id, row.handoff_id);
-      continue;
-    }
-
-    const visited: string[] = [row.handoff_id];
-    let cursor: string | null = row.parent_handoff_id;
-    let resolvedRoot: string | null = null;
-    let fallback: "depth" | "orphan" | null = null;
-
-    while (true) {
-      if (cursor == null) {
-        resolvedRoot = visited[visited.length - 1]!;
-        break;
-      }
-      const upstream = rootMap.get(cursor);
-      if (upstream != null) {
-        resolvedRoot = upstream;
-        break;
-      }
-      if (!parentMap.has(cursor)) {
-        fallback = "orphan";
-        break;
-      }
-      if (visited.length >= MAX_DEPTH) {
-        fallback = "depth";
-        break;
-      }
-      visited.push(cursor);
-      cursor = parentMap.get(cursor) ?? null;
-    }
-
-    if (fallback === "orphan") {
-      console.warn("[handoff-root-backfill] orphaned parent fallback: " + row.handoff_id);
-      updates.push([row.handoff_id, row.handoff_id]);
-      rootMap.set(row.handoff_id, row.handoff_id);
-      continue;
-    }
-    if (fallback === "depth") {
-      console.warn("[handoff-root-backfill] depth-cap fallback: " + row.handoff_id);
-      updates.push([row.handoff_id, row.handoff_id]);
-      rootMap.set(row.handoff_id, row.handoff_id);
-      continue;
-    }
-
-    for (const id of visited) {
-      if (rootMap.get(id) == null) {
-        updates.push([id, resolvedRoot!]);
-        rootMap.set(id, resolvedRoot!);
-      }
-    }
+    resolveHandoffRoot(row, parentMap, rootMap, updates);
   }
 
   const stmt = db.prepare(`UPDATE handoffs SET root_handoff_id = ? WHERE handoff_id = ?`);
@@ -1413,7 +1484,7 @@ export function addColumnIfMissing(db: Database, table: string, name: string, ty
     .get(table, name);
   if (exists && exists.count > 0) return;
   try {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+    db.run(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (!message.includes("duplicate column name")) {
@@ -1434,7 +1505,7 @@ function migrateDreamQueryRewritesToModelScopedKeys(db: Database): void {
     .query<{ name: string; unique: number }, []>(`PRAGMA index_list('dream_query_rewrites')`)
     .all();
   const hasModelScopedUnique = uniqueIndexes.some((index) => {
-    if (index.name == null || index.name === "sqlite_autoindex_dream_query_rewrites_1") {
+    if (index.name === "sqlite_autoindex_dream_query_rewrites_1") {
       return false;
     }
     if (index.unique !== 1) {
@@ -1463,9 +1534,9 @@ function migrateDreamQueryRewritesToModelScopedKeys(db: Database): void {
       ? "skip_reason"
       : "NULL";
 
-  db.exec("PRAGMA foreign_keys = OFF");
-  db.exec(`ALTER TABLE dream_query_rewrites RENAME TO dream_query_rewrites_v27`);
-  db.exec(`
+  db.run("PRAGMA foreign_keys = OFF");
+  db.run(`ALTER TABLE dream_query_rewrites RENAME TO dream_query_rewrites_v27`);
+  db.run(`
     CREATE TABLE dream_query_rewrites (
       id                    INTEGER PRIMARY KEY AUTOINCREMENT,
       t2_memory_id          TEXT NOT NULL,
@@ -1482,7 +1553,7 @@ function migrateDreamQueryRewritesToModelScopedKeys(db: Database): void {
       FOREIGN KEY (t2_memory_id) REFERENCES t2_memories(memory_id) ON DELETE CASCADE
     )
   `);
-  db.exec(`INSERT INTO dream_query_rewrites(
+  db.run(`INSERT INTO dream_query_rewrites(
     t2_memory_id, memory_updated_at_ms, verdict_kind, query, reason, model, expires_at, created_at
   )
   SELECT
@@ -1498,11 +1569,11 @@ function migrateDreamQueryRewritesToModelScopedKeys(db: Database): void {
   WHERE (verdict_kind != 'query' OR query IS NOT NULL)
     AND (verdict_kind != 'skip' OR ${reasonSource} IS NOT NULL)
   `);
-  db.exec(`DROP TABLE dream_query_rewrites_v27`);
-  db.exec(`DROP INDEX IF EXISTS idx_dream_query_rewrites_t2_memory_id`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_dream_query_rewrites_t2_memory_id
+  db.run(`DROP TABLE dream_query_rewrites_v27`);
+  db.run(`DROP INDEX IF EXISTS idx_dream_query_rewrites_t2_memory_id`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_dream_query_rewrites_t2_memory_id
     ON dream_query_rewrites(t2_memory_id)`);
-  db.exec("PRAGMA foreign_keys = ON");
+  db.run("PRAGMA foreign_keys = ON");
 }
 
 export function runStartupZombieSweep(db: Database): void {
@@ -1515,7 +1586,7 @@ export function runStartupZombieSweep(db: Database): void {
 
 export function releaseT1RollupClaims(db: Database, opts: ReleaseT1RollupClaimsOpts): number {
   const clauses: string[] = [];
-  const params: Array<string | number> = [];
+  const params: (string | number)[] = [];
 
   const outcomes = (opts.terminalOutcomes ?? []).filter((outcome) => outcome.trim().length > 0);
   if (outcomes.length > 0) {
@@ -1562,8 +1633,8 @@ function ensureNullableMaestroSessionChainHandoffId(db: Database): void {
     return;
   }
 
-  db.exec(`ALTER TABLE maestro_sessions RENAME TO maestro_sessions__legacy_notnull_chain`);
-  db.exec(`
+  db.run(`ALTER TABLE maestro_sessions RENAME TO maestro_sessions__legacy_notnull_chain`);
+  db.run(`
     CREATE TABLE maestro_sessions (
       task_id TEXT PRIMARY KEY,
       chain_handoff_id TEXT,
@@ -1580,7 +1651,7 @@ function ensureNullableMaestroSessionChainHandoffId(db: Database): void {
       FOREIGN KEY(task_id) REFERENCES tasks(id)
     );
   `);
-  db.exec(`
+  db.run(`
     INSERT INTO maestro_sessions (
       task_id, chain_handoff_id, agent_id, started_at,
       wall_clock_budget_ms, cost_budget_cents, sub_dispatch_budget,
@@ -1594,11 +1665,11 @@ function ensureNullableMaestroSessionChainHandoffId(db: Database): void {
       terminated_at, termination_reason
     FROM maestro_sessions__legacy_notnull_chain;
   `);
-  db.exec(`DROP TABLE maestro_sessions__legacy_notnull_chain`);
-  db.exec(
+  db.run(`DROP TABLE maestro_sessions__legacy_notnull_chain`);
+  db.run(
     `CREATE INDEX IF NOT EXISTS maestro_sessions_chain_handoff_id ON maestro_sessions(chain_handoff_id);`,
   );
-  db.exec(
+  db.run(
     `CREATE INDEX IF NOT EXISTS maestro_sessions_terminated_at ON maestro_sessions(terminated_at);`,
   );
 }
