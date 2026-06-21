@@ -1,237 +1,239 @@
-import type { DaemonClient } from "../daemon-client.js";
-import { statSync } from "node:fs";
-import { dirname } from "node:path";
-import { ObserveInputShape, observeHandler } from "./observe.js";
-import {
-  TaskDraftListPendingEscalationsInputShape,
-  TaskDraftListPendingInputShape,
-  taskDraftListPendingEscalationsHandler,
-  taskDraftListPendingHandler,
-} from "./task-draft.js";
-import { RecallInputShape, recallHandler } from "./recall.js";
-import { SearchInputShape, searchHandler } from "./search.js";
-import { VerifyInputShape, verifyHandler } from "./verify.js";
-import {
-  MemoryVerifyAuthorizeInputShape,
-  memoryVerifyAuthorizeHandler,
-} from "./memory-verify-authorize.js";
-import { TimelineInputShape, timelineHandler } from "./timeline.js";
-import { GetObservationsInputShape, getObservationsHandler } from "./get-observations.js";
-import { CorpusBuildInputShape, corpusBuildHandler } from "./corpus-build.js";
-import { CorpusQueryInputShape, corpusQueryHandler } from "./corpus-query.js";
-import { CorpusListInputShape, corpusListHandler } from "./corpus-list.js";
-import { MemoryWriteT2InputShape, memoryWriteT2Handler } from "./memory-write-t2.js";
-import { WorkflowListInputShape, workflowListHandler } from "./workflow-list.js";
-import {
-  WorkflowRunInputShape,
-  workflowRunHandler,
-  type WorkflowRunHandlerOpts,
-} from "./workflow-run.js";
-import {
-  WorkflowStatusInputShape,
-  WorkflowWaitInputShape,
-  workflowStatusHandler,
-  workflowWaitHandler,
-} from "./workflow-status.js";
-import { WorkflowSuggestInputShape, workflowSuggestHandler } from "./workflow-suggest.js";
-import { WorkflowHistoryInputShape, workflowHistoryHandler } from "./workflow-history.js";
-import { BrainstormInputShape, brainstormHandler } from "./brainstorm.js";
-import { PlanOpenInputShape, planOpenHandler } from "./plan-open.js";
-import { LaneOpenInputShape, laneOpenHandler } from "./lane-open.js";
-import { LaneCloseInputShape, laneCloseHandler } from "./lane-close.js";
-import { LaneLedgerRecentInputShape, laneLedgerRecentHandler } from "./lane-ledger-recent.js";
-import { RecallStatusInputShape, recallStatusHandler } from "./recall-status.js";
-import {
-  MemoryEfficacyRecentInputShape,
-  memoryEfficacyRecentHandler,
-} from "./memory-efficacy-recent.js";
-import {
-  MemoryVerificationEventsInputShape,
-  memoryVerificationEventsHandler,
-} from "./memory-verification-events.js";
-import { QualityStatusInputShape, qualityStatusHandler } from "./quality-status.js";
-import {
-  MemoryEfficacyRebuildInputShape,
-  memoryEfficacyRebuildHandler,
-} from "./memory-efficacy-rebuild.js";
-import {
-  MemoryEfficacyJobStatusInputShape,
-  memoryEfficacyJobStatusHandler,
-} from "./memory-efficacy-job-status.js";
-import { MemoryEfficacyJobsInputShape, memoryEfficacyJobsHandler } from "./memory-efficacy-jobs.js";
-import { SessionEndInputShape, sessionEndHandler } from "./session-end.js";
-import { CostRecentInputShape, costRecentHandler } from "./cost-recent.js";
-import {
-  COST_QUOTA_STATUS_DESCRIPTION,
-  CostQuotaStatusInputShape,
-  costQuotaStatusHandler,
-} from "./cost-quota-status.js";
-import {
-  SubscriptionPressureStatusInputShape,
-  subscriptionPressureStatusHandler,
-} from "./subscription-pressure-status.js";
-import { RoutingBiasListInputShape, routingBiasListHandler } from "./routing-bias-list.js";
-import { RoutingBiasSetInputShape, routingBiasSetHandler } from "./routing-bias-set.js";
-import { RoutingBiasClearInputShape, routingBiasClearHandler } from "./routing-bias-clear.js";
-import { AgentRankInputShape, agentRankHandler } from "./agent-rank.js";
-import { FleetLatencyInputShape, fleetLatencyHandler } from "./fleet-latency.js";
-import { AgentRecommendInputShape, agentRecommendHandler } from "./agent-recommend.js";
-import { AgentRouteForInputShape, agentRouteForHandler } from "./agent-route-for.js";
-import { PlanStartInputShape, planStartHandler } from "./plan-start.js";
-import { PlanListInputShape, planListHandler } from "./plan-list.js";
-import { PlanStatusInputShape, planStatusHandler } from "./plan-status.js";
-import { PlanCancelInputShape, planCancelHandler } from "./plan-cancel.js";
-import { ListHandoffsInputShape, listHandoffsHandler } from "./handoff-list.js";
-import { ApproveHandoffInputShape, approveHandoffHandler } from "./handoff-approve.js";
-import { HandoffGetInputShape, handoffGetHandler } from "./handoff-get.js";
-import { DispatchAuditInputShape, dispatchAuditHandler } from "./dispatch-audit.js";
-import { DispatchLandInputShape, dispatchLandHandler } from "./dispatch-land.js";
-import { DispatchTimelineInputShape, dispatchTimelineHandler } from "./dispatch-timeline.js";
-import { ChainStatusInputShape, chainStatusHandler } from "./chain-status.js";
-import {
-  ChainStartInputShape,
-  chainStartHandler,
-  type ChainStartHandlerOpts,
-  RegistryUnavailableError,
-} from "./chain-start.js";
-import { ChainStartSimpleInputShape, chainStartSimpleHandler } from "./chain-start-simple.js";
-import { chainStartRefinedHandler } from "./chain-start-refined.js";
-import { ChainHistoryInputShape, chainHistoryHandler } from "./chain-history.js";
-import { ChainGetMessagesInputShape, chainGetMessagesHandler } from "./chain-get-messages.js";
-import { ChainGetResponseInputShape, chainGetResponseHandler } from "./chain-get-response.js";
-import { ChainListAgentsInputShape, chainListAgentsHandler } from "./chain-list-agents.js";
-import { ChainCancelInputShape, chainCancelHandler } from "./chain-cancel.js";
-import { ChainSendMessageInputShape, chainSendMessageHandler } from "./chain-send-message.js";
-import { ChainWaitInputShape, chainWaitHandler } from "./chain-wait.js";
-import { WorktreeListInputShape, worktreeListHandler } from "./worktree-list.js";
-import { WorktreeInspectInputShape, worktreeInspectHandler } from "./worktree-inspect.js";
-import { WorktreeCleanupInputShape, worktreeCleanupHandler } from "./worktree-cleanup.js";
-import { FsGlobInputShape, fsGlobHandler } from "./fs-glob.js";
-import { FsGrepInputShape, fsGrepHandler } from "./fs-grep.js";
-import { FsReadInputShape, fsReadHandler } from "./fs-read.js";
-import { FsWriteInputShape, fsWriteHandler } from "./fs-write.js";
-import { FsEditInputShape, fsEditHandler } from "./fs-edit.js";
-import { FsExecInputShape, fsExecHandler } from "./fs-exec.js";
-import {
-  PermissionListPendingInputShape,
-  permissionListPendingHandler,
-} from "./permission-list-pending.js";
-import { PermissionGetInputShape, permissionGetHandler } from "./permission-get.js";
-import { PermissionApproveInputShape, permissionApproveHandler } from "./permission-approve.js";
-import {
-  DAEMON_RELOAD_CONFIG_DESCRIPTION,
-  DaemonReloadConfigInputShape,
-  daemonReloadConfigHandler,
-} from "./daemon-reload-config.js";
-import { ShellRunInputShape, shellRunHandler } from "./shell-run.js";
-import { ShellCloseInputShape, shellCloseHandler } from "./shell-close.js";
-import { ShellListInputShape, shellListHandler } from "./shell-list.js";
-import { TaskFileInputShape, taskFileHandler } from "./task-file.js";
-import { TaskListInputShape, taskListHandler } from "./task-list.js";
-import { TaskGetInputShape, taskGetHandler } from "./task-get.js";
-import { MaestroSessionGetInputShape, maestroSessionGetHandler } from "./maestro-session-get.js";
-import {
-  MaestroSessionStartInputShape,
-  maestroSessionStartHandler,
-} from "./maestro-session-start.js";
-import {
-  MaestroSessionStartAdhocInputShape,
-  maestroSessionStartAdhocHandler,
-} from "./maestro-session-start-adhoc.js";
-import {
-  MaestroCapabilitiesInputShape,
-  maestroCapabilitiesHandler,
-} from "./maestro-capabilities.js";
-import { TaskNextInputShape, taskNextHandler } from "./task-next.js";
-import { TaskHeartbeatInputShape, taskHeartbeatHandler } from "./task-heartbeat.js";
-import { TaskCompleteInputShape, taskCompleteHandler } from "./task-complete.js";
-import { TaskFailInputShape, taskFailHandler } from "./task-fail.js";
-import { TaskCancelInputShape, taskCancelHandler } from "./task-cancel.js";
 import {
   defaultProjectRegistryPath,
   findProjectIdByCwd,
   loadProjectRegistry,
 } from "@penumbra/core";
+import { statSync } from "node:fs";
+import { dirname } from "node:path";
+
+import type { DaemonClient } from "../daemon-client.js";
+import type { HandleStore } from "../handle-store.js";
+
+import { agentRankHandler, AgentRankInputShape } from "./agent-rank.js";
+import { agentRecommendHandler, AgentRecommendInputShape } from "./agent-recommend.js";
+import { agentRouteForHandler, AgentRouteForInputShape } from "./agent-route-for.js";
+import { brainstormHandler, BrainstormInputShape } from "./brainstorm.js";
+import { chainCancelHandler, ChainCancelInputShape } from "./chain-cancel.js";
+import { chainGetMessagesHandler, ChainGetMessagesInputShape } from "./chain-get-messages.js";
+import { chainGetResponseHandler, ChainGetResponseInputShape } from "./chain-get-response.js";
+import { chainHistoryHandler, ChainHistoryInputShape } from "./chain-history.js";
+import { chainListAgentsHandler, ChainListAgentsInputShape } from "./chain-list-agents.js";
+import { chainSendMessageHandler, ChainSendMessageInputShape } from "./chain-send-message.js";
+import { chainStartRefinedHandler } from "./chain-start-refined.js";
+import { chainStartSimpleHandler, ChainStartSimpleInputShape } from "./chain-start-simple.js";
 import {
-  ReconcilerSweepOrphanPrsInputShape,
-  reconcilerSweepOrphanPrsHandler,
-} from "./reconciler-sweep-orphan-prs.js";
-import { ReconcilerVerdictsInputShape, reconcilerVerdictsHandler } from "./reconciler-verdicts.js";
-import { TaskLinkGhInputShape, taskLinkGhHandler } from "./task-link-gh.js";
-import { TaskCommentGhInputShape, taskCommentGhHandler } from "./task-comment-gh.js";
-import { TaskUnlinkGhInputShape, taskUnlinkGhHandler } from "./task-unlink-gh.js";
-import { TaskSyncGhNowInputShape, taskSyncGhNowHandler } from "./task-sync-gh-now.js";
-import { LongLivedListInputShape, longLivedListHandler } from "./long-lived-list-mcp.js";
-import { LongLivedGetInputShape, longLivedGetHandler } from "./long-lived-get-mcp.js";
-import { LongLivedPauseInputShape, longLivedPauseHandler } from "./long-lived-pause-mcp.js";
-import { LongLivedResumeInputShape, longLivedResumeHandler } from "./long-lived-resume-mcp.js";
-import { LongLivedRetireInputShape, longLivedRetireHandler } from "./long-lived-retire-mcp.js";
-import { LongLivedTickInputShape, longLivedTickHandler } from "./long-lived-tick-mcp.js";
+  chainStartHandler,
+  type ChainStartHandlerOpts,
+  ChainStartInputShape,
+  RegistryUnavailableError,
+} from "./chain-start.js";
+import { chainStatusHandler, ChainStatusInputShape } from "./chain-status.js";
+import { chainWaitHandler, ChainWaitInputShape } from "./chain-wait.js";
+import { corpusBuildHandler, CorpusBuildInputShape } from "./corpus-build.js";
+import { corpusListHandler, CorpusListInputShape } from "./corpus-list.js";
+import { corpusQueryHandler, CorpusQueryInputShape } from "./corpus-query.js";
 import {
-  LongLivedStateGetInputShape,
-  longLivedStateGetHandler,
-} from "./long-lived-state-get-mcp.js";
+  COST_QUOTA_STATUS_DESCRIPTION,
+  costQuotaStatusHandler,
+  CostQuotaStatusInputShape,
+} from "./cost-quota-status.js";
+import { costRecentHandler, CostRecentInputShape } from "./cost-recent.js";
 import {
-  LongLivedStateSetInputShape,
-  longLivedStateSetHandler,
-} from "./long-lived-state-set-mcp.js";
+  DAEMON_RELOAD_CONFIG_DESCRIPTION,
+  daemonReloadConfigHandler,
+  DaemonReloadConfigInputShape,
+} from "./daemon-reload-config.js";
+import { dispatchAuditHandler, DispatchAuditInputShape } from "./dispatch-audit.js";
+import { dispatchLandHandler, DispatchLandInputShape } from "./dispatch-land.js";
+import { dispatchTimelineHandler, DispatchTimelineInputShape } from "./dispatch-timeline.js";
+import { dreamingHealthHandler, DreamingHealthInputShape } from "./dreaming-health.js";
+import { fleetLatencyHandler, FleetLatencyInputShape } from "./fleet-latency.js";
+import { fsEditHandler, FsEditInputShape } from "./fs-edit.js";
+import { fsExecHandler, FsExecInputShape } from "./fs-exec.js";
+import { fsGlobHandler, FsGlobInputShape } from "./fs-glob.js";
+import { fsGrepHandler, FsGrepInputShape } from "./fs-grep.js";
+import { fsReadHandler, FsReadInputShape } from "./fs-read.js";
+import { fsWriteHandler, FsWriteInputShape } from "./fs-write.js";
+import { getObservationsHandler, GetObservationsInputShape } from "./get-observations.js";
+import { approveHandoffHandler, ApproveHandoffInputShape } from "./handoff-approve.js";
+import { handoffGetHandler, HandoffGetInputShape } from "./handoff-get.js";
+import { listHandoffsHandler, ListHandoffsInputShape } from "./handoff-list.js";
+import { laneCloseHandler, LaneCloseInputShape } from "./lane-close.js";
+import { laneLedgerRecentHandler, LaneLedgerRecentInputShape } from "./lane-ledger-recent.js";
+import { laneOpenHandler, LaneOpenInputShape } from "./lane-open.js";
 import {
-  LongLivedPendingActionsInputShape,
+  longLivedApproveActionHandler,
+  LongLivedApproveActionInputShape,
+} from "./long-lived-approve-action-mcp.js";
+import { longLivedAuditHandler, LongLivedAuditInputShape } from "./long-lived-audit-mcp.js";
+import { longLivedGetHandler, LongLivedGetInputShape } from "./long-lived-get-mcp.js";
+import {
+  longLivedInjectGoalHandler,
+  LongLivedInjectGoalInputShape,
+} from "./long-lived-inject-goal-mcp.js";
+import { longLivedListHandler, LongLivedListInputShape } from "./long-lived-list-mcp.js";
+import { longLivedPauseHandler, LongLivedPauseInputShape } from "./long-lived-pause-mcp.js";
+import {
   longLivedPendingActionsHandler,
+  LongLivedPendingActionsInputShape,
 } from "./long-lived-pending-actions-mcp.js";
 import {
-  LongLivedSelfStateGetInputShape,
-  longLivedSelfStateGetHandler,
-} from "./long-lived-self-state-get-mcp.js";
+  longLivedRejectActionHandler,
+  LongLivedRejectActionInputShape,
+} from "./long-lived-reject-action-mcp.js";
+import { longLivedResumeHandler, LongLivedResumeInputShape } from "./long-lived-resume-mcp.js";
+import { longLivedRetireHandler, LongLivedRetireInputShape } from "./long-lived-retire-mcp.js";
 import {
-  LongLivedSelfStateSetInputShape,
-  longLivedSelfStateSetHandler,
-} from "./long-lived-self-state-set-mcp.js";
-import {
-  LongLivedSelfPendingActionsInputShape,
   longLivedSelfPendingActionsHandler,
+  LongLivedSelfPendingActionsInputShape,
 } from "./long-lived-self-pending-actions-mcp.js";
 import {
-  LongLivedApproveActionInputShape,
-  longLivedApproveActionHandler,
-} from "./long-lived-approve-action-mcp.js";
+  longLivedSelfStateGetHandler,
+  LongLivedSelfStateGetInputShape,
+} from "./long-lived-self-state-get-mcp.js";
 import {
-  LongLivedRejectActionInputShape,
-  longLivedRejectActionHandler,
-} from "./long-lived-reject-action-mcp.js";
+  longLivedSelfStateSetHandler,
+  LongLivedSelfStateSetInputShape,
+} from "./long-lived-self-state-set-mcp.js";
 import {
-  LongLivedInjectGoalInputShape,
-  longLivedInjectGoalHandler,
-} from "./long-lived-inject-goal-mcp.js";
-import { LongLivedAuditInputShape, longLivedAuditHandler } from "./long-lived-audit-mcp.js";
-import { LongLivedTicksInputShape, longLivedTicksHandler } from "./long-lived-ticks-mcp.js";
-import { withActingOnEnvelope } from "./with-acting-on.js";
+  longLivedStateGetHandler,
+  LongLivedStateGetInputShape,
+} from "./long-lived-state-get-mcp.js";
 import {
-  MemoryListPendingDreamActionsInputShape,
-  memoryListPendingDreamActionsHandler,
-} from "./memory-list-pending-dream-actions.js";
+  longLivedStateSetHandler,
+  LongLivedStateSetInputShape,
+} from "./long-lived-state-set-mcp.js";
+import { longLivedTickHandler, LongLivedTickInputShape } from "./long-lived-tick-mcp.js";
+import { longLivedTicksHandler, LongLivedTicksInputShape } from "./long-lived-ticks-mcp.js";
 import {
-  MemoryDreamActionRevertInputShape,
-  memoryDreamActionRevertHandler,
-} from "./memory-dream-action-revert.js";
-import { DreamingHealthInputShape, dreamingHealthHandler } from "./dreaming-health.js";
+  maestroCapabilitiesHandler,
+  MaestroCapabilitiesInputShape,
+} from "./maestro-capabilities.js";
+import { maestroSessionGetHandler, MaestroSessionGetInputShape } from "./maestro-session-get.js";
 import {
-  MemoryCuratorPatternsListInputShape,
-  memoryCuratorPatternsListHandler,
-} from "./memory-curator-patterns-list.js";
+  maestroSessionStartAdhocHandler,
+  MaestroSessionStartAdhocInputShape,
+} from "./maestro-session-start-adhoc.js";
 import {
-  MemoryCuratorPatternsAddInputShape,
+  maestroSessionStartHandler,
+  MaestroSessionStartInputShape,
+} from "./maestro-session-start.js";
+import {
   memoryCuratorPatternsAddHandler,
+  MemoryCuratorPatternsAddInputShape,
 } from "./memory-curator-patterns-add.js";
 import {
-  MemoryCuratorPatternsApproveInputShape,
   memoryCuratorPatternsApproveHandler,
+  MemoryCuratorPatternsApproveInputShape,
 } from "./memory-curator-patterns-approve.js";
 import {
-  MemoryCuratorPatternsDisableInputShape,
   memoryCuratorPatternsDisableHandler,
+  MemoryCuratorPatternsDisableInputShape,
 } from "./memory-curator-patterns-disable.js";
-import type { HandleStore } from "../handle-store.js";
+import {
+  memoryCuratorPatternsListHandler,
+  MemoryCuratorPatternsListInputShape,
+} from "./memory-curator-patterns-list.js";
+import {
+  memoryDreamActionRevertHandler,
+  MemoryDreamActionRevertInputShape,
+} from "./memory-dream-action-revert.js";
+import {
+  memoryEfficacyJobStatusHandler,
+  MemoryEfficacyJobStatusInputShape,
+} from "./memory-efficacy-job-status.js";
+import { memoryEfficacyJobsHandler, MemoryEfficacyJobsInputShape } from "./memory-efficacy-jobs.js";
+import {
+  memoryEfficacyRebuildHandler,
+  MemoryEfficacyRebuildInputShape,
+} from "./memory-efficacy-rebuild.js";
+import {
+  memoryEfficacyRecentHandler,
+  MemoryEfficacyRecentInputShape,
+} from "./memory-efficacy-recent.js";
+import {
+  memoryListPendingDreamActionsHandler,
+  MemoryListPendingDreamActionsInputShape,
+} from "./memory-list-pending-dream-actions.js";
+import {
+  memoryVerificationEventsHandler,
+  MemoryVerificationEventsInputShape,
+} from "./memory-verification-events.js";
+import {
+  memoryVerifyAuthorizeHandler,
+  MemoryVerifyAuthorizeInputShape,
+} from "./memory-verify-authorize.js";
+import { memoryWriteT2Handler, MemoryWriteT2InputShape } from "./memory-write-t2.js";
+import { observeHandler, ObserveInputShape } from "./observe.js";
+import { permissionApproveHandler, PermissionApproveInputShape } from "./permission-approve.js";
+import { permissionGetHandler, PermissionGetInputShape } from "./permission-get.js";
+import {
+  permissionListPendingHandler,
+  PermissionListPendingInputShape,
+} from "./permission-list-pending.js";
+import { planCancelHandler, PlanCancelInputShape } from "./plan-cancel.js";
+import { planListHandler, PlanListInputShape } from "./plan-list.js";
+import { planOpenHandler, PlanOpenInputShape } from "./plan-open.js";
+import { planStartHandler, PlanStartInputShape } from "./plan-start.js";
+import { planStatusHandler, PlanStatusInputShape } from "./plan-status.js";
+import { qualityStatusHandler, QualityStatusInputShape } from "./quality-status.js";
+import { recallStatusHandler, RecallStatusInputShape } from "./recall-status.js";
+import { recallHandler, RecallInputShape } from "./recall.js";
+import {
+  reconcilerSweepOrphanPrsHandler,
+  ReconcilerSweepOrphanPrsInputShape,
+} from "./reconciler-sweep-orphan-prs.js";
+import { reconcilerVerdictsHandler, ReconcilerVerdictsInputShape } from "./reconciler-verdicts.js";
+import { routingBiasClearHandler, RoutingBiasClearInputShape } from "./routing-bias-clear.js";
+import { routingBiasListHandler, RoutingBiasListInputShape } from "./routing-bias-list.js";
+import { routingBiasSetHandler, RoutingBiasSetInputShape } from "./routing-bias-set.js";
+import { searchHandler, SearchInputShape } from "./search.js";
+import { sessionEndHandler, SessionEndInputShape } from "./session-end.js";
+import { shellCloseHandler, ShellCloseInputShape } from "./shell-close.js";
+import { shellListHandler, ShellListInputShape } from "./shell-list.js";
+import { shellRunHandler, ShellRunInputShape } from "./shell-run.js";
+import {
+  subscriptionPressureStatusHandler,
+  SubscriptionPressureStatusInputShape,
+} from "./subscription-pressure-status.js";
+import { taskCancelHandler, TaskCancelInputShape } from "./task-cancel.js";
+import { taskCommentGhHandler, TaskCommentGhInputShape } from "./task-comment-gh.js";
+import { taskCompleteHandler, TaskCompleteInputShape } from "./task-complete.js";
+import {
+  taskDraftListPendingEscalationsHandler,
+  TaskDraftListPendingEscalationsInputShape,
+  taskDraftListPendingHandler,
+  TaskDraftListPendingInputShape,
+} from "./task-draft.js";
+import { taskFailHandler, TaskFailInputShape } from "./task-fail.js";
+import { taskFileHandler, TaskFileInputShape } from "./task-file.js";
+import { taskGetHandler, TaskGetInputShape } from "./task-get.js";
+import { taskHeartbeatHandler, TaskHeartbeatInputShape } from "./task-heartbeat.js";
+import { taskLinkGhHandler, TaskLinkGhInputShape } from "./task-link-gh.js";
+import { taskListHandler, TaskListInputShape } from "./task-list.js";
+import { taskNextHandler, TaskNextInputShape } from "./task-next.js";
+import { taskSyncGhNowHandler, TaskSyncGhNowInputShape } from "./task-sync-gh-now.js";
+import { taskUnlinkGhHandler, TaskUnlinkGhInputShape } from "./task-unlink-gh.js";
+import { timelineHandler, TimelineInputShape } from "./timeline.js";
+import { verifyHandler, VerifyInputShape } from "./verify.js";
+import { withActingOnEnvelope } from "./with-acting-on.js";
+import { workflowHistoryHandler, WorkflowHistoryInputShape } from "./workflow-history.js";
+import { workflowListHandler, WorkflowListInputShape } from "./workflow-list.js";
+import {
+  workflowRunHandler,
+  type WorkflowRunHandlerOpts,
+  WorkflowRunInputShape,
+} from "./workflow-run.js";
+import {
+  workflowStatusHandler,
+  WorkflowStatusInputShape,
+  workflowWaitHandler,
+  WorkflowWaitInputShape,
+} from "./workflow-status.js";
+import { workflowSuggestHandler, WorkflowSuggestInputShape } from "./workflow-suggest.js";
+import { worktreeCleanupHandler, WorktreeCleanupInputShape } from "./worktree-cleanup.js";
+import { worktreeInspectHandler, WorktreeInspectInputShape } from "./worktree-inspect.js";
+import { worktreeListHandler, WorktreeListInputShape } from "./worktree-list.js";
 
 interface ToolBuildContext {
   handleStore: HandleStore;
@@ -280,44 +282,59 @@ function isEnoentError(err: unknown): boolean {
   return err instanceof Error && "code" in err && (err as { code?: string }).code === "ENOENT";
 }
 
+function checkMissingCacheStillValid(
+  registryPath: string,
+  statPath: ProjectRegistryResolverDeps["statPath"],
+): "still_missing" | "invalidate" {
+  if (missingProjectRegistryCache?.path !== registryPath) {
+    return "invalidate";
+  }
+  try {
+    const parentMtimeMs = statPath(missingProjectRegistryCache.parentDir).mtimeMs;
+    if (parentMtimeMs === missingProjectRegistryCache.parentMtimeMs) {
+      return "still_missing";
+    }
+  } catch {
+    return "still_missing";
+  }
+  return "invalidate";
+}
+
+function handleMissingRegistry(
+  registryPath: string,
+  statPath: ProjectRegistryResolverDeps["statPath"],
+): void {
+  const parentDir = dirname(registryPath);
+  let parentMtimeMs = -1;
+  try {
+    parentMtimeMs = statPath(parentDir).mtimeMs;
+  } catch {
+    // Keep sentinel -1 when parent dir stats are unavailable.
+  }
+  missingProjectRegistryCache = { path: registryPath, parentDir, parentMtimeMs };
+  cachedProjectRegistry = null;
+}
+
 function loadProjectRegistryFromCache(
   registryPath: string,
   deps: Pick<ProjectRegistryResolverDeps, "statPath" | "loadRegistry">,
 ): ReturnType<typeof loadProjectRegistry> | undefined {
-  if (missingProjectRegistryCache !== null && missingProjectRegistryCache.path === registryPath) {
-    try {
-      const parentMtimeMs = deps.statPath(missingProjectRegistryCache.parentDir).mtimeMs;
-      if (parentMtimeMs === missingProjectRegistryCache.parentMtimeMs) return undefined;
-    } catch {
-      return undefined;
-    }
-    missingProjectRegistryCache = null;
+  if (checkMissingCacheStillValid(registryPath, deps.statPath) === "still_missing") {
+    return undefined;
   }
+  missingProjectRegistryCache = null;
 
   let mtimeMs: number;
   try {
     mtimeMs = deps.statPath(registryPath).mtimeMs;
   } catch (err) {
     if (isEnoentError(err)) {
-      const parentDir = dirname(registryPath);
-      let parentMtimeMs = -1;
-      try {
-        parentMtimeMs = deps.statPath(parentDir).mtimeMs;
-      } catch {
-        // Keep sentinel -1 when parent dir stats are unavailable.
-      }
-      missingProjectRegistryCache = {
-        path: registryPath,
-        parentDir,
-        parentMtimeMs,
-      };
-      cachedProjectRegistry = null;
+      handleMissingRegistry(registryPath, deps.statPath);
       return undefined;
     }
     throw err;
   }
 
-  missingProjectRegistryCache = null;
   if (
     cachedProjectRegistry !== null &&
     cachedProjectRegistry.path === registryPath &&
@@ -419,7 +436,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Record an observation into Penumbra T0.",
       inputSchema: ObserveInputShape,
     },
-    makeHandler: observeHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: observeHandler,
     readOnly: false,
   },
   task_draft_list_pending: {
@@ -428,7 +445,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "List pending task draft lifecycle events by latest state, oldest-first for FIFO processing.",
       inputSchema: TaskDraftListPendingInputShape,
     },
-    makeHandler: taskDraftListPendingHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: taskDraftListPendingHandler,
     readOnly: true,
   },
   task_draft_list_pending_escalations: {
@@ -437,7 +454,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "List task_drafts whose latest lifecycle event is task_draft_escalation, joined back to the original draft payload. Used by the escalation refiner tier.",
       inputSchema: TaskDraftListPendingEscalationsInputShape,
     },
-    makeHandler: taskDraftListPendingEscalationsHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: taskDraftListPendingEscalationsHandler,
     readOnly: true,
   },
   memory_recall: {
@@ -445,7 +462,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Retrieve top-K memories (T1+T2) by semantic similarity.",
       inputSchema: RecallInputShape,
     },
-    makeHandler: recallHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: recallHandler,
     readOnly: true,
   },
   memory_search: {
@@ -454,7 +471,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Step 1 of 3-layer recall: compact index of memory hits (id + title + snippet + score) over t1_fts/t2_fts with metadata filters. Cheap to scan; pair with memory_timeline + memory_get_observations.",
       inputSchema: SearchInputShape,
     },
-    makeHandler: searchHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: searchHandler,
     readOnly: true,
   },
   memory_verify: {
@@ -462,7 +479,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Mark a t2 memory as verified and update its freshness metadata.",
       inputSchema: VerifyInputShape,
     },
-    makeHandler: verifyHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: verifyHandler,
     readOnly: false,
   },
   memory_verify_authorize: {
@@ -471,7 +488,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Authorize memory verification with basis validation and record the authorization provenance.",
       inputSchema: MemoryVerifyAuthorizeInputShape,
     },
-    makeHandler: memoryVerifyAuthorizeHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: memoryVerifyAuthorizeHandler,
     readOnly: false,
   },
   memory_write_t2: {
@@ -480,7 +497,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Write a direct T2 memory from maestro/CLI principals (rejected for worker-token callers), with optional backlink parsing.",
       inputSchema: MemoryWriteT2InputShape,
     },
-    makeHandler: memoryWriteT2Handler as unknown as ToolDef["makeHandler"],
+    makeHandler: memoryWriteT2Handler,
     readOnly: false,
   },
   memory_timeline: {
@@ -489,7 +506,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Step 2 of 3-layer recall: chronological neighbors around an anchor t2 memory. Use to see what was happening just before/after a hit.",
       inputSchema: TimelineInputShape,
     },
-    makeHandler: timelineHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: timelineHandler,
     readOnly: true,
   },
   memory_get_observations: {
@@ -498,7 +515,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Step 3 of 3-layer recall: hydrate full bodies for IDs returned by memory_search or memory_timeline. Always batch — do not call once per ID.",
       inputSchema: GetObservationsInputShape,
     },
-    makeHandler: getObservationsHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: getObservationsHandler,
     readOnly: true,
   },
   memory_corpus_build: {
@@ -507,7 +524,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Build (or rebuild by name) a knowledge corpus: a named, persisted bundle of t2 observations matching a metadata filter (project_id / obs_type / concept / file_path / date range). Use as a topical RAG slice that survives across recalls.",
       inputSchema: CorpusBuildInputShape,
     },
-    makeHandler: corpusBuildHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: corpusBuildHandler,
     readOnly: false,
   },
   memory_corpus_query: {
@@ -516,7 +533,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Vector-rerank a query against members of a named corpus only. Returns the same hit shape as memory_search but constrained to the corpus.",
       inputSchema: CorpusQueryInputShape,
     },
-    makeHandler: corpusQueryHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: corpusQueryHandler,
     readOnly: true,
   },
   memory_corpus_list: {
@@ -524,7 +541,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "List all knowledge corpora with their member counts and creation timestamps.",
       inputSchema: CorpusListInputShape,
     },
-    makeHandler: corpusListHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: corpusListHandler,
     readOnly: true,
   },
   memory_efficacy_recent: {
@@ -533,7 +550,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Recent-window read of how often reviewer findings indicate a memory failure mode (missed_registration / recall_miss / memory_ignored / not_memory_related).",
       inputSchema: MemoryEfficacyRecentInputShape,
     },
-    makeHandler: memoryEfficacyRecentHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: memoryEfficacyRecentHandler,
     readOnly: true,
   },
   memory_verification_events: {
@@ -542,7 +559,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Read the audit trail for a verified memory, including verifier identity, claimed-by provenance, reason, and timestamp.",
       inputSchema: MemoryVerificationEventsInputShape,
     },
-    makeHandler: memoryVerificationEventsHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: memoryVerificationEventsHandler,
     readOnly: true,
   },
   quality_status: {
@@ -551,7 +568,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Composite quality snapshot spanning lane health, adversarial review outcomes, agent recommendations, memory efficacy, and subscription pressure.",
       inputSchema: QualityStatusInputShape,
     },
-    makeHandler: qualityStatusHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: qualityStatusHandler,
     readOnly: true,
   },
   memory_efficacy_rebuild: {
@@ -560,7 +577,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Enqueue an async rebuild of the memory_efficacy_cache by scanning review syntheses and classifying findings via Sirius LLM. Returns {job_id, status} for tracking with memory_efficacy_job_status.",
       inputSchema: MemoryEfficacyRebuildInputShape,
     },
-    makeHandler: memoryEfficacyRebuildHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: memoryEfficacyRebuildHandler,
     readOnly: false,
   },
   memory_efficacy_job_status: {
@@ -568,7 +585,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Check the status of an async memory_efficacy_rebuild job.",
       inputSchema: MemoryEfficacyJobStatusInputShape,
     },
-    makeHandler: memoryEfficacyJobStatusHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: memoryEfficacyJobStatusHandler,
     readOnly: true,
   },
   memory_efficacy_jobs: {
@@ -576,7 +593,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "List recent memory_efficacy_rebuild jobs with optional status filter.",
       inputSchema: MemoryEfficacyJobsInputShape,
     },
-    makeHandler: memoryEfficacyJobsHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: memoryEfficacyJobsHandler,
     readOnly: true,
   },
   workflow_list: {
@@ -584,7 +601,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "List registered workflows with their triggers and descriptions.",
       inputSchema: WorkflowListInputShape,
     },
-    makeHandler: workflowListHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: workflowListHandler,
     readOnly: true,
   },
   workflow_run: {
@@ -620,7 +637,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Suggest workflows matching current state thresholds.",
       inputSchema: WorkflowSuggestInputShape,
     },
-    makeHandler: workflowSuggestHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: workflowSuggestHandler,
     readOnly: true,
   },
   workflow_history: {
@@ -628,7 +645,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Past run stats + recent outcomes for a named workflow.",
       inputSchema: WorkflowHistoryInputShape,
     },
-    makeHandler: workflowHistoryHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: workflowHistoryHandler,
     readOnly: true,
   },
   brainstorm: {
@@ -636,7 +653,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Run the brainstorm workflow with topic and optional constraints.",
       inputSchema: BrainstormInputShape,
     },
-    makeHandler: brainstormHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: brainstormHandler,
     readOnly: false,
   },
   plan_open: {
@@ -645,7 +662,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Open a plan from a goal and optional steps by generating a minimal plan file and registering it.",
       inputSchema: PlanOpenInputShape,
     },
-    makeHandler: planOpenHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: planOpenHandler,
     readOnly: false,
   },
   lane_open: {
@@ -679,7 +696,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Recall corpus health snapshot: tier counts (t0/t1/t2), t2 obs_type/severity histograms, t1 promotion backlog (unpromoted + failed), corpora count, and last recall_audit timestamp.",
       inputSchema: RecallStatusInputShape,
     },
-    makeHandler: recallStatusHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: recallStatusHandler,
     readOnly: true,
   },
   long_lived_list: {
@@ -687,7 +704,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "List non-retired long-lived operators.",
       inputSchema: LongLivedListInputShape,
     },
-    makeHandler: longLivedListHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: longLivedListHandler,
     readOnly: true,
   },
   long_lived_get: {
@@ -759,7 +776,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Get this long-lived agent working memory snapshot.",
       inputSchema: LongLivedSelfStateGetInputShape,
     },
-    makeHandler: longLivedSelfStateGetHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: longLivedSelfStateGetHandler,
     readOnly: true,
   },
   long_lived_self_state_set: {
@@ -767,7 +784,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Update this long-lived agent working memory snapshot.",
       inputSchema: LongLivedSelfStateSetInputShape,
     },
-    makeHandler: longLivedSelfStateSetHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: longLivedSelfStateSetHandler,
     readOnly: false,
   },
   long_lived_self_pending_actions: {
@@ -775,7 +792,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "List pending actions for this long-lived agent.",
       inputSchema: LongLivedSelfPendingActionsInputShape,
     },
-    makeHandler: longLivedSelfPendingActionsHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: longLivedSelfPendingActionsHandler,
     readOnly: true,
   },
   long_lived_approve_action: {
@@ -824,7 +841,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Returns the recent cost ledger summary (totals + by_provider) over a 24h-default window.",
       inputSchema: CostRecentInputShape,
     },
-    makeHandler: costRecentHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: costRecentHandler,
     readOnly: true,
   },
   cost_quota_status: {
@@ -832,7 +849,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: COST_QUOTA_STATUS_DESCRIPTION,
       inputSchema: CostQuotaStatusInputShape,
     },
-    makeHandler: costQuotaStatusHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: costQuotaStatusHandler,
     readOnly: true,
   },
   subscription_pressure_status: {
@@ -841,7 +858,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Per-(provider, window_label) subscription rate-limit snapshots aggregated from t0_events. Replaces fictional USD readouts for subscription agents.",
       inputSchema: SubscriptionPressureStatusInputShape,
     },
-    makeHandler: subscriptionPressureStatusHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: subscriptionPressureStatusHandler,
     readOnly: true,
   },
   routing_bias_list: {
@@ -850,7 +867,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "List active routing biases with human-readable time_remaining. Optionally filter by scope or value.",
       inputSchema: RoutingBiasListInputShape,
     },
-    makeHandler: routingBiasListHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: routingBiasListHandler,
     readOnly: true,
   },
   routing_bias_set: {
@@ -859,7 +876,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Set a routing bias (boost, divert, exclude) for an agent or provider. Idempotent at the (scope, value, mode) key.",
       inputSchema: RoutingBiasSetInputShape,
     },
-    makeHandler: routingBiasSetHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: routingBiasSetHandler,
     readOnly: false,
   },
   routing_bias_clear: {
@@ -868,7 +885,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Clear routing biases by bias_id, (scope + value), or all:true with confirm:true guard.",
       inputSchema: RoutingBiasClearInputShape,
     },
-    makeHandler: routingBiasClearHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: routingBiasClearHandler,
     readOnly: false,
   },
   agent_rank: {
@@ -877,7 +894,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Rank agents for a task type using captured dispatch outcome, cost, and latency data.",
       inputSchema: AgentRankInputShape,
     },
-    makeHandler: agentRankHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: agentRankHandler,
     readOnly: true,
   },
   fleet_latency: {
@@ -886,7 +903,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Read per-agent dispatch execution latency and throughput from dispatch_events over a recent window, plus current approved/dispatched queue depth.",
       inputSchema: FleetLatencyInputShape,
     },
-    makeHandler: fleetLatencyHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: fleetLatencyHandler,
     readOnly: true,
   },
   agent_recommend: {
@@ -904,7 +921,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Route a task role to the best eligible agent using role allowlists, pressure state, and recent performance.",
       inputSchema: AgentRouteForInputShape,
     },
-    makeHandler: agentRouteForHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: agentRouteForHandler,
     readOnly: true,
   },
   plan_start: {
@@ -945,7 +962,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Trigger a synchronous T1 rollup for the named session. Returns the rollup_id, or null if there was nothing to roll up (already rolled up or no events).",
       inputSchema: SessionEndInputShape,
     },
-    makeHandler: sessionEndHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: sessionEndHandler,
     readOnly: false,
   },
   handoff_list_pending: {
@@ -1141,7 +1158,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Returns all currently-tracked worktrees from the manager.",
       inputSchema: WorktreeListInputShape,
     },
-    makeHandler: worktreeListHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: worktreeListHandler,
     readOnly: true,
   },
   worktree_inspect: {
@@ -1251,7 +1268,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Run a shell command inside a dispatch shell session.",
       inputSchema: ShellRunInputShape,
     },
-    makeHandler: shellRunHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: shellRunHandler,
     readOnly: false,
   },
   shell_close: {
@@ -1259,7 +1276,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Close a dispatch shell session.",
       inputSchema: ShellCloseInputShape,
     },
-    makeHandler: shellCloseHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: shellCloseHandler,
     readOnly: false,
   },
   shell_list: {
@@ -1267,7 +1284,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "List active dispatch shell sessions.",
       inputSchema: ShellListInputShape,
     },
-    makeHandler: shellListHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: shellListHandler,
     readOnly: true,
   },
   task_file: {
@@ -1284,7 +1301,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "List tasks with optional status/kind/eligibility/origin filters.",
       inputSchema: TaskListInputShape,
     },
-    makeHandler: taskListHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: taskListHandler,
     readOnly: true,
   },
   task_get: {
@@ -1292,7 +1309,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Get one task by id with optional lease/events/descendants expansions.",
       inputSchema: TaskGetInputShape,
     },
-    makeHandler: taskGetHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: taskGetHandler,
     readOnly: true,
   },
   maestro_session_get: {
@@ -1300,7 +1317,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Get one maestro session by task id, or null if no session row exists.",
       inputSchema: MaestroSessionGetInputShape,
     },
-    makeHandler: maestroSessionGetHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: maestroSessionGetHandler,
     readOnly: true,
   },
   maestro_session_start: {
@@ -1309,7 +1326,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Create a maestro session row for an orchestrate task with explicit maestro agent and budgets.",
       inputSchema: MaestroSessionStartInputShape,
     },
-    makeHandler: maestroSessionStartHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: maestroSessionStartHandler,
     readOnly: false,
   },
   maestro_session_start_adhoc: {
@@ -1318,7 +1335,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Create an orchestrate task and synchronously dispatch a pre-bound maestro session in one call.",
       inputSchema: MaestroSessionStartAdhocInputShape,
     },
-    makeHandler: maestroSessionStartAdhocHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: maestroSessionStartAdhocHandler,
     readOnly: false,
   },
   maestro_capabilities: {
@@ -1327,7 +1344,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Return canonical maestro capabilities: dispatchable agents, task types, and workflow names.",
       inputSchema: MaestroCapabilitiesInputShape,
     },
-    makeHandler: maestroCapabilitiesHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: maestroCapabilitiesHandler,
     readOnly: true,
   },
   task_next: {
@@ -1344,7 +1361,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Heartbeat an active task lease.",
       inputSchema: TaskHeartbeatInputShape,
     },
-    makeHandler: taskHeartbeatHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: taskHeartbeatHandler,
     readOnly: false,
   },
   task_complete: {
@@ -1352,7 +1369,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Complete a leased task and persist its result payload.",
       inputSchema: TaskCompleteInputShape,
     },
-    makeHandler: taskCompleteHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: taskCompleteHandler,
     readOnly: false,
   },
   task_fail: {
@@ -1360,7 +1377,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Fail a leased task with a reason.",
       inputSchema: TaskFailInputShape,
     },
-    makeHandler: taskFailHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: taskFailHandler,
     readOnly: false,
   },
   task_cancel: {
@@ -1368,7 +1385,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Cancel a task by id.",
       inputSchema: TaskCancelInputShape,
     },
-    makeHandler: taskCancelHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: taskCancelHandler,
     readOnly: false,
   },
   task_link_gh: {
@@ -1376,7 +1393,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Link a task to a GitHub issue and enqueue async sync.",
       inputSchema: TaskLinkGhInputShape,
     },
-    makeHandler: taskLinkGhHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: taskLinkGhHandler,
     readOnly: false,
   },
   task_comment_gh: {
@@ -1384,7 +1401,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Post a manual mirrored comment to the linked GitHub issue for this task.",
       inputSchema: TaskCommentGhInputShape,
     },
-    makeHandler: taskCommentGhHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: taskCommentGhHandler,
     readOnly: false,
   },
   task_unlink_gh: {
@@ -1392,7 +1409,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Unlink a task from GitHub issue metadata without changing issue state.",
       inputSchema: TaskUnlinkGhInputShape,
     },
-    makeHandler: taskUnlinkGhHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: taskUnlinkGhHandler,
     readOnly: false,
   },
   task_sync_gh_now: {
@@ -1400,7 +1417,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Sync one linked task (or all linked tasks) against GitHub issue state now.",
       inputSchema: TaskSyncGhNowInputShape,
     },
-    makeHandler: taskSyncGhNowHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: taskSyncGhNowHandler,
     readOnly: false,
   },
   memory_list_pending_dream_actions: {
@@ -1409,7 +1426,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "List dream_actions awaiting human review (status queued or approved). Returns actions with untrusted_source flag and oldest_pending_age_hours computed from cycle started_at.",
       inputSchema: MemoryListPendingDreamActionsInputShape,
     },
-    makeHandler: memoryListPendingDreamActionsHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: memoryListPendingDreamActionsHandler,
     readOnly: true,
   },
   memory_dream_action_revert: {
@@ -1418,7 +1435,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Revert a dream action with optional cascade dependency resolution. P1 promote_t1: un-promotes t1 rollup and retires minted t2. P2 link: retires memory_links row. P3 retire: un-retires t2 memory. P6 brief: deletes project_briefs row (gated by generated_at <= decided_at). P7 reembed: restores prior embedding vector from t2_vec_history. Other phases (P3 rewrite, P4, P5): stamp reverted_by only (no state change). cascade=none refuses with 409 has_dependents when other auto_applied actions reference this action via payload_json.source_action_id. cascade=force recurses topologically (children first).",
       inputSchema: MemoryDreamActionRevertInputShape,
     },
-    makeHandler: memoryDreamActionRevertHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: memoryDreamActionRevertHandler,
     readOnly: false,
   },
   dreaming_health: {
@@ -1426,7 +1443,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Get dreaming health status including running cycles and alerts.",
       inputSchema: DreamingHealthInputShape,
     },
-    makeHandler: dreamingHealthHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: dreamingHealthHandler,
     readOnly: true,
   },
   memory_curator_patterns_list: {
@@ -1434,7 +1451,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "List curator ephemera patterns. Default status=approved.",
       inputSchema: MemoryCuratorPatternsListInputShape,
     },
-    makeHandler: memoryCuratorPatternsListHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: memoryCuratorPatternsListHandler,
     readOnly: true,
   },
   memory_curator_patterns_add: {
@@ -1442,7 +1459,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Propose a new curator ephemera pattern (status=queued, enabled=0).",
       inputSchema: MemoryCuratorPatternsAddInputShape,
     },
-    makeHandler: memoryCuratorPatternsAddHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: memoryCuratorPatternsAddHandler,
     readOnly: false,
   },
   memory_curator_patterns_approve: {
@@ -1450,7 +1467,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Approve a queued ephemera pattern (sets status=approved, enabled=1).",
       inputSchema: MemoryCuratorPatternsApproveInputShape,
     },
-    makeHandler: memoryCuratorPatternsApproveHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: memoryCuratorPatternsApproveHandler,
     readOnly: false,
   },
   memory_curator_patterns_disable: {
@@ -1458,7 +1475,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Disable an approved ephemera pattern (sets enabled=0; keeps history).",
       inputSchema: MemoryCuratorPatternsDisableInputShape,
     },
-    makeHandler: memoryCuratorPatternsDisableHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: memoryCuratorPatternsDisableHandler,
     readOnly: false,
   },
 };

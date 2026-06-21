@@ -1,6 +1,8 @@
-import { toTextContent } from "@nova/mcp-shared";
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
+
 import { resolveToolOrigin } from "../tool-origin.js";
 
 export const TaskNextInputSchema = z
@@ -13,7 +15,7 @@ export const TaskNextInputSchema = z
 export const TaskNextInputShape = TaskNextInputSchema.shape;
 
 export function taskNextHandler(daemon: Pick<DaemonClient, "taskNext">) {
-  return async (input: unknown, extra: unknown) => {
+  return async (input: unknown, extra: unknown): Promise<TextContentEnvelope> => {
     const parsed = TaskNextInputSchema.parse(input ?? {});
     const origin = resolveToolOrigin(extra);
     const out = await daemon.taskNext(parsed, origin ? { origin } : {});

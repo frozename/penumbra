@@ -1,5 +1,6 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const TimelineInputShape = {
@@ -9,8 +10,10 @@ export const TimelineInputShape = {
   project_id: z.string().nullable().optional(),
 };
 
-export function timelineHandler(daemon: DaemonClient) {
-  return async (input: unknown) => {
+export function timelineHandler(
+  daemon: DaemonClient,
+): (input: unknown) => Promise<TextContentEnvelope> {
+  return async (input: unknown): Promise<TextContentEnvelope> => {
     const out = await daemon.memoryTimeline(input);
     return toTextContent(out);
   };

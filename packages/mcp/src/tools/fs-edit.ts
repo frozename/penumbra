@@ -1,6 +1,14 @@
 import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
-import { makeFsEnvelopeResult, type FsEnvelopeHandlerOpts } from "./fs-envelope.js";
+
+import {
+  errorContent,
+  type FsEnvelopeHandlerOpts,
+  type FsToolResult,
+  makeFsEnvelopeResult,
+  toErrorContent,
+} from "./fs-envelope.js";
 
 export const FsEditInputShape = {
   path: z.string().min(1).describe("File path inside the worktree to edit."),
@@ -24,22 +32,21 @@ export const FsEditInputShape = {
     ),
 };
 
-function errorContent(code: string, message: string) {
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify({ error: { code, message } }) }],
-    isError: true,
-  };
+interface FsEditInput {
+  path: string;
+  old_string: string;
+  new_string: string;
+  replace_all?: boolean;
+  handoff_id?: string;
+  envelope?: boolean;
 }
 
-function toErrorContent(err: any) {
-  const code = err?.body?.error?.code ?? (err?.status === 404 ? "not_found" : "internal_error");
-  const message = err?.body?.error?.message ?? err?.message ?? "unknown error";
-  return errorContent(code, message);
-}
-
-export function fsEditHandler(daemon: DaemonClient, opts?: FsEnvelopeHandlerOpts) {
-  return async (input: any) => {
-    const handoff_id = input.handoff_id || process.env.PENUMBRA_HANDOFF_ID;
+export function fsEditHandler(
+  daemon: DaemonClient,
+  opts?: FsEnvelopeHandlerOpts,
+): (input: FsEditInput) => Promise<FsToolResult> {
+  return async (input): Promise<FsToolResult> => {
+    const handoff_id = input.handoff_id ?? process.env.PENUMBRA_HANDOFF_ID;
     if (!handoff_id) {
       return errorContent(
         "no_handoff_context",
@@ -57,7 +64,7 @@ export function fsEditHandler(daemon: DaemonClient, opts?: FsEnvelopeHandlerOpts
       if (input.envelope) {
         return makeFsEnvelopeResult(rawJson, opts);
       }
-      return { content: [{ type: "text" as const, text: rawJson }] };
+      return { content: [{ type: "text", text: rawJson }] };
     } catch (err) {
       return toErrorContent(err);
     }

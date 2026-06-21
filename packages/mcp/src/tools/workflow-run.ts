@@ -1,5 +1,6 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const WorkflowRunInputShape = {
@@ -55,7 +56,7 @@ function isEnvTruthy(value: string | undefined): boolean {
 }
 
 export function workflowRunHandler(daemon: DaemonClient, opts: WorkflowRunHandlerOpts = {}) {
-  return async (input: unknown) => {
+  return async (input: unknown): Promise<TextContentEnvelope> => {
     const parsed = WorkflowRunSchema.parse(input);
     const payload = { ...parsed };
     if (parsed.cwd === undefined) {

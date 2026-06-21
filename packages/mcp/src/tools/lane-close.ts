@@ -1,6 +1,7 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
+import { type LaneCloseMetadata, LaneCloseMetadataSchema } from "@penumbra/core";
 import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
-import { LaneCloseMetadataSchema, type LaneCloseMetadata } from "@penumbra/core";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const LaneCloseInputShape = {
@@ -11,14 +12,18 @@ export const LaneCloseInputShape = {
   metadata: LaneCloseMetadataSchema.optional(),
 };
 
-export function laneCloseHandler(daemon: DaemonClient) {
-  return async (input: {
-    lane_id: string;
-    gate_status: "passed" | "failed" | "skipped" | "review_debt";
-    reviewer_handoff_id?: string;
-    override_reason?: string;
-    metadata?: LaneCloseMetadata;
-  }) => {
+interface LaneCloseInput {
+  lane_id: string;
+  gate_status: "passed" | "failed" | "skipped" | "review_debt";
+  reviewer_handoff_id?: string;
+  override_reason?: string;
+  metadata?: LaneCloseMetadata;
+}
+
+export function laneCloseHandler(
+  daemon: DaemonClient,
+): (input: LaneCloseInput) => Promise<TextContentEnvelope> {
+  return async (input): Promise<TextContentEnvelope> => {
     const response = (await postToDaemon(daemon, "/lanes/close", {
       lane_id: input.lane_id,
       gate_status: input.gate_status,
@@ -95,8 +100,10 @@ async function daemonHttpError(path: string, res: Response): Promise<Error> {
   let body: unknown;
   try {
     body = await res.json();
-  } catch {}
+  } catch {
+    body = undefined;
+  }
   return new Error(
-    `daemon ${path}: HTTP ${res.status}${body === undefined ? "" : ` ${JSON.stringify(body)}`}`,
+    `daemon ${path}: HTTP ${String(res.status)}${body === undefined ? "" : ` ${JSON.stringify(body)}`}`,
   );
 }

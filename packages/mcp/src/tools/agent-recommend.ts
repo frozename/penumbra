@@ -1,6 +1,7 @@
-import { toTextContent } from "@nova/mcp-shared";
-import { z } from "zod";
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { WORKLOADS } from "@penumbra/config";
+import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 type Workload = (typeof WORKLOADS)[number];
@@ -22,7 +23,7 @@ export const AgentRecommendInputSchema = z
   .superRefine((value, ctx) => {
     if (value.task_type === undefined && value.workload === undefined) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         path: ["workload"],
         message: "Either 'workload' or 'task_type' is required",
       });
@@ -34,12 +35,12 @@ export const AgentRecommendInputShape = AgentRecommendInputSchema.shape;
 export function agentRecommendHandler(
   daemon: Pick<DaemonClient, "agentRecommend">,
   opts: { logger?: AgentRecommendDeprecationLogger } = {},
-) {
-  return async (input: unknown) => {
+): (input: unknown) => Promise<TextContentEnvelope> {
+  return async (input): Promise<TextContentEnvelope> => {
     const parsed = AgentRecommendInputSchema.parse(input ?? {});
     const logger = opts.logger ?? console;
-    const workload = parsed.workload as Workload | undefined;
-    const taskType = parsed.task_type as Workload | undefined;
+    const workload = parsed.workload;
+    const taskType = parsed.task_type;
     if (workload !== undefined && taskType !== undefined && workload !== taskType) {
       throw new Error(
         `agent_recommend: workload='${workload}' conflicts with task_type='${taskType}'; pass only one or matching values`,

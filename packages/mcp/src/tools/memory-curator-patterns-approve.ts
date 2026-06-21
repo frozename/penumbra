@@ -1,5 +1,6 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const MemoryCuratorPatternsApproveInputShape = {
@@ -9,7 +10,7 @@ export const MemoryCuratorPatternsApproveInputShape = {
 const Schema = z.object(MemoryCuratorPatternsApproveInputShape);
 
 export function memoryCuratorPatternsApproveHandler(daemon: DaemonClient) {
-  return async (input: unknown) => {
+  return async (input: unknown): Promise<TextContentEnvelope> => {
     const parsed = Schema.parse(input);
     return toTextContent(await daemon.postCuratorPatternApprove(parsed));
   };

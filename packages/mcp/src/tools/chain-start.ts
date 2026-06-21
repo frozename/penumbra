@@ -1,8 +1,11 @@
-import { z } from "zod";
-import { ChainStartRequestSchema, TaskClassSchema } from "@penumbra/core";
-import { ChainStartResponseSchema, type ChainStartResponse } from "@penumbra/api-contract";
+import { type ChainStartResponse, ChainStartResponseSchema } from "@penumbra/api-contract";
 import { WORKLOADS } from "@penumbra/config";
+import { ChainStartRequestSchema, TaskClassSchema } from "@penumbra/core";
+import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
+
+import { formatChainStart, wrapWithSummary } from "../format-summary.js";
 
 type ChainStartDaemonBody = Parameters<DaemonClient["startChain"]>[0] & {
   task_class?: z.input<typeof TaskClassSchema>;
@@ -120,8 +123,6 @@ export const ChainStartInputShape = {
     ),
 };
 
-import { formatChainStart, wrapWithSummary } from "../format-summary.js";
-
 export interface ChainStartHandlerOpts {
   /**
    * Called when the caller omits `project_id`. Should return the registered
@@ -174,124 +175,210 @@ export class CallerCwdNotRegisteredError extends Error {
   }
 }
 
-export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerOpts = {}) {
-  return async (input: any) => {
-    const logger = opts.logger ?? console;
-    const workload = input.workload as Workload | undefined;
-    const taskType = input.task_type as Workload | undefined;
-    if (workload !== undefined && taskType !== undefined && workload !== taskType) {
-      throw new Error(
-        `chain_start: workload='${workload}' conflicts with task_type='${taskType}'; pass only one or matching values`,
-      );
-    }
-    const resolvedTaskType = workload ?? taskType;
-    if (
-      workload === undefined &&
-      taskType !== undefined &&
-      !taskTypeDeprecationLogged.has(logger)
-    ) {
-      logger.info("chain_start: task_type is deprecated; prefer 'workload' instead");
-      taskTypeDeprecationLogged.add(logger);
-    }
-    let effectiveProjectId: string | null | undefined = input.project_id;
-    const resolveProjectIdFromCwd = opts.resolveProjectIdFromCwd;
-    const resolveProjectIdFromPath = opts.resolveProjectIdFromPath;
-    let resolutionWarning:
-      | { code: string; resolved_project_id: string; caller_cwd?: string }
-      | undefined;
+interface ChainStartInput {
+  initial_agent: string;
+  message: string;
+  conversation_id?: string;
+  project_id?: string | null;
+  max_hops?: number;
+  trust_mode?: "all" | "config";
+  use_worktree?: boolean;
+  task_type?: Workload;
+  workload?: Workload;
+  parent_handoff_id?: string;
+  dispatch_kind?: DispatchKind;
+  workflow_run_id?: string;
+  long_lived_agent_id?: string;
+  long_lived_tick_id?: string;
+  branch_base?: string;
+  open_pr_on_review?: boolean;
+  isolated_install?: boolean;
+  task_class?: z.input<typeof TaskClassSchema>;
+  caller_cwd?: string;
+}
 
-    // caller_cwd resolution: when project_id is omitted but caller_cwd is provided,
-    // parent-walk the path against the project registry. Don't fall through to daemon-cwd.
-    if (effectiveProjectId == null && input.caller_cwd !== undefined) {
-      if (!resolveProjectIdFromPath) {
-        throw new Error(
-          "caller_cwd_not_supported: resolveProjectIdFromPath callback not configured",
-        );
-      }
-      const resolvedFromPath = resolveProjectIdFromPath(input.caller_cwd);
-      if (resolvedFromPath === undefined) {
-        throw new CallerCwdNotRegisteredError(input.caller_cwd);
-      }
-      effectiveProjectId = resolvedFromPath;
-      resolutionWarning = {
-        code: "project_id_resolved_from_caller_cwd",
-        resolved_project_id: resolvedFromPath,
-        caller_cwd: input.caller_cwd,
-      };
+export interface ResolutionWarning {
+  code: string;
+  resolved_project_id: string;
+  caller_cwd?: string;
+}
+
+export interface ChainStartResult {
+  content: { type: string; text: string }[];
+  resolution_warning?: ResolutionWarning;
+  routing_warning?: unknown;
+  routing_advisory?: unknown;
+}
+
+function resolveTaskType(
+  input: ChainStartInput,
+  logger: ChainStartDeprecationLogger,
+): Workload | undefined {
+  const workload = input.workload;
+  const taskType = input.task_type;
+  if (workload !== undefined && taskType !== undefined && workload !== taskType) {
+    throw new Error(
+      `chain_start: workload='${workload}' conflicts with task_type='${taskType}'; pass only one or matching values`,
+    );
+  }
+  if (workload === undefined && taskType !== undefined && !taskTypeDeprecationLogged.has(logger)) {
+    logger.info("chain_start: task_type is deprecated; prefer 'workload' instead");
+    taskTypeDeprecationLogged.add(logger);
+  }
+  return workload ?? taskType;
+}
+
+function resolveProjectFromCallerCwd(
+  callerCwd: string,
+  resolveProjectIdFromPath: ((path: string) => string | undefined) | undefined,
+): { projectId: string; warning: ResolutionWarning } {
+  if (!resolveProjectIdFromPath) {
+    throw new Error("caller_cwd_not_supported: resolveProjectIdFromPath callback not configured");
+  }
+  const resolvedFromPath = resolveProjectIdFromPath(callerCwd);
+  if (resolvedFromPath === undefined) {
+    throw new CallerCwdNotRegisteredError(callerCwd);
+  }
+  return {
+    projectId: resolvedFromPath,
+    warning: {
+      code: "project_id_resolved_from_caller_cwd",
+      resolved_project_id: resolvedFromPath,
+      caller_cwd: callerCwd,
+    },
+  };
+}
+
+function isInternalHop(input: ChainStartInput): boolean {
+  const isLongLivedTickHop =
+    input.dispatch_kind === "long_lived_tick" &&
+    typeof input.long_lived_tick_id === "string" &&
+    input.long_lived_tick_id.length > 0 &&
+    typeof input.long_lived_agent_id === "string" &&
+    input.long_lived_agent_id.length > 0;
+  const isWorkflowHop =
+    input.dispatch_kind === "workflow" &&
+    typeof input.workflow_run_id === "string" &&
+    input.workflow_run_id.length > 0;
+  return isLongLivedTickHop || isWorkflowHop;
+}
+
+function resolveProjectFromCwd(
+  effectiveProjectId: string | null | undefined,
+  input: ChainStartInput,
+  opts: ChainStartHandlerOpts,
+): { projectId: string | null | undefined; warning: ResolutionWarning | undefined } {
+  const resolveProjectIdFromCwd = opts.resolveProjectIdFromCwd;
+  const requireExplicitProjectId = isEnvTruthy(process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID);
+  const shouldResolveProjectFromCwd =
+    effectiveProjectId === undefined &&
+    input.use_worktree !== false &&
+    resolveProjectIdFromCwd !== undefined;
+  const shouldRequireExplicitProjectId =
+    requireExplicitProjectId &&
+    (effectiveProjectId === undefined || effectiveProjectId === null) &&
+    resolveProjectIdFromCwd !== undefined;
+
+  if (isInternalHop(input) || !(shouldResolveProjectFromCwd || shouldRequireExplicitProjectId)) {
+    return { projectId: effectiveProjectId, warning: undefined };
+  }
+
+  let resolved: string | undefined;
+  try {
+    resolved = resolveProjectIdFromCwd();
+  } catch (err) {
+    if (err instanceof RegistryUnavailableError) {
+      throw new Error(`registry_unavailable: ${err.message}`);
     }
-
-    const requireExplicitProjectId = isEnvTruthy(process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID);
-    const isLongLivedTickHop =
-      input.dispatch_kind === "long_lived_tick" &&
-      typeof input.long_lived_tick_id === "string" &&
-      input.long_lived_tick_id.length > 0 &&
-      typeof input.long_lived_agent_id === "string" &&
-      input.long_lived_agent_id.length > 0;
-    const isWorkflowHop =
-      input.dispatch_kind === "workflow" &&
-      typeof input.workflow_run_id === "string" &&
-      input.workflow_run_id.length > 0;
-    const isInternalHop = isLongLivedTickHop || isWorkflowHop;
-    const shouldResolveProjectFromCwd =
-      effectiveProjectId === undefined &&
-      input.use_worktree !== false &&
-      resolveProjectIdFromCwd !== undefined;
-    const shouldRequireExplicitProjectId =
-      requireExplicitProjectId &&
-      (effectiveProjectId === undefined || effectiveProjectId === null) &&
-      resolveProjectIdFromCwd !== undefined;
-
-    if (!isInternalHop && (shouldResolveProjectFromCwd || shouldRequireExplicitProjectId)) {
-      let resolved: string | undefined;
-      try {
-        resolved = resolveProjectIdFromCwd();
-      } catch (err) {
-        if (err instanceof RegistryUnavailableError) {
-          throw new Error(`registry_unavailable: ${err.message}`);
-        }
-        throw err;
-      }
-      if (resolved === undefined) {
-        throw new Error(
-          "cwd_not_registered: MCP server cwd does not match any entry in the project registry; " +
-            "pass project_id explicitly or register the cwd as a project",
-        );
-      }
-      if (requireExplicitProjectId) {
-        throw new ProjectIdRequiredError(resolved);
-      }
-      if (effectiveProjectId === undefined) {
-        effectiveProjectId = resolved;
-        resolutionWarning = {
-          code: "project_id_inferred_from_mcp_cwd",
-          resolved_project_id: resolved,
-        };
-      }
-    }
-
-    const body: ChainStartDaemonBody = {
-      initial_agent: input.initial_agent,
-      message: input.message,
+    throw err;
+  }
+  if (resolved === undefined) {
+    throw new Error(
+      "cwd_not_registered: MCP server cwd does not match any entry in the project registry; " +
+        "pass project_id explicitly or register the cwd as a project",
+    );
+  }
+  if (requireExplicitProjectId) {
+    throw new ProjectIdRequiredError(resolved);
+  }
+  if (effectiveProjectId === undefined) {
+    return {
+      projectId: resolved,
+      warning: { code: "project_id_inferred_from_mcp_cwd", resolved_project_id: resolved },
     };
-    if (input.conversation_id !== undefined) body.conversation_id = input.conversation_id;
-    if (effectiveProjectId !== undefined && effectiveProjectId !== null)
-      body.project_id = effectiveProjectId;
-    if (input.max_hops !== undefined) body.max_hops = input.max_hops;
-    if (input.trust_mode !== undefined) body.trust_mode = input.trust_mode;
-    if (input.use_worktree !== undefined) body.use_worktree = input.use_worktree;
-    if (resolvedTaskType !== undefined) body.task_type = resolvedTaskType;
-    if (input.parent_handoff_id !== undefined) body.parent_handoff_id = input.parent_handoff_id;
-    if (input.dispatch_kind !== undefined) body.dispatch_kind = input.dispatch_kind;
-    if (input.workflow_run_id !== undefined) body.workflow_run_id = input.workflow_run_id;
-    if (input.long_lived_agent_id !== undefined)
-      body.long_lived_agent_id = input.long_lived_agent_id;
-    if (input.long_lived_tick_id !== undefined) body.long_lived_tick_id = input.long_lived_tick_id;
-    if (input.branch_base !== undefined) body.branch_base = input.branch_base;
-    if (input.open_pr_on_review !== undefined) body.open_pr_on_review = input.open_pr_on_review;
-    if (input.isolated_install !== undefined) body.isolated_install = input.isolated_install;
-    if (input.task_class !== undefined) body.task_class = input.task_class;
+  }
+  return { projectId: effectiveProjectId, warning: undefined };
+}
+
+const OPTIONAL_BODY_FIELDS = [
+  "conversation_id",
+  "max_hops",
+  "trust_mode",
+  "use_worktree",
+  "parent_handoff_id",
+  "dispatch_kind",
+  "workflow_run_id",
+  "long_lived_agent_id",
+  "long_lived_tick_id",
+  "branch_base",
+  "open_pr_on_review",
+  "isolated_install",
+  "task_class",
+] as const satisfies readonly (keyof ChainStartInput)[];
+
+function buildDaemonBody(
+  input: ChainStartInput,
+  effectiveProjectId: string | null | undefined,
+  resolvedTaskType: Workload | undefined,
+): ChainStartDaemonBody {
+  const body: ChainStartDaemonBody = {
+    initial_agent: input.initial_agent,
+    message: input.message,
+  };
+  if (effectiveProjectId !== undefined && effectiveProjectId !== null) {
+    body.project_id = effectiveProjectId;
+  }
+  if (resolvedTaskType !== undefined) {
+    body.task_type = resolvedTaskType;
+  }
+  for (const field of OPTIONAL_BODY_FIELDS) {
+    const value = input[field];
+    if (value !== undefined) {
+      (body as Record<string, unknown>)[field] = value;
+    }
+  }
+  return body;
+}
+
+export function chainStartHandler(
+  daemon: DaemonClient,
+  opts: ChainStartHandlerOpts = {},
+): (input: ChainStartInput) => Promise<ChainStartResult> {
+  return async (input): Promise<ChainStartResult> => {
+    const logger = opts.logger ?? console;
+    const resolvedTaskType = resolveTaskType(input, logger);
+
+    let effectiveProjectId: string | null | undefined = input.project_id;
+    let resolutionWarning: ResolutionWarning | undefined;
+
+    if (effectiveProjectId === undefined && input.caller_cwd !== undefined) {
+      const { projectId, warning } = resolveProjectFromCallerCwd(
+        input.caller_cwd,
+        opts.resolveProjectIdFromPath,
+      );
+      effectiveProjectId = projectId;
+      resolutionWarning = warning;
+    }
+
+    const cwdResolution = resolveProjectFromCwd(effectiveProjectId, input, opts);
+    effectiveProjectId = cwdResolution.projectId;
+    if (cwdResolution.warning !== undefined) {
+      resolutionWarning = cwdResolution.warning;
+    }
+
+    const body = buildDaemonBody(input, effectiveProjectId, resolvedTaskType);
     const res: ChainStartResponse = ChainStartResponseSchema.parse(await daemon.startChain(body));
-    const response = {
+    const response: ChainStartResult = {
       content: [
         {
           type: "text",
@@ -306,11 +393,15 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
         },
       ],
     };
-    return {
-      ...response,
-      ...(resolutionWarning !== undefined ? { resolution_warning: resolutionWarning } : {}),
-      ...(res.routing_warning !== undefined ? { routing_warning: res.routing_warning } : {}),
-      ...(res.routing_advisory !== undefined ? { routing_advisory: res.routing_advisory } : {}),
-    };
+    if (resolutionWarning !== undefined) {
+      response.resolution_warning = resolutionWarning;
+    }
+    if (res.routing_warning !== undefined) {
+      response.routing_warning = res.routing_warning;
+    }
+    if (res.routing_advisory !== undefined) {
+      response.routing_advisory = res.routing_advisory;
+    }
+    return response;
   };
 }

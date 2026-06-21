@@ -1,5 +1,8 @@
 import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
+
+import { type ToolHandler, type ToolResult } from "./context.js";
 
 export const WorktreeCleanupInputShape = {
   handoff_id: z.string().min(1).describe("The handoff ID to cleanup the worktree for"),
@@ -15,8 +18,10 @@ export const WorktreeCleanupInputShape = {
  * same daemon instance, so handoff_id is sufficient to tear down the local
  * worktree state.
  */
-export function worktreeCleanupHandler(daemon: DaemonClient) {
-  return async (input: any) => {
+export function worktreeCleanupHandler(
+  daemon: DaemonClient,
+): ToolHandler<{ handoff_id: string; force?: boolean }> {
+  return async (input): Promise<ToolResult> => {
     const res = await daemon.cleanupWorktree(input.handoff_id, input.force);
     return { content: [{ type: "text", text: JSON.stringify(res) }] };
   };

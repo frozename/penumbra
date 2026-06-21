@@ -1,5 +1,6 @@
-import { toTextContent } from "@nova/mcp-shared";
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const TaskCommentGhInputSchema = z
@@ -11,7 +12,7 @@ export const TaskCommentGhInputSchema = z
 export const TaskCommentGhInputShape = TaskCommentGhInputSchema.shape;
 
 export function taskCommentGhHandler(daemon: Pick<DaemonClient, "taskCommentGh">) {
-  return async (input: unknown) => {
+  return async (input: unknown): Promise<TextContentEnvelope> => {
     const parsed = TaskCommentGhInputSchema.parse(input ?? {});
     const out = await daemon.taskCommentGh(parsed.task_id, { body: parsed.body });
     return toTextContent(out);

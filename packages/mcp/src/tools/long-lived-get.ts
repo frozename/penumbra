@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
-import { z } from "zod";
+
 import { WorkingMemorySchema } from "@penumbra/core/long-lived/types";
+import { z } from "zod";
 
 export const LongLivedGetArgsSchema = z
   .object({
@@ -8,16 +9,26 @@ export const LongLivedGetArgsSchema = z
   })
   .strict();
 
-function parseJson<T>(value: string | null): T | null {
-  if (!value) return null;
+function parseJson(value: string | null): unknown {
+  if (!value) {
+    return null;
+  }
   try {
-    return JSON.parse(value) as T;
+    return JSON.parse(value);
   } catch {
     return null;
   }
 }
 
-export async function handleLongLivedGet(db: Database, args: unknown) {
+export function handleLongLivedGet(
+  db: Database,
+  args: unknown,
+): {
+  agent: Record<string, unknown>;
+  recent_ticks: unknown[];
+  pending_actions: unknown[];
+  recent_audit: unknown[];
+} {
   const parsed = LongLivedGetArgsSchema.parse(args ?? {});
   const agent = db
     .query<
@@ -88,8 +99,8 @@ export async function handleLongLivedGet(db: Database, args: unknown) {
     .all(parsed.id)
     .map((row) => ({
       ...row,
-      trigger_payload: parseJson<unknown>(row.trigger_payload_json),
-      working_memory_diff: parseJson<unknown>(row.working_memory_diff_json),
+      trigger_payload: parseJson(row.trigger_payload_json),
+      working_memory_diff: parseJson(row.working_memory_diff_json),
     }));
 
   const pendingActions = db
@@ -120,7 +131,7 @@ export async function handleLongLivedGet(db: Database, args: unknown) {
     .all(parsed.id)
     .map((row) => ({
       ...row,
-      payload: parseJson<unknown>(row.payload_json),
+      payload: parseJson(row.payload_json),
     }));
 
   const recentAudit = db
@@ -149,10 +160,10 @@ export async function handleLongLivedGet(db: Database, args: unknown) {
   return {
     agent: {
       ...agent,
-      subscriptions: parseJson<unknown>(agent.subscriptions_json),
-      mcp_allowlist: parseJson<unknown>(agent.mcp_allowlist_json) ?? [],
-      approval_required_globs: parseJson<unknown>(agent.approval_required_globs_json) ?? [],
-      cooldown_overrides: parseJson<unknown>(agent.cooldown_overrides_json) ?? {},
+      subscriptions: parseJson(agent.subscriptions_json),
+      mcp_allowlist: parseJson(agent.mcp_allowlist_json) ?? [],
+      approval_required_globs: parseJson(agent.approval_required_globs_json) ?? [],
+      cooldown_overrides: parseJson(agent.cooldown_overrides_json) ?? {},
       working_memory: WorkingMemorySchema.parse(JSON.parse(agent.working_memory_json)),
     },
     recent_ticks: recentTicks,

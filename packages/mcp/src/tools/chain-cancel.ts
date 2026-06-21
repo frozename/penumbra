@@ -1,6 +1,9 @@
 import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
+
 import { DaemonHttpError } from "../daemon-client.js";
+import { type ToolHandler, type ToolResult } from "./context.js";
 
 export const ChainCancelInputShape = {
   handoff_id: z.string().min(1).describe("The handoff ID to cancel."),
@@ -8,11 +11,15 @@ export const ChainCancelInputShape = {
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "rejected"]);
 
-export function chainCancelHandler(daemon: DaemonClient) {
-  return async (args: { handoff_id: string }) => {
+interface NotFoundBody {
+  error: { code: string; message: string };
+}
+
+export function chainCancelHandler(daemon: DaemonClient): ToolHandler<{ handoff_id: string }> {
+  return async (args): Promise<ToolResult> => {
     try {
       const { handoff } = await daemon.getHandoff(args.handoff_id);
-      const current_status = String(handoff.status);
+      const current_status = handoff.status;
       if (TERMINAL_STATUSES.has(current_status)) {
         return {
           content: [
@@ -24,7 +31,7 @@ export function chainCancelHandler(daemon: DaemonClient) {
         };
       }
 
-      await daemon.cancelConversation(String(handoff.conversation_id));
+      await daemon.cancelConversation(handoff.conversation_id);
       return {
         content: [
           {
@@ -50,7 +57,10 @@ function isNotFound(err: unknown): err is DaemonHttpError {
   return err instanceof DaemonHttpError && err.status === 404;
 }
 
-function notFoundBody(err: DaemonHttpError | { body?: unknown }, handoff_id: string) {
+function notFoundBody(
+  err: DaemonHttpError | { body?: unknown },
+  handoff_id: string,
+): NotFoundBody | object {
   const body = "body" in err ? err.body : undefined;
   if (typeof body === "object" && body !== null && "error" in body) {
     return body;

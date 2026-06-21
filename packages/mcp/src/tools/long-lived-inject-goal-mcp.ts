@@ -1,5 +1,6 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const LongLivedInjectGoalInputShape = {
@@ -8,6 +9,6 @@ export const LongLivedInjectGoalInputShape = {
 };
 
 export function longLivedInjectGoalHandler(daemon: DaemonClient) {
-  return async (input: { id: string; goal: string }) =>
+  return async (input: { id: string; goal: string }): Promise<TextContentEnvelope> =>
     toTextContent(await daemon.longLivedInjectGoal(input.id, input.goal));
 }

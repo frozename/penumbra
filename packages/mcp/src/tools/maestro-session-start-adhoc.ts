@@ -1,6 +1,7 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { MaestroSessionRecord } from "@penumbra/core";
-import { toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const MaestroSessionStartAdhocInputSchema = z
@@ -29,7 +30,7 @@ const MaestroSessionStartAdhocOutputSchema = z
 export function maestroSessionStartAdhocHandler(
   daemon: Pick<DaemonClient, "maestroSessionStartAdhoc">,
 ) {
-  return async (input: unknown) => {
+  return async (input: unknown): Promise<TextContentEnvelope> => {
     const parsed = MaestroSessionStartAdhocInputSchema.parse(input ?? {});
     const out = await daemon.maestroSessionStartAdhoc(parsed);
     return toTextContent(MaestroSessionStartAdhocOutputSchema.parse(out));

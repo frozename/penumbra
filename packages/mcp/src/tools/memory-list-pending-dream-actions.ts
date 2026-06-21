@@ -1,5 +1,6 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const MemoryListPendingDreamActionsInputShape = {
@@ -15,7 +16,7 @@ export const MemoryListPendingDreamActionsInputShape = {
 const Schema = z.object(MemoryListPendingDreamActionsInputShape);
 
 export function memoryListPendingDreamActionsHandler(daemon: DaemonClient) {
-  return async (input: unknown) => {
+  return async (input: unknown): Promise<TextContentEnvelope> => {
     const parsed = Schema.parse(input ?? {});
     return toTextContent(await daemon.listPendingDreamActions(parsed));
   };

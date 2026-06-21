@@ -1,6 +1,9 @@
 import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
+
 import { DaemonHttpError } from "../daemon-client.js";
+import { type ToolHandler, type ToolResult } from "./context.js";
 
 export const ChainSendMessageInputShape = {
   handoff_id: z
@@ -14,8 +17,10 @@ export const ChainSendMessageInputShape = {
     .describe("The user-text message to inject into the live session."),
 };
 
-export function chainSendMessageHandler(daemon: DaemonClient) {
-  return async (args: { handoff_id: string; content: string }) => {
+export function chainSendMessageHandler(
+  daemon: DaemonClient,
+): ToolHandler<{ handoff_id: string; content: string }> {
+  return async (args): Promise<ToolResult> => {
     try {
       const res = await daemon.sendChainMessage({
         handoff_id: args.handoff_id,

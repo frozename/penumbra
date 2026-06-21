@@ -1,5 +1,6 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const MemoryEfficacyJobStatusInputShape = {
@@ -9,7 +10,7 @@ export const MemoryEfficacyJobStatusInputShape = {
 const MemoryEfficacyJobStatusSchema = z.object(MemoryEfficacyJobStatusInputShape).strict();
 
 export function memoryEfficacyJobStatusHandler(daemon: DaemonClient) {
-  return async (input: unknown) => {
+  return async (input: unknown): Promise<TextContentEnvelope> => {
     const parsed = MemoryEfficacyJobStatusSchema.parse(input);
     return toTextContent(await daemon.memoryEfficacyJobStatus(parsed));
   };

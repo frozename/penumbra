@@ -1,7 +1,8 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 const PlanOpenInputSchema = z
@@ -19,8 +20,15 @@ const DEFAULT_PREFERRED_AGENT = "openai-codex-fast-acp";
 type PlanOpenDaemon = Pick<DaemonClient, "planStart"> &
   Partial<Pick<DaemonClient, "listChainAgents" | "maestroCapabilities">>;
 
-export function planOpenHandler(daemon: PlanOpenDaemon) {
-  return async (input: unknown) => {
+interface PlanOpenError {
+  error: { code: string; field?: string };
+}
+type PlanOpenResult = Awaited<ReturnType<DaemonClient["planStart"]>> | PlanOpenError;
+
+export function planOpenHandler(
+  daemon: PlanOpenDaemon,
+): (input: unknown) => Promise<PlanOpenResult> {
+  return async (input): Promise<PlanOpenResult> => {
     const parsed = PlanOpenInputSchema.parse(input ?? {});
     const unsafeField = findUnsafeField(parsed.goal, parsed.steps ?? []);
     if (unsafeField) {
@@ -59,8 +67,7 @@ async function resolveDefaultAgents(
     const capabilities = await daemon.maestroCapabilities();
     fallbackAgent =
       capabilities.agents.find(
-        (agent) =>
-          agent.maestro_capable === true && (agent.task_types ?? []).includes("plan_refine"),
+        (agent) => agent.maestro_capable && (agent.task_types ?? []).includes("plan_refine"),
       )?.name ?? null;
   } catch {
     return { error: { code: "no_plan_capable_agent" } };
@@ -80,7 +87,7 @@ async function resolveDefaultAgents(
     if (names.length === 0) {
       return [DEFAULT_PREFERRED_AGENT, fallbackAgent];
     }
-    return [names[0]!, fallbackAgent];
+    return [names[0] ?? DEFAULT_PREFERRED_AGENT, fallbackAgent];
   } catch {
     return [DEFAULT_PREFERRED_AGENT, fallbackAgent];
   }
@@ -95,7 +102,7 @@ async function writePlanOpenFile(input: {
   const root = await mkdtemp(join(tmpdir(), "penumbra-plan-open-"));
   const filePath = join(root, "plan-open.md");
   const timestamp = new Date().toISOString();
-  const taskPath = `docs/plan-open-${Date.now()}.md`;
+  const taskPath = `docs/plan-open-${String(Date.now())}.md`;
   const body = renderPlanOpenMarkdown({
     goal: input.goal,
     steps: input.steps,
@@ -120,7 +127,7 @@ function renderPlanOpenMarkdown(input: {
   const stepsJson = encodeUserValue(input.steps);
   const stepsBlock =
     input.steps.length > 0
-      ? input.steps.map((step, idx) => `${idx + 1}. ${encodeUserValue(step)}`).join("\n")
+      ? input.steps.map((step, idx) => `${String(idx + 1)}. ${encodeUserValue(step)}`).join("\n")
       : '1. "Clarify and break down the goal into actionable implementation steps."';
   return [
     "---",
@@ -160,17 +167,36 @@ function encodeUserValue(value: unknown): string {
 
 function findUnsafeField(goal: string, steps: string[]): string | null {
   if (containsUnsafeInput(goal)) return "goal";
-  for (let i = 0; i < steps.length; i += 1) {
-    if (containsUnsafeInput(steps[i]!)) return `steps[${i}]`;
+  for (const [i, step] of steps.entries()) {
+    if (containsUnsafeInput(step)) {
+      return `steps[${String(i)}]`;
+    }
   }
   return null;
 }
 
+const FRONT_MATTER_PATTERN = /(?:^|\n)\s*---\s*(?:\n|$)/m;
+const BANG_DIRECTIVE_PATTERN = /(?:^|\n)\s*!![^\n]*/m;
+// eslint-disable-next-line no-control-regex -- intentional control-char screen on untrusted user input
+const CONTROL_CHAR_PATTERN = /[\u0000]/;
+// eslint-disable-next-line no-control-regex -- intentional ANSI-escape sequence screen on untrusted user input
+const ANSI_ESCAPE_PATTERN = /[\u001B\u009B]\[[0-?]*[ -/]*[@-~]/;
+
 function containsUnsafeInput(value: string): boolean {
-  if (value.includes("```")) return true;
-  if (/(^|\n)\s*---\s*(\n|$)/m.test(value)) return true;
-  if (/(^|\n)\s*!![^\n]*/m.test(value)) return true;
-  if (/[\u0000]/.test(value)) return true;
-  if (/[\u001B\u009B]\[[0-?]*[ -/]*[@-~]/.test(value)) return true;
+  if (value.includes("```")) {
+    return true;
+  }
+  if (FRONT_MATTER_PATTERN.test(value)) {
+    return true;
+  }
+  if (BANG_DIRECTIVE_PATTERN.test(value)) {
+    return true;
+  }
+  if (CONTROL_CHAR_PATTERN.test(value)) {
+    return true;
+  }
+  if (ANSI_ESCAPE_PATTERN.test(value)) {
+    return true;
+  }
   return false;
 }

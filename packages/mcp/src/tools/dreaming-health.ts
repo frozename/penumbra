@@ -1,17 +1,27 @@
+import type { Database } from "bun:sqlite";
+
 import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const DreamingHealthInputShape = z.object({});
 
 export type DreamingHealthInput = z.infer<typeof DreamingHealthInputShape>;
 
-export function dreamingHealthHandler(daemon: DaemonClient) {
-  return async () => {
-    return await daemon.dreamingHealth();
-  };
+export function dreamingHealthHandler(daemon: DaemonClient): () => Promise<unknown> {
+  return async (): Promise<unknown> => await daemon.dreamingHealth();
 }
 
-export function getDreamingHealthAlerts(db: any, opts: { daemonUptimeMs: number }) {
+export interface DreamingHealthAlerts {
+  alerts: string[];
+  cycles_in_last_24h: number;
+  cycles_crashed_24h: number;
+}
+
+export function getDreamingHealthAlerts(
+  db: Database,
+  opts: { daemonUptimeMs: number },
+): DreamingHealthAlerts {
   const now = Date.now();
   const yesterdayMs = now - 24 * 60 * 60 * 1000;
 
@@ -24,7 +34,7 @@ export function getDreamingHealthAlerts(db: any, opts: { daemonUptimeMs: number 
   const cycles_crashed_24h = (
     db
       .prepare(
-        'SELECT COUNT(*) as c FROM dream_cycles WHERE started_at >= ? AND outcome = \"crashed\"',
+        'SELECT COUNT(*) as c FROM dream_cycles WHERE started_at >= ? AND outcome = \\"crashed\\"',
       )
       .get(yesterdayMs) as { c: number }
   ).c;

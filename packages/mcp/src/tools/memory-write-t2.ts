@@ -1,5 +1,6 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const MemoryWriteT2InputShape = {
@@ -20,7 +21,7 @@ export const MemoryWriteT2InputShape = {
 const MemoryWriteT2Schema = z.object(MemoryWriteT2InputShape).strict();
 
 export function memoryWriteT2Handler(daemon: Pick<DaemonClient, "memoryWriteT2">) {
-  return async (input: unknown) => {
+  return async (input: unknown): Promise<TextContentEnvelope> => {
     const parsed = MemoryWriteT2Schema.parse(input);
     return toTextContent(await daemon.memoryWriteT2(parsed));
   };

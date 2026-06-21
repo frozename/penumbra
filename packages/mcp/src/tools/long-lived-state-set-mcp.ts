@@ -1,6 +1,7 @@
-import { z } from "zod";
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { WorkingMemorySchema } from "@penumbra/core/long-lived/types";
-import { toTextContent } from "@nova/mcp-shared";
+import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const LongLivedStateSetInputShape = {
@@ -19,5 +20,6 @@ export function longLivedStateSetHandler(daemon: DaemonClient) {
   return async (input: {
     id: string;
     partial: { intent_summary?: string; working_memory?: unknown };
-  }) => toTextContent(await daemon.longLivedStateSet(input.id, input.partial));
+  }): Promise<TextContentEnvelope> =>
+    toTextContent(await daemon.longLivedStateSet(input.id, input.partial));
 }

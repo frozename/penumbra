@@ -1,5 +1,6 @@
-import { toTextContent } from "@nova/mcp-shared";
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
+
 import type { HandleStore } from "../handle-store.js";
 
 export const ReadHandleInputShape = {
@@ -12,12 +13,14 @@ export const ReadHandleInputShape = {
 export const READ_HANDLE_DESCRIPTION =
   "Retrieve the full content for a handle_id returned by a prior tool call (e.g. an oversized result stored out-of-band). Returns the stored payload verbatim.";
 
-export function readHandleHandler(store: HandleStore) {
-  return async (input: unknown) => {
+export function readHandleHandler(
+  store: HandleStore,
+): (input: unknown) => Promise<TextContentEnvelope | (TextContentEnvelope & { isError: true })> {
+  return (input): Promise<TextContentEnvelope | (TextContentEnvelope & { isError: true })> => {
     const { handle_id } = (input ?? {}) as { handle_id?: string };
-    const content = handle_id ? store.get(handle_id) : undefined;
+    const content = handle_id !== undefined ? store.get(handle_id) : undefined;
     if (content === undefined) {
-      return {
+      return Promise.resolve({
         ...toTextContent({
           error: {
             code: "handle_not_found",
@@ -25,8 +28,8 @@ export function readHandleHandler(store: HandleStore) {
           },
         }),
         isError: true,
-      };
+      });
     }
-    return { content: [{ type: "text", text: content }] };
+    return Promise.resolve({ content: [{ type: "text", text: content }] });
   };
 }

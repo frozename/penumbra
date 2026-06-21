@@ -1,6 +1,7 @@
-import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { isCanonicalProviderValue } from "@penumbra/config";
+import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 const RoutingBiasSetInputObject = z.object({
@@ -9,7 +10,7 @@ const RoutingBiasSetInputObject = z.object({
   mode: z.enum(["boost", "divert", "exclude"]),
   weight: z.number().min(0).max(2.0).optional(),
   ttl_seconds: z.number().int().positive().optional(),
-  expires_at: z.string().datetime().optional(),
+  expires_at: z.iso.datetime().optional(),
   reason: z.string().optional(),
 });
 
@@ -34,8 +35,10 @@ export const RoutingBiasSetInputShape = RoutingBiasSetInputObject.shape;
 
 export type RoutingBiasSetInput = z.infer<typeof RoutingBiasSetInputSchema>;
 
-export function routingBiasSetHandler(daemon: DaemonClient) {
-  return async (input: unknown) => {
+export function routingBiasSetHandler(
+  daemon: DaemonClient,
+): (input: unknown) => Promise<TextContentEnvelope> {
+  return async (input): Promise<TextContentEnvelope> => {
     const parsed = RoutingBiasSetInputSchema.parse(input);
     const out = await daemon.routingBiasSet(parsed);
     return toTextContent(out);

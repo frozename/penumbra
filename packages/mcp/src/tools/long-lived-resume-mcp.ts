@@ -1,5 +1,6 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const LongLivedResumeInputShape = {
@@ -7,5 +8,6 @@ export const LongLivedResumeInputShape = {
 };
 
 export function longLivedResumeHandler(daemon: DaemonClient) {
-  return async (input: { id: string }) => toTextContent(await daemon.longLivedResume(input.id));
+  return async (input: { id: string }): Promise<TextContentEnvelope> =>
+    toTextContent(await daemon.longLivedResume(input.id));
 }

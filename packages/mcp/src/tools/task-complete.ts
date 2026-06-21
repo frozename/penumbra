@@ -1,6 +1,7 @@
-import { toTextContent } from "@nova/mcp-shared";
-import { z } from "zod";
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { CompleteTaskInputSchema as CoreCompleteTaskInputSchema } from "@penumbra/core";
+import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 // lease_id is optional at the tool layer: maestro principals complete tasks
@@ -12,7 +13,7 @@ const TaskCompleteToolSchema = CoreCompleteTaskInputSchema.extend({
 export const TaskCompleteInputShape = TaskCompleteToolSchema.shape;
 
 export function taskCompleteHandler(daemon: Pick<DaemonClient, "taskComplete">) {
-  return async (input: unknown) => {
+  return async (input: unknown): Promise<TextContentEnvelope> => {
     const parsed = TaskCompleteToolSchema.parse(input ?? {});
     const out = await daemon.taskComplete(parsed.task_id, {
       lease_id: parsed.lease_id,

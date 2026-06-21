@@ -1,5 +1,6 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const RoutingBiasClearInputSchema = z
@@ -33,7 +34,7 @@ export const RoutingBiasClearInputShape = RoutingBiasClearInputSchema.shape;
 export type RoutingBiasClearInput = z.infer<typeof RoutingBiasClearInputSchema>;
 
 export function routingBiasClearHandler(daemon: DaemonClient) {
-  return async (input: unknown) => {
+  return async (input: unknown): Promise<TextContentEnvelope> => {
     const parsed = RoutingBiasClearInputSchema.parse(input);
     const out = await daemon.routingBiasClear(parsed);
     return toTextContent(out);

@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+
 import { z } from "zod";
 
 export const LongLivedRejectActionArgsSchema = z
@@ -9,14 +10,20 @@ export const LongLivedRejectActionArgsSchema = z
   })
   .strict();
 
-export async function handleLongLivedRejectAction(
+interface WorkingMemory {
+  recent_decisions?: Record<string, unknown>[];
+  updated_at?: number;
+  [key: string]: unknown;
+}
+
+export function handleLongLivedRejectAction(
   db: Database,
   deps: {
     emit: (event: { type: string; agent_id: string; payload: unknown }) => void;
     now: () => number;
   },
   args: unknown,
-) {
+): { ok: true } {
   const { action_id, reason, decided_by } = LongLivedRejectActionArgsSchema.parse(args ?? {});
   const row = db
     .query<
@@ -32,8 +39,12 @@ export async function handleLongLivedRejectAction(
       "SELECT agent_id, tick_id, action_kind, action_target, status FROM long_lived_pending_actions WHERE id=?",
     )
     .get(action_id);
-  if (!row) throw new Error("not_found");
-  if (row.status !== "pending") throw new Error("not_pending");
+  if (!row) {
+    throw new Error("not_found");
+  }
+  if (row.status !== "pending") {
+    throw new Error("not_pending");
+  }
 
   const now = deps.now();
   db.transaction(() => {
@@ -61,14 +72,16 @@ export async function handleLongLivedRejectAction(
       >("SELECT working_memory_json FROM long_lived_agents WHERE id=?")
       .get(row.agent_id);
     if (agent) {
-      const workingMemory = JSON.parse(agent.working_memory_json);
+      const workingMemory = JSON.parse(agent.working_memory_json) as WorkingMemory;
       workingMemory.recent_decisions = workingMemory.recent_decisions ?? [];
       const entry: Record<string, unknown> = {
         pending_action_id: action_id,
         decision: "rejected",
         decided_at: now,
       };
-      if (reason !== undefined) entry.reason = reason;
+      if (reason !== undefined) {
+        entry.reason = reason;
+      }
       workingMemory.recent_decisions.push(entry);
       workingMemory.updated_at = now;
       db.query("UPDATE long_lived_agents SET working_memory_json=?, updated_at=? WHERE id=?").run(

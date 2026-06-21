@@ -1,5 +1,6 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const MemoryEfficacyRebuildInputShape = {
@@ -15,7 +16,7 @@ export const MemoryEfficacyRebuildInputShape = {
 const MemoryEfficacyRebuildSchema = z.object(MemoryEfficacyRebuildInputShape).strict();
 
 export function memoryEfficacyRebuildHandler(daemon: DaemonClient) {
-  return async (input: unknown) => {
+  return async (input: unknown): Promise<TextContentEnvelope> => {
     const parsed = MemoryEfficacyRebuildSchema.parse(input);
     return toTextContent(
       await daemon.memoryEfficacyRebuild({ ...parsed, source: parsed.source ?? "maestro" }),

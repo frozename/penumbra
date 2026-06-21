@@ -1,4 +1,5 @@
 import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const ReconcilerVerdictsInputShape = {
@@ -16,8 +17,18 @@ export const ReconcilerVerdictsInputShape = {
     .describe("When true, include only verdicts without a PR URL."),
 };
 
-export function reconcilerVerdictsHandler(daemon: Pick<DaemonClient, "reconcilerVerdicts">) {
-  return async (input: { since?: string; limit?: number; only_unverified?: boolean }) => {
+interface ReconcilerVerdictsResult {
+  content: { type: "text"; text: string }[];
+}
+
+export function reconcilerVerdictsHandler(
+  daemon: Pick<DaemonClient, "reconcilerVerdicts">,
+): (input: {
+  since?: string;
+  limit?: number;
+  only_unverified?: boolean;
+}) => Promise<ReconcilerVerdictsResult> {
+  return async (input): Promise<ReconcilerVerdictsResult> => {
     const out = await daemon.reconcilerVerdicts({
       since: input.since,
       limit: input.limit,

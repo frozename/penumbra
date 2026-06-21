@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+
 import { z } from "zod";
 
 export const LongLivedInjectGoalArgsSchema = z
@@ -8,14 +9,20 @@ export const LongLivedInjectGoalArgsSchema = z
   })
   .strict();
 
-export async function handleLongLivedInjectGoal(
+interface WorkingMemory {
+  pending_goals?: { kind: string; text: string; created_at: number }[];
+  updated_at?: number;
+  [key: string]: unknown;
+}
+
+export function handleLongLivedInjectGoal(
   db: Database,
   deps: {
     fireTick: (req: { agent_id: string; trigger_kind: "injected_goal" }) => void;
     now: () => number;
   },
   args: unknown,
-) {
+): { ok: true } {
   const { id, goal } = LongLivedInjectGoalArgsSchema.parse(args ?? {});
   const now = deps.now();
 
@@ -26,10 +33,14 @@ export async function handleLongLivedInjectGoal(
         [string]
       >("SELECT status, schedule_cron, working_memory_json FROM long_lived_agents WHERE id=?")
       .get(id);
-    if (!row) throw new Error("not_found");
-    if (row.status !== "active") throw new Error("not_active");
+    if (!row) {
+      throw new Error("not_found");
+    }
+    if (row.status !== "active") {
+      throw new Error("not_active");
+    }
 
-    const workingMemory = JSON.parse(row.working_memory_json);
+    const workingMemory = JSON.parse(row.working_memory_json) as WorkingMemory;
     workingMemory.pending_goals = workingMemory.pending_goals ?? [];
     workingMemory.pending_goals.push({ kind: "user_goal", text: goal, created_at: now });
     workingMemory.updated_at = now;

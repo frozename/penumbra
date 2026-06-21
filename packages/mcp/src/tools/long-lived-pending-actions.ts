@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+
 import { z } from "zod";
 
 export const LongLivedPendingActionsArgsSchema = z
@@ -8,7 +9,10 @@ export const LongLivedPendingActionsArgsSchema = z
   })
   .strict();
 
-export async function handleLongLivedPendingActions(db: Database, args: unknown) {
+export function handleLongLivedPendingActions(
+  db: Database,
+  args: unknown,
+): { pending_actions: unknown[] } {
   const parsed = LongLivedPendingActionsArgsSchema.parse(args ?? {});
   const rows = db
     .query(

@@ -1,4 +1,5 @@
 import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const DispatchTimelineInputShape = {
@@ -8,8 +9,14 @@ export const DispatchTimelineInputShape = {
     .describe("The handoff_id whose dispatch event timeline should be returned."),
 };
 
-export function dispatchTimelineHandler(daemon: Pick<DaemonClient, "getDispatchTimeline">) {
-  return async (input: { handoff_id: string }) => {
+interface DispatchTimelineResult {
+  content: { type: "text"; text: string }[];
+}
+
+export function dispatchTimelineHandler(
+  daemon: Pick<DaemonClient, "getDispatchTimeline">,
+): (input: { handoff_id: string }) => Promise<DispatchTimelineResult> {
+  return async (input): Promise<DispatchTimelineResult> => {
     const timeline = await daemon.getDispatchTimeline(input.handoff_id);
     const rawJson = JSON.stringify(timeline, null, 2);
     return {

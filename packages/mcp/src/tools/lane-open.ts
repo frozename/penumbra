@@ -1,7 +1,8 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
+import { TaskClassSchema } from "@penumbra/core";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
-import { TaskClassSchema } from "@penumbra/core";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const LaneOpenInputShape = {
@@ -9,11 +10,15 @@ export const LaneOpenInputShape = {
   task_class: TaskClassSchema,
 };
 
-export function laneOpenHandler(daemon: DaemonClient) {
-  return async (input: {
-    implementer_handoff_id: string;
-    task_class: z.infer<typeof TaskClassSchema>;
-  }) => {
+interface LaneOpenInput {
+  implementer_handoff_id: string;
+  task_class: z.infer<typeof TaskClassSchema>;
+}
+
+export function laneOpenHandler(
+  daemon: DaemonClient,
+): (input: LaneOpenInput) => Promise<TextContentEnvelope> {
+  return async (input): Promise<TextContentEnvelope> => {
     const response = await postToDaemon(daemon, "/lanes/open", {
       lane_id: randomUUID(),
       implementer_handoff: input.implementer_handoff_id,
@@ -43,8 +48,10 @@ async function daemonHttpError(path: string, res: Response): Promise<Error> {
   let body: unknown;
   try {
     body = await res.json();
-  } catch {}
+  } catch {
+    body = undefined;
+  }
   return new Error(
-    `daemon ${path}: HTTP ${res.status}${body === undefined ? "" : ` ${JSON.stringify(body)}`}`,
+    `daemon ${path}: HTTP ${String(res.status)}${body === undefined ? "" : ` ${JSON.stringify(body)}`}`,
   );
 }

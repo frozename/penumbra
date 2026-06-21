@@ -1,7 +1,9 @@
-import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { RecallRequestSchema } from "@penumbra/core";
+import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
+
 import { sliceSurrogateSafe } from "../responses/budget.js";
 
 export const RecallInputShape = {
@@ -39,8 +41,10 @@ const DEFAULT_BODY_MAX_CHARS = 600;
  * Unlike observeHandler, recall requires no server-side identity injection —
  * RecallRequestSchema fields are all LLM-addressable or have schema defaults.
  */
-export function recallHandler(daemon: DaemonClient) {
-  return async (input: unknown) => {
+export function recallHandler(
+  daemon: DaemonClient,
+): (input: unknown) => Promise<TextContentEnvelope> {
+  return async (input): Promise<TextContentEnvelope> => {
     const parsed = RecallSchema.parse(input);
     const request = RecallRequestSchema.parse({
       ...parsed,
@@ -49,9 +53,9 @@ export function recallHandler(daemon: DaemonClient) {
     });
     const r = await daemon.recall(request);
     const bodyMaxChars = parsed.body_max_chars ?? DEFAULT_BODY_MAX_CHARS;
-    if (Array.isArray(r?.results)) {
+    if (Array.isArray(r.results)) {
       for (const hit of r.results) {
-        if (typeof hit?.body === "string" && hit.body.length > bodyMaxChars) {
+        if (typeof hit.body === "string" && hit.body.length > bodyMaxChars) {
           // Surrogate-safe: a naive slice can split an astral codepoint (emoji)
           // and leave a lone high surrogate that strict JSON decoders reject.
           hit.body = sliceSurrogateSafe(hit.body, bodyMaxChars);

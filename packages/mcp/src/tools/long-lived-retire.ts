@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+
 import { z } from "zod";
 
 export const LongLivedRetireArgsSchema = z
@@ -7,12 +8,17 @@ export const LongLivedRetireArgsSchema = z
   })
   .strict();
 
-export async function handleLongLivedRetire(db: Database, args: unknown) {
+export function handleLongLivedRetire(
+  db: Database,
+  args: unknown,
+): { id: string; status: "retired"; retired_at: number } {
   const parsed = LongLivedRetireArgsSchema.parse(args ?? {});
   const row = db
     .query<{ status: string }, [string]>("SELECT status FROM long_lived_agents WHERE id = ?")
     .get(parsed.id);
-  if (!row) throw new Error("agent_not_found");
+  if (!row) {
+    throw new Error("agent_not_found");
+  }
 
   const now = Date.now();
   // V1: status flag only; cron stop happens at next reactor.reload(). Tick gate enforces.

@@ -1,6 +1,7 @@
-import { toTextContent } from "@nova/mcp-shared";
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { TaskKindSchema, TaskStatusSchema } from "@penumbra/core";
 import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const TaskListInputSchema = z
@@ -17,7 +18,7 @@ export const TaskListInputSchema = z
 export const TaskListInputShape = TaskListInputSchema.shape;
 
 export function taskListHandler(daemon: Pick<DaemonClient, "taskList">) {
-  return async (input: unknown) => {
+  return async (input: unknown): Promise<TextContentEnvelope> => {
     const parsed = TaskListInputSchema.parse(input ?? {});
     return toTextContent(await daemon.taskList(parsed));
   };

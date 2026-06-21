@@ -1,6 +1,7 @@
-import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { BasisSchema } from "@penumbra/core";
+import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const VerifyInputShape = {
@@ -30,8 +31,10 @@ export const VerifyInputShape = {
 
 const VerifySchema = z.object(VerifyInputShape);
 
-export function verifyHandler(daemon: DaemonClient) {
-  return async (input: unknown) => {
+export function verifyHandler(
+  daemon: DaemonClient,
+): (input: unknown) => Promise<TextContentEnvelope> {
+  return async (input: unknown): Promise<TextContentEnvelope> => {
     const parsed = VerifySchema.parse(input);
     const claimed_by = parsed.claimed_by ?? parsed.by;
     return toTextContent(

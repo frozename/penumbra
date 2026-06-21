@@ -1,5 +1,6 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const WorkflowSuggestInputShape = {
@@ -8,8 +9,10 @@ export const WorkflowSuggestInputShape = {
 
 const WorkflowSuggestSchema = z.object(WorkflowSuggestInputShape).strict();
 
-export function workflowSuggestHandler(daemon: DaemonClient) {
-  return async (input: unknown) => {
+export function workflowSuggestHandler(
+  daemon: DaemonClient,
+): (input: unknown) => Promise<TextContentEnvelope> {
+  return async (input: unknown): Promise<TextContentEnvelope> => {
     const parsed = WorkflowSuggestSchema.parse(input);
     return toTextContent(await daemon.workflowSuggest(parsed));
   };

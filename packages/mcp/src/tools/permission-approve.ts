@@ -1,5 +1,8 @@
 import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
+
+import { formatPermissionApprove, wrapWithSummary } from "../format-summary.js";
 
 export const PermissionApproveInputShape = {
   permission_id: z.string().min(1),
@@ -13,16 +16,20 @@ export const PermissionApproveInputShape = {
   reason: z.string().optional(),
 };
 
-import { formatPermissionApprove, wrapWithSummary } from "../format-summary.js";
+interface PermissionApproveResult {
+  content: { type: "text"; text: string }[];
+}
+
+interface PermissionApproveArgs {
+  permission_id: string;
+  decision: "approve" | "reject";
+  remember?: "this_call" | "this_dispatch";
+  reason?: string;
+}
 
 export const permissionApproveHandler =
-  (daemon: DaemonClient) =>
-  async (args: {
-    permission_id: string;
-    decision: "approve" | "reject";
-    remember?: "this_call" | "this_dispatch";
-    reason?: string;
-  }) => {
+  (daemon: DaemonClient): ((args: PermissionApproveArgs) => Promise<PermissionApproveResult>) =>
+  async (args): Promise<PermissionApproveResult> => {
     const r = await daemon.approvePermission(args.permission_id, {
       decision: args.decision,
       remember: args.remember,

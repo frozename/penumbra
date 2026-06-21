@@ -1,60 +1,109 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
+
 import type { DaemonClient } from "../daemon-client.js";
 import type { HandleStore } from "../handle-store.js";
+
 import {
   DEFAULT_BUDGET,
   estimateTokens,
   sliceSurrogateSafe,
   truncateToTokens,
 } from "../responses/budget.js";
-import { makeEnvelopeResult } from "../responses/envelope.js";
+import { type EnvelopeResult, makeEnvelopeResult } from "../responses/envelope.js";
 
 const WORKFLOW_WAIT_INLINE_BYTE_LIMIT = DEFAULT_BUDGET * 4;
 const WORKFLOW_WAIT_PREVIEW_CHAR_SLICE = DEFAULT_BUDGET * 10;
+
+interface BoundFieldKeys {
+  truncated: string;
+  preview: string;
+  bytes: string;
+  handle: string;
+}
+
+function fieldKeys(field: "result" | "error"): BoundFieldKeys {
+  return {
+    truncated: `${field}_truncated`,
+    preview: `${field}_preview`,
+    bytes: `${field}_bytes`,
+    handle: `${field}_handle_id`,
+  };
+}
+
+function rebuildWithout(
+  source: Record<string, unknown>,
+  drop: readonly string[],
+): Record<string, unknown> {
+  const dropSet = new Set(drop);
+  const next: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(source)) {
+    if (!dropSet.has(k)) {
+      next[k] = v;
+    }
+  }
+  return next;
+}
+
+function spillField(
+  out: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  field: "result" | "error",
+  serialized: string,
+  keys: BoundFieldKeys,
+  handleStore: HandleStore | undefined,
+): Record<string, unknown> {
+  out[field] = null;
+  out[keys.truncated] = true;
+  out[keys.preview] = truncateToTokens(
+    serialized.slice(0, WORKFLOW_WAIT_PREVIEW_CHAR_SLICE),
+    DEFAULT_BUDGET,
+  ).text;
+  if (handleStore) {
+    out[keys.handle] = handleStore.put(serialized);
+    return out;
+  }
+  return rebuildWithout(out, [keys.handle]);
+}
+
+function clearSpill(out: Record<string, unknown>, keys: BoundFieldKeys): Record<string, unknown> {
+  out[keys.truncated] = false;
+  return rebuildWithout(out, [keys.preview, keys.handle]);
+}
+
+interface BoundFieldOutcome {
+  spilled: boolean;
+  out: Record<string, unknown>;
+}
 
 function boundField(
   out: Record<string, unknown>,
   payload: Record<string, unknown>,
   field: "result" | "error",
   handleStore?: HandleStore,
-): boolean {
-  if (!Object.prototype.hasOwnProperty.call(payload, field)) return false;
-  const truncatedKey = `${field}_truncated`;
-  const previewKey = `${field}_preview`;
-  const bytesKey = `${field}_bytes`;
-  const handleKey = `${field}_handle_id`;
+): BoundFieldOutcome {
+  if (!Object.prototype.hasOwnProperty.call(payload, field)) {
+    return { spilled: false, out };
+  }
+  const keys = fieldKeys(field);
 
   // Mixed deploy safety: if daemon already truncated, preserve daemon fields verbatim.
-  if (payload[field] === null && payload[truncatedKey] === true) return false;
-
-  const value = payload[field];
-  if (value === undefined) return false;
-
-  const serialized = JSON.stringify(value);
-  if (serialized === undefined) return false;
-
-  const bytes = Buffer.byteLength(serialized, "utf8");
-  out[bytesKey] = typeof payload[bytesKey] === "number" ? payload[bytesKey] : bytes;
-  if (bytes > WORKFLOW_WAIT_INLINE_BYTE_LIMIT) {
-    out[field] = null;
-    out[truncatedKey] = true;
-    out[previewKey] = truncateToTokens(
-      serialized.slice(0, WORKFLOW_WAIT_PREVIEW_CHAR_SLICE),
-      DEFAULT_BUDGET,
-    ).text;
-    if (handleStore) {
-      out[handleKey] = handleStore.put(serialized);
-    } else {
-      delete out[handleKey];
-    }
-    return true;
+  if (payload[field] === null && payload[keys.truncated] === true) {
+    return { spilled: false, out };
   }
 
-  out[truncatedKey] = false;
-  delete out[previewKey];
-  delete out[handleKey];
-  return false;
+  const value = payload[field];
+  if (value === undefined) {
+    return { spilled: false, out };
+  }
+
+  const serialized = JSON.stringify(value);
+  const bytes = Buffer.byteLength(serialized, "utf8");
+  out[keys.bytes] = typeof payload[keys.bytes] === "number" ? payload[keys.bytes] : bytes;
+  if (bytes > WORKFLOW_WAIT_INLINE_BYTE_LIMIT) {
+    return { spilled: true, out: spillField(out, payload, field, serialized, keys, handleStore) };
+  }
+  return { spilled: false, out: clearSpill(out, keys) };
 }
 
 export const WorkflowStatusInputShape = {
@@ -73,49 +122,79 @@ export const WorkflowWaitInputShape = {
     .describe("Timeout in ms (default 300000, max 1800000)."),
 };
 
-export function workflowStatusHandler(daemon: DaemonClient) {
-  return async (input: { workflow_run_id: string }) =>
+export function workflowStatusHandler(
+  daemon: DaemonClient,
+): (input: { workflow_run_id: string }) => Promise<TextContentEnvelope> {
+  return async (input): Promise<TextContentEnvelope> =>
     toTextContent(await daemon.workflowStatus(input));
 }
 
-export function workflowWaitHandler(daemon: DaemonClient, opts?: { handleStore?: HandleStore }) {
-  return async (input: { workflow_run_id: string; timeout_ms?: number }) => {
-    const payload = (await daemon.workflowWait(input)) as Record<string, unknown>;
-    const out: Record<string, unknown> = { ...payload };
-    const handleStore = opts?.handleStore;
-    const spilledResult = boundField(out, payload, "result", handleStore);
-    const spilledError = boundField(out, payload, "error", handleStore);
-
-    if (spilledResult || spilledError) {
-      // Each spilled preview was independently truncated to DEFAULT_BUDGET, so a
-      // dual-spill envelope can otherwise reach ~2x the budget. Re-shrink the
-      // spilled previews jointly until the combined JSON fits.
-      const spilledPreviewKeys: string[] = [];
-      if (spilledResult) spilledPreviewKeys.push("result_preview");
-      if (spilledError) spilledPreviewKeys.push("error_preview");
-      let text = JSON.stringify(out);
-      while (estimateTokens(text) > DEFAULT_BUDGET) {
-        let shrunk = false;
-        for (const key of spilledPreviewKeys) {
-          const current = out[key];
-          if (typeof current === "string" && current.length > 0) {
-            const next = sliceSurrogateSafe(current, Math.floor(current.length * 0.9));
-            if (next.length < current.length) {
-              out[key] = next;
-              shrunk = true;
-            }
-          }
-        }
-        if (!shrunk) break;
-        text = JSON.stringify(out);
-      }
-      return makeEnvelopeResult([{ type: "text", text }], {
-        usedTokens: estimateTokens(text),
-        limitTokens: DEFAULT_BUDGET,
-        truncated: spilledResult || spilledError,
-        resultBytes: Buffer.byteLength(text, "utf8"),
-      });
+function shrinkOneRound(out: Record<string, unknown>, previewKeys: string[]): boolean {
+  let shrunk = false;
+  for (const key of previewKeys) {
+    const current = out[key];
+    if (typeof current !== "string" || current.length === 0) {
+      continue;
     }
-    return toTextContent(out);
+    const next = sliceSurrogateSafe(current, Math.floor(current.length * 0.9));
+    if (next.length < current.length) {
+      out[key] = next;
+      shrunk = true;
+    }
+  }
+  return shrunk;
+}
+
+function shrinkPreviewsToFit(out: Record<string, unknown>, previewKeys: string[]): string {
+  let text = JSON.stringify(out);
+  while (estimateTokens(text) > DEFAULT_BUDGET) {
+    if (!shrinkOneRound(out, previewKeys)) {
+      break;
+    }
+    text = JSON.stringify(out);
+  }
+  return text;
+}
+
+export function workflowWaitHandler(
+  daemon: DaemonClient,
+  opts?: { handleStore?: HandleStore },
+): (input: {
+  workflow_run_id: string;
+  timeout_ms?: number;
+}) => Promise<TextContentEnvelope | EnvelopeResult> {
+  return async (input): Promise<TextContentEnvelope | EnvelopeResult> => {
+    const payload = (await daemon.workflowWait(input)) as Record<string, unknown>;
+    let out: Record<string, unknown> = { ...payload };
+    const handleStore = opts?.handleStore;
+    const resultOutcome = boundField(out, payload, "result", handleStore);
+    out = resultOutcome.out;
+    const errorOutcome = boundField(out, payload, "error", handleStore);
+    out = errorOutcome.out;
+    const spilledResult = resultOutcome.spilled;
+    const spilledError = errorOutcome.spilled;
+
+    if (!spilledResult && !spilledError) {
+      return toTextContent(out);
+    }
+
+    // Each spilled preview was independently truncated to DEFAULT_BUDGET, so a
+    // dual-spill envelope can otherwise reach ~2x the budget. Re-shrink the
+    // spilled previews jointly until the combined JSON fits.
+    const spilledPreviewKeys: string[] = [];
+    if (spilledResult) {
+      spilledPreviewKeys.push("result_preview");
+    }
+    if (spilledError) {
+      spilledPreviewKeys.push("error_preview");
+    }
+    const text = shrinkPreviewsToFit(out, spilledPreviewKeys);
+
+    return makeEnvelopeResult([{ type: "text", text }], {
+      usedTokens: estimateTokens(text),
+      limitTokens: DEFAULT_BUDGET,
+      truncated: spilledResult || spilledError,
+      resultBytes: Buffer.byteLength(text, "utf8"),
+    });
   };
 }

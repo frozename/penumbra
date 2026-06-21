@@ -1,6 +1,7 @@
-import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { TaskClassSchema } from "@penumbra/core";
+import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const LaneLedgerRecentInputShape = {
@@ -10,13 +11,17 @@ export const LaneLedgerRecentInputShape = {
   limit: z.coerce.number().int().min(1).optional(),
 };
 
-export function laneLedgerRecentHandler(daemon: DaemonClient) {
-  return async (input: {
-    status?: "open" | "passed" | "failed" | "skipped" | "review_debt";
-    task_class?: z.infer<typeof TaskClassSchema>;
-    since?: string;
-    limit?: number;
-  }) => {
+interface LaneLedgerRecentInput {
+  status?: "open" | "passed" | "failed" | "skipped" | "review_debt";
+  task_class?: z.infer<typeof TaskClassSchema>;
+  since?: string;
+  limit?: number;
+}
+
+export function laneLedgerRecentHandler(
+  daemon: DaemonClient,
+): (input: LaneLedgerRecentInput) => Promise<TextContentEnvelope> {
+  return async (input): Promise<TextContentEnvelope> => {
     const response = await getFromDaemon(daemon, "/lanes/recent", {
       status: input.status,
       task_class: input.task_class,
@@ -54,8 +59,10 @@ async function daemonHttpError(path: string, res: Response): Promise<Error> {
   let body: unknown;
   try {
     body = await res.json();
-  } catch {}
+  } catch {
+    body = undefined;
+  }
   return new Error(
-    `daemon ${path}: HTTP ${res.status}${body === undefined ? "" : ` ${JSON.stringify(body)}`}`,
+    `daemon ${path}: HTTP ${String(res.status)}${body === undefined ? "" : ` ${JSON.stringify(body)}`}`,
   );
 }

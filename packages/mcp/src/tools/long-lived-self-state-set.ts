@@ -1,7 +1,9 @@
 import type { Database } from "bun:sqlite";
-import { z } from "zod";
-import { WorkingMemorySchema } from "@penumbra/core/long-lived/types";
+
 import { updateLongLivedAgentState } from "@penumbra/core/long-lived/self-reader";
+import { WorkingMemorySchema } from "@penumbra/core/long-lived/types";
+import { z } from "zod";
+
 import { verifyRunningIdentity } from "../long-lived-context.js";
 
 const SelfStateSetArgsBaseSchema = z.object({
@@ -20,11 +22,11 @@ export interface SelfStateSetContext {
   running_tick_id?: string;
 }
 
-export async function handleLongLivedSelfStateSet(
+export function handleLongLivedSelfStateSet(
   db: Database,
   ctx: SelfStateSetContext,
   args: unknown,
-) {
+): { ok: true } {
   const identity = verifyRunningIdentity(db, ctx);
   const parsed = SelfStateSetArgsSchema.parse(args);
   (updateLongLivedAgentState as unknown as (db: Database, ...args: unknown[]) => void)(

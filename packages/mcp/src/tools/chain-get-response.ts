@@ -1,6 +1,10 @@
 import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
+
 import { DaemonHttpError } from "../daemon-client.js";
+import { formatChainGetResponse, wrapWithSummary } from "../format-summary.js";
+import { type ToolHandler, type ToolResult } from "./context.js";
 
 export const ChainGetResponseInputShape = {
   conversation_id: z.string().describe("The conversation ID to query responses for."),
@@ -10,10 +14,14 @@ export const ChainGetResponseInputShape = {
     .default("final")
     .describe("Whether to return only the final response or all responses in chronological order."),
 };
-import { formatChainGetResponse, wrapWithSummary } from "../format-summary.js";
+
+interface NotFoundBody {
+  error: { code: string; message: string };
+}
 
 export const chainGetResponseHandler =
-  (daemon: DaemonClient) => async (args: { conversation_id: string; which?: "final" | "all" }) => {
+  (daemon: DaemonClient): ToolHandler<{ conversation_id: string; which?: "final" | "all" }> =>
+  async (args): Promise<ToolResult> => {
     try {
       const payload = await daemon.getChainResponses(args.conversation_id, args.which);
       return {
@@ -44,7 +52,7 @@ function isNotFound(err: unknown): err is DaemonHttpError {
   return err instanceof DaemonHttpError && err.status === 404;
 }
 
-function notFoundBody(err: DaemonHttpError | { body?: unknown }) {
+function notFoundBody(err: DaemonHttpError | { body?: unknown }): NotFoundBody | object {
   const body = "body" in err ? err.body : undefined;
   if (typeof body === "object" && body !== null && "error" in body) {
     return body;

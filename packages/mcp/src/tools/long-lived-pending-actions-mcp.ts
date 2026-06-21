@@ -1,5 +1,6 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const LongLivedPendingActionsInputShape = {
@@ -8,6 +9,6 @@ export const LongLivedPendingActionsInputShape = {
 };
 
 export function longLivedPendingActionsHandler(daemon: DaemonClient) {
-  return async (input: { id: string; status?: string | null }) =>
+  return async (input: { id: string; status?: string | null }): Promise<TextContentEnvelope> =>
     toTextContent(await daemon.longLivedPendingActions(input.id, input.status ?? null));
 }

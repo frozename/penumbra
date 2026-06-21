@@ -1,5 +1,6 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const SearchInputShape = {
@@ -21,7 +22,7 @@ export const SearchInputShape = {
 };
 
 export function searchHandler(daemon: DaemonClient) {
-  return async (input: unknown) => {
+  return async (input: unknown): Promise<TextContentEnvelope> => {
     const out = await daemon.memorySearch(input);
     return toTextContent(out);
   };

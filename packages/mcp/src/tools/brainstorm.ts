@@ -1,6 +1,7 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
-import { DaemonHttpError, type DaemonClient } from "../daemon-client.js";
+
+import { type DaemonClient, DaemonHttpError } from "../daemon-client.js";
 
 const BrainstormInputSchema = z
   .object({
@@ -12,7 +13,7 @@ const BrainstormInputSchema = z
 export const BrainstormInputShape = BrainstormInputSchema.shape;
 
 export function brainstormHandler(daemon: Pick<DaemonClient, "workflowRun">) {
-  return async (input: unknown) => {
+  return async (input: unknown): Promise<TextContentEnvelope> => {
     const parsed = BrainstormInputSchema.parse(input ?? {});
     try {
       const out = await daemon.workflowRun({

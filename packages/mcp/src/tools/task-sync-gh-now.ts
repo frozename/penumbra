@@ -1,5 +1,6 @@
-import { toTextContent } from "@nova/mcp-shared";
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const TaskSyncGhNowInputSchema = z
@@ -10,7 +11,7 @@ export const TaskSyncGhNowInputSchema = z
 export const TaskSyncGhNowInputShape = TaskSyncGhNowInputSchema.shape;
 
 export function taskSyncGhNowHandler(daemon: Pick<DaemonClient, "taskSyncGhNow">) {
-  return async (input: unknown) => {
+  return async (input: unknown): Promise<TextContentEnvelope> => {
     const parsed = TaskSyncGhNowInputSchema.parse(input ?? {});
     const out = await daemon.taskSyncGhNow(parsed.task_id ? { task_id: parsed.task_id } : {});
     return toTextContent(out);

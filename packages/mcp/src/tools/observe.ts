@@ -1,6 +1,7 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
+import { T0EventInputSchema, TASK_DRAFT_LIFECYCLE_EVENT_TYPES } from "@penumbra/core";
 import { z } from "zod";
-import { TASK_DRAFT_LIFECYCLE_EVENT_TYPES, T0EventInputSchema } from "@penumbra/core";
-import { toTextContent } from "@nova/mcp-shared";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 const ObserveBaseEventTypes = [
@@ -33,7 +34,7 @@ export const ObserveInputShape = {
 const ObserveSchema = z.object(ObserveInputShape).strict();
 
 export function observeHandler(daemon: DaemonClient) {
-  return async (input: unknown) => {
+  return async (input: unknown): Promise<TextContentEnvelope> => {
     // ObserveInputShape (the MCP tool's input schema) intentionally omits
     // user_id/machine_id because the LLM doesn't know them. T0EventInputSchema
     // requires both. The daemon's normalize() overrides them with ctx values

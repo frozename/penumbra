@@ -52,7 +52,9 @@ function extractActingOn(input: unknown, map: Record<string, ActingOnKind>): Act
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (value === null || typeof value !== "object") return false;
-  const proto = Object.getPrototypeOf(value);
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+  const proto: unknown = Object.getPrototypeOf(value);
   return proto === Object.prototype || proto === null;
 }

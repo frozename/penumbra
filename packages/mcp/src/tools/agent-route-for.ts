@@ -1,5 +1,6 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const AgentRouteForInputSchema = z.object({
@@ -12,7 +13,7 @@ export const AgentRouteForInputSchema = z.object({
 export const AgentRouteForInputShape = AgentRouteForInputSchema.shape;
 
 export function agentRouteForHandler(daemon: Pick<DaemonClient, "agentRouteFor">) {
-  return async (input: unknown) => {
+  return async (input: unknown): Promise<TextContentEnvelope> => {
     const parsed = AgentRouteForInputSchema.parse(input ?? {});
     const out = await daemon.agentRouteFor({
       role: parsed.role,

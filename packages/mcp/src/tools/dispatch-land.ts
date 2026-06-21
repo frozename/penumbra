@@ -1,4 +1,5 @@
 import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const DispatchLandInputShape = {
@@ -30,15 +31,23 @@ export const DispatchLandInputShape = {
     ),
 };
 
-export function dispatchLandHandler(daemon: Pick<DaemonClient, "dispatchLand">) {
-  return async (input: {
-    handoff_id: string;
-    commit_message: string;
-    mode?: "squash" | "ff";
-    delete_branch?: boolean;
-    force?: boolean;
-    reject_if_held?: boolean;
-  }) => {
+interface DispatchLandResult {
+  content: { type: "text"; text: string }[];
+}
+
+interface DispatchLandInput {
+  handoff_id: string;
+  commit_message: string;
+  mode?: "squash" | "ff";
+  delete_branch?: boolean;
+  force?: boolean;
+  reject_if_held?: boolean;
+}
+
+export function dispatchLandHandler(
+  daemon: Pick<DaemonClient, "dispatchLand">,
+): (input: DispatchLandInput) => Promise<DispatchLandResult> {
+  return async (input): Promise<DispatchLandResult> => {
     const out = await daemon.dispatchLand({
       handoff_id: input.handoff_id,
       commit_message: input.commit_message,

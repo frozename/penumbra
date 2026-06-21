@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+
 import { z } from "zod";
 
 export const LongLivedAuditArgsSchema = z
@@ -9,7 +10,7 @@ export const LongLivedAuditArgsSchema = z
   })
   .strict();
 
-export async function handleLongLivedAudit(db: Database, args: unknown) {
+export function handleLongLivedAudit(db: Database, args: unknown): { audit: unknown[] } {
   const parsed = LongLivedAuditArgsSchema.parse(args ?? {});
   const rows = db
     .query(

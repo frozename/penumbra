@@ -1,6 +1,10 @@
 import { z } from "zod";
-import type { DaemonClient } from "../daemon-client.js";
+
+import type { DaemonClient, HandoffShape } from "../daemon-client.js";
+
 import { DaemonHttpError } from "../daemon-client.js";
+import { formatHandoffGet, wrapWithSummary } from "../format-summary.js";
+import { type ToolHandler, type ToolResult } from "./context.js";
 
 export const HandoffGetInputShape = {
   handoff_id: z.string().min(1).describe("The ID of the handoff to retrieve."),
@@ -12,31 +16,42 @@ export const HandoffGetInputShape = {
     ),
 };
 
-function applyCompactTransform(handoff: any) {
-  const out = { ...handoff };
-  delete out.message;
-  if (typeof out.resolution_reason === "string" && out.resolution_reason.length > 1100) {
-    const head = out.resolution_reason.slice(0, 500);
-    const tail = out.resolution_reason.slice(-500);
-    const truncated = out.resolution_reason.length - 1000;
-    out.resolution_reason = `${head}\n[... truncated ${truncated} chars ...]\n${tail}`;
+function applyCompactTransform(handoff: HandoffShape): HandoffShape {
+  const out: HandoffShape = { ...handoff };
+  delete (out as { message?: unknown }).message;
+  const reason = out.resolution_reason;
+  if (typeof reason === "string" && reason.length > 1100) {
+    const head = reason.slice(0, 500);
+    const tail = reason.slice(-500);
+    const truncated = reason.length - 1000;
+    out.resolution_reason = `${head}\n[... truncated ${String(truncated)} chars ...]\n${tail}`;
   }
   return out;
 }
 
-import { formatHandoffGet, wrapWithSummary } from "../format-summary.js";
+interface NotFoundBody {
+  error: { code: string; message: string };
+}
 
 export const handoffGetHandler =
-  (daemon: DaemonClient) => async (args: { handoff_id: string; compact?: boolean }) => {
+  (daemon: DaemonClient): ToolHandler<{ handoff_id: string; compact?: boolean }> =>
+  async (args): Promise<ToolResult> => {
     try {
       const { handoff } = await daemon.getHandoff(args.handoff_id);
       const output = args.compact ? applyCompactTransform(handoff) : handoff;
       const payload = { handoff: output };
+      const formatterInput = {
+        handoff: {
+          handoff_id: output.handoff_id,
+          agent_name: typeof output.agent_name === "string" ? output.agent_name : "",
+          status: output.status,
+        },
+      };
       return {
         content: [
           {
             type: "text",
-            text: wrapWithSummary(formatHandoffGet(payload), payload),
+            text: wrapWithSummary(formatHandoffGet(formatterInput), payload),
           },
         ],
       };
@@ -60,7 +75,10 @@ function isNotFound(err: unknown): err is DaemonHttpError {
   return err instanceof DaemonHttpError && err.status === 404;
 }
 
-function notFoundBody(err: DaemonHttpError | { body?: unknown }, handoff_id: string) {
+function notFoundBody(
+  err: DaemonHttpError | { body?: unknown },
+  handoff_id: string,
+): NotFoundBody | object {
   const body = "body" in err ? err.body : undefined;
   if (typeof body === "object" && body !== null && "error" in body) {
     return body;

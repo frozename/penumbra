@@ -1,6 +1,14 @@
 import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
-import { makeFsEnvelopeResult, type FsEnvelopeHandlerOpts } from "./fs-envelope.js";
+
+import {
+  errorContent,
+  type FsEnvelopeHandlerOpts,
+  type FsToolResult,
+  makeFsEnvelopeResult,
+  toErrorContent,
+} from "./fs-envelope.js";
 
 export const FsGrepInputShape = {
   pattern: z.string().min(1).describe("Regular expression to search for."),
@@ -39,22 +47,24 @@ export const FsGrepInputShape = {
     ),
 };
 
-function errorContent(code: string, message: string) {
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify({ error: { code, message } }) }],
-    isError: true,
-  };
+interface FsGrepInput {
+  pattern: string;
+  path?: string;
+  glob?: string;
+  output_mode?: "content" | "files_with_matches";
+  case_insensitive?: boolean;
+  include_ignored?: boolean;
+  max_results?: number;
+  handoff_id?: string;
+  envelope?: boolean;
 }
 
-function toErrorContent(err: any) {
-  const code = err?.body?.error?.code ?? (err?.status === 404 ? "not_found" : "internal_error");
-  const message = err?.body?.error?.message ?? err?.message ?? "unknown error";
-  return errorContent(code, message);
-}
-
-export function fsGrepHandler(daemon: DaemonClient, opts?: FsEnvelopeHandlerOpts) {
-  return async (input: any) => {
-    const handoff_id = input.handoff_id || process.env.PENUMBRA_HANDOFF_ID;
+export function fsGrepHandler(
+  daemon: DaemonClient,
+  opts?: FsEnvelopeHandlerOpts,
+): (input: FsGrepInput) => Promise<FsToolResult> {
+  return async (input): Promise<FsToolResult> => {
+    const handoff_id = input.handoff_id ?? process.env.PENUMBRA_HANDOFF_ID;
     if (!handoff_id) {
       return errorContent(
         "no_handoff_context",
@@ -85,7 +95,7 @@ export function fsGrepHandler(daemon: DaemonClient, opts?: FsEnvelopeHandlerOpts
       if (input.envelope) {
         return makeFsEnvelopeResult(rawJson, opts);
       }
-      return { content: [{ type: "text" as const, text: rawJson }] };
+      return { content: [{ type: "text", text: rawJson }] };
     } catch (err) {
       return toErrorContent(err);
     }

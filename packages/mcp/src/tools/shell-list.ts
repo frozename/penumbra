@@ -1,4 +1,5 @@
 import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 const ShellListInputSchema = z.object({
@@ -7,8 +8,14 @@ const ShellListInputSchema = z.object({
 
 export const ShellListInputShape = ShellListInputSchema.shape;
 
-export function shellListHandler(daemon: Pick<DaemonClient, "shellList">) {
-  return async (input: unknown) => {
+interface ShellTextResult {
+  content: { type: "text"; text: string }[];
+}
+
+export function shellListHandler(
+  daemon: Pick<DaemonClient, "shellList">,
+): (input: unknown) => Promise<ShellTextResult> {
+  return async (input): Promise<ShellTextResult> => {
     const parsed = ShellListInputSchema.parse(input ?? {});
     const result = await daemon.shellList(parsed);
     return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };

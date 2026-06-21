@@ -1,7 +1,8 @@
 import type { Database, SQLQueryBindings } from "bun:sqlite";
-import { z } from "zod";
-import { WorkingMemorySchema } from "@penumbra/core/long-lived/types";
+
 import { trimWorkingMemoryThreadNotes } from "@penumbra/core/long-lived/thread-notes-trim";
+import { WorkingMemorySchema } from "@penumbra/core/long-lived/types";
+import { z } from "zod";
 
 export const LongLivedStateSetArgsSchema = z
   .object({
@@ -17,7 +18,7 @@ export const LongLivedStateSetArgsSchema = z
   })
   .strict();
 
-export async function handleLongLivedStateSet(db: Database, args: unknown) {
+export function handleLongLivedStateSet(db: Database, args: unknown): { ok: true } {
   const parsed = LongLivedStateSetArgsSchema.parse(args ?? {});
   const row = db
     .query<{ id: string }, [string]>("SELECT id FROM long_lived_agents WHERE id = ?")

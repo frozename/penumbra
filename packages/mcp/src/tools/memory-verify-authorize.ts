@@ -1,5 +1,6 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 const BasisSchema = z.discriminatedUnion("kind", [
@@ -39,7 +40,7 @@ export const MemoryVerifyAuthorizeInputShape = {
 const MemoryVerifyAuthorizeSchema = z.object(MemoryVerifyAuthorizeInputShape).strict();
 
 export function memoryVerifyAuthorizeHandler(daemon: Pick<DaemonClient, "memoryVerifyAuthorize">) {
-  return async (input: unknown) => {
+  return async (input: unknown): Promise<TextContentEnvelope> => {
     const parsed = MemoryVerifyAuthorizeSchema.parse(input);
     return toTextContent(await daemon.memoryVerifyAuthorize(parsed));
   };

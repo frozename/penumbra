@@ -1,5 +1,6 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 export const LongLivedAuditInputShape = {
@@ -9,6 +10,10 @@ export const LongLivedAuditInputShape = {
 };
 
 export function longLivedAuditHandler(daemon: DaemonClient) {
-  return async (input: { id: string; since?: number; limit?: number }) =>
+  return async (input: {
+    id: string;
+    since?: number;
+    limit?: number;
+  }): Promise<TextContentEnvelope> =>
     toTextContent(await daemon.longLivedAudit(input.id, input.since, input.limit));
 }

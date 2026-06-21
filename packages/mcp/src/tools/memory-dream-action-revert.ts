@@ -1,4 +1,5 @@
 import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 /**
@@ -11,8 +12,10 @@ export const MemoryDreamActionRevertInputShape = z.object({
 
 export type MemoryDreamActionRevertInput = z.infer<typeof MemoryDreamActionRevertInputShape>;
 
-export function memoryDreamActionRevertHandler(daemon: DaemonClient) {
-  return async (args: unknown) => {
+export function memoryDreamActionRevertHandler(
+  daemon: DaemonClient,
+): (args: unknown) => Promise<Awaited<ReturnType<DaemonClient["memoryDreamActionRevert"]>>> {
+  return async (args): Promise<Awaited<ReturnType<DaemonClient["memoryDreamActionRevert"]>>> => {
     const input = MemoryDreamActionRevertInputShape.parse(args);
     return await daemon.memoryDreamActionRevert(input);
   };

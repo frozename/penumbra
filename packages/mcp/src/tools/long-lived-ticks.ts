@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+
 import { z } from "zod";
 
 export const LongLivedTicksArgsSchema = z
@@ -9,7 +10,7 @@ export const LongLivedTicksArgsSchema = z
   })
   .strict();
 
-export async function handleLongLivedTicks(db: Database, args: unknown) {
+export function handleLongLivedTicks(db: Database, args: unknown): { ticks: unknown[] } {
   const parsed = LongLivedTicksArgsSchema.parse(args ?? {});
   const rows = db
     .query(

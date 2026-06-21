@@ -1,6 +1,8 @@
+import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
-import { toTextContent } from "@nova/mcp-shared";
+
 import type { DaemonClient } from "../daemon-client.js";
+
 import { wrapWithSummary } from "../format-summary.js";
 
 export const CostRecentInputSchema = z.object({
@@ -18,8 +20,10 @@ export const CostRecentInputShape = CostRecentInputSchema.shape;
 
 export type CostRecentInput = z.infer<typeof CostRecentInputSchema>;
 
-export function costRecentHandler(daemon: DaemonClient) {
-  return async (input: unknown) => {
+export function costRecentHandler(
+  daemon: DaemonClient,
+): (input: unknown) => Promise<TextContentEnvelope> {
+  return async (input): Promise<TextContentEnvelope> => {
     const parsed = CostRecentInputSchema.parse(input ?? {});
     const out = await daemon.costRecent({
       since: parsed.since,
@@ -32,18 +36,18 @@ export function costRecentHandler(daemon: DaemonClient) {
 type CostRecentShape = {
   handoff_count: number;
   window: { from: string; to: string };
-  by_provider: Array<{
+  by_provider: {
     provider: string | null;
-    subscription_pressure?: Array<{
+    subscription_pressure?: {
       window_label: string;
       used_pct: number;
-    }>;
-  }>;
+    }[];
+  }[];
 };
 
 function formatCostRecent(out: CostRecentShape): string {
   const lines = [
-    `● cost.recent  providers=${out.by_provider.length}  handoffs=${out.handoff_count}  window=${out.window.from}..${out.window.to}`,
+    `● cost.recent  providers=${String(out.by_provider.length)}  handoffs=${String(out.handoff_count)}  window=${out.window.from}..${out.window.to}`,
   ];
   for (const providerRow of out.by_provider) {
     const pressureSummary = formatPressure(providerRow.subscription_pressure);
@@ -54,11 +58,9 @@ function formatCostRecent(out: CostRecentShape): string {
   return lines.join("\n");
 }
 
-function formatPressure(
-  rows: Array<{ window_label: string; used_pct: number }> | undefined,
-): string {
+function formatPressure(rows: { window_label: string; used_pct: number }[] | undefined): string {
   if (!rows) return "";
   const active = rows.filter((row) => row.used_pct > 0);
   if (active.length === 0) return "";
-  return active.map((row) => `${row.window_label}:${row.used_pct}%`).join(" ");
+  return active.map((row) => `${row.window_label}:${String(row.used_pct)}%`).join(" ");
 }

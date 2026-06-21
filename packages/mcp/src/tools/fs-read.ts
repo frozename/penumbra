@@ -1,6 +1,14 @@
 import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
-import { makeFsEnvelopeResult, type FsEnvelopeHandlerOpts } from "./fs-envelope.js";
+
+import {
+  errorContent,
+  type FsEnvelopeHandlerOpts,
+  type FsToolResult,
+  makeFsEnvelopeResult,
+  toErrorContent,
+} from "./fs-envelope.js";
 
 export const FsReadInputShape = {
   path: z.string().min(1).describe("File path inside the worktree to read."),
@@ -16,22 +24,18 @@ export const FsReadInputShape = {
     ),
 };
 
-function errorContent(code: string, message: string) {
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify({ error: { code, message } }) }],
-    isError: true,
-  };
+interface FsReadInput {
+  path: string;
+  handoff_id?: string;
+  envelope?: boolean;
 }
 
-function toErrorContent(err: any) {
-  const code = err?.body?.error?.code ?? (err?.status === 404 ? "not_found" : "internal_error");
-  const message = err?.body?.error?.message ?? err?.message ?? "unknown error";
-  return errorContent(code, message);
-}
-
-export function fsReadHandler(daemon: DaemonClient, opts?: FsEnvelopeHandlerOpts) {
-  return async (input: any) => {
-    const handoff_id = input.handoff_id || process.env.PENUMBRA_HANDOFF_ID;
+export function fsReadHandler(
+  daemon: DaemonClient,
+  opts?: FsEnvelopeHandlerOpts,
+): (input: FsReadInput) => Promise<FsToolResult> {
+  return async (input): Promise<FsToolResult> => {
+    const handoff_id = input.handoff_id ?? process.env.PENUMBRA_HANDOFF_ID;
     if (!handoff_id) {
       return errorContent(
         "no_handoff_context",
@@ -44,7 +48,7 @@ export function fsReadHandler(daemon: DaemonClient, opts?: FsEnvelopeHandlerOpts
       if (input.envelope) {
         return makeFsEnvelopeResult(rawJson, opts);
       }
-      return { content: [{ type: "text" as const, text: rawJson }] };
+      return { content: [{ type: "text", text: rawJson }] };
     } catch (err) {
       return toErrorContent(err);
     }

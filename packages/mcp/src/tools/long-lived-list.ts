@@ -1,15 +1,17 @@
 import type { Database } from "bun:sqlite";
 
-export async function handleLongLivedList(db: Database, _args: Record<string, never>) {
+export interface LongLivedListAgent {
+  id: string;
+  display_name: string;
+  status: string;
+}
+
+export function handleLongLivedList(
+  db: Database,
+  _args: Record<string, never>,
+): { agents: LongLivedListAgent[] } {
   const agents = db
-    .query<
-      {
-        id: string;
-        display_name: string;
-        status: string;
-      },
-      []
-    >(
+    .query<LongLivedListAgent, []>(
       `SELECT id, display_name, status
      FROM long_lived_agents
      WHERE status != 'retired'

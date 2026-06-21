@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+
 import { z } from "zod";
 
 export const LongLivedApproveActionArgsSchema = z
@@ -8,14 +9,25 @@ export const LongLivedApproveActionArgsSchema = z
   })
   .strict();
 
-export async function handleLongLivedApproveAction(
+interface WorkingMemory {
+  pending_goals?: {
+    kind: string;
+    pending_action_id: string;
+    original_payload: unknown;
+    created_at: number;
+  }[];
+  updated_at?: number;
+  [key: string]: unknown;
+}
+
+export function handleLongLivedApproveAction(
   db: Database,
   deps: {
     emit: (event: { type: string; agent_id: string; payload: unknown }) => void;
     now: () => number;
   },
   args: unknown,
-) {
+): { ok: true } {
   const { action_id, decided_by } = LongLivedApproveActionArgsSchema.parse(args ?? {});
   const row = db
     .query<
@@ -32,8 +44,12 @@ export async function handleLongLivedApproveAction(
       "SELECT agent_id, tick_id, action_kind, action_target, payload_json, status FROM long_lived_pending_actions WHERE id=?",
     )
     .get(action_id);
-  if (!row) throw new Error("not_found");
-  if (row.status !== "pending") throw new Error("not_pending");
+  if (!row) {
+    throw new Error("not_found");
+  }
+  if (row.status !== "pending") {
+    throw new Error("not_pending");
+  }
 
   const now = deps.now();
   db.transaction(() => {
@@ -53,12 +69,12 @@ export async function handleLongLivedApproveAction(
       >("SELECT working_memory_json FROM long_lived_agents WHERE id=?")
       .get(row.agent_id);
     if (agent) {
-      const workingMemory = JSON.parse(agent.working_memory_json);
+      const workingMemory = JSON.parse(agent.working_memory_json) as WorkingMemory;
       workingMemory.pending_goals = workingMemory.pending_goals ?? [];
       workingMemory.pending_goals.push({
         kind: "approved_action",
         pending_action_id: action_id,
-        original_payload: JSON.parse(row.payload_json),
+        original_payload: JSON.parse(row.payload_json) as unknown,
         created_at: now,
       });
       workingMemory.updated_at = now;

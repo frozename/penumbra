@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
-import { z } from "zod";
+
 import { WorkingMemorySchema } from "@penumbra/core/long-lived/types";
+import { z } from "zod";
 
 export const LongLivedStateGetArgsSchema = z
   .object({
@@ -8,7 +9,10 @@ export const LongLivedStateGetArgsSchema = z
   })
   .strict();
 
-export async function handleLongLivedStateGet(db: Database, args: unknown) {
+export function handleLongLivedStateGet(
+  db: Database,
+  args: unknown,
+): { working_memory: z.infer<typeof WorkingMemorySchema> } {
   const parsed = LongLivedStateGetArgsSchema.parse(args ?? {});
   const row = db
     .query<
@@ -17,5 +21,7 @@ export async function handleLongLivedStateGet(db: Database, args: unknown) {
     >("SELECT working_memory_json FROM long_lived_agents WHERE id = ?")
     .get(parsed.id);
   if (!row) throw new Error("agent_not_found");
-  return { working_memory: WorkingMemorySchema.parse(JSON.parse(row.working_memory_json)) };
+  return {
+    working_memory: WorkingMemorySchema.parse(JSON.parse(row.working_memory_json)),
+  };
 }
