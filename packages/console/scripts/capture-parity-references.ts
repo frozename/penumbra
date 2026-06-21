@@ -1,8 +1,8 @@
+import { chromium, type Page } from "@playwright/test";
 import { existsSync } from "node:fs";
-import { mkdir, copyFile, readFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium, type Page } from "@playwright/test";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const packageDir = resolve(here, "..");
@@ -20,14 +20,14 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  const server = await startServer();
+  const server = startServer();
   const browser = await chromium.launch();
   const page = await browser.newPage({
     viewport: { width: 1440, height: 900 },
   });
 
   try {
-    await page.goto(`http://127.0.0.1:${server.port}/penumbra-console.html`);
+    await page.goto(`http://127.0.0.1:${String(server.port)}/penumbra-console.html`);
     await page.getByRole("heading", { name: "Mission Control" }).waitFor({ timeout: 15_000 });
     await disableAnimations(page);
 
@@ -43,15 +43,15 @@ async function main(): Promise<void> {
         join(targetDir, `${view}.png`),
         join(snapshotDir, `${view}-chromium-darwin.png`),
       );
-      console.log(`[parity:capture] wrote ${view}`);
+      console.warn(`[parity:capture] wrote ${view}`);
     }
   } finally {
     await browser.close();
-    server.stop();
+    await server.stop();
   }
 }
 
-async function startServer(): Promise<{ port: number; stop: () => void }> {
+function startServer(): { port: number; stop: () => Promise<void> } {
   const server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
@@ -102,7 +102,7 @@ async function disableAnimations(page: Page): Promise<void> {
   });
 }
 
-void main().catch((error) => {
+void main().catch((error: unknown) => {
   console.error(error);
   process.exitCode = 1;
 });

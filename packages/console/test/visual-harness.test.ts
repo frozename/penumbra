@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadStoryIndex } from "../visual/story-index";
+
+import { loadStoryIndex } from "../visual/story-index.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const staticDir = resolve(here, "..", "storybook-static");

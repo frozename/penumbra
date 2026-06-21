@@ -1,10 +1,12 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 
 function runScript(code: string): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
+    const { NODE_EXTRA_CA_CERTS: _nodeExtraCaCerts, ...childEnv } = process.env;
     const child = spawn("bun", ["-e", code], {
       cwd: import.meta.dir + "/..",
+      env: childEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";

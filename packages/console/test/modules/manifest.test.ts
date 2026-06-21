@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { MODULES, getModule } from "../../src/modules/manifest";
+
+import { getModule, MODULES } from "../../src/modules/manifest.js";
 
 describe("module manifest", () => {
   test("keeps mission first for the default route", () => {
@@ -8,10 +9,10 @@ describe("module manifest", () => {
 
   test("uses lowercase ids that match the route segment", () => {
     for (const module of MODULES) {
-      const routeId = module.path.slice(1) as typeof module.id;
-      const lowerId = module.id.toLowerCase() as typeof module.id;
-      expect(module.id).toBe(routeId);
-      expect(module.id).toBe(lowerId);
+      const routeId = module.path.slice(1);
+      const lowerId = module.id.toLowerCase();
+      expect(routeId).toBe(module.id);
+      expect(lowerId).toBe(module.id);
     }
   });
 
