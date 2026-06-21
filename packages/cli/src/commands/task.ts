@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import YAML from "yaml";
 
@@ -422,46 +423,54 @@ export async function runTaskReview(opts: RunTaskReviewOpts): Promise<void> {
   );
   const task = (await taskRes.json()) as TaskShowResponse;
   const editor = opts.editor ?? process.env.EDITOR ?? "vi";
-  const tmpPath = join(process.env.TMPDIR ?? "/tmp", `penumbra-task-review-${opts.id}.yaml`);
-  const scaffold = [
-    `prompt: ${JSON.stringify(task.prompt)}`,
-    `acceptance_criteria: ${JSON.stringify(task.acceptance_criteria)}`,
-    "passed: true",
-    "notes: |",
-    "  ",
-  ].join("\n");
-  await Bun.write(tmpPath, scaffold);
-  const proc = Bun.spawn({
-    cmd: [editor, tmpPath],
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  await proc.exited;
-  const parsed = YAML.parse(await Bun.file(tmpPath).text()) as { passed?: boolean; notes?: string };
-  if (parsed?.passed !== true || typeof parsed?.notes !== "string") {
-    throw new Error("penumbra task review: editor file must contain passed: true and notes");
-  }
-  const completeRes = await (opts.fetch ?? fetch)(
-    opts.fetch ? `/tasks/${opts.id}/complete` : `${daemon!.baseUrl}/tasks/${opts.id}/complete`,
-    {
-      method: "POST",
-      headers: {
-        ...(daemon ? { authorization: `Bearer ${daemon.token}` } : {}),
-        "content-type": "application/json",
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-task-review-"));
+  const tmpPath = join(dir, "review.yaml");
+  try {
+    const scaffold = [
+      `prompt: ${JSON.stringify(task.prompt)}`,
+      `acceptance_criteria: ${JSON.stringify(task.acceptance_criteria)}`,
+      "passed: true",
+      "notes: |",
+      "  ",
+    ].join("\n");
+    await Bun.write(tmpPath, scaffold);
+    const proc = Bun.spawn({
+      cmd: [editor, tmpPath],
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    await proc.exited;
+    const parsed = YAML.parse(await Bun.file(tmpPath).text()) as {
+      passed?: boolean;
+      notes?: string;
+    };
+    if (parsed?.passed !== true || typeof parsed?.notes !== "string") {
+      throw new Error("penumbra task review: editor file must contain passed: true and notes");
+    }
+    const completeRes = await (opts.fetch ?? fetch)(
+      opts.fetch ? `/tasks/${opts.id}/complete` : `${daemon!.baseUrl}/tasks/${opts.id}/complete`,
+      {
+        method: "POST",
+        headers: {
+          ...(daemon ? { authorization: `Bearer ${daemon.token}` } : {}),
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          lease_id: lease.lease_id,
+          result_summary: "review completed",
+          review_verdict: { passed: parsed.passed, notes: parsed.notes },
+        }),
       },
-      body: JSON.stringify({
-        lease_id: lease.lease_id,
-        result_summary: "review completed",
-        review_verdict: { passed: parsed.passed, notes: parsed.notes },
-      }),
-    },
-  );
-  if (!completeRes.ok)
-    throw new Error(
-      `penumbra task review: daemon /tasks/${opts.id}/complete returned HTTP ${completeRes.status}`,
     );
-  print(`reviewed ${opts.id}`);
+    if (!completeRes.ok)
+      throw new Error(
+        `penumbra task review: daemon /tasks/${opts.id}/complete returned HTTP ${completeRes.status}`,
+      );
+    print(`reviewed ${opts.id}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 export async function runTaskWatch(opts: RunTaskWatchOpts): Promise<void> {
