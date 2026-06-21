@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { existsSync, statSync } from "node:fs";
+
 import { makeSandbox } from "./sandbox.js";
 
 test("makeSandbox creates an existing directory under the system tmp dir", () => {

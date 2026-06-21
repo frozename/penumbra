@@ -1,15 +1,16 @@
-import { expect, test, beforeAll, afterAll, beforeEach, afterEach } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
 import { join } from "node:path";
+
+import { JsonRpcStdioClient } from "../helpers/jsonrpc-stdio.js";
 import { makeSandbox, type Sandbox } from "../helpers/sandbox.js";
 import {
+  type BunSubprocess,
+  captureOutput,
+  killGracefully,
   spawnPenumbra,
   spawnPenumbraMcp,
   waitForPortFile,
-  captureOutput,
-  killGracefully,
-  type BunSubprocess,
 } from "../helpers/spawn-bin.js";
-import { JsonRpcStdioClient } from "../helpers/jsonrpc-stdio.js";
 
 const GATE = process.env.PENUMBRA_E2E_LLAMACTL === "1";
 const MANIFEST =
@@ -27,7 +28,9 @@ async function llamactlApply(): Promise<void> {
     stderr: "pipe",
   });
   const code = await proc.exited;
-  if (code !== 0) throw new Error(`llamactl composite apply exited ${code}`);
+  if (code !== 0) {
+    throw new Error(`llamactl composite apply exited ${String(code)}`);
+  }
 }
 
 async function llamactlDelete(): Promise<void> {
@@ -87,14 +90,16 @@ beforeEach(async () => {
     PENUMBRA_SIRIUS_DIM: SIRIUS_DIM,
   });
   daemonStdoutBuf = "";
-  void (async () => {
-    const reader = (daemon!.stdout as ReadableStream<Uint8Array>).getReader();
+  const daemonProc = daemon;
+  void (async (): Promise<void> => {
+    const reader = (daemonProc.stdout as unknown as ReadableStream<Uint8Array>).getReader();
     const dec = new TextDecoder();
     try {
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
+      for (;;) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          break;
+        }
         daemonStdoutBuf += dec.decode(value, { stream: true });
       }
     } catch {

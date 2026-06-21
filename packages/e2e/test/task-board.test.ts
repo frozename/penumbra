@@ -1,21 +1,22 @@
-import { expect, test } from "bun:test";
+import { DaemonClient } from "@penumbra/mcp";
 import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DaemonClient } from "@penumbra/mcp";
+
 import { connectInMemory } from "../../mcp/test/helpers.js";
 import { makeSandbox } from "./helpers/sandbox.js";
 import {
+  type BunSubprocess,
+  captureOutput,
+  drainOutput,
+  killGracefully,
   spawnPenumbra,
   waitForPortFile,
-  captureOutput,
-  killGracefully,
-  drainOutput,
-  type BunSubprocess,
 } from "./helpers/spawn-bin.js";
 
 interface ToolResult {
-  content: Array<{ type: string; text: string }>;
+  content: { type: string; text: string }[];
 }
 
 interface TaskEvent {
@@ -38,7 +39,7 @@ interface TaskListItem {
 interface TaskGetResponse {
   id: string;
   status: string;
-  events?: Array<{ kind: string }>;
+  events?: { kind: string }[];
 }
 
 interface TaskNextResponse {
@@ -50,8 +51,8 @@ interface TaskNextResponse {
 
 type McpClient = Awaited<ReturnType<typeof connectInMemory>>;
 
-function parseToolResult<T>(out: unknown): T {
-  return JSON.parse((out as ToolResult).content[0]!.text) as T;
+function parseToolResult(out: unknown): unknown {
+  return JSON.parse((out as ToolResult).content[0]!.text);
 }
 
 async function callToolJson<T>(
@@ -60,7 +61,7 @@ async function callToolJson<T>(
   args: Record<string, unknown>,
 ): Promise<T> {
   const out = await client.callTool({ name, arguments: args });
-  return parseToolResult<T>(out);
+  return parseToolResult(out) as T;
 }
 
 function readSseFrames(
@@ -71,12 +72,13 @@ function readSseFrames(
   const decoder = new TextDecoder();
   let buf = "";
 
-  return (async () => {
+  return (async (): Promise<void> => {
     try {
-      while (true) {
+      for (;;) {
         const { done, value } = await reader.read();
-        if (done) break;
-        if (!value) continue;
+        if (done) {
+          break;
+        }
         buf += decoder.decode(value, { stream: true });
 
         let splitAt = buf.indexOf("\n\n");
@@ -107,12 +109,12 @@ async function waitForEvent(
     if (found) return found;
     await Bun.sleep(10);
   }
-  throw new Error(`timed out waiting for task event after ${timeoutMs}ms`);
+  throw new Error(`timed out waiting for task event after ${String(timeoutMs)}ms`);
 }
 
 async function waitForLedgerRows(
   dbPath: string,
-): Promise<Array<{ agent_name: string; task_type: string; outcome: string }>> {
+): Promise<{ agent_name: string; task_type: string; outcome: string }[]> {
   const start = Date.now();
   while (Date.now() - start < 3000) {
     const db = new Database(dbPath, { readonly: true });
@@ -210,7 +212,7 @@ test("task board full-stack smoke: CLI + SSE + MCP + ledger", async () => {
     drainOutput(daemon);
 
     const port = await waitForPortFile(sb.dir, 30_000);
-    const baseUrl = `http://127.0.0.1:${port}`;
+    const baseUrl = `http://127.0.0.1:${String(port)}`;
     const token = readFileSync(join(sb.dir, "token"), "utf8").trim();
     expect(token.length).toBeGreaterThan(0);
 
@@ -339,24 +341,26 @@ test("task board full-stack smoke: CLI + SSE + MCP + ledger", async () => {
       ),
     ).toBe(true);
 
-    const parentKinds = streamEvents
+    const parentKinds: string[] = streamEvents
       .filter((event) => event.task_id === taskId)
       .map((event) => event.kind);
-    expect(parentKinds).toEqual(
-      expect.arrayContaining([
-        "filed",
-        "leased",
-        "heartbeat",
-        "completed",
-        "review_filed",
-        "review_passed",
-      ]),
-    );
+    for (const expected of [
+      "filed",
+      "leased",
+      "heartbeat",
+      "completed",
+      "review_filed",
+      "review_passed",
+    ]) {
+      expect(parentKinds).toContain(expected);
+    }
 
-    const reviewKinds = streamEvents
+    const reviewKinds: string[] = streamEvents
       .filter((event) => event.task_id === reviewTask.id)
       .map((event) => event.kind);
-    expect(reviewKinds).toEqual(expect.arrayContaining(["filed", "leased", "completed"]));
+    for (const expected of ["filed", "leased", "completed"]) {
+      expect(reviewKinds).toContain(expected);
+    }
 
     const kindSet = new Set(streamEvents.map((event) => event.kind));
     expect(kindSet.has("filed")).toBe(true);
@@ -368,7 +372,9 @@ test("task board full-stack smoke: CLI + SSE + MCP + ledger", async () => {
   } finally {
     if (mcp) await mcp.close();
     abort.abort();
-    if (streamDone) await streamDone.catch(() => {});
+    if (streamDone) {
+      await streamDone.catch((): void => undefined);
+    }
     if (daemon) {
       await captureOutput(spawnPenumbra(["stop"], sb.dir, env));
       await killGracefully(daemon);

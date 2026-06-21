@@ -1,14 +1,15 @@
-import { expect, test, beforeEach, afterEach } from "bun:test";
-import { existsSync, statSync, readFileSync } from "node:fs";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+
 import { makeSandbox, type Sandbox } from "../helpers/sandbox.js";
 import {
+  type BunSubprocess,
+  captureOutput,
+  drainOutput,
+  killGracefully,
   spawnPenumbra,
   waitForPortFile,
-  captureOutput,
-  killGracefully,
-  drainOutput,
-  type BunSubprocess,
 } from "../helpers/spawn-bin.js";
 
 let sb: Sandbox;
@@ -51,7 +52,7 @@ test("penumbra start writes pid + port files; status reports running; stop clean
   const pidPath = join(sb.dir, "pid");
   expect(existsSync(pidPath)).toBe(true);
   const pid = Number(readFileSync(pidPath, "utf8").trim());
-  expect(pid).toBe(daemon.pid ?? -1);
+  expect(pid).toBe(daemon.pid);
 
   // Status should report running.
   const statusProc = spawnPenumbra(["status"], sb.dir);
@@ -68,7 +69,11 @@ test("penumbra start writes pid + port files; status reports running; stop clean
   // The daemon child should exit shortly after stop unlinks its pid.
   const daemonExit = await Promise.race([
     daemon.exited,
-    new Promise<"timeout">((r) => setTimeout(() => r("timeout"), 3000)),
+    new Promise<"timeout">((r) =>
+      setTimeout(() => {
+        r("timeout");
+      }, 3000),
+    ),
   ]);
   // Either the daemon exited cleanly OR it's still running (in which case
   // killGracefully in afterEach will mop it up). The pid + port files MUST

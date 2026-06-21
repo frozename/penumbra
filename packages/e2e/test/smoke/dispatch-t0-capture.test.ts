@@ -1,19 +1,21 @@
-import { expect, test, beforeEach, afterEach } from "bun:test";
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { execSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { Database } from "bun:sqlite";
+
+import { JsonRpcStdioClient } from "../helpers/jsonrpc-stdio.js";
 import { makeSandbox, type Sandbox } from "../helpers/sandbox.js";
 import {
+  type BunSubprocess,
+  captureOutput,
+  drainOutput,
+  killGracefully,
   spawnBun,
   spawnPenumbra,
   spawnPenumbraMcp,
   waitForPortFile,
-  captureOutput,
-  killGracefully,
-  drainOutput,
-  type BunSubprocess,
 } from "../helpers/spawn-bin.js";
-import { JsonRpcStdioClient } from "../helpers/jsonrpc-stdio.js";
 
 let sb: Sandbox;
 let daemon: BunSubprocess | null = null;
@@ -89,6 +91,26 @@ interface CallToolResult {
   content: { type: string; text: string }[];
 }
 
+interface StartData {
+  conversation_id: string;
+  handoff_id: string;
+}
+
+interface T0Row {
+  event_type: string;
+  ts: string;
+  payload_summary: string;
+}
+
+function dumpSandboxLogs(dir: string): void {
+  try {
+    process.stdout.write(execSync(`find ${dir} -type f -name "*.log"`).toString());
+    process.stdout.write(execSync(`cat ${dir}/logs/*.log 2>/dev/null || true`).toString());
+  } catch {
+    /* best-effort log dump */
+  }
+}
+
 test("dispatch t0 capture end-to-end", async () => {
   mcp = spawnPenumbraMcp(sb.dir);
   const client = new JsonRpcStdioClient(mcp);
@@ -108,16 +130,12 @@ test("dispatch t0 capture end-to-end", async () => {
   const startText = startRes.content[0]!.text;
   process.stdout.write(`START_TEXT: ${JSON.stringify(startText)}\n`);
   const startJson = startText.substring(startText.indexOf("{"));
-  let startData: any;
+  let startData: StartData;
   try {
-    startData = JSON.parse(startJson) as { conversation_id: string; handoff_id: string };
+    startData = JSON.parse(startJson) as StartData;
   } catch (e) {
     console.error("FAIL PARSING JSON. LOGS:");
-    const { execSync } = require("node:child_process");
-    try {
-      process.stdout.write(execSync("find " + sb.dir + ' -type f -name "*.log"').toString());
-      process.stdout.write(execSync("cat " + sb.dir + "/logs/*.log 2>/dev/null || true").toString());
-    } catch (err) {}
+    dumpSandboxLogs(sb.dir);
     throw e;
   }
   const convId = startData.conversation_id;
@@ -140,7 +158,7 @@ test("dispatch t0 capture end-to-end", async () => {
     ORDER BY ts ASC
   `,
     )
-    .all(convId) as { event_type: string; ts: string; payload_summary: string }[];
+    .all(convId) as T0Row[];
   db.close();
 
   const types = rows.map((r) => r.event_type);

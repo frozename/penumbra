@@ -1,17 +1,18 @@
-import { expect, test, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+
+import { JsonRpcStdioClient } from "../helpers/jsonrpc-stdio.js";
 import { makeSandbox, type Sandbox } from "../helpers/sandbox.js";
 import {
+  type BunSubprocess,
+  captureOutput,
+  drainOutput,
+  killGracefully,
   spawnPenumbra,
   spawnPenumbraMcp,
   waitForPortFile,
-  captureOutput,
-  killGracefully,
-  drainOutput,
-  type BunSubprocess,
 } from "../helpers/spawn-bin.js";
-import { JsonRpcStdioClient } from "../helpers/jsonrpc-stdio.js";
 
 let sb: Sandbox;
 let daemon: BunSubprocess | null = null;
@@ -69,7 +70,11 @@ test("penumbra-mcp boots, registers all MCP tools, exits 0 on stdin close", asyn
   await client.close();
   const exitCode = await Promise.race([
     mcp.exited,
-    new Promise<number>((r) => setTimeout(() => r(-1), 3000)),
+    new Promise<number>((r) => {
+      setTimeout(() => {
+        r(-1);
+      }, 3000);
+    }),
   ]);
   expect(exitCode).toBe(0);
   mcp = null;

@@ -1,10 +1,12 @@
-import { expect, test } from "bun:test";
-import { registerAdapter, clearCustomAdapters } from "../../../agentchat/src/adapters/registry.js";
-import type { AgentChatConfig } from "../../../agentchat/src/config/types.js";
-import { withDaemon } from "../helpers/with-daemon.js";
-import { createWorkerDispatcher } from "../../../agentchat/src/worker/dispatcher.js";
-import { dispatchHandoff } from "../../../agentchat/src/cli/dispatch-handoff.js";
 import { createLogger } from "@penumbra/core";
+import { expect, test } from "bun:test";
+
+import type { AgentChatConfig } from "../../../agentchat/src/config/types.js";
+
+import { clearCustomAdapters, registerAdapter } from "../../../agentchat/src/adapters/registry.js";
+import { dispatchHandoff } from "../../../agentchat/src/cli/dispatch-handoff.js";
+import { createWorkerDispatcher } from "../../../agentchat/src/worker/dispatcher.js";
+import { withDaemon } from "../helpers/with-daemon.js";
 
 test("retry exhaustion marks failed + emits chain-terminated(error) without rejecting", async () => {
   clearCustomAdapters();
@@ -21,18 +23,18 @@ test("retry exhaustion marks failed + emits chain-terminated(error) without reje
 
     registerAdapter("e2e-plan-ok", () => ({
       kind: "e2e-plan-ok",
-      async dispatch() {
-        return { text: `Plan: do X. @executor ${marker}` };
+      dispatch(): Promise<{ text: string }> {
+        return Promise.resolve({ text: `Plan: do X. @executor ${marker}` });
       },
     }));
     registerAdapter("e2e-exec-flaky", () => ({
       kind: "e2e-exec-flaky",
-      async dispatch({ prompt }) {
+      dispatch({ prompt }: { prompt: string }): Promise<{ text: string }> {
         if (prompt.includes(marker)) {
           execAttempts++;
           throw new Error(errMsg);
         }
-        return { text: "ok" };
+        return Promise.resolve({ text: "ok" });
       },
     }));
 
@@ -63,7 +65,7 @@ test("retry exhaustion marks failed + emits chain-terminated(error) without reje
       claim: (id) => client.claimHandoff(id, "e2e-worker"),
       postProgress: (id, payload) => client.postProgress(id, payload),
       complete: (id) => client.completeHandoff(id),
-      dispatch: async (h, onChunk, signal) => {
+      dispatch: async (h: Parameters<typeof dispatchHandoff>[0]["handoff"], onChunk, signal) => {
         return await dispatchHandoff({
           handoff: h,
           config,
@@ -73,13 +75,15 @@ test("retry exhaustion marks failed + emits chain-terminated(error) without reje
           hopsSoFar: 0,
           maxHops: 5,
           trustMode: "all",
-          observe: (e) => client.observe(e),
-          createHandoff: (body) => client.createHandoff(body),
-          approve: (id, body) => client.approve(id, body),
+          observe: (e: Parameters<typeof client.observe>[0]) => client.observe(e),
+          createHandoff: (body: Parameters<typeof client.createHandoff>[0]) =>
+            client.createHandoff(body),
+          approve: (id: string, body: Parameters<typeof client.approve>[1]) =>
+            client.approve(id, body),
           markFailed: (id, reason) => client.markFailed(id, reason),
           onChunk,
           signal,
-          delay: async () => {}, // no delay in tests
+          delay: () => Promise.resolve(),
         });
       },
     });

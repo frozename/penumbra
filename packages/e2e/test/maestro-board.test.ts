@@ -1,9 +1,5 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { AgentDescriptor, Services } from "@penumbra/core";
+
 import {
   buildServices,
   loadSqliteVec,
@@ -13,6 +9,12 @@ import {
   TaskWriter,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { createBoundsCallbacks } from "../../daemon/src/maestro/bounds-callbacks.js";
 import { createBoundsTracker } from "../../daemon/src/maestro/bounds-tracker.js";
 import { createOrchestrateReactor } from "../../daemon/src/reactors/orchestrate-reactor.js";
@@ -23,7 +25,9 @@ try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* already loaded or not available */
+}
 
 interface TaskEvent {
   task_id: string;
@@ -50,7 +54,7 @@ interface MaestroHarness {
   tracker: { tick(): void };
   setNow: (nextMs: number) => void;
   nowMs: () => number;
-  injectCalls: Array<{ chain_handoff_id: string; message: { role: "user"; text: string } }>;
+  injectCalls: { chain_handoff_id: string; message: { role: "user"; text: string } }[];
   chainCancelCalls: string[];
   stop: () => void;
 }
@@ -90,16 +94,22 @@ function createHarness(): MaestroHarness {
     storageRoot: root,
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date(now),
-    uuid: () => `id-${++n}`,
+    clock: (): Date => new Date(now),
+    uuid: (): string => `id-${String(++n)}`,
     agentRegistry: [MAESTRO_AGENT.name],
     worktreeRootDir,
     mainRepoDir,
   });
   services.watchdog = {
-    recordHeartbeat: () => {},
-    hasActiveWorker: () => true,
-    tick: async () => {},
+    recordHeartbeat(): void {
+      /* no-op for e2e */
+    },
+    hasActiveWorker(): boolean {
+      return true;
+    },
+    tick(): Promise<void> {
+      return Promise.resolve();
+    },
   };
   (services as Services & { agentchatConfig?: unknown }).agentchatConfig = {
     agents: [MAESTRO_AGENT],
@@ -110,35 +120,35 @@ function createHarness(): MaestroHarness {
     name === MAESTRO_DESCRIPTOR.name ? MAESTRO_DESCRIPTOR : undefined;
 
   const taskEvents = new TaskEventBus();
-  const sessions = new MaestroSessionWriter({ db, now: () => now });
+  const sessions = new MaestroSessionWriter({ db, now: (): number => now });
   const chainCancelCalls: string[] = [];
   const taskWriter = new TaskWriter(db, {
-    now: () => now,
+    now: (): number => now,
     bus: taskEvents,
     resolveAgent,
     maestroSessions: sessions,
-    onOrchestrateCancel: (chain_handoff_id: string) => {
+    onOrchestrateCancel: (chain_handoff_id: string): void => {
       chainCancelCalls.push(chain_handoff_id);
-      return Promise.resolve();
     },
   });
 
-  const injectCalls: Array<{ chain_handoff_id: string; message: { role: "user"; text: string } }> =
-    [];
+  const injectCalls: { chain_handoff_id: string; message: { role: "user"; text: string } }[] = [];
   const boundsCallbacks = createBoundsCallbacks({
     db,
     taskWriter,
     sessions,
     injector: {
-      inject: async (chain_handoff_id, message) => {
+      inject: (chain_handoff_id, message): Promise<void> => {
         injectCalls.push({ chain_handoff_id, message });
+        return Promise.resolve();
       },
     },
     bus: taskEvents,
-    chainCancel: async (chain_handoff_id) => {
+    chainCancel: (chain_handoff_id): Promise<void> => {
       chainCancelCalls.push(chain_handoff_id);
+      return Promise.resolve();
     },
-    now: () => now,
+    now: (): number => now,
   });
   const tracker = createBoundsTracker({
     db,
@@ -161,7 +171,7 @@ function createHarness(): MaestroHarness {
       });
       if (!response.ok) {
         const body = await response.text();
-        throw new Error(`chain_start failed (${response.status}): ${body}`);
+        throw new Error(`chain_start failed (${String(response.status)}): ${body}`);
       }
       const data = (await response.json()) as { handoff_id?: unknown; conversation_id?: unknown };
       if (typeof data.handoff_id !== "string" || typeof data.conversation_id !== "string") {
@@ -196,28 +206,34 @@ function createHarness(): MaestroHarness {
     taskWriter,
     sessions,
     tracker,
-    setNow: (nextMs) => {
+    setNow: (nextMs): void => {
       now = nextMs;
     },
-    nowMs: () => now,
+    nowMs: (): number => now,
     injectCalls,
     chainCancelCalls,
-    stop: () => {
+    stop: (): void => {
       try {
         orchestrateReactor.stop();
-      } catch {}
+      } catch {
+        /* best-effort */
+      }
       try {
         services.supervisor.stopAll();
-      } catch {}
+      } catch {
+        /* best-effort */
+      }
       try {
         db.close();
-      } catch {}
+      } catch {
+        /* best-effort */
+      }
       rmSync(root, { recursive: true, force: true });
     },
   };
 }
 
-function authHeaders(token: string, headers: HeadersInit = {}): HeadersInit {
+function authHeaders(token: string, headers: Record<string, string> = {}): Record<string, string> {
   return {
     authorization: `Bearer ${token}`,
     ...headers,
@@ -225,7 +241,7 @@ function authHeaders(token: string, headers: HeadersInit = {}): HeadersInit {
 }
 
 async function postJson(harness: MaestroHarness, path: string, body: unknown): Promise<Response> {
-  return harness.fetch(path, {
+  return await harness.fetch(path, {
     method: "POST",
     headers: authHeaders(harness.token, { "content-type": "application/json" }),
     body: JSON.stringify(body),
@@ -240,10 +256,11 @@ async function readSseFrames(
   const decoder = new TextDecoder();
   let buffer = "";
   try {
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read();
-      if (done) break;
-      if (!value) continue;
+      if (done) {
+        break;
+      }
       buffer += decoder.decode(value, { stream: true });
       let splitAt = buffer.indexOf("\n\n");
       while (splitAt >= 0) {
@@ -263,12 +280,14 @@ async function readSseFrames(
 
 async function waitFor(assertion: () => void | Promise<void>, timeoutMs = 5_000): Promise<void> {
   const started = Date.now();
-  while (true) {
+  for (;;) {
     try {
       await assertion();
       return;
-    } catch (error) {
-      if (Date.now() - started >= timeoutMs) throw error;
+    } catch (error: unknown) {
+      if (Date.now() - started >= timeoutMs) {
+        throw error;
+      }
       await Bun.sleep(20);
     }
   }
@@ -285,7 +304,7 @@ async function waitForEvent(
     if (found) return found;
     await Bun.sleep(10);
   }
-  throw new Error(`timed out waiting for event after ${timeoutMs}ms`);
+  throw new Error(`timed out waiting for event after ${String(timeoutMs)}ms`);
 }
 
 test("maestro board smoke: orchestrate spawn, sub-dispatch accounting, completion, and SSE", async () => {
@@ -440,10 +459,12 @@ test("maestro board smoke: orchestrate spawn, sub-dispatch accounting, completio
     if (sseBody) {
       try {
         await sseBody.cancel();
-      } catch {}
+      } catch {
+        /* already closed */
+      }
     }
     if (streamDone) {
-      await Promise.race([streamDone.catch(() => {}), Bun.sleep(100)]);
+      await Promise.race([streamDone.catch((): void => undefined), Bun.sleep(100)]);
     }
     harness.stop();
   }
@@ -504,10 +525,12 @@ test("maestro board variant A: 80% wall-clock emits warning and ACP inject", asy
     if (sseBody) {
       try {
         await sseBody.cancel();
-      } catch {}
+      } catch {
+        /* already closed */
+      }
     }
     if (streamDone) {
-      await Promise.race([streamDone.catch(() => {}), Bun.sleep(100)]);
+      await Promise.race([streamDone.catch((): void => undefined), Bun.sleep(100)]);
     }
     harness.stop();
   }
@@ -586,10 +609,12 @@ test("maestro board variant B: 100% wall-clock hard-kill fails task and cancels 
     if (sseBody) {
       try {
         await sseBody.cancel();
-      } catch {}
+      } catch {
+        /* already closed */
+      }
     }
     if (streamDone) {
-      await Promise.race([streamDone.catch(() => {}), Bun.sleep(100)]);
+      await Promise.race([streamDone.catch((): void => undefined), Bun.sleep(100)]);
     }
     harness.stop();
   }

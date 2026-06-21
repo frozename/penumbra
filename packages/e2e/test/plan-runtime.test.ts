@@ -1,9 +1,3 @@
-import { afterAll, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { execSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   derivePlanId,
   loadSqliteVec,
@@ -12,20 +6,31 @@ import {
   TaskEventBus,
   TaskWriter,
 } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { afterAll, expect, test } from "bun:test";
+import { execSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { createPlanRuntimeSweeper } from "../../daemon/src/sweepers/plan-runtime.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* already loaded or not available */
+}
 
 const cleanupDirs: string[] = [];
 afterAll(() => {
   for (const d of cleanupDirs) {
     try {
       rmSync(d, { recursive: true, force: true });
-    } catch {}
+    } catch {
+      /* best-effort cleanup */
+    }
   }
 });
 
@@ -55,7 +60,10 @@ test("cross-repo plan runs end-to-end: 3 leaf tasks fire across 2 repos with rea
   const bus = new TaskEventBus();
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name: string) => ({ name, maestro_capable: true }),
+    resolveAgent: (name: string): { name: string; maestro_capable: boolean } => ({
+      name,
+      maestro_capable: true,
+    }),
   });
   const plans = new PlanWriter(db);
 
@@ -81,56 +89,67 @@ test("cross-repo plan runs end-to-end: 3 leaf tasks fire across 2 repos with rea
   const sweeper = createPlanRuntimeSweeper({ db, plans, taskWriter });
   const unsubSweeper = sweeper.subscribe(bus);
 
+  type StubAction = "add-1.1" | "add-1.2" | "remove-1.3";
+
+  const resolveAction = (prompt: string): { repo: string; action: StubAction } | null => {
+    if (prompt.includes("Task 1.1")) {
+      return { repo: penumbraRepo, action: "add-1.1" };
+    }
+    if (prompt.includes("Task 1.2")) {
+      return { repo: siriusRepo, action: "add-1.2" };
+    }
+    if (prompt.includes("Task 1.3")) {
+      return { repo: penumbraRepo, action: "remove-1.3" };
+    }
+    return null;
+  };
+
+  const applyAction = (repo: string, action: StubAction): void => {
+    if (action === "add-1.1") {
+      mkdirSync(join(repo, "packages/core/src"), { recursive: true });
+      writeFileSync(join(repo, "packages/core/src/v2demo-marker.txt"), "v2-demo-step-1\n");
+      execSync('git add -A && git commit -q -m "chore: add v2demo marker"', {
+        cwd: repo,
+        shell: "/bin/bash",
+      });
+      return;
+    }
+    if (action === "add-1.2") {
+      writeFileSync(join(repo, "v2demo-marker.txt"), "v2-demo-step-2\n");
+      execSync('git add -A && git commit -q -m "chore: add v2demo marker"', {
+        cwd: repo,
+        shell: "/bin/bash",
+      });
+      return;
+    }
+    rmSync(join(repo, "packages/core/src/v2demo-marker.txt"));
+    execSync('git add -A && git commit -q -m "chore: remove v2demo marker"', {
+      cwd: repo,
+      shell: "/bin/bash",
+    });
+  };
+
   const filedEvents = bus.subscribe((event) => event.kind === "filed");
-  const stubLoop = (async () => {
+  const stubLoop = (async (): Promise<void> => {
     try {
       for await (const event of filedEvents) {
         const task = taskWriter.get(event.task_id);
-        if (task.kind !== "orchestrate") continue;
-
-        let repo: string | null = null;
-        let action: "add-1.1" | "add-1.2" | "remove-1.3" | null = null;
-        if (/Task 1\.1/.test(task.prompt)) {
-          repo = penumbraRepo;
-          action = "add-1.1";
-        } else if (/Task 1\.2/.test(task.prompt)) {
-          repo = siriusRepo;
-          action = "add-1.2";
-        } else if (/Task 1\.3/.test(task.prompt)) {
-          repo = penumbraRepo;
-          action = "remove-1.3";
+        if (task.kind !== "orchestrate") {
+          continue;
         }
-        if (!repo || !action) continue;
-
-        if (action === "add-1.1") {
-          mkdirSync(join(repo, "packages/core/src"), { recursive: true });
-          writeFileSync(join(repo, "packages/core/src/v2demo-marker.txt"), "v2-demo-step-1\n");
-          execSync('git add -A && git commit -q -m "chore: add v2demo marker"', {
-            cwd: repo,
-            shell: "/bin/bash",
-          });
-        } else if (action === "add-1.2") {
-          writeFileSync(join(repo, "v2demo-marker.txt"), "v2-demo-step-2\n");
-          execSync('git add -A && git commit -q -m "chore: add v2demo marker"', {
-            cwd: repo,
-            shell: "/bin/bash",
-          });
-        } else {
-          rmSync(join(repo, "packages/core/src/v2demo-marker.txt"));
-          execSync('git add -A && git commit -q -m "chore: remove v2demo marker"', {
-            cwd: repo,
-            shell: "/bin/bash",
-          });
+        const resolved = resolveAction(task.prompt);
+        if (!resolved) {
+          continue;
         }
-
+        applyAction(resolved.repo, resolved.action);
         const lease = taskWriter.lease({ task_id: event.task_id, agent_id: "e2e-stub" });
         taskWriter.complete({
           task_id: event.task_id,
           lease_id: lease.lease_id,
-          result_summary: `${action} done`,
+          result_summary: `${resolved.action} done`,
         });
       }
-    } catch (error) {
+    } catch {
       // iterator closed at teardown — nothing to do
     }
   })();

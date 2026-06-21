@@ -1,15 +1,16 @@
-import { expect, test, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+
+import { JsonRpcStdioClient } from "../helpers/jsonrpc-stdio.js";
 import { makeSandbox, type Sandbox } from "../helpers/sandbox.js";
 import {
+  type BunSubprocess,
+  captureOutput,
+  drainOutput,
+  killGracefully,
   spawnPenumbra,
   spawnPenumbraMcp,
   waitForPortFile,
-  captureOutput,
-  killGracefully,
-  drainOutput,
-  type BunSubprocess,
 } from "../helpers/spawn-bin.js";
-import { JsonRpcStdioClient } from "../helpers/jsonrpc-stdio.js";
 
 let sb: Sandbox;
 let daemon: BunSubprocess | null = null;
@@ -33,6 +34,10 @@ afterEach(async () => {
 
 interface CallToolResult {
   content: { type: string; text: string }[];
+}
+
+interface RecallPayload {
+  results: { tier: string; body: string }[];
 }
 
 async function observeAndEnd(): Promise<void> {
@@ -85,7 +90,7 @@ async function recall(): Promise<{ tier: string; body: string }[]> {
   await client.close();
   await killGracefully(mcp);
   mcp = null;
-  return JSON.parse(r.content[0]!.text).results;
+  return (JSON.parse(r.content[0]!.text) as RecallPayload).results;
 }
 
 test("observed content survives daemon restart", async () => {

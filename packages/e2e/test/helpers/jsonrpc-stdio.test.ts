@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { frame, parseChunks } from "./jsonrpc-stdio.js";
 
 test("frame appends a single newline", () => {

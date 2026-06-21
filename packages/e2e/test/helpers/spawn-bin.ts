@@ -1,10 +1,11 @@
+import type { Subprocess } from "bun";
+
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Subprocess, SpawnOptions } from "bun";
 
 export type BunSubprocess = Subprocess<"pipe", "pipe", "pipe">;
 
-const REPO_ROOT = (() => {
+const REPO_ROOT: string = ((): string => {
   // Resolve the repo root from this file's location:
   // packages/e2e/test/helpers/spawn-bin.ts → ../../../../
   const here = new URL(".", import.meta.url).pathname;
@@ -33,14 +34,13 @@ process.on("exit", () => {
  * cleanup on test-process exit.
  */
 export function spawnBun(args: string[], env?: Record<string, string | undefined>): BunSubprocess {
-  const opts: SpawnOptions.SpawnOptions<"pipe", "pipe", "pipe"> & { cmd: string[] } = {
+  const proc = Bun.spawn({
     cmd: ["bun", ...args],
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
-  };
-  if (env) opts.env = { ...process.env, ...env } as Record<string, string>;
-  const proc = Bun.spawn(opts) as BunSubprocess;
+    ...(env !== undefined ? { env: { ...process.env, ...env } } : {}),
+  });
   childRegistry.add(proc);
   return proc;
 }
@@ -84,11 +84,15 @@ export async function waitForPortFile(dir: string, timeoutMs = 5000): Promise<nu
     if (existsSync(portPath)) {
       const raw = readFileSync(portPath, "utf8").trim();
       const port = Number(raw);
-      if (Number.isInteger(port) && port > 0 && port < 65536) return port;
+      if (Number.isInteger(port) && port > 0 && port < 65536) {
+        return port;
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error(`waitForPortFile: timeout after ${timeoutMs}ms (no valid port at ${portPath})`);
+  throw new Error(
+    `waitForPortFile: timeout after ${String(timeoutMs)}ms (no valid port at ${portPath})`,
+  );
 }
 
 /**
@@ -106,6 +110,20 @@ export async function captureOutput(
   return { exitCode, stdout, stderr };
 }
 
+async function drainStream(stream: ReadableStream<Uint8Array>): Promise<void> {
+  const reader = stream.getReader();
+  try {
+    for (;;) {
+      const { done } = await reader.read();
+      if (done) {
+        break;
+      }
+    }
+  } catch {
+    /* subprocess died, that's fine */
+  }
+}
+
 /**
  * Drain stdout + stderr of a long-running subprocess to discard, in the
  * background. Prevents the OS pipe buffer (typically 64KiB) from filling
@@ -115,28 +133,8 @@ export async function captureOutput(
  * on a side effect (port file, log, exit code) rather than on stdout.
  */
 export function drainOutput(proc: BunSubprocess): void {
-  void (async () => {
-    try {
-      const reader = (proc.stdout as unknown as ReadableStream<Uint8Array>).getReader();
-      while (true) {
-        const { done } = await reader.read();
-        if (done) break;
-      }
-    } catch {
-      /* subprocess died, that's fine */
-    }
-  })();
-  void (async () => {
-    try {
-      const reader = (proc.stderr as unknown as ReadableStream<Uint8Array>).getReader();
-      while (true) {
-        const { done } = await reader.read();
-        if (done) break;
-      }
-    } catch {
-      /* subprocess died, that's fine */
-    }
-  })();
+  void drainStream(proc.stdout);
+  void drainStream(proc.stderr);
 }
 
 /**
@@ -149,7 +147,9 @@ export async function killGracefully(proc: BunSubprocess, gracefulMs = 2000): Pr
     /* already dead */
   }
   const timeout = new Promise<"timeout">((resolve) =>
-    setTimeout(() => resolve("timeout"), gracefulMs),
+    setTimeout(() => {
+      resolve("timeout");
+    }, gracefulMs),
   );
   const result = await Promise.race([proc.exited, timeout]);
   if (result === "timeout") {

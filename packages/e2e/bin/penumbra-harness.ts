@@ -3,6 +3,13 @@
 // Bootstrap the homebrew-supplied sqlite for sqlite-vec on macOS.
 // Must run before any `new Database(...)` call. Idempotent.
 import { Database } from "bun:sqlite";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+
+import { runInit } from "../../cli/src/commands/init.js";
+import { runStart } from "../../cli/src/commands/start.js";
+import { runStop } from "../../cli/src/commands/stop.js";
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
@@ -10,13 +17,6 @@ try {
 } catch {
   /* already loaded or not available */
 }
-
-import { rmSync, mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { runInit } from "../../cli/src/commands/init.js";
-import { runStart } from "../../cli/src/commands/start.js";
-import { runStop } from "../../cli/src/commands/stop.js";
 
 interface Args {
   sandbox?: string;
@@ -30,16 +30,23 @@ interface Args {
   siriusBaseUrl?: string;
 }
 
+function writeOut(line: string): void {
+  process.stdout.write(`${line}\n`);
+}
+
 function parseArgs(argv: string[]): Args {
   const out: Args = {
     persist: false,
     mcpConfigOnly: false,
-    pretty: process.stdout.isTTY ?? false,
+    pretty: process.stdout.isTTY,
     noTail: false,
     help: false,
   };
   for (let i = 2; i < argv.length; i++) {
-    const a = argv[i]!;
+    const a = argv[i];
+    if (a === undefined) {
+      break;
+    }
     switch (a) {
       case "--sandbox":
         out.sandbox = argv[++i];
@@ -58,7 +65,9 @@ function parseArgs(argv: string[]): Args {
         break;
       case "--llm-driver": {
         const v = argv[++i];
-        if (v !== "llamactl") throw new Error(`unsupported --llm-driver: ${v}`);
+        if (v !== "llamactl") {
+          throw new Error(`unsupported --llm-driver: ${String(v)}`);
+        }
         out.llmDriver = v;
         break;
       }
@@ -80,7 +89,7 @@ function parseArgs(argv: string[]): Args {
 }
 
 function printHelp(): void {
-  console.log(`usage: penumbra-harness [options]
+  writeOut(`usage: penumbra-harness [options]
 
   --sandbox <path>          Reuse an existing storage root.
   --persist                 Keep the sandbox dir on exit.
@@ -121,16 +130,16 @@ function printMcpConfig(sandbox: string, port: number): void {
       },
     },
   };
-  console.log("");
-  console.log("=== Claude Code MCP config (paste into your .mcp.json) ===");
-  console.log(JSON.stringify(config, null, 2));
-  console.log("");
-  console.log(`(daemon listening on http://127.0.0.1:${port}; storage root: ${sandbox})`);
-  console.log("");
+  writeOut("");
+  writeOut("=== Claude Code MCP config (paste into your .mcp.json) ===");
+  writeOut(JSON.stringify(config, null, 2));
+  writeOut("");
+  writeOut(`(daemon listening on http://127.0.0.1:${String(port)}; storage root: ${sandbox})`);
+  writeOut("");
 }
 
-async function runMcpConfigOnly(args: Args): Promise<number> {
-  if (!args.sandbox) {
+function runMcpConfigOnly(args: Args): number {
+  if (args.sandbox === undefined) {
     console.error("--mcp-config-only requires --sandbox <path>");
     return 1;
   }
@@ -154,7 +163,7 @@ async function runMcpConfigOnly(args: Args): Promise<number> {
 }
 
 async function runDefault(args: Args): Promise<number> {
-  const userProvidedSandbox = !!args.sandbox;
+  const userProvidedSandbox = args.sandbox !== undefined;
   const sandbox = args.sandbox ?? mkdtempSync(join(tmpdir(), "penumbra-harness-"));
   let stopping = false;
   let cleanedUp = false;
@@ -164,11 +173,13 @@ async function runDefault(args: Args): Promise<number> {
   printMcpConfig(sandbox, handle.port);
 
   if (!args.noTail) {
-    console.log("Tailing daemon log. Press Ctrl-C to stop.");
+    writeOut("Tailing daemon log. Press Ctrl-C to stop.");
   }
 
   const cleanup = async (): Promise<void> => {
-    if (cleanedUp) return;
+    if (cleanedUp) {
+      return;
+    }
     cleanedUp = true;
     try {
       await runStop({ storageRoot: sandbox, handle });
@@ -190,7 +201,7 @@ async function runDefault(args: Args): Promise<number> {
       process.exit(1);
     }
     stopping = true;
-    console.log(`\n${sig} received; shutting down...`);
+    writeOut(`\n${sig} received; shutting down...`);
     await cleanup();
     process.exit(0);
   };
@@ -202,7 +213,9 @@ async function runDefault(args: Args): Promise<number> {
   });
 
   // Block forever; signals drive exit.
-  await new Promise<never>(() => {});
+  await new Promise<never>(() => {
+    // intentionally never resolves
+  });
   return 0;
 }
 
@@ -218,7 +231,7 @@ async function runLlamactl(args: Args): Promise<number> {
   );
   const manifest = args.manifest ?? defaultManifest;
 
-  console.log(`applying llamactl composite: ${manifest}`);
+  writeOut(`applying llamactl composite: ${manifest}`);
   const apply = Bun.spawn({
     cmd: ["llamactl", "composite", "apply", "-f", manifest],
     stdout: "inherit",
@@ -230,12 +243,12 @@ async function runLlamactl(args: Args): Promise<number> {
   }
 
   const baseUrl =
-    args.siriusBaseUrl ?? process.env.PENUMBRA_SIRIUS_BASE_URL ?? "http://127.0.0.1:18080";
-  const token = process.env.PENUMBRA_SIRIUS_TOKEN ?? "test";
-  const model = process.env.PENUMBRA_SIRIUS_MODEL ?? "text-embedding-3-small";
-  const dim = process.env.PENUMBRA_SIRIUS_DIM ?? "1536";
+    args.siriusBaseUrl ?? process.env["PENUMBRA_SIRIUS_BASE_URL"] ?? "http://127.0.0.1:18080";
+  const token = process.env["PENUMBRA_SIRIUS_TOKEN"] ?? "test";
+  const model = process.env["PENUMBRA_SIRIUS_MODEL"] ?? "text-embedding-3-small";
+  const dim = process.env["PENUMBRA_SIRIUS_DIM"] ?? "1536";
 
-  console.log(`waiting for sirius at ${baseUrl}/healthz ...`);
+  writeOut(`waiting for sirius at ${baseUrl}/healthz ...`);
   const healthDeadline = Date.now() + 30_000;
   let healthy = false;
   while (Date.now() < healthDeadline) {
@@ -262,13 +275,13 @@ async function runLlamactl(args: Args): Promise<number> {
   }
 
   // Set sirius env vars so runStart picks them up.
-  process.env.PENUMBRA_EMBEDDER_PREFER_SIRIUS = "true";
-  process.env.PENUMBRA_SIRIUS_BASE_URL = baseUrl;
-  process.env.PENUMBRA_SIRIUS_TOKEN = token;
-  process.env.PENUMBRA_SIRIUS_MODEL = model;
-  process.env.PENUMBRA_SIRIUS_DIM = dim;
+  process.env["PENUMBRA_EMBEDDER_PREFER_SIRIUS"] = "true";
+  process.env["PENUMBRA_SIRIUS_BASE_URL"] = baseUrl;
+  process.env["PENUMBRA_SIRIUS_TOKEN"] = token;
+  process.env["PENUMBRA_SIRIUS_MODEL"] = model;
+  process.env["PENUMBRA_SIRIUS_DIM"] = dim;
 
-  const userProvidedSandbox = !!args.sandbox;
+  const userProvidedSandbox = args.sandbox !== undefined;
   const sandbox = args.sandbox ?? mkdtempSync(join(tmpdir(), "penumbra-harness-llamactl-"));
   let stopping = false;
   let cleanedUp = false;
@@ -276,11 +289,15 @@ async function runLlamactl(args: Args): Promise<number> {
   await runInit({ storageRoot: sandbox });
   const handle = await runStart({ storageRoot: sandbox });
   printMcpConfig(sandbox, handle.port);
-  console.log(`sirius backend: ${baseUrl} (model ${model}, dim ${dim})`);
-  if (!args.noTail) console.log("Press Ctrl-C to tear down.");
+  writeOut(`sirius backend: ${baseUrl} (model ${model}, dim ${dim})`);
+  if (!args.noTail) {
+    writeOut("Press Ctrl-C to tear down.");
+  }
 
   const cleanup = async (): Promise<void> => {
-    if (cleanedUp) return;
+    if (cleanedUp) {
+      return;
+    }
     cleanedUp = true;
     try {
       await runStop({ storageRoot: sandbox, handle });
@@ -308,7 +325,7 @@ async function runLlamactl(args: Args): Promise<number> {
       process.exit(1);
     }
     stopping = true;
-    console.log(`\n${sig} received; tearing down...`);
+    writeOut(`\n${sig} received; tearing down...`);
     await cleanup();
     process.exit(0);
   };
@@ -319,7 +336,9 @@ async function runLlamactl(args: Args): Promise<number> {
     void onSignal("SIGTERM");
   });
 
-  await new Promise<never>(() => {});
+  await new Promise<never>(() => {
+    // intentionally never resolves
+  });
   return 0;
 }
 
@@ -329,7 +348,7 @@ if (args.help) {
   process.exit(0);
 }
 if (args.mcpConfigOnly) {
-  process.exit(await runMcpConfigOnly(args));
+  process.exit(runMcpConfigOnly(args));
 }
 if (args.llmDriver === "llamactl") {
   process.exit(await runLlamactl(args));

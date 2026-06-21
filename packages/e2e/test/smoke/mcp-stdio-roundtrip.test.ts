@@ -1,15 +1,16 @@
-import { expect, test, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+
+import { JsonRpcStdioClient } from "../helpers/jsonrpc-stdio.js";
 import { makeSandbox, type Sandbox } from "../helpers/sandbox.js";
 import {
+  type BunSubprocess,
+  captureOutput,
+  drainOutput,
+  killGracefully,
   spawnPenumbra,
   spawnPenumbraMcp,
   waitForPortFile,
-  captureOutput,
-  killGracefully,
-  drainOutput,
-  type BunSubprocess,
 } from "../helpers/spawn-bin.js";
-import { JsonRpcStdioClient } from "../helpers/jsonrpc-stdio.js";
 
 let sb: Sandbox;
 let daemon: BunSubprocess | null = null;
