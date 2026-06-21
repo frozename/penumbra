@@ -1,19 +1,21 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, expectTypeOf, test } from "bun:test";
+import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
+
 import type { AgentChatConfig as LegacyAgentChatConfig } from "../../../agentchat/src/config/types.js";
+
+import { type AgentChatConfig } from "../../src/files/agentchat-types.js";
 import {
   AgentConfigSchema,
-  AgentsConfigSchema,
   type AgentsConfig,
+  AgentsConfigSchema,
 } from "../../src/files/agents.js";
-import { type AgentChatConfig } from "../../src/files/agentchat-types.js";
-import { QuotasConfigSchema, type QuotasConfig } from "../../src/files/quotas.js";
-import { RoutingConfigSchema, type RoutingConfig } from "../../src/files/routing.js";
+import { readUtf8 } from "../../src/files/node-fs.js";
+import { type QuotasConfig, QuotasConfigSchema } from "../../src/files/quotas.js";
+import { type RoutingConfig, RoutingConfigSchema } from "../../src/files/routing.js";
 
 function loadFixture(name: "agents" | "routing" | "quotas"): string {
-  return readFileSync(join(import.meta.dir, "fixtures", `${name}.yaml`), "utf8");
+  return readUtf8(join(import.meta.dir, "fixtures", `${name}.yaml`));
 }
 
 describe("AgentsConfigSchema", () => {
@@ -42,13 +44,13 @@ describe("AgentsConfigSchema", () => {
   });
 
   test("missing required field throws", () => {
-    const parsed = parseYaml(loadFixture("agents")) as { agents: Array<Record<string, unknown>> };
+    const parsed = parseYaml(loadFixture("agents")) as { agents: Record<string, unknown>[] };
     delete parsed.agents[0]?.name;
     expect(() => AgentsConfigSchema.parse(parsed)).toThrow(/name/);
   });
 
   test("malformed type throws", () => {
-    const parsed = parseYaml(loadFixture("agents")) as { agents: Array<Record<string, unknown>> };
+    const parsed = parseYaml(loadFixture("agents")) as { agents: Record<string, unknown>[] };
     parsed.agents[0]!.options = { requestTimeoutMs: "60000" };
     expect(() => AgentsConfigSchema.parse(parsed)).toThrow(/requestTimeoutMs/);
   });
@@ -128,7 +130,7 @@ describe("AgentsConfigSchema", () => {
     });
     expect(result.success).toBe(false);
     if (!result.success) {
-      const dupIssue = result.error.issues.find((i) => /duplicate agent name/.test(i.message));
+      const dupIssue = result.error.issues.find((i) => i.message.includes("duplicate agent name"));
       expect(dupIssue).toBeDefined();
       expect(dupIssue?.path).toEqual(["agents", 2, "name"]);
       expect(dupIssue?.message).toContain("'dup-name'");
@@ -431,7 +433,7 @@ describe("QuotasConfigSchema", () => {
 
   test("missing required field throws", () => {
     const parsed = parseYaml(loadFixture("quotas")) as {
-      providers: Array<Record<string, unknown>>;
+      providers: Record<string, unknown>[];
     };
     delete parsed.providers[0]?.name;
     expect(() => QuotasConfigSchema.parse(parsed)).toThrow(/name/);
@@ -439,7 +441,7 @@ describe("QuotasConfigSchema", () => {
 
   test("malformed type throws", () => {
     const parsed = parseYaml(loadFixture("quotas")) as {
-      providers: Array<Record<string, unknown>>;
+      providers: Record<string, unknown>[];
     };
     parsed.providers[0]!.quota_usd_per_24h = "50";
     expect(() => QuotasConfigSchema.parse(parsed)).toThrow(/quota_usd_per_24h/);
@@ -526,7 +528,7 @@ describe("QuotasConfigSchema", () => {
     });
     expect(result.success).toBe(false);
     if (!result.success) {
-      const dupIssue = result.error.issues.find((i) => /duplicate provider/.test(i.message));
+      const dupIssue = result.error.issues.find((i) => i.message.includes("duplicate provider"));
       expect(dupIssue).toBeDefined();
       expect(dupIssue?.path).toEqual(["providers", 2]);
       expect(dupIssue?.message).toContain("'google'");
@@ -543,7 +545,7 @@ describe("QuotasConfigSchema", () => {
     });
     expect(result.success).toBe(false);
     if (!result.success) {
-      const dupIssue = result.error.issues.find((i) => /duplicate provider/.test(i.message));
+      const dupIssue = result.error.issues.find((i) => i.message.includes("duplicate provider"));
       expect(dupIssue).toBeDefined();
       expect(dupIssue?.path).toEqual(["providers", 1]);
       expect(dupIssue?.message).toContain("(no model)");

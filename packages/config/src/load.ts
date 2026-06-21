@@ -1,4 +1,4 @@
-import { ENV_REGISTRY, parseEnv, type EnvConfig } from "./env.js";
+import { ENV_REGISTRY, type EnvConfig, parseEnv } from "./env.js";
 
 export type ConfigSource = "explicit" | "default";
 

@@ -1,4 +1,5 @@
 import { z } from "zod";
+
 import { CANONICAL_PROVIDER_VALUE_RE } from "../provider-format.js";
 
 /**
@@ -22,7 +23,7 @@ const PressureCapWindowSchema = z.union([
     .superRefine((data, ctx) => {
       if (data.warn !== null && data.warn !== undefined && data.warn >= data.refuse) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: "custom",
           path: ["warn"],
           message: "warn must be < refuse",
         });
@@ -83,16 +84,15 @@ export const QuotasConfigSchema = z
     // (no model) is a distinct key from any model-scoped entry. Only entries
     // sharing BOTH name AND model (including both-model-absent) collide.
     const seen = new Map<string, number>();
-    for (let i = 0; i < data.providers.length; i++) {
-      const entry = data.providers[i]!;
+    for (const [i, entry] of data.providers.entries()) {
       const key = JSON.stringify([entry.name, entry.model ?? null]);
       const first = seen.get(key);
       if (first !== undefined) {
         const modelDesc = entry.model ? ` model '${entry.model}'` : " (no model)";
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: "custom",
           path: ["providers", i],
-          message: `duplicate provider '${entry.name}'${modelDesc} (also at providers[${first}]); quota rows are keyed by (name, model), so the later entry would silently drop one quota config`,
+          message: `duplicate provider '${entry.name}'${modelDesc} (also at providers[${String(first)}]); quota rows are keyed by (name, model), so the later entry would silently drop one quota config`,
         });
       } else {
         seen.set(key, i);

@@ -1,4 +1,5 @@
 import { z } from "zod";
+
 import { AgentPinSchema, AgentPoolSchema } from "./agent-pool.js";
 import { WORKLOADS, WorkloadSchema } from "./workload.js";
 
@@ -34,9 +35,7 @@ export type PersonaConfig = z.infer<typeof PersonaSchema>;
 
 const workloadShape = Object.fromEntries(
   WORKLOADS.map((workload) => [workload, WorkloadSchema.optional()]),
-) as {
-  [K in (typeof WORKLOADS)[number]]: z.ZodOptional<typeof WorkloadSchema>;
-};
+) as Record<(typeof WORKLOADS)[number], z.ZodOptional<typeof WorkloadSchema>>;
 
 export const WorkloadsConfigSchema = z.object(workloadShape).strict();
 export type WorkloadsConfig = z.infer<typeof WorkloadsConfigSchema>;
@@ -59,7 +58,7 @@ export const RoutingConfigSchema = z
       for (const [index, personaKey] of workload.eligible_agents.entries()) {
         if (personas[personaKey]) continue;
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: "custom",
           path: ["workloads", workloadName, "eligible_agents", index],
           message: `unknown persona '${personaKey}'; add personas.${personaKey} to routing.yaml`,
         });

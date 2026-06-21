@@ -1,8 +1,9 @@
-import { lstatSync, readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
 import { describe, expect, test } from "bun:test";
+import { join, relative } from "node:path";
 import { parse as parseYaml } from "yaml";
+
 import { AgentConfigSchema, AgentOptionsSchema } from "../src/files/agents.js";
+import { listDir, lstatInfo, readUtf8 } from "../src/files/node-fs.js";
 
 const fullAgentOptions = {
   agentName: "codex-acp-fast",
@@ -74,16 +75,16 @@ const fullAgentOptionKeys = Object.keys(fullAgentOptions).sort();
 
 function collectYamlFixtures(dir: string): string[] {
   const out: string[] = [];
-  for (const entry of readdirSync(dir)) {
+  for (const entry of listDir(dir)) {
     if (entry === "node_modules" || entry === "dist") continue;
     const abs = join(dir, entry);
-    const stat = lstatSync(abs);
-    if (stat.isSymbolicLink()) continue;
-    if (stat.isDirectory()) {
+    const info = lstatInfo(abs);
+    if (info.isSymbolicLink) continue;
+    if (info.isDirectory) {
       out.push(...collectYamlFixtures(abs));
       continue;
     }
-    if (/\.(ya?ml)$/.test(entry) && relative(process.cwd(), abs).includes("/test/")) {
+    if (/\.ya?ml$/.test(entry) && relative(process.cwd(), abs).includes("/test/")) {
       out.push(abs);
     }
   }
@@ -91,7 +92,7 @@ function collectYamlFixtures(dir: string): string[] {
 }
 
 function agentOptionsBlocksFromYamlFixture(path: string): unknown[] {
-  const parsed = parseYaml(readFileSync(path, "utf8"));
+  const parsed: unknown = parseYaml(readUtf8(path));
   if (!parsed || typeof parsed !== "object") return [];
   const agents = (parsed as { agents?: unknown }).agents;
   if (!Array.isArray(agents)) return [];

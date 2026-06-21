@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+
 import { CANONICAL_PROVIDER_VALUE_RE, isCanonicalProviderValue } from "../src/provider-format.js";
 
 describe("isCanonicalProviderValue", () => {

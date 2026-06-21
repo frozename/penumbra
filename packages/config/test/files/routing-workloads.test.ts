@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { RoutingConfigSchema } from "../../src/files/routing.js";
 
 describe("RoutingConfigSchema workloads", () => {

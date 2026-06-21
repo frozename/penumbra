@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+
 import { getConfig, resetConfigForTest } from "../src/load.js";
 
 afterEach(resetConfigForTest);

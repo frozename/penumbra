@@ -1,9 +1,11 @@
-import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { ZodError, type ZodType } from "zod";
 import { parse as parseYaml } from "yaml";
-import { AgentsConfigSchema } from "./agents.js";
+import { ZodError, type ZodType } from "zod";
+
 import type { AgentChatConfig } from "./agentchat-types.js";
+
+import { AgentsConfigSchema } from "./agents.js";
+import { existsPath, readUtf8 } from "./node-fs.js";
 import { QuotasConfigSchema } from "./quotas.js";
 import { RoutingConfigSchema } from "./routing.js";
 
@@ -36,13 +38,13 @@ function parseConfigFile<T>(
   schema: ZodType<T>,
 ): T {
   const filePath = join(dir, name);
-  if (!existsSync(filePath)) {
+  if (!existsPath(filePath)) {
     throw new Error(`loadAgentChatConfigFromDir: ${filePath} not found`);
   }
 
   try {
-    const content = readFileSync(filePath, "utf8");
-    const parsed = parseYaml(content);
+    const content = readUtf8(filePath);
+    const parsed: unknown = parseYaml(content);
     return schema.parse(parsed);
   } catch (error) {
     if (error instanceof ZodError) {

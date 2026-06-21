@@ -1,7 +1,7 @@
-import { z, type ZodTypeAny } from "zod";
+import { z } from "zod";
 
 export type EnvEntry<T> = {
-  schema: ZodTypeAny;
+  schema: z.ZodType;
   default?: T;
   description: string;
   isSensitive?: boolean;
@@ -1168,7 +1168,7 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   },
 } as const;
 
-const shape: Record<string, ZodTypeAny> = {};
+const shape: Record<string, z.ZodType> = {};
 for (const [key, entry] of Object.entries(ENV_REGISTRY)) {
   const base =
     entry.default !== undefined ? entry.schema.default(entry.default) : entry.schema.optional();
@@ -1188,7 +1188,7 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): EnvConfig {
       subset[key] = env[key];
     }
   }
-  return EnvSchema.parse(subset) as EnvConfig;
+  return EnvSchema.parse(subset);
 }
 
 export function isMcpInvocationLogEnabled(env: NodeJS.ProcessEnv = process.env): boolean {

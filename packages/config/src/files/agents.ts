@@ -1,6 +1,7 @@
 import { z } from "zod";
-import { AgentPoolSchema } from "./agent-pool.js";
+
 import { CANONICAL_PROVIDER_VALUE_RE } from "../provider-format.js";
+import { AgentPoolSchema } from "./agent-pool.js";
 
 const CANONICAL_PROVIDER_MESSAGE =
   'provider must be canonical lowercase-hyphen (e.g. "openai", "nvidia-nim") so routing-bias matching resolves it';
@@ -169,9 +170,9 @@ export const ADAPTER_SPECIFIC_OPTION_KEYS = {
 } as const satisfies Record<string, readonly string[]>;
 
 export function allowedKeysFor(adapter: string): ReadonlySet<string> | null {
+  if (!Object.hasOwn(ADAPTER_SPECIFIC_OPTION_KEYS, adapter)) return null;
   const adapterKeys =
     ADAPTER_SPECIFIC_OPTION_KEYS[adapter as keyof typeof ADAPTER_SPECIFIC_OPTION_KEYS];
-  if (!adapterKeys) return null;
   return new Set([...UNIVERSAL_OPTION_KEYS, ...adapterKeys]);
 }
 
@@ -185,7 +186,7 @@ export function refineAgentConfigAdapterOptions(
   for (const key of Object.keys(data.options ?? {})) {
     if (allowedKeys.has(key)) continue;
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: "custom",
       path: ["options", key],
       message: `option '${key}' is not used by adapter '${data.adapter}'`,
     });
@@ -328,14 +329,14 @@ export const AgentConfigSchema = z
     refineAgentConfigAdapterOptions(data, ctx);
     if (data.pricing_mode === "subscription" && !data.subscription_provider) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         path: ["subscription_provider"],
         message: 'subscription_provider is required when pricing_mode is "subscription"',
       });
     }
     if (data.long_lived === true && data.long_lived_config === undefined) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         path: ["long_lived_config"],
         message: "long_lived: true requires long_lived_config",
       });
@@ -454,14 +455,14 @@ export const AgentsConfigSchema = z
   .strict()
   .superRefine((data, ctx) => {
     const seen = new Map<string, number>();
-    for (let i = 0; i < data.agents.length; i++) {
-      const name = data.agents[i]!.name;
+    for (const [i, agent] of data.agents.entries()) {
+      const name = agent.name;
       const first = seen.get(name);
       if (first !== undefined) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: "custom",
           path: ["agents", i, "name"],
-          message: `duplicate agent name '${name}' (also at agents[${first}]); the routing scorer would silently collapse to the first entry, making this agent unreachable`,
+          message: `duplicate agent name '${name}' (also at agents[${String(first)}]); the routing scorer would silently collapse to the first entry, making this agent unreachable`,
         });
       } else {
         seen.set(name, i);

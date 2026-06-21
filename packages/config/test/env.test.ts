@@ -1,4 +1,5 @@
-import { beforeEach, afterEach, describe, test, expect } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
 import { ENV_REGISTRY, isMcpInvocationLogEnabled, parseEnv } from "../src/env.js";
 
 describe("parseEnv", () => {

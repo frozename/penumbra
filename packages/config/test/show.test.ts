@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test";
+
 import { formatEnvConfig, getConfig, resetConfigForTest } from "../src/index.js";
+
+interface ShowJsonOutput {
+  env: Record<string, unknown>;
+  sources: Record<string, string>;
+}
+
+function parseShowJson(output: string): ShowJsonOutput {
+  return JSON.parse(output) as ShowJsonOutput;
+}
 
 describe("formatEnvConfig", () => {
   test("text mode sorts keys", () => {
@@ -51,7 +61,7 @@ describe("formatEnvConfig", () => {
   test("json mode redacts sensitive values", () => {
     resetConfigForTest();
     const bundle = getConfig({ PENUMBRA_DAEMON_TOKEN: "super-secret" });
-    const parsed = JSON.parse(formatEnvConfig(bundle, { json: true }));
+    const parsed = parseShowJson(formatEnvConfig(bundle, { json: true }));
 
     expect(parsed.env.PENUMBRA_DAEMON_TOKEN).toBe("<redacted>");
   });
@@ -62,7 +72,7 @@ describe("formatEnvConfig", () => {
       PENUMBRA_DREAMING_ENABLED: "true",
       PENUMBRA_DREAMING_CRON_MINUTES: "42",
     });
-    const parsed = JSON.parse(formatEnvConfig(bundle, { json: true }));
+    const parsed = parseShowJson(formatEnvConfig(bundle, { json: true }));
 
     expect(parsed.env.PENUMBRA_DREAMING_ENABLED).toBe(true);
     expect(parsed.env.PENUMBRA_DREAMING_CRON_MINUTES).toBe(42);
@@ -88,7 +98,7 @@ describe("formatEnvConfig", () => {
   test("JSON mode emits null for unset non-sensitive keys (not undefined)", () => {
     resetConfigForTest();
     const bundle = getConfig({});
-    const parsed = JSON.parse(formatEnvConfig(bundle, { json: true }));
+    const parsed = parseShowJson(formatEnvConfig(bundle, { json: true }));
 
     // PENUMBRA_DAEMON_URL is OptStr (no default, not sensitive). When unset,
     // the JSON output must contain it as `null`, not drop it entirely.

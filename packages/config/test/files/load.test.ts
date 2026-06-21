@@ -1,34 +1,39 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "bun:test";
+import * as nodeFs from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { loadAgentChatConfigFromDir, reloadAgentChatConfig } from "../../src/files/load.js";
+import { readUtf8 } from "../../src/files/node-fs.js";
+import { removeRecursive, writeUtf8 } from "../_fs-helpers.js";
+
+const fsCalls = { mkdtempSync: nodeFs.mkdtempSync };
 
 const tempDirs: string[] = [];
 
 function makeTempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "agentchat-config-"));
+  const dir = fsCalls.mkdtempSync(join(tmpdir(), "agentchat-config-"));
   tempDirs.push(dir);
   return dir;
 }
 
 function fixture(name: "agents" | "routing" | "quotas"): string {
-  return readFileSync(join(import.meta.dir, "fixtures", `${name}.yaml`), "utf8");
+  return readUtf8(join(import.meta.dir, "fixtures", `${name}.yaml`));
 }
 
 function writeConfigDir(
   dir: string,
   overrides?: Partial<Record<"agents" | "routing" | "quotas", string>>,
 ): void {
-  writeFileSync(join(dir, "agents.yaml"), overrides?.agents ?? fixture("agents"));
-  writeFileSync(join(dir, "routing.yaml"), overrides?.routing ?? fixture("routing"));
-  writeFileSync(join(dir, "quotas.yaml"), overrides?.quotas ?? fixture("quotas"));
+  writeUtf8(join(dir, "agents.yaml"), overrides?.agents ?? fixture("agents"));
+  writeUtf8(join(dir, "routing.yaml"), overrides?.routing ?? fixture("routing"));
+  writeUtf8(join(dir, "quotas.yaml"), overrides?.quotas ?? fixture("quotas"));
 }
 
 afterEach(() => {
   reloadAgentChatConfig();
   for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
+    removeRecursive(dir);
   }
 });
 
@@ -70,8 +75,8 @@ describe("loadAgentChatConfigFromDir", () => {
 
   test("missing file throws with file path in message", () => {
     const dir = makeTempDir();
-    writeFileSync(join(dir, "routing.yaml"), fixture("routing"));
-    writeFileSync(join(dir, "quotas.yaml"), fixture("quotas"));
+    writeUtf8(join(dir, "routing.yaml"), fixture("routing"));
+    writeUtf8(join(dir, "quotas.yaml"), fixture("quotas"));
 
     expect(() => loadAgentChatConfigFromDir(dir)).toThrow(/agents\.yaml/);
   });

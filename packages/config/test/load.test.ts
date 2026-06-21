@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { getConfig, resetConfigForTest } from "../src/load.js";
 
 describe("getConfig", () => {
