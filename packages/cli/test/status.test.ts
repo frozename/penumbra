@@ -1,12 +1,13 @@
-import { expect, test, beforeEach, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { runInit } from "../src/commands/init.js";
 import { runStart } from "../src/commands/start.js";
-import { runStop } from "../src/commands/stop.js";
 import { runStatus } from "../src/commands/status.js";
+import { runStop } from "../src/commands/stop.js";
 
 try {
   if (process.platform === "darwin") {
@@ -22,7 +23,9 @@ beforeEach(async () => {
   // claudeUserDir under the temp storage root so runInit's CLAUDE.md install never writes the real ~/.claude.
   await runInit({ storageRoot: dir, uuid: () => "tok", claudeUserDir: join(dir, "claude-user") });
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true });
+});
 
 test('status returns "running" when daemon is up', async () => {
   const handle = await runStart({ storageRoot: dir });
@@ -51,15 +54,15 @@ test('status returns "stale" when daemon lacks current dispatch event route', as
   });
 
   try {
-    writeFileSync(join(dir, "pid"), `${process.pid}\n`);
-    writeFileSync(join(dir, "port"), `${srv.port}\n`);
+    writeFileSync(join(dir, "pid"), `${String(process.pid)}\n`);
+    writeFileSync(join(dir, "port"), `${String(srv.port)}\n`);
     writeFileSync(join(dir, "token"), "tok\n");
 
     const r = await runStatus({ storageRoot: dir });
     expect(r.status).toBe("stale");
     expect(r.reason).toBe("missing_dispatch_events_route");
   } finally {
-    srv.stop(true);
+    void srv.stop(true);
   }
 });
 

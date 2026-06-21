@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { classifyOrigin, mapClaudeCodeEvent, runHook } from "../src/commands/hook.js";
 
 test("mapClaudeCodeEvent produces an agent-prompt T0 event for UserPromptSubmit", () => {
@@ -81,17 +82,22 @@ test("mapClaudeCodeEvent skips unknown hook events", () => {
   expect(ev).toBeNull();
 });
 
+interface ObservationBody {
+  event_type?: string;
+  source?: string;
+}
+
 test("runHook posts to /observations on the live daemon", async () => {
-  let received: { headers: Headers; body: any } | null = null;
+  let received: { headers: Headers; body: ObservationBody } | null = null;
   const server = Bun.serve({
     port: 0,
     async fetch(req) {
-      received = { headers: req.headers, body: await req.json() };
+      received = { headers: req.headers, body: (await req.json()) as ObservationBody };
       return Response.json({ event_id: "cc-1" });
     },
   });
   const root = mkdtempSync(join(tmpdir(), "penumbra-hook-test-"));
-  writeFileSync(join(root, "port"), `${server.port}\n`);
+  writeFileSync(join(root, "port"), `${String(server.port)}\n`);
   writeFileSync(join(root, "token"), "tk\n");
 
   const exit = await runHook({
@@ -111,7 +117,7 @@ test("runHook posts to /observations on the live daemon", async () => {
     expect(received!.body.event_type).toBe("agent-prompt");
     expect(received!.body.source).toBe("claude-code");
   } finally {
-    server.stop(true);
+    void server.stop(true);
   }
 });
 
@@ -168,15 +174,22 @@ test("mapClaudeCodeEvent leaves project_id null when cwd is not a repo and no fl
   expect(ev!.project_id).toBeNull();
 });
 
+interface TriggerCall {
+  event?: { event?: string };
+  hookContext?: { tool_name?: string | null; file_path?: string | null };
+  session_id?: string | null;
+  transcript_path?: string | null;
+}
+
 test("runHook forwards PreToolUse:Read events as pre-tool-use lifecycle with file_path", async () => {
-  const triggerCalls: any[] = [];
-  const observationCalls: any[] = [];
+  const triggerCalls: TriggerCall[] = [];
+  const observationCalls: unknown[] = [];
   const server = Bun.serve({
     port: 0,
     async fetch(req) {
       const url = new URL(req.url);
       if (url.pathname === "/workflows/trigger") {
-        triggerCalls.push(await req.json());
+        triggerCalls.push((await req.json()) as TriggerCall);
         return Response.json({ matched: [], additionalContext: null });
       }
       if (url.pathname === "/sessions/touch") {
@@ -190,7 +203,7 @@ test("runHook forwards PreToolUse:Read events as pre-tool-use lifecycle with fil
     },
   });
   const root = mkdtempSync(join(tmpdir(), "penumbra-hook-pre-"));
-  writeFileSync(join(root, "port"), `${server.port}\n`);
+  writeFileSync(join(root, "port"), `${String(server.port)}\n`);
   writeFileSync(join(root, "token"), "tk\n");
 
   try {
@@ -208,21 +221,21 @@ test("runHook forwards PreToolUse:Read events as pre-tool-use lifecycle with fil
     expect(exit).toBe(0);
     const trigger = triggerCalls.find((c) => c.event?.event === "pre-tool-use");
     expect(trigger).toBeTruthy();
-    expect(trigger.hookContext).toEqual({ tool_name: "Read", file_path: "/repo/src/foo.ts" });
-    expect(trigger.session_id).toBe("cc-pre-1");
+    expect(trigger!.hookContext).toEqual({ tool_name: "Read", file_path: "/repo/src/foo.ts" });
+    expect(trigger!.session_id).toBe("cc-pre-1");
   } finally {
-    server.stop(true);
+    void server.stop(true);
   }
 });
 
 test("runHook forwards transcript_path for Stop lifecycle events", async () => {
-  const triggerCalls: any[] = [];
+  const triggerCalls: TriggerCall[] = [];
   const server = Bun.serve({
     port: 0,
     async fetch(req) {
       const url = new URL(req.url);
       if (url.pathname === "/workflows/trigger") {
-        triggerCalls.push(await req.json());
+        triggerCalls.push((await req.json()) as TriggerCall);
         return Response.json({ matched: [], additionalContext: null });
       }
       if (url.pathname === "/sessions/touch") {
@@ -232,7 +245,7 @@ test("runHook forwards transcript_path for Stop lifecycle events", async () => {
     },
   });
   const root = mkdtempSync(join(tmpdir(), "penumbra-hook-stop-"));
-  writeFileSync(join(root, "port"), `${server.port}\n`);
+  writeFileSync(join(root, "port"), `${String(server.port)}\n`);
   writeFileSync(join(root, "token"), "tk\n");
 
   try {
@@ -252,7 +265,7 @@ test("runHook forwards transcript_path for Stop lifecycle events", async () => {
     expect(triggerCalls[0]!.session_id).toBe("cc-stop-1");
     expect(triggerCalls[0]!.event.event).toBe("stop");
   } finally {
-    server.stop(true);
+    void server.stop(true);
   }
 });
 

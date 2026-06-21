@@ -1,9 +1,10 @@
-import { expect, test, beforeEach, afterEach, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
-import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { runInit } from "../src/commands/init.js";
 import { runStart } from "../src/commands/start.js";
 import { runStop } from "../src/commands/stop.js";
@@ -22,7 +23,9 @@ beforeEach(async () => {
   // claudeUserDir under the temp storage root so runInit's CLAUDE.md install never writes the real ~/.claude.
   await runInit({ storageRoot: dir, uuid: () => "tok", claudeUserDir: join(dir, "claude-user") });
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true });
+});
 
 test("start writes port + pid files; stop removes them", async () => {
   const handle = await runStart({ storageRoot: dir, port: 51379 });
@@ -31,7 +34,7 @@ test("start writes port + pid files; stop removes them", async () => {
     expect(existsSync(join(dir, "pid"))).toBe(true);
     const port = Number(readFileSync(join(dir, "port"), "utf8"));
     expect(port).toBeGreaterThan(0);
-    const res = await fetch(`http://localhost:${port}/health`);
+    const res = await fetch(`http://localhost:${String(port)}/health`);
     expect(res.status).toBe(200);
   } finally {
     await runStop({ storageRoot: dir, handle });
@@ -43,7 +46,14 @@ test("start writes port + pid files; stop removes them", async () => {
 test("start refuses if a live daemon is already running", async () => {
   const handle = await runStart({ storageRoot: dir });
   try {
-    await expect(runStart({ storageRoot: dir })).rejects.toThrow(/already running/);
+    let err: unknown;
+    try {
+      await runStart({ storageRoot: dir });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(Error);
+    expect(String(err)).toMatch(/already running/);
   } finally {
     await runStop({ storageRoot: dir, handle });
   }
@@ -53,7 +63,7 @@ test("start retries pid claim after a stale takeover loses the race", async () =
   const pidPath = join(dir, "pid");
   const stalePid = 2147483640;
   const port = 51381;
-  writeFileSync(pidPath, `${stalePid}\n`);
+  writeFileSync(pidPath, `${String(stalePid)}\n`);
 
   const originalOpenSync = fs.openSync;
   const originalReadFileSync = fs.readFileSync;
@@ -74,16 +84,17 @@ test("start retries pid claim after a stale takeover loses the race", async () =
     },
   );
 
+  type ReadFileSyncOpts = Parameters<typeof originalReadFileSync>[1];
   const readSpy = spyOn(fs, "readFileSync").mockImplementation(
     (path: fs.PathLike, options?: BufferEncoding | { encoding?: BufferEncoding | null }) => {
-      if (path === pidPath) return `${stalePid}\n`;
-      return originalReadFileSync(path, options as any);
+      if (path === pidPath) return `${String(stalePid)}\n`;
+      return originalReadFileSync(path, options as ReadFileSyncOpts);
     },
   );
 
-  const unlinkSpy = spyOn(fs, "unlinkSync").mockImplementation((path: fs.PathLike) =>
-    originalUnlinkSync(path),
-  );
+  const unlinkSpy = spyOn(fs, "unlinkSync").mockImplementation((path: fs.PathLike) => {
+    originalUnlinkSync(path);
+  });
 
   try {
     const handle = await runStart({ storageRoot: dir, port });
@@ -109,7 +120,7 @@ test("stop without handle calls process.kill on recorded pid and unlinks files",
   // - file unlink runs
   // - bad pid throws are swallowed
   const fakePid = 2147483640; // near INT_MAX, very unlikely to be a real pid
-  writeFileSync(join(dir, "pid"), `${fakePid}\n`);
+  writeFileSync(join(dir, "pid"), `${String(fakePid)}\n`);
   writeFileSync(join(dir, "port"), "12345\n");
 
   const result = await runStop({ storageRoot: dir });
@@ -128,7 +139,7 @@ test("start binds to an explicit port when one is provided", async () => {
     expect(handle.port).toBe(port);
     const portFile = Number(readFileSync(join(dir, "port"), "utf8").trim());
     expect(portFile).toBe(port);
-    const res = await fetch(`http://localhost:${port}/health`);
+    const res = await fetch(`http://localhost:${String(port)}/health`);
     expect(res.status).toBe(200);
   } finally {
     await runStop({ storageRoot: dir, handle });
@@ -150,7 +161,6 @@ test("concurrent runStart calls — exactly one wins, the other rejects", async 
   expect(rejected.length).toBe(1);
 
   // Clean up the winner.
-  const winner = (fulfilled[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof runStart>>>)
-    .value;
+  const winner = fulfilled[0]!.value;
   await runStop({ storageRoot: dir, handle: winner });
 });

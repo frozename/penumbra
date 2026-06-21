@@ -1,9 +1,10 @@
-import { expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { loadSqliteVec, migrate } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Database } from "bun:sqlite";
-import { loadSqliteVec, migrate } from "@penumbra/core";
+
 import { runExport } from "../src/commands/export.js";
 import { runImport } from "../src/commands/import.js";
 
@@ -19,9 +20,11 @@ let dir = "";
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "penumbra-cli-ei-"));
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true });
+});
 
-function freshDb() {
+function freshDb(): { db: Database; path: string } {
   const path = join(dir, "db.sqlite");
   const db = new Database(path, { create: true });
   loadSqliteVec(db);
@@ -108,7 +111,14 @@ test("import quotes column identifiers instead of executing injected SQL", async
     ].join("\n"),
   );
 
-  await expect(runImport({ dbPath: path, inPath })).rejects.toThrow(/column named evil"name/i);
+  let err: unknown;
+  try {
+    await runImport({ dbPath: path, inPath });
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toBeInstanceOf(Error);
+  expect(String(err)).toMatch(/column named evil"name/i);
 
   const db2 = new Database(path);
   const after = db2.query<{ c: number }, []>("SELECT COUNT(*) c FROM t0_events").get()!.c;

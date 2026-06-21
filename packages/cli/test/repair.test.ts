@@ -1,11 +1,12 @@
-import { expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync, existsSync, copyFileSync, mkdirSync } from "node:fs";
+import { loadSqliteVec, migrate } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Database } from "bun:sqlite";
-import { loadSqliteVec, migrate } from "@penumbra/core";
-import { runRepair } from "../src/commands/repair.js";
+
 import { runInit } from "../src/commands/init.js";
+import { runRepair } from "../src/commands/repair.js";
 import { runStart } from "../src/commands/start.js";
 import { runStop } from "../src/commands/stop.js";
 
@@ -21,7 +22,9 @@ let dir = "";
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "penumbra-cli-repair-"));
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true });
+});
 
 test("on a healthy DB, repair reports ok without touching the file", async () => {
   const dbPath = join(dir, "db.sqlite");
@@ -62,7 +65,14 @@ test("repair refuses while a daemon is running", async () => {
   await runInit({ storageRoot: dir, uuid: () => "tok", claudeUserDir: join(dir, "claude-user") });
   const handle = await runStart({ storageRoot: dir });
   try {
-    await expect(runRepair({ storageRoot: dir })).rejects.toThrow(/Daemon is running/);
+    let err: unknown;
+    try {
+      await runRepair({ storageRoot: dir });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(Error);
+    expect(String(err)).toMatch(/Daemon is running/);
   } finally {
     await runStop({ storageRoot: dir, handle });
   }

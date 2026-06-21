@@ -1,4 +1,5 @@
-import { expect, test, spyOn } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+
 import { readEmbedderEnv } from "../src/commands/sirius-env.js";
 
 test("readEmbedderEnv returns undefined when no vars are set", () => {
@@ -48,7 +49,7 @@ test("readEmbedderEnv keeps empty healthPath to signal probe skip", () => {
 });
 
 test("readEmbedderEnv maps legacy PENUMBRA_SIRIUS_* vars and warns once", () => {
-  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  const warn = spyOn(console, "warn").mockImplementation(() => undefined);
   const env = {
     PENUMBRA_SIRIUS_BASE_URL: "http://legacy:8080",
     PENUMBRA_SIRIUS_MODEL: "legacy-model",

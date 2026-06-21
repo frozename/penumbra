@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
   runLongLivedApprove,
   runLongLivedAudit,
@@ -11,8 +12,8 @@ import {
   runLongLivedPause,
   runLongLivedPending,
   runLongLivedReject,
-  runLongLivedRetire,
   runLongLivedResume,
+  runLongLivedRetire,
   runLongLivedStateGet,
   runLongLivedStateSet,
   runLongLivedTicks,
@@ -32,10 +33,16 @@ function setupRoot(): string {
 }
 
 function mockFetch(expectedPath: string, fixture: unknown): typeof fetch {
-  return async (path, init) => {
-    expect(String(path)).toBe(expectedPath);
-    return Response.json(fixture);
+  return (path: string | URL | Request) => {
+    const asStr =
+      typeof path === "string" ? path : path instanceof URL ? path.toString() : path.url;
+    expect(asStr).toBe(expectedPath);
+    return Promise.resolve(Response.json(fixture));
   };
+}
+
+function parseJson(s: string): unknown {
+  return JSON.parse(s);
 }
 
 test("long-lived list prints JSON", async () => {
@@ -46,7 +53,7 @@ test("long-lived list prints JSON", async () => {
     fetch: mockFetch("/long-lived", { items: [{ id: "ll-1" }] }),
     print: (line) => out.push(line),
   });
-  expect(JSON.parse(out.join("\n")).items[0].id).toBe("ll-1");
+  expect((parseJson(out.join("\n")) as { items: { id: string }[] }).items[0]!.id).toBe("ll-1");
 });
 
 test("long-lived get prints JSON", async () => {
@@ -58,7 +65,7 @@ test("long-lived get prints JSON", async () => {
     fetch: mockFetch("/long-lived/ll-1", { id: "ll-1" }),
     print: (line) => out.push(line),
   });
-  expect(JSON.parse(out.join("\n")).id).toBe("ll-1");
+  expect((parseJson(out.join("\n")) as { id: string }).id).toBe("ll-1");
 });
 
 test("long-lived pause prints JSON", async () => {
@@ -70,7 +77,7 @@ test("long-lived pause prints JSON", async () => {
     fetch: mockFetch("/long-lived/ll-1/pause", { paused: true }),
     print: (line) => out.push(line),
   });
-  expect(JSON.parse(out.join("\n")).paused).toBe(true);
+  expect((parseJson(out.join("\n")) as { paused: boolean }).paused).toBe(true);
 });
 
 test("long-lived resume prints JSON", async () => {
@@ -82,7 +89,7 @@ test("long-lived resume prints JSON", async () => {
     fetch: mockFetch("/long-lived/ll-1/resume", { resumed: true }),
     print: (line) => out.push(line),
   });
-  expect(JSON.parse(out.join("\n")).resumed).toBe(true);
+  expect((parseJson(out.join("\n")) as { resumed: boolean }).resumed).toBe(true);
 });
 
 test("long-lived retire prints JSON", async () => {
@@ -94,7 +101,7 @@ test("long-lived retire prints JSON", async () => {
     fetch: mockFetch("/long-lived/ll-1/retire", { retired: true }),
     print: (line) => out.push(line),
   });
-  expect(JSON.parse(out.join("\n")).retired).toBe(true);
+  expect((parseJson(out.join("\n")) as { retired: boolean }).retired).toBe(true);
 });
 
 test("long-lived state get prints JSON", async () => {
@@ -106,7 +113,7 @@ test("long-lived state get prints JSON", async () => {
     fetch: mockFetch("/long-lived/ll-1/state", { intent_summary: "x" }),
     print: (line) => out.push(line),
   });
-  expect(JSON.parse(out.join("\n")).intent_summary).toBe("x");
+  expect((parseJson(out.join("\n")) as { intent_summary: string }).intent_summary).toBe("x");
 });
 
 test("long-lived state set prints JSON", async () => {
@@ -120,7 +127,7 @@ test("long-lived state set prints JSON", async () => {
     fetch: mockFetch("/long-lived/ll-1/state", { updated: true }),
     print: (line) => out.push(line),
   });
-  expect(JSON.parse(out.join("\n")).updated).toBe(true);
+  expect((parseJson(out.join("\n")) as { updated: boolean }).updated).toBe(true);
 });
 
 test("long-lived pending prints JSON", async () => {
@@ -132,7 +139,7 @@ test("long-lived pending prints JSON", async () => {
     fetch: mockFetch("/long-lived/ll-1/pending-actions?status=pending", { actions: [] }),
     print: (line) => out.push(line),
   });
-  expect(JSON.parse(out.join("\n")).actions).toHaveLength(0);
+  expect((parseJson(out.join("\n")) as { actions: unknown[] }).actions).toHaveLength(0);
 });
 
 test("long-lived approve prints JSON", async () => {
@@ -144,7 +151,7 @@ test("long-lived approve prints JSON", async () => {
     fetch: mockFetch("/long-lived/pending-actions/act-1/approve", { approved: true }),
     print: (line) => out.push(line),
   });
-  expect(JSON.parse(out.join("\n")).approved).toBe(true);
+  expect((parseJson(out.join("\n")) as { approved: boolean }).approved).toBe(true);
 });
 
 test("long-lived reject prints JSON", async () => {
@@ -157,7 +164,7 @@ test("long-lived reject prints JSON", async () => {
     fetch: mockFetch("/long-lived/pending-actions/act-1/reject", { rejected: true }),
     print: (line) => out.push(line),
   });
-  expect(JSON.parse(out.join("\n")).rejected).toBe(true);
+  expect((parseJson(out.join("\n")) as { rejected: boolean }).rejected).toBe(true);
 });
 
 test("long-lived inject prints JSON", async () => {
@@ -170,7 +177,7 @@ test("long-lived inject prints JSON", async () => {
     fetch: mockFetch("/long-lived/ll-1/inject-goal", { injected: true }),
     print: (line) => out.push(line),
   });
-  expect(JSON.parse(out.join("\n")).injected).toBe(true);
+  expect((parseJson(out.join("\n")) as { injected: boolean }).injected).toBe(true);
 });
 
 test("long-lived audit prints JSON", async () => {
@@ -184,7 +191,7 @@ test("long-lived audit prints JSON", async () => {
     fetch: mockFetch("/long-lived/ll-1/audit?since=1&limit=2", { audit: [] }),
     print: (line) => out.push(line),
   });
-  expect(JSON.parse(out.join("\n")).audit).toHaveLength(0);
+  expect((parseJson(out.join("\n")) as { audit: unknown[] }).audit).toHaveLength(0);
 });
 
 test("long-lived ticks prints JSON", async () => {
@@ -198,5 +205,5 @@ test("long-lived ticks prints JSON", async () => {
     fetch: mockFetch("/long-lived/ll-1/ticks?since=1&limit=2", { ticks: [] }),
     print: (line) => out.push(line),
   });
-  expect(JSON.parse(out.join("\n")).ticks).toHaveLength(0);
+  expect((parseJson(out.join("\n")) as { ticks: unknown[] }).ticks).toHaveLength(0);
 });

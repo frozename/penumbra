@@ -81,7 +81,7 @@ test("defaultLifecycleForwardFn emits SessionStart envelope when daemon returns 
       Promise.resolve(fakeResponse({ matched: ["x"], additionalContext: "PROBE_CONTEXT" }));
     const { chunks } = await withMockedFetch(fakeFetch, () =>
       withCapturedStdout(async () => {
-        const fn = await defaultLifecycleForwardFn(root, "/tmp");
+        const fn = defaultLifecycleForwardFn(root, "/tmp");
         await fn({ kind: "lifecycle", event: "session-start" });
       }),
     );
@@ -106,7 +106,7 @@ test("defaultLifecycleForwardFn maps pre-compact / stop to PreCompact / Stop eve
       Promise.resolve(fakeResponse({ matched: [], additionalContext: "X" }));
     const { chunks: preChunks } = await withMockedFetch(fakeFetch, () =>
       withCapturedStdout(async () => {
-        const fn = await defaultLifecycleForwardFn(root, "/tmp");
+        const fn = defaultLifecycleForwardFn(root, "/tmp");
         await fn({ kind: "lifecycle", event: "pre-compact" });
       }),
     );
@@ -114,7 +114,7 @@ test("defaultLifecycleForwardFn maps pre-compact / stop to PreCompact / Stop eve
 
     const { chunks: stopChunks } = await withMockedFetch(fakeFetch, () =>
       withCapturedStdout(async () => {
-        const fn = await defaultLifecycleForwardFn(root, "/tmp");
+        const fn = defaultLifecycleForwardFn(root, "/tmp");
         await fn({ kind: "lifecycle", event: "stop" });
       }),
     );
@@ -142,7 +142,7 @@ test("defaultLifecycleForwardFn maps user-prompt-submit / post-tool-use to UserP
       Promise.resolve(fakeResponse({ matched: [], additionalContext: "X" }));
     const { chunks: upsChunks } = await withMockedFetch(fakeFetch, () =>
       withCapturedStdout(async () => {
-        const fn = await defaultLifecycleForwardFn(root, "/tmp");
+        const fn = defaultLifecycleForwardFn(root, "/tmp");
         await fn({ kind: "lifecycle", event: "user-prompt-submit" });
       }),
     );
@@ -150,7 +150,7 @@ test("defaultLifecycleForwardFn maps user-prompt-submit / post-tool-use to UserP
 
     const { chunks: ptuChunks } = await withMockedFetch(fakeFetch, () =>
       withCapturedStdout(async () => {
-        const fn = await defaultLifecycleForwardFn(root, "/tmp");
+        const fn = defaultLifecycleForwardFn(root, "/tmp");
         await fn({ kind: "lifecycle", event: "post-tool-use" });
       }),
     );
@@ -178,7 +178,7 @@ test("defaultLifecycleForwardFn forwards hookContext.tool_name in the request bo
       return Promise.resolve(fakeResponse({ matched: [], additionalContext: null }));
     };
     await withMockedFetch(fakeFetch, async () => {
-      const fn = await defaultLifecycleForwardFn(root, "/tmp");
+      const fn = defaultLifecycleForwardFn(root, "/tmp");
       await fn({ kind: "lifecycle", event: "post-tool-use", hookContext: { tool_name: "Edit" } });
     });
 
@@ -208,7 +208,7 @@ test("defaultLifecycleForwardFn forwards hookContext.file_path for pre-tool-use 
       return Promise.resolve(fakeResponse({ matched: [], additionalContext: null }));
     };
     await withMockedFetch(fakeFetch, async () => {
-      const fn = await defaultLifecycleForwardFn(root, "/tmp");
+      const fn = defaultLifecycleForwardFn(root, "/tmp");
       await fn({
         kind: "lifecycle",
         event: "pre-tool-use",
@@ -230,7 +230,7 @@ test("defaultLifecycleForwardFn maps pre-tool-use to PreToolUse hookEventName", 
       Promise.resolve(fakeResponse({ matched: [], additionalContext: "X" }));
     const { chunks } = await withMockedFetch(fakeFetch, () =>
       withCapturedStdout(async () => {
-        const fn = await defaultLifecycleForwardFn(root, "/tmp");
+        const fn = defaultLifecycleForwardFn(root, "/tmp");
         await fn({ kind: "lifecycle", event: "pre-tool-use" });
       }),
     );
@@ -247,7 +247,7 @@ test("defaultLifecycleForwardFn writes nothing when additionalContext is null/em
       Promise.resolve(fakeResponse({ matched: [], additionalContext: null }));
     const { chunks } = await withMockedFetch(fakeFetch, () =>
       withCapturedStdout(async () => {
-        const fn = await defaultLifecycleForwardFn(root, "/tmp");
+        const fn = defaultLifecycleForwardFn(root, "/tmp");
         await fn({ kind: "lifecycle", event: "session-start" });
       }),
     );

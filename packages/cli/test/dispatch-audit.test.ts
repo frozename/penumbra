@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { formatDispatchAudit, runDispatchAudit } from "../src/commands/dispatch-audit.js";
 
 const report = {
@@ -59,14 +60,16 @@ describe("runDispatchAudit", () => {
   });
 
   test("fetches the dispatch audit and prints the formatted report", async () => {
-    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const calls: { url: string; init?: RequestInit }[] = [];
     const printed: string[] = [];
-    const fetch = mock(async (url: string | URL, init?: RequestInit) => {
+    const fetch = mock((url: string | URL, init?: RequestInit) => {
       calls.push({ url: String(url), init });
-      return new Response(JSON.stringify({ report }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
+      return Promise.resolve(
+        new Response(JSON.stringify({ report }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
     });
 
     await runDispatchAudit({
@@ -96,11 +99,13 @@ describe("runDispatchAudit", () => {
       handoffId: "handoff-2",
       json: true,
       storageRoot,
-      fetch: async () =>
-        new Response(JSON.stringify({ report }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
+      fetch: () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ report }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        ),
       print: (line) => {
         printed = line;
       },
@@ -113,21 +118,30 @@ describe("runDispatchAudit", () => {
   test("throws on a 404 response without printing a report", async () => {
     const printed: string[] = [];
 
-    await expect(
-      runDispatchAudit({
+    let err: unknown;
+    try {
+      await runDispatchAudit({
         handoffId: "missing-handoff",
         json: false,
         storageRoot,
-        fetch: async () =>
-          new Response(JSON.stringify({ error: { code: "not_found", message: "missing" } }), {
-            status: 404,
-            headers: { "content-type": "application/json" },
-          }),
+        fetch: () =>
+          Promise.resolve(
+            new Response(JSON.stringify({ error: { code: "not_found", message: "missing" } }), {
+              status: 404,
+              headers: { "content-type": "application/json" },
+            }),
+          ),
         print: (line) => {
           printed.push(line);
         },
-      }),
-    ).rejects.toThrow("penumbra dispatch audit: daemon /dispatch/audit returned HTTP 404");
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(Error);
+    expect(String(err)).toContain(
+      "penumbra dispatch audit: daemon /dispatch/audit returned HTTP 404",
+    );
 
     expect(printed).toHaveLength(0);
   });

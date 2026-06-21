@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { resolveCliStorageRoot } from "../src/storage-root.js";
 
 test("resolveCliStorageRoot prefers PENUMBRA_STORAGE_ROOT over autodiscovery", () => {

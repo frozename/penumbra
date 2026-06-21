@@ -1,8 +1,9 @@
-import { expect, test, beforeEach, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync, readFileSync, existsSync, statSync } from "node:fs";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { runInit } from "../src/commands/init.js";
 import { runStartDetached } from "../src/commands/start.js";
 import { runStop } from "../src/commands/stop.js";
@@ -44,7 +45,7 @@ test("runStartDetached forks a daemon that survives parent return", async () => 
   const port = Number(readFileSync(join(dir, "port"), "utf8").trim());
   expect(port).toBe(result.port);
 
-  const res = await fetch(`http://127.0.0.1:${port}/health`);
+  const res = await fetch(`http://127.0.0.1:${String(port)}/health`);
   expect(res.status).toBe(200);
 
   // Parent has returned; verify the recorded child pid is alive but distinct

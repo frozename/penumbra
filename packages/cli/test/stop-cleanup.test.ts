@@ -1,15 +1,19 @@
-import { expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runStop } from "../src/commands/stop.js";
+
 import type { DaemonHandle } from "../../daemon/src/serve.js";
+
+import { runStop } from "../src/commands/stop.js";
 
 let dir = "";
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "penumbra-stop-"));
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true });
+});
 
 test("pid and port files are removed even when handle.stop() throws", async () => {
   const pidPath = join(dir, "pid");
@@ -25,9 +29,14 @@ test("pid and port files are removed even when handle.stop() throws", async () =
   };
 
   // runStop should propagate the throw but still clean up the files.
-  await expect(runStop({ storageRoot: dir, handle: throwingHandle })).rejects.toThrow(
-    "supervisor exploded",
-  );
+  let err: unknown;
+  try {
+    await runStop({ storageRoot: dir, handle: throwingHandle });
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toBeInstanceOf(Error);
+  expect(String(err)).toContain("supervisor exploded");
 
   expect(existsSync(pidPath)).toBe(false);
   expect(existsSync(portPath)).toBe(false);
