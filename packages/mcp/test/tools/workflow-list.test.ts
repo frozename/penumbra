@@ -1,16 +1,26 @@
 import { expect, mock, test } from "bun:test";
+
+import type { DaemonClient } from "../../src/daemon-client.js";
+
 import { workflowListHandler } from "../../src/tools/workflow-list.js";
+import { fakeDaemon } from "../helpers.js";
+
+type WorkflowListFn = DaemonClient["workflowList"];
 
 test("calls daemon.workflowList and returns wrapped text content", async () => {
-  const daemon = {
-    workflowList: mock(async () => ({
+  const workflowList = mock<WorkflowListFn>(() =>
+    Promise.resolve({
       workflows: [{ name: "a", description: "D", triggers: [] }],
-    })),
-  };
-  const handler = workflowListHandler(daemon as any);
-  const r = await handler({});
-  expect(daemon.workflowList).toHaveBeenCalled();
-  expect(JSON.parse(r.content[0].text)).toEqual({
+    }),
+  );
+  const handler = workflowListHandler(fakeDaemon({ workflowList }));
+  const r = await handler();
+  expect(workflowList).toHaveBeenCalled();
+  const block = r.content[0];
+  if (!block) {
+    throw new Error("expected content[0]");
+  }
+  expect(JSON.parse(block.text)).toEqual({
     workflows: [{ name: "a", description: "D", triggers: [] }],
   });
 });

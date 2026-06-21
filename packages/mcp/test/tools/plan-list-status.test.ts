@@ -1,10 +1,42 @@
 import { expect, test } from "bun:test";
+
+import type { DaemonClient } from "../../src/daemon-client.js";
+
 import { planListHandler } from "../../src/tools/plan-list.js";
 import { planStatusHandler } from "../../src/tools/plan-status.js";
+import { fakeDaemon } from "../helpers.js";
+
+type PlanListFn = DaemonClient["planList"];
+type PlanListReq = Parameters<PlanListFn>[0];
+type PlanListResult = Awaited<ReturnType<PlanListFn>>;
+type PlanStatusFn = DaemonClient["planStatus"];
+type PlanStatusReq = Parameters<PlanStatusFn>[0];
+type PlanStatusResult = Awaited<ReturnType<PlanStatusFn>>;
+
+interface TextEnvelope {
+  content: { type: string; text: string }[];
+}
+
+function envelopeText(result: TextEnvelope): string {
+  const block = result.content[0];
+  if (!block) {
+    throw new Error("expected envelope content[0]");
+  }
+  return block.text;
+}
+
+async function captureRejection(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected promise to reject but it resolved");
+}
 
 test("plan.list returns all plans when no status filter", async () => {
-  const daemon = {
-    planList: async (req: any) => ({
+  const planList: PlanListFn = (): Promise<PlanListResult> =>
+    Promise.resolve({
       plans: [
         {
           plan_id: "a-1",
@@ -21,11 +53,10 @@ test("plan.list returns all plans when no status filter", async () => {
           status: "completed",
         },
       ],
-    }),
-  };
-  const handler = planListHandler(daemon as any);
+    });
+  const handler = planListHandler(fakeDaemon({ planList }));
   const result = await handler({});
-  expect(result.content[0].text ? JSON.parse(result.content[0].text) : null).toEqual({
+  expect(JSON.parse(envelopeText(result)) as PlanListResult).toEqual({
     plans: [
       {
         plan_id: "a-1",
@@ -46,25 +77,23 @@ test("plan.list returns all plans when no status filter", async () => {
 });
 
 test("plan.list filters by status", async () => {
-  const daemon = {
-    planList: async (req: any) => {
-      expect(req.status).toBe("running");
-      return {
-        plans: [
-          {
-            plan_id: "a-1",
-            file_path: "/a.md",
-            home_project: "penumbra",
-            registered_at: 1700000000,
-            status: "running",
-          },
-        ],
-      };
-    },
+  const planList: PlanListFn = (req: PlanListReq): Promise<PlanListResult> => {
+    expect(req.status).toBe("running");
+    return Promise.resolve({
+      plans: [
+        {
+          plan_id: "a-1",
+          file_path: "/a.md",
+          home_project: "penumbra",
+          registered_at: 1700000000,
+          status: "running",
+        },
+      ],
+    });
   };
-  const handler = planListHandler(daemon as any);
+  const handler = planListHandler(fakeDaemon({ planList }));
   const result = await handler({ status: "running" });
-  expect(JSON.parse(result.content[0].text)).toEqual({
+  expect(JSON.parse(envelopeText(result)) as PlanListResult).toEqual({
     plans: [
       {
         plan_id: "a-1",
@@ -78,16 +107,17 @@ test("plan.list filters by status", async () => {
 });
 
 test("plan.list rejects invalid status", async () => {
-  const daemon = { planList: async () => ({ plans: [] }) };
-  const handler = planListHandler(daemon as any);
-  await expect(handler({ status: "bogus" })).rejects.toThrow();
+  const planList: PlanListFn = (): Promise<PlanListResult> => Promise.resolve({ plans: [] });
+  const handler = planListHandler(fakeDaemon({ planList }));
+  const err = await captureRejection(handler({ status: "bogus" }));
+  expect(err).toBeInstanceOf(Error);
 });
 
 test("plan.status returns plan + hydrated tasks", async () => {
-  const daemon = {
-    planStatus: async (req: any) => ({
+  const planStatus: PlanStatusFn = (req: PlanStatusReq): Promise<PlanStatusResult> =>
+    Promise.resolve({
       plan: {
-        plan_id: "a-1",
+        plan_id: req.plan_id,
         file_path: "/a.md",
         home_project: "penumbra",
         registered_at: 1700000000,
@@ -95,7 +125,7 @@ test("plan.status returns plan + hydrated tasks", async () => {
       },
       tasks: [
         {
-          plan_id: "a-1",
+          plan_id: req.plan_id,
           task_meta_id: "1.1",
           project_id: "penumbra",
           task_id_in_board: "task-abc",
@@ -103,11 +133,10 @@ test("plan.status returns plan + hydrated tasks", async () => {
           last_event_ts: 1700000005,
         },
       ],
-    }),
-  };
-  const handler = planStatusHandler(daemon as any);
+    });
+  const handler = planStatusHandler(fakeDaemon({ planStatus }));
   const result = await handler({ plan_id: "a-1" });
-  const payload = JSON.parse(result.content[0].text);
+  const payload = JSON.parse(envelopeText(result)) as PlanStatusResult;
   expect(payload.plan.plan_id).toBe("a-1");
-  expect(payload.tasks[0].task_id_in_board).toBe("task-abc");
+  expect(payload.tasks[0]?.task_id_in_board).toBe("task-abc");
 });
