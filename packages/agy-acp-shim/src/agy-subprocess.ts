@@ -43,13 +43,20 @@ export function spawnAgy(opts: {
     }
   });
 
+  let hasExited = false;
   const exited = new Promise<number | null>((resolve) => {
-    child.on("exit", (code) => resolve(code));
-    child.on("error", () => resolve(null));
+    child.on("exit", (code) => {
+      hasExited = true;
+      resolve(code);
+    });
+    child.on("error", () => {
+      hasExited = true;
+      resolve(null);
+    });
   });
 
   const signalProcess = (signal: NodeJS.Signals) => {
-    if (!child.pid) return;
+    if (!child.pid || hasExited) return;
     try {
       if (process.platform !== "win32") {
         process.kill(-child.pid, signal);
@@ -62,11 +69,13 @@ export function spawnAgy(opts: {
   };
 
   const kill = () => {
+    if (hasExited) return;
     signalProcess("SIGTERM");
     const timer = setTimeout(() => {
       signalProcess("SIGKILL");
     }, 2000);
     timer.unref();
+    void exited.then(() => clearTimeout(timer));
   };
 
   if (opts.signal) {
