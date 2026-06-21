@@ -31,6 +31,9 @@ export default tseslint.config(
     ignores: [
       "**/dist/**",
       "**/*.d.ts",
+      "**/*.spec.ts",
+      "**/storybook-static/**",
+      "packages/console/visual/**",
       "coverage/**",
       "node_modules/**",
       "bun.lock",
