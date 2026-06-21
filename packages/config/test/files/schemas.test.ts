@@ -516,21 +516,58 @@ describe("QuotasConfigSchema", () => {
     ).toThrow(/typo_field/);
   });
 
-  test("rejects duplicate provider names (would silently drop one quota config)", () => {
+  test("rejects duplicate (name, model) composite — same name + same model collide", () => {
+    const result = QuotasConfigSchema.safeParse({
+      providers: [
+        { name: "google", model: "gemini-3-flash-preview", quota_usd_per_24h: 50 },
+        { name: "openai", quota_usd_per_24h: 25 },
+        { name: "google", model: "gemini-3-flash-preview", quota_usd_per_24h: 100 },
+      ],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const dupIssue = result.error.issues.find((i) => /duplicate provider/.test(i.message));
+      expect(dupIssue).toBeDefined();
+      expect(dupIssue?.path).toEqual(["providers", 2]);
+      expect(dupIssue?.message).toContain("'google'");
+      expect(dupIssue?.message).toContain("gemini-3-flash-preview");
+    }
+  });
+
+  test("rejects duplicate provider-level entries (same name, both model-absent)", () => {
     const result = QuotasConfigSchema.safeParse({
       providers: [
         { name: "anthropic", quota_usd_per_24h: 50 },
-        { name: "openai", quota_usd_per_24h: 25 },
         { name: "anthropic", quota_usd_per_24h: 100 },
       ],
     });
     expect(result.success).toBe(false);
     if (!result.success) {
-      const dupIssue = result.error.issues.find((i) => /duplicate provider name/.test(i.message));
+      const dupIssue = result.error.issues.find((i) => /duplicate provider/.test(i.message));
       expect(dupIssue).toBeDefined();
-      expect(dupIssue?.path).toEqual(["providers", 2, "name"]);
-      expect(dupIssue?.message).toContain("'anthropic'");
+      expect(dupIssue?.path).toEqual(["providers", 1]);
+      expect(dupIssue?.message).toContain("(no model)");
     }
+  });
+
+  test("accepts same name with different models plus a provider-level entry (deployed pattern)", () => {
+    expect(() =>
+      QuotasConfigSchema.parse({
+        providers: [
+          { name: "google", quota_usd_per_24h: 25 },
+          {
+            name: "google",
+            model: "gemini-3-flash-preview",
+            quota_tokens_per_24h: 30000000,
+          },
+          {
+            name: "google",
+            model: "gemini-3.1-pro-preview",
+            quota_tokens_per_24h: 450000000,
+          },
+        ],
+      }),
+    ).not.toThrow();
   });
 
   test("accepts providers with all-unique names (regression: refine should not false-positive)", () => {

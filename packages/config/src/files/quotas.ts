@@ -78,18 +78,24 @@ export const QuotasConfigSchema = z
   })
   .strict()
   .superRefine((data, ctx) => {
+    // Quota rows are keyed downstream by the COMPOSITE (name, model) — see
+    // packages/daemon/src/maestro/build-provider-caps.ts. A provider-level entry
+    // (no model) is a distinct key from any model-scoped entry. Only entries
+    // sharing BOTH name AND model (including both-model-absent) collide.
     const seen = new Map<string, number>();
     for (let i = 0; i < data.providers.length; i++) {
-      const name = data.providers[i]!.name;
-      const first = seen.get(name);
+      const entry = data.providers[i]!;
+      const key = JSON.stringify([entry.name, entry.model ?? null]);
+      const first = seen.get(key);
       if (first !== undefined) {
+        const modelDesc = entry.model ? ` model '${entry.model}'` : " (no model)";
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          path: ["providers", i, "name"],
-          message: `duplicate provider name '${name}' (also at providers[${first}]); quota rows are keyed by provider name, so the later entry would silently drop one quota config`,
+          path: ["providers", i],
+          message: `duplicate provider '${entry.name}'${modelDesc} (also at providers[${first}]); quota rows are keyed by (name, model), so the later entry would silently drop one quota config`,
         });
       } else {
-        seen.set(name, i);
+        seen.set(key, i);
       }
     }
   });
