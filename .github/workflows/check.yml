@@ -93,6 +93,8 @@ jobs:
           fi
           echo "all test shards passed"
         continue-on-error: true
-      - name: lint (advisory - currently has known violations, see plan Phase 5.2)
+      - name: lint (advisory - whole-repo burn-down tracker, see strict-lint ratchet)
         run: bun run lint || true
         continue-on-error: true
+      - name: lint:strict (BLOCKING - ratcheted packages must stay at eslint --max-warnings=0)
+        run: bun run lint:strict
