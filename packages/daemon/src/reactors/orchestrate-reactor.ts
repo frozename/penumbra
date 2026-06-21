@@ -11,6 +11,7 @@ import { createLogger, MaestroSessionWriter, routeAgent } from "@penumbra/core";
 import { orchestrateOneTask } from "../maestro/orchestrate-one-task.js";
 
 const ORCHESTRATE_BACKSTOP_INTERVAL_MS = 30_000;
+const ORCHESTRATE_BACKSTOP_BATCH_LIMIT = 500;
 const defaultLog = createLogger({ component: "daemon:orchestrate-reactor" });
 
 interface TaskKindRow {
@@ -80,7 +81,7 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): {
   // only writes the terminated event on bounds exceed, not on chain success.
   function reconcileChainCompletions(): void {
     const rows = opts.db
-      .query<SpawnedRow, []>(
+      .query<SpawnedRow, [number]>(
         `SELECT te.task_id AS task_id, te.payload_json AS payload_json
          FROM task_events te
         WHERE te.kind = 'orchestrate_spawned'
@@ -88,9 +89,11 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): {
             SELECT 1 FROM task_events te2
              WHERE te2.task_id = te.task_id
                AND te2.kind = 'orchestrate_terminated'
-          )`,
+          )
+        ORDER BY te.id ASC
+        LIMIT ?`,
       )
-      .all();
+      .all(ORCHESTRATE_BACKSTOP_BATCH_LIMIT);
     for (const row of rows) {
       let chainHandoffId: string | null = null;
       try {

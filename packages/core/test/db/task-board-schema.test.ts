@@ -198,6 +198,7 @@ test("applySchema creates task board tables and indexes", () => {
   expect(indexes).toContain("task_leases_task_id_released_at");
   expect(indexes).toContain("task_leases_agent_id_released_at");
   expect(indexes).toContain("task_events_task_id_at");
+  expect(indexes).toContain("task_events_kind_task");
   expect(indexes).toContain("gh_outbox_status_created_at");
   expect(indexes).toContain("gh_outbox_task_id_status");
 

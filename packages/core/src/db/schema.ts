@@ -260,6 +260,7 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
         FOREIGN KEY(task_id) REFERENCES tasks(id)
       );
       CREATE INDEX IF NOT EXISTS task_events_task_id_at ON task_events(task_id, at);
+      CREATE INDEX IF NOT EXISTS task_events_kind_task ON task_events(kind, task_id);
 
       CREATE TABLE IF NOT EXISTS gh_outbox (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,

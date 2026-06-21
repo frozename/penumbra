@@ -210,6 +210,71 @@ function insertTerminalHandoff(db: Database, status: string): void {
   );
 }
 
+test("completion backstop: bounds per-tick batch and still reconciles remaining tasks on the next tick", async () => {
+  const db = setupDb();
+  const bus = new TaskEventBus();
+  const sessions = new MaestroSessionWriter({ db });
+  const taskWriter = new TaskWriter(db, {
+    bus,
+    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+  });
+
+  const reactor = createOrchestrateReactor({
+    db,
+    bus,
+    sessions,
+    taskWriter,
+    chainStart: async () => ({ handoff_id: "handoff-batch", conversation_id: "conv-batch" }),
+    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    defaults: DEFAULT_BOUNDS,
+  });
+
+  // Synthesize 501 distinct orchestrate_spawned events for separate tasks
+  // sharing a single terminal handoff. The query LIMIT (500) should bound the
+  // first tick; the 501st row reconciles on the next call.
+  const TOTAL = 501;
+  const taskIds: string[] = [];
+  for (let i = 0; i < TOTAL; i += 1) {
+    const id = `synthetic-task-${i}`;
+    taskIds.push(id);
+    db.run(
+      `INSERT INTO tasks(id, kind, prompt, status, priority, created_by_kind, created_by_id, created_at, updated_at, eligibility, requires_review)
+       VALUES (?, 'orchestrate', 'p', 'leased', 'normal', 'human', 'cli', 0, 0, '{}', 0)`,
+      [id],
+    );
+    db.run(
+      `INSERT INTO task_events (task_id, at, kind, actor, payload_json, maestro_session_task_id)
+       VALUES (?, ?, 'orchestrate_spawned', NULL, ?, ?)`,
+      [id, i, JSON.stringify({ chain_handoff_id: "handoff-batch" }), id],
+    );
+  }
+  db.run(
+    `INSERT INTO handoffs(handoff_id, ts, conversation_id, from_agent, to_agent, message, status)
+     VALUES('handoff-batch', '2026-06-09T00:00:00Z', 'conv-batch', 'maestro', ?, 'msg', 'completed')`,
+    [MAESTRO_AGENT.name],
+  );
+
+  reactor.reconcileChainCompletions();
+  const afterFirst = db
+    .query<
+      { n: number },
+      []
+    >("SELECT COUNT(*) AS n FROM task_events WHERE kind = 'orchestrate_terminated'")
+    .get();
+  expect(afterFirst?.n).toBe(500);
+
+  reactor.reconcileChainCompletions();
+  const afterSecond = db
+    .query<
+      { n: number },
+      []
+    >("SELECT COUNT(*) AS n FROM task_events WHERE kind = 'orchestrate_terminated'")
+    .get();
+  expect(afterSecond?.n).toBe(TOTAL);
+
+  db.close();
+});
+
 test("completion backstop: still-leased task whose chain completed is failed, not inferred done", async () => {
   const db = setupDb();
   const bus = new TaskEventBus();
