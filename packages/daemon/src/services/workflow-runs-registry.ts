@@ -334,6 +334,7 @@ export function createWorkflowRunsRegistry(opts: {
     for (const [workflowRunId, entry] of entries) {
       if (entry.record && entry.record.status !== "running") {
         entries.delete(workflowRunId);
+        clearRunState(workflowRunId);
         evicted = true;
       }
     }

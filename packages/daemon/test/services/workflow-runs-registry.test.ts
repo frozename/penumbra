@@ -296,6 +296,33 @@ test("evictIfNeeded drains all expired terminal runs in one pass", async () => {
   expect(registry.register("wf-4", "proj")).toBe("wfrun-4");
 });
 
+test("capacity-pressure eviction clears persistence state alongside the entry", async () => {
+  let n = 0;
+  const registry = createWorkflowRunsRegistry({
+    uuid: () => `wfrun-evict-orphan-${++n}`,
+    clock: () => new Date("2026-04-26T00:00:00Z"),
+    db: freshDb(":memory:"),
+    storageRoot: tmpdir(),
+    capacity: 2,
+  });
+  const id1 = registry.register("wf-1", "proj");
+  const id2 = registry.register("wf-2", "proj");
+  expect(id1).toBe("wfrun-evict-orphan-1");
+  expect(id2).toBe("wfrun-evict-orphan-2");
+  await registry.recordResult(id1!, { ok: true });
+  await registry.recordResult(id2!, { ok: true });
+
+  await expect(registry.getStatus(id1!)).resolves.toMatchObject({
+    persistence_status: "persisted",
+  });
+
+  expect(registry.register("wf-3", "proj")).toBe("wfrun-evict-orphan-3");
+
+  const status = await registry.getStatus(id1!);
+  expect(status).not.toBeNull();
+  expect(status).not.toHaveProperty("persistence_status");
+});
+
 test("waitForResult enforces waiter caps", async () => {
   const registry = createWorkflowRunsRegistry({
     uuid: () => "wfrun-1",
