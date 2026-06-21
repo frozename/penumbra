@@ -1,13 +1,15 @@
 import type { Database } from "bun:sqlite";
+
 import type { Uuid } from "../utils/uuid.js";
+
 import { HandoffReader } from "../readers/handoff.js";
 import {
-  RecordOperatorAgentPerformanceInputSchema,
   type AgentPerformanceRow,
   type RecordOperatorAgentPerformanceInput,
+  RecordOperatorAgentPerformanceInputSchema,
 } from "../schemas/agent-performance.js";
-import { aggregateHandoffUsage } from "./agent-performance-capture.js";
 import { AgentPerformanceWriter } from "../writers/agent-performance.js";
+import { aggregateHandoffUsage } from "./agent-performance-capture.js";
 
 function computeResolvedLatencyMs(ts: string, resolvedAt: string | null): number | null {
   if (!resolvedAt) return null;

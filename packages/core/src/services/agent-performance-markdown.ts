@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
+
 import {
+  type AgentPerformanceMarkdownParseInput,
   AgentPerformanceMarkdownParseInputSchema,
+  type AgentPerformanceRow,
   AgentPerformanceRowSchema,
   AgentTaskTypeSchema,
-  type AgentPerformanceMarkdownParseInput,
-  type AgentPerformanceRow,
 } from "../schemas/agent-performance.js";
 
 const CANONICAL_HEADER = [
@@ -22,7 +23,7 @@ const CANONICAL_HEADER = [
 ] as const;
 
 function normalizeHeaderCell(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
+  return value.trim().toLowerCase().replaceAll(/\s+/g, " ");
 }
 
 function splitPipeRow(line: string): string[] | null {
@@ -126,24 +127,146 @@ function formatTsCell(ts: string): string {
 
 function formatCostCell(row: AgentPerformanceRow, metadata: Record<string, unknown>): string {
   if (metadata.cost_marker === "<1") return "<1";
-  if (row.cost_usd == null) return "n/a";
+  if (row.cost_usd === null) return "n/a";
   const prefix = metadata.cost_marker === "~" ? "~" : "";
   return `${prefix}${row.cost_usd.toFixed(2)}`;
 }
 
 function formatLatencyCell(row: AgentPerformanceRow, metadata: Record<string, unknown>): string {
   if (metadata.latency_marker === "<1") return "<1";
-  if (row.latency_ms == null) return "n/a";
+  if (row.latency_ms === null) return "n/a";
   return String(Number((row.latency_ms / 60_000).toFixed(6)));
 }
 
 function parseMetadata(json: string): Record<string, unknown> {
   try {
-    const parsed = JSON.parse(json);
+    const parsed = JSON.parse(json) as unknown;
     return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
   } catch {
     return {};
   }
+}
+
+type CanonicalRowCells = readonly [
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+];
+
+function asCanonicalCells(cells: readonly string[]): CanonicalRowCells | null {
+  if (cells.length !== CANONICAL_HEADER.length) return null;
+  return [
+    cells[0] ?? "",
+    cells[1] ?? "",
+    cells[2] ?? "",
+    cells[3] ?? "",
+    cells[4] ?? "",
+    cells[5] ?? "",
+    cells[6] ?? "",
+    cells[7] ?? "",
+    cells[8] ?? "",
+    cells[9] ?? "",
+    cells[10] ?? "",
+  ];
+}
+
+function resolveTaskType(
+  raw: string,
+  metadata: Record<string, string>,
+): AgentPerformanceRow["task_type"] {
+  if (AgentTaskTypeSchema.safeParse(raw).success) {
+    return raw as AgentPerformanceRow["task_type"];
+  }
+  // Preserve legacy task types only for forensic lookup in metadata.
+  metadata.task_type_original = raw;
+  return "unknown";
+}
+
+function parseMarkdownDataRow(
+  cells: CanonicalRowCells,
+  input: { projectId?: string | null; sourcePath: string },
+  rowIndex: number,
+): AgentPerformanceRow {
+  const metadata: Record<string, string> = { source_path: input.sourcePath };
+  const ts = cells[0].trim();
+  const agentName = cells[1].trim();
+  const taskType = resolveTaskType(cells[2].trim(), metadata);
+  const outcome = parseOutcomeCell(cells[3], metadata);
+  const notesRaw = cells[10].trim();
+  const notes = notesRaw === "" ? null : notesRaw;
+  const handoffId = stableManualId({
+    projectId: input.projectId,
+    ts,
+    agentName,
+    taskType,
+    outcome,
+    notes,
+  });
+  const parsedRow = AgentPerformanceRowSchema.safeParse({
+    performance_id: handoffId,
+    ts,
+    handoff_id: handoffId,
+    conversation_id: null,
+    project_id: input.projectId ?? null,
+    agent_name: agentName,
+    task_type: taskType,
+    outcome,
+    rounds: parseIntegerCell(cells[4]),
+    smoke_pass: parseSmokeCell(cells[5], metadata),
+    reviewer_findings: parseIntegerCell(cells[7]),
+    maestro_score: parseIntegerCell(cells[6]),
+    cost_usd: parseCostCell(cells[8], metadata),
+    tokens_used: null,
+    latency_ms: parseLatencyCell(cells[9], metadata),
+    source: "manual_seed",
+    notes,
+    metadata_json: JSON.stringify(metadata),
+  });
+  if (!parsedRow.success) {
+    throw new Error(
+      `invalid agent performance markdown row at line ${String(rowIndex + 1)}: ${parsedRow.error.issues.map((issue) => issue.message).join(", ")}`,
+    );
+  }
+  return parsedRow.data;
+}
+
+function isCanonicalHeaderRow(line: string): boolean {
+  const headerCells = splitPipeRow(line);
+  if (headerCells?.length !== CANONICAL_HEADER.length) return false;
+  const normalizedHeader = headerCells.map(normalizeHeaderCell);
+  return normalizedHeader.every((cell, idx) => cell === CANONICAL_HEADER[idx]);
+}
+
+function isCanonicalDividerRow(line: string): boolean {
+  const dividerCells = splitPipeRow(line);
+  return dividerCells?.length === CANONICAL_HEADER.length && isDividerRow(dividerCells);
+}
+
+function collectTableRows(
+  lines: string[],
+  start: number,
+  input: { projectId?: string | null; sourcePath: string },
+  rows: AgentPerformanceRow[],
+): number {
+  let lastIndex = start - 1;
+  for (let rowIndex = start; rowIndex < lines.length; rowIndex++) {
+    const rowCells = splitPipeRow(lines[rowIndex] ?? "");
+    if (!rowCells) return rowIndex;
+    const canonical = asCanonicalCells(rowCells);
+    if (canonical) {
+      rows.push(parseMarkdownDataRow(canonical, input, rowIndex));
+    }
+    lastIndex = rowIndex;
+  }
+  return lastIndex;
 }
 
 export function parseAgentPerformanceMarkdownRows(
@@ -160,77 +283,9 @@ export function parseAgentPerformanceMarkdownRows(
   const rows: AgentPerformanceRow[] = [];
 
   for (let index = 0; index < lines.length; index++) {
-    const headerCells = splitPipeRow(lines[index] ?? "");
-    if (!headerCells || headerCells.length !== CANONICAL_HEADER.length) continue;
-    const normalizedHeader = headerCells.map(normalizeHeaderCell);
-    if (!normalizedHeader.every((cell, idx) => cell === CANONICAL_HEADER[idx])) continue;
-
-    const dividerCells = splitPipeRow(lines[index + 1] ?? "");
-    if (
-      !dividerCells ||
-      dividerCells.length !== CANONICAL_HEADER.length ||
-      !isDividerRow(dividerCells)
-    )
-      continue;
-
-    for (let rowIndex = index + 2; rowIndex < lines.length; rowIndex++) {
-      const rowCells = splitPipeRow(lines[rowIndex] ?? "");
-      if (!rowCells) {
-        index = rowIndex;
-        break;
-      }
-      if (rowCells.length !== CANONICAL_HEADER.length) {
-        continue;
-      }
-
-      const metadata: Record<string, string> = { source_path: input.sourcePath };
-      const ts = rowCells[0]!.trim();
-      const agentName = rowCells[1]!.trim();
-      const rawTaskType = rowCells[2]!.trim();
-      const taskType = AgentTaskTypeSchema.safeParse(rawTaskType).success ? rawTaskType : "unknown";
-      if (taskType !== rawTaskType) {
-        // Preserve legacy task types only for forensic lookup in metadata.
-        metadata.task_type_original = rawTaskType;
-      }
-      const outcome = parseOutcomeCell(rowCells[3]!, metadata);
-      const notes = rowCells[10]!.trim() === "" ? null : rowCells[10]!.trim();
-      const handoffId = stableManualId({
-        projectId: input.projectId,
-        ts,
-        agentName,
-        taskType,
-        outcome,
-        notes,
-      });
-
-      const parsedRow = AgentPerformanceRowSchema.safeParse({
-        performance_id: handoffId,
-        ts,
-        handoff_id: handoffId,
-        conversation_id: null,
-        project_id: input.projectId ?? null,
-        agent_name: agentName,
-        task_type: taskType,
-        outcome,
-        rounds: parseIntegerCell(rowCells[4]!),
-        smoke_pass: parseSmokeCell(rowCells[5]!, metadata),
-        reviewer_findings: parseIntegerCell(rowCells[7]!),
-        maestro_score: parseIntegerCell(rowCells[6]!),
-        cost_usd: parseCostCell(rowCells[8]!, metadata),
-        tokens_used: null,
-        latency_ms: parseLatencyCell(rowCells[9]!, metadata),
-        source: "manual_seed",
-        notes,
-        metadata_json: JSON.stringify(metadata),
-      });
-      if (!parsedRow.success) {
-        throw new Error(
-          `invalid agent performance markdown row at line ${rowIndex + 1}: ${parsedRow.error.issues.map((issue) => issue.message).join(", ")}`,
-        );
-      }
-      rows.push(parsedRow.data);
-      index = rowIndex;
-    }
+    if (!isCanonicalHeaderRow(lines[index] ?? "")) continue;
+    if (!isCanonicalDividerRow(lines[index + 1] ?? "")) continue;
+    index = collectTableRows(lines, index + 2, input, rows);
   }
 
   return rows;
@@ -259,16 +314,16 @@ export function renderAgentPerformanceMarkdown(
       const metadata = parseMetadata(row.metadata_json);
       const legacyMarker = metadata.legacy_marker === "*" ? "*" : "";
       const smokeMarker = metadata.smoke_marker === "*" ? "*" : "";
-      const smoke = row.smoke_pass == null ? "n/a" : `${row.smoke_pass}${smokeMarker}`;
+      const smoke = row.smoke_pass === null ? "n/a" : `${row.smoke_pass}${smokeMarker}`;
       return [
         formatTsCell(row.ts),
         row.agent_name,
         row.task_type,
         `${row.outcome}${legacyMarker}`,
-        row.rounds == null ? "" : String(row.rounds),
+        row.rounds === null ? "" : String(row.rounds),
         smoke,
-        row.maestro_score == null ? "" : String(row.maestro_score),
-        row.reviewer_findings == null ? "" : String(row.reviewer_findings),
+        row.maestro_score === null ? "" : String(row.maestro_score),
+        row.reviewer_findings === null ? "" : String(row.reviewer_findings),
         formatCostCell(row, metadata),
         formatLatencyCell(row, metadata),
         row.notes ?? "",

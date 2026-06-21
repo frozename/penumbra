@@ -79,11 +79,20 @@ export interface DispatchReliabilityReport {
 const TERMINAL_STATUSES = new Set(["completed", "failed", "rejected", "expired"]);
 const ADAPTER_EVENT_PREFIXES = ["proc.", "http.", "acp."];
 
-export function classifyDispatchReliability(
-  input: DispatchReliabilityInput,
-): DispatchReliabilityReport {
+interface ClassificationContext {
+  input: DispatchReliabilityInput;
+  eventKinds: string[];
+  toolFailureCount: number;
+  hasAdapterLifecycle: boolean;
+  terminal: boolean;
+  cancelRequested: boolean;
+  watchdogFailed: boolean;
+  missing: string[];
+  baseEvidence: DispatchReliabilityReport["evidence"];
+}
+
+function buildClassificationContext(input: DispatchReliabilityInput): ClassificationContext {
   const eventKinds = input.events.map((event) => event.kind);
-  const has = (kind: string) => eventKinds.includes(kind);
   const toolFailureCount = input.events.filter(
     (event) => event.kind === "agent.tool_call.failed",
   ).length;
@@ -92,56 +101,71 @@ export function classifyDispatchReliability(
   );
   const terminal = TERMINAL_STATUSES.has(input.handoff.status);
   const cancelRequested = input.handoff.cancel_requested_at !== null;
-  const watchdogFailed = has("watchdog.auto_fail");
+  const watchdogFailed = eventKinds.includes("watchdog.auto_fail");
   const missing: string[] = [];
-
-  if (!has("dispatch.start")) missing.push("dispatch.start");
+  if (!eventKinds.includes("dispatch.start")) missing.push("dispatch.start");
   if (!hasAdapterLifecycle) missing.push("adapter.lifecycle");
-  if (!has("dispatch.end")) missing.push("dispatch.end");
+  if (!eventKinds.includes("dispatch.end")) missing.push("dispatch.end");
 
-  const baseEvidence = {
-    handoff_status: input.handoff.status,
-    event_count: input.events.length,
-    response_count: input.responseCount,
-    worktree_changed: input.worktreeChanged,
-    dispatch_end_committed: input.dispatchEndCommitted,
-    reconciled: input.reconciled,
-    watchdog_failed: watchdogFailed,
-    cancel_requested: cancelRequested,
-    adapter_streaming: input.adapterStreaming,
-  };
-
-  const report = (
-    status: DispatchReliabilityStatus,
-    trustworthy: boolean,
-    summary: string,
-    recommended_action: DispatchRecommendedAction,
-    missing_events = missing,
-  ): DispatchReliabilityReport => ({
-    handoff_id: input.handoff.handoff_id,
-    status,
+  return {
+    input,
+    eventKinds,
+    toolFailureCount,
+    hasAdapterLifecycle,
     terminal,
+    cancelRequested,
+    watchdogFailed,
+    missing,
+    baseEvidence: {
+      handoff_status: input.handoff.status,
+      event_count: input.events.length,
+      response_count: input.responseCount,
+      worktree_changed: input.worktreeChanged,
+      dispatch_end_committed: input.dispatchEndCommitted,
+      reconciled: input.reconciled,
+      watchdog_failed: watchdogFailed,
+      cancel_requested: cancelRequested,
+      adapter_streaming: input.adapterStreaming,
+    },
+  };
+}
+
+function makeReport(
+  ctx: ClassificationContext,
+  status: DispatchReliabilityStatus,
+  trustworthy: boolean,
+  summary: string,
+  recommended_action: DispatchRecommendedAction,
+  missing_events: string[] = ctx.missing,
+): DispatchReliabilityReport {
+  return {
+    handoff_id: ctx.input.handoff.handoff_id,
+    status,
+    terminal: ctx.terminal,
     trustworthy,
     summary,
     missing_events,
-    evidence: baseEvidence,
+    evidence: ctx.baseEvidence,
     recommended_action,
-  });
+  };
+}
 
-  if (!terminal && isStale(input)) {
-    return report(
+function classifyStaleAndCancel(ctx: ClassificationContext): DispatchReliabilityReport | null {
+  if (!ctx.terminal && isStale(ctx.input)) {
+    return makeReport(
+      ctx,
       "non_terminal_stale",
       false,
       "handoff is non-terminal past the stale threshold",
-      usesWorktree(input.handoff) || input.adapterStreaming === false
+      usesWorktree(ctx.input.handoff) || ctx.input.adapterStreaming === false
         ? "inspect_worktree"
         : "cancel",
       [],
     );
   }
-
-  if (cancelRequested && input.handoff.status === "completed") {
-    return report(
+  if (ctx.cancelRequested && ctx.input.handoff.status === "completed") {
+    return makeReport(
+      ctx,
       "cancel_completed",
       false,
       "cancel-requested handoff completed",
@@ -149,9 +173,13 @@ export function classifyDispatchReliability(
       [],
     );
   }
+  return null;
+}
 
-  if (watchdogFailed && !has("dispatch.end")) {
-    return report(
+function classifyMissingLifecycle(ctx: ClassificationContext): DispatchReliabilityReport | null {
+  if (ctx.watchdogFailed && !ctx.eventKinds.includes("dispatch.end")) {
+    return makeReport(
+      ctx,
       "watchdog_only",
       false,
       "watchdog failed the handoff without dispatch.end",
@@ -159,9 +187,9 @@ export function classifyDispatchReliability(
       ["dispatch.end"],
     );
   }
-
-  if (!has("dispatch.start")) {
-    return report(
+  if (!ctx.eventKinds.includes("dispatch.start")) {
+    return makeReport(
+      ctx,
       "missing_dispatch_start",
       false,
       "dispatch.start event is missing",
@@ -169,9 +197,9 @@ export function classifyDispatchReliability(
       ["dispatch.start"],
     );
   }
-
-  if (!hasAdapterLifecycle) {
-    return report(
+  if (!ctx.hasAdapterLifecycle) {
+    return makeReport(
+      ctx,
       "missing_adapter_lifecycle",
       false,
       "adapter lifecycle event is missing",
@@ -179,23 +207,37 @@ export function classifyDispatchReliability(
       ["adapter.lifecycle"],
     );
   }
-
-  if (!has("dispatch.end")) {
-    return report(
+  if (!ctx.eventKinds.includes("dispatch.end")) {
+    return makeReport(
+      ctx,
       "missing_dispatch_end",
       false,
       "dispatch.end event is missing",
-      terminal ? "review_manually" : "wait",
+      ctx.terminal ? "review_manually" : "wait",
       ["dispatch.end"],
     );
   }
+  return null;
+}
 
-  if (terminal && input.responseCount === 0 && !input.finalResponseText?.trim()) {
-    return report("no_agent_output", false, "terminal handoff has no agent output", "retry", []);
+function classifyResultIntegrity(ctx: ClassificationContext): DispatchReliabilityReport | null {
+  if (ctx.terminal && ctx.input.responseCount === 0 && !ctx.input.finalResponseText?.trim()) {
+    return makeReport(
+      ctx,
+      "no_agent_output",
+      false,
+      "terminal handoff has no agent output",
+      "retry",
+      [],
+    );
   }
-
-  if (isImplementationTask(input.handoff) && terminal && input.worktreeChanged === false) {
-    return report(
+  if (
+    isImplementationTask(ctx.input.handoff) &&
+    ctx.terminal &&
+    ctx.input.worktreeChanged === false
+  ) {
+    return makeReport(
+      ctx,
       "no_worktree_activity",
       false,
       "implementation task completed without worktree activity",
@@ -203,30 +245,30 @@ export function classifyDispatchReliability(
       [],
     );
   }
-
   // tool_call.failed events are treated as recovered when dispatch.end reported committed=true.
   if (
-    terminal &&
-    toolFailureCount > 0 &&
-    input.worktreeChanged === true &&
-    input.dispatchEndCommitted !== true
+    ctx.terminal &&
+    ctx.toolFailureCount > 0 &&
+    ctx.input.worktreeChanged === true &&
+    ctx.input.dispatchEndCommitted !== true
   ) {
-    return report(
+    return makeReport(
+      ctx,
       "tool_failure_with_end_turn",
       false,
-      `tool call failed during dispatch (${toolFailureCount}); end_turn reached without recovery`,
+      `tool call failed during dispatch (${String(ctx.toolFailureCount)}); end_turn reached without recovery`,
       "retry",
       [],
     );
   }
-
   if (
-    isImplementationTask(input.handoff) &&
-    terminal &&
-    input.worktreeChanged === true &&
-    input.reconciled === false
+    isImplementationTask(ctx.input.handoff) &&
+    ctx.terminal &&
+    ctx.input.worktreeChanged === true &&
+    ctx.input.reconciled === false
   ) {
-    return report(
+    return makeReport(
+      ctx,
       "reconcile_missing",
       false,
       "implementation task changed files but lacks reconciliation evidence",
@@ -234,9 +276,9 @@ export function classifyDispatchReliability(
       [],
     );
   }
-
-  if (hasImpossibleOrder(input.events)) {
-    return report(
+  if (hasImpossibleOrder(ctx.input.events)) {
+    return makeReport(
+      ctx,
       "timeline_inconsistent",
       false,
       "dispatch timeline has impossible event ordering",
@@ -244,12 +286,21 @@ export function classifyDispatchReliability(
       [],
     );
   }
+  return null;
+}
 
-  if (!terminal) {
-    return report("complete", false, "handoff is still running and not stale", "wait", []);
+export function classifyDispatchReliability(
+  input: DispatchReliabilityInput,
+): DispatchReliabilityReport {
+  const ctx = buildClassificationContext(input);
+  const earlyReport =
+    classifyStaleAndCancel(ctx) ?? classifyMissingLifecycle(ctx) ?? classifyResultIntegrity(ctx);
+  if (earlyReport) return earlyReport;
+  if (!ctx.terminal) {
+    return makeReport(ctx, "complete", false, "handoff is still running and not stale", "wait", []);
   }
-
-  return report(
+  return makeReport(
+    ctx,
     "complete",
     true,
     "dispatch lifecycle and result evidence are complete",

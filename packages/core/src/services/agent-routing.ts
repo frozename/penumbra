@@ -1,16 +1,18 @@
-import type { Database } from "bun:sqlite";
 import type { AgentPool } from "@penumbra/config";
+import type { Database } from "bun:sqlite";
+
+import type { RoutingBias } from "../readers/routing-bias.js";
+
 import {
-  DEFAULT_AGENT_KIND,
-  inferAgentTaskTypeForRole,
   type AgentKind,
   type AgentRankOutput,
   type AgentTaskType,
+  DEFAULT_AGENT_KIND,
+  inferAgentTaskTypeForRole,
 } from "../schemas/agent-performance.js";
-import type { RoutingBias } from "../readers/routing-bias.js";
 
 type AgentRoutePressureSnapshot = {
-  snapshots: Array<{
+  snapshots: {
     provider: string;
     window_label: string;
     model: string | null;
@@ -18,7 +20,7 @@ type AgentRoutePressureSnapshot = {
     resets_at: number | null;
     observed_at: string;
     source_kind: string;
-  }>;
+  }[];
   warnings?: unknown[];
 };
 
@@ -37,7 +39,7 @@ export type ResolveAgentPoolResult = {
 };
 
 type NormalizedAgentPool = {
-  members: Array<{ agent: string; tier?: "local" | "cloud" }>;
+  members: { agent: string; tier?: "local" | "cloud" }[];
   select: "rank" | "order";
   fallback_to_cloud: boolean;
 };
@@ -88,7 +90,7 @@ function orderAgentPoolPartition(
   const byName = new Map(members.map((member) => [member.agent, member]));
   const ranked = rank(members.map((member) => member.agent))
     .map((agent) => byName.get(agent))
-    .filter((member): member is ResolvedAgentPoolMember => member != null);
+    .filter((member): member is ResolvedAgentPoolMember => member !== undefined);
   const rankedNames = new Set(ranked.map((member) => member.agent));
   return [...ranked, ...members.filter((member) => !rankedNames.has(member.agent))];
 }
@@ -98,7 +100,7 @@ export function resolveAgentPool(
   ctx: ResolveAgentPoolContext,
 ): ResolveAgentPoolResult {
   const registry = ctx.registry instanceof Set ? ctx.registry : new Set(ctx.registry);
-  const isHealthy = ctx.isHealthy ?? (() => true);
+  const isHealthy = ctx.isHealthy ?? ((): boolean => true);
   const normalized = normalizeAgentPool(pool);
   const dropped: DroppedAgentPoolMember[] = [];
   const survivors: ResolvedAgentPoolMember[] = [];
@@ -135,13 +137,13 @@ export function resolveAgentPool(
 }
 
 type AgentRouteAgentchatConfig = {
-  agents: Array<{
+  agents: {
     name: string;
     roles: string[];
     subscription_provider?: string;
     api_provider?: string;
     pricing_mode?: "api" | "subscription";
-  }>;
+  }[];
   role_routing?: {
     headroom_weighting?: boolean;
     latency_weighting?: boolean;
@@ -371,8 +373,9 @@ function winsorizedMean(values: number[]): number | null {
   const n = sorted.length;
   const k = Math.floor(EXEC_WINSOR_TRIM_FRAC * n);
   if (k === 0) return sorted.reduce((sum, v) => sum + v, 0) / n;
-  const lo = sorted[k]!;
-  const hi = sorted[n - 1 - k]!;
+  const lo = sorted[k];
+  const hi = sorted[n - 1 - k];
+  if (lo === undefined || hi === undefined) return null;
   let total = 0;
   for (const v of sorted) total += v < lo ? lo : v > hi ? hi : v;
   return total / n;
@@ -386,7 +389,7 @@ function isSuccessOutcome(outcome: string): boolean {
 // from GATE_OUTCOME_PASS_VALUES; keep them in lockstep. The string comparison
 // is intentional because writers stamp canonical ISO-8601 UTC timestamps.
 function rowPassesGateOutcome(row: PerformanceRow, gateOutcomeCutover: string): boolean {
-  if (row.gate_outcome == null) return row.ts < gateOutcomeCutover;
+  if (row.gate_outcome === null) return row.ts < gateOutcomeCutover;
   return (GATE_OUTCOME_PASS_VALUES as readonly string[]).includes(row.gate_outcome);
 }
 
@@ -457,125 +460,161 @@ function smokeValue(smoke: string | null): number {
   return 0.5;
 }
 
+interface AgentRowAccumulator {
+  successes: number;
+  failures: number;
+  neutral: number;
+  roundsSum: number;
+  roundsCount: number;
+  latencySum: number;
+  latencyCount: number;
+  execMsValues: number[];
+  trueExecMsValues: number[];
+  successCostSum: number;
+  successCostCount: number;
+  reviewerSum: number;
+  reviewerCount: number;
+  trustScoreSum: number;
+  trustScoreCount: number;
+  gateVerdictCount: number;
+  gatePassCount: number;
+  outcomeScoreSum: number;
+  roundsScoreSum: number;
+  smokeScoreSum: number;
+  reviewerScoreSum: number;
+  maestroScoreSum: number;
+  lastOutcomeAt: string;
+}
+
+function makeAccumulator(seedTs: string): AgentRowAccumulator {
+  return {
+    successes: 0,
+    failures: 0,
+    neutral: 0,
+    roundsSum: 0,
+    roundsCount: 0,
+    latencySum: 0,
+    latencyCount: 0,
+    execMsValues: [],
+    trueExecMsValues: [],
+    successCostSum: 0,
+    successCostCount: 0,
+    reviewerSum: 0,
+    reviewerCount: 0,
+    trustScoreSum: 0,
+    trustScoreCount: 0,
+    gateVerdictCount: 0,
+    gatePassCount: 0,
+    outcomeScoreSum: 0,
+    roundsScoreSum: 0,
+    smokeScoreSum: 0,
+    reviewerScoreSum: 0,
+    maestroScoreSum: 0,
+    lastOutcomeAt: seedTs,
+  };
+}
+
+function accumulateOutcome(
+  acc: AgentRowAccumulator,
+  row: PerformanceRow,
+  bucket: "success" | "failure" | "neutral",
+): void {
+  if (bucket === "success") acc.successes++;
+  else if (bucket === "neutral") acc.neutral++;
+  else acc.failures++;
+
+  if (row.gate_outcome !== null) {
+    acc.gateVerdictCount++;
+    if ((GATE_OUTCOME_PASS_VALUES as readonly string[]).includes(row.gate_outcome)) {
+      acc.gatePassCount++;
+    }
+  }
+  if (bucket === "success" && row.cost_usd !== null) {
+    acc.successCostSum += row.cost_usd;
+    acc.successCostCount++;
+  }
+}
+
+function accumulateRounds(acc: AgentRowAccumulator, row: PerformanceRow): void {
+  if (row.rounds !== null) {
+    acc.roundsSum += row.rounds;
+    acc.roundsCount++;
+    acc.roundsScoreSum += clamp01(1 / row.rounds);
+  } else {
+    acc.roundsScoreSum += 0.5;
+  }
+}
+
+function accumulateLatencyAndExec(acc: AgentRowAccumulator, row: PerformanceRow): void {
+  if (row.latency_ms !== null) {
+    acc.latencySum += row.latency_ms;
+    acc.latencyCount++;
+  }
+  if (row.exec_ms !== null) {
+    acc.execMsValues.push(row.exec_ms);
+    acc.trueExecMsValues.push(Math.max(0, row.exec_ms - (row.framework_overhead_ms ?? 0)));
+  }
+}
+
+function accumulateReviewerAndScore(acc: AgentRowAccumulator, row: PerformanceRow): void {
+  if (row.reviewer_findings !== null) {
+    acc.reviewerSum += row.reviewer_findings;
+    acc.reviewerCount++;
+    acc.reviewerScoreSum += clamp01(1 - Math.min(row.reviewer_findings, 10) / 10);
+  } else {
+    acc.reviewerScoreSum += 0.5;
+  }
+  acc.maestroScoreSum += row.maestro_score !== null ? clamp01(row.maestro_score / 5) : 0.5;
+  if (row.trust_score !== null) {
+    acc.trustScoreSum += row.trust_score;
+    acc.trustScoreCount++;
+  }
+}
+
 function summarizeAgent(
   agentName: string,
   rows: PerformanceRow[],
   gateOutcomeCutover: string,
 ): CandidateSummary {
-  let successes = 0;
-  let failures = 0;
-  let neutral = 0;
-  let roundsSum = 0;
-  let roundsCount = 0;
-  let latencySum = 0;
-  let latencyCount = 0;
-  const execMsValues: number[] = [];
-  const trueExecMsValues: number[] = [];
-  let successCostSum = 0;
-  let successCostCount = 0;
-  let reviewerSum = 0;
-  let reviewerCount = 0;
-  let trustScoreSum = 0;
-  let trustScoreCount = 0;
-  let gateVerdictCount = 0;
-  let gatePassCount = 0;
-  let outcomeScoreSum = 0;
-  let roundsScoreSum = 0;
-  let smokeScoreSum = 0;
-  let reviewerScoreSum = 0;
-  let maestroScoreSum = 0;
-  let lastOutcomeAt = rows[0]!.ts;
+  const firstRow = rows[0];
+  const acc = makeAccumulator(firstRow ? firstRow.ts : "");
 
   for (const row of rows) {
-    if (row.ts > lastOutcomeAt) lastOutcomeAt = row.ts;
-    const outcomeBucketValue = rowOutcomeBucket(row, gateOutcomeCutover);
-    if (outcomeBucketValue === "success") successes++;
-    else if (outcomeBucketValue === "neutral") neutral++;
-    else failures++;
-
-    if (row.gate_outcome != null) {
-      gateVerdictCount++;
-      if ((GATE_OUTCOME_PASS_VALUES as readonly string[]).includes(row.gate_outcome))
-        gatePassCount++;
-    }
-
-    outcomeScoreSum += rowOutcomeScore(row, gateOutcomeCutover);
-
-    if (outcomeBucketValue === "success" && row.cost_usd != null) {
-      successCostSum += row.cost_usd;
-      successCostCount++;
-    }
-
-    if (row.rounds != null) {
-      roundsSum += row.rounds;
-      roundsCount++;
-      roundsScoreSum += clamp01(1 / row.rounds);
-    } else {
-      roundsScoreSum += 0.5;
-    }
-
-    smokeScoreSum += smokeValue(row.smoke_pass);
-
-    if (row.latency_ms != null) {
-      latencySum += row.latency_ms;
-      latencyCount++;
-    }
-
-    if (row.exec_ms != null) {
-      execMsValues.push(row.exec_ms);
-      trueExecMsValues.push(Math.max(0, row.exec_ms - (row.framework_overhead_ms ?? 0)));
-    }
-
-    if (row.reviewer_findings != null) {
-      reviewerSum += row.reviewer_findings;
-      reviewerCount++;
-      reviewerScoreSum += clamp01(1 - Math.min(row.reviewer_findings, 10) / 10);
-    } else {
-      reviewerScoreSum += 0.5;
-    }
-
-    maestroScoreSum += row.maestro_score != null ? clamp01(row.maestro_score / 5) : 0.5;
-
-    if (row.trust_score != null) {
-      trustScoreSum += row.trust_score;
-      trustScoreCount++;
-    }
+    if (row.ts > acc.lastOutcomeAt) acc.lastOutcomeAt = row.ts;
+    const bucket = rowOutcomeBucket(row, gateOutcomeCutover);
+    accumulateOutcome(acc, row, bucket);
+    acc.outcomeScoreSum += rowOutcomeScore(row, gateOutcomeCutover);
+    accumulateRounds(acc, row);
+    acc.smokeScoreSum += smokeValue(row.smoke_pass);
+    accumulateLatencyAndExec(acc, row);
+    accumulateReviewerAndScore(acc, row);
   }
 
   const samples = rows.length;
-  const nonNeutral = successes + failures;
-  const success_rate = nonNeutral > 0 ? successes / nonNeutral : 0;
-  const avg_rounds = roundsCount > 0 ? roundsSum / roundsCount : null;
-  const avg_latency_ms = latencyCount > 0 ? latencySum / latencyCount : null;
-  const avg_exec_ms = winsorizedMean(execMsValues);
-  const _latency_exec_ms = winsorizedMean(trueExecMsValues);
-  const cost_per_success_usd = successCostCount > 0 ? successCostSum / successCostCount : null;
-  const avgReviewerFindings = reviewerCount > 0 ? reviewerSum / reviewerCount : null;
-  const avg_reviewer_findings = avgReviewerFindings;
-  const avg_trust_score = trustScoreCount > 0 ? trustScoreSum / trustScoreCount : null;
-
+  const nonNeutral = acc.successes + acc.failures;
   return {
     agent_name: agentName,
     samples,
-    successes,
-    failures,
-    neutral,
-    success_rate,
-    avg_rounds,
-    avg_latency_ms,
-    avg_exec_ms,
-    _latency_exec_ms,
-    cost_per_success_usd,
-    avg_reviewer_findings,
-    avg_trust_score,
-    gate_verdict_count: gateVerdictCount,
-    gate_pass_count: gatePassCount,
-    last_outcome_at: lastOutcomeAt,
-    _outcome_score: outcomeScoreSum / samples,
-    _rounds_score: roundsScoreSum / samples,
-    _smoke_score: smokeScoreSum / samples,
-    _reviewer_score: reviewerScoreSum / samples,
-    _maestro_score: maestroScoreSum / samples,
+    successes: acc.successes,
+    failures: acc.failures,
+    neutral: acc.neutral,
+    success_rate: nonNeutral > 0 ? acc.successes / nonNeutral : 0,
+    avg_rounds: acc.roundsCount > 0 ? acc.roundsSum / acc.roundsCount : null,
+    avg_latency_ms: acc.latencyCount > 0 ? acc.latencySum / acc.latencyCount : null,
+    avg_exec_ms: winsorizedMean(acc.execMsValues),
+    _latency_exec_ms: winsorizedMean(acc.trueExecMsValues),
+    cost_per_success_usd:
+      acc.successCostCount > 0 ? acc.successCostSum / acc.successCostCount : null,
+    avg_reviewer_findings: acc.reviewerCount > 0 ? acc.reviewerSum / acc.reviewerCount : null,
+    avg_trust_score: acc.trustScoreCount > 0 ? acc.trustScoreSum / acc.trustScoreCount : null,
+    gate_verdict_count: acc.gateVerdictCount,
+    gate_pass_count: acc.gatePassCount,
+    last_outcome_at: acc.lastOutcomeAt,
+    _outcome_score: acc.outcomeScoreSum / samples,
+    _rounds_score: acc.roundsScoreSum / samples,
+    _smoke_score: acc.smokeScoreSum / samples,
+    _reviewer_score: acc.reviewerScoreSum / samples,
+    _maestro_score: acc.maestroScoreSum / samples,
   };
 }
 
@@ -595,57 +634,92 @@ function scoreCandidate(
   // speed can't rescue a chronically-failing agent, and outcome weight stays
   // >= 0.28 in every branch (the latency term is carved from the lower-signal
   // weights, not from outcome).
+  const minExec = typeof opts.minExecMs === "number" ? opts.minExecMs : null;
+  const maxExec = typeof opts.maxExecMs === "number" ? opts.maxExecMs : null;
+  const latencyExec = c._latency_exec_ms;
   const latencyActive =
     opts.latencyWeighting === true &&
-    c._latency_exec_ms != null &&
-    opts.minExecMs != null &&
-    opts.maxExecMs != null &&
+    latencyExec !== null &&
+    minExec !== null &&
+    maxExec !== null &&
     c.success_rate >= LATENCY_MIN_SUCCESS_FLOOR;
-  const latency_score = !latencyActive
-    ? 0
-    : opts.maxExecMs === opts.minExecMs
-      ? 1
-      : clamp01((opts.maxExecMs! - c._latency_exec_ms!) / (opts.maxExecMs! - opts.minExecMs!));
-
-  let raw: number;
-  if (opts.includeCost) {
-    let cost_score: number;
-    if (c.cost_per_success_usd == null || opts.minCost == null || opts.maxCost == null) {
-      cost_score = 0.5;
-    } else if (opts.maxCost === opts.minCost) {
-      cost_score = 1;
+  let latency_score = 0;
+  if (latencyActive) {
+    if (maxExec === minExec) {
+      latency_score = 1;
     } else {
-      cost_score = clamp01((opts.maxCost - c.cost_per_success_usd) / (opts.maxCost - opts.minCost));
+      latency_score = clamp01((maxExec - latencyExec) / (maxExec - minExec));
     }
-    raw = latencyActive
-      ? 0.28 * c._outcome_score +
+  }
+
+  const cost_score = opts.includeCost ? computeCostScore(c, opts) : 0;
+  const raw = combineScoreWeights(c, {
+    latencyActive,
+    includeCost: opts.includeCost,
+    cost_score,
+    latency_score,
+  });
+  return clamp01(Math.round(raw * 10000) / 10000);
+}
+
+function computeCostScore(
+  c: CandidateSummary,
+  opts: { minCost: number | null; maxCost: number | null },
+): number {
+  if (c.cost_per_success_usd === null || opts.minCost === null || opts.maxCost === null) {
+    return 0.5;
+  }
+  if (opts.maxCost === opts.minCost) return 1;
+  return clamp01((opts.maxCost - c.cost_per_success_usd) / (opts.maxCost - opts.minCost));
+}
+
+function combineScoreWeights(
+  c: CandidateSummary,
+  opts: {
+    latencyActive: boolean;
+    includeCost: boolean;
+    cost_score: number;
+    latency_score: number;
+  },
+): number {
+  if (opts.includeCost) {
+    if (opts.latencyActive) {
+      return (
+        0.28 * c._outcome_score +
         0.18 * c._rounds_score +
         0.17 * c._smoke_score +
         0.12 * c._reviewer_score +
         0.08 * c._maestro_score +
-        0.07 * cost_score +
-        0.1 * latency_score
-      : 0.3 * c._outcome_score +
-        0.2 * c._rounds_score +
-        0.2 * c._smoke_score +
-        0.15 * c._reviewer_score +
-        0.1 * c._maestro_score +
-        0.05 * cost_score;
-  } else {
-    raw = latencyActive
-      ? 0.3 * c._outcome_score +
-        0.18 * c._rounds_score +
-        0.18 * c._smoke_score +
-        0.14 * c._reviewer_score +
-        0.1 * c._maestro_score +
-        0.1 * latency_score
-      : 0.32 * c._outcome_score +
-        0.22 * c._rounds_score +
-        0.22 * c._smoke_score +
-        0.16 * c._reviewer_score +
-        0.08 * c._maestro_score;
+        0.07 * opts.cost_score +
+        0.1 * opts.latency_score
+      );
+    }
+    return (
+      0.3 * c._outcome_score +
+      0.2 * c._rounds_score +
+      0.2 * c._smoke_score +
+      0.15 * c._reviewer_score +
+      0.1 * c._maestro_score +
+      0.05 * opts.cost_score
+    );
   }
-  return clamp01(Math.round(raw * 10000) / 10000);
+  if (opts.latencyActive) {
+    return (
+      0.3 * c._outcome_score +
+      0.18 * c._rounds_score +
+      0.18 * c._smoke_score +
+      0.14 * c._reviewer_score +
+      0.1 * c._maestro_score +
+      0.1 * opts.latency_score
+    );
+  }
+  return (
+    0.32 * c._outcome_score +
+    0.22 * c._rounds_score +
+    0.22 * c._smoke_score +
+    0.16 * c._reviewer_score +
+    0.08 * c._maestro_score
+  );
 }
 
 function resolveProvider(
@@ -692,13 +766,13 @@ function resolveBiasEffect(
   for (const bias of biases) {
     const matches =
       (bias.scope === "agent" && bias.value === agentName) ||
-      (bias.scope === "provider" && provider != null && bias.value === provider);
+      (bias.scope === "provider" && provider !== null && bias.value === provider);
     if (!matches) continue;
     if (bias.mode === "exclude") {
       exclude = true;
     } else if (bias.mode === "divert") {
       factor *= bias.weight ?? DEFAULT_DIVERT_WEIGHT;
-    } else if (bias.mode === "boost") {
+    } else {
       factor *= bias.weight ?? DEFAULT_BOOST_WEIGHT;
     }
   }
@@ -713,11 +787,11 @@ function getAllowedAgents(input: RouteAgentInput): string[] | null {
           .filter((agent) => agent.roles.includes(role))
           .map((agent) => agent.name)
       : null;
-  const registryAgents = input.agentRegistry ? input.agentRegistry : null;
+  const registryAgents = input.agentRegistry ?? null;
 
-  if (roleAgents == null && registryAgents == null) return null;
-  if (roleAgents == null) return registryAgents;
-  if (registryAgents == null) return roleAgents;
+  if (roleAgents === null && registryAgents === null) return null;
+  if (roleAgents === null) return registryAgents;
+  if (registryAgents === null) return roleAgents;
   const registrySet = new Set(registryAgents);
   return roleAgents.filter((name) => registrySet.has(name));
 }
@@ -738,9 +812,142 @@ function queryRows(
     )
     .all(taskType, sinceIso, agentKind);
   const filteredRows = rows.filter((row) => !isClassifierDeclineExempt(row));
-  return allowedAgents == null
+  return allowedAgents === null
     ? filteredRows
     : filteredRows.filter((row) => allowedAgents.includes(row.agent_name));
+}
+
+function applyPressureFactor(
+  score: number,
+  summary: CandidateSummary,
+  input: RouteAgentInput,
+): number {
+  if (!input.agentchatConfig?.role_routing?.headroom_weighting || !input.applyPressure) {
+    return score;
+  }
+  const agentConf = input.agentchatConfig.agents.find((a) => a.name === summary.agent_name);
+  const provider = agentConf ? resolveProvider(agentConf) : null;
+  if (!provider) return score;
+  const snaps = input.applyPressure.snapshots.filter((snap) => snap.provider === provider);
+  if (snaps.length === 0) return score;
+  const maxUsedPct = Math.max(...snaps.map((snap) => snap.used_pct));
+  const factor = clamp01(1 - maxUsedPct / 100);
+  return clamp01(Math.round(score * factor * 10000) / 10000);
+}
+
+function applyWarmPoolFactor(
+  score: number,
+  summary: CandidateSummary,
+  input: RouteAgentInput,
+): number {
+  if (
+    !input.agentchatConfig?.role_routing?.warm_pool_reuse_weighting ||
+    !input.warmPoolReuseRates
+  ) {
+    return score;
+  }
+  const reuseRate = input.warmPoolReuseRates[summary.agent_name];
+  if (reuseRate === undefined) return score;
+  const clampedRate = Math.max(0, Math.min(1, reuseRate));
+  const reuseFactor = 1 + WARM_POOL_REUSE_MAX_BOOST * clampedRate;
+  return clamp01(Math.round(score * reuseFactor * 10000) / 10000);
+}
+
+function applyBiasFactor(
+  score: number,
+  summary: CandidateSummary,
+  input: RouteAgentInput,
+): { score: number; biasExclude: boolean } {
+  if (!input.activeBiases || input.activeBiases.length === 0) {
+    return { score, biasExclude: false };
+  }
+  const agentConf = input.agentchatConfig?.agents.find((a) => a.name === summary.agent_name);
+  const provider = agentConf ? resolveProvider(agentConf) : null;
+  const effect = resolveBiasEffect(summary.agent_name, provider, input.activeBiases);
+  if (effect.exclude) return { score, biasExclude: true };
+  if (effect.factor !== 1) {
+    return {
+      score: clamp01(Math.round(score * effect.factor * 10000) / 10000),
+      biasExclude: false,
+    };
+  }
+  return { score, biasExclude: false };
+}
+
+function summaryToCandidate(
+  summary: CandidateSummary,
+  score: number,
+): AgentRankOutput["candidates"][number] {
+  return {
+    agent_name: summary.agent_name,
+    samples: summary.samples,
+    successes: summary.successes,
+    failures: summary.failures,
+    neutral: summary.neutral,
+    success_rate: summary.success_rate,
+    avg_rounds: summary.avg_rounds,
+    avg_latency_ms: summary.avg_latency_ms,
+    avg_exec_ms: summary.avg_exec_ms,
+    cost_per_success_usd: summary.cost_per_success_usd,
+    avg_reviewer_findings: summary.avg_reviewer_findings,
+    avg_trust_score: summary.avg_trust_score,
+    gate_verdict_coverage: summary.samples > 0 ? summary.gate_verdict_count / summary.samples : 0,
+    gate_pass_rate: summary.samples > 0 ? summary.gate_pass_count / summary.samples : 0,
+    last_outcome_at: summary.last_outcome_at,
+    score,
+  };
+}
+
+interface ScoreContext {
+  input: RouteAgentInput;
+  minCost: number | null;
+  maxCost: number | null;
+  latencyWeighting: boolean;
+  minExecMs: number | null;
+  maxExecMs: number | null;
+}
+
+function rankSummary(
+  summary: CandidateSummary,
+  ctx: ScoreContext,
+): { candidate: AgentRankOutput["candidates"][number]; biasExclude: boolean } {
+  let score = scoreCandidate(summary, {
+    includeCost: ctx.input.includeCost ?? false,
+    minCost: ctx.minCost,
+    maxCost: ctx.maxCost,
+    latencyWeighting: ctx.latencyWeighting,
+    minExecMs: ctx.minExecMs,
+    maxExecMs: ctx.maxExecMs,
+  });
+  score = applyPressureFactor(score, summary, ctx.input);
+  score = applyWarmPoolFactor(score, summary, ctx.input);
+  const biased = applyBiasFactor(score, summary, ctx.input);
+  return { candidate: summaryToCandidate(summary, biased.score), biasExclude: biased.biasExclude };
+}
+
+function groupRowsByAgent(rows: PerformanceRow[]): Map<string, PerformanceRow[]> {
+  const byAgent = new Map<string, PerformanceRow[]>();
+  for (const row of rows) {
+    const list = byAgent.get(row.agent_name) ?? [];
+    list.push(row);
+    byAgent.set(row.agent_name, list);
+  }
+  return byAgent;
+}
+
+function computeExecMsRange(
+  summaries: CandidateSummary[],
+  latencyWeighting: boolean,
+): { minExecMs: number | null; maxExecMs: number | null } {
+  if (!latencyWeighting) return { minExecMs: null, maxExecMs: null };
+  const execMsRange = summaries
+    .filter(
+      (s): s is CandidateSummary & { _latency_exec_ms: number } =>
+        s.success_rate >= LATENCY_MIN_SUCCESS_FLOOR && s._latency_exec_ms !== null,
+    )
+    .map((s) => s._latency_exec_ms);
+  if (execMsRange.length === 0) return { minExecMs: null, maxExecMs: null };
+  return { minExecMs: Math.min(...execMsRange), maxExecMs: Math.max(...execMsRange) };
 }
 
 function buildRank(
@@ -752,7 +959,7 @@ function buildRank(
   const now = input.now ?? new Date();
   const agentKind = input.agentKind ?? DEFAULT_AGENT_KIND;
   const sinceIso =
-    input.since != null
+    input.since !== undefined
       ? new Date(input.since).toISOString()
       : new Date(now.getTime() - DEFAULT_RANK_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const rows = queryRows(db, taskType, agentKind, sinceIso, allowedAgents);
@@ -760,17 +967,12 @@ function buildRank(
   const visibleRows = input.includeNeutral
     ? rows
     : rows.filter((row) => rowOutcomeBucket(row, gateOutcomeCutover) !== "neutral");
-  const byAgent = new Map<string, PerformanceRow[]>();
-  for (const row of visibleRows) {
-    const list = byAgent.get(row.agent_name) ?? [];
-    list.push(row);
-    byAgent.set(row.agent_name, list);
-  }
+  const byAgent = groupRowsByAgent(visibleRows);
   const summaries = Array.from(byAgent.entries())
     .map(([agentName, agentRows]) => summarizeAgent(agentName, agentRows, gateOutcomeCutover))
     .filter((c) => c.samples >= (input.minSamples ?? 1));
   const costs = input.includeCost
-    ? summaries.map((s) => s.cost_per_success_usd).filter((v): v is number => v != null)
+    ? summaries.map((s) => s.cost_per_success_usd).filter((v): v is number => v !== null)
     : [];
   const minCost = costs.length > 0 ? Math.min(...costs) : null;
   const maxCost = costs.length > 0 ? Math.max(...costs) : null;
@@ -778,84 +980,17 @@ function buildRank(
   // Normalize the latency_score over candidates ELIGIBLE for the latency term
   // (>= success floor, exec present) so a sub-floor fast agent can't compress
   // everyone else's range.
-  const execMsRange = latencyWeighting
-    ? summaries
-        .filter((s) => s.success_rate >= LATENCY_MIN_SUCCESS_FLOOR && s._latency_exec_ms != null)
-        .map((s) => s._latency_exec_ms as number)
-    : [];
-  const minExecMs = execMsRange.length > 0 ? Math.min(...execMsRange) : null;
-  const maxExecMs = execMsRange.length > 0 ? Math.max(...execMsRange) : null;
+  const { minExecMs, maxExecMs } = computeExecMsRange(summaries, latencyWeighting);
   const hasBiases = !!input.activeBiases && input.activeBiases.length > 0;
-  const ranked = summaries.map((s) => {
-    let score = scoreCandidate(s, {
-      includeCost: input.includeCost ?? false,
-      minCost,
-      maxCost,
-      latencyWeighting,
-      minExecMs,
-      maxExecMs,
-    });
-    if (input.agentchatConfig?.role_routing?.headroom_weighting && input.applyPressure) {
-      const agentConf = input.agentchatConfig.agents.find((a) => a.name === s.agent_name);
-      const provider = agentConf ? resolveProvider(agentConf) : null;
-      if (provider) {
-        const snaps = input.applyPressure.snapshots.filter((snap) => snap.provider === provider);
-        if (snaps.length > 0) {
-          const maxUsedPct = Math.max(...snaps.map((snap) => snap.used_pct));
-          const factor = clamp01(1 - maxUsedPct / 100);
-          score = clamp01(Math.round(score * factor * 10000) / 10000);
-        }
-      }
-    }
-    // Warm-pool reuse preference (flag-gated, safe-fallback). Applies a mild
-    // multiplicative lift (at most WARM_POOL_REUSE_MAX_BOOST = 5%) for agents
-    // with higher ACP session reuse rates. When the flag is off or the signal is
-    // absent for a candidate, the score is byte-identical to the unflagged path.
-    if (
-      input.agentchatConfig?.role_routing?.warm_pool_reuse_weighting &&
-      input.warmPoolReuseRates
-    ) {
-      const reuseRate = input.warmPoolReuseRates[s.agent_name];
-      if (reuseRate != null) {
-        const clampedRate = Math.max(0, Math.min(1, reuseRate));
-        const reuseFactor = 1 + WARM_POOL_REUSE_MAX_BOOST * clampedRate;
-        score = clamp01(Math.round(score * reuseFactor * 10000) / 10000);
-      }
-    }
-    // Usage-steering bias factor composes AFTER the pressure factor (single final clamp).
-    let biasExclude = false;
-    if (hasBiases) {
-      const agentConf = input.agentchatConfig?.agents.find((a) => a.name === s.agent_name);
-      const provider = agentConf ? resolveProvider(agentConf) : null;
-      const effect = resolveBiasEffect(s.agent_name, provider, input.activeBiases);
-      if (effect.exclude) {
-        biasExclude = true;
-      } else if (effect.factor !== 1) {
-        score = clamp01(Math.round(score * effect.factor * 10000) / 10000);
-      }
-    }
-    return {
-      candidate: {
-        agent_name: s.agent_name,
-        samples: s.samples,
-        successes: s.successes,
-        failures: s.failures,
-        neutral: s.neutral,
-        success_rate: s.success_rate,
-        avg_rounds: s.avg_rounds,
-        avg_latency_ms: s.avg_latency_ms,
-        avg_exec_ms: s.avg_exec_ms,
-        cost_per_success_usd: s.cost_per_success_usd,
-        avg_reviewer_findings: s.avg_reviewer_findings,
-        avg_trust_score: s.avg_trust_score,
-        gate_verdict_coverage: s.samples > 0 ? s.gate_verdict_count / s.samples : 0,
-        gate_pass_rate: s.samples > 0 ? s.gate_pass_count / s.samples : 0,
-        last_outcome_at: s.last_outcome_at,
-        score,
-      },
-      biasExclude,
-    };
-  });
+  const ctx: ScoreContext = {
+    input,
+    minCost,
+    maxCost,
+    latencyWeighting,
+    minExecMs,
+    maxExecMs,
+  };
+  const ranked = summaries.map((s) => rankSummary(s, ctx));
   // Hard-prefer with safe fallback: drop exclude-steered candidates, but if that
   // would empty the ranking, re-admit them rather than return nothing.
   const kept = hasBiases ? ranked.filter((r) => !r.biasExclude) : ranked;
@@ -926,7 +1061,7 @@ function buildRecommendations(
       ...successPredicate.params,
     });
   const filtered =
-    allowedAgents == null ? rows : rows.filter((row) => allowedAgents.includes(row.agent_name));
+    allowedAgents === null ? rows : rows.filter((row) => allowedAgents.includes(row.agent_name));
   return filtered.map((r) => ({
     agent_name: r.agent_name,
     task_type: r.task_type,
@@ -934,7 +1069,7 @@ function buildRecommendations(
     success_rate: r.samples > 0 ? r.successes / r.samples : 0,
     gate_verdict_coverage: r.samples > 0 ? r.gate_outcome_count / r.samples : 0,
     gate_pass_rate: r.samples > 0 ? r.gate_pass_count / r.samples : 0,
-    avg_latency_seconds: r.avg_latency_ms != null ? r.avg_latency_ms / 1000 : null,
+    avg_latency_seconds: r.avg_latency_ms !== null ? r.avg_latency_ms / 1000 : null,
     last_observed_at: r.last_observed_at,
   }));
 }

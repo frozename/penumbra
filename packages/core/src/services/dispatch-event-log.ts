@@ -1,5 +1,6 @@
-import type { Database } from "bun:sqlite";
 import type { DispatchEventKind as ApiDispatchEventKind } from "@penumbra/api-contract";
+import type { Database } from "bun:sqlite";
+
 import type { DispatchEventBus } from "../dispatch/event-bus.js";
 
 // The API contract owns the shared wire-event union; core adds one internal-only lifecycle event.
@@ -25,7 +26,7 @@ export interface DispatchEventRow {
 }
 
 const MAX_META_JSON_LENGTH = 4096;
-const STRICT_META_JSON_EVENT_KINDS: DispatchEventKind[] = ["dispatch.end"];
+const STRICT_META_JSON_EVENT_KINDS: ReadonlySet<DispatchEventKind> = new Set(["dispatch.end"]);
 
 function normalizeEventMeta(
   kind: DispatchEventKind,
@@ -35,9 +36,9 @@ function normalizeEventMeta(
   const rawJson = JSON.stringify(meta);
   if (rawJson.length <= MAX_META_JSON_LENGTH) return meta;
 
-  if (STRICT_META_JSON_EVENT_KINDS.includes(kind)) {
+  if (STRICT_META_JSON_EVENT_KINDS.has(kind)) {
     throw new Error(
-      `dispatch_events.meta_json exceeds ${MAX_META_JSON_LENGTH} bytes for strict kind ${kind}`,
+      `dispatch_events.meta_json exceeds ${String(MAX_META_JSON_LENGTH)} bytes for strict kind ${kind}`,
     );
   }
 
@@ -46,7 +47,9 @@ function normalizeEventMeta(
     kind,
     original_size: rawJson.length,
   };
-  console.warn(`dispatch_events.meta_json truncated for ${kind} at ${rawJson.length} bytes`);
+  console.warn(
+    `dispatch_events.meta_json truncated for ${kind} at ${String(rawJson.length)} bytes`,
+  );
   return truncatedMeta;
 }
 

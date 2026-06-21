@@ -1,5 +1,5 @@
 export type JudgeChatFn = (opts: {
-  messages: Array<{ role: string; content: string }>;
+  messages: { role: string; content: string }[];
   model: string;
 }) => Promise<string>;
 
@@ -29,7 +29,9 @@ export function createJudgeChat(opts: {
   const timeoutMs = opts.timeoutMs ?? resolveJudgeChatTimeoutMs();
   return async (chatOpts) => {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => {
+      controller.abort();
+    }, timeoutMs);
     let res: Response;
     try {
       const headers: Record<string, string> = {
@@ -49,17 +51,17 @@ export function createJudgeChat(opts: {
       });
     } catch (err) {
       if (controller.signal.aborted) {
-        throw new Error(`judge chat: timed out after ${timeoutMs}ms`);
+        throw new Error(`judge chat: timed out after ${String(timeoutMs)}ms`);
       }
       throw err;
     } finally {
       clearTimeout(timer);
     }
     if (!res.ok) {
-      throw new Error(`judge chat: HTTP ${res.status}`);
+      throw new Error(`judge chat: HTTP ${String(res.status)}`);
     }
     const body = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
+      choices?: { message?: { content?: string } }[];
     };
     const content = body.choices?.[0]?.message?.content;
     if (!content) {
@@ -111,7 +113,7 @@ export function resolveJudgeConfig(
     }
   }
 
-  const token = env.PENUMBRA_JUDGE_TOKEN || env.PENUMBRA_SIRIUS_TOKEN || "";
+  const token = env.PENUMBRA_JUDGE_TOKEN ?? env.PENUMBRA_SIRIUS_TOKEN ?? "";
 
   return {
     baseUrl,

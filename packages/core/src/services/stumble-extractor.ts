@@ -70,23 +70,23 @@ function extractStumbleExcerpt(text: string): string {
     const end = Math.min(text.length, match.index + match[0].length + STUMBLE_EXCERPT_RADIUS);
     const head = start > 0 ? "…" : "";
     const tail = end < text.length ? "…" : "";
-    return (head + text.slice(start, end) + tail).replace(/\s+/g, " ").trim();
+    return (head + text.slice(start, end) + tail).replaceAll(/\s+/g, " ").trim();
   }
   if (text.length <= STUMBLE_EXCERPT_FALLBACK_MAX) {
-    return text.replace(/\s+/g, " ").trim();
+    return text.replaceAll(/\s+/g, " ").trim();
   }
-  return text.slice(0, STUMBLE_EXCERPT_FALLBACK_MAX).replace(/\s+/g, " ").trim() + "…";
+  return text.slice(0, STUMBLE_EXCERPT_FALLBACK_MAX).replaceAll(/\s+/g, " ").trim() + "…";
 }
 
 function normalizePrompt(line: string): string {
-  return line.trim().replace(/\s+/g, " ");
+  return line.trim().replaceAll(/\s+/g, " ");
 }
 
 function canonicalPrompt(prompt: string): string {
   return prompt
     .trim()
-    .replace(/\s+/g, " ")
-    .replace(/[.?!,;:]+$/g, "")
+    .replaceAll(/\s+/g, " ")
+    .replaceAll(/[.?!,;:]+$/g, "")
     .toLowerCase();
 }
 
@@ -147,22 +147,46 @@ function promptFromEvent(event: SessionEventRow): string | null {
   return null;
 }
 
-export async function extractStumblesFromSession(
-  input: ExtractStumblesInput,
-): Promise<StumbleCandidate[]> {
+function collectTranscriptCandidates(input: ExtractStumblesInput): {
+  candidates: StumbleCandidate[];
+  lineCount: number;
+} {
   const transcript = input.transcript_path ? safeReadTranscript(input.transcript_path) : "";
   const lines = transcript
     .split(/\r?\n+/)
     .map((line) => normalizePrompt(line))
     .filter((line) => line.length > 0);
-
-  if (lines.length === 0 && !input.dispatch_events_query) return [];
-
   const candidates: StumbleCandidate[] = [];
   for (const line of lines) {
     if (!hasStumbleSignal(line)) continue;
     candidates.push(buildCandidate(line, input.session_id, input));
   }
+  return { candidates, lineCount: lines.length };
+}
+
+function promoteEventCandidates(
+  rows: SessionEventRow[],
+  allowedSources: string[],
+  allowedEventTypes: string[],
+  input: ExtractStumblesInput,
+  candidates: StumbleCandidate[],
+): void {
+  const promotable = rows.filter(
+    (row) => allowedSources.includes(row.source) && allowedEventTypes.includes(row.event_type),
+  );
+  for (const row of promotable) {
+    const prompt = promptFromEvent(row);
+    if (!prompt || !hasStumbleSignal(prompt)) continue;
+    candidates.push(buildCandidate(prompt, input.session_id, input));
+  }
+}
+
+export async function extractStumblesFromSession(
+  input: ExtractStumblesInput,
+): Promise<StumbleCandidate[]> {
+  const { candidates, lineCount } = collectTranscriptCandidates(input);
+
+  if (lineCount === 0 && !input.dispatch_events_query) return [];
 
   const allowedSources = input.allowed_sources ?? ["mcp", "transcript", "agentchat"];
   const allowedEventTypes = input.allowed_event_types ?? [
@@ -180,14 +204,7 @@ export async function extractStumblesFromSession(
     dedupeRows = allRows.filter((row) => row.event_type === "task_draft");
     if (candidates.length === 0) {
       // Promote rows into candidates only when they pass source + event-type allowlists.
-      const promotable = allRows.filter(
-        (row) => allowedSources.includes(row.source) && allowedEventTypes.includes(row.event_type),
-      );
-      for (const row of promotable) {
-        const prompt = promptFromEvent(row);
-        if (!prompt || !hasStumbleSignal(prompt)) continue;
-        candidates.push(buildCandidate(prompt, input.session_id, input));
-      }
+      promoteEventCandidates(allRows, allowedSources, allowedEventTypes, input, candidates);
     }
   }
   const seen = new Set<string>();

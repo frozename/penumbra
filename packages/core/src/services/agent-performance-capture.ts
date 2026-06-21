@@ -1,22 +1,24 @@
 import type { Database } from "bun:sqlite";
-import type { Uuid } from "../utils/uuid.js";
-import {
-  stampAgentPerformanceGateOutcomeForHandoff,
-  type ClosedLaneGateStatus,
-} from "../db/lane-ledger.js";
-import { HandoffReader } from "../readers/handoff.js";
-import { ChainReader, type AgentResponseEvent } from "../readers/chain.js";
+
 import type { HandoffRow } from "../schemas/handoff.js";
+import type { Uuid } from "../utils/uuid.js";
+
 import {
-  AgentPerformanceCaptureFromReconcilerSchema,
-  AgentPerformanceCaptureFromDispatchSchema,
+  type ClosedLaneGateStatus,
+  stampAgentPerformanceGateOutcomeForHandoff,
+} from "../db/lane-ledger.js";
+import { type AgentResponseEvent, ChainReader } from "../readers/chain.js";
+import { HandoffReader } from "../readers/handoff.js";
+import {
   type AgentOutcome,
+  type AgentPerformanceCaptureFromDispatch,
+  AgentPerformanceCaptureFromDispatchSchema,
+  type AgentPerformanceCaptureFromReconciler,
+  AgentPerformanceCaptureFromReconcilerSchema,
+  type AgentPerformanceRow,
   inferAgentTaskTypeForRole,
   mapDispatchReasonToAgentOutcome,
   mapMergeStatusToAgentOutcome,
-  type AgentPerformanceCaptureFromDispatch,
-  type AgentPerformanceCaptureFromReconciler,
-  type AgentPerformanceRow,
   NON_MUTATING_TASK_TYPES,
 } from "../schemas/agent-performance.js";
 import { AgentPerformanceWriter } from "../writers/agent-performance.js";
@@ -31,7 +33,7 @@ export function meaningfulOutput(text: string | null | undefined): {
   chars: number;
   meaningful: boolean;
 } {
-  const chars = typeof text === "string" ? text.replace(/\s/g, "").length : 0;
+  const chars = typeof text === "string" ? text.replaceAll(/\s/g, "").length : 0;
   return { chars, meaningful: chars >= MIN_RESPONSE_CHARS };
 }
 
@@ -99,7 +101,7 @@ function upsertAgentPerformanceWithGuardedGateOutcome(
 ): AgentPerformanceRow {
   const writer = new AgentPerformanceWriter(db);
   writer.upsert(row);
-  if (row.gate_outcome == null) return row;
+  if (row.gate_outcome === null) return row;
   return {
     ...row,
     gate_outcome: stampAgentPerformanceGateOutcomeForHandoff(
@@ -251,7 +253,7 @@ function computeDispatchSignals(
   const silentFailure = useWorktree && worktreeChanged === false;
   const classifierDeclined = parsedDispatchEndMeta?.classifier_declined === true;
   const declineReason =
-    classifierDeclined && typeof parsedDispatchEndMeta?.decline_reason === "string"
+    classifierDeclined && typeof parsedDispatchEndMeta.decline_reason === "string"
       ? parsedDispatchEndMeta.decline_reason
       : classifierDeclined
         ? "provider_safety_refusal"
@@ -327,6 +329,131 @@ function classifyDispatchReliabilityFromDb(
   });
 }
 
+interface DispatchResponseSummary {
+  readonly hasMeaningfulOutput: boolean;
+  readonly finalResponseChars: number;
+}
+
+interface ResolvedDispatchResponses {
+  responseSummary: DispatchResponseSummary | null;
+  responses: AgentResponseEvent[];
+  finalResponseText: string | null;
+  hasNonEmptyResponse: boolean;
+}
+
+function resolveDispatchResponses(
+  db: Database,
+  input: AgentPerformanceCaptureFromDispatch,
+  handoff: HandoffRow,
+): ResolvedDispatchResponses {
+  // Responses must be read before the dispatch completes.
+  // Note: We assume t0_events for this dispatch have already been fully
+  // ingested synchronously or that any async lag is budgeted before this
+  // capture occurs. Breaking this ordering invariant causes getResponses
+  // to return empty, leading to silent misclassification of outcomes
+  // (e.g. valid non-mutating reviews scored as 'no_changes' failures).
+  const responseSummary: DispatchResponseSummary | null =
+    typeof input.has_meaningful_output === "boolean"
+      ? {
+          hasMeaningfulOutput: input.has_meaningful_output,
+          finalResponseChars: input.final_response_chars ?? 0,
+        }
+      : null;
+  const responses = responseSummary
+    ? []
+    : new ChainReader(db).getResponses(handoff.conversation_id, "final", {
+        handoff_id: input.handoff_id,
+      });
+  let finalResponseText: string | null;
+  if (responseSummary) {
+    finalResponseText = responseSummary.hasMeaningfulOutput ? "output" : null;
+  } else {
+    finalResponseText = responses.map((r) => r.text).join("\n");
+  }
+  const hasNonEmptyResponse =
+    responseSummary?.hasMeaningfulOutput ?? meaningfulOutput(finalResponseText).meaningful;
+  return { responseSummary, responses, finalResponseText, hasNonEmptyResponse };
+}
+
+function buildDispatchNotes(
+  reason: string,
+  silentFailure: boolean,
+  recommendedAction: string,
+  recoveryCancel: boolean,
+): string {
+  let base: string;
+  if (silentFailure) {
+    base = `${reason} (silent_failure: empty worktree)`;
+  } else if (recommendedAction === "cancel") {
+    base = `${reason} (recommended_action=cancel)`;
+  } else {
+    base = reason;
+  }
+  return recoveryCancel ? `${base} (maestro_takeover: recovery_cancel)` : base;
+}
+
+function resolveDispatchOutcome(
+  input: AgentPerformanceCaptureFromDispatch,
+  handoff: HandoffRow,
+  signals: ReturnType<typeof computeDispatchSignals>,
+  hasNonEmptyResponse: boolean,
+): {
+  taskType: ReturnType<typeof inferAgentTaskTypeForRole>;
+  outcome: AgentOutcome;
+  taskTypeMismatch: boolean;
+} {
+  const explicitTaskType = handoff.chain_task_type ?? input.task_type;
+  const taskType = explicitTaskType ?? inferAgentTaskTypeForRole(handoff.message, handoff.to_role);
+  const taskTypeMismatch =
+    typeof handoff.chain_task_type === "string" &&
+    typeof input.task_type === "string" &&
+    input.task_type !== handoff.chain_task_type;
+
+  let outcome = mapDispatchReasonToAgentOutcome(input.reason, signals);
+  // The upgrade deliberately gates on explicitTaskType (input or chain
+  // metadata), never the inferred fallback: handoff message text is
+  // agent-influenced, so an inferred task_type must not be able to promote
+  // an outcome. Cost: inferred-only non-mutating dispatches keep no_changes
+  // even though the row persists the inferred taskType.
+  if (
+    outcome === "no_changes" &&
+    explicitTaskType &&
+    (NON_MUTATING_TASK_TYPES as readonly string[]).includes(explicitTaskType) &&
+    hasNonEmptyResponse
+  ) {
+    outcome = "completed_with_output";
+  }
+  return { taskType, outcome, taskTypeMismatch };
+}
+
+function buildDispatchMetadata(
+  input: AgentPerformanceCaptureFromDispatch,
+  handoff: HandoffRow,
+  signals: ReturnType<typeof computeDispatchSignals>,
+  responseSummary: DispatchResponseSummary | null,
+  taskTypeMismatch: boolean,
+): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {
+    reason: input.reason,
+    silent_failure: signals.silent_failure,
+    tool_failure_count: signals.tool_failure_count,
+  };
+  if (signals.classifier_declined) {
+    metadata.classifier_declined = true;
+    metadata.decline_reason = signals.decline_reason;
+  }
+  if (taskTypeMismatch) {
+    metadata.caller_task_type = input.task_type;
+    metadata.handoff_task_type = handoff.chain_task_type;
+    metadata.task_type_mismatch = true;
+  }
+  if (responseSummary) {
+    metadata.final_response_chars = responseSummary.finalResponseChars;
+    metadata.has_meaningful_output = responseSummary.hasMeaningfulOutput;
+  }
+  return metadata;
+}
+
 export function captureAgentPerformanceFromDispatch(opts: {
   db: Database;
   uuid: Uuid;
@@ -355,77 +482,56 @@ export function captureAgentPerformanceFromDispatch(opts: {
     parsedDispatchEndMeta,
   );
 
-  // Responses must be read before the dispatch completes.
-  // Note: We assume t0_events for this dispatch have already been fully
-  // ingested synchronously or that any async lag is budgeted before this
-  // capture occurs. Breaking this ordering invariant causes getResponses
-  // to return empty, leading to silent misclassification of outcomes
-  // (e.g. valid non-mutating reviews scored as 'no_changes' failures).
-  const responseSummary =
-    typeof input.has_meaningful_output === "boolean"
-      ? ({
-          hasMeaningfulOutput: input.has_meaningful_output,
-          finalResponseChars: input.final_response_chars ?? 0,
-        } as const)
-      : null;
-  const responses = responseSummary
-    ? []
-    : new ChainReader(opts.db).getResponses(handoff.conversation_id, "final", {
-        handoff_id: input.handoff_id,
-      });
-  const finalResponseText = responseSummary
-    ? responseSummary.hasMeaningfulOutput
-      ? "output"
-      : null
-    : responses.map((r) => r.text).join("\n");
+  const { responseSummary, responses, hasNonEmptyResponse } = resolveDispatchResponses(
+    opts.db,
+    input,
+    handoff,
+  );
 
+  const reliabilityResponses: AgentResponseEvent[] = responseSummary?.hasMeaningfulOutput
+    ? [{ text: "output", ts: nowIso, agent: handoff.to_agent }]
+    : responses;
   const reliabilityReport = classifyDispatchReliabilityFromDb(
     opts.db,
     input.handoff_id,
     handoff,
     input.worktree_changed,
     parsedDispatchEndMeta,
-    responseSummary?.hasMeaningfulOutput
-      ? ([{ text: "output", ts: nowIso, agent: handoff.to_agent }] as AgentResponseEvent[])
-      : responses,
+    reliabilityResponses,
   );
-  const baseNotes = signals.silent_failure
-    ? `${input.reason} (silent_failure: empty worktree)`
-    : reliabilityReport.recommended_action === "cancel"
-      ? `${input.reason} (recommended_action=cancel)`
-      : input.reason;
   const recoveryCancel = detectRecoveryCancel(
     opts.db,
     input.handoff_id,
     handoff.cancel_requested_at,
   );
-  const notes = recoveryCancel ? `${baseNotes} (maestro_takeover: recovery_cancel)` : baseNotes;
+  const notes = buildDispatchNotes(
+    input.reason,
+    signals.silent_failure,
+    reliabilityReport.recommended_action,
+    recoveryCancel,
+  );
 
-  const has_non_empty_response =
-    responseSummary?.hasMeaningfulOutput ?? meaningfulOutput(finalResponseText).meaningful;
+  const { taskType, outcome, taskTypeMismatch } = resolveDispatchOutcome(
+    input,
+    handoff,
+    signals,
+    hasNonEmptyResponse,
+  );
 
-  const explicitTaskType = handoff.chain_task_type ?? input.task_type;
-  const taskType = explicitTaskType ?? inferAgentTaskTypeForRole(handoff.message, handoff.to_role);
-  const taskTypeMismatch =
-    handoff.chain_task_type != null &&
-    input.task_type != null &&
-    input.task_type !== handoff.chain_task_type;
-
-  let baseOutcome = mapDispatchReasonToAgentOutcome(input.reason, signals);
-
-  // The upgrade deliberately gates on explicitTaskType (input or chain
-  // metadata), never the inferred fallback: handoff message text is
-  // agent-influenced, so an inferred task_type must not be able to promote
-  // an outcome. Cost: inferred-only non-mutating dispatches keep no_changes
-  // even though the row persists the inferred taskType.
-  if (
-    baseOutcome === "no_changes" &&
-    explicitTaskType &&
-    (NON_MUTATING_TASK_TYPES as readonly string[]).includes(explicitTaskType) &&
-    has_non_empty_response
-  ) {
-    baseOutcome = "completed_with_output";
+  let maestroTakeover: "y" | "n" | null = null;
+  if (recoveryCancel) {
+    maestroTakeover = "y";
+  } else if (handoff.cancel_requested_at) {
+    maestroTakeover = "n";
   }
+
+  const metadata = buildDispatchMetadata(
+    input,
+    handoff,
+    signals,
+    responseSummary,
+    taskTypeMismatch,
+  );
 
   const row: AgentPerformanceRow = {
     performance_id: opts.uuid(),
@@ -435,7 +541,7 @@ export function captureAgentPerformanceFromDispatch(opts: {
     project_id: handoff.project_id,
     agent_name: handoff.to_agent,
     task_type: taskType,
-    outcome: baseOutcome,
+    outcome,
     rounds: null,
     smoke_pass: null,
     reviewer_findings: null,
@@ -450,31 +556,8 @@ export function captureAgentPerformanceFromDispatch(opts: {
     notes,
     reliability_status: reliabilityReport.status,
     failure_class: signals.classifier_declined ? "classifier_declined" : null,
-    maestro_takeover_required: recoveryCancel ? "y" : handoff.cancel_requested_at ? "n" : null,
-    metadata_json: JSON.stringify({
-      reason: input.reason,
-      silent_failure: signals.silent_failure,
-      tool_failure_count: signals.tool_failure_count,
-      ...(signals.classifier_declined
-        ? {
-            classifier_declined: true,
-            decline_reason: signals.decline_reason,
-          }
-        : {}),
-      ...(taskTypeMismatch
-        ? {
-            caller_task_type: input.task_type,
-            handoff_task_type: handoff.chain_task_type,
-            task_type_mismatch: true,
-          }
-        : {}),
-      ...(responseSummary
-        ? {
-            final_response_chars: responseSummary.finalResponseChars,
-            has_meaningful_output: responseSummary.hasMeaningfulOutput,
-          }
-        : {}),
-    }),
+    maestro_takeover_required: maestroTakeover,
+    metadata_json: JSON.stringify(metadata),
   };
   return upsertAgentPerformanceWithGuardedGateOutcome(opts.db, row);
 }

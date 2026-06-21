@@ -42,7 +42,10 @@ export interface RefineDispatchPromptOpts {
 
 export async function refineDispatchPrompt(opts: RefineDispatchPromptOpts): Promise<string> {
   if (Buffer.byteLength(opts.message, "utf8") > REFINER_INPUT_MAX_BYTES) {
-    throw new RefineError("input_too_large", `input exceeds ${REFINER_INPUT_MAX_BYTES} bytes`);
+    throw new RefineError(
+      "input_too_large",
+      `input exceeds ${String(REFINER_INPUT_MAX_BYTES)} bytes`,
+    );
   }
   if (opts.message.trim().length === 0) {
     throw new RefineError("input_blank", "input is empty or whitespace-only");
@@ -69,7 +72,7 @@ export async function refineDispatchPrompt(opts: RefineDispatchPromptOpts): Prom
   if (Buffer.byteLength(refined, "utf8") > REFINER_OUTPUT_MAX_BYTES) {
     throw new RefineError(
       "output_too_large",
-      `refined output exceeds ${REFINER_OUTPUT_MAX_BYTES} bytes`,
+      `refined output exceeds ${String(REFINER_OUTPUT_MAX_BYTES)} bytes`,
     );
   }
   return refined;
