@@ -1,15 +1,72 @@
-import { expect, test, mock } from "bun:test";
 import { ChainStartRequestSchema } from "@penumbra/core";
+import { expect, mock, test } from "bun:test";
+
+import type { DaemonClient } from "../../src/daemon-client.js";
+
 import {
+  CallerCwdNotRegisteredError,
   chainStartHandler,
   ChainStartInputShape,
-  CallerCwdNotRegisteredError,
-  RegistryUnavailableError,
   ProjectIdRequiredError,
+  RegistryUnavailableError,
 } from "../../src/tools/chain-start.js";
+import { fakeDaemon } from "../helpers.js";
+
+type StartChainFn = DaemonClient["startChain"];
+type StartChainBody = Parameters<StartChainFn>[0];
+type StartChainResult = Awaited<ReturnType<StartChainFn>>;
+type ErrorConstructor = new (...args: never[]) => Error;
+
+// bun:test types report `.rejects.toThrow(...)` / `.rejects.toBeInstanceOf(...)`
+// as returning `void`, but each is async at runtime. Avoid the chain entirely so
+// no-confusing-void-expression and await-thenable have nothing to flag.
+async function expectRejectsWith(
+  promise: Promise<unknown>,
+  matcher: RegExp | string | ErrorConstructor,
+): Promise<void> {
+  try {
+    await promise;
+  } catch (err) {
+    if (matcher instanceof RegExp) {
+      const message = err instanceof Error ? err.message : String(err);
+      expect(message).toMatch(matcher);
+      return;
+    }
+    if (typeof matcher === "string") {
+      const message = err instanceof Error ? err.message : String(err);
+      expect(message).toContain(matcher);
+      return;
+    }
+    expect(err).toBeInstanceOf(matcher);
+    return;
+  }
+  throw new Error("expected promise to reject but it resolved");
+}
+
+const DEFAULT_RESULT: StartChainResult = {
+  conversation_id: "conv-1",
+  handoff_id: "h-1",
+};
+
+function makeStartChain(result: StartChainResult = DEFAULT_RESULT): {
+  daemon: DaemonClient;
+  startChain: StartChainFn;
+} {
+  const startChain = mock<StartChainFn>(() => Promise.resolve(result));
+  return { daemon: fakeDaemon({ startChain }), startChain };
+}
+
+function calls(startChain: StartChainFn): StartChainBody[] {
+  // The bun:test `mock<T>(fn)` overload returns the original function signature,
+  // not the `T & { mock: ... }` shape the runtime carries. Read recorded calls
+  // through a typed shim instead of widening with `any`.
+  return (startChain as unknown as { mock: { calls: [StartChainBody][] } }).mock.calls.map(
+    (entry) => entry[0],
+  );
+}
 
 test("ChainStartInputShape requires initial_agent and message", () => {
-  expect(() => (ChainStartInputShape as any).initial_agent.parse(undefined)).toThrow();
+  expect(() => ChainStartInputShape.initial_agent.parse(undefined)).toThrow();
 });
 
 test("ChainStartInputShape requires task_class", () => {
@@ -25,14 +82,12 @@ test("ChainStartInputShape exposes the canonical dispatch_kind enum", () => {
 test.each(["BOUNDARY", "STANDARD", "TRIVIAL"] as const)(
   "chain.start handler forwards task_class=%s to daemon.startChain",
   async (task_class) => {
-    const daemon = {
-      startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-    } as any;
+    const { daemon, startChain } = makeStartChain();
     const handler = chainStartHandler(daemon);
 
     await handler({ initial_agent: "planner", message: "hi", task_class });
 
-    expect(daemon.startChain).toHaveBeenCalledWith({
+    expect(startChain).toHaveBeenCalledWith({
       initial_agent: "planner",
       message: "hi",
       task_class,
@@ -41,9 +96,7 @@ test.each(["BOUNDARY", "STANDARD", "TRIVIAL"] as const)(
 );
 
 test("chain.start handler proxies to daemon.startChain and returns conversation_id + handoff_id", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
+  const { daemon, startChain } = makeStartChain();
   const handler = chainStartHandler(daemon);
   const res = await handler({
     initial_agent: "planner",
@@ -51,25 +104,23 @@ test("chain.start handler proxies to daemon.startChain and returns conversation_
     max_hops: 5,
     trust_mode: "all",
   });
-  expect(daemon.startChain).toHaveBeenCalledWith({
+  expect(startChain).toHaveBeenCalledWith({
     initial_agent: "planner",
     message: "hi",
     max_hops: 5,
     trust_mode: "all",
   });
   expect(res.content[0].type).toBe("text");
-  expect(res.content[0].text).toMatch(/^◌ chain_start  /);
+  expect(res.content[0].text).toMatch(/^◌ chain_start {2}/);
   expect(res.content[0].text).toContain('"conversation_id": "conv-1"');
   expect(res.content[0].text).toContain('"handoff_id": "h-1"');
 });
 
 test("chain.start handler forwards task_type hints for routing", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
+  const { daemon, startChain } = makeStartChain();
   const handler = chainStartHandler(daemon);
   await handler({ initial_agent: "executor", message: "hi", task_type: "implement_substantial" });
-  expect(daemon.startChain).toHaveBeenCalledWith({
+  expect(startChain).toHaveBeenCalledWith({
     initial_agent: "executor",
     message: "hi",
     task_type: "implement_substantial",
@@ -77,12 +128,10 @@ test("chain.start handler forwards task_type hints for routing", async () => {
 });
 
 test("chain.start handler forwards branch_base when supplied", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
+  const { daemon, startChain } = makeStartChain();
   const handler = chainStartHandler(daemon);
   await handler({ initial_agent: "executor", message: "hi", branch_base: "agent/h-2" });
-  expect(daemon.startChain).toHaveBeenCalledWith({
+  expect(startChain).toHaveBeenCalledWith({
     initial_agent: "executor",
     message: "hi",
     branch_base: "agent/h-2",
@@ -90,12 +139,10 @@ test("chain.start handler forwards branch_base when supplied", async () => {
 });
 
 test("chain.start handler forwards open_pr_on_review when supplied", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
+  const { daemon, startChain } = makeStartChain();
   const handler = chainStartHandler(daemon);
   await handler({ initial_agent: "executor", message: "hi", open_pr_on_review: true });
-  expect(daemon.startChain).toHaveBeenCalledWith({
+  expect(startChain).toHaveBeenCalledWith({
     initial_agent: "executor",
     message: "hi",
     open_pr_on_review: true,
@@ -103,9 +150,7 @@ test("chain.start handler forwards open_pr_on_review when supplied", async () =>
 });
 
 test("chain.start handler forwards long-lived dispatch identity fields when supplied", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
+  const { daemon, startChain } = makeStartChain();
   const handler = chainStartHandler(daemon);
   await handler({
     initial_agent: "executor",
@@ -114,7 +159,7 @@ test("chain.start handler forwards long-lived dispatch identity fields when supp
     long_lived_agent_id: "agent-1",
     long_lived_tick_id: "tick-1",
   });
-  expect(daemon.startChain).toHaveBeenCalledWith({
+  expect(startChain).toHaveBeenCalledWith({
     initial_agent: "executor",
     message: "hi",
     dispatch_kind: "long_lived_tick",
@@ -124,18 +169,16 @@ test("chain.start handler forwards long-lived dispatch identity fields when supp
 });
 
 test("chain.start auto-resolves project_id from cwd when caller omits it", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
+  const { daemon, startChain } = makeStartChain();
   const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
   delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
-  const resolver = mock().mockReturnValue("llamactl");
+  const resolver = mock<() => string | undefined>(() => "llamactl");
   const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
 
   try {
     await handler({ initial_agent: "planner", message: "hi" });
 
-    expect(daemon.startChain).toHaveBeenCalledWith(
+    expect(startChain).toHaveBeenCalledWith(
       expect.objectContaining({
         initial_agent: "planner",
         message: "hi",
@@ -149,39 +192,36 @@ test("chain.start auto-resolves project_id from cwd when caller omits it", async
 });
 
 test("chain.start throws cwd_not_registered when no project_id and cwd resolver returns undefined", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
-  const resolver = mock().mockReturnValue(undefined);
+  const { daemon, startChain } = makeStartChain();
+  const resolver = mock<() => string | undefined>(() => undefined);
   const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
 
-  await expect(
+  await expectRejectsWith(
     handler({ initial_agent: "planner", message: "hi", use_worktree: true }),
-  ).rejects.toThrow(/cwd_not_registered/);
-  expect(daemon.startChain).not.toHaveBeenCalled();
+    /cwd_not_registered/,
+  );
+  expect(startChain).not.toHaveBeenCalled();
 });
 
 test("chain.start does not throw cwd_not_registered when use_worktree is false and resolver returns undefined", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
+  const { daemon, startChain } = makeStartChain();
   const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
   delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
-  const resolver = mock().mockReturnValue(undefined);
+  const resolver = mock<() => string | undefined>(() => undefined);
   const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
 
   try {
     await handler({ initial_agent: "planner", message: "hi", use_worktree: false });
 
-    expect(daemon.startChain).toHaveBeenCalledWith(
+    expect(startChain).toHaveBeenCalledWith(
       expect.objectContaining({
         initial_agent: "planner",
         message: "hi",
         use_worktree: false,
       }),
     );
-    const call = (daemon.startChain as any).mock.calls[0][0];
-    expect(call.project_id).toBeUndefined();
+    const recorded = calls(startChain);
+    expect(recorded[0]?.project_id).toBeUndefined();
   } finally {
     if (oldRequireExplicit === undefined) delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
     else process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
@@ -189,54 +229,50 @@ test("chain.start does not throw cwd_not_registered when use_worktree is false a
 });
 
 test("chain.start requires project_id even when use_worktree is false and explicit project_id is omitted", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
+  const { daemon, startChain } = makeStartChain();
   const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
   process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = "1";
-  const resolver = mock().mockReturnValue("llamactl");
+  const resolver = mock<() => string | undefined>(() => "llamactl");
   const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
 
   try {
-    await expect(
+    await expectRejectsWith(
       handler({ initial_agent: "planner", message: "hi", use_worktree: false }),
-    ).rejects.toThrow(ProjectIdRequiredError);
+      ProjectIdRequiredError,
+    );
   } finally {
     if (oldRequireExplicit === undefined) delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
     else process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
   }
-  expect(daemon.startChain).not.toHaveBeenCalled();
-  expect(resolver).toHaveBeenCalledOnce();
+  expect(startChain).not.toHaveBeenCalled();
+  expect(resolver).toHaveBeenCalledTimes(1);
 });
 
 test("chain.start requires explicit project_id when env-gate is set and project_id is null", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
+  const { daemon, startChain } = makeStartChain();
   const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
   process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = "1";
-  const resolver = mock().mockReturnValue("llamactl");
+  const resolver = mock<() => string | undefined>(() => "llamactl");
   const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
 
   try {
-    await expect(
+    await expectRejectsWith(
       handler({ initial_agent: "planner", message: "hi", project_id: null }),
-    ).rejects.toThrow(ProjectIdRequiredError);
+      ProjectIdRequiredError,
+    );
   } finally {
     if (oldRequireExplicit === undefined) delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
     else process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
   }
-  expect(daemon.startChain).not.toHaveBeenCalled();
-  expect(resolver).toHaveBeenCalledOnce();
+  expect(startChain).not.toHaveBeenCalled();
+  expect(resolver).toHaveBeenCalledTimes(1);
 });
 
 test("chain.start long-lived tick exemption bypasses explicit project_id gate and leaves project_id unset", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
+  const { daemon, startChain } = makeStartChain();
   const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
   process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = "1";
-  const resolver = mock().mockReturnValue("llamactl");
+  const resolver = mock<() => string | undefined>(() => "llamactl");
   const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
 
   try {
@@ -249,7 +285,7 @@ test("chain.start long-lived tick exemption bypasses explicit project_id gate an
     });
 
     expect(resolver).not.toHaveBeenCalled();
-    expect(daemon.startChain).toHaveBeenCalledWith(
+    expect(startChain).toHaveBeenCalledWith(
       expect.objectContaining({
         initial_agent: "planner",
         message: "hi",
@@ -258,8 +294,8 @@ test("chain.start long-lived tick exemption bypasses explicit project_id gate an
         long_lived_tick_id: "tick-1",
       }),
     );
-    const call = (daemon.startChain as any).mock.calls[0][0];
-    expect(call.project_id).toBeUndefined();
+    const recorded = calls(startChain);
+    expect(recorded[0]?.project_id).toBeUndefined();
     expect(res).not.toHaveProperty("resolution_warning");
   } finally {
     if (oldRequireExplicit === undefined) delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
@@ -268,12 +304,10 @@ test("chain.start long-lived tick exemption bypasses explicit project_id gate an
 });
 
 test("chain.start workflow exemption bypasses explicit project_id gate and leaves project_id unset", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
+  const { daemon, startChain } = makeStartChain();
   const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
   process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = "1";
-  const resolver = mock().mockReturnValue("llamactl");
+  const resolver = mock<() => string | undefined>(() => "llamactl");
   const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
 
   try {
@@ -285,7 +319,7 @@ test("chain.start workflow exemption bypasses explicit project_id gate and leave
     });
 
     expect(resolver).not.toHaveBeenCalled();
-    expect(daemon.startChain).toHaveBeenCalledWith(
+    expect(startChain).toHaveBeenCalledWith(
       expect.objectContaining({
         initial_agent: "planner",
         message: "hi",
@@ -293,8 +327,8 @@ test("chain.start workflow exemption bypasses explicit project_id gate and leave
         workflow_run_id: "wf-1",
       }),
     );
-    const call = (daemon.startChain as any).mock.calls[0][0];
-    expect(call.project_id).toBeUndefined();
+    const recorded = calls(startChain);
+    expect(recorded[0]?.project_id).toBeUndefined();
     expect(res).not.toHaveProperty("resolution_warning");
   } finally {
     if (oldRequireExplicit === undefined) delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
@@ -303,62 +337,58 @@ test("chain.start workflow exemption bypasses explicit project_id gate and leave
 });
 
 test("chain.start malformed long-lived tick envelope still requires explicit project_id under env-gate", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
+  const { daemon, startChain } = makeStartChain();
   const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
   process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = "1";
-  const resolver = mock().mockReturnValue("llamactl");
+  const resolver = mock<() => string | undefined>(() => "llamactl");
   const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
 
   try {
-    await expect(
+    await expectRejectsWith(
       handler({
         initial_agent: "planner",
         message: "hi",
         dispatch_kind: "long_lived_tick",
         long_lived_agent_id: "agent-1",
       }),
-    ).rejects.toThrow(ProjectIdRequiredError);
-  } finally {
-    if (oldRequireExplicit === undefined) delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
-    else process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
-  }
-  expect(daemon.startChain).not.toHaveBeenCalled();
-  expect(resolver).toHaveBeenCalledOnce();
-});
-
-test("chain.start requires explicit project_id when env-gate is set and no dispatch_kind is supplied", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
-  const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
-  process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = "1";
-  const resolver = mock().mockReturnValue("llamactl");
-  const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
-
-  try {
-    await expect(handler({ initial_agent: "planner", message: "hi" })).rejects.toThrow(
       ProjectIdRequiredError,
     );
   } finally {
     if (oldRequireExplicit === undefined) delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
     else process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
   }
-  expect(daemon.startChain).not.toHaveBeenCalled();
-  expect(resolver).toHaveBeenCalledOnce();
+  expect(startChain).not.toHaveBeenCalled();
+  expect(resolver).toHaveBeenCalledTimes(1);
+});
+
+test("chain.start requires explicit project_id when env-gate is set and no dispatch_kind is supplied", async () => {
+  const { daemon, startChain } = makeStartChain();
+  const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+  process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = "1";
+  const resolver = mock<() => string | undefined>(() => "llamactl");
+  const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
+
+  try {
+    await expectRejectsWith(
+      handler({ initial_agent: "planner", message: "hi" }),
+      ProjectIdRequiredError,
+    );
+  } finally {
+    if (oldRequireExplicit === undefined) delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+    else process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
+  }
+  expect(startChain).not.toHaveBeenCalled();
+  expect(resolver).toHaveBeenCalledTimes(1);
 });
 
 test("chain.start does not auto-resolve when caller passes explicit project_id", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
-  const resolver = mock().mockReturnValue("would-be-wrong");
+  const { daemon, startChain } = makeStartChain();
+  const resolver = mock<() => string | undefined>(() => "would-be-wrong");
   const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
 
   await handler({ initial_agent: "planner", message: "hi", project_id: "sirius" });
 
-  expect(daemon.startChain).toHaveBeenCalledWith(
+  expect(startChain).toHaveBeenCalledWith(
     expect.objectContaining({
       project_id: "sirius",
     }),
@@ -367,20 +397,18 @@ test("chain.start does not auto-resolve when caller passes explicit project_id",
 });
 
 test("chain.start does not auto-resolve when caller explicitly passes project_id: null", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
+  const { daemon, startChain } = makeStartChain();
   const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
   delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
-  const resolver = mock().mockReturnValue("llamactl");
+  const resolver = mock<() => string | undefined>(() => "llamactl");
   const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
 
   try {
     await handler({ initial_agent: "planner", message: "hi", project_id: null });
 
     expect(resolver).not.toHaveBeenCalled();
-    const call = (daemon.startChain as any).mock.calls[0][0];
-    expect(call.project_id).toBeUndefined();
+    const recorded = calls(startChain);
+    expect(recorded[0]?.project_id).toBeUndefined();
   } finally {
     if (oldRequireExplicit === undefined) delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
     else process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
@@ -388,10 +416,8 @@ test("chain.start does not auto-resolve when caller explicitly passes project_id
 });
 
 test("chain.start resolves caller_cwd when project_id is null", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
-  const pathResolver = mock().mockReturnValue("llamactl");
+  const { daemon, startChain } = makeStartChain();
+  const pathResolver = mock<(path: string) => string | undefined>(() => "llamactl");
   const handler = chainStartHandler(daemon, { resolveProjectIdFromPath: pathResolver });
 
   const res = await handler({
@@ -402,7 +428,7 @@ test("chain.start resolves caller_cwd when project_id is null", async () => {
   });
 
   expect(pathResolver).toHaveBeenCalledWith("/Volumes/WorkSSD/repos/llamactl");
-  expect(daemon.startChain).toHaveBeenCalledWith(
+  expect(startChain).toHaveBeenCalledWith(
     expect.objectContaining({
       project_id: "llamactl",
     }),
@@ -415,50 +441,45 @@ test("chain.start resolves caller_cwd when project_id is null", async () => {
 });
 
 test("chain.start re-throws registry_unavailable when cwd resolver cannot load registry", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
-  const resolver = mock().mockImplementation(() => {
+  const { daemon, startChain } = makeStartChain();
+  const resolver = mock<() => string | undefined>(() => {
     throw new RegistryUnavailableError("failed to read project registry");
   });
   const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
 
-  await expect(handler({ initial_agent: "planner", message: "hi" })).rejects.toThrow(
+  await expectRejectsWith(
+    handler({ initial_agent: "planner", message: "hi" }),
     /registry_unavailable/,
   );
-  expect(daemon.startChain).not.toHaveBeenCalled();
+  expect(startChain).not.toHaveBeenCalled();
 });
 
 test("chain.start without resolver opt passes through (legacy behavior)", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
+  const { daemon, startChain } = makeStartChain();
   const handler = chainStartHandler(daemon);
 
   await handler({ initial_agent: "planner", message: "hi" });
 
-  expect(daemon.startChain).toHaveBeenCalledWith(
+  expect(startChain).toHaveBeenCalledWith(
     expect.objectContaining({
       initial_agent: "planner",
       message: "hi",
     }),
   );
-  const call = (daemon.startChain as any).mock.calls[0][0];
-  expect(call.project_id).toBeUndefined();
+  const recorded = calls(startChain);
+  expect(recorded[0]?.project_id).toBeUndefined();
 });
 
 test("chain.start explicit-project_id-no-warning", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
-  const resolver = mock().mockReturnValue("llamactl");
+  const { daemon, startChain } = makeStartChain();
+  const resolver = mock<() => string | undefined>(() => "llamactl");
   const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
 
   const res = await handler({ initial_agent: "planner", message: "hi", project_id: "sirius" });
 
   expect(resolver).not.toHaveBeenCalled();
   expect(res).not.toHaveProperty("resolution_warning");
-  expect(daemon.startChain).toHaveBeenCalledWith(
+  expect(startChain).toHaveBeenCalledWith(
     expect.objectContaining({
       project_id: "sirius",
     }),
@@ -466,12 +487,10 @@ test("chain.start explicit-project_id-no-warning", async () => {
 });
 
 test("chain.start cwd-fallback-emits-warning-with-resolved-id", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
+  const { daemon, startChain } = makeStartChain();
   const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
   delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
-  const resolver = mock().mockReturnValue("llamactl");
+  const resolver = mock<() => string | undefined>(() => "llamactl");
   const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
 
   try {
@@ -481,7 +500,7 @@ test("chain.start cwd-fallback-emits-warning-with-resolved-id", async () => {
       code: "project_id_inferred_from_mcp_cwd",
       resolved_project_id: "llamactl",
     });
-    expect(daemon.startChain).toHaveBeenCalledWith(
+    expect(startChain).toHaveBeenCalledWith(
       expect.objectContaining({
         project_id: "llamactl",
       }),
@@ -493,12 +512,10 @@ test("chain.start cwd-fallback-emits-warning-with-resolved-id", async () => {
 });
 
 test("chain.start hard-mode-env-set-throws-with-correct-code-and-hint", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
+  const { daemon, startChain } = makeStartChain();
   const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
   process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = "1";
-  const resolver = mock().mockReturnValue("llamactl");
+  const resolver = mock<() => string | undefined>(() => "llamactl");
   const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
 
   let error: unknown;
@@ -520,22 +537,21 @@ test("chain.start hard-mode-env-set-throws-with-correct-code-and-hint", async ()
   expect(err.hint).toBe(
     "pass project_id explicitly, or unset PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy default",
   );
-  expect(daemon.startChain).not.toHaveBeenCalled();
-  expect(resolver).toHaveBeenCalledOnce();
+  expect(startChain).not.toHaveBeenCalled();
+  expect(resolver).toHaveBeenCalledTimes(1);
 });
 
 test.each(["1", "true", "TRUE", "yes", "Yes", "on", "ON"])(
   "chain.start env-knob accepts %s case-insensitively",
   async (value) => {
-    const daemon = {
-      startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-    } as any;
+    const { daemon, startChain } = makeStartChain();
     const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
     process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = value;
-    const resolver = mock().mockReturnValue("llamactl");
+    const resolver = mock<() => string | undefined>(() => "llamactl");
     const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
 
-    await expect(handler({ initial_agent: "planner", message: "hi" })).rejects.toBeInstanceOf(
+    await expectRejectsWith(
+      handler({ initial_agent: "planner", message: "hi" }),
       ProjectIdRequiredError,
     );
     if (oldRequireExplicit === undefined) {
@@ -543,20 +559,18 @@ test.each(["1", "true", "TRUE", "yes", "Yes", "on", "ON"])(
     } else {
       process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
     }
-    expect(daemon.startChain).not.toHaveBeenCalled();
-    expect(resolver).toHaveBeenCalledOnce();
+    expect(startChain).not.toHaveBeenCalled();
+    expect(resolver).toHaveBeenCalledTimes(1);
   },
 );
 
 test.each(["", "0", "false", "FALSE", "no", "off", "maybe", " "])(
   "chain.start env-knob rejects %s and keeps legacy warning path",
   async (value) => {
-    const daemon = {
-      startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-    } as any;
+    const { daemon, startChain } = makeStartChain();
     const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
     process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = value;
-    const resolver = mock().mockReturnValue("llamactl");
+    const resolver = mock<() => string | undefined>(() => "llamactl");
     const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
 
     const res = await handler({ initial_agent: "planner", message: "hi" });
@@ -569,20 +583,18 @@ test.each(["", "0", "false", "FALSE", "no", "off", "maybe", " "])(
     } else {
       process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
     }
-    expect(daemon.startChain).toHaveBeenCalledWith(
+    expect(startChain).toHaveBeenCalledWith(
       expect.objectContaining({
         project_id: "llamactl",
       }),
     );
-    expect(resolver).toHaveBeenCalledOnce();
+    expect(resolver).toHaveBeenCalledTimes(1);
   },
 );
 
 test("chain.start caller_cwd resolves to a registered project and emits resolution_warning", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
-  const pathResolver = mock().mockReturnValue("llamactl");
+  const { daemon, startChain } = makeStartChain();
+  const pathResolver = mock<(path: string) => string | undefined>(() => "llamactl");
   const handler = chainStartHandler(daemon, { resolveProjectIdFromPath: pathResolver });
 
   const res = await handler({
@@ -592,7 +604,7 @@ test("chain.start caller_cwd resolves to a registered project and emits resoluti
   });
 
   expect(pathResolver).toHaveBeenCalledWith("/Volumes/WorkSSD/repos/llamactl");
-  expect(daemon.startChain).toHaveBeenCalledWith(
+  expect(startChain).toHaveBeenCalledWith(
     expect.objectContaining({
       project_id: "llamactl",
     }),
@@ -605,20 +617,19 @@ test("chain.start caller_cwd resolves to a registered project and emits resoluti
 });
 
 test("chain.start caller_cwd not registered throws caller_cwd_not_registered", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
-  const pathResolver = mock().mockReturnValue(undefined);
+  const { daemon, startChain } = makeStartChain();
+  const pathResolver = mock<(path: string) => string | undefined>(() => undefined);
   const handler = chainStartHandler(daemon, { resolveProjectIdFromPath: pathResolver });
 
-  await expect(
+  await expectRejectsWith(
     handler({
       initial_agent: "planner",
       message: "hi",
       caller_cwd: "/some/unregistered/path",
     }),
-  ).rejects.toBeInstanceOf(CallerCwdNotRegisteredError);
-  expect(daemon.startChain).not.toHaveBeenCalled();
+    CallerCwdNotRegisteredError,
+  );
+  expect(startChain).not.toHaveBeenCalled();
 });
 
 test("ChainStartInputShape rejects relative caller_cwd", () => {
@@ -628,10 +639,8 @@ test("ChainStartInputShape rejects relative caller_cwd", () => {
 });
 
 test("chain.start explicit project_id wins over caller_cwd", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
-  const pathResolver = mock().mockReturnValue("llamactl");
+  const { daemon, startChain } = makeStartChain();
+  const pathResolver = mock<(path: string) => string | undefined>(() => "llamactl");
   const handler = chainStartHandler(daemon, { resolveProjectIdFromPath: pathResolver });
 
   const res = await handler({
@@ -642,7 +651,7 @@ test("chain.start explicit project_id wins over caller_cwd", async () => {
   });
 
   expect(pathResolver).not.toHaveBeenCalled();
-  expect(daemon.startChain).toHaveBeenCalledWith(
+  expect(startChain).toHaveBeenCalledWith(
     expect.objectContaining({
       project_id: "sirius",
     }),
@@ -651,19 +660,17 @@ test("chain.start explicit project_id wins over caller_cwd", async () => {
 });
 
 test("chain.start no project_id and no caller_cwd falls through to daemon-cwd path", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
+  const { daemon, startChain } = makeStartChain();
   const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
   delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
-  const cwdResolver = mock().mockReturnValue("penumbra");
+  const cwdResolver = mock<() => string | undefined>(() => "penumbra");
   const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: cwdResolver });
 
   try {
     const res = await handler({ initial_agent: "planner", message: "hi" });
 
-    expect(cwdResolver).toHaveBeenCalledOnce();
-    expect(daemon.startChain).toHaveBeenCalledWith(
+    expect(cwdResolver).toHaveBeenCalledTimes(1);
+    expect(startChain).toHaveBeenCalledWith(
       expect.objectContaining({
         project_id: "penumbra",
       }),
@@ -680,20 +687,18 @@ test("chain.start no project_id and no caller_cwd falls through to daemon-cwd pa
 });
 
 test("chain.start handler forwards daemon routing warnings into the MCP response", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({
-      conversation_id: "conv-1",
-      handoff_id: "h-1",
-      routing_warning: {
-        code: "prompt_project_mismatch",
-        project_id: "penumbra",
-        mentioned_paths: ["/Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts"],
-        missing_in_project: ["packages/train"],
-        suggested_project_id: "llamactl",
-        hint: "pass project_id explicitly or update prompt paths",
-      },
-    }),
-  } as any;
+  const { daemon, startChain } = makeStartChain({
+    conversation_id: "conv-1",
+    handoff_id: "h-1",
+    routing_warning: {
+      code: "prompt_project_mismatch",
+      project_id: "penumbra",
+      mentioned_paths: ["/Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts"],
+      missing_in_project: ["packages/train"],
+      suggested_project_id: "llamactl",
+      hint: "pass project_id explicitly or update prompt paths",
+    },
+  });
   const handler = chainStartHandler(daemon);
 
   const res = await handler({
@@ -713,7 +718,7 @@ test("chain.start handler forwards daemon routing warnings into the MCP response
       suggested_project_id: "llamactl",
     }),
   );
-  expect(daemon.startChain).toHaveBeenCalledWith(
+  expect(startChain).toHaveBeenCalledWith(
     expect.objectContaining({
       project_id: "penumbra",
     }),
@@ -721,9 +726,7 @@ test("chain.start handler forwards daemon routing warnings into the MCP response
 });
 
 test("chain.start handler forwards isolated_install to daemon.startChain", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
+  const { daemon, startChain } = makeStartChain();
   const handler = chainStartHandler(daemon);
 
   await handler({
@@ -733,7 +736,7 @@ test("chain.start handler forwards isolated_install to daemon.startChain", async
     isolated_install: true,
   });
 
-  expect(daemon.startChain).toHaveBeenCalledWith(
+  expect(startChain).toHaveBeenCalledWith(
     expect.objectContaining({
       isolated_install: true,
     }),
@@ -741,9 +744,7 @@ test("chain.start handler forwards isolated_install to daemon.startChain", async
 });
 
 test("chain.start handler forwards isolated_install: false explicitly", async () => {
-  const daemon = {
-    startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-  } as any;
+  const { daemon, startChain } = makeStartChain();
   const handler = chainStartHandler(daemon);
 
   await handler({
@@ -753,7 +754,7 @@ test("chain.start handler forwards isolated_install: false explicitly", async ()
     isolated_install: false,
   });
 
-  expect(daemon.startChain).toHaveBeenCalledWith(
+  expect(startChain).toHaveBeenCalledWith(
     expect.objectContaining({
       isolated_install: false,
     }),
