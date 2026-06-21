@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { RateLimitDelta, UsageReader, UsageReaderResult } from "./index.js";
 
@@ -26,6 +27,8 @@ export interface PollerOptions {
 export interface PollerHandle {
   stop: () => void;
   runOnce: () => Promise<void>;
+  /** Total number of cursor-file persists since start; coalesced to ≤1 per tick. */
+  persistCount: () => number;
 }
 
 type CursorMap = Record<string, unknown>;
@@ -55,16 +58,18 @@ export function startUsagePoller(opts: PollerOptions): PollerHandle {
   const lastEmittedOrder: string[] = [];
   let stopped = false;
   let heldLock: boolean | undefined;
+  let persistCount = 0;
 
-  const persist = () => {
+  const persist = async (): Promise<void> => {
     const dir = dirname(opts.cursorPath);
     mkdirSync(dir, { recursive: true });
     const tmp = usageCursorTempPath(opts.cursorPath);
-    writeFileSync(tmp, `${JSON.stringify(cursors)}\n`);
-    renameSync(tmp, opts.cursorPath);
+    await writeFile(tmp, `${JSON.stringify(cursors)}\n`);
+    await rename(tmp, opts.cursorPath);
+    persistCount++;
   };
 
-  const runReader = async (reader: UsageReader): Promise<void> => {
+  const runReader = async (reader: UsageReader): Promise<boolean> => {
     const prev = Object.prototype.hasOwnProperty.call(cursors, reader.id)
       ? cursors[reader.id]
       : null;
@@ -79,8 +84,9 @@ export function startUsagePoller(opts: PollerOptions): PollerHandle {
     );
     if (ok) {
       cursors[reader.id] = result.cursor;
-      persist();
+      return true;
     }
+    return false;
   };
 
   const runOnce = async (): Promise<void> => {
@@ -105,12 +111,20 @@ export function startUsagePoller(opts: PollerOptions): PollerHandle {
         );
       }
     }
+    let dirty = false;
     for (const reader of opts.readers) {
       if (reader.machineGlobal && !holdsLock) continue;
       try {
-        await runReader(reader);
+        if (await runReader(reader)) dirty = true;
       } catch (err) {
         opts.log.error({ err: String(err), reader: reader.id }, "usage-poller: reader failed");
+      }
+    }
+    if (dirty) {
+      try {
+        await persist();
+      } catch (err) {
+        opts.log.error({ err: String(err) }, "usage-poller: cursor persist failed");
       }
     }
   };
@@ -127,6 +141,7 @@ export function startUsagePoller(opts: PollerOptions): PollerHandle {
       clearInterval(timer);
     },
     runOnce,
+    persistCount: () => persistCount,
   };
 }
 
