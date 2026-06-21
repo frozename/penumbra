@@ -162,6 +162,133 @@ describe("long-lived self reader/writer helpers", () => {
     expect(workingMemory.pending_goals).toEqual([concurrentGoal]);
   });
 
+  it("does not lose updates when interleaved with concurrent post-tick goal writes", () => {
+    const db = new Database(":memory:");
+    seed(db);
+
+    const goalA = { kind: "user_goal", text: "approved-A", created_at: 100 };
+    db.query("UPDATE long_lived_agents SET working_memory_json = ? WHERE id='a'").run(
+      JSON.stringify({
+        version: 1,
+        updated_at: 100,
+        pending_goals: [goalA],
+        open_threads: [],
+        watches: [],
+        recent_decisions: [],
+      }),
+    );
+
+    updateLongLivedAgentState(
+      db,
+      "a",
+      {
+        working_memory: {
+          version: 1,
+          updated_at: 150,
+          pending_goals: [],
+          open_threads: [{ id: "o1", topic: "t1", opened_at: 1, notes: "" }],
+          watches: [],
+          recent_decisions: [],
+        } as any,
+      },
+      { running_tick_id: "tick-a" },
+    );
+
+    let row = db.query("SELECT working_memory_json FROM long_lived_agents WHERE id='a'").get() as {
+      working_memory_json: string;
+    };
+    let wm = JSON.parse(row.working_memory_json);
+    expect(wm.pending_goals).toEqual([goalA]);
+    expect(wm.open_threads).toHaveLength(1);
+
+    const goalB = { kind: "user_goal", text: "approved-B", created_at: 200 };
+    wm.pending_goals.push(goalB);
+    db.query("UPDATE long_lived_agents SET working_memory_json = ? WHERE id='a'").run(
+      JSON.stringify(wm),
+    );
+
+    updateLongLivedAgentState(
+      db,
+      "a",
+      {
+        working_memory: {
+          version: 1,
+          updated_at: 250,
+          pending_goals: [],
+          open_threads: [
+            { id: "o1", topic: "t1", opened_at: 1, notes: "" },
+            { id: "o2", topic: "t2", opened_at: 2, notes: "" },
+          ],
+          watches: [],
+          recent_decisions: [],
+        } as any,
+      },
+      { running_tick_id: "tick-a" },
+    );
+
+    row = db.query("SELECT working_memory_json FROM long_lived_agents WHERE id='a'").get() as {
+      working_memory_json: string;
+    };
+    wm = JSON.parse(row.working_memory_json);
+    expect(wm.pending_goals).toEqual([goalA, goalB]);
+    expect(wm.open_threads).toHaveLength(2);
+  });
+
+  it("performs the read-modify-write inside a single transaction", () => {
+    const db = new Database(":memory:");
+    seed(db);
+
+    db.query("UPDATE long_lived_agents SET working_memory_json = ? WHERE id='a'").run(
+      JSON.stringify({
+        version: 1,
+        updated_at: 50,
+        pending_goals: [{ kind: "user_goal", text: "post-tick", created_at: 100 }],
+        open_threads: [],
+        watches: [],
+        recent_decisions: [],
+      }),
+    );
+
+    const observed: { sql: string; inTx: boolean }[] = [];
+    const originalQuery = db.query.bind(db);
+    (db as any).query = (sql: string) => {
+      const stmt = originalQuery(sql);
+      return new Proxy(stmt, {
+        get(target: any, prop: string | symbol) {
+          const value = target[prop];
+          if (typeof value === "function" && (prop === "get" || prop === "all" || prop === "run")) {
+            return (...args: any[]) => {
+              observed.push({ sql, inTx: db.inTransaction });
+              return value.apply(target, args);
+            };
+          }
+          return value;
+        },
+      });
+    };
+
+    updateLongLivedAgentState(
+      db,
+      "a",
+      {
+        working_memory: {
+          version: 1,
+          updated_at: 200,
+          pending_goals: [],
+          open_threads: [],
+          watches: [],
+          recent_decisions: [],
+        } as any,
+        intent_summary: "intent",
+      },
+      { running_tick_id: "tick-a" },
+    );
+
+    const agentTouches = observed.filter((entry) => /long_lived_agents/.test(entry.sql));
+    expect(agentTouches.length).toBeGreaterThanOrEqual(2);
+    expect(agentTouches.every((entry) => entry.inTx)).toBe(true);
+  });
+
   it("lists only pending actions for the agent in descending created_at order", () => {
     const db = new Database(":memory:");
     loadSqliteVec(db);

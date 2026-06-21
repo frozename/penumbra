@@ -74,48 +74,50 @@ export function updateLongLivedAgentState(
   context: UpdateContext = {},
 ): void {
   const now = Date.now();
-  if (patch.working_memory) {
-    const workingMemoryFromAgent = trimWorkingMemoryThreadNotes(patch.working_memory);
-    let nextWorkingMemory = workingMemoryFromAgent;
+  db.transaction(() => {
+    if (patch.working_memory) {
+      const workingMemoryFromAgent = trimWorkingMemoryThreadNotes(patch.working_memory);
+      let nextWorkingMemory = workingMemoryFromAgent;
 
-    if (context.running_tick_id) {
-      const tick = db
-        .query<
-          TickStartRow,
-          [string]
-        >("SELECT started_at FROM long_lived_ticks WHERE id = ? LIMIT 1")
-        .get(context.running_tick_id);
-      if (tick) {
-        const current = db
+      if (context.running_tick_id) {
+        const tick = db
           .query<
-            WorkingMemoryRow,
+            TickStartRow,
             [string]
-          >("SELECT working_memory_json FROM long_lived_agents WHERE id = ?")
-          .get(agent_id);
-        if (current) {
-          const currentWorkingMemory = parseWorkingMemory(current.working_memory_json);
-          const existingGoals =
-            currentWorkingMemory?.pending_goals?.filter((goal) =>
-              goalAppendedAfterTick(goal, tick.started_at),
-            ) ?? [];
-          nextWorkingMemory = {
-            ...workingMemoryFromAgent,
-            pending_goals: mergePendingGoals(workingMemoryFromAgent.pending_goals, existingGoals),
-          };
+          >("SELECT started_at FROM long_lived_ticks WHERE id = ? LIMIT 1")
+          .get(context.running_tick_id);
+        if (tick) {
+          const current = db
+            .query<
+              WorkingMemoryRow,
+              [string]
+            >("SELECT working_memory_json FROM long_lived_agents WHERE id = ?")
+            .get(agent_id);
+          if (current) {
+            const currentWorkingMemory = parseWorkingMemory(current.working_memory_json);
+            const existingGoals =
+              currentWorkingMemory?.pending_goals?.filter((goal) =>
+                goalAppendedAfterTick(goal, tick.started_at),
+              ) ?? [];
+            nextWorkingMemory = {
+              ...workingMemoryFromAgent,
+              pending_goals: mergePendingGoals(workingMemoryFromAgent.pending_goals, existingGoals),
+            };
+          }
         }
       }
-    }
 
-    const persisted = trimWorkingMemoryThreadNotes({ ...nextWorkingMemory, updated_at: now });
-    db.query(
-      "UPDATE long_lived_agents SET working_memory_json = ?, updated_at = ? WHERE id = ?",
-    ).run(JSON.stringify(persisted), now, agent_id);
-  }
-  if (patch.intent_summary !== undefined) {
-    db.query(
-      "UPDATE long_lived_agents SET last_intent_summary = ?, updated_at = ? WHERE id = ?",
-    ).run(patch.intent_summary, now, agent_id);
-  }
+      const persisted = trimWorkingMemoryThreadNotes({ ...nextWorkingMemory, updated_at: now });
+      db.query(
+        "UPDATE long_lived_agents SET working_memory_json = ?, updated_at = ? WHERE id = ?",
+      ).run(JSON.stringify(persisted), now, agent_id);
+    }
+    if (patch.intent_summary !== undefined) {
+      db.query(
+        "UPDATE long_lived_agents SET last_intent_summary = ?, updated_at = ? WHERE id = ?",
+      ).run(patch.intent_summary, now, agent_id);
+    }
+  }).immediate();
 }
 
 export interface LongLivedPendingActionRow {
