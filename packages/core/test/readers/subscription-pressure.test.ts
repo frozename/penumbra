@@ -1,7 +1,8 @@
-import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { describe, expect, it } from "bun:test";
+
 import { applySchema } from "../../src/db/schema.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { readSubscriptionPressure } from "../../src/readers/subscription-pressure.js";
 
 try {
@@ -31,7 +32,7 @@ function insertSnapshotRow(
     resets_at: number | null;
     source_kind: string;
   },
-) {
+): void {
   db.prepare(
     `
     INSERT INTO t0_events (

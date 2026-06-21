@@ -1,8 +1,10 @@
-import { beforeEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, it } from "bun:test";
+
+import type { AgentRankOutput } from "../../src/schemas/agent-performance.js";
+
 import { loadSqliteVec, migrate } from "../../src/index.js";
 import { routeAgent } from "../../src/services/agent-routing.js";
-import type { AgentRankOutput } from "../../src/schemas/agent-performance.js";
 import { AgentPerformanceWriter } from "../../src/writers/agent-performance.js";
 
 function rankAgentsViaRoute(input: Parameters<typeof routeAgent>[0]): AgentRankOutput {

@@ -1,5 +1,6 @@
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+
 import { BundledEmbedder } from "../../src/embedder/bundled.js";
 
 export interface EmbedRecipeRow {
@@ -15,7 +16,7 @@ export interface EmbedRecipeFixtures {
   queries: string[];
 }
 
-interface CombinedFixtureFile extends EmbedRecipeFixtures {}
+type CombinedFixtureFile = EmbedRecipeFixtures;
 
 export type CandidateKey =
   | "minilm_body_only"
@@ -113,7 +114,9 @@ const embedderCache = new Map<string, EmbedderLike>();
 async function withTimeout<T>(task: Promise<T>, ms: number, label: string): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    timeout = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    timeout = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${String(ms)}ms`));
+    }, ms);
   });
   try {
     return await Promise.race([task, timeoutPromise]);
@@ -122,7 +125,10 @@ async function withTimeout<T>(task: Promise<T>, ms: number, label: string): Prom
   }
 }
 
-function representationText(representation: "body_only" | "title_only" | "title_plus_concise", row: EmbedRecipeRow): string {
+function representationText(
+  representation: "body_only" | "title_only" | "title_plus_concise",
+  row: EmbedRecipeRow,
+): string {
   switch (representation) {
     case "body_only":
       return row.body;
@@ -136,7 +142,11 @@ function representationText(representation: "body_only" | "title_only" | "title_
 function dot(a: Float32Array, b: Float32Array): number {
   const n = Math.min(a.length, b.length);
   let out = 0;
-  for (let i = 0; i < n; i += 1) out += a[i]! * b[i]!;
+  for (let i = 0; i < n; i += 1) {
+    const ai = a[i] ?? 0;
+    const bi = b[i] ?? 0;
+    out += ai * bi;
+  }
   return out;
 }
 
@@ -170,7 +180,7 @@ async function getEmbedder(kind: "minilm" | "bge-small" | "bge-base"): Promise<E
   const instance = (await FlagEmbedding.init({
     model,
     cacheDir: FASTEMBED_CACHE_DIR,
-  } as Record<string, unknown>)) as {
+  })) as {
     embed: (texts: string[], batchSize?: number) => AsyncIterable<number[][]>;
   };
 
@@ -211,44 +221,7 @@ async function evaluateCandidate(
 
   try {
     return await withTimeout(
-      (async () => {
-        const corpus = uniqueRows(fixtures.corpusRows);
-        const embedder = await getEmbedder(cfg.embedder);
-        const memoryTexts = corpus.map((row) => representationText(cfg.representation, row));
-        const memoryVecs = await embedder.embed(memoryTexts);
-        const weakIds = new Set(fixtures.weakRows.map((r) => r.id));
-        const goldenIds = new Set(fixtures.goldenRows.map((r) => r.id));
-        const enteredWeak = new Set<string>();
-        const enteredGolden = new Set<string>();
-
-        for (const queryText of fixtures.queries) {
-          const [qv] = await embedder.embed([queryText]);
-          const ranked = corpus
-            .map((row, idx) => ({ id: row.id, score: dot(qv!, memoryVecs[idx]!) }))
-            .sort((a, b) => (b.score === a.score ? a.id.localeCompare(b.id) : b.score - a.score))
-            .slice(0, 20);
-          for (const hit of ranked) {
-            if (weakIds.has(hit.id)) enteredWeak.add(hit.id);
-            if (goldenIds.has(hit.id)) enteredGolden.add(hit.id);
-          }
-        }
-
-        let regressionCount = 0;
-        for (const id of baselineEnteredGolden) {
-          if (!enteredGolden.has(id)) regressionCount += 1;
-        }
-
-        return {
-          ...base,
-          runnable: true,
-          weakLift: key === "minilm_body_only" ? 0 : enteredWeak.size - baselineWeakEntered,
-          regressionCount,
-          weakEntered: enteredWeak.size,
-          baselineWeakEntered,
-          baselineGoldenEntered: baselineEnteredGolden.size,
-          goldenEntered: enteredGolden.size,
-        };
-      })(),
+      runCandidateScoring(fixtures, baselineEnteredGolden, baselineWeakEntered, key, base, cfg),
       Number(process.env.PENUMBRA_EMBED_RECIPE_TIMEOUT_MS ?? "180000"),
       `candidate ${key}`,
     );
@@ -258,20 +231,97 @@ async function evaluateCandidate(
   }
 }
 
+interface CandidateCfg {
+  representation: "body_only" | "title_only" | "title_plus_concise";
+  embedder: "minilm" | "bge-small" | "bge-base";
+}
+
+async function runCandidateScoring(
+  fixtures: EmbedRecipeFixtures,
+  baselineEnteredGolden: Set<string>,
+  baselineWeakEntered: number,
+  key: CandidateKey,
+  base: CandidateScore,
+  cfg: CandidateCfg,
+): Promise<CandidateScore> {
+  const corpus = uniqueRows(fixtures.corpusRows);
+  const embedder = await getEmbedder(cfg.embedder);
+  const memoryTexts = corpus.map((row) => representationText(cfg.representation, row));
+  const memoryVecs = await embedder.embed(memoryTexts);
+  const weakIds = new Set(fixtures.weakRows.map((r) => r.id));
+  const goldenIds = new Set(fixtures.goldenRows.map((r) => r.id));
+  const enteredWeak = new Set<string>();
+  const enteredGolden = new Set<string>();
+
+  for (const queryText of fixtures.queries) {
+    await scoreQueryAgainstCorpus(
+      embedder,
+      queryText,
+      corpus,
+      memoryVecs,
+      weakIds,
+      goldenIds,
+      enteredWeak,
+      enteredGolden,
+    );
+  }
+
+  let regressionCount = 0;
+  for (const id of baselineEnteredGolden) {
+    if (!enteredGolden.has(id)) regressionCount += 1;
+  }
+
+  return {
+    ...base,
+    runnable: true,
+    weakLift: key === "minilm_body_only" ? 0 : enteredWeak.size - baselineWeakEntered,
+    regressionCount,
+    weakEntered: enteredWeak.size,
+    baselineWeakEntered,
+    baselineGoldenEntered: baselineEnteredGolden.size,
+    goldenEntered: enteredGolden.size,
+  };
+}
+
+async function scoreQueryAgainstCorpus(
+  embedder: EmbedderLike,
+  queryText: string,
+  corpus: EmbedRecipeRow[],
+  memoryVecs: Float32Array[],
+  weakIds: Set<string>,
+  goldenIds: Set<string>,
+  enteredWeak: Set<string>,
+  enteredGolden: Set<string>,
+): Promise<void> {
+  const [qv] = await embedder.embed([queryText]);
+  if (!qv) return;
+  const ranked = corpus
+    .map((row, idx) => ({ id: row.id, score: dot(qv, memoryVecs[idx] ?? new Float32Array()) }))
+    .sort((a, b) => (b.score === a.score ? a.id.localeCompare(b.id) : b.score - a.score))
+    .slice(0, 20);
+  for (const hit of ranked) {
+    if (weakIds.has(hit.id)) enteredWeak.add(hit.id);
+    if (goldenIds.has(hit.id)) enteredGolden.add(hit.id);
+  }
+}
+
 async function baselineEnteredSets(fixtures: EmbedRecipeFixtures): Promise<{
   golden: Set<string>;
 }> {
   const cfg = CANDIDATES.minilm_body_only;
   const corpus = uniqueRows(fixtures.corpusRows);
   const embedder = await getEmbedder(cfg.embedder);
-  const memoryVecs = await embedder.embed(corpus.map((row) => representationText(cfg.representation, row)));
+  const memoryVecs = await embedder.embed(
+    corpus.map((row) => representationText(cfg.representation, row)),
+  );
   const goldenIds = new Set(fixtures.goldenRows.map((r) => r.id));
   const enteredGolden = new Set<string>();
 
   for (const queryText of fixtures.queries) {
     const [qv] = await embedder.embed([queryText]);
+    if (!qv) continue;
     const ranked = corpus
-      .map((row, idx) => ({ id: row.id, score: dot(qv!, memoryVecs[idx]!) }))
+      .map((row, idx) => ({ id: row.id, score: dot(qv, memoryVecs[idx] ?? new Float32Array()) }))
       .sort((a, b) => (b.score === a.score ? a.id.localeCompare(b.id) : b.score - a.score))
       .slice(0, 20);
     for (const hit of ranked) {

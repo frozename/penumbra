@@ -1,21 +1,24 @@
+import { Database } from "bun:sqlite";
 // packages/core/test/readers/hybrid.test.ts
 import { describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+
+import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { TestEmbedder } from "../../src/embedder/test-embedder.js";
+import { hybridSearch } from "../../src/readers/hybrid.js";
 try {
   if (process.platform === "darwin")
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-} catch {}
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { migrate } from "../../src/db/migrations.js";
-import { hybridSearch } from "../../src/readers/hybrid.js";
-import { TestEmbedder } from "../../src/embedder/test-embedder.js";
+} catch {
+  // already loaded in this process
+}
 
 class FixedEmbedder {
   readonly name = "fixed";
   readonly dim = 2;
 
-  async embed(texts: string[]): Promise<Float32Array[]> {
-    return texts.map(() => new Float32Array([1, 0]));
+  embed(texts: string[]): Promise<Float32Array[]> {
+    return Promise.resolve(texts.map(() => new Float32Array([1, 0])));
   }
 }
 
@@ -24,7 +27,7 @@ describe("hybridSearch", () => {
     const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 4 });
-    const insert = (id: string, type: string, body: string, vec: number[]) => {
+    const insert = (id: string, type: string, body: string, vec: number[]): void => {
       db.run(
         `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids, window_start, window_end, title, body, metadata_json, created_at, updated_at, obs_type)
          VALUES (?, 'u', 'rollup', '[]', '2026-05-03', '2026-05-03', ?, ?, '{}', '2026-05-03', '2026-05-03', ?)`,
@@ -55,7 +58,7 @@ describe("hybridSearch", () => {
     const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 4 });
-    const insert = (id: string, body: string, vec: number[]) => {
+    const insert = (id: string, body: string, vec: number[]): void => {
       db.run(
         `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids, window_start, window_end, title, body, metadata_json, created_at, updated_at, obs_type)
          VALUES (?, 'u', 'rollup', '[]', '2026-05-03', '2026-05-03', ?, ?, '{}', '2026-05-03', '2026-05-03', 'feature')`,
@@ -81,7 +84,7 @@ describe("hybridSearch", () => {
     const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 2 });
-    const insert = (id: string, vec: number[]) => {
+    const insert = (id: string, vec: number[]): void => {
       db.run(
         `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids, window_start, window_end, title, body, metadata_json, created_at, updated_at, obs_type)
          VALUES (?, 'u', 'rollup', '[]', '2026-05-03', '2026-05-03', ?, ?, '{}', '2026-05-03', '2026-05-03', 'feature')`,
@@ -97,7 +100,7 @@ describe("hybridSearch", () => {
     insert("orthogonal", [0, 1]);
     insert("opposite", [-1, 0]);
 
-    const exact = await hybridSearch(db, new FixedEmbedder() as unknown as TestEmbedder, {
+    const exact = await hybridSearch(db, new FixedEmbedder(), {
       query: "ignored",
       limit: 4,
     });

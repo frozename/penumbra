@@ -1,8 +1,9 @@
-import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { migrate, loadSqliteVec } from "../../src/index.js";
-import { PermissionWriter } from "../../src/writers/permission.js";
+import { describe, expect, test } from "bun:test";
+
+import { loadSqliteVec, migrate } from "../../src/index.js";
 import { PermissionReader } from "../../src/readers/permission.js";
+import { PermissionWriter } from "../../src/writers/permission.js";
 
 try {
   if (process.platform === "darwin") {
@@ -12,7 +13,7 @@ try {
   /* already loaded */
 }
 
-function setup() {
+function setup(): { db: Database; w: PermissionWriter; r: PermissionReader } {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });

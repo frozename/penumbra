@@ -1,5 +1,10 @@
-import { expect, test, beforeEach } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, expect, test } from "bun:test";
+
+import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js"; // Ensure to load vector extension if required by tests!
+import { HandoffReader } from "../../src/readers/handoff.js";
+import { HandoffWriter } from "../../src/writers/handoff.js";
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
@@ -7,10 +12,6 @@ try {
 } catch {
   // already loaded in this process
 }
-import { migrate } from "../../src/db/migrations.js";
-import { HandoffWriter } from "../../src/writers/handoff.js";
-import { HandoffReader } from "../../src/readers/handoff.js";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js"; // Ensure to load vector extension if required by tests!
 
 let db: Database;
 let reader: HandoffReader;
@@ -106,13 +107,13 @@ function seedChainB(): void {
 
 function seedSingleRootChain(count: number): void {
   for (let i = 1; i <= count; i++) {
-    const id = `R.${i}`;
+    const id = `R.${String(i)}`;
     insertHandoffRow({
       handoff_id: id,
       ts: isoAt(i - 1),
       conversation_id: "conv-r",
       root_handoff_id: "R.1",
-      parent_handoff_id: i === 1 ? null : `R.${i - 1}`,
+      parent_handoff_id: i === 1 ? null : `R.${String(i - 1)}`,
       status: "approved",
     });
   }
@@ -126,7 +127,19 @@ beforeEach(() => {
   reader = new HandoffReader({ db });
 });
 
-const sampleParams = (id: string, conv: string) => ({
+interface SampleHandoffParams {
+  handoff_id: string;
+  ts: string;
+  from: string;
+  to: string;
+  to_role: string | null;
+  message: string;
+  conversation_id: string;
+  project_id: string | null;
+  triggered_by_event_id: string;
+}
+
+const sampleParams = (id: string, conv: string): SampleHandoffParams => ({
   handoff_id: id,
   ts: `2026-04-25T20:00:0${id.slice(-1)}.000Z`,
   from: "claude",
@@ -429,7 +442,7 @@ ORDER BY (
   WHERE h2.status='dispatched' AND h2.root_handoff_id = h.root_handoff_id
 ) ASC,
 h.ts ASC`;
-  const planRows = db.query("EXPLAIN QUERY PLAN " + sql).all() as Array<{ detail: string }>;
+  const planRows = db.query("EXPLAIN QUERY PLAN " + sql).all() as { detail: string }[];
   const allDetail = planRows.map((r) => r.detail).join(" ");
   expect(allDetail).toContain("idx_handoffs_root_status");
 });

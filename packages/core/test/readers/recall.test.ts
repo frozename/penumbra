@@ -1,7 +1,8 @@
-import { expect, test, beforeEach } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { beforeEach, expect, test } from "bun:test";
+
 import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { TestEmbedder } from "../../src/embedder/test-embedder.js";
 import { RecallReader } from "../../src/readers/recall.js";
 
@@ -26,7 +27,7 @@ beforeEach(() => {
   migrate(db, { embeddingDim: 384 });
 });
 
-async function seedT1(rollupId: string, text: string, createdAt: string) {
+async function seedT1(rollupId: string, text: string, createdAt: string): Promise<void> {
   const embedder = new TestEmbedder({ dim: 384 });
   const [vec] = await embedder.embed([text]);
   db.run(
@@ -66,14 +67,14 @@ test("recall query path embeds raw query text even when t2 title recipe is enabl
   const spyEmbedder = {
     name: "spy",
     dim: 384,
-    async embed(texts: string[]) {
+    async embed(texts: string[]): Promise<Float32Array[]> {
       seen.push(texts);
-      return baseEmbedder.embed(texts);
+      return await baseEmbedder.embed(texts);
     },
   };
 
   try {
-    const reader = new RecallReader({ db, embedder: spyEmbedder as any });
+    const reader = new RecallReader({ db, embedder: spyEmbedder });
     await reader.recall({
       query: "RAW QUERY STRING",
       project_id: "p1",
@@ -114,7 +115,7 @@ test("empty DB returns empty array", async () => {
   expect(results).toEqual([]);
 });
 
-function seedT0(eventId: string, text: string, ts: string) {
+function seedT0(eventId: string, text: string, ts: string): void {
   db.run(
     `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, payload_json, project_id)
      VALUES (?, ?, ?, 'mcp', 'u', 'm', 'request', 'local', ?, 'p1')`,
@@ -122,7 +123,7 @@ function seedT0(eventId: string, text: string, ts: string) {
   );
 }
 
-async function seedT2(memoryId: string, text: string, createdAt: string) {
+async function seedT2(memoryId: string, text: string, createdAt: string): Promise<void> {
   const embedder = new TestEmbedder({ dim: 384 });
   const [vec] = await embedder.embed([text]);
   db.run(
@@ -143,7 +144,7 @@ function vectorWithHead(value: number): Float32Array {
   return vec;
 }
 
-async function seedT1WithVector(rollupId: string, vec: Float32Array, createdAt: string) {
+function seedT1WithVector(rollupId: string, vec: Float32Array, createdAt: string): void {
   db.run(
     `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at,
                             n_events, last_response_excerpt, first_prompt_excerpt)
@@ -156,7 +157,7 @@ async function seedT1WithVector(rollupId: string, vec: Float32Array, createdAt: 
   db.run("INSERT INTO t1_vec(rowid, embedding) VALUES(?, ?)", [rowid, vec]);
 }
 
-async function seedT2WithVector(memoryId: string, vec: Float32Array, createdAt: string) {
+function seedT2WithVector(memoryId: string, vec: Float32Array, createdAt: string): void {
   db.run(
     `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, window_start, window_end,
                              title, body, created_at, updated_at)
@@ -309,35 +310,35 @@ test("oversampling retrieves a crowded-out t2 row and lets it survive fusion", a
   const fixedEmbedder = {
     name: "fixed-embedder",
     dim: 384,
-    async embed(_texts: string[]) {
-      return [queryVec];
+    embed(_texts: string[]): Promise<Float32Array[]> {
+      return Promise.resolve([queryVec]);
     },
   };
 
   for (let i = 1; i <= 19; i++) {
     const value = i / 1000;
-    await seedT1WithVector(
+    seedT1WithVector(
       `t1-rank-${i.toString().padStart(2, "0")}`,
       vectorWithHead(value),
       "2026-04-20T00:00:00Z",
     );
   }
-  await seedT1WithVector("shared-crowded", vectorWithHead(0.02), "2026-04-20T00:00:00Z");
+  seedT1WithVector("shared-crowded", vectorWithHead(0.02), "2026-04-20T00:00:00Z");
 
   for (let i = 1; i <= 21; i++) {
     const value = i / 1000;
-    await seedT2WithVector(
+    seedT2WithVector(
       `t2-rank-${i.toString().padStart(2, "0")}`,
       vectorWithHead(value),
       "2026-04-21T00:00:00Z",
     );
   }
-  await seedT2WithVector("shared-crowded", vectorWithHead(0.022), "2026-04-21T00:00:00Z");
+  seedT2WithVector("shared-crowded", vectorWithHead(0.022), "2026-04-21T00:00:00Z");
 
   const prev = process.env.PENUMBRA_T2_OVERSAMPLE_FACTOR;
   try {
     process.env.PENUMBRA_T2_OVERSAMPLE_FACTOR = "1";
-    const readerFactorOne = new RecallReader({ db, embedder: fixedEmbedder as any });
+    const readerFactorOne = new RecallReader({ db, embedder: fixedEmbedder });
     const factorOne = await readerFactorOne.recall({
       query: "crowded recall query",
       project_id: "p1",
@@ -348,7 +349,7 @@ test("oversampling retrieves a crowded-out t2 row and lets it survive fusion", a
     expect(factorOne.some((r) => r.id === "shared-crowded")).toBeFalse();
 
     process.env.PENUMBRA_T2_OVERSAMPLE_FACTOR = "3";
-    const readerFactorThree = new RecallReader({ db, embedder: fixedEmbedder as any });
+    const readerFactorThree = new RecallReader({ db, embedder: fixedEmbedder });
     const factorThree = await readerFactorThree.recall({
       query: "crowded recall query",
       project_id: "p1",
@@ -370,13 +371,13 @@ test("verified t2 boost is flag-gated and preserves default RRF ordering", async
   const fixedEmbedder = {
     name: "fixed-embedder",
     dim: 384,
-    async embed(_texts: string[]) {
-      return [queryVec];
+    embed(_texts: string[]): Promise<Float32Array[]> {
+      return Promise.resolve([queryVec]);
     },
   };
 
-  await seedT1WithVector("unverified-t1", vectorWithHead(0.001), "2026-04-20T00:00:00Z");
-  await seedT2WithVector("verified-t2", vectorWithHead(0.001), "2026-04-20T00:00:00Z");
+  seedT1WithVector("unverified-t1", vectorWithHead(0.001), "2026-04-20T00:00:00Z");
+  seedT2WithVector("verified-t2", vectorWithHead(0.001), "2026-04-20T00:00:00Z");
   db.run("UPDATE t2_memories SET last_verified_at = ? WHERE memory_id = ?", [
     new Date().toISOString(),
     "verified-t2",
@@ -397,7 +398,7 @@ test("verified t2 boost is flag-gated and preserves default RRF ordering", async
   const prev = process.env.PENUMBRA_RECALL_VERIFIED_BOOST;
   try {
     delete process.env.PENUMBRA_RECALL_VERIFIED_BOOST;
-    const readerDefault = new RecallReader({ db, embedder: fixedEmbedder as any });
+    const readerDefault = new RecallReader({ db, embedder: fixedEmbedder });
     const baseline = await readerDefault.recall({
       query: "verified boost query",
       project_id: "p1",
@@ -408,7 +409,7 @@ test("verified t2 boost is flag-gated and preserves default RRF ordering", async
     expect(baseline.map((r) => r.id).slice(0, 2)).toEqual(["unverified-t1", "verified-t2"]);
 
     process.env.PENUMBRA_RECALL_VERIFIED_BOOST = "1";
-    const readerBoosted = new RecallReader({ db, embedder: fixedEmbedder as any });
+    const readerBoosted = new RecallReader({ db, embedder: fixedEmbedder });
     const boosted = await readerBoosted.recall({
       query: "verified boost query",
       project_id: "p1",
@@ -435,18 +436,18 @@ test("verification_count is computed per-row (no cross-row contamination from th
   const fixedEmbedder = {
     name: "fixed-embedder",
     dim: 384,
-    async embed(_texts: string[]) {
-      return [queryVec];
+    embed(_texts: string[]): Promise<Float32Array[]> {
+      return Promise.resolve([queryVec]);
     },
   };
 
   // Closer (smaller distance) but unverified: should win without boost,
   // lose to the verified-but-farther row when the boost is enabled.
-  await seedT2WithVector("unverified-near", vectorWithHead(0.001), "2026-04-20T00:00:00Z");
+  seedT2WithVector("unverified-near", vectorWithHead(0.001), "2026-04-20T00:00:00Z");
   // Farther but has 3 verification events.
-  await seedT2WithVector("verified-far", vectorWithHead(0.002), "2026-04-20T00:00:00Z");
+  seedT2WithVector("verified-far", vectorWithHead(0.002), "2026-04-20T00:00:00Z");
   // A third memory whose verification rows should NOT bleed into the others.
-  await seedT2WithVector("verified-other", vectorWithHead(0.003), "2026-04-20T00:00:00Z");
+  seedT2WithVector("verified-other", vectorWithHead(0.003), "2026-04-20T00:00:00Z");
 
   for (const [eventId, memoryId] of [
     ["v1", "verified-far"],
@@ -465,7 +466,7 @@ test("verification_count is computed per-row (no cross-row contamination from th
   const prev = process.env.PENUMBRA_RECALL_VERIFIED_BOOST;
   try {
     process.env.PENUMBRA_RECALL_VERIFIED_BOOST = "1";
-    const reader = new RecallReader({ db, embedder: fixedEmbedder as any });
+    const reader = new RecallReader({ db, embedder: fixedEmbedder });
     const results = await reader.recall({
       query: "verification count regression",
       project_id: "p1",

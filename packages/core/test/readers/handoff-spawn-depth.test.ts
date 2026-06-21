@@ -1,13 +1,16 @@
-import { test, expect, beforeEach } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, expect, test } from "bun:test";
+
 import { migrate } from "../../src/db/migrations.js";
-import { HandoffReader } from "../../src/readers/handoff.js";
 import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { HandoffReader } from "../../src/readers/handoff.js";
 
 try {
   if (process.platform === "darwin")
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-} catch {}
+} catch {
+  // already loaded in this process
+}
 
 let db: Database;
 let reader: HandoffReader;
@@ -19,7 +22,7 @@ beforeEach(() => {
   reader = new HandoffReader({ db });
 });
 
-function insertHandoff(id: string, parent: string | null) {
+function insertHandoff(id: string, parent: string | null): void {
   db.prepare(
     `
     INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status, parent_handoff_id)

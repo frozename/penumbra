@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { expect, test } from "bun:test";
+
 import { applySchema } from "../../src/db/schema.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { getMemoryVerificationEvents } from "../../src/readers/memory-verification-events.js";
 
 test("getMemoryVerificationEvents clamps limit to a bounded range", () => {
@@ -37,7 +38,15 @@ test("getMemoryVerificationEvents clamps limit to a bounded range", () => {
       `INSERT INTO t2_memory_verification_events(
         event_id, memory_id, verifier_actor, claimed_by, reason, session_id, verified_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [`evt-${i}`, "memory-limit", "machine-1", null, null, null, `2026-05-12T12:0${i}:00.000Z`],
+      [
+        `evt-${String(i)}`,
+        "memory-limit",
+        "machine-1",
+        null,
+        null,
+        null,
+        `2026-05-12T12:0${String(i)}:00.000Z`,
+      ],
     );
   }
 

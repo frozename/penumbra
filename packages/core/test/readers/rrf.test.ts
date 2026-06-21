@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { fuseRRF, type RankedResult } from "../../src/readers/rrf.js";
 
 type Item = { tag: string };
@@ -72,11 +73,12 @@ test("three lists with full overlap", () => {
 });
 
 test("limit cap returns top-N", () => {
-  const lists: Array<Array<RankedResult<Item>>> = [];
+  const lists: RankedResult<Item>[][] = [];
   for (let listIndex = 0; listIndex < 5; listIndex++) {
-    const list: Array<RankedResult<Item>> = [];
+    const list: RankedResult<Item>[] = [];
     for (let i = 0; i < 100; i++) {
-      list.push(rr(`${listIndex}-${i}`, 1 - i / 1000, `${listIndex}-${i}`));
+      const key = `${String(listIndex)}-${String(i)}`;
+      list.push(rr(key, 1 - i / 1000, key));
     }
     lists.push(list);
   }

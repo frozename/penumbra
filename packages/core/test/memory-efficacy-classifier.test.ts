@@ -1,21 +1,26 @@
 import { expect, test, vi } from "bun:test";
-import { classifyFindings } from "../src/services/memory-efficacy-classifier.js";
-import type { Finding } from "../src/services/memory-efficacy-classifier.js";
+
 import type { JudgeChatFn } from "../src/services/judge-chat.js";
+import type { Finding } from "../src/services/memory-efficacy-classifier.js";
+
+import { classifyFindings } from "../src/services/memory-efficacy-classifier.js";
 
 test("classifyFindings includes the tight reason cap guidance in the prompt", async () => {
-  const judgeChat: JudgeChatFn = vi.fn(async ({ messages }) => {
-    const content = messages[0]?.content ?? "";
+  const impl: JudgeChatFn = (opts) => {
+    const content = opts.messages[0]?.content ?? "";
     expect(content).toContain('reason": "<= 80 chars, fragment, no clauses>"');
     expect(content).toContain("Worked examples (read these first):");
     expect(content).toContain("Example 1 → missed_registration");
     expect(content).toContain("Example 2 → recall_miss");
     expect(content).toContain("Example 3 → memory_ignored");
     expect(content).toContain("Now classify this finding:");
-    return JSON.stringify([
-      { findingId: "finding-1", classification: "not_memory_related", reason: "stubbed" },
-    ]);
-  });
+    return Promise.resolve(
+      JSON.stringify([
+        { findingId: "finding-1", classification: "not_memory_related", reason: "stubbed" },
+      ]),
+    );
+  };
+  const judgeChat = vi.fn(impl);
 
   await classifyFindings(
     [{ findingId: "finding-1", severity: "High", text: "Example finding", index: 1 }],
@@ -28,23 +33,26 @@ test("classifyFindings includes the tight reason cap guidance in the prompt", as
 
 test("classifyFindings sends findings in batches of five", async () => {
   const calls: number[] = [];
-  const judgeChat: JudgeChatFn = vi.fn(async ({ messages }) => {
-    const content = messages[0]?.content ?? "";
+  const impl: JudgeChatFn = (opts) => {
+    const content = opts.messages[0]?.content ?? "";
     const batchSize = content.split("\n").filter((line) => /^finding-\d+\./.test(line)).length;
     calls.push(batchSize);
-    return JSON.stringify(
-      Array.from({ length: batchSize }, (_, index) => ({
-        findingId: `finding-${calls.length}-${index + 1}`,
-        classification: "not_memory_related",
-        reason: "stubbed",
-      })),
+    return Promise.resolve(
+      JSON.stringify(
+        Array.from({ length: batchSize }, (_, index) => ({
+          findingId: `finding-${String(calls.length)}-${String(index + 1)}`,
+          classification: "not_memory_related",
+          reason: "stubbed",
+        })),
+      ),
     );
-  });
+  };
+  const judgeChat = vi.fn(impl);
 
   const findings: Finding[] = Array.from({ length: 12 }, (_, index) => ({
-    findingId: `finding-${index + 1}`,
+    findingId: `finding-${String(index + 1)}`,
     severity: index % 2 === 0 ? "High" : null,
-    text: `Finding ${index + 1}`,
+    text: `Finding ${String(index + 1)}`,
     index,
   }));
 
@@ -59,26 +67,31 @@ test("classifyFindings sends findings in batches of five", async () => {
 });
 
 test("classifyFindings handles malformed JSON, throws, and partial batch success", async () => {
-  const judgeChat: JudgeChatFn = vi.fn(async ({ messages }) => {
-    const content = messages[0]?.content ?? "";
+  const impl: JudgeChatFn = (opts) => {
+    const content = opts.messages[0]?.content ?? "";
     if (/^finding-1\./m.test(content)) {
-      return JSON.stringify([
-        { findingId: "finding-1", classification: "recall_miss", reason: "ok" },
-        { findingId: "finding-2", classification: "memory_ignored", reason: "ok" },
-        { findingId: "finding-3", classification: "not_memory_related", reason: "ok" },
-        { findingId: "finding-4", classification: "missed_registration", reason: "ok" },
-        { findingId: "finding-5", classification: "recall_miss", reason: "ok" },
-      ]);
+      return Promise.resolve(
+        JSON.stringify([
+          { findingId: "finding-1", classification: "recall_miss", reason: "ok" },
+          { findingId: "finding-2", classification: "memory_ignored", reason: "ok" },
+          { findingId: "finding-3", classification: "not_memory_related", reason: "ok" },
+          { findingId: "finding-4", classification: "missed_registration", reason: "ok" },
+          { findingId: "finding-5", classification: "recall_miss", reason: "ok" },
+        ]),
+      );
     }
-    if (content.includes("finding-6")) return "not-json";
+    if (content.includes("finding-6")) return Promise.resolve("not-json");
     throw new Error("boom");
-  });
+  };
+  const judgeChat = vi.fn(impl);
 
-  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {
+    /* suppress noise */
+  });
   const findings: Finding[] = Array.from({ length: 10 }, (_, index) => ({
-    findingId: `finding-${index + 1}`,
+    findingId: `finding-${String(index + 1)}`,
     severity: "High",
-    text: `Finding ${index + 1}`,
+    text: `Finding ${String(index + 1)}`,
     index,
   }));
 

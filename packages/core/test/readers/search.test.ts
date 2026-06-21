@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { describe, expect, test } from "bun:test";
+
 import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { search } from "../../src/readers/search.js";
 
 try {
@@ -12,7 +13,7 @@ try {
   // already loaded
 }
 
-function freshDb() {
+function freshDb(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 4 });

@@ -1,12 +1,15 @@
-import { beforeEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, it } from "bun:test";
+
 import { loadSqliteVec, migrate } from "../../src/index.js";
 import { readFleetLatency } from "../../src/readers/fleet-latency.js";
 
 if (process.platform === "darwin") {
   try {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-  } catch {}
+  } catch {
+    // already loaded in this process
+  }
 }
 
 describe("readFleetLatency", () => {
@@ -18,7 +21,7 @@ describe("readFleetLatency", () => {
     migrate(db, { embeddingDim: 384 });
   });
 
-  function insertHandoff(handoffId: string, agent: string, status = "completed") {
+  function insertHandoff(handoffId: string, agent: string, status = "completed"): void {
     db.prepare(
       `
       INSERT INTO handoffs (
@@ -42,7 +45,7 @@ describe("readFleetLatency", () => {
     );
   }
 
-  function insertDispatchEnd(handoffId: string, ts: string, wallMs: number | null) {
+  function insertDispatchEnd(handoffId: string, ts: string, wallMs: number | null): void {
     db.prepare(
       `
       INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
@@ -52,13 +55,17 @@ describe("readFleetLatency", () => {
       handoffId,
       "worker-1",
       ts,
-      wallMs == null
+      wallMs === null
         ? JSON.stringify({ status: "ok" })
         : JSON.stringify({ status: "ok", wall_ms: wallMs }),
     );
   }
 
-  function insertPerformance(handoffId: string, agent: string, frameworkOverheadMs: number | null) {
+  function insertPerformance(
+    handoffId: string,
+    agent: string,
+    frameworkOverheadMs: number | null,
+  ): void {
     db.prepare(
       `
       INSERT INTO agent_performance (
@@ -92,7 +99,7 @@ describe("readFleetLatency", () => {
     kind: "acp.server.start" | "acp.session.reuse" | "acp.session.start",
     ts: string,
     frameworkOverheadMs?: number,
-  ) {
+  ): void {
     db.prepare(
       `
       INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
@@ -116,7 +123,7 @@ describe("readFleetLatency", () => {
     ts: string,
     wallMs: number,
     frameworkOverheadMs: number,
-  ) {
+  ): void {
     db.prepare(
       `
       INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)

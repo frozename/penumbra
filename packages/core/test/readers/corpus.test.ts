@@ -1,20 +1,23 @@
-import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
+
+import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { TestEmbedder } from "../../src/embedder/test-embedder.js";
+import { buildCorpus, listCorpora, queryCorpus, removeCorpus } from "../../src/readers/corpus.js";
 try {
   if (process.platform === "darwin")
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-} catch {}
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { migrate } from "../../src/db/migrations.js";
-import { TestEmbedder } from "../../src/embedder/test-embedder.js";
-import { buildCorpus, listCorpora, queryCorpus, removeCorpus } from "../../src/readers/corpus.js";
+} catch {
+  // already loaded in this process
+}
 
 class FixedEmbedder {
   readonly name = "fixed";
   readonly dim = 2;
 
-  async embed(texts: string[]): Promise<Float32Array[]> {
-    return texts.map(() => new Float32Array([1, 0]));
+  embed(texts: string[]): Promise<Float32Array[]> {
+    return Promise.resolve(texts.map(() => new Float32Array([1, 0])));
   }
 }
 
@@ -22,7 +25,7 @@ const insertT2 = (
   db: Database,
   id: string,
   opts: { obs_type?: string; concepts?: string[]; body?: string; vec?: number[] } = {},
-) => {
+): void => {
   const obs_type = opts.obs_type ?? null;
   const concepts = opts.concepts ? JSON.stringify(opts.concepts) : null;
   const body = opts.body ?? "b";
@@ -147,11 +150,11 @@ describe("corpus", () => {
     insertT2(db, "orthogonal", { obs_type: "feature", body: "orthogonal", vec: [0, 1] });
     insertT2(db, "opposite", { obs_type: "feature", body: "opposite", vec: [-1, 0] });
 
-    await buildCorpus(db, new FixedEmbedder() as unknown as TestEmbedder, {
+    await buildCorpus(db, new FixedEmbedder(), {
       name: "all",
       filter: { obs_type: "feature" },
     });
-    const out = await queryCorpus(db, new FixedEmbedder() as unknown as TestEmbedder, {
+    const out = await queryCorpus(db, new FixedEmbedder(), {
       name: "all",
       query: "ignored",
       limit: 4,

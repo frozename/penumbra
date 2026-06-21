@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { describe, expect, test } from "bun:test";
+
 import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { timeline } from "../../src/readers/timeline.js";
 
 try {
@@ -12,7 +13,7 @@ try {
   // already loaded
 }
 
-function freshDb() {
+function freshDb(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 4 });
@@ -89,26 +90,12 @@ describe("timeline (chronological neighbors)", () => {
 
     const out = timeline(db, { anchor: "anchor", depth_before: 1, depth_after: 1, now });
     expect(out).toHaveLength(3);
-    expect(out).toContainEqual(
-      expect.objectContaining({
-        id: "fresh",
-        age_days: expect.any(Number),
-        stale: false,
-      }),
-    );
-    expect(out).toContainEqual(
-      expect.objectContaining({
-        id: "anchor",
-        age_days: expect.any(Number),
-        stale: false,
-      }),
-    );
-    expect(out).toContainEqual(
-      expect.objectContaining({
-        id: "stale",
-        age_days: expect.any(Number),
-        stale: true,
-      }),
-    );
+    const byId = new Map(out.map((row) => [row.id, row]));
+    expect(byId.get("fresh")?.stale).toBe(false);
+    expect(typeof byId.get("fresh")?.age_days).toBe("number");
+    expect(byId.get("anchor")?.stale).toBe(false);
+    expect(typeof byId.get("anchor")?.age_days).toBe("number");
+    expect(byId.get("stale")?.stale).toBe(true);
+    expect(typeof byId.get("stale")?.age_days).toBe("number");
   });
 });

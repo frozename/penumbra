@@ -1,9 +1,10 @@
-import { beforeEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { beforeEach, expect, test } from "bun:test";
+
 import { migrate } from "../../src/db/migrations.js";
-import { queryT0, RecallReader } from "../../src/readers/recall.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { TestEmbedder } from "../../src/embedder/test-embedder.js";
+import { queryT0, RecallReader } from "../../src/readers/recall.js";
 
 // On macOS, Bun uses the Apple SQLite build which disables extension loading.
 // Switch to Homebrew's full-featured SQLite before any Database is created.
@@ -33,7 +34,7 @@ function insertT0Event(opts: {
   ts?: string;
   event_type?: string;
   payload_json: unknown;
-}) {
+}): void {
   const ts = opts.ts ?? "2026-04-27T00:00:00Z";
   db.run(
     `INSERT INTO t0_events(
@@ -100,7 +101,7 @@ test("backfill populates t0_fts for existing rows", () => {
   const db2 = new Database(":memory:");
   loadSqliteVec(db2);
 
-  db2.exec(`
+  db2.run(`
     CREATE TABLE IF NOT EXISTS t0_events (
       event_id         TEXT PRIMARY KEY,
       ts               TEXT NOT NULL,

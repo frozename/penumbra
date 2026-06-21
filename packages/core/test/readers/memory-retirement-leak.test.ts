@@ -1,12 +1,13 @@
-import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { describe, expect, test } from "bun:test";
+
 import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { TestEmbedder } from "../../src/embedder/test-embedder.js";
+import { getObservations } from "../../src/readers/get-observations.js";
 import { RecallReader } from "../../src/readers/recall.js";
 import { search } from "../../src/readers/search.js";
 import { timeline } from "../../src/readers/timeline.js";
-import { getObservations } from "../../src/readers/get-observations.js";
 
 try {
   if (process.platform === "darwin") {
@@ -18,7 +19,7 @@ try {
 
 const EMBEDDING_DIM = 384;
 
-function freshDb() {
+function freshDb(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: EMBEDDING_DIM });
@@ -108,7 +109,9 @@ describe("retired t2 memory filtering across recall surfaces", () => {
       sources: ["t2"],
     });
     const recallIds = recallHits.map((hit) => hit.id);
-    expect(recallIds).toEqual(expect.arrayContaining(["m1", "m3", "m4"]));
+    expect(recallIds).toContain("m1");
+    expect(recallIds).toContain("m3");
+    expect(recallIds).toContain("m4");
     expect(recallIds).not.toContain("m2-retired");
 
     const searchHits = search(db, {
@@ -119,7 +122,9 @@ describe("retired t2 memory filtering across recall surfaces", () => {
       tiers: ["t2"],
     });
     const searchIds = searchHits.map((hit) => hit.id);
-    expect(searchIds).toEqual(expect.arrayContaining(["m1", "m3", "m4"]));
+    expect(searchIds).toContain("m1");
+    expect(searchIds).toContain("m3");
+    expect(searchIds).toContain("m4");
     expect(searchIds).not.toContain("m2-retired");
 
     const retiredAnchorTimeline = timeline(db, {

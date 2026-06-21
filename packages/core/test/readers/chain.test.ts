@@ -1,5 +1,11 @@
-import { expect, test, beforeEach } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, expect, test } from "bun:test";
+
+import type { HandoffStatus } from "../../src/schemas/handoff.js";
+
+import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { ChainReader } from "../../src/readers/chain.js";
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
@@ -7,10 +13,6 @@ try {
 } catch {
   // already loaded in this process
 }
-import { migrate } from "../../src/db/migrations.js";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { ChainReader } from "../../src/readers/chain.js";
-import type { HandoffStatus } from "../../src/schemas/handoff.js";
 
 let db: Database;
 let reader: ChainReader;
@@ -136,7 +138,7 @@ function listChainsLegacy(opts: {
     LIMIT ? OFFSET ?
   `;
   params.push(opts.limit, opts.offset);
-  return db.query(sql).all(...params) as unknown[];
+  return db.query(sql).all(...params);
 }
 
 beforeEach(() => {
@@ -257,12 +259,12 @@ test("listChains rewrite matches legacy query result-for-result on a multi-conve
     to_agent: "codex",
   });
 
-  const cases: Array<{
+  const cases: {
     status?: HandoffStatus;
     project_id?: string;
     limit: number;
     offset: number;
-  }> = [
+  }[] = [
     { limit: 100, offset: 0 },
     { limit: 2, offset: 0 },
     { limit: 2, offset: 2 },
@@ -287,7 +289,7 @@ test("listChains returns empty result on empty handoffs table", () => {
 test("getMessages applies high default limit but does not truncate normal reads", () => {
   for (let i = 0; i < 5; i++) {
     insertEvent({
-      event_id: `ev-${i}`,
+      event_id: `ev-${String(i)}`,
       ts: isoAt(i),
       session_id: "c1",
       event_type: "user-prompt",
@@ -302,7 +304,7 @@ test("getMessages applies high default limit but does not truncate normal reads"
 test("getMessages honors explicit limit and offset for pagination", () => {
   for (let i = 0; i < 6; i++) {
     insertEvent({
-      event_id: `ev-${i}`,
+      event_id: `ev-${String(i)}`,
       ts: isoAt(i),
       session_id: "c1",
       event_type: "user-prompt",
@@ -331,7 +333,7 @@ test("getMessages caps pathological conversations at the safe default", () => {
 test("getMessages before_ts cursor returns only events strictly before the cursor", () => {
   for (let i = 0; i < 5; i++) {
     insertEvent({
-      event_id: `ev-${i}`,
+      event_id: `ev-${String(i)}`,
       ts: isoAt(i),
       session_id: "c1",
       event_type: "user-prompt",

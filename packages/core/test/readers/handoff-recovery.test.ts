@@ -1,6 +1,9 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- test fixtures and sqlite row mocks intentionally use loose shapes */
-import { expect, test, beforeEach } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, expect, test } from "bun:test";
+
+import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { HandoffReader } from "../../src/readers/handoff.js";
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
@@ -8,9 +11,6 @@ try {
 } catch {
   // already loaded in this process
 }
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { migrate } from "../../src/db/migrations.js";
-import { HandoffReader } from "../../src/readers/handoff.js";
 
 let db: Database;
 let reader: HandoffReader;
@@ -39,6 +39,6 @@ test("listOrphanedDispatches happy path", () => {
 
   const results = reader.listOrphanedDispatches(["dead-1", "dead-2"]);
   expect(results).toHaveLength(2);
-  const ids = results.map((r: any) => r.handoff_id).sort();
+  const ids = results.map((r) => r.handoff_id).sort();
   expect(ids).toEqual(["h-1", "h-2"]);
 });

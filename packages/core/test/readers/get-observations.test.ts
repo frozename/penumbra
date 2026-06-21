@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { describe, expect, test } from "bun:test";
+
 import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { getObservations } from "../../src/readers/get-observations.js";
 
 try {
@@ -12,7 +13,7 @@ try {
   // already loaded
 }
 
-function freshDb() {
+function freshDb(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 4 });
@@ -70,21 +71,17 @@ describe("getObservations", () => {
 
     const out = getObservations(db, { ids: ["fresh", "stale"] });
     expect(out).toHaveLength(2);
-    expect(out[0]).toMatchObject({
-      id: "fresh",
-      age_days: expect.any(Number),
-      stale: false,
-    });
-    expect(out[1]).toMatchObject({
-      id: "stale",
-      age_days: expect.any(Number),
-      stale: true,
-    });
+    expect(out[0]?.id).toBe("fresh");
+    expect(out[0]?.stale).toBe(false);
+    expect(typeof out[0]?.age_days).toBe("number");
+    expect(out[1]?.id).toBe("stale");
+    expect(out[1]?.stale).toBe(true);
+    expect(typeof out[1]?.age_days).toBe("number");
   });
 
   test("respects requested order", () => {
     const db = freshDb();
-    const insert = (id: string) =>
+    const insert = (id: string): void => {
       db.run(
         `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids,
                                  window_start, window_end, title, body, metadata_json,
@@ -93,6 +90,7 @@ describe("getObservations", () => {
                  '2026-05-03', '2026-05-03')`,
         [id],
       );
+    };
     insert("a");
     insert("b");
     insert("c");

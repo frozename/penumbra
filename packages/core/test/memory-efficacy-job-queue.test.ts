@@ -1,13 +1,23 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- test fixtures and sqlite row mocks intentionally use loose shapes */
-import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadSqliteVec } from "../src/db/sqlite-vec.js";
-import { applySchema } from "../src/db/schema.js";
-import { buildMemoryEfficacyCache } from "../src/readers/memory-efficacy.js";
+
 import type { JudgeChatFn } from "../src/services/judge-chat.js";
+
+import { applySchema } from "../src/db/schema.js";
+import { loadSqliteVec } from "../src/db/sqlite-vec.js";
+import {
+  claimNextJob,
+  completeJob,
+  enqueueMemoryEfficacyJob,
+  getJobStatus,
+  heartbeatJob,
+  listRecentJobs,
+  sweepStaleJobs,
+} from "../src/readers/memory-efficacy-jobs.js";
+import { buildMemoryEfficacyCache } from "../src/readers/memory-efficacy.js";
 
 try {
   if (process.platform === "darwin") {
@@ -17,32 +27,14 @@ try {
   // already loaded in this process
 }
 
-function freshDb() {
+function freshDb(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   applySchema(db);
   return db;
 }
 
-// Dynamic import after schema/file creation
-let enqueueMemoryEfficacyJob: any;
-let claimNextJob: any;
-let heartbeatJob: any;
-let sweepStaleJobs: any;
-let completeJob: any;
-let getJobStatus: any;
-let listRecentJobs: any;
-
 test("enqueue, claim, complete cycle via memory-efficacy-jobs reader/writer", async () => {
-  const mod = await import("../src/readers/memory-efficacy-jobs.js");
-  enqueueMemoryEfficacyJob = mod.enqueueMemoryEfficacyJob;
-  claimNextJob = mod.claimNextJob;
-  heartbeatJob = mod.heartbeatJob;
-  sweepStaleJobs = mod.sweepStaleJobs;
-  completeJob = mod.completeJob;
-  getJobStatus = mod.getJobStatus;
-  listRecentJobs = mod.listRecentJobs;
-
   const root = mkdtempSync(join(tmpdir(), "penumbra-jobqueue-"));
   const reviewDir = join(root, ".penumbra", "reviews", "2026-05-01T12-00-00");
   mkdirSync(reviewDir, { recursive: true });
@@ -58,15 +50,17 @@ test("enqueue, claim, complete cycle via memory-efficacy-jobs reader/writer", as
 
   writeFileSync(join(reviewDir, "synthesis.md"), synthesis, "utf8");
 
-  const stubChat: JudgeChatFn = async () =>
-    JSON.stringify([
-      { findingId: "f0", classification: "missed_registration", reason: "No memory entry found" },
-      {
-        findingId: "f1",
-        classification: "memory_ignored",
-        reason: "Memory existed but was ignored",
-      },
-    ]);
+  const stubChat: JudgeChatFn = () =>
+    Promise.resolve(
+      JSON.stringify([
+        { findingId: "f0", classification: "missed_registration", reason: "No memory entry found" },
+        {
+          findingId: "f1",
+          classification: "memory_ignored",
+          reason: "Memory existed but was ignored",
+        },
+      ]),
+    );
 
   const db = freshDb();
   const now = new Date("2026-05-01T13:00:00Z").toISOString();
@@ -145,14 +139,7 @@ test("enqueue, claim, complete cycle via memory-efficacy-jobs reader/writer", as
   rmSync(root, { recursive: true, force: true });
 });
 
-test("stale running job is reclaimed after lease expiry and can be claimed again", async () => {
-  const mod = await import("../src/readers/memory-efficacy-jobs.js");
-  enqueueMemoryEfficacyJob = mod.enqueueMemoryEfficacyJob;
-  claimNextJob = mod.claimNextJob;
-  heartbeatJob = mod.heartbeatJob;
-  sweepStaleJobs = mod.sweepStaleJobs;
-  getJobStatus = mod.getJobStatus;
-
+test("stale running job is reclaimed after lease expiry and can be claimed again", () => {
   const db = freshDb();
   const enqueued = enqueueMemoryEfficacyJob(db, {
     reviewsDir: "/tmp/reviews",
@@ -189,13 +176,7 @@ test("stale running job is reclaimed after lease expiry and can be claimed again
   expect(getJobStatus(db, enqueued.job_id)!.claimed_by).toBe("worker-b");
 });
 
-test("failure path: completeJob with error sets status=failed and error_message", async () => {
-  const mod = await import("../src/readers/memory-efficacy-jobs.js");
-  enqueueMemoryEfficacyJob = mod.enqueueMemoryEfficacyJob;
-  claimNextJob = mod.claimNextJob;
-  completeJob = mod.completeJob;
-  getJobStatus = mod.getJobStatus;
-
+test("failure path: completeJob with error sets status=failed and error_message", () => {
   const db = freshDb();
   const now = new Date().toISOString();
 
@@ -218,14 +199,7 @@ test("failure path: completeJob with error sets status=failed and error_message"
   expect(status!.scanned).toBeNull();
 });
 
-test("stale worker loses terminal write after reclaim", async () => {
-  const mod = await import("../src/readers/memory-efficacy-jobs.js");
-  enqueueMemoryEfficacyJob = mod.enqueueMemoryEfficacyJob;
-  claimNextJob = mod.claimNextJob;
-  sweepStaleJobs = mod.sweepStaleJobs;
-  completeJob = mod.completeJob;
-  getJobStatus = mod.getJobStatus;
-
+test("stale worker loses terminal write after reclaim", () => {
   const db = freshDb();
   const enqueued = enqueueMemoryEfficacyJob(db, {
     reviewsDir: "/tmp/reviews",

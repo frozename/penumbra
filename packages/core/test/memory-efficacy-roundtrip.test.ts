@@ -1,15 +1,17 @@
-import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadSqliteVec } from "../src/db/sqlite-vec.js";
-import { applySchema } from "../src/db/schema.js";
-import {
-  getMemoryEfficacyRecent,
-  buildMemoryEfficacyCache,
-} from "../src/readers/memory-efficacy.js";
+
 import type { JudgeChatFn } from "../src/services/judge-chat.js";
+
+import { applySchema } from "../src/db/schema.js";
+import { loadSqliteVec } from "../src/db/sqlite-vec.js";
+import {
+  buildMemoryEfficacyCache,
+  getMemoryEfficacyRecent,
+} from "../src/readers/memory-efficacy.js";
 
 try {
   if (process.platform === "darwin") {
@@ -19,12 +21,24 @@ try {
   // already loaded in this process
 }
 
-function freshDb() {
+function freshDb(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   applySchema(db);
   return db;
 }
+
+// Capture the rejection from a promise so assertions can run against the
+// caught error. Sidesteps the bun-types type gap where `.rejects.X()` is
+// declared `void` but returns a Promise at runtime.
+const catchRejection = async (promise: Promise<unknown>): Promise<unknown> => {
+  try {
+    await promise;
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected promise to reject");
+};
 
 test("buildMemoryEfficacyCache classifies findings and getMemoryEfficacyRecent reads them", async () => {
   const root = mkdtempSync(join(tmpdir(), "penumbra-efficacy-"));
@@ -43,20 +57,22 @@ test("buildMemoryEfficacyCache classifies findings and getMemoryEfficacyRecent r
 
   writeFileSync(join(reviewDir, "synthesis.md"), synthesis, "utf8");
 
-  const stubChat: JudgeChatFn = async () =>
-    JSON.stringify([
-      { findingId: "finding-1", classification: "recall_miss", reason: "stubbed classification" },
-      {
-        findingId: "finding-2",
-        classification: "memory_ignored",
-        reason: "stubbed classification",
-      },
-      {
-        findingId: "finding-3",
-        classification: "not_memory_related",
-        reason: "stubbed classification",
-      },
-    ]);
+  const stubChat: JudgeChatFn = () =>
+    Promise.resolve(
+      JSON.stringify([
+        { findingId: "finding-1", classification: "recall_miss", reason: "stubbed classification" },
+        {
+          findingId: "finding-2",
+          classification: "memory_ignored",
+          reason: "stubbed classification",
+        },
+        {
+          findingId: "finding-3",
+          classification: "not_memory_related",
+          reason: "stubbed classification",
+        },
+      ]),
+    );
 
   const db = freshDb();
 
@@ -110,7 +126,8 @@ test("buildMemoryEfficacyCache classifies multiple outer batches in parallel wit
 
   const inputFindings = Array.from(
     { length: 30 },
-    (_, index) => `${index + 1}. **High — Parallel finding ${index + 1}** (architect).`,
+    (_, index) =>
+      `${String(index + 1)}. **High — Parallel finding ${String(index + 1)}** (architect).`,
   ).join("\n");
 
   writeFileSync(
@@ -126,7 +143,7 @@ test("buildMemoryEfficacyCache classifies multiple outer batches in parallel wit
   const stubChat: JudgeChatFn = async ({ messages }) => {
     const content = messages[0]?.content ?? "";
     const batchFindings = content.split("\n").filter((line) => /^[^.]+\./.test(line));
-    siriusCallOrder.push(batchFindings[0]?.match(/^([^.]+)\./)?.[1] ?? "unknown");
+    siriusCallOrder.push(/^([^.]+)\./.exec(batchFindings[0] ?? "")?.[1] ?? "unknown");
     currentInFlight += 1;
     peakInFlight = Math.max(peakInFlight, currentInFlight);
     siriusCalls += 1;
@@ -134,8 +151,8 @@ test("buildMemoryEfficacyCache classifies multiple outer batches in parallel wit
     currentInFlight -= 1;
     return JSON.stringify(
       batchFindings.map((line) => {
-        const findingId = line.match(/^([^.]+)\./)?.[1] ?? "missing";
-        const findingNumber = Number(line.match(/Parallel finding (\d+)/)?.[1] ?? NaN);
+        const findingId = /^([^.]+)\./.exec(line)?.[1] ?? "missing";
+        const findingNumber = Number(/Parallel finding (\d+)/.exec(line)?.[1] ?? NaN);
         return {
           findingId,
           classification:
@@ -180,34 +197,31 @@ test("buildMemoryEfficacyCache validates caller concurrency bounds", async () =>
   const db = freshDb();
   const baseOpts = {
     reviewsDir: "/tmp/missing-reviews",
-    judgeChat: async () => "[]",
+    judgeChat: (): Promise<string> => Promise.resolve("[]"),
     model: "test",
   };
 
-  await expect(buildMemoryEfficacyCache(db, { ...baseOpts, concurrency: 0 })).rejects.toThrow(
+  const err0 = await catchRejection(buildMemoryEfficacyCache(db, { ...baseOpts, concurrency: 0 }));
+  expect((err0 as Error).message).toBe(
     "buildMemoryEfficacyCache: concurrency must be integer in [1, 32], got 0",
   );
-  await expect(buildMemoryEfficacyCache(db, { ...baseOpts, concurrency: 33 })).rejects.toThrow(
+  const err33 = await catchRejection(
+    buildMemoryEfficacyCache(db, { ...baseOpts, concurrency: 33 }),
+  );
+  expect((err33 as Error).message).toBe(
     "buildMemoryEfficacyCache: concurrency must be integer in [1, 32], got 33",
   );
-  await expect(buildMemoryEfficacyCache(db, { ...baseOpts, concurrency: 1.5 })).rejects.toThrow(
+  const errFractional = await catchRejection(
+    buildMemoryEfficacyCache(db, { ...baseOpts, concurrency: 1.5 }),
+  );
+  expect((errFractional as Error).message).toBe(
     "buildMemoryEfficacyCache: concurrency must be integer in [1, 32], got 1.5",
   );
 
-  await expect(
-    buildMemoryEfficacyCache(db, { ...baseOpts, concurrency: 1 }),
-  ).resolves.toMatchObject({
-    scanned: 0,
-    classified: 0,
-    skipped: 0,
-  });
-  await expect(
-    buildMemoryEfficacyCache(db, { ...baseOpts, concurrency: 32 }),
-  ).resolves.toMatchObject({
-    scanned: 0,
-    classified: 0,
-    skipped: 0,
-  });
+  const ok1 = await buildMemoryEfficacyCache(db, { ...baseOpts, concurrency: 1 });
+  expect(ok1).toMatchObject({ scanned: 0, classified: 0, skipped: 0 });
+  const ok32 = await buildMemoryEfficacyCache(db, { ...baseOpts, concurrency: 32 });
+  expect(ok32).toMatchObject({ scanned: 0, classified: 0, skipped: 0 });
 });
 
 test("parseFindings handles bolded severity findings and bare bold titles", async () => {
@@ -228,25 +242,27 @@ test("parseFindings handles bolded severity findings and bare bold titles", asyn
 
   writeFileSync(join(reviewDir, "synthesis.md"), synthesis, "utf8");
 
-  const stubChat: JudgeChatFn = async () =>
-    JSON.stringify([
-      { findingId: "finding-1", classification: "recall_miss", reason: "stubbed classification" },
-      {
-        findingId: "finding-2",
-        classification: "memory_ignored",
-        reason: "stubbed classification",
-      },
-      {
-        findingId: "finding-3",
-        classification: "not_memory_related",
-        reason: "stubbed classification",
-      },
-      {
-        findingId: "finding-4",
-        classification: "missed_registration",
-        reason: "stubbed classification",
-      },
-    ]);
+  const stubChat: JudgeChatFn = () =>
+    Promise.resolve(
+      JSON.stringify([
+        { findingId: "finding-1", classification: "recall_miss", reason: "stubbed classification" },
+        {
+          findingId: "finding-2",
+          classification: "memory_ignored",
+          reason: "stubbed classification",
+        },
+        {
+          findingId: "finding-3",
+          classification: "not_memory_related",
+          reason: "stubbed classification",
+        },
+        {
+          findingId: "finding-4",
+          classification: "missed_registration",
+          reason: "stubbed classification",
+        },
+      ]),
+    );
 
   const db = freshDb();
   const result = await buildMemoryEfficacyCache(db, {
@@ -309,25 +325,27 @@ test("parseFindings handles real synthesis envelopes and skips malformed lines",
 
   writeFileSync(join(reviewDir, "synthesis.md"), synthesis, "utf8");
 
-  const stubChat: JudgeChatFn = async () =>
-    JSON.stringify([
-      { findingId: "finding-1", classification: "recall_miss", reason: "stubbed classification" },
-      {
-        findingId: "finding-2",
-        classification: "memory_ignored",
-        reason: "stubbed classification",
-      },
-      {
-        findingId: "finding-3",
-        classification: "not_memory_related",
-        reason: "stubbed classification",
-      },
-      {
-        findingId: "finding-4",
-        classification: "missed_registration",
-        reason: "stubbed classification",
-      },
-    ]);
+  const stubChat: JudgeChatFn = () =>
+    Promise.resolve(
+      JSON.stringify([
+        { findingId: "finding-1", classification: "recall_miss", reason: "stubbed classification" },
+        {
+          findingId: "finding-2",
+          classification: "memory_ignored",
+          reason: "stubbed classification",
+        },
+        {
+          findingId: "finding-3",
+          classification: "not_memory_related",
+          reason: "stubbed classification",
+        },
+        {
+          findingId: "finding-4",
+          classification: "missed_registration",
+          reason: "stubbed classification",
+        },
+      ]),
+    );
 
   const db = freshDb();
   const result = await buildMemoryEfficacyCache(db, {
@@ -370,15 +388,21 @@ test("parseFindings accepts legacy bracketed severity findings", async () => {
   const db = freshDb();
   const result = await buildMemoryEfficacyCache(db, {
     reviewsDir: join(root, ".penumbra", "reviews"),
-    judgeChat: async () =>
-      JSON.stringify([
-        { findingId: "finding-1", classification: "recall_miss", reason: "stubbed classification" },
-        {
-          findingId: "finding-2",
-          classification: "memory_ignored",
-          reason: "stubbed classification",
-        },
-      ]),
+    judgeChat: () =>
+      Promise.resolve(
+        JSON.stringify([
+          {
+            findingId: "finding-1",
+            classification: "recall_miss",
+            reason: "stubbed classification",
+          },
+          {
+            findingId: "finding-2",
+            classification: "memory_ignored",
+            reason: "stubbed classification",
+          },
+        ]),
+      ),
     model: "test",
   });
 
@@ -399,7 +423,7 @@ test("parseFindings accepts legacy bracketed severity findings", async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test("getMemoryEfficacyRecent includes raw response only when requested", async () => {
+test("getMemoryEfficacyRecent includes raw response only when requested", () => {
   const db = freshDb();
   db.query(
     `INSERT INTO memory_efficacy_cache (
@@ -452,15 +476,17 @@ test("buildMemoryEfficacyCache preserves classifications for same-index findings
     "utf8",
   );
 
-  const stubChat: JudgeChatFn = async () =>
-    JSON.stringify([
-      { findingId: "finding-a", classification: "recall_miss", reason: "stubbed classification" },
-      {
-        findingId: "finding-b",
-        classification: "memory_ignored",
-        reason: "stubbed classification",
-      },
-    ]);
+  const stubChat: JudgeChatFn = () =>
+    Promise.resolve(
+      JSON.stringify([
+        { findingId: "finding-a", classification: "recall_miss", reason: "stubbed classification" },
+        {
+          findingId: "finding-b",
+          classification: "memory_ignored",
+          reason: "stubbed classification",
+        },
+      ]),
+    );
 
   const db = freshDb();
   const result = await buildMemoryEfficacyCache(db, {

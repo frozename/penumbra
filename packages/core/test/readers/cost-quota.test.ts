@@ -1,11 +1,12 @@
-import { describe, it, expect, beforeEach } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, it } from "bun:test";
+
 import { quotaStatus } from "../../src/readers/cost-quota.js";
 import { recentCost } from "../../src/readers/cost.js";
 
 function makeDb(): Database {
   const db = new Database(":memory:");
-  db.exec(`
+  db.run(`
     CREATE TABLE t0_events (
       event_id TEXT PRIMARY KEY,
       ts TEXT NOT NULL,
@@ -47,7 +48,7 @@ function insertUsageRow(
     tokens_cache_write?: number;
     handoff_id: string | null;
   },
-) {
+): void {
   db.prepare(
     `
     INSERT INTO t0_events (event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, provider, model, cost_usd, payload_json)
@@ -83,7 +84,7 @@ function insertSnapshotRow(
     resets_at: number | null;
     source_kind: string;
   },
-) {
+): void {
   db.prepare(
     `
     INSERT INTO t0_events (
@@ -496,25 +497,25 @@ describe("quotaStatus token window selection", () => {
       used_usd_synth: 7.4,
       remaining_usd: 20,
     });
-    expect(out.providers[0]?.subscription_pressure).toHaveLength(2);
-    expect(out.providers[0]?.subscription_pressure).toEqual(
-      expect.arrayContaining([
-        {
-          window_label: "five_hour",
-          used_pct: 51,
-          observed_at: "2026-05-08T11:45:00Z",
-          source_kind: "local-state-claude-statusline",
-          resets_at: 1778166000,
-        },
-        {
-          window_label: "daily",
-          used_pct: 80,
-          observed_at: "2026-05-08T11:50:00Z",
-          source_kind: "local-state-claude-statusline",
-          resets_at: null,
-        },
-      ]),
-    );
+    const pressure = out.providers[0]?.subscription_pressure ?? [];
+    expect(pressure).toHaveLength(2);
+    const sorted = [...pressure].sort((a, b) => a.window_label.localeCompare(b.window_label));
+    expect(sorted).toEqual([
+      {
+        window_label: "daily",
+        used_pct: 80,
+        observed_at: "2026-05-08T11:50:00Z",
+        source_kind: "local-state-claude-statusline",
+        resets_at: null,
+      },
+      {
+        window_label: "five_hour",
+        used_pct: 51,
+        observed_at: "2026-05-08T11:45:00Z",
+        source_kind: "local-state-claude-statusline",
+        resets_at: 1778166000,
+      },
+    ]);
   });
 
   it("matches subscription pressure rows from recentCost for the same provider/model window", () => {

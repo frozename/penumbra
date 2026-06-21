@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, it } from "bun:test";
+
 import { recentCost } from "../../src/readers/cost.js";
 
 function makeDb(): Database {
   const db = new Database(":memory:");
-  db.exec(`
+  db.run(`
     CREATE TABLE t0_events (
       event_id TEXT PRIMARY KEY,
       ts TEXT NOT NULL,
@@ -46,7 +47,7 @@ function insertUsageRow(
     tokens_cache_write?: number;
     handoff_id: string | null;
   },
-) {
+): void {
   db.prepare(
     `
     INSERT INTO t0_events (event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, provider, model, cost_usd, payload_json)
@@ -82,7 +83,7 @@ function insertSnapshotRow(
     resets_at: number | null;
     source_kind: string;
   },
-) {
+): void {
   db.prepare(
     `
     INSERT INTO t0_events (
@@ -395,8 +396,8 @@ describe("recentCost.by_provider_model", () => {
       () => new Date("2026-04-29T12:00:00Z"),
     );
     expect(out.by_provider_model).toBeDefined();
-    const flash = out.by_provider_model!.find((r) => r.model === "gemini-3-flash-preview");
-    const pro = out.by_provider_model!.find((r) => r.model === "gemini-3.1-pro-preview");
+    const flash = out.by_provider_model.find((r) => r.model === "gemini-3-flash-preview");
+    const pro = out.by_provider_model.find((r) => r.model === "gemini-3.1-pro-preview");
     expect(flash).toMatchObject({
       provider: "google",
       model: "gemini-3-flash-preview",

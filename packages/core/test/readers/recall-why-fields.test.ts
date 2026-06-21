@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { beforeEach, describe, expect, test } from "bun:test";
+
 import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { TestEmbedder } from "../../src/embedder/test-embedder.js";
 import { RecallReader } from "../../src/readers/recall.js";
 
@@ -29,7 +30,7 @@ async function seedT2Memory(opts: {
   sourceQuote: string | null;
   learnedAt: string | null;
   lastVerifiedAt: string | null;
-}) {
+}): Promise<void> {
   const embedder = new TestEmbedder({ dim: 384 });
   const [vec] = await embedder.embed([opts.body]);
   db.run(

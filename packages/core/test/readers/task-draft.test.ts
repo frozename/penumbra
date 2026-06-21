@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { beforeEach, describe, expect, test } from "bun:test";
+
 import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { TaskDraftReader } from "../../src/readers/task-draft.js";
 
 try {
@@ -12,7 +13,7 @@ try {
   // already loaded
 }
 
-function freshDb() {
+function freshDb(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 4 });
@@ -36,7 +37,7 @@ function insertDraft(
     draft_id: string;
     payload: unknown;
   },
-) {
+): void {
   db.run(
     `INSERT INTO t0_events(event_id, ts, ingest_ts, source, project_id, user_id, machine_id, event_type, lane, payload_json)
      VALUES (?, ?, ?, 'mcp', ?, 'u', 'm', ?, 'unknown', ?)`,
@@ -157,7 +158,7 @@ describe("TaskDraftReader.listPending", () => {
 
     const originalWarn = console.warn;
     const warnings: string[] = [];
-    console.warn = (...args: unknown[]) => {
+    console.warn = (...args: unknown[]): void => {
       warnings.push(args.map(String).join(" "));
     };
     try {
@@ -195,7 +196,7 @@ describe("TaskDraftReader.listPending", () => {
 
     const originalWarn = console.warn;
     const warnings: string[] = [];
-    console.warn = (...args: unknown[]) => {
+    console.warn = (...args: unknown[]): void => {
       warnings.push(args.map(String).join(" "));
     };
     try {
@@ -670,7 +671,7 @@ describe("TaskDraftReader.listPendingEscalations", () => {
 
     const originalWarn = console.warn;
     const warnings: string[] = [];
-    console.warn = (...args: unknown[]) => {
+    console.warn = (...args: unknown[]): void => {
       warnings.push(args.map(String).join(" "));
     };
     try {
@@ -817,7 +818,7 @@ describe("TaskDraftReader.listPendingEscalations", () => {
 
     const originalWarn = console.warn;
     const warnings: string[] = [];
-    console.warn = (...args: unknown[]) => {
+    console.warn = (...args: unknown[]): void => {
       warnings.push(args.map(String).join(" "));
     };
     try {
@@ -961,9 +962,9 @@ describe("TaskDraftReader.listPendingEscalations", () => {
         AND ranked.project_id = ?
       ORDER BY ranked.ts ASC, ranked.ingest_ts ASC, ranked.event_id ASC
       LIMIT ?`;
-    const planRows = db.query("EXPLAIN QUERY PLAN " + sql).all("p1", 1) as Array<{
+    const planRows = db.query("EXPLAIN QUERY PLAN " + sql).all("p1", 1) as {
       detail: string;
-    }>;
+    }[];
     const allDetail = planRows.map((row) => row.detail).join(" ");
     // The escalation LIST query must not full-scan the multi-GB t0_events base
     // table — it reaches t0_events through an index (the event_type filter picks

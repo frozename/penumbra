@@ -1,13 +1,14 @@
-import { beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, test } from "bun:test";
+
 import { loadSqliteVec, migrate } from "../../src/index.js";
+import { AgentRecommendInputSchema } from "../../src/schemas/agent-recommend.js";
 import {
+  type AgentRecommendation,
   buildSuccessPredicate,
   routeAgent,
-  type AgentRecommendation,
 } from "../../src/services/agent-routing.js";
 import { AgentPerformanceWriter } from "../../src/writers/agent-performance.js";
-import { AgentRecommendInputSchema } from "../../src/schemas/agent-recommend.js";
 
 function getRecommendationsViaRoute(
   input: Parameters<typeof routeAgent>[0],
@@ -21,7 +22,9 @@ function getRecommendationsViaRoute(
 if (process.platform === "darwin") {
   try {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-  } catch {}
+  } catch {
+    // already loaded in this process
+  }
 }
 
 const NOW = new Date("2026-05-01T12:00:00Z");
@@ -323,7 +326,7 @@ describe("agent recommendations", () => {
 
   test("gate outcome success predicate is cutoff-aware and exposes coverage", () => {
     const writer = new AgentPerformanceWriter(db);
-    db.exec(`
+    db.run(`
       INSERT INTO lane_ledger (
         lane_id, ts_opened, ts_closed, task_class, implementer_handoff, reviewer_handoff, gate_status, metadata_json
       ) VALUES
@@ -655,12 +658,11 @@ describe("agent recommendations", () => {
         taskType: "health_check",
         now: new Date("2026-06-13T12:00:00.000Z"),
       });
-      const agent = (out as any).recommendations.find(
-        (r: any) => r.agent_name === "classifier-sql-agent",
-      );
-
-      expect(agent.samples).toBe(1);
-      expect(agent.success_rate).toBe(1);
+      if (out.detail !== "summary") throw new Error("expected summary output");
+      const agent = out.recommendations.find((r) => r.agent_name === "classifier-sql-agent");
+      expect(agent).toBeDefined();
+      expect(agent?.samples).toBe(1);
+      expect(agent?.success_rate).toBe(1);
     } finally {
       if (previousCutover === undefined) delete process.env.PENUMBRA_CLASSIFIER_DECLINE_CUTOVER_ISO;
       else process.env.PENUMBRA_CLASSIFIER_DECLINE_CUTOVER_ISO = previousCutover;

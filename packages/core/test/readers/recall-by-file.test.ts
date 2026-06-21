@@ -1,9 +1,10 @@
-import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { describe, expect, test } from "bun:test";
+
 import { migrate } from "../../src/db/migrations.js";
-import { RecallReader } from "../../src/readers/recall.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { TestEmbedder } from "../../src/embedder/test-embedder.js";
+import { RecallReader } from "../../src/readers/recall.js";
 
 try {
   if (process.platform === "darwin") {
@@ -19,7 +20,7 @@ describe("RecallReader by-file scoping", () => {
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
 
-    const insert = (id: string, file: string | null, content: string) =>
+    const insert = (id: string, file: string | null, content: string): void => {
       db.run(
         `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, payload_json)
          VALUES (?, '2026-05-03', '2026-05-03', 'claude-code', 'u', 'm', 'tool_use', 'tool', ?)`,
@@ -30,6 +31,7 @@ describe("RecallReader by-file scoping", () => {
           ),
         ],
       );
+    };
 
     insert("e1", "agentchat.yaml", "edited haiku entry agentchat");
     insert("e2", "README.md", "edited readme agentchat");

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import {
   evaluateCandidatesFromFixtures,
   loadDecision,
@@ -8,7 +9,10 @@ import {
 test("chosen t2 embed recipe clears weak-lift and regression guardrails", async () => {
   const fixtures = await loadFixtures("synthetic.json");
   const decision = await loadDecision();
-  const scorecard = await evaluateCandidatesFromFixtures(fixtures, [decision.candidateKey, "minilm_body_only"]);
+  const scorecard = await evaluateCandidatesFromFixtures(fixtures, [
+    decision.candidateKey,
+    "minilm_body_only",
+  ]);
   const chosen = scorecard.find((row) => row.key === decision.candidateKey);
   const baseline = scorecard.find((row) => row.key === "minilm_body_only");
 
