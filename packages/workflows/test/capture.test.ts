@@ -179,6 +179,35 @@ test("preserves last_failure_at and last_failure_reason on success after failure
   expect(afterSuccess.last_failure_reason).toBe("kaboom");
 });
 
+test("rolls back t0 events when workflow_stats upsert throws", () => {
+  const db = freshDb();
+  // Drop the stats table so the final upsert throws inside the transaction;
+  // verifies the three t0 inserts roll back atomically with the failed write.
+  db.run("DROP TABLE workflow_stats");
+
+  expect(() =>
+    captureWorkflowOutcome({
+      db,
+      workflowName: "atomic",
+      outcome: "success",
+      latencyMs: 10,
+      artifacts: [],
+      warnings: [],
+      recallSummary: { sources: [], itemCount: 0 },
+      project: "t",
+      sessionId: "s",
+      userId: "u",
+      machineId: "m",
+      now: () => new Date(),
+    }),
+  ).toThrow();
+
+  const rows = db
+    .query("SELECT COUNT(*) AS c FROM t0_events WHERE event_type LIKE 'workflow.%'")
+    .get() as { c: number };
+  expect(rows.c).toBe(0);
+});
+
 test("resets consecutive_failures on success after failures", () => {
   const db = freshDb();
   const args = {

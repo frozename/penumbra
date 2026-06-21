@@ -78,75 +78,80 @@ export function captureWorkflowOutcome(input: CaptureInput): void {
     machineId: input.machineId,
   };
 
-  insertT0(input.db, {
-    ...base,
-    ts: eventTs(0),
-    event_id: randomUUID(),
-    event_type: "workflow.run",
-    payload: { workflow_name: input.workflowName, started_at: ts },
-  });
-  insertT0(input.db, {
-    ...base,
-    ts: eventTs(1),
-    event_id: randomUUID(),
-    event_type: "workflow.recall",
-    payload: {
-      workflow_name: input.workflowName,
-      sources: input.recallSummary.sources,
-      item_count: input.recallSummary.itemCount,
-      warnings: input.warnings,
-    },
-  });
-  insertT0(input.db, {
-    ...base,
-    ts: eventTs(2),
-    event_id: randomUUID(),
-    event_type: "workflow.outcome",
-    payload: {
-      workflow_name: input.workflowName,
-      outcome: input.outcome,
-      latency_ms: input.latencyMs,
-      artifacts: input.artifacts,
-      error_message: input.errorMessage ?? null,
-      gate_evidence: input.gateEvidence ?? null,
-    },
-  });
+  // Atomic lifecycle: all three t0 events plus the stats read+upsert commit
+  // together, or none at all. A throwing stats upsert (e.g. SQLITE_FULL inside
+  // an FTS5 trigger) would otherwise leave half-written t0 rows and a
+  // permanently undercounted stats row.
+  input.db.transaction(() => {
+    insertT0(input.db, {
+      ...base,
+      ts: eventTs(0),
+      event_id: randomUUID(),
+      event_type: "workflow.run",
+      payload: { workflow_name: input.workflowName, started_at: ts },
+    });
+    insertT0(input.db, {
+      ...base,
+      ts: eventTs(1),
+      event_id: randomUUID(),
+      event_type: "workflow.recall",
+      payload: {
+        workflow_name: input.workflowName,
+        sources: input.recallSummary.sources,
+        item_count: input.recallSummary.itemCount,
+        warnings: input.warnings,
+      },
+    });
+    insertT0(input.db, {
+      ...base,
+      ts: eventTs(2),
+      event_id: randomUUID(),
+      event_type: "workflow.outcome",
+      payload: {
+        workflow_name: input.workflowName,
+        outcome: input.outcome,
+        latency_ms: input.latencyMs,
+        artifacts: input.artifacts,
+        error_message: input.errorMessage ?? null,
+        gate_evidence: input.gateEvidence ?? null,
+      },
+    });
 
-  const existing = input.db
-    .query("SELECT * FROM workflow_stats WHERE workflow_name = ?")
-    .get(input.workflowName) as
-    | {
-        samples: number;
-        successes: number;
-        failures: number;
-        avg_latency_ms: number;
-        consecutive_failures: number;
-        last_failure_at: string | null;
-        last_failure_reason: string | null;
-        refresh_runs: number;
-        intentional_runs: number;
-      }
-    | undefined;
+    const existing = input.db
+      .query("SELECT * FROM workflow_stats WHERE workflow_name = ?")
+      .get(input.workflowName) as
+      | {
+          samples: number;
+          successes: number;
+          failures: number;
+          avg_latency_ms: number;
+          consecutive_failures: number;
+          last_failure_at: string | null;
+          last_failure_reason: string | null;
+          refresh_runs: number;
+          intentional_runs: number;
+        }
+      | undefined;
 
-  const isFailure = FAILURE_OUTCOMES.includes(input.outcome);
-  const samples = (existing?.samples ?? 0) + 1;
-  const successes = (existing?.successes ?? 0) + (isFailure ? 0 : 1);
-  const failures = (existing?.failures ?? 0) + (isFailure ? 1 : 0);
-  const consecutive = isFailure ? (existing?.consecutive_failures ?? 0) + 1 : 0;
-  const quarantined = consecutive >= QUARANTINE_THRESHOLD;
-  const quarantineReason = quarantined
-    ? `${consecutive} consecutive failures (last: ${input.errorMessage ?? input.outcome})`
-    : null;
-  const prevAvg = existing?.avg_latency_ms ?? 0;
-  const avgLatency = Math.round((prevAvg * (samples - 1) + input.latencyMs) / samples);
+    const isFailure = FAILURE_OUTCOMES.includes(input.outcome);
+    const samples = (existing?.samples ?? 0) + 1;
+    const successes = (existing?.successes ?? 0) + (isFailure ? 0 : 1);
+    const failures = (existing?.failures ?? 0) + (isFailure ? 1 : 0);
+    const consecutive = isFailure ? (existing?.consecutive_failures ?? 0) + 1 : 0;
+    const quarantined = consecutive >= QUARANTINE_THRESHOLD;
+    const quarantineReason = quarantined
+      ? `${consecutive} consecutive failures (last: ${input.errorMessage ?? input.outcome})`
+      : null;
+    const prevAvg = existing?.avg_latency_ms ?? 0;
+    const avgLatency = Math.round((prevAvg * (samples - 1) + input.latencyMs) / samples);
 
-  const kind = input.kind ?? "intentional";
-  const refreshRuns = (existing?.refresh_runs ?? 0) + (kind === "refresh" ? 1 : 0);
-  const intentionalRuns = (existing?.intentional_runs ?? 0) + (kind === "intentional" ? 1 : 0);
+    const kind = input.kind ?? "intentional";
+    const refreshRuns = (existing?.refresh_runs ?? 0) + (kind === "refresh" ? 1 : 0);
+    const intentionalRuns = (existing?.intentional_runs ?? 0) + (kind === "intentional" ? 1 : 0);
 
-  input.db
-    .prepare(
-      `
+    input.db
+      .prepare(
+        `
       INSERT INTO workflow_stats (
         workflow_name, samples, successes, failures, avg_latency_ms,
         last_run_at, last_failure_at, last_failure_reason, consecutive_failures,
@@ -166,20 +171,21 @@ export function captureWorkflowOutcome(input: CaptureInput): void {
         refresh_runs = excluded.refresh_runs,
         intentional_runs = excluded.intentional_runs
     `,
-    )
-    .run(
-      input.workflowName,
-      samples,
-      successes,
-      failures,
-      avgLatency,
-      ts,
-      isFailure ? ts : (existing?.last_failure_at ?? null),
-      isFailure ? (input.errorMessage ?? input.outcome) : (existing?.last_failure_reason ?? null),
-      consecutive,
-      quarantined ? 1 : 0,
-      quarantineReason,
-      refreshRuns,
-      intentionalRuns,
-    );
+      )
+      .run(
+        input.workflowName,
+        samples,
+        successes,
+        failures,
+        avgLatency,
+        ts,
+        isFailure ? ts : (existing?.last_failure_at ?? null),
+        isFailure ? (input.errorMessage ?? input.outcome) : (existing?.last_failure_reason ?? null),
+        consecutive,
+        quarantined ? 1 : 0,
+        quarantineReason,
+        refreshRuns,
+        intentionalRuns,
+      );
+  })();
 }
