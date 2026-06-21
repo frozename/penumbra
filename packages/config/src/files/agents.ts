@@ -451,5 +451,21 @@ export const AgentsConfigSchema = z
     thoughts: ThoughtsConfigSchema,
     shell: ShellConfigSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((data, ctx) => {
+    const seen = new Map<string, number>();
+    for (let i = 0; i < data.agents.length; i++) {
+      const name = data.agents[i]!.name;
+      const first = seen.get(name);
+      if (first !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["agents", i, "name"],
+          message: `duplicate agent name '${name}' (also at agents[${first}]); the routing scorer would silently collapse to the first entry, making this agent unreachable`,
+        });
+      } else {
+        seen.set(name, i);
+      }
+    }
+  });
 export type AgentsConfig = z.infer<typeof AgentsConfigSchema>;

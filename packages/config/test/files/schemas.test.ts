@@ -118,6 +118,35 @@ describe("AgentsConfigSchema", () => {
     ).toThrow(/enabledd/);
   });
 
+  test("rejects duplicate agent names (would silently collapse in routing scorer)", () => {
+    const result = AgentsConfigSchema.safeParse({
+      agents: [
+        { name: "dup-name", adapter: "stdio-acp" },
+        { name: "other", adapter: "stdio-acp" },
+        { name: "dup-name", adapter: "claude-cli" },
+      ],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const dupIssue = result.error.issues.find((i) => /duplicate agent name/.test(i.message));
+      expect(dupIssue).toBeDefined();
+      expect(dupIssue?.path).toEqual(["agents", 2, "name"]);
+      expect(dupIssue?.message).toContain("'dup-name'");
+    }
+  });
+
+  test("accepts agents with all-unique names (regression: refine should not false-positive)", () => {
+    expect(() =>
+      AgentsConfigSchema.parse({
+        agents: [
+          { name: "a", adapter: "stdio-acp" },
+          { name: "b", adapter: "stdio-acp" },
+          { name: "c", adapter: "stdio-acp" },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
   test("thought analyzer agents accept scalar, array, and structured pools", () => {
     const parsed = AgentsConfigSchema.parse({
       agents: [{ name: "claude-acp-sonnet", adapter: "stdio-acp" }],
