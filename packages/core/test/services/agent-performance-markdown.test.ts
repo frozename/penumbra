@@ -1,8 +1,19 @@
 import { describe, expect, test } from "bun:test";
+
 import {
   parseAgentPerformanceMarkdownRows,
   renderAgentPerformanceMarkdown,
 } from "../../src/services/agent-performance-markdown.js";
+
+type ParsedMetadata = {
+  legacy_marker?: string;
+  smoke_marker?: string;
+  cost_marker?: string;
+  latency_marker?: string;
+  task_type_original?: string;
+};
+
+const parseMetadata = (json: string): ParsedMetadata => JSON.parse(json) as ParsedMetadata;
 
 describe("parseAgentPerformanceMarkdownRows", () => {
   test("parses legacy ledger rows into normalized seed rows", () => {
@@ -25,10 +36,10 @@ describe("parseAgentPerformanceMarkdownRows", () => {
     expect(rows[0]!.cost_usd).toBe(0.4);
     expect(rows[0]!.latency_ms).toBe(8 * 60_000);
     expect(rows[0]!.source).toBe("manual_seed");
-    expect(JSON.parse(rows[0]!.metadata_json).legacy_marker).toBe("*");
+    expect(parseMetadata(rows[0]!.metadata_json).legacy_marker).toBe("*");
     expect(rows[1]!.outcome).toBe("merged_with_concerns");
     expect(rows[1]!.smoke_pass).toBe("n");
-    expect(JSON.parse(rows[1]!.metadata_json).smoke_marker).toBe("*");
+    expect(parseMetadata(rows[1]!.metadata_json).smoke_marker).toBe("*");
   });
 
   test("parseAgentPerformanceMarkdownRows skips non-matching tables", () => {
@@ -99,9 +110,9 @@ describe("parseAgentPerformanceMarkdownRows", () => {
 
     expect(rows).toHaveLength(2);
     expect(rows[0]!.task_type).toBe("unknown");
-    expect(JSON.parse(rows[0]!.metadata_json).task_type_original).toBe("publish_and_smoke");
+    expect(parseMetadata(rows[0]!.metadata_json).task_type_original).toBe("publish_and_smoke");
     expect(rows[1]!.task_type).toBe("implement_small");
-    expect(JSON.parse(rows[1]!.metadata_json).task_type_original).toBeUndefined();
+    expect(parseMetadata(rows[1]!.metadata_json).task_type_original).toBeUndefined();
   });
 });
 

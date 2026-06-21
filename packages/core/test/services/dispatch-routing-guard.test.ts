@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import type { ProjectEntry, ResolvedProjectEntry } from "../../../src/projects/schema.js";
+
+import type { ResolvedProjectEntry } from "../../src/projects/schema.js";
+
 import {
   collectMentionedPaths,
   inspectPromptVsProject,
   resolveProjectIdFromAbsolutePath,
 } from "../../src/services/dispatch-routing-guard.js";
 
-const registry: ProjectEntry[] = [
+const registry: ResolvedProjectEntry[] = [
   {
     project_id: "penumbra",
     root_path: "/Volumes/WorkSSD/repos/penumbra-worktrees/8ba3d99d-276b-4bab-a2fd-6aaa739b57be",
@@ -175,7 +177,7 @@ test("cross-project absolute paths suggest the matching project", () => {
 });
 
 test("packages references can suggest another project when missing in the resolved project", () => {
-  const existsSync = (path: string) =>
+  const existsSync = (path: string): boolean =>
     path === "/Volumes/WorkSSD/repos/personal/llamactl/packages/train";
   const result = inspectPromptVsProject(
     {
@@ -196,7 +198,7 @@ test("packages references can suggest another project when missing in the resolv
 
 test("packages references memoize existsSync lookups within one guard call", () => {
   const seen = new Map<string, number>();
-  const existsSync = (path: string) => {
+  const existsSync = (path: string): boolean => {
     seen.set(path, (seen.get(path) ?? 0) + 1);
     return path === "/Volumes/WorkSSD/repos/personal/llamactl/packages/train";
   };

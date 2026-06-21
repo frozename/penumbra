@@ -1,15 +1,37 @@
-import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, spyOn, test } from "bun:test";
+
+import type { RoutingBias } from "../../src/readers/routing-bias.js";
+import type { AgentRankOutput } from "../../src/schemas/agent-performance.js";
+import type { RouteAgentInput, RouteAgentOutput } from "../../src/services/agent-routing.js";
+
 import { loadSqliteVec, migrate, routeAgent } from "../../src/index.js";
 import { AgentPerformanceWriter } from "../../src/writers/agent-performance.js";
 
 if (process.platform === "darwin") {
   try {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-  } catch {}
+  } catch {
+    // ignore: fall back to bundled SQLite if Homebrew lib is unavailable
+  }
 }
 
 const NOW = new Date("2026-05-01T12:00:00Z");
+
+type RankCandidate = AgentRankOutput["candidates"][number];
+
+function rankCandidates(out: RouteAgentOutput): RankCandidate[] {
+  if (out.detail !== "rank") {
+    throw new Error(`expected rank, got ${out.detail}`);
+  }
+  return out.candidates.candidates;
+}
+
+function findCandidate(out: RouteAgentOutput, agentName: string): RankCandidate {
+  const candidate = rankCandidates(out).find((c) => c.agent_name === agentName);
+  if (!candidate) throw new Error(`candidate ${agentName} not found`);
+  return candidate;
+}
 
 describe("routeAgent", () => {
   test("headroom-weighted routing applies factor when flag is on", () => {
@@ -61,20 +83,14 @@ describe("routeAgent", () => {
 
     // With flag on, alpha score * 0.8, beta score * 0.2
     const rankOn = routeAgent(input);
-    const alphaOn = (rankOn as any).candidates.candidates.find(
-      (c: any) => c.agent_name === "alpha",
-    );
-    const betaOn = (rankOn as any).candidates.candidates.find((c: any) => c.agent_name === "beta");
+    const alphaOn = findCandidate(rankOn, "alpha");
+    const betaOn = findCandidate(rankOn, "beta");
 
     // With flag off, scores should be unchanged
     input.agentchatConfig.role_routing.headroom_weighting = false;
     const rankOff = routeAgent(input);
-    const alphaOff = (rankOff as any).candidates.candidates.find(
-      (c: any) => c.agent_name === "alpha",
-    );
-    const betaOff = (rankOff as any).candidates.candidates.find(
-      (c: any) => c.agent_name === "beta",
-    );
+    const alphaOff = findCandidate(rankOff, "alpha");
+    const betaOff = findCandidate(rankOff, "beta");
 
     // Using simple precision check
     expect(alphaOn.score).toBeCloseTo(alphaOff.score * 0.8, 2);
@@ -172,11 +188,11 @@ describe("routeAgent", () => {
       now: NOW,
     });
 
-    const candidates = (out as any).candidates.candidates;
-    const low = candidates.find((candidate: any) => candidate.agent_name === "low-pressure");
-    const high = candidates.find((candidate: any) => candidate.agent_name === "high-pressure");
+    const candidates = rankCandidates(out);
+    const low = findCandidate(out, "low-pressure");
+    const high = findCandidate(out, "high-pressure");
     expect(low.score).toBeGreaterThan(0);
-    expect(candidates[0].agent_name).toBe("low-pressure");
+    expect(candidates[0]!.agent_name).toBe("low-pressure");
     expect(low.score).toBeGreaterThan(high.score);
   });
 
@@ -232,7 +248,7 @@ describe("routeAgent", () => {
       taskType: "implement_substantial",
       since: "2026-06-13T00:00:00.000Z",
     });
-    const alpha = (out as any).candidates.candidates.find((c: any) => c.agent_name === "alpha");
+    const alpha = findCandidate(out, "alpha");
 
     expect(alpha.samples).toBe(1);
     expect(alpha.failures).toBe(0);
@@ -362,9 +378,9 @@ describe("routeAgent", () => {
 
     expect(out.detail).toBe("rank");
     if (out.detail !== "rank") return;
-    expect(out.candidates.candidates.map((candidate) => candidate.agent_name)).toEqual(
-      expect.arrayContaining(["alpha", "beta"]),
-    );
+    const rankedNames = out.candidates.candidates.map((candidate) => candidate.agent_name);
+    expect(rankedNames).toContain("alpha");
+    expect(rankedNames).toContain("beta");
   });
 
   test("rank mode defaults the hot-path query to a 30 day window", () => {
@@ -380,9 +396,15 @@ describe("routeAgent", () => {
 
     expect(out.detail).toBe("rank");
     if (out.detail !== "rank") return;
-    const rankQuery = querySpy.mock.calls
-      .map((call) => String(call[0]))
-      .find((sql) => sql.includes("FROM agent_performance") && sql.includes("ORDER BY ts DESC"));
+    // bun-types `MockInstance.calls` widens to `any` for variadic overloads
+    // (db.query has many); narrow back to a string SQL literal explicitly.
+    const calls = querySpy.mock.calls as unknown as unknown[][];
+    const sqls = calls
+      .map((call) => (typeof call[0] === "string" ? call[0] : String(call[0])))
+      .filter((value): value is string => typeof value === "string");
+    const rankQuery = sqls.find(
+      (sql) => sql.includes("FROM agent_performance") && sql.includes("ORDER BY ts DESC"),
+    );
     expect(rankQuery).toContain("ts >= ?");
     expect(out.candidates.window.from).toBe("2026-04-01T12:00:00.000Z");
   });
@@ -934,13 +956,13 @@ describe("latency_weighting routing", () => {
       exec_ms: number | null;
       framework_overhead_ms?: number | null;
     },
-  ) => {
+  ): void => {
     writer.upsert({
       ...baseRow,
-      performance_id: `${agent}-${i}`,
-      ts: `2026-04-30T1${i % 10}:00:00Z`,
-      handoff_id: `h-${agent}-${i}`,
-      conversation_id: `c-${agent}-${i}`,
+      performance_id: `${agent}-${String(i)}`,
+      ts: `2026-04-30T1${String(i % 10)}:00:00Z`,
+      handoff_id: `h-${agent}-${String(i)}`,
+      conversation_id: `c-${agent}-${String(i)}`,
       agent_name: agent,
       task_type: "implement_substantial",
       outcome: fields.outcome,
@@ -955,7 +977,7 @@ describe("latency_weighting routing", () => {
     migrate(db, { embeddingDim: 384 });
   });
 
-  const rank = (latency_weighting: boolean) => {
+  const rank = (latency_weighting: boolean): RankCandidate[] => {
     const out = routeAgent({
       db,
       detail: "rank" as const,
@@ -968,7 +990,7 @@ describe("latency_weighting routing", () => {
     if (out.detail !== "rank") throw new Error("expected rank");
     return out.candidates.candidates;
   };
-  const find = (cands: ReturnType<typeof rank>, name: string) => {
+  const find = (cands: ReturnType<typeof rank>, name: string): RankCandidate => {
     const c = cands.find((x) => x.agent_name === name);
     if (!c) throw new Error(`candidate ${name} not found`);
     return c;
@@ -1070,13 +1092,13 @@ describe("warm_pool_reuse_weighting routing", () => {
     agent: string,
     i: number,
     outcome: "merged" | "failed",
-  ) => {
+  ): void => {
     writer.upsert({
       ...baseRow,
-      performance_id: `${agent}-${i}`,
-      ts: `2026-04-30T1${i % 10}:00:00Z`,
-      handoff_id: `h-${agent}-${i}`,
-      conversation_id: `c-${agent}-${i}`,
+      performance_id: `${agent}-${String(i)}`,
+      ts: `2026-04-30T1${String(i % 10)}:00:00Z`,
+      handoff_id: `h-${agent}-${String(i)}`,
+      conversation_id: `c-${agent}-${String(i)}`,
       agent_name: agent,
       task_type: "implement_substantial",
       outcome,
@@ -1092,7 +1114,7 @@ describe("warm_pool_reuse_weighting routing", () => {
   const rank = (
     warm_pool_reuse_weighting: boolean,
     warmPoolReuseRates?: Record<string, number>,
-  ) => {
+  ): RankCandidate[] => {
     const out = routeAgent({
       db,
       detail: "rank" as const,
@@ -1107,7 +1129,7 @@ describe("warm_pool_reuse_weighting routing", () => {
     return out.candidates.candidates;
   };
 
-  const find = (cands: ReturnType<typeof rank>, name: string) => {
+  const find = (cands: ReturnType<typeof rank>, name: string): RankCandidate => {
     const c = cands.find((x) => x.agent_name === name);
     if (!c) throw new Error(`candidate ${name} not found`);
     return c;
@@ -1165,12 +1187,12 @@ describe("routing bias (usage steering)", () => {
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     const w = new AgentPerformanceWriter(db);
-    const seed = (agent: string, n: number, outcome: "merged" | "failed") =>
+    const seed = (agent: string, n: number, outcome: "merged" | "failed"): void => {
       w.upsert({
-        performance_id: `${agent}-${n}`,
-        ts: `2026-06-13T10:0${n}:00.000Z`,
-        handoff_id: `h-${agent}-${n}`,
-        conversation_id: `c-${agent}-${n}`,
+        performance_id: `${agent}-${String(n)}`,
+        ts: `2026-06-13T10:0${String(n)}:00.000Z`,
+        handoff_id: `h-${agent}-${String(n)}`,
+        conversation_id: `c-${agent}-${String(n)}`,
         project_id: "proj",
         agent_name: agent,
         task_type: "implement_substantial",
@@ -1187,6 +1209,7 @@ describe("routing bias (usage steering)", () => {
         notes: null,
         metadata_json: "{}",
       });
+    };
     // Mixed outcomes => mid/low base scores with headroom so a boost factor does
     // not clamp at 1.0 and a divert factor stays > 0.
     for (const a of ["alpha", "beta", "gamma"]) {
@@ -1222,7 +1245,7 @@ describe("routing bias (usage steering)", () => {
     value: string,
     mode: "boost" | "divert" | "exclude",
     weight: number | null = null,
-  ) => ({
+  ): RoutingBias => ({
     bias_id: `${scope}-${value}-${mode}`,
     scope,
     value,
@@ -1233,22 +1256,23 @@ describe("routing bias (usage steering)", () => {
     expires_at: "2099-01-01T00:00:00.000Z",
   });
 
-  const rankInput = (activeBiases?: any[]) => ({
+  const rankInput = (activeBiases?: RoutingBias[]): RouteAgentInput => ({
     db,
-    detail: "rank" as const,
-    taskType: "implement_substantial" as const,
+    detail: "rank",
+    taskType: "implement_substantial",
     agentchatConfig: { agents: AGENTS },
     activeBiases,
     now: NOW,
   });
-  const cands = (out: any) => out.candidates.candidates;
-  const findC = (out: any, name: string) => cands(out).find((c: any) => c.agent_name === name);
+  const cands = (out: RouteAgentOutput): RankCandidate[] => rankCandidates(out);
+  const findC = (out: RouteAgentOutput, name: string): RankCandidate | undefined =>
+    cands(out).find((c) => c.agent_name === name);
 
-  const singleInput = (activeBiases?: any[]) => ({
+  const singleInput = (activeBiases?: RoutingBias[]): RouteAgentInput => ({
     db,
-    detail: "single" as const,
+    detail: "single",
     role: "coder",
-    taskType: "implement_substantial" as const,
+    taskType: "implement_substantial",
     agentchatConfig: { agents: AGENTS },
     defaultRoles: { coder: "alpha" },
     activeBiases,
@@ -1263,16 +1287,16 @@ describe("routing bias (usage steering)", () => {
   test("boost raises a candidate score; divert lowers it", () => {
     const base = routeAgent(rankInput(undefined));
     const boosted = routeAgent(rankInput([bias("agent", "alpha", "boost", 1.5)]));
-    expect(findC(boosted, "alpha").score).toBeGreaterThan(findC(base, "alpha").score);
+    expect(findC(boosted, "alpha")!.score).toBeGreaterThan(findC(base, "alpha")!.score);
     const diverted = routeAgent(rankInput([bias("agent", "beta", "divert", 0.5)]));
-    expect(findC(diverted, "beta").score).toBeLessThan(findC(base, "beta").score);
+    expect(findC(diverted, "beta")!.score).toBeLessThan(findC(base, "beta")!.score);
   });
 
   test("exclude removes a candidate from the ranking", () => {
     const out = routeAgent(rankInput([bias("agent", "gamma", "exclude")]));
     expect(
       cands(out)
-        .map((c: any) => c.agent_name)
+        .map((c) => c.agent_name)
         .sort(),
     ).toEqual(["alpha", "beta"]);
   });
@@ -1280,7 +1304,7 @@ describe("routing bias (usage steering)", () => {
   test("provider-scope exclude matches all agents of that provider", () => {
     const out = routeAgent(rankInput([bias("provider", "prov-a", "exclude")]));
     // prov-a = alpha + gamma excluded; only beta (prov-b) remains
-    expect(cands(out).map((c: any) => c.agent_name)).toEqual(["beta"]);
+    expect(cands(out).map((c) => c.agent_name)).toEqual(["beta"]);
   });
 
   test("exclude > boost precedence: exclude wins on the same agent", () => {
@@ -1302,7 +1326,7 @@ describe("routing bias (usage steering)", () => {
     expect(out.detail).toBe("single");
     if (out.detail !== "single") return;
     expect(out.route).not.toBeNull();
-    expect(out.route!.agent).not.toBe("alpha");
+    expect(out.route?.agent).not.toBe("alpha");
   });
 
   test("single mode safe fallback: excluding ALL role agents still returns a route", () => {

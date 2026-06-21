@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { AgentPoolSchema } from "../../../config/src/files/agent-pool.js";
 import { resolveAgentPool } from "../../src/services/agent-routing.js";
 
@@ -185,7 +186,7 @@ describe("resolveAgentPool", () => {
   test("prefers isLocal probe over tier labels and warns when they disagree", () => {
     const warnings: unknown[][] = [];
     const originalWarn = console.warn;
-    console.warn = (...args: unknown[]) => {
+    console.warn = (...args: unknown[]): void => {
       warnings.push(args);
     };
     try {

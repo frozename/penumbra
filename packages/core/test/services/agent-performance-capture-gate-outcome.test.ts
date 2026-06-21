@@ -1,11 +1,12 @@
-import { beforeEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, it } from "bun:test";
+
 import { loadSqliteVec, migrate } from "../../src/index.js";
 import {
   captureAgentPerformanceFromDispatch,
   captureAgentPerformanceFromReconciler,
 } from "../../src/services/agent-performance-capture.js";
-import { routeAgent, type AgentRecommendation } from "../../src/services/agent-routing.js";
+import { type AgentRecommendation, routeAgent } from "../../src/services/agent-routing.js";
 import { AgentPerformanceWriter } from "../../src/writers/agent-performance.js";
 
 function getRecommendationsViaRoute(
@@ -20,7 +21,9 @@ function getRecommendationsViaRoute(
 if (process.platform === "darwin") {
   try {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-  } catch {}
+  } catch {
+    // ignore: fall back to bundled SQLite if Homebrew lib is unavailable
+  }
 }
 
 describe("agent performance gate outcome wiring", () => {
@@ -33,7 +36,7 @@ describe("agent performance gate outcome wiring", () => {
   });
 
   it("stamps gate_outcome from the latest closed lane on reconciler capture", () => {
-    db.exec(`
+    db.run(`
       INSERT INTO handoffs (
         handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message,
         status, resolved_by, resolved_at, triggered_by_event_id
@@ -65,7 +68,7 @@ describe("agent performance gate outcome wiring", () => {
   });
 
   it("stamps gate_outcome as null when no closed lane exists", () => {
-    db.exec(`
+    db.run(`
       INSERT INTO handoffs (
         handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message,
         status, resolved_by, resolved_at, triggered_by_event_id
@@ -86,7 +89,7 @@ describe("agent performance gate outcome wiring", () => {
   });
 
   it("stamps gate_outcome from the lane row on dispatch capture when a closed lane exists", () => {
-    db.exec(`
+    db.run(`
       INSERT INTO lane_ledger (
         lane_id, ts_opened, ts_closed, task_class, implementer_handoff, reviewer_handoff, gate_status, metadata_json
       ) VALUES (
@@ -112,7 +115,7 @@ describe("agent performance gate outcome wiring", () => {
   });
 
   it("does not downgrade an existing passed gate_outcome on later capture", () => {
-    db.exec(`
+    db.run(`
       INSERT INTO handoffs (
         handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message,
         status, resolved_by, resolved_at, triggered_by_event_id

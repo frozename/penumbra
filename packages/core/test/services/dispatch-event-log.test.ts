@@ -1,10 +1,11 @@
-import { beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, test } from "bun:test";
+
 import { applySchema } from "../../src/db/schema.js";
 import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import {
-  DispatchEventLog,
   type DispatchEventInput,
+  DispatchEventLog,
 } from "../../src/services/dispatch-event-log.js";
 
 function freshDb(): Database {
@@ -34,12 +35,12 @@ describe("DispatchEventLog", () => {
     const log = new DispatchEventLog(db);
     log.record(sampleEvent);
 
-    const rows = db.query("SELECT * FROM dispatch_events").all() as Array<{
+    const rows = db.query("SELECT * FROM dispatch_events").all() as {
       handoff_id: string;
       worker_id: string;
       kind: string;
       meta_json: string;
-    }>;
+    }[];
     expect(rows).toHaveLength(1);
     expect(rows[0].handoff_id).toBe("h-1");
     expect(rows[0].worker_id).toBe("w-1");
@@ -52,7 +53,7 @@ describe("DispatchEventLog", () => {
     log.recordBatch(
       Array.from({ length: 5 }, (_, i) => ({
         ...sampleEvent,
-        ts: `2026-05-01T00:00:0${i}.000Z`,
+        ts: `2026-05-01T00:00:0${String(i)}.000Z`,
         kind: "proc.spawn",
       })),
     );

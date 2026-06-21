@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
   extractStumblesFromSession,
   type SessionEventRow,
@@ -89,7 +90,7 @@ describe("extractStumblesFromSession", () => {
       const out = await extractStumblesFromSession({
         session_id: "s-3",
         transcript_path: transcript,
-        dispatch_events_query: async () => events,
+        dispatch_events_query: () => Promise.resolve(events),
       });
       expect(out).toEqual([]);
     } finally {
@@ -118,7 +119,7 @@ describe("extractStumblesFromSession", () => {
     const rows: SessionEventRow[] = [{ ...storedRow, source: "untrusted-source" }];
     const out = await extractStumblesFromSession({
       session_id: "s-src",
-      dispatch_events_query: async () => rows,
+      dispatch_events_query: () => Promise.resolve(rows),
     });
     expect(out).toEqual([]);
   });
@@ -127,7 +128,7 @@ describe("extractStumblesFromSession", () => {
     const rows: SessionEventRow[] = [{ ...storedRow, event_type: "custom-event" }];
     const out = await extractStumblesFromSession({
       session_id: "s-type",
-      dispatch_events_query: async () => rows,
+      dispatch_events_query: () => Promise.resolve(rows),
     });
     expect(out).toEqual([]);
   });
@@ -142,7 +143,7 @@ describe("extractStumblesFromSession", () => {
     ];
     const out = await extractStumblesFromSession({
       session_id: "s-custom",
-      dispatch_events_query: async () => rows,
+      dispatch_events_query: () => Promise.resolve(rows),
       allowed_sources: ["custom"],
       allowed_event_types: ["custom-event"],
     });
@@ -171,7 +172,7 @@ describe("extractStumblesFromSession", () => {
 
     const out = await extractStumblesFromSession({
       session_id: "s-excerpt",
-      dispatch_events_query: async () => rows,
+      dispatch_events_query: () => Promise.resolve(rows),
     });
 
     expect(out).toHaveLength(1);

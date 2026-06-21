@@ -1,4 +1,5 @@
-import { test, expect, mock } from "bun:test";
+import { expect, mock, test } from "bun:test";
+
 import {
   refineDispatchPrompt,
   RefineError,
@@ -6,8 +7,20 @@ import {
   REFINER_OUTPUT_MAX_BYTES,
 } from "../../src/services/dispatch-prompt-refiner.js";
 
+// Capture the rejection from a promise so assertions can run against the
+// caught error. Sidesteps the bun-types type gap where `.rejects.X()` is
+// declared `void` but returns a Promise at runtime.
+const catchRejection = async (promise: Promise<unknown>): Promise<unknown> => {
+  try {
+    await promise;
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected promise to reject");
+};
+
 test("refineDispatchPrompt happy path returns trimmed output", async () => {
-  const chat = mock(async () => "  Reshaped prompt.  \n");
+  const chat = mock(() => Promise.resolve("  Reshaped prompt.  \n"));
   const refined = await refineDispatchPrompt({
     message: "# Spike\n\nDo X.",
     chat,
@@ -18,54 +31,46 @@ test("refineDispatchPrompt happy path returns trimmed output", async () => {
 });
 
 test("refineDispatchPrompt rejects input larger than REFINER_INPUT_MAX_BYTES", async () => {
-  const chat = mock(async () => "unused");
+  const chat = mock(() => Promise.resolve("unused"));
   const big = "a".repeat(REFINER_INPUT_MAX_BYTES + 1);
-  await expect(
-    refineDispatchPrompt({ message: big, chat, model: "gpt-4o" }),
-  ).rejects.toBeInstanceOf(RefineError);
-  await expect(refineDispatchPrompt({ message: big, chat, model: "gpt-4o" })).rejects.toMatchObject(
-    {
-      code: "input_too_large",
-    },
-  );
+  const err1 = await catchRejection(refineDispatchPrompt({ message: big, chat, model: "gpt-4o" }));
+  expect(err1).toBeInstanceOf(RefineError);
+  const err2 = await catchRejection(refineDispatchPrompt({ message: big, chat, model: "gpt-4o" }));
+  expect(err2).toMatchObject({ code: "input_too_large" });
   expect(chat).not.toHaveBeenCalled();
 });
 
 test("refineDispatchPrompt rejects blank input", async () => {
-  const chat = mock(async () => "unused");
-  await expect(
+  const chat = mock(() => Promise.resolve("unused"));
+  const err = await catchRejection(
     refineDispatchPrompt({ message: "   \n\t  ", chat, model: "gpt-4o" }),
-  ).rejects.toMatchObject({
-    code: "input_blank",
-  });
+  );
+  expect(err).toMatchObject({ code: "input_blank" });
   expect(chat).not.toHaveBeenCalled();
 });
 
 test("refineDispatchPrompt rejects empty refined output", async () => {
-  const chat = mock(async () => "   \n  ");
-  await expect(
+  const chat = mock(() => Promise.resolve("   \n  "));
+  const err = await catchRejection(
     refineDispatchPrompt({ message: "real input", chat, model: "gpt-4o" }),
-  ).rejects.toMatchObject({
-    code: "output_empty",
-  });
+  );
+  expect(err).toMatchObject({ code: "output_empty" });
 });
 
 test("refineDispatchPrompt rejects oversize refined output", async () => {
-  const chat = mock(async () => "a".repeat(REFINER_OUTPUT_MAX_BYTES + 1));
-  await expect(
+  const chat = mock(() => Promise.resolve("a".repeat(REFINER_OUTPUT_MAX_BYTES + 1)));
+  const err = await catchRejection(
     refineDispatchPrompt({ message: "real input", chat, model: "gpt-4o" }),
-  ).rejects.toMatchObject({
-    code: "output_too_large",
-  });
+  );
+  expect(err).toMatchObject({ code: "output_too_large" });
 });
 
 test("refineDispatchPrompt wraps upstream errors with upstream_failed code", async () => {
-  const chat = mock(async () => {
-    throw new Error("sirius down");
-  });
-  await expect(
+  const chat = mock(() => Promise.reject(new Error("sirius down")));
+  const err = await catchRejection(
     refineDispatchPrompt({ message: "real input", chat, model: "gpt-4o" }),
-  ).rejects.toMatchObject({
+  );
+  expect(err).toMatchObject({
     code: "upstream_failed",
     message: "sirius down",
   });
@@ -73,9 +78,9 @@ test("refineDispatchPrompt wraps upstream errors with upstream_failed code", asy
 
 test("refineDispatchPrompt passes system + user roles to chat fn", async () => {
   let captured: { role: string; content: string }[] | null = null;
-  const chat = mock(async (opts: { messages: { role: string; content: string }[] }) => {
+  const chat = mock((opts: { messages: { role: string; content: string }[] }) => {
     captured = opts.messages;
-    return "ok";
+    return Promise.resolve("ok");
   });
   await refineDispatchPrompt({ message: "real input", chat, model: "haiku-test" });
   expect(captured).not.toBeNull();

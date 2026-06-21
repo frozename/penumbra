@@ -1,18 +1,21 @@
-import { beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, it, spyOn } from "bun:test";
+
 import { loadSqliteVec, migrate } from "../../src/index.js";
+import { ChainReader } from "../../src/readers/chain.js";
 import {
   captureAgentPerformanceFromDispatch,
   captureAgentPerformanceFromReconciler,
   meaningfulOutput,
   MIN_RESPONSE_CHARS,
 } from "../../src/services/agent-performance-capture.js";
-import { ChainReader } from "../../src/readers/chain.js";
 
 if (process.platform === "darwin") {
   try {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-  } catch {}
+  } catch {
+    // ignore: fall back to bundled SQLite if Homebrew lib is unavailable
+  }
 }
 
 describe("captureAgentPerformanceFromReconciler", () => {
