@@ -16,7 +16,7 @@
     "typecheck": "bun scripts/check-dist-freshness.ts && tsc --build",
     "lint": "bun run lint:no-raw-env && bun run lint:no-sync-exec && eslint .",
     "lint:fix": "eslint . --fix",
-    "lint:strict": "eslint packages/config packages/api-contract packages/agy-acp-shim packages/e2e packages/workflows packages/cli packages/console scripts --max-warnings=0",
+    "lint:strict": "eslint packages/config packages/api-contract packages/agy-acp-shim packages/e2e packages/workflows packages/cli packages/console packages/core scripts --max-warnings=0",
     "format": "prettier . --write",
     "format:check": "prettier . --check",
     "prepare": "husky"
