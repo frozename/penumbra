@@ -12,7 +12,7 @@ import { getPrincipal } from "../auth.js";
 
 const FS_READ_MAX_BYTES = 1024 * 1024; // 1 MiB
 
-function checkWorkerOwnership(
+export function checkWorkerOwnership(
   req: Request,
   handoffWorkerId: string | null | undefined,
 ): Response | null {

@@ -3,6 +3,7 @@ import type { DaemonServices } from "../serve.js";
 import { z } from "zod";
 
 import { json } from "./_helpers.js";
+import { checkWorkerOwnership } from "./fs.js";
 const ShellRunInputSchema = z.object({
   handoff_id: z.string().min(1),
   agent_name: z.string().min(1),
@@ -131,6 +132,8 @@ export async function shellRunRoute(req: Request, _services: Services): Promise<
   if (!handoff) {
     return json({ error: { code: "handoff_not_found" } }, 404);
   }
+  const ownershipDenied = checkWorkerOwnership(req, (handoff as any).worker_id);
+  if (ownershipDenied !== null) return ownershipDenied;
   const TERMINAL_STATUSES = new Set(["completed", "failed", "rejected", "expired"]);
   if (TERMINAL_STATUSES.has(handoff.status)) {
     return json({ error: { code: "handoff_terminal", status: handoff.status } }, 409);
@@ -281,6 +284,8 @@ export async function shellCloseRoute(req: Request, _services: Services): Promis
   if (!closeHandoff) {
     return json({ error: { code: "handoff_not_found" } }, 404);
   }
+  const closeOwnershipDenied = checkWorkerOwnership(req, (closeHandoff as any).worker_id);
+  if (closeOwnershipDenied !== null) return closeOwnershipDenied;
   const TERMINAL_STATUSES_CLOSE = new Set(["completed", "failed", "rejected", "expired"]);
   if (TERMINAL_STATUSES_CLOSE.has(closeHandoff.status)) {
     return json({ error: { code: "handoff_terminal", status: closeHandoff.status } }, 409);
@@ -315,6 +320,8 @@ export async function shellListRoute(req: Request, _services: Services): Promise
   if (!listHandoff) {
     return json({ error: { code: "handoff_not_found" } }, 404);
   }
+  const listOwnershipDenied = checkWorkerOwnership(req, (listHandoff as any).worker_id);
+  if (listOwnershipDenied !== null) return listOwnershipDenied;
 
   return json({ sessions: shellSessionPool.listSessions(handoffId) });
 }
