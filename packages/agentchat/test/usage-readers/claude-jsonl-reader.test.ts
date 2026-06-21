@@ -1,5 +1,12 @@
 import { describe, it, expect, spyOn } from "bun:test";
-import { appendFileSync, mkdtempSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdtempSync,
+  mkdirSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -165,6 +172,100 @@ describe("ClaudeJsonlReader", () => {
       readSyncSpy.mockRestore();
       readFileSyncSpy.mockRestore();
     }
+  });
+
+  it("skips out-of-window files and prunes their cursor entries; in-window files still tail-read", async () => {
+    const { rootDir } = setupProjectsDir();
+    const fakeNow = Date.UTC(2026, 5, 20, 12, 0, 0);
+    const dayMs = 24 * 60 * 60 * 1000;
+
+    const stalePath = writeJsonl(rootDir, "-stale-project", "stale-sess", [
+      {
+        type: "assistant",
+        message: { model: "claude-opus-4-7", usage: { input_tokens: 99, output_tokens: 99 } },
+      },
+    ]);
+    const staleMtimeSec = (fakeNow - 48 * 60 * 60 * 1000) / 1000;
+    utimesSync(stalePath, staleMtimeSec, staleMtimeSec);
+
+    const freshPath = writeJsonl(rootDir, "-fresh-project", "fresh-sess", [
+      {
+        type: "assistant",
+        message: { model: "claude-opus-4-7", usage: { input_tokens: 10, output_tokens: 20 } },
+      },
+      {
+        type: "assistant",
+        message: { model: "claude-opus-4-7", usage: { input_tokens: 30, output_tokens: 40 } },
+      },
+    ]);
+    const freshMtimeSec = (fakeNow - 60 * 1000) / 1000;
+    utimesSync(freshPath, freshMtimeSec, freshMtimeSec);
+
+    const reader = new ClaudeJsonlReader({
+      rootDir,
+      lookbackHours: 24,
+      now: () => fakeNow,
+    });
+
+    // Seed cursor with entries for BOTH files. The fresh cursor sits between
+    // the first and second assistant row so we can verify tail-reading from it.
+    const freshSize = statSync(freshPath).size;
+    const lines = fs.readFileSync(freshPath, "utf8").split("\n");
+    const firstLineBytes = Buffer.byteLength(lines[0] + "\n", "utf8");
+    expect(firstLineBytes).toBeLessThan(freshSize);
+    const seededCursor = {
+      files: {
+        [stalePath]: { byte_offset: 0, mtime_ms: staleMtimeSec * 1000 },
+        [freshPath]: { byte_offset: firstLineBytes, mtime_ms: freshMtimeSec * 1000 },
+      },
+    };
+
+    const r = await reader.read(seededCursor);
+
+    // Only the in-window file's second row was read.
+    expect(r.usage_deltas).toHaveLength(1);
+    const delta = first(r.usage_deltas);
+    expect(delta.tokens_input).toBe(30);
+    expect(delta.tokens_output).toBe(40);
+
+    const cursor = r.cursor as { files: Record<string, { byte_offset: number; mtime_ms: number }> };
+    expect(cursor.files[stalePath]).toBeUndefined();
+    expect(cursor.files[freshPath]).toBeDefined();
+    expect(cursor.files[freshPath]!.byte_offset).toBe(freshSize);
+
+    // dayMs is referenced to keep linter quiet about the constant; assertion sanity-check.
+    expect(fakeNow - staleMtimeSec * 1000).toBeGreaterThan(dayMs);
+  });
+
+  it("prunes cursor entries for files that no longer exist on disk", async () => {
+    const { rootDir } = setupProjectsDir();
+    const fakeNow = Date.UTC(2026, 5, 20, 12, 0, 0);
+
+    const livePath = writeJsonl(rootDir, "-live-project", "live-sess", [
+      {
+        type: "assistant",
+        message: { model: "claude-opus-4-7", usage: { input_tokens: 1, output_tokens: 1 } },
+      },
+    ]);
+    utimesSync(livePath, fakeNow / 1000, fakeNow / 1000);
+
+    const ghostPath = join(rootDir, "-vanished-project", "ghost-sess.jsonl");
+    const seededCursor = {
+      files: {
+        [ghostPath]: { byte_offset: 100, mtime_ms: fakeNow - 60_000 },
+      },
+    };
+
+    const reader = new ClaudeJsonlReader({
+      rootDir,
+      lookbackHours: 24,
+      now: () => fakeNow,
+    });
+    const r = await reader.read(seededCursor);
+
+    const cursor = r.cursor as { files: Record<string, unknown> };
+    expect(cursor.files[ghostPath]).toBeUndefined();
+    expect(cursor.files[livePath]).toBeDefined();
   });
 
   it("returns rate_limit_snapshots as an empty array even when JSONL includes rate_limits", async () => {

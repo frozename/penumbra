@@ -6,6 +6,10 @@ import type { UsageReader, UsageReaderResult, UsageReaderDelta } from "./index.j
 
 export interface ClaudeJsonlReaderOptions {
   rootDir?: string;
+  /** Only scan jsonl files modified within the last N hours. Default 24. */
+  lookbackHours?: number;
+  /** Injectable clock for tests. */
+  now?: () => number;
 }
 
 interface FileCursor {
@@ -37,9 +41,13 @@ export class ClaudeJsonlReader implements UsageReader {
   readonly id = "claude-jsonl";
   readonly machineGlobal = true;
   private rootDir: string;
+  private lookbackHours: number;
+  private now: () => number;
 
   constructor(opts: ClaudeJsonlReaderOptions = {}) {
     this.rootDir = opts.rootDir ?? join(homedir(), ".claude", "projects");
+    this.lookbackHours = opts.lookbackHours ?? 24;
+    this.now = opts.now ?? (() => Date.now());
   }
 
   async read(previousCursor: unknown | null): Promise<UsageReaderResult> {
@@ -52,6 +60,8 @@ export class ClaudeJsonlReader implements UsageReader {
     }
     const cursor: ClaudeJsonlCursor = (previousCursor as ClaudeJsonlCursor | null) ?? { files: {} };
     const newCursor: ClaudeJsonlCursor = { files: { ...cursor.files } };
+    const cutoff = this.now() - this.lookbackHours * 60 * 60 * 1000;
+    const seenInWindow = new Set<string>();
 
     const buckets = new Map<string, UsageReaderDelta>();
     const projectDirs = fs
@@ -70,9 +80,14 @@ export class ClaudeJsonlReader implements UsageReader {
         if (!fEnt.isFile() || !fEnt.name.endsWith(".jsonl")) continue;
         const filePath = join(projectPath, fEnt.name);
         const stats = fs.statSync(filePath);
+        if (stats.mtimeMs < cutoff) continue;
+        seenInWindow.add(filePath);
         const fileCursor = newCursor.files[filePath];
         const offset = fileCursor?.byte_offset ?? 0;
-        if (offset >= stats.size) continue;
+        if (offset >= stats.size) {
+          newCursor.files[filePath] = { byte_offset: stats.size, mtime_ms: stats.mtimeMs };
+          continue;
+        }
         const slice = readTail(filePath, offset, stats.size - offset);
         for (const rawLine of slice.split("\n")) {
           const line = rawLine.trim();
@@ -112,6 +127,10 @@ export class ClaudeJsonlReader implements UsageReader {
         }
         newCursor.files[filePath] = { byte_offset: stats.size, mtime_ms: stats.mtimeMs };
       }
+    }
+
+    for (const path of Object.keys(newCursor.files)) {
+      if (!seenInWindow.has(path)) delete newCursor.files[path];
     }
     /**
      * Claude rate limits intentionally NOT captured here. The canonical source is
