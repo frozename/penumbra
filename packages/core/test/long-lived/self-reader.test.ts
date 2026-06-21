@@ -1,15 +1,25 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- test fixtures and sqlite row mocks intentionally use loose shapes */
-import { describe, it, expect } from "bun:test";
-import { Database } from "bun:sqlite";
 import {
+  listLongLivedPendingActionsForAgent,
   loadSqliteVec,
   readLongLivedAgentWorkingMemory,
   updateLongLivedAgentState,
-  listLongLivedPendingActionsForAgent,
 } from "@penumbra/core";
 import { applySchema } from "@penumbra/core/db/schema";
+import { Database } from "bun:sqlite";
+import { describe, expect, it } from "bun:test";
 
-function seed(db: Database) {
+import type { WorkingMemory } from "../../src/long-lived/types.js";
+
+interface AgentRow {
+  last_intent_summary: string | null;
+  working_memory_json: string;
+}
+
+interface WorkingMemoryJsonRow {
+  working_memory_json: string;
+}
+
+function seed(db: Database): void {
   loadSqliteVec(db);
   applySchema(db, { embeddingDim: 384 });
   db.query(
@@ -30,6 +40,28 @@ function seed(db: Database) {
   ).run();
 }
 
+function readAgent(db: Database): AgentRow {
+  const row = db
+    .query<
+      AgentRow,
+      []
+    >("SELECT last_intent_summary, working_memory_json FROM long_lived_agents WHERE id='a'")
+    .get();
+  if (!row) throw new Error("agent row missing");
+  return row;
+}
+
+function readWorkingMemory(db: Database): WorkingMemory {
+  const row = db
+    .query<
+      WorkingMemoryJsonRow,
+      []
+    >("SELECT working_memory_json FROM long_lived_agents WHERE id='a'")
+    .get();
+  if (!row) throw new Error("agent row missing");
+  return JSON.parse(row.working_memory_json) as WorkingMemory;
+}
+
 describe("long-lived self reader/writer helpers", () => {
   it("reads working memory for an existing agent", () => {
     const db = new Database(":memory:");
@@ -48,7 +80,7 @@ describe("long-lived self reader/writer helpers", () => {
   it("updates working memory and intent summary independently", () => {
     const db = new Database(":memory:");
     seed(db);
-    const wm = {
+    const wm: WorkingMemory = {
       version: 1,
       updated_at: 5,
       pending_goals: [],
@@ -56,31 +88,26 @@ describe("long-lived self reader/writer helpers", () => {
       watches: [],
       recent_decisions: [],
     };
-    updateLongLivedAgentState(db, "a", { working_memory: wm as any, intent_summary: "intent" });
-    const row = db
-      .query("SELECT last_intent_summary, working_memory_json FROM long_lived_agents WHERE id='a'")
-      .get() as any;
+    updateLongLivedAgentState(db, "a", { working_memory: wm, intent_summary: "intent" });
+    const row = readAgent(db);
     expect(row.last_intent_summary).toBe("intent");
-    expect(JSON.parse(row.working_memory_json).open_threads).toHaveLength(1);
+    const stored = JSON.parse(row.working_memory_json) as WorkingMemory;
+    expect(stored.open_threads).toHaveLength(1);
   });
 
   it("no-ops when given an empty patch", () => {
     const db = new Database(":memory:");
     seed(db);
-    const before = db
-      .query("SELECT last_intent_summary, working_memory_json FROM long_lived_agents WHERE id='a'")
-      .get() as any;
+    const before = readAgent(db);
     updateLongLivedAgentState(db, "a", {});
-    const after = db
-      .query("SELECT last_intent_summary, working_memory_json FROM long_lived_agents WHERE id='a'")
-      .get() as any;
+    const after = readAgent(db);
     expect(after).toEqual(before);
   });
 
   it("flushes consumed pending goals when tick read snapshot omits them", () => {
     const db = new Database(":memory:");
     seed(db);
-    const beforeRead = {
+    const beforeRead: WorkingMemory = {
       version: 1,
       updated_at: 2,
       pending_goals: [{ kind: "user_goal", text: "relevant", created_at: 0 }],
@@ -108,16 +135,14 @@ describe("long-lived self reader/writer helpers", () => {
       { running_tick_id: "tick-a" },
     );
 
-    const row = db
-      .query("SELECT working_memory_json FROM long_lived_agents WHERE id='a'")
-      .get() as { working_memory_json: string };
-    expect(JSON.parse(row.working_memory_json).pending_goals).toEqual([]);
+    const wm = readWorkingMemory(db);
+    expect(wm.pending_goals).toEqual([]);
   });
 
   it("preserves concurrent appended pending goals while flushing old snapshot goals", () => {
     const db = new Database(":memory:");
     seed(db);
-    const baseRead = {
+    const baseRead: WorkingMemory = {
       version: 1,
       updated_at: 2,
       pending_goals: [{ kind: "user_goal", text: "stale", created_at: 0 }],
@@ -129,11 +154,11 @@ describe("long-lived self reader/writer helpers", () => {
       JSON.stringify(baseRead),
     );
 
-    const concurrentGoal = { kind: "user_goal", text: "fresh", created_at: 1500 };
-    const withConcurrent = {
+    const concurrentGoal = { kind: "user_goal" as const, text: "fresh", created_at: 1500 };
+    const withConcurrent: WorkingMemory = {
       ...baseRead,
       updated_at: 4,
-      pending_goals: [baseRead.pending_goals[0], concurrentGoal],
+      pending_goals: [baseRead.pending_goals[0]!, concurrentGoal],
     };
     db.query("UPDATE long_lived_agents SET working_memory_json = ? WHERE id='a'").run(
       JSON.stringify(withConcurrent),
@@ -155,10 +180,7 @@ describe("long-lived self reader/writer helpers", () => {
       { running_tick_id: "tick-a" },
     );
 
-    const row = db
-      .query("SELECT working_memory_json FROM long_lived_agents WHERE id='a'")
-      .get() as { working_memory_json: string };
-    const workingMemory = JSON.parse(row.working_memory_json);
+    const workingMemory = readWorkingMemory(db);
     expect(workingMemory.pending_goals).toEqual([concurrentGoal]);
   });
 
@@ -166,7 +188,7 @@ describe("long-lived self reader/writer helpers", () => {
     const db = new Database(":memory:");
     seed(db);
 
-    const goalA = { kind: "user_goal", text: "approved-A", created_at: 100 };
+    const goalA = { kind: "user_goal" as const, text: "approved-A", created_at: 100 };
     db.query("UPDATE long_lived_agents SET working_memory_json = ? WHERE id='a'").run(
       JSON.stringify({
         version: 1,
@@ -175,7 +197,7 @@ describe("long-lived self reader/writer helpers", () => {
         open_threads: [],
         watches: [],
         recent_decisions: [],
-      }),
+      } satisfies WorkingMemory),
     );
 
     updateLongLivedAgentState(
@@ -189,19 +211,16 @@ describe("long-lived self reader/writer helpers", () => {
           open_threads: [{ id: "o1", topic: "t1", opened_at: 1, notes: "" }],
           watches: [],
           recent_decisions: [],
-        } as any,
+        },
       },
       { running_tick_id: "tick-a" },
     );
 
-    let row = db.query("SELECT working_memory_json FROM long_lived_agents WHERE id='a'").get() as {
-      working_memory_json: string;
-    };
-    let wm = JSON.parse(row.working_memory_json);
+    let wm = readWorkingMemory(db);
     expect(wm.pending_goals).toEqual([goalA]);
     expect(wm.open_threads).toHaveLength(1);
 
-    const goalB = { kind: "user_goal", text: "approved-B", created_at: 200 };
+    const goalB = { kind: "user_goal" as const, text: "approved-B", created_at: 200 };
     wm.pending_goals.push(goalB);
     db.query("UPDATE long_lived_agents SET working_memory_json = ? WHERE id='a'").run(
       JSON.stringify(wm),
@@ -221,15 +240,12 @@ describe("long-lived self reader/writer helpers", () => {
           ],
           watches: [],
           recent_decisions: [],
-        } as any,
+        },
       },
       { running_tick_id: "tick-a" },
     );
 
-    row = db.query("SELECT working_memory_json FROM long_lived_agents WHERE id='a'").get() as {
-      working_memory_json: string;
-    };
-    wm = JSON.parse(row.working_memory_json);
+    wm = readWorkingMemory(db);
     expect(wm.pending_goals).toEqual([goalA, goalB]);
     expect(wm.open_threads).toHaveLength(2);
   });
@@ -246,26 +262,30 @@ describe("long-lived self reader/writer helpers", () => {
         open_threads: [],
         watches: [],
         recent_decisions: [],
-      }),
+      } satisfies WorkingMemory),
     );
 
     const observed: { sql: string; inTx: boolean }[] = [];
     const originalQuery = db.query.bind(db);
-    (db as any).query = (sql: string) => {
+    type DbQuery = typeof db.query;
+    type PreparedStatement = ReturnType<DbQuery>;
+    type StatementMethod = (...args: unknown[]) => unknown;
+    const spyQuery = ((sql: string): PreparedStatement => {
       const stmt = originalQuery(sql);
       return new Proxy(stmt, {
-        get(target: any, prop: string | symbol) {
-          const value = target[prop];
+        get(target, prop): unknown {
+          const value: unknown = Reflect.get(target, prop);
           if (typeof value === "function" && (prop === "get" || prop === "all" || prop === "run")) {
-            return (...args: any[]) => {
+            return (...args: unknown[]): unknown => {
               observed.push({ sql, inTx: db.inTransaction });
-              return value.apply(target, args);
+              return (value as StatementMethod).apply(target, args);
             };
           }
           return value;
         },
       });
-    };
+    }) as DbQuery;
+    db.query = spyQuery;
 
     updateLongLivedAgentState(
       db,
@@ -278,13 +298,13 @@ describe("long-lived self reader/writer helpers", () => {
           open_threads: [],
           watches: [],
           recent_decisions: [],
-        } as any,
+        },
         intent_summary: "intent",
       },
       { running_tick_id: "tick-a" },
     );
 
-    const agentTouches = observed.filter((entry) => /long_lived_agents/.test(entry.sql));
+    const agentTouches = observed.filter((entry) => entry.sql.includes("long_lived_agents"));
     expect(agentTouches.length).toBeGreaterThanOrEqual(2);
     expect(agentTouches.every((entry) => entry.inTx)).toBe(true);
   });

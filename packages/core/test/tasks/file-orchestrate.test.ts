@@ -1,8 +1,10 @@
-import { beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { migrate } from "../../src/db/migrations.js";
+import { beforeEach, describe, expect, test } from "bun:test";
+
 import type { AgentDescriptor } from "../../src/tasks/eligibility.js";
+
+import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import {
   OrchestrateAgentNotMaestroCapable,
   OrchestrateRecursionForbidden,
@@ -67,7 +69,8 @@ describe("TaskWriter.file orchestrate validation", () => {
       created_by_id: "cli",
     });
 
-    expect(writer.get(task_id)).toMatchObject({
+    const row = writer.get(task_id);
+    expect(row).toMatchObject({
       id: task_id,
       created_by_kind: "human",
       created_by_id: "cli",
@@ -92,9 +95,9 @@ describe("TaskWriter.file orchestrate validation", () => {
       chain_id: null,
       origin: null,
       project_id: null,
-      created_at: expect.any(Number),
-      updated_at: expect.any(Number),
     });
+    expect(typeof row.created_at).toBe("number");
+    expect(typeof row.updated_at).toBe("number");
   });
 
   test("happy path without bounds leaves bounds columns null", () => {

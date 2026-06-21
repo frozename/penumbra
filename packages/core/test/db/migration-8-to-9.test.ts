@@ -1,8 +1,9 @@
-import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { expect, test } from "bun:test";
+
 import { migrate } from "../../src/db/migrations.js";
 import { SCHEMA_VERSION } from "../../src/db/schema.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 
 try {
   if (process.platform === "darwin") {
@@ -78,7 +79,7 @@ test("migration preserves existing rows in pre-existing tables", () => {
 
   migrate(db, { embeddingDim: 384 });
 
-  db.exec(`
+  db.run(`
     INSERT INTO t0_events (
       event_id, ts, ingest_ts, source, source_detail, project_id, user_id,
       machine_id, session_id, event_type, lane, provider, model, tokens_in,
@@ -171,7 +172,7 @@ test("migration can recreate v9 tables after downgrading schema_version to 8", (
   loadSqliteVec(db);
 
   migrate(db, { embeddingDim: 384 });
-  db.exec(`
+  db.run(`
     DROP TABLE task_events;
     DROP TABLE task_leases;
     DROP TABLE tasks;

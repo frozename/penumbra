@@ -1,12 +1,19 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
-import { promisify } from "node:util";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { exec as execCb } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { promisify } from "node:util";
+
 import { WorktreeManager } from "../../src/worktree/manager.js";
 
-const exec = promisify(execCb);
+// node:util.promisify(child_process.exec)'s declaration overloads make TS pick
+// the void-returning variant in eslint's type-aware pass; the runtime is in
+// fact a Promise (per util.promisify.custom), so the explicit shape closes the
+// gap without an `as any` dodge.
+type ExecResult = { stdout: string; stderr: string };
+type ExecOpts = { cwd?: string };
+const exec: (command: string, opts?: ExecOpts) => Promise<ExecResult> = promisify(execCb);
 const TSC_BIN = path.resolve(process.cwd(), "node_modules", "typescript", "bin", "tsc");
 
 async function setupWorkspaceRepo(prefix: string): Promise<string> {
@@ -125,7 +132,7 @@ describe("WorktreeManager isolated-install mode", () => {
   });
 
   function nextHandoff(): string {
-    return `wt-isolated-${Date.now()}-${++counter}`;
+    return `wt-isolated-${String(Date.now())}-${String(++counter)}`;
   }
 
   it("default mode mirrors node_modules symlinks to main repo and keeps the stale-type trap", async () => {
@@ -221,7 +228,13 @@ describe("WorktreeManager isolated-install mode", () => {
     const id = nextHandoff();
 
     try {
-      await expect(manager.createWorktree(id, { isolated_install: true })).rejects.toThrow();
+      let createErr: unknown;
+      try {
+        await manager.createWorktree(id, { isolated_install: true });
+      } catch (err) {
+        createErr = err;
+      }
+      expect(createErr).toBeDefined();
       expect(manager.getWorktree(id)).toBeNull();
       expect(fs.existsSync(path.join(homeRoot, id))).toBe(false);
     } finally {

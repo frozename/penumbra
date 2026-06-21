@@ -1,17 +1,17 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- test fixtures and sqlite row mocks intentionally use loose shapes */
-import { beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { migrate } from "../../src/db/migrations.js";
+import { beforeEach, describe, expect, test } from "bun:test";
+
 import type { AgentDescriptor } from "../../src/tasks/eligibility.js";
 import type { FileTaskInput } from "../../src/tasks/schema.js";
+
+import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import {
   OrchestrateAgentNotMaestroCapable,
   OrchestrateRecursionForbidden,
   OrchestrateRequiresAllowAgents,
   validateOrchestrateFile,
 } from "../../src/tasks/orchestrate-validation.js";
-import { TaskWriter } from "../../src/tasks/writer.js";
 
 if (process.platform === "darwin") {
   try {
@@ -71,7 +71,7 @@ describe("validateOrchestrateFile", () => {
 
   test("non-orchestrate kind is no-op", () => {
     const parentId = insertTask(db, "orchestrate");
-    expect(() =>
+    expect(() => {
       validateOrchestrateFile(
         db,
         baseInput({
@@ -79,12 +79,12 @@ describe("validateOrchestrateFile", () => {
           parent_task_id: parentId,
         }),
         { resolveAgent: () => undefined },
-      ),
-    ).not.toThrow();
+      );
+    }).not.toThrow();
   });
 
   test("empty allow_agents throws", () => {
-    expect(() =>
+    expect(() => {
       validateOrchestrateFile(
         db,
         baseInput({
@@ -92,20 +92,20 @@ describe("validateOrchestrateFile", () => {
           eligibility: { allow_agents: [] },
         }),
         { resolveAgent: () => undefined },
-      ),
-    ).toThrow(OrchestrateRequiresAllowAgents);
+      );
+    }).toThrow(OrchestrateRequiresAllowAgents);
   });
 
   test("missing eligibility throws", () => {
-    expect(() =>
+    expect(() => {
       validateOrchestrateFile(db, baseInput({ kind: "orchestrate" }), {
         resolveAgent: () => undefined,
-      }),
-    ).toThrow(OrchestrateRequiresAllowAgents);
+      });
+    }).toThrow(OrchestrateRequiresAllowAgents);
   });
 
   test("unknown agent throws with unknown reason", () => {
-    expect(() =>
+    expect(() => {
       validateOrchestrateFile(
         db,
         baseInput({
@@ -113,12 +113,12 @@ describe("validateOrchestrateFile", () => {
           eligibility: { allow_agents: ["foo"] },
         }),
         { resolveAgent: makeResolver({}) },
-      ),
-    ).toThrow(new OrchestrateAgentNotMaestroCapable("foo", "unknown"));
+      );
+    }).toThrow(new OrchestrateAgentNotMaestroCapable("foo", "unknown"));
   });
 
   test("agent not maestro-capable throws with not_maestro_capable reason", () => {
-    expect(() =>
+    expect(() => {
       validateOrchestrateFile(
         db,
         baseInput({
@@ -126,12 +126,12 @@ describe("validateOrchestrateFile", () => {
           eligibility: { allow_agents: ["foo"] },
         }),
         { resolveAgent: makeResolver({ foo: { name: "foo", maestro_capable: false } }) },
-      ),
-    ).toThrow(new OrchestrateAgentNotMaestroCapable("foo", "not_maestro_capable"));
+      );
+    }).toThrow(new OrchestrateAgentNotMaestroCapable("foo", "not_maestro_capable"));
   });
 
   test("mixed allow_agents fails on first not-capable entry", () => {
-    expect(() =>
+    expect(() => {
       validateOrchestrateFile(
         db,
         baseInput({
@@ -144,12 +144,12 @@ describe("validateOrchestrateFile", () => {
             bad: { name: "bad", maestro_capable: false },
           }),
         },
-      ),
-    ).toThrow(new OrchestrateAgentNotMaestroCapable("bad", "not_maestro_capable"));
+      );
+    }).toThrow(new OrchestrateAgentNotMaestroCapable("bad", "not_maestro_capable"));
   });
 
   test("happy path passes without parent", () => {
-    expect(() =>
+    expect(() => {
       validateOrchestrateFile(
         db,
         baseInput({
@@ -162,27 +162,27 @@ describe("validateOrchestrateFile", () => {
             "also-good": { name: "also-good", maestro_capable: true },
           }),
         },
-      ),
-    ).not.toThrow();
+      );
+    }).not.toThrow();
   });
 
   test("branch_base is accepted on orchestrate tasks", () => {
-    expect(() =>
+    expect(() => {
       validateOrchestrateFile(
         db,
         baseInput({
           kind: "orchestrate",
           branch_base: "agent/handoff-1",
           eligibility: { allow_agents: ["good"] },
-        } as any),
+        }),
         { resolveAgent: makeResolver({ good: { name: "good", maestro_capable: true } }) },
-      ),
-    ).not.toThrow();
+      );
+    }).not.toThrow();
   });
 
   test("parent orchestrate is forbidden", () => {
     const parentId = insertTask(db, "orchestrate");
-    expect(() =>
+    expect(() => {
       validateOrchestrateFile(
         db,
         baseInput({
@@ -191,13 +191,13 @@ describe("validateOrchestrateFile", () => {
           eligibility: { allow_agents: ["good"] },
         }),
         { resolveAgent: makeResolver({ good: { name: "good", maestro_capable: true } }) },
-      ),
-    ).toThrow(new OrchestrateRecursionForbidden(parentId));
+      );
+    }).toThrow(new OrchestrateRecursionForbidden(parentId));
   });
 
   test("parent work does not trigger recursion check", () => {
     const parentId = insertTask(db, "work");
-    expect(() =>
+    expect(() => {
       validateOrchestrateFile(
         db,
         baseInput({
@@ -206,12 +206,12 @@ describe("validateOrchestrateFile", () => {
           eligibility: { allow_agents: ["good"] },
         }),
         { resolveAgent: makeResolver({ good: { name: "good", maestro_capable: true } }) },
-      ),
-    ).not.toThrow();
+      );
+    }).not.toThrow();
   });
 
   test("missing parent does not throw", () => {
-    expect(() =>
+    expect(() => {
       validateOrchestrateFile(
         db,
         baseInput({
@@ -220,7 +220,7 @@ describe("validateOrchestrateFile", () => {
           eligibility: { allow_agents: ["good"] },
         }),
         { resolveAgent: makeResolver({ good: { name: "good", maestro_capable: true } }) },
-      ),
-    ).not.toThrow();
+      );
+    }).not.toThrow();
   });
 });

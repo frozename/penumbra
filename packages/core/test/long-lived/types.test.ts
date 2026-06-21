@@ -1,10 +1,10 @@
-import { describe, expect, it } from "bun:test";
 import {
   LongLivedAgentRowSchema,
   LongLivedPendingActionRowSchema,
   LongLivedTickRowSchema,
   WorkingMemorySchema,
 } from "@penumbra/core/long-lived/types";
+import { describe, expect, it } from "bun:test";
 
 describe("long-lived types", () => {
   it("parses a minimal working memory blob", () => {

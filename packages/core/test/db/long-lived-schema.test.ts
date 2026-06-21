@@ -1,9 +1,10 @@
-import { describe, expect, it } from "bun:test";
-import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { applySchema, SCHEMA_VERSION } from "@penumbra/core/db/schema";
+import { Database } from "bun:sqlite";
+import { describe, expect, it } from "bun:test";
 
-function fresh() {
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+
+function fresh(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   applySchema(db, { embeddingDim: 384 });
@@ -71,7 +72,10 @@ describe("long-lived schema (v15)", () => {
       )
       .all()
       .find((column) => column.name === "project_id");
-    expect(row).toEqual(expect.objectContaining({ name: "project_id", type: "TEXT", notnull: 0 }));
+    expect(row).toBeDefined();
+    expect(row?.name).toBe("project_id");
+    expect(row?.type).toBe("TEXT");
+    expect(row?.notnull).toBe(0);
   });
 
   it("long_lived_agents.project_id column persists and reads back", () => {
@@ -147,7 +151,10 @@ describe("long-lived schema (v15)", () => {
       )
       .all()
       .find((column) => column.name === "meta_json");
-    expect(row).toEqual(expect.objectContaining({ name: "meta_json", type: "TEXT", notnull: 0 }));
+    expect(row).toBeDefined();
+    expect(row?.name).toBe("meta_json");
+    expect(row?.type).toBe("TEXT");
+    expect(row?.notnull).toBe(0);
   });
 
   it("has the expected indexes", () => {
@@ -167,12 +174,16 @@ describe("long-lived schema (v15)", () => {
 
   it("applySchema is idempotent (second call does not throw)", () => {
     const db = fresh();
-    expect(() => applySchema(db, { embeddingDim: 384 })).not.toThrow();
+    expect(() => {
+      applySchema(db, { embeddingDim: 384 });
+    }).not.toThrow();
   });
 
   it("long_lived project_id migration is idempotent", () => {
     const db = fresh();
-    expect(() => applySchema(db, { embeddingDim: 384 })).not.toThrow();
+    expect(() => {
+      applySchema(db, { embeddingDim: 384 });
+    }).not.toThrow();
     const rows = db
       .query<{ name: string }, []>(`PRAGMA table_info('long_lived_agents')`)
       .all()

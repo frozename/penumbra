@@ -1,8 +1,9 @@
-import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { applySchema, SCHEMA_VERSION } from "../../src/db/schema.js";
+import { expect, test } from "bun:test";
+
 import { migrate } from "../../src/db/migrations.js";
+import { applySchema, SCHEMA_VERSION } from "../../src/db/schema.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 
 // On macOS, Bun uses the Apple SQLite build which disables extension loading.
 // Switch to Homebrew's full-featured SQLite before any Database is created.
@@ -117,7 +118,7 @@ test("schema creates agent_performance table and indexes", () => {
 test("applySchema dedupes open lane rows before creating the partial unique index", () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);
-  db.exec(`
+  db.run(`
     CREATE TABLE lane_ledger (
       lane_id              TEXT PRIMARY KEY,
       ts_opened            TEXT NOT NULL,
@@ -159,37 +160,34 @@ test("applySchema dedupes open lane rows before creating the partial unique inde
        ORDER BY ts_opened ASC`,
     )
     .all();
-  expect(rows).toEqual([
-    {
-      lane_id: "lane-old-open",
-      gate_status: "skipped",
-      ts_closed: expect.any(String),
-      override_reason: "schema dedupe: duplicate open lane superseded by lane-new-open",
-    },
-    {
-      lane_id: "lane-new-open",
-      gate_status: "open",
-      ts_closed: null,
-      override_reason: null,
-    },
-  ]);
+  expect(rows).toHaveLength(2);
+  expect(rows[0]?.lane_id).toBe("lane-old-open");
+  expect(rows[0]?.gate_status).toBe("skipped");
+  expect(typeof rows[0]?.ts_closed).toBe("string");
+  expect(rows[0]?.override_reason).toBe(
+    "schema dedupe: duplicate open lane superseded by lane-new-open",
+  );
+  expect(rows[1]).toEqual({
+    lane_id: "lane-new-open",
+    gate_status: "open",
+    ts_closed: null,
+    override_reason: null,
+  });
   const closedAt = Date.parse(rows[0]!.ts_closed!);
   expect(closedAt).toBeGreaterThanOrEqual(beforeApply);
   expect(closedAt).toBeLessThanOrEqual(afterApply);
   expect(rows[0]!.ts_closed).not.toBe("2026-06-01T00:10:00.000Z");
 
-  const indexes = db.query("PRAGMA index_list('lane_ledger')").all() as Array<{
-    name: string;
-    unique: number;
-    partial: number;
-  }>;
-  expect(indexes).toContainEqual(
-    expect.objectContaining({
-      name: "lane_ledger_one_open_per_implementer",
-      unique: 1,
-      partial: 1,
-    }),
-  );
+  const indexes = db
+    .query<
+      { name: string; unique: number; partial: number },
+      []
+    >("PRAGMA index_list('lane_ledger')")
+    .all();
+  const partialIndex = indexes.find((idx) => idx.name === "lane_ledger_one_open_per_implementer");
+  expect(partialIndex).toBeDefined();
+  expect(partialIndex?.unique).toBe(1);
+  expect(partialIndex?.partial).toBe(1);
   expect(() => {
     db.run(
       `INSERT INTO lane_ledger (

@@ -1,8 +1,9 @@
+import { Database } from "bun:sqlite";
 // packages/core/test/db/schema-recall-fields.test.ts
 import { describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+
 import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 
 try {
   if (process.platform === "darwin") {
@@ -12,7 +13,7 @@ try {
   // already loaded
 }
 
-function freshDb() {
+function freshDb(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 4 });

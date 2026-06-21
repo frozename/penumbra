@@ -1,8 +1,9 @@
-import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { expect, test } from "bun:test";
+
 import { migrate } from "../../src/db/migrations.js";
 import { SCHEMA_VERSION } from "../../src/db/schema.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 
 try {
   if (process.platform === "darwin") {
@@ -37,13 +38,15 @@ test("migrate rejects a mismatched embedding dim on a non-empty db", () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
-  expect(() => migrate(db, { embeddingDim: 1536 })).toThrow(/embedding_dim/);
+  expect(() => {
+    migrate(db, { embeddingDim: 1536 });
+  }).toThrow(/embedding_dim/);
 });
 
 test("migrate backfills legacy t2_memory_verification_events columns and index", () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);
-  db.exec(`
+  db.run(`
     CREATE TABLE db_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE t2_memories (
       memory_id TEXT PRIMARY KEY,
@@ -101,5 +104,8 @@ test("migrate creates long_lived_pending_actions.meta_json", () => {
     )
     .all()
     .find((column) => column.name === "meta_json");
-  expect(row).toEqual(expect.objectContaining({ name: "meta_json", type: "TEXT", notnull: 0 }));
+  expect(row).toBeDefined();
+  expect(row?.name).toBe("meta_json");
+  expect(row?.type).toBe("TEXT");
+  expect(row?.notnull).toBe(0);
 });

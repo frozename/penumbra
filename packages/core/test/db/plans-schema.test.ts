@@ -1,15 +1,17 @@
-import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
+import { migrate } from "../../src/db/migrations.js";
+import { SCHEMA_VERSION } from "../../src/db/schema.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
-
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { migrate } from "../../src/db/migrations.js";
-import { SCHEMA_VERSION } from "../../src/db/schema.js";
+} catch {
+  // platform-specific SQLite override; ignore failures elsewhere
+}
 
 test("schema_version matches current version after migrate", () => {
   const db = new Database(":memory:");

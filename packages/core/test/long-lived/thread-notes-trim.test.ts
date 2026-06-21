@@ -1,8 +1,8 @@
-import { describe, it, expect } from "bun:test";
 import {
   trimThreadNotes,
   trimWorkingMemoryThreadNotes,
 } from "@penumbra/core/long-lived/thread-notes-trim";
+import { describe, expect, it } from "bun:test";
 
 const BANNER = "... (older entries truncated)\n";
 const MAX = 4096;

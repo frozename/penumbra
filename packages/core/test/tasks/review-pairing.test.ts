@@ -1,8 +1,10 @@
-import { beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, test } from "bun:test";
+
+import type { FileTaskInput } from "../../src/tasks/schema.js";
+
 import { migrate } from "../../src/db/migrations.js";
 import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import type { FileTaskInput } from "../../src/tasks/schema.js";
 import { TaskWriter } from "../../src/tasks/writer.js";
 
 if (process.platform === "darwin") {
@@ -125,25 +127,25 @@ describe("TaskWriter review pairing", () => {
   test("lease-less completion uses an immediate transaction", () => {
     const modes: string[] = [];
     const observedDb = new Proxy(db, {
-      get(target, prop, receiver) {
+      get(target, prop, receiver): unknown {
         if (prop === "transaction") {
-          return ((fn: () => unknown) => {
-            const tx = target.transaction(fn) as (() => unknown) & {
-              immediate: () => unknown;
-            };
-            const wrapped = (() => {
+          return (fn: () => unknown) => {
+            const tx = target.transaction(fn);
+            const wrapped = ((): unknown => {
               modes.push("default");
               return tx();
             }) as typeof tx;
-            wrapped.immediate = () => {
+            wrapped.immediate = (): unknown => {
               modes.push("immediate");
               return tx.immediate();
             };
             return wrapped;
-          }) as typeof db.transaction;
+          };
         }
-        const value = Reflect.get(target, prop, receiver);
-        return typeof value === "function" ? value.bind(target) : value;
+        const value: unknown = Reflect.get(target, prop, receiver);
+        return typeof value === "function"
+          ? (value as (...args: unknown[]) => unknown).bind(target)
+          : value;
       },
     });
     const observedWriter = new TaskWriter(observedDb);
@@ -231,7 +233,7 @@ describe("TaskWriter review pairing", () => {
   });
 
   test("priority bumps one bucket and never drops below normal", () => {
-    const cases: Array<{ parent: FileTaskInput["priority"]; child: FileTaskInput["priority"] }> = [
+    const cases: { parent: FileTaskInput["priority"]; child: FileTaskInput["priority"] }[] = [
       { parent: "low", child: "normal" },
       { parent: "normal", child: "high" },
       { parent: "high", child: "urgent" },
@@ -241,11 +243,11 @@ describe("TaskWriter review pairing", () => {
     for (const [index, c] of cases.entries()) {
       const { task_id: parentTaskId } = writer.file(
         baseInput({
-          prompt: `task-${index}`,
+          prompt: `task-${String(index)}`,
           priority: c.parent,
         }),
       );
-      const lease = writer.lease({ task_id: parentTaskId, agent_id: `agent-${index}` });
+      const lease = writer.lease({ task_id: parentTaskId, agent_id: `agent-${String(index)}` });
       writer.complete({
         task_id: parentTaskId,
         lease_id: lease.lease_id,
@@ -283,7 +285,7 @@ describe("TaskWriter review pairing", () => {
     const original = (writer as unknown as { _fileInTransaction: (input: unknown) => unknown })
       ._fileInTransaction;
     (writer as unknown as { _fileInTransaction: (input: unknown) => unknown })._fileInTransaction =
-      () => {
+      (): never => {
         throw new Error("simulated review file failure");
       };
 

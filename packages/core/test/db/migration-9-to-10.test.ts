@@ -1,8 +1,9 @@
-import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { expect, test } from "bun:test";
+
 import { migrate } from "../../src/db/migrations.js";
 import { SCHEMA_VERSION } from "../../src/db/schema.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 
 if (process.platform === "darwin") {
   try {
@@ -44,7 +45,7 @@ function columnNames(db: Database, table: string): string[] {
 }
 
 function seedTask(db: Database, id: string): void {
-  db.exec(`
+  db.run(`
     INSERT INTO tasks (
       id, created_at, updated_at, created_by_kind, created_by_id, parent_task_id,
       kind, priority, prompt, acceptance_criteria, expected_artifacts,
@@ -193,7 +194,7 @@ test("migration recreates maestro_sessions after downgrading schema_version to 9
   loadSqliteVec(db);
 
   migrate(db, { embeddingDim: 384 });
-  db.exec(`
+  db.run(`
     DROP TABLE maestro_sessions;
     UPDATE db_meta SET value = '9' WHERE key = 'schema_version';
   `);

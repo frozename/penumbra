@@ -1,9 +1,11 @@
-import { beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { migrate } from "../../src/db/migrations.js";
-import { type AgentDescriptor, isEligible } from "../../src/tasks/eligibility.js";
+import { beforeEach, describe, expect, test } from "bun:test";
+
 import type { FileTaskInput } from "../../src/tasks/schema.js";
+
+import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { type AgentDescriptor, isEligible } from "../../src/tasks/eligibility.js";
 import { TaskWriter } from "../../src/tasks/writer.js";
 
 if (process.platform === "darwin") {
@@ -74,8 +76,8 @@ describe("TaskWriter.list({ eligible_for })", () => {
   beforeEach(() => {
     db = freshDb();
     writer = new TaskWriter(db, {
-      now: () => 1_000,
-      resolveAgent: (name) => {
+      now: (): number => 1_000,
+      resolveAgent: (name): AgentDescriptor | undefined => {
         if (name === "agent-a") {
           return {
             name: "agent-a",

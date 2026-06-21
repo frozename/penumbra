@@ -1,7 +1,8 @@
-import { beforeEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { beforeEach, expect, test } from "bun:test";
+
 import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 
 try {
   if (process.platform === "darwin") {
@@ -195,21 +196,21 @@ test("t2_memories.cc_kind accepts CC taxonomy values and round-trips", () => {
 
 test("idx_t2_slug enforces project-scoped UNIQUE on non-null slugs", () => {
   seedMemory(db, "u-a", { slug: "shared-slug", origin: "direct", projectId: "proj-a" });
-  expect(() =>
-    seedMemory(db, "u-b", { slug: "shared-slug", origin: "direct", projectId: "proj-b" }),
-  ).not.toThrow();
-  expect(() =>
-    seedMemory(db, "u-c", { slug: "shared-slug", origin: "direct", projectId: "proj-a" }),
-  ).toThrow(/UNIQUE/);
-  expect(() =>
-    seedMemory(db, "u-d", { slug: "shared-slug", origin: "direct", projectId: "proj-b" }),
-  ).toThrow(/UNIQUE/);
+  expect(() => {
+    seedMemory(db, "u-b", { slug: "shared-slug", origin: "direct", projectId: "proj-b" });
+  }).not.toThrow();
+  expect(() => {
+    seedMemory(db, "u-c", { slug: "shared-slug", origin: "direct", projectId: "proj-a" });
+  }).toThrow(/UNIQUE/);
+  expect(() => {
+    seedMemory(db, "u-d", { slug: "shared-slug", origin: "direct", projectId: "proj-b" });
+  }).toThrow(/UNIQUE/);
 
   // UNIQUE applies even after the first row is retired for the same project.
   db.run(`UPDATE t2_memories SET retired_at = 1 WHERE memory_id = 'u-a'`);
-  expect(() =>
-    seedMemory(db, "u-c", { slug: "shared-slug", origin: "direct", projectId: "proj-a" }),
-  ).toThrow(/UNIQUE/);
+  expect(() => {
+    seedMemory(db, "u-c", { slug: "shared-slug", origin: "direct", projectId: "proj-a" });
+  }).toThrow(/UNIQUE/);
 });
 
 test("idx_t2_slug allows many rows with NULL slug (legacy + dreaming-promoted)", () => {
@@ -224,7 +225,9 @@ test("idx_t2_slug allows many rows with NULL slug (legacy + dreaming-promoted)",
 
 test("idx_t2_slug rejects duplicate NULL project_id slug", () => {
   seedMemory(db, "null-1", { slug: "shared" });
-  expect(() => seedMemory(db, "null-2", { slug: "shared" })).toThrow(/UNIQUE/);
+  expect(() => {
+    seedMemory(db, "null-2", { slug: "shared" });
+  }).toThrow(/UNIQUE/);
 });
 
 test("t2_fts trigger keeps rowid alignment for rows with slug/hook/sub_kind", () => {

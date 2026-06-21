@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- test fixtures and sqlite row mocks intentionally use loose shapes */
-import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { applySchema, SCHEMA_VERSION } from "../../src/db/schema.js";
+import { describe, expect, it } from "bun:test";
+
+import { applySchema } from "../../src/db/schema.js";
 import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 
 if (process.platform === "darwin") {
@@ -57,7 +58,7 @@ describe("schema-dispatch-recovery", () => {
     loadSqliteVec(db);
 
     // Seed with old schema
-    db.exec(`
+    db.run(`
       CREATE TABLE handoffs (
         handoff_id              TEXT PRIMARY KEY,
         ts                      TEXT NOT NULL,
@@ -89,7 +90,9 @@ describe("schema-dispatch-recovery", () => {
     `);
 
     // Apply schema with new additions
-    expect(() => applySchema(db)).not.toThrow();
+    expect(() => {
+      applySchema(db);
+    }).not.toThrow();
 
     // Verify columns were added
     const columns = db.query<{ name: string }, []>("PRAGMA table_info(handoffs)").all();

@@ -1,13 +1,47 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
-import { promisify } from "node:util";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { exec as execCb } from "node:child_process";
-import { WorktreeManager } from "../../src/worktree/manager.js";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { promisify } from "node:util";
 
-const exec = promisify(execCb);
+import { type WorktreeHandle, WorktreeManager } from "../../src/worktree/manager.js";
+
+// node:util.promisify(child_process.exec)'s declaration overloads resolve to the
+// void-returning variant in eslint's type-aware pass; the runtime is in fact a
+// Promise (per util.promisify.custom). Explicit shape closes the gap.
+type ExecResult = { stdout: string; stderr: string };
+type ExecOpts = { cwd?: string };
+const exec: (command: string, opts?: ExecOpts) => Promise<ExecResult> = promisify(execCb);
+
 const INJECTION_CANARY = "/tmp/penumbra-injection-canary";
+
+// bun:test types report `.rejects.toThrow(...)` / `.resolves.toEqual(...)` as
+// returning `void`, but each is async at runtime. Avoid the chain entirely so
+// no-confusing-void-expression has nothing to flag.
+async function expectRejectsWith(
+  promise: Promise<unknown>,
+  matcher?: RegExp | string,
+): Promise<void> {
+  try {
+    await promise;
+  } catch (err) {
+    if (matcher === undefined) return;
+    const message = err instanceof Error ? err.message : String(err);
+    if (matcher instanceof RegExp) {
+      expect(message).toMatch(matcher);
+    } else {
+      expect(message).toContain(matcher);
+    }
+    return;
+  }
+  throw new Error("expected promise to reject but it resolved");
+}
+
+async function expectResolvesEqual<T>(promise: Promise<T>, expected: T): Promise<void> {
+  const actual = await promise;
+  expect(actual).toEqual(expected);
+}
 
 async function setupTempRepo(prefix: string): Promise<string> {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -45,7 +79,7 @@ describe("WorktreeManager — project parameterization", () => {
   });
 
   function nextHandoff(): string {
-    return `wt-test-${Date.now()}-${++counter}`;
+    return `wt-test-${String(Date.now())}-${String(++counter)}`;
   }
 
   it("creates and tears down under home base when no project_id provided", async () => {
@@ -86,7 +120,8 @@ describe("WorktreeManager — project parameterization", () => {
       fs.rmSync(INJECTION_CANARY, { force: true });
       const id = nextHandoff();
 
-      await expect(manager.createWorktree(id, { baseRef })).rejects.toThrow(
+      await expectRejectsWith(
+        manager.createWorktree(id, { baseRef }),
         /invalid reference|not a valid object name|unknown revision|ambiguous argument/,
       );
 
@@ -104,7 +139,7 @@ describe("WorktreeManager — project parameterization", () => {
       const manager = new WorktreeManager({
         rootDir: homeRoot,
         mainRepoDir: homeRepo,
-        resolveProjectRoot: (id) => (id === "sirius" ? siriusRepo : undefined),
+        resolveProjectRoot: (id): string | undefined => (id === "sirius" ? siriusRepo : undefined),
       });
 
       const id = nextHandoff();
@@ -113,10 +148,8 @@ describe("WorktreeManager — project parameterization", () => {
       expect(handle.path).toBe(path.join(expectedBase, id));
       expect(handle.projectId).toBe("sirius");
       expect(fs.existsSync(handle.path)).toBe(true);
-      // Must not have been created in the home base.
       expect(fs.existsSync(path.join(homeRoot, id))).toBe(false);
 
-      // Prune via teardown — must clean up under the per-project base.
       await manager.teardownWorktree(id, true);
       expect(fs.existsSync(handle.path)).toBe(false);
       expect(manager.getWorktree(id, "sirius")).toBeNull();
@@ -130,10 +163,11 @@ describe("WorktreeManager — project parameterization", () => {
     const manager = new WorktreeManager({
       rootDir: homeRoot,
       mainRepoDir: homeRepo,
-      resolveProjectRoot: (id) => (id === "known" ? homeRepo : undefined),
+      resolveProjectRoot: (id): string | undefined => (id === "known" ? homeRepo : undefined),
     });
     const id = nextHandoff();
-    await expect(manager.createWorktree(id, { project_id: "totally-bogus" })).rejects.toThrow(
+    await expectRejectsWith(
+      manager.createWorktree(id, { project_id: "totally-bogus" }),
       /unknown_project_id: totally-bogus/,
     );
     expect(manager.getWorktree(id)).toBeNull();
@@ -156,13 +190,13 @@ describe("WorktreeManager — project parameterization", () => {
     const handle = await managerA.createWorktree(id);
     const managerB = new WorktreeManager({ rootDir: homeRoot, mainRepoDir: homeRepo });
 
-    const result = await (managerB as any).teardownWorktree(id, false);
+    const result = await managerB.teardownWorktree(id, false);
 
     expect(result).toEqual({ worktreeRemoved: true, branchDeleted: true });
     expect(fs.existsSync(handle.path)).toBe(false);
-    await expect(
+    await expectRejectsWith(
       exec(`git -C "${homeRepo}" rev-parse --verify --quiet "refs/heads/agent/${id}"`),
-    ).rejects.toThrow();
+    );
   });
 
   it("honors deleteBranch=false by keeping the agent branch", async () => {
@@ -170,7 +204,7 @@ describe("WorktreeManager — project parameterization", () => {
     const id = nextHandoff();
     const handle = await manager.createWorktree(id);
 
-    const result = await (manager as any).teardownWorktree(id, false, undefined, false);
+    const result = await manager.teardownWorktree(id, false, undefined, false);
 
     expect(result).toEqual({ worktreeRemoved: true, branchDeleted: false });
     expect(fs.existsSync(handle.path)).toBe(false);
@@ -188,9 +222,7 @@ describe("WorktreeManager — project parameterization", () => {
     fs.mkdirSync(fakePath, { recursive: true });
     fs.writeFileSync(path.join(fakePath, "orphan.txt"), "not a worktree");
 
-    await expect((manager as any).teardownWorktree(id, false)).rejects.toThrow(
-      /Failed to remove worktree/,
-    );
+    await expectRejectsWith(manager.teardownWorktree(id, false), /Failed to remove worktree/);
   });
 
   it("discovers uuid-named git worktrees absent from the in-memory map", async () => {
@@ -207,7 +239,7 @@ describe("WorktreeManager — project parameterization", () => {
     fs.mkdirSync(nonUuidPath, { recursive: true });
     fs.writeFileSync(path.join(nonUuidPath, ".git"), "gitdir: /tmp/not-a-uuid.git\n");
 
-    await expect(manager.discoverOrphanWorktrees()).resolves.toEqual([
+    await expectResolvesEqual(manager.discoverOrphanWorktrees(), [
       { path: orphanPath, handoffId: orphanId },
     ]);
 
@@ -225,7 +257,7 @@ describe("WorktreeManager — project parameterization", () => {
 
     const manager = new WorktreeManager({ rootDir: homeRoot, mainRepoDir: homeRepo });
 
-    await expect(manager.discoverOrphanWorktrees()).resolves.toEqual([
+    await expectResolvesEqual(manager.discoverOrphanWorktrees(), [
       { path: orphanPath, handoffId: orphanId },
     ]);
   });
@@ -240,11 +272,13 @@ describe("WorktreeManager — project parameterization", () => {
     const manager = new WorktreeManager({ mainRepoDir: homeRepo });
 
     expect(manager.listWorktrees().map((handle) => handle.handoffId)).toContain(orphanId);
-    await expect(manager.discoverOrphanWorktrees()).resolves.toEqual([]);
+    await expectResolvesEqual(manager.discoverOrphanWorktrees(), []);
 
     const orphanOnlyManager = new WorktreeManager({ mainRepoDir: homeRepo });
-    (orphanOnlyManager as any).worktrees.clear();
-    await expect(orphanOnlyManager.discoverOrphanWorktrees()).resolves.toEqual([
+    // worktrees is private; simulate an empty in-memory map after a daemon
+    // restart, before rediscoverWorktrees() would repopulate it.
+    (orphanOnlyManager as unknown as { worktrees: Map<string, WorktreeHandle> }).worktrees.clear();
+    await expectResolvesEqual(orphanOnlyManager.discoverOrphanWorktrees(), [
       { path: orphanPath, handoffId: orphanId },
     ]);
   });
@@ -280,7 +314,7 @@ describe("WorktreeManager — project parameterization", () => {
     fs.writeFileSync(sentinelFile, "keep\n");
     fs.symlinkSync(sentinelRoot, path.join(fakeWorktree, "node_modules"), "dir");
 
-    await expect(manager.teardownWorktree(id, true)).rejects.toThrow(/Failed to remove worktree/);
+    await expectRejectsWith(manager.teardownWorktree(id, true), /Failed to remove worktree/);
 
     expect(fs.existsSync(path.join(fakeWorktree, "node_modules"))).toBe(false);
     expect(fs.existsSync(sentinelRoot)).toBe(true);
@@ -342,7 +376,8 @@ describe("WorktreeManager.stageMergedBase", () => {
 
   it("throws on an empty ancestor list", async () => {
     const manager = new WorktreeManager({ rootDir: worktreeRoot, mainRepoDir: repoDir });
-    await expect(manager.stageMergedBase("h1", [])).rejects.toThrow(
+    await expectRejectsWith(
+      manager.stageMergedBase("h1", []),
       "stageMergedBase: empty ancestorRefs",
     );
   });
@@ -358,7 +393,7 @@ describe("WorktreeManager.stageMergedBase", () => {
     const right = (await exec(`git rev-parse HEAD`, { cwd: repoDir })).stdout.trim();
 
     const manager = new WorktreeManager({ rootDir: worktreeRoot, mainRepoDir: repoDir });
-    await expect(manager.stageMergedBase("h1", [left, right])).rejects.toThrow();
+    await expectRejectsWith(manager.stageMergedBase("h1", [left, right]));
     expect(fs.existsSync(path.join(worktreeRoot, ".stage-h1"))).toBe(false);
   });
 });

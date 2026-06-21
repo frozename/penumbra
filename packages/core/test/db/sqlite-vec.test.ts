@@ -1,5 +1,6 @@
-import { expect, test, beforeEach, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+
 import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 
 // On macOS, Bun uses the Apple SQLite build which disables extension loading.
@@ -19,7 +20,9 @@ let db: Database;
 beforeEach(() => {
   db = new Database(":memory:");
 });
-afterEach(() => db.close());
+afterEach(() => {
+  db.close();
+});
 
 test("loadSqliteVec enables vec0 virtual tables", () => {
   loadSqliteVec(db);

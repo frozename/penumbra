@@ -1,10 +1,45 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- test fixtures and sqlite row mocks intentionally use loose shapes */
-import { expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { applySchema, releaseT1RollupClaims, runStartupZombieSweep } from "../../src/db/schema.js";
+import { expect, it } from "bun:test";
 
-async function openTestDb(): Promise<Database> {
+import { applySchema, releaseT1RollupClaims, runStartupZombieSweep } from "../../src/db/schema.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+
+interface ColumnInfoRow {
+  name: string;
+  type: string;
+  notnull: number;
+  pk: number;
+}
+
+interface DreamCycleRow {
+  outcome: string | null;
+  ended_at: number | null;
+  llm_spent_usd: number;
+  embedding_spent_usd: number;
+  research_spent_usd: number;
+  project_id: string | null;
+  last_phase_completed: string | null;
+}
+
+interface IndexSchemaRow {
+  sql: string;
+}
+
+interface PromotionFieldsRow {
+  promotion_skipped_at: string | null;
+  promotion_filtered_at: string | null;
+}
+
+interface CycleStateRow {
+  outcome: string;
+  bail_reason: string | null;
+}
+
+interface CountRow {
+  n: number;
+}
+
+function openTestDb(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   applySchema(db, { embeddingDim: 384 });
@@ -28,8 +63,15 @@ function seedCycleAndMemories(db: Database): void {
   }
 }
 
-it("five new tables exist after applySchema", async () => {
-  const db = await openTestDb();
+function tableColumnNames(db: Database, table: string): string[] {
+  return db
+    .prepare<ColumnInfoRow, []>(`PRAGMA table_info(${table})`)
+    .all()
+    .map((row) => row.name);
+}
+
+it("five new tables exist after applySchema", () => {
+  const db = openTestDb();
   for (const tbl of [
     "dream_cycles",
     "dream_actions",
@@ -41,28 +83,26 @@ it("five new tables exist after applySchema", async () => {
   }
 });
 
-it("dream_cycles: outcome defaults 'running', ended_at nullable, split cost buckets, project_id nullable, last_phase_completed nullable", async () => {
-  const db = await openTestDb();
+it("dream_cycles: outcome defaults 'running', ended_at nullable, split cost buckets, project_id nullable, last_phase_completed nullable", () => {
+  const db = openTestDb();
   const row = db
-    .prepare(
-      "INSERT INTO dream_cycles(cycle_id,started_at,trigger,budget_usd_cap) VALUES(?,?,?,?) RETURNING *",
-    )
-    .get("c1", Date.now(), "cron", 0.5) as any;
-  expect(row.outcome).toBe("running");
-  expect(row.ended_at).toBeNull();
-  expect(row.llm_spent_usd).toBe(0);
-  expect(row.embedding_spent_usd).toBe(0);
-  expect(row.research_spent_usd).toBe(0);
-  expect(row.project_id).toBeNull();
-  expect(row.last_phase_completed).toBeNull();
+    .prepare<
+      DreamCycleRow,
+      [string, number, string, number]
+    >("INSERT INTO dream_cycles(cycle_id,started_at,trigger,budget_usd_cap) VALUES(?,?,?,?) RETURNING *")
+    .get("c1", Date.now(), "cron", 0.5);
+  expect(row?.outcome).toBe("running");
+  expect(row?.ended_at).toBeNull();
+  expect(row?.llm_spent_usd).toBe(0);
+  expect(row?.embedding_spent_usd).toBe(0);
+  expect(row?.research_spent_usd).toBe(0);
+  expect(row?.project_id).toBeNull();
+  expect(row?.last_phase_completed).toBeNull();
 });
 
-it("dream_actions: status is sole state field; untrusted_source, expires_at, reverted_by present; NO auto_applied column", async () => {
-  const db = await openTestDb();
-  const cols = db
-    .prepare("PRAGMA table_info(dream_actions)")
-    .all()
-    .map((r: any) => r.name);
+it("dream_actions: status is sole state field; untrusted_source, expires_at, reverted_by present; NO auto_applied column", () => {
+  const db = openTestDb();
+  const cols = tableColumnNames(db, "dream_actions");
   expect(cols).toContain("untrusted_source");
   expect(cols).toContain("expires_at");
   expect(cols).toContain("reverted_by");
@@ -70,20 +110,21 @@ it("dream_actions: status is sole state field; untrusted_source, expires_at, rev
   expect(cols).toContain("status");
 });
 
-it("dream_actions has queued link target index", async () => {
-  const db = await openTestDb();
+it("dream_actions has queued link target index", () => {
+  const db = openTestDb();
   const row = db
-    .prepare(
-      "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_dream_actions_queued_link_target'",
-    )
-    .get() as { sql: string } | null;
+    .prepare<
+      IndexSchemaRow,
+      []
+    >("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_dream_actions_queued_link_target'")
+    .get();
   expect(row?.sql).toContain(
     "CREATE INDEX idx_dream_actions_queued_link_target ON dream_actions(target_ids) WHERE action_type = 'link' AND status = 'queued'",
   );
 });
 
-it("memory_links UNIQUE(src_id, dst_id, link_type) prevents duplicate edges from concurrent cycles", async () => {
-  const db = await openTestDb();
+it("memory_links UNIQUE(src_id, dst_id, link_type) prevents duplicate edges from concurrent cycles", () => {
+  const db = openTestDb();
   seedCycleAndMemories(db);
   db.prepare(
     `INSERT INTO memory_links(link_id,src_id,dst_id,link_type,weight,minted_at,minted_by_cycle) VALUES('L1','M1','M2','semantic_near',0.9,1,'C1')`,
@@ -97,16 +138,10 @@ it("memory_links UNIQUE(src_id, dst_id, link_type) prevents duplicate edges from
   ).toThrow();
 });
 
-it("t1_rollups gains claimed_at, claimed_by_cycle, embedding_model_version, promotion_filtered_at; t2_memories gains embedding_model_version", async () => {
-  const db = await openTestDb();
-  const t1cols = db
-    .prepare("PRAGMA table_info(t1_rollups)")
-    .all()
-    .map((r: any) => r.name);
-  const t2cols = db
-    .prepare("PRAGMA table_info(t2_memories)")
-    .all()
-    .map((r: any) => r.name);
+it("t1_rollups gains claimed_at, claimed_by_cycle, embedding_model_version, promotion_filtered_at; t2_memories gains embedding_model_version", () => {
+  const db = openTestDb();
+  const t1cols = tableColumnNames(db, "t1_rollups");
+  const t2cols = tableColumnNames(db, "t2_memories");
   expect(t1cols).toContain("claimed_at");
   expect(t1cols).toContain("claimed_by_cycle");
   expect(t1cols).toContain("embedding_model_version");
@@ -114,10 +149,10 @@ it("t1_rollups gains claimed_at, claimed_by_cycle, embedding_model_version, prom
   expect(t2cols).toContain("embedding_model_version");
 });
 
-it("promotion_filtered_at migration preserves legacy promotion_skipped_at values and is idempotent", async () => {
+it("promotion_filtered_at migration preserves legacy promotion_skipped_at values and is idempotent", () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);
-  db.exec(`
+  db.run(`
     CREATE TABLE t1_rollups (
       rollup_id TEXT PRIMARY KEY,
       project_id TEXT,
@@ -148,36 +183,32 @@ it("promotion_filtered_at migration preserves legacy promotion_skipped_at values
 
   applySchema(db, { embeddingDim: 384 });
 
-  let cols = db
-    .prepare("PRAGMA table_info(t1_rollups)")
-    .all()
-    .map((r: any) => r.name);
+  let cols = tableColumnNames(db, "t1_rollups");
   expect(cols).toContain("promotion_filtered_at");
 
   let row = db
-    .prepare(
-      "SELECT promotion_skipped_at, promotion_filtered_at FROM t1_rollups WHERE rollup_id = 'r1'",
-    )
-    .get() as any;
-  expect(row.promotion_skipped_at).toBe("2026-02-02T03:04:05.000Z");
-  expect(row.promotion_filtered_at).toBe("2026-02-02T03:04:05.000Z");
+    .prepare<
+      PromotionFieldsRow,
+      []
+    >("SELECT promotion_skipped_at, promotion_filtered_at FROM t1_rollups WHERE rollup_id = 'r1'")
+    .get();
+  expect(row?.promotion_skipped_at).toBe("2026-02-02T03:04:05.000Z");
+  expect(row?.promotion_filtered_at).toBe("2026-02-02T03:04:05.000Z");
 
   applySchema(db, { embeddingDim: 384 });
-  cols = db
-    .prepare("PRAGMA table_info(t1_rollups)")
-    .all()
-    .map((r: any) => r.name);
-  expect(cols.filter((name: string) => name === "promotion_filtered_at")).toHaveLength(1);
+  cols = tableColumnNames(db, "t1_rollups");
+  expect(cols.filter((name) => name === "promotion_filtered_at")).toHaveLength(1);
   row = db
-    .prepare(
-      "SELECT promotion_skipped_at, promotion_filtered_at FROM t1_rollups WHERE rollup_id = 'r1'",
-    )
-    .get() as any;
-  expect(row.promotion_filtered_at).toBe("2026-02-02T03:04:05.000Z");
+    .prepare<
+      PromotionFieldsRow,
+      []
+    >("SELECT promotion_skipped_at, promotion_filtered_at FROM t1_rollups WHERE rollup_id = 'r1'")
+    .get();
+  expect(row?.promotion_filtered_at).toBe("2026-02-02T03:04:05.000Z");
 });
 
-it("startup zombie sweep marks outcome='running' rows as 'crashed' and clears claimed_at", async () => {
-  const db = await openTestDb();
+it("startup zombie sweep marks outcome='running' rows as 'crashed' and clears claimed_at", () => {
+  const db = openTestDb();
   db.prepare(
     `INSERT INTO dream_cycles(cycle_id,started_at,trigger,budget_usd_cap) VALUES('zombie',1,'cron',0.5)`,
   ).run();
@@ -186,18 +217,21 @@ it("startup zombie sweep marks outcome='running' rows as 'crashed' and clears cl
   ).run();
   runStartupZombieSweep(db);
   const cycle = db
-    .prepare(`SELECT outcome, bail_reason FROM dream_cycles WHERE cycle_id='zombie'`)
-    .get() as any;
-  expect(cycle.outcome).toBe("crashed");
-  expect(cycle.bail_reason).toMatch(/daemon_respawn/i);
+    .prepare<
+      CycleStateRow,
+      []
+    >(`SELECT outcome, bail_reason FROM dream_cycles WHERE cycle_id='zombie'`)
+    .get();
+  expect(cycle?.outcome).toBe("crashed");
+  expect(cycle?.bail_reason).toMatch(/daemon_respawn/i);
   const claimed = db
-    .prepare(`SELECT COUNT(*) as n FROM t1_rollups WHERE claimed_at IS NOT NULL`)
-    .get() as any;
-  expect(claimed.n).toBe(0);
+    .prepare<CountRow, []>(`SELECT COUNT(*) as n FROM t1_rollups WHERE claimed_at IS NOT NULL`)
+    .get();
+  expect(claimed?.n).toBe(0);
 });
 
-it("shared claim reset path releases terminal-cycle and stale leases", async () => {
-  const db = await openTestDb();
+it("shared claim reset path releases terminal-cycle and stale leases", () => {
+  const db = openTestDb();
   const now = Date.now();
   db.prepare(
     `INSERT INTO dream_cycles(cycle_id,started_at,ended_at,trigger,budget_usd_cap,outcome,phases_run)
@@ -220,10 +254,11 @@ it("shared claim reset path releases terminal-cycle and stale leases", async () 
   expect(released).toBeGreaterThanOrEqual(2);
 
   const rows = db
-    .prepare(
-      `SELECT rollup_id, claimed_by_cycle FROM t1_rollups WHERE rollup_id IN ('terminal','stale','fresh') ORDER BY rollup_id`,
-    )
-    .all() as Array<{ rollup_id: string; claimed_by_cycle: string | null }>;
+    .prepare<
+      { rollup_id: string; claimed_by_cycle: string | null },
+      []
+    >(`SELECT rollup_id, claimed_by_cycle FROM t1_rollups WHERE rollup_id IN ('terminal','stale','fresh') ORDER BY rollup_id`)
+    .all();
   expect(rows).toEqual([
     { rollup_id: "fresh", claimed_by_cycle: "running-keep" },
     { rollup_id: "stale", claimed_by_cycle: null },

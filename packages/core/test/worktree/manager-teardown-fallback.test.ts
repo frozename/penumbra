@@ -2,7 +2,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { WorktreeManager } from "../../src/worktree/manager.js";
+
+import type { Logger } from "../../src/logger.js";
+
+import { type WorktreeHandle, WorktreeManager } from "../../src/worktree/manager.js";
+
+interface WarnEntry {
+  obj: unknown;
+  msg: string;
+}
 
 describe("WorktreeManager teardown fallback", () => {
   let rootDir: string;
@@ -62,15 +70,24 @@ describe("WorktreeManager teardown fallback", () => {
   });
 
   test("logs checkout failure and retries worktree remove with --force", async () => {
-    const warns: any[] = [];
+    const warns: WarnEntry[] = [];
+    // The test only needs warn() to capture observations; info/debug/etc. are
+    // unused by teardown's instrumentation but pino's Logger surface is wide.
+    const stubLogger = {
+      warn: (obj: unknown, msg: string): void => {
+        warns.push({ obj, msg });
+      },
+      info: (): void => {
+        /* unused */
+      },
+      debug: (): void => {
+        /* unused */
+      },
+    } as unknown as Logger;
     const manager = new WorktreeManager({
       rootDir,
       mainRepoDir: repoDir,
-      log: {
-        warn: (obj, msg) => warns.push({ obj, msg }),
-        info: () => {},
-        debug: () => {},
-      } as any,
+      log: stubLogger,
     });
     const handoffId = "11111111-1111-4111-8111-111111111111";
     const worktreePath = path.join(rootDir, handoffId);
@@ -78,13 +95,16 @@ describe("WorktreeManager teardown fallback", () => {
     fs.writeFileSync(path.join(worktreePath, ".git"), "gitdir: /tmp/fake.git\n");
     fs.writeFileSync(path.join(worktreePath, "bun.lock"), "tracked\n");
     fs.mkdirSync(path.join(worktreePath, ".test-storage"), { recursive: true });
-    (manager as any).worktrees.set(handoffId, {
+    // worktrees is private; the test seeds an entry to exercise the teardown
+    // path that runs against an already-tracked worktree.
+    (manager as unknown as { worktrees: Map<string, WorktreeHandle> }).worktrees.set(handoffId, {
       handoffId,
       path: worktreePath,
       branchName: `agent/${handoffId}`,
       storageRoot: path.join(worktreePath, ".test-storage"),
       createdAt: new Date().toISOString(),
       status: "created",
+      worktreeMode: "symlink_mirror",
     });
 
     const result = await manager.teardownWorktree(handoffId, false);

@@ -1,6 +1,7 @@
-import { describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { DispatchEventKindSchema } from "@penumbra/api-contract";
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
+
 import { applySchema, SCHEMA_VERSION } from "../../src/db/schema.js";
 import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 
@@ -18,10 +19,10 @@ describe("dispatch_events table", () => {
     loadSqliteVec(db);
     applySchema(db);
 
-    const cols = db.query("PRAGMA table_info('dispatch_events')").all() as Array<{
+    const cols = db.query("PRAGMA table_info('dispatch_events')").all() as {
       name: string;
       notnull: number;
-    }>;
+    }[];
     expect(cols.map((c) => c.name).sort()).toEqual([
       "handoff_id",
       "id",
@@ -39,9 +40,9 @@ describe("dispatch_events table", () => {
     expect(notnull.worker_id).toBe(false);
     expect(notnull.meta_json).toBe(false);
 
-    const indexes = db.query("PRAGMA index_list('dispatch_events')").all() as Array<{
+    const indexes = db.query("PRAGMA index_list('dispatch_events')").all() as {
       name: string;
-    }>;
+    }[];
     const names = indexes.map((i) => i.name);
     expect(names).toContain("idx_dispatch_events_handoff");
     expect(names).toContain("idx_dispatch_events_ts");

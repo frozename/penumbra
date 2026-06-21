@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
+
 import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { MaestroSessionWriter } from "../../src/maestro/writer.js";
 import { TaskWriter } from "../../src/tasks/writer.js";
 
@@ -105,11 +106,11 @@ describe("TaskWriter.cancel orchestrate sessions", () => {
 
   beforeEach(() => {
     db = freshDb();
-    sessions = new MaestroSessionWriter({ db, now: () => 2_000 });
+    sessions = new MaestroSessionWriter({ db, now: (): number => 2_000 });
     callbackCalls = [];
     taskWriter = new TaskWriter(db, {
       maestroSessions: sessions,
-      onOrchestrateCancel: (chain_handoff_id) => {
+      onOrchestrateCancel: (chain_handoff_id: string): void => {
         callbackCalls.push(chain_handoff_id);
       },
     });
@@ -146,7 +147,7 @@ describe("TaskWriter.cancel orchestrate sessions", () => {
       .all(task_id)
       .map((row) => ({
         kind: row.kind,
-        payload: row.payload_json ? JSON.parse(row.payload_json) : null,
+        payload: row.payload_json ? (JSON.parse(row.payload_json) as unknown) : null,
       }));
     expect(events.map((event) => event.kind)).toEqual(["cancelled", "orchestrate_terminated"]);
     expect(events[1]!.payload).toEqual({ reason: "cancelled" });
@@ -225,11 +226,13 @@ describe("TaskWriter.cancel orchestrate sessions", () => {
   test("chain cancel callback throws but cancel still succeeds", () => {
     const throwingWriter = new TaskWriter(db, {
       maestroSessions: sessions,
-      onOrchestrateCancel: () => {
+      onOrchestrateCancel: (): void => {
         throw new Error("boom");
       },
     });
-    const warn = mock(() => {});
+    const warn = mock((): void => {
+      /* swallow */
+    });
     const originalWarn = console.warn;
     console.warn = warn;
 

@@ -1,5 +1,8 @@
-import { describe, expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { describe, expect, spyOn, test } from "bun:test";
+
+import type { AgentTaskType } from "../../src/schemas/agent-performance.js";
+
 import {
   loadSqliteVec,
   migrate,
@@ -8,12 +11,13 @@ import {
   type RouteAgentInput,
 } from "../../src/index.js";
 import { AgentPerformanceWriter } from "../../src/writers/agent-performance.js";
-import type { AgentTaskType } from "../../src/schemas/agent-performance.js";
 
 if (process.platform === "darwin") {
   try {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-  } catch {}
+  } catch {
+    // platform-specific SQLite override; ignore failures elsewhere
+  }
 }
 
 const NOW = "2026-05-01T12:00:00Z";
@@ -182,7 +186,7 @@ describe("pickFromPool", () => {
         rounds: 1,
         latency_ms: 10_000,
         ts: `2026-05-01T10:${String(i).padStart(2, "0")}:00Z`,
-        id_suffix: `old-success-${i}`,
+        id_suffix: `old-success-${String(i)}`,
       });
     }
     for (let i = 0; i < 3; i += 1) {
@@ -191,7 +195,7 @@ describe("pickFromPool", () => {
         rounds: 1,
         latency_ms: 10_000,
         ts: recentIso(30 - i),
-        id_suffix: `recent-failure-${i}`,
+        id_suffix: `recent-failure-${String(i)}`,
       });
     }
     writePerf(db, "b", "review_adversarial", {
@@ -225,7 +229,7 @@ describe("pickFromPool", () => {
           rounds: 1,
           latency_ms: 10_000,
           ts: recentIso(30 - i),
-          id_suffix: `classifier-decline-${i}`,
+          id_suffix: `classifier-decline-${String(i)}`,
         });
       }
       writePerf(db, "b", "review_adversarial", {
@@ -250,7 +254,7 @@ describe("pickFromPool", () => {
           rounds: 1,
           latency_ms: 10_000,
           ts: recentIso(30 - i),
-          id_suffix: `${agent}-recent-failure-${i}`,
+          id_suffix: `${agent}-recent-failure-${String(i)}`,
         });
       }
     }

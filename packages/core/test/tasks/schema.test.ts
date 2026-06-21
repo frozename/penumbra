@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import {
   CancelTaskInputSchema,
   CompleteTaskInputSchema,
@@ -200,7 +201,7 @@ describe("task board schemas", () => {
         result_summary: "done",
         result_artifacts: Array.from({ length: 51 }, (_, index) => ({
           type: "file",
-          ref: `file-${index}`,
+          ref: `file-${String(index)}`,
         })),
       }),
     ).toThrow();

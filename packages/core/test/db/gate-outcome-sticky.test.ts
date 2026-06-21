@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, it } from "bun:test";
+
 import { stampAgentPerformanceGateOutcomeForHandoff } from "../../src/db/lane-ledger.js";
 
 const CREATE_AGENT_PERFORMANCE_SQL = `
@@ -26,10 +27,10 @@ describe("stampAgentPerformanceGateOutcomeForHandoff", () => {
 
   beforeEach(() => {
     db = new Database(":memory:");
-    db.exec(CREATE_AGENT_PERFORMANCE_SQL);
+    db.run(CREATE_AGENT_PERFORMANCE_SQL);
   });
 
-  function seedPerformance(handoffId: string, gateOutcome: string | null) {
+  function seedPerformance(handoffId: string, gateOutcome: string | null): void {
     db.prepare(
       `INSERT INTO agent_performance (
         performance_id, ts, handoff_id, agent_name, task_type, outcome, gate_outcome

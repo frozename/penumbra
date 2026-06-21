@@ -1,8 +1,9 @@
-import { expect, test, beforeEach } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { applySchema } from "../../src/db/schema.js";
+import { beforeEach, expect, test } from "bun:test";
+
 import { DbMeta } from "../../src/db/meta.js";
+import { applySchema } from "../../src/db/schema.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 
 // On macOS, Bun uses the Apple SQLite build which disables extension loading.
 // Switch to Homebrew's full-featured SQLite before any Database is created.

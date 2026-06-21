@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { migrate, loadSqliteVec } from "../../src/index.js";
+import { expect, test } from "bun:test";
+
+import { loadSqliteVec, migrate } from "../../src/index.js";
 
 try {
   if (process.platform === "darwin") {

@@ -1,7 +1,8 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- test fixtures and sqlite row mocks intentionally use loose shapes */
-import { beforeEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, it } from "bun:test";
+
 import {
+  type ClosedLaneGateStatus,
   closeLane,
   getClosedLaneRoundCountForHandoffLineage,
   getLane,
@@ -65,9 +66,9 @@ describe("lane-ledger dao", () => {
 
   beforeEach(() => {
     db = new Database(":memory:");
-    db.exec(CREATE_HANDOFFS_SQL);
-    db.exec(CREATE_AGENT_PERFORMANCE_SQL);
-    db.exec(CREATE_LANE_LEDGER_SQL);
+    db.run(CREATE_HANDOFFS_SQL);
+    db.run(CREATE_AGENT_PERFORMANCE_SQL);
+    db.run(CREATE_LANE_LEDGER_SQL);
   });
 
   it("round-trips an inserted lane", () => {
@@ -153,7 +154,7 @@ describe("lane-ledger dao", () => {
   });
 
   it("stamps agent_performance gate_outcome on close and preserves stronger verdicts", () => {
-    const insertPerf = (handoffId: string, gateOutcome: string | null) => {
+    const insertPerf = (handoffId: string, gateOutcome: string | null): void => {
       db.run(
         `INSERT INTO agent_performance (
            performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type,
@@ -197,9 +198,10 @@ describe("lane-ledger dao", () => {
       gate_status: "skipped",
     });
     const skipped = db
-      .query<{ gate_outcome: string | null }, [string]>(
-        `SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?`,
-      )
+      .query<
+        { gate_outcome: string | null },
+        [string]
+      >(`SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?`)
       .get("handoff-perf-skipped");
     expect(skipped?.gate_outcome).toBe("skipped");
 
@@ -216,9 +218,10 @@ describe("lane-ledger dao", () => {
       gate_status: "skipped",
     });
     const passed = db
-      .query<{ gate_outcome: string | null }, [string]>(
-        `SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?`,
-      )
+      .query<
+        { gate_outcome: string | null },
+        [string]
+      >(`SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?`)
       .get("handoff-perf-passed");
     expect(passed?.gate_outcome).toBe("passed");
 
@@ -235,9 +238,10 @@ describe("lane-ledger dao", () => {
       gate_status: "skipped",
     });
     const failed = db
-      .query<{ gate_outcome: string | null }, [string]>(
-        `SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?`,
-      )
+      .query<
+        { gate_outcome: string | null },
+        [string]
+      >(`SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?`)
       .get("handoff-perf-failed");
     expect(failed?.gate_outcome).toBe("failed");
   });
@@ -252,9 +256,9 @@ describe("lane-ledger dao", () => {
     });
     closeLane(db, "lane-4", { ts_closed: "2026-05-12T10:25:00.000Z", gate_status: "failed" });
 
-    expect(() =>
-      closeLane(db, "lane-4", { ts_closed: "2026-05-12T10:30:00.000Z", gate_status: "passed" }),
-    ).toThrow();
+    expect(() => {
+      closeLane(db, "lane-4", { ts_closed: "2026-05-12T10:30:00.000Z", gate_status: "passed" });
+    }).toThrow();
   });
 
   it("rejects invalid close statuses", () => {
@@ -266,12 +270,13 @@ describe("lane-ledger dao", () => {
       gate_status: "open",
     });
 
-    expect(() =>
+    expect(() => {
       closeLane(db, "lane-5", {
         ts_closed: "2026-05-12T10:35:00.000Z",
-        gate_status: "open" as any,
-      }),
-    ).toThrow();
+        // Deliberately bypassing the type to verify the runtime guard rejects "open".
+        gate_status: "open" as unknown as ClosedLaneGateStatus,
+      });
+    }).toThrow();
   });
 
   it("filters and orders recent lanes by status, task class, and since", () => {
@@ -456,10 +461,13 @@ describe("lane-ledger dao", () => {
   it("counts lineage rounds with an IN union query instead of correlated OR exists", () => {
     let capturedSql = "";
     const originalQuery = db.query.bind(db);
-    db.query = ((sql: string) => {
+    // bun:sqlite's Database.query is overloaded; replacing it for a spy needs a
+    // typed wrapper so the assignment doesn't widen to `any`.
+    const captureQuery = ((sql: string) => {
       capturedSql = sql;
       return originalQuery(sql);
     }) as typeof db.query;
+    db.query = captureQuery;
 
     expect(getClosedLaneRoundCountForHandoffLineage(db, "unknown-handoff")).toBe(0);
 

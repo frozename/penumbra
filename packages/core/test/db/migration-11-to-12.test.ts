@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { afterEach, beforeEach, expect, mock, test } from "bun:test";
+
 import { migrate } from "../../src/db/migrations.js";
 import { SCHEMA_VERSION } from "../../src/db/schema.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 
 if (process.platform === "darwin") {
   try {
@@ -22,7 +23,7 @@ beforeEach(() => {
   warnSpy = mock((...args: unknown[]) => {
     warnings.push(args.map((a) => String(a)).join(" "));
   });
-  console.warn = warnSpy as unknown as typeof console.warn;
+  console.warn = warnSpy;
 });
 
 afterEach(() => {
@@ -33,7 +34,7 @@ function insertHandoff(
   db: Database,
   handoffId: string,
   parentHandoffId: string | null,
-  status: string = "pending",
+  status = "pending",
 ): void {
   db.run(
     `INSERT INTO handoffs (
@@ -155,7 +156,7 @@ test("depth-cap fallback self-roots the deepest row with warning", () => {
   // Insert leaf-first so the leaf is processed before any ancestor's
   // root_handoff_id is memoized; with a 16-visit cap the leaf cannot
   // reach d0 within the limit and falls back to self-root.
-  const ids = Array.from({ length: 17 }, (_, i) => "d" + i);
+  const ids = Array.from({ length: 17 }, (_, i) => `d${String(i)}`);
   for (let i = ids.length - 1; i >= 1; i--) {
     insertHandoff(db, ids[i]!, ids[i - 1]!);
   }

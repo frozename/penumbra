@@ -1,7 +1,9 @@
-import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { describe, expect, test } from "bun:test";
+
+import { backfillRecallFields } from "../../src/db/backfill-recall-fields.js";
 import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 
 // Switch to Homebrew's full-featured SQLite before any Database is created.
 // Guard against double-load when multiple test files run in the same process.
@@ -12,8 +14,6 @@ try {
 } catch {
   // already loaded
 }
-
-import { backfillRecallFields } from "../../src/db/backfill-recall-fields.js";
 
 describe("backfillRecallFields", () => {
   test("emoji-prefixed titles map to obs_type", () => {
@@ -37,7 +37,7 @@ describe("backfillRecallFields", () => {
       db.run(
         `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids, window_start, window_end, title, body, metadata_json, created_at, updated_at)
          VALUES (?, 'u', 'rollup', '[]', '2026-05-03', '2026-05-03', ?, '', '{}', '2026-05-03', '2026-05-03')`,
-        [`m${i++}`, title],
+        [`m${String(i++)}`, title],
       );
     }
 

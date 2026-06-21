@@ -1,10 +1,12 @@
-import { describe, expect, test, beforeEach } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { migrate } from "../../src/db/migrations.js";
-import { TaskWriter } from "../../src/tasks/writer.js";
-import { EmitCapExceeded } from "../../src/tasks/emit-caps.js";
+import { beforeEach, describe, expect, test } from "bun:test";
+
 import type { FileTaskInput } from "../../src/tasks/schema.js";
+
+import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { EmitCapExceeded } from "../../src/tasks/emit-caps.js";
+import { TaskWriter } from "../../src/tasks/writer.js";
 
 if (process.platform === "darwin") {
   try {
@@ -63,7 +65,7 @@ describe("TaskWriter emit caps", () => {
     ).task_id;
 
     for (let i = 0; i < 20; i++) {
-      writer.file(baseInput({ created_by_id: `agent-child-${i}`, parent_task_id: root }));
+      writer.file(baseInput({ created_by_id: `agent-child-${String(i)}`, parent_task_id: root }));
     }
 
     expectEmitCap(

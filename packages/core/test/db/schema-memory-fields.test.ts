@@ -1,10 +1,11 @@
-import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { migrate } from "../../src/db/migrations.js";
+import { describe, expect, test } from "bun:test";
+
 import { backfillRecallFields } from "../../src/db/backfill-recall-fields.js";
-import { RecallReader } from "../../src/readers/recall.js";
+import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { TestEmbedder } from "../../src/embedder/test-embedder.js";
+import { RecallReader } from "../../src/readers/recall.js";
 
 try {
   if (process.platform === "darwin") {
@@ -19,7 +20,7 @@ describe("memory schema enrichment", () => {
     const db = new Database(":memory:");
     loadSqliteVec(db);
 
-    db.exec(`
+    db.run(`
       CREATE TABLE IF NOT EXISTS t2_memories (
         memory_id           TEXT PRIMARY KEY,
         user_id             TEXT NOT NULL,
@@ -93,7 +94,9 @@ describe("memory schema enrichment", () => {
 
     const firstRun = backfillRecallFields(db);
 
-    const info = db.query<{ name: string; type: string }, []>(`PRAGMA table_info(t2_memories)`).all();
+    const info = db
+      .query<{ name: string; type: string }, []>(`PRAGMA table_info(t2_memories)`)
+      .all();
     const names = info.map((r) => r.name);
     expect(names).toContain("why");
     expect(names).toContain("source_quote");
@@ -150,7 +153,9 @@ describe("memory schema enrichment", () => {
          ORDER BY memory_id`,
       )
       .all();
-    const beforeSecondCount = db.query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM t2_memories`).get()?.c;
+    const beforeSecondCount = db
+      .query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM t2_memories`)
+      .get()?.c;
 
     migrate(db, { embeddingDim: 4 });
     const secondRun = backfillRecallFields(db);
@@ -171,7 +176,9 @@ describe("memory schema enrichment", () => {
          ORDER BY memory_id`,
       )
       .all();
-    const afterSecondCount = db.query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM t2_memories`).get()?.c;
+    const afterSecondCount = db
+      .query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM t2_memories`)
+      .get()?.c;
 
     expect(firstRun.t2_learned_at_set).toBe(3);
     expect(secondRun.t2_learned_at_set).toBe(0);

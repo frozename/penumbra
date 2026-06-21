@@ -1,13 +1,16 @@
+import { Database } from "bun:sqlite";
 // packages/core/test/db/t0-file-refs.test.ts
 import { describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+
 import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 // macOS preamble (see Pre-flight "Test file boilerplate")
 try {
   if (process.platform === "darwin")
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-} catch {}
+} catch {
+  // platform-specific SQLite override; ignore failures elsewhere
+}
 
 describe("t0_file_refs trigger", () => {
   test("Edit/Write/Read tool calls produce one row per file_path in payload", () => {

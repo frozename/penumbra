@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { execFileSync } from "node:child_process";
+
 import { WorktreeManager } from "../../src/worktree/manager.js";
 
 type RunnerOptions = {
@@ -13,26 +14,65 @@ type RunnerOptions = {
   signal?: AbortSignal;
   stdio?: "ignore";
 };
+type RunnerResult = { stdout: string; stderr: string };
 type RunnerCall = { cmd: string; args: string[]; opts: RunnerOptions };
+type Runner = (cmd: string, args: string[], runnerOpts?: RunnerOptions) => Promise<RunnerResult>;
 
 const calls: RunnerCall[] = [];
 
-function makeRunner(opts?: { failBunInstall?: Error; timeoutBunInstall?: boolean }) {
-  return async (cmd: string, args: string[], runnerOpts: RunnerOptions = {}) => {
+// async helpers from previous tests intentionally use bun:test rejects/resolves
+// chain matchers. Their types are void at compile time even though they wait at
+// runtime, so we avoid the chain entirely with these tiny helpers.
+async function expectRejectsWith(
+  promise: Promise<unknown>,
+  matcher?: RegExp | string,
+): Promise<void> {
+  try {
+    await promise;
+  } catch (err) {
+    if (matcher === undefined) return;
+    const message = err instanceof Error ? err.message : String(err);
+    if (matcher instanceof RegExp) {
+      expect(message).toMatch(matcher);
+    } else {
+      expect(message).toContain(matcher);
+    }
+    return;
+  }
+  throw new Error("expected promise to reject but it resolved");
+}
+
+async function expectRejectsTo<T>(promise: Promise<T>, value: unknown): Promise<void> {
+  try {
+    await promise;
+  } catch (err) {
+    expect(err).toBe(value);
+    return;
+  }
+  throw new Error("expected promise to reject but it resolved");
+}
+
+async function expectResolvesEqual<T>(promise: Promise<T>, expected: T): Promise<void> {
+  const actual = await promise;
+  expect(actual).toEqual(expected);
+}
+
+function makeRunner(opts?: { failBunInstall?: Error; timeoutBunInstall?: boolean }): Runner {
+  return (cmd: string, args: string[], runnerOpts: RunnerOptions = {}): Promise<RunnerResult> => {
     calls.push({ cmd, args, opts: runnerOpts });
     if (cmd === "git" && args[0] === "worktree" && args[1] === "add") {
       fs.mkdirSync(args[3]!, { recursive: true });
       fs.writeFileSync(path.join(args[3]!, ".git"), "gitdir: fake\n");
     }
     if (cmd === "bun" && opts?.failBunInstall) {
-      throw opts.failBunInstall;
+      return Promise.reject(opts.failBunInstall);
     }
     if (cmd === "bun" && opts?.timeoutBunInstall) {
       const err = new Error("operation timed out") as Error & { code: string };
       err.code = "ETIMEDOUT";
-      throw err;
+      return Promise.reject(err);
     }
-    return { stdout: "", stderr: "" };
+    return Promise.resolve({ stdout: "", stderr: "" });
   };
 }
 
@@ -52,7 +92,8 @@ test("isolated install failure removes the partial worktree and rethrows the ins
       runner: makeRunner({ failBunInstall: installError }),
     });
 
-    await expect(manager.createWorktree(handoffId, { isolated_install: true })).rejects.toBe(
+    await expectRejectsTo(
+      manager.createWorktree(handoffId, { isolated_install: true }),
       installError,
     );
     expect(fs.existsSync(path.join(rootDir, handoffId))).toBe(false);
@@ -97,13 +138,16 @@ test("isolated install writes readiness marker only after bun install succeeds",
   calls.length = 0;
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-install-mode-repo-"));
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-install-mode-root-"));
-  const observed: Array<{ rootMarker: boolean; modeMarker: string | null; readyMarker: boolean }> =
-    [];
+  const observed: { rootMarker: boolean; modeMarker: string | null; readyMarker: boolean }[] = [];
 
   try {
     fs.writeFileSync(path.join(repoDir, "package.json"), "{}\n");
     fs.writeFileSync(path.join(repoDir, "bun.lock"), "");
-    const runner = async (cmd: string, args: string[], runnerOpts: RunnerOptions = {}) => {
+    const runner: Runner = (
+      cmd: string,
+      args: string[],
+      runnerOpts: RunnerOptions = {},
+    ): Promise<RunnerResult> => {
       calls.push({ cmd, args, opts: runnerOpts });
       if (cmd === "git" && args[0] === "worktree" && args[1] === "add") {
         fs.mkdirSync(args[3]!, { recursive: true });
@@ -118,7 +162,7 @@ test("isolated install writes readiness marker only after bun install succeeds",
           readyMarker: fs.existsSync(path.join(runnerOpts.cwd!, ".test-storage", "worktree-ready")),
         });
       }
-      return { stdout: "", stderr: "" };
+      return Promise.resolve({ stdout: "", stderr: "" });
     };
     const manager = new WorktreeManager({
       rootDir,
@@ -162,7 +206,7 @@ test("rediscovery skips isolated worktrees with a mode marker but no readiness m
     });
 
     expect(manager.getWorktree(handoffId)).toBeNull();
-    await expect(manager.discoverOrphanWorktrees()).resolves.toEqual([]);
+    await expectResolvesEqual(manager.discoverOrphanWorktrees(), []);
   } finally {
     fs.rmSync(repoDir, { recursive: true, force: true });
     fs.rmSync(rootDir, { recursive: true, force: true });
@@ -252,9 +296,10 @@ test("isolated install timeout rethrows a clear timeout message", async () => {
       runner: makeRunner({ timeoutBunInstall: true }),
     });
 
-    await expect(
+    await expectRejectsWith(
       manager.createWorktree("h-install-timeout", { isolated_install: true }),
-    ).rejects.toThrow("isolated bun install timed out after 25ms");
+      "isolated bun install timed out after 25ms",
+    );
   } finally {
     if (previousTimeout === undefined) delete process.env.PENUMBRA_ISOLATED_INSTALL_TIMEOUT_MS;
     else process.env.PENUMBRA_ISOLATED_INSTALL_TIMEOUT_MS = previousTimeout;

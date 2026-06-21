@@ -1,8 +1,9 @@
-import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { afterEach, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+
 import { applyRuntimePragmas, loadSqliteVec } from "../../src/db/sqlite-vec.js";
 
 let tempDb: Database | null = null;
@@ -29,5 +30,7 @@ test("loadSqliteVec enables runtime pragmas on file-backed databases", () => {
 test("applyRuntimePragmas does not throw on in-memory databases", () => {
   tempDb = new Database(":memory:");
 
-  expect(() => applyRuntimePragmas(tempDb!)).not.toThrow();
+  expect(() => {
+    applyRuntimePragmas(tempDb!);
+  }).not.toThrow();
 });

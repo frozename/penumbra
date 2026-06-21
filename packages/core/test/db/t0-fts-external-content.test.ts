@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { describe, expect, test } from "bun:test";
+
 import { applySchema, migrateT0FtsToExternalContentOnce } from "../../src/db/schema.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 
 try {
   if (process.platform === "darwin") {
@@ -74,7 +75,7 @@ function externalContentMarker(db: Database): string | undefined {
 }
 
 function installLegacyStoredT0Fts(db: Database): void {
-  db.exec(`
+  db.run(`
     CREATE VIRTUAL TABLE t0_fts USING fts5(
       content,
       event_id UNINDEXED
@@ -158,7 +159,7 @@ describe("t0_fts external-content migration", () => {
   test("existing stored-content t0_fts is converted and delete triggers keep the index current", () => {
     const db = openDb();
     applySchema(db, { embeddingDim: 384 });
-    db.exec(`
+    db.run(`
       DELETE FROM db_meta WHERE key = 't0_fts_external_content_v1';
       DROP TRIGGER IF EXISTS t0_fts_insert;
       DROP TRIGGER IF EXISTS t0_fts_delete;
@@ -201,8 +202,12 @@ describe("t0_fts external-content migration", () => {
     const db = openDb();
     applySchema(db, { embeddingDim: 384 });
 
-    expect(() => migrateT0FtsToExternalContentOnce(db)).not.toThrow();
-    expect(() => migrateT0FtsToExternalContentOnce(db)).not.toThrow();
+    expect(() => {
+      migrateT0FtsToExternalContentOnce(db);
+    }).not.toThrow();
+    expect(() => {
+      migrateT0FtsToExternalContentOnce(db);
+    }).not.toThrow();
     expect(externalContentMarker(db)).toBe("1");
     expect(shadowContentBytes(db)).toBe(0);
   });

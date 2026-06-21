@@ -1,14 +1,16 @@
-import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
+import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
-
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { migrate } from "../../src/db/migrations.js";
+} catch {
+  // platform-specific SQLite override; ignore failures elsewhere
+}
 
 test("claude_code_sessions table exists with expected columns after migrate", () => {
   const db = new Database(":memory:");
@@ -20,12 +22,12 @@ test("claude_code_sessions table exists with expected columns after migrate", ()
     .get() as { name: string } | undefined;
   expect(tableRow?.name).toBe("claude_code_sessions");
 
-  const cols = db.query("PRAGMA table_info('claude_code_sessions')").all() as Array<{
+  const cols = db.query("PRAGMA table_info('claude_code_sessions')").all() as {
     name: string;
     type: string;
     notnull: number;
     pk: number;
-  }>;
+  }[];
   const colMap = Object.fromEntries(cols.map((c) => [c.name, c]));
   expect(colMap.session_id?.pk).toBe(1);
   expect(colMap.session_id?.type).toBe("TEXT");

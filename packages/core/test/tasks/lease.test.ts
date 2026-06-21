@@ -1,14 +1,16 @@
-import { describe, expect, test, beforeEach } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { beforeEach, describe, expect, test } from "bun:test";
+
+import type { FileTaskInput } from "../../src/tasks/schema.js";
+
 import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import {
-  TaskWriter,
-  TaskNotFound,
   InvalidTaskStatus,
   LeaseConflict,
+  TaskNotFound,
+  TaskWriter,
 } from "../../src/tasks/writer.js";
-import type { FileTaskInput } from "../../src/tasks/schema.js";
 
 if (process.platform === "darwin") {
   try {
@@ -113,7 +115,7 @@ describe("TaskWriter.lease", () => {
     const { task_id } = writer.file(baseInput());
 
     const attempts = Array.from({ length: 50 }, (_, i) =>
-      Promise.resolve().then(() => writer.lease({ task_id, agent_id: `agent-${i}` })),
+      Promise.resolve().then(() => writer.lease({ task_id, agent_id: `agent-${String(i)}` })),
     );
 
     const results = await Promise.allSettled(attempts);
@@ -123,7 +125,7 @@ describe("TaskWriter.lease", () => {
     expect(fulfilled).toHaveLength(1);
     expect(rejected).toHaveLength(49);
     for (const r of rejected) {
-      expect((r as PromiseRejectedResult).reason).toBeInstanceOf(LeaseConflict);
+      expect(r.reason).toBeInstanceOf(LeaseConflict);
     }
 
     // DB invariant: at most one open lease for the task

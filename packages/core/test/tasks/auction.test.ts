@@ -1,16 +1,19 @@
-import { describe, expect, test, beforeEach } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { Database } from "bun:sqlite";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { migrate } from "../../src/db/migrations.js";
-import { TaskWriter } from "../../src/tasks/writer.js";
-import { pickPreferred } from "../../src/tasks/auction.js";
-import { pickPreferred as exportedPickPreferred } from "../../src/index.js";
-import type { FileTaskInput } from "../../src/tasks/schema.js";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import type { RouteAgentOutput } from "../../src/services/agent-routing.js";
 import type { AgentDescriptor } from "../../src/tasks/eligibility.js";
+import type { FileTaskInput } from "../../src/tasks/schema.js";
+
+import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { pickPreferred as exportedPickPreferred } from "../../src/index.js";
+import { pickPreferred } from "../../src/tasks/auction.js";
+import { TaskWriter } from "../../src/tasks/writer.js";
 
 if (process.platform === "darwin") {
   try {
@@ -68,10 +71,10 @@ describe("TaskWriter.next auction window", () => {
     agents = defaultAgents();
   });
 
-  function makeWriter(rankings: Array<{ agent_name: string; score: number }>) {
+  function makeWriter(rankings: { agent_name: string; score: number }[]): TaskWriter {
     return new TaskWriter(db, {
-      now: () => nowMs,
-      resolveAgent: (name) => agents.get(name),
+      now: (): number => nowMs,
+      resolveAgent: (name): AgentDescriptor | undefined => agents.get(name),
       routeAgent: () => ({
         detail: "rank" as const,
         candidates: {
@@ -213,11 +216,11 @@ describe("TaskWriter.next auction window", () => {
     const dbDir = dbPath.slice(0, dbPath.lastIndexOf("/"));
     const workerScript = join(tmpdir(), `penumbra-auction-race-${crypto.randomUUID()}.mjs`);
     const startAt = Date.now() + 500;
-    const { task_id } = (() => {
+    const { task_id } = ((): { task_id: string } => {
       const writer = new TaskWriter(new Database(dbPath), {
-        now: () => 10_000,
-        resolveAgent: (name) => agents.get(name),
-        routeAgent: () => ({
+        now: (): number => 10_000,
+        resolveAgent: (name): AgentDescriptor | undefined => agents.get(name),
+        routeAgent: (): RouteAgentOutput => ({
           detail: "rank" as const,
           candidates: {
             task_type: "implement_substantial",
@@ -342,15 +345,19 @@ try {
           ]);
           let stdout = "";
           let stderr = "";
-          child.stdout.on("data", (chunk) => {
+          child.stdout.on("data", (chunk: Buffer | string): void => {
             stdout += chunk.toString();
           });
-          child.stderr.on("data", (chunk) => {
+          child.stderr.on("data", (chunk: Buffer | string): void => {
             stderr += chunk.toString();
           });
-          child.on("exit", (code) => {
-            if (code === 0) resolve(stdout.trim() === "null" ? null : JSON.parse(stdout.trim()));
-            else reject(stderr || `worker exited ${code}`);
+          child.on("exit", (code: number | null): void => {
+            if (code === 0) {
+              const trimmed = stdout.trim();
+              resolve(trimmed === "null" ? null : (JSON.parse(trimmed) as string));
+            } else {
+              reject(new Error(stderr || `worker exited ${String(code)}`));
+            }
           });
         }),
     );

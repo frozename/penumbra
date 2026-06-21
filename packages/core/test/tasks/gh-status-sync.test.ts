@@ -1,9 +1,12 @@
-import { beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { migrate } from "../../src/db/migrations.js";
-import { enqueueGhStatusSyncOnDb, TaskWriter } from "../../src/tasks/writer.js";
+import { beforeEach, describe, expect, test } from "bun:test";
+
+import type { RouteAgentOutput } from "../../src/services/agent-routing.js";
 import type { AgentDescriptor } from "../../src/tasks/eligibility.js";
+
+import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { enqueueGhStatusSyncOnDb, TaskWriter } from "../../src/tasks/writer.js";
 
 if (process.platform === "darwin") {
   try {
@@ -105,14 +108,8 @@ describe("TaskWriter centralized gh status-sync enqueue", () => {
     expect(processing?.status).toBe("processing");
     expect(typeof processing?.attempted_at).toBe("number");
 
-    type GhOutboxRequeueCapableWriter = TaskWriter & {
-      requeueStaleGhOutboxProcessing?: (staleBefore: number) => number;
-    };
-    const requeueStaleGhOutboxProcessing = (
-      writer as GhOutboxRequeueCapableWriter
-    ).requeueStaleGhOutboxProcessing?.bind(writer);
+    const requeueStaleGhOutboxProcessing = writer.requeueStaleGhOutboxProcessing.bind(writer);
     expect(typeof requeueStaleGhOutboxProcessing).toBe("function");
-    if (typeof requeueStaleGhOutboxProcessing !== "function") return;
 
     expect(requeueStaleGhOutboxProcessing(0)).toBe(0);
     expect(requeueStaleGhOutboxProcessing(Date.now() + 1_000)).toBe(1);
@@ -282,9 +279,9 @@ describe("TaskWriter centralized gh status-sync enqueue", () => {
       ["A", { name: "A", tags: ["core"], tier: "oc", cost_cents_per_run: 25 }],
     ]);
     const auctionWriter = new TaskWriter(db, {
-      now: () => nowMs,
-      resolveAgent: (name) => agents.get(name),
-      routeAgent: () => ({
+      now: (): number => nowMs,
+      resolveAgent: (name): AgentDescriptor | undefined => agents.get(name),
+      routeAgent: (): RouteAgentOutput => ({
         detail: "rank" as const,
         candidates: {
           task_type: "implement_substantial",
