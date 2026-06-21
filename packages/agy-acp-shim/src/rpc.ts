@@ -40,7 +40,7 @@ export function encodeMessage(msg: object): string {
 export function encodeMessageContentLength(msg: object): string {
   const json = JSON.stringify(msg);
   const byteLen = Buffer.byteLength(json, "utf8");
-  return `Content-Length: ${byteLen}\r\n\r\n${json}`;
+  return `Content-Length: ${String(byteLen)}\r\n\r\n${json}`;
 }
 
 /**
@@ -51,7 +51,7 @@ export function decodeMessages(buf: string): object[] {
   const results: object[] = [];
   for (const line of buf.split("\n")) {
     const trimmed = line.trim();
-    if (!trimmed || !trimmed.startsWith("{")) continue;
+    if (!trimmed.startsWith("{")) continue;
     try {
       results.push(JSON.parse(trimmed) as object);
     } catch {
@@ -81,7 +81,7 @@ export function createRpcServer(handlers: RpcHandlers): RpcServer {
 
     rl.on("line", (line: string) => {
       const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith("{")) return;
+      if (!trimmed.startsWith("{")) return;
 
       let req: RpcRequest;
       try {

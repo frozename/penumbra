@@ -1,5 +1,3 @@
-import { createRpcServer } from "./rpc.js";
-import { spawnAgy as _spawnAgy } from "./agy-subprocess.js";
 import type {
   InitializeParams,
   InitializeResult,
@@ -9,11 +7,14 @@ import type {
   SessionPromptResult,
 } from "./types.js";
 
+import { spawnAgy as _spawnAgy } from "./agy-subprocess.js";
+import { createRpcServer } from "./rpc.js";
+
 const AGY_BINARY = process.env["AGY_BINARY"] ?? "agy";
 
 export interface AgyHandle {
   exited: Promise<number | null>;
-  kill(): void;
+  kill: () => void;
 }
 
 export type SpawnAgyFn = (opts: {
@@ -30,32 +31,29 @@ export interface HandlersOptions {
 }
 
 export interface Handlers {
-  handleInitialize(params: InitializeParams): Promise<InitializeResult>;
-  handleSessionNew(params: SessionNewParams): Promise<SessionNewResult>;
-  handleSessionPrompt(params: SessionPromptParams): Promise<SessionPromptResult>;
-  handleSessionCancel(params: { sessionId: string }): Promise<{}>;
+  handleInitialize: (params: InitializeParams) => Promise<InitializeResult>;
+  handleSessionNew: (params: SessionNewParams) => Promise<SessionNewResult>;
+  handleSessionPrompt: (params: SessionPromptParams) => Promise<SessionPromptResult>;
+  handleSessionCancel: (params: { sessionId: string }) => Promise<Record<string, never>>;
 }
 
 export function makeHandlers(opts: HandlersOptions): Handlers {
   const inFlight = new Map<string, AgyHandle>();
   const cancelled = new Set<string>();
 
-  async function handleInitialize(_params: InitializeParams): Promise<InitializeResult> {
-    return {
+  function handleInitialize(_params: InitializeParams): Promise<InitializeResult> {
+    return Promise.resolve({
       protocolVersion: 1,
       authMethods: [],
-    };
+    });
   }
 
-  async function handleSessionNew(_params: SessionNewParams): Promise<SessionNewResult> {
-    return { sessionId: crypto.randomUUID() };
+  function handleSessionNew(_params: SessionNewParams): Promise<SessionNewResult> {
+    return Promise.resolve({ sessionId: crypto.randomUUID() });
   }
 
   async function handleSessionPrompt(params: SessionPromptParams): Promise<SessionPromptResult> {
-    const promptText = params.prompt
-      .filter((p) => p.type === "text")
-      .map((p) => p.text)
-      .join("\n");
+    const promptText = params.prompt.map((p) => p.text).join("\n");
 
     const argv = [
       "--print",
@@ -107,7 +105,7 @@ export function makeHandlers(opts: HandlersOptions): Handlers {
     return { stopReason: "end_turn" };
   }
 
-  async function handleSessionCancel(params: { sessionId: string }): Promise<{}> {
+  function handleSessionCancel(params: { sessionId: string }): Promise<Record<string, never>> {
     const handle = inFlight.get(params.sessionId);
     if (!handle) {
       const err = new Error("not_a_session");
@@ -118,27 +116,31 @@ export function makeHandlers(opts: HandlersOptions): Handlers {
     cancelled.add(params.sessionId);
     inFlight.delete(params.sessionId);
     handle.kill();
-    return {};
+    return Promise.resolve({});
   }
 
   return { handleInitialize, handleSessionNew, handleSessionPrompt, handleSessionCancel };
 }
 
-export async function runShim(): Promise<void> {
-  let server: ReturnType<typeof createRpcServer>;
+export function runShim(): void {
+  const serverRef: { current: ReturnType<typeof createRpcServer> | undefined } = {
+    current: undefined,
+  };
 
-  const { handleInitialize, handleSessionNew, handleSessionPrompt, handleSessionCancel } =
-    makeHandlers({
-      spawnAgy: _spawnAgy,
-      notify: (method, params) => server.notify(method, params),
-    });
-
-  server = createRpcServer({
-    initialize: (params) => handleInitialize(params as InitializeParams),
-    "session/new": (params) => handleSessionNew(params as SessionNewParams),
-    "session/prompt": (params) => handleSessionPrompt(params as SessionPromptParams),
-    "session/cancel": (params) => handleSessionCancel(params as { sessionId: string }),
+  const handlers = makeHandlers({
+    spawnAgy: _spawnAgy,
+    notify: (method, params) => {
+      serverRef.current?.notify(method, params);
+    },
   });
+
+  const server = createRpcServer({
+    initialize: (params) => handlers.handleInitialize(params as InitializeParams),
+    "session/new": (params) => handlers.handleSessionNew(params as SessionNewParams),
+    "session/prompt": (params) => handlers.handleSessionPrompt(params as SessionPromptParams),
+    "session/cancel": (params) => handlers.handleSessionCancel(params as { sessionId: string }),
+  });
+  serverRef.current = server;
 
   server.start();
 }

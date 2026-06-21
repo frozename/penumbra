@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { encodeMessage, decodeMessages } from "../src/rpc.js";
+
+import { decodeMessages, encodeMessage } from "../src/rpc.js";
 
 describe("rpc framing", () => {
   it("encodes a JSON-RPC object and decodes it back", () => {

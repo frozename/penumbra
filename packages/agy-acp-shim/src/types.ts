@@ -19,9 +19,7 @@ export interface InitializeResult {
   };
 }
 
-export interface SessionNewParams {
-  [key: string]: unknown;
-}
+export type SessionNewParams = Record<string, unknown>;
 
 export interface SessionNewResult {
   sessionId: string;
@@ -40,6 +38,4 @@ export interface SessionCancelParams {
   sessionId: string;
 }
 
-export interface SessionCancelResult {
-  [key: string]: unknown;
-}
+export type SessionCancelResult = Record<string, unknown>;

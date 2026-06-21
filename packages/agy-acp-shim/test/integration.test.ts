@@ -1,11 +1,29 @@
 import { describe, expect, it } from "bun:test";
-import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
 const AGY_BINARY = process.env["AGY_BINARY"] ?? Bun.which("agy") ?? undefined;
 const SHIM_ENTRY = new URL("../bin/agy-acp-shim.ts", import.meta.url).pathname;
-const AGY_PRESENT = AGY_BINARY !== undefined && existsSync(AGY_BINARY);
+const AGY_PRESENT = AGY_BINARY !== undefined && (await Bun.file(AGY_BINARY).exists());
+
+interface JsonRpcResponse {
+  jsonrpc: "2.0";
+  id?: number | string | null;
+  method?: string;
+  result?: {
+    sessionId?: string;
+    [key: string]: unknown;
+  };
+  error?: { code: number; message: string; data?: unknown };
+  params?: {
+    sessionId?: string;
+    update?: {
+      sessionUpdate?: string;
+      content?: { type?: string; text?: string };
+    };
+    [key: string]: unknown;
+  };
+}
 
 describe("integration (requires local agy binary)", () => {
   it.skipIf(!AGY_PRESENT)(
@@ -16,17 +34,19 @@ describe("integration (requires local agy binary)", () => {
         env: { ...process.env, AGY_BINARY },
       });
 
-      const rl = createInterface({ input: shim.stdout!, terminal: false });
-      const readNext = (): Promise<any> =>
+      const rl = createInterface({ input: shim.stdout, terminal: false });
+      const readNext = (): Promise<JsonRpcResponse> =>
         new Promise((res) => {
-          const handler = (line: string) => {
+          const handler = (line: string): void => {
             rl.off("line", handler);
-            res(JSON.parse(line));
+            res(JSON.parse(line) as JsonRpcResponse);
           };
           rl.once("line", handler);
         });
 
-      const send = (msg: object) => shim.stdin!.write(JSON.stringify(msg) + "\n");
+      const send = (msg: object): void => {
+        shim.stdin.write(JSON.stringify(msg) + "\n");
+      };
 
       // 1. initialize
       send({
@@ -46,7 +66,7 @@ describe("integration (requires local agy binary)", () => {
       // 2. session/new
       send({ jsonrpc: "2.0", id: 2, method: "session/new", params: {} });
       const sessionResp = await readNext();
-      const sessionId: string = sessionResp.result.sessionId;
+      const sessionId = sessionResp.result?.sessionId;
       expect(typeof sessionId).toBe("string");
 
       // 3. session/prompt — collect until done
@@ -61,17 +81,12 @@ describe("integration (requires local agy binary)", () => {
       });
 
       let fullText = "";
-      let done = false;
-      while (!done) {
+      for (;;) {
         const msg = await readNext();
-        if (msg.method === "done") {
-          done = true;
-          break;
-        }
+        if (msg.method === "done") break;
         if (msg.method === "session/update") {
           if (msg.params?.update?.sessionUpdate === "agent_message_chunk") {
-            const text: string = msg.params?.update?.content?.text ?? "";
-            fullText += text;
+            fullText += msg.params.update.content?.text ?? "";
           }
         }
       }
@@ -90,16 +105,18 @@ describe("integration (requires local agy binary)", () => {
         env: { ...process.env, AGY_BINARY },
       });
 
-      const rl = createInterface({ input: shim.stdout!, terminal: false });
-      const readNext = (): Promise<any> =>
+      const rl = createInterface({ input: shim.stdout, terminal: false });
+      const readNext = (): Promise<JsonRpcResponse> =>
         new Promise((res) => {
-          const handler = (line: string) => {
+          const handler = (line: string): void => {
             rl.off("line", handler);
-            res(JSON.parse(line));
+            res(JSON.parse(line) as JsonRpcResponse);
           };
           rl.once("line", handler);
         });
-      const send = (msg: object) => shim.stdin!.write(JSON.stringify(msg) + "\n");
+      const send = (msg: object): void => {
+        shim.stdin.write(JSON.stringify(msg) + "\n");
+      };
 
       send({
         jsonrpc: "2.0",
@@ -115,7 +132,7 @@ describe("integration (requires local agy binary)", () => {
 
       send({ jsonrpc: "2.0", id: 2, method: "session/new", params: {} });
       const sessionResp = await readNext();
-      const sessionId = sessionResp.result.sessionId;
+      const sessionId = sessionResp.result?.sessionId;
 
       // send a long prompt, immediately cancel
       send({
@@ -148,16 +165,18 @@ describe("integration (requires local agy binary)", () => {
         env: { ...process.env, AGY_BINARY },
       });
 
-      const rl = createInterface({ input: shim.stdout!, terminal: false });
-      const readNext = (): Promise<any> =>
+      const rl = createInterface({ input: shim.stdout, terminal: false });
+      const readNext = (): Promise<JsonRpcResponse> =>
         new Promise((res) => {
-          const handler = (line: string) => {
+          const handler = (line: string): void => {
             rl.off("line", handler);
-            res(JSON.parse(line));
+            res(JSON.parse(line) as JsonRpcResponse);
           };
           rl.once("line", handler);
         });
-      const send = (msg: object) => shim.stdin!.write(JSON.stringify(msg) + "\n");
+      const send = (msg: object): void => {
+        shim.stdin.write(JSON.stringify(msg) + "\n");
+      };
 
       send({
         jsonrpc: "2.0",
@@ -173,7 +192,7 @@ describe("integration (requires local agy binary)", () => {
 
       send({ jsonrpc: "2.0", id: 2, method: "session/new", params: {} });
       const sessionResp = await readNext();
-      const sessionId = sessionResp.result.sessionId;
+      const sessionId = sessionResp.result?.sessionId;
 
       send({
         jsonrpc: "2.0",
@@ -191,17 +210,12 @@ describe("integration (requires local agy binary)", () => {
       });
 
       let fullText = "";
-      let done = false;
-      while (!done) {
+      for (;;) {
         const msg = await readNext();
-        if (msg.method === "done") {
-          done = true;
-          break;
-        }
+        if (msg.method === "done") break;
         if (msg.method === "session/update") {
           if (msg.params?.update?.sessionUpdate === "agent_message_chunk") {
-            const text: string = msg.params?.update?.content?.text ?? "";
-            fullText += text;
+            fullText += msg.params.update.content?.text ?? "";
           }
         }
       }

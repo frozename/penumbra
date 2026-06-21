@@ -1,5 +1,8 @@
 import { describe, expect, it, spyOn } from "bun:test";
+
 import { spawnAgy } from "../src/agy-subprocess.js";
+
+const noop = (): void => undefined;
 
 describe("spawnAgy", () => {
   it("yields lines from a mock echo process", async () => {
@@ -27,7 +30,7 @@ describe("spawnAgy", () => {
   });
 
   it("kill() terminates the subprocess before natural exit", async () => {
-    const proc = spawnAgy({ binary: "sleep", args: ["60"], onLine: () => {} });
+    const proc = spawnAgy({ binary: "sleep", args: ["60"], onLine: noop });
     proc.kill();
     const code = await proc.exited;
     // SIGTERM exits non-zero on macOS
@@ -35,7 +38,7 @@ describe("spawnAgy", () => {
   });
 
   it("resolves exited after process finishes", async () => {
-    const proc = spawnAgy({ binary: "true", args: [], onLine: () => {} });
+    const proc = spawnAgy({ binary: "true", args: [], onLine: noop });
     const code = await proc.exited;
     expect(code).toBe(0);
   });
@@ -43,7 +46,7 @@ describe("spawnAgy", () => {
   it("does not send SIGKILL when the child exits before the escalation window", async () => {
     const killSpy = spyOn(process, "kill").mockImplementation(() => true);
     try {
-      const proc = spawnAgy({ binary: "true", args: [], onLine: () => {} });
+      const proc = spawnAgy({ binary: "true", args: [], onLine: noop });
       proc.kill();
       await proc.exited;
       // Yield to flush the exited.then(clearTimeout) microtask.

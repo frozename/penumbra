@@ -1,25 +1,39 @@
 import { describe, expect, it } from "bun:test";
-import { makeHandlers } from "../src/handlers.js";
-import type { AgyHandle } from "../src/handlers.js";
 
-function mockSpawnAgy(lines: string[], exitCode = 0) {
-  return (opts: { onLine: (l: string) => void; prompt?: string }): AgyHandle => {
+import type { AgyHandle, SpawnAgyFn } from "../src/handlers.js";
+
+import { makeHandlers } from "../src/handlers.js";
+
+const noop = (): void => undefined;
+
+interface MockSpawnOpts {
+  binary: string;
+  args: string[];
+  onLine: (line: string) => void;
+  prompt?: string;
+  signal?: AbortSignal;
+}
+
+function mockSpawnAgy(lines: string[], exitCode = 0): SpawnAgyFn {
+  return (opts: MockSpawnOpts): AgyHandle => {
     expect(typeof opts.prompt).toBe("string");
     const exited = new Promise<number>((res) => {
-      Promise.resolve().then(() => {
+      void Promise.resolve().then(() => {
         for (const l of lines) opts.onLine(l);
         res(exitCode);
       });
     });
-    return { exited, kill: () => {} };
+    return { exited, kill: noop };
   };
 }
 
-function mockSlowSpawnAgy(onKill: () => void) {
-  return (_opts: { onLine: (l: string) => void; prompt?: string }): AgyHandle => {
+function mockSlowSpawnAgy(onKill: () => void): SpawnAgyFn {
+  return (_opts: MockSpawnOpts): AgyHandle => {
     let killed = false;
     const exited = new Promise<number>((res) => {
-      const timeout = setTimeout(() => res(0), 60_000);
+      const timeout = setTimeout(() => {
+        res(0);
+      }, 60_000);
       const checkKill = setInterval(() => {
         if (!killed) return;
         clearInterval(checkKill);
@@ -29,7 +43,7 @@ function mockSlowSpawnAgy(onKill: () => void) {
     });
     return {
       exited,
-      kill: () => {
+      kill: (): void => {
         killed = true;
         onKill();
       },
@@ -37,16 +51,19 @@ function mockSlowSpawnAgy(onKill: () => void) {
   };
 }
 
+const failingSpawn: SpawnAgyFn = () => {
+  throw new Error("spawnAgy should not be called");
+};
+
 describe("initialize", () => {
   it("returns protocolVersion and empty capabilities", async () => {
-    const { handleInitialize } = makeHandlers({ spawnAgy: null as any, notify: () => {} });
-    const result = await handleInitialize({
+    const handlers = makeHandlers({ spawnAgy: failingSpawn, notify: noop });
+    const result = await handlers.handleInitialize({
       protocolVersion: 1,
       clientCapabilities: {},
       clientInfo: { name: "penumbra", version: "1.0.0" },
     });
     expect(result.protocolVersion).toBe(1);
-    // no tool capabilities advertised
     expect(result.capabilities?.terminal).toBeFalsy();
     expect(result.capabilities?.fs).toBeFalsy();
   });
@@ -54,29 +71,29 @@ describe("initialize", () => {
 
 describe("session/new", () => {
   it("returns a non-empty session ID string", async () => {
-    const { handleSessionNew } = makeHandlers({ spawnAgy: null as any, notify: () => {} });
-    const result = await handleSessionNew({});
+    const handlers = makeHandlers({ spawnAgy: failingSpawn, notify: noop });
+    const result = await handlers.handleSessionNew({});
     expect(typeof result.sessionId).toBe("string");
     expect(result.sessionId.length).toBeGreaterThan(0);
   });
 
   it("returns a different ID on each call", async () => {
-    const { handleSessionNew } = makeHandlers({ spawnAgy: null as any, notify: () => {} });
-    const a = await handleSessionNew({});
-    const b = await handleSessionNew({});
+    const handlers = makeHandlers({ spawnAgy: failingSpawn, notify: noop });
+    const a = await handlers.handleSessionNew({});
+    const b = await handlers.handleSessionNew({});
     expect(a.sessionId).not.toBe(b.sessionId);
   });
 });
 
 describe("session/prompt (mocked agy)", () => {
   it("emits canonical session/update notifications for each agy output line", async () => {
-    const notifications: Array<{ method: string; params: unknown }> = [];
-    const { handleSessionPrompt } = makeHandlers({
-      spawnAgy: mockSpawnAgy(["hello", "world"]) as any,
+    const notifications: { method: string; params: unknown }[] = [];
+    const handlers = makeHandlers({
+      spawnAgy: mockSpawnAgy(["hello", "world"]),
       notify: (method, params) => notifications.push({ method, params }),
     });
 
-    const result = await handleSessionPrompt({
+    const result = await handlers.handleSessionPrompt({
       sessionId: "s1",
       prompt: [{ type: "text", text: "hi" }],
     });
@@ -94,12 +111,12 @@ describe("session/prompt (mocked agy)", () => {
   });
 
   it("returns stopReason 'failed' when agy exits with a non-zero code", async () => {
-    const { handleSessionPrompt } = makeHandlers({
-      spawnAgy: mockSpawnAgy(["boom"], 1) as any,
-      notify: () => {},
+    const handlers = makeHandlers({
+      spawnAgy: mockSpawnAgy(["boom"], 1),
+      notify: noop,
     });
 
-    const result = await handleSessionPrompt({
+    const result = await handlers.handleSessionPrompt({
       sessionId: "s-crash",
       prompt: [{ type: "text", text: "hi" }],
     });
@@ -108,13 +125,13 @@ describe("session/prompt (mocked agy)", () => {
   });
 
   it("emits a done notification after agy exits", async () => {
-    const notifications: Array<{ method: string; params: unknown }> = [];
-    const { handleSessionPrompt } = makeHandlers({
-      spawnAgy: mockSpawnAgy(["pong"]) as any,
+    const notifications: { method: string; params: unknown }[] = [];
+    const handlers = makeHandlers({
+      spawnAgy: mockSpawnAgy(["pong"]),
       notify: (method, params) => notifications.push({ method, params }),
     });
 
-    const result = await handleSessionPrompt({
+    const result = await handlers.handleSessionPrompt({
       sessionId: "s1",
       prompt: [{ type: "text", text: "ping" }],
     });
@@ -127,47 +144,53 @@ describe("session/prompt (mocked agy)", () => {
 describe("session/cancel", () => {
   it("kills the in-flight agy subprocess", async () => {
     let killed = false;
-    const { handleSessionPrompt, handleSessionCancel } = makeHandlers({
+    const handlers = makeHandlers({
       spawnAgy: mockSlowSpawnAgy(() => {
         killed = true;
-      }) as any,
-      notify: () => {},
+      }),
+      notify: noop,
     });
 
-    const promptPromise = handleSessionPrompt({
+    const promptPromise = handlers.handleSessionPrompt({
       sessionId: "s2",
       prompt: [{ type: "text", text: "sleep" }],
     });
     await new Promise((resolve) => setTimeout(resolve, 20));
-    await handleSessionCancel({ sessionId: "s2" });
-    await promptPromise.catch(() => {});
+    await handlers.handleSessionCancel({ sessionId: "s2" });
+    await promptPromise.catch(noop);
 
     expect(killed).toBe(true);
   });
 
   it("returns stopReason 'cancelled' for a cancelled prompt instead of 'end_turn'", async () => {
-    const { handleSessionPrompt, handleSessionCancel } = makeHandlers({
-      spawnAgy: mockSlowSpawnAgy(() => {}) as any,
-      notify: () => {},
+    const handlers = makeHandlers({
+      spawnAgy: mockSlowSpawnAgy(noop),
+      notify: noop,
     });
 
-    const promptPromise = handleSessionPrompt({
+    const promptPromise = handlers.handleSessionPrompt({
       sessionId: "s-cancel",
       prompt: [{ type: "text", text: "sleep" }],
     });
     await new Promise((resolve) => setTimeout(resolve, 20));
-    await handleSessionCancel({ sessionId: "s-cancel" });
+    await handlers.handleSessionCancel({ sessionId: "s-cancel" });
     const result = await promptPromise;
 
     expect(result).toEqual({ stopReason: "cancelled" });
   });
 
   it("rejects with an error if no active prompt exists for sessionId", async () => {
-    const { handleSessionCancel } = makeHandlers({
-      spawnAgy: mockSpawnAgy([]) as any,
-      notify: () => {},
+    const handlers = makeHandlers({
+      spawnAgy: mockSpawnAgy([]),
+      notify: noop,
     });
 
-    await expect(handleSessionCancel({ sessionId: "ghost" })).rejects.toThrow();
+    let threw = false;
+    try {
+      await handlers.handleSessionCancel({ sessionId: "ghost" });
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
   });
 });

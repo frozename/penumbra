@@ -3,7 +3,7 @@ import { createInterface } from "node:readline";
 
 export interface AgyHandle {
   exited: Promise<number | null>;
-  kill(): void;
+  kill: () => void;
 }
 
 export function spawnAgy(opts: {
@@ -18,24 +18,22 @@ export function spawnAgy(opts: {
     detached: process.platform !== "win32",
   });
 
-  if (opts.prompt !== undefined && child.stdin) {
+  if (opts.prompt !== undefined) {
     child.stdin.end(opts.prompt);
   } else {
-    child.stdin?.end();
+    child.stdin.end();
   }
 
-  if (child.stdout) {
-    const rl = createInterface({
-      input: child.stdout,
-      terminal: false,
-    });
-    rl.on("line", (line: string) => {
-      if (!line.trim()) return;
-      opts.onLine(line);
-    });
-  }
+  const rl = createInterface({
+    input: child.stdout,
+    terminal: false,
+  });
+  rl.on("line", (line: string) => {
+    if (!line.trim()) return;
+    opts.onLine(line);
+  });
 
-  child.stderr?.on("data", (chunk: Buffer) => {
+  child.stderr.on("data", (chunk: Buffer) => {
     try {
       process.stderr.write(chunk);
     } catch {
@@ -55,7 +53,7 @@ export function spawnAgy(opts: {
     });
   });
 
-  const signalProcess = (signal: NodeJS.Signals) => {
+  const signalProcess = (signal: NodeJS.Signals): void => {
     if (!child.pid || hasExited) return;
     try {
       if (process.platform !== "win32") {
@@ -68,14 +66,16 @@ export function spawnAgy(opts: {
     }
   };
 
-  const kill = () => {
+  const kill = (): void => {
     if (hasExited) return;
     signalProcess("SIGTERM");
     const timer = setTimeout(() => {
       signalProcess("SIGKILL");
     }, 2000);
     timer.unref();
-    void exited.then(() => clearTimeout(timer));
+    void exited.then(() => {
+      clearTimeout(timer);
+    });
   };
 
   if (opts.signal) {
