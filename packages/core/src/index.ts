@@ -1,508 +1,353 @@
-export { Branding } from "./branding.js";
-export type { WebResearchAdapter, WebResearchResult } from "./research/types.js";
-export type { RemoteEmbedderOpts } from "./embedder/openai-compat.js";
-export { SettingsDefaults, SettingsSchema, type Settings, type SettingsInput } from "./settings.js";
-export { systemClock, type Clock } from "./utils/clock.js";
-export { systemUuid, type Uuid } from "./utils/uuid.js";
-export { BasisSchema, validateBasis, type Basis } from "./memory-verify/basis.js";
-export { RegexRedactor, DEFAULT_REDACTION_RULES, type RedactionRule } from "./redaction/regex.js";
-export { stripPrivacyTags } from "./redaction/privacy-tags.js";
+import { FsPathError, resolveInsideWorktree } from "./fs-paths.js";
+
 export {
-  MAX_WALKER_DEPTH,
-  MAX_WALKER_STRING_BYTES,
-  WALKER_DEPTH_EXCEEDED_RULE_ID,
-  WALKER_STRING_OVERSIZE_RULE_ID,
-  ValuePatternRedactor,
-  type ValuePatternRule,
-  type ValueRedactionHit,
-  type RedactStringResult,
-  type RedactValueLimits,
-  type RedactValueResult,
-} from "./redaction/value-patterns.js";
-export { MachineId } from "./identity/machine-id.js";
-export {
-  WorkerTokenStore,
-  type WorkerTokenRow,
   type IssueArgs,
   type IssueResult,
+  type WorkerTokenRow,
+  WorkerTokenStore,
 } from "./auth/worker-token-store.js";
-export { createLogger, type Logger } from "./logger.js";
-export { normalize, type NormalizeCtx } from "./normalize/ingest.js";
+export { Branding } from "./branding.js";
+export { ContextFileWriter, type ContextFileWriterOpts } from "./context-file/writer.js";
 export {
-  T0EventSchema,
-  T0EventInputSchema,
-  type T0Event,
-  type T0EventInput,
-  TASK_DRAFT_LIFECYCLE_EVENT_TYPES,
-  type TaskDraftLifecycleEventType,
-} from "./schemas/event.js";
-export {
-  TaskDraftPayloadSchema,
-  TaskDraftProvenanceSchema,
-  TaskDraftRefiningPayloadSchema,
-  TaskDraftPromotedPayloadSchema,
-  TaskDraftStalePayloadSchema,
-  TaskDraftDuplicatePayloadSchema,
-  TaskDraftEscalationPayloadSchema,
-  TaskDraftLifecyclePayloadSchema,
-  type TaskDraftPayload,
-  type TaskDraftProvenance,
-  type TaskDraftRefiningPayload,
-  type TaskDraftPromotedPayload,
-  type TaskDraftStalePayload,
-  type TaskDraftDuplicatePayload,
-  type TaskDraftEscalationPayload,
-  type TaskDraftLifecyclePayload,
-  type ParsedTaskDraftLifecyclePayload,
-  parseTaskDraftLifecyclePayload,
-} from "./schemas/task-draft.js";
-export {
-  buildServices,
-  type Services,
-  type BuildServicesOpts,
-  type Watchdog,
-  type AgentRoutingConfig,
-  type WorkflowRunInfo,
-  type WorkflowRunRecord,
-  type WorkflowStatusLight,
-  type WorkflowRunsRegistry,
-} from "./services.js";
-export { type McpPoolLike, type ActionGateLike } from "./services.js";
-export { resolveProjectScope, type ProjectScope } from "./identity/project-resolver.js";
-export type {
-  WorkflowRegistry,
-  RegistryEntry,
-  RegistryError,
-  BuildRegistryOpts,
-} from "./workflows/registry-interface.js";
-export { applyRuntimePragmas, loadSqliteVec } from "./db/sqlite-vec.js";
-export { WorkingMemorySchema, type WorkingMemory } from "./long-lived/types.js";
-export {
-  readLongLivedAgentWorkingMemory,
-  updateLongLivedAgentState,
-  listLongLivedPendingActionsForAgent,
-  type LongLivedAgentStateUpdate,
-  type LongLivedPendingActionRow,
-} from "./long-lived/self-reader.js";
-export {
-  applySchema,
-  SCHEMA_VERSION,
-  runStartupZombieSweep,
-  releaseT1RollupClaims,
-  type ReleaseT1RollupClaimsOpts,
-} from "./db/schema.js";
-export { assertEmbedderDim, migrate, type MigrateOpts } from "./db/migrations.js";
+  resolveDaemonStorageRoot,
+  type ResolveDaemonStorageRootOpts,
+  waitForDaemonStorageRoot,
+  type WaitForDaemonStorageRootOpts,
+} from "./daemon-discovery.js";
+export { backfillRecallFields, type BackfillStats } from "./db/backfill-recall-fields.js";
 export {
   checkEmbeddingModelVersion,
   readStoredEmbeddingModelVersion,
 } from "./db/embedding-version-guard.js";
+export { getHandoffToAgent } from "./db/handoffs.js";
 export {
-  resolveStorageDbPath,
-  assertTestDbPathIsolation,
-  type ResolveStorageDbPathOpts,
-} from "./db/storage-db-path.js";
-export { backfillRecallFields, type BackfillStats } from "./db/backfill-recall-fields.js";
-export {
-  closeLane,
-  getClosedLaneRoundCountForHandoffLineage,
-  getOpenLaneForImplementer,
-  getLane,
-  insertLane,
-  recentLanes,
-  stampAgentPerformanceGateOutcome,
-  stampAgentPerformanceGateOutcomeForHandoff,
   type ClosedLaneGateStatus,
+  closeLane,
   type CloseLaneInput,
+  getClosedLaneRoundCountForHandoffLineage,
+  getLane,
+  getOpenLaneForImplementer,
+  insertLane,
   type InsertLaneInput,
   type LaneGateStatus,
   type LaneRow,
   type RecentLaneFilter,
+  recentLanes,
+  stampAgentPerformanceGateOutcome,
+  stampAgentPerformanceGateOutcomeForHandoff,
 } from "./db/lane-ledger.js";
-export { getHandoffToAgent } from "./db/handoffs.js";
-export type { Embedder } from "./embedder/interface.js";
+export { assertEmbedderDim, migrate, type MigrateOpts } from "./db/migrations.js";
+export {
+  applySchema,
+  releaseT1RollupClaims,
+  type ReleaseT1RollupClaimsOpts,
+  runStartupZombieSweep,
+  SCHEMA_VERSION,
+} from "./db/schema.js";
+export { applyRuntimePragmas, loadSqliteVec } from "./db/sqlite-vec.js";
+export {
+  assertTestDbPathIsolation,
+  resolveStorageDbPath,
+  type ResolveStorageDbPathOpts,
+} from "./db/storage-db-path.js";
+export { type DispatchEvent, DispatchEventBus } from "./dispatch/event-bus.js";
 export { BundledEmbedder } from "./embedder/bundled.js";
+export type { Embedder } from "./embedder/interface.js";
+export type { RemoteEmbedderOpts } from "./embedder/openai-compat.js";
 export { OpenAICompatEmbedder } from "./embedder/openai-compat.js";
 export { resolveEmbedder } from "./embedder/resolve.js";
 export type { EmbedderMode } from "./embedder/resolve.js";
 export {
-  collectMentionedPaths,
-  inspectPromptVsProject,
-  resolveProjectIdFromAbsolutePath,
-  type DispatchRoutingGuardInput,
-  type DispatchRoutingGuardResult,
-} from "./services/dispatch-routing-guard.js";
+  ConversationStreamBus,
+  type ConversationStreamListener,
+} from "./events/conversation-stream.js";
+export { HandoffEventBus, type HandoffEventListener } from "./events/handoff-events.js";
 export {
-  RecallRequestSchema,
-  RecallResultSchema,
-  STALE_AFTER_DAYS_DEFAULT,
-  STALE_AFTER_DAYS_BY_OBS_TYPE,
-  STALE_AFTER_DAYS,
-  type RecallRequest,
-  type RecallResult,
-  staleThresholdDays,
-  SearchRequestSchema,
-  TimelineRequestSchema,
-  GetObservationsRequestSchema,
-  type SearchRequest,
-  type SearchHit,
-  type TimelineRequest,
-  type TimelineEntry,
-  type GetObservationsRequest,
-  type ObservationDetail,
-  CorpusFilterSchema,
-  CorpusBuildRequestSchema,
-  CorpusQueryRequestSchema,
-  CorpusSummarySchema,
-  type CorpusFilterInput,
-  type CorpusBuildRequest,
-  type CorpusQueryRequest,
-  type CorpusSummaryRow,
-} from "./schemas/recall.js";
-export { search } from "./readers/search.js";
-export { timeline } from "./readers/timeline.js";
-export {
-  getMemoryVerificationEvents,
-  type MemoryVerificationEvent,
-} from "./readers/memory-verification-events.js";
-export { getObservations } from "./readers/get-observations.js";
-export {
-  TaskDraftReader,
-  getTaskDraftPromotionInfo,
-  type PendingTaskDraft,
-  type PendingTaskDraftEscalation,
-  type ListPendingInput,
-  type ListPendingEscalationsInput,
-} from "./readers/task-draft.js";
-export { recallStatus, type RecallStatus } from "./readers/recall-status.js";
-export {
-  qualityStatus,
-  type QualityStatusSnapshot,
-  type QualityStatusInput,
-} from "./readers/quality-status.js";
-export {
-  readFleetLatency,
-  type FleetLatencyAgentRow,
-  type FleetLatencyInput,
-  type FleetLatencyOutput,
-} from "./readers/fleet-latency.js";
-export {
-  resolveAgentPool,
-  routeAgent,
-  resolveGateOutcomeCutoverIso,
-  type DetailMode,
-  type DroppedAgentPoolMember,
-  type RouteAgentInput,
-  type RouteAgentOutput,
-  type RoleRoute,
-  type AgentRecommendation,
-  type ResolveAgentPoolContext,
-  type ResolveAgentPoolResult,
-  type ResolvedAgentPoolMember,
-} from "./services/agent-routing.js";
-export {
-  extractStumblesFromSession,
-  type StumbleCandidate,
-  type ExtractStumblesInput,
-  type StumbleEvidence,
-} from "./services/stumble-extractor.js";
-export {
-  buildCorpus,
-  listCorpora,
-  queryCorpus,
-  removeCorpus,
-  type CorpusFilter,
-  type BuildCorpusInput,
-  type CorpusSummary,
-} from "./readers/corpus.js";
-export { T1Rollup, type T1RollupOpts } from "./writers/t1.js";
-export {
-  T2Promotion,
-  DEFAULT_T2_PROMOTION_MIN_EVENTS,
-  type T2PromotionOpts,
-  type LLMJudge,
-  type T2MemoryExtraction,
-  verifyMemory,
-  writeT2Memory,
-  type T2MemoryWriteInput,
-  type DirectT2WriteInput,
-  type DirectT2WriteResult,
-  writeDirectT2Memory,
-  readExistingNearDuplicateCandidates,
-  type ExistingNearDuplicateCandidate,
-} from "./writers/t2.js";
-export {
-  extractSessionCandidates,
-  type SessionExtractCandidate,
-  type SessionExtractOpts,
-} from "./writers/session-extract.js";
-export { MAX_BODY_CHARS, buildT2EmbedText, validateT2Body } from "./writers/t2-embed-text.js";
-export type { T2BodyValidationResult, T2EmbedRecipe } from "./writers/t2-embed-text.js";
-export { retireMemory, retireNonDirectMemory } from "./writers/retire-memory.js";
-export { PidRegistry } from "./pid/registry.js";
-export { InProcessSupervisor } from "./supervisor/in-process.js";
+  type EmittedPermissionEvent,
+  type PermissionEvent,
+  PermissionEventBus,
+  type PermissionEventKind,
+  type PermissionEventListener,
+} from "./events/permission-events.js";
+export { WorkerControlBus, type WorkerControlListener } from "./events/worker-control.js";
+export { MachineId } from "./identity/machine-id.js";
 export { resolveProjectId } from "./identity/project-id.js";
+export { type ProjectScope, resolveProjectScope } from "./identity/project-resolver.js";
+export { createLogger, type Logger } from "./logger.js";
 export {
-  ProjectRegistry,
-  loadProjectRegistry,
-  defaultProjectRegistryPath,
-  ProjectRegistryParseError,
-  ProjectRegistryDuplicateId,
-} from "./projects/registry.js";
-export { findProjectIdByCwd } from "./projects/registry-cwd.js";
-export { getGithubRepo } from "./projects/schema.js";
-export type { ProjectEntry, ProjectRegistryFile } from "./projects/schema.js";
-export { ContextFileWriter, type ContextFileWriterOpts } from "./context-file/writer.js";
-export { derivePlanId } from "./plans/plan-id.js";
-export { SafeProjectIdSchema, assertSafeProjectId } from "./schemas/project-id.js";
-export { parseWikiLinks } from "./writers/wiki-links.js";
+  listLongLivedPendingActionsForAgent,
+  type LongLivedAgentStateUpdate,
+  type LongLivedPendingActionRow,
+  readLongLivedAgentWorkingMemory,
+  updateLongLivedAgentState,
+} from "./long-lived/self-reader.js";
+export { type WorkingMemory, WorkingMemorySchema } from "./long-lived/types.js";
 export {
-  HandoffStatusSchema,
-  HandoffRowSchema,
-  CreateHandoffRequestSchema,
-  ApproveHandoffRequestSchema,
-  type HandoffStatus,
-  type HandoffRow,
-  type CreateHandoffRequest,
-  type ApproveHandoffRequest,
-} from "./schemas/handoff.js";
-export {
-  HandoffWriter,
-  type CreateHandoffParams,
-  type CreateApprovedParams,
-  type ApproveOpts,
-  type ApproveResult,
-} from "./writers/handoff.js";
-export { HandoffReader, type HandoffReaderOpts } from "./readers/handoff.js";
-export {
-  recentCost,
-  readRecentSubscriptionPressureSnapshots,
-  collectSubscriptionPressure,
-  type RecentCostInput,
-  type RecentCostOutput,
-  type SubscriptionPressureRow,
-  type SubscriptionPressureSnapshot,
-} from "./readers/cost.js";
-export {
-  quotaStatus,
-  type ProviderQuota,
-  type QuotaStatusInput,
-  type QuotaStatusOutput,
-  type QuotaStatusProviderRow,
-} from "./readers/cost-quota.js";
-export {
-  readSubscriptionPressure,
-  type PressureSnapshot,
-  type PressureWarning,
-  type PressureResult,
-  type ReadSubscriptionPressureOpts,
-} from "./readers/subscription-pressure.js";
-export {
-  readRoutingBiases,
-  type RoutingBias,
-  type ReadRoutingBiasesOpts,
-} from "./readers/routing-bias.js";
-export {
-  setRoutingBias,
-  clearRoutingBias,
-  type SetRoutingBiasArgs,
-  type ClearRoutingBiasArgs,
-  type ClearRoutingBiasResult,
-} from "./writers/routing-bias.js";
+  type CapCheckOutcome,
+  type CapCheckPass,
+  type CapCheckRefuse,
+  type CapCheckWarn,
+  checkPressureCap,
+  type CheckPressureCapDeps,
+  type ProviderCaps,
+  type WindowCaps,
+} from "./maestro/check-pressure-cap.js";
+export { type MaestroPromptBounds, synthesizeMaestroPrompt } from "./maestro/prompt.js";
+export { BoundsAxis, MaestroSessionRecord, MaestroTerminationReason } from "./maestro/schema.js";
+export type { BoundsConsumed } from "./maestro/schema.js";
 export {
   createSubscriptionPressureCache,
   type SubscriptionPressureCache,
   type SubscriptionPressureCacheOptions,
 } from "./maestro/subscription-pressure-cache.js";
 export {
-  checkPressureCap,
-  type CapCheckOutcome,
-  type CapCheckPass,
-  type CapCheckWarn,
-  type CapCheckRefuse,
-  type CheckPressureCapDeps,
-  type WindowCaps,
-  type ProviderCaps,
-} from "./maestro/check-pressure-cap.js";
-export {
-  ChainReader,
-  type ChainTerminatedEvent,
-  type AgentResponseEvent,
-  type ChainSummary,
-} from "./readers/chain.js";
-export { HandoffEventBus, type HandoffEventListener } from "./events/handoff-events.js";
-export {
-  ConversationStreamBus,
-  type ConversationStreamListener,
-} from "./events/conversation-stream.js";
-export { WorkerControlBus, type WorkerControlListener } from "./events/worker-control.js";
-export { ChainStartRequestSchema, type ChainStartRequest } from "./schemas/chain.js";
-export { TaskClassSchema, type TaskClass } from "./schemas/task-class.js";
-export {
-  LaneCloseMetadataSchema,
-  LANE_CLOSE_METADATA_MAX_SERIALIZED_BYTES,
-  type LaneCloseMetadata,
-} from "./schemas/lane-close-metadata.js";
-export { T1RollupSchema, type T1RollupRow } from "./schemas/rollup.js";
-export { T2MemorySchema, type T2MemoryRow } from "./schemas/memory.js";
-export * from "./schemas/sse-events.js";
-export * from "./schemas/sse.js";
-export * from "./schemas/write-tools-events.js";
-export {
-  resolveDaemonStorageRoot,
-  waitForDaemonStorageRoot,
-  type ResolveDaemonStorageRootOpts,
-  type WaitForDaemonStorageRootOpts,
-} from "./daemon-discovery.js";
-export {
-  WorktreeManager,
-  type WorktreeCommandRunner,
-  type WorktreeCommandRunnerOptions,
-  type WorktreeHandle,
-  type WorktreeMode,
-  type OrphanWorktreeHandle,
-} from "./worktree/manager.js";
-export {
-  selectWorktreeGcCandidates,
-  type SelectWorktreeGcCandidatesOpts,
-  type WorktreeGcCandidate,
-  type WorktreeGcCandidateReason,
-} from "./worktree/gc-candidates.js";
-export {
-  PermissionStatusSchema,
-  PermissionRememberSchema,
-  PermissionRequestRowSchema,
-  CreatePermissionRequestSchema,
-  ApprovePermissionRequestSchema,
-  type PermissionStatus,
-  type PermissionRemember,
-  type PermissionRequestRow,
-  type CreatePermissionRequest,
-  type ApprovePermissionRequest,
-} from "./schemas/permission.js";
-export {
-  TaskKindSchema,
-  BoundsInputSchema,
-  TaskPrioritySchema,
-  TaskStatusSchema,
-  GhCreateStatusSchema,
-  TaskEventKindSchema,
-  EligibilitySchema,
-  ExpectedArtifactSchema,
-  ReviewVerdictSchema,
-  FileTaskInputSchema,
-  LeaseTaskInputSchema,
-  HeartbeatTaskInputSchema,
-  CompleteTaskInputSchema,
-  FailTaskInputSchema,
-  CancelTaskInputSchema,
-  TaskRecordSchema,
-  type TaskKind,
-  type BoundsInput,
-  type TaskPriority,
-  type TaskStatus,
-  type GhCreateStatus,
-  type TaskEventKind,
-  type Eligibility,
-  type ExpectedArtifact,
-  type ReviewVerdict,
-  type FileTaskInput,
-  type LeaseTaskInput,
-  type HeartbeatTaskInput,
-  type CompleteTaskInput,
-  type FailTaskInput,
-  type CancelTaskInput,
-  type TaskRecord,
-} from "./tasks/schema.js";
-export { MaestroTerminationReason, BoundsAxis, MaestroSessionRecord } from "./maestro/schema.js";
-export type { BoundsConsumed } from "./maestro/schema.js";
-export {
-  MaestroSessionWriter,
   MaestroSessionAlreadyDispatched,
   MaestroSessionExists,
+  MaestroSessionWriter,
   type MaestroSessionWriterOpts,
   type StartMaestroSessionParams,
 } from "./maestro/writer.js";
-export { synthesizeMaestroPrompt, type MaestroPromptBounds } from "./maestro/prompt.js";
+export { type Basis, BasisSchema, validateBasis } from "./memory-verify/basis.js";
+export { normalize, type NormalizeCtx } from "./normalize/ingest.js";
+export { mapProvider, normalizeOtlpLogsToUsageEvents } from "./otlp/normalize.js";
+export { parseOtlpLogs } from "./otlp/parse.js";
+export { parseOtlpLogsProtobuf } from "./otlp/protobuf.js";
+export type { ParsedLogRecord } from "./otlp/types.js";
+export { PidRegistry } from "./pid/registry.js";
+export { derivePlanId } from "./plans/plan-id.js";
 export {
-  PlanWriter,
+  type PlanRecord,
+  PlanRecordSchema,
+  type PlanStatus,
+  PlanStatusSchema,
+  type PlanTaskRecord,
+  PlanTaskRecordSchema,
+  type PlanTaskStatus,
+  PlanTaskStatusSchema,
+} from "./plans/schema.js";
+export {
   PlanAlreadyRegistered,
   PlanNotFound,
   PlanTaskNotFound,
+  PlanWriter,
   type RegisterPlanInput,
 } from "./plans/writer.js";
+export { findProjectIdByCwd } from "./projects/registry-cwd.js";
 export {
-  PlanRecordSchema,
-  PlanStatusSchema,
-  PlanTaskRecordSchema,
-  PlanTaskStatusSchema,
-  type PlanRecord,
-  type PlanStatus,
-  type PlanTaskRecord,
-  type PlanTaskStatus,
-} from "./plans/schema.js";
-export { TaskEventBus, type TaskEvent } from "./tasks/event-bus.js";
-export { pickPreferred, type AgentRankRow } from "./tasks/auction.js";
-export { pickFromPool } from "./tasks/pick-from-pool.js";
+  defaultProjectRegistryPath,
+  loadProjectRegistry,
+  ProjectRegistry,
+  ProjectRegistryDuplicateId,
+  ProjectRegistryParseError,
+} from "./projects/registry.js";
+export { getGithubRepo } from "./projects/schema.js";
+export type { ProjectEntry, ProjectRegistryFile } from "./projects/schema.js";
 export {
-  TaskWriter,
-  enqueueGhStatusSyncOnDb,
-  TaskNotFound,
-  InvalidTaskStatus,
-  LeaseConflict,
-  LeaseInvalid,
-  MissingReviewVerdict,
-  UnexpectedReviewVerdict,
-  ReviewParentInvalidState,
-  type TaskInclude,
-  type TaskWithIncludes,
-  type TaskLeaseRow,
-  type TaskEventRow,
-  type TaskDescendants,
-  type ListFilters,
-} from "./tasks/writer.js";
-export { TaskReader } from "./tasks/reader.js";
-export { T0Writer } from "./writers/t0.js";
+  type AgentResponseEvent,
+  ChainReader,
+  type ChainSummary,
+  type ChainTerminatedEvent,
+} from "./readers/chain.js";
 export {
-  NotificationOutboxWriter,
-  type NotificationOutboxKind,
-  type NotificationOutboxEntry,
-} from "./writers/notification-outbox.js";
-export { TaskCooldowns } from "./tasks/cooldowns.js";
-export { mapTaskEventToLedger, ledgerWriteToPerformanceRow } from "./tasks/ledger-bridge.js";
-export { EmitCapExceeded } from "./tasks/emit-caps.js";
-export { REVIEW_PROMPT_TEMPLATE, mergeDeny, synthesizeReviewTask } from "./tasks/review-pairing.js";
-export { isEligible, TIER_ORDER, type AgentDescriptor } from "./tasks/eligibility.js";
+  buildCorpus,
+  type BuildCorpusInput,
+  type CorpusFilter,
+  type CorpusSummary,
+  listCorpora,
+  queryCorpus,
+  removeCorpus,
+} from "./readers/corpus.js";
 export {
-  validateOrchestrateFile,
-  OrchestrateRequiresAllowAgents,
-  OrchestrateAgentNotMaestroCapable,
-  OrchestrateRecursionForbidden,
-} from "./tasks/orchestrate-validation.js";
+  type ProviderQuota,
+  quotaStatus,
+  type QuotaStatusInput,
+  type QuotaStatusOutput,
+  type QuotaStatusProviderRow,
+} from "./readers/cost-quota.js";
 export {
-  PermissionWriter,
-  type PermissionWriterOpts,
-  type CreatePermissionInput,
-  type DecidePermissionInput,
-} from "./writers/permission.js";
+  collectSubscriptionPressure,
+  readRecentSubscriptionPressureSnapshots,
+  recentCost,
+  type RecentCostInput,
+  type RecentCostOutput,
+  type SubscriptionPressureRow,
+  type SubscriptionPressureSnapshot,
+} from "./readers/cost.js";
+export {
+  type FleetLatencyAgentRow,
+  type FleetLatencyInput,
+  type FleetLatencyOutput,
+  readFleetLatency,
+} from "./readers/fleet-latency.js";
+export { getObservations } from "./readers/get-observations.js";
+export { HandoffReader, type HandoffReaderOpts } from "./readers/handoff.js";
+export {
+  claimNextJob,
+  completeJob,
+  enqueueMemoryEfficacyJob,
+  getJobStatus,
+  heartbeatJob,
+  listRecentJobs,
+  type MemoryEfficacyJobRow,
+  sweepStaleJobs,
+} from "./readers/memory-efficacy-jobs.js";
+export {
+  buildMemoryEfficacyCache,
+  getMemoryEfficacyRecent,
+  type MemoryEfficacyRecent,
+} from "./readers/memory-efficacy.js";
+export {
+  getMemoryVerificationEvents,
+  type MemoryVerificationEvent,
+} from "./readers/memory-verification-events.js";
 export { PermissionReader, type PermissionReaderOpts } from "./readers/permission.js";
 export {
-  PermissionEventBus,
-  type PermissionEvent,
-  type EmittedPermissionEvent,
-  type PermissionEventKind,
-  type PermissionEventListener,
-} from "./events/permission-events.js";
-export { parseOtlpLogs } from "./otlp/parse.js";
-export { parseOtlpLogsProtobuf } from "./otlp/protobuf.js";
-export { normalizeOtlpLogsToUsageEvents, mapProvider } from "./otlp/normalize.js";
-export type { ParsedLogRecord } from "./otlp/types.js";
-
-import { resolveInsideWorktree, FsPathError } from "./fs-paths.js";
-export { resolveInsideWorktree, FsPathError };
-
+  qualityStatus,
+  type QualityStatusInput,
+  type QualityStatusSnapshot,
+} from "./readers/quality-status.js";
+export { recallStatus, type RecallStatus } from "./readers/recall-status.js";
+export {
+  readRoutingBiases,
+  type ReadRoutingBiasesOpts,
+  type RoutingBias,
+} from "./readers/routing-bias.js";
+export { search } from "./readers/search.js";
+export {
+  type PressureResult,
+  type PressureSnapshot,
+  type PressureWarning,
+  readSubscriptionPressure,
+  type ReadSubscriptionPressureOpts,
+} from "./readers/subscription-pressure.js";
+export {
+  getTaskDraftPromotionInfo,
+  type ListPendingEscalationsInput,
+  type ListPendingInput,
+  type PendingTaskDraft,
+  type PendingTaskDraftEscalation,
+  TaskDraftReader,
+} from "./readers/task-draft.js";
+export { timeline } from "./readers/timeline.js";
+export { stripPrivacyTags } from "./redaction/privacy-tags.js";
+export { DEFAULT_REDACTION_RULES, type RedactionRule, RegexRedactor } from "./redaction/regex.js";
+export {
+  MAX_WALKER_DEPTH,
+  MAX_WALKER_STRING_BYTES,
+  type RedactStringResult,
+  type RedactValueLimits,
+  type RedactValueResult,
+  ValuePatternRedactor,
+  type ValuePatternRule,
+  type ValueRedactionHit,
+  WALKER_DEPTH_EXCEEDED_RULE_ID,
+  WALKER_STRING_OVERSIZE_RULE_ID,
+} from "./redaction/value-patterns.js";
+export type { WebResearchAdapter, WebResearchResult } from "./research/types.js";
 export * from "./schemas/agent-performance.js";
 export * from "./schemas/agent-recommend.js";
-export { AgentPerformanceWriter } from "./writers/agent-performance.js";
+export { type ChainStartRequest, ChainStartRequestSchema } from "./schemas/chain.js";
+export {
+  type T0Event,
+  type T0EventInput,
+  T0EventInputSchema,
+  T0EventSchema,
+  TASK_DRAFT_LIFECYCLE_EVENT_TYPES,
+  type TaskDraftLifecycleEventType,
+} from "./schemas/event.js";
+export {
+  type ApproveHandoffRequest,
+  ApproveHandoffRequestSchema,
+  type CreateHandoffRequest,
+  CreateHandoffRequestSchema,
+  type HandoffRow,
+  HandoffRowSchema,
+  type HandoffStatus,
+  HandoffStatusSchema,
+} from "./schemas/handoff.js";
+export {
+  LANE_CLOSE_METADATA_MAX_SERIALIZED_BYTES,
+  type LaneCloseMetadata,
+  LaneCloseMetadataSchema,
+} from "./schemas/lane-close-metadata.js";
+export { type T2MemoryRow, T2MemorySchema } from "./schemas/memory.js";
+export {
+  type ApprovePermissionRequest,
+  ApprovePermissionRequestSchema,
+  type CreatePermissionRequest,
+  CreatePermissionRequestSchema,
+  type PermissionRemember,
+  PermissionRememberSchema,
+  type PermissionRequestRow,
+  PermissionRequestRowSchema,
+  type PermissionStatus,
+  PermissionStatusSchema,
+} from "./schemas/permission.js";
+export { assertSafeProjectId, SafeProjectIdSchema } from "./schemas/project-id.js";
+export {
+  type CorpusBuildRequest,
+  CorpusBuildRequestSchema,
+  type CorpusFilterInput,
+  CorpusFilterSchema,
+  type CorpusQueryRequest,
+  CorpusQueryRequestSchema,
+  type CorpusSummaryRow,
+  CorpusSummarySchema,
+  type GetObservationsRequest,
+  GetObservationsRequestSchema,
+  type ObservationDetail,
+  type RecallRequest,
+  RecallRequestSchema,
+  type RecallResult,
+  RecallResultSchema,
+  type SearchHit,
+  type SearchRequest,
+  SearchRequestSchema,
+  STALE_AFTER_DAYS_DEFAULT as STALE_AFTER_DAYS,
+  STALE_AFTER_DAYS_BY_OBS_TYPE,
+  STALE_AFTER_DAYS_DEFAULT,
+  staleThresholdDays,
+  type TimelineEntry,
+  type TimelineRequest,
+  TimelineRequestSchema,
+} from "./schemas/recall.js";
+export { type T1RollupRow, T1RollupSchema } from "./schemas/rollup.js";
+export * from "./schemas/sse-events.js";
+export * from "./schemas/sse.js";
+export { type TaskClass, TaskClassSchema } from "./schemas/task-class.js";
+export {
+  type ParsedTaskDraftLifecyclePayload,
+  parseTaskDraftLifecyclePayload,
+  type TaskDraftDuplicatePayload,
+  TaskDraftDuplicatePayloadSchema,
+  type TaskDraftEscalationPayload,
+  TaskDraftEscalationPayloadSchema,
+  type TaskDraftLifecyclePayload,
+  TaskDraftLifecyclePayloadSchema,
+  type TaskDraftPayload,
+  TaskDraftPayloadSchema,
+  type TaskDraftPromotedPayload,
+  TaskDraftPromotedPayloadSchema,
+  type TaskDraftProvenance,
+  TaskDraftProvenanceSchema,
+  type TaskDraftRefiningPayload,
+  TaskDraftRefiningPayloadSchema,
+  type TaskDraftStalePayload,
+  TaskDraftStalePayloadSchema,
+} from "./schemas/task-draft.js";
+export * from "./schemas/write-tools-events.js";
+export {
+  type AgentRoutingConfig,
+  buildServices,
+  type BuildServicesOpts,
+  type Services,
+  type Watchdog,
+  type WorkflowRunInfo,
+  type WorkflowRunRecord,
+  type WorkflowRunsRegistry,
+  type WorkflowStatusLight,
+} from "./services.js";
+export { type ActionGateLike, type McpPoolLike } from "./services.js";
 export {
   aggregateHandoffUsage,
   captureAgentPerformanceFromDispatch,
@@ -516,52 +361,207 @@ export {
 } from "./services/agent-performance-markdown.js";
 export { recordOperatorAgentPerformance } from "./services/agent-performance-operator.js";
 export {
-  DispatchEventLog,
+  type AgentRecommendation,
+  type DetailMode,
+  type DroppedAgentPoolMember,
+  resolveAgentPool,
+  type ResolveAgentPoolContext,
+  type ResolveAgentPoolResult,
+  type ResolvedAgentPoolMember,
+  resolveGateOutcomeCutoverIso,
+  type RoleRoute,
+  routeAgent,
+  type RouteAgentInput,
+  type RouteAgentOutput,
+} from "./services/agent-routing.js";
+export {
   type DispatchEventInput,
   type DispatchEventKind,
+  DispatchEventLog,
   type DispatchEventRow,
 } from "./services/dispatch-event-log.js";
-export { DispatchEventBus, type DispatchEvent } from "./dispatch/event-bus.js";
+export {
+  refineDispatchPrompt,
+  type RefineDispatchPromptOpts,
+  RefineError,
+  type RefineErrorCode,
+  REFINER_INPUT_MAX_BYTES,
+  REFINER_OUTPUT_MAX_BYTES,
+} from "./services/dispatch-prompt-refiner.js";
 export {
   classifyDispatchReliability,
+  type DispatchRecommendedAction,
   type DispatchReliabilityEvent,
   type DispatchReliabilityHandoff,
   type DispatchReliabilityInput,
   type DispatchReliabilityReport,
   type DispatchReliabilityStatus,
-  type DispatchRecommendedAction,
 } from "./services/dispatch-reliability.js";
 export {
+  collectMentionedPaths,
+  type DispatchRoutingGuardInput,
+  type DispatchRoutingGuardResult,
+  inspectPromptVsProject,
+  resolveProjectIdFromAbsolutePath,
+} from "./services/dispatch-routing-guard.js";
+export {
+  createJudgeChat,
   type JudgeChatFn,
   type ResolvedJudgeConfig,
-  createJudgeChat,
   resolveJudgeConfig,
 } from "./services/judge-chat.js";
 export {
-  refineDispatchPrompt,
-  RefineError,
-  REFINER_INPUT_MAX_BYTES,
-  REFINER_OUTPUT_MAX_BYTES,
-  type RefineDispatchPromptOpts,
-  type RefineErrorCode,
-} from "./services/dispatch-prompt-refiner.js";
-export {
+  type Classification,
   classifyFindings,
   type Finding,
-  type Classification,
 } from "./services/memory-efficacy-classifier.js";
 export {
-  getMemoryEfficacyRecent,
-  buildMemoryEfficacyCache,
-  type MemoryEfficacyRecent,
-} from "./readers/memory-efficacy.js";
+  extractStumblesFromSession,
+  type ExtractStumblesInput,
+  type StumbleCandidate,
+  type StumbleEvidence,
+} from "./services/stumble-extractor.js";
+export { type Settings, SettingsDefaults, type SettingsInput, SettingsSchema } from "./settings.js";
+export { InProcessSupervisor } from "./supervisor/in-process.js";
+export { type AgentRankRow, pickPreferred } from "./tasks/auction.js";
+export { TaskCooldowns } from "./tasks/cooldowns.js";
+export { type AgentDescriptor, isEligible, TIER_ORDER } from "./tasks/eligibility.js";
+export { EmitCapExceeded } from "./tasks/emit-caps.js";
+export { type TaskEvent, TaskEventBus } from "./tasks/event-bus.js";
+export { ledgerWriteToPerformanceRow, mapTaskEventToLedger } from "./tasks/ledger-bridge.js";
 export {
-  enqueueMemoryEfficacyJob,
-  claimNextJob,
-  heartbeatJob,
-  sweepStaleJobs,
-  completeJob,
-  getJobStatus,
-  listRecentJobs,
-  type MemoryEfficacyJobRow,
-} from "./readers/memory-efficacy-jobs.js";
+  OrchestrateAgentNotMaestroCapable,
+  OrchestrateRecursionForbidden,
+  OrchestrateRequiresAllowAgents,
+  validateOrchestrateFile,
+} from "./tasks/orchestrate-validation.js";
+export { pickFromPool } from "./tasks/pick-from-pool.js";
+export { TaskReader } from "./tasks/reader.js";
+export { mergeDeny, REVIEW_PROMPT_TEMPLATE, synthesizeReviewTask } from "./tasks/review-pairing.js";
+export {
+  type BoundsInput,
+  BoundsInputSchema,
+  type CancelTaskInput,
+  CancelTaskInputSchema,
+  type CompleteTaskInput,
+  CompleteTaskInputSchema,
+  type Eligibility,
+  EligibilitySchema,
+  type ExpectedArtifact,
+  ExpectedArtifactSchema,
+  type FailTaskInput,
+  FailTaskInputSchema,
+  type FileTaskInput,
+  FileTaskInputSchema,
+  type GhCreateStatus,
+  GhCreateStatusSchema,
+  type HeartbeatTaskInput,
+  HeartbeatTaskInputSchema,
+  type LeaseTaskInput,
+  LeaseTaskInputSchema,
+  type ReviewVerdict,
+  ReviewVerdictSchema,
+  type TaskEventKind,
+  TaskEventKindSchema,
+  type TaskKind,
+  TaskKindSchema,
+  type TaskPriority,
+  TaskPrioritySchema,
+  type TaskRecord,
+  TaskRecordSchema,
+  type TaskStatus,
+  TaskStatusSchema,
+} from "./tasks/schema.js";
+export {
+  enqueueGhStatusSyncOnDb,
+  InvalidTaskStatus,
+  LeaseConflict,
+  LeaseInvalid,
+  type ListFilters,
+  MissingReviewVerdict,
+  ReviewParentInvalidState,
+  type TaskDescendants,
+  type TaskEventRow,
+  type TaskInclude,
+  type TaskLeaseRow,
+  TaskNotFound,
+  type TaskWithIncludes,
+  TaskWriter,
+  UnexpectedReviewVerdict,
+} from "./tasks/writer.js";
+export { type Clock, systemClock } from "./utils/clock.js";
+export { systemUuid, type Uuid } from "./utils/uuid.js";
+export type {
+  BuildRegistryOpts,
+  RegistryEntry,
+  RegistryError,
+  WorkflowRegistry,
+} from "./workflows/registry-interface.js";
+export {
+  selectWorktreeGcCandidates,
+  type SelectWorktreeGcCandidatesOpts,
+  type WorktreeGcCandidate,
+  type WorktreeGcCandidateReason,
+} from "./worktree/gc-candidates.js";
+export { FsPathError, resolveInsideWorktree };
+
+export {
+  type OrphanWorktreeHandle,
+  type WorktreeCommandRunner,
+  type WorktreeCommandRunnerOptions,
+  type WorktreeHandle,
+  WorktreeManager,
+  type WorktreeMode,
+} from "./worktree/manager.js";
+export { AgentPerformanceWriter } from "./writers/agent-performance.js";
+export {
+  type ApproveOpts,
+  type ApproveResult,
+  type CreateApprovedParams,
+  type CreateHandoffParams,
+  HandoffWriter,
+} from "./writers/handoff.js";
+export {
+  type NotificationOutboxEntry,
+  type NotificationOutboxKind,
+  NotificationOutboxWriter,
+} from "./writers/notification-outbox.js";
+export {
+  type CreatePermissionInput,
+  type DecidePermissionInput,
+  PermissionWriter,
+  type PermissionWriterOpts,
+} from "./writers/permission.js";
+export { retireMemory, retireNonDirectMemory } from "./writers/retire-memory.js";
+export {
+  clearRoutingBias,
+  type ClearRoutingBiasArgs,
+  type ClearRoutingBiasResult,
+  setRoutingBias,
+  type SetRoutingBiasArgs,
+} from "./writers/routing-bias.js";
+export {
+  extractSessionCandidates,
+  type SessionExtractCandidate,
+  type SessionExtractOpts,
+} from "./writers/session-extract.js";
+export { T0Writer } from "./writers/t0.js";
+export { T1Rollup, type T1RollupOpts } from "./writers/t1.js";
+export { buildT2EmbedText, MAX_BODY_CHARS, validateT2Body } from "./writers/t2-embed-text.js";
+export type { T2BodyValidationResult, T2EmbedRecipe } from "./writers/t2-embed-text.js";
+export {
+  DEFAULT_T2_PROMOTION_MIN_EVENTS,
+  type DirectT2WriteInput,
+  type DirectT2WriteResult,
+  type ExistingNearDuplicateCandidate,
+  type LLMJudge,
+  readExistingNearDuplicateCandidates,
+  type T2MemoryExtraction,
+  type T2MemoryWriteInput,
+  T2Promotion,
+  type T2PromotionOpts,
+  verifyMemory,
+  writeDirectT2Memory,
+  writeT2Memory,
+} from "./writers/t2.js";
+export { parseWikiLinks } from "./writers/wiki-links.js";

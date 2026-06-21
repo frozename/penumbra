@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
 import { systemUuid, type Uuid } from "../utils/uuid.js";
 
 export class MachineId {

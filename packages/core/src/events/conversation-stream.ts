@@ -77,7 +77,7 @@ export class ConversationStreamBus {
       this.evictOverflowEntries();
     } else if (event.type === "token") {
       const entry = this.cache.get(conversation_id);
-      if (entry && entry.hop_start.handoff_id === event.handoff_id) {
+      if (entry?.hop_start.handoff_id === event.handoff_id) {
         entry.tokens.push(event);
         if (entry.tokens.length > this.maxTokensPerEntry) {
           // Sliding window: drop oldest tokens so a runaway hop cannot grow
@@ -123,7 +123,7 @@ export class ConversationStreamBus {
 
   private evictOverflowEntries(): void {
     while (this.cache.size > this.maxEntries) {
-      const oldest = this.cache.keys().next().value as string | undefined;
+      const oldest = this.cache.keys().next().value;
       if (oldest === undefined) break;
       this.cache.delete(oldest);
     }

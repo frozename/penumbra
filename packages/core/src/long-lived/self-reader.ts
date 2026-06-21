@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
-import { WorkingMemorySchema, type WorkingMemory } from "./types.js";
+
 import { trimWorkingMemoryThreadNotes } from "./thread-notes-trim.js";
+import { type WorkingMemory, WorkingMemorySchema } from "./types.js";
 
 type Goal = WorkingMemory["pending_goals"][number];
 
@@ -25,8 +26,7 @@ function parseWorkingMemory(value: string): WorkingMemory | null {
 }
 
 function goalAppendedAfterTick(goal: Goal, tickStartedAt: number): boolean {
-  if (goal === null || typeof goal !== "object") return false;
-  const createdAt = (goal as { created_at?: unknown }).created_at;
+  const createdAt = goal.created_at;
   return typeof createdAt === "number" && createdAt > tickStartedAt;
 }
 
@@ -96,7 +96,7 @@ export function updateLongLivedAgentState(
           if (current) {
             const currentWorkingMemory = parseWorkingMemory(current.working_memory_json);
             const existingGoals =
-              currentWorkingMemory?.pending_goals?.filter((goal) =>
+              currentWorkingMemory?.pending_goals.filter((goal) =>
                 goalAppendedAfterTick(goal, tick.started_at),
               ) ?? [];
             nextWorkingMemory = {

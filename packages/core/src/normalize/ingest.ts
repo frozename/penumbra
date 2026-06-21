@@ -1,12 +1,13 @@
+import type { RegexRedactor } from "../redaction/regex.js";
 import type { Clock } from "../utils/clock.js";
 import type { Uuid } from "../utils/uuid.js";
-import type { RegexRedactor } from "../redaction/regex.js";
+
 import { stripPrivacyTags } from "../redaction/privacy-tags.js";
 import {
-  T0EventInputSchema,
-  T0EventSchema,
   type T0Event,
   type T0EventInput,
+  T0EventInputSchema,
+  T0EventSchema,
 } from "../schemas/event.js";
 
 export interface NormalizeCtx {

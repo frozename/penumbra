@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
 import { assertSafeProjectId } from "../schemas/project-id.js";
 
 export interface ContextFileWriterOpts {
@@ -25,13 +26,33 @@ interface MemoryRow {
   created_at: string;
 }
 
+function buildMemoriesSection(memories: MemoryRow[]): string[] {
+  if (memories.length === 0) return [];
+  const out: string[] = ["## Cross-session memories"];
+  for (const m of memories) out.push(`### ${m.title}\n\n${m.body}\n`);
+  return out;
+}
+
+function buildRollupsSection(rollups: RollupRow[]): string[] {
+  if (rollups.length === 0) return [];
+  const out: string[] = ["## Recent sessions"];
+  for (const r of rollups) {
+    out.push(`### ${r.started_at} → ${r.ended_at ?? "ongoing"}`);
+    if (r.first_prompt_excerpt) out.push(`- **First prompt:** ${r.first_prompt_excerpt}`);
+    if (r.last_response_excerpt) out.push(`- **Last response:** ${r.last_response_excerpt}`);
+    if (r.tool_calls_summary) out.push(`- **Tools:** ${r.tool_calls_summary}`);
+    out.push("");
+  }
+  return out;
+}
+
 export class ContextFileWriter {
   constructor(private readonly opts: ContextFileWriterOpts) {}
 
   rewrite(projectId: string): void {
     assertSafeProjectId(projectId);
     if (this.opts.topK < 1) {
-      throw new RangeError(`ContextFileWriter.topK must be >= 1, got ${this.opts.topK}`);
+      throw new RangeError(`ContextFileWriter.topK must be >= 1, got ${String(this.opts.topK)}`);
     }
     const rollups = this.opts.db
       .query<RollupRow, [string, number]>(
@@ -54,42 +75,29 @@ export class ContextFileWriter {
       )
       .all(projectId, this.opts.topK);
 
-    const parts: string[] = [];
-    parts.push("---");
-    parts.push(`generated_at: ${JSON.stringify(new Date().toISOString())}`);
-    parts.push(`project_id: ${JSON.stringify(projectId)}`);
-    parts.push(`t1_count: ${rollups.length}`);
-    parts.push(`t2_count: ${memories.length}`);
-    parts.push("---");
-    parts.push("");
+    const parts: string[] = [
+      "---",
+      `generated_at: ${JSON.stringify(new Date().toISOString())}`,
+      `project_id: ${JSON.stringify(projectId)}`,
+      `t1_count: ${String(rollups.length)}`,
+      `t2_count: ${String(memories.length)}`,
+      "---",
+      "",
+    ];
 
     if (rollups.length === 0 && memories.length === 0) {
-      parts.push("## no memories yet");
-      parts.push("");
       parts.push(
+        "## no memories yet",
+        "",
         "Observations have not been rolled up for this project. Use the tool for a few sessions and memories will populate here.",
       );
     } else {
-      if (memories.length > 0) {
-        parts.push("## Cross-session memories");
-        for (const m of memories) parts.push(`### ${m.title}\n\n${m.body}\n`);
-      }
-      if (rollups.length > 0) {
-        parts.push("## Recent sessions");
-        for (const r of rollups) {
-          parts.push(`### ${r.started_at} → ${r.ended_at ?? "ongoing"}`);
-          if (r.first_prompt_excerpt) parts.push(`- **First prompt:** ${r.first_prompt_excerpt}`);
-          if (r.last_response_excerpt)
-            parts.push(`- **Last response:** ${r.last_response_excerpt}`);
-          if (r.tool_calls_summary) parts.push(`- **Tools:** ${r.tool_calls_summary}`);
-          parts.push("");
-        }
-      }
+      parts.push(...buildMemoriesSection(memories), ...buildRollupsSection(rollups));
     }
 
     const dir = join(this.opts.storageRoot, "context", projectId);
     mkdirSync(dir, { recursive: true });
-    const tmp = join(dir, `latest.md.${process.pid}.tmp`);
+    const tmp = join(dir, `latest.md.${String(process.pid)}.tmp`);
     const final = join(dir, "latest.md");
     writeFileSync(tmp, parts.join("\n") + "\n", { mode: 0o644 });
     renameSync(tmp, final);

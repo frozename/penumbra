@@ -15,11 +15,11 @@ export class PidRegistry {
 
   register(e: PidEntry): string | null {
     if (this.entries.length >= this.caps.hardCap) {
-      throw new Error(`PidRegistry hardCap=${this.caps.hardCap} reached`);
+      throw new Error(`PidRegistry hardCap=${String(this.caps.hardCap)} reached`);
     }
     this.entries.push(e);
     if (this.entries.length > this.caps.softCap) {
-      return `over softCap=${this.caps.softCap}, ${this.entries.length} active`;
+      return `over softCap=${String(this.caps.softCap)}, ${String(this.entries.length)} active`;
     }
     return null;
   }

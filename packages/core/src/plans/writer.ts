@@ -1,13 +1,14 @@
 import type { Database } from "bun:sqlite";
+
 import {
-  PlanRecordSchema,
-  PlanStatusSchema,
-  PlanTaskRecordSchema,
-  PlanTaskStatusSchema,
   type PlanRecord,
+  PlanRecordSchema,
   type PlanStatus,
+  PlanStatusSchema,
   type PlanTaskRecord,
+  PlanTaskRecordSchema,
   type PlanTaskStatus,
+  PlanTaskStatusSchema,
 } from "./schema.js";
 
 export class PlanAlreadyRegistered extends Error {
@@ -43,7 +44,7 @@ export interface RegisterPlanInput {
   plan_id: string;
   file_path: string;
   home_project: string;
-  tasks: Array<{ task_meta_id: string; project_id: string }>;
+  tasks: { task_meta_id: string; project_id: string }[];
 }
 
 type PlanRow = {

@@ -1,6 +1,7 @@
 import { dirname } from "node:path";
-import { resolveProjectId } from "./project-id.js";
+
 import { findProjectIdByCwd } from "../projects/registry-cwd.js";
+import { resolveProjectId } from "./project-id.js";
 
 export type ProjectScope =
   | { kind: "registered"; project_id: string; repo_root: string }
@@ -9,7 +10,7 @@ export type ProjectScope =
   | { kind: "global"; project_id: null; repo_root: null };
 
 type ProjectRegistryLike = {
-  list: () => Array<{ readonly project_id: string; readonly root_path: string }>;
+  list: () => { readonly project_id: string; readonly root_path: string }[];
 };
 
 type ResolveProjectScopeOpts = {

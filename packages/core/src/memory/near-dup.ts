@@ -48,13 +48,13 @@ export function scoreMemoryQuality(
 }
 
 function compactLength(text: string): number {
-  return text.replace(/\s+/g, " ").trim().length;
+  return text.replaceAll(/\s+/g, " ").trim().length;
 }
 
 function cosineSim(a: Float32Array, b: Float32Array): number {
   if (a.length !== b.length) {
     throw new Error(
-      `near-dup cosineSim dimension mismatch: candidate=${a.length} existing=${b.length}`,
+      `near-dup cosineSim dimension mismatch: candidate=${String(a.length)} existing=${String(b.length)}`,
     );
   }
   let dot = 0;
@@ -62,8 +62,8 @@ function cosineSim(a: Float32Array, b: Float32Array): number {
   let normB = 0;
   const len = a.length;
   for (let i = 0; i < len; i++) {
-    const av = a[i]!;
-    const bv = b[i]!;
+    const av = a[i] ?? 0;
+    const bv = b[i] ?? 0;
     dot += av * bv;
     normA += av * av;
     normB += bv * bv;

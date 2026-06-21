@@ -1,45 +1,47 @@
 import { Database } from "bun:sqlite";
 import { resolve as pathResolve } from "node:path";
-import { type Settings, type SettingsInput, SettingsDefaults } from "./settings.js";
+
+import type { Embedder } from "./embedder/interface.js";
+import type { ProjectRegistry } from "./projects/registry.js";
+import type { ProviderQuota } from "./readers/cost-quota.js";
+import type { HandoffRow } from "./schemas/handoff.js";
+import type { WorkerSupervisor } from "./supervisor/interface.js";
+import type { TaskCooldowns } from "./tasks/cooldowns.js";
+import type { WorkflowRegistry } from "./workflows/registry-interface.js";
+
+import { DbMeta } from "./db/meta.js";
+import { DispatchEventBus } from "./dispatch/event-bus.js";
+import { ConversationStreamBus } from "./events/conversation-stream.js";
+import { HandoffEventBus } from "./events/handoff-events.js";
+import { PermissionEventBus } from "./events/permission-events.js";
+import { WorkerControlBus } from "./events/worker-control.js";
 import { MachineId } from "./identity/machine-id.js";
 import { ProjectCache } from "./identity/project-cache.js";
-import { DbMeta } from "./db/meta.js";
-import { DEFAULT_REDACTION_RULES, RegexRedactor } from "./redaction/regex.js";
-import { T0Writer } from "./writers/t0.js";
-import { HandoffWriter } from "./writers/handoff.js";
-import { RecallReader } from "./readers/recall.js";
-import { HandoffReader } from "./readers/handoff.js";
-import { TaskDraftReader } from "./readers/task-draft.js";
-import { ChainReader } from "./readers/chain.js";
-import { InProcessSupervisor } from "./supervisor/in-process.js";
-import type { WorkerSupervisor } from "./supervisor/interface.js";
-import { PidRegistry } from "./pid/registry.js";
-import { systemClock, type Clock } from "./utils/clock.js";
-import { systemUuid, type Uuid } from "./utils/uuid.js";
-import type { Embedder } from "./embedder/interface.js";
 import { createLogger, type Logger } from "./logger.js";
-import { HandoffEventBus } from "./events/handoff-events.js";
-import type { HandoffRow } from "./schemas/handoff.js";
-import { ConversationStreamBus } from "./events/conversation-stream.js";
-import { WorkerControlBus } from "./events/worker-control.js";
-import { WorktreeManager } from "./worktree/manager.js";
-import { PermissionWriter } from "./writers/permission.js";
-import { PermissionReader } from "./readers/permission.js";
-import { PermissionEventBus } from "./events/permission-events.js";
-import type { ProviderQuota } from "./readers/cost-quota.js";
-import { DispatchEventLog } from "./services/dispatch-event-log.js";
-import { DispatchEventBus } from "./dispatch/event-bus.js";
-import type { ProjectRegistry } from "./projects/registry.js";
-import type { WorkflowRegistry } from "./workflows/registry-interface.js";
-import type { TaskCooldowns } from "./tasks/cooldowns.js";
-import { MaestroSessionWriter } from "./maestro/writer.js";
-import { TaskWriter } from "./tasks/writer.js";
-import { PlanWriter } from "./plans/writer.js";
-import { NotificationOutboxWriter } from "./writers/notification-outbox.js";
 import {
   createSubscriptionPressureCache,
   type SubscriptionPressureCache,
 } from "./maestro/subscription-pressure-cache.js";
+import { MaestroSessionWriter } from "./maestro/writer.js";
+import { PidRegistry } from "./pid/registry.js";
+import { PlanWriter } from "./plans/writer.js";
+import { ChainReader } from "./readers/chain.js";
+import { HandoffReader } from "./readers/handoff.js";
+import { PermissionReader } from "./readers/permission.js";
+import { RecallReader } from "./readers/recall.js";
+import { TaskDraftReader } from "./readers/task-draft.js";
+import { DEFAULT_REDACTION_RULES, RegexRedactor } from "./redaction/regex.js";
+import { DispatchEventLog } from "./services/dispatch-event-log.js";
+import { type Settings, SettingsDefaults, type SettingsInput } from "./settings.js";
+import { InProcessSupervisor } from "./supervisor/in-process.js";
+import { TaskWriter } from "./tasks/writer.js";
+import { type Clock, systemClock } from "./utils/clock.js";
+import { systemUuid, type Uuid } from "./utils/uuid.js";
+import { WorktreeManager } from "./worktree/manager.js";
+import { HandoffWriter } from "./writers/handoff.js";
+import { NotificationOutboxWriter } from "./writers/notification-outbox.js";
+import { PermissionWriter } from "./writers/permission.js";
+import { T0Writer } from "./writers/t0.js";
 
 export interface WorkflowRunInfo {
   workflow_name: string;
@@ -83,13 +85,13 @@ export interface WorkflowRunsRegistry {
 }
 
 export interface AgentRoutingConfig {
-  agents: Array<{
+  agents: {
     name: string;
     roles: string[];
     subscription_provider?: string;
     api_provider?: string;
     pricing_mode?: "api" | "subscription";
-  }>;
+  }[];
   default_roles: Record<string, string>;
   role_exploration_policy?: "unsampled-first" | "ranked-first";
   role_routing?: {
@@ -103,7 +105,7 @@ export interface Watchdog {
   recordHeartbeat(worker_id: string): void;
   hasActiveWorker(timeoutMs: number): boolean;
   getStaleWorkers(timeoutMs: number): string[];
-  getStaleHeartbeatAges(timeoutMs: number): Array<{ worker_id: string; last_seen_age_ms: number }>;
+  getStaleHeartbeatAges(timeoutMs: number): { worker_id: string; last_seen_age_ms: number }[];
   tick(): Promise<void>;
 }
 
@@ -128,13 +130,13 @@ export interface ShellSessionPoolLike {
     truncated: boolean;
   }>;
   closeSession(input: { handoffId: string; sessionId: string }): Promise<{ closed: boolean }>;
-  listSessions(handoffId: string): Array<{
+  listSessions(handoffId: string): {
     session_id: string;
     created_at: string;
     last_used_at: string;
     cwd: string;
     pty: boolean;
-  }>;
+  }[];
   reapHandoff(handoffId: string): Promise<void>;
   reapTerminalHandoffs(): Promise<void>;
   reapIdleSessions(): Promise<void>;
@@ -170,10 +172,10 @@ export interface McpPoolLike {
   ): Promise<unknown>;
   listTools(
     serverName: string,
-  ): Promise<Array<{ name: string; description?: string; inputSchema?: unknown }>>;
+  ): Promise<{ name: string; description?: string; inputSchema?: unknown }[]>;
   getFederationHealth(): {
-    registered: Array<{ server: string; tool: string; name: string }>;
-    skipped: Array<{ server: string; tool: string; reason: string }>;
+    registered: { server: string; tool: string; name: string }[];
+    skipped: { server: string; tool: string; reason: string }[];
   };
   shutdown(): Promise<void>;
 }
@@ -198,7 +200,7 @@ export interface NotificationEventsBusLike {
 }
 
 export interface WorkerManagerLike {
-  lookupSession(chain_handoff_id: string): Promise<unknown> | unknown;
+  lookupSession(chain_handoff_id: string): unknown;
 }
 
 export interface WorkflowDirsLike {
@@ -253,7 +255,7 @@ export interface Services {
   agentRegistry: string[] | null;
   agentRouting: AgentRoutingConfig | null;
   agentchatConfig?: {
-    agents?: Array<{
+    agents?: {
       name: string;
       roles: string[];
       options?: Record<string, unknown>;
@@ -261,7 +263,7 @@ export interface Services {
       subscription_model?: string;
       api_provider?: string;
       pricing_mode?: "api" | "subscription";
-    }>;
+    }[];
   };
   providerQuotas: ProviderQuota[];
   subscriptionPressureCache: SubscriptionPressureCache;
@@ -320,15 +322,15 @@ export function buildServices(opts: BuildServicesOpts): Services {
     mainRepoDir: opts.mainRepoDir,
     log,
     resolveProjectRoot: shouldResolveProjectRoot
-      ? (id: string) => opts.projectRegistry?.get(id)?.root_path
+      ? (id: string): string | undefined => opts.projectRegistry?.get(id)?.root_path
       : undefined,
   });
   const watchdog: Watchdog = {
-    recordHeartbeat: () => {},
+    recordHeartbeat: () => undefined,
     hasActiveWorker: () => false,
     getStaleWorkers: () => [],
     getStaleHeartbeatAges: () => [],
-    tick: async () => {},
+    tick: () => Promise.resolve(),
   };
   return {
     settings,

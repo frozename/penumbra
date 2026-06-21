@@ -17,5 +17,5 @@ export function derivePlanId(
   const sha = createHash("sha256").update(buf).digest("hex");
   const prefix = sha.slice(0, 12);
   const unixSeconds = Math.floor(registeredAt / 1000);
-  return `${prefix}-${unixSeconds}`;
+  return `${prefix}-${String(unixSeconds)}`;
 }

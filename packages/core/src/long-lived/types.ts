@@ -14,37 +14,35 @@ export const PendingGoalSchema = z.union([
   }),
 ]);
 
-export const WorkingMemorySchema = z
-  .object({
-    version: z.literal(1),
-    updated_at: z.number(),
-    pending_goals: z.array(PendingGoalSchema),
-    open_threads: z.array(
-      z.object({
-        id: z.string(),
-        topic: z.string(),
-        opened_at: z.number(),
-        notes: z.string(),
-      }),
-    ),
-    watches: z.array(
-      z.object({
-        id: z.string(),
-        subject: z.string(),
-        until: z.number().optional(),
-        reason: z.string(),
-      }),
-    ),
-    recent_decisions: z.array(
-      z.object({
-        pending_action_id: z.string(),
-        decision: z.enum(["approved", "rejected", "expired"]),
-        reason: z.string().optional(),
-        decided_at: z.number(),
-      }),
-    ),
-  })
-  .passthrough();
+export const WorkingMemorySchema = z.looseObject({
+  version: z.literal(1),
+  updated_at: z.number(),
+  pending_goals: z.array(PendingGoalSchema),
+  open_threads: z.array(
+    z.object({
+      id: z.string(),
+      topic: z.string(),
+      opened_at: z.number(),
+      notes: z.string(),
+    }),
+  ),
+  watches: z.array(
+    z.object({
+      id: z.string(),
+      subject: z.string(),
+      until: z.number().optional(),
+      reason: z.string(),
+    }),
+  ),
+  recent_decisions: z.array(
+    z.object({
+      pending_action_id: z.string(),
+      decision: z.enum(["approved", "rejected", "expired"]),
+      reason: z.string().optional(),
+      decided_at: z.number(),
+    }),
+  ),
+});
 
 export type WorkingMemory = z.infer<typeof WorkingMemorySchema>;
 

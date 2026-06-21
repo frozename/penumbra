@@ -55,9 +55,9 @@ export class PermissionEventBus {
    * already fallen out of the ring buffer (caller must re-fetch state).
    */
   replaySince(sinceSeq: number): EmittedPermissionEvent[] | null {
-    if (this.ring.length === 0) return [];
-    const earliest = this.ring[0]!.seq;
-    if (sinceSeq < earliest - 1) return null;
+    const first = this.ring[0];
+    if (!first) return [];
+    if (sinceSeq < first.seq - 1) return null;
     return this.ring.filter((e) => e.seq > sinceSeq);
   }
 }

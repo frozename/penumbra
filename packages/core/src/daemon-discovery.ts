@@ -1,6 +1,6 @@
-import { join } from "node:path";
-import { homedir } from "node:os";
 import { existsSync as fsExistsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 export interface ResolveDaemonStorageRootOpts {
   explicit?: string;
@@ -74,7 +74,8 @@ export async function waitForDaemonStorageRoot(
 ): Promise<string> {
   const timeoutMs = opts.timeoutMs ?? 60_000;
   const intervalMs = opts.intervalMs ?? 500;
-  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const sleep =
+    opts.sleep ?? ((ms: number): Promise<void> => new Promise<void>((r) => setTimeout(r, ms)));
   const now = opts.now ?? Date.now;
 
   const explicit =

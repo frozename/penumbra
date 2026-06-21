@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+
 import type { Services } from "../services.js";
 
 const LaneCloseBasisSchema = z.object({
@@ -79,80 +80,95 @@ async function validateAdversarialReviewPath(
   return { ok: true, realpath: canonicalPath };
 }
 
-export async function validateBasis(
+type ValidateResult = { ok: true } | { ok: false; status: 400 | 403 | 404; reason: string };
+
+function validateLaneClose(
   services: Services,
-  basis: Basis,
-): Promise<{ ok: true } | { ok: false; status: 400 | 403 | 404; reason: string }> {
+  basis: Extract<Basis, { kind: "lane_close" }>,
+): ValidateResult {
+  const lane = services.db
+    .query<
+      {
+        implementer_handoff: string;
+        reviewer_handoff: string | null;
+        ts_closed: string | null;
+      },
+      [string]
+    >(`SELECT implementer_handoff, reviewer_handoff, ts_closed FROM lane_ledger WHERE lane_id = ?`)
+    .get(basis.lane_id);
+  if (!lane) return { ok: false, status: 404, reason: "lane not found" };
+  if (lane.ts_closed === null) return { ok: false, status: 400, reason: "lane is not closed" };
+  if (lane.reviewer_handoff !== basis.reviewer_handoff) {
+    return { ok: false, status: 403, reason: "reviewer handoff does not match lane ledger" };
+  }
+  if (lane.implementer_handoff === lane.reviewer_handoff) {
+    return { ok: false, status: 403, reason: "reviewer must differ from implementer" };
+  }
+  return { ok: true };
+}
+
+function validateDispatchLand(
+  services: Services,
+  basis: Extract<Basis, { kind: "dispatch_land" }>,
+): ValidateResult {
+  const mainRepoDir = getMainRepoDir(services);
+  const handoff = services.db
+    .query<
+      {
+        from_agent: string;
+        to_agent: string;
+      },
+      [string]
+    >(`SELECT from_agent, to_agent FROM handoffs WHERE handoff_id = ?`)
+    .get(basis.reviewer_handoff);
+  if (!handoff) return { ok: false, status: 404, reason: "handoff not found" };
+  if (handoff.from_agent === handoff.to_agent) {
+    return { ok: false, status: 403, reason: "reviewer must differ from implementer" };
+  }
+  const proc = spawnSync("git", ["-C", mainRepoDir, "cat-file", "-e", basis.merge_commit], {
+    encoding: "utf8",
+  });
+  if (proc.status !== 0) return { ok: false, status: 404, reason: "merge commit not found" };
+  return { ok: true };
+}
+
+async function validateAdversarialReview(
+  services: Services,
+  basis: Extract<Basis, { kind: "adversarial_review" }>,
+): Promise<ValidateResult> {
+  const pathResult = await validateAdversarialReviewPath(services, basis.synthesis_path);
+  if (!pathResult.ok) return pathResult;
+  const synth = services.handoffReader.get(basis.synthesizer_handoff);
+  if (!synth) return { ok: false, status: 404, reason: "synthesizer handoff not found" };
+  const chainTaskType =
+    (synth as unknown as { chain_task_type?: string | null }).chain_task_type ?? null;
+  if (chainTaskType !== "review_adversarial" && chainTaskType !== "adversarial_review_synthesis") {
+    return { ok: false, status: 403, reason: "synthesizer handoff has wrong task type" };
+  }
+  return { ok: true };
+}
+
+function validateManualOverride(
+  services: Services,
+  basis: Extract<Basis, { kind: "manual_override" }>,
+): ValidateResult {
+  const reason = basis.reason.trim();
+  const authorizedBy = basis.authorized_by.trim();
+  if (!reason) return { ok: false, status: 400, reason: "reason is required" };
+  if (!authorizedBy) return { ok: false, status: 400, reason: "authorized_by is required" };
+  services.log.warn({ authorized_by: authorizedBy }, "memory verify manual override authorized");
+  return { ok: true };
+}
+
+export async function validateBasis(services: Services, basis: Basis): Promise<ValidateResult> {
   switch (basis.kind) {
-    case "lane_close": {
-      const lane = services.db
-        .query<
-          {
-            implementer_handoff: string;
-            reviewer_handoff: string | null;
-            ts_closed: string | null;
-          },
-          [string]
-        >(
-          `SELECT implementer_handoff, reviewer_handoff, ts_closed FROM lane_ledger WHERE lane_id = ?`,
-        )
-        .get(basis.lane_id);
-      if (!lane) return { ok: false, status: 404, reason: "lane not found" };
-      if (lane.ts_closed === null) return { ok: false, status: 400, reason: "lane is not closed" };
-      if (lane.reviewer_handoff !== basis.reviewer_handoff) {
-        return { ok: false, status: 403, reason: "reviewer handoff does not match lane ledger" };
-      }
-      if (lane.implementer_handoff === lane.reviewer_handoff) {
-        return { ok: false, status: 403, reason: "reviewer must differ from implementer" };
-      }
-      return { ok: true };
-    }
-    case "dispatch_land": {
-      const mainRepoDir = getMainRepoDir(services);
-      const handoff = services.db
-        .query<
-          {
-            from_agent: string;
-            to_agent: string;
-          },
-          [string]
-        >(`SELECT from_agent, to_agent FROM handoffs WHERE handoff_id = ?`)
-        .get(basis.reviewer_handoff);
-      if (!handoff) return { ok: false, status: 404, reason: "handoff not found" };
-      if (handoff.from_agent === handoff.to_agent) {
-        return { ok: false, status: 403, reason: "reviewer must differ from implementer" };
-      }
-      const proc = spawnSync("git", ["-C", mainRepoDir, "cat-file", "-e", basis.merge_commit], {
-        encoding: "utf8",
-      });
-      if (proc.status !== 0) return { ok: false, status: 404, reason: "merge commit not found" };
-      return { ok: true };
-    }
-    case "adversarial_review": {
-      const pathResult = await validateAdversarialReviewPath(services, basis.synthesis_path);
-      if (!pathResult.ok) return pathResult;
-      const synth = services.handoffReader.get(basis.synthesizer_handoff);
-      if (!synth) return { ok: false, status: 404, reason: "synthesizer handoff not found" };
-      const chainTaskType =
-        (synth as unknown as { chain_task_type?: string | null }).chain_task_type ?? null;
-      if (
-        chainTaskType !== "review_adversarial" &&
-        chainTaskType !== "adversarial_review_synthesis"
-      ) {
-        return { ok: false, status: 403, reason: "synthesizer handoff has wrong task type" };
-      }
-      return { ok: true };
-    }
-    case "manual_override": {
-      const reason = basis.reason.trim();
-      const authorizedBy = basis.authorized_by.trim();
-      if (!reason) return { ok: false, status: 400, reason: "reason is required" };
-      if (!authorizedBy) return { ok: false, status: 400, reason: "authorized_by is required" };
-      services.log.warn(
-        { authorized_by: authorizedBy },
-        "memory verify manual override authorized",
-      );
-      return { ok: true };
-    }
+    case "lane_close":
+      return validateLaneClose(services, basis);
+    case "dispatch_land":
+      return validateDispatchLand(services, basis);
+    case "adversarial_review":
+      return await validateAdversarialReview(services, basis);
+    case "manual_override":
+      return validateManualOverride(services, basis);
   }
 }

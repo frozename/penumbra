@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+
 import type { Clock } from "../utils/clock.js";
 import type { ProjectResolution } from "./project-id.js";
 
@@ -21,7 +22,7 @@ export class ProjectCache {
       .get(resolution.project_id);
 
     if (existing) {
-      const paths: string[] = JSON.parse(existing.first_seen_paths);
+      const paths = JSON.parse(existing.first_seen_paths) as string[];
       if (!paths.includes(path)) {
         paths.push(path);
         this.db.run("UPDATE projects SET first_seen_paths=? WHERE project_id=?", [

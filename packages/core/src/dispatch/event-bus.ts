@@ -9,7 +9,7 @@ interface DispatchSubscriber {
   closed: boolean;
   predicate: (event: DispatchEvent) => boolean;
   queue: DispatchEvent[];
-  pending: Array<(result: IteratorResult<DispatchEvent>) => void>;
+  pending: ((result: IteratorResult<DispatchEvent>) => void)[];
 }
 
 export class DispatchEventBus {
@@ -38,7 +38,7 @@ export class DispatchEventBus {
     };
     this.subscribers.add(subscriber);
 
-    const close = () => {
+    const close = (): void => {
       if (subscriber.closed) return;
       subscriber.closed = true;
       this.subscribers.delete(subscriber);
@@ -71,7 +71,7 @@ export class DispatchEventBus {
       },
       throw(error: unknown) {
         close();
-        return Promise.reject(error);
+        return Promise.reject(error instanceof Error ? error : new Error(String(error)));
       },
     };
 
