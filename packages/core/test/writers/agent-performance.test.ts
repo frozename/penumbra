@@ -1,13 +1,31 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- test fixtures and sqlite row mocks intentionally use loose shapes */
-import { beforeEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, it } from "bun:test";
+
 import { loadSqliteVec, migrate } from "../../src/index.js";
 import { AgentPerformanceWriter } from "../../src/writers/agent-performance.js";
+
+interface AgentPerformanceRow {
+  performance_id: string;
+  outcome: string;
+  cost_usd: number | null;
+  reliability_status: string | null;
+  failure_class: string | null;
+  artifact_present: string | null;
+  verification_present: string | null;
+  maestro_takeover_required: string | null;
+  empty_response: string | null;
+  worktree_changed: string | null;
+  reconcile_status: string | null;
+  environment_failure: string | null;
+  trust_score: number | null;
+}
 
 if (process.platform === "darwin") {
   try {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-  } catch {}
+  } catch {
+    /* darwin sqlite override is best-effort */
+  }
 }
 
 describe("AgentPerformanceWriter", () => {
@@ -62,10 +80,12 @@ describe("AgentPerformanceWriter", () => {
       metadata_json: "{}",
     });
 
-    const row = db.query<any, []>('SELECT * FROM agent_performance WHERE handoff_id="h1"').get();
-    expect(row.performance_id).toBe("p2");
-    expect(row.outcome).toBe("merged");
-    expect(row.cost_usd).toBe(0.5);
+    const row = db
+      .query<AgentPerformanceRow, []>('SELECT * FROM agent_performance WHERE handoff_id="h1"')
+      .get();
+    expect(row?.performance_id).toBe("p2");
+    expect(row?.outcome).toBe("merged");
+    expect(row?.cost_usd).toBe(0.5);
   });
 
   it("persists reliability fields and defaults omitted fields to null", () => {
@@ -122,23 +142,26 @@ describe("AgentPerformanceWriter", () => {
     });
 
     const reliable = db
-      .query<any, []>('SELECT * FROM agent_performance WHERE handoff_id="h-reliable"')
+      .query<
+        AgentPerformanceRow,
+        []
+      >('SELECT * FROM agent_performance WHERE handoff_id="h-reliable"')
       .get();
-    expect(reliable.reliability_status).toBe("complete");
-    expect(reliable.artifact_present).toBe("y");
-    expect(reliable.verification_present).toBe("y");
-    expect(reliable.maestro_takeover_required).toBe("n");
-    expect(reliable.empty_response).toBe("n");
-    expect(reliable.worktree_changed).toBe("y");
-    expect(reliable.reconcile_status).toBe("merged");
-    expect(reliable.environment_failure).toBe("n");
-    expect(reliable.trust_score).toBe(0.95);
+    expect(reliable?.reliability_status).toBe("complete");
+    expect(reliable?.artifact_present).toBe("y");
+    expect(reliable?.verification_present).toBe("y");
+    expect(reliable?.maestro_takeover_required).toBe("n");
+    expect(reliable?.empty_response).toBe("n");
+    expect(reliable?.worktree_changed).toBe("y");
+    expect(reliable?.reconcile_status).toBe("merged");
+    expect(reliable?.environment_failure).toBe("n");
+    expect(reliable?.trust_score).toBe(0.95);
 
     const legacy = db
-      .query<any, []>('SELECT * FROM agent_performance WHERE handoff_id="h-legacy"')
+      .query<AgentPerformanceRow, []>('SELECT * FROM agent_performance WHERE handoff_id="h-legacy"')
       .get();
-    expect(legacy.reliability_status).toBeNull();
-    expect(legacy.failure_class).toBeNull();
-    expect(legacy.trust_score).toBeNull();
+    expect(legacy?.reliability_status).toBeNull();
+    expect(legacy?.failure_class).toBeNull();
+    expect(legacy?.trust_score).toBeNull();
   });
 });

@@ -1,6 +1,9 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- test fixtures and sqlite row mocks intentionally use loose shapes */
-import { expect, test, beforeEach } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, expect, test } from "bun:test";
+
+import { loadSqliteVec, migrate } from "../../src/index.js";
+import { TestEmbedder } from "../../src/testing/index.js";
+import { T1Rollup } from "../../src/writers/t1.js";
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
@@ -8,9 +11,6 @@ try {
 } catch {
   // already loaded in this process
 }
-import { loadSqliteVec, migrate } from "../../src/index.js";
-import { TestEmbedder } from "../../src/testing/index.js";
-import { T1Rollup } from "../../src/writers/t1.js";
 
 let db: Database;
 beforeEach(() => {
@@ -19,7 +19,7 @@ beforeEach(() => {
   migrate(db, { embeddingDim: 384 });
 });
 
-function seed(sessionId: string, n: number, lane = "local", origin: string | null = null) {
+function seed(sessionId: string, n: number, lane = "local", origin: string | null = null): void {
   for (let i = 0; i < n; i++) {
     db.run(
       `INSERT INTO t0_events(event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id,
@@ -27,12 +27,12 @@ function seed(sessionId: string, n: number, lane = "local", origin: string | nul
         request_id, payload_json, payload_summary, origin)
        VALUES(?, ?, ?, 'mcp', null, 'p1', 'u', 'm', ?, 'agent-tool-use', ?, null, null, null, null, null, null, null, '{}', ?, ?)`,
       [
-        `e-${sessionId}-${i}`,
-        `2026-04-23T12:0${i}:00Z`,
-        `2026-04-23T12:0${i}:00Z`,
+        `e-${sessionId}-${String(i)}`,
+        `2026-04-23T12:0${String(i)}:00Z`,
+        `2026-04-23T12:0${String(i)}:00Z`,
         sessionId,
         lane,
-        `event ${i}`,
+        `event ${String(i)}`,
         origin,
       ],
     );
@@ -44,8 +44,8 @@ test("rollupSession produces a rollup + vec row with correct counts", async () =
   const roll = new T1Rollup({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-23T12:30:00Z"),
-    uuid: () => "rollup-1",
+    clock: (): Date => new Date("2026-04-23T12:30:00Z"),
+    uuid: (): string => "rollup-1",
   });
 
   const written = await roll.rollupSession("s1");
@@ -66,8 +66,8 @@ test("rollupSession returns null if session has zero events", async () => {
   const roll = new T1Rollup({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-23T12:30:00Z"),
-    uuid: () => "r",
+    clock: (): Date => new Date("2026-04-23T12:30:00Z"),
+    uuid: (): string => "r",
   });
 
   expect(await roll.rollupSession("nonexistent")).toBeNull();
@@ -78,10 +78,10 @@ test("rollupSession is idempotent — re-running for same session is a no-op", a
   const roll = new T1Rollup({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-23T12:30:00Z"),
-    uuid: (() => {
+    clock: (): Date => new Date("2026-04-23T12:30:00Z"),
+    uuid: ((): (() => string) => {
       let i = 0;
-      return () => `r-${++i}`;
+      return (): string => `r-${String(++i)}`;
     })(),
   });
 
@@ -91,19 +91,19 @@ test("rollupSession is idempotent — re-running for same session is a no-op", a
   expect(db.query<{ c: number }, []>("SELECT COUNT(*) c FROM t1_rollups").get()!.c).toBe(1);
 });
 
-function appendEvent(sessionId: string, i: number, lane = "cloud") {
+function appendEvent(sessionId: string, i: number, lane = "cloud"): void {
   db.run(
     `INSERT INTO t0_events(event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id,
       session_id, event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms,
       request_id, payload_json, payload_summary)
      VALUES(?, ?, ?, 'mcp', null, 'p1', 'u', 'm', ?, 'agent-tool-use', ?, null, null, null, null, null, null, null, '{}', ?)`,
     [
-      `e-${sessionId}-${i}`,
-      `2026-04-23T12:0${i}:00Z`,
-      `2026-04-23T12:0${i}:00Z`,
+      `e-${sessionId}-${String(i)}`,
+      `2026-04-23T12:0${String(i)}:00Z`,
+      `2026-04-23T12:0${String(i)}:00Z`,
       sessionId,
       lane,
-      `event ${i}`,
+      `event ${String(i)}`,
     ],
   );
 }
@@ -113,8 +113,8 @@ test("rollupSession rerolls append-only by default when new events exist", async
   const roll = new T1Rollup({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-23T12:30:00Z"),
-    uuid: () => "r_append",
+    clock: (): Date => new Date("2026-04-23T12:30:00Z"),
+    uuid: (): string => "r_append",
   });
 
   await roll.rollupSession("s_append");
@@ -124,7 +124,10 @@ test("rollupSession rerolls append-only by default when new events exist", async
   expect(written).toBe("r_append");
 
   const row = db
-    .query<any, [string]>("SELECT n_events, lane_breakdown_json FROM t1_rollups WHERE session_id=?")
+    .query<
+      { n_events: number; lane_breakdown_json: string },
+      [string]
+    >("SELECT n_events, lane_breakdown_json FROM t1_rollups WHERE session_id=?")
     .get("s_append")!;
   expect(row.n_events).toBe(3);
   expect(JSON.parse(row.lane_breakdown_json)).toEqual({ local: 2, cloud: 1 });
@@ -136,16 +139,16 @@ function appendEventWithType(
   eventType: string,
   payloadSummary: string,
   lane = "local",
-) {
+): void {
   db.run(
     `INSERT INTO t0_events(event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id,
       session_id, event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms,
       request_id, payload_json, payload_summary)
      VALUES(?, ?, ?, 'mcp', null, 'p1', 'u', 'm', ?, ?, ?, null, null, null, null, null, null, null, '{}', ?)`,
     [
-      `e-${sessionId}-${i}`,
-      `2026-04-23T12:0${i}:00Z`,
-      `2026-04-23T12:0${i}:00Z`,
+      `e-${sessionId}-${String(i)}`,
+      `2026-04-23T12:0${String(i)}:00Z`,
+      `2026-04-23T12:0${String(i)}:00Z`,
       sessionId,
       eventType,
       lane,
@@ -159,8 +162,8 @@ test("rollupSession appends after t0 pruning when a newer event arrives", async 
   const roll = new T1Rollup({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-23T12:30:00Z"),
-    uuid: () => "r_prune",
+    clock: (): Date => new Date("2026-04-23T12:30:00Z"),
+    uuid: (): string => "r_prune",
   });
 
   await roll.rollupSession("s_prune");
@@ -203,8 +206,8 @@ test("rollupSession append branch re-embeds t1_vec when last_response_excerpt ch
   const roll = new T1Rollup({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-23T12:30:00Z"),
-    uuid: () => "r_embed",
+    clock: (): Date => new Date("2026-04-23T12:30:00Z"),
+    uuid: (): string => "r_embed",
   });
 
   await roll.rollupSession("s_embed");
@@ -253,8 +256,8 @@ test("rollupSession fully overwrites when overwriteOnReroll is true", async () =
   const roll = new T1Rollup({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-23T12:30:00Z"),
-    uuid: () => `r_over_${++idx}`,
+    clock: (): Date => new Date("2026-04-23T12:30:00Z"),
+    uuid: (): string => `r_over_${String(++idx)}`,
     overwriteOnReroll: true,
   });
 
@@ -265,7 +268,10 @@ test("rollupSession fully overwrites when overwriteOnReroll is true", async () =
   expect(written).toBe("r_over_2"); // New ID
 
   const row = db
-    .query<any, [string]>("SELECT rollup_id, n_events FROM t1_rollups WHERE session_id=?")
+    .query<
+      { rollup_id: string; n_events: number },
+      [string]
+    >("SELECT rollup_id, n_events FROM t1_rollups WHERE session_id=?")
     .get("s_over")!;
   expect(row.rollup_id).toBe("r_over_2");
   expect(row.n_events).toBe(3);
@@ -281,15 +287,20 @@ test("rollupSession picks maestro over dispatch over unknown when origins are mi
         session_id, event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms,
         request_id, payload_json, payload_summary, origin)
        VALUES(?, ?, ?, 'mcp', null, 'p1', 'u', 'm', 's_mix', 'agent-tool-use', 'local', null, null, null, null, null, null, null, '{}', ?, 'dispatch')`,
-      [`e-mix-${i}`, `2026-04-23T13:0${i}:00Z`, `2026-04-23T13:0${i}:00Z`, `event ${i}`],
+      [
+        `e-mix-${String(i)}`,
+        `2026-04-23T13:0${String(i)}:00Z`,
+        `2026-04-23T13:0${String(i)}:00Z`,
+        `event ${String(i)}`,
+      ],
     );
   }
 
   const roll = new T1Rollup({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-23T13:30:00Z"),
-    uuid: () => "r_mix",
+    clock: (): Date => new Date("2026-04-23T13:30:00Z"),
+    uuid: (): string => "r_mix",
   });
   await roll.rollupSession("s_mix");
 
@@ -304,8 +315,8 @@ test("rollupSession leaves origin NULL when all source events have NULL origin (
   const roll = new T1Rollup({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-23T13:30:00Z"),
-    uuid: () => "r_legacy",
+    clock: (): Date => new Date("2026-04-23T13:30:00Z"),
+    uuid: (): string => "r_legacy",
   });
   await roll.rollupSession("s_legacy");
   const row = db
@@ -325,8 +336,8 @@ test("rollupSession dispatch beats unknown", async () => {
   const roll = new T1Rollup({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-23T13:30:00Z"),
-    uuid: () => "r_du",
+    clock: (): Date => new Date("2026-04-23T13:30:00Z"),
+    uuid: (): string => "r_du",
   });
   await roll.rollupSession("s_du");
   const row = db
@@ -341,8 +352,8 @@ test("rollupSession is concurrency-safe — racing calls fold to one row", async
   const roll = new T1Rollup({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-23T12:30:00Z"),
-    uuid: () => `race-${++uuidIdx}`,
+    clock: (): Date => new Date("2026-04-23T12:30:00Z"),
+    uuid: (): string => `race-${String(++uuidIdx)}`,
   });
 
   const [a, b] = await Promise.all([roll.rollupSession("sR"), roll.rollupSession("sR")]);

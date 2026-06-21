@@ -1,7 +1,16 @@
-import { describe, it, expect, beforeEach } from "bun:test";
-import { Database } from "bun:sqlite";
 import { loadSqliteVec, NotificationOutboxWriter } from "@penumbra/core";
 import { applySchema } from "@penumbra/core/db/schema";
+import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, it } from "bun:test";
+
+interface OutboxStatusRow {
+  status: string;
+  attempted_at: number | null;
+  attempt_count: number | null;
+  completed_at: number | null;
+  error: string | null;
+  deliver_after: number | null;
+}
 
 function setup(): Database {
   const db = new Database(":memory:");
@@ -88,18 +97,24 @@ describe("NotificationOutboxWriter", () => {
     expect(outbox.markProcessing(id, 2100)).toBe(false);
 
     let row = db
-      .query("SELECT status, attempted_at, attempt_count FROM notification_outbox WHERE id=?")
-      .get(id) as any;
-    expect(row.status).toBe("processing");
-    expect(row.attempted_at).toBe(2000);
-    expect(row.attempt_count).toBe(1);
+      .query<
+        OutboxStatusRow,
+        [string]
+      >("SELECT status, attempted_at, attempt_count FROM notification_outbox WHERE id=?")
+      .get(id);
+    expect(row?.status).toBe("processing");
+    expect(row?.attempted_at).toBe(2000);
+    expect(row?.attempt_count).toBe(1);
 
     outbox.markDone(id, 3000);
     row = db
-      .query("SELECT status, completed_at FROM notification_outbox WHERE id=?")
-      .get(id) as any;
-    expect(row.status).toBe("done");
-    expect(row.completed_at).toBe(3000);
+      .query<
+        OutboxStatusRow,
+        [string]
+      >("SELECT status, completed_at FROM notification_outbox WHERE id=?")
+      .get(id);
+    expect(row?.status).toBe("done");
+    expect(row?.completed_at).toBe(3000);
   });
 
   it("reclaims stale processing entries back to pending", () => {
@@ -117,10 +132,13 @@ describe("NotificationOutboxWriter", () => {
     expect(outbox.requeueStaleProcessing(2500)).toBe(1);
 
     const row = db
-      .query("SELECT status, attempted_at FROM notification_outbox WHERE id=?")
-      .get(id) as any;
-    expect(row.status).toBe("pending");
-    expect(row.attempted_at).toBe(2000);
+      .query<
+        OutboxStatusRow,
+        [string]
+      >("SELECT status, attempted_at FROM notification_outbox WHERE id=?")
+      .get(id);
+    expect(row?.status).toBe("pending");
+    expect(row?.attempted_at).toBe(2000);
   });
 
   it("reschedules retryable failures with deliver_after", () => {
@@ -136,14 +154,15 @@ describe("NotificationOutboxWriter", () => {
     outbox.markRetry(id, "discord_post_failed", 5100);
 
     const row = db
-      .query(
-        "SELECT status, error, deliver_after, completed_at FROM notification_outbox WHERE id=?",
-      )
-      .get(id) as any;
-    expect(row.status).toBe("pending");
-    expect(row.error).toBe("discord_post_failed");
-    expect(row.deliver_after).toBe(5100);
-    expect(row.completed_at).toBeNull();
+      .query<
+        OutboxStatusRow,
+        [string]
+      >("SELECT status, error, deliver_after, completed_at FROM notification_outbox WHERE id=?")
+      .get(id);
+    expect(row?.status).toBe("pending");
+    expect(row?.error).toBe("discord_post_failed");
+    expect(row?.deliver_after).toBe(5100);
+    expect(row?.completed_at).toBeNull();
   });
 
   it("transitions entries to failed", () => {
@@ -158,10 +177,10 @@ describe("NotificationOutboxWriter", () => {
     outbox.markFailed(pending[0].id, 2000, "discord_post_failed");
 
     const row = db
-      .query("SELECT status, error FROM notification_outbox WHERE id=?")
-      .get(pending[0].id) as any;
-    expect(row.status).toBe("failed");
-    expect(row.error).toBe("discord_post_failed");
+      .query<OutboxStatusRow, [string]>("SELECT status, error FROM notification_outbox WHERE id=?")
+      .get(pending[0].id);
+    expect(row?.status).toBe("failed");
+    expect(row?.error).toBe("discord_post_failed");
   });
 
   it("lists pending entries before a cutoff", () => {

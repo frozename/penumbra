@@ -1,11 +1,14 @@
-import { beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, test } from "bun:test";
+
+import type { T2MemoryExtraction } from "../../src/writers/t2.js";
+
 import { loadSqliteVec, migrate } from "../../src/index.js";
-import { buildT2EmbedText } from "../../src/writers/t2-embed-text.js";
 import {
   extractSessionCandidates,
   type SessionExtractCandidate,
 } from "../../src/writers/session-extract.js";
+import { buildT2EmbedText } from "../../src/writers/t2-embed-text.js";
 
 try {
   if (process.platform === "darwin") {
@@ -21,8 +24,10 @@ class DeterministicEmbedder {
 
   constructor(private readonly vectors = new Map<string, Float32Array>()) {}
 
-  async embed(input: string[]): Promise<Float32Array[]> {
-    return input.map((text) => this.vectors.get(text) ?? new Float32Array([0, 1, 0, 0]));
+  embed(input: string[]): Promise<Float32Array[]> {
+    return Promise.resolve(
+      input.map((text) => this.vectors.get(text) ?? new Float32Array([0, 1, 0, 0])),
+    );
   }
 }
 
@@ -81,9 +86,9 @@ describe("extractSessionCandidates", () => {
       db,
       project_id: "proj",
       embedder: new DeterministicEmbedder(),
-      llm: async () => {
+      llm: (): Promise<T2MemoryExtraction[]> => {
         calls += 1;
-        return [
+        return Promise.resolve([
           {
             title: "Should not run",
             body: "This durable memory body should never be considered by the short transcript gate.",
@@ -91,12 +96,12 @@ describe("extractSessionCandidates", () => {
             why: "The judge should not be called for empty or short transcripts.",
             depth: 2,
           },
-        ];
+        ]);
       },
     };
 
-    await expect(extractSessionCandidates(opts, "")).resolves.toEqual([]);
-    await expect(extractSessionCandidates(opts, "User: too short")).resolves.toEqual([]);
+    expect(await extractSessionCandidates(opts, "")).toEqual([]);
+    expect(await extractSessionCandidates(opts, "User: too short")).toEqual([]);
     expect(calls).toBe(0);
   });
 
@@ -117,16 +122,17 @@ describe("extractSessionCandidates", () => {
         db,
         project_id: "proj",
         embedder: new DeterministicEmbedder(),
-        llm: async () => [
-          {
-            title,
-            body,
-            kind: "decision",
-            why: "The extracted rule replaces an existing direct memory instead of duplicating it.",
-            source_quote: "update the existing row",
-            depth: 2,
-          },
-        ],
+        llm: () =>
+          Promise.resolve([
+            {
+              title,
+              body,
+              kind: "decision",
+              why: "The extracted rule replaces an existing direct memory instead of duplicating it.",
+              source_quote: "update the existing row",
+              depth: 2,
+            },
+          ]),
       },
       "User: ".repeat(60),
     );
@@ -151,36 +157,37 @@ describe("extractSessionCandidates", () => {
         db,
         project_id: "proj",
         embedder: new DeterministicEmbedder(),
-        llm: async () => [
-          {
-            title: "Missing why",
-            body: "A body with enough length that would otherwise pass the density gate but lacks explanatory why.",
-            kind: "fact",
-            why: null,
-            depth: 2,
-          },
-          {
-            title: "Short why",
-            body: "A body with enough length that would otherwise pass the density gate but has weak why.",
-            kind: "fact",
-            why: "too short",
-            depth: 2,
-          },
-          {
-            title: "Bare fact",
-            body: "The file packages/core/src/writers/t2.ts exists in the repository and contains TypeScript code.",
-            kind: "fact",
-            why: "This has a long enough why but the candidate is still only a bare rediscoverable fact.",
-            depth: 2,
-          },
-          {
-            title: "Valid durable rule",
-            body: validBody,
-            kind: "knowledge",
-            why: "The body explains when to use the route and the durable consequence for future sessions.",
-            depth: 2,
-          },
-        ],
+        llm: () =>
+          Promise.resolve([
+            {
+              title: "Missing why",
+              body: "A body with enough length that would otherwise pass the density gate but lacks explanatory why.",
+              kind: "fact",
+              why: null,
+              depth: 2,
+            },
+            {
+              title: "Short why",
+              body: "A body with enough length that would otherwise pass the density gate but has weak why.",
+              kind: "fact",
+              why: "too short",
+              depth: 2,
+            },
+            {
+              title: "Bare fact",
+              body: "The file packages/core/src/writers/t2.ts exists in the repository and contains TypeScript code.",
+              kind: "fact",
+              why: "This has a long enough why but the candidate is still only a bare rediscoverable fact.",
+              depth: 2,
+            },
+            {
+              title: "Valid durable rule",
+              body: validBody,
+              kind: "knowledge",
+              why: "The body explains when to use the route and the durable consequence for future sessions.",
+              depth: 2,
+            },
+          ]),
       },
       "Assistant: ".repeat(60),
     );
@@ -195,22 +202,23 @@ describe("extractSessionCandidates", () => {
         db,
         project_id: "proj",
         embedder: new DeterministicEmbedder(),
-        llm: async () => [
-          {
-            title: "Too short",
-            body: "Short durable body.",
-            kind: "fact",
-            why: "Even with a why, shallow short bodies should not become t2 candidates.",
-            depth: 1,
-          },
-          {
-            title: "Deep short",
-            body: "Short but deep.",
-            kind: "decision",
-            why: "Depth two is the existing escape hatch for concise high-value durable items.",
-            depth: 2,
-          },
-        ],
+        llm: () =>
+          Promise.resolve([
+            {
+              title: "Too short",
+              body: "Short durable body.",
+              kind: "fact",
+              why: "Even with a why, shallow short bodies should not become t2 candidates.",
+              depth: 1,
+            },
+            {
+              title: "Deep short",
+              body: "Short but deep.",
+              kind: "decision",
+              why: "Depth two is the existing escape hatch for concise high-value durable items.",
+              depth: 2,
+            },
+          ]),
       },
       "Assistant: ".repeat(60),
     );
@@ -239,15 +247,16 @@ describe("extractSessionCandidates", () => {
         db,
         project_id: "proj",
         embedder: new DeterministicEmbedder(),
-        llm: async () => [
-          {
-            title: "Memory Session Extract Route",
-            body: "Memory session extract candidates should link nearby planning and routing memories because follow-up sessions need context.",
-            kind: "knowledge",
-            why: "Backlinks give future promotion review enough context to update related durable memories.",
-            depth: 2,
-          },
-        ],
+        llm: () =>
+          Promise.resolve([
+            {
+              title: "Memory Session Extract Route",
+              body: "Memory session extract candidates should link nearby planning and routing memories because follow-up sessions need context.",
+              kind: "knowledge",
+              why: "Backlinks give future promotion review enough context to update related durable memories.",
+              depth: 2,
+            },
+          ]),
       },
       "Assistant: ".repeat(60),
     );
@@ -276,15 +285,16 @@ describe("extractSessionCandidates", () => {
         db,
         project_id: "proj",
         embedder: new DeterministicEmbedder(new Map([[embedText, new Float32Array([1, 0, 0, 0])]])),
-        llm: async () => [
-          {
-            title: "Near Duplicate Rule",
-            body,
-            kind: "knowledge",
-            why: "Session extraction should reuse near-duplicate rows when the existing memory is stronger.",
-            depth: 2,
-          },
-        ],
+        llm: () =>
+          Promise.resolve([
+            {
+              title: "Near Duplicate Rule",
+              body,
+              kind: "knowledge",
+              why: "Session extraction should reuse near-duplicate rows when the existing memory is stronger.",
+              depth: 2,
+            },
+          ]),
         nearDuplicateThreshold: 0.95,
       },
       "Assistant: ".repeat(60),

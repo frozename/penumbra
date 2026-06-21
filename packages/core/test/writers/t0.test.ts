@@ -1,6 +1,10 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- test fixtures and sqlite row mocks intentionally use loose shapes */
-import { expect, test, beforeEach } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, expect, test } from "bun:test";
+
+import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { T0EventSchema } from "../../src/schemas/event.js";
+import { T0Writer } from "../../src/writers/t0.js";
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
@@ -8,10 +12,6 @@ try {
 } catch {
   // already loaded in this process
 }
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { migrate } from "../../src/db/migrations.js";
-import { T0Writer } from "../../src/writers/t0.js";
-import { T0EventSchema } from "../../src/schemas/event.js";
 
 let db: Database;
 beforeEach(() => {
@@ -71,7 +71,7 @@ test("writes origin=dispatch round-trips", () => {
 test("writes origin=null when not set (legacy compat)", () => {
   const w = new T0Writer(db);
   // Bypass schema to simulate a legacy-shaped row (origin omitted)
-  const e = { ...sample, event_id: "e3", origin: null } as any;
+  const e = T0EventSchema.parse({ ...sample, event_id: "e3", origin: null });
   w.write(e);
   const row = db
     .query<{ origin: string | null }, [string]>("SELECT origin FROM t0_events WHERE event_id=?")

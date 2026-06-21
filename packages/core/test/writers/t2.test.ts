@@ -1,6 +1,14 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- test fixtures and sqlite row mocks intentionally use loose shapes */
-import { afterEach, expect, test, beforeEach } from "bun:test";
 import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+
+import { loadSqliteVec, migrate } from "../../src/index.js";
+import { TestEmbedder } from "../../src/testing/index.js";
+import {
+  type T2MemoryExtraction,
+  T2Promotion,
+  verifyMemory,
+  writeDirectT2Memory,
+} from "../../src/writers/t2.js";
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
@@ -8,9 +16,6 @@ try {
 } catch {
   // already loaded in this process
 }
-import { loadSqliteVec, migrate } from "../../src/index.js";
-import { TestEmbedder } from "../../src/testing/index.js";
-import { T2Promotion, verifyMemory, writeDirectT2Memory } from "../../src/writers/t2.js";
 
 let db: Database;
 let previousExtractionFilterGate: string | undefined;
@@ -43,7 +48,7 @@ function seedT1(
   sessionId: string,
   endedAt: string,
   origin: string | null = null,
-) {
+): void {
   db.run(
     `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at,
                              n_events, lane_breakdown_json, provider_breakdown_json, origin)
@@ -81,7 +86,7 @@ function seedT1WithPayloadJsonOnly(
   endedAt: string,
   payloadPromptText: string,
   payloadResponseText: string,
-) {
+): void {
   db.run(
     `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at,
                              n_events, lane_breakdown_json, provider_breakdown_json)
@@ -115,17 +120,19 @@ function seedT1WithPayloadJsonOnly(
 test("promoteRollup extracts memories and marks as promoted", async () => {
   seedT1("r1", "s1", "2026-04-27T10:05:00Z");
 
-  const llm = async (transcript: string) => {
+  const llm = (transcript: string): Promise<T2MemoryExtraction[]> => {
     expect(transcript).toContain("Tell me about the project");
     expect(transcript).toContain("Penumbra");
-    return [{ title: "Project Name", body: "The project is called Penumbra", kind: "fact" }];
+    return Promise.resolve([
+      { title: "Project Name", body: "The project is called Penumbra", kind: "fact" },
+    ]);
   };
 
   const prom = new T2Promotion({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-27T15:00:00Z"),
-    uuid: () => "m1",
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: (): string => "m1",
     llm,
     minTranscriptChars: 0,
   });
@@ -133,14 +140,17 @@ test("promoteRollup extracts memories and marks as promoted", async () => {
   const count = await prom.promoteRollup("r1");
   expect(count).toBe(1);
 
-  const memories = db.query("SELECT * FROM t2_memories", []).all();
+  const memories = db.query<{ title: string }, []>("SELECT title FROM t2_memories").all();
   expect(memories.length).toBe(1);
-  expect((memories[0] as any).title).toBe("Project Name");
+  expect(memories[0].title).toBe("Project Name");
 
   const rollup = db
-    .query('SELECT t2_promoted_at FROM t1_rollups WHERE rollup_id = "r1"', [])
-    .get() as any;
-  expect(rollup.t2_promoted_at).toBe("2026-04-27T15:00:00.000Z");
+    .query<
+      { t2_promoted_at: string | null },
+      []
+    >('SELECT t2_promoted_at FROM t1_rollups WHERE rollup_id = "r1"')
+    .get();
+  expect(rollup?.t2_promoted_at).toBe("2026-04-27T15:00:00.000Z");
 });
 
 test("promoteRollup sends body-v1 embed text by default (inert-default)", async () => {
@@ -151,9 +161,9 @@ test("promoteRollup sends body-v1 embed text by default (inert-default)", async 
   const embedder = {
     name: "spy",
     dim: 384,
-    embed: async (texts: string[]) => {
+    embed: (texts: string[]): Promise<Float32Array[]> => {
       seen.push(texts);
-      return texts.map(() => new Float32Array(384));
+      return Promise.resolve(texts.map(() => new Float32Array(384)));
     },
   };
 
@@ -161,9 +171,10 @@ test("promoteRollup sends body-v1 embed text by default (inert-default)", async 
     const prom = new T2Promotion({
       db,
       embedder,
-      clock: () => new Date("2026-04-27T15:00:00Z"),
-      uuid: () => "m-embed-default",
-      llm: async () => [{ title: "Project Name", body: "The body text", kind: "fact" }],
+      clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+      uuid: (): string => "m-embed-default",
+      llm: (): Promise<T2MemoryExtraction[]> =>
+        Promise.resolve([{ title: "Project Name", body: "The body text", kind: "fact" }]),
       minTranscriptChars: 0,
     });
 
@@ -184,9 +195,9 @@ test("promoteRollup routes embed input through title recipe when enabled", async
   const embedder = {
     name: "spy",
     dim: 384,
-    embed: async (texts: string[]) => {
+    embed: (texts: string[]): Promise<Float32Array[]> => {
       seen.push(texts);
-      return texts.map(() => new Float32Array(384));
+      return Promise.resolve(texts.map(() => new Float32Array(384)));
     },
   };
 
@@ -194,9 +205,10 @@ test("promoteRollup routes embed input through title recipe when enabled", async
     const prom = new T2Promotion({
       db,
       embedder,
-      clock: () => new Date("2026-04-27T15:00:00Z"),
-      uuid: () => "m-embed-title",
-      llm: async () => [{ title: "A title", body: "The body text", kind: "fact" }],
+      clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+      uuid: (): string => "m-embed-title",
+      llm: (): Promise<T2MemoryExtraction[]> =>
+        Promise.resolve([{ title: "A title", body: "The body text", kind: "fact" }]),
       minTranscriptChars: 0,
     });
 
@@ -215,9 +227,10 @@ test("promoteRollup skips oversized extraction body without throwing", async () 
   const prom = new T2Promotion({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-27T15:00:00Z"),
-    uuid: () => "m-oversized",
-    llm: async () => [{ title: "Too Long", body: "L".repeat(4097), kind: "fact" }],
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: (): string => "m-oversized",
+    llm: (): Promise<T2MemoryExtraction[]> =>
+      Promise.resolve([{ title: "Too Long", body: "L".repeat(4097), kind: "fact" }]),
     minTranscriptChars: 0,
   });
 
@@ -233,15 +246,16 @@ test("promoteRollup skips extraction body containing tool-call xml bleed markers
   const prom = new T2Promotion({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-27T15:00:00Z"),
-    uuid: () => "m-xml",
-    llm: async () => [
-      {
-        title: "Bad XML",
-        body: "Assistant emitted <tool_call id='1'>payload</tool_call> raw markup.",
-        kind: "fact",
-      },
-    ],
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: (): string => "m-xml",
+    llm: (): Promise<T2MemoryExtraction[]> =>
+      Promise.resolve([
+        {
+          title: "Bad XML",
+          body: "Assistant emitted <tool_call id='1'>payload</tool_call> raw markup.",
+          kind: "fact",
+        },
+      ]),
     minTranscriptChars: 0,
   });
 
@@ -257,15 +271,16 @@ test("promoteRollup continues promotion for valid extraction when another extrac
   const prom = new T2Promotion({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-27T15:00:00Z"),
-    uuid: (() => {
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: ((): (() => string) => {
       const ids = ["m-mixed-good", "m-mixed-bad"];
-      return () => ids.shift() ?? "m-mixed-fallback";
+      return (): string => ids.shift() ?? "m-mixed-fallback";
     })(),
-    llm: async () => [
-      { title: "Bad oversized", body: "B".repeat(5000), kind: "fact" },
-      { title: "Good", body: "This valid extraction should still promote.", kind: "fact" },
-    ],
+    llm: (): Promise<T2MemoryExtraction[]> =>
+      Promise.resolve([
+        { title: "Bad oversized", body: "B".repeat(5000), kind: "fact" },
+        { title: "Good", body: "This valid extraction should still promote.", kind: "fact" },
+      ]),
     minTranscriptChars: 0,
   });
 
@@ -288,7 +303,7 @@ test("promoteRollup logs skipped extraction count and reason", async () => {
   seedT1("r-skip-count", "s-skip-count", "2026-04-27T10:05:00Z");
   const warnings: string[] = [];
   const originalWarn = console.warn;
-  console.warn = (...args: unknown[]) => {
+  console.warn = (...args: unknown[]): void => {
     warnings.push(args.map((arg) => String(arg)).join(" "));
   };
 
@@ -296,9 +311,10 @@ test("promoteRollup logs skipped extraction count and reason", async () => {
     const prom = new T2Promotion({
       db,
       embedder: new TestEmbedder({ dim: 384 }),
-      clock: () => new Date("2026-04-27T15:00:00Z"),
-      uuid: () => "m-skip-count",
-      llm: async () => [{ title: "Too Long", body: "Z".repeat(4097), kind: "fact" }],
+      clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+      uuid: (): string => "m-skip-count",
+      llm: (): Promise<T2MemoryExtraction[]> =>
+        Promise.resolve([{ title: "Too Long", body: "Z".repeat(4097), kind: "fact" }]),
       minTranscriptChars: 0,
     });
     await prom.promoteRollup("r-skip-count");
@@ -318,9 +334,10 @@ test("promoteRollup accepts normal 1500-char extraction bodies", async () => {
   const prom = new T2Promotion({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-27T15:00:00Z"),
-    uuid: () => "m-normal-1500",
-    llm: async () => [{ title: "Normal", body: "N".repeat(1500), kind: "fact" }],
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: (): string => "m-normal-1500",
+    llm: (): Promise<T2MemoryExtraction[]> =>
+      Promise.resolve([{ title: "Normal", body: "N".repeat(1500), kind: "fact" }]),
     minTranscriptChars: 0,
   });
 
@@ -344,18 +361,22 @@ test("promoteRollup handles empty transcript gracefully", async () => {
   const prom = new T2Promotion({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-27T15:00:00Z"),
-    uuid: () => "u",
-    llm: async () => [{ title: "X", body: "Y", kind: "fact" }],
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: (): string => "u",
+    llm: (): Promise<T2MemoryExtraction[]> =>
+      Promise.resolve([{ title: "X", body: "Y", kind: "fact" }]),
   });
 
   const count = await prom.promoteRollup("r-empty");
   expect(count).toBe(0);
 
   const rollup = db
-    .query('SELECT t2_promoted_at FROM t1_rollups WHERE rollup_id = "r-empty"', [])
-    .get() as any;
-  expect(rollup.t2_promoted_at).toBe("2026-04-27T15:00:00.000Z");
+    .query<
+      { t2_promoted_at: string | null },
+      []
+    >('SELECT t2_promoted_at FROM t1_rollups WHERE rollup_id = "r-empty"')
+    .get();
+  expect(rollup?.t2_promoted_at).toBe("2026-04-27T15:00:00.000Z");
 });
 
 test("detectEligibleRollups finds rollups past delay", () => {
@@ -365,9 +386,9 @@ test("detectEligibleRollups finds rollups past delay", () => {
   const prom = new T2Promotion({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-27T15:00:00Z"),
-    uuid: () => "u",
-    llm: async () => [],
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: (): string => "u",
+    llm: (): Promise<T2MemoryExtraction[]> => Promise.resolve([]),
   });
 
   const eligible = prom.detectEligibleRollups(24, new Date("2026-04-27T15:00:00Z"));
@@ -381,9 +402,10 @@ test("promoteRollup inherits origin from t1_rollup onto t2_memory", async () => 
   const prom = new T2Promotion({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-27T15:00:00Z"),
-    uuid: () => "m-orig",
-    llm: async () => [{ title: "T", body: "B", kind: "fact" }],
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: (): string => "m-orig",
+    llm: (): Promise<T2MemoryExtraction[]> =>
+      Promise.resolve([{ title: "T", body: "B", kind: "fact" }]),
     minTranscriptChars: 0,
   });
 
@@ -400,9 +422,10 @@ test("promoteRollup carries NULL origin through to t2_memory (legacy rollup)", a
   const prom = new T2Promotion({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-27T15:00:00Z"),
-    uuid: () => "m-legacy",
-    llm: async () => [{ title: "T", body: "B", kind: "fact" }],
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: (): string => "m-legacy",
+    llm: (): Promise<T2MemoryExtraction[]> =>
+      Promise.resolve([{ title: "T", body: "B", kind: "fact" }]),
     minTranscriptChars: 0,
   });
 
@@ -427,14 +450,14 @@ test("verifyMemory treats duplicate memory/session verification as idempotent", 
     claimedBy: "agent-1",
     reason: "lane closed passed: passed",
     sessionId: "h-dup",
-    uuid: () => "evt-1",
+    uuid: (): string => "evt-1",
   });
   const second = verifyMemory(db, "m-dup", {
     verifierActor: "auto-lane-close",
     claimedBy: "agent-1",
     reason: "lane closed passed: passed",
     sessionId: "h-dup",
-    uuid: () => "evt-2",
+    uuid: (): string => "evt-2",
   });
 
   expect(first?.written).toBe(true);
@@ -459,7 +482,7 @@ test("verifyMemory defaults basis fields to null when omitted", () => {
     claimedBy: "agent-1",
     reason: "lane closed passed: passed",
     sessionId: "h-basis-default",
-    uuid: () => "evt-basis-default",
+    uuid: (): string => "evt-basis-default",
   });
 
   const row = db
@@ -500,7 +523,7 @@ test("verifyMemory persists provided basis fields", () => {
       detail: "passed",
       basis: "dispatch verdict",
     },
-    uuid: () => "evt-basis-populated",
+    uuid: (): string => "evt-basis-populated",
   });
 
   const row = db
@@ -537,7 +560,7 @@ test("verifyMemory persists authorizedByHandoff when provided", () => {
     reason: "lane closed passed: passed",
     sessionId: "h-auth-handoff",
     authorizedByHandoff: "h-auth",
-    uuid: () => "evt-auth-handoff",
+    uuid: (): string => "evt-auth-handoff",
   });
 
   const row = db
@@ -565,9 +588,9 @@ test("detectEligibleRollups respects minEvents threshold", () => {
   const prom = new T2Promotion({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-27T15:00:00Z"),
-    uuid: () => "u",
-    llm: async () => [],
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: (): string => "u",
+    llm: (): Promise<T2MemoryExtraction[]> => Promise.resolve([]),
     minEvents: 5,
   });
 
@@ -585,9 +608,9 @@ test("detectEligibleRollups excludes promotion-filtered rollups", () => {
   const prom = new T2Promotion({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-27T15:00:00Z"),
-    uuid: () => "u",
-    llm: async () => [],
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: (): string => "u",
+    llm: (): Promise<T2MemoryExtraction[]> => Promise.resolve([]),
     minEvents: 5,
   });
 
@@ -605,9 +628,9 @@ test("resetPromotionFilter requires an explicit all-rows reset", () => {
   const prom = new T2Promotion({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-27T15:00:00Z"),
-    uuid: () => "u",
-    llm: async () => [],
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: (): string => "u",
+    llm: (): Promise<T2MemoryExtraction[]> => Promise.resolve([]),
     minEvents: 5,
   });
 
@@ -616,20 +639,20 @@ test("resetPromotionFilter requires an explicit all-rows reset", () => {
     .prepare(
       `SELECT rollup_id, promotion_filtered_at FROM t1_rollups WHERE rollup_id IN ('r-one', 'r-two') ORDER BY rollup_id`,
     )
-    .all() as Array<{ rollup_id: string; promotion_filtered_at: string | null }>;
+    .all() as { rollup_id: string; promotion_filtered_at: string | null }[];
   expect(rows).toEqual([
     { rollup_id: "r-one", promotion_filtered_at: null },
     { rollup_id: "r-two", promotion_filtered_at: "2026-04-27T15:00:00.000Z" },
   ]);
 
-  expect(() => prom.resetPromotionFilter("", undefined)).toThrow(
-    "resetPromotionFilter requires a rollupId or { all: true }",
-  );
+  expect(() => {
+    prom.resetPromotionFilter("", undefined);
+  }).toThrow("resetPromotionFilter requires a rollupId or { all: true }");
   rows = db
     .prepare(
       `SELECT rollup_id, promotion_filtered_at FROM t1_rollups WHERE rollup_id IN ('r-one', 'r-two') ORDER BY rollup_id`,
     )
-    .all() as Array<{ rollup_id: string; promotion_filtered_at: string | null }>;
+    .all() as { rollup_id: string; promotion_filtered_at: string | null }[];
   expect(rows).toEqual([
     { rollup_id: "r-one", promotion_filtered_at: null },
     { rollup_id: "r-two", promotion_filtered_at: "2026-04-27T15:00:00.000Z" },
@@ -640,7 +663,7 @@ test("resetPromotionFilter requires an explicit all-rows reset", () => {
     .prepare(
       `SELECT rollup_id, promotion_filtered_at FROM t1_rollups WHERE rollup_id IN ('r-one', 'r-two') ORDER BY rollup_id`,
     )
-    .all() as Array<{ rollup_id: string; promotion_filtered_at: string | null }>;
+    .all() as { rollup_id: string; promotion_filtered_at: string | null }[];
   expect(rows).toEqual([
     { rollup_id: "r-one", promotion_filtered_at: null },
     { rollup_id: "r-two", promotion_filtered_at: null },
@@ -654,19 +677,20 @@ test("promoteRollup replaces orphaned t2_vec rowids", async () => {
   const prom = new T2Promotion({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-27T15:00:00Z"),
-    uuid: () => "m-orphan",
-    llm: async () => [{ title: "T", body: "B", kind: "fact" }],
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: (): string => "m-orphan",
+    llm: (): Promise<T2MemoryExtraction[]> =>
+      Promise.resolve([{ title: "T", body: "B", kind: "fact" }]),
     minTranscriptChars: 0,
   });
 
   const count = await prom.promoteRollup("r-orphan");
   expect(count).toBe(1);
 
-  const memories = db.query("SELECT COUNT(*) c FROM t2_memories", []).get() as any;
-  expect(memories.c).toBe(1);
-  const vectors = db.query("SELECT COUNT(*) c FROM t2_vec", []).get() as any;
-  expect(vectors.c).toBe(1);
+  const memories = db.query<{ c: number }, []>("SELECT COUNT(*) c FROM t2_memories").get();
+  expect(memories?.c).toBe(1);
+  const vectors = db.query<{ c: number }, []>("SELECT COUNT(*) c FROM t2_vec").get();
+  expect(vectors?.c).toBe(1);
 });
 
 test("promoteRollup deterministically keeps one promoted copy for identical high-frequency transcripts", async () => {
@@ -674,17 +698,18 @@ test("promoteRollup deterministically keeps one promoted copy for identical high
   seedT1("r-dedupe-2", "s-dedupe-2", "2026-04-27T10:05:00Z");
 
   const originalRandom = Math.random;
-  Math.random = () => 0.1;
+  Math.random = (): number => 0.1;
   try {
     const prom = new T2Promotion({
       db,
       embedder: new TestEmbedder({ dim: 384 }),
-      clock: () => new Date("2026-04-27T15:00:00Z"),
-      uuid: (() => {
+      clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+      uuid: ((): (() => string) => {
         const ids = ["m-dedupe-1", "m-dedupe-2"];
-        return () => ids.shift() ?? "m-dedupe-fallback";
+        return (): string => ids.shift() ?? "m-dedupe-fallback";
       })(),
-      llm: async () => [{ title: "Stable fact", body: "Stable body", kind: "fact" }],
+      llm: (): Promise<T2MemoryExtraction[]> =>
+        Promise.resolve([{ title: "Stable fact", body: "Stable body", kind: "fact" }]),
       minTranscriptChars: 0,
       highFrequencyThreshold: 0,
     });
@@ -716,11 +741,11 @@ test("promoteRollup uses payload_json transcript text and still applies transcri
   const shortProm = new T2Promotion({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-27T15:00:00Z"),
-    uuid: () => "m-json-short",
-    llm: async (transcript) => {
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: (): string => "m-json-short",
+    llm: (transcript): Promise<T2MemoryExtraction[]> => {
       shortInputs.push(transcript);
-      return [{ title: "T", body: "B", kind: "fact" }];
+      return Promise.resolve([{ title: "T", body: "B", kind: "fact" }]);
     },
     minTranscriptChars: 30,
     maxTranscriptChars: 200,
@@ -743,11 +768,11 @@ test("promoteRollup uses payload_json transcript text and still applies transcri
   const longProm = new T2Promotion({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-27T15:00:00Z"),
-    uuid: () => "m-json-long",
-    llm: async (transcript) => {
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: (): string => "m-json-long",
+    llm: (transcript): Promise<T2MemoryExtraction[]> => {
       longInputs.push(transcript);
-      return [{ title: "Long", body: "Body", kind: "fact" }];
+      return Promise.resolve([{ title: "Long", body: "Body", kind: "fact" }]);
     },
     minTranscriptChars: 1,
     maxTranscriptChars: 40,
@@ -778,11 +803,11 @@ test("promoteRollup strips tool-call xml tags from transcript content before LLM
   const prom = new T2Promotion({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-27T15:00:00Z"),
-    uuid: () => "m-xml-transcript",
-    llm: async (transcript) => {
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: (): string => "m-xml-transcript",
+    llm: (transcript): Promise<T2MemoryExtraction[]> => {
       seenTranscripts.push(transcript);
-      return [];
+      return Promise.resolve([]);
     },
     minTranscriptChars: 0,
   });
@@ -866,14 +891,15 @@ test("writeDirectT2Memory rolls back t2_vec DELETE on slug-UPDATE when re-INSERT
   const beforeBytes = Buffer.from(before!.embedding as ArrayBuffer | Uint8Array as Uint8Array);
 
   const originalRun = db.run.bind(db);
-  const failingRun: typeof db.run = ((sql: string, ...rest: unknown[]) => {
+  type DbRunArgs = Parameters<typeof db.run>;
+  const failingRun: typeof db.run = (sql: string, ...rest: unknown[]) => {
     if (typeof sql === "string" && sql.startsWith("INSERT INTO t2_vec")) {
       throw new Error("forced t2_vec INSERT failure");
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- forwarded variadic args
-    return (originalRun as any)(sql, ...rest);
-  }) as typeof db.run;
-  (db as any).run = failingRun;
+    return originalRun(sql, ...(rest as DbRunArgs extends [string, ...infer R] ? R : never[]));
+  };
+  const dbInternals = db as unknown as { run: typeof db.run };
+  dbInternals.run = failingRun;
 
   try {
     expect(() =>
@@ -886,7 +912,7 @@ test("writeDirectT2Memory rolls back t2_vec DELETE on slug-UPDATE when re-INSERT
       }),
     ).toThrow();
   } finally {
-    (db as any).run = originalRun;
+    dbInternals.run = originalRun;
   }
 
   const after = db

@@ -1,7 +1,8 @@
-import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { describe, expect, it } from "bun:test";
+
 import { applySchema, SCHEMA_VERSION } from "../../src/db/schema.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 
 try {
   if (process.platform === "darwin") {
@@ -502,7 +503,7 @@ describe("clearRoutingBias", () => {
     const db = makeDb();
 
     expect(() => clearRoutingBias(db, {})).toThrow();
-    expect(() => clearRoutingBias(db, { scope: "agent" } as any)).toThrow();
+    expect(() => clearRoutingBias(db, { scope: "agent" })).toThrow();
     db.close();
   });
 });

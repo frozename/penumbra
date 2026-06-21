@@ -1,5 +1,9 @@
-import { expect, test, beforeEach } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, expect, test } from "bun:test";
+
+import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { HandoffWriter } from "../../src/writers/handoff.js";
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
@@ -7,9 +11,6 @@ try {
 } catch {
   // already loaded in this process
 }
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { migrate } from "../../src/db/migrations.js";
-import { HandoffWriter } from "../../src/writers/handoff.js";
 
 let db: Database;
 let writer: HandoffWriter;

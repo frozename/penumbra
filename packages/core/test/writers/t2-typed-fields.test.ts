@@ -1,14 +1,17 @@
+import { Database } from "bun:sqlite";
 // packages/core/test/writers/t2-typed-fields.test.ts
 import { describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+
 import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { writeT2Memory } from "../../src/writers/t2.js";
 // macOS preamble (see Pre-flight "Test file boilerplate")
 try {
   if (process.platform === "darwin")
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-} catch {}
-import { writeT2Memory } from "../../src/writers/t2.js";
+} catch {
+  /* darwin sqlite override is best-effort */
+}
 
 describe("T2 writer typed-fields support", () => {
   test("explicit obs_type/concepts/severity/file_paths land on the row", async () => {

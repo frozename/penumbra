@@ -1,8 +1,13 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
 import { loadSqliteVec, migrate } from "../../src/index.js";
 import { TestEmbedder } from "../../src/testing/index.js";
-import { T2MemoryExtractionSchema, T2Promotion } from "../../src/writers/t2.js";
+import {
+  type T2MemoryExtraction,
+  T2MemoryExtractionSchema,
+  T2Promotion,
+} from "../../src/writers/t2.js";
 
 try {
   if (process.platform === "darwin") {
@@ -105,38 +110,40 @@ describe("T2 extraction schema + promote persistence for why/source_quote/learne
     const populated = new T2Promotion({
       db,
       embedder: new TestEmbedder({ dim: 4 }),
-      clock: () => new Date("2026-05-02T00:00:00.000Z"),
-      uuid: () => "m-populated",
+      clock: (): Date => new Date("2026-05-02T00:00:00.000Z"),
+      uuid: (): string => "m-populated",
       minTranscriptChars: 0,
-      llm: async () => [
-        {
-          title: "Persist typed fields",
-          body: "body",
-          kind: "fact",
-          obs_type: "feature",
-          why: "Improves retrieval precision",
-          source_quote: "T2.2 requires these fields",
-          learned_at: "2026-05-01T10:00:00.000Z",
-          durability: "medium",
-          depth: 3,
-          is_episodic: true,
-        },
-      ],
+      llm: (): Promise<T2MemoryExtraction[]> =>
+        Promise.resolve([
+          {
+            title: "Persist typed fields",
+            body: "body",
+            kind: "fact",
+            obs_type: "feature",
+            why: "Improves retrieval precision",
+            source_quote: "T2.2 requires these fields",
+            learned_at: "2026-05-01T10:00:00.000Z",
+            durability: "medium",
+            depth: 3,
+            is_episodic: true,
+          },
+        ]),
     });
 
     const legacy = new T2Promotion({
       db,
       embedder: new TestEmbedder({ dim: 4 }),
-      clock: () => new Date("2026-05-02T00:00:00.000Z"),
-      uuid: () => "m-legacy",
+      clock: (): Date => new Date("2026-05-02T00:00:00.000Z"),
+      uuid: (): string => "m-legacy",
       minTranscriptChars: 0,
-      llm: async () => [
-        {
-          title: "Legacy extraction",
-          body: "body",
-          kind: "fact",
-        },
-      ],
+      llm: (): Promise<T2MemoryExtraction[]> =>
+        Promise.resolve([
+          {
+            title: "Legacy extraction",
+            body: "body",
+            kind: "fact",
+          },
+        ]),
     });
 
     expect(await populated.promoteRollup("r-populated")).toBe(1);

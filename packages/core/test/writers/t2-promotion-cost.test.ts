@@ -1,5 +1,9 @@
-import { beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, test } from "bun:test";
+
+import { loadSqliteVec, migrate } from "../../src/index.js";
+import { TestEmbedder } from "../../src/testing/index.js";
+import { type T2MemoryExtraction, T2Promotion } from "../../src/writers/t2.js";
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
@@ -7,9 +11,6 @@ try {
 } catch {
   // already loaded in this process
 }
-import { loadSqliteVec, migrate } from "../../src/index.js";
-import { TestEmbedder } from "../../src/testing/index.js";
-import { T2Promotion } from "../../src/writers/t2.js";
 
 describe("T2Promotion cost gates", () => {
   let db: Database;
@@ -20,7 +21,7 @@ describe("T2Promotion cost gates", () => {
     migrate(db, { embeddingDim: 384 });
   });
 
-  function seedRollup(rollupId: string, sessionId: string, origin: string | null = null) {
+  function seedRollup(rollupId: string, sessionId: string, origin: string | null = null): void {
     db.run(
       `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at,
                                n_events, lane_breakdown_json, provider_breakdown_json, origin)
@@ -29,7 +30,7 @@ describe("T2Promotion cost gates", () => {
     );
   }
 
-  function seedTranscript(sessionId: string, content: string) {
+  function seedTranscript(sessionId: string, content: string): void {
     db.run(
       `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
        VALUES (?, ?, ?, 'mcp', 'u1', 'm1', ?, 'agent-prompt', 'local', '{}', ?)`,
@@ -45,11 +46,11 @@ describe("T2Promotion cost gates", () => {
     const prom = new T2Promotion({
       db,
       embedder: new TestEmbedder({ dim: 384 }),
-      clock: () => new Date("2026-04-27T15:00:00Z"),
-      uuid: () => "m-short",
-      llm: async () => {
+      clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+      uuid: (): string => "m-short",
+      llm: (): Promise<T2MemoryExtraction[]> => {
         called = true;
-        return [];
+        return Promise.resolve([]);
       },
     });
 
@@ -73,11 +74,11 @@ describe("T2Promotion cost gates", () => {
     const prom = new T2Promotion({
       db,
       embedder: new TestEmbedder({ dim: 384 }),
-      clock: () => new Date("2026-04-27T15:00:00Z"),
-      uuid: () => "m-long",
-      llm: async (transcript: string) => {
+      clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+      uuid: (): string => "m-long",
+      llm: (transcript: string): Promise<T2MemoryExtraction[]> => {
         seenTranscript = transcript;
-        return [];
+        return Promise.resolve([]);
       },
     });
 
@@ -91,28 +92,28 @@ describe("T2Promotion cost gates", () => {
 
   test("allows the first repeated high-frequency transcript after the threshold", async () => {
     const originalRandom = Math.random;
-    Math.random = () => 0.1;
+    Math.random = (): number => 0.1;
     try {
       let called = 0;
       const prom = new T2Promotion({
         db,
         embedder: new TestEmbedder({ dim: 384 }),
-        clock: () => new Date("2026-04-27T15:00:00Z"),
-        uuid: () => "m-sample",
-        llm: async () => {
+        clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+        uuid: (): string => "m-sample",
+        llm: (): Promise<T2MemoryExtraction[]> => {
           called++;
-          return [];
+          return Promise.resolve([]);
         },
       });
 
       for (let i = 1; i <= 6; i++) {
-        seedRollup(`r-${i}`, `s-${i}`, "maestro");
+        seedRollup(`r-${String(i)}`, `s-${String(i)}`, "maestro");
         seedTranscript(
-          `s-${i}`,
+          `s-${String(i)}`,
           "This is a normal length transcript with enough signal to hit the sampling gate. " +
             "x".repeat(220),
         );
-        await prom.promoteRollup(`r-${i}`);
+        await prom.promoteRollup(`r-${String(i)}`);
       }
 
       expect(called).toBe(6);

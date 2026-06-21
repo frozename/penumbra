@@ -1,8 +1,12 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- sqlite row fixtures */
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
 import { loadSqliteVec, migrate } from "../../src/index.js";
-import { T2Promotion } from "../../src/writers/t2.js";
+import { type T2MemoryExtraction, T2Promotion } from "../../src/writers/t2.js";
+
+interface PromotionInternals {
+  markPromotionFiltered: (rollupId: string) => void;
+}
 
 try {
   if (process.platform === "darwin") {
@@ -30,12 +34,14 @@ type Extraction = {
 class DeterministicEmbedder {
   constructor(private readonly vectors: Map<string, Float32Array>) {}
 
-  async embed(input: string[]): Promise<Float32Array[]> {
-    return input.map((text) => {
-      const vec = this.vectors.get(text);
-      if (!vec) throw new Error(`missing deterministic vector for: ${text}`);
-      return vec;
-    });
+  embed(input: string[]): Promise<Float32Array[]> {
+    return Promise.resolve(
+      input.map((text) => {
+        const vec = this.vectors.get(text);
+        if (!vec) throw new Error(`missing deterministic vector for: ${text}`);
+        return vec;
+      }),
+    );
   }
 }
 
@@ -50,8 +56,8 @@ beforeEach(() => {
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 4 });
   uuidSeq = 0;
-  delete process.env[EXTRACTION_FILTER_GATE_ENV];
-  delete process.env[NEAR_DUP_GATE_ENV];
+  delete process.env.PENUMBRA_EXTRACTION_FILTER_GATE;
+  delete process.env.PENUMBRA_PROMOTION_NEAR_DUP_GATE;
 });
 
 afterEach(() => {
@@ -94,13 +100,13 @@ function seedRollup(rollupId: string, sessionId: string): void {
 
 function makePromotion(
   embedder: DeterministicEmbedder,
-  llm: (transcript: string) => Promise<Extraction[]>,
-) {
+  llm: (transcript: string) => Promise<T2MemoryExtraction[]>,
+): T2Promotion {
   return new T2Promotion({
     db,
     embedder,
-    clock: () => new Date("2026-04-27T15:00:00Z"),
-    uuid: () => `m-${++uuidSeq}`,
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: (): string => `m-${String(++uuidSeq)}`,
     llm,
     minTranscriptChars: 0,
   });
@@ -116,31 +122,33 @@ describe("T2Promotion creation gate + near-dup gate", () => {
       ["episodic", new Float32Array([0, 0, 1, 0])],
     ]);
 
-    const prom = makePromotion(new DeterministicEmbedder(vecs), async () => [
-      {
-        title: "tiny",
-        body: "tiny",
-        kind: "fact",
-        depth: 1,
-        promote: false,
-      },
-      {
-        title: "standing",
-        body: "standing",
-        kind: "preference",
-        obs_type: "standing_brief",
-        promote: false,
-        depth: 1,
-      },
-      {
-        title: "episodic",
-        body: "episodic",
-        kind: "fact",
-        is_episodic: true,
-        promote: false,
-        depth: 1,
-      },
-    ]);
+    const prom = makePromotion(new DeterministicEmbedder(vecs), () =>
+      Promise.resolve([
+        {
+          title: "tiny",
+          body: "tiny",
+          kind: "fact",
+          depth: 1,
+          promote: false,
+        },
+        {
+          title: "standing",
+          body: "standing",
+          kind: "preference",
+          obs_type: "standing_brief",
+          promote: false,
+          depth: 1,
+        },
+        {
+          title: "episodic",
+          body: "episodic",
+          kind: "fact",
+          is_episodic: true,
+          promote: false,
+          depth: 1,
+        },
+      ]),
+    );
 
     const count = await prom.promoteRollup("r-default-off");
     expect(count).toBe(3);
@@ -171,50 +179,52 @@ describe("T2Promotion creation gate + near-dup gate", () => {
       [keptDeepShortBody, new Float32Array([0.5, 0.5, 0.5, 0.5])],
     ]);
 
-    const prom = makePromotion(new DeterministicEmbedder(vecs), async () => [
-      {
-        title: "episodic",
-        body: "episodic body should drop",
-        kind: "fact",
-        is_episodic: true,
-        obs_type: "is_episodic",
-        promote: false,
-        depth: 1,
-      },
-      {
-        title: "standing brief",
-        body: "standing brief body should drop",
-        kind: "preference",
-        obs_type: "standing_brief",
-        promote: false,
-        depth: 2,
-      },
-      {
-        title: "tiny shallow",
-        body: "tiny",
-        kind: "fact",
-        depth: 1,
-        promote: true,
-      },
-      {
-        title: "semantic keep",
-        body: keptSemanticBody,
-        kind: "knowledge",
-        why: "grounded why",
-        obs_type: "fact",
-        promote: true,
-        depth: 1,
-      },
-      {
-        title: "deep short keep",
-        body: keptDeepShortBody,
-        kind: "decision",
-        why: "depth escape hatch should retain this",
-        obs_type: "fact",
-        promote: true,
-        depth: 2,
-      },
-    ]);
+    const prom = makePromotion(new DeterministicEmbedder(vecs), () =>
+      Promise.resolve([
+        {
+          title: "episodic",
+          body: "episodic body should drop",
+          kind: "fact",
+          is_episodic: true,
+          obs_type: "is_episodic",
+          promote: false,
+          depth: 1,
+        },
+        {
+          title: "standing brief",
+          body: "standing brief body should drop",
+          kind: "preference",
+          obs_type: "standing_brief",
+          promote: false,
+          depth: 2,
+        },
+        {
+          title: "tiny shallow",
+          body: "tiny",
+          kind: "fact",
+          depth: 1,
+          promote: true,
+        },
+        {
+          title: "semantic keep",
+          body: keptSemanticBody,
+          kind: "knowledge",
+          why: "grounded why",
+          obs_type: "fact",
+          promote: true,
+          depth: 1,
+        },
+        {
+          title: "deep short keep",
+          body: keptDeepShortBody,
+          kind: "decision",
+          why: "depth escape hatch should retain this",
+          obs_type: "fact",
+          promote: true,
+          depth: 2,
+        },
+      ]),
+    );
 
     const count = await prom.promoteRollup("r-gated");
     expect(count).toBe(2);
@@ -232,16 +242,18 @@ describe("T2Promotion creation gate + near-dup gate", () => {
 
     const vecs = new Map<string, Float32Array>([["drop me", new Float32Array([1, 0, 0, 0])]]);
 
-    const prom = makePromotion(new DeterministicEmbedder(vecs), async () => [
-      {
-        title: "standing brief",
-        body: "drop me",
-        kind: "preference",
-        obs_type: "standing_brief",
-        promote: false,
-        depth: 1,
-      },
-    ]);
+    const prom = makePromotion(new DeterministicEmbedder(vecs), () =>
+      Promise.resolve([
+        {
+          title: "standing brief",
+          body: "drop me",
+          kind: "preference",
+          obs_type: "standing_brief",
+          promote: false,
+          depth: 1,
+        },
+      ]),
+    );
 
     const count = await prom.promoteRollup("r-drop");
     expect(count).toBe(0);
@@ -283,26 +295,30 @@ describe("T2Promotion creation gate + near-dup gate", () => {
     ]);
 
     seedRollup("r-a", "s-a");
-    const p1 = makePromotion(new DeterministicEmbedder(vecs), async () => [
-      {
-        title: "existing",
-        body: existingBody,
-        kind: "knowledge",
-        why: "explains architectural tradeoff",
-        depth: 3,
-      },
-    ]);
+    const p1 = makePromotion(new DeterministicEmbedder(vecs), () =>
+      Promise.resolve([
+        {
+          title: "existing",
+          body: existingBody,
+          kind: "knowledge",
+          why: "explains architectural tradeoff",
+          depth: 3,
+        },
+      ]),
+    );
     expect(await p1.promoteRollup("r-a")).toBe(1);
 
     seedRollup("r-b", "s-b");
-    const p2 = makePromotion(new DeterministicEmbedder(vecs), async () => [
-      {
-        title: "candidate weaker",
-        body: dupeBody,
-        kind: "knowledge",
-        depth: 1,
-      },
-    ]);
+    const p2 = makePromotion(new DeterministicEmbedder(vecs), () =>
+      Promise.resolve([
+        {
+          title: "candidate weaker",
+          body: dupeBody,
+          kind: "knowledge",
+          depth: 1,
+        },
+      ]),
+    );
     expect(await p2.promoteRollup("r-b")).toBe(0);
 
     const memoryCount = db.query<{ c: number }, []>("SELECT COUNT(*) AS c FROM t2_memories").get();
@@ -343,26 +359,30 @@ describe("T2Promotion creation gate + near-dup gate", () => {
     ]);
 
     seedRollup("r-c", "s-c");
-    const p1 = makePromotion(new DeterministicEmbedder(vecs), async () => [
-      {
-        title: "existing weak",
-        body: weakBody,
-        kind: "fact",
-        depth: 1,
-      },
-    ]);
+    const p1 = makePromotion(new DeterministicEmbedder(vecs), () =>
+      Promise.resolve([
+        {
+          title: "existing weak",
+          body: weakBody,
+          kind: "fact",
+          depth: 1,
+        },
+      ]),
+    );
     expect(await p1.promoteRollup("r-c")).toBe(1);
 
     seedRollup("r-d", "s-d");
-    const p2 = makePromotion(new DeterministicEmbedder(vecs), async () => [
-      {
-        title: "candidate strong",
-        body: strongBody,
-        kind: "fact",
-        why: "contains rationale missing from prior memory",
-        depth: 3,
-      },
-    ]);
+    const p2 = makePromotion(new DeterministicEmbedder(vecs), () =>
+      Promise.resolve([
+        {
+          title: "candidate strong",
+          body: strongBody,
+          kind: "fact",
+          why: "contains rationale missing from prior memory",
+          depth: 3,
+        },
+      ]),
+    );
     expect(await p2.promoteRollup("r-d")).toBe(1);
 
     const memoryCount = db.query<{ c: number }, []>("SELECT COUNT(*) AS c FROM t2_memories").get();
@@ -417,7 +437,7 @@ describe("T2Promotion creation gate + near-dup gate", () => {
 
     const originalWarn = console.warn;
     const warnings: string[] = [];
-    console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+    console.warn = (...args: unknown[]): number => warnings.push(args.map(String).join(" "));
     try {
       for (const raw of ["0", "-1", "1.1", "not-a-number"]) {
         const existingBody = `existing body ${raw}`;
@@ -428,15 +448,15 @@ describe("T2Promotion creation gate + near-dup gate", () => {
         ]);
         process.env[NEAR_DUP_THRESHOLD_ENV] = raw;
         seedRollup(`r-threshold-existing-${raw}`, `s-threshold-existing-${raw}`);
-        const first = makePromotion(new DeterministicEmbedder(caseVectors), async () => [
-          { title: "existing", body: existingBody, kind: "fact", depth: 3 },
-        ]);
+        const first = makePromotion(new DeterministicEmbedder(caseVectors), () =>
+          Promise.resolve([{ title: "existing", body: existingBody, kind: "fact", depth: 3 }]),
+        );
         expect(await first.promoteRollup(`r-threshold-existing-${raw}`)).toBe(1);
 
         seedRollup(`r-threshold-candidate-${raw}`, `s-threshold-candidate-${raw}`);
-        const second = makePromotion(new DeterministicEmbedder(caseVectors), async () => [
-          { title: "candidate", body: candidateBody, kind: "fact", depth: 1 },
-        ]);
+        const second = makePromotion(new DeterministicEmbedder(caseVectors), () =>
+          Promise.resolve([{ title: "candidate", body: candidateBody, kind: "fact", depth: 1 }]),
+        );
         expect(await second.promoteRollup(`r-threshold-candidate-${raw}`)).toBe(0);
       }
 
@@ -448,19 +468,19 @@ describe("T2Promotion creation gate + near-dup gate", () => {
         [validCandidateBody, new Float32Array([0.98, 0.02, 0, 0])],
       ]);
       seedRollup("r-threshold-valid-existing", "s-threshold-valid-existing");
-      const validFirst = makePromotion(new DeterministicEmbedder(validVectors), async () => [
-        { title: "existing", body: validExistingBody, kind: "fact", depth: 3 },
-      ]);
+      const validFirst = makePromotion(new DeterministicEmbedder(validVectors), () =>
+        Promise.resolve([{ title: "existing", body: validExistingBody, kind: "fact", depth: 3 }]),
+      );
       expect(await validFirst.promoteRollup("r-threshold-valid-existing")).toBe(1);
 
       seedRollup("r-threshold-valid-candidate", "s-threshold-valid-candidate");
-      const validSecond = makePromotion(new DeterministicEmbedder(validVectors), async () => [
-        { title: "candidate", body: validCandidateBody, kind: "fact", depth: 1 },
-      ]);
+      const validSecond = makePromotion(new DeterministicEmbedder(validVectors), () =>
+        Promise.resolve([{ title: "candidate", body: validCandidateBody, kind: "fact", depth: 1 }]),
+      );
       expect(await validSecond.promoteRollup("r-threshold-valid-candidate")).toBe(0);
     } finally {
       console.warn = originalWarn;
-      delete process.env[NEAR_DUP_THRESHOLD_ENV];
+      delete process.env.PENUMBRA_PROMOTION_NEAR_DUP_THRESHOLD;
     }
 
     expect(warnings.filter((msg) => msg.includes(NEAR_DUP_THRESHOLD_ENV))).toHaveLength(8);
@@ -480,26 +500,30 @@ describe("T2Promotion creation gate + near-dup gate", () => {
     ]);
 
     seedRollup("r-atomic-a", "s-atomic-a");
-    const first = makePromotion(new DeterministicEmbedder(vecs), async () => [
-      {
-        title: "existing",
-        body: existingBody,
-        kind: "knowledge",
-        why: "explains architectural tradeoff",
-        depth: 3,
-      },
-    ]);
+    const first = makePromotion(new DeterministicEmbedder(vecs), () =>
+      Promise.resolve([
+        {
+          title: "existing",
+          body: existingBody,
+          kind: "knowledge",
+          why: "explains architectural tradeoff",
+          depth: 3,
+        },
+      ]),
+    );
     expect(await first.promoteRollup("r-atomic-a")).toBe(1);
 
     seedRollup("r-atomic-b", "s-atomic-b");
-    const blocked = makePromotion(new DeterministicEmbedder(vecs), async () => [
-      {
-        title: "candidate weaker",
-        body: dupeBody,
-        kind: "knowledge",
-        depth: 1,
-      },
-    ]);
+    const blocked = makePromotion(new DeterministicEmbedder(vecs), () =>
+      Promise.resolve([
+        {
+          title: "candidate weaker",
+          body: dupeBody,
+          kind: "knowledge",
+          depth: 1,
+        },
+      ]),
+    );
     const originalTransaction = db.transaction.bind(db);
     let inTransaction = false;
     db.transaction = ((fn: () => unknown) =>
@@ -512,10 +536,11 @@ describe("T2Promotion creation gate + near-dup gate", () => {
         }
       })) as typeof db.transaction;
     const markCallsInTxn: boolean[] = [];
-    const originalMarkFiltered = (blocked as any).markPromotionFiltered.bind(blocked);
-    (blocked as any).markPromotionFiltered = (rid: string) => {
+    const blockedInternals = blocked as unknown as PromotionInternals;
+    const originalMarkFiltered = blockedInternals.markPromotionFiltered.bind(blocked);
+    blockedInternals.markPromotionFiltered = (rid: string): void => {
       markCallsInTxn.push(inTransaction);
-      return originalMarkFiltered(rid);
+      originalMarkFiltered(rid);
     };
     expect(await blocked.promoteRollup("r-atomic-b")).toBe(0);
 
@@ -546,26 +571,30 @@ describe("T2Promotion creation gate + near-dup gate", () => {
     ]);
 
     seedRollup("r-prefetch-a", "s-prefetch-a");
-    const first = makePromotion(new DeterministicEmbedder(vecs), async () => [
-      {
-        title: "existing",
-        body: existingBody,
-        kind: "knowledge",
-        why: "explains architectural tradeoff",
-        depth: 3,
-      },
-    ]);
+    const first = makePromotion(new DeterministicEmbedder(vecs), () =>
+      Promise.resolve([
+        {
+          title: "existing",
+          body: existingBody,
+          kind: "knowledge",
+          why: "explains architectural tradeoff",
+          depth: 3,
+        },
+      ]),
+    );
     expect(await first.promoteRollup("r-prefetch-a")).toBe(1);
 
     seedRollup("r-prefetch-b", "s-prefetch-b");
-    const blocked = makePromotion(new DeterministicEmbedder(vecs), async () => [
-      {
-        title: "candidate weaker",
-        body: dupeBody,
-        kind: "knowledge",
-        depth: 1,
-      },
-    ]);
+    const blocked = makePromotion(new DeterministicEmbedder(vecs), () =>
+      Promise.resolve([
+        {
+          title: "candidate weaker",
+          body: dupeBody,
+          kind: "knowledge",
+          depth: 1,
+        },
+      ]),
+    );
 
     const originalTransaction = db.transaction.bind(db);
     let inTransaction = false;
@@ -581,14 +610,14 @@ describe("T2Promotion creation gate + near-dup gate", () => {
 
     const originalQuery = db.query.bind(db);
     const nearDupQueryInTxn: boolean[] = [];
-    db.query = ((sql: string) => {
+    db.query = ((sql: string): ReturnType<typeof originalQuery> => {
       if (sql.includes("ORDER BY vec_distance_cosine")) nearDupQueryInTxn.push(inTransaction);
       return originalQuery(sql);
     }) as typeof db.query;
 
     expect(await blocked.promoteRollup("r-prefetch-b")).toBe(0);
     expect(nearDupQueryInTxn.length).toBeGreaterThan(0);
-    expect(nearDupQueryInTxn.every((v) => v === false)).toBe(true);
+    expect(nearDupQueryInTxn.every((v) => !v)).toBe(true);
   });
 
   test("near-dup gate merges displaced candidate retire targets into the winning candidate", async () => {
@@ -608,33 +637,35 @@ describe("T2Promotion creation gate + near-dup gate", () => {
     ]);
 
     seedRollup("r-displace-a", "s-displace-a");
-    const p1 = makePromotion(new DeterministicEmbedder(vecs), async () => [
-      { title: "existing A", body: existingABody, kind: "fact", depth: 1 },
-    ]);
+    const p1 = makePromotion(new DeterministicEmbedder(vecs), () =>
+      Promise.resolve([{ title: "existing A", body: existingABody, kind: "fact", depth: 1 }]),
+    );
     expect(await p1.promoteRollup("r-displace-a")).toBe(1);
 
     seedRollup("r-displace-b", "s-displace-b");
-    const p2 = makePromotion(new DeterministicEmbedder(vecs), async () => [
-      { title: "existing B", body: existingBBody, kind: "fact", depth: 1 },
-    ]);
+    const p2 = makePromotion(new DeterministicEmbedder(vecs), () =>
+      Promise.resolve([{ title: "existing B", body: existingBBody, kind: "fact", depth: 1 }]),
+    );
     expect(await p2.promoteRollup("r-displace-b")).toBe(1);
 
     seedRollup("r-displace-c", "s-displace-c");
-    const p3 = makePromotion(new DeterministicEmbedder(vecs), async () => [
-      {
-        title: "candidate weak",
-        body: candidateWeakBody,
-        kind: "fact",
-        depth: 1,
-      },
-      {
-        title: "candidate strong",
-        body: candidateStrongBody,
-        kind: "fact",
-        why: "better explanation",
-        depth: 3,
-      },
-    ]);
+    const p3 = makePromotion(new DeterministicEmbedder(vecs), () =>
+      Promise.resolve([
+        {
+          title: "candidate weak",
+          body: candidateWeakBody,
+          kind: "fact",
+          depth: 1,
+        },
+        {
+          title: "candidate strong",
+          body: candidateStrongBody,
+          kind: "fact",
+          why: "better explanation",
+          depth: 3,
+        },
+      ]),
+    );
     expect(await p3.promoteRollup("r-displace-c")).toBe(1);
 
     const existingIds = db
@@ -649,7 +680,7 @@ describe("T2Promotion creation gate + near-dup gate", () => {
         "SELECT target_ids FROM dream_actions WHERE action_type = 'retire' AND status = 'queued' ORDER BY rowid ASC",
       )
       .all()
-      .map((r) => JSON.parse(r.target_ids)[0] as string)
+      .map((r) => (JSON.parse(r.target_ids) as string[])[0])
       .sort();
 
     expect(retireTargets).toEqual([...existingIds].sort());
@@ -669,9 +700,9 @@ describe("T2Promotion creation gate + near-dup gate", () => {
     ]);
 
     seedRollup("r-bad-embed-a", "s-bad-embed-a");
-    const first = makePromotion(new DeterministicEmbedder(vecs), async () => [
-      { title: "existing", body: existingBody, kind: "fact", depth: 1 },
-    ]);
+    const first = makePromotion(new DeterministicEmbedder(vecs), () =>
+      Promise.resolve([{ title: "existing", body: existingBody, kind: "fact", depth: 1 }]),
+    );
     expect(await first.promoteRollup("r-bad-embed-a")).toBe(1);
 
     const existing = db
@@ -683,19 +714,18 @@ describe("T2Promotion creation gate + near-dup gate", () => {
     expect(existing).toBeDefined();
 
     const originalQuery = db.query.bind(db);
-    db.query = ((sql: string) => {
+    db.query = ((sql: string): ReturnType<typeof originalQuery> => {
       const statement = originalQuery(sql);
       if (!sql.includes("ORDER BY vec_distance_cosine")) return statement;
-      return {
-        ...statement,
-        all: (...args: unknown[]) => {
-          const rows = statement.all(...(args as [string | null, Float32Array, number])) as Array<{
+      const proxy = Object.assign(Object.create(statement) as typeof statement, {
+        all: (...args: unknown[]): unknown[] => {
+          const rows = statement.all(...(args as [string | null, Float32Array, number])) as {
             memory_id: string;
             body: string;
             why: string | null;
             depth: number | null;
             embedding: unknown;
-          }>;
+          }[];
           return rows.map((row) =>
             row.memory_id !== existing!.memory_id
               ? row
@@ -705,18 +735,19 @@ describe("T2Promotion creation gate + near-dup gate", () => {
                 },
           );
         },
-      };
+      });
+      return proxy;
     }) as typeof db.query;
 
     const warnings: string[] = [];
     const oldWarn = console.warn;
-    console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+    console.warn = (...args: unknown[]): number => warnings.push(args.map(String).join(" "));
     try {
       seedRollup("r-bad-embed-b", "s-bad-embed-b");
-      const second = makePromotion(new DeterministicEmbedder(vecs), async () => [
-        { title: "candidate", body: candidateBody, kind: "fact", depth: 1 },
-      ]);
-      await expect(second.promoteRollup("r-bad-embed-b")).resolves.toBe(1);
+      const second = makePromotion(new DeterministicEmbedder(vecs), () =>
+        Promise.resolve([{ title: "candidate", body: candidateBody, kind: "fact", depth: 1 }]),
+      );
+      expect(await second.promoteRollup("r-bad-embed-b")).toBe(1);
     } finally {
       console.warn = oldWarn;
     }
@@ -741,14 +772,16 @@ describe("T2Promotion creation gate + near-dup gate", () => {
     ]);
 
     seedRollup("r-dedup-status-a", "s-dedup-status-a");
-    const p1 = makePromotion(new DeterministicEmbedder(vecs), async () => [
-      {
-        title: "existing weak",
-        body: weakBody,
-        kind: "fact",
-        depth: 1,
-      },
-    ]);
+    const p1 = makePromotion(new DeterministicEmbedder(vecs), () =>
+      Promise.resolve([
+        {
+          title: "existing weak",
+          body: weakBody,
+          kind: "fact",
+          depth: 1,
+        },
+      ]),
+    );
     expect(await p1.promoteRollup("r-dedup-status-a")).toBe(1);
 
     const weakId = db
@@ -772,15 +805,17 @@ describe("T2Promotion creation gate + near-dup gate", () => {
     );
 
     seedRollup("r-dedup-status-b", "s-dedup-status-b");
-    const p2 = makePromotion(new DeterministicEmbedder(vecs), async () => [
-      {
-        title: "candidate strong",
-        body: strongBody,
-        kind: "fact",
-        why: "contains rationale missing from prior memory",
-        depth: 3,
-      },
-    ]);
+    const p2 = makePromotion(new DeterministicEmbedder(vecs), () =>
+      Promise.resolve([
+        {
+          title: "candidate strong",
+          body: strongBody,
+          kind: "fact",
+          why: "contains rationale missing from prior memory",
+          depth: 3,
+        },
+      ]),
+    );
     expect(await p2.promoteRollup("r-dedup-status-b")).toBe(1);
 
     const actionsAfterApproved = db
@@ -794,15 +829,17 @@ describe("T2Promotion creation gate + near-dup gate", () => {
     db.run("UPDATE dream_actions SET status = 'auto_applied' WHERE action_id = 'a-approved'");
 
     seedRollup("r-dedup-status-c", "s-dedup-status-c");
-    const p3 = makePromotion(new DeterministicEmbedder(vecs), async () => [
-      {
-        title: "candidate strongest",
-        body: `${strongBody} plus one more precision sentence`,
-        kind: "fact",
-        why: "keeps improving",
-        depth: 4,
-      },
-    ]);
+    const p3 = makePromotion(new DeterministicEmbedder(vecs), () =>
+      Promise.resolve([
+        {
+          title: "candidate strongest",
+          body: `${strongBody} plus one more precision sentence`,
+          kind: "fact",
+          why: "keeps improving",
+          depth: 4,
+        },
+      ]),
+    );
 
     vecs.set(
       `${strongBody} plus one more precision sentence`,
@@ -831,25 +868,29 @@ describe("T2Promotion creation gate + near-dup gate", () => {
     ]);
 
     seedRollup("r-e", "s-e");
-    const p1 = makePromotion(new DeterministicEmbedder(vecs), async () => [
-      {
-        title: "A",
-        body: bodyA,
-        kind: "fact",
-        depth: 1,
-      },
-    ]);
+    const p1 = makePromotion(new DeterministicEmbedder(vecs), () =>
+      Promise.resolve([
+        {
+          title: "A",
+          body: bodyA,
+          kind: "fact",
+          depth: 1,
+        },
+      ]),
+    );
     expect(await p1.promoteRollup("r-e")).toBe(1);
 
     seedRollup("r-f", "s-f");
-    const p2 = makePromotion(new DeterministicEmbedder(vecs), async () => [
-      {
-        title: "B",
-        body: bodyB,
-        kind: "fact",
-        depth: 1,
-      },
-    ]);
+    const p2 = makePromotion(new DeterministicEmbedder(vecs), () =>
+      Promise.resolve([
+        {
+          title: "B",
+          body: bodyB,
+          kind: "fact",
+          depth: 1,
+        },
+      ]),
+    );
     expect(await p2.promoteRollup("r-f")).toBe(1);
 
     const memoryCount = db.query<{ c: number }, []>("SELECT COUNT(*) AS c FROM t2_memories").get();
@@ -875,24 +916,35 @@ describe("T2Promotion creation gate + near-dup gate", () => {
     ]);
 
     seedRollup("r-dim-a", "s-dim-a");
-    const p1 = makePromotion(new DeterministicEmbedder(vecs), async () => [
-      {
-        title: "baseline",
-        body: baseBody,
-        kind: "fact",
-      },
-    ]);
+    const p1 = makePromotion(new DeterministicEmbedder(vecs), () =>
+      Promise.resolve([
+        {
+          title: "baseline",
+          body: baseBody,
+          kind: "fact",
+        },
+      ]),
+    );
     expect(await p1.promoteRollup("r-dim-a")).toBe(1);
 
     seedRollup("r-dim-b", "s-dim-b");
-    const p2 = makePromotion(new DeterministicEmbedder(vecs), async () => [
-      {
-        title: "mismatch",
-        body: mismatchBody,
-        kind: "fact",
-      },
-    ]);
-    await expect(p2.promoteRollup("r-dim-b")).rejects.toThrow(/dimension/i);
+    const p2 = makePromotion(new DeterministicEmbedder(vecs), () =>
+      Promise.resolve([
+        {
+          title: "mismatch",
+          body: mismatchBody,
+          kind: "fact",
+        },
+      ]),
+    );
+    let dimError: unknown;
+    try {
+      await p2.promoteRollup("r-dim-b");
+    } catch (e) {
+      dimError = e;
+    }
+    expect(dimError).toBeInstanceOf(Error);
+    expect((dimError as Error).message).toMatch(/dimension/i);
 
     const failed = db
       .query<

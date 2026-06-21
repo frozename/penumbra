@@ -1,6 +1,12 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- test fixtures and sqlite row mocks intentionally use loose shapes */
-import { expect, test, beforeEach } from "bun:test";
+import { HandoffEventBus } from "@penumbra/core";
 import { Database } from "bun:sqlite";
+import { beforeEach, expect, test } from "bun:test";
+
+import type { HandoffRow } from "../../src/schemas/handoff.js";
+
+import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { HandoffWriter } from "../../src/writers/handoff.js";
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
@@ -8,10 +14,6 @@ try {
 } catch {
   // already loaded in this process
 }
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { migrate } from "../../src/db/migrations.js";
-import { HandoffWriter } from "../../src/writers/handoff.js";
-import { HandoffEventBus } from "@penumbra/core";
 
 let db: Database;
 let writer: HandoffWriter;
@@ -34,7 +36,7 @@ test("create() inserts a pending handoff with the given handoff_id", () => {
     conversation_id: "conv-7",
     project_id: "auth-svc",
     triggered_by_event_id: "evt-1",
-  } as any);
+  });
   expect(id).toBe("h-1");
   const row = db
     .query<
@@ -59,7 +61,7 @@ test("create() persists isolated_install for pending handoffs", () => {
     triggered_by_event_id: "evt-isolated",
     use_worktree: true,
     isolated_install: true,
-  } as any);
+  });
 
   const row = db
     .query<
@@ -81,7 +83,7 @@ test("approve() transitions pending → approved and records actor + ts", () => 
     conversation_id: "c",
     project_id: null,
     triggered_by_event_id: "e",
-  } as any);
+  });
   const result = writer.approve("h-2", {
     resolved_by: "user",
     resolved_at: "2026-04-25T20:01:00Z",
@@ -108,7 +110,7 @@ test("approve() with redirect_to records redirected status and target", () => {
     conversation_id: "c",
     project_id: null,
     triggered_by_event_id: "e",
-  } as any);
+  });
   const result = writer.approve("h-3", {
     resolved_by: "user",
     resolved_at: "t2",
@@ -129,7 +131,7 @@ test("approve() rejects an already-resolved handoff with conflict", () => {
     conversation_id: "c",
     project_id: null,
     triggered_by_event_id: "e",
-  } as any);
+  });
   writer.approve("h-4", { resolved_by: "user", resolved_at: "t" });
   expect(() => writer.approve("h-4", { resolved_by: "user", resolved_at: "t" })).toThrow(
     /conflict/,
@@ -147,7 +149,7 @@ test("claimDispatch() flips approved → dispatched atomically; only one wins", 
     conversation_id: "c",
     project_id: null,
     triggered_by_event_id: "e",
-  } as any);
+  });
   writer.approve("h-5", { resolved_by: "u", resolved_at: "t" });
   expect(writer.claimDispatch("h-5", "w-1")).toBe(true);
   expect(writer.claimDispatch("h-5", "w-2")).toBe(false); // already dispatched
@@ -168,9 +170,10 @@ test("claimDispatch() increments dispatch_attempts and stamps last_dispatch_star
     resolved_at: null,
     chain_max_hops: null,
     chain_trust_mode: null,
+    chain_task_type: null,
     use_worktree: null,
     parent_handoff_id: null,
-  } as any);
+  });
 
   const before = db
     .query("SELECT dispatch_attempts, last_dispatch_started_at FROM handoffs WHERE handoff_id=?")
@@ -203,10 +206,11 @@ test("claimDispatch() rejects claim when dispatch_attempts >= max_dispatch_attem
     resolved_at: null,
     chain_max_hops: null,
     chain_trust_mode: null,
+    chain_task_type: null,
     use_worktree: null,
     parent_handoff_id: null,
     max_dispatch_attempts: 3,
-  } as any);
+  });
 
   db.query(
     "UPDATE handoffs SET dispatch_attempts = 3 WHERE handoff_id = 'h-claim-exhausted'",
@@ -231,11 +235,12 @@ test("createApproved() persists workflow_run_id and max_dispatch_attempts", () =
     resolved_at: null,
     chain_max_hops: null,
     chain_trust_mode: null,
+    chain_task_type: null,
     use_worktree: null,
     parent_handoff_id: null,
     workflow_run_id: "wf-123",
     max_dispatch_attempts: 5,
-  } as any);
+  });
 
   const row = db
     .query("SELECT workflow_run_id, max_dispatch_attempts FROM handoffs WHERE handoff_id=?")
@@ -259,9 +264,10 @@ test("createApproved() defaults max_dispatch_attempts to 3", () => {
     resolved_at: null,
     chain_max_hops: null,
     chain_trust_mode: null,
+    chain_task_type: null,
     use_worktree: null,
     parent_handoff_id: null,
-  } as any);
+  });
 
   const row = db
     .query("SELECT workflow_run_id, max_dispatch_attempts FROM handoffs WHERE handoff_id=?")
@@ -281,7 +287,7 @@ test("markCompleted() transitions dispatched → completed", () => {
     conversation_id: "c",
     project_id: null,
     triggered_by_event_id: "e",
-  } as any);
+  });
   writer.approve("h-6", { resolved_by: "u", resolved_at: "t" });
   writer.claimDispatch("h-6", "worker-1");
   writer.markCompleted("h-6", { ts: "done-ts" });
@@ -306,7 +312,7 @@ test("markCompleted() refuses cancel-requested dispatched handoffs", () => {
     conversation_id: "c-cancel",
     project_id: null,
     triggered_by_event_id: "e",
-  } as any);
+  });
   writer.approve("h-cancel-complete", { resolved_by: "u", resolved_at: "t" });
   writer.claimDispatch("h-cancel-complete", "worker-1");
   writer.requestCancellation("c-cancel", "cancel-ts");
@@ -333,7 +339,7 @@ test("markCompleted() enforces expected_worker_id when provided", () => {
     conversation_id: "c-cas",
     project_id: null,
     triggered_by_event_id: "e",
-  } as any);
+  });
   writer.approve("h-cas-complete", { resolved_by: "u", resolved_at: "t" });
   writer.claimDispatch("h-cas-complete", "worker-B");
 
@@ -375,7 +381,7 @@ test("reject() stores reason and does NOT emit event", () => {
     conversation_id: "c",
     project_id: null,
     triggered_by_event_id: "e",
-  } as any);
+  });
 
   const seen: string[] = [];
   bus.subscribe((row) => seen.push(`${row.handoff_id}:${row.status}`));
@@ -413,7 +419,7 @@ test("markFailed() transitions non-terminal → failed, records reason and does 
     conversation_id: "c",
     project_id: null,
     triggered_by_event_id: "e",
-  } as any);
+  });
   expect(writer.markFailed("h-fail-1", { reason: "timeout" })).toBe(true);
   const row1 = db
     .query<
@@ -436,7 +442,7 @@ test("markFailed() transitions non-terminal → failed, records reason and does 
     conversation_id: "c",
     project_id: null,
     triggered_by_event_id: "e",
-  } as any);
+  });
   writer.approve("h-fail-2", { resolved_by: "u", resolved_at: "t" });
   writer.claimDispatch("h-fail-2");
   expect(writer.markFailed("h-fail-2", { reason: "crash" })).toBe(true);
@@ -461,7 +467,7 @@ test("markFailed() refuses to transition terminal status", () => {
     conversation_id: "c",
     project_id: null,
     triggered_by_event_id: "e",
-  } as any);
+  });
   writer.approve("h-fail-term", { resolved_by: "u", resolved_at: "t" });
   writer.claimDispatch("h-fail-term");
   writer.markCompleted("h-fail-term");
@@ -483,7 +489,7 @@ test("markFailed() refuses to transition terminal status", () => {
     conversation_id: "c",
     project_id: null,
     triggered_by_event_id: "e",
-  } as any);
+  });
   writer.reject("h-fail-rejected", { resolved_by: "u", resolved_at: "t" });
   expect(writer.markFailed("h-fail-rejected", { reason: "fail after reject" })).toBe(false);
 
@@ -498,7 +504,7 @@ test("markFailed() refuses to transition terminal status", () => {
     conversation_id: "c",
     project_id: null,
     triggered_by_event_id: "e",
-  } as any);
+  });
   writer.markFailed("h-fail-failed", { reason: "first" });
   expect(writer.markFailed("h-fail-failed", { reason: "second" })).toBe(false);
 });
@@ -514,7 +520,7 @@ test("markFailed() enforces expected_worker_id when provided", () => {
     conversation_id: "c-cas",
     project_id: null,
     triggered_by_event_id: "e",
-  } as any);
+  });
   writer.approve("h-cas-failed", { resolved_by: "u", resolved_at: "t" });
   writer.claimDispatch("h-cas-failed", "worker-B");
 
@@ -558,7 +564,7 @@ test("HandoffWriter.approve emits a handoff-events event when bus is provided", 
     to: "b",
     message: "m",
     triggered_by_event_id: "e",
-  } as any);
+  });
 
   const seen: string[] = [];
   bus.subscribe((row) => seen.push(`${row.handoff_id}:${row.status}`));
@@ -581,7 +587,7 @@ test("HandoffWriter.approve emits redirected status when redirect_to set", () =>
     to: "b",
     message: "m",
     triggered_by_event_id: "e",
-  } as any);
+  });
 
   const seen: string[] = [];
   bus.subscribe((row) => seen.push(`${row.handoff_id}:${row.status}`));
@@ -684,7 +690,7 @@ test("create() self-roots a handoff with no parent", () => {
     conversation_id: "c",
     project_id: null,
     triggered_by_event_id: "e",
-  } as any);
+  });
   const row = db
     .query<
       { root_handoff_id: string | null },
@@ -705,7 +711,7 @@ test("create() inherits root_handoff_id from parent", () => {
     conversation_id: "c",
     project_id: null,
     triggered_by_event_id: "e",
-  } as any);
+  });
   writer.create({
     handoff_id: "C",
     ts: "t",
@@ -717,7 +723,7 @@ test("create() inherits root_handoff_id from parent", () => {
     project_id: null,
     triggered_by_event_id: "e",
     parent_handoff_id: "R",
-  } as any);
+  });
   const row = db
     .query<
       { root_handoff_id: string | null },
@@ -738,7 +744,7 @@ test("create() recursive inheritance — grandchild inherits grandparent root", 
     conversation_id: "c",
     project_id: null,
     triggered_by_event_id: "e",
-  } as any);
+  });
   writer.create({
     handoff_id: "C1",
     ts: "t",
@@ -750,7 +756,7 @@ test("create() recursive inheritance — grandchild inherits grandparent root", 
     project_id: null,
     triggered_by_event_id: "e",
     parent_handoff_id: "R",
-  } as any);
+  });
   writer.create({
     handoff_id: "G1",
     ts: "t",
@@ -762,7 +768,7 @@ test("create() recursive inheritance — grandchild inherits grandparent root", 
     project_id: null,
     triggered_by_event_id: "e",
     parent_handoff_id: "C1",
-  } as any);
+  });
   const row = db
     .query<
       { root_handoff_id: string | null },
@@ -775,7 +781,7 @@ test("create() recursive inheritance — grandchild inherits grandparent root", 
 test("create() with orphaned parent self-roots and warns", () => {
   const originalWarn = console.warn;
   const warnings: string[] = [];
-  console.warn = (...args: unknown[]) => {
+  console.warn = (...args: unknown[]): void => {
     warnings.push(args.map((a) => String(a)).join(" "));
   };
   try {
@@ -790,7 +796,7 @@ test("create() with orphaned parent self-roots and warns", () => {
       project_id: null,
       triggered_by_event_id: "e",
       parent_handoff_id: "nonexistent-parent-id",
-    } as any);
+    });
   } finally {
     console.warn = originalWarn;
   }
@@ -817,7 +823,7 @@ test("create() — distinct trees yield distinct root_handoff_ids", () => {
     conversation_id: "c1",
     project_id: null,
     triggered_by_event_id: "e",
-  } as any);
+  });
   writer.create({
     handoff_id: "R1c",
     ts: "t",
@@ -829,7 +835,7 @@ test("create() — distinct trees yield distinct root_handoff_ids", () => {
     project_id: null,
     triggered_by_event_id: "e",
     parent_handoff_id: "R1",
-  } as any);
+  });
   writer.create({
     handoff_id: "R2",
     ts: "t",
@@ -840,7 +846,7 @@ test("create() — distinct trees yield distinct root_handoff_ids", () => {
     conversation_id: "c2",
     project_id: null,
     triggered_by_event_id: "e",
-  } as any);
+  });
   writer.create({
     handoff_id: "R2c",
     ts: "t",
@@ -852,7 +858,7 @@ test("create() — distinct trees yield distinct root_handoff_ids", () => {
     project_id: null,
     triggered_by_event_id: "e",
     parent_handoff_id: "R2",
-  } as any);
+  });
 
   const r1c = db
     .query<
@@ -877,7 +883,7 @@ test("HandoffWriter.createApproved inserts a handoff already in approved status 
   migrate(db, { embeddingDim: 384 });
   const bus = new HandoffEventBus();
   const writer = new HandoffWriter({ db, events: bus });
-  const seen: any[] = [];
+  const seen: HandoffRow[] = [];
   bus.subscribe((row) => seen.push(row));
 
   writer.createApproved({
@@ -897,14 +903,16 @@ test("HandoffWriter.createApproved inserts a handoff already in approved status 
     chain_task_type: "implement_small",
   });
 
-  const row = db.query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`).get("h-cs");
-  expect(row.status).toBe("approved");
-  expect(row.from_agent).toBe("user");
-  expect(row.resolved_by).toBe("chain-start");
-  expect(row.resolved_at).toBeNull();
-  expect(row.chain_max_hops).toBe(5);
-  expect(row.chain_trust_mode).toBe("all");
-  expect(row.chain_task_type).toBe("implement_small");
+  const row = db
+    .query<HandoffRow, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
+    .get("h-cs");
+  expect(row?.status).toBe("approved");
+  expect(row?.from_agent).toBe("user");
+  expect(row?.resolved_by).toBe("chain-start");
+  expect(row?.resolved_at).toBeNull();
+  expect(row?.chain_max_hops).toBe(5);
+  expect(row?.chain_trust_mode).toBe("all");
+  expect(row?.chain_task_type).toBe("implement_small");
   expect(seen.length).toBe(1);
   expect(seen[0].handoff_id).toBe("h-cs");
 });
