@@ -8,10 +8,10 @@
     "noPropertyAccessFromIndexSignature": true
   },
   "include": [
-    "packages/*/src/**/*.ts",
-    "packages/*/test/**/*.ts",
-    "packages/*/bin/**/*.ts",
-    "packages/*/scripts/**/*.ts",
+    "packages/**/src/**/*.ts",
+    "packages/**/test/**/*.ts",
+    "packages/**/bin/**/*.ts",
+    "packages/**/scripts/**/*.ts",
     "scripts/**/*.ts",
     "eslint.config.mjs"
   ],

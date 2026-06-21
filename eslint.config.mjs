@@ -16,10 +16,10 @@ import tseslint from "typescript-eslint";
 // (no-undef, base no-unused-vars) plus emits a parse error — the source of
 // thousands of spurious findings.
 const SOURCE_GLOBS = [
-  "packages/*/src/**/*.ts",
-  "packages/*/test/**/*.ts",
-  "packages/*/bin/**/*.ts",
-  "packages/*/scripts/**/*.ts",
+  "packages/**/src/**/*.ts",
+  "packages/**/test/**/*.ts",
+  "packages/**/bin/**/*.ts",
+  "packages/**/scripts/**/*.ts",
   "scripts/**/*.ts",
 ];
 
@@ -39,7 +39,7 @@ export default tseslint.config(
       reportUnusedInlineConfigs: "error",
     },
   },
-  js.configs.recommended,
+  { ...js.configs.recommended, files: SOURCE_GLOBS },
   ...tseslint.configs.strictTypeChecked.map((config) => ({
     ...config,
     files: SOURCE_GLOBS,
