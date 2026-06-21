@@ -1,4 +1,5 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import * as fs from "node:fs";
+import { Buffer } from "node:buffer";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { UsageReader, UsageReaderResult, UsageReaderDelta } from "./index.js";
@@ -15,6 +16,23 @@ interface ClaudeJsonlCursor {
   files: Record<string, FileCursor>;
 }
 
+function readTail(filePath: string, offset: number, length: number): string {
+  if (length <= 0) return "";
+  const buf = Buffer.alloc(length);
+  const fd = fs.openSync(filePath, "r");
+  let total = 0;
+  try {
+    while (total < length) {
+      const n = fs.readSync(fd, buf, total, length - total, offset + total);
+      if (n <= 0) break;
+      total += n;
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return buf.subarray(0, total).toString("utf8");
+}
+
 export class ClaudeJsonlReader implements UsageReader {
   readonly id = "claude-jsonl";
   readonly machineGlobal = true;
@@ -25,7 +43,7 @@ export class ClaudeJsonlReader implements UsageReader {
   }
 
   async read(previousCursor: unknown | null): Promise<UsageReaderResult> {
-    if (!existsSync(this.rootDir)) {
+    if (!fs.existsSync(this.rootDir)) {
       return {
         cursor: previousCursor ?? { files: {} },
         usage_deltas: [],
@@ -36,26 +54,26 @@ export class ClaudeJsonlReader implements UsageReader {
     const newCursor: ClaudeJsonlCursor = { files: { ...cursor.files } };
 
     const buckets = new Map<string, UsageReaderDelta>();
-    const projectDirs = readdirSync(this.rootDir, { withFileTypes: true }).filter((d) =>
-      d.isDirectory(),
-    );
+    const projectDirs = fs
+      .readdirSync(this.rootDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory());
 
     for (const projDir of projectDirs) {
       const projectPath = join(this.rootDir, projDir.name);
       let files: import("node:fs").Dirent[];
       try {
-        files = readdirSync(projectPath, { withFileTypes: true });
+        files = fs.readdirSync(projectPath, { withFileTypes: true });
       } catch {
         continue;
       }
       for (const fEnt of files) {
         if (!fEnt.isFile() || !fEnt.name.endsWith(".jsonl")) continue;
         const filePath = join(projectPath, fEnt.name);
-        const stats = statSync(filePath);
+        const stats = fs.statSync(filePath);
         const fileCursor = newCursor.files[filePath];
-        if (fileCursor && fileCursor.byte_offset >= stats.size) continue;
-        const buf = readFileSync(filePath, "utf8");
-        const slice = buf.slice(fileCursor?.byte_offset ?? 0);
+        const offset = fileCursor?.byte_offset ?? 0;
+        if (offset >= stats.size) continue;
+        const slice = readTail(filePath, offset, stats.size - offset);
         for (const rawLine of slice.split("\n")) {
           const line = rawLine.trim();
           if (!line) continue;
