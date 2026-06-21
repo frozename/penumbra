@@ -1,23 +1,44 @@
-import { describe, it, expect } from "bun:test";
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync } from "node:fs";
+import { describe, expect, it } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
   runHooksInstallClaude,
-  runHooksUninstallClaude,
-  runHooksInstallGeminiOtel,
-  runHooksUninstallGeminiOtel,
-  runHooksInstallCodexOtel,
-  runHooksUninstallCodexOtel,
-  runHooksInstallClaudeOtel,
-  runHooksUninstallClaudeOtel,
-  runHooksInstallClaudeMemory,
-  runHooksUninstallClaudeMemory,
   runHooksInstallClaudeMd,
+  runHooksInstallClaudeMemory,
+  runHooksInstallClaudeOtel,
+  runHooksInstallCodexOtel,
+  runHooksInstallGeminiOtel,
+  runHooksUninstallClaude,
   runHooksUninstallClaudeMd,
+  runHooksUninstallClaudeMemory,
+  runHooksUninstallClaudeOtel,
+  runHooksUninstallCodexOtel,
+  runHooksUninstallGeminiOtel,
 } from "../../src/commands/hooks.js";
+import { expectAsyncThrow, parseJson } from "./_helpers.js";
 
-function tmpClaudeDir(initial?: any): string {
+interface ClaudeSettings {
+  statusLine?: { command: string };
+  telemetry?: {
+    enabled?: boolean;
+    target?: string;
+    otlpProtocol?: string;
+    otlpEndpoint?: string;
+  };
+  env?: Record<string, string | undefined>;
+  hooks?: Record<string, HookGroup[]>;
+  theme?: string;
+  selectedAuthType?: string;
+}
+
+interface HookGroup {
+  matcher: string;
+  hooks: { type: string; command: string }[];
+}
+
+function tmpClaudeDir(initial?: ClaudeSettings): string {
   const root = mkdtempSync(join(tmpdir(), "penumbra-hooks-"));
   const claudeDir = join(root, ".claude");
   mkdirSync(claudeDir, { recursive: true });
@@ -26,14 +47,18 @@ function tmpClaudeDir(initial?: any): string {
   return claudeDir;
 }
 
+function readClaudeSettings(claudeDir: string): ClaudeSettings {
+  return parseJson(readFileSync(join(claudeDir, "settings.json"), "utf8")) as ClaudeSettings;
+}
+
 describe("hooks install --claude", () => {
   it("installs penumbra statusline when no statusLine is configured", async () => {
     const claudeDir = tmpClaudeDir({});
     const scriptDir = mkdtempSync(join(tmpdir(), "penumbra-bin-"));
     const result = await runHooksInstallClaude({ claudeDir, scriptDir, force: false });
     expect(result.installed).toBe(true);
-    const settings = JSON.parse(readFileSync(join(claudeDir, "settings.json"), "utf8"));
-    expect(settings.statusLine.command).toContain("penumbra-claude-statusline");
+    const settings = readClaudeSettings(claudeDir);
+    expect(settings.statusLine?.command).toContain("penumbra-claude-statusline");
     expect(existsSync(join(scriptDir, "penumbra-claude-statusline"))).toBe(true);
   });
 
@@ -50,7 +75,8 @@ describe("hooks install --claude", () => {
   it("refuses to overwrite a third-party statusLine without --force", async () => {
     const claudeDir = tmpClaudeDir({ statusLine: { command: "/some/other/script.sh" } });
     const scriptDir = mkdtempSync(join(tmpdir(), "penumbra-bin-"));
-    await expect(runHooksInstallClaude({ claudeDir, scriptDir, force: false })).rejects.toThrow(
+    await expectAsyncThrow(
+      runHooksInstallClaude({ claudeDir, scriptDir, force: false }),
       /Refusing to overwrite|--force/,
     );
   });
@@ -61,8 +87,8 @@ describe("hooks install --claude", () => {
     const result = await runHooksInstallClaude({ claudeDir, scriptDir, force: true });
     expect(result.installed).toBe(true);
     expect(result.backupPath).toBeDefined();
-    const settings = JSON.parse(readFileSync(join(claudeDir, "settings.json"), "utf8"));
-    expect(settings.statusLine.command).toContain("penumbra-claude-statusline");
+    const settings = readClaudeSettings(claudeDir);
+    expect(settings.statusLine?.command).toContain("penumbra-claude-statusline");
     expect(existsSync(result.backupPath!)).toBe(true);
   });
 });
@@ -75,7 +101,7 @@ describe("hooks uninstall --claude", () => {
     });
     const r = await runHooksUninstallClaude({ claudeDir, scriptDir });
     expect(r.removed).toBe(true);
-    const settings = JSON.parse(readFileSync(join(claudeDir, "settings.json"), "utf8"));
+    const settings = readClaudeSettings(claudeDir);
     expect(settings.statusLine).toBeUndefined();
   });
 });
@@ -89,12 +115,16 @@ function makeFakeHome(): { home: string; geminiDir: string; portFile: string } {
   return { home, geminiDir, portFile };
 }
 
+function readGeminiSettings(geminiDir: string): ClaudeSettings {
+  return parseJson(readFileSync(join(geminiDir, "settings.json"), "utf8")) as ClaudeSettings;
+}
+
 describe("runHooksInstallGeminiOtel", () => {
   it("writes telemetry block into ~/.gemini/settings.json with the daemon port", async () => {
     const { geminiDir, portFile } = makeFakeHome();
     const r = await runHooksInstallGeminiOtel({ geminiDir, portFile });
     expect(r.installed).toBe(true);
-    const settings = JSON.parse(readFileSync(join(geminiDir, "settings.json"), "utf8"));
+    const settings = readGeminiSettings(geminiDir);
     expect(settings.telemetry).toMatchObject({
       enabled: true,
       target: "local",
@@ -110,7 +140,7 @@ describe("runHooksInstallGeminiOtel", () => {
       JSON.stringify({ theme: "Dark", selectedAuthType: "oauth-personal" }, null, 2),
     );
     await runHooksInstallGeminiOtel({ geminiDir, portFile });
-    const settings = JSON.parse(readFileSync(join(geminiDir, "settings.json"), "utf8"));
+    const settings = readGeminiSettings(geminiDir);
     expect(settings.theme).toBe("Dark");
     expect(settings.selectedAuthType).toBe("oauth-personal");
     expect(settings.telemetry?.otlpEndpoint).toBe("http://localhost:51390");
@@ -128,9 +158,10 @@ describe("runHooksInstallGeminiOtel", () => {
     const home = mkdtempSync(join(tmpdir(), "penumbra-hooks-"));
     const geminiDir = join(home, ".gemini");
     mkdirSync(geminiDir, { recursive: true });
-    await expect(
+    await expectAsyncThrow(
       runHooksInstallGeminiOtel({ geminiDir, portFile: join(home, "missing") }),
-    ).rejects.toThrow(/port/i);
+      /port/i,
+    );
   });
 });
 
@@ -140,7 +171,7 @@ describe("runHooksUninstallGeminiOtel", () => {
     await runHooksInstallGeminiOtel({ geminiDir, portFile });
     const r = await runHooksUninstallGeminiOtel({ geminiDir });
     expect(r.removed).toBe(true);
-    const settings = JSON.parse(readFileSync(join(geminiDir, "settings.json"), "utf8"));
+    const settings = readGeminiSettings(geminiDir);
     expect(settings.telemetry).toBeUndefined();
   });
 
@@ -216,9 +247,10 @@ describe("runHooksInstallCodexOtel", () => {
     const home = mkdtempSync(join(tmpdir(), "penumbra-hooks-codex-"));
     const codexDir = join(home, ".codex");
     mkdirSync(codexDir, { recursive: true });
-    await expect(
+    await expectAsyncThrow(
       runHooksInstallCodexOtel({ codexDir, portFile: join(home, "missing") }),
-    ).rejects.toThrow(/port/i);
+      /port/i,
+    );
   });
 });
 
@@ -269,7 +301,7 @@ describe("runHooksInstallClaudeOtel", () => {
     const r = await runHooksInstallClaudeOtel({ claudeDir, portFile });
     expect(r.installed).toBe(true);
     expect(r.endpoint).toBe("http://localhost:51390");
-    const settings = JSON.parse(readFileSync(join(claudeDir, "settings.json"), "utf8"));
+    const settings = readClaudeSettings(claudeDir);
     expect(settings.env).toMatchObject({
       CLAUDE_CODE_ENABLE_TELEMETRY: "1",
       OTEL_LOGS_EXPORTER: "otlp",
@@ -293,7 +325,7 @@ describe("runHooksInstallClaudeOtel", () => {
       ),
     );
     await runHooksInstallClaudeOtel({ claudeDir, portFile });
-    const settings = JSON.parse(readFileSync(join(claudeDir, "settings.json"), "utf8"));
+    const settings = readClaudeSettings(claudeDir);
     expect(settings.statusLine).toMatchObject({ type: "command" });
     expect(settings.theme).toBe("Dark");
     expect(settings.env?.OTEL_EXPORTER_OTLP_ENDPOINT).toBe("http://localhost:51390");
@@ -312,10 +344,10 @@ describe("runHooksInstallClaudeOtel", () => {
       ),
     );
     await runHooksInstallClaudeOtel({ claudeDir, portFile });
-    const settings = JSON.parse(readFileSync(join(claudeDir, "settings.json"), "utf8"));
-    expect(settings.env.MY_API_KEY).toBe("secret-xyz");
-    expect(settings.env.CUSTOM_VAR).toBe("foo");
-    expect(settings.env.OTEL_EXPORTER_OTLP_ENDPOINT).toBe("http://localhost:51390");
+    const settings = readClaudeSettings(claudeDir);
+    expect(settings.env?.MY_API_KEY).toBe("secret-xyz");
+    expect(settings.env?.CUSTOM_VAR).toBe("foo");
+    expect(settings.env?.OTEL_EXPORTER_OTLP_ENDPOINT).toBe("http://localhost:51390");
   });
 
   it("is idempotent when env keys already match", async () => {
@@ -333,17 +365,18 @@ describe("runHooksInstallClaudeOtel", () => {
     const r2 = await runHooksInstallClaudeOtel({ claudeDir, portFile });
     expect(r2.installed).toBe(true);
     expect(r2.idempotent).not.toBe(true);
-    const settings = JSON.parse(readFileSync(join(claudeDir, "settings.json"), "utf8"));
-    expect(settings.env.OTEL_EXPORTER_OTLP_ENDPOINT).toBe("http://localhost:60000");
+    const settings = readClaudeSettings(claudeDir);
+    expect(settings.env?.OTEL_EXPORTER_OTLP_ENDPOINT).toBe("http://localhost:60000");
   });
 
   it("throws when port file is missing", async () => {
     const home = mkdtempSync(join(tmpdir(), "penumbra-hooks-claudeotel-"));
     const claudeDir = join(home, ".claude");
     mkdirSync(claudeDir, { recursive: true });
-    await expect(
+    await expectAsyncThrow(
       runHooksInstallClaudeOtel({ claudeDir, portFile: join(home, "missing") }),
-    ).rejects.toThrow(/port/i);
+      /port/i,
+    );
   });
 });
 
@@ -363,10 +396,10 @@ describe("runHooksUninstallClaudeOtel", () => {
     await runHooksInstallClaudeOtel({ claudeDir, portFile });
     const r = await runHooksUninstallClaudeOtel({ claudeDir });
     expect(r.removed).toBe(true);
-    const settings = JSON.parse(readFileSync(join(claudeDir, "settings.json"), "utf8"));
-    expect(settings.env.MY_API_KEY).toBe("secret-xyz");
-    expect(settings.env.CLAUDE_CODE_ENABLE_TELEMETRY).toBeUndefined();
-    expect(settings.env.OTEL_EXPORTER_OTLP_ENDPOINT).toBeUndefined();
+    const settings = readClaudeSettings(claudeDir);
+    expect(settings.env?.MY_API_KEY).toBe("secret-xyz");
+    expect(settings.env?.CLAUDE_CODE_ENABLE_TELEMETRY).toBeUndefined();
+    expect(settings.env?.OTEL_EXPORTER_OTLP_ENDPOINT).toBeUndefined();
   });
 
   it("drops the env block entirely if it becomes empty after OTEL_* removal", async () => {
@@ -374,7 +407,7 @@ describe("runHooksUninstallClaudeOtel", () => {
     await runHooksInstallClaudeOtel({ claudeDir, portFile });
     const r = await runHooksUninstallClaudeOtel({ claudeDir });
     expect(r.removed).toBe(true);
-    const settings = JSON.parse(readFileSync(join(claudeDir, "settings.json"), "utf8"));
+    const settings = readClaudeSettings(claudeDir);
     expect(settings.env).toBeUndefined();
   });
 
@@ -392,7 +425,7 @@ describe("runHooksUninstallClaudeOtel", () => {
     );
     await runHooksInstallClaudeOtel({ claudeDir, portFile });
     await runHooksUninstallClaudeOtel({ claudeDir });
-    const settings = JSON.parse(readFileSync(join(claudeDir, "settings.json"), "utf8"));
+    const settings = readClaudeSettings(claudeDir);
     expect(settings.statusLine).toMatchObject({ type: "command" });
   });
 
@@ -428,7 +461,7 @@ describe("hooks install --claude-memory", () => {
       "Stop",
     ]);
 
-    const settings = JSON.parse(readFileSync(join(claudeDir, "settings.json"), "utf8"));
+    const settings = readClaudeSettings(claudeDir);
     for (const ev of [
       "UserPromptSubmit",
       "PreToolUse",
@@ -437,13 +470,14 @@ describe("hooks install --claude-memory", () => {
       "PreCompact",
       "Stop",
     ]) {
-      const cmds = settings.hooks[ev].flatMap((e: any) => e.hooks.map((h: any) => h.command));
-      expect(
-        cmds.some((c: string) => c.includes("penumbra.ts") && c.includes("hook claude-code")),
-      ).toBe(true);
-      expect(
-        cmds.some((c: string) => c.includes("PENUMBRA_STORAGE_ROOT=") && c.includes(FAKE_ROOT)),
-      ).toBe(true);
+      const groups = settings.hooks?.[ev] ?? [];
+      const cmds = groups.flatMap((e) => e.hooks.map((h) => h.command));
+      expect(cmds.some((c) => c.includes("penumbra.ts") && c.includes("hook claude-code"))).toBe(
+        true,
+      );
+      expect(cmds.some((c) => c.includes("PENUMBRA_STORAGE_ROOT=") && c.includes(FAKE_ROOT))).toBe(
+        true,
+      );
     }
   });
 
@@ -494,14 +528,14 @@ describe("hooks install --claude-memory", () => {
     });
     expect(r.installed).toBe(true);
 
-    const settings = JSON.parse(readFileSync(join(claudeDir, "settings.json"), "utf8"));
-    const ups = settings.hooks.UserPromptSubmit;
+    const settings = readClaudeSettings(claudeDir);
+    const ups = settings.hooks?.UserPromptSubmit ?? [];
     // The other tool's entry is preserved.
-    expect(ups[0].hooks[0].command).toBe("~/.claude/hooks/some-other-tool.sh");
+    expect(ups[0]?.hooks[0]?.command).toBe("~/.claude/hooks/some-other-tool.sh");
     // The penumbra entry was updated in place — no duplicate appended.
     const penumbraCmds = ups
-      .flatMap((e: any) => e.hooks.map((h: any) => h.command))
-      .filter((c: string) => c.includes("penumbra.ts") && c.includes("hook claude-code"));
+      .flatMap((e) => e.hooks.map((h) => h.command))
+      .filter((c) => c.includes("penumbra.ts") && c.includes("hook claude-code"));
     expect(penumbraCmds).toHaveLength(1);
     expect(penumbraCmds[0]).toContain("PENUMBRA_STORAGE_ROOT=");
     expect(penumbraCmds[0]).toContain(FAKE_ROOT);
@@ -511,9 +545,10 @@ describe("hooks install --claude-memory", () => {
   it("throws when daemon port file is missing and skipDaemonCheck is false", async () => {
     const claudeDir = tmpClaudeDir({});
     const root = mkdtempSync(join(tmpdir(), "penumbra-no-daemon-"));
-    await expect(
+    await expectAsyncThrow(
       runHooksInstallClaudeMemory({ claudeDir, storageRoot: root, binPath: FAKE_BIN }),
-    ).rejects.toThrow(/daemon port file/);
+      /daemon port file/,
+    );
   });
 
   it("shell-quotes a storageRoot containing spaces so the command is safe to execute", async () => {
@@ -528,8 +563,8 @@ describe("hooks install --claude-memory", () => {
     expect(r.command).toBe(
       `PENUMBRA_STORAGE_ROOT='/opt/my storage root/penumbra' bun '/opt/penumbra/bin/penumbra.ts' hook claude-code`,
     );
-    const settings = JSON.parse(readFileSync(join(claudeDir, "settings.json"), "utf8"));
-    const cmd = settings.hooks["UserPromptSubmit"][0].hooks[0].command;
+    const settings = readClaudeSettings(claudeDir);
+    const cmd = settings.hooks?.UserPromptSubmit?.[0]?.hooks[0]?.command;
     expect(cmd).toBe(r.command);
   });
 
@@ -572,15 +607,15 @@ describe("hooks uninstall --claude-memory", () => {
     expect(r.removed).toBe(true);
     expect(r.events).toContain("UserPromptSubmit");
 
-    const settings = JSON.parse(readFileSync(join(claudeDir, "settings.json"), "utf8"));
-    const ups = settings.hooks.UserPromptSubmit;
+    const settings = readClaudeSettings(claudeDir);
+    const ups = settings.hooks?.UserPromptSubmit ?? [];
     // Other-tool entry remains; no penumbra commands left.
     expect(
       ups
-        .flatMap((e: any) => e.hooks.map((h: any) => h.command))
-        .filter((c: string) => c.includes("penumbra.ts") && c.includes("hook claude-code")),
+        .flatMap((e) => e.hooks.map((h) => h.command))
+        .filter((c) => c.includes("penumbra.ts") && c.includes("hook claude-code")),
     ).toHaveLength(0);
-    expect(ups[0].hooks[0].command).toBe("~/.claude/hooks/some-other-tool.sh");
+    expect(ups[0]?.hooks[0]?.command).toBe("~/.claude/hooks/some-other-tool.sh");
   });
 
   it("returns removed=false when no penumbra hooks exist", async () => {

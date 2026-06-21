@@ -1,5 +1,6 @@
-import { describe, it, expect } from "bun:test";
-import { runCostRecent, runCostQuota, parseDuration } from "../../src/commands/cost.js";
+import { describe, expect, it } from "bun:test";
+
+import { parseDuration, runCostQuota, runCostRecent } from "../../src/commands/cost.js";
 
 describe("parseDuration", () => {
   it("parses Nh", () => {
@@ -16,26 +17,28 @@ describe("parseDuration", () => {
 describe("runCostRecent", () => {
   it("--json prints raw RecentCostOutput shape", async () => {
     let printed = "";
-    const out = await runCostRecent({
+    await runCostRecent({
       since: "24h",
       json: true,
-      fetch: async () =>
-        new Response(
-          JSON.stringify({
-            total_cost_usd: 0.42,
-            total_tokens_used: 100,
-            handoff_count: 1,
-            by_provider: [],
-            window: { from: "a", to: "b" },
-          }),
-          { status: 200 },
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              total_cost_usd: 0.42,
+              total_tokens_used: 100,
+              handoff_count: 1,
+              by_provider: [],
+              window: { from: "a", to: "b" },
+            }),
+            { status: 200 },
+          ),
         ),
       print: (s: string) => {
         printed = s;
       },
     });
-    expect(out).toBeUndefined();
-    expect(JSON.parse(printed).total_cost_usd).toBe(0.42);
+    const parsed = JSON.parse(printed) as { total_cost_usd: number };
+    expect(parsed.total_cost_usd).toBe(0.42);
   });
 });
 
@@ -45,25 +48,27 @@ describe("runCostQuota", () => {
     await runCostQuota({
       since: undefined,
       json: false,
-      fetch: async () =>
-        new Response(
-          JSON.stringify({
-            window: { from: "x", to: "y" },
-            providers: [
-              {
-                provider: "anthropic",
-                used_usd: 12.4,
-                quota_usd: 50,
-                remaining_usd: 37.6,
-                remaining_pct_usd: 75.2,
-                used_tokens: 0,
-                quota_tokens: null,
-                remaining_tokens: null,
-                remaining_pct_tokens: null,
-              },
-            ],
-          }),
-          { status: 200 },
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              window: { from: "x", to: "y" },
+              providers: [
+                {
+                  provider: "anthropic",
+                  used_usd: 12.4,
+                  quota_usd: 50,
+                  remaining_usd: 37.6,
+                  remaining_pct_usd: 75.2,
+                  used_tokens: 0,
+                  quota_tokens: null,
+                  remaining_tokens: null,
+                  remaining_pct_tokens: null,
+                },
+              ],
+            }),
+            { status: 200 },
+          ),
         ),
       print: (s: string) => {
         printed += s + "\n";
@@ -78,49 +83,51 @@ describe("runCostQuota", () => {
     await runCostQuota({
       since: undefined,
       json: false,
-      fetch: async () =>
-        new Response(
-          JSON.stringify({
-            window: { from: "x", to: "y" },
-            providers: [
-              {
-                provider: "google",
-                used_usd: 0,
-                quota_usd: 25,
-                remaining_usd: 25,
-                remaining_pct_usd: 100,
-                used_tokens: 0,
-                quota_tokens: null,
-                remaining_tokens: null,
-                remaining_pct_tokens: null,
-              },
-              {
-                provider: "google",
-                model: "gemini-3-flash-preview",
-                used_usd: null,
-                quota_usd: null,
-                remaining_usd: null,
-                remaining_pct_usd: null,
-                used_tokens: 21849,
-                quota_tokens: 1500000,
-                remaining_tokens: 1478151,
-                remaining_pct_tokens: 98.5,
-              },
-              {
-                provider: "google",
-                model: "gemini-3.1-pro-preview",
-                used_usd: null,
-                quota_usd: null,
-                remaining_usd: null,
-                remaining_pct_usd: null,
-                used_tokens: 0,
-                quota_tokens: 250000,
-                remaining_tokens: 250000,
-                remaining_pct_tokens: 100,
-              },
-            ],
-          }),
-          { status: 200 },
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              window: { from: "x", to: "y" },
+              providers: [
+                {
+                  provider: "google",
+                  used_usd: 0,
+                  quota_usd: 25,
+                  remaining_usd: 25,
+                  remaining_pct_usd: 100,
+                  used_tokens: 0,
+                  quota_tokens: null,
+                  remaining_tokens: null,
+                  remaining_pct_tokens: null,
+                },
+                {
+                  provider: "google",
+                  model: "gemini-3-flash-preview",
+                  used_usd: null,
+                  quota_usd: null,
+                  remaining_usd: null,
+                  remaining_pct_usd: null,
+                  used_tokens: 21849,
+                  quota_tokens: 1500000,
+                  remaining_tokens: 1478151,
+                  remaining_pct_tokens: 98.5,
+                },
+                {
+                  provider: "google",
+                  model: "gemini-3.1-pro-preview",
+                  used_usd: null,
+                  quota_usd: null,
+                  remaining_usd: null,
+                  remaining_pct_usd: null,
+                  used_tokens: 0,
+                  quota_tokens: 250000,
+                  remaining_tokens: 250000,
+                  remaining_pct_tokens: 100,
+                },
+              ],
+            }),
+            { status: 200 },
+          ),
         ),
       print: (s: string) => {
         printed += s + "\n";

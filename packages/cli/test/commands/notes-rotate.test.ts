@@ -1,16 +1,10 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import {
-  mkdtempSync,
-  mkdirSync,
-  writeFileSync,
-  existsSync,
-  readFileSync,
-  statSync,
-  rmSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { runNotesRotate } from "../../src/commands/notes-rotate.js";
+import { expectAsyncThrow } from "./_helpers.js";
 
 let rootDir = "";
 let originalCwd = "";
@@ -118,14 +112,15 @@ describe("runNotesRotate", () => {
   test("--keep-count 4 fails the sanity guard", async () => {
     writeNotes("maestro-continuation-2026-05-01.md");
 
-    await expect(
+    await expectAsyncThrow(
       runNotesRotate({
         rootDir,
         apply: false,
         keepCount: 4,
         now: new Date("2026-05-19T12:00:00.000Z"),
       }),
-    ).rejects.toThrow("keep-count must be at least 5");
+      "keep-count must be at least 5",
+    );
   });
 
   test("refuses to rotate when a candidate has a staged-only modification", async () => {
@@ -160,14 +155,15 @@ describe("runNotesRotate", () => {
     writeFileSync(candidate, "staged-only edit\n");
     git(["add", candidate]);
 
-    await expect(
+    await expectAsyncThrow(
       runNotesRotate({
         rootDir,
         apply: true,
         keepCount: 10,
         now: new Date("2026-05-19T12:00:00.000Z"),
       }),
-    ).rejects.toThrow(/refusing.*modified files/);
+      /refusing.*modified files/,
+    );
 
     expect(existsSync(notesPath("maestro-continuation-2026-05-01.md"))).toBe(true);
     expect(existsSync(archivePath("maestro-continuation-2026-05-01.md"))).toBe(false);

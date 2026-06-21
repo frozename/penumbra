@@ -1,12 +1,14 @@
+import { AgentsConfigSchema, QuotasConfigSchema, RoutingConfigSchema } from "@penumbra/config";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import YAML from "yaml";
-import { AgentsConfigSchema, QuotasConfigSchema, RoutingConfigSchema } from "@penumbra/config";
 
-async function runSplit(args: string[]) {
+async function runSplit(
+  args: string[],
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const proc = Bun.spawn(["bun", "packages/cli/bin/penumbra.ts", "config", "split", ...args], {
     env: { ...process.env },
     stdout: "pipe",

@@ -1,5 +1,6 @@
-import { resolve } from "node:path";
 import { expect, test } from "bun:test";
+import { resolve } from "node:path";
+
 import { runPlanValidate } from "../../src/commands/plan.js";
 
 test("validator fires on legacy workflow-runtime plan with no yaml meta blocks", async () => {

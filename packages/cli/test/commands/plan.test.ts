@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
   runPlanCancel,
   runPlanList,
@@ -22,15 +23,24 @@ afterEach(async () => {
   await rm(workDir, { recursive: true, force: true });
 });
 
-function captureStreams() {
+interface CapturedStreams {
+  out: string[];
+  err: string[];
+  write: { out: (s: string) => void; err: (s: string) => void };
+}
+function captureStreams(): CapturedStreams {
   const out: string[] = [];
   const err: string[] = [];
   return {
     out,
     err,
     write: {
-      out: (s: string) => out.push(s),
-      err: (s: string) => err.push(s),
+      out: (s: string): void => {
+        out.push(s);
+      },
+      err: (s: string): void => {
+        err.push(s);
+      },
     },
   };
 }
@@ -87,7 +97,24 @@ function planFixture(path: string): string {
   ].join("\n");
 }
 
-function planRecord(path: string, status: string, planId = "plan_123") {
+interface PlanRecordFixture {
+  plan: {
+    plan_id: string;
+    file_path: string;
+    home_project: string;
+    registered_at: number;
+    status: string;
+  };
+  tasks: {
+    plan_id: string;
+    task_meta_id: string;
+    project_id: string;
+    task_id_in_board: string | null;
+    status: string;
+    last_event_ts: number;
+  }[];
+}
+function planRecord(path: string, status: string, planId = "plan_123"): PlanRecordFixture {
   return {
     plan: {
       plan_id: planId,
@@ -207,15 +234,20 @@ test("runPlanStart prints the plan id and initial task tree", async () => {
   const path = join(workDir, "plan.md");
   await writeFile(path, planFixture(path), "utf8");
 
-  const requests: Array<{ url: string; init?: RequestInit }> = [];
-  const fetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
-    requests.push({ url: String(url), init });
-    const parsed = new URL(String(url), "http://127.0.0.1:4242");
+  const requests: { url: string; init?: RequestInit }[] = [];
+  const fetch = (url: string | URL, init?: RequestInit): Promise<Response> => {
+    const urlStr = typeof url === "string" ? url : url.toString();
+    requests.push({ url: urlStr, init });
+    const parsed = new URL(urlStr, "http://127.0.0.1:4242");
     if (parsed.pathname === "/plans" && init?.method === "POST") {
-      expect(JSON.parse(String(init.body)) as { file_path: string }).toEqual({ file_path: path });
-      return new Response(JSON.stringify({ plan_id: "plan_123", status: "running" }), {
-        status: 201,
-      });
+      const bodyStr = typeof init.body === "string" ? init.body : "";
+      const parsedBody = JSON.parse(bodyStr) as { file_path: string };
+      expect(parsedBody).toEqual({ file_path: path });
+      return Promise.resolve(
+        new Response(JSON.stringify({ plan_id: "plan_123", status: "running" }), {
+          status: 201,
+        }),
+      );
     }
     throw new Error(`unexpected ${parsed.pathname}`);
   };
@@ -235,45 +267,52 @@ test("runPlanStart prints the plan id and initial task tree", async () => {
 });
 
 test("runPlanList renders a table and forwards status filters", async () => {
-  const requests: Array<{ url: string; init?: RequestInit }> = [];
-  const fetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
-    requests.push({ url: String(url), init });
-    const parsed = new URL(String(url), "http://127.0.0.1:4242");
+  const requests: { url: string; init?: RequestInit }[] = [];
+  const fetch = (url: string | URL, init?: RequestInit): Promise<Response> => {
+    const urlStr = typeof url === "string" ? url : url.toString();
+    requests.push({ url: urlStr, init });
+    const parsed = new URL(urlStr, "http://127.0.0.1:4242");
     if (parsed.pathname === "/plans" && parsed.search === "") {
-      return new Response(
-        JSON.stringify({
-          plans: [
-            {
-              plan_id: "plan_123",
-              file_path: "/tmp/plan-123.md",
-              home_project: "penumbra",
-              registered_at: 1,
-              status: "running",
-            },
-          ],
-        }),
-        { status: 200 },
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            plans: [
+              {
+                plan_id: "plan_123",
+                file_path: "/tmp/plan-123.md",
+                home_project: "penumbra",
+                registered_at: 1,
+                status: "running",
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
       );
     }
     if (parsed.pathname === "/plans/plan_123") {
-      return new Response(JSON.stringify(planRecord("/tmp/plan-123.md", "running", "plan_123")), {
-        status: 200,
-      });
+      return Promise.resolve(
+        new Response(JSON.stringify(planRecord("/tmp/plan-123.md", "running", "plan_123")), {
+          status: 200,
+        }),
+      );
     }
     if (parsed.pathname === "/plans" && parsed.search === "?status=running") {
-      return new Response(
-        JSON.stringify({
-          plans: [
-            {
-              plan_id: "plan_123",
-              file_path: "/tmp/plan-123.md",
-              home_project: "penumbra",
-              registered_at: 1,
-              status: "running",
-            },
-          ],
-        }),
-        { status: 200 },
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            plans: [
+              {
+                plan_id: "plan_123",
+                file_path: "/tmp/plan-123.md",
+                home_project: "penumbra",
+                registered_at: 1,
+                status: "running",
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
       );
     }
     throw new Error(`unexpected ${parsed.pathname}${parsed.search}`);
@@ -294,7 +333,7 @@ test("runPlanList renders a table and forwards status filters", async () => {
     fetch,
     print: (line) => filtered.push(line),
   });
-  expect(requests.some((req) => String(req.url).includes("/plans?status=running"))).toBe(true);
+  expect(requests.some((req) => req.url.includes("/plans?status=running"))).toBe(true);
   expect(filtered.join("\n")).toContain("plan_123".slice(0, 12));
 });
 
@@ -302,10 +341,13 @@ test("runPlanStatus renders the plan task DAG", async () => {
   const path = join(workDir, "status-plan.md");
   await writeFile(path, planFixture(path), "utf8");
 
-  const fetch = async (url: string | URL): Promise<Response> => {
-    const parsed = new URL(String(url), "http://127.0.0.1:4242");
+  const fetch = (url: string | URL): Promise<Response> => {
+    const urlStr = typeof url === "string" ? url : url.toString();
+    const parsed = new URL(urlStr, "http://127.0.0.1:4242");
     if (parsed.pathname === "/plans/plan_123") {
-      return new Response(JSON.stringify(planRecord(path, "running", "plan_123")), { status: 200 });
+      return Promise.resolve(
+        new Response(JSON.stringify(planRecord(path, "running", "plan_123")), { status: 200 }),
+      );
     }
     throw new Error(`unexpected ${parsed.pathname}`);
   };
@@ -330,12 +372,15 @@ test("runPlanStatus watch stops after the first poll when signaled", async () =>
 
   const controller = new AbortController();
   let polls = 0;
-  const fetch = async (url: string | URL): Promise<Response> => {
+  const fetch = (url: string | URL): Promise<Response> => {
     polls += 1;
-    const parsed = new URL(String(url), "http://127.0.0.1:4242");
+    const urlStr = typeof url === "string" ? url : url.toString();
+    const parsed = new URL(urlStr, "http://127.0.0.1:4242");
     if (parsed.pathname === "/plans/plan_123") {
       controller.abort();
-      return new Response(JSON.stringify(planRecord(path, "running", "plan_123")), { status: 200 });
+      return Promise.resolve(
+        new Response(JSON.stringify(planRecord(path, "running", "plan_123")), { status: 200 }),
+      );
     }
     throw new Error(`unexpected ${parsed.pathname}`);
   };
@@ -356,14 +401,17 @@ test("runPlanStatus watch stops after the first poll when signaled", async () =>
 });
 
 test("runPlanCancel prints the cancelled running count", async () => {
-  const requests: Array<{ url: string; init?: RequestInit }> = [];
-  const fetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
-    requests.push({ url: String(url), init });
-    const parsed = new URL(String(url), "http://127.0.0.1:4242");
+  const requests: { url: string; init?: RequestInit }[] = [];
+  const fetch = (url: string | URL, init?: RequestInit): Promise<Response> => {
+    const urlStr = typeof url === "string" ? url : url.toString();
+    requests.push({ url: urlStr, init });
+    const parsed = new URL(urlStr, "http://127.0.0.1:4242");
     if (parsed.pathname === "/plans/plan_123/cancel" && init?.method === "POST") {
-      return new Response(
-        JSON.stringify({ plan_id: "plan_123", status: "cancelled", cancelled_running_count: 1 }),
-        { status: 200 },
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ plan_id: "plan_123", status: "cancelled", cancelled_running_count: 1 }),
+          { status: 200 },
+        ),
       );
     }
     throw new Error(`unexpected ${parsed.pathname}`);

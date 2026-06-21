@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+
 import {
   runTaskCancel,
   runTaskList,
@@ -24,47 +25,50 @@ afterEach(() => {
 });
 
 test("task new/list/show/cancel/list filter", async () => {
-  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  const requests: { url: string; init?: RequestInit }[] = [];
   let taskId = "";
   let taskStatus = "pending";
-  const fetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
-    requests.push({ url: String(url), init });
-    const parsed = new URL(String(url), "http://127.0.0.1:4242");
+  const fetch = (url: string | URL, init?: RequestInit): Promise<Response> => {
+    const urlStr = typeof url === "string" ? url : url.toString();
+    requests.push({ url: urlStr, init });
+    const parsed = new URL(urlStr, "http://127.0.0.1:4242");
     const pathname = `${parsed.pathname}${parsed.search}`;
     if (pathname === "/tasks" && init?.method === "POST") {
       taskId = "task_123";
-      return new Response(JSON.stringify({ task_id: taskId }), { status: 201 });
+      return Promise.resolve(new Response(JSON.stringify({ task_id: taskId }), { status: 201 }));
     }
     if (pathname === `/tasks/${taskId}?include=lease,events` || pathname === `/tasks/${taskId}`) {
-      return new Response(
-        JSON.stringify({
-          id: taskId,
-          created_at: 1,
-          updated_at: 1,
-          created_by_kind: "human",
-          created_by_id: "cli",
-          parent_task_id: null,
-          kind: "work",
-          priority: "high",
-          prompt: "test",
-          acceptance_criteria: null,
-          expected_artifacts: null,
-          eligibility: {},
-          review_eligibility: null,
-          requires_review: false,
-          status: taskStatus,
-          result_summary: null,
-          result_artifacts: null,
-          failure_reason: null,
-          chain_id: null,
-          origin: "cli",
-        }),
-        { status: 200 },
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            id: taskId,
+            created_at: 1,
+            updated_at: 1,
+            created_by_kind: "human",
+            created_by_id: "cli",
+            parent_task_id: null,
+            kind: "work",
+            priority: "high",
+            prompt: "test",
+            acceptance_criteria: null,
+            expected_artifacts: null,
+            eligibility: {},
+            review_eligibility: null,
+            requires_review: false,
+            status: taskStatus,
+            result_summary: null,
+            result_artifacts: null,
+            failure_reason: null,
+            chain_id: null,
+            origin: "cli",
+          }),
+          { status: 200 },
+        ),
       );
     }
     if (pathname === `/tasks/${taskId}/cancel` && init?.method === "POST") {
       taskStatus = "cancelled";
-      return new Response(JSON.stringify({ task_id: taskId }), { status: 200 });
+      return Promise.resolve(new Response(JSON.stringify({ task_id: taskId }), { status: 200 }));
     }
     if (pathname.startsWith("/tasks") && init?.method !== "POST" && !pathname.endsWith("/cancel")) {
       const task = {
@@ -89,9 +93,11 @@ test("task new/list/show/cancel/list filter", async () => {
         chain_id: null,
         origin: "cli",
       };
-      return new Response(JSON.stringify({ tasks: taskStatus === "pending" ? [task] : [] }), {
-        status: 200,
-      });
+      return Promise.resolve(
+        new Response(JSON.stringify({ tasks: taskStatus === "pending" ? [task] : [] }), {
+          status: 200,
+        }),
+      );
     }
     throw new Error(`unexpected ${pathname}`);
   };
@@ -109,7 +115,7 @@ test("task new/list/show/cancel/list filter", async () => {
   const listed: string[] = [];
   await runTaskList({ json: true, storageRoot, fetch, print: (line) => listed.push(line) });
   const listBody = JSON.parse(listed.join("\n")) as {
-    tasks: Array<{ id: string; priority: string }>;
+    tasks: { id: string; priority: string }[];
   };
   expect(listBody.tasks[0]?.id).toBe(taskId);
   expect(listBody.tasks[0]?.priority).toBe("high");
@@ -122,7 +128,7 @@ test("task new/list/show/cancel/list filter", async () => {
     fetch,
     print: (line) => mine.push(line),
   });
-  expect(requests.some((req) => String(req.url).includes("origin=cli"))).toBe(true);
+  expect(requests.some((req) => req.url.includes("origin=cli"))).toBe(true);
 
   const shown: string[] = [];
   await runTaskShow({
@@ -132,7 +138,8 @@ test("task new/list/show/cancel/list filter", async () => {
     fetch,
     print: (line) => shown.push(line),
   });
-  expect(JSON.parse(shown.join("\n"))).toEqual(expect.objectContaining({ id: taskId }));
+  const shownBody = JSON.parse(shown.join("\n")) as { id: string };
+  expect(shownBody).toMatchObject({ id: taskId });
 
   await runTaskCancel({ id: taskId, storageRoot, fetch });
 
@@ -144,14 +151,13 @@ test("task new/list/show/cancel/list filter", async () => {
     fetch,
     print: (line) => filtered.push(line),
   });
-  expect(
-    JSON.parse(filtered.join("\n")).tasks.some((task: { id: string }) => task.id === taskId),
-  ).toBe(false);
+  const filteredBody = JSON.parse(filtered.join("\n")) as { tasks: { id: string }[] };
+  expect(filteredBody.tasks.some((task) => task.id === taskId)).toBe(false);
 });
 
 test("task watch prints filed events", async () => {
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
+    start(controller): void {
       const encoder = new TextEncoder();
       controller.enqueue(encoder.encode(": ok\n\n"));
       setTimeout(() => {
@@ -167,11 +173,13 @@ test("task watch prints filed events", async () => {
   const lines: string[] = [];
   await runTaskWatch({
     storageRoot,
-    fetch: async () =>
-      new Response(stream, {
-        status: 200,
-        headers: { "content-type": "text/event-stream" },
-      }),
+    fetch: () =>
+      Promise.resolve(
+        new Response(stream, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+      ),
     print: (line) => lines.push(line),
   });
   expect(lines).toContain("[2026-05-05T12:00:00.000Z] filed task=task_abc actor=cli");
@@ -197,42 +205,47 @@ test("task review writes scaffold to a private mkdtemp dir, not a predictable sh
     const id = "task_review_1";
     const predictablePath = join(process.env.TMPDIR ?? "/tmp", `penumbra-task-review-${id}.yaml`);
 
-    const fetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
-      const pathname = new URL(String(url), "http://127.0.0.1:4242").pathname;
+    const fetch = (url: string | URL, init?: RequestInit): Promise<Response> => {
+      const urlStr = typeof url === "string" ? url : url.toString();
+      const pathname = new URL(urlStr, "http://127.0.0.1:4242").pathname;
       if (pathname === "/tasks/lease" && init?.method === "POST") {
-        return new Response(JSON.stringify({ task_id: id, lease_id: "lease_1", expires_at: 0 }), {
-          status: 200,
-        });
+        return Promise.resolve(
+          new Response(JSON.stringify({ task_id: id, lease_id: "lease_1", expires_at: 0 }), {
+            status: 200,
+          }),
+        );
       }
       if (pathname === `/tasks/${id}`) {
-        return new Response(
-          JSON.stringify({
-            id,
-            created_at: 1,
-            updated_at: 1,
-            created_by_kind: "human",
-            created_by_id: "cli",
-            parent_task_id: null,
-            kind: "review",
-            priority: "high",
-            prompt: "p",
-            acceptance_criteria: "ac",
-            expected_artifacts: null,
-            eligibility: {},
-            review_eligibility: null,
-            requires_review: false,
-            status: "leased",
-            result_summary: null,
-            result_artifacts: null,
-            failure_reason: null,
-            chain_id: null,
-            origin: "cli",
-          }),
-          { status: 200 },
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id,
+              created_at: 1,
+              updated_at: 1,
+              created_by_kind: "human",
+              created_by_id: "cli",
+              parent_task_id: null,
+              kind: "review",
+              priority: "high",
+              prompt: "p",
+              acceptance_criteria: "ac",
+              expected_artifacts: null,
+              eligibility: {},
+              review_eligibility: null,
+              requires_review: false,
+              status: "leased",
+              result_summary: null,
+              result_artifacts: null,
+              failure_reason: null,
+              chain_id: null,
+              origin: "cli",
+            }),
+            { status: 200 },
+          ),
         );
       }
       if (pathname === `/tasks/${id}/complete` && init?.method === "POST") {
-        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
       }
       throw new Error(`unexpected ${pathname}`);
     };
@@ -242,7 +255,9 @@ test("task review writes scaffold to a private mkdtemp dir, not a predictable sh
       storageRoot,
       fetch,
       editor: editorScript,
-      print: () => {},
+      print: () => {
+        /* discard */
+      },
     });
 
     const captured = readFileSync(capturePath, "utf8").trim().split("\n");
@@ -268,30 +283,31 @@ test("task new with gh_create prints task id and queued status", async () => {
     gh_labels: ["tasks", "phase-2"],
     gh_assignees: ["acordeiro"],
     storageRoot,
-    fetch: async (_url, init) => {
-      postedBody = JSON.parse(String(init?.body ?? "{}"));
-      return new Response(
-        JSON.stringify({
-          task_id: "task_gh_1",
-          gh_create_status: "queued",
-          gh_create_error: null,
-        }),
-        { status: 201 },
+    fetch: (_url, init) => {
+      const bodyStr = typeof init?.body === "string" ? init.body : "{}";
+      postedBody = JSON.parse(bodyStr);
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            task_id: "task_gh_1",
+            gh_create_status: "queued",
+            gh_create_error: null,
+          }),
+          { status: 201 },
+        ),
       );
     },
     print: (line) => lines.push(line),
   });
 
-  expect(postedBody).toEqual(
-    expect.objectContaining({
-      prompt: "wire task gh create",
-      gh_create: {
-        repo: "acordeiro/penumbra",
-        title: "Custom GH title",
-        labels: ["tasks", "phase-2"],
-        assignees: ["acordeiro"],
-      },
-    }),
-  );
+  expect(postedBody).toMatchObject({
+    prompt: "wire task gh create",
+    gh_create: {
+      repo: "acordeiro/penumbra",
+      title: "Custom GH title",
+      labels: ["tasks", "phase-2"],
+      assignees: ["acordeiro"],
+    },
+  });
   expect(lines).toEqual(["task_gh_1", "gh_create_status=queued"]);
 });

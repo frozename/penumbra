@@ -1,8 +1,12 @@
+import type { DispatchReliabilityReport } from "@penumbra/core";
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { formatDispatchAudit, runDispatchAudit } from "../../src/commands/dispatch-audit.js";
+import { urlToString } from "./_helpers.js";
 
 const report = {
   handoff_id: "h-1",
@@ -22,7 +26,7 @@ const report = {
     adapter_streaming: null,
   },
   recommended_action: "retry",
-} as const;
+} satisfies DispatchReliabilityReport;
 
 let storageRoot = "";
 
@@ -47,15 +51,14 @@ describe("formatDispatchAudit", () => {
   });
 
   test("formats classifier declines as a dedicated safety-classifier block", () => {
-    expect(
-      formatDispatchAudit({
-        ...report,
-        classifier_decline: {
-          classifier_declined: true,
-          decline_reason: "provider_safety_refusal",
-        },
-      } as any),
-    ).toContain(
+    const withDecline: DispatchReliabilityReport = {
+      ...report,
+      classifier_decline: {
+        classifier_declined: true,
+        decline_reason: "provider_safety_refusal",
+      },
+    };
+    expect(formatDispatchAudit(withDecline)).toContain(
       [
         "safety_classifier:",
         "  classifier_declined: yes",
@@ -77,19 +80,21 @@ describe("runDispatchAudit", () => {
   });
 
   test("fetches dispatch audit with bearer auth and prints a readable report", async () => {
-    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const calls: { url: string; init?: RequestInit }[] = [];
     const printed: string[] = [];
 
     await runDispatchAudit({
       handoffId: "handoff-1",
       json: false,
       storageRoot,
-      fetch: async (url, init) => {
-        calls.push({ url: String(url), init });
-        return new Response(JSON.stringify({ report }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
+      fetch: (url, init) => {
+        calls.push({ url: urlToString(url), init });
+        return Promise.resolve(
+          new Response(JSON.stringify({ report }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
       },
       print: (line) => {
         printed.push(line);
@@ -111,11 +116,13 @@ describe("runDispatchAudit", () => {
       handoffId: "handoff-2",
       json: true,
       storageRoot,
-      fetch: async () =>
-        new Response(JSON.stringify({ report }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
+      fetch: () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ report }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        ),
       print: (line) => {
         printed = line;
       },

@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { runDispatchTimeline } from "../../src/commands/dispatch.js";
+import { urlToString } from "./_helpers.js";
 
 let storageRoot = "";
 
@@ -18,29 +20,31 @@ describe("runDispatchTimeline", () => {
   });
 
   test("fetches dispatch events with bearer auth and prints a readable timeline", async () => {
-    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const calls: { url: string; init?: RequestInit }[] = [];
     const printed: string[] = [];
 
     await runDispatchTimeline({
       handoffId: "handoff-1",
       json: false,
       storageRoot,
-      fetch: async (url, init) => {
-        calls.push({ url: String(url), init });
-        return new Response(
-          JSON.stringify({
-            events: [
-              {
-                handoff_id: "handoff-1",
-                worker_id: "worker-a",
-                source: "worker",
-                kind: "dispatch.start",
-                ts: "2026-05-01T12:00:00.000Z",
-                meta: { agent: "codex", hop: 1 },
-              },
-            ],
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
+      fetch: (url, init) => {
+        calls.push({ url: urlToString(url), init });
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              events: [
+                {
+                  handoff_id: "handoff-1",
+                  worker_id: "worker-a",
+                  source: "worker",
+                  kind: "dispatch.start",
+                  ts: "2026-05-01T12:00:00.000Z",
+                  meta: { agent: "codex", hop: 1 },
+                },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
         );
       },
       print: (line) => {
@@ -64,25 +68,27 @@ describe("runDispatchTimeline", () => {
       handoffId: "handoff-classifier",
       json: false,
       storageRoot,
-      fetch: async () =>
-        new Response(
-          JSON.stringify({
-            events: [
-              {
-                handoff_id: "handoff-classifier",
-                worker_id: "worker-a",
-                source: "worker",
-                kind: "dispatch.end",
-                ts: "2026-06-13T12:00:00.000Z",
-                meta: {
-                  status: "error",
-                  classifier_declined: true,
-                  decline_reason: "provider_safety_refusal",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              events: [
+                {
+                  handoff_id: "handoff-classifier",
+                  worker_id: "worker-a",
+                  source: "worker",
+                  kind: "dispatch.end",
+                  ts: "2026-06-13T12:00:00.000Z",
+                  meta: {
+                    status: "error",
+                    classifier_declined: true,
+                    decline_reason: "provider_safety_refusal",
+                  },
                 },
-              },
-            ],
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
         ),
       print: (line) => printed.push(line),
     });
@@ -99,21 +105,23 @@ describe("runDispatchTimeline", () => {
       handoffId: "handoff-2",
       json: true,
       storageRoot,
-      fetch: async () =>
-        new Response(
-          JSON.stringify({
-            events: [
-              {
-                handoff_id: "handoff-2",
-                worker_id: null,
-                source: "daemon",
-                kind: "watchdog.tick",
-                ts: "2026-05-01T12:00:01.000Z",
-                meta: null,
-              },
-            ],
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              events: [
+                {
+                  handoff_id: "handoff-2",
+                  worker_id: null,
+                  source: "daemon",
+                  kind: "watchdog.tick",
+                  ts: "2026-05-01T12:00:01.000Z",
+                  meta: null,
+                },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
         ),
       print: (line) => {
         printed = line;
@@ -147,11 +155,13 @@ describe("runDispatchTimeline", () => {
       handoffId: "handoff-empty",
       json: false,
       storageRoot,
-      fetch: async () =>
-        new Response(JSON.stringify({ events: [] }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
+      fetch: () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ events: [] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        ),
       print: (line) => {
         printed.push(line);
       },

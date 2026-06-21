@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { runStatusline } from "../../src/commands/statusline.js";
 
 const CACHE_PATH = "/tmp/penumbra-statusline.cache";
@@ -14,19 +15,26 @@ interface MockDaemonResponse {
   doneInLastHour: number;
 }
 
-function makeMockFetch(response: MockDaemonResponse | "offline") {
-  return async (url: string) => {
-    if (response === "offline") throw new Error("connect ECONNREFUSED");
+function makeMockFetch(response: MockDaemonResponse | "offline"): typeof globalThis.fetch {
+  return () => {
+    if (response === "offline") return Promise.reject(new Error("connect ECONNREFUSED"));
     // simulate three daemon route calls — we don't actually distinguish here, just return
     // a synthetic merged response
-    return {
-      ok: true,
-      json: async () => ({
-        handoffs: Array(response.dispatchedHandoffs).fill({ status: "dispatched" }),
-        permissions: Array(response.pendingPermissions).fill({ status: "pending" }),
-        done: response.doneInLastHour,
+    const body = {
+      handoffs: Array<{ status: string }>(response.dispatchedHandoffs).fill({
+        status: "dispatched",
       }),
+      permissions: Array<{ status: string }>(response.pendingPermissions).fill({
+        status: "pending",
+      }),
+      done: response.doneInLastHour,
     };
+    return Promise.resolve(
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
   };
 }
 
@@ -34,7 +42,9 @@ describe("penumbra statusline", () => {
   beforeEach(async () => {
     try {
       await unlink(CACHE_PATH);
-    } catch {}
+    } catch {
+      /* cache may not exist */
+    }
     process.env.NO_COLOR = "1";
     storageRoot = mkdtempSync(join(tmpdir(), "penumbra-statusline-"));
     writeFileSync(join(storageRoot, "port"), "4242\n");

@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-async function runConfig(args: string[], envOverrides: Record<string, string> = {}) {
+async function runConfig(
+  args: string[],
+  envOverrides: Record<string, string> = {},
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const proc = Bun.spawn(["bun", "packages/cli/bin/penumbra.ts", "config", ...args], {
     env: { ...process.env, ...envOverrides },
     stdout: "pipe",
@@ -32,7 +35,7 @@ describe("penumbra config show", () => {
     const result = await runConfig(["show", "--json"]);
 
     expect(result.exitCode).toBe(0);
-    const parsed = JSON.parse(result.stdout);
+    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
     expect(parsed).toHaveProperty("env");
     expect(parsed).toHaveProperty("sources");
   });
@@ -43,7 +46,7 @@ describe("penumbra config show", () => {
     });
 
     expect(result.exitCode).toBe(0);
-    const parsed = JSON.parse(result.stdout);
+    const parsed = JSON.parse(result.stdout) as { env: Record<string, string> };
     expect(parsed.env.PENUMBRA_DAEMON_TOKEN).toBe("<redacted>");
   });
 

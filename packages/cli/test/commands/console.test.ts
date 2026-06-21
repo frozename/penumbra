@@ -2,17 +2,18 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { prepareConsoleServer, runConsole } from "../../src/commands/console.js";
 
 let storageRoot = "";
 let distRoot = "";
 let mockDaemon: ReturnType<typeof Bun.serve> | null = null;
-let mockDaemonRequests: Array<{
+let mockDaemonRequests: {
   method: string;
   path: string;
   authorization: string | null;
   cookie: string | null;
-}> = [];
+}[] = [];
 
 const TOKEN = "test-token-xyz";
 let expectedDaemonToken = TOKEN;
@@ -64,7 +65,7 @@ beforeEach(() => {
   storageRoot = mkdtempSync(join(tmpdir(), "penumbra-console-cli-store-"));
   distRoot = mkdtempSync(join(tmpdir(), "penumbra-console-cli-dist-"));
   const daemonPort = startMockDaemon();
-  writeFileSync(join(storageRoot, "port"), `${daemonPort}\n`);
+  writeFileSync(join(storageRoot, "port"), `${String(daemonPort)}\n`);
   writeFileSync(join(storageRoot, "token"), `${TOKEN}\n`);
   writeFileSync(join(distRoot, "index.html"), FIXTURE_HTML);
   writeFileSync(join(distRoot, "app.js"), "// hello world");
@@ -72,7 +73,7 @@ beforeEach(() => {
 
 afterEach(() => {
   if (mockDaemon) {
-    mockDaemon.stop(true);
+    void mockDaemon.stop(true);
     mockDaemon = null;
   }
   if (storageRoot) rmSync(storageRoot, { recursive: true, force: true });
@@ -81,7 +82,7 @@ afterEach(() => {
 
 function extractSessionCookie(setCookie: string | null): string | null {
   if (!setCookie) return null;
-  const m = setCookie.match(/penumbra_session=([^;]+)/);
+  const m = /penumbra_session=([^;]+)/.exec(setCookie);
   return m ? m[1]! : null;
 }
 
@@ -145,10 +146,10 @@ test("prepareConsoleServer: /api with valid cookie is proxied to daemon with bea
     expect(cookieValue).toBe(prepared.sessionNonce);
 
     const apiRes = await fetch(`${prepared.url}/api/handoffs?status=pending`, {
-      headers: { Cookie: `penumbra_session=${cookieValue}` },
+      headers: { Cookie: `penumbra_session=${cookieValue ?? ""}` },
     });
     expect(apiRes.status).toBe(200);
-    const payload = (await apiRes.json()) as { handoffs: Array<{ id: string }> };
+    const payload = (await apiRes.json()) as { handoffs: { id: string }[] };
     expect(payload.handoffs[0]!.id).toBe("h1");
 
     expect(mockDaemonRequests.length).toBe(1);
@@ -171,7 +172,7 @@ test("prepareConsoleServer: mutating /api requests require sec-fetch-site same-o
     const apiRes = await fetch(`${prepared.url}/api/echo`, {
       method: "POST",
       headers: {
-        Cookie: `penumbra_session=${cookieValue}`,
+        Cookie: `penumbra_session=${cookieValue ?? ""}`,
       },
       body: "x",
     });
@@ -193,7 +194,7 @@ test("prepareConsoleServer: mutating /api requests require matching Origin", asy
     const missingOrigin = await fetch(`${prepared.url}/api/echo`, {
       method: "POST",
       headers: {
-        Cookie: `penumbra_session=${cookieValue}`,
+        Cookie: `penumbra_session=${cookieValue ?? ""}`,
         "Sec-Fetch-Site": "same-origin",
       },
       body: "x",
@@ -206,7 +207,7 @@ test("prepareConsoleServer: mutating /api requests require matching Origin", asy
     const wrongOrigin = await fetch(`${prepared.url}/api/echo`, {
       method: "POST",
       headers: {
-        Cookie: `penumbra_session=${cookieValue}`,
+        Cookie: `penumbra_session=${cookieValue ?? ""}`,
         "Sec-Fetch-Site": "same-origin",
         Origin: "http://127.0.0.1:1",
       },
@@ -230,7 +231,7 @@ test("prepareConsoleServer: mutating /api requests with same-origin headers are 
     const apiRes = await fetch(`${prepared.url}/api/echo`, {
       method: "POST",
       headers: {
-        Cookie: `penumbra_session=${cookieValue}`,
+        Cookie: `penumbra_session=${cookieValue ?? ""}`,
         "Sec-Fetch-Site": "same-origin",
         Origin: prepared.url,
       },
@@ -251,7 +252,7 @@ test("prepareConsoleServer: /api response strips upstream Set-Cookie + Authoriza
     const indexRes = await fetch(`${prepared.url}/`);
     const cookieValue = extractSessionCookie(indexRes.headers.get("set-cookie"));
     const apiRes = await fetch(`${prepared.url}/api/handoffs?status=pending`, {
-      headers: { Cookie: `penumbra_session=${cookieValue}` },
+      headers: { Cookie: `penumbra_session=${cookieValue ?? ""}` },
     });
     expect(apiRes.headers.get("x-frame-options")).toBe("DENY");
     expect(apiRes.headers.get("x-content-type-options")).toBe("nosniff");
@@ -268,18 +269,18 @@ test("prepareConsoleServer: refreshes daemon bootstrap after connectivity failur
     const indexRes = await fetch(`${prepared.url}/`);
     const cookieValue = extractSessionCookie(indexRes.headers.get("set-cookie"));
     const first = await fetch(`${prepared.url}/api/echo`, {
-      headers: { Cookie: `penumbra_session=${cookieValue}` },
+      headers: { Cookie: `penumbra_session=${cookieValue ?? ""}` },
     });
     expect(first.status).toBe(200);
     expect(await first.text()).toBe("ok");
 
-    mockDaemon?.stop(true);
+    void mockDaemon?.stop(true);
     mockDaemon = null;
     const newPort = startMockDaemon("ok2");
-    writeFileSync(join(storageRoot, "port"), `${newPort}\n`);
+    writeFileSync(join(storageRoot, "port"), `${String(newPort)}\n`);
 
     const second = await fetch(`${prepared.url}/api/echo`, {
-      headers: { Cookie: `penumbra_session=${cookieValue}` },
+      headers: { Cookie: `penumbra_session=${cookieValue ?? ""}` },
     });
     expect(second.status).toBe(200);
     expect(await second.text()).toBe("ok2");
@@ -294,7 +295,7 @@ test("prepareConsoleServer: refreshes daemon bootstrap after upstream 401 and re
     const indexRes = await fetch(`${prepared.url}/`);
     const cookieValue = extractSessionCookie(indexRes.headers.get("set-cookie"));
     const first = await fetch(`${prepared.url}/api/echo`, {
-      headers: { Cookie: `penumbra_session=${cookieValue}` },
+      headers: { Cookie: `penumbra_session=${cookieValue ?? ""}` },
     });
     expect(first.status).toBe(200);
 
@@ -302,7 +303,7 @@ test("prepareConsoleServer: refreshes daemon bootstrap after upstream 401 and re
     writeFileSync(join(storageRoot, "token"), `${expectedDaemonToken}\n`);
 
     const second = await fetch(`${prepared.url}/api/echo`, {
-      headers: { Cookie: `penumbra_session=${cookieValue}` },
+      headers: { Cookie: `penumbra_session=${cookieValue ?? ""}` },
     });
     expect(second.status).toBe(200);
     expect(await second.text()).toBe("ok");

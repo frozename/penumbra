@@ -1,13 +1,16 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { loadSqliteVec, migrate } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
 import { runMemoryDigest } from "../../src/commands/memory.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* sqlite already loaded in this process */
+}
 
 let db: Database;
 
@@ -98,15 +101,21 @@ function withDigestEnv(
     for (const name of names) {
       if (!(name in overrides)) continue;
       const value = overrides[name];
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
+      if (value === undefined) {
+        Reflect.deleteProperty(process.env, name);
+      } else {
+        process.env[name] = value;
+      }
     }
     fn();
   } finally {
     for (const name of names) {
       const value = previous.get(name);
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
+      if (value === undefined) {
+        Reflect.deleteProperty(process.env, name);
+      } else {
+        process.env[name] = value;
+      }
     }
   }
 }
@@ -213,11 +222,11 @@ describe("runMemoryDigest", () => {
     for (let i = 0; i < 201; i++) {
       const ts = new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString();
       seedT2Memory({
-        memory_id: `m${i}`,
-        title: `Entry ${i}`,
+        memory_id: `m${String(i)}`,
+        title: `Entry ${String(i)}`,
         updated_at: ts,
         origin: "direct",
-        slug: `entry-${i}`,
+        slug: `entry-${String(i)}`,
         hook: "hook",
         project_id: null,
         retired_at: null,
@@ -244,11 +253,11 @@ describe("runMemoryDigest", () => {
     for (let i = 0; i < 201; i++) {
       const ts = new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString();
       seedT2Memory({
-        memory_id: `lm${i}`,
-        title: `Entry ${i}`,
+        memory_id: `lm${String(i)}`,
+        title: `Entry ${String(i)}`,
         updated_at: ts,
         origin: "direct",
-        slug: `entry-${i}`,
+        slug: `entry-${String(i)}`,
         hook: "hook",
         project_id: null,
         retired_at: null,
@@ -270,11 +279,11 @@ describe("runMemoryDigest", () => {
     for (let i = 0; i < 5; i++) {
       const ts = new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString();
       seedT2Memory({
-        memory_id: `em${i}`,
-        title: `Entry ${i}`,
+        memory_id: `em${String(i)}`,
+        title: `Entry ${String(i)}`,
         updated_at: ts,
         origin: "direct",
-        slug: `entry-${i}`,
+        slug: `entry-${String(i)}`,
         hook: "hook",
         project_id: null,
         retired_at: null,

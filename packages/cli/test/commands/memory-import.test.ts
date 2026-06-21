@@ -1,13 +1,15 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { buildServices, loadSqliteVec, migrate } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
-import { TestEmbedder } from "@penumbra/core/testing";
-import { buildServices, loadSqliteVec, migrate } from "@penumbra/core";
+
 import { createDaemonFetchHandler } from "../../../daemon/src/serve.js";
 import { runMemoryImport } from "../../src/commands/memory.js";
+import { urlToString } from "./_helpers.js";
 
 let root = "";
 let db: Database;
@@ -31,22 +33,23 @@ function makeStorageRoot(): string {
   return storageRoot;
 }
 
-function setupMemoryDaemon(): {
+interface MemoryDaemonHandle {
   storageRoot: string;
-  fetch: (path: string, init?: RequestInit) => Promise<Response>;
+  fetch: (path: string | URL, init?: RequestInit) => Promise<Response>;
   db: Database;
   stop: () => void;
-} {
-  const db = new Database(":memory:");
-  loadSqliteVec(db);
-  migrate(db, { embeddingDim: 384 });
+}
+function setupMemoryDaemon(): MemoryDaemonHandle {
+  const memoryDb = new Database(":memory:");
+  loadSqliteVec(memoryDb);
+  migrate(memoryDb, { embeddingDim: 384 });
 
   const storageRoot = makeStorageRoot();
   const services = buildServices({
     env: {},
     input: {},
     storageRoot,
-    db,
+    db: memoryDb,
     embedder: new TestEmbedder({ dim: 384 }),
   });
 
@@ -54,29 +57,36 @@ function setupMemoryDaemon(): {
   createdMemoryDbDir = storageRoot;
   return {
     storageRoot,
-    db,
-    fetch: (path, init = {}) => {
-      const parsed = new URL(path);
+    db: memoryDb,
+    fetch: (path, init = {}): Promise<Response> => {
+      const parsed = new URL(urlToString(path));
       const rel = `${parsed.pathname}${parsed.search}`;
+      const existingHeaders = (init.headers ?? {}) as Record<string, string>;
       const request = new Request(`http://x${rel}`, {
         ...init,
         headers: {
-          ...((init as RequestInit).headers ?? {}),
+          ...existingHeaders,
           authorization: `Bearer tok`,
         },
       });
       return handler(request);
     },
-    stop: () => {
+    stop: (): void => {
       try {
         services.supervisor.stopAll();
-      } catch {}
+      } catch {
+        /* already stopped */
+      }
       try {
-        db.close();
-      } catch {}
+        memoryDb.close();
+      } catch {
+        /* already closed */
+      }
       try {
         rmSync(storageRoot, { recursive: true, force: true });
-      } catch {}
+      } catch {
+        /* already removed */
+      }
     },
   };
 }
@@ -84,7 +94,7 @@ function setupMemoryDaemon(): {
 function parseLinksFromSlugRows(
   storageDb: Database,
   srcSlug: string,
-): Array<{ link_type: string; raw_slug: string | null; dst_id: string | null }> {
+): { link_type: string; raw_slug: string | null; dst_id: string | null }[] {
   const rows = storageDb
     .query<{ link_type: string; raw_slug: string | null; dst_id: string | null }, [string]>(
       `
@@ -117,7 +127,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (db) db.close();
+  db.close();
   if (root) rmSync(root, { recursive: true, force: true });
   if (createdMemoryDbDir && existsSync(createdMemoryDbDir)) {
     rmSync(createdMemoryDbDir, { recursive: true, force: true });
@@ -161,7 +171,7 @@ describe("runMemoryImport", () => {
         printed += line;
       },
     });
-    expect(result).toEqual(expect.objectContaining({ would_write: 3, skipped: 0, errors: 0 }));
+    expect(result).toMatchObject({ would_write: 3, skipped: 0, errors: 0 });
     expect(result.rows).toHaveLength(3);
     expect(result.rows.every((row) => row.status === "would_write")).toBe(true);
     expect(printed).toContain("PLAN first.md");
@@ -295,7 +305,7 @@ describe("runMemoryImport", () => {
       },
     );
     expect(proc.status).not.toBe(0);
-    expect(proc.stderr ?? "").toContain("root_not_found");
+    expect(proc.stderr).toContain("root_not_found");
   });
 
   test("apply -- imports entries through daemon /memory/write and writes direct memories", async () => {
@@ -318,29 +328,27 @@ describe("runMemoryImport", () => {
         }),
       );
 
-      const calls: Array<{ url: string; method?: string }> = [];
+      const calls: { url: string; method?: string }[] = [];
       const result = await runMemoryImport({
         root,
         dryRun: false,
         apply: true,
         storageRoot: daemon.storageRoot,
         fetch: async (url, init) => {
-          calls.push({ url: String(url), method: init?.method });
-          return daemon.fetch(url, init);
+          calls.push({ url: urlToString(url), method: init?.method });
+          return await daemon.fetch(url, init);
         },
       });
 
       expect(calls).toHaveLength(2);
       expect(calls.every((call) => call.url.includes("/memory/write"))).toBe(true);
       expect(calls.every((call) => call.method === "POST")).toBe(true);
-      expect(result).toEqual(
-        expect.objectContaining({
-          imported: 2,
-          updated: 0,
-          skipped: 0,
-          errors: 0,
-        }),
-      );
+      expect(result).toMatchObject({
+        imported: 2,
+        updated: 0,
+        skipped: 0,
+        errors: 0,
+      });
       expect(queryMemoryCount(daemon.db, ["first-entry", "second-entry"])).toBe(2);
     } finally {
       daemon.stop();
@@ -430,18 +438,18 @@ describe("runMemoryImport", () => {
     try {
       for (let i = 1; i <= 20; i += 1) {
         writeMemoryFile(
-          `file-${i}.md`,
-          ccFile(`entry-${i}`, {
-            description: `Entry ${i}`,
+          `file-${String(i)}.md`,
+          ccFile(`entry-${String(i)}`, {
+            description: `Entry ${String(i)}`,
             type: i % 3 === 0 ? "reference" : "feedback",
-            body: `Body ${i}`,
+            body: `Body ${String(i)}`,
           }),
         );
       }
 
       let active = 0;
       let peak = 0;
-      const calls: Array<{ url: string }> = [];
+      const calls: { url: string }[] = [];
       const result = await runMemoryImport({
         root,
         dryRun: false,
@@ -450,7 +458,7 @@ describe("runMemoryImport", () => {
         fetch: async (url, init) => {
           active += 1;
           peak = Math.max(peak, active);
-          calls.push({ url: String(url) });
+          calls.push({ url: urlToString(url) });
           await Bun.sleep(10);
           const response = await daemon.fetch(url, init);
           active -= 1;
@@ -469,13 +477,14 @@ describe("runMemoryImport", () => {
     }
   });
 
-  test.skip("apply mode emits Imported summary line and no dry-run marker (subprocess form — flaky on Bun.serve handshake; covered by direct-call apply tests)", async () => {
-    const handler = ((): {
+  test.skip("apply mode emits Imported summary line and no dry-run marker (subprocess form — flaky on Bun.serve handshake; covered by direct-call apply tests)", () => {
+    interface HandlerHandle {
       server: ReturnType<typeof Bun.serve>;
       storageRoot: string;
       getSummary: () => { calls: string[] };
       close: () => void;
-    } => {
+    }
+    const handler = ((): HandlerHandle => {
       let calls: string[] = [];
       const storageRoot = mkdtempSync(join(tmpdir(), "penumbra-memory-import-apply-storage-"));
       const server = Bun.serve({
@@ -485,8 +494,8 @@ describe("runMemoryImport", () => {
             return new Response("not found", { status: 404 });
           }
           const payload = (await request.json().catch(() => ({}))) as { slug?: string };
-          calls = [...calls, payload?.slug ?? "unknown"];
-          const memoryId = payload?.slug ?? Math.random().toString(36).slice(2);
+          calls = [...calls, payload.slug ?? "unknown"];
+          const memoryId = payload.slug ?? Math.random().toString(36).slice(2);
           return new Response(JSON.stringify({ memory_id: memoryId, created: true }), {
             status: 200,
             headers: { "content-type": "application/json" },
@@ -496,9 +505,9 @@ describe("runMemoryImport", () => {
       return {
         server,
         storageRoot,
-        getSummary: () => ({ calls }),
-        close: () => {
-          server.stop();
+        getSummary: (): { calls: string[] } => ({ calls }),
+        close: (): void => {
+          void server.stop();
           rmSync(storageRoot, { recursive: true, force: true });
         },
       };
@@ -546,7 +555,7 @@ describe("runMemoryImport", () => {
     expect(handler.getSummary().calls).toHaveLength(2);
   });
 
-  test("dry-run emits Would write summary and no Imported summary", async () => {
+  test("dry-run emits Would write summary and no Imported summary", () => {
     writeMemoryFile(
       "first.md",
       ccFile("first-entry", {
@@ -579,14 +588,14 @@ describe("runMemoryImport", () => {
     expect(proc.stdout).not.toContain("Imported:");
   });
 
-  test("apply requires --root at CLI level", async () => {
+  test("apply requires --root at CLI level", () => {
     const cli = join(process.cwd(), "packages/cli/bin/penumbra.ts");
     const proc = spawnSync("bun", [cli, "memory", "import-from-claude-code", "--apply"], {
       encoding: "utf8",
       cwd: process.cwd(),
     });
     expect(proc.status).not.toBe(0);
-    expect(proc.stderr ?? "").toContain(
+    expect(proc.stderr).toContain(
       "usage: penumbra memory import-from-claude-code --root <path> (--dry-run | --apply)",
     );
   });
@@ -603,7 +612,7 @@ describe("runMemoryImport", () => {
         }),
       );
       let called = 0;
-      const calls: Array<{ url: string; method: string | undefined }> = [];
+      const calls: { url: string; method: string | undefined }[] = [];
 
       const result = await runMemoryImport({
         root,
@@ -612,8 +621,8 @@ describe("runMemoryImport", () => {
         storageRoot: daemon.storageRoot,
         fetch: async (url, init) => {
           called += 1;
-          calls.push({ url: String(url), method: init?.method });
-          return daemon.fetch(url, init);
+          calls.push({ url: urlToString(url), method: init?.method });
+          return await daemon.fetch(url, init);
         },
       });
 
@@ -652,7 +661,7 @@ Body content`,
         storageRoot: daemon.storageRoot,
         fetch: async (url, init) => {
           calls += 1;
-          return daemon.fetch(url, init);
+          return await daemon.fetch(url, init);
         },
       });
 
@@ -664,7 +673,7 @@ Body content`,
     }
   });
 
-  test("apply exits non-zero on invalid rows (e.g. empty slug)", async () => {
+  test("apply exits non-zero on invalid rows (e.g. empty slug)", () => {
     const cli = join(process.cwd(), "packages/cli/bin/penumbra.ts");
     writeMemoryFile(
       "empty-slug.md",
@@ -690,7 +699,7 @@ Body content`,
     expect(proc.status).not.toBe(0);
   });
 
-  test("--dry-run and --apply are mutually exclusive", async () => {
+  test("--dry-run and --apply are mutually exclusive", () => {
     const cli = join(process.cwd(), "packages/cli/bin/penumbra.ts");
     const proc = spawnSync(
       "bun",
@@ -701,6 +710,6 @@ Body content`,
       },
     );
     expect(proc.status).not.toBe(0);
-    expect(proc.stderr ?? "").toContain("cannot combine --dry-run and --apply");
+    expect(proc.stderr).toContain("cannot combine --dry-run and --apply");
   });
 });

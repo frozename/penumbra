@@ -1,16 +1,20 @@
+import { loadSqliteVec, migrate, type WorktreeHandle } from "@penumbra/core";
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Database } from "bun:sqlite";
-import { migrate, loadSqliteVec, type WorktreeHandle } from "@penumbra/core";
-import { runWorktreeGc, PendingHandoffsError } from "../../src/commands/worktree-gc.js";
+
+import { PendingHandoffsError, runWorktreeGc } from "../../src/commands/worktree-gc.js";
+import { expectAsyncThrow } from "./_helpers.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* sqlite already loaded */
+}
 
 let storageRoot = "";
 
@@ -27,12 +31,12 @@ afterEach(() => {
 });
 
 function seedHandoff(
-  storageRoot: string,
+  storageRootArg: string,
   handoff_id: string,
   status: string,
   resolved_at: string | null,
 ): void {
-  const db = new Database(join(storageRoot, "db.sqlite"));
+  const db = new Database(join(storageRootArg, "db.sqlite"));
   db.run(
     `INSERT INTO handoffs (
        handoff_id, ts, project_id, conversation_id, from_agent, to_agent,
@@ -45,12 +49,12 @@ function seedHandoff(
 }
 
 function updateHandoffStatus(
-  storageRoot: string,
+  storageRootArg: string,
   handoff_id: string,
   status: string,
   resolved_at: string | null,
 ): void {
-  const db = new Database(join(storageRoot, "db.sqlite"));
+  const db = new Database(join(storageRootArg, "db.sqlite"));
   db.run(
     `UPDATE handoffs
         SET status = ?, resolved_at = ?
@@ -81,15 +85,22 @@ function makeOrphan(handoffId: string): { path: string; handoffId: string } {
 const GRACE_MS = 2 * 60 * 60_000;
 const OLD_RESOLVED = new Date(Date.now() - 3 * 60 * 60_000).toISOString();
 
+interface WorktreeManagerMock {
+  listWorktrees: () => WorktreeHandle[];
+  teardownWorktree: (id: string) => Promise<void>;
+  discoverOrphanWorktrees?: () => Promise<{ path: string; handoffId: string }[]>;
+}
+
 describe("runWorktreeGc", () => {
   test("dry-run returns candidates and does NOT call teardownWorktree", async () => {
     seedHandoff(storageRoot, "h-dry", "completed", OLD_RESOLVED);
 
     const teardownCalls: string[] = [];
-    const wm = {
-      listWorktrees: () => [makeHandle("h-dry")],
-      teardownWorktree: async (id: string) => {
+    const wm: WorktreeManagerMock = {
+      listWorktrees: (): WorktreeHandle[] => [makeHandle("h-dry")],
+      teardownWorktree: (id: string): Promise<void> => {
         teardownCalls.push(id);
+        return Promise.resolve();
       },
     };
 
@@ -112,10 +123,11 @@ describe("runWorktreeGc", () => {
     seedHandoff(storageRoot, "h-apply-2", "failed", OLD_RESOLVED);
 
     const teardownCalls: string[] = [];
-    const wm = {
-      listWorktrees: () => [makeHandle("h-apply-1"), makeHandle("h-apply-2")],
-      teardownWorktree: async (id: string) => {
+    const wm: WorktreeManagerMock = {
+      listWorktrees: (): WorktreeHandle[] => [makeHandle("h-apply-1"), makeHandle("h-apply-2")],
+      teardownWorktree: (id: string): Promise<void> => {
         teardownCalls.push(id);
+        return Promise.resolve();
       },
     };
 
@@ -137,13 +149,14 @@ describe("runWorktreeGc", () => {
     seedHandoff(storageRoot, "h-race-live", "completed", OLD_RESOLVED);
 
     const teardownCalls: string[] = [];
-    const wm = {
-      listWorktrees: () => [makeHandle("h-race-old"), makeHandle("h-race-live")],
-      teardownWorktree: async (id: string) => {
+    const wm: WorktreeManagerMock = {
+      listWorktrees: (): WorktreeHandle[] => [makeHandle("h-race-old"), makeHandle("h-race-live")],
+      teardownWorktree: (id: string): Promise<void> => {
         teardownCalls.push(id);
         if (id === "h-race-old") {
           updateHandoffStatus(storageRoot, "h-race-live", "dispatched", null);
         }
+        return Promise.resolve();
       },
     };
 
@@ -164,17 +177,19 @@ describe("runWorktreeGc", () => {
     seedHandoff(storageRoot, "h-old", "completed", OLD_RESOLVED);
 
     const teardownCalls: string[] = [];
-    const wm = {
-      listWorktrees: () => [makeHandle("h-old")],
-      teardownWorktree: async (id: string) => {
+    const wm: WorktreeManagerMock = {
+      listWorktrees: (): WorktreeHandle[] => [makeHandle("h-old")],
+      teardownWorktree: (id: string): Promise<void> => {
         teardownCalls.push(id);
+        return Promise.resolve();
       },
     };
 
     for (const apply of [false, true]) {
-      await expect(
+      await expectAsyncThrow(
         runWorktreeGc({ storageRoot, apply, gracePeriodMs: GRACE_MS, worktreeManager: wm }),
-      ).rejects.toBeInstanceOf(PendingHandoffsError);
+        PendingHandoffsError,
+      );
     }
 
     expect(teardownCalls).toEqual([]);
@@ -185,11 +200,13 @@ describe("runWorktreeGc", () => {
     seedHandoff(storageRoot, "h-orphan-new", "completed", new Date().toISOString());
 
     const teardownCalls: string[] = [];
-    const wm = {
-      listWorktrees: () => [],
-      discoverOrphanWorktrees: async () => [makeOrphan("h-orphan-old"), makeOrphan("h-orphan-new")],
-      teardownWorktree: async (id: string) => {
+    const wm: WorktreeManagerMock = {
+      listWorktrees: (): WorktreeHandle[] => [],
+      discoverOrphanWorktrees: (): Promise<{ path: string; handoffId: string }[]> =>
+        Promise.resolve([makeOrphan("h-orphan-old"), makeOrphan("h-orphan-new")]),
+      teardownWorktree: (id: string): Promise<void> => {
         teardownCalls.push(id);
+        return Promise.resolve();
       },
     };
 
@@ -208,36 +225,36 @@ describe("runWorktreeGc", () => {
   test("closes the db handle when enumeration throws mid-run", async () => {
     seedHandoff(storageRoot, "h-throw", "completed", OLD_RESOLVED);
 
-    const originalClose = Database.prototype.close;
+    type CloseFn = (this: Database, throwOnError?: boolean) => void;
+    const protoSlot = Database.prototype as unknown as { close: CloseFn };
+    const originalClose: CloseFn = protoSlot.close;
     let closeCount = 0;
-    (Database.prototype as unknown as { close: typeof originalClose }).close = function (
-      this: Database,
-      ...args: Parameters<typeof originalClose>
-    ) {
+    protoSlot.close = function (this: Database, throwOnError?: boolean): void {
       closeCount++;
-      return originalClose.apply(this, args);
+      originalClose.call(this, throwOnError);
     };
 
     try {
-      const wm = {
+      const wm: WorktreeManagerMock = {
         listWorktrees: (): WorktreeHandle[] => {
           throw new Error("boom");
         },
-        teardownWorktree: async () => {},
+        teardownWorktree: (): Promise<void> => Promise.resolve(),
       };
 
-      await expect(
+      await expectAsyncThrow(
         runWorktreeGc({
           storageRoot,
           apply: false,
           gracePeriodMs: GRACE_MS,
           worktreeManager: wm,
         }),
-      ).rejects.toThrow("boom");
+        "boom",
+      );
 
       expect(closeCount).toBeGreaterThanOrEqual(1);
     } finally {
-      (Database.prototype as unknown as { close: typeof originalClose }).close = originalClose;
+      protoSlot.close = originalClose;
     }
   });
 
@@ -248,11 +265,13 @@ describe("runWorktreeGc", () => {
     utimesSync(missing.path, oldTime, oldTime);
 
     const teardownCalls: string[] = [];
-    const wm = {
-      listWorktrees: () => [],
-      discoverOrphanWorktrees: async () => [missing, makeOrphan("h-orphan-active")],
-      teardownWorktree: async (id: string) => {
+    const wm: WorktreeManagerMock = {
+      listWorktrees: (): WorktreeHandle[] => [],
+      discoverOrphanWorktrees: (): Promise<{ path: string; handoffId: string }[]> =>
+        Promise.resolve([missing, makeOrphan("h-orphan-active")]),
+      teardownWorktree: (id: string): Promise<void> => {
         teardownCalls.push(id);
+        return Promise.resolve();
       },
     };
 

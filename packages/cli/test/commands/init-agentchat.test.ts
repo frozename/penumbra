@@ -1,9 +1,12 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import YAML from "yaml";
+
+import { AGENTCHAT_TEMPLATE } from "../../src/commands/init-agentchat-template.js";
+import { runInit } from "../../src/commands/init.js";
 
 // Use homebrew sqlite (supports dynamic extension loading for sqlite-vec) on macOS,
 // matching the bootstrap every other CLI/runtime test uses. Without it runInit's
@@ -15,9 +18,6 @@ try {
 } catch {
   // already loaded in this process
 }
-
-import { runInit } from "../../src/commands/init.js";
-import { AGENTCHAT_TEMPLATE } from "../../src/commands/init-agentchat-template.js";
 
 let storageRoot = "";
 let agentchatDir = "";
@@ -48,10 +48,10 @@ test("seeds agentchat config when missing", async () => {
   expect(existsSync(agentchatPath)).toBe(true);
   expect(readFileSync(agentchatPath, "utf8")).toBe(AGENTCHAT_TEMPLATE);
 
-  const parsed = YAML.parse(readFileSync(agentchatPath, "utf8"));
-  expect(
-    parsed.agents.some((agent: { maestro_capable?: boolean }) => agent.maestro_capable === true),
-  ).toBe(true);
+  const parsed = YAML.parse(readFileSync(agentchatPath, "utf8")) as {
+    agents: { maestro_capable?: boolean }[];
+  };
+  expect(parsed.agents.some((agent) => agent.maestro_capable === true)).toBe(true);
 });
 
 test("preserves an existing agentchat config by default", async () => {

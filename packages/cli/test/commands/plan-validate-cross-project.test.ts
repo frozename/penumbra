@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { runPlanValidate } from "../../src/commands/plan.js";
 
 const dirs: string[] = [];
@@ -79,8 +80,12 @@ test("valid plan with qualified deps + registered home_project exits 0", async (
   const result = await runPlanValidate({
     path: planPath,
     knownAgents: KNOWN_AGENTS,
-    out: () => {},
-    err: () => {},
+    out: () => {
+      /* discard */
+    },
+    err: () => {
+      /* discard */
+    },
   });
   expect(result).toBe(0);
 });
@@ -95,7 +100,9 @@ test("home_project not in registry exits 2 with clear message", async () => {
   const result = await runPlanValidate({
     path: planPath,
     knownAgents: KNOWN_AGENTS,
-    out: () => {},
+    out: () => {
+      /* discard */
+    },
     err: (s) => errs.push(s),
   });
   expect(result).toBe(2);
@@ -114,7 +121,9 @@ test("--no-registry skips project-membership rule", async () => {
     path: planPath,
     noRegistry: true,
     knownAgents: KNOWN_AGENTS,
-    out: () => {},
+    out: () => {
+      /* discard */
+    },
     err: (s) => errs.push(s),
   });
   expect(result).toBe(2);

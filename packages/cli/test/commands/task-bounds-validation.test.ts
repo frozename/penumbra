@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
-async function runTaskNew(args: string[]) {
+async function runTaskNew(
+  args: string[],
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const proc = Bun.spawn(
     ["bun", "packages/cli/bin/penumbra.ts", "task", "new", "--prompt", "x", ...args],
     {
