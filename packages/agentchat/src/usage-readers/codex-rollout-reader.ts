@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, statSync, readdirSync } from "node:fs";
+import * as fs from "node:fs";
+import { Buffer } from "node:buffer";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { UsageReader, UsageReaderResult, RateLimitDelta } from "./index.js";
@@ -19,6 +20,23 @@ interface CodexRolloutCursor {
   files: Record<string, FileCursor>;
 }
 
+function readTail(filePath: string, offset: number, length: number): string {
+  if (length <= 0) return "";
+  const buf = Buffer.alloc(length);
+  const fd = fs.openSync(filePath, "r");
+  let total = 0;
+  try {
+    while (total < length) {
+      const n = fs.readSync(fd, buf, total, length - total, offset + total);
+      if (n <= 0) break;
+      total += n;
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return buf.subarray(0, total).toString("utf8");
+}
+
 export class CodexRolloutReader implements UsageReader {
   readonly id = "codex-rollout";
   readonly machineGlobal = true;
@@ -33,7 +51,7 @@ export class CodexRolloutReader implements UsageReader {
   }
 
   async read(previousCursor: unknown | null): Promise<UsageReaderResult> {
-    if (!existsSync(this.rootDir)) {
+    if (!fs.existsSync(this.rootDir)) {
       return {
         cursor: previousCursor ?? { files: {} },
         usage_deltas: [],
@@ -51,17 +69,16 @@ export class CodexRolloutReader implements UsageReader {
 
     for (const filePath of files) {
       const fileCursor = newCursor.files[filePath];
-      const stats = statSync(filePath);
+      const stats = fs.statSync(filePath);
       const { mtimeMs: mtime_ms, size } = stats;
       if (mtime_ms < cutoff) {
         continue;
       }
-      if (fileCursor && fileCursor.mtime_ms === mtime_ms && fileCursor.byte_offset >= size) {
+      const offset = fileCursor?.byte_offset ?? 0;
+      if (offset >= size) {
         continue;
       }
-      const buf = readFileSync(filePath, "utf8");
-      const start = fileCursor?.byte_offset ?? 0;
-      const slice = buf.slice(start);
+      const slice = readTail(filePath, offset, size - offset);
 
       let latestRateLimits: any = null;
       for (const rawLine of slice.split("\n")) {
@@ -106,7 +123,7 @@ export class CodexRolloutReader implements UsageReader {
     const walk = (dir: string) => {
       let entries: import("node:fs").Dirent[];
       try {
-        entries = readdirSync(dir, { withFileTypes: true });
+        entries = fs.readdirSync(dir, { withFileTypes: true });
       } catch {
         return;
       }

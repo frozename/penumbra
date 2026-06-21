@@ -1,5 +1,12 @@
 import { describe, it, expect } from "bun:test";
-import { mkdtempSync, writeFileSync, mkdirSync, utimesSync } from "node:fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  mkdirSync,
+  utimesSync,
+  appendFileSync,
+  statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodexRolloutReader } from "../../src/usage-readers/codex-rollout-reader.js";
@@ -113,6 +120,43 @@ describe("CodexRolloutReader", () => {
     const r = await reader.read(null);
     expect(r.rate_limit_snapshots).toHaveLength(0);
     expect(r.usage_deltas).toHaveLength(0);
+  });
+
+  it("reads only the appended tail on subsequent polls and still finds the latest rate-limit line", async () => {
+    const root = mkdtempSync(join(tmpdir(), "codex-rollout-"));
+    const dayDir = join(root, "2026", "04", "28");
+    mkdirSync(dayDir, { recursive: true });
+    const path = writeRollout(dayDir, "rollout-2026-04-28T12-00-00-tail.jsonl", [
+      tokenCountLine(1.0, 10.0),
+    ]);
+    const initialSize = statSync(path).size;
+
+    const reader = new CodexRolloutReader({ rootDir: root });
+    const r1 = await reader.read(null);
+    expect(r1.rate_limit_snapshots).toHaveLength(2);
+    expect(r1.rate_limit_snapshots.find((s) => s.window_label === "primary")?.used_pct).toBe(1.0);
+
+    const cursor1 = (r1.cursor as { files: Record<string, { byte_offset: number }> }).files[path];
+    expect(cursor1?.byte_offset).toBe(initialSize);
+
+    appendFileSync(path, JSON.stringify(tokenCountLine(9.0, 90.0)) + "\n");
+    const appendedSize = statSync(path).size;
+    expect(appendedSize).toBeGreaterThan(initialSize);
+
+    const r2 = await reader.read(r1.cursor);
+    expect(r2.rate_limit_snapshots).toHaveLength(2);
+    expect(r2.rate_limit_snapshots.find((s) => s.window_label === "primary")?.used_pct).toBe(9.0);
+    const cursor2 = (r2.cursor as { files: Record<string, { byte_offset: number }> }).files[path];
+    expect(cursor2?.byte_offset).toBe(appendedSize);
+
+    appendFileSync(path, "{not valid json on the tail-only path\n");
+    const r3 = await reader.read(r2.cursor);
+    expect(r3.rate_limit_snapshots).toHaveLength(0);
+
+    appendFileSync(path, JSON.stringify(tokenCountLine(7.0, 70.0)) + "\n");
+    const r4 = await reader.read(r3.cursor);
+    expect(r4.rate_limit_snapshots).toHaveLength(2);
+    expect(r4.rate_limit_snapshots.find((s) => s.window_label === "primary")?.used_pct).toBe(7.0);
   });
 
   // Snapshot test against a verbatim payload captured from a production codex
