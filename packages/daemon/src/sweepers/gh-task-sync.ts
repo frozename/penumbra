@@ -146,6 +146,16 @@ interface GhTaskSyncServiceOpts {
   };
   userId?: string;
   machineId?: string;
+  /**
+   * Idempotency probe for the gh_create_issue path. Before calling
+   * ghClient.createIssue, the outbox processor invokes this with the repo and
+   * a retry-stable marker embedded in the issue body. If a prior attempt
+   * already created the issue but crashed before linkGhIssue ran (later
+   * requeued by requeueStaleGhOutboxProcessing), this lookup must return that
+   * issue so we link it instead of creating a duplicate. When absent, the
+   * pre-fix at-least-once behavior is preserved.
+   */
+  findOpenIssueByMarker?: (repo: string, marker: string) => Promise<{ number: number } | null>;
 }
 
 type TaskStatusLike =
@@ -465,7 +475,7 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
             }
             const repo = String(payload.repo ?? "").trim();
             const title = clampGhIssueTitle(String(payload.title ?? ""));
-            const body = String(payload.body ?? "");
+            const rawBody = String(payload.body ?? "");
             const labels = Array.isArray(payload.labels)
               ? payload.labels.filter((v): v is string => typeof v === "string" && v.length > 0)
               : undefined;
@@ -473,7 +483,28 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
               ? payload.assignees.filter((v): v is string => typeof v === "string" && v.length > 0)
               : undefined;
             if (!repo || !title) throw new Error("gh_create_issue missing repo/title");
+            // Marker keyed off the gh_outbox row id stays stable across
+            // requeueStaleGhOutboxProcessing retries, so a crash between
+            // createIssue and linkGhIssue can be detected on the next attempt.
+            const marker = buildGhCreateIssueMarker(row.id);
+            const body = embedGhCreateIssueMarker(rawBody, marker);
             opts.taskWriter.setGhCreateStatus(row.task_id, "pending", null);
+            let existing: { number: number } | null = null;
+            if (opts.findOpenIssueByMarker) {
+              try {
+                existing = await opts.findOpenIssueByMarker(repo, marker);
+              } catch {
+                existing = null;
+              }
+            }
+            if (existing) {
+              opts.taskWriter.linkGhIssue(row.task_id, {
+                repo,
+                issue_number: existing.number,
+              });
+              opts.taskWriter.setGhCreateStatus(row.task_id, "created", null);
+              break;
+            }
             const created = await ghClient.createIssue({ repo, title, body, labels, assignees });
             opts.taskWriter.linkGhIssue(row.task_id, { repo, issue_number: created.number });
             opts.taskWriter.setGhCreateStatus(row.task_id, "created", null);
@@ -883,6 +914,75 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
   };
 }
 
+export function buildGhCreateIssueMarker(outboxRowId: number): string {
+  return `<!-- penumbra-outbox-id=${outboxRowId} -->`;
+}
+
+export function embedGhCreateIssueMarker(body: string, marker: string): string {
+  if (body.includes(marker)) return body;
+  if (body.length === 0) return marker;
+  return `${body}\n\n${marker}`;
+}
+
+async function defaultFindOpenIssueByMarker(
+  repo: string,
+  marker: string,
+): Promise<{ number: number } | null> {
+  // Best-effort: gh issue list --search relies on GitHub's issue index. The
+  // 10-min stale-requeue window typically gives the index time to catch up.
+  // Any failure (gh missing, network error, parse error) returns null so the
+  // caller falls through to createIssue (prior at-least-once behavior).
+  try {
+    const proc = Bun.spawn({
+      cmd: [
+        "gh",
+        "issue",
+        "list",
+        "--repo",
+        repo,
+        "--state",
+        "open",
+        "--search",
+        marker,
+        "--json",
+        "number,body",
+        "--limit",
+        "30",
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      proc.kill();
+    }, 30_000);
+    const [stdout, , exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    clearTimeout(timer);
+    if (timedOut || exitCode !== 0) return null;
+    const items = JSON.parse(stdout || "[]") as Array<{ number?: unknown; body?: unknown }>;
+    for (const item of items) {
+      if (
+        item &&
+        typeof item.body === "string" &&
+        item.body.includes(marker) &&
+        typeof item.number === "number" &&
+        Number.isInteger(item.number) &&
+        item.number > 0
+      ) {
+        return { number: item.number };
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function clampGhIssueTitle(title: string): string {
   const singleLine = title.replace(/\s+/g, " ").trim();
   if (singleLine.length <= 256) return singleLine;
@@ -1011,5 +1111,6 @@ export function createDefaultGhTaskSyncService(
     uuid: services.uuid,
     log: services.log as any,
     machineId: services.machineId.get(),
+    findOpenIssueByMarker: defaultFindOpenIssueByMarker,
   });
 }

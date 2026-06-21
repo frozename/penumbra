@@ -445,7 +445,8 @@ describe("gh-task-sync sweeper/service", () => {
     expect(createCalls[0]?.title).toMatch(/^[^\n]+$/);
     expect(createCalls[0]?.title.length).toBeLessThanOrEqual(256);
     expect(createCalls[0]?.title).toContain("line one");
-    expect(createCalls[0]?.body).toBe("full body");
+    expect(createCalls[0]?.body).toContain("full body");
+    expect(createCalls[0]?.body).toMatch(/<!-- penumbra-outbox-id=\d+ -->/);
   });
 
   test("syncAllLinkedTasks does not duplicate createIssue when stale requeue sees an in-flight row", async () => {
@@ -942,6 +943,144 @@ describe("gh-task-sync sweeper/service", () => {
         (row: any) => row?.event === "sweeper.skip_tick" && row?.sweeper === "gh-task-sync",
       ),
     ).toBe(true);
+  });
+
+  test("retry of gh_create_issue whose createIssue succeeded but linkGhIssue did not does NOT create a duplicate", async () => {
+    // Simulates: previous attempt called ghClient.createIssue (issue #999 was
+    // created on GitHub) but the daemon crashed before linkGhIssue ran, leaving
+    // the gh_outbox row in 'processing'. After the 10-min stale window,
+    // requeueStaleGhOutboxProcessing flips the row back to 'pending'. Without
+    // the idempotency probe, the next attempt would call createIssue a second
+    // time and produce a duplicate GitHub issue.
+    const { db, writer, setNow } = setup();
+    const startedAt = Date.parse("2026-05-08T03:00:00.000Z");
+    setNow(startedAt);
+    let setupNow = startedAt;
+    const { task_id } = writer.file({
+      prompt: "retry idempotency",
+      created_by_kind: "human",
+      created_by_id: "cli",
+    });
+    writer.enqueueGhOutbox(task_id, "gh_create_issue", {
+      repo: "acordeiro/penumbra",
+      title: "Idempotent create",
+      body: "issue body",
+    });
+    const [pendingRow] = writer.listPendingGhOutbox(10);
+    expect(pendingRow).toBeDefined();
+    expect(writer.markGhOutboxAttempt(pendingRow!.id)).toBe(true);
+
+    setupNow = startedAt + 11 * 60 * 1000;
+    setNow(setupNow);
+
+    const createCalls: { repo: string; title: string; body: string }[] = [];
+    const ghClient: GhClient = {
+      createIssue: async (input) => {
+        createCalls.push(input);
+        return {
+          number: 1000,
+          url: "https://github.com/acordeiro/penumbra/issues/1000",
+        };
+      },
+      viewIssue: async () => {
+        throw new Error("not used");
+      },
+      closeIssue: async () => {},
+      reopenIssue: async () => {},
+      commentIssue: async () => ({
+        comment_url: "https://github.com/acordeiro/penumbra/issues/999#issuecomment-1",
+      }),
+      listComments: async () => [],
+    };
+
+    const markerCalls: Array<{ repo: string; marker: string }> = [];
+    const findOpenIssueByMarker = async (
+      repo: string,
+      marker: string,
+    ): Promise<{ number: number } | null> => {
+      markerCalls.push({ repo, marker });
+      return { number: 999 };
+    };
+
+    const sync = createGhTaskSyncService({
+      taskWriter: writer,
+      ghClient,
+      t0Writer: new T0Writer(db),
+      now: () => new Date(setupNow),
+      uuid: () => crypto.randomUUID(),
+      userId: "test-user",
+      machineId: "test-machine",
+      findOpenIssueByMarker,
+    });
+
+    await sync.syncAllLinkedTasks({ fullReconcile: false });
+
+    expect(createCalls).toHaveLength(0);
+    expect(markerCalls).toHaveLength(1);
+    expect(markerCalls[0]?.repo).toBe("acordeiro/penumbra");
+    expect(markerCalls[0]?.marker).toMatch(/^<!-- penumbra-outbox-id=\d+ -->$/);
+
+    const task = writer.get(task_id);
+    expect(task.gh_issue_number).toBe(999);
+    expect(task.gh_issue_repo).toBe("acordeiro/penumbra");
+
+    const row = db
+      .query<{ status: string }, [string]>(`SELECT status FROM gh_outbox WHERE task_id = ?`)
+      .get(task_id);
+    expect(row?.status).toBe("done");
+  });
+
+  test("first-attempt gh_create_issue embeds the idempotency marker in the issue body", async () => {
+    const { db, writer } = setup();
+    const { task_id } = writer.file({
+      prompt: "marker embedded",
+      created_by_kind: "human",
+      created_by_id: "cli",
+    });
+    writer.enqueueGhOutbox(task_id, "gh_create_issue", {
+      repo: "acordeiro/penumbra",
+      title: "marker create",
+      body: "original body",
+    });
+
+    const createCalls: { repo: string; title: string; body: string }[] = [];
+    const ghClient: GhClient = {
+      createIssue: async (input) => {
+        createCalls.push(input);
+        return {
+          number: 42,
+          url: "https://github.com/acordeiro/penumbra/issues/42",
+        };
+      },
+      viewIssue: async () => {
+        throw new Error("not used");
+      },
+      closeIssue: async () => {},
+      reopenIssue: async () => {},
+      commentIssue: async () => ({
+        comment_url: "https://github.com/acordeiro/penumbra/issues/42#issuecomment-1",
+      }),
+      listComments: async () => [],
+    };
+
+    const findOpenIssueByMarker = async (): Promise<{ number: number } | null> => null;
+
+    const sync = createGhTaskSyncService({
+      taskWriter: writer,
+      ghClient,
+      t0Writer: new T0Writer(db),
+      now: () => new Date("2026-05-08T03:00:00.000Z"),
+      uuid: () => crypto.randomUUID(),
+      userId: "test-user",
+      machineId: "test-machine",
+      findOpenIssueByMarker,
+    });
+
+    await sync.syncAllLinkedTasks({ fullReconcile: false });
+
+    expect(createCalls).toHaveLength(1);
+    expect(createCalls[0]?.body).toContain("original body");
+    expect(createCalls[0]?.body).toMatch(/<!-- penumbra-outbox-id=\d+ -->/);
   });
 
   test("createDaemonFetchHandler uses provided ghTaskSyncService without re-wrapping (Bug A)", async () => {
