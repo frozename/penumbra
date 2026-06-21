@@ -83,6 +83,8 @@ export interface WorkerDispatcher {
   idle(): Promise<void>;
   /** Aborts all active dispatches and clears state. */
   stop(): void;
+  /** @internal Test-only diagnostics. Not part of the runtime contract. */
+  __internals(): { claimRetryStateSize: number };
 }
 
 export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispatcher {
@@ -136,8 +138,34 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
     const jitter = backoff * (0.2 * Math.random());
     return Math.min(capMs, Math.round(backoff + jitter));
   };
+  // Bound claimRetryState so a handoff that fails a retryable claim and then
+  // goes terminal upstream (e.g. orphan sweeper marks it failed) before any
+  // re-claim does not leak an entry forever. Two complementary caps:
+  //   - STALE: entries whose backoff window expired this long ago are dropped
+  //     opportunistically — the daemon either re-surfaces the row well within
+  //     this window or marks it terminal, so a stale entry is dead weight.
+  //   - MAX: hard ceiling that drops the oldest entries first (Map preserves
+  //     insertion order). Sized generously; the eviction is a safety net for
+  //     pathological surfacing storms, not a per-second tuning knob.
+  const STALE_CLAIM_RETRY_MS = 5 * 60_000;
+  const MAX_CLAIM_RETRY_STATE = 1_000;
+  const evictStaleClaimRetryState = () => {
+    if (claimRetryState.size === 0) return;
+    const now = Date.now();
+    for (const [hid, state] of claimRetryState) {
+      if (now - state.resumeAtMs > STALE_CLAIM_RETRY_MS) {
+        claimRetryState.delete(hid);
+      }
+    }
+    while (claimRetryState.size > MAX_CLAIM_RETRY_STATE) {
+      const oldestKey = claimRetryState.keys().next().value;
+      if (oldestKey === undefined) break;
+      claimRetryState.delete(oldestKey);
+    }
+  };
 
   const handleOne = async (handoff: any): Promise<void> => {
+    evictStaleClaimRetryState();
     // Cross-project claim affinity. Hold back before claiming so a home-repoRoot
     // worker wins the first-poll race and reuses its warm connection. 0 for home
     // workers, non-warm agents, or when disabled. Awaited BEFORE the conv-lock +
@@ -192,6 +220,12 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
               },
               "claim failed; retryable but backoff active",
             );
+            // The host may have cleared dedup state for this handoff_id
+            // (SSE reconnect, daemon restart, in-memory eviction) since
+            // the prior retry was scheduled. Re-arm so the row remains
+            // eligible for re-discovery past resumeAtMs even though the
+            // log/dispatch_event side effects are rate-limited here.
+            deps.onClaimRetryable?.(handoff.handoff_id);
             return;
           }
           const attempts = (previous?.attempts ?? 0) + 1;
@@ -646,6 +680,10 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
       activeAborts.clear();
       pendingCancelsByHandoff.clear();
       pendingCancelsByConv.clear();
+      claimRetryState.clear();
     },
+    __internals: () => ({
+      claimRetryStateSize: claimRetryState.size,
+    }),
   };
 }

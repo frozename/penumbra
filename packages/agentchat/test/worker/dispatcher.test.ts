@@ -638,6 +638,7 @@ test("claim 500 is retryable: onClaimRetryable is invoked with the handoff_id", 
 
 test("retryable claim failures back off per handoff and reset after success", async () => {
   const onClaimRetryable = mock();
+  const events: any[] = [];
   const claims = mock()
     .mockRejectedValueOnce(new PenumbraHttpError("/handoffs/h1/claim", 500))
     .mockRejectedValueOnce(new PenumbraHttpError("/handoffs/h1/claim", 500))
@@ -646,6 +647,7 @@ test("retryable claim failures back off per handoff and reset after success", as
   const d = deps({
     claim: claims,
     onClaimRetryable,
+    onDispatchEvent: (event: any) => events.push(event),
   });
   const dispatcher = createWorkerDispatcher(d);
 
@@ -658,8 +660,62 @@ test("retryable claim failures back off per handoff and reset after success", as
   await dispatcher.handle(baseHandoff("h1"));
   await dispatcher.idle();
 
+  // onClaimRetryable fires on every retryable failure (incl. backoff-suppressed
+  // ones) so the host can re-arm dedup state for re-discovery; the dispatch
+  // event/log warn is what's rate-limited by backoff.
+  expect(onClaimRetryable).toHaveBeenCalledTimes(3);
+  expect(onClaimRetryable.mock.calls.map((call) => call[0])).toEqual(["h1", "h1", "h1"]);
+  // claim_retry dispatch event is suppressed inside the backoff window (handle
+  // #2) but re-emitted after success resets state and a new failure occurs.
+  const claimRetryEvents = events.filter((e) => e.kind === "claim_retry");
+  expect(claimRetryEvents).toHaveLength(2);
+});
+
+test("backoff-active early return still re-arms onClaimRetryable so host can re-surface", async () => {
+  const onClaimRetryable = mock();
+  const events: any[] = [];
+  const d = deps({
+    claim: mock().mockRejectedValue(new PenumbraHttpError("/handoffs/h1/claim", 500)),
+    onClaimRetryable,
+    onDispatchEvent: (event: any) => events.push(event),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  // First failure schedules the backoff window. Second failure lands inside
+  // that window (no real delay between handle() calls in the test).
+  await dispatcher.handle(baseHandoff("h1"));
+  await dispatcher.idle();
+  await dispatcher.handle(baseHandoff("h1"));
+  await dispatcher.idle();
+
+  // Even though the second failure is suppressed for log/dispatch-event
+  // emission (rate-limited), it MUST still re-arm onClaimRetryable: the
+  // host may have cleared dedup state since the first retry was scheduled
+  // and would otherwise never re-surface this row past resumeAtMs.
   expect(onClaimRetryable).toHaveBeenCalledTimes(2);
   expect(onClaimRetryable.mock.calls.map((call) => call[0])).toEqual(["h1", "h1"]);
+  // But the dispatch claim_retry event fires only once (rate-limited).
+  expect(events.filter((e) => e.kind === "claim_retry")).toHaveLength(1);
+});
+
+test("claimRetryState stays bounded and is cleared on stop()", async () => {
+  const d = deps({
+    claim: mock().mockRejectedValue(new PenumbraHttpError("/handoffs/x/claim", 500)),
+    onClaimRetryable: mock(),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  // Populate state with a handful of failing handoffs.
+  for (let i = 0; i < 5; i++) {
+    await dispatcher.handle(baseHandoff(`h-${i}`, `c-${i}`));
+  }
+  await dispatcher.idle();
+  expect(dispatcher.__internals().claimRetryStateSize).toBe(5);
+
+  // stop() must clear the map for symmetry with the other collections so
+  // a recycled dispatcher does not carry forward stale per-handoff backoff.
+  dispatcher.stop();
+  expect(dispatcher.__internals().claimRetryStateSize).toBe(0);
 });
 
 test("claim network error (non-HTTP) is retryable: onClaimRetryable is invoked", async () => {
