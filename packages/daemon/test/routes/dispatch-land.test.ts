@@ -912,6 +912,81 @@ describe("dispatchLandRoute", () => {
     expect(basis.merge_commit).toBe(realCommit);
   });
 
+  test("memory-verify authorize throw does not flip a successful land to failed", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-land-authz-throw", "c-land-authz-throw");
+    seedHandoff(svc, "h-reviewer-authz-throw", "c-reviewer-authz-throw");
+    seedClosedLaneWithReviewer(svc, {
+      laneId: "lane-land-authz-throw",
+      implementerHandoff: "h-land-authz-throw",
+      reviewerHandoff: "h-reviewer-authz-throw",
+    });
+    writeVerdictEvent(svc, {
+      eventId: "v-land-authz-throw",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-land-authz-throw",
+      conversationId: "c-land-authz-throw",
+      typecheck: "pass",
+      tests: "pass",
+    });
+    seedMemory(svc.db, "m-land-authz-throw");
+    seedDispatchMemory(svc.db, "h-land-authz-throw", "m-land-authz-throw");
+
+    // Force the memory-verify authorize side-effect to throw by dropping the
+    // verification-events table out from under it. The land itself has already
+    // succeeded by this point; the throw must not flip the result to failed.
+    svc.db.run("DROP TABLE t2_memory_verification_events");
+
+    const realCommit = Bun.spawnSync({
+      cmd: ["git", "rev-parse", "HEAD"],
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+      .stdout.toString()
+      .trim();
+    expect(realCommit).toMatch(/^[a-f0-9]{40}$/);
+
+    const post = await dispatchLandRoute(
+      new Request("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-land-authz-throw",
+          commit_message: "feat(core): land succeeds despite memory-verify throw",
+          mode: "squash",
+          delete_branch: false,
+        }),
+      }),
+      svc,
+      {
+        runGit: async (args: string[]) => {
+          if (args[0] === "rev-parse" && args[1] === "main") {
+            return { code: 0, stdout: `${realCommit}\n`, stderr: "" };
+          }
+          if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--quiet") {
+            return { code: 1, stdout: "", stderr: "" };
+          }
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: {
+          listOpenPullRequestsByHead: async () => [],
+          closePullRequest: async () => {},
+        },
+        now: () => new Date("2026-05-08T00:04:00.000Z"),
+      } as any,
+    );
+
+    expect(post.status).toBe(202);
+    const accepted = (await post.json()) as any;
+    const terminal = await waitForLandTask(svc, accepted.task_id);
+    expect(terminal.status).toBe("done");
+    expect(terminal.error).toBeNull();
+    expect(terminal.result).toMatchObject({
+      ok: true,
+      commit_sha: realCommit,
+    });
+    expect(terminal.result.already_landed).toBeUndefined();
+  });
+
   test("ff mode runs ff-only merge and leaves branch when delete_branch=false", async () => {
     const svc = services();
     seedHandoff(svc, "h-2", "c-2");

@@ -857,14 +857,21 @@ async function executeLand(input: {
   }
 
   if (!already_landed) {
-    const reviewerHandoff = resolveReviewerHandoffForDispatchLand(services, handoff_id);
-    if (reviewerHandoff) {
-      await authorizeDispatchLandMemoryVerify({
-        services,
-        handoffId: handoff_id,
-        reviewerHandoff,
-        commitSha: commit_sha,
-      });
+    try {
+      const reviewerHandoff = resolveReviewerHandoffForDispatchLand(services, handoff_id);
+      if (reviewerHandoff) {
+        await authorizeDispatchLandMemoryVerify({
+          services,
+          handoffId: handoff_id,
+          reviewerHandoff,
+          commitSha: commit_sha,
+        });
+      }
+    } catch (err) {
+      services.log?.warn?.(
+        { handoff_id, err: String(err) },
+        "dispatch-land memory verify authorize threw; land result unaffected",
+      );
     }
   }
 
