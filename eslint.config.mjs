@@ -154,8 +154,17 @@ export default tseslint.config(
       "unicorn/prefer-string-replace-all": "warn",
       "unicorn/prefer-set-has": "warn",
       "unicorn/throw-new-error": "warn",
-      "security/detect-non-literal-fs-filename": "warn",
-      "security/detect-non-literal-regexp": "warn",
+      // Threat-model carve-out (documented, deliberate — NOT a per-call escape):
+      // these heuristics flag fs/RegExp built from non-literal values to catch
+      // injection from UNTRUSTED input. penumbra is an internal daemon whose
+      // paths and patterns are internally constructed (config/worktree/temp/
+      // session dirs, internal regexes), never user-supplied, so the rules are
+      // pure false-positives here and "fixing" them means hidden indirection,
+      // not real safety. Disabled at config level (visible + reviewable) rather
+      // than dodged per-call. (nova/llamactl keep these unenforced too.)
+      // Re-enable with a real validating boundary if untrusted paths ever reach fs.
+      "security/detect-non-literal-fs-filename": "off",
+      "security/detect-non-literal-regexp": "off",
       "@typescript-eslint/prefer-readonly-parameter-types": "off",
       "@typescript-eslint/consistent-type-definitions": "off",
       "@typescript-eslint/member-ordering": "off",
