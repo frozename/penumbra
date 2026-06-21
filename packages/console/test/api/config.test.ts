@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { BadDaemonUrlError, MissingTokenError, loadPenumbraConfig } from "../../src/api/config";
+
+import { BadDaemonUrlError, loadPenumbraConfig, MissingTokenError } from "../../src/api/config.js";
 
 describe("loadPenumbraConfig", () => {
   test("production mode returns /api baseUrl with empty token", () => {

@@ -1,24 +1,30 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { DaemonClient, type UsageQuotaResponse } from "../../src/api/client";
-import { DaemonContractError, DaemonHttpError } from "../../src/api/errors";
 
-type FetchCall = { url: string; init?: RequestInit };
+import { DaemonClient, type UsageQuotaResponse } from "../../src/api/client.js";
+import { DaemonContractError, DaemonHttpError } from "../../src/api/errors.js";
+
+interface FetchCall {
+  url: string;
+  init: RequestInit | undefined;
+}
 type FetchHandler = (url: string, init?: RequestInit) => Response | Promise<Response>;
 
 const calls: FetchCall[] = [];
-let handler: FetchHandler = () => new Response("not configured", { status: 500 });
+const notConfigured: FetchHandler = (): Response => new Response("not configured", { status: 500 });
+let handler: FetchHandler = notConfigured;
 const originalFetch = globalThis.fetch;
+
+function urlOf(input: string | URL | Request): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+}
 
 beforeEach(() => {
   calls.length = 0;
-  handler = () => new Response("not configured", { status: 500 });
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    const url =
-      typeof input === "string"
-        ? input
-        : input instanceof URL
-          ? input.toString()
-          : (input as Request).url;
+  handler = notConfigured;
+  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    const url = urlOf(input);
     calls.push({ url, init });
     return Promise.resolve(handler(url, init));
   }) as typeof fetch;
@@ -28,9 +34,9 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-function makeClient(overrides?: Partial<{ baseUrl: string; token: string }>) {
+function makeClient(overrides?: Partial<{ baseUrl: string; token: string }>): DaemonClient {
   return new DaemonClient({
-    getConfig: () => ({
+    getConfig: (): { baseUrl: string; token: string } => ({
       baseUrl: overrides?.baseUrl ?? "http://127.0.0.1:51257",
       token: overrides?.token ?? "tok-abc",
     }),
@@ -42,6 +48,10 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { "content-type": "application/json" },
   });
+}
+
+function parseBody(init: RequestInit | undefined): Record<string, unknown> {
+  return JSON.parse(init?.body as string) as Record<string, unknown>;
 }
 
 const minimalHandoffRow = {
@@ -71,7 +81,7 @@ const minimalHandoffRow = {
 
 describe("DaemonClient", () => {
   test("health() includes credentials: 'include' and Authorization header", async () => {
-    handler = () => jsonResponse({ status: "ok" });
+    handler = (): Response => jsonResponse({ status: "ok" });
     const client = makeClient();
     const result = await client.health();
     expect(result).toEqual({ status: "ok" });
@@ -84,7 +94,7 @@ describe("DaemonClient", () => {
   });
 
   test("health() with empty token omits Authorization header", async () => {
-    handler = () => jsonResponse({ status: "ok" });
+    handler = (): Response => jsonResponse({ status: "ok" });
     const client = makeClient({ token: "" });
     const result = await client.health();
     expect(result).toEqual({ status: "ok" });
@@ -97,7 +107,7 @@ describe("DaemonClient", () => {
   });
 
   test("health() with relative /api baseUrl concatenates correctly", async () => {
-    handler = () => jsonResponse({ status: "ok" });
+    handler = (): Response => jsonResponse({ status: "ok" });
     const client = makeClient({ baseUrl: "/api", token: "" });
     const result = await client.health();
     expect(result).toEqual({ status: "ok" });
@@ -107,7 +117,7 @@ describe("DaemonClient", () => {
   });
 
   test("listHandoffs() with relative baseUrl builds correct URL with query", async () => {
-    handler = () => jsonResponse({ handoffs: [] });
+    handler = (): Response => jsonResponse({ handoffs: [] });
     const client = makeClient({ baseUrl: "/api" });
     await client.listHandoffs({ status: "pending" });
     expect(calls[0]!.url).toBe("/api/handoffs?status=pending");
@@ -115,14 +125,15 @@ describe("DaemonClient", () => {
   });
 
   test("listHandoffs() with relative trailing-slash baseUrl avoids double slash", async () => {
-    handler = () => jsonResponse({ handoffs: [] });
+    handler = (): Response => jsonResponse({ handoffs: [] });
     const client = makeClient({ baseUrl: "/api/" });
     await client.listHandoffs({ status: "pending" });
     expect(calls[0]!.url).toBe("/api/handoffs?status=pending");
   });
 
   test("approveHandoff() with relative baseUrl builds correct POST URL", async () => {
-    handler = () => jsonResponse({ handoff_id: "h1", status: "rejected", redirected_to: null });
+    handler = (): Response =>
+      jsonResponse({ handoff_id: "h1", status: "rejected", redirected_to: null });
     const client = makeClient({ baseUrl: "/api" });
     await client.approveHandoff("h1", { reject: true });
     expect(calls[0]!.url).toBe("/api/handoffs/h1/approve");
@@ -131,7 +142,7 @@ describe("DaemonClient", () => {
   });
 
   test("listHandoffs() with no opts hits /handoffs without query", async () => {
-    handler = () => jsonResponse({ handoffs: [minimalHandoffRow] });
+    handler = (): Response => jsonResponse({ handoffs: [minimalHandoffRow] });
     const client = makeClient();
     const result = await client.listHandoffs();
     expect(calls[0]!.url).toBe("http://127.0.0.1:51257/handoffs");
@@ -141,14 +152,14 @@ describe("DaemonClient", () => {
   });
 
   test("listHandoffs({ status: 'pending' }) appends ?status=pending", async () => {
-    handler = () => jsonResponse({ handoffs: [] });
+    handler = (): Response => jsonResponse({ handoffs: [] });
     const client = makeClient();
     await client.listHandoffs({ status: "pending" });
     expect(calls[0]!.url).toBe("http://127.0.0.1:51257/handoffs?status=pending");
   });
 
   test("listHandoffs() throws DaemonHttpError on 401", async () => {
-    handler = () => new Response("nope", { status: 401, statusText: "Unauthorized" });
+    handler = (): Response => new Response("nope", { status: 401, statusText: "Unauthorized" });
     const client = makeClient();
     let err: unknown;
     try {
@@ -164,7 +175,7 @@ describe("DaemonClient", () => {
   });
 
   test("listHandoffs() throws DaemonContractError when body fails schema", async () => {
-    handler = () => jsonResponse({ wrong: "shape" });
+    handler = (): Response => jsonResponse({ wrong: "shape" });
     const client = makeClient();
     let err: unknown;
     try {
@@ -180,14 +191,15 @@ describe("DaemonClient", () => {
   });
 
   test("listHandoffs() parses well-formed response cleanly", async () => {
-    handler = () => jsonResponse({ handoffs: [minimalHandoffRow, minimalHandoffRow] });
+    handler = (): Response => jsonResponse({ handoffs: [minimalHandoffRow, minimalHandoffRow] });
     const client = makeClient();
     const result = await client.listHandoffs();
     expect(result.handoffs).toHaveLength(2);
   });
 
   test("approveHandoff(id, { reject: true, reason }) POSTs JSON body", async () => {
-    handler = () => jsonResponse({ handoff_id: "h1", status: "rejected", redirected_to: null });
+    handler = (): Response =>
+      jsonResponse({ handoff_id: "h1", status: "rejected", redirected_to: null });
     const client = makeClient();
     const result = await client.approveHandoff("h1", {
       reject: true,
@@ -203,12 +215,11 @@ describe("DaemonClient", () => {
     expect(calls[0]!.init?.credentials).toBe("include");
     const headers = new Headers(calls[0]!.init?.headers);
     expect(headers.get("content-type")).toBe("application/json");
-    const body = JSON.parse(calls[0]!.init?.body as string) as Record<string, unknown>;
-    expect(body).toEqual({ reject: true, reason: "looks bad" });
+    expect(parseBody(calls[0]!.init)).toEqual({ reject: true, reason: "looks bad" });
   });
 
   test("listChains forwards status, limit, offset, projectId as query params", async () => {
-    handler = () => jsonResponse({ chains: [], limit: 10, offset: 20 });
+    handler = (): Response => jsonResponse({ chains: [], limit: 10, offset: 20 });
     const client = makeClient();
     await client.listChains({
       status: "pending",
@@ -225,18 +236,18 @@ describe("DaemonClient", () => {
   });
 
   test("approveHandoff maps camelCase opts to snake_case wire body", async () => {
-    handler = () => jsonResponse({ handoff_id: "h1", status: "redirected", redirected_to: "x" });
+    handler = (): Response =>
+      jsonResponse({ handoff_id: "h1", status: "redirected", redirected_to: "x" });
     const client = makeClient();
     await client.approveHandoff("h1", {
       redirectTo: "x",
       resolvedBy: "operator",
     });
-    const body = JSON.parse(calls[0]!.init?.body as string) as Record<string, unknown>;
-    expect(body).toEqual({ redirect_to: "x", resolved_by: "operator" });
+    expect(parseBody(calls[0]!.init)).toEqual({ redirect_to: "x", resolved_by: "operator" });
   });
 
   test("getQuotaStatus() hits /usage/quota_status and returns UsageQuotaResponse", async () => {
-    handler = () => jsonResponse({ arbitrary: { shape: 1 } });
+    handler = (): Response => jsonResponse({ arbitrary: { shape: 1 } });
     const client = makeClient();
     const result: UsageQuotaResponse = await client.getQuotaStatus();
     expect(calls[0]!.url).toBe("http://127.0.0.1:51257/usage/quota_status");

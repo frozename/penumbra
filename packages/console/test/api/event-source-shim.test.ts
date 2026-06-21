@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test, mock } from "bun:test";
-import { createSseSource } from "../../src/api/event-source-shim";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+
+import { createSseSource } from "../../src/api/event-source-shim.js";
 
 interface SseFakeController {
   send(text: string): void;
@@ -11,7 +12,7 @@ interface SseFakeController {
 function makeMockResponse(): { response: Response; controller: SseFakeController } {
   let ctrl!: ReadableStreamDefaultController<Uint8Array>;
   const stream = new ReadableStream<Uint8Array>({
-    start(c) {
+    start(c): void {
       ctrl = c;
     },
   });
@@ -21,32 +22,34 @@ function makeMockResponse(): { response: Response; controller: SseFakeController
   });
   const enc = new TextEncoder();
   const controller: SseFakeController = {
-    send(text) {
+    send(text): void {
       ctrl.enqueue(enc.encode(text));
     },
-    sendEvent(event, data) {
-      const lines = [];
+    sendEvent(event, data): void {
+      const lines: string[] = [];
       if (event !== null) lines.push(`event: ${event}`);
       for (const line of data.split("\n")) lines.push(`data: ${line}`);
       ctrl.enqueue(enc.encode(lines.join("\n") + "\n\n"));
     },
-    error(err) {
+    error(err): void {
       ctrl.error(err);
     },
-    close() {
+    close(): void {
       ctrl.close();
     },
   };
   return { response, controller };
 }
 
-async function flushMicrotasks() {
+async function flushMicrotasks(): Promise<void> {
   for (let i = 0; i < 10; i++) await Promise.resolve();
 }
 
+type CapturedCredentials = RequestInit["credentials"];
+
 let capturedSignal: AbortSignal | null = null;
 let capturedHeaders: Record<string, string> | null = null;
-let capturedCredentials: RequestCredentials | null = null;
+let capturedCredentials: CapturedCredentials | null = null;
 let fetchImpl: typeof fetch;
 
 beforeEach(() => {
@@ -59,8 +62,12 @@ afterEach(() => {
   // no-op
 });
 
+function noop(): void {
+  /* intentional no-op */
+}
+
 function makeFetch(response: Response): typeof fetch {
-  return ((url: RequestInfo | URL, init?: RequestInit) => {
+  return ((url: string | URL | Request, init?: RequestInit) => {
     void url;
     capturedSignal = init?.signal ?? null;
     capturedHeaders = (init?.headers as Record<string, string> | undefined) ?? null;
@@ -170,7 +177,9 @@ describe("createSseSource", () => {
   test("onTransportError fires when the stream errors", async () => {
     const { response, controller } = makeMockResponse();
     fetchImpl = makeFetch(response);
-    const onErr = mock((_e: unknown) => {});
+    const onErr = mock((_e: unknown): void => {
+      /* spy */
+    });
     const src = createSseSource({
       url: "http://x/y",
       headers: {},
@@ -216,7 +225,7 @@ describe("createSseSource", () => {
     });
     await flushMicrotasks();
     expect(capturedHeaders).not.toBeNull();
-    const headers = capturedHeaders as Record<string, string>;
+    const headers = capturedHeaders!;
     expect(headers.Accept).toBe("text/event-stream");
     expect(headers.Authorization).toBe("Bearer abc");
     expect(capturedCredentials).toBe("include");
@@ -264,14 +273,16 @@ describe("createSseSource", () => {
   test("300KB un-delimited bytes triggers sse_buffer_overflow", async () => {
     const { response, controller } = makeMockResponse();
     fetchImpl = makeFetch(response);
-    const onErr = mock((_e: unknown) => {});
+    const onErr = mock((_e: unknown): void => {
+      /* spy */
+    });
     const src = createSseSource({
       url: "http://x/y",
       headers: {},
       onTransportError: onErr,
       fetchImpl,
     });
-    src.addEventListener("message", () => {});
+    src.addEventListener("message", noop);
 
     await flushMicrotasks();
     // 300KB of un-delimited content (no \n\n)
@@ -288,14 +299,16 @@ describe("createSseSource", () => {
   test("oversized single event triggers sse_buffer_overflow", async () => {
     const { response, controller } = makeMockResponse();
     fetchImpl = makeFetch(response);
-    const onErr = mock((_e: unknown) => {});
+    const onErr = mock((_e: unknown): void => {
+      /* spy */
+    });
     const src = createSseSource({
       url: "http://x/y",
       headers: {},
       onTransportError: onErr,
       fetchImpl,
     });
-    src.addEventListener("message", () => {});
+    src.addEventListener("message", noop);
 
     await flushMicrotasks();
     // 70KB single event (exceeds MAX_EVENT_BYTES=64KB), then a delimiter

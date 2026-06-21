@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+
+import type { EventSourceLike, ShimOpts } from "../../src/api/event-source-shim.js";
+
 import {
   __resetBrokerForTests,
   __setSchedulers,
   createStreamBroker,
   paramsKey,
-  subscribe,
   type StreamBrokerDeps,
   type StreamMessage,
-} from "../../src/api/streams";
-import type { EventSourceLike, ShimOpts } from "../../src/api/event-source-shim";
-import { useDaemonStore } from "../../src/stores/daemon-store";
+  subscribe,
+} from "../../src/api/streams.js";
+import { useDaemonStore } from "../../src/stores/daemon-store.js";
 
 interface SseFakeController {
   send(event: string, data: string): void;
@@ -20,14 +22,24 @@ interface SseFakeController {
 
 interface MockSseSession {
   url: string;
-  init?: RequestInit;
+  init: RequestInit | undefined;
   controller: SseFakeController;
+}
+
+// Each subscriber callback must have a distinct function identity because
+// stream broker entries dedupe subscribers via `Set.add`. A shared `noop`
+// would cause the second subscribe() call to no-op the dedupe, so refcount
+// and the unsubscribe handshake desync. Produce a fresh callback per call.
+function noop(): () => void {
+  return () => {
+    /* intentional no-op */
+  };
 }
 
 function createMockSseResponse(): { response: Response; controller: SseFakeController } {
   let ctrl!: ReadableStreamDefaultController<Uint8Array>;
   const stream = new ReadableStream<Uint8Array>({
-    start(c) {
+    start(c): void {
       ctrl = c;
     },
   });
@@ -37,7 +49,7 @@ function createMockSseResponse(): { response: Response; controller: SseFakeContr
   });
   const enc = new TextEncoder();
   const controller: SseFakeController = {
-    send(event, data) {
+    send(event, data): void {
       const evtPart = event === "message" ? "" : `event: ${event}\n`;
       const dataPart = data
         .split("\n")
@@ -45,13 +57,13 @@ function createMockSseResponse(): { response: Response; controller: SseFakeContr
         .join("\n");
       ctrl.enqueue(enc.encode(`${evtPart}${dataPart}\n\n`));
     },
-    sendRaw(text) {
+    sendRaw(text): void {
       ctrl.enqueue(enc.encode(text));
     },
-    error(err) {
+    error(err): void {
       ctrl.error(err);
     },
-    close() {
+    close(): void {
       ctrl.close();
     },
   };
@@ -64,15 +76,21 @@ class FakeClock {
   private nextId = 1;
   setTimeout = ((fn: (...a: unknown[]) => void, delay: number) => {
     const id = this.nextId++;
-    this.timers.push({ id, at: this.now + delay, fn: () => fn() });
+    this.timers.push({
+      id,
+      at: this.now + delay,
+      fn: (): void => {
+        fn();
+      },
+    });
     return id as unknown as ReturnType<typeof globalThis.setTimeout>;
   }) as unknown as typeof globalThis.setTimeout;
-  clearTimeout = ((handle: unknown) => {
+  clearTimeout = ((handle: unknown): void => {
     this.timers = this.timers.filter((t) => t.id !== (handle as number));
   }) as unknown as typeof globalThis.clearTimeout;
   advance(ms: number): void {
     const target = this.now + ms;
-    while (true) {
+    for (;;) {
       const next = this.timers.filter((t) => t.at <= target).sort((a, b) => a.at - b.at)[0];
       if (!next) break;
       this.timers = this.timers.filter((t) => t.id !== next.id);
@@ -88,8 +106,14 @@ const originalFetch = globalThis.fetch;
 
 let pendingResponses: { response: Response; controller: SseFakeController }[];
 
-async function flushMicrotasks() {
+async function flushMicrotasks(): Promise<void> {
   for (let i = 0; i < 20; i++) await Promise.resolve();
+}
+
+function urlOf(input: string | URL | Request): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
 }
 
 beforeEach(() => {
@@ -102,15 +126,9 @@ beforeEach(() => {
     health: "unknown",
     lastHealthAt: null,
   });
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    const url =
-      typeof input === "string"
-        ? input
-        : input instanceof URL
-          ? input.toString()
-          : (input as Request).url;
-    let entry = pendingResponses.shift();
-    if (!entry) entry = createMockSseResponse();
+  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    const url = urlOf(input);
+    const entry = pendingResponses.shift() ?? createMockSseResponse();
     sessions.push({ url, init, controller: entry.controller });
     return Promise.resolve(entry.response);
   }) as typeof fetch;
@@ -123,8 +141,8 @@ afterEach(() => {
 
 describe("streams broker", () => {
   test("two subscribers to same topic+params share one fetch", async () => {
-    const sub1 = subscribe("dispatch-events", () => {});
-    const sub2 = subscribe("dispatch-events", () => {});
+    const sub1 = subscribe("dispatch-events", noop());
+    const sub2 = subscribe("dispatch-events", noop());
     await flushMicrotasks();
 
     expect(sessions).toHaveLength(1);
@@ -137,41 +155,43 @@ describe("streams broker", () => {
     const clock = new FakeClock();
     __setSchedulers(clock.setTimeout, clock.clearTimeout);
 
-    const sub1 = subscribe("dispatch-events", () => {});
+    const sub1 = subscribe("dispatch-events", noop());
     await flushMicrotasks();
     expect(sessions).toHaveLength(1);
-    const initialSignal = sessions[0]!.init?.signal as AbortSignal;
+    const initialSignal = sessions[0]!.init?.signal;
+    expect(initialSignal).toBeDefined();
 
     sub1.unsubscribe();
     clock.advance(29_000);
-    expect(initialSignal.aborted).toBe(false);
+    expect(initialSignal?.aborted).toBe(false);
     clock.advance(1_000);
-    expect(initialSignal.aborted).toBe(true);
+    expect(initialSignal?.aborted).toBe(true);
   });
 
   test("linger is canceled when a new subscriber arrives", async () => {
     const clock = new FakeClock();
     __setSchedulers(clock.setTimeout, clock.clearTimeout);
 
-    const sub1 = subscribe("dispatch-events", () => {});
+    const sub1 = subscribe("dispatch-events", noop());
     await flushMicrotasks();
-    const initialSignal = sessions[0]!.init?.signal as AbortSignal;
+    const initialSignal = sessions[0]!.init?.signal;
+    expect(initialSignal).toBeDefined();
 
     sub1.unsubscribe();
     clock.advance(20_000);
-    const sub2 = subscribe("dispatch-events", () => {});
+    const sub2 = subscribe("dispatch-events", noop());
     clock.advance(60_000);
 
-    expect(initialSignal.aborted).toBe(false);
+    expect(initialSignal?.aborted).toBe(false);
     expect(sessions).toHaveLength(1); // still one — refcount kept it alive
     sub2.unsubscribe();
   });
 
   test("different paramsKey isolates connections", async () => {
-    const subA = subscribe("dispatch-events", () => {}, {
+    const subA = subscribe("dispatch-events", noop(), {
       params: { kind: "a" },
     });
-    const subB = subscribe("dispatch-events", () => {}, {
+    const subB = subscribe("dispatch-events", noop(), {
       params: { kind: "b" },
     });
     await flushMicrotasks();
@@ -184,10 +204,10 @@ describe("streams broker", () => {
   });
 
   test("paramsKey canonicalizes key order", async () => {
-    const sub1 = subscribe("dispatch-events", () => {}, {
+    const sub1 = subscribe("dispatch-events", noop(), {
       params: { a: "1", b: "2" },
     });
-    const sub2 = subscribe("dispatch-events", () => {}, {
+    const sub2 = subscribe("dispatch-events", noop(), {
       params: { b: "2", a: "1" },
     });
     await flushMicrotasks();
@@ -198,7 +218,7 @@ describe("streams broker", () => {
   });
 
   test("ring buffer caps at 200 and tail() returns last 200", async () => {
-    const sub = subscribe("dispatch-events", () => {});
+    const sub = subscribe("dispatch-events", noop());
     await flushMicrotasks();
     const ctrl = sessions[0]!.controller;
     let bigChunk = "";
@@ -216,13 +236,13 @@ describe("streams broker", () => {
   });
 
   test("new subscriber sees buffered tail()", async () => {
-    const sub1 = subscribe("dispatch-events", () => {});
+    const sub1 = subscribe("dispatch-events", noop());
     await flushMicrotasks();
     const ctrl = sessions[0]!.controller;
     for (let i = 0; i < 5; i++) ctrl.send("message", JSON.stringify({ i }));
     await flushMicrotasks();
 
-    const sub2 = subscribe("dispatch-events", () => {});
+    const sub2 = subscribe("dispatch-events", noop());
     expect(sub2.tail()).toHaveLength(5);
     sub1.unsubscribe();
     sub2.unsubscribe();
@@ -281,7 +301,7 @@ describe("streams broker", () => {
     __setSchedulers(clock.setTimeout, clock.clearTimeout);
 
     pendingResponses = [createMockSseResponse(), createMockSseResponse(), createMockSseResponse()];
-    const sub = subscribe("dispatch-events", () => {});
+    const sub = subscribe("dispatch-events", noop());
     await flushMicrotasks();
     expect(sessions).toHaveLength(1);
 
@@ -314,9 +334,11 @@ describe("streams broker", () => {
   });
 
   test("subscriber error isolation — one throws, others still receive", async () => {
-    const errorSpy = mock((..._args: unknown[]) => {});
+    const errorSpy = mock((..._args: unknown[]): void => {
+      /* spy */
+    });
     const origError = console.error;
-    console.error = errorSpy as unknown as typeof console.error;
+    console.error = errorSpy;
 
     const aReceived: StreamMessage<unknown>[] = [];
     const bReceived: StreamMessage<unknown>[] = [];
@@ -342,13 +364,13 @@ describe("streams broker", () => {
   });
 
   test("auth header: passes Bearer token from daemon-store when token is set", async () => {
-    const sub = subscribe("dispatch-events", () => {});
+    const sub = subscribe("dispatch-events", noop());
     await flushMicrotasks();
 
     expect(sessions[0]!.url).toBe("http://127.0.0.1:51257/dispatch-events/stream");
     expect(sessions[0]!.init?.credentials).toBe("include");
     const headers = (sessions[0]!.init?.headers ?? {}) as Record<string, string>;
-    expect(headers.Authorization).toBe("Bearer tok-test");
+    expect(headers["Authorization"]).toBe("Bearer tok-test");
     sub.unsubscribe();
   });
 
@@ -359,12 +381,12 @@ describe("streams broker", () => {
       health: "unknown",
       lastHealthAt: null,
     });
-    const sub = subscribe("dispatch-events", () => {});
+    const sub = subscribe("dispatch-events", noop());
     await flushMicrotasks();
 
     expect(sessions[0]!.init?.credentials).toBe("include");
     const headers = (sessions[0]!.init?.headers ?? {}) as Record<string, string>;
-    expect(headers.Authorization).toBeUndefined();
+    expect(headers["Authorization"]).toBeUndefined();
     sub.unsubscribe();
   });
 
@@ -375,7 +397,7 @@ describe("streams broker", () => {
       health: "unknown",
       lastHealthAt: null,
     });
-    const sub = subscribe("dispatch-events", () => {});
+    const sub = subscribe("dispatch-events", noop());
     await flushMicrotasks();
 
     expect(sessions[0]!.url).toBe("/api/dispatch-events/stream");
@@ -383,7 +405,11 @@ describe("streams broker", () => {
   });
 
   test("unknown topic throws (runtime guard against stringly-typed callers)", () => {
-    expect(() => subscribe("not-a-topic" as never, () => {})).toThrow(/unknown stream topic/);
+    // Intentional unsafe cast: this test asserts the runtime guard rejects
+    // stringly-typed callers that bypass the StreamTopic union at the type level.
+    expect(() => subscribe("not-a-topic" as "dispatch-events", noop())).toThrow(
+      /unknown stream topic/,
+    );
   });
 });
 
@@ -419,22 +445,25 @@ function createFakeSseFactory(): {
 } {
   const sources: FakeSseHandle[] = [];
   const factory = (opts: ShimOpts): EventSourceLike => {
-    const listeners = new Map<string, Array<(msg: { data: string; type: string }) => void>>();
+    const listeners = new Map<string, ((msg: { data: string; type: string }) => void)[]>();
     let closed = false;
     sources.push({
       url: opts.url,
-      isClosed: () => closed,
-      emit(event, data) {
+      isClosed: (): boolean => closed,
+      emit(event, data): void {
         if (closed) return;
         const arr = listeners.get(event);
         if (arr) for (const l of arr) l({ data, type: event });
       },
-      triggerError(err) {
+      triggerError(err): void {
         opts.onTransportError?.(err);
       },
     });
     return {
-      addEventListener(event, listener) {
+      addEventListener(
+        event: string,
+        listener: (msg: { data: string; type: string }) => void,
+      ): void {
         let arr = listeners.get(event);
         if (!arr) {
           arr = [];
@@ -442,7 +471,7 @@ function createFakeSseFactory(): {
         }
         arr.push(listener);
       },
-      close() {
+      close(): void {
         closed = true;
       },
     };
@@ -454,26 +483,21 @@ describe("createStreamBroker", () => {
   test("two brokers with different baseUrl open SEPARATE fetches for the same topic", async () => {
     const fetchedUrls: string[] = [];
     const origFetch = globalThis.fetch;
-    globalThis.fetch = ((input: RequestInfo | URL) => {
-      const url =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : (input as Request).url;
+    globalThis.fetch = ((input: string | URL | Request) => {
+      const url = urlOf(input);
       fetchedUrls.push(url);
       const { response } = createMockSseResponse();
       return Promise.resolve(response);
     }) as typeof fetch;
 
     const deps = (baseUrl: string): StreamBrokerDeps => ({
-      getConfig: () => ({ baseUrl, token: "t" }),
+      getConfig: (): { baseUrl: string; token: string } => ({ baseUrl, token: "t" }),
     });
     const a = createStreamBroker(deps("http://a.local:1111"));
     const b = createStreamBroker(deps("http://b.local:2222"));
 
-    const subA = a.subscribe("dispatch-events", () => {});
-    const subB = b.subscribe("dispatch-events", () => {});
+    const subA = a.subscribe("dispatch-events", noop());
+    const subB = b.subscribe("dispatch-events", noop());
     await flushMicrotasks();
 
     expect(fetchedUrls).toHaveLength(2);
@@ -490,13 +514,8 @@ describe("createStreamBroker", () => {
   test("same broker: cache key includes baseUrl — config change opens a fresh fetch", async () => {
     const fetchedUrls: string[] = [];
     const origFetch = globalThis.fetch;
-    globalThis.fetch = ((input: RequestInfo | URL) => {
-      const url =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : (input as Request).url;
+    globalThis.fetch = ((input: string | URL | Request) => {
+      const url = urlOf(input);
       fetchedUrls.push(url);
       const { response } = createMockSseResponse();
       return Promise.resolve(response);
@@ -504,13 +523,13 @@ describe("createStreamBroker", () => {
 
     let baseUrl = "http://first.local:1000";
     const broker = createStreamBroker({
-      getConfig: () => ({ baseUrl, token: "t" }),
+      getConfig: (): { baseUrl: string; token: string } => ({ baseUrl, token: "t" }),
     });
 
-    const sub1 = broker.subscribe("dispatch-events", () => {});
+    const sub1 = broker.subscribe("dispatch-events", noop());
     await flushMicrotasks();
     baseUrl = "http://second.local:2000";
-    const sub2 = broker.subscribe("dispatch-events", () => {});
+    const sub2 = broker.subscribe("dispatch-events", noop());
     await flushMicrotasks();
 
     expect(fetchedUrls).toHaveLength(2);
@@ -527,7 +546,10 @@ describe("createStreamBroker", () => {
     const fakeB = createFakeSseFactory();
 
     const a = createStreamBroker({
-      getConfig: () => ({ baseUrl: "http://a.local:1111", token: "ta" }),
+      getConfig: (): { baseUrl: string; token: string } => ({
+        baseUrl: "http://a.local:1111",
+        token: "ta",
+      }),
       scheduler: {
         setTimeout: clockA.setTimeout,
         clearTimeout: clockA.clearTimeout,
@@ -535,7 +557,10 @@ describe("createStreamBroker", () => {
       sourceFactory: fakeA.factory,
     });
     const b = createStreamBroker({
-      getConfig: () => ({ baseUrl: "http://b.local:2222", token: "tb" }),
+      getConfig: (): { baseUrl: string; token: string } => ({
+        baseUrl: "http://b.local:2222",
+        token: "tb",
+      }),
       scheduler: {
         setTimeout: clockB.setTimeout,
         clearTimeout: clockB.clearTimeout,
@@ -585,7 +610,10 @@ describe("createStreamBroker", () => {
     const clock = new FakeClock();
     const fake = createFakeSseFactory();
     const broker = createStreamBroker({
-      getConfig: () => ({ baseUrl: "http://x.local:3333", token: "t" }),
+      getConfig: (): { baseUrl: string; token: string } => ({
+        baseUrl: "http://x.local:3333",
+        token: "t",
+      }),
       scheduler: {
         setTimeout: clock.setTimeout,
         clearTimeout: clock.clearTimeout,
@@ -593,7 +621,7 @@ describe("createStreamBroker", () => {
       sourceFactory: fake.factory,
     });
 
-    const sub = broker.subscribe("dispatch-events", () => {});
+    const sub = broker.subscribe("dispatch-events", noop());
     await flushMicrotasks();
     expect(fake.sources).toHaveLength(1);
 
@@ -628,7 +656,10 @@ describe("createStreamBroker", () => {
     const clock = new FakeClock();
     const fake = createFakeSseFactory();
     const broker = createStreamBroker({
-      getConfig: () => ({ baseUrl: "http://r.local:4444", token: "t" }),
+      getConfig: (): { baseUrl: string; token: string } => ({
+        baseUrl: "http://r.local:4444",
+        token: "t",
+      }),
       scheduler: {
         setTimeout: clock.setTimeout,
         clearTimeout: clock.clearTimeout,
@@ -636,7 +667,7 @@ describe("createStreamBroker", () => {
       sourceFactory: fake.factory,
     });
 
-    const sub = broker.subscribe("dispatch-events", () => {});
+    const sub = broker.subscribe("dispatch-events", noop());
     await flushMicrotasks();
 
     for (let i = 0; i < 5; i++) {
@@ -676,7 +707,10 @@ describe("createStreamBroker", () => {
     const fakeB = createFakeSseFactory();
 
     const a = createStreamBroker({
-      getConfig: () => ({ baseUrl: "http://a.local:5555", token: "ta" }),
+      getConfig: (): { baseUrl: string; token: string } => ({
+        baseUrl: "http://a.local:5555",
+        token: "ta",
+      }),
       scheduler: {
         setTimeout: clockA.setTimeout,
         clearTimeout: clockA.clearTimeout,
@@ -684,7 +718,10 @@ describe("createStreamBroker", () => {
       sourceFactory: fakeA.factory,
     });
     const b = createStreamBroker({
-      getConfig: () => ({ baseUrl: "http://b.local:6666", token: "tb" }),
+      getConfig: (): { baseUrl: string; token: string } => ({
+        baseUrl: "http://b.local:6666",
+        token: "tb",
+      }),
       scheduler: {
         setTimeout: clockB.setTimeout,
         clearTimeout: clockB.clearTimeout,
@@ -692,9 +729,9 @@ describe("createStreamBroker", () => {
       sourceFactory: fakeB.factory,
     });
 
-    const a1 = a.subscribe("dispatch-events", () => {});
-    const a2 = a.subscribe("dispatch-events", () => {});
-    const b1 = b.subscribe("dispatch-events", () => {});
+    const a1 = a.subscribe("dispatch-events", noop());
+    const a2 = a.subscribe("dispatch-events", noop());
+    const b1 = b.subscribe("dispatch-events", noop());
     await flushMicrotasks();
 
     expect(fakeA.sources).toHaveLength(1);
