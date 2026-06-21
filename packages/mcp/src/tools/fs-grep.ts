@@ -60,7 +60,7 @@ interface FsGrepInput {
 }
 
 export function fsGrepHandler(
-  daemon: DaemonClient,
+  daemon: Pick<DaemonClient, "grepInWorktree">,
   opts?: FsEnvelopeHandlerOpts,
 ): (input: FsGrepInput) => Promise<FsToolResult> {
   return async (input): Promise<FsToolResult> => {

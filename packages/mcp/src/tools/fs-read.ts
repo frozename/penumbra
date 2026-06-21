@@ -31,7 +31,7 @@ interface FsReadInput {
 }
 
 export function fsReadHandler(
-  daemon: DaemonClient,
+  daemon: Pick<DaemonClient, "readInWorktree">,
   opts?: FsEnvelopeHandlerOpts,
 ): (input: FsReadInput) => Promise<FsToolResult> {
   return async (input): Promise<FsToolResult> => {

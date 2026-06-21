@@ -33,7 +33,7 @@ interface FsWriteInput {
 }
 
 export function fsWriteHandler(
-  daemon: DaemonClient,
+  daemon: Pick<DaemonClient, "writeInWorktree">,
   opts?: FsEnvelopeHandlerOpts,
 ): (input: FsWriteInput) => Promise<FsToolResult> {
   return async (input): Promise<FsToolResult> => {

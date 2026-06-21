@@ -46,7 +46,7 @@ interface FsGlobInput {
 }
 
 export function fsGlobHandler(
-  daemon: DaemonClient,
+  daemon: Pick<DaemonClient, "globInWorktree">,
   opts?: FsEnvelopeHandlerOpts,
 ): (input: FsGlobInput) => Promise<FsToolResult> {
   return async (input): Promise<FsToolResult> => {
