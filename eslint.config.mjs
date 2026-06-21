@@ -10,6 +10,19 @@ import unusedImports from "eslint-plugin-unused-imports";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 
+// Keep these CONGRUENT with tsconfig.eslint.json's `include`: eslint must lint
+// exactly the files the type-aware parser project covers. A file linted but
+// outside the project parses without type info and falls back to base JS rules
+// (no-undef, base no-unused-vars) plus emits a parse error — the source of
+// thousands of spurious findings.
+const SOURCE_GLOBS = [
+  "packages/*/src/**/*.ts",
+  "packages/*/test/**/*.ts",
+  "packages/*/bin/**/*.ts",
+  "packages/*/scripts/**/*.ts",
+  "scripts/**/*.ts",
+];
+
 export default tseslint.config(
   {
     ignores: [
@@ -29,14 +42,14 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.strictTypeChecked.map((config) => ({
     ...config,
-    files: ["packages/**/*.ts", "scripts/**/*.ts"],
+    files: SOURCE_GLOBS,
   })),
   ...tseslint.configs.stylisticTypeChecked.map((config) => ({
     ...config,
-    files: ["packages/**/*.ts", "scripts/**/*.ts"],
+    files: SOURCE_GLOBS,
   })),
   {
-    files: ["packages/**/*.ts", "scripts/**/*.ts"],
+    files: SOURCE_GLOBS,
     languageOptions: {
       parserOptions: {
         projectService: false,
@@ -50,7 +63,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["packages/**/*.ts", "scripts/**/*.ts"],
+    files: SOURCE_GLOBS,
     plugins: {
       unicorn,
       "import-x": importX,

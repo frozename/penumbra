@@ -10,8 +10,10 @@
   "include": [
     "packages/*/src/**/*.ts",
     "packages/*/test/**/*.ts",
-    "eslint.config.mjs",
-    "scripts/**/*.ts"
+    "packages/*/bin/**/*.ts",
+    "packages/*/scripts/**/*.ts",
+    "scripts/**/*.ts",
+    "eslint.config.mjs"
   ],
   "exclude": ["node_modules", "**/dist", "coverage", ".penumbra"]
 }
