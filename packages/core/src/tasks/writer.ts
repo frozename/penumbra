@@ -1,32 +1,34 @@
 import type { Database } from "bun:sqlite";
-import { enforceEmitCaps } from "./emit-caps.js";
-import { isEligible, type AgentDescriptor, TIER_ORDER } from "./eligibility.js";
-import { pickPreferred, type AgentRankRow } from "./auction.js";
-import type { RouteAgentFn } from "./rank-bridge.js";
+
 import type { MaestroSessionWriter } from "../maestro/writer.js";
-import { synthesizeReviewTask } from "./review-pairing.js";
-import { validateOrchestrateFile } from "./orchestrate-validation.js";
+import type { RouteAgentFn } from "./rank-bridge.js";
+
+import { type AgentRankRow, pickPreferred } from "./auction.js";
+import { type AgentDescriptor, isEligible, TIER_ORDER } from "./eligibility.js";
+import { enforceEmitCaps } from "./emit-caps.js";
 import { type TaskEvent, TaskEventBus } from "./event-bus.js";
+import { validateOrchestrateFile } from "./orchestrate-validation.js";
+import { synthesizeReviewTask } from "./review-pairing.js";
 import {
-  FileTaskInputSchema,
-  LeaseTaskInputSchema,
-  HeartbeatTaskInputSchema,
+  type CancelTaskInput,
+  CancelTaskInputSchema,
+  type CompleteTaskInput,
   CompleteTaskInputSchema,
   CompleteWithoutLeaseInputSchema,
-  FailTaskInputSchema,
-  CancelTaskInputSchema,
-  type FileTaskInput,
-  type LeaseTaskInput,
-  type HeartbeatTaskInput,
-  type CompleteTaskInput,
-  type FailTaskInput,
-  type CancelTaskInput,
-  type TaskRecord,
-  type TaskKind,
-  type TaskStatus,
-  type TaskEventKind,
-  type ExpectedArtifact,
   type Eligibility,
+  type ExpectedArtifact,
+  type FailTaskInput,
+  FailTaskInputSchema,
+  type FileTaskInput,
+  FileTaskInputSchema,
+  type HeartbeatTaskInput,
+  HeartbeatTaskInputSchema,
+  type LeaseTaskInput,
+  LeaseTaskInputSchema,
+  type TaskEventKind,
+  type TaskKind,
+  type TaskRecord,
+  type TaskStatus,
 } from "./schema.js";
 
 export class TaskNotFound extends Error {
@@ -92,6 +94,30 @@ export class ReviewParentInvalidState extends Error {
 
 const DEFAULT_LEASE_TTL_MS = 90_000;
 
+interface CompleteTaskRow {
+  id: string;
+  kind: TaskKind;
+  status: TaskStatus;
+  parent_task_id: string | null;
+  requires_review: number;
+}
+
+interface FailTaskRow {
+  id: string;
+  kind: TaskKind;
+  status: TaskStatus;
+  parent_task_id: string | null;
+  eligibility: string;
+}
+
+function parseDenyAgents(eligibilityJson: string | undefined): string[] {
+  if (!eligibilityJson) return [];
+  const parsed = JSON.parse(eligibilityJson) as { deny_agents?: unknown };
+  return Array.isArray(parsed.deny_agents)
+    ? parsed.deny_agents.filter((value): value is string => typeof value === "string")
+    : [];
+}
+
 export interface TaskLeaseRow {
   id: string;
   task_id: string;
@@ -109,7 +135,7 @@ export interface TaskEventRow {
   at: number;
   kind: TaskEventKind;
   actor: string | null;
-  payload: unknown | null;
+  payload: unknown;
 }
 
 export interface TaskDescendants {
@@ -251,7 +277,7 @@ export function enqueueGhStatusSyncOnDb(
       [string]
     >(`SELECT gh_issue_number FROM tasks WHERE id = ?`)
     .get(task_id);
-  if (!linked || linked.gh_issue_number === null) return;
+  if ((linked?.gh_issue_number ?? null) === null) return;
   const insert = (op: GhOutboxOp, payload: unknown): void => {
     db.run(
       `INSERT INTO gh_outbox (task_id, op, payload_json, status, created_at)
@@ -291,7 +317,7 @@ export class TaskWriter {
     if (typeof deps === "function") {
       this.now = deps;
       this.resolveAgent = undefined;
-      this.routeAgent = () => ({
+      this.routeAgent = (): ReturnType<RouteAgentFn> => ({
         detail: "rank" as const,
         candidates: { task_type: "unknown", window: { from: null, to: "" }, candidates: [] },
       });
@@ -305,7 +331,7 @@ export class TaskWriter {
     this.resolveAgent = deps.resolveAgent;
     this.routeAgent =
       deps.routeAgent ??
-      (() => ({
+      ((): ReturnType<RouteAgentFn> => ({
         detail: "rank" as const,
         candidates: { task_type: "unknown", window: { from: null, to: "" }, candidates: [] },
       }));
@@ -412,13 +438,51 @@ export class TaskWriter {
     return { task_id };
   }
 
-  async next(input: NextTaskInput): Promise<NextTaskResult | null> {
+  next(input: NextTaskInput): Promise<NextTaskResult | null> {
+    return Promise.resolve(this.nextSync(input));
+  }
+
+  private nextSync(input: NextTaskInput): NextTaskResult | null {
     const resolvedAgent = this.resolveAgent?.(input.agent_id);
     if (!resolvedAgent) return null;
     const emittedEvents: TaskEvent[] = [];
-
     const now = this.now();
-    const pending = this.db
+    const pending = this.loadPendingTasks();
+
+    for (const candidate of pending) {
+      const candidateEligible = isEligible(resolvedAgent, candidate.eligibility, {
+        now,
+        cooldowns: this.cooldowns,
+        task_id: candidate.id,
+      });
+      if (!candidateEligible) continue;
+
+      const auctioned = this.applyAuctionWindow(candidate, input, now, emittedEvents);
+      if (auctioned === "skip") continue;
+
+      const rankings = auctioned.rankings ?? this.computeRankings();
+      const callerScore = rankings.find((row) => row.agent_name === input.agent_id)?.score ?? null;
+
+      const leased = this.tryLeaseCandidate(candidate, input, now, callerScore, emittedEvents);
+      if (!leased) continue;
+      const result: NextTaskResult = {
+        task_id: candidate.id,
+        prompt: candidate.prompt,
+        acceptance_criteria: candidate.acceptance_criteria,
+        expected_artifacts: candidate.expected_artifacts,
+        lease_id: leased.lease_id,
+        expires_at: leased.expires_at,
+      };
+      publishEvents(this.bus, emittedEvents);
+      return result;
+    }
+
+    publishEvents(this.bus, emittedEvents);
+    return null;
+  }
+
+  private loadPendingTasks(): TaskRecord[] {
+    return this.db
       .query<TaskDbRow, [number]>(
         `SELECT id, created_at, updated_at, created_by_kind, created_by_id, project_id,
                 parent_task_id, kind, priority, prompt, acceptance_criteria,
@@ -434,191 +498,178 @@ export class TaskWriter {
       )
       .all(100)
       .map(hydrateTask);
+  }
 
-    for (const candidate of pending) {
-      const candidateEligible = isEligible(resolvedAgent, candidate.eligibility, {
-        now,
-        cooldowns: this.cooldowns,
-        task_id: candidate.id,
+  private computeRankings(): AgentRankRow[] {
+    const routed = this.routeAgent({
+      db: this.db,
+      detail: "rank",
+      taskType: "implement_substantial",
+      minSamples: 1,
+      includeNeutral: false,
+      includeCost: false,
+    });
+    if (routed.detail !== "rank") throw new Error("unexpected routeAgent detail");
+    return routed.candidates.candidates.map((c) => ({
+      agent_name: c.agent_name,
+      score: c.score,
+      avg_latency_ms: c.avg_latency_ms,
+    }));
+  }
+
+  private applyAuctionWindow(
+    candidate: TaskRecord,
+    input: NextTaskInput,
+    now: number,
+    emittedEvents: TaskEvent[],
+  ): "skip" | { rankings: AgentRankRow[] | null } {
+    const filedRow = this.db
+      .query<{ at: number }, [string]>(
+        `SELECT at FROM task_events
+         WHERE task_id = ? AND kind = 'filed'
+         ORDER BY id DESC
+         LIMIT 1`,
+      )
+      .get(candidate.id);
+    const auctionStartedAt = filedRow?.at ?? candidate.created_at;
+    const auctionWindowMs = candidate.eligibility.preference_window_ms ?? 30_000;
+    const insideWindow = auctionWindowMs > 0 && now - auctionStartedAt < auctionWindowMs;
+    if (!insideWindow) return { rankings: null };
+
+    const existingAuctioned = this.db
+      .query<{ payload_json: string | null }, [string]>(
+        `SELECT payload_json
+         FROM task_events
+         WHERE task_id = ? AND kind = 'auctioned'
+         ORDER BY id DESC
+         LIMIT 1`,
+      )
+      .get(candidate.id);
+
+    if (existingAuctioned?.payload_json) {
+      const payload = JSON.parse(existingAuctioned.payload_json) as {
+        preferred_agent?: string | null;
+      };
+      const preferredAgent = payload.preferred_agent ?? null;
+      return preferredAgent && preferredAgent !== input.agent_id ? "skip" : { rankings: null };
+    }
+
+    const rankings = this.computeRankings();
+    const preferredAgent = this.recordAuctionResult({
+      candidate,
+      now,
+      auctionWindowMs,
+      auctionStartedAt,
+      rankings,
+      emittedEvents,
+    });
+    if (preferredAgent && preferredAgent !== input.agent_id) return "skip";
+    return { rankings };
+  }
+
+  private recordAuctionResult(args: {
+    candidate: TaskRecord;
+    now: number;
+    auctionWindowMs: number;
+    auctionStartedAt: number;
+    rankings: AgentRankRow[];
+    emittedEvents: TaskEvent[];
+  }): string | null {
+    const eligibleDescriptors = args.rankings
+      .map((row) => this.resolveAgent?.(row.agent_name))
+      .filter((row): row is AgentDescriptor => Boolean(row))
+      .filter((row) =>
+        isEligible(row, args.candidate.eligibility, {
+          now: args.now,
+          cooldowns: this.cooldowns,
+          task_id: args.candidate.id,
+        }),
+      );
+
+    const preferred = pickPreferred(args.rankings, eligibleDescriptors);
+    const preferredAgent = preferred?.agent_id ?? null;
+    const auctionPayload = {
+      preferred_agent: preferredAgent,
+      score: preferred?.score ?? null,
+      window_ms: args.auctionWindowMs,
+      started_at: args.auctionStartedAt,
+    };
+
+    const insertedAuctioned = this.db.run(
+      `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+       SELECT ?, ?, 'auctioned', NULL, ?
+       WHERE NOT EXISTS (
+         SELECT 1 FROM task_events WHERE task_id = ? AND kind = 'auctioned'
+       )`,
+      [args.candidate.id, args.now, JSON.stringify(auctionPayload), args.candidate.id],
+    );
+    if (insertedAuctioned.changes > 0) {
+      recordEvent(args.emittedEvents, {
+        task_id: args.candidate.id,
+        at: args.now,
+        kind: "auctioned",
+        actor: null,
+        payload: auctionPayload,
       });
-      if (!candidateEligible) continue;
+    }
+    return preferredAgent;
+  }
 
-      const filedRow = this.db
-        .query<{ at: number }, [string]>(
-          `SELECT at FROM task_events
-           WHERE task_id = ? AND kind = 'filed'
-           ORDER BY id DESC
-           LIMIT 1`,
-        )
-        .get(candidate.id);
-      const auctionStartedAt = filedRow?.at ?? candidate.created_at;
-      const auctionWindowMs = candidate.eligibility.preference_window_ms ?? 30_000;
-      const insideWindow = auctionWindowMs > 0 && now - auctionStartedAt < auctionWindowMs;
-
-      let rankings: AgentRankRow[] | null = null;
-      let callerScore: number | null = null;
-
-      if (insideWindow) {
-        let preferredAgent: string | null = null;
-
-        const existingAuctioned = this.db
-          .query<{ payload_json: string | null }, [string]>(
-            `SELECT payload_json
-             FROM task_events
-             WHERE task_id = ? AND kind = 'auctioned'
-             ORDER BY id DESC
-             LIMIT 1`,
-          )
+  private tryLeaseCandidate(
+    candidate: TaskRecord,
+    input: NextTaskInput,
+    now: number,
+    callerScore: number | null,
+    emittedEvents: TaskEvent[],
+  ): { lease_id: string; expires_at: number } | null {
+    return this.db
+      .transaction((): { lease_id: string; expires_at: number } | null => {
+        const taskRow = this.db
+          .query<{ status: TaskStatus }, [string]>(`SELECT status FROM tasks WHERE id = ?`)
           .get(candidate.id);
+        if (taskRow?.status !== "pending") return null;
 
-        if (existingAuctioned?.payload_json) {
-          const payload = JSON.parse(existingAuctioned.payload_json) as {
-            preferred_agent?: string | null;
-          };
-          preferredAgent = payload.preferred_agent ?? null;
-        } else {
-          const routed = this.routeAgent({
-            db: this.db,
-            detail: "rank",
-            taskType: "implement_substantial",
-            minSamples: 1,
-            includeNeutral: false,
-            includeCost: false,
-          });
-          if (routed.detail !== "rank") throw new Error("unexpected routeAgent detail");
-          rankings = routed.candidates.candidates.map((c) => ({
-            agent_name: c.agent_name,
-            score: c.score,
-            avg_latency_ms: c.avg_latency_ms,
-          }));
-
-          const eligibleDescriptors = rankings
-            .map((row) => this.resolveAgent?.(row.agent_name))
-            .filter((row): row is AgentDescriptor => Boolean(row))
-            .filter((row) =>
-              isEligible(row, candidate.eligibility, {
-                now,
-                cooldowns: this.cooldowns,
-                task_id: candidate.id,
-              }),
-            );
-
-          const preferred = pickPreferred(rankings, eligibleDescriptors);
-          preferredAgent = preferred?.agent_id ?? null;
-          const auctionPayload = {
-            preferred_agent: preferred?.agent_id ?? null,
-            score: preferred?.score ?? null,
-            window_ms: auctionWindowMs,
-            started_at: auctionStartedAt,
-          };
-
-          const insertedAuctioned = this.db.run(
-            `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
-             SELECT ?, ?, 'auctioned', NULL, ?
-             WHERE NOT EXISTS (
-               SELECT 1 FROM task_events WHERE task_id = ? AND kind = 'auctioned'
-             )`,
-            [candidate.id, now, JSON.stringify(auctionPayload), candidate.id],
-          );
-          if (insertedAuctioned.changes > 0) {
-            recordEvent(emittedEvents, {
-              task_id: candidate.id,
-              at: now,
-              kind: "auctioned",
-              actor: null,
-              payload: auctionPayload,
-            });
-          }
-        }
-
-        if (preferredAgent && preferredAgent !== input.agent_id) {
-          continue;
-        }
-      }
-
-      if (!rankings) {
-        const routed = this.routeAgent({
-          db: this.db,
-          detail: "rank",
-          taskType: "implement_substantial",
-          minSamples: 1,
-          includeNeutral: false,
-          includeCost: false,
-        });
-        if (routed.detail !== "rank") throw new Error("unexpected routeAgent detail");
-        rankings = routed.candidates.candidates.map((c) => ({
-          agent_name: c.agent_name,
-          score: c.score,
-          avg_latency_ms: c.avg_latency_ms,
-        }));
-      }
-      callerScore = rankings.find((row) => row.agent_name === input.agent_id)?.score ?? null;
-
-      const leased = this.db
-        .transaction(() => {
-          const taskRow = this.db
-            .query<{ status: TaskStatus }, [string]>(`SELECT status FROM tasks WHERE id = ?`)
-            .get(candidate.id);
-          if (!taskRow || taskRow.status !== "pending") return null;
-
-          const openLease = this.db
-            .query<{ one: number }, [string]>(
-              `SELECT 1 AS one
+        const openLease = this.db
+          .query<{ one: number }, [string]>(
+            `SELECT 1 AS one
              FROM task_leases
              WHERE task_id = ? AND released_at IS NULL
              LIMIT 1`,
-            )
-            .get(candidate.id);
-          if (openLease) return null;
+          )
+          .get(candidate.id);
+        if (openLease) return null;
 
-          const ttl_ms = candidate.eligibility.heartbeat_ttl_ms ?? DEFAULT_LEASE_TTL_MS;
-          const lease_id = `lease_${crypto.randomUUID().toLowerCase()}`;
-          const expires_at = now + ttl_ms;
+        const ttl_ms = candidate.eligibility.heartbeat_ttl_ms ?? DEFAULT_LEASE_TTL_MS;
+        const lease_id = `lease_${crypto.randomUUID().toLowerCase()}`;
+        const expires_at = now + ttl_ms;
 
-          this.db.run(
-            `INSERT INTO task_leases (
+        this.db.run(
+          `INSERT INTO task_leases (
              id, task_id, agent_id, claimed_at, expires_at, released_at, release_reason, auction_score, original_ttl_ms
            ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
-            [lease_id, candidate.id, input.agent_id, now, expires_at, callerScore, ttl_ms],
-          );
-          this.db.run(`UPDATE tasks SET status = 'leased', updated_at = ? WHERE id = ?`, [
-            now,
-            candidate.id,
-          ]);
-          this.enqueueGhStatusSync(candidate.id, "pending", "leased");
-          this.db.run(
-            `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+          [lease_id, candidate.id, input.agent_id, now, expires_at, callerScore, ttl_ms],
+        );
+        this.db.run(`UPDATE tasks SET status = 'leased', updated_at = ? WHERE id = ?`, [
+          now,
+          candidate.id,
+        ]);
+        this.enqueueGhStatusSync(candidate.id, "pending", "leased");
+        this.db.run(
+          `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
            VALUES (?, ?, 'leased', ?, ?)`,
-            [candidate.id, now, input.agent_id, JSON.stringify({ lease_id, ttl_ms })],
-          );
-          recordEvent(emittedEvents, {
-            task_id: candidate.id,
-            at: now,
-            kind: "leased",
-            actor: input.agent_id,
-            payload: { lease_id, ttl_ms },
-          });
+          [candidate.id, now, input.agent_id, JSON.stringify({ lease_id, ttl_ms })],
+        );
+        recordEvent(emittedEvents, {
+          task_id: candidate.id,
+          at: now,
+          kind: "leased",
+          actor: input.agent_id,
+          payload: { lease_id, ttl_ms },
+        });
 
-          return { lease_id, expires_at };
-        })
-        .immediate();
-
-      if (!leased) continue;
-
-      const result = {
-        task_id: candidate.id,
-        prompt: candidate.prompt,
-        acceptance_criteria: candidate.acceptance_criteria,
-        expected_artifacts: candidate.expected_artifacts,
-        lease_id: leased.lease_id,
-        expires_at: leased.expires_at,
-      };
-      publishEvents(this.bus, emittedEvents);
-      return result;
-    }
-
-    publishEvents(this.bus, emittedEvents);
-    return null;
+        return { lease_id, expires_at };
+      })
+      .immediate();
   }
 
   lease(input: LeaseTaskInput): { lease_id: string; expires_at: number } {
@@ -702,7 +753,7 @@ export class TaskWriter {
            WHERE id = ? AND released_at IS NULL`,
         )
         .get(validated.lease_id);
-      if (!leaseRow || leaseRow.task_id !== validated.task_id) {
+      if (leaseRow?.task_id !== validated.task_id) {
         throw new LeaseInvalid(validated.lease_id, validated.task_id);
       }
 
@@ -748,231 +799,22 @@ export class TaskWriter {
   ): { status: TaskStatus } {
     const emittedEvents: TaskEvent[] = [];
 
-    const completeTx = this.db.transaction(() => {
-      const taskRow = this.db
-        .query<
-          {
-            id: string;
-            kind: TaskKind;
-            status: TaskStatus;
-            parent_task_id: string | null;
-            requires_review: number;
-          },
-          [string]
-        >(
-          `SELECT id, kind, status, parent_task_id, requires_review
-           FROM tasks
-           WHERE id = ?`,
-        )
-        .get(validated.task_id);
-      if (!taskRow) throw new TaskNotFound(validated.task_id);
-
-      const leaseRow = opts.leaseless
-        ? null
-        : validated.lease_id
-          ? this.db
-              .query<{ id: string; task_id: string; agent_id: string }, [string]>(
-                `SELECT id, task_id, agent_id
-                 FROM task_leases
-                 WHERE id = ? AND released_at IS NULL`,
-              )
-              .get(validated.lease_id)
-          : null;
-
-      if (opts.leaseless) {
-        if (taskRow.status === "leased") {
-          const activeLease = this.db
-            .query<{ id: string }, [string]>(
-              `SELECT id
-               FROM task_leases
-               WHERE task_id = ? AND released_at IS NULL
-               ORDER BY claimed_at DESC
-               LIMIT 1`,
-            )
-            .get(validated.task_id);
-          throw new LeaseConflict(validated.task_id, activeLease?.id);
-        }
-        if (taskRow.status !== "pending") {
-          throw new InvalidTaskStatus(validated.task_id, taskRow.status);
-        }
-      } else {
-        if (!validated.lease_id || !leaseRow || leaseRow.task_id !== validated.task_id) {
-          throw new LeaseInvalid(validated.lease_id ?? "", validated.task_id);
-        }
-        if (taskRow.status !== "leased") {
-          throw new InvalidTaskStatus(validated.task_id, taskRow.status);
-        }
-      }
+    const completeTx = this.db.transaction((): { status: TaskStatus } => {
+      const taskRow = this.loadCompleteTaskRow(validated.task_id);
+      const leaseRow = this.loadCompleteLeaseRow(opts, validated);
+      this.validateCompleteLeaseAndStatus(taskRow, leaseRow, validated, opts);
 
       const now = this.now();
-      let nextStatus: TaskStatus;
       const actor = leaseRow?.agent_id ?? opts.actor ?? "maestro";
+      const nextStatus = this.completeApplyKind({
+        taskRow,
+        validated,
+        now,
+        actor,
+        emittedEvents,
+      });
 
-      if (taskRow.kind === "review") {
-        const verdict = validated.review_verdict;
-        if (!verdict) throw new MissingReviewVerdict(validated.task_id);
-
-        const parentTaskId = taskRow.parent_task_id ?? "unknown";
-        const parentRow = taskRow.parent_task_id
-          ? this.db
-              .query<{ status: TaskStatus }, [string]>(`SELECT status FROM tasks WHERE id = ?`)
-              .get(taskRow.parent_task_id)
-          : null;
-        if (!parentRow || parentRow.status !== "done_pending_review") {
-          throw new ReviewParentInvalidState(parentTaskId, parentRow?.status ?? "cancelled");
-        }
-
-        if (verdict.passed) {
-          this.db.run(
-            `UPDATE tasks
-             SET status = 'done', updated_at = ?
-             WHERE id = ?`,
-            [now, taskRow.parent_task_id!],
-          );
-          this.enqueueGhStatusSync(parentTaskId, "done_pending_review", "done");
-          this.db.run(
-            `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
-             VALUES (?, ?, 'review_passed', ?, ?)`,
-            [taskRow.parent_task_id!, now, actor, JSON.stringify({ notes: verdict.notes })],
-          );
-          recordEvent(emittedEvents, {
-            task_id: taskRow.parent_task_id!,
-            at: now,
-            kind: "review_passed",
-            actor,
-            payload: { notes: verdict.notes },
-          });
-        } else {
-          this.db.run(
-            `UPDATE tasks
-             SET status = 'failed', failure_reason = ?, updated_at = ?
-             WHERE id = ?`,
-            [`review rejected: ${verdict.notes}`, now, taskRow.parent_task_id!],
-          );
-          this.enqueueGhStatusSync(parentTaskId, "done_pending_review", "failed");
-          this.db.run(
-            `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
-             VALUES (?, ?, 'review_failed', ?, ?)`,
-            [taskRow.parent_task_id!, now, actor, JSON.stringify({ notes: verdict.notes })],
-          );
-          recordEvent(emittedEvents, {
-            task_id: taskRow.parent_task_id!,
-            at: now,
-            kind: "review_failed",
-            actor,
-            payload: { notes: verdict.notes },
-          });
-        }
-
-        this.db.run(
-          `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
-           VALUES (?, ?, 'completed', ?, ?)`,
-          [
-            validated.task_id,
-            now,
-            actor,
-            JSON.stringify({ result_summary: validated.result_summary }),
-          ],
-        );
-        recordEvent(emittedEvents, {
-          task_id: validated.task_id,
-          at: now,
-          kind: "completed",
-          actor,
-          payload: { result_summary: validated.result_summary },
-        });
-        nextStatus = "done";
-      } else {
-        if (validated.review_verdict) {
-          throw new UnexpectedReviewVerdict(validated.task_id);
-        }
-        nextStatus = taskRow.requires_review === 1 ? "done_pending_review" : "done";
-
-        this.db.run(
-          `UPDATE tasks
-           SET status = ?, result_summary = ?, result_artifacts = ?, chain_id = ?, updated_at = ?
-           WHERE id = ?`,
-          [
-            nextStatus,
-            validated.result_summary,
-            validated.result_artifacts ? JSON.stringify(validated.result_artifacts) : null,
-            validated.chain_id ?? null,
-            now,
-            validated.task_id,
-          ],
-        );
-        this.enqueueGhStatusSync(validated.task_id, taskRow.status, nextStatus);
-        this.db.run(
-          `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
-           VALUES (?, ?, 'completed', ?, ?)`,
-          [
-            validated.task_id,
-            now,
-            actor,
-            JSON.stringify({ result_summary: validated.result_summary }),
-          ],
-        );
-        recordEvent(emittedEvents, {
-          task_id: validated.task_id,
-          at: now,
-          kind: "completed",
-          actor,
-          payload: { result_summary: validated.result_summary },
-        });
-
-        if (taskRow.kind === "work" && taskRow.requires_review === 1) {
-          const parentAfterUpdateRow = this.db
-            .query<TaskDbRow, [string]>(
-              `SELECT id, created_at, updated_at, created_by_kind, created_by_id, project_id,
-                      parent_task_id, kind, priority, prompt, acceptance_criteria,
-                      expected_artifacts, eligibility, review_eligibility, requires_review,
-                      bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
-                      branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin,
-                      gh_issue_number, gh_issue_repo, gh_last_comment_id,
-                gh_comments_synced_at, gh_create_status, gh_create_error
-               FROM tasks WHERE id = ?`,
-            )
-            .get(validated.task_id);
-          if (!parentAfterUpdateRow) throw new TaskNotFound(validated.task_id);
-
-          const reviewInput = synthesizeReviewTask(hydrateTask(parentAfterUpdateRow), actor);
-          const filed = this._fileInTransaction(reviewInput, {
-            skipEmitCaps: true,
-            emittedEvents,
-          });
-
-          this.db.run(
-            `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
-             VALUES (?, ?, 'review_filed', 'system', ?)`,
-            [validated.task_id, now, JSON.stringify({ review_task_id: filed.task_id })],
-          );
-          recordEvent(emittedEvents, {
-            task_id: validated.task_id,
-            at: now,
-            kind: "review_filed",
-            actor: "system",
-            payload: { review_task_id: filed.task_id },
-          });
-        }
-      }
-
-      if (taskRow.kind === "review") {
-        this.db.run(`UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?`, [
-          now,
-          validated.task_id,
-        ]);
-        this.enqueueGhStatusSync(validated.task_id, taskRow.status, "done");
-      }
-
-      if (validated.lease_id) {
-        this.db.run(
-          `UPDATE task_leases
-           SET released_at = ?, release_reason = 'completed'
-           WHERE id = ?`,
-          [now, validated.lease_id],
-        );
-      }
-
+      this.completeFinalizeReviewAndLease({ taskRow, validated, now });
       return { status: nextStatus };
     });
     // Lease-less completion must take the write lock before reading task status;
@@ -982,20 +824,275 @@ export class TaskWriter {
     return completion;
   }
 
+  private loadCompleteTaskRow(taskId: string): CompleteTaskRow {
+    const taskRow = this.db
+      .query<CompleteTaskRow, [string]>(
+        `SELECT id, kind, status, parent_task_id, requires_review
+           FROM tasks
+           WHERE id = ?`,
+      )
+      .get(taskId);
+    if (!taskRow) throw new TaskNotFound(taskId);
+    return taskRow;
+  }
+
+  private loadCompleteLeaseRow(
+    opts: { leaseless: boolean },
+    validated: { lease_id?: string },
+  ): { id: string; task_id: string; agent_id: string } | null {
+    if (opts.leaseless || !validated.lease_id) return null;
+    return (
+      this.db
+        .query<{ id: string; task_id: string; agent_id: string }, [string]>(
+          `SELECT id, task_id, agent_id
+             FROM task_leases
+             WHERE id = ? AND released_at IS NULL`,
+        )
+        .get(validated.lease_id) ?? null
+    );
+  }
+
+  private validateCompleteLeaseAndStatus(
+    taskRow: CompleteTaskRow,
+    leaseRow: { task_id: string } | null,
+    validated: { task_id: string; lease_id?: string },
+    opts: { leaseless: boolean },
+  ): void {
+    if (opts.leaseless) {
+      if (taskRow.status === "leased") {
+        const activeLease = this.db
+          .query<{ id: string }, [string]>(
+            `SELECT id
+               FROM task_leases
+               WHERE task_id = ? AND released_at IS NULL
+               ORDER BY claimed_at DESC
+               LIMIT 1`,
+          )
+          .get(validated.task_id);
+        throw new LeaseConflict(validated.task_id, activeLease?.id);
+      }
+      if (taskRow.status !== "pending") {
+        throw new InvalidTaskStatus(validated.task_id, taskRow.status);
+      }
+      return;
+    }
+    if (!validated.lease_id || leaseRow?.task_id !== validated.task_id) {
+      throw new LeaseInvalid(validated.lease_id ?? "", validated.task_id);
+    }
+    if (taskRow.status !== "leased") {
+      throw new InvalidTaskStatus(validated.task_id, taskRow.status);
+    }
+  }
+
+  private completeApplyKind(args: {
+    taskRow: CompleteTaskRow;
+    validated: Omit<CompleteTaskInput, "lease_id"> & { lease_id?: string };
+    now: number;
+    actor: string;
+    emittedEvents: TaskEvent[];
+  }): TaskStatus {
+    if (args.taskRow.kind === "review") {
+      return this.completeReviewKind(args);
+    }
+    return this.completeWorkKind(args);
+  }
+
+  private completeReviewKind(args: {
+    taskRow: CompleteTaskRow;
+    validated: Omit<CompleteTaskInput, "lease_id"> & { lease_id?: string };
+    now: number;
+    actor: string;
+    emittedEvents: TaskEvent[];
+  }): TaskStatus {
+    const { taskRow, validated, now, actor, emittedEvents } = args;
+    const verdict = validated.review_verdict;
+    if (!verdict) throw new MissingReviewVerdict(validated.task_id);
+
+    const parentTaskId = taskRow.parent_task_id ?? "unknown";
+    const parentRow = taskRow.parent_task_id
+      ? this.db
+          .query<{ status: TaskStatus }, [string]>(`SELECT status FROM tasks WHERE id = ?`)
+          .get(taskRow.parent_task_id)
+      : null;
+    if (parentRow?.status !== "done_pending_review") {
+      throw new ReviewParentInvalidState(parentTaskId, parentRow?.status ?? "cancelled");
+    }
+
+    this.applyReviewVerdict({ verdict, parentTaskId, now, actor, emittedEvents });
+    this.recordCompleted(validated, now, actor, emittedEvents);
+    return "done";
+  }
+
+  private applyReviewVerdict(args: {
+    verdict: { passed: boolean; notes: string };
+    parentTaskId: string;
+    now: number;
+    actor: string;
+    emittedEvents: TaskEvent[];
+  }): void {
+    const { verdict, parentTaskId, now, actor, emittedEvents } = args;
+    if (verdict.passed) {
+      this.db.run(`UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?`, [
+        now,
+        parentTaskId,
+      ]);
+      this.enqueueGhStatusSync(parentTaskId, "done_pending_review", "done");
+      this.db.run(
+        `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+         VALUES (?, ?, 'review_passed', ?, ?)`,
+        [parentTaskId, now, actor, JSON.stringify({ notes: verdict.notes })],
+      );
+      recordEvent(emittedEvents, {
+        task_id: parentTaskId,
+        at: now,
+        kind: "review_passed",
+        actor,
+        payload: { notes: verdict.notes },
+      });
+      return;
+    }
+    this.db.run(
+      `UPDATE tasks
+         SET status = 'failed', failure_reason = ?, updated_at = ?
+         WHERE id = ?`,
+      [`review rejected: ${verdict.notes}`, now, parentTaskId],
+    );
+    this.enqueueGhStatusSync(parentTaskId, "done_pending_review", "failed");
+    this.db.run(
+      `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+         VALUES (?, ?, 'review_failed', ?, ?)`,
+      [parentTaskId, now, actor, JSON.stringify({ notes: verdict.notes })],
+    );
+    recordEvent(emittedEvents, {
+      task_id: parentTaskId,
+      at: now,
+      kind: "review_failed",
+      actor,
+      payload: { notes: verdict.notes },
+    });
+  }
+
+  private completeWorkKind(args: {
+    taskRow: CompleteTaskRow;
+    validated: Omit<CompleteTaskInput, "lease_id"> & { lease_id?: string };
+    now: number;
+    actor: string;
+    emittedEvents: TaskEvent[];
+  }): TaskStatus {
+    const { taskRow, validated, now, actor, emittedEvents } = args;
+    if (validated.review_verdict) throw new UnexpectedReviewVerdict(validated.task_id);
+    const nextStatus: TaskStatus = taskRow.requires_review === 1 ? "done_pending_review" : "done";
+
+    this.db.run(
+      `UPDATE tasks
+         SET status = ?, result_summary = ?, result_artifacts = ?, chain_id = ?, updated_at = ?
+         WHERE id = ?`,
+      [
+        nextStatus,
+        validated.result_summary,
+        validated.result_artifacts ? JSON.stringify(validated.result_artifacts) : null,
+        validated.chain_id ?? null,
+        now,
+        validated.task_id,
+      ],
+    );
+    this.enqueueGhStatusSync(validated.task_id, taskRow.status, nextStatus);
+    this.recordCompleted(validated, now, actor, emittedEvents);
+
+    if (taskRow.kind === "work" && taskRow.requires_review === 1) {
+      this.fileReviewFollowUp(validated.task_id, now, actor, emittedEvents);
+    }
+    return nextStatus;
+  }
+
+  private recordCompleted(
+    validated: { task_id: string; result_summary: string },
+    now: number,
+    actor: string,
+    emittedEvents: TaskEvent[],
+  ): void {
+    this.db.run(
+      `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+         VALUES (?, ?, 'completed', ?, ?)`,
+      [validated.task_id, now, actor, JSON.stringify({ result_summary: validated.result_summary })],
+    );
+    recordEvent(emittedEvents, {
+      task_id: validated.task_id,
+      at: now,
+      kind: "completed",
+      actor,
+      payload: { result_summary: validated.result_summary },
+    });
+  }
+
+  private fileReviewFollowUp(
+    taskId: string,
+    now: number,
+    actor: string,
+    emittedEvents: TaskEvent[],
+  ): void {
+    const parentAfterUpdateRow = this.db
+      .query<TaskDbRow, [string]>(
+        `SELECT id, created_at, updated_at, created_by_kind, created_by_id, project_id,
+                parent_task_id, kind, priority, prompt, acceptance_criteria,
+                expected_artifacts, eligibility, review_eligibility, requires_review,
+                bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
+                branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin,
+                gh_issue_number, gh_issue_repo, gh_last_comment_id,
+                gh_comments_synced_at, gh_create_status, gh_create_error
+           FROM tasks WHERE id = ?`,
+      )
+      .get(taskId);
+    if (!parentAfterUpdateRow) throw new TaskNotFound(taskId);
+
+    const reviewInput = synthesizeReviewTask(hydrateTask(parentAfterUpdateRow), actor);
+    const filed = this._fileInTransaction(reviewInput, { skipEmitCaps: true, emittedEvents });
+
+    this.db.run(
+      `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+         VALUES (?, ?, 'review_filed', 'system', ?)`,
+      [taskId, now, JSON.stringify({ review_task_id: filed.task_id })],
+    );
+    recordEvent(emittedEvents, {
+      task_id: taskId,
+      at: now,
+      kind: "review_filed",
+      actor: "system",
+      payload: { review_task_id: filed.task_id },
+    });
+  }
+
+  private completeFinalizeReviewAndLease(args: {
+    taskRow: CompleteTaskRow;
+    validated: { task_id: string; lease_id?: string };
+    now: number;
+  }): void {
+    const { taskRow, validated, now } = args;
+    if (taskRow.kind === "review") {
+      this.db.run(`UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?`, [
+        now,
+        validated.task_id,
+      ]);
+      this.enqueueGhStatusSync(validated.task_id, taskRow.status, "done");
+    }
+    if (validated.lease_id) {
+      this.db.run(
+        `UPDATE task_leases
+           SET released_at = ?, release_reason = 'completed'
+           WHERE id = ?`,
+        [now, validated.lease_id],
+      );
+    }
+  }
+
   fail(input: FailTaskInput): { status: "failed" } {
     const validated = FailTaskInputSchema.parse(input);
     const emittedEvents: TaskEvent[] = [];
 
-    const failed = this.db.transaction(() => {
+    const failed = this.db.transaction((): { status: "failed" } => {
       const taskRow = this.db
         .query<
-          {
-            id: string;
-            kind: TaskKind;
-            status: TaskStatus;
-            parent_task_id: string | null;
-            eligibility: string;
-          },
+          FailTaskRow,
           [string]
         >(`SELECT id, kind, status, parent_task_id, eligibility FROM tasks WHERE id = ?`)
         .get(validated.task_id);
@@ -1008,164 +1105,186 @@ export class TaskWriter {
            WHERE id = ? AND released_at IS NULL`,
         )
         .get(validated.lease_id);
-      if (!leaseRow || leaseRow.task_id !== validated.task_id) {
+      if (leaseRow?.task_id !== validated.task_id) {
         throw new LeaseInvalid(validated.lease_id, validated.task_id);
       }
 
       const now = this.now();
-      this.db.run(
-        `UPDATE task_leases
-         SET released_at = ?, release_reason = 'failed'
-         WHERE id = ?`,
-        [now, validated.lease_id],
-      );
-      this.db.run(
-        `UPDATE tasks
-         SET status = 'failed', failure_reason = ?, updated_at = ?
-         WHERE id = ?`,
-        [validated.reason, now, validated.task_id],
-      );
-      this.enqueueGhStatusSync(validated.task_id, taskRow.status, "failed");
-      this.db.run(
-        `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
-         VALUES (?, ?, 'completed', ?, ?)`,
-        [
-          validated.task_id,
-          now,
-          leaseRow.agent_id,
-          JSON.stringify({ success: false, reason: validated.reason }),
-        ],
-      );
-      recordEvent(emittedEvents, {
-        task_id: validated.task_id,
-        at: now,
-        kind: "completed",
-        actor: leaseRow.agent_id,
-        payload: { success: false, reason: validated.reason },
-      });
-
-      if (taskRow.kind === "review" && taskRow.parent_task_id) {
-        const parentRow = this.db
-          .query<
-            { id: string; status: TaskStatus },
-            [string]
-          >(`SELECT id, status FROM tasks WHERE id = ?`)
-          .get(taskRow.parent_task_id);
-
-        if (parentRow && parentRow.status === "done_pending_review") {
-          const attemptsRow = this.db
-            .query<{ attempts: number }, [string]>(
-              `SELECT COUNT(*) AS attempts
-               FROM tasks
-               WHERE parent_task_id = ? AND kind = 'review'`,
-            )
-            .get(taskRow.parent_task_id);
-          const attempts = attemptsRow?.attempts ?? 0;
-
-          if (attempts < 3) {
-            const originalReviewRow = this.db
-              .query<{ eligibility: string }, [string]>(
-                `SELECT eligibility
-                 FROM tasks
-                 WHERE parent_task_id = ? AND kind = 'review'
-                 ORDER BY created_at ASC, id ASC
-                 LIMIT 1`,
-              )
-              .get(taskRow.parent_task_id);
-
-            let originalDenyAgents: string[] = [];
-            if (originalReviewRow?.eligibility) {
-              const parsed = JSON.parse(originalReviewRow.eligibility) as { deny_agents?: unknown };
-              originalDenyAgents = Array.isArray(parsed.deny_agents)
-                ? parsed.deny_agents.filter((value): value is string => typeof value === "string")
-                : [];
-            }
-
-            const currentEligibility = JSON.parse(taskRow.eligibility) as { deny_agents?: unknown };
-            const currentDenyAgents = Array.isArray(currentEligibility.deny_agents)
-              ? currentEligibility.deny_agents.filter(
-                  (value): value is string => typeof value === "string",
-                )
-              : [];
-
-            const parentTaskRow = this.db
-              .query<TaskDbRow, [string]>(
-                `SELECT id, created_at, updated_at, created_by_kind, created_by_id, project_id,
-                        parent_task_id, kind, priority, prompt, acceptance_criteria,
-                        expected_artifacts, eligibility, review_eligibility, requires_review,
-                        bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
-                        branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin,
-                        gh_issue_number, gh_issue_repo, gh_last_comment_id,
-                gh_comments_synced_at, gh_create_status, gh_create_error
-                 FROM tasks WHERE id = ?`,
-              )
-              .get(taskRow.parent_task_id);
-
-            if (parentTaskRow) {
-              const doerAgentId = originalDenyAgents[0] ?? leaseRow.agent_id;
-              const reviewInput = synthesizeReviewTask(hydrateTask(parentTaskRow), doerAgentId, [
-                ...currentDenyAgents,
-                leaseRow.agent_id,
-              ]);
-              const filed = this._fileInTransaction(reviewInput, {
-                skipEmitCaps: true,
-                emittedEvents,
-              });
-
-              this.db.run(
-                `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
-                 VALUES (?, ?, 'review_filed', 'system', ?)`,
-                [parentTaskRow.id, now, JSON.stringify({ review_task_id: filed.task_id })],
-              );
-              recordEvent(emittedEvents, {
-                task_id: parentTaskRow.id,
-                at: now,
-                kind: "review_filed",
-                actor: "system",
-                payload: { review_task_id: filed.task_id },
-              });
-            }
-          } else {
-            this.db.run(
-              `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
-               VALUES (?, ?, 'review_failed', ?, ?)`,
-              [
-                taskRow.parent_task_id,
-                now,
-                leaseRow.agent_id,
-                JSON.stringify({
-                  retries_exhausted: true,
-                  last_reviewer: leaseRow.agent_id,
-                  last_notes: validated.reason,
-                }),
-              ],
-            );
-            recordEvent(emittedEvents, {
-              task_id: taskRow.parent_task_id,
-              at: now,
-              kind: "review_failed",
-              actor: leaseRow.agent_id,
-              payload: {
-                retries_exhausted: true,
-                last_reviewer: leaseRow.agent_id,
-                last_notes: validated.reason,
-              },
-            });
-          }
-        }
-      }
-
+      this.applyFailMutations({ taskRow, leaseRow, validated, now, emittedEvents });
+      this.maybeRetryReviewAfterFail({ taskRow, leaseRow, validated, now, emittedEvents });
       return { status: "failed" as const };
     })();
     publishEvents(this.bus, emittedEvents);
     return failed;
   }
 
+  private applyFailMutations(args: {
+    taskRow: FailTaskRow;
+    leaseRow: { agent_id: string };
+    validated: { task_id: string; lease_id: string; reason: string };
+    now: number;
+    emittedEvents: TaskEvent[];
+  }): void {
+    const { taskRow, leaseRow, validated, now, emittedEvents } = args;
+    this.db.run(
+      `UPDATE task_leases
+         SET released_at = ?, release_reason = 'failed'
+         WHERE id = ?`,
+      [now, validated.lease_id],
+    );
+    this.db.run(
+      `UPDATE tasks
+         SET status = 'failed', failure_reason = ?, updated_at = ?
+         WHERE id = ?`,
+      [validated.reason, now, validated.task_id],
+    );
+    this.enqueueGhStatusSync(validated.task_id, taskRow.status, "failed");
+    this.db.run(
+      `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+         VALUES (?, ?, 'completed', ?, ?)`,
+      [
+        validated.task_id,
+        now,
+        leaseRow.agent_id,
+        JSON.stringify({ success: false, reason: validated.reason }),
+      ],
+    );
+    recordEvent(emittedEvents, {
+      task_id: validated.task_id,
+      at: now,
+      kind: "completed",
+      actor: leaseRow.agent_id,
+      payload: { success: false, reason: validated.reason },
+    });
+  }
+
+  private maybeRetryReviewAfterFail(args: {
+    taskRow: FailTaskRow;
+    leaseRow: { agent_id: string };
+    validated: { task_id: string; reason: string };
+    now: number;
+    emittedEvents: TaskEvent[];
+  }): void {
+    const { taskRow } = args;
+    if (taskRow.kind !== "review" || !taskRow.parent_task_id) return;
+
+    const parentRow = this.db
+      .query<
+        { id: string; status: TaskStatus },
+        [string]
+      >(`SELECT id, status FROM tasks WHERE id = ?`)
+      .get(taskRow.parent_task_id);
+    if (parentRow?.status !== "done_pending_review") return;
+
+    const attemptsRow = this.db
+      .query<{ attempts: number }, [string]>(
+        `SELECT COUNT(*) AS attempts
+           FROM tasks
+           WHERE parent_task_id = ? AND kind = 'review'`,
+      )
+      .get(taskRow.parent_task_id);
+    const attempts = attemptsRow?.attempts ?? 0;
+
+    if (attempts < 3) {
+      this.refileReview({ ...args, parentTaskId: taskRow.parent_task_id });
+    } else {
+      this.recordReviewRetriesExhausted({
+        parentTaskId: taskRow.parent_task_id,
+        leaseRow: args.leaseRow,
+        validated: args.validated,
+        now: args.now,
+        emittedEvents: args.emittedEvents,
+      });
+    }
+  }
+
+  private refileReview(args: {
+    parentTaskId: string;
+    taskRow: FailTaskRow;
+    leaseRow: { agent_id: string };
+    now: number;
+    emittedEvents: TaskEvent[];
+  }): void {
+    const { parentTaskId, taskRow, leaseRow, now, emittedEvents } = args;
+    const originalReviewRow = this.db
+      .query<{ eligibility: string }, [string]>(
+        `SELECT eligibility
+           FROM tasks
+           WHERE parent_task_id = ? AND kind = 'review'
+           ORDER BY created_at ASC, id ASC
+           LIMIT 1`,
+      )
+      .get(parentTaskId);
+    const originalDenyAgents = parseDenyAgents(originalReviewRow?.eligibility);
+    const currentDenyAgents = parseDenyAgents(taskRow.eligibility);
+
+    const parentTaskRow = this.db
+      .query<TaskDbRow, [string]>(
+        `SELECT id, created_at, updated_at, created_by_kind, created_by_id, project_id,
+                parent_task_id, kind, priority, prompt, acceptance_criteria,
+                expected_artifacts, eligibility, review_eligibility, requires_review,
+                bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
+                branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin,
+                gh_issue_number, gh_issue_repo, gh_last_comment_id,
+                gh_comments_synced_at, gh_create_status, gh_create_error
+           FROM tasks WHERE id = ?`,
+      )
+      .get(parentTaskId);
+    if (!parentTaskRow) return;
+
+    const doerAgentId = originalDenyAgents[0] ?? leaseRow.agent_id;
+    const reviewInput = synthesizeReviewTask(hydrateTask(parentTaskRow), doerAgentId, [
+      ...currentDenyAgents,
+      leaseRow.agent_id,
+    ]);
+    const filed = this._fileInTransaction(reviewInput, { skipEmitCaps: true, emittedEvents });
+
+    this.db.run(
+      `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+         VALUES (?, ?, 'review_filed', 'system', ?)`,
+      [parentTaskRow.id, now, JSON.stringify({ review_task_id: filed.task_id })],
+    );
+    recordEvent(emittedEvents, {
+      task_id: parentTaskRow.id,
+      at: now,
+      kind: "review_filed",
+      actor: "system",
+      payload: { review_task_id: filed.task_id },
+    });
+  }
+
+  private recordReviewRetriesExhausted(args: {
+    parentTaskId: string;
+    leaseRow: { agent_id: string };
+    validated: { reason: string };
+    now: number;
+    emittedEvents: TaskEvent[];
+  }): void {
+    const { parentTaskId, leaseRow, validated, now, emittedEvents } = args;
+    const payload = {
+      retries_exhausted: true,
+      last_reviewer: leaseRow.agent_id,
+      last_notes: validated.reason,
+    };
+    this.db.run(
+      `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+         VALUES (?, ?, 'review_failed', ?, ?)`,
+      [parentTaskId, now, leaseRow.agent_id, JSON.stringify(payload)],
+    );
+    recordEvent(emittedEvents, {
+      task_id: parentTaskId,
+      at: now,
+      kind: "review_failed",
+      actor: leaseRow.agent_id,
+      payload,
+    });
+  }
+
   cancel(input: CancelTaskInput): { status: "cancelled" } {
     const validated = CancelTaskInputSchema.parse(input);
     const emittedEvents: TaskEvent[] = [];
-    let sessionTerminatedHere = false;
-    let terminatedChainHandoffId: string | null = null;
+    const cancelState: { sessionTerminatedHere: boolean; terminatedChainHandoffId: string | null } =
+      { sessionTerminatedHere: false, terminatedChainHandoffId: null };
 
     const cancelled = this.db
       .transaction(() => {
@@ -1231,10 +1350,10 @@ export class TaskWriter {
 
         if (taskRow.kind === "orchestrate" && this.maestroSessions) {
           const session = this.maestroSessions.get(validated.task_id);
-          if (session && session.terminated_at === null) {
-            terminatedChainHandoffId = session.chain_handoff_id;
+          if (session?.terminated_at === null) {
+            cancelState.terminatedChainHandoffId = session.chain_handoff_id;
             this.maestroSessions.terminate(validated.task_id, "cancelled");
-            sessionTerminatedHere = true;
+            cancelState.sessionTerminatedHere = true;
             this.db.run(
               `INSERT INTO task_events (task_id, maestro_session_task_id, at, kind, actor, payload_json)
              VALUES (?, ?, ?, 'orchestrate_terminated', NULL, ?)`,
@@ -1254,9 +1373,13 @@ export class TaskWriter {
       })
       .immediate();
     publishEvents(this.bus, emittedEvents);
-    if (sessionTerminatedHere && terminatedChainHandoffId && this.onOrchestrateCancel) {
+    if (
+      cancelState.sessionTerminatedHere &&
+      cancelState.terminatedChainHandoffId &&
+      this.onOrchestrateCancel
+    ) {
       try {
-        this.onOrchestrateCancel(terminatedChainHandoffId);
+        this.onOrchestrateCancel(cancelState.terminatedChainHandoffId);
       } catch (error) {
         console.warn("[task.cancel] onOrchestrateCancel failed", error);
       }
@@ -1590,7 +1713,7 @@ export class TaskWriter {
         at: r.at,
         kind: r.kind as TaskEventKind,
         actor: r.actor,
-        payload: r.payload_json ? JSON.parse(r.payload_json) : null,
+        payload: r.payload_json ? (JSON.parse(r.payload_json) as unknown) : null,
       }));
     }
 
@@ -1623,50 +1746,7 @@ export class TaskWriter {
     if (filters.eligible_for && !resolvedAgent) return [];
     if (filters.eligible_for && filters.status && filters.status !== "pending") return [];
 
-    const where: string[] = [];
-    const params: Array<string | number> = [];
-
-    if (filters.status !== undefined) {
-      where.push("status = ?");
-      params.push(filters.status);
-    }
-    if (filters.kind !== undefined) {
-      where.push("kind = ?");
-      params.push(filters.kind);
-    }
-    if (filters.parent_task_id !== undefined) {
-      where.push("parent_task_id = ?");
-      params.push(filters.parent_task_id);
-    }
-    if (filters.origin !== undefined) {
-      where.push("origin = ?");
-      params.push(filters.origin);
-    }
-    if (filters.eligible_for && filters.status === undefined) {
-      where.push("status = ?");
-      params.push("pending");
-    }
-    if (filters.eligible_for && resolvedAgent) {
-      const tier = resolvedAgent.tier;
-      const agentRank = TIER_ORDER.indexOf(tier as (typeof TIER_ORDER)[number]);
-      if (agentRank >= 0) {
-        const eligibleMinTiers = TIER_ORDER.slice(0, agentRank + 1);
-        const placeholders = eligibleMinTiers.map(() => "?").join(", ");
-        where.push(
-          `(json_extract(eligibility, '$.min_tier') IS NULL
-            OR json_extract(eligibility, '$.min_tier') NOT IN (${TIER_ORDER.map(() => "?").join(", ")})
-            OR json_extract(eligibility, '$.min_tier') IN (${placeholders}))`,
-        );
-        params.push(...TIER_ORDER, ...eligibleMinTiers);
-      } else {
-        where.push(
-          `(json_extract(eligibility, '$.min_tier') IS NULL
-            OR json_extract(eligibility, '$.min_tier') NOT IN (${TIER_ORDER.map(() => "?").join(", ")}))`,
-        );
-        params.push(...TIER_ORDER);
-      }
-    }
-
+    const { where, params } = buildListWhereClause(filters, resolvedAgent);
     const limit = filters.limit ?? 50;
     const offset = filters.offset ?? 0;
 
@@ -1698,6 +1778,62 @@ export class TaskWriter {
       }),
     );
   }
+}
+
+function buildListWhereClause(
+  filters: ListFilters,
+  resolvedAgent: AgentDescriptor | undefined,
+): { where: string[]; params: (string | number)[] } {
+  const where: string[] = [];
+  const params: (string | number)[] = [];
+  if (filters.status !== undefined) {
+    where.push("status = ?");
+    params.push(filters.status);
+  }
+  if (filters.kind !== undefined) {
+    where.push("kind = ?");
+    params.push(filters.kind);
+  }
+  if (filters.parent_task_id !== undefined) {
+    where.push("parent_task_id = ?");
+    params.push(filters.parent_task_id);
+  }
+  if (filters.origin !== undefined) {
+    where.push("origin = ?");
+    params.push(filters.origin);
+  }
+  if (filters.eligible_for && filters.status === undefined) {
+    where.push("status = ?");
+    params.push("pending");
+  }
+  if (filters.eligible_for && resolvedAgent) {
+    appendTierWhereClause(resolvedAgent.tier, where, params);
+  }
+  return { where, params };
+}
+
+function appendTierWhereClause(
+  tier: string | undefined,
+  where: string[],
+  params: (string | number)[],
+): void {
+  const agentRank = TIER_ORDER.indexOf(tier as (typeof TIER_ORDER)[number]);
+  if (agentRank >= 0) {
+    const eligibleMinTiers = TIER_ORDER.slice(0, agentRank + 1);
+    const placeholders = eligibleMinTiers.map(() => "?").join(", ");
+    where.push(
+      `(json_extract(eligibility, '$.min_tier') IS NULL
+        OR json_extract(eligibility, '$.min_tier') NOT IN (${TIER_ORDER.map(() => "?").join(", ")})
+        OR json_extract(eligibility, '$.min_tier') IN (${placeholders}))`,
+    );
+    params.push(...TIER_ORDER, ...eligibleMinTiers);
+    return;
+  }
+  where.push(
+    `(json_extract(eligibility, '$.min_tier') IS NULL
+      OR json_extract(eligibility, '$.min_tier') NOT IN (${TIER_ORDER.map(() => "?").join(", ")}))`,
+  );
+  params.push(...TIER_ORDER);
 }
 
 function hydrateTask(row: TaskDbRow): TaskRecord {

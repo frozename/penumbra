@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+
 import type { FileTaskInput } from "./schema.js";
 
 const DEFAULT_MAX_DESCENDANTS_PER_ROOT = 20;
@@ -14,7 +15,7 @@ export class EmitCapExceeded extends Error {
     public readonly limit: number,
     public readonly observed: number,
   ) {
-    super(`emit cap exceeded: scope=${scope} limit=${limit} observed=${observed}`);
+    super(`emit cap exceeded: scope=${scope} limit=${String(limit)} observed=${String(observed)}`);
     this.name = "EmitCapExceeded";
   }
 }
@@ -75,7 +76,7 @@ function resolveRootAndDepth(
   let cursor = parentTaskId;
   let newTaskDepth = 1;
 
-  while (true) {
+  for (;;) {
     const row = db
       .query<
         { parent_task_id: string | null },
@@ -83,7 +84,7 @@ function resolveRootAndDepth(
       >(`SELECT parent_task_id FROM tasks WHERE id = ?`)
       .get(cursor);
 
-    if (!row || row.parent_task_id === null) {
+    if (!row?.parent_task_id) {
       return { rootTaskId: cursor, newTaskDepth };
     }
 

@@ -1,6 +1,8 @@
 import type { Database } from "bun:sqlite";
-import { TaskWriter } from "./writer.js";
+
 import type { AgentDescriptor } from "./eligibility.js";
+
+import { TaskWriter } from "./writer.js";
 
 /**
  * Read-only facade over `TaskWriter`. Lets callers (HTTP routes, MCP tools,

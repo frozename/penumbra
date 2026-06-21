@@ -1,12 +1,14 @@
 import type { Database } from "bun:sqlite";
+
 import type { AgentTaskType } from "../schemas/agent-performance.js";
+
 import {
   GATE_OUTCOME_PASS_VALUES,
   resolveClassifierDeclineCutoverIso,
   resolveGateOutcomeCutoverIso,
   routeAgent,
-  SUCCESS_OUTCOME_VALUES,
   type RouteAgentInput,
+  SUCCESS_OUTCOME_VALUES,
 } from "../services/agent-routing.js";
 import { pickPreferred } from "./auction.js";
 
@@ -26,7 +28,7 @@ type RecentOutcomeRow = {
 
 function isSuccess(row: RecentOutcomeRow, gateOutcomeCutover: string): boolean {
   if (!(SUCCESS_OUTCOME_VALUES as readonly string[]).includes(row.outcome)) return false;
-  if (row.gate_outcome == null) return row.ts < gateOutcomeCutover;
+  if (row.gate_outcome === null) return row.ts < gateOutcomeCutover;
   return (GATE_OUTCOME_PASS_VALUES as readonly string[]).includes(row.gate_outcome);
 }
 
@@ -70,8 +72,9 @@ export function pickFromPool(
   pressure: PressureSnapshot | null | undefined,
   taskType: AgentTaskType,
 ): string {
-  if (pool.length === 0) throw new Error("pickFromPool: pool must not be empty");
-  if (pool.length === 1) return pool[0]!;
+  const [firstAgent, secondAgent] = pool;
+  if (firstAgent === undefined) throw new Error("pickFromPool: pool must not be empty");
+  if (secondAgent === undefined) return firstAgent;
 
   const localConfig: AgentchatConfig | undefined = agentchatConfig
     ? {
@@ -93,14 +96,16 @@ export function pickFromPool(
     agentchatConfig: localConfig,
   });
 
-  if (out.detail !== "rank") return pool[0]!;
+  if (out.detail !== "rank") return firstAgent;
   const demoted = recentlyFailingAgents(pool, db, taskType);
   const eligiblePool = pool.filter((agent) => !demoted.has(agent));
   const pickPool = eligiblePool.length > 0 ? eligiblePool : pool;
+  const [pickHead] = pickPool;
+  if (pickHead === undefined) return firstAgent;
 
   const winner = pickPreferred(
     out.candidates.candidates,
     pickPool.map((name) => ({ name })),
   );
-  return winner?.agent_id ?? pickPool[0]!;
+  return winner?.agent_id ?? pickHead;
 }

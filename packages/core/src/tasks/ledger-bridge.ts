@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+
 import type { AgentPerformanceRow, AgentTaskType } from "../schemas/agent-performance.js";
 import type { TaskEvent } from "./event-bus.js";
 import type { TaskRecord } from "./schema.js";
@@ -29,57 +30,42 @@ export function mapTaskEventToLedger(
   taskRow: TaskRecord,
   leaseRow?: TaskLeaseRow,
 ): LedgerWrite | null {
+  const agentId = leaseRow?.agent_id;
+  if (!agentId) return null;
+
   if (event.kind === "completed" && taskRow.kind === "work" && taskRow.status === "done") {
-    if (!leaseRow?.agent_id) return null;
-    return {
-      agent_name: leaseRow.agent_id,
-      task_type: taskSizeTaskType(taskRow),
-      success: true,
-      failure_reason: null,
-    };
+    return ledgerSuccess(agentId, taskSizeTaskType(taskRow));
   }
-
   if (event.kind === "review_passed") {
-    if (!leaseRow?.agent_id) return null;
-    return {
-      agent_name: leaseRow.agent_id,
-      task_type: taskSizeTaskType(taskRow),
-      success: true,
-      failure_reason: null,
-    };
+    return ledgerSuccess(agentId, taskSizeTaskType(taskRow));
   }
-
   if (event.kind === "review_failed") {
-    if (!leaseRow?.agent_id) return null;
-    return {
-      agent_name: leaseRow.agent_id,
-      task_type: taskSizeTaskType(taskRow),
-      success: false,
-      failure_reason: taskRow.failure_reason,
-    };
+    return ledgerFailure(agentId, taskSizeTaskType(taskRow), taskRow.failure_reason);
   }
-
   if (event.kind === "completed" && taskRow.kind === "review" && taskRow.status === "done") {
-    if (!leaseRow?.agent_id) return null;
-    return {
-      agent_name: leaseRow.agent_id,
-      task_type: "review_adversarial",
-      success: true,
-      failure_reason: null,
-    };
+    return ledgerSuccess(agentId, "review_adversarial");
   }
-
   if (event.kind === "released" && event.payload?.reason === "expired") {
-    if (!leaseRow?.agent_id) return null;
-    return {
-      agent_name: leaseRow.agent_id,
-      task_type: deriveTaskType(taskRow),
-      success: false,
-      failure_reason: "lease expired",
-    };
+    return ledgerFailure(agentId, deriveTaskType(taskRow), "lease expired");
   }
-
   return null;
+}
+
+function ledgerSuccess(agentName: string, taskType: AgentTaskType): LedgerWrite {
+  return { agent_name: agentName, task_type: taskType, success: true, failure_reason: null };
+}
+
+function ledgerFailure(
+  agentName: string,
+  taskType: AgentTaskType,
+  failureReason: string | null,
+): LedgerWrite {
+  return {
+    agent_name: agentName,
+    task_type: taskType,
+    success: false,
+    failure_reason: failureReason,
+  };
 }
 
 function stableTaskLedgerId(input: {

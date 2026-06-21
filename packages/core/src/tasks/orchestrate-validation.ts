@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+
 import type { AgentDescriptor } from "./eligibility.js";
 import type { FileTaskInput } from "./schema.js";
 

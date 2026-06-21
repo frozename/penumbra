@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
+
 import { randomUUID } from "node:crypto";
+
 import type { RoutingBias } from "../readers/routing-bias.js";
 
 const VALID_SCOPES = ["provider", "agent"] as const;
@@ -36,7 +38,7 @@ export function setRoutingBias(db: Database, args: SetRoutingBiasArgs): RoutingB
   }
 
   let weight = args.weight ?? null;
-  if (weight !== null && weight !== undefined) {
+  if (weight !== null) {
     weight = Math.max(0, Math.min(2.0, weight));
   }
 

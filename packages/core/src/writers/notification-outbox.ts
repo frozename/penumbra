@@ -145,6 +145,6 @@ export class NotificationOutboxWriter {
 
   exists(kind: string, referenceId: string): boolean {
     const row = this.selectByKindRef.get(kind, referenceId) as { id: number } | null;
-    return row != null;
+    return row !== null;
   }
 }

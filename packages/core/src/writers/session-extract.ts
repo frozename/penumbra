@@ -1,12 +1,14 @@
 import { Database } from "bun:sqlite";
+
 import type { Embedder } from "../embedder/interface.js";
+
 import { isNearDuplicate } from "../memory/near-dup.js";
+import { buildT2EmbedText, validateT2Body } from "./t2-embed-text.js";
 import {
   readExistingNearDuplicateCandidates,
-  T2MemoryExtractionSchema,
   type T2MemoryExtraction,
+  T2MemoryExtractionSchema,
 } from "./t2.js";
-import { buildT2EmbedText, validateT2Body } from "./t2-embed-text.js";
 
 const DEFAULT_MIN_TRANSCRIPT_CHARS = 200;
 const DEFAULT_MAX_CANDIDATES = 15;
@@ -74,76 +76,85 @@ export async function extractSessionCandidates(
   const out: SessionExtractCandidate[] = [];
 
   for (let i = 0; i < bounded.length && out.length < maxCandidates; i++) {
-    const extraction = bounded[i]!;
+    const extraction = bounded[i];
     const embedding = embeddings[i];
-    if (!embedding) continue;
-
-    const slug = slugify(extraction.title);
-    const slugMatch = findExistingBySlug(opts.db, slug, opts.project_id ?? null);
-    const nearDupMatch = isNearDuplicate(
-      {
-        body: extraction.body,
-        why: extraction.why ?? null,
-        depth: extraction.depth ?? null,
-        embedding,
-      },
-      readExistingNearDuplicateCandidates(
-        opts.db,
-        opts.project_id ?? null,
-        embedding,
-        NEAR_DUP_QUERY_LIMIT,
-      ),
-      opts.nearDuplicateThreshold ?? DEFAULT_NEAR_DUP_THRESHOLD,
-    );
-
-    const existing =
-      slugMatch ??
-      (nearDupMatch?.winner === "existing"
-        ? {
-            memory_id: nearDupMatch.existing.memory_id,
-            slug: nearDupMatch.existing.slug ?? null,
-          }
-        : null);
-    const updateSlug = existing?.slug ?? slug;
-
-    out.push({
-      action: existing ? "update" : "create",
-      slug,
-      ...(existing
-        ? {
-            existing_memory_id: existing.memory_id,
-            update_existing_slug: updateSlug,
-          }
-        : {}),
-      title: extraction.title,
-      body: extraction.body,
-      hook: buildHook(extraction),
-      kind: extraction.kind,
-      ...(extraction.metadata ? { metadata: extraction.metadata } : {}),
-      obs_type: extraction.obs_type ?? null,
-      why: extraction.why!.trim(),
-      source_quote: extraction.source_quote ?? null,
-      learned_at: extraction.learned_at ?? null,
-      durability: extraction.durability ?? null,
-      depth: extraction.depth ?? null,
-      is_episodic: extraction.is_episodic ?? null,
-      promote: extraction.promote ?? null,
-      backlinks: resolveBacklinks(
-        opts.db,
-        extraction.title,
-        opts.project_id ?? null,
-        existing?.memory_id,
-      ),
-      embedding,
-    });
+    if (!extraction || !embedding) continue;
+    out.push(buildCandidate(opts, extraction, embedding));
   }
 
   return out;
 }
 
+function buildCandidate(
+  opts: SessionExtractOpts,
+  extraction: T2MemoryExtraction,
+  embedding: Float32Array,
+): SessionExtractCandidate {
+  const projectId = opts.project_id ?? null;
+  const slug = slugify(extraction.title);
+  const existing = resolveExistingMatch(opts, extraction, embedding, slug);
+  const updateSlug = existing?.slug ?? slug;
+
+  return {
+    action: existing ? "update" : "create",
+    slug,
+    ...(existing
+      ? {
+          existing_memory_id: existing.memory_id,
+          update_existing_slug: updateSlug,
+        }
+      : {}),
+    title: extraction.title,
+    body: extraction.body,
+    hook: buildHook(extraction),
+    kind: extraction.kind,
+    ...(extraction.metadata ? { metadata: extraction.metadata } : {}),
+    obs_type: extraction.obs_type ?? null,
+    why: (extraction.why ?? "").trim(),
+    source_quote: extraction.source_quote ?? null,
+    learned_at: extraction.learned_at ?? null,
+    durability: extraction.durability ?? null,
+    depth: extraction.depth ?? null,
+    is_episodic: extraction.is_episodic ?? null,
+    promote: extraction.promote ?? null,
+    backlinks: resolveBacklinks(opts.db, extraction.title, projectId, existing?.memory_id),
+    embedding,
+  };
+}
+
+function resolveExistingMatch(
+  opts: SessionExtractOpts,
+  extraction: T2MemoryExtraction,
+  embedding: Float32Array,
+  slug: string,
+): { memory_id: string; slug: string | null } | null {
+  const projectId = opts.project_id ?? null;
+  const slugMatch = findExistingBySlug(opts.db, slug, projectId);
+  const nearDupMatch = isNearDuplicate(
+    {
+      body: extraction.body,
+      why: extraction.why ?? null,
+      depth: extraction.depth ?? null,
+      embedding,
+    },
+    readExistingNearDuplicateCandidates(opts.db, projectId, embedding, NEAR_DUP_QUERY_LIMIT),
+    opts.nearDuplicateThreshold ?? DEFAULT_NEAR_DUP_THRESHOLD,
+  );
+  return (
+    slugMatch ??
+    (nearDupMatch?.winner === "existing"
+      ? {
+          memory_id: nearDupMatch.existing.memory_id,
+          slug: nearDupMatch.existing.slug ?? null,
+        }
+      : null)
+  );
+}
+
 function buildHook(extraction: T2MemoryExtraction): string {
-  const source = extraction.why?.trim() || extraction.title.trim();
-  return source.replace(/\s+/g, " ").slice(0, 180);
+  const trimmedWhy = extraction.why?.trim();
+  const source = trimmedWhy && trimmedWhy.length > 0 ? trimmedWhy : extraction.title.trim();
+  return source.replaceAll(/\s+/g, " ").slice(0, 180);
 }
 
 function validateExtractQuality(extraction: T2MemoryExtraction): boolean {
@@ -168,11 +179,11 @@ function isBareRediscoverableFact(extraction: T2MemoryExtraction): boolean {
   if (extraction.kind !== "fact") return false;
   const body = extraction.body.trim().toLowerCase();
   const hasDurableHook =
-    /\b(because|so that|therefore|instead|avoid|prefer|requires?|must|should|when|whenever|workaround|future|preserv(?:e|es)|route|use)\b/.test(
+    /\b(?:because|so that|therefore|instead|avoid|prefer|requires?|must|should|when|whenever|workaround|future|preserv(?:e|es)|route|use)\b/.test(
       body,
     );
   if (hasDurableHook) return false;
-  return /\b(file|directory|package|function|class|repo|repository|exists|contains|lives at)\b/.test(
+  return /\b(?:file|directory|package|function|class|repo|repository|exists|contains|lives at)\b/.test(
     body,
   );
 }
@@ -200,7 +211,7 @@ function resolveBacklinks(
 ): string[] {
   const tokens = titleTokens(title);
   if (tokens.length < 2) return [];
-  const query = tokens.map((token) => `"${token.replace(/"/g, '""')}"`).join(" OR ");
+  const query = tokens.map((token) => `"${token.replaceAll('"', '""')}"`).join(" OR ");
   try {
     const rows = db
       .query<{ memory_id: string }, [string, string | null, string | null, string | null]>(
@@ -236,9 +247,9 @@ function titleTokens(title: string): string[] {
 function slugify(title: string): string {
   const slug = title
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .replace(/-{2,}/g, "-")
+    .replaceAll(/[^a-z0-9]+/g, "-")
+    .replaceAll(/^-+|-+$/g, "")
+    .replaceAll(/-{2,}/g, "-")
     .slice(0, 120);
   return slug || "session-extract";
 }

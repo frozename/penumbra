@@ -1,4 +1,4 @@
-import { TIER_ORDER, type Eligibility } from "./schema.js";
+import { type Eligibility, TIER_ORDER } from "./schema.js";
 
 export { TIER_ORDER } from "./schema.js";
 
@@ -16,45 +16,56 @@ function tierRank(tier: string | undefined): number {
   return idx === -1 ? -1 : idx;
 }
 
+interface EligibilityOpts {
+  now?: number;
+  cooldowns?: Map<string, Map<string, number>>;
+  task_id?: string;
+}
+
 export function isEligible(
   agent: AgentDescriptor,
   eligibility: Eligibility,
-  opts: {
-    now?: number;
-    cooldowns?: Map<string, Map<string, number>>;
-    task_id?: string;
-  } = {},
+  opts: EligibilityOpts = {},
 ): boolean {
+  if (!matchesRequiredTags(agent, eligibility)) return false;
+  if (!matchesTier(agent, eligibility)) return false;
+  if (!matchesCost(agent, eligibility)) return false;
+  if (!matchesAllowDeny(agent, eligibility)) return false;
+  if (isOnCooldown(agent, opts)) return false;
+  return true;
+}
+
+function matchesRequiredTags(agent: AgentDescriptor, eligibility: Eligibility): boolean {
   const requiredTags = eligibility.required_tags ?? [];
-  if (requiredTags.length > 0) {
-    const agentTags = new Set(agent.tags ?? []);
-    if (requiredTags.some((tag) => !agentTags.has(tag))) return false;
-  }
+  if (requiredTags.length === 0) return true;
+  const agentTags = new Set(agent.tags ?? []);
+  return requiredTags.every((tag) => agentTags.has(tag));
+}
 
-  if (eligibility.min_tier !== undefined) {
-    const minRank = tierRank(eligibility.min_tier);
-    if (minRank !== -1) {
-      const agentRank = tierRank(agent.tier);
-      if (agentRank < minRank) return false;
-    }
-  }
+function matchesTier(agent: AgentDescriptor, eligibility: Eligibility): boolean {
+  if (eligibility.min_tier === undefined) return true;
+  const minRank = tierRank(eligibility.min_tier);
+  if (minRank === -1) return true;
+  return tierRank(agent.tier) >= minRank;
+}
 
-  if (eligibility.max_cost_cents !== undefined) {
-    const cost = agent.cost_cents_per_run ?? 0;
-    if (cost > eligibility.max_cost_cents) return false;
-  }
+function matchesCost(agent: AgentDescriptor, eligibility: Eligibility): boolean {
+  if (eligibility.max_cost_cents === undefined) return true;
+  const cost = agent.cost_cents_per_run ?? 0;
+  return cost <= eligibility.max_cost_cents;
+}
 
+function matchesAllowDeny(agent: AgentDescriptor, eligibility: Eligibility): boolean {
   if ((eligibility.deny_agents ?? []).includes(agent.name)) return false;
-
   const allowAgents = eligibility.allow_agents ?? [];
   if (allowAgents.length > 0 && !allowAgents.includes(agent.name)) return false;
-
-  const taskId = opts.task_id;
-  if (taskId && opts.cooldowns) {
-    const now = opts.now ?? Date.now();
-    const byAgent = opts.cooldowns.get(taskId);
-    if (byAgent && (byAgent.get(agent.name) ?? 0) > now) return false;
-  }
-
   return true;
+}
+
+function isOnCooldown(agent: AgentDescriptor, opts: EligibilityOpts): boolean {
+  const taskId = opts.task_id;
+  if (!taskId || !opts.cooldowns) return false;
+  const now = opts.now ?? Date.now();
+  const byAgent = opts.cooldowns.get(taskId);
+  return !!byAgent && (byAgent.get(agent.name) ?? 0) > now;
 }

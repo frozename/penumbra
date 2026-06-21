@@ -1,11 +1,13 @@
 import { Database } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
+
 import type { Embedder } from "../embedder/interface.js";
-import { isNearDuplicate, type NearDuplicateItem } from "../memory/near-dup.js";
-import { T2MemoryWriteSchema, type T2MemoryWriteInput } from "../schemas/memory.js";
 import type { Clock } from "../utils/clock.js";
 import type { Uuid } from "../utils/uuid.js";
+
+import { isNearDuplicate, type NearDuplicateItem } from "../memory/near-dup.js";
+import { type T2MemoryWriteInput, T2MemoryWriteSchema } from "../schemas/memory.js";
 import { buildT2EmbedText, validateT2Body } from "./t2-embed-text.js";
 
 export const T2MemoryExtractionSchema = z.object({
@@ -114,11 +116,15 @@ export function writeDirectT2Memory(db: Database, input: DirectT2WriteInput): Di
             existing.memory_id,
           ],
         );
-        const rowid = db
+        const rowidRow = db
           .query<{ rowid: number }, [string]>("SELECT rowid FROM t2_memories WHERE memory_id = ?")
-          .get(existing.memory_id)!.rowid;
-        db.run("DELETE FROM t2_vec WHERE rowid = ?", [rowid]);
-        db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [rowid, input.embedding]);
+          .get(existing.memory_id);
+        if (!rowidRow) throw new Error(`t2 memory row missing after UPDATE: ${existing.memory_id}`);
+        db.run("DELETE FROM t2_vec WHERE rowid = ?", [rowidRow.rowid]);
+        db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [
+          rowidRow.rowid,
+          input.embedding,
+        ]);
         return { memory_id: existing.memory_id, created: false };
       }
     }
@@ -157,15 +163,16 @@ export function writeDirectT2Memory(db: Database, input: DirectT2WriteInput): Di
       ],
     );
 
-    const rowid = db
+    const rowidRow = db
       .query<{ rowid: number }, [string]>("SELECT rowid FROM t2_memories WHERE memory_id = ?")
-      .get(memoryId)!.rowid;
+      .get(memoryId);
+    if (!rowidRow) throw new Error(`t2 memory row missing after INSERT: ${memoryId}`);
     // Defensive DELETE: SQLite reuses recently-freed rowids on INSERT, so an
     // orphan t2_vec row (left behind by a t2_memories DELETE that didn't cascade)
     // collides with the fresh INSERT here. vec0 virtual tables don't accept
     // INSERT OR REPLACE, so explicit DELETE+INSERT is the canonical pattern.
-    db.run("DELETE FROM t2_vec WHERE rowid = ?", [rowid]);
-    db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [rowid, input.embedding]);
+    db.run("DELETE FROM t2_vec WHERE rowid = ?", [rowidRow.rowid]);
+    db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [rowidRow.rowid, input.embedding]);
     return { memory_id: memoryId, created: true };
   })();
 }
@@ -201,7 +208,7 @@ export function verifyMemory(
     .get(memoryId);
   if (!row) return null;
 
-  const now = (opts.now ?? (() => new Date()))().toISOString();
+  const now = (opts.now ?? ((): Date => new Date()))().toISOString();
   const verifierActor = opts.verifierActor;
   const claimedBy = opts.claimedBy ?? null;
   const reason = opts.reason ?? null;
@@ -274,11 +281,11 @@ export function verifyMemory(
   };
 }
 
-export async function writeT2Memory(db: Database, input: T2MemoryWriterInput): Promise<void> {
+export function writeT2Memory(db: Database, input: T2MemoryWriterInput): Promise<void> {
   const rec = T2MemoryWriteSchema.parse(input);
   const now = new Date().toISOString();
 
-  db.transaction(() => {
+  db.transaction((): void => {
     db.run(
       `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, source_session_ids,
                                window_start, window_end, title, body, metadata_json,
@@ -291,7 +298,7 @@ export async function writeT2Memory(db: Database, input: T2MemoryWriterInput): P
         rec.project_id ?? null,
         rec.user_id,
         rec.kind,
-        JSON.stringify(rec.source_session_ids ?? []),
+        JSON.stringify(rec.source_session_ids),
         rec.window_start,
         rec.window_end,
         rec.title,
@@ -301,17 +308,19 @@ export async function writeT2Memory(db: Database, input: T2MemoryWriterInput): P
         now,
         now,
         rec.obs_type ?? null,
-        JSON.stringify(rec.concepts ?? []),
+        JSON.stringify(rec.concepts),
         rec.severity ?? null,
-        JSON.stringify(rec.file_paths ?? []),
+        JSON.stringify(rec.file_paths),
       ],
     );
 
-    const rowid = db
+    const rowidRow = db
       .query<{ rowid: number }, [string]>("SELECT rowid FROM t2_memories WHERE memory_id=?")
-      .get(rec.memory_id)!.rowid;
-    db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [rowid, rec.embedding]);
+      .get(rec.memory_id);
+    if (!rowidRow) throw new Error(`t2 memory row missing after INSERT: ${rec.memory_id}`);
+    db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [rowidRow.rowid, rec.embedding]);
   })();
+  return Promise.resolve();
 }
 
 export interface T2PromotionOpts {
@@ -338,39 +347,43 @@ export class T2Promotion {
    * Returns the number of memories created.
    */
   async promoteRollup(rollupId: string): Promise<number> {
-    const rollup = this.opts.db
-      .query<
-        {
-          rollup_id: string;
-          session_id: string;
-          project_id: string | null;
-          user_id: string;
-          started_at: string;
-          ended_at: string | null;
-          origin: string | null;
-        },
-        [string]
-      >(
-        "SELECT rollup_id, session_id, project_id, user_id, started_at, ended_at, origin FROM t1_rollups WHERE rollup_id = ?",
-      )
-      .get(rollupId);
-
+    const rollup = this.loadRollup(rollupId);
     if (!rollup) return 0;
 
-    // Fetch transcript from t0_events
+    const transcript = this.buildTranscript(rollup.session_id);
+    if (!transcript) {
+      this.markPromoted(rollupId);
+      return 0;
+    }
+
+    try {
+      return await this.runPromotion(rollupId, rollup, transcript);
+    } catch (err) {
+      this.recordFailure(rollupId);
+      throw err;
+    }
+  }
+
+  private loadRollup(rollupId: string): RollupRow | null {
+    return (
+      this.opts.db
+        .query<
+          RollupRow,
+          [string]
+        >("SELECT rollup_id, session_id, project_id, user_id, started_at, ended_at, origin FROM t1_rollups WHERE rollup_id = ?")
+        .get(rollupId) ?? null
+    );
+  }
+
+  private buildTranscript(sessionId: string): string {
     const events = this.opts.db
       .query<
         { event_type: string; payload_summary: string | null; payload_json: string | null },
         [string]
       >("SELECT event_type, payload_summary, payload_json FROM t0_events WHERE session_id = ? ORDER BY ts ASC")
-      .all(rollup.session_id);
+      .all(sessionId);
 
-    if (events.length === 0) {
-      this.markPromoted(rollupId);
-      return 0;
-    }
-
-    const transcript = events
+    return events
       .filter((e) => e.event_type === "agent-prompt" || e.event_type === "agent-response")
       .map((e) => {
         const role = e.event_type === "agent-prompt" ? "User" : "Assistant";
@@ -379,268 +392,210 @@ export class T2Promotion {
       })
       .filter(Boolean)
       .join("\n\n");
+  }
 
-    if (!transcript) {
+  private async runPromotion(
+    rollupId: string,
+    rollup: RollupRow,
+    transcript: string,
+  ): Promise<number> {
+    const minTranscriptChars = this.opts.minTranscriptChars ?? 200;
+    if (transcript.length < minTranscriptChars) {
       this.markPromoted(rollupId);
       return 0;
     }
 
-    try {
-      const minTranscriptChars = this.opts.minTranscriptChars ?? 200;
-      const maxTranscriptChars = this.opts.maxTranscriptChars ?? 20_000;
-      const highFrequencyThreshold = this.opts.highFrequencyThreshold ?? 5;
-      const rollupKind = rollup.origin ?? "t1_rollup";
-      const shapeKey = `${rollup.project_id ?? ""}:${rollupKind}`;
-      const transcriptLength = transcript.length;
+    if (!this.recordShapeAndCheckDup(rollupId, rollup, transcript)) return 0;
 
-      if (transcriptLength < minTranscriptChars) {
-        this.markPromoted(rollupId);
-        return 0;
-      }
-
-      let llmTranscript = transcript;
-      if (transcriptLength > maxTranscriptChars) {
-        llmTranscript = `${transcript.slice(0, 8000)}\n… [truncated] …\n${transcript.slice(-8000)}`;
-      }
-
-      const seenCount = (this.recentShapes.get(shapeKey) ?? 0) + 1;
-      if (this.recentShapes.size >= 64 && !this.recentShapes.has(shapeKey)) {
-        const firstKey = this.recentShapes.keys().next().value as string | undefined;
-        if (firstKey !== undefined) this.recentShapes.delete(firstKey);
-      }
-      this.recentShapes.set(shapeKey, seenCount);
-      if (seenCount > highFrequencyThreshold) {
-        const transcriptHash = hashContent(transcript);
-        if (this.promotedTranscriptHashes.has(transcriptHash)) {
-          this.markPromoted(rollupId);
-          return 0;
-        }
-        if (this.promotedTranscriptHashes.size >= 256) {
-          const firstHash = this.promotedTranscriptHashes.values().next().value as
-            | string
-            | undefined;
-          if (firstHash !== undefined) this.promotedTranscriptHashes.delete(firstHash);
-        }
-        this.promotedTranscriptHashes.add(transcriptHash);
-      }
-
-      const rawExtractions = await this.opts.llm(llmTranscript);
-
-      // LLM response schema validation
-      const extractions: T2MemoryExtraction[] = [];
-      for (const ext of rawExtractions) {
-        const result = T2MemoryExtractionSchema.safeParse(ext);
-        if (result.success) {
-          extractions.push(result.data);
-        } else {
-          // If any extraction is malformed, we fail the whole rollup to avoid partial/garbage data.
-          throw new Error(`LLM extraction failed validation: ${result.error.message}`);
-        }
-      }
-
-      if (extractions.length === 0) {
-        this.markPromoted(rollupId);
-        return 0;
-      }
-
-      const bodyGatedExtractions: T2MemoryExtraction[] = [];
-      let skippedBodyCount = 0;
-      let reasoningMarkerCount = 0;
-      for (const extraction of extractions) {
-        const validation = validateT2Body(extraction.body);
-        if (!validation.ok) {
-          skippedBodyCount += 1;
-          console.warn(
-            `[t2-promotion] skipping extraction title=${extraction.title} reason=${validation.reason} body_preview=${toPreview(extraction.body)}`,
-          );
-          continue;
-        }
-        if (hasReasoningProseMarker(extraction.body)) {
-          reasoningMarkerCount += 1;
-          console.warn(
-            `[t2-promotion] advisory reasoning-prose marker title=${extraction.title} body_preview=${toPreview(extraction.body)}`,
-          );
-        }
-        bodyGatedExtractions.push(extraction);
-      }
-
-      if (skippedBodyCount > 0) {
-        console.warn(
-          `[t2-promotion] extraction body gate skipped=${skippedBodyCount} rollup_id=${rollupId}`,
-        );
-      }
-      if (reasoningMarkerCount > 0) {
-        console.warn(
-          `[t2-promotion] extraction body advisory reasoning_markers=${reasoningMarkerCount} rollup_id=${rollupId}`,
-        );
-      }
-
-      if (bodyGatedExtractions.length === 0) {
-        this.markPromotionFiltered(rollupId);
-        return 0;
-      }
-
-      const extractionFilterEnabled = isEnvGateEnabled("PENUMBRA_EXTRACTION_FILTER_GATE");
-      const nearDupGateEnabled = isEnvGateEnabled("PENUMBRA_PROMOTION_NEAR_DUP_GATE");
-      const nearDupThreshold = getNearDupThreshold();
-
-      const filteredExtractions = extractionFilterEnabled
-        ? bodyGatedExtractions.filter((extraction) => isPromotionCandidate(extraction))
-        : bodyGatedExtractions;
-
-      if (filteredExtractions.length === 0) {
-        this.markPromotionFiltered(rollupId);
-        return 0;
-      }
-
-      const embedTexts = filteredExtractions.map((e) => buildT2EmbedText(e.title, e.body));
-      const embeddings = await this.opts.embedder.embed(embedTexts);
-      const existingNearDupCandidates = nearDupGateEnabled
-        ? embeddings.map((embedding) =>
-            readExistingNearDuplicateCandidates(
-              this.opts.db,
-              rollup.project_id,
-              embedding,
-              NEAR_DUP_QUERY_LIMIT,
-            ),
-          )
-        : [];
-
-      const insertedCount = this.opts.db.transaction(() => {
-        const threshold = nearDupThreshold;
-        const selectedCandidates: PendingNearDuplicateCandidate[] = [];
-        let nearDupDetectedInTxn = false;
-
-        for (let i = 0; i < filteredExtractions.length; i++) {
-          const ext = filteredExtractions[i]!;
-          const vec = embeddings[i]!;
-          const candidate: PendingNearDuplicateCandidate = {
-            extraction: ext,
-            body: ext.body,
-            why: ext.why ?? null,
-            depth: ext.depth ?? null,
-            embedding: vec,
-            retireExistingIds: new Map<string, number>(),
-          };
-
-          if (nearDupGateEnabled) {
-            const existingCandidates = existingNearDupCandidates[i] ?? [];
-            const existingDup = isNearDuplicate(candidate, existingCandidates, threshold);
-            if (existingDup) {
-              nearDupDetectedInTxn = true;
-              if (existingDup.winner === "existing") {
-                continue;
-              }
-              candidate.retireExistingIds.set(
-                existingDup.existing.memory_id,
-                existingDup.similarity,
-              );
-            }
-
-            const batchDup = isNearDuplicate(candidate, selectedCandidates, threshold);
-            if (batchDup) {
-              nearDupDetectedInTxn = true;
-              if (batchDup.winner === "existing") {
-                continue;
-              }
-              const weakerIndex = selectedCandidates.indexOf(batchDup.existing);
-              if (weakerIndex >= 0) {
-                const weaker = selectedCandidates[weakerIndex]!;
-                for (const [memoryId, similarity] of weaker.retireExistingIds) {
-                  const prior = candidate.retireExistingIds.get(memoryId);
-                  if (prior === undefined || similarity > prior) {
-                    candidate.retireExistingIds.set(memoryId, similarity);
-                  }
-                }
-                selectedCandidates.splice(weakerIndex, 1);
-              }
-            }
-          }
-
-          selectedCandidates.push(candidate);
-        }
-
-        let insertedCountInTxn = 0;
-        const queuedRetireIds = new Set<string>();
-        const now = this.opts.clock().toISOString();
-        let nearDupCycleId: string | null = null;
-
-        for (const pending of selectedCandidates) {
-          const memoryId = this.opts.uuid();
-          const ext = pending.extraction;
-          this.opts.db.run(
-            `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, source_session_ids,
-                                     window_start, window_end, title, body, metadata_json,
-                                     obs_type, why, source_quote, learned_at, durability, depth, is_episodic,
-                                     created_at, updated_at, origin)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              memoryId,
-              rollup.project_id,
-              rollup.user_id,
-              ext.kind,
-              JSON.stringify([rollup.session_id]),
-              rollup.started_at,
-              rollup.ended_at || rollup.started_at,
-              ext.title,
-              ext.body,
-              JSON.stringify(ext.metadata || {}),
-              ext.obs_type ?? null,
-              ext.why ?? null,
-              ext.source_quote ?? null,
-              ext.learned_at ?? null,
-              ext.durability ?? null,
-              ext.depth ?? null,
-              ext.is_episodic ? 1 : 0,
-              now,
-              now,
-              rollup.origin,
-            ],
-          );
-
-          const rowid = this.opts.db
-            .query<{ rowid: number }, [string]>("SELECT rowid FROM t2_memories WHERE memory_id=?")
-            .get(memoryId)!.rowid;
-          this.opts.db.run("DELETE FROM t2_vec WHERE rowid = ?", [rowid]);
-          this.opts.db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [
-            rowid,
-            pending.embedding,
-          ]);
-          insertedCountInTxn += 1;
-
-          if (!nearDupGateEnabled) continue;
-          for (const [existingMemoryId, similarity] of pending.retireExistingIds) {
-            if (queuedRetireIds.has(existingMemoryId)) continue;
-            if (!nearDupCycleId) {
-              nearDupCycleId = ensureNearDupRetireCycle(
-                this.opts.db,
-                now,
-                rollupId,
-                this.opts.uuid(),
-              );
-            }
-            const enqueued = enqueueNearDupRetireAction(this.opts.db, {
-              cycleId: nearDupCycleId,
-              actionId: this.opts.uuid(),
-              memoryId: existingMemoryId,
-              similarity,
-            });
-            if (enqueued) queuedRetireIds.add(existingMemoryId);
-          }
-        }
-
-        if (insertedCountInTxn > 0) this.markPromoted(rollupId);
-        if (insertedCountInTxn === 0 && (nearDupDetectedInTxn || extractionFilterEnabled)) {
-          this.markPromotionFiltered(rollupId);
-        }
-        return insertedCountInTxn;
-      })();
-
-      return insertedCount;
-    } catch (err) {
-      this.recordFailure(rollupId);
-      throw err;
+    const llmTranscript = this.truncateTranscript(transcript);
+    const rawExtractions = await this.opts.llm(llmTranscript);
+    const extractions = parseExtractions(rawExtractions);
+    if (extractions.length === 0) {
+      this.markPromoted(rollupId);
+      return 0;
     }
+
+    const bodyGatedExtractions = applyBodyGate(rollupId, extractions);
+    if (bodyGatedExtractions.length === 0) {
+      this.markPromotionFiltered(rollupId);
+      return 0;
+    }
+
+    const extractionFilterEnabled = isEnvGateEnabled("PENUMBRA_EXTRACTION_FILTER_GATE");
+    const nearDupGateEnabled = isEnvGateEnabled("PENUMBRA_PROMOTION_NEAR_DUP_GATE");
+    const nearDupThreshold = getNearDupThreshold();
+    const filteredExtractions = extractionFilterEnabled
+      ? bodyGatedExtractions.filter((e) => isPromotionCandidate(e))
+      : bodyGatedExtractions;
+
+    if (filteredExtractions.length === 0) {
+      this.markPromotionFiltered(rollupId);
+      return 0;
+    }
+
+    const embedTexts = filteredExtractions.map((e) => buildT2EmbedText(e.title, e.body));
+    const embeddings = await this.opts.embedder.embed(embedTexts);
+    const existingNearDupCandidates = nearDupGateEnabled
+      ? embeddings.map((embedding) =>
+          readExistingNearDuplicateCandidates(
+            this.opts.db,
+            rollup.project_id,
+            embedding,
+            NEAR_DUP_QUERY_LIMIT,
+          ),
+        )
+      : [];
+
+    return this.opts.db.transaction((): number => {
+      const { selected, nearDupDetected } = selectCandidates({
+        filteredExtractions,
+        embeddings,
+        existingNearDupCandidates,
+        nearDupGateEnabled,
+        threshold: nearDupThreshold,
+      });
+
+      const insertedCount = this.insertSelectedCandidates(
+        rollupId,
+        rollup,
+        selected,
+        nearDupGateEnabled,
+      );
+
+      if (insertedCount > 0) this.markPromoted(rollupId);
+      if (insertedCount === 0 && (nearDupDetected || extractionFilterEnabled)) {
+        this.markPromotionFiltered(rollupId);
+      }
+      return insertedCount;
+    })();
+  }
+
+  private recordShapeAndCheckDup(rollupId: string, rollup: RollupRow, transcript: string): boolean {
+    const highFrequencyThreshold = this.opts.highFrequencyThreshold ?? 5;
+    const rollupKind = rollup.origin ?? "t1_rollup";
+    const shapeKey = `${rollup.project_id ?? ""}:${rollupKind}`;
+    const seenCount = (this.recentShapes.get(shapeKey) ?? 0) + 1;
+    if (this.recentShapes.size >= 64 && !this.recentShapes.has(shapeKey)) {
+      const firstKey = this.recentShapes.keys().next().value;
+      if (firstKey !== undefined) this.recentShapes.delete(firstKey);
+    }
+    this.recentShapes.set(shapeKey, seenCount);
+    if (seenCount <= highFrequencyThreshold) return true;
+
+    const transcriptHash = hashContent(transcript);
+    if (this.promotedTranscriptHashes.has(transcriptHash)) {
+      this.markPromoted(rollupId);
+      return false;
+    }
+    if (this.promotedTranscriptHashes.size >= 256) {
+      const firstHash = this.promotedTranscriptHashes.values().next().value;
+      if (firstHash !== undefined) this.promotedTranscriptHashes.delete(firstHash);
+    }
+    this.promotedTranscriptHashes.add(transcriptHash);
+    return true;
+  }
+
+  private truncateTranscript(transcript: string): string {
+    const maxTranscriptChars = this.opts.maxTranscriptChars ?? 20_000;
+    if (transcript.length <= maxTranscriptChars) return transcript;
+    return `${transcript.slice(0, 8000)}\n… [truncated] …\n${transcript.slice(-8000)}`;
+  }
+
+  private insertSelectedCandidates(
+    rollupId: string,
+    rollup: RollupRow,
+    selected: PendingNearDuplicateCandidate[],
+    nearDupGateEnabled: boolean,
+  ): number {
+    let insertedCount = 0;
+    const queuedRetireIds = new Set<string>();
+    const now = this.opts.clock().toISOString();
+    let nearDupCycleId: string | null = null;
+
+    for (const pending of selected) {
+      const memoryId = this.opts.uuid();
+      this.insertCandidateRow(memoryId, rollup, pending, now);
+      insertedCount += 1;
+      if (!nearDupGateEnabled) continue;
+      nearDupCycleId = this.queueRetireActions({
+        pending,
+        rollupId,
+        now,
+        cycleId: nearDupCycleId,
+        queuedRetireIds,
+      });
+    }
+    return insertedCount;
+  }
+
+  private insertCandidateRow(
+    memoryId: string,
+    rollup: RollupRow,
+    pending: PendingNearDuplicateCandidate,
+    now: string,
+  ): void {
+    const ext = pending.extraction;
+    this.opts.db.run(
+      `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, source_session_ids,
+                               window_start, window_end, title, body, metadata_json,
+                               obs_type, why, source_quote, learned_at, durability, depth, is_episodic,
+                               created_at, updated_at, origin)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        memoryId,
+        rollup.project_id,
+        rollup.user_id,
+        ext.kind,
+        JSON.stringify([rollup.session_id]),
+        rollup.started_at,
+        rollup.ended_at ?? rollup.started_at,
+        ext.title,
+        ext.body,
+        JSON.stringify(ext.metadata ?? {}),
+        ext.obs_type ?? null,
+        ext.why ?? null,
+        ext.source_quote ?? null,
+        ext.learned_at ?? null,
+        ext.durability ?? null,
+        ext.depth ?? null,
+        ext.is_episodic ? 1 : 0,
+        now,
+        now,
+        rollup.origin,
+      ],
+    );
+
+    const rowidRow = this.opts.db
+      .query<{ rowid: number }, [string]>("SELECT rowid FROM t2_memories WHERE memory_id=?")
+      .get(memoryId);
+    if (!rowidRow) throw new Error(`t2 memory row missing after INSERT: ${memoryId}`);
+    this.opts.db.run("DELETE FROM t2_vec WHERE rowid = ?", [rowidRow.rowid]);
+    this.opts.db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [
+      rowidRow.rowid,
+      pending.embedding,
+    ]);
+  }
+
+  private queueRetireActions(args: {
+    pending: PendingNearDuplicateCandidate;
+    rollupId: string;
+    now: string;
+    cycleId: string | null;
+    queuedRetireIds: Set<string>;
+  }): string | null {
+    let cycleId = args.cycleId;
+    for (const [existingMemoryId, similarity] of args.pending.retireExistingIds) {
+      if (args.queuedRetireIds.has(existingMemoryId)) continue;
+      cycleId ??= ensureNearDupRetireCycle(this.opts.db, args.now, args.rollupId, this.opts.uuid());
+      const enqueued = enqueueNearDupRetireAction(this.opts.db, {
+        cycleId,
+        actionId: this.opts.uuid(),
+        memoryId: existingMemoryId,
+        similarity,
+      });
+      if (enqueued) args.queuedRetireIds.add(existingMemoryId);
+    }
+    return cycleId;
   }
 
   private markPromoted(rollupId: string): void {
@@ -710,7 +665,145 @@ interface PendingNearDuplicateCandidate extends NearDuplicateItem {
   retireExistingIds: Map<string, number>;
 }
 
+interface RollupRow {
+  rollup_id: string;
+  session_id: string;
+  project_id: string | null;
+  user_id: string;
+  started_at: string;
+  ended_at: string | null;
+  origin: string | null;
+}
+
 const NEAR_DUP_QUERY_LIMIT = 10;
+
+function parseExtractions(rawExtractions: T2MemoryExtraction[]): T2MemoryExtraction[] {
+  const extractions: T2MemoryExtraction[] = [];
+  for (const ext of rawExtractions) {
+    const result = T2MemoryExtractionSchema.safeParse(ext);
+    if (result.success) {
+      extractions.push(result.data);
+    } else {
+      // If any extraction is malformed, fail the whole rollup to avoid partial/garbage data.
+      throw new Error(`LLM extraction failed validation: ${result.error.message}`);
+    }
+  }
+  return extractions;
+}
+
+function applyBodyGate(rollupId: string, extractions: T2MemoryExtraction[]): T2MemoryExtraction[] {
+  const out: T2MemoryExtraction[] = [];
+  let skippedBodyCount = 0;
+  let reasoningMarkerCount = 0;
+  for (const extraction of extractions) {
+    const validation = validateT2Body(extraction.body);
+    if (!validation.ok) {
+      skippedBodyCount += 1;
+      console.warn(
+        `[t2-promotion] skipping extraction title=${extraction.title} reason=${validation.reason} body_preview=${toPreview(extraction.body)}`,
+      );
+      continue;
+    }
+    if (hasReasoningProseMarker(extraction.body)) {
+      reasoningMarkerCount += 1;
+      console.warn(
+        `[t2-promotion] advisory reasoning-prose marker title=${extraction.title} body_preview=${toPreview(extraction.body)}`,
+      );
+    }
+    out.push(extraction);
+  }
+  if (skippedBodyCount > 0) {
+    console.warn(
+      `[t2-promotion] extraction body gate skipped=${String(skippedBodyCount)} rollup_id=${rollupId}`,
+    );
+  }
+  if (reasoningMarkerCount > 0) {
+    console.warn(
+      `[t2-promotion] extraction body advisory reasoning_markers=${String(reasoningMarkerCount)} rollup_id=${rollupId}`,
+    );
+  }
+  return out;
+}
+
+interface SelectCandidatesArgs {
+  filteredExtractions: T2MemoryExtraction[];
+  embeddings: Float32Array[];
+  existingNearDupCandidates: ExistingNearDuplicateCandidate[][];
+  nearDupGateEnabled: boolean;
+  threshold: number;
+}
+
+function selectCandidates(args: SelectCandidatesArgs): {
+  selected: PendingNearDuplicateCandidate[];
+  nearDupDetected: boolean;
+} {
+  const selected: PendingNearDuplicateCandidate[] = [];
+  let nearDupDetected = false;
+
+  for (const [i, ext] of args.filteredExtractions.entries()) {
+    const vec = args.embeddings[i];
+    if (!vec) continue;
+    const candidate: PendingNearDuplicateCandidate = {
+      extraction: ext,
+      body: ext.body,
+      why: ext.why ?? null,
+      depth: ext.depth ?? null,
+      embedding: vec,
+      retireExistingIds: new Map<string, number>(),
+    };
+    if (!args.nearDupGateEnabled) {
+      selected.push(candidate);
+      continue;
+    }
+    const outcome = resolveNearDupCandidate(candidate, selected, {
+      threshold: args.threshold,
+      existingCandidates: args.existingNearDupCandidates[i] ?? [],
+    });
+    if (outcome.skip) {
+      nearDupDetected = true;
+      continue;
+    }
+    if (outcome.detected) nearDupDetected = true;
+    selected.push(candidate);
+  }
+  return { selected, nearDupDetected };
+}
+
+function resolveNearDupCandidate(
+  candidate: PendingNearDuplicateCandidate,
+  selected: PendingNearDuplicateCandidate[],
+  ctx: { threshold: number; existingCandidates: ExistingNearDuplicateCandidate[] },
+): { skip: boolean; detected: boolean } {
+  const existingDup = isNearDuplicate(candidate, ctx.existingCandidates, ctx.threshold);
+  const existingDetected = existingDup !== null;
+  if (existingDup) {
+    if (existingDup.winner === "existing") return { skip: true, detected: true };
+    candidate.retireExistingIds.set(existingDup.existing.memory_id, existingDup.similarity);
+  }
+
+  const batchDup = isNearDuplicate(candidate, selected, ctx.threshold);
+  if (!batchDup) return { skip: false, detected: existingDetected };
+  if (batchDup.winner === "existing") return { skip: true, detected: true };
+
+  applyBatchDup(candidate, selected, batchDup.existing);
+  return { skip: false, detected: true };
+}
+
+function applyBatchDup(
+  candidate: PendingNearDuplicateCandidate,
+  selected: PendingNearDuplicateCandidate[],
+  weakerCandidate: PendingNearDuplicateCandidate,
+): void {
+  const weakerIndex = selected.indexOf(weakerCandidate);
+  if (weakerIndex < 0) return;
+  for (const [memoryId, similarity] of weakerCandidate.retireExistingIds) {
+    const prior = candidate.retireExistingIds.get(memoryId);
+    if (prior === undefined || similarity > prior) {
+      candidate.retireExistingIds.set(memoryId, similarity);
+    }
+  }
+  selected.splice(weakerIndex, 1);
+}
 
 function isPromotionCandidate(extraction: T2MemoryExtraction): boolean {
   if (extraction.promote === false) return false;
@@ -770,7 +863,7 @@ function toFloat32Array(value: unknown, memoryId?: string): Float32Array | null 
     if (value instanceof Float32Array) return value;
     if (value instanceof ArrayBuffer) return new Float32Array(value);
     if (ArrayBuffer.isView(value)) {
-      const view = value as ArrayBufferView;
+      const view = value;
       const bytes = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
       return new Float32Array(
         bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
@@ -837,7 +930,7 @@ function extractPayloadText(payload: unknown): string {
 function extractResponseText(response: unknown): string | null {
   if (typeof response === "string") return response;
   if (Array.isArray(response) && response.length > 0) {
-    const first = response[0];
+    const first: unknown = response[0];
     if (first && typeof first === "object")
       return readString((first as Record<string, unknown>).text);
   }
@@ -860,8 +953,8 @@ function readString(value: unknown): string | null {
 function scrubTranscriptMarkup(content: string): string {
   if (!content) return "";
   return content
-    .replace(/<\/?(?:function_calls|invoke|tool_call|tool_use|antml:[a-z_]+)\b[^>]*>/gi, " ")
-    .replace(/\s+/g, " ")
+    .replaceAll(/<\/?(?:function_calls|invoke|tool_call|tool_use|antml:[a-z_]+)\b[^>]*>/gi, " ")
+    .replaceAll(/\s+/g, " ")
     .trim();
 }
 
@@ -870,7 +963,7 @@ function hashContent(content: string): string {
 }
 
 function toPreview(value: string): string {
-  return value.replace(/\s+/g, " ").trim().slice(0, 120);
+  return value.replaceAll(/\s+/g, " ").trim().slice(0, 120);
 }
 
 function hasReasoningProseMarker(body: string): boolean {

@@ -12,11 +12,11 @@ export function pickPreferred(
 ): { agent_id: string; score: number } | null {
   const eligibleNames = new Set(eligible.map((agent) => agent.name));
   const filtered = rankings.filter((row) => eligibleNames.has(row.agent_name));
-  if (filtered.length === 0) return null;
+  const [head, ...rest] = filtered;
+  if (!head) return null;
 
-  let best = filtered[0]!;
-  for (let i = 1; i < filtered.length; i += 1) {
-    const row = filtered[i]!;
+  let best = head;
+  for (const row of rest) {
     if (row.score > best.score) {
       best = row;
       continue;

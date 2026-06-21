@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
-import type { CreateHandoffRequest, HandoffRow } from "../schemas/handoff.js";
+
 import type { HandoffEventBus } from "../events/handoff-events.js";
+import type { CreateHandoffRequest, HandoffRow } from "../schemas/handoff.js";
 
 export interface HandoffWriterOpts {
   db: Database;
@@ -258,7 +259,8 @@ export class HandoffWriter {
     const last_dispatch_started_at = new Date().toISOString();
     if (
       opts?.workflow_run_id &&
-      opts.maxWorkflowSiblingsPerWorker != null &&
+      opts.maxWorkflowSiblingsPerWorker !== null &&
+      opts.maxWorkflowSiblingsPerWorker !== undefined &&
       Number.isFinite(opts.maxWorkflowSiblingsPerWorker) &&
       opts.maxWorkflowSiblingsPerWorker >= 0
     ) {
@@ -343,14 +345,14 @@ export class HandoffWriter {
   }
 
   private resolveRootHandoffId(handoff_id: string, parent_handoff_id: string | null): string {
-    if (parent_handoff_id == null) return handoff_id;
+    if (parent_handoff_id === null) return handoff_id;
     const parent = this.db
       .query<
         { root_handoff_id: string | null },
         [string]
       >(`SELECT root_handoff_id FROM handoffs WHERE handoff_id = ?`)
       .get(parent_handoff_id);
-    if (parent == null) {
+    if (!parent) {
       console.warn("[handoff-writer] orphaned parent fallback: " + handoff_id);
       return handoff_id;
     }

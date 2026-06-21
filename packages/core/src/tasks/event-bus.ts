@@ -12,7 +12,7 @@ interface TaskSubscriber {
   closed: boolean;
   predicate: (event: TaskEvent) => boolean;
   queue: TaskEvent[];
-  pending: Array<(result: IteratorResult<TaskEvent>) => void>;
+  pending: ((result: IteratorResult<TaskEvent>) => void)[];
 }
 
 export class TaskEventBus {
@@ -41,7 +41,7 @@ export class TaskEventBus {
     };
     this.subscribers.add(subscriber);
 
-    const close = () => {
+    const close = (): void => {
       if (subscriber.closed) return;
       subscriber.closed = true;
       this.subscribers.delete(subscriber);
@@ -74,7 +74,7 @@ export class TaskEventBus {
       },
       throw(error: unknown) {
         close();
-        return Promise.reject(error);
+        return Promise.reject(error instanceof Error ? error : new Error(String(error)));
       },
     };
 
