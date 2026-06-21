@@ -425,6 +425,69 @@ test("verified t2 boost is flag-gated and preserves default RRF ordering", async
   }
 });
 
+test("verification_count is computed per-row (no cross-row contamination from the count subquery)", async () => {
+  // Regression: an earlier implementation used an unfiltered GROUP BY subquery
+  // joined on memory_id. Both shapes return correct numbers, but the
+  // correlated variant only fires for the k KNN-matched rows. This test pins
+  // correctness: per-memory boost eligibility must reflect *that* memory's
+  // verification count, not a neighbor's.
+  const queryVec = vectorWithHead(0);
+  const fixedEmbedder = {
+    name: "fixed-embedder",
+    dim: 384,
+    async embed(_texts: string[]) {
+      return [queryVec];
+    },
+  };
+
+  // Closer (smaller distance) but unverified: should win without boost,
+  // lose to the verified-but-farther row when the boost is enabled.
+  await seedT2WithVector("unverified-near", vectorWithHead(0.001), "2026-04-20T00:00:00Z");
+  // Farther but has 3 verification events.
+  await seedT2WithVector("verified-far", vectorWithHead(0.002), "2026-04-20T00:00:00Z");
+  // A third memory whose verification rows should NOT bleed into the others.
+  await seedT2WithVector("verified-other", vectorWithHead(0.003), "2026-04-20T00:00:00Z");
+
+  for (const [eventId, memoryId] of [
+    ["v1", "verified-far"],
+    ["v2", "verified-far"],
+    ["v3", "verified-far"],
+    ["v4", "verified-other"],
+  ] as const) {
+    db.run(
+      `INSERT INTO t2_memory_verification_events(
+         event_id, memory_id, verifier_actor, session_id, verified_at
+       ) VALUES (?, ?, 'tester', ?, ?)`,
+      [eventId, memoryId, `sess-${eventId}`, new Date().toISOString()],
+    );
+  }
+
+  const prev = process.env.PENUMBRA_RECALL_VERIFIED_BOOST;
+  try {
+    process.env.PENUMBRA_RECALL_VERIFIED_BOOST = "1";
+    const reader = new RecallReader({ db, embedder: fixedEmbedder as any });
+    const results = await reader.recall({
+      query: "verification count regression",
+      project_id: "p1",
+      limit: 10,
+      include_raw: false,
+      min_score: 0,
+      sources: ["t2"],
+    });
+
+    // unverified-near has zero verification events: it must NOT get boosted.
+    // verified-far has 3 events: boost lifts it above the closer unverified row.
+    const order = results.map((r) => r.id);
+    expect(order.indexOf("verified-far")).toBeLessThan(order.indexOf("unverified-near"));
+    // verified-other (1 event) still appears; it should not steal verified-far's
+    // count and vice versa.
+    expect(order).toContain("verified-other");
+  } finally {
+    if (prev === undefined) delete process.env.PENUMBRA_RECALL_VERIFIED_BOOST;
+    else process.env.PENUMBRA_RECALL_VERIFIED_BOOST = prev;
+  }
+});
+
 test("hybrid strategy returns persisted source_session_ids from t2 rows", async () => {
   const embedder = new TestEmbedder({ dim: 384 });
   const [vec] = await embedder.embed(["hybrid session provenance"]);

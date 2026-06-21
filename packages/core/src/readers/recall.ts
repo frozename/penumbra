@@ -188,15 +188,11 @@ export class RecallReader {
         .query<T2Row, [Float32Array, number, string | null, string | null]>(
           `SELECT m.memory_id, m.project_id, m.title, m.body, m.created_at, m.source_session_ids,
                   m.why, m.source_quote, m.learned_at, m.last_verified_at,
-                  COALESCE(ve.verification_count, 0) AS verification_count,
+                  (SELECT COUNT(*) FROM t2_memory_verification_events ve
+                    WHERE ve.memory_id = m.memory_id) AS verification_count,
                   v.distance
              FROM t2_vec v
              JOIN t2_memories m ON m.rowid = v.rowid
-        LEFT JOIN (
-                  SELECT memory_id, COUNT(*) AS verification_count
-                    FROM t2_memory_verification_events
-                   GROUP BY memory_id
-                  ) ve ON ve.memory_id = m.memory_id
             WHERE v.embedding MATCH ?
               AND k = ?
               AND (? IS NULL OR m.project_id = ?)
