@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { resolveDaemonStorageRoot, waitForDaemonStorageRoot } from "../src/daemon-discovery.js";
 
 test("resolveDaemonStorageRoot prefers PENUMBRA_STORAGE_ROOT over autodiscovery", () => {
@@ -62,7 +63,7 @@ test("waitForDaemonStorageRoot returns immediately when the daemon is already up
 
 test("waitForDaemonStorageRoot polls and resolves when the daemon comes up mid-wait", async () => {
   let now = 0;
-  let daemonUpAt = 30; // ms
+  const daemonUpAt = 30; // ms
   const sleeps: number[] = [];
   let onWaitingCalls = 0;
 
@@ -72,9 +73,10 @@ test("waitForDaemonStorageRoot polls and resolves when the daemon comes up mid-w
     existsSync: () => now >= daemonUpAt,
     timeoutMs: 1000,
     intervalMs: 10,
-    sleep: async (ms) => {
+    sleep: (ms) => {
       sleeps.push(ms);
       now += ms;
+      return Promise.resolve();
     },
     now: () => now,
     onWaiting: () => {
@@ -90,19 +92,26 @@ test("waitForDaemonStorageRoot polls and resolves when the daemon comes up mid-w
 
 test("waitForDaemonStorageRoot throws after timeoutMs when the daemon never appears", async () => {
   let now = 0;
-  await expect(
-    waitForDaemonStorageRoot({
+  let caught: unknown;
+  try {
+    await waitForDaemonStorageRoot({
       env: {},
       candidates: ["/cand1", "/cand2"],
       existsSync: () => false,
       timeoutMs: 50,
       intervalMs: 10,
-      sleep: async (ms) => {
+      sleep: (ms) => {
         now += ms;
+        return Promise.resolve();
       },
       now: () => now,
-    }),
-  ).rejects.toThrow(/penumbra daemon not found\. Checked candidate paths: \/cand1, \/cand2/);
+    });
+  } catch (err) {
+    caught = err;
+  }
+  expect((caught as Error).message).toMatch(
+    /penumbra daemon not found\. Checked candidate paths: \/cand1, \/cand2/,
+  );
 });
 
 test("waitForDaemonStorageRoot does not call onWaiting when daemon is already up", async () => {

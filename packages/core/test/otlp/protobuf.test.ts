@@ -1,5 +1,6 @@
-import { describe, it, expect } from "bun:test";
-import { ProtoReader } from "../../src/otlp/protobuf.js";
+import { describe, expect, it } from "bun:test";
+
+import { parseOtlpLogsProtobuf, ProtoReader } from "../../src/otlp/protobuf.js";
 import { ProtoWriter } from "./encoder.js";
 
 describe("ProtoReader.readVarint", () => {
@@ -62,8 +63,6 @@ describe("ProtoReader.readTag at eof", () => {
   });
 });
 
-import { parseOtlpLogsProtobuf } from "../../src/otlp/protobuf.js";
-
 function encodeKeyValue(key: string, valueEncoder: (w: ProtoWriter) => void): Uint8Array {
   const inner = new ProtoWriter();
   inner.writeString(1, key);
@@ -74,15 +73,21 @@ function encodeKeyValue(key: string, valueEncoder: (w: ProtoWriter) => void): Ui
 }
 
 function stringValue(s: string): (w: ProtoWriter) => void {
-  return (w) => w.writeString(1, s);
+  return (w) => {
+    w.writeString(1, s);
+  };
 }
 
 function intValue(n: number): (w: ProtoWriter) => void {
-  return (w) => w.writeVarintField(3, n);
+  return (w) => {
+    w.writeVarintField(3, n);
+  };
 }
 
 function doubleValue(n: number): (w: ProtoWriter) => void {
-  return (w) => w.writeDouble64(4, n);
+  return (w) => {
+    w.writeDouble64(4, n);
+  };
 }
 
 describe("parseOtlpLogsProtobuf", () => {
@@ -129,7 +134,9 @@ describe("parseOtlpLogsProtobuf", () => {
   it("handles a logs envelope with nested kvlistValue", () => {
     const inner = new ProtoWriter();
     inner.writeNested(1, encodeKeyValue("nested.key", stringValue("nested-val")));
-    const kvlistAttr = encodeKeyValue("outer", (w) => w.writeNested(6, inner.bytes()));
+    const kvlistAttr = encodeKeyValue("outer", (w) => {
+      w.writeNested(6, inner.bytes());
+    });
 
     const logRecord = new ProtoWriter();
     logRecord.writeNested(6, kvlistAttr);

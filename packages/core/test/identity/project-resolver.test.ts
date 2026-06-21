@@ -1,14 +1,15 @@
-import { expect, test, beforeEach, afterEach, mock } from "bun:test";
-import { join } from "node:path";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { resolveProjectScope } from "../../src/identity/project-resolver.js";
 import { ProjectRegistry } from "../../src/projects/registry.js";
 
 let dir = "";
 
-function mkGitDir() {
+function mkGitDir(): void {
   dir = mkdtempSync(join(tmpdir(), "penumbra-project-resolver-"));
   spawnSync("git", ["init", "-q"], { cwd: dir });
   spawnSync("git", ["remote", "add", "origin", "https://example.com/foo/bar.git"], { cwd: dir });
@@ -19,7 +20,9 @@ beforeEach(() => {
   mkGitDir();
 });
 
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true });
+});
 
 test("registered repo_root returns kind=registered with friendly name", () => {
   const gitRoot = spawnSync("git", ["-C", dir, "rev-parse", "--show-toplevel"], {

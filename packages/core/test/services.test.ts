@@ -1,6 +1,14 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- test fixtures and sqlite row mocks intentionally use loose shapes */
-import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { migrate } from "../src/db/migrations.js";
+import { loadSqliteVec } from "../src/db/sqlite-vec.js";
+import { TestEmbedder } from "../src/embedder/test-embedder.js";
+import { ProjectRegistry } from "../src/projects/registry.js";
+import { buildServices } from "../src/services.js";
 
 // On macOS, Bun uses the Apple SQLite build which disables extension loading.
 // Switch to Homebrew's full-featured SQLite before any Database is created.
@@ -15,15 +23,6 @@ try {
   // already loaded in this process
 }
 
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { loadSqliteVec } from "../src/db/sqlite-vec.js";
-import { migrate } from "../src/db/migrations.js";
-import { buildServices } from "../src/services.js";
-import { TestEmbedder } from "../src/embedder/test-embedder.js";
-import { ProjectRegistry } from "../src/projects/registry.js";
-
 test("buildServices wires all core dependencies with injected clock/uuid", () => {
   const dir = mkdtempSync(join(tmpdir(), "penumbra-svc-"));
   try {
@@ -36,8 +35,8 @@ test("buildServices wires all core dependencies with injected clock/uuid", () =>
       storageRoot: dir,
       db,
       embedder: new TestEmbedder({ dim: 384 }),
-      clock: () => new Date("2026-04-23T00:00:00Z"),
-      uuid: () => "u",
+      clock: (): Date => new Date("2026-04-23T00:00:00Z"),
+      uuid: (): string => "u",
     });
     expect(svc.settings.t0RetentionDays).toBe(30);
     expect(svc.machineId.get()).toBe("u");
@@ -60,11 +59,11 @@ test("buildServices passes through workflowRegistry when provided", () => {
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     const stub = {
-      list: () => [{ name: "demo" }],
-      entries: () => [],
-      get: () => undefined,
-      findByTrigger: () => [],
-      getEntry: () => undefined,
+      list: (): { name: string }[] => [{ name: "demo" }],
+      entries: (): never[] => [],
+      get: (): undefined => undefined,
+      findByTrigger: (): never[] => [],
+      getEntry: (): undefined => undefined,
       errors: [],
     };
     const svc = buildServices({
@@ -100,10 +99,14 @@ test("buildServices wires resolveProjectRoot from projectRegistry", () => {
     projectRegistry: reg,
   });
 
-  expect((services.worktreeManager as any).baseFor("sirius")).toBe(
-    "/tmp/sirius-not-real-worktrees",
-  );
-  expect((services.worktreeManager as any).repoRootFor("sirius")).toBe("/tmp/sirius-not-real");
+  // Test exercises private project-resolution helpers; cast through unknown to
+  // a narrow shape rather than asserting the full WorktreeManager surface.
+  const manager = services.worktreeManager as unknown as {
+    baseFor(project_id: string): string;
+    repoRootFor(project_id: string): string;
+  };
+  expect(manager.baseFor("sirius")).toBe("/tmp/sirius-not-real-worktrees");
+  expect(manager.repoRootFor("sirius")).toBe("/tmp/sirius-not-real");
 });
 
 test("buildServices without projectRegistry leaves resolveProjectRoot undefined", () => {
@@ -119,7 +122,10 @@ test("buildServices without projectRegistry leaves resolveProjectRoot undefined"
     embedder: new TestEmbedder({ dim: 384 }),
   });
 
-  expect((services.worktreeManager as any).baseFor("sirius")).not.toContain("sirius-not-real");
+  const manager = services.worktreeManager as unknown as {
+    baseFor(project_id: string): string;
+  };
+  expect(manager.baseFor("sirius")).not.toContain("sirius-not-real");
 });
 
 test("buildServices with an empty projectRegistry keeps legacy worktree fallback behavior", () => {
@@ -140,5 +146,8 @@ test("buildServices with an empty projectRegistry keeps legacy worktree fallback
     projectRegistry: reg,
   });
 
-  expect((services.worktreeManager as any).baseFor("whatever")).toBe(rootDir);
+  const manager = services.worktreeManager as unknown as {
+    baseFor(project_id: string): string;
+  };
+  expect(manager.baseFor("whatever")).toBe(rootDir);
 });

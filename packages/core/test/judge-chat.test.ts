@@ -1,4 +1,5 @@
 import { expect, mock, test } from "bun:test";
+
 import {
   createJudgeChat,
   DEFAULT_JUDGE_CHAT_TIMEOUT_MS,
@@ -7,14 +8,15 @@ import {
 } from "../src/services/judge-chat.js";
 
 test("createJudgeChat omits authorization when token is empty", async () => {
-  const fetchMock = mock(
-    async () =>
+  const fetchMock = mock(() =>
+    Promise.resolve(
       new Response(
         JSON.stringify({
           choices: [{ message: { content: "ok" } }],
         }),
         { status: 200 },
       ),
+    ),
   );
   const originalFetch = globalThis.fetch;
   globalThis.fetch = fetchMock as typeof fetch;
@@ -35,14 +37,15 @@ test("createJudgeChat omits authorization when token is empty", async () => {
 });
 
 test("createJudgeChat includes bearer authorization when token is set", async () => {
-  const fetchMock = mock(
-    async () =>
+  const fetchMock = mock(() =>
+    Promise.resolve(
       new Response(
         JSON.stringify({
           choices: [{ message: { content: "ok" } }],
         }),
         { status: 200 },
       ),
+    ),
   );
   const originalFetch = globalThis.fetch;
   globalThis.fetch = fetchMock as typeof fetch;
@@ -141,7 +144,7 @@ test("createJudgeChat aborts with the configured per-instance timeout", async ()
   // A fetch that never resolves on its own — only the abort signal ends it.
   globalThis.fetch = ((_url: unknown, init: { signal?: AbortSignal }) =>
     new Promise((_resolve, reject) => {
-      init?.signal?.addEventListener("abort", () => {
+      init.signal?.addEventListener("abort", () => {
         const e = new Error("aborted");
         e.name = "AbortError";
         reject(e);
@@ -149,9 +152,13 @@ test("createJudgeChat aborts with the configured per-instance timeout", async ()
     })) as typeof fetch;
   try {
     const chat = createJudgeChat({ baseUrl: "http://judge", timeoutMs: 10 });
-    await expect(
-      chat({ model: "local", messages: [{ role: "user", content: "hi" }] }),
-    ).rejects.toThrow("timed out after 10ms");
+    let caught: unknown;
+    try {
+      await chat({ model: "local", messages: [{ role: "user", content: "hi" }] });
+    } catch (err) {
+      caught = err;
+    }
+    expect((caught as Error).message).toContain("timed out after 10ms");
   } finally {
     globalThis.fetch = originalFetch;
   }

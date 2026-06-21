@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../src/db/sqlite-vec.js";
+import { expect, test } from "bun:test";
+
 import { applySchema } from "../src/db/schema.js";
+import { loadSqliteVec } from "../src/db/sqlite-vec.js";
 import { search } from "../src/readers/search.js";
 import { verifyMemory } from "../src/writers/t2.js";
 
@@ -13,7 +14,7 @@ try {
   // already loaded in this process
 }
 
-function freshDb() {
+function freshDb(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   applySchema(db);
@@ -97,7 +98,7 @@ test("verifyMemory updates freshness and search surfaces it", () => {
 
   const verified = verifyMemory(db, "memory-fresh", {
     verifierActor: "machine-1",
-    uuid: () => "evt-1",
+    uuid: (): string => "evt-1",
   });
   expect(verified.memory_id).toBe("memory-fresh");
   expect(verified.last_verified_at).toBeTruthy();
@@ -145,9 +146,9 @@ test("search uses obs_type-specific stale thresholds", () => {
   expect(decisionHits).toHaveLength(1);
   expect(decisionHits[0]).toMatchObject({
     id: "memory-decision",
-    age_days: expect.any(Number),
     stale: false,
   });
+  expect(typeof decisionHits[0]?.age_days).toBe("number");
 
   const sessionHits = search(db, {
     query: "memory-session",

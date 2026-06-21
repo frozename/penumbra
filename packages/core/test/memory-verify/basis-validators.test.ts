@@ -1,13 +1,20 @@
-import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
-import { join } from "node:path";
+import { expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { buildServices, loadSqliteVec, migrate } from "../../src/index.js";
 import { validateBasis } from "../../src/memory-verify/basis.js";
 import { TestEmbedder } from "../../src/testing/index.js";
 
-function freshServices() {
+function freshServices(): {
+  db: Database;
+  root: string;
+  reviewsDir: string;
+  services: ReturnType<typeof buildServices>;
+  stop: () => void;
+} {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
@@ -29,7 +36,9 @@ function freshServices() {
     root,
     reviewsDir,
     services,
-    stop: () => rmSync(root, { recursive: true, force: true }),
+    stop: (): void => {
+      rmSync(root, { recursive: true, force: true });
+    },
   };
 }
 
@@ -102,7 +111,8 @@ test("validateBasis rejects adversarial_review traversal via absolute path outsi
       synthesis_path: "/tmp/outside.md",
       synthesizer_handoff: "h-synth",
     });
-    expect(result).toEqual({ ok: false, status: 400, reason: expect.any(String) });
+    expect(result).toMatchObject({ ok: false, status: 400 });
+    expect(typeof (result as { reason?: unknown }).reason).toBe("string");
   } finally {
     ctx.stop();
   }
@@ -119,7 +129,8 @@ test("validateBasis rejects adversarial_review symlink escapes", async () => {
       synthesis_path: "link.md",
       synthesizer_handoff: "h-synth",
     });
-    expect(result).toEqual({ ok: false, status: 400, reason: expect.stringContaining("escapes") });
+    expect(result).toMatchObject({ ok: false, status: 400 });
+    expect(String((result as { reason?: unknown }).reason)).toContain("escapes");
   } finally {
     ctx.stop();
   }

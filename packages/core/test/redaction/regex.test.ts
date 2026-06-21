@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { RegexRedactor, DEFAULT_REDACTION_RULES } from "../../src/redaction/regex.js";
+
+import { DEFAULT_REDACTION_RULES, RegexRedactor } from "../../src/redaction/regex.js";
 
 test("redacts default secret-like keys", () => {
   const r = new RegexRedactor(DEFAULT_REDACTION_RULES);

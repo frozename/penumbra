@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { SafeProjectIdSchema, assertSafeProjectId } from "../../src/schemas/project-id.js";
+
 import { T0EventInputSchema } from "../../src/schemas/event.js";
+import { assertSafeProjectId, SafeProjectIdSchema } from "../../src/schemas/project-id.js";
 
 // ---------------------------------------------------------------------------
 // SafeProjectIdSchema — valid IDs
@@ -97,20 +98,34 @@ test('T0EventInputSchema rejects traversal project_id "../../etc/cron.d"', () =>
 // ---------------------------------------------------------------------------
 
 test("assertSafeProjectId passes on safe ids", () => {
-  expect(() => assertSafeProjectId("proj-ctx")).not.toThrow();
-  expect(() => assertSafeProjectId("abcdef0123456789:.")).not.toThrow();
-  expect(() => assertSafeProjectId("abcdef0123456789:packages/core")).not.toThrow();
+  expect(() => {
+    assertSafeProjectId("proj-ctx");
+  }).not.toThrow();
+  expect(() => {
+    assertSafeProjectId("abcdef0123456789:.");
+  }).not.toThrow();
+  expect(() => {
+    assertSafeProjectId("abcdef0123456789:packages/core");
+  }).not.toThrow();
 });
 
 test("assertSafeProjectId throws TypeError on traversal", () => {
-  expect(() => assertSafeProjectId("../evil")).toThrow(TypeError);
-  expect(() => assertSafeProjectId("../../etc/cron.d")).toThrow(TypeError);
+  expect(() => {
+    assertSafeProjectId("../evil");
+  }).toThrow(TypeError);
+  expect(() => {
+    assertSafeProjectId("../../etc/cron.d");
+  }).toThrow(TypeError);
 });
 
 test("assertSafeProjectId throws TypeError on absolute path", () => {
-  expect(() => assertSafeProjectId("/etc/passwd")).toThrow(TypeError);
+  expect(() => {
+    assertSafeProjectId("/etc/passwd");
+  }).toThrow(TypeError);
 });
 
 test("assertSafeProjectId throws TypeError on backslash", () => {
-  expect(() => assertSafeProjectId("..\\windows\\evil")).toThrow(TypeError);
+  expect(() => {
+    assertSafeProjectId("..\\windows\\evil");
+  }).toThrow(TypeError);
 });

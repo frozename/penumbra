@@ -1,8 +1,8 @@
-import { expect, test } from "bun:test";
+import { test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-const BANNED_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
+const BANNED_PATTERNS: { label: string; pattern: RegExp }[] = [
   { label: "/Volumes/WorkSSD", pattern: /\/Volumes\/WorkSSD/ },
   { label: "packages/[a-z]", pattern: /\bpackages\/[a-z]/ },
   { label: "bun test", pattern: /bun test/ },

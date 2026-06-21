@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { beforeEach, describe, expect, test } from "bun:test";
+
 import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { MaestroSessionExists, MaestroSessionWriter } from "../../src/maestro/writer.js";
 
 if (process.platform === "darwin") {
@@ -109,7 +110,7 @@ describe("MaestroSessionWriter", () => {
 
   test("start inserts a live row and uses fresh now() timestamps", () => {
     const nowValues = [1_000, 1_050];
-    const writer = new MaestroSessionWriter({ db, now: () => nowValues.shift() ?? 0 });
+    const writer = new MaestroSessionWriter({ db, now: (): number => nowValues.shift() ?? 0 });
     const taskA = "task-a";
     const taskB = "task-b";
     seedTask(db, taskA);
@@ -173,7 +174,7 @@ describe("MaestroSessionWriter", () => {
   });
 
   test("start supports pre-bound rows with null chain_handoff_id", () => {
-    const writer = new MaestroSessionWriter({ db, now: () => 1_000 });
+    const writer = new MaestroSessionWriter({ db, now: (): number => 1_000 });
     const taskId = "task-prebound-null-chain";
     seedTask(db, taskId);
 
@@ -189,15 +190,15 @@ describe("MaestroSessionWriter", () => {
   });
 
   test("start rejects duplicate task_id with MaestroSessionExists", () => {
-    const writer = new MaestroSessionWriter({ db, now: () => 1_000 });
+    const writer = new MaestroSessionWriter({ db, now: (): number => 1_000 });
     const taskId = "task-dup";
     seedTask(db, taskId);
 
     startSession(writer, taskId, "handoff-dup", "agent-a");
 
-    expect(() => startSession(writer, taskId, "handoff-dup-2", "agent-b")).toThrow(
-      MaestroSessionExists,
-    );
+    expect(() => {
+      startSession(writer, taskId, "handoff-dup-2", "agent-b");
+    }).toThrow(MaestroSessionExists);
     try {
       startSession(writer, taskId, "handoff-dup-2", "agent-b");
     } catch (error) {
@@ -207,7 +208,7 @@ describe("MaestroSessionWriter", () => {
   });
 
   test("start succeeds when a terminated session already exists for the same task_id", () => {
-    const writer = new MaestroSessionWriter({ db, now: () => 2_000 });
+    const writer = new MaestroSessionWriter({ db, now: (): number => 2_000 });
     const taskId = "task-terminated-retry";
     seedTask(db, taskId);
 
@@ -243,7 +244,7 @@ describe("MaestroSessionWriter", () => {
   });
 
   test("get returns a hydrated row and null when missing", () => {
-    const writer = new MaestroSessionWriter({ db, now: () => 1_000 });
+    const writer = new MaestroSessionWriter({ db, now: (): number => 1_000 });
     const taskId = "task-get";
     seedTask(db, taskId);
     startSession(writer, taskId, "handoff-get", "agent-a");
@@ -266,7 +267,7 @@ describe("MaestroSessionWriter", () => {
   });
 
   test("getByChainHandoff returns a hydrated row and null when missing", () => {
-    const writer = new MaestroSessionWriter({ db, now: () => 1_000 });
+    const writer = new MaestroSessionWriter({ db, now: (): number => 1_000 });
     const taskId = "task-chain";
     seedTask(db, taskId);
     startSession(writer, taskId, "handoff-chain", "agent-a");
@@ -289,7 +290,7 @@ describe("MaestroSessionWriter", () => {
   });
 
   test("markDispatched sets chain_handoff_id once and rejects double-set", () => {
-    const writer = new MaestroSessionWriter({ db, now: () => 1_000 });
+    const writer = new MaestroSessionWriter({ db, now: (): number => 1_000 });
     const taskId = "task-mark-dispatched";
     seedTask(db, taskId);
     writer.start({
@@ -311,7 +312,7 @@ describe("MaestroSessionWriter", () => {
 
   test("listLive returns live rows ordered by started_at ascending", () => {
     const nowValues = [100, 200, 300];
-    const writer = new MaestroSessionWriter({ db, now: () => nowValues.shift() ?? 0 });
+    const writer = new MaestroSessionWriter({ db, now: (): number => nowValues.shift() ?? 0 });
     const tasks = ["task-live-1", "task-live-2", "task-live-3"];
     for (const taskId of tasks) seedTask(db, taskId);
 
@@ -325,7 +326,7 @@ describe("MaestroSessionWriter", () => {
   });
 
   test("incrementSubDispatch is atomic across concurrent calls", async () => {
-    const writer = new MaestroSessionWriter({ db, now: () => 1_000 });
+    const writer = new MaestroSessionWriter({ db, now: (): number => 1_000 });
     const taskId = "task-subdispatch";
     seedTask(db, taskId);
     startSession(writer, taskId, "handoff-subdispatch", "agent-a");
@@ -351,7 +352,7 @@ describe("MaestroSessionWriter", () => {
   });
 
   test("incrementSubDispatch returns zeroes for missing and terminated sessions", () => {
-    const writer = new MaestroSessionWriter({ db, now: () => 1_000 });
+    const writer = new MaestroSessionWriter({ db, now: (): number => 1_000 });
     const taskId = "task-subdispatch-terminated";
     seedTask(db, taskId);
     startSession(writer, taskId, "handoff-subdispatch-term", "agent-a");
@@ -363,7 +364,7 @@ describe("MaestroSessionWriter", () => {
 
   test("markSoftWarned only stamps the first time", () => {
     const nowValues = [1_000, 2_000, 3_000];
-    const writer = new MaestroSessionWriter({ db, now: () => nowValues.shift() ?? 0 });
+    const writer = new MaestroSessionWriter({ db, now: (): number => nowValues.shift() ?? 0 });
     const taskId = "task-soft-warning";
     seedTask(db, taskId);
     startSession(writer, taskId, "handoff-soft-warning", "agent-a");
@@ -377,7 +378,7 @@ describe("MaestroSessionWriter", () => {
 
   test("terminate is idempotent and preserves the first reason and timestamp", () => {
     const nowValues = [1_000, 2_000, 3_000];
-    const writer = new MaestroSessionWriter({ db, now: () => nowValues.shift() ?? 0 });
+    const writer = new MaestroSessionWriter({ db, now: (): number => nowValues.shift() ?? 0 });
     const taskId = "task-terminate";
     seedTask(db, taskId);
     startSession(writer, taskId, "handoff-terminate", "agent-a");
@@ -402,7 +403,7 @@ describe("MaestroSessionWriter", () => {
   });
 
   test("bumpCostConsumed writes the absolute value and ignores terminated sessions", () => {
-    const writer = new MaestroSessionWriter({ db, now: () => 1_000 });
+    const writer = new MaestroSessionWriter({ db, now: (): number => 1_000 });
     const liveTaskId = "task-cost-live";
     const terminatedTaskId = "task-cost-terminated";
     seedTask(db, liveTaskId);

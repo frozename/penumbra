@@ -1,8 +1,11 @@
-import { expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Database } from "bun:sqlite";
+
+import { ContextFileWriter } from "../../src/context-file/writer.js";
+import { loadSqliteVec, migrate } from "../../src/index.js";
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
@@ -10,8 +13,6 @@ try {
 } catch {
   /* already loaded */
 }
-import { loadSqliteVec, migrate } from "../../src/index.js";
-import { ContextFileWriter } from "../../src/context-file/writer.js";
 
 let dir = "";
 let db: Database;
@@ -21,9 +22,11 @@ beforeEach(() => {
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true });
+});
 
-function seedT1(rollupId: string, projectId: string, excerpt: string, endedAt: string) {
+function seedT1(rollupId: string, projectId: string, excerpt: string, endedAt: string): void {
   db.run(
     `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events,
        first_prompt_excerpt, last_response_excerpt, tool_calls_summary)
@@ -64,7 +67,9 @@ test("rewrite uses a tmp file then renames (never leaves half-written content)",
 
 test("rewrite throws RangeError when topK < 1 (SQLite LIMIT -1 returns all rows)", () => {
   const writer = new ContextFileWriter({ db, storageRoot: dir, topK: 0 });
-  expect(() => writer.rewrite("p1")).toThrow(RangeError);
+  expect(() => {
+    writer.rewrite("p1");
+  }).toThrow(RangeError);
 });
 
 test("frontmatter JSON-quotes generated_at to survive YAML-breaking colon in ISO timestamps", () => {
@@ -81,7 +86,13 @@ test("frontmatter JSON-quotes generated_at to survive YAML-breaking colon in ISO
 
 test("rewrite throws on unsafe project_id (defense in depth)", () => {
   const writer = new ContextFileWriter({ db, storageRoot: dir, topK: 5 });
-  expect(() => writer.rewrite("../../etc/cron.d")).toThrow(TypeError);
-  expect(() => writer.rewrite("../evil")).toThrow(TypeError);
-  expect(() => writer.rewrite("/absolute/path")).toThrow(TypeError);
+  expect(() => {
+    writer.rewrite("../../etc/cron.d");
+  }).toThrow(TypeError);
+  expect(() => {
+    writer.rewrite("../evil");
+  }).toThrow(TypeError);
+  expect(() => {
+    writer.rewrite("/absolute/path");
+  }).toThrow(TypeError);
 });

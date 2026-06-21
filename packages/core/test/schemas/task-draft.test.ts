@@ -1,14 +1,15 @@
 import { describe, expect, it, test } from "bun:test";
+
+import { TASK_DRAFT_LIFECYCLE_EVENT_TYPES } from "../../src/schemas/event.js";
 import {
   parseTaskDraftLifecyclePayload,
-  TaskDraftPayloadSchema,
-  TaskDraftRefiningPayloadSchema,
-  TaskDraftPromotedPayloadSchema,
-  TaskDraftStalePayloadSchema,
   TaskDraftDuplicatePayloadSchema,
   TaskDraftEscalationPayloadSchema,
+  TaskDraftPayloadSchema,
+  TaskDraftPromotedPayloadSchema,
+  TaskDraftRefiningPayloadSchema,
+  TaskDraftStalePayloadSchema,
 } from "../../src/schemas/task-draft.js";
-import { TASK_DRAFT_LIFECYCLE_EVENT_TYPES } from "../../src/schemas/event.js";
 
 const baseDraftPayload = {
   draft_id: "11111111-1111-4111-8111-111111111111",
@@ -72,21 +73,25 @@ test("parses task_draft_escalation payload", () => {
   ).not.toThrow();
 });
 
+const PAYLOADS_BY_EVENT_TYPE: Record<string, unknown> = {
+  task_draft: baseDraftPayload,
+  task_draft_refining: { draft_id: baseDraftPayload.draft_id },
+  task_draft_promoted: { draft_id: baseDraftPayload.draft_id, task_ids: ["task-1"] },
+  task_draft_stale: { draft_id: baseDraftPayload.draft_id, stale_reason: "ttl_expired" },
+  task_draft_duplicate: {
+    draft_id: baseDraftPayload.draft_id,
+    duplicate_of_task_id: "task-123",
+  },
+  task_draft_escalation: {
+    draft_id: baseDraftPayload.draft_id,
+    escalation_reason: "manual handoff",
+  },
+};
+
 describe("parseTaskDraftLifecyclePayload", () => {
   for (const eventType of TASK_DRAFT_LIFECYCLE_EVENT_TYPES) {
     it(`parses ${eventType}`, () => {
-      const payload =
-        eventType === "task_draft"
-          ? baseDraftPayload
-          : eventType === "task_draft_refining"
-            ? { draft_id: baseDraftPayload.draft_id }
-            : eventType === "task_draft_promoted"
-              ? { draft_id: baseDraftPayload.draft_id, task_ids: ["task-1"] }
-              : eventType === "task_draft_stale"
-                ? { draft_id: baseDraftPayload.draft_id, stale_reason: "ttl_expired" }
-                : eventType === "task_draft_duplicate"
-                  ? { draft_id: baseDraftPayload.draft_id, duplicate_of_task_id: "task-123" }
-                  : { draft_id: baseDraftPayload.draft_id, escalation_reason: "manual handoff" };
+      const payload = PAYLOADS_BY_EVENT_TYPE[eventType];
       expect(() => parseTaskDraftLifecyclePayload(eventType, payload)).not.toThrow();
     });
   }
@@ -96,7 +101,7 @@ describe("parseTaskDraftLifecyclePayload", () => {
       TaskDraftPayloadSchema.parse({
         ...baseDraftPayload,
         draft_id: undefined,
-      } as unknown),
+      }),
     ).toThrow();
   });
 
@@ -122,7 +127,7 @@ describe("parseTaskDraftLifecyclePayload", () => {
       TaskDraftStalePayloadSchema.parse({
         draft_id: baseDraftPayload.draft_id,
         stale_reason: "unsupported",
-      } as unknown),
+      }),
     ).toThrow();
   });
 
@@ -140,7 +145,7 @@ describe("parseTaskDraftLifecyclePayload", () => {
       TaskDraftPayloadSchema.parse({
         ...baseDraftPayload,
         auto_ok: "true",
-      } as unknown),
+      }),
     ).toThrow();
   });
 

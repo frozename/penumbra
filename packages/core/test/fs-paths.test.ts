@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { resolveInsideWorktree, FsPathError } from "../src/fs-paths.js";
+
+import { FsPathError, resolveInsideWorktree } from "../src/fs-paths.js";
 
 describe("resolveInsideWorktree", () => {
   let tmp: string;
@@ -22,9 +23,9 @@ describe("resolveInsideWorktree", () => {
   });
 
   it("rejects an absolute path outside the worktree", async () => {
-    await expect(resolveInsideWorktree("/etc/passwd", tmp)).rejects.toThrow(FsPathError);
     try {
       await resolveInsideWorktree("/etc/passwd", tmp);
+      throw new Error("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(FsPathError);
       expect((err as FsPathError).code).toBe("outside_worktree");
@@ -37,9 +38,13 @@ describe("resolveInsideWorktree", () => {
     // realpaths the parent dir to keep canonical platform translation working
     // (e.g. macOS /var -> /private/var) without losing escape detection.
     const escape = path.join(tmp, "..", "something.txt");
-    await expect(resolveInsideWorktree(escape, tmp)).rejects.toMatchObject({
-      code: "outside_worktree",
-    });
+    try {
+      await resolveInsideWorktree(escape, tmp);
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(FsPathError);
+      expect((err as FsPathError).code).toBe("outside_worktree");
+    }
   });
 
   it("rejects a symlink whose realpath is outside the worktree", async () => {

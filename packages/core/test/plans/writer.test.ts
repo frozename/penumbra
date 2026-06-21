@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { expect, test } from "bun:test";
+
 import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { PlanAlreadyRegistered, PlanTaskNotFound, PlanWriter } from "../../src/plans/writer.js";
 
 try {
@@ -106,7 +107,9 @@ test("bindTaskToBoard is idempotent when called twice", () => {
   expect(tasks[0]!.status).toBe("running");
 
   // calling for a missing task should throw
-  expect(() => w.bindTaskToBoard("plan-c", "nope", "x")).toThrow(PlanTaskNotFound);
+  expect(() => {
+    w.bindTaskToBoard("plan-c", "nope", "x");
+  }).toThrow(PlanTaskNotFound);
 });
 
 test("markTaskStatus updates row + last_event_ts", () => {
@@ -124,7 +127,9 @@ test("markTaskStatus updates row + last_event_ts", () => {
   expect(tasks[0]!.status).toBe("completed");
   expect(tasks[0]!.last_event_ts).toBe(1_700_005_000);
 
-  expect(() => w.markTaskStatus("plan-d", "missing", "failed")).toThrow(PlanTaskNotFound);
+  expect(() => {
+    w.markTaskStatus("plan-d", "missing", "failed");
+  }).toThrow(PlanTaskNotFound);
 });
 
 test("listPlans filter by status", () => {

@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../src/db/sqlite-vec.js";
+import { expect, test } from "bun:test";
+
 import { applySchema } from "../src/db/schema.js";
+import { loadSqliteVec } from "../src/db/sqlite-vec.js";
 import { search } from "../src/readers/search.js";
 import { verifyMemory } from "../src/writers/t2.js";
 
@@ -13,7 +14,7 @@ try {
   // already loaded in this process
 }
 
-function freshDb() {
+function freshDb(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   applySchema(db);
@@ -61,7 +62,7 @@ test("verifyMemory provenance is surfaced by search", () => {
     claimedBy: "maestro",
     reason: "manual-spot-check",
     sessionId: "sess-xyz",
-    uuid: () => "evt-1",
+    uuid: (): string => "evt-1",
   });
   expect(verified).not.toBeNull();
 
@@ -88,7 +89,7 @@ test("verifyMemory defaults provenance fields to null", () => {
 
   const verified = verifyMemory(db, "memory-defaults", {
     verifierActor: "machine-1",
-    uuid: () => "evt-1",
+    uuid: (): string => "evt-1",
   });
   expect(verified).toMatchObject({
     last_verified_by: null,

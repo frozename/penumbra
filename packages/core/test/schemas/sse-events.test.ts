@@ -1,12 +1,13 @@
 import { expect, test } from "bun:test";
+
 import {
+  ConversationChainEndEventSchema,
+  ConversationHopEndEventSchema,
   ConversationHopStartEventSchema,
   ConversationTokenEventSchema,
-  ConversationHopEndEventSchema,
-  ConversationChainEndEventSchema,
+  HopStateCacheEntrySchema,
   MergeResultEventSchema,
   WorkerCancelEventSchema,
-  HopStateCacheEntrySchema,
 } from "../../src/schemas/sse-events.js";
 
 test("ConversationHopStartEventSchema validates the phase 2 hop-start payload", () => {

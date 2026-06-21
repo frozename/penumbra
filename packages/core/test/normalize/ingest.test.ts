@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { normalize } from "../../src/normalize/ingest.js";
 import { DEFAULT_REDACTION_RULES, RegexRedactor } from "../../src/redaction/regex.js";
 
@@ -6,8 +7,8 @@ const redactor = new RegexRedactor(DEFAULT_REDACTION_RULES);
 const ctx = {
   userId: "u-1",
   machineId: "m-1",
-  now: () => new Date("2026-04-23T12:00:00.000Z"),
-  uuid: () => "fixed-uuid",
+  now: (): Date => new Date("2026-04-23T12:00:00.000Z"),
+  uuid: (): string => "fixed-uuid",
   redactor,
 };
 

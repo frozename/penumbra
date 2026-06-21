@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { createLogger } from "../src/logger.js";
 
 test("createLogger returns a pino logger with the component field baked in", () => {

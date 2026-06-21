@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { PidRegistry } from "../../src/pid/registry.js";
 
 test("register and iterate live PIDs", () => {

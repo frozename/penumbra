@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { InProcessSupervisor } from "../../src/supervisor/in-process.js";
 
 test("start runs the tick function then reports running", async () => {
@@ -7,8 +8,9 @@ test("start runs the tick function then reports running", async () => {
   sup.register({
     name: "w",
     intervalMs: 1_000,
-    tick: async () => {
+    tick: () => {
       count++;
+      return Promise.resolve();
     },
   });
   await sup.startAll();
@@ -24,8 +26,9 @@ test("stopAll stops ticks and reports stopped", async () => {
   sup.register({
     name: "w",
     intervalMs: 1_000,
-    tick: async () => {
+    tick: () => {
       count++;
+      return Promise.resolve();
     },
   });
   await sup.startAll();
@@ -40,12 +43,13 @@ test("thrown tick errors are caught; next tick still runs", async () => {
   sup.register({
     name: "w",
     intervalMs: 5,
-    tick: async () => {
+    tick: () => {
       ran++;
       if (throws) {
         throws = false;
         throw new Error("boom");
       }
+      return Promise.resolve();
     },
   });
   await sup.startAll();
@@ -59,7 +63,7 @@ test("failing initial tick surfaces as errored, not running", async () => {
   sup.register({
     name: "w",
     intervalMs: 10_000,
-    tick: async () => {
+    tick: () => {
       throw new Error("initial fail");
     },
   });
@@ -73,7 +77,7 @@ test("tick errors arriving after stopAll do not clobber stopped", async () => {
   sup.register({
     name: "w",
     intervalMs: 10_000,
-    tick: async () => {
+    tick: () => {
       throw new Error("boom");
     },
   });

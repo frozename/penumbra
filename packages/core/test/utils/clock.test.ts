@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { type Clock, systemClock } from "../../src/utils/clock.js";
 
 test("systemClock returns a Date within 100ms of now", () => {

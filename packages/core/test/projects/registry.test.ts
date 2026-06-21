@@ -2,6 +2,7 @@ import { afterEach, expect, mock, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
   defaultProjectRegistryPath,
   getGithubRepo,
@@ -73,7 +74,7 @@ test("loadProjectRegistry ignores missing root_path canonicalization failures", 
 test("canonicalization warning truncates long values", () => {
   const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
-  const missingRoot = `${"a".repeat(300)}`;
+  const missingRoot = "a".repeat(300);
   const path = join(dir, "projects.yaml");
   writeFileSync(
     path,
@@ -83,7 +84,7 @@ test("canonicalization warning truncates long values", () => {
 `,
   );
 
-  const warn = mock(() => {});
+  const warn = mock((): void => undefined);
   const originalWarn = console.warn;
   console.warn = warn;
   try {
@@ -128,8 +129,11 @@ test("malformed yaml throws", () => {
 });
 
 test("missing file returns empty registry and warns once", () => {
-  const path = join(tmpdir(), `penumbra-missing-${Date.now()}-${Math.random()}.yaml`);
-  const warn = mock(() => {});
+  const path = join(
+    tmpdir(),
+    `penumbra-missing-${String(Date.now())}-${String(Math.random())}.yaml`,
+  );
+  const warn = mock((): void => undefined);
   const originalWarn = console.warn;
   console.warn = warn;
   try {

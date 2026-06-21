@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { SettingsDefaults, type SettingsInput } from "../src/settings.js";
 
 test("returns defaults when nothing is overridden", () => {

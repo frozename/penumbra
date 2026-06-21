@@ -1,5 +1,9 @@
-import { expect, test, beforeEach } from "bun:test";
 import { Database } from "bun:sqlite";
+import { beforeEach, expect, test } from "bun:test";
+
+import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { ProjectCache } from "../../src/identity/project-cache.js";
 
 try {
   if (process.platform === "darwin") {
@@ -8,10 +12,6 @@ try {
 } catch {
   // already loaded in this process
 }
-
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { migrate } from "../../src/db/migrations.js";
-import { ProjectCache } from "../../src/identity/project-cache.js";
 
 let db: Database;
 beforeEach(() => {
@@ -23,7 +23,7 @@ beforeEach(() => {
 test("upsert records a git-kind project on first sight", () => {
   const cache = new ProjectCache({
     db,
-    clock: () => new Date("2026-04-23T12:00:00Z"),
+    clock: (): Date => new Date("2026-04-23T12:00:00Z"),
   });
   cache.upsertFromResolution(
     {
@@ -48,7 +48,7 @@ test("upsert records a git-kind project on first sight", () => {
 test("upsert appends new path to first_seen_paths without duplicates", () => {
   const cache = new ProjectCache({
     db,
-    clock: () => new Date("2026-04-23T12:00:00Z"),
+    clock: (): Date => new Date("2026-04-23T12:00:00Z"),
   });
   const res = {
     kind: "git" as const,

@@ -1,11 +1,12 @@
-import { describe, expect, test } from "bun:test";
-import { ConversationStreamBus } from "@penumbra/core";
 import type {
   ConversationChainEndEvent,
   ConversationHopEndEvent,
   ConversationHopStartEvent,
   ConversationTokenEvent,
 } from "@penumbra/core";
+
+import { ConversationStreamBus } from "@penumbra/core";
+import { describe, expect, test } from "bun:test";
 
 function hopStart(conv: string, handoff = `${conv}-h`): ConversationHopStartEvent {
   return {
@@ -36,9 +37,9 @@ function chainEnd(chain: string): ConversationChainEndEvent {
   return { type: "chain-end", chain_id: chain, reason: "completed" };
 }
 
-describe("ConversationStreamBus", () => {
-  test("subscribers receive emitted events in order and survive bad subscribers", () => {
-    const bus = new ConversationStreamBus({ now: () => 0 });
+describe("ConversationStreamBus", (): void => {
+  test("subscribers receive emitted events in order and survive bad subscribers", (): void => {
+    const bus = new ConversationStreamBus({ now: (): number => 0 });
     const seen: string[] = [];
     bus.subscribe(() => {
       throw new Error("boom");
@@ -50,8 +51,8 @@ describe("ConversationStreamBus", () => {
     expect(seen).toEqual(["hop-start", "token", "hop-end"]);
   });
 
-  test("getHistory returns cached hop-start plus tokens for the active hop", () => {
-    const bus = new ConversationStreamBus({ now: () => 0 });
+  test("getHistory returns cached hop-start plus tokens for the active hop", (): void => {
+    const bus = new ConversationStreamBus({ now: (): number => 0 });
     bus.emit("c1", hopStart("c1", "h1"));
     bus.emit("c1", token("h1", 0, "a"));
     bus.emit("c1", token("h1", 1, "b"));
@@ -59,8 +60,8 @@ describe("ConversationStreamBus", () => {
     expect(history.map((e) => e.type)).toEqual(["hop-start", "token", "token"]);
   });
 
-  test("hop-end and chain-end clear the cached entry", () => {
-    const bus = new ConversationStreamBus({ now: () => 0 });
+  test("hop-end and chain-end clear the cached entry", (): void => {
+    const bus = new ConversationStreamBus({ now: (): number => 0 });
     bus.emit("c1", hopStart("c1", "h1"));
     bus.emit("c2", hopStart("c2", "h2"));
     bus.emit("c1", hopEnd("h1", "c1"));
@@ -69,8 +70,8 @@ describe("ConversationStreamBus", () => {
     expect(bus.getHistory("c2")).toEqual([]);
   });
 
-  test("cache evicts oldest entries past maxEntries (LRU)", () => {
-    const bus = new ConversationStreamBus({ maxEntries: 3, now: () => 0 });
+  test("cache evicts oldest entries past maxEntries (LRU)", (): void => {
+    const bus = new ConversationStreamBus({ maxEntries: 3, now: (): number => 0 });
     bus.emit("c1", hopStart("c1"));
     bus.emit("c2", hopStart("c2"));
     bus.emit("c3", hopStart("c3"));
@@ -83,8 +84,8 @@ describe("ConversationStreamBus", () => {
     expect(bus.getHistory("c4").length).toBe(1);
   });
 
-  test("active conversations refresh LRU position via token emits and survive overflow", () => {
-    const bus = new ConversationStreamBus({ maxEntries: 2, now: () => 0 });
+  test("active conversations refresh LRU position via token emits and survive overflow", (): void => {
+    const bus = new ConversationStreamBus({ maxEntries: 2, now: (): number => 0 });
     bus.emit("active", hopStart("active", "ha"));
     bus.emit("filler", hopStart("filler", "hf"));
     // Touch 'active' so 'filler' is now LRU.
@@ -95,9 +96,9 @@ describe("ConversationStreamBus", () => {
     expect(bus.getHistory("new").length).toBe(1);
   });
 
-  test("active conversations survive TTL eviction while stale ones are reclaimed", () => {
+  test("active conversations survive TTL eviction while stale ones are reclaimed", (): void => {
     let now = 0;
-    const bus = new ConversationStreamBus({ ttlMs: 1000, now: () => now });
+    const bus = new ConversationStreamBus({ ttlMs: 1000, now: (): number => now });
 
     bus.emit("active", hopStart("active", "ha"));
     bus.emit("stale", hopStart("stale", "hs"));
@@ -115,8 +116,8 @@ describe("ConversationStreamBus", () => {
     expect(bus.getHistory("trigger").length).toBe(1);
   });
 
-  test("tokens are capped per entry so a runaway hop cannot grow unbounded", () => {
-    const bus = new ConversationStreamBus({ maxTokensPerEntry: 4, now: () => 0 });
+  test("tokens are capped per entry so a runaway hop cannot grow unbounded", (): void => {
+    const bus = new ConversationStreamBus({ maxTokensPerEntry: 4, now: (): number => 0 });
     bus.emit("c1", hopStart("c1", "h1"));
     for (let i = 0; i < 100; i++) bus.emit("c1", token("h1", i));
 
@@ -126,8 +127,8 @@ describe("ConversationStreamBus", () => {
     expect(seqs).toEqual([96, 97, 98, 99]);
   });
 
-  test("token with mismatched handoff_id is not cached but still broadcast", () => {
-    const bus = new ConversationStreamBus({ now: () => 0 });
+  test("token with mismatched handoff_id is not cached but still broadcast", (): void => {
+    const bus = new ConversationStreamBus({ now: (): number => 0 });
     const seen: string[] = [];
     bus.subscribe((_id, evt) => seen.push(evt.type));
     bus.emit("c1", hopStart("c1", "h1"));

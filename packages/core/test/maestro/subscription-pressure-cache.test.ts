@@ -1,7 +1,8 @@
-import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { describe, expect, it } from "bun:test";
+
 import { applySchema } from "../../src/db/schema.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import {
   createSubscriptionPressureCache,
   type SubscriptionPressureCacheOptions,
@@ -34,7 +35,7 @@ function insertSnapshotRow(
     resets_at: number | null;
     source_kind: string;
   },
-) {
+): void {
   db.prepare(
     `
     INSERT INTO t0_events (
@@ -148,8 +149,8 @@ describe("createSubscriptionPressureCache", () => {
 
     const errors: unknown[][] = [];
     const log = {
-      info: () => undefined,
-      error: (...args: unknown[]) => {
+      info: (): void => undefined,
+      error: (...args: unknown[]): void => {
         errors.push(args);
       },
     };
@@ -159,7 +160,9 @@ describe("createSubscriptionPressureCache", () => {
 
     db.close();
 
-    expect(() => cache.refresh()).not.toThrow();
+    expect(() => {
+      cache.refresh();
+    }).not.toThrow();
     expect(cache.get("anthropic", "five_hour")).toMatchObject({
       provider: "anthropic",
       window_label: "five_hour",

@@ -1,9 +1,10 @@
 import { describe, expect, it } from "bun:test";
+
 import {
-  PermissionStatusSchema,
-  PermissionRequestRowSchema,
-  CreatePermissionRequestSchema,
   ApprovePermissionRequestSchema,
+  CreatePermissionRequestSchema,
+  PermissionRequestRowSchema,
+  PermissionStatusSchema,
 } from "../../src/schemas/permission.js";
 
 describe("PermissionStatusSchema", () => {

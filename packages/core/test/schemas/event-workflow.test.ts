@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { EventTypeSchema, T0EventInputSchema } from "../../src/schemas/event.js";
 
 test("workflow.run/recall/outcome event types accepted", () => {

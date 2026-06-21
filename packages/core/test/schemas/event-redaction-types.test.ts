@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { EventTypeSchema } from "../../src/schemas/event.js";
 
 const NEW_TYPES = [

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { derivePlanId } from "../../src/plans/plan-id.js";
 
 test("identical inputs collide", () => {

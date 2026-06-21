@@ -1,11 +1,12 @@
 import { describe, expect, it } from "bun:test";
+
 import {
   checkPressureCap,
   type CheckPressureCapDeps,
   type PressureSnapshot,
 } from "../../src/index.js";
 
-const now = () => new Date("2026-05-08T01:00:00Z");
+const now = (): Date => new Date("2026-05-08T01:00:00Z");
 
 function makeSnapshot(
   overrides: Partial<PressureSnapshot> &
@@ -25,7 +26,7 @@ function makeSnapshot(
 function makeDeps(snapshotsByProvider: Record<string, PressureSnapshot[]>): CheckPressureCapDeps {
   return {
     cache: {
-      forProvider(provider: string) {
+      forProvider(provider: string): PressureSnapshot[] {
         return snapshotsByProvider[provider] ?? [];
       },
     },
@@ -69,8 +70,8 @@ describe("checkPressureCap", () => {
     });
     expect(resultRefuse.state).toBe("refuse");
     if (resultRefuse.state === "refuse") {
-      expect(resultRefuse.reason).toBe("provider_synthetic_cap" as any);
-      expect((resultRefuse as any).provider).toBe("anthropic");
+      expect(resultRefuse.reason).toBe("provider_synthetic_cap");
+      expect(resultRefuse.provider).toBe("anthropic");
       expect(resultRefuse.used_pct).toBe(100);
       expect(resultRefuse.cap_pct).toBe(100);
     }
@@ -80,7 +81,7 @@ describe("checkPressureCap", () => {
     let called = false;
     const result = checkPressureCap({
       cache: {
-        forProvider() {
+        forProvider(): PressureSnapshot[] {
           called = true;
           return [];
         },
@@ -97,7 +98,7 @@ describe("checkPressureCap", () => {
   it("subscription agent without subscription_provider → pass with no_signal", () => {
     const result = checkPressureCap({
       cache: {
-        forProvider() {
+        forProvider(): PressureSnapshot[] {
           throw new Error("should not be called");
         },
       },
@@ -396,7 +397,7 @@ describe("checkPressureCap", () => {
   it("fresh + refuse beats warn even when another window would warn", () => {
     const result = checkPressureCap({
       cache: {
-        forProvider() {
+        forProvider(): PressureSnapshot[] {
           return [
             makeSnapshot({
               provider: "anthropic",
@@ -469,7 +470,7 @@ describe("checkPressureCap", () => {
   it("agent.subscription_model matches per-model snapshot and uses per-model cap", () => {
     const result = checkPressureCap({
       cache: {
-        forProvider() {
+        forProvider(): PressureSnapshot[] {
           return [
             makeSnapshot({
               provider: "google",
@@ -512,7 +513,7 @@ describe("checkPressureCap", () => {
   it("agent.subscription_model with only provider-level snapshot falls back to default cap", () => {
     const result = checkPressureCap({
       cache: {
-        forProvider() {
+        forProvider(): PressureSnapshot[] {
           return [
             makeSnapshot({
               provider: "google",
@@ -554,7 +555,7 @@ describe("checkPressureCap", () => {
   it("agent.subscription_model ignores snapshot for a different model", () => {
     const result = checkPressureCap({
       cache: {
-        forProvider() {
+        forProvider(): PressureSnapshot[] {
           return [
             makeSnapshot({
               provider: "google",
@@ -587,7 +588,7 @@ describe("checkPressureCap", () => {
   it("agent without subscription_model ignores per-model snapshots", () => {
     const result = checkPressureCap({
       cache: {
-        forProvider() {
+        forProvider(): PressureSnapshot[] {
           return [
             makeSnapshot({
               provider: "google",
@@ -619,7 +620,7 @@ describe("checkPressureCap", () => {
   it("per-model snapshot uses default cap when no per-model cap exists", () => {
     const result = checkPressureCap({
       cache: {
-        forProvider() {
+        forProvider(): PressureSnapshot[] {
           return [
             makeSnapshot({
               provider: "google",
@@ -685,7 +686,7 @@ describe("checkPressureCap", () => {
     const depsRefuse = {
       ...depsPass,
       cache: {
-        forProvider() {
+        forProvider(): PressureSnapshot[] {
           return [
             makeSnapshot({
               provider: "opencode-go",

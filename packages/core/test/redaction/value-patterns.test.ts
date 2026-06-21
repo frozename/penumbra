@@ -1,5 +1,5 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- test fixtures and sqlite row mocks intentionally use loose shapes */
 import { expect, test } from "bun:test";
+
 import { ValuePatternRedactor } from "../../src/redaction/value-patterns.js";
 
 test("redactString rewrites matches and records hits", () => {
@@ -30,8 +30,8 @@ test("redactValue walks objects and arrays redacting string leaves", () => {
     untouched: 42,
   };
   const { redacted, hits } = r.redactValue(input);
-  expect((redacted as any).cmd).toBe("cat ~/[REDACTED:ssh-key]");
-  expect((redacted as any).nested.args[1]).toBe("~/[REDACTED:ssh-key]");
-  expect((redacted as any).untouched).toBe(42);
+  expect(redacted.cmd).toBe("cat ~/[REDACTED:ssh-key]");
+  expect(redacted.nested.args[1]).toBe("~/[REDACTED:ssh-key]");
+  expect(redacted.untouched).toBe(42);
   expect(hits.find((h) => h.rule_id === "ssh")?.count).toBe(2);
 });

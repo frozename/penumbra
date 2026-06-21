@@ -1,8 +1,9 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- test fixtures and sqlite row mocks intentionally use loose shapes */
-import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
+
 import { applySchema } from "../src/db/schema.js";
 import { loadSqliteVec } from "../src/db/sqlite-vec.js";
+import { TestEmbedder } from "../src/embedder/test-embedder.js";
 import { buildServices } from "../src/services.js";
 
 describe("buildServices dispatchEventLog", () => {
@@ -15,7 +16,7 @@ describe("buildServices dispatchEventLog", () => {
       input: {},
       storageRoot: "/tmp/test-svc",
       db,
-      embedder: null as any,
+      embedder: new TestEmbedder({ dim: 384 }),
     });
 
     services.dispatchEventLog.record({

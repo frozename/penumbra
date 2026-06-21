@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { BundledEmbedder } from "../../src/embedder/bundled.js";
 
 // Skip if the env flag opt-out is set — CI without net access.

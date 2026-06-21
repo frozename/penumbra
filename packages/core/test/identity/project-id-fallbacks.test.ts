@@ -1,14 +1,17 @@
-import { expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { resolveProjectId } from "../../src/identity/project-id.js";
 
 let dir = "";
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "penumbra-pid-fb-"));
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true });
+});
 
 test("declared wins over everything", () => {
   writeFileSync(join(dir, ".penumbra-project"), "marker-uuid");

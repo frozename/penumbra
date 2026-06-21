@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { resolveEmbedder } from "../../src/embedder/resolve.js";
 import { TestEmbedder } from "../../src/embedder/test-embedder.js";
 
@@ -11,10 +12,20 @@ function mockFetch(fn: typeof fetch): () => void {
   };
 }
 
+const catchRejection = async (promise: Promise<unknown>): Promise<unknown> => {
+  try {
+    await promise;
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected promise to reject");
+};
+
 test("auto + reachable health chooses remote embedder", async () => {
-  const restoreFetch = mockFetch(async (url) => {
-    expect(new URL(String(url)).pathname).toBe("/healthz");
-    return new Response("ok", { status: 200 });
+  const restoreFetch = mockFetch((url) => {
+    const req = new Request(url);
+    expect(new URL(req.url).pathname).toBe("/healthz");
+    return Promise.resolve(new Response("ok", { status: 200 }));
   });
 
   try {
@@ -48,18 +59,20 @@ test("auto + no baseUrl chooses bundled fallback", async () => {
 
 test("remote mode throws when endpoint is unreachable", async () => {
   const fallback = new TestEmbedder({ dim: 4 });
-  await expect(
+  const err = await catchRejection(
     resolveEmbedder({
       mode: "remote",
       remote: { baseUrl: "http://127.0.0.1:1", model: "m", dim: 4 },
       fallback,
     }),
-  ).rejects.toThrow(/unreachable/i);
+  );
+  expect((err as Error).message).toMatch(/unreachable/i);
 });
 
 test("remote mode throws when baseUrl is missing", async () => {
   const fallback = new TestEmbedder({ dim: 4 });
-  await expect(resolveEmbedder({ mode: "remote", fallback })).rejects.toThrow(/BASE_URL/);
+  const err = await catchRejection(resolveEmbedder({ mode: "remote", fallback }));
+  expect((err as Error).message).toMatch(/BASE_URL/);
 });
 
 test("bundled mode always chooses fallback", async () => {
@@ -74,14 +87,14 @@ test("bundled mode always chooses fallback", async () => {
 
 test("auto mode skips health probe when healthPath is empty", async () => {
   let calledHealth = false;
-  const restoreFetch = mockFetch(async (url) => {
+  const restoreFetch = mockFetch((url) => {
     const req = new Request(url);
     const path = new URL(req.url).pathname;
     if (path === "/healthz") {
       calledHealth = true;
-      return new Response("no", { status: 500 });
+      return Promise.resolve(new Response("no", { status: 500 }));
     }
-    return Response.json({ data: [{ embedding: [0, 0, 0, 0], index: 0 }] });
+    return Promise.resolve(Response.json({ data: [{ embedding: [0, 0, 0, 0], index: 0 }] }));
   });
 
   try {

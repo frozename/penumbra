@@ -1,5 +1,5 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- test fixtures and sqlite row mocks intentionally use loose shapes */
 import { expect, test } from "bun:test";
+
 import {
   MAX_WALKER_DEPTH,
   MAX_WALKER_STRING_BYTES,
@@ -46,8 +46,8 @@ test("redactValue: oversize string records synthetic hit and preserves original 
   const walked = r.redactValue(value, { maxStringBytes: MAX_WALKER_STRING_BYTES });
 
   expect(walked.hits.find((h) => h.rule_id === "walker_string_oversize")?.count).toBe(1);
-  expect((walked.redacted as any).msg).not.toContain(".ssh/id_ed25519");
-  expect(Buffer.byteLength((walked.redacted as any).msg, "utf8")).toBeLessThanOrEqual(
+  expect(walked.redacted.msg).not.toContain(".ssh/id_ed25519");
+  expect(Buffer.byteLength(walked.redacted.msg, "utf8")).toBeLessThanOrEqual(
     MAX_WALKER_STRING_BYTES,
   );
 });
@@ -87,7 +87,7 @@ test("redactValue: clean array keeps the original reference (no allocation)", ()
   const r = new ValuePatternRedactor([
     { id: "soft", pattern: /banana/g, replacement: "[REDACTED:soft]" },
   ]);
-  const input = Array.from({ length: 100 }, (_, i) => `clean-${i}`);
+  const input = Array.from({ length: 100 }, (_, i) => `clean-${String(i)}`);
 
   const walked = r.redactValue(input);
   expect(walked.hits).toEqual([]);

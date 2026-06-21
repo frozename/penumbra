@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+
 import { EventTypeSchema } from "../../src/schemas/event.js";
 
-const EVENT_TYPE_LITERAL_RE = /\bevent_type\s*:\s*['\"]([^'\"]+)['\"]/g;
+const EVENT_TYPE_LITERAL_RE = /\bevent_type\s*:\s*['"]([^'"]+)['"]/g;
 
 function findEventTypeDrift(): string[] {
   const repoRoot = resolve(import.meta.dir, "../../../../");

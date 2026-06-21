@@ -1,15 +1,16 @@
 import { describe, expect, it } from "bun:test";
+
 import {
   AgentOutcomeSchema,
-  AgentPerformanceRowSchema,
   AgentPerformanceCaptureFromReconcilerSchema,
+  AgentPerformanceRowSchema,
   AgentRankInputSchema,
   AgentRankOutputSchema,
   AgentTaskTypeSchema,
-  MergeResultStatusSchema,
-  mapMergeStatusToAgentOutcome,
-  mapDispatchReasonToAgentOutcome,
   inferAgentTaskType,
+  mapDispatchReasonToAgentOutcome,
+  mapMergeStatusToAgentOutcome,
+  MergeResultStatusSchema,
 } from "../../src/schemas/agent-performance.js";
 
 describe("agent performance schemas", () => {

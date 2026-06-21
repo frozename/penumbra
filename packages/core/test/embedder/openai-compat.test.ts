@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { OpenAICompatEmbedder } from "../../src/embedder/openai-compat.js";
 
 const originalFetch = globalThis.fetch;
@@ -9,6 +10,15 @@ function mockFetch(fn: typeof fetch): () => void {
     globalThis.fetch = originalFetch;
   };
 }
+
+const catchRejection = async (promise: Promise<unknown>): Promise<unknown> => {
+  try {
+    await promise;
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected promise to reject");
+};
 
 test("POSTs to /v1/embeddings and parses the OpenAI-compat response", async () => {
   const restoreFetch = mockFetch(async (url, init) => {
@@ -40,10 +50,12 @@ test("POSTs to /v1/embeddings and parses the OpenAI-compat response", async () =
 });
 
 test("omits Authorization header when token is not configured", async () => {
-  const restoreFetch = mockFetch(async (url, init) => {
+  const restoreFetch = mockFetch((url, init) => {
     const req = new Request(url, init);
     expect(req.headers.has("authorization")).toBe(false);
-    return Response.json({ data: [{ embedding: [0, 1, 2, 3], index: 0, object: "embedding" }] });
+    return Promise.resolve(
+      Response.json({ data: [{ embedding: [0, 1, 2, 3], index: 0, object: "embedding" }] }),
+    );
   });
 
   try {
@@ -60,11 +72,13 @@ test("omits Authorization header when token is not configured", async () => {
 });
 
 test("honors custom authHeader/authScheme", async () => {
-  const restoreFetch = mockFetch(async (url, init) => {
+  const restoreFetch = mockFetch((url, init) => {
     const req = new Request(url, init);
     expect(req.headers.get("x-api-key")).toBe("ApiKey test-token");
     expect(req.headers.has("authorization")).toBe(false);
-    return Response.json({ data: [{ embedding: [1, 1, 1, 1], index: 0, object: "embedding" }] });
+    return Promise.resolve(
+      Response.json({ data: [{ embedding: [1, 1, 1, 1], index: 0, object: "embedding" }] }),
+    );
   });
 
   try {
@@ -84,10 +98,12 @@ test("honors custom authHeader/authScheme", async () => {
 });
 
 test("throws when response length does not match request length", async () => {
-  const restoreFetch = mockFetch(async () =>
-    Response.json({
-      data: [{ embedding: [0, 1, 2, 3], index: 0, object: "embedding" }],
-    }),
+  const restoreFetch = mockFetch(() =>
+    Promise.resolve(
+      Response.json({
+        data: [{ embedding: [0, 1, 2, 3], index: 0, object: "embedding" }],
+      }),
+    ),
   );
   try {
     const e = new OpenAICompatEmbedder({
@@ -96,19 +112,20 @@ test("throws when response length does not match request length", async () => {
       model: "m",
       dim: 4,
     });
-    await expect(e.embed(["a", "b"])).rejects.toThrow(
-      /response length 1 does not match request length 2/,
-    );
+    const err = await catchRejection(e.embed(["a", "b"]));
+    expect((err as Error).message).toMatch(/response length 1 does not match request length 2/);
   } finally {
     restoreFetch();
   }
 });
 
 test("throws when a vector has the wrong dimension", async () => {
-  const restoreFetch = mockFetch(async () =>
-    Response.json({
-      data: [{ embedding: [0, 1, 2], index: 0, object: "embedding" }],
-    }),
+  const restoreFetch = mockFetch(() =>
+    Promise.resolve(
+      Response.json({
+        data: [{ embedding: [0, 1, 2], index: 0, object: "embedding" }],
+      }),
+    ),
   );
   try {
     const e = new OpenAICompatEmbedder({
@@ -117,14 +134,15 @@ test("throws when a vector has the wrong dimension", async () => {
       model: "m",
       dim: 4,
     });
-    await expect(e.embed(["a"])).rejects.toThrow(/dim 3, expected 4/);
+    const err = await catchRejection(e.embed(["a"]));
+    expect((err as Error).message).toMatch(/dim 3, expected 4/);
   } finally {
     restoreFetch();
   }
 });
 
 test("throws when response body has no data array", async () => {
-  const restoreFetch = mockFetch(async () => Response.json({ error: "nope" }));
+  const restoreFetch = mockFetch(() => Promise.resolve(Response.json({ error: "nope" })));
   try {
     const e = new OpenAICompatEmbedder({
       baseUrl: "http://embedder.test",
@@ -132,14 +150,15 @@ test("throws when response body has no data array", async () => {
       model: "m",
       dim: 4,
     });
-    await expect(e.embed(["a"])).rejects.toThrow(/malformed response/);
+    const err = await catchRejection(e.embed(["a"]));
+    expect((err as Error).message).toMatch(/malformed response/);
   } finally {
     restoreFetch();
   }
 });
 
 test("throws on non-2xx", async () => {
-  const restoreFetch = mockFetch(async () => new Response("boom", { status: 500 }));
+  const restoreFetch = mockFetch(() => Promise.resolve(new Response("boom", { status: 500 })));
   try {
     const e = new OpenAICompatEmbedder({
       baseUrl: "http://embedder.test",
@@ -147,7 +166,8 @@ test("throws on non-2xx", async () => {
       model: "m",
       dim: 4,
     });
-    await expect(e.embed(["x"])).rejects.toThrow(/embeddings/);
+    const err = await catchRejection(e.embed(["x"]));
+    expect((err as Error).message).toMatch(/embeddings/);
   } finally {
     restoreFetch();
   }

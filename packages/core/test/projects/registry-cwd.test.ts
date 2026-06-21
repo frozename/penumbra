@@ -1,9 +1,10 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ProjectRegistry } from "../../src/projects/registry.js";
+
 import { findProjectIdByCwd } from "../../src/projects/registry-cwd.js";
+import { ProjectRegistry } from "../../src/projects/registry.js";
 
 const dirs: string[] = [];
 
@@ -17,7 +18,7 @@ function mkdir(prefix: string): string {
   return d;
 }
 
-function registry(entries: Array<{ project_id: string; root_path: string }>): ProjectRegistry {
+function registry(entries: { project_id: string; root_path: string }[]): ProjectRegistry {
   const m = new Map<string, { project_id: string; root_path: string }>();
   for (const e of entries) m.set(e.project_id, e);
   return new ProjectRegistry(m);

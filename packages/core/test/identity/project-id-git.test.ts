@@ -1,8 +1,9 @@
-import { expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
+
 import { resolveProjectId } from "../../src/identity/project-id.js";
 
 let dir = "";
@@ -14,7 +15,9 @@ beforeEach(() => {
   writeFileSync(join(dir, "README.md"), "#");
 });
 
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true });
+});
 
 test("resolves a git repo at the root to kind=git with deterministic id", () => {
   const r = resolveProjectId({ cwd: dir });

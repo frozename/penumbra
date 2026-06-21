@@ -1,11 +1,12 @@
-import { expect, test } from "bun:test";
+import { loadSqliteVec, migrate } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { migrate, loadSqliteVec } from "@penumbra/core";
+import { expect, test } from "bun:test";
+
 import {
-  HandoffStatusSchema,
-  HandoffRowSchema,
-  CreateHandoffRequestSchema,
   ApproveHandoffRequestSchema,
+  CreateHandoffRequestSchema,
+  HandoffRowSchema,
+  HandoffStatusSchema,
 } from "../../src/schemas/handoff.js";
 
 test("HandoffStatusSchema accepts valid statuses", () => {
@@ -106,13 +107,13 @@ test("migration adds chain_max_hops and chain_trust_mode columns to handoffs", (
 test("migration backfills error_message and cancel_requested_at onto legacy handoffs tables idempotently", () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);
-  db.exec(`CREATE TABLE handoffs (
+  db.run(`CREATE TABLE handoffs (
     handoff_id TEXT PRIMARY KEY, ts TEXT NOT NULL, project_id TEXT,
     conversation_id TEXT NOT NULL, from_agent TEXT NOT NULL, to_agent TEXT NOT NULL,
     to_role TEXT, message TEXT NOT NULL, status TEXT NOT NULL,
     resolved_by TEXT, resolved_at TEXT, redirected_to TEXT, triggered_by_event_id TEXT
   )`);
-  db.exec(`INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status)
+  db.run(`INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status)
            VALUES ('legacy', '2026-04-25T00:00:00Z', 'c0', 'a', 'b', 'old', 'pending')`);
 
   migrate(db, { embeddingDim: 384 });
@@ -139,13 +140,13 @@ test("migration is genuinely additive: handoffs created in a pre-existing DB wit
   const db = new Database(":memory:");
   loadSqliteVec(db);
   // Simulate a v0 database that predates the chain_* columns.
-  db.exec(`CREATE TABLE handoffs (
+  db.run(`CREATE TABLE handoffs (
     handoff_id TEXT PRIMARY KEY, ts TEXT NOT NULL, project_id TEXT,
     conversation_id TEXT NOT NULL, from_agent TEXT NOT NULL, to_agent TEXT NOT NULL,
     to_role TEXT, message TEXT NOT NULL, status TEXT NOT NULL,
     resolved_by TEXT, resolved_at TEXT, redirected_to TEXT, triggered_by_event_id TEXT
   )`);
-  db.exec(`INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status)
+  db.run(`INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status)
            VALUES ('legacy', '2026-04-25T00:00:00Z', 'c0', 'a', 'b', 'old', 'pending')`);
 
   migrate(db, { embeddingDim: 384 });
@@ -180,12 +181,12 @@ test("inserts with chain_max_hops + chain_trust_mode succeed; existing inserts s
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
-  db.exec(`
+  db.run(`
     INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status,
                           chain_max_hops, chain_trust_mode, chain_task_type)
     VALUES ('h1', '2026-04-26T00:00:00Z', 'c1', 'user', 'planner', 'go', 'approved', 5, 'all', 'implement_small')
   `);
-  db.exec(`
+  db.run(`
     INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status)
     VALUES ('h2', '2026-04-26T00:00:00Z', 'c1', 'a', 'b', 'msg', 'pending')
   `);
