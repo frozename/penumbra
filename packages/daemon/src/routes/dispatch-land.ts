@@ -143,6 +143,62 @@ function commitFailureLooksLikeHook(stderr: string): boolean {
 const dispatchLandTasks = new Map<string, DispatchLandTaskRecord>();
 let dispatchLandQueue: Promise<void> = Promise.resolve();
 
+// Terminal (done/failed) records accumulate for status GETs and idempotency
+// replies; only the in-flight (queued/running) entries are load-bearing. Bound
+// the table with TTL + capacity eviction so the Map cannot grow without limit.
+const DISPATCH_LAND_TERMINAL_TTL_MS = 60 * 60 * 1000;
+const DISPATCH_LAND_TASKS_MAX = 1000;
+
+function isTerminalDispatchLandStatus(status: DispatchLandTaskStatus): boolean {
+  return status === "done" || status === "failed";
+}
+
+function evictTerminalDispatchLandTasks(opts: {
+  now: Date;
+  ttlMs?: number;
+  maxSize?: number;
+}): void {
+  const ttlMs = opts.ttlMs ?? DISPATCH_LAND_TERMINAL_TTL_MS;
+  const maxSize = opts.maxSize ?? DISPATCH_LAND_TASKS_MAX;
+  const nowMs = opts.now.getTime();
+
+  // TTL sweep: drop terminal records whose finished_at is older than ttlMs.
+  for (const [taskId, record] of dispatchLandTasks) {
+    if (!isTerminalDispatchLandStatus(record.status)) continue;
+    if (!record.finished_at) continue;
+    const finishedMs = Date.parse(record.finished_at);
+    if (!Number.isFinite(finishedMs)) continue;
+    if (nowMs - finishedMs > ttlMs) {
+      dispatchLandTasks.delete(taskId);
+    }
+  }
+
+  // Capacity cap: while the Map exceeds maxSize, evict the oldest terminal
+  // record. In-flight (queued/running) entries are skipped — idempotency and
+  // status GETs depend on them.
+  if (dispatchLandTasks.size <= maxSize) return;
+  const terminals: Array<{ taskId: string; finishedMs: number }> = [];
+  for (const [taskId, record] of dispatchLandTasks) {
+    if (!isTerminalDispatchLandStatus(record.status)) continue;
+    const parsed = record.finished_at ? Date.parse(record.finished_at) : Number.NaN;
+    terminals.push({ taskId, finishedMs: Number.isFinite(parsed) ? parsed : 0 });
+  }
+  terminals.sort((a, b) => a.finishedMs - b.finishedMs);
+  for (const { taskId } of terminals) {
+    if (dispatchLandTasks.size <= maxSize) return;
+    dispatchLandTasks.delete(taskId);
+  }
+}
+
+// Test-only handle: exposes the module-scoped Map and eviction routine so
+// regression tests can exercise the policy without standing up real lands.
+export const __dispatchLandInternalsForTest = {
+  tasks: dispatchLandTasks,
+  evict: evictTerminalDispatchLandTasks,
+  TTL_MS: DISPATCH_LAND_TERMINAL_TTL_MS,
+  MAX_SIZE: DISPATCH_LAND_TASKS_MAX,
+};
+
 function createDefaultDeps(services: Services, repoDir: string): DispatchLandDeps {
   return {
     runGit: (args, opts) =>
@@ -412,6 +468,7 @@ export async function dispatchLandRoute(
         task.status = "done";
         task.result = outcome;
       }
+      evictTerminalDispatchLandTasks({ now: now() });
     })
     .catch((error) => {
       task.status = "failed";
@@ -420,6 +477,7 @@ export async function dispatchLandRoute(
         code: "internal_error",
         message: error instanceof Error ? error.message : String(error),
       };
+      evictTerminalDispatchLandTasks({ now: now() });
     });
 
   return json(

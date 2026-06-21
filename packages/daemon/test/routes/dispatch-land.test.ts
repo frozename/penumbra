@@ -1,7 +1,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import {
   buildServices,
@@ -12,7 +12,11 @@ import {
   type Services,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { dispatchLandRoute, dispatchLandTaskRoute } from "../../src/routes/dispatch-land.js";
+import {
+  __dispatchLandInternalsForTest,
+  dispatchLandRoute,
+  dispatchLandTaskRoute,
+} from "../../src/routes/dispatch-land.js";
 import { createDaemonFetchHandler } from "../../src/serve.js";
 
 function services(): Services {
@@ -2051,5 +2055,157 @@ describe("dispatchLandRoute", () => {
     expect(body.status).toBe("done");
     expect(body.result.pr_closed).toBe(false);
     expect(closed).toEqual([]);
+  });
+});
+
+describe("dispatchLandTasks eviction", () => {
+  beforeEach(() => {
+    // Other test cases in this file accumulate terminal entries in the
+    // module-scoped Map; clear it so eviction assertions are deterministic.
+    __dispatchLandInternalsForTest.tasks.clear();
+  });
+
+  function seedTerminalEntry(
+    taskId: string,
+    handoffId: string,
+    status: "done" | "failed",
+    finishedAtIso: string,
+  ): void {
+    __dispatchLandInternalsForTest.tasks.set(taskId, {
+      task_id: taskId,
+      handoff_id: handoffId,
+      status,
+      created_at: finishedAtIso,
+      started_at: finishedAtIso,
+      finished_at: finishedAtIso,
+      result: status === "done" ? ({ ok: true } as any) : null,
+      error: status === "failed" ? { code: "fake" } : null,
+    });
+  }
+
+  function seedInFlightEntry(
+    taskId: string,
+    handoffId: string,
+    status: "queued" | "running",
+  ): void {
+    __dispatchLandInternalsForTest.tasks.set(taskId, {
+      task_id: taskId,
+      handoff_id: handoffId,
+      status,
+      created_at: "2026-05-08T00:00:00.000Z",
+      started_at: status === "running" ? "2026-05-08T00:00:01.000Z" : null,
+      finished_at: null,
+      result: null,
+      error: null,
+    });
+  }
+
+  test("evicts terminal entries past TTL but keeps in-flight and recent terminals", () => {
+    // Stale terminals — both done and failed older than 1h.
+    const staleIds = ["evict-ttl-stale-1", "evict-ttl-stale-2", "evict-ttl-stale-3"];
+    for (const id of staleIds) {
+      seedTerminalEntry(
+        id,
+        `h-${id}`,
+        id.endsWith("3") ? "failed" : "done",
+        "2026-05-07T23:50:00.000Z", // 1h10m before "now" — strictly past 1h TTL
+      );
+    }
+    // Fresh terminal — finished 5 minutes before "now"; must survive TTL.
+    seedTerminalEntry("evict-ttl-fresh", "h-evict-ttl-fresh", "done", "2026-05-08T00:55:00.000Z");
+    // In-flight entries — must survive regardless of age.
+    seedInFlightEntry("evict-ttl-queued", "h-evict-ttl-queued", "queued");
+    seedInFlightEntry("evict-ttl-running", "h-evict-ttl-running", "running");
+
+    __dispatchLandInternalsForTest.evict({
+      now: new Date("2026-05-08T01:00:00.000Z"),
+      ttlMs: 60 * 60 * 1000,
+      maxSize: 10_000, // disable capacity cap for this case
+    });
+
+    for (const id of staleIds) {
+      expect(__dispatchLandInternalsForTest.tasks.has(id), `${id} should be evicted`).toBe(false);
+    }
+    expect(__dispatchLandInternalsForTest.tasks.has("evict-ttl-fresh")).toBe(true);
+    expect(__dispatchLandInternalsForTest.tasks.has("evict-ttl-queued")).toBe(true);
+    expect(__dispatchLandInternalsForTest.tasks.has("evict-ttl-running")).toBe(true);
+  });
+
+  test("capacity cap evicts oldest terminals first while in-flight survive", () => {
+    const baseMs = Date.parse("2026-05-08T00:30:00.000Z");
+    // Seed 20 terminal entries with monotonically increasing finished_at —
+    // all fresh enough that TTL would not evict at the chosen "now".
+    const terminalIds: string[] = [];
+    for (let i = 0; i < 20; i += 1) {
+      const id = `evict-cap-term-${i.toString().padStart(2, "0")}`;
+      const finishedAt = new Date(baseMs + i * 1000).toISOString();
+      seedTerminalEntry(id, `h-${id}`, i % 2 === 0 ? "done" : "failed", finishedAt);
+      terminalIds.push(id);
+    }
+    // Two in-flight tasks: must NOT be evicted even when over cap.
+    seedInFlightEntry("evict-cap-queued", "h-evict-cap-queued", "queued");
+    seedInFlightEntry("evict-cap-running", "h-evict-cap-running", "running");
+
+    expect(__dispatchLandInternalsForTest.tasks.size).toBe(22);
+
+    // Cap=12 forces eviction of 10 terminals (22 -> 12).
+    __dispatchLandInternalsForTest.evict({
+      now: new Date("2026-05-08T00:31:00.000Z"),
+      ttlMs: 60 * 60 * 1000,
+      maxSize: 12,
+    });
+
+    expect(__dispatchLandInternalsForTest.tasks.size).toBe(12);
+    // In-flight survives.
+    expect(__dispatchLandInternalsForTest.tasks.has("evict-cap-queued")).toBe(true);
+    expect(__dispatchLandInternalsForTest.tasks.has("evict-cap-running")).toBe(true);
+    // Oldest 10 terminals evicted; newest 10 survive.
+    for (let i = 0; i < 10; i += 1) {
+      expect(
+        __dispatchLandInternalsForTest.tasks.has(terminalIds[i]!),
+        `${terminalIds[i]!} evicted`,
+      ).toBe(false);
+    }
+    for (let i = 10; i < 20; i += 1) {
+      expect(
+        __dispatchLandInternalsForTest.tasks.has(terminalIds[i]!),
+        `${terminalIds[i]!} kept`,
+      ).toBe(true);
+    }
+  });
+
+  test("capacity cap will not evict in-flight even if it cannot reach maxSize", () => {
+    // 15 in-flight, 0 terminal — cap is impossible to honour without evicting in-flight.
+    for (let i = 0; i < 15; i += 1) {
+      const id = `evict-overflow-${i.toString().padStart(2, "0")}`;
+      seedInFlightEntry(id, `h-${id}`, i % 2 === 0 ? "queued" : "running");
+    }
+    expect(__dispatchLandInternalsForTest.tasks.size).toBe(15);
+
+    __dispatchLandInternalsForTest.evict({
+      now: new Date("2026-05-08T01:00:00.000Z"),
+      ttlMs: 60 * 60 * 1000,
+      maxSize: 5,
+    });
+
+    // Map stays at 15 — in-flight survives by design even when over cap.
+    expect(__dispatchLandInternalsForTest.tasks.size).toBe(15);
+  });
+
+  test("eviction is a no-op when under cap and within TTL", () => {
+    const freshTs = "2026-05-08T00:59:30.000Z";
+    const ids = ["evict-noop-1", "evict-noop-2", "evict-noop-3", "evict-noop-queued"];
+    for (let i = 0; i < 3; i += 1) seedTerminalEntry(ids[i]!, `h-${ids[i]}`, "done", freshTs);
+    seedInFlightEntry("evict-noop-queued", "h-evict-noop-queued", "queued");
+
+    const before = __dispatchLandInternalsForTest.tasks.size;
+    __dispatchLandInternalsForTest.evict({
+      now: new Date("2026-05-08T01:00:00.000Z"),
+      ttlMs: 60 * 60 * 1000,
+      maxSize: 10_000,
+    });
+
+    expect(__dispatchLandInternalsForTest.tasks.size).toBe(before);
+    for (const id of ids) expect(__dispatchLandInternalsForTest.tasks.has(id)).toBe(true);
   });
 });
