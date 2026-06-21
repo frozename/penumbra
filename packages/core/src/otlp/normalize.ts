@@ -1,5 +1,5 @@
-import type { ParsedLogRecord } from "./types.js";
 import type { T0EventInput } from "../schemas/event.js";
+import type { ParsedLogRecord } from "./types.js";
 
 // Attribute keys that carry user-content or user-identifiers and must NOT be
 // persisted in payload_json. Checked against the un-prefixed key, so it covers
@@ -90,7 +90,7 @@ function providerFromRecord(rec: ParsedLogRecord): string | null {
   const fromAttr = mapProvider(asString(rec.attrs["gen_ai.provider.name"]));
   if (fromAttr) return fromAttr;
   const svc = asString(rec.resourceAttrs["service.name"]);
-  if (svc && SERVICE_TO_PROVIDER[svc]) return SERVICE_TO_PROVIDER[svc]!;
+  if (svc && SERVICE_TO_PROVIDER[svc]) return SERVICE_TO_PROVIDER[svc];
   return null;
 }
 
@@ -213,7 +213,9 @@ export function normalizeOtlpLogsToUsageEvents(records: ParsedLogRecord[]): T0Ev
   for (const rec of records) {
     const eventName = asString(rec.attrs["event.name"]);
     const bodyName = asString(rec.body);
-    const handler = (eventName && LOG_HANDLERS[eventName]) || (bodyName && LOG_HANDLERS[bodyName]);
+    const handler =
+      (eventName ? LOG_HANDLERS[eventName] : undefined) ??
+      (bodyName ? LOG_HANDLERS[bodyName] : undefined);
     if (!handler) continue;
     const ev = handler(rec);
     if (ev) out.push(ev);

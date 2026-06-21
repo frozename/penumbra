@@ -1,7 +1,8 @@
+import { execFile as execFileCb, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { execFile as execFileCb, spawn } from "node:child_process";
+
 import { createLogger, type Logger } from "../logger.js";
 
 const execFile = promisify(execFileCb);
@@ -73,10 +74,7 @@ function defaultRunner(
   if (opts?.stdio === "ignore") {
     return spawnSilent(cmd, args, opts);
   }
-  return execFile(cmd, args, { ...opts, encoding: opts?.encoding ?? "utf8" }) as Promise<{
-    stdout: string;
-    stderr: string;
-  }>;
+  return execFile(cmd, args, { ...opts, encoding: opts?.encoding ?? "utf8" });
 }
 
 function spawnSilent(
@@ -94,7 +92,7 @@ function spawnSilent(
     let timedOut = false;
     let stderrText = "";
     const stderrCap = opts.maxBuffer ?? SPAWN_STDERR_CAP;
-    child.stderr?.on("data", (chunk: Buffer | string) => {
+    child.stderr.on("data", (chunk: Buffer | string) => {
       if (stderrText.length < stderrCap) {
         stderrText = (stderrText + String(chunk)).slice(0, stderrCap);
       }
@@ -110,7 +108,7 @@ function spawnSilent(
             child.kill("SIGKILL");
           }, opts.timeout)
         : null;
-    const settle = (fn: () => void) => {
+    const settle = (fn: () => void): void => {
       if (settled) return;
       settled = true;
       if (timeout) clearTimeout(timeout);
@@ -118,13 +116,18 @@ function spawnSilent(
     };
     // An external AbortSignal surfaces here as an unwrapped ABORT_ERR — it
     // must stay distinguishable from a timeout for the caller's retry logic.
-    child.on("error", (err) => settle(() => reject(err)));
-    child.on("exit", (code, signal) =>
+    child.on("error", (err) => {
+      settle(() => {
+        reject(err);
+      });
+    });
+    child.on("exit", (code, signal) => {
       settle(() => {
         const detail = stderrText.trim();
         if (timedOut) {
+          const timeoutMs = opts.timeout ?? 0;
           const err = new Error(
-            `spawn ${cmd} timed out after ${opts.timeout}ms${detail ? `: ${detail}` : ""}`,
+            `spawn ${cmd} timed out after ${String(timeoutMs)}ms${detail ? `: ${detail}` : ""}`,
           ) as Error & { code: string; signal: NodeJS.Signals | null };
           err.code = "ETIMEDOUT";
           err.signal = signal;
@@ -135,8 +138,9 @@ function spawnSilent(
           resolve({ stdout: "", stderr: stderrText });
           return;
         }
+        const reason = signal ? `signal ${signal}` : `code ${String(code)}`;
         const err = new Error(
-          `${cmd} exited with ${signal ? `signal ${signal}` : `code ${code}`}${detail ? `: ${detail}` : ""}`,
+          `${cmd} exited with ${reason}${detail ? `: ${detail}` : ""}`,
         ) as Error & {
           code?: number | string | null;
           signal?: NodeJS.Signals | null;
@@ -144,8 +148,8 @@ function spawnSilent(
         err.code = code;
         err.signal = signal;
         reject(err);
-      }),
-    );
+      });
+    });
   });
 }
 
@@ -158,13 +162,13 @@ export class WorktreeManager {
   private runner: WorktreeCommandRunner;
 
   constructor(opts?: WorktreeManagerOpts) {
-    this.#mainRepoDir = opts?.mainRepoDir || process.cwd();
+    this.#mainRepoDir = opts?.mainRepoDir ?? process.cwd();
     this.log = opts?.log ?? NOOP_LOG;
     this.resolveProjectRoot = opts?.resolveProjectRoot;
     this.runner = opts?.runner ?? defaultRunner;
     this.rootDir =
-      opts?.rootDir ||
-      process.env.PENUMBRA_WORKTREE_ROOT ||
+      opts?.rootDir ??
+      process.env["PENUMBRA_WORKTREE_ROOT"] ??
       `${this.repoRootFor(undefined)}-worktrees`;
     this.rediscoverWorktrees();
   }
@@ -173,7 +177,10 @@ export class WorktreeManager {
     return this.#mainRepoDir;
   }
 
-  private git(args: string[], opts?: { cwd?: string }) {
+  private git(
+    args: string[],
+    opts?: { cwd?: string },
+  ): Promise<{ stdout: string; stderr: string }> {
     return this.runner("git", args, { ...opts, encoding: "utf8" });
   }
 
@@ -204,47 +211,68 @@ export class WorktreeManager {
     return [...new Set([this.baseFor(undefined)])];
   }
 
-  private rediscoverWorktrees() {
+  private rediscoverEntry(base: string, entry: fs.Dirent): void {
+    if (!entry.isDirectory()) return;
+    const handoffId = entry.name;
+    const wtPath = path.join(base, handoffId);
+    if (!fs.existsSync(path.join(wtPath, ".git"))) return;
+    const branchName = `agent/${handoffId}`;
+    const storageRoot = path.join(wtPath, ".test-storage");
+    const worktreeMode = inferWorktreeMode(wtPath);
+    if (!isWorktreeReadySync(wtPath, worktreeMode, handoffId)) return;
+
+    let createdAt = new Date().toISOString();
+    try {
+      createdAt = fs.statSync(wtPath).birthtime.toISOString();
+    } catch {
+      // ignore stat errors
+    }
+
+    this.worktrees.set(handoffId, {
+      handoffId,
+      path: wtPath,
+      branchName,
+      storageRoot,
+      createdAt,
+      status: "created",
+      worktreeMode,
+    });
+    if (worktreeMode === "symlink_mirror") {
+      mirrorNodeModuleSymlinks(this.#mainRepoDir, wtPath, this.log);
+    }
+  }
+
+  private rediscoverWorktrees(): void {
     for (const base of this.discoveryBases()) {
       if (!fs.existsSync(base)) continue;
-
       const entries = fs.readdirSync(base, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isDirectory()) {
-          const handoffId = entry.name;
-          const wtPath = path.join(base, handoffId);
-
-          // A valid git worktree has a .git file (not directory) containing `gitdir: ...`
-          if (fs.existsSync(path.join(wtPath, ".git"))) {
-            const branchName = `agent/${handoffId}`;
-            const storageRoot = path.join(wtPath, ".test-storage");
-            const worktreeMode = inferWorktreeMode(wtPath);
-            if (!isWorktreeReadySync(wtPath, worktreeMode, handoffId)) continue;
-
-            let createdAt = new Date().toISOString();
-            try {
-              const stat = fs.statSync(wtPath);
-              createdAt = stat.birthtime.toISOString();
-            } catch (e) {
-              // Ignore stat errors
-            }
-
-            this.worktrees.set(handoffId, {
-              handoffId,
-              path: wtPath,
-              branchName,
-              storageRoot,
-              createdAt,
-              status: "created",
-              worktreeMode,
-            });
-            if (worktreeMode === "symlink_mirror") {
-              mirrorNodeModuleSymlinks(this.#mainRepoDir, wtPath, this.log);
-            }
-          }
-        }
-      }
+      for (const entry of entries) this.rediscoverEntry(base, entry);
     }
+  }
+
+  private copyBunLockIfNeeded(wtPath: string, repoRoot: string, worktreeMode: WorktreeMode): void {
+    if (worktreeMode === "isolated_install") return;
+    const mainBunLock = path.join(repoRoot, "bun.lock");
+    const wtBunLock = path.join(wtPath, "bun.lock");
+    if (fs.existsSync(mainBunLock)) {
+      fs.rmSync(wtBunLock, { force: true });
+      fs.copyFileSync(mainBunLock, wtBunLock);
+    }
+  }
+
+  private async finalizeWorktreeMode(
+    wtPath: string,
+    repoRoot: string,
+    handoffId: string,
+    worktreeMode: WorktreeMode,
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    if (worktreeMode === "isolated_install") {
+      await this.runIsolatedInstall(wtPath, signal);
+    } else {
+      mirrorNodeModuleSymlinks(repoRoot, wtPath, this.log);
+    }
+    writeWorktreeReady(wtPath, handoffId);
   }
 
   async createWorktree(handoffId: string, opts?: CreateOpts): Promise<WorktreeHandle> {
@@ -269,56 +297,21 @@ export class WorktreeManager {
 
     const wtPath = path.join(base, handoffId);
     const branchName = `agent/${handoffId}`;
-    const baseRef = opts?.baseRef || "HEAD";
+    const baseRef = opts?.baseRef ?? "HEAD";
     const worktreeMode: WorktreeMode = opts?.isolated_install
       ? "isolated_install"
       : "symlink_mirror";
-    let cleanedUpPartialWorktree = false;
 
     try {
-      // 1. Add detached worktree
-      await this.git(["worktree", "add", "--detach", wtPath, baseRef], {
-        cwd: repoRoot,
-      });
-
-      // 2. Checkout new branch
+      await this.git(["worktree", "add", "--detach", wtPath, baseRef], { cwd: repoRoot });
       await this.git(["-C", wtPath, "checkout", "-b", branchName]);
+      this.copyBunLockIfNeeded(wtPath, repoRoot, worktreeMode);
 
-      // 3. Copy bun.lock (do not symlink to avoid dirty git state). Only for
-      // the symlink-mirror topology: an isolated install must run against the
-      // lockfile of the CHECKED-OUT ref, or --frozen-lockfile fails (or
-      // installs the wrong graph) whenever baseRef diverges from the daemon's
-      // current main.
-      if (worktreeMode !== "isolated_install") {
-        const mainBunLock = path.join(repoRoot, "bun.lock");
-        const wtBunLock = path.join(wtPath, "bun.lock");
-        if (fs.existsSync(mainBunLock)) {
-          fs.rmSync(wtBunLock, { force: true });
-          fs.copyFileSync(mainBunLock, wtBunLock);
-        }
-      }
-
-      // 4. Create .test-storage/ dir and persist the mode before any long
-      // install can block, so crash recovery observes the authoritative mode.
       const storageRoot = path.join(wtPath, ".test-storage");
       fs.mkdirSync(storageRoot, { recursive: true });
       writeWorktreeMode(wtPath, worktreeMode);
 
-      if (worktreeMode === "isolated_install") {
-        try {
-          await this.runIsolatedInstall(wtPath, opts?.signal);
-        } catch (err) {
-          await this.removePartialWorktree(wtPath, repoRoot);
-          cleanedUpPartialWorktree = true;
-          throw err;
-        }
-        writeWorktreeReady(wtPath, handoffId);
-      } else {
-        // Bun workspaces create root and per-package node_modules. Mirroring
-        // all of them keeps the default fast path byte-for-byte compatible.
-        mirrorNodeModuleSymlinks(repoRoot, wtPath, this.log);
-        writeWorktreeReady(wtPath, handoffId);
-      }
+      await this.finalizeWorktreeMode(wtPath, repoRoot, handoffId, worktreeMode, opts?.signal);
 
       const handle: WorktreeHandle = {
         handoffId,
@@ -334,7 +327,7 @@ export class WorktreeManager {
       this.worktrees.set(handoffId, handle);
       return handle;
     } catch (err) {
-      if (!cleanedUpPartialWorktree) await this.removePartialWorktree(wtPath, repoRoot);
+      await this.removePartialWorktree(wtPath, repoRoot);
       throw err;
     }
   }
@@ -354,10 +347,8 @@ export class WorktreeManager {
       // Best-effort: a deletion failure (EBUSY etc.) must never mask the
       // original install error the caller is about to rethrow; the unready
       // directory is reaped later by the grace-period GC.
-      this.log.warn(
-        { err: err instanceof Error ? err.message : String(err), wtPath },
-        "partial worktree cleanup failed",
-      );
+      const errMessage = err instanceof Error ? err.message : String(err);
+      this.log.warn({ err: errMessage, wtPath }, "partial worktree cleanup failed");
     }
   }
 
@@ -380,7 +371,7 @@ export class WorktreeManager {
       // callers can distinguish the two.
       if (isAbortError(err)) throw err;
       if (isTimeoutError(err)) {
-        throw new Error(`isolated bun install timed out after ${timeout}ms`, {
+        throw new Error(`isolated bun install timed out after ${String(timeout)}ms`, {
           cause: err instanceof Error ? err : new Error(String(err)),
         });
       }
@@ -393,17 +384,18 @@ export class WorktreeManager {
     ancestorRefs: string[],
     opts?: { project_id?: string },
   ): Promise<string> {
-    if (ancestorRefs.length === 0) {
+    const firstRef = ancestorRefs[0];
+    if (firstRef === undefined) {
       throw new Error("stageMergedBase: empty ancestorRefs");
     }
-    if (ancestorRefs.length === 1) return ancestorRefs[0]!;
+    if (ancestorRefs.length === 1) return firstRef;
 
     const repoRoot = this.repoRootFor(opts?.project_id);
     const base = this.baseFor(opts?.project_id);
     const scratchPath = path.join(base, `.stage-${handoffId}`);
     const stageBranch = `stage/${handoffId}`;
 
-    await this.git(["-C", repoRoot, "branch", "-f", stageBranch, ancestorRefs[0]!]);
+    await this.git(["-C", repoRoot, "branch", "-f", stageBranch, firstRef]);
     await this.git(["-C", repoRoot, "worktree", "add", "--detach", scratchPath, stageBranch]);
 
     try {
@@ -477,6 +469,31 @@ export class WorktreeManager {
     return Array.from(this.worktrees.values());
   }
 
+  private async classifyOrphanEntry(
+    base: string,
+    entry: fs.Dirent,
+  ): Promise<OrphanWorktreeHandle | null> {
+    if (!entry.isDirectory()) return null;
+    const handoffId = entry.name;
+    if (!UUID_DIR_RE.test(handoffId)) return null;
+    if (this.worktrees.has(handoffId)) return null;
+
+    const wtPath = path.join(base, handoffId);
+    try {
+      await fs.promises.access(path.join(wtPath, ".git"));
+    } catch {
+      return null;
+    }
+    const worktreeMode = inferWorktreeMode(wtPath);
+    if (await isWorktreeReady(wtPath, worktreeMode, handoffId)) {
+      return { path: wtPath, handoffId };
+    }
+    if (await isUnreadyWorktreePastGrace(wtPath)) {
+      return { path: wtPath, handoffId };
+    }
+    return null;
+  }
+
   async discoverOrphanWorktrees(): Promise<OrphanWorktreeHandle[]> {
     const orphans: OrphanWorktreeHandle[] = [];
     for (const base of this.discoveryBases()) {
@@ -486,142 +503,134 @@ export class WorktreeManager {
       } catch {
         continue;
       }
-
       const entries = await fs.promises.readdir(base, { withFileTypes: true });
       for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        const handoffId = entry.name;
-        if (!UUID_DIR_RE.test(handoffId)) continue;
-        if (this.worktrees.has(handoffId)) continue;
-
-        const wtPath = path.join(base, handoffId);
-        try {
-          await fs.promises.access(path.join(wtPath, ".git"));
-        } catch {
-          continue;
-        }
-        const worktreeMode = inferWorktreeMode(wtPath);
-        if (!(await isWorktreeReady(wtPath, worktreeMode, handoffId))) {
-          if (await isUnreadyWorktreePastGrace(wtPath)) {
-            orphans.push({ path: wtPath, handoffId });
-          }
-          continue;
-        }
-        orphans.push({ path: wtPath, handoffId });
+        const orphan = await this.classifyOrphanEntry(base, entry);
+        if (orphan) orphans.push(orphan);
       }
     }
 
     return orphans.sort((a, b) => a.handoffId.localeCompare(b.handoffId));
   }
 
+  private hydrateMissingHandle(
+    handoffId: string,
+    project_id: string | undefined,
+  ): WorktreeHandle | null {
+    const base = this.baseFor(project_id);
+    const wtPath = path.join(base, handoffId);
+    if (!fs.existsSync(wtPath)) return null;
+    let createdAt = new Date().toISOString();
+    try {
+      createdAt = fs.statSync(wtPath).birthtime.toISOString();
+    } catch {
+      // ignore stat errors — synthesize a placeholder timestamp
+    }
+    return {
+      handoffId,
+      path: wtPath,
+      branchName: `agent/${handoffId}`,
+      storageRoot: path.join(wtPath, ".test-storage"),
+      createdAt,
+      status: "created",
+      projectId: project_id,
+      worktreeMode: inferWorktreeMode(wtPath),
+    };
+  }
+
+  private async preCleanForTeardown(handle: WorktreeHandle, handoffId: string): Promise<void> {
+    const wtBunLock = path.join(handle.path, "bun.lock");
+    if (fs.existsSync(wtBunLock)) {
+      fs.rmSync(wtBunLock, { force: true });
+      try {
+        await this.git(["-C", handle.path, "checkout", "bun.lock"]);
+      } catch (err) {
+        this.log.warn(
+          { handoff_id: handoffId, path: handle.path, err: String(err) },
+          "failed to restore bun.lock before worktree removal",
+        );
+      }
+    }
+    const storageRoot = path.join(handle.path, ".test-storage");
+    if (fs.existsSync(storageRoot)) {
+      fs.rmSync(storageRoot, { recursive: true, force: true });
+    }
+    fs.rmSync(path.join(handle.path, ".penumbra-worktree-mode"), { force: true });
+    fs.rmSync(path.join(handle.path, WORKTREE_MODE_FILE), { force: true });
+    fs.rmSync(path.join(handle.path, WORKTREE_READY_FILE), { force: true });
+  }
+
+  private async runWorktreeRemove(
+    handle: WorktreeHandle,
+    handoffId: string,
+    force: boolean,
+    repoRoot: string,
+  ): Promise<void> {
+    try {
+      await this.git(["worktree", "remove", ...(force ? ["--force"] : []), handle.path], {
+        cwd: repoRoot,
+      });
+      return;
+    } catch (err) {
+      if (force) {
+        throw new Error(`Failed to remove worktree ${handle.path}: ${String(err)}`);
+      }
+      this.log.warn(
+        { handoff_id: handoffId, path: handle.path, err: String(err) },
+        "worktree remove failed without force; retrying with --force",
+      );
+      try {
+        await this.git(["worktree", "remove", "--force", handle.path], { cwd: repoRoot });
+      } catch (forceErr) {
+        throw new Error(`Failed to remove worktree ${handle.path}: ${String(forceErr)}`);
+      }
+    }
+  }
+
+  private async verifyBranchDeleted(handle: WorktreeHandle, repoRoot: string): Promise<boolean> {
+    try {
+      await this.git(["branch", "-D", handle.branchName], { cwd: repoRoot });
+    } catch {
+      // branch deletion is verified below
+    }
+    try {
+      await this.git(["rev-parse", "--verify", "--quiet", `refs/heads/${handle.branchName}`], {
+        cwd: repoRoot,
+      });
+      return false;
+    } catch {
+      return true;
+    }
+  }
+
   async teardownWorktree(
     handoffId: string,
     force?: boolean,
     project_id?: string,
-    deleteBranch: boolean = true,
+    deleteBranch = true,
   ): Promise<{ worktreeRemoved: boolean; branchDeleted: boolean }> {
     let handle = this.worktrees.get(handoffId);
     const effectiveProjectId = handle?.projectId ?? project_id;
     const repoRoot = this.repoRootFor(effectiveProjectId);
 
     if (!handle) {
-      const base = this.baseFor(project_id);
-      const wtPath = path.join(base, handoffId);
-      if (!fs.existsSync(wtPath)) {
-        return { worktreeRemoved: false, branchDeleted: false };
-      }
-      let createdAt = new Date().toISOString();
-      try {
-        createdAt = fs.statSync(wtPath).birthtime.toISOString();
-      } catch {
-        // ignore stat errors — synthesize a placeholder timestamp
-      }
-      handle = {
-        handoffId,
-        path: wtPath,
-        branchName: `agent/${handoffId}`,
-        storageRoot: path.join(wtPath, ".test-storage"),
-        createdAt,
-        status: "created",
-        projectId: project_id,
-        worktreeMode: inferWorktreeMode(wtPath),
-      };
+      const hydrated = this.hydrateMissingHandle(handoffId, project_id);
+      if (!hydrated) return { worktreeRemoved: false, branchDeleted: false };
+      handle = hydrated;
     }
 
     if (!force) {
-      // Remove framework-injected files so git doesn't complain about modified/untracked files
-      const wtBunLock = path.join(handle.path, "bun.lock");
-      if (fs.existsSync(wtBunLock)) {
-        fs.rmSync(wtBunLock, { force: true });
-        // bun.lock is git-tracked here, so restore the tracked copy before
-        // `git worktree remove` checks for local modifications.
-        try {
-          await this.git(["-C", handle.path, "checkout", "bun.lock"]);
-        } catch (err) {
-          this.log.warn(
-            { handoff_id: handoffId, path: handle.path, err: String(err) },
-            "failed to restore bun.lock before worktree removal",
-          );
-        }
-      }
-      const storageRoot = path.join(handle.path, ".test-storage");
-      if (fs.existsSync(storageRoot)) {
-        fs.rmSync(storageRoot, { recursive: true, force: true });
-      }
-      fs.rmSync(path.join(handle.path, ".penumbra-worktree-mode"), { force: true });
-      fs.rmSync(path.join(handle.path, WORKTREE_MODE_FILE), { force: true });
-      fs.rmSync(path.join(handle.path, WORKTREE_READY_FILE), { force: true });
+      await this.preCleanForTeardown(handle, handoffId);
     }
-    // Remove every node_modules symlink we mirrored in (top-level + per-package).
-    // .gitignore's `node_modules/` rule matches directories but not symlinks, so without
-    // cleanup `git worktree remove` (non-force) treats them as untracked. Force removal
-    // needs the same pre-cleanup so git never sees symlinks back into the main checkout.
     removeNodeModuleSymlinks(repoRoot, handle.path, this.log);
 
-    try {
-      await this.git(["worktree", "remove", ...(force ? ["--force"] : []), handle.path], {
-        cwd: repoRoot,
-      });
-    } catch (err) {
-      if (!force) {
-        this.log.warn(
-          { handoff_id: handoffId, path: handle.path, err: String(err) },
-          "worktree remove failed without force; retrying with --force",
-        );
-        try {
-          await this.git(["worktree", "remove", "--force", handle.path], {
-            cwd: repoRoot,
-          });
-        } catch (forceErr) {
-          throw new Error(`Failed to remove worktree ${handle.path}: ${forceErr}`);
-        }
-      } else {
-        throw new Error(`Failed to remove worktree ${handle.path}: ${err}`);
-      }
-    }
+    await this.runWorktreeRemove(handle, handoffId, force ?? false, repoRoot);
 
     if (fs.existsSync(handle.path)) {
       throw new Error(`worktree remove reported success but path still exists: ${handle.path}`);
     }
 
-    let branchDeleted = false;
-    if (deleteBranch) {
-      try {
-        await this.git(["branch", "-D", handle.branchName], {
-          cwd: repoRoot,
-        });
-      } catch {
-        // branch deletion is verified below
-      }
-      try {
-        await this.git(["rev-parse", "--verify", "--quiet", `refs/heads/${handle.branchName}`], {
-          cwd: repoRoot,
-        });
-        branchDeleted = false;
-      } catch {
-        branchDeleted = true;
-      }
-    }
+    const branchDeleted = deleteBranch ? await this.verifyBranchDeleted(handle, repoRoot) : false;
 
     this.worktrees.delete(handoffId);
     return { worktreeRemoved: true, branchDeleted };
@@ -855,53 +864,76 @@ function extractWorkspacePatterns(parsedPackageJson: unknown): string[] {
   return [];
 }
 
+function visitLiteralSegment(
+  mainRoot: string,
+  pattern: string,
+  log: Logger,
+  segments: string[],
+  index: number,
+  relDir: string,
+  segment: string,
+  recurse: (i: number, rel: string) => void,
+): void {
+  const nextRel = relDir ? path.join(relDir, segment) : segment;
+  const nextAbs = path.join(mainRoot, nextRel);
+  try {
+    if (fs.statSync(nextAbs).isDirectory()) {
+      recurse(index + 1, nextRel);
+    }
+  } catch (err) {
+    if (isMissingError(err)) return;
+    logCaughtError(log, "failed to inspect workspace path while expanding workspaces", err, {
+      path: nextAbs,
+      pattern,
+    });
+  }
+}
+
+function visitGlobSegment(
+  mainRoot: string,
+  pattern: string,
+  log: Logger,
+  index: number,
+  relDir: string,
+  segment: string,
+  recurse: (i: number, rel: string) => void,
+): void {
+  const currentAbs = path.join(mainRoot, relDir);
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(currentAbs, { withFileTypes: true });
+  } catch (err) {
+    if (isMissingError(err)) return;
+    logCaughtError(log, "failed to read workspace parent while expanding workspaces", err, {
+      path: currentAbs,
+      pattern,
+    });
+    return;
+  }
+  const segmentPattern = globSegmentToRegExp(segment);
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (!segmentPattern.test(entry.name)) continue;
+    const nextRel = relDir ? path.join(relDir, entry.name) : entry.name;
+    recurse(index + 1, nextRel);
+  }
+}
+
 function expandWorkspacePattern(mainRoot: string, pattern: string, log: Logger): string[] {
-  const segments = pattern.replace(/\\/g, "/").split("/").filter(Boolean);
+  const segments = pattern.replaceAll("\\", "/").split("/").filter(Boolean);
   const matches: string[] = [];
 
-  const visit = (index: number, relDir: string) => {
+  const visit = (index: number, relDir: string): void => {
     if (index === segments.length) {
       matches.push(relDir);
       return;
     }
-
-    const segment = segments[index]!;
-    if (!segment.includes("*")) {
-      const nextRel = relDir ? path.join(relDir, segment) : segment;
-      const nextAbs = path.join(mainRoot, nextRel);
-      try {
-        if (fs.statSync(nextAbs).isDirectory()) {
-          visit(index + 1, nextRel);
-        }
-      } catch (err) {
-        if (isMissingError(err)) return;
-        logCaughtError(log, "failed to inspect workspace path while expanding workspaces", err, {
-          path: nextAbs,
-          pattern,
-        });
-      }
-      return;
-    }
-
-    const currentAbs = path.join(mainRoot, relDir);
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(currentAbs, { withFileTypes: true });
-    } catch (err) {
-      if (isMissingError(err)) return;
-      logCaughtError(log, "failed to read workspace parent while expanding workspaces", err, {
-        path: currentAbs,
-        pattern,
-      });
-      return;
-    }
-
-    const segmentPattern = globSegmentToRegExp(segment);
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      if (!segmentPattern.test(entry.name)) continue;
-      const nextRel = relDir ? path.join(relDir, entry.name) : entry.name;
-      visit(index + 1, nextRel);
+    const segment = segments[index];
+    if (segment === undefined) return;
+    if (segment.includes("*")) {
+      visitGlobSegment(mainRoot, pattern, log, index, relDir, segment, visit);
+    } else {
+      visitLiteralSegment(mainRoot, pattern, log, segments, index, relDir, segment, visit);
     }
   };
 
@@ -910,7 +942,7 @@ function expandWorkspacePattern(mainRoot: string, pattern: string, log: Logger):
 }
 
 function globSegmentToRegExp(segment: string): RegExp {
-  const escaped = segment.replace(/[|\\{}()[\]^$+?.]/g, "\\$&").replace(/\*/g, ".*");
+  const escaped = segment.replaceAll(/[|\\{}()[\]^$+?.]/g, "\\$&").replaceAll("*", ".*");
   return new RegExp(`^${escaped}$`);
 }
 

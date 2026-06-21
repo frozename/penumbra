@@ -5,6 +5,8 @@
  *
  * Reference: https://protobuf.dev/programming-guides/encoding/
  */
+import type { ParsedLogRecord } from "./types.js";
+
 export class ProtoReader {
   private pos = 0;
   constructor(private readonly buf: Uint8Array) {}
@@ -16,6 +18,10 @@ export class ProtoReader {
     return this.pos;
   }
 
+  private byteAt(idx: number): number {
+    return this.buf[idx] ?? 0;
+  }
+
   /** Read a varint as a JS number (truncates beyond 53 bits). */
   readVarint(): number {
     let result = 0;
@@ -23,7 +29,8 @@ export class ProtoReader {
     let byte: number;
     do {
       if (this.pos >= this.buf.length) throw new Error("protobuf: truncated varint");
-      byte = this.buf[this.pos++]!;
+      byte = this.byteAt(this.pos);
+      this.pos++;
       result += (byte & 0x7f) * Math.pow(2, shift);
       shift += 7;
       if (shift > 63) throw new Error("protobuf: varint too long");
@@ -35,16 +42,16 @@ export class ProtoReader {
   readFixed64(): number {
     if (this.pos + 8 > this.buf.length) throw new Error("protobuf: truncated fixed64");
     const lo =
-      (this.buf[this.pos]! |
-        (this.buf[this.pos + 1]! << 8) |
-        (this.buf[this.pos + 2]! << 16) |
-        (this.buf[this.pos + 3]! << 24)) >>>
+      (this.byteAt(this.pos) |
+        (this.byteAt(this.pos + 1) << 8) |
+        (this.byteAt(this.pos + 2) << 16) |
+        (this.byteAt(this.pos + 3) << 24)) >>>
       0;
     const hi =
-      (this.buf[this.pos + 4]! |
-        (this.buf[this.pos + 5]! << 8) |
-        (this.buf[this.pos + 6]! << 16) |
-        (this.buf[this.pos + 7]! << 24)) >>>
+      (this.byteAt(this.pos + 4) |
+        (this.byteAt(this.pos + 5) << 8) |
+        (this.byteAt(this.pos + 6) << 16) |
+        (this.byteAt(this.pos + 7) << 24)) >>>
       0;
     this.pos += 8;
     return hi * Math.pow(2, 32) + lo;
@@ -63,8 +70,8 @@ export class ProtoReader {
     if (this.pos + 8 > this.buf.length) throw new Error("protobuf: truncated fixed64");
     let lo = BigInt(0);
     let hi = BigInt(0);
-    for (let i = 0; i < 4; i++) lo |= BigInt(this.buf[this.pos + i]!) << BigInt(8 * i);
-    for (let i = 0; i < 4; i++) hi |= BigInt(this.buf[this.pos + 4 + i]!) << BigInt(8 * i);
+    for (let i = 0; i < 4; i++) lo |= BigInt(this.byteAt(this.pos + i)) << BigInt(8 * i);
+    for (let i = 0; i < 4; i++) hi |= BigInt(this.byteAt(this.pos + 4 + i)) << BigInt(8 * i);
     this.pos += 8;
     return ((hi << BigInt(32)) | lo).toString();
   }
@@ -114,10 +121,7 @@ export class ProtoReader {
         this.pos += 4;
         return;
       default:
-        // Wire types 3, 4 (groups), 6, 7 (reserved) cannot be skipped without
-        // schema knowledge. Caller (envelope walker) lets this propagate to the
-        // daemon route which returns 200 + parse_error to avoid retry loops.
-        throw new Error(`protobuf: cannot skip wire type ${wireType}`);
+        throw new Error(`protobuf: cannot skip wire type ${String(wireType)}`);
     }
   }
 
@@ -129,9 +133,38 @@ export class ProtoReader {
   }
 }
 
-import type { ParsedLogRecord } from "./types.js";
-
 type AttrValue = unknown;
+
+function readArrayValue(arrayBytes: Uint8Array): AttrValue[] {
+  const out: AttrValue[] = [];
+  const ar = new ProtoReader(arrayBytes);
+  while (!ar.eof) {
+    const at = ar.readTag();
+    if (!at) break;
+    if (at.fieldNumber === 1 && at.wireType === 2) {
+      out.push(readAnyValue(ar.readLengthDelimited()));
+    } else {
+      ar.skipField(at.wireType);
+    }
+  }
+  return out;
+}
+
+function readKvListValue(kvBytes: Uint8Array): Record<string, AttrValue> {
+  const out: Record<string, AttrValue> = {};
+  const kr = new ProtoReader(kvBytes);
+  while (!kr.eof) {
+    const kt = kr.readTag();
+    if (!kt) break;
+    if (kt.fieldNumber === 1 && kt.wireType === 2) {
+      const [k, v] = readKeyValue(kr.readLengthDelimited());
+      out[k] = v;
+    } else {
+      kr.skipField(kt.wireType);
+    }
+  }
+  return out;
+}
 
 function readAnyValue(bytes: Uint8Array): AttrValue {
   const r = new ProtoReader(bytes);
@@ -147,37 +180,10 @@ function readAnyValue(bytes: Uint8Array): AttrValue {
         return r.readVarint();
       case 4:
         return r.readDouble64();
-      case 5: {
-        const arrayBytes = r.readLengthDelimited();
-        const out: AttrValue[] = [];
-        const ar = new ProtoReader(arrayBytes);
-        while (!ar.eof) {
-          const at = ar.readTag();
-          if (!at) break;
-          if (at.fieldNumber === 1 && at.wireType === 2) {
-            out.push(readAnyValue(ar.readLengthDelimited()));
-          } else {
-            ar.skipField(at.wireType);
-          }
-        }
-        return out;
-      }
-      case 6: {
-        const kvBytes = r.readLengthDelimited();
-        const out: Record<string, AttrValue> = {};
-        const kr = new ProtoReader(kvBytes);
-        while (!kr.eof) {
-          const kt = kr.readTag();
-          if (!kt) break;
-          if (kt.fieldNumber === 1 && kt.wireType === 2) {
-            const [k, v] = readKeyValue(kr.readLengthDelimited());
-            out[k] = v;
-          } else {
-            kr.skipField(kt.wireType);
-          }
-        }
-        return out;
-      }
+      case 5:
+        return readArrayValue(r.readLengthDelimited());
+      case 6:
+        return readKvListValue(r.readLengthDelimited());
       case 7:
         return r.readLengthDelimited();
       default:
@@ -235,31 +241,45 @@ function readResource(bytes: Uint8Array): Record<string, AttrValue> {
   return readAttributes(attrs);
 }
 
+function readLogRecordField(
+  r: ProtoReader,
+  tag: { fieldNumber: number; wireType: number },
+  state: { timeUnixNano: string | null; body: string | null; attrBytes: Uint8Array[] },
+): void {
+  if (tag.fieldNumber === 1 && tag.wireType === 1) {
+    state.timeUnixNano = r.readFixed64AsString();
+  } else if (tag.fieldNumber === 5 && tag.wireType === 2) {
+    const v = readAnyValue(r.readLengthDelimited());
+    state.body = typeof v === "string" ? v : null;
+  } else if (tag.fieldNumber === 6 && tag.wireType === 2) {
+    state.attrBytes.push(r.readLengthDelimited());
+  } else {
+    r.skipField(tag.wireType);
+  }
+}
+
 function readLogRecord(
   bytes: Uint8Array,
   resourceAttrs: Record<string, AttrValue>,
   scopeName: string | null,
 ): ParsedLogRecord {
   const r = new ProtoReader(bytes);
-  let timeUnixNano: string | null = null;
-  let body: string | null = null;
-  const attrBytes: Uint8Array[] = [];
+  const state: { timeUnixNano: string | null; body: string | null; attrBytes: Uint8Array[] } = {
+    timeUnixNano: null,
+    body: null,
+    attrBytes: [],
+  };
   while (!r.eof) {
     const tag = r.readTag();
     if (!tag) break;
-    if (tag.fieldNumber === 1 && tag.wireType === 1) timeUnixNano = r.readFixed64AsString();
-    else if (tag.fieldNumber === 5 && tag.wireType === 2) {
-      const v = readAnyValue(r.readLengthDelimited());
-      body = typeof v === "string" ? v : null;
-    } else if (tag.fieldNumber === 6 && tag.wireType === 2) attrBytes.push(r.readLengthDelimited());
-    else r.skipField(tag.wireType);
+    readLogRecordField(r, tag, state);
   }
   return {
-    timeUnixNano,
-    resourceAttrs: resourceAttrs as Record<string, unknown>,
+    timeUnixNano: state.timeUnixNano,
+    resourceAttrs,
     scopeName,
-    body,
-    attrs: readAttributes(attrBytes) as Record<string, unknown>,
+    body: state.body,
+    attrs: readAttributes(state.attrBytes),
   };
 }
 

@@ -49,12 +49,12 @@ function addSyntheticHit(into: Map<string, number>, ruleId: string): void {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (!value || typeof value !== "object") return false;
-  const proto = Object.getPrototypeOf(value);
+  const proto: unknown = Object.getPrototypeOf(value);
   return proto === Object.prototype || proto === null;
 }
 
 function utf8Prefix(text: string, maxBytes: number): string {
-  const encoded = Buffer.from(text, "utf8");
+  const encoded: Buffer = Buffer.from(text, "utf8");
   if (encoded.byteLength <= maxBytes) return text;
   return encoded.subarray(0, maxBytes).toString("utf8");
 }
@@ -96,7 +96,69 @@ export class ValuePatternRedactor {
     let depthExceededRecorded = false;
     let oversizeRecorded = false;
 
-    const walk = (input: unknown, depth: number): { value: unknown; rewritten: boolean } => {
+    type WalkResult = { value: unknown; rewritten: boolean };
+
+    const walkString = (input: string): WalkResult => {
+      const bytes = Buffer.byteLength(input, "utf8");
+      if (bytes > maxStringBytes) {
+        if (!oversizeRecorded) {
+          addSyntheticHit(hitCounts, WALKER_STRING_OVERSIZE_RULE_ID);
+          oversizeRecorded = true;
+        }
+        const sampled = utf8Prefix(input, maxStringBytes);
+        const result = this.redactString(sampled);
+        mergeHits(hitCounts, result.hits);
+        return { value: result.redacted, rewritten: true };
+      }
+      const result = this.redactString(input);
+      mergeHits(hitCounts, result.hits);
+      if (result.redacted === input) return { value: input, rewritten: false };
+      return { value: result.redacted, rewritten: true };
+    };
+
+    const walkArray = (input: unknown[], depth: number): WalkResult => {
+      let out: unknown[] | null = null;
+      let anyRewritten = false;
+      for (let i = 0; i < input.length; i++) {
+        const next = walk(input[i], depth + 1);
+        if (next.rewritten) {
+          out ??= input.slice();
+          out[i] = next.value;
+          anyRewritten = true;
+        }
+      }
+      if (!anyRewritten) return { value: input, rewritten: false };
+      return { value: out, rewritten: true };
+    };
+
+    const walkObject = (input: Record<string, unknown>, depth: number): WalkResult => {
+      let anyRewritten = false;
+      const rewrittenEntries: { key: string; value: unknown }[] = [];
+      const keyOccurrences = new Map<string, number>();
+      for (const [k, v] of Object.entries(input)) {
+        const keyNext = walk(k, depth + 1);
+        const nextKey = String(keyNext.value);
+        const next = walk(v, depth + 1);
+        const occurrence = (keyOccurrences.get(nextKey) ?? 0) + 1;
+        keyOccurrences.set(nextKey, occurrence);
+        const resolvedKey = occurrence === 1 ? nextKey : `${nextKey}__${String(occurrence - 1)}`;
+        if (occurrence > 1) {
+          addSyntheticHit(hitCounts, WALKER_KEY_COLLISION_RULE_ID);
+          anyRewritten = true;
+        }
+        if (keyNext.rewritten || next.rewritten) anyRewritten = true;
+        rewrittenEntries.push({ key: resolvedKey, value: next.value });
+      }
+      if (!anyRewritten) return { value: input, rewritten: false };
+      const proto = Object.getPrototypeOf(input) as object | null;
+      const out = Object.create(proto) as Record<string, unknown>;
+      for (const entry of rewrittenEntries) {
+        out[entry.key] = entry.value;
+      }
+      return { value: out, rewritten: true };
+    };
+
+    const walk = (input: unknown, depth: number): WalkResult => {
       if (depth > maxDepth) {
         if (!depthExceededRecorded) {
           addSyntheticHit(hitCounts, WALKER_DEPTH_EXCEEDED_RULE_ID);
@@ -104,78 +166,9 @@ export class ValuePatternRedactor {
         }
         return { value: input, rewritten: false };
       }
-
-      if (typeof input === "string") {
-        const bytes = Buffer.byteLength(input, "utf8");
-        if (bytes > maxStringBytes) {
-          if (!oversizeRecorded) {
-            addSyntheticHit(hitCounts, WALKER_STRING_OVERSIZE_RULE_ID);
-            oversizeRecorded = true;
-          }
-          const sampled = utf8Prefix(input, maxStringBytes);
-          const result = this.redactString(sampled);
-          mergeHits(hitCounts, result.hits);
-          return { value: result.redacted, rewritten: true };
-        }
-
-        const result = this.redactString(input);
-        mergeHits(hitCounts, result.hits);
-        if (result.redacted === input) {
-          return { value: input, rewritten: false };
-        }
-        return { value: result.redacted, rewritten: true };
-      }
-
-      if (Array.isArray(input)) {
-        let out: unknown[] | null = null;
-        let anyRewritten = false;
-        for (let i = 0; i < input.length; i++) {
-          const next = walk(input[i], depth + 1);
-          if (next.rewritten) {
-            if (!out) out = input.slice();
-            out[i] = next.value;
-            anyRewritten = true;
-          }
-        }
-        if (!anyRewritten) return { value: input, rewritten: false };
-        return { value: out as unknown, rewritten: true };
-      }
-
-      if (isPlainObject(input)) {
-        let anyRewritten = false;
-        const rewrittenEntries: Array<{ key: string; value: unknown }> = [];
-        const keyOccurrences = new Map<string, number>();
-        for (const [k, v] of Object.entries(input)) {
-          const keyNext = walk(k, depth + 1);
-          const nextKey = String(keyNext.value);
-          const next = walk(v, depth + 1);
-          const occurrence = (keyOccurrences.get(nextKey) ?? 0) + 1;
-          keyOccurrences.set(nextKey, occurrence);
-          const resolvedKey = occurrence === 1 ? nextKey : `${nextKey}__${occurrence - 1}`;
-
-          if (occurrence > 1) {
-            addSyntheticHit(hitCounts, WALKER_KEY_COLLISION_RULE_ID);
-            anyRewritten = true;
-          }
-          if (keyNext.rewritten || next.rewritten) {
-            anyRewritten = true;
-          }
-          rewrittenEntries.push({ key: resolvedKey, value: next.value });
-        }
-        if (!anyRewritten) return { value: input, rewritten: false };
-        const proto = Object.getPrototypeOf(input);
-        const out = Object.create(proto) as Record<string, unknown>;
-        for (const entry of rewrittenEntries) {
-          out[entry.key] = entry.value;
-        }
-        return { value: out as unknown, rewritten: true };
-      }
-
-      if (input && typeof input === "object") {
-        // Deliberately skip opaque instances (Date/Map/URL/etc).
-        return { value: input, rewritten: false };
-      }
-
+      if (typeof input === "string") return walkString(input);
+      if (Array.isArray(input)) return walkArray(input, depth);
+      if (isPlainObject(input)) return walkObject(input, depth);
       return { value: input, rewritten: false };
     };
 

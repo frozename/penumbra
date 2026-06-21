@@ -117,19 +117,20 @@ export const HopStateCacheEntrySchema = z
   })
   .superRefine((value, ctx) => {
     for (let i = 0; i < value.tokens.length; i++) {
-      const token = value.tokens[i]!;
+      const token = value.tokens[i];
+      if (!token) continue;
       if (token.handoff_id !== value.hop_start.handoff_id) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: "custom",
           path: ["tokens", i, "handoff_id"],
           message: "token handoff_id must match hop_start.handoff_id",
         });
       }
       if (i > 0) {
-        const prev = value.tokens[i - 1]!;
-        if (token.seq <= prev.seq) {
+        const prev = value.tokens[i - 1];
+        if (prev && token.seq <= prev.seq) {
           ctx.addIssue({
-            code: z.ZodIssueCode.custom,
+            code: "custom",
             path: ["tokens", i, "seq"],
             message: "token seq values must be strictly increasing",
           });

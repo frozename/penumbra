@@ -1,4 +1,5 @@
-import type { EmbeddingModel, FlagEmbedding } from "fastembed";
+import type { FlagEmbedding } from "fastembed";
+
 import type { Embedder } from "./interface.js";
 
 type FastembedModule = typeof import("fastembed");
@@ -6,10 +7,8 @@ type FastembedModule = typeof import("fastembed");
 let fastembedModulePromise: Promise<FastembedModule> | null = null;
 
 async function loadFastembed(): Promise<FastembedModule> {
-  if (!fastembedModulePromise) {
-    fastembedModulePromise = import("fastembed");
-  }
-  return fastembedModulePromise;
+  fastembedModulePromise ??= import("fastembed");
+  return await fastembedModulePromise;
 }
 
 export class BundledEmbedder implements Embedder {
@@ -20,21 +19,21 @@ export class BundledEmbedder implements Embedder {
 
   async ready(): Promise<void> {
     if (this.model) return;
-    if (!this.initPromise) {
-      this.initPromise = (async () => {
-        const { EmbeddingModel, FlagEmbedding } = await loadFastembed();
-        this.model = await FlagEmbedding.init({
-          model: EmbeddingModel.AllMiniLML6V2,
-        });
-      })();
-    }
-    return this.initPromise;
+    this.initPromise ??= (async (): Promise<void> => {
+      const { EmbeddingModel, FlagEmbedding } = await loadFastembed();
+      this.model = await FlagEmbedding.init({
+        model: EmbeddingModel.AllMiniLML6V2,
+      });
+    })();
+    await this.initPromise;
   }
 
   async embed(texts: string[]): Promise<Float32Array[]> {
     await this.ready();
+    const model = this.model;
+    if (!model) throw new Error("BundledEmbedder model not initialized");
     const out: Float32Array[] = [];
-    for await (const batch of this.model!.embed(texts, texts.length)) {
+    for await (const batch of model.embed(texts, texts.length)) {
       for (const v of batch) out.push(new Float32Array(v));
     }
     return out;

@@ -1,8 +1,9 @@
 import type { Database } from "bun:sqlite";
+
 import {
-  readSubscriptionPressure,
   type PressureResult,
   type PressureSnapshot,
+  readSubscriptionPressure,
 } from "../readers/subscription-pressure.js";
 
 export interface SubscriptionPressureCacheOptions {
@@ -32,7 +33,7 @@ export function createSubscriptionPressureCache(
   };
   let timer: ReturnType<typeof setInterval> | null = null;
 
-  const refresh = () => {
+  const refresh = (): void => {
     try {
       cached.result = readSubscriptionPressure(db, {
         stale_after_seconds: opts.staleAfterSeconds,
@@ -40,24 +41,24 @@ export function createSubscriptionPressureCache(
       });
       cached.lastUpdatedAt = new Date();
     } catch (error) {
-      opts.log?.error?.(error);
+      opts.log?.error(error);
     }
   };
 
   refresh();
 
   return {
-    start() {
+    start(): void {
       if (timer) return;
       timer = setInterval(refresh, intervalMs);
     },
-    stop() {
+    stop(): void {
       if (!timer) return;
       clearInterval(timer);
       timer = null;
     },
     refresh,
-    get(provider, windowLabel, model) {
+    get(provider, windowLabel, model): PressureSnapshot | null {
       const expectedModel = model === undefined ? null : model;
       return (
         cached.result.snapshots.find(
@@ -68,10 +69,10 @@ export function createSubscriptionPressureCache(
         ) ?? null
       );
     },
-    forProvider(provider) {
+    forProvider(provider): PressureSnapshot[] {
       return cached.result.snapshots.filter((snapshot) => snapshot.provider === provider);
     },
-    lastUpdatedAt() {
+    lastUpdatedAt(): Date | null {
       return cached.lastUpdatedAt;
     },
   };

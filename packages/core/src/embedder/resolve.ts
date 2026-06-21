@@ -1,4 +1,5 @@
 import type { Embedder } from "./interface.js";
+
 import { OpenAICompatEmbedder, type RemoteEmbedderOpts } from "./openai-compat.js";
 
 export type EmbedderMode = "bundled" | "remote" | "auto";
@@ -54,7 +55,9 @@ async function openaiReachable(
   timeoutMs: number,
 ): Promise<boolean> {
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  const t = setTimeout(() => {
+    ctrl.abort();
+  }, timeoutMs);
   try {
     const path = healthPath ?? "/healthz";
     const normalizedPath = path.startsWith("/") ? path : `/${path}`;

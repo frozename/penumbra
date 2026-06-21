@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { TaskDraftLifecycleEventType, TASK_DRAFT_LIFECYCLE_EVENT_TYPES } from "./event.js";
+
+import { TASK_DRAFT_LIFECYCLE_EVENT_TYPES, TaskDraftLifecycleEventType } from "./event.js";
 
 export const TaskDraftEvidenceSchema = z
   .object({
@@ -18,30 +19,30 @@ export const TaskDraftProvenanceSchema = z.object({
 });
 
 export const TaskDraftPayloadSchema = z.object({
-  draft_id: z.string().uuid(),
+  draft_id: z.uuid(),
   prompt: z.string().min(1),
   affects_projects: z.array(z.string()).min(1),
   evidence: TaskDraftEvidenceSchema,
   auto_ok: z.boolean(),
   filed_by_agent: z.string().min(1),
   filed_via: z.enum(["skill_inline", "stop_hook"]),
-  parent_draft_id: z.string().uuid().nullable(),
+  parent_draft_id: z.uuid().nullable(),
   recovery_count: z.number().int().nonnegative().optional(),
   recovered_from: z.string().min(1).optional(),
   provenance: TaskDraftProvenanceSchema.optional(),
 });
 
 export const TaskDraftRefiningPayloadSchema = z.object({
-  draft_id: z.string().uuid(),
+  draft_id: z.uuid(),
 });
 
 export const TaskDraftPromotedPayloadSchema = z.object({
-  draft_id: z.string().uuid(),
+  draft_id: z.uuid(),
   task_ids: z.array(z.string().min(1)).min(1),
 });
 
 export const TaskDraftStalePayloadSchema = z.object({
-  draft_id: z.string().uuid(),
+  draft_id: z.uuid(),
   stale_reason: z.enum([
     "path_removed",
     "resolved_by",
@@ -54,12 +55,12 @@ export const TaskDraftStalePayloadSchema = z.object({
 });
 
 export const TaskDraftDuplicatePayloadSchema = z.object({
-  draft_id: z.string().uuid(),
+  draft_id: z.uuid(),
   duplicate_of_task_id: z.string().min(1),
 });
 
 export const TaskDraftEscalationPayloadSchema = z.object({
-  draft_id: z.string().uuid(),
+  draft_id: z.uuid(),
   escalation_reason: z.string().min(1),
 });
 
@@ -99,7 +100,7 @@ export type ParsedTaskDraftLifecyclePayload =
   | TaskDraftDuplicatePayload
   | TaskDraftEscalationPayload;
 
-const TASK_DRAFT_LIFECYCLE_DISPATCH_TABLE: Record<TaskDraftLifecycleEventType, z.ZodTypeAny> = {
+const TASK_DRAFT_LIFECYCLE_DISPATCH_TABLE: Record<TaskDraftLifecycleEventType, z.ZodType> = {
   task_draft: TaskDraftPayloadSchema,
   task_draft_refining: TaskDraftRefiningPayloadSchema,
   task_draft_promoted: TaskDraftPromotedPayloadSchema,
@@ -113,6 +114,5 @@ export function parseTaskDraftLifecyclePayload(
   payload: unknown,
 ): ParsedTaskDraftLifecyclePayload {
   const schema = TASK_DRAFT_LIFECYCLE_DISPATCH_TABLE[eventType];
-  if (!schema) throw new Error(`Unsupported task draft lifecycle event type: ${eventType}`);
   return schema.parse(payload) as ParsedTaskDraftLifecyclePayload;
 }

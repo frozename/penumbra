@@ -53,23 +53,24 @@ export class OpenAICompatEmbedder implements Embedder {
       body: JSON.stringify({ input: texts, model: this.model }),
     });
     if (!res.ok) {
-      throw new Error(`openai-compatible embeddings: HTTP ${res.status}`);
+      throw new Error(`openai-compatible embeddings: HTTP ${String(res.status)}`);
     }
     const body = (await res.json()) as { data?: { embedding: number[]; index: number }[] };
-    if (!Array.isArray(body?.data)) {
+    if (!Array.isArray(body.data)) {
       throw new Error(`openai-compatible embeddings: malformed response (data is not an array)`);
     }
     if (body.data.length !== texts.length) {
       throw new Error(
-        `openai-compatible embeddings: response length ${body.data.length} does not match request length ${texts.length}`,
+        `openai-compatible embeddings: response length ${String(body.data.length)} does not match request length ${String(texts.length)}`,
       );
     }
     const sorted = [...body.data].sort((a, b) => a.index - b.index);
-    for (let i = 0; i < sorted.length; i++) {
-      const d = sorted[i]!;
+    for (const [i, element] of sorted.entries()) {
+      const d = element;
       if (!Array.isArray(d.embedding) || d.embedding.length !== this.dim) {
+        const got = Array.isArray(d.embedding) ? String(d.embedding.length) : "n/a";
         throw new Error(
-          `openai-compatible embeddings: vector at index ${i} has dim ${Array.isArray(d.embedding) ? d.embedding.length : "n/a"}, expected ${this.dim}`,
+          `openai-compatible embeddings: vector at index ${String(i)} has dim ${got}, expected ${String(this.dim)}`,
         );
       }
     }

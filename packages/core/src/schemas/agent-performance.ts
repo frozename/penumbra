@@ -108,14 +108,12 @@ export const AgentPerformanceCaptureFromReconcilerSchema = z.object({
   task_type: AgentTaskTypeSchema.optional(),
   wall_ms: z.number().nonnegative().nullable().optional(),
   framework_overhead_ms: z.number().nonnegative().nullable().optional(),
-  result: z
-    .object({
-      status: MergeResultStatusSchema,
-      pr_url: z.string().url().optional(),
-      regression_summary: z.string().optional(),
-      timed_out: z.boolean().optional(),
-    })
-    .passthrough(),
+  result: z.looseObject({
+    status: MergeResultStatusSchema,
+    pr_url: z.url().optional(),
+    regression_summary: z.string().optional(),
+    timed_out: z.boolean().optional(),
+  }),
 });
 export type AgentPerformanceCaptureFromReconciler = z.infer<
   typeof AgentPerformanceCaptureFromReconcilerSchema
@@ -294,6 +292,8 @@ export function inferAgentTaskTypeForRole(
       return "implement_substantial";
     case "reviewer":
       return "review_adversarial";
+    case null:
+    case undefined:
     default:
       return "unknown";
   }

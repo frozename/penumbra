@@ -14,9 +14,11 @@ function renderExpectedArtifacts(value: TaskRecord["expected_artifacts"]): strin
   return value && value.length > 0 ? JSON.stringify(value, null, 2) : "(none specified)";
 }
 
+const DOLLAR = "$";
+
 export function synthesizeMaestroPrompt(task: TaskRecord, bounds: MaestroPromptBounds): string {
   const wallClockMinutes = Math.round(bounds.wall_clock_budget_ms / 60_000);
-  const costDollars = (bounds.cost_budget_cents / 100).toFixed(2);
+  const costDollars = `${DOLLAR}${(bounds.cost_budget_cents / 100).toFixed(2)}`;
 
   return `You are an autonomous orchestrator for task ${task.id}.
 
@@ -37,9 +39,9 @@ YOU HAVE THE FOLLOWING POWERS:
 - All other read-only MCP tools (memory.*, fs.*, dispatch.*, etc.)
 
 YOU HAVE THE FOLLOWING BUDGETS (consumed as you work):
-- Wall clock: ${wallClockMinutes} minutes from now
-- Cost: $${costDollars}
-- Sub-dispatches: ${bounds.sub_dispatch_budget} chain_start calls
+- Wall clock: ${String(wallClockMinutes)} minutes from now
+- Cost: ${costDollars}
+- Sub-dispatches: ${String(bounds.sub_dispatch_budget)} chain_start calls
 
 WHEN YOU ARE DONE you MUST resolve this task on the board — otherwise it is reclaimed and re-dispatched. Resolution needs the lease id, which you must read first:
 1. Call task.get with { task_id: "${task.id}", include: ["lease"] } and read the open lease id from the returned lease.id.
