@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from "react";
-import { DaemonClient, type DaemonClientDeps } from "../api/client";
-import { useDaemonStore } from "../stores/daemon-store";
+
+import { DaemonClient, type DaemonClientDeps } from "../api/client.js";
+import { useDaemonStore } from "../stores/daemon-store.js";
 
 export interface UseDaemonHealthOpts {
   client?: DaemonClient;
@@ -22,7 +23,7 @@ export function useDaemonHealth(opts?: UseDaemonHealthOpts): "unknown" | "ok" | 
   useEffect(() => {
     let isMounted = true;
     let latestSeq = 0;
-    const poll = async () => {
+    const poll = async (): Promise<void> => {
       const seq = ++latestSeq;
       try {
         await client.health();
@@ -41,7 +42,7 @@ export function useDaemonHealth(opts?: UseDaemonHealthOpts): "unknown" | "ok" | 
       void poll();
     }, intervalMs);
 
-    return () => {
+    return (): void => {
       isMounted = false;
       globalThis.clearInterval(timer);
     };

@@ -4,15 +4,15 @@ export function fmtDur(seconds: number): string {
   const minutes = Math.floor((total % 3600) / 60);
 
   if (hours === 0) {
-    return `${minutes}m`;
+    return `${String(minutes)}m`;
   }
   if (minutes === 0 && hours === 1) {
-    return `${hours}h`;
+    return `${String(hours)}h`;
   }
   if (minutes === 0) {
-    return `${hours}h 0m`;
+    return `${String(hours)}h 0m`;
   }
-  return `${hours}h ${minutes}m`;
+  return `${String(hours)}h ${String(minutes)}m`;
 }
 
 export function providerLabel(slug: string): string {

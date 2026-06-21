@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
-import { DaemonClient, type DaemonClientDeps } from "../api/client";
-import { useDaemonStore } from "../stores/daemon-store";
-import { usageSubscriptionPressure } from "../lib/query-keys";
-import { HEARTBEAT_MS } from "../lib/timing";
+
+import { DaemonClient, type DaemonClientDeps } from "../api/client.js";
+import { usageSubscriptionPressure } from "../lib/query-keys.js";
+import { HEARTBEAT_MS } from "../lib/timing.js";
+import { useDaemonStore } from "../stores/daemon-store.js";
 
 export interface PressureWindowRow {
   used_pct: number;
@@ -78,7 +79,7 @@ export function usePressureSnapshot(opts?: { client?: DaemonClient }): UsePressu
   const client = useMemo(() => opts?.client ?? makeDefaultClient(), [opts?.client]);
   const query = useQuery({
     queryKey: usageSubscriptionPressure(),
-    queryFn: async () => client.getSubscriptionPressure(),
+    queryFn: async () => await client.getSubscriptionPressure(),
     refetchInterval: HEARTBEAT_MS,
   });
   const normalized = useMemo(() => normalizePressureSnapshot(query.data), [query.data]);

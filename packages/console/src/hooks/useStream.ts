@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+
 import {
   paramsKey,
-  subscribe,
   type StreamMessage,
   type StreamTopic,
+  subscribe,
   type Subscription,
-} from "../api/streams";
+} from "../api/streams.js";
 
 const DEFAULT_BUFFER_SIZE = 200;
 
@@ -21,7 +22,7 @@ export interface UseStreamOpts {
 }
 
 export interface UseStreamResult<T> {
-  messages: ReadonlyArray<StreamMessage<T>>;
+  messages: readonly StreamMessage<T>[];
   reconnectCount: number;
 }
 
@@ -40,7 +41,7 @@ export function useStream<T = unknown>(
   const subscribeImpl = internal?.subscribeImpl ?? subscribe;
   const pkey = useMemo(() => paramsKey(opts?.params), [opts?.params]);
   const subscriptionRef = useRef<Subscription | null>(null);
-  const [snapshot, setSnapshot] = useState<ReadonlyArray<StreamMessage<T>>>([]);
+  const [snapshot, setSnapshot] = useState<readonly StreamMessage<T>[]>([]);
   const [reconnectCount, setReconnectCount] = useState(0);
 
   useEffect(() => {
@@ -87,7 +88,7 @@ export function useStream<T = unknown>(
     subscriptionRef.current?.unsubscribe();
     subscriptionRef.current = sub;
 
-    return () => {
+    return (): void => {
       sub.unsubscribe();
       if (subscriptionRef.current === sub) {
         subscriptionRef.current = null;

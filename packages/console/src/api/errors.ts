@@ -1,4 +1,6 @@
-import type { ZodIssue } from "zod";
+import type { z } from "zod";
+
+type ZodIssueLike = z.core.$ZodIssue;
 
 export class DaemonHttpError extends Error {
   override name = "DaemonHttpError";
@@ -8,7 +10,7 @@ export class DaemonHttpError extends Error {
   readonly url: string;
 
   constructor(args: { status: number; statusText: string; bodyText: string; url: string }) {
-    super(`daemon ${args.status} ${args.statusText} for ${args.url}`);
+    super(`daemon ${String(args.status)} ${args.statusText} for ${args.url}`);
     this.status = args.status;
     this.statusText = args.statusText;
     this.bodyText = args.bodyText;
@@ -19,10 +21,10 @@ export class DaemonHttpError extends Error {
 export class DaemonContractError extends Error {
   override name = "DaemonContractError";
   readonly url: string;
-  readonly issues: ZodIssue[];
+  readonly issues: ZodIssueLike[];
   readonly rawBody: unknown;
 
-  constructor(args: { url: string; issues: ZodIssue[]; rawBody: unknown }) {
+  constructor(args: { url: string; issues: ZodIssueLike[]; rawBody: unknown }) {
     super(`daemon response failed contract for ${args.url}`);
     this.url = args.url;
     this.issues = args.issues;

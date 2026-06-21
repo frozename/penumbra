@@ -1,15 +1,16 @@
 import {
   ChainsListResponseSchema,
   HandoffsListResponseSchema,
+  type HandoffStatus,
   UsageQuotaResponseSchema,
   UsageRecentResponseSchema,
   UsageSubscriptionPressureResponseSchema,
-  type HandoffStatus,
 } from "@penumbra/api-contract";
-import { MissionSessionSchema } from "../../../api-contract/src/session";
-import { z, type ZodTypeAny } from "zod";
+import { z } from "zod";
+
+import { MissionSessionSchema } from "../../../api-contract/src/session.js";
+import { buildRequestUrl } from "../lib/url.js";
 import { DaemonContractError, DaemonHttpError } from "./errors.js";
-import { buildRequestUrl } from "../lib/url";
 
 const HealthResponseSchema = z.object({ status: z.literal("ok") });
 const WorkspaceSchema = z.object({
@@ -52,7 +53,7 @@ export interface ApproveHandoffResponse {
   redirected_to?: string | null;
 }
 
-interface RequestOpts<S extends ZodTypeAny> {
+interface RequestOpts<S extends z.ZodType> {
   method?: "GET" | "POST";
   path: string;
   query?: Record<string, string | number | boolean | null | undefined>;
@@ -64,14 +65,14 @@ export class DaemonClient {
   constructor(private readonly deps: DaemonClientDeps) {}
 
   async health(): Promise<{ status: "ok" }> {
-    return this.request({
+    return await this.request({
       path: "/health",
       schema: HealthResponseSchema,
-    }) as Promise<{ status: "ok" }>;
+    });
   }
 
   async listHandoffs(opts?: { status?: HandoffStatus }): Promise<HandoffsListResponse> {
-    return this.request({
+    return await this.request({
       path: "/handoffs",
       query: { status: opts?.status },
       schema: HandoffsListResponseSchema,
@@ -87,12 +88,12 @@ export class DaemonClient {
     if (opts?.reason !== undefined) body.reason = opts.reason;
     if (opts?.redirectTo !== undefined) body.redirect_to = opts.redirectTo;
     if (opts?.resolvedBy !== undefined) body.resolved_by = opts.resolvedBy;
-    return this.request({
+    return await (this.request({
       method: "POST",
       path: `/handoffs/${encodeURIComponent(handoffId)}/approve`,
       body,
       schema: ApproveHandoffResponseSchemaLoose,
-    }) as Promise<ApproveHandoffResponse>;
+    }) as Promise<ApproveHandoffResponse>);
   }
 
   async listChains(opts?: {
@@ -101,7 +102,7 @@ export class DaemonClient {
     offset?: number;
     projectId?: string;
   }): Promise<ChainsListResponse> {
-    return this.request({
+    return await this.request({
       path: "/chains",
       query: {
         status: opts?.status,
@@ -118,7 +119,7 @@ export class DaemonClient {
     since?: string;
     projectId?: string | null;
   }): Promise<UsageRecentResponse> {
-    return this.request({
+    return await this.request({
       path: "/usage/recent",
       query: { since: opts?.since, project_id: opts?.projectId },
       schema: UsageRecentResponseSchema,
@@ -130,7 +131,7 @@ export class DaemonClient {
     since?: string;
     window?: "24h" | "5h";
   }): Promise<UsageQuotaResponse> {
-    return this.request({
+    return await this.request({
       path: "/usage/quota_status",
       query: { since: opts?.since, window: opts?.window },
       schema: UsageQuotaResponseSchema,
@@ -142,7 +143,7 @@ export class DaemonClient {
     provider?: string;
     staleAfterSeconds?: number;
   }): Promise<UsageSubscriptionPressureResponse> {
-    return this.request({
+    return await this.request({
       path: "/usage/subscription_pressure",
       query: {
         provider: opts?.provider,
@@ -153,24 +154,24 @@ export class DaemonClient {
   }
 
   async getSession(): Promise<MissionSession> {
-    return this.request({
+    return await this.request({
       path: "/session/current",
       schema: MissionSessionSchema,
     });
   }
 
   async getWorkspace(): Promise<Workspace> {
-    return this.request({
+    return await this.request({
       path: "/workspace",
       schema: WorkspaceSchema,
     });
   }
 
-  private buildHeaders(extra?: HeadersInit): HeadersInit {
+  private buildHeaders(extra?: Record<string, string>): Record<string, string> {
     const cfg = this.deps.getConfig();
     const headers: Record<string, string> = {
       Accept: "application/json",
-      ...Object.fromEntries(new Headers(extra).entries()),
+      ...(extra ?? {}),
     };
     if (cfg.token) {
       headers["Authorization"] = `Bearer ${cfg.token}`;
@@ -178,7 +179,7 @@ export class DaemonClient {
     return headers;
   }
 
-  private async request<S extends ZodTypeAny>(opts: RequestOpts<S>): Promise<z.infer<S>> {
+  private async request<S extends z.ZodType>(opts: RequestOpts<S>): Promise<z.infer<S>> {
     const { baseUrl } = this.deps.getConfig();
     const url = buildRequestUrl(baseUrl, opts.path, opts.query);
     const init: RequestInit = {
@@ -205,7 +206,7 @@ export class DaemonClient {
     }
 
     if (!response.ok) {
-      const bodyText = await response.text().catch(() => "");
+      const bodyText: string = await response.text().catch(() => "");
       throw new DaemonHttpError({
         status: response.status,
         statusText: response.statusText,
@@ -214,7 +215,7 @@ export class DaemonClient {
       });
     }
 
-    const rawBody = (await response.json()) as unknown;
+    const rawBody: unknown = await response.json();
     const parsed = opts.schema.safeParse(rawBody);
     if (!parsed.success) {
       throw new DaemonContractError({

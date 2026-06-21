@@ -15,6 +15,10 @@ export interface MissionStoreActions {
 export const useMissionStore = create<MissionStoreState & MissionStoreActions>((set) => ({
   tailFilter: null,
   pausedTail: false,
-  setTailFilter: (tailFilter) => set({ tailFilter }),
-  setPausedTail: (pausedTail) => set({ pausedTail }),
+  setTailFilter: (tailFilter): void => {
+    set({ tailFilter });
+  },
+  setPausedTail: (pausedTail): void => {
+    set({ pausedTail });
+  },
 }));

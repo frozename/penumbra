@@ -1,9 +1,11 @@
+import type { MissionSession } from "@penumbra/api-contract";
+
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
-import { DaemonClient, type DaemonClientDeps } from "../api/client";
-import { useDaemonStore } from "../stores/daemon-store";
-import type { MissionSession } from "@penumbra/api-contract";
-import { COOL_POLL_MS } from "../lib/timing";
+
+import { DaemonClient, type DaemonClientDeps } from "../api/client.js";
+import { COOL_POLL_MS } from "../lib/timing.js";
+import { useDaemonStore } from "../stores/daemon-store.js";
 
 function makeDefaultClient(): DaemonClient {
   const deps: DaemonClientDeps = {
@@ -20,7 +22,7 @@ export function useSession(opts?: { client?: DaemonClient }): {
   const client = useMemo(() => opts?.client ?? makeDefaultClient(), [opts?.client]);
   const query = useQuery({
     queryKey: ["session", "current"] as const,
-    queryFn: async () => client.getSession(),
+    queryFn: async () => await client.getSession(),
     staleTime: COOL_POLL_MS,
   });
 

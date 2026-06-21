@@ -15,7 +15,7 @@ export const MODULES = [
   { id: "mission", path: "/mission", label: "Mission control", icon: "◐", available: true },
   { id: "chains", path: "/chains", label: "Chains", icon: "≋", available: false },
   { id: "tasks", path: "/tasks", label: "Tasks", icon: "☷", available: false },
-] as const satisfies ReadonlyArray<ModuleSpec>;
+] as const satisfies readonly ModuleSpec[];
 
 export type ModuleId = (typeof MODULES)[number]["id"];
 

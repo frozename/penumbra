@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { MODULES, type ModuleId } from "../modules/manifest";
+
+import { type ModuleId, MODULES } from "../modules/manifest.js";
 
 export type ActiveModule = ModuleId;
 
@@ -17,9 +18,15 @@ export const useUIStore = create<UIState>()(
     (set, get) => ({
       activeModule: MODULES[0].id,
       explorerCollapsed: false,
-      setActiveModule: (m) => set({ activeModule: m }),
-      setExplorerCollapsed: (v) => set({ explorerCollapsed: v }),
-      toggleExplorerCollapsed: () => set({ explorerCollapsed: !get().explorerCollapsed }),
+      setActiveModule: (m): void => {
+        set({ activeModule: m });
+      },
+      setExplorerCollapsed: (v): void => {
+        set({ explorerCollapsed: v });
+      },
+      toggleExplorerCollapsed: (): void => {
+        set({ explorerCollapsed: !get().explorerCollapsed });
+      },
     }),
     {
       name: "penumbra-ui",
