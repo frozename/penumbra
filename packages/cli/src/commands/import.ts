@@ -14,13 +14,13 @@ const PK: Record<string, string> = {
 };
 
 function quoteIdentifier(identifier: string): string {
-  return `"${identifier.replace(/"/g, '""')}"`;
+  return `"${identifier.replaceAll('"', '""')}"`;
 }
 
-export async function runImport(opts: RunImportOpts): Promise<number> {
+function runImportSync(opts: RunImportOpts): void {
   const db = new Database(opts.dbPath);
   try {
-    db.exec("BEGIN");
+    db.run("BEGIN");
     try {
       const content = readFileSync(opts.inPath, "utf8");
       for (const line of content.split("\n")) {
@@ -33,13 +33,13 @@ export async function runImport(opts: RunImportOpts): Promise<number> {
         const placeholders = cols.map(() => "?").join(",");
         db.run(
           `INSERT INTO ${table}(${quotedCols}) VALUES(${placeholders}) ON CONFLICT(${quoteIdentifier(pk)}) DO NOTHING`,
-          cols.map((c) => row[c] as string | number | null) as (string | number | null)[],
+          cols.map((c) => row[c] as string | number | null),
         );
       }
-      db.exec("COMMIT");
+      db.run("COMMIT");
     } catch (err) {
       try {
-        db.exec("ROLLBACK");
+        db.run("ROLLBACK");
       } catch {
         /* nothing to rollback */
       }
@@ -48,5 +48,13 @@ export async function runImport(opts: RunImportOpts): Promise<number> {
   } finally {
     db.close();
   }
-  return 0;
+}
+
+export function runImport(opts: RunImportOpts): Promise<number> {
+  try {
+    runImportSync(opts);
+    return Promise.resolve(0);
+  } catch (err) {
+    return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+  }
 }

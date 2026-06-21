@@ -7,7 +7,7 @@ export interface RunExportOpts {
   outPath: string;
 }
 
-export async function runExport(opts: RunExportOpts): Promise<number> {
+export function runExport(opts: RunExportOpts): Promise<number> {
   const db = new Database(opts.dbPath, { readonly: true });
   try {
     const lines: string[] = [];
@@ -26,5 +26,5 @@ export async function runExport(opts: RunExportOpts): Promise<number> {
   } finally {
     db.close();
   }
-  return 0;
+  return Promise.resolve(0);
 }

@@ -1,6 +1,6 @@
+import { resolveDaemonStorageRoot } from "@penumbra/core";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { resolveDaemonStorageRoot } from "@penumbra/core";
 
 const CACHE_PATH = "/tmp/penumbra-statusline.cache";
 const CACHE_TTL_MS = 2_000;
@@ -76,10 +76,12 @@ async function fetchCounts(
     throw new Error(`penumbra statusline: empty daemon token in ${tokenPath}`);
   }
 
-  const baseUrl = `http://127.0.0.1:${port}`;
+  const baseUrl = `http://127.0.0.1:${String(port)}`;
   const headers = { authorization: `Bearer ${token}` };
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), DAEMON_TIMEOUT_MS);
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, DAEMON_TIMEOUT_MS);
 
   try {
     const dispatchedRes = await fetchFn(`${baseUrl}/handoffs?status=dispatched`, {
@@ -119,13 +121,13 @@ async function fetchCounts(
 
 function formatLine(counts: DaemonCounts): string {
   if (counts.awaiting > 0) {
-    return `◐ penumbra  ${counts.awaiting} awaiting  ${counts.dispatched} dispatched  ${counts.done} done`;
+    return `◐ penumbra  ${String(counts.awaiting)} awaiting  ${String(counts.dispatched)} dispatched  ${String(counts.done)} done`;
   }
   if (counts.dispatched > 0) {
-    return `◌ penumbra  ${counts.dispatched} dispatched  ${counts.done} done`;
+    return `◌ penumbra  ${String(counts.dispatched)} dispatched  ${String(counts.done)} done`;
   }
   if (counts.done > 0) {
-    return `● penumbra  ${counts.done} done`;
+    return `● penumbra  ${String(counts.done)} done`;
   }
   return "● penumbra  idle";
 }

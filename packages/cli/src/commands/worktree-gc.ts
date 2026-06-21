@@ -1,25 +1,28 @@
-import { Database } from "bun:sqlite";
 import {
   HandoffReader,
-  WorktreeManager,
   loadSqliteVec,
   selectWorktreeGcCandidates,
   type WorktreeGcCandidate,
   type WorktreeHandle,
+  WorktreeManager,
 } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+
 import { resolveStorageDbPath } from "../../../core/src/db/storage-db-path.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  // sqlite override is best-effort; ignore failures
+}
 
 const DEFAULT_GRACE_MS = 2 * 60 * 60_000;
 type MaybePromise<T> = T | Promise<T>;
 type WorktreeGcManager = {
   listWorktrees(): WorktreeHandle[];
-  discoverOrphanWorktrees?(): MaybePromise<Array<{ path: string; handoffId: string }>>;
+  discoverOrphanWorktrees?(): MaybePromise<{ path: string; handoffId: string }[]>;
   teardownWorktree(handoffId: string, force?: boolean): Promise<unknown>;
 };
 
@@ -115,8 +118,8 @@ export async function runWorktreeGc(opts: WorktreeGcOpts): Promise<WorktreeGcRes
                 reason: candidate.reason,
               }),
             );
-          console.log(
-            `reaped worktree ${candidate.handoff_id}: ${candidate.reason} (${candidate.path})`,
+          process.stdout.write(
+            `reaped worktree ${candidate.handoff_id}: ${candidate.reason} (${candidate.path})\n`,
           );
           n_removed++;
         } catch {

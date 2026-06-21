@@ -1,9 +1,10 @@
-import { readFile } from "node:fs/promises";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
-import YAML from "yaml";
 import { defaultProjectRegistryPath, loadProjectRegistry } from "@penumbra/core";
 import { parsePlanMetaFile, validatePlan } from "@penumbra/workflows";
+import { existsSync, readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import YAML from "yaml";
+
 import { renderPlanTree } from "./plan-render.js";
 
 const FALLBACK_AGENTS: string[] = [
@@ -24,7 +25,7 @@ export type Out = (s: string) => void;
 export function findRepoRoot(startPath: string): string {
   const absolute = isAbsolute(startPath) ? startPath : resolve(process.cwd(), startPath);
   let current = existsSync(absolute) ? absolute : dirname(absolute);
-  while (true) {
+  for (;;) {
     if (existsSync(join(current, ".git"))) return current;
     const parent = dirname(current);
     if (parent === current) return process.cwd();
@@ -41,10 +42,10 @@ async function loadFromDaemon(storageRoot: string): Promise<Set<string> | null> 
       headers: { authorization: `Bearer ${token}` },
     });
     if (!r.ok) return null;
-    const body = (await r.json()) as { agents?: Array<{ name?: unknown }> };
+    const body = (await r.json()) as { agents?: { name?: unknown }[] };
     const names = (body.agents ?? [])
-      .map((a) => (typeof a?.name === "string" ? a.name : null))
-      .filter((n): n is string => n != null && n.length > 0);
+      .map((a) => (typeof a.name === "string" ? a.name : null))
+      .filter((n): n is string => n !== null && n.length > 0);
     return names.length > 0 ? new Set(names) : null;
   } catch {
     return null;
@@ -56,10 +57,10 @@ async function loadFromYaml(repoRoot: string, warn: Out): Promise<Set<string> | 
   if (!existsSync(yamlPath)) return null;
   try {
     const text = await readFile(yamlPath, "utf8");
-    const parsed = YAML.parse(text) as { agents?: Array<{ name?: unknown }> } | undefined;
+    const parsed = YAML.parse(text) as { agents?: { name?: unknown }[] } | undefined;
     const names = (parsed?.agents ?? [])
-      .map((a) => (typeof a?.name === "string" ? a.name : null))
-      .filter((n): n is string => n != null && n.length > 0);
+      .map((a) => (typeof a.name === "string" ? a.name : null))
+      .filter((n): n is string => n !== null && n.length > 0);
     return names.length > 0 ? new Set(names) : null;
   } catch (err) {
     warn(
@@ -78,8 +79,8 @@ export async function loadKnownAgents(
   if (storageRoot) {
     base = await loadFromDaemon(storageRoot);
   }
-  if (!base) base = await loadFromYaml(repoRoot, warn);
-  if (!base) base = new Set(FALLBACK_AGENTS);
+  base ??= await loadFromYaml(repoRoot, warn);
+  base ??= new Set(FALLBACK_AGENTS);
   for (const sentinel of MAESTRO_SENTINELS) base.add(sentinel);
   return base;
 }
@@ -112,7 +113,7 @@ export async function runPlanValidate(opts: RunPlanValidateOpts): Promise<number
   if (errors.length > 0) {
     hasIssue = true;
     for (const e of errors) {
-      opts.err(`parse: ${opts.path}: line ${e.line}: ${e.reason}`);
+      opts.err(`parse: ${opts.path}: line ${String(e.line)}: ${e.reason}`);
     }
   }
 
@@ -219,7 +220,7 @@ function resolveDaemon(storageRoot: string): { baseUrl: string; token: string } 
   if (!token) {
     throw new Error(`penumbra plan: empty daemon token in ${join(storageRoot, "token")}`);
   }
-  return { baseUrl: `http://127.0.0.1:${port}`, token };
+  return { baseUrl: `http://127.0.0.1:${String(port)}`, token };
 }
 
 function requestHeaders(
@@ -238,7 +239,8 @@ function daemonRequest(
   init?: RequestInit,
 ): Promise<Response> {
   const daemon = opts.fetch ? null : resolveDaemon(opts.storageRoot);
-  return (opts.fetch ?? fetch)(opts.fetch ? path : `${daemon!.baseUrl}${path}`, {
+  const url = daemon === null ? path : `${daemon.baseUrl}${path}`;
+  return (opts.fetch ?? fetch)(url, {
     ...init,
     headers: requestHeaders(daemon?.token ?? null, init?.headers),
   });
@@ -264,7 +266,7 @@ async function daemonError(action: string, path: string, res: Response): Promise
     detail = "";
   }
   throw new Error(
-    `penumbra plan ${action}: daemon ${path} returned HTTP ${res.status}${detail ? ` (${detail})` : ""}`,
+    `penumbra plan ${action}: daemon ${path} returned HTTP ${String(res.status)}${detail ? ` (${detail})` : ""}`,
   );
 }
 
@@ -294,11 +296,11 @@ function renderTaskForest<T extends { id: string; depends_on: string[] }>(
     const deps = unique(
       task.depends_on.map(normalizeTaskRef).filter((dep) => dep !== task.id && indexById.has(dep)),
     );
-    if (deps.length === 0) {
+    const parent = deps[0];
+    if (parent === undefined) {
       roots.push(task.id);
       continue;
     }
-    const parent = deps[0]!;
     const children = childrenByParent.get(parent);
     if (children) {
       children.push(task.id);
@@ -307,16 +309,20 @@ function renderTaskForest<T extends { id: string; depends_on: string[] }>(
     }
   }
 
+  const indexOf = (id: string): number => indexById.get(id) ?? 0;
   for (const children of childrenByParent.values()) {
-    children.sort((a, b) => indexById.get(a)! - indexById.get(b)!);
+    children.sort((a, b) => indexOf(a) - indexOf(b));
   }
-  roots.sort((a, b) => indexById.get(a)! - indexById.get(b)!);
+  roots.sort((a, b) => indexOf(a) - indexOf(b));
 
   const visited = new Set<string>();
   const emit = (taskId: string, depth: number): void => {
     if (visited.has(taskId)) return;
     visited.add(taskId);
-    const task = tasks[indexById.get(taskId)!]!;
+    const idx = indexById.get(taskId);
+    if (idx === undefined) return;
+    const task = tasks[idx];
+    if (!task) return;
     out(`${"  ".repeat(depth)}${renderLine(task)}`);
     for (const child of childrenByParent.get(taskId) ?? []) {
       emit(child, depth + 1);
@@ -342,7 +348,7 @@ function formatStatusCounts(tasks: PlanTaskRecord[]): string {
       counts[task.status as keyof typeof counts] += 1;
     }
   }
-  return `running=${counts.running} pending=${counts.pending} completed=${counts.completed} failed=${counts.failed} cancelled=${counts.cancelled}`;
+  return `running=${String(counts.running)} pending=${String(counts.pending)} completed=${String(counts.completed)} failed=${String(counts.failed)} cancelled=${String(counts.cancelled)}`;
 }
 
 function formatIso(ts: number): string {
@@ -351,7 +357,7 @@ function formatIso(ts: number): string {
 
 async function fetchPlanStartMeta(path: string): Promise<{
   header?: { home_project?: string };
-  tasks: Array<{ id: string; project?: string; depends_on: string[] }>;
+  tasks: { id: string; project?: string; depends_on: string[] }[];
 }> {
   const { header, tasks } = await parsePlanMetaFile(path);
   return {
@@ -364,17 +370,17 @@ async function fetchPlanStartMeta(path: string): Promise<{
   };
 }
 
-async function renderPlanTasks(
-  tasks: Array<{
+function renderPlanTasks(
+  tasks: {
     id: string;
     project_id: string;
     status: string;
     depends_on: string[];
     task_id_in_board?: string | null;
-  }>,
+  }[],
   out: Out,
   opts: { includeBoard: boolean },
-): Promise<void> {
+): void {
   renderTaskForest(
     tasks,
     (task) => {
@@ -402,7 +408,7 @@ export async function runPlanStart(opts: RunPlanStartOpts): Promise<void> {
     print("(no tasks)");
     return;
   }
-  await renderPlanTasks(
+  renderPlanTasks(
     meta.tasks.map((task) => ({
       id: task.id,
       project_id: task.project ?? meta.header?.home_project ?? "-",
@@ -427,13 +433,13 @@ export async function runPlanList(opts: RunPlanListOpts): Promise<void> {
     return;
   }
 
-  const rows: Array<{
+  const rows: {
     plan_id: string;
     home_project: string;
     status: string;
     registered_at: string;
     tasks: string;
-  }> = [];
+  }[] = [];
 
   for (const plan of body.plans) {
     const detailRes = await daemonRequest(opts, `/plans/${plan.plan_id}`);
@@ -482,13 +488,13 @@ async function loadPlanTreeNodes(
   plan: PlanRecord,
   tasks: PlanTaskRecord[],
 ): Promise<
-  Array<{
+  {
     id: string;
     project_id: string;
     status: string;
     depends_on: string[];
     task_id_in_board: string | null;
-  }>
+  }[]
 > {
   try {
     const meta = await parsePlanMetaFile(plan.file_path);
@@ -566,10 +572,10 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 export async function runPlanStatus(opts: RunPlanStatusOpts): Promise<void> {
   const print = opts.print ?? defaultPrint;
   const interval = opts.pollIntervalMs ?? 2_000;
-  const shouldClear = opts.print == null && process.stdout.isTTY === true;
+  const shouldClear = opts.print === undefined && process.stdout.isTTY;
   let first = true;
 
-  while (true) {
+  for (;;) {
     if (!first && shouldClear) {
       print("\u001b[2J\u001b[H");
     }
@@ -592,68 +598,114 @@ export async function runPlanCancel(opts: RunPlanCancelOpts): Promise<void> {
   });
   if (!res.ok) await daemonError("cancel", `/plans/${opts.id}/cancel`, res);
   const body = (await res.json()) as PlanCancelResponse;
-  print(`cancelled ${body.cancelled_running_count}`);
+  print(`cancelled ${String(body.cancelled_running_count)}`);
+}
+
+async function dispatchPlanStart(
+  args: string[],
+  storageRoot: string,
+  out: Out,
+  err: Out,
+): Promise<number> {
+  const path = args[1];
+  if (!path || path.startsWith("-")) {
+    err("usage: penumbra plan start <path>");
+    return 2;
+  }
+  await runPlanStart({ path, storageRoot, print: out });
+  return 0;
+}
+
+async function dispatchPlanList(
+  args: string[],
+  storageRoot: string,
+  out: Out,
+  err: Out,
+): Promise<number> {
+  const statusIdx = args.indexOf("--status");
+  const status = statusIdx >= 0 ? args[statusIdx + 1] : undefined;
+  if (statusIdx >= 0 && (!status || status.startsWith("-"))) {
+    err("usage: penumbra plan list [--status <status>]");
+    return 2;
+  }
+  await runPlanList({ status, storageRoot, print: out });
+  return 0;
+}
+
+async function dispatchPlanStatusOrWatch(
+  args: string[],
+  storageRoot: string,
+  sub: string,
+  out: Out,
+  err: Out,
+): Promise<number> {
+  const id = args[1];
+  const watch = sub === "watch" || args.includes("--watch");
+  if (!id || id.startsWith("-")) {
+    err(
+      watch
+        ? "usage: penumbra plan watch <plan_id>"
+        : "usage: penumbra plan status <plan_id> [--watch]",
+    );
+    return 2;
+  }
+  await runPlanStatus({ id, watch, storageRoot, print: out });
+  return 0;
+}
+
+async function dispatchPlanCancel(
+  args: string[],
+  storageRoot: string,
+  out: Out,
+  err: Out,
+): Promise<number> {
+  const id = args[1];
+  if (!id || id.startsWith("-")) {
+    err("usage: penumbra plan cancel <plan_id>");
+    return 2;
+  }
+  await runPlanCancel({ id, storageRoot, print: out });
+  return 0;
+}
+
+async function dispatchPlanValidate(
+  args: string[],
+  storageRoot: string,
+  out: Out,
+  err: Out,
+): Promise<number> {
+  const path = args[1];
+  const noRegistry = args.includes("--no-registry");
+  if (!path || path.startsWith("-")) {
+    err("usage: penumbra plan validate <path>");
+    return 2;
+  }
+  return await runPlanValidate({ path, storageRoot, noRegistry, out, err });
 }
 
 export async function dispatchPlanSubcommand(args: string[], storageRoot: string): Promise<number> {
   const sub = args[0];
-  const out = (s: string) => process.stdout.write(`${s}\n`);
-  const err = (s: string) => console.error(s);
+  const out: Out = (s) => {
+    process.stdout.write(`${s}\n`);
+  };
+  const err: Out = (s) => {
+    process.stderr.write(`${s}\n`);
+  };
   switch (sub) {
-    case "start": {
-      const path = args[1];
-      if (!path || path.startsWith("-")) {
-        err("usage: penumbra plan start <path>");
-        return 2;
-      }
-      await runPlanStart({ path, storageRoot, print: out });
-      return 0;
-    }
-    case "list": {
-      const statusIdx = args.indexOf("--status");
-      const status = statusIdx >= 0 ? (args[statusIdx + 1] ?? undefined) : undefined;
-      if (statusIdx >= 0 && (!status || status.startsWith("-"))) {
-        err("usage: penumbra plan list [--status <status>]");
-        return 2;
-      }
-      await runPlanList({ status, storageRoot, print: out });
-      return 0;
-    }
-    case "status":
-    case "watch": {
-      const id = args[1];
-      const watch = sub === "watch" || args.includes("--watch");
-      if (!id || id.startsWith("-")) {
-        err(
-          watch
-            ? "usage: penumbra plan watch <plan_id>"
-            : "usage: penumbra plan status <plan_id> [--watch]",
-        );
-        return 2;
-      }
-      await runPlanStatus({ id, watch, storageRoot, print: out });
-      return 0;
-    }
-    case "cancel": {
-      const id = args[1];
-      if (!id || id.startsWith("-")) {
-        err("usage: penumbra plan cancel <plan_id>");
-        return 2;
-      }
-      await runPlanCancel({ id, storageRoot, print: out });
-      return 0;
-    }
-    case "validate": {
-      const path = args[1];
-      const noRegistry = args.includes("--no-registry");
-      if (!path || path.startsWith("-")) {
-        err("usage: penumbra plan validate <path>");
-        return 2;
-      }
-      return runPlanValidate({ path, storageRoot, noRegistry, out, err });
-    }
+    case undefined:
     default:
       err("usage: penumbra plan <start|list|status|cancel|watch|validate>");
       return 2;
+    case "start":
+      return await dispatchPlanStart(args, storageRoot, out, err);
+    case "list":
+      return await dispatchPlanList(args, storageRoot, out, err);
+    case "status":
+    case "watch":
+      return await dispatchPlanStatusOrWatch(args, storageRoot, sub, out, err);
+    case "cancel":
+      return await dispatchPlanCancel(args, storageRoot, out, err);
+    case "validate":
+      return await dispatchPlanValidate(args, storageRoot, out, err);
   }
 }

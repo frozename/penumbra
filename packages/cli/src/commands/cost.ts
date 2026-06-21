@@ -1,6 +1,6 @@
+import { resolveDaemonStorageRoot } from "@penumbra/core";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { resolveDaemonStorageRoot } from "@penumbra/core";
 
 export function parseDuration(input: string): number {
   const m = /^(\d+)([smhd])$/.exec(input);
@@ -14,7 +14,7 @@ export function parseDuration(input: string): number {
       d: 86_400_000,
     };
     const factor = mult[unit];
-    if (factor == null) {
+    if (factor === undefined) {
       throw new Error(`Invalid duration: ${input}`);
     }
     return n * factor;
@@ -63,12 +63,12 @@ function defaultPrint(s: string): void {
 }
 
 function formatNumber(n: number | null | undefined, digits = 4): string {
-  if (n == null) return "—";
+  if (n === null || n === undefined) return "—";
   return n.toFixed(digits);
 }
 
 function formatPercent(n: number | null | undefined): string {
-  if (n == null) return "—";
+  if (n === null || n === undefined) return "—";
   return n.toFixed(1);
 }
 
@@ -78,11 +78,12 @@ export async function runCostRecent(opts: RunCostOpts): Promise<void> {
   const since = resolveSinceParam(opts.since);
   const params = new URLSearchParams();
   if (since) params.set("since", since);
-  if (opts.project_id != null) params.set("project_id", opts.project_id);
+  if (opts.project_id !== null && opts.project_id !== undefined)
+    params.set("project_id", opts.project_id);
 
   const url = opts.fetch
     ? `/usage/recent${params.toString() ? `?${params.toString()}` : ""}`
-    : (() => {
+    : ((): string => {
         const daemon = resolveDaemon(opts.storageRoot);
         return `${daemon.baseUrl}/usage/recent${params.toString() ? `?${params.toString()}` : ""}`;
       })();
@@ -91,7 +92,7 @@ export async function runCostRecent(opts: RunCostOpts): Promise<void> {
     : { authorization: `Bearer ${resolveDaemon(opts.storageRoot).token}` };
   const res = await fetcher(url, headers ? { headers } : undefined);
   if (!res.ok) {
-    print(`error: HTTP ${res.status}`);
+    print(`error: HTTP ${String(res.status)}`);
     return;
   }
 
@@ -99,12 +100,12 @@ export async function runCostRecent(opts: RunCostOpts): Promise<void> {
     total_cost_usd: number | null;
     total_tokens_used: number;
     handoff_count: number;
-    by_provider: Array<{
+    by_provider: {
       provider: string | null;
       cost_usd: number | null;
       tokens_used: number;
       handoff_count: number;
-    }>;
+    }[];
     window: { from: string; to: string };
   };
 
@@ -116,7 +117,7 @@ export async function runCostRecent(opts: RunCostOpts): Promise<void> {
   print(`Cost ledger -- window ${body.window.from} -> ${body.window.to}`);
   print("");
   print(
-    `  Total: $${formatNumber(body.total_cost_usd)}  (${body.total_tokens_used} tokens, ${body.handoff_count} dispatches)`,
+    `  Total: ${formatNumber(body.total_cost_usd)}  (${String(body.total_tokens_used)} tokens, ${String(body.handoff_count)} dispatches)`,
   );
   print("  By provider:");
   if (body.by_provider.length === 0) {
@@ -126,9 +127,22 @@ export async function runCostRecent(opts: RunCostOpts): Promise<void> {
   for (const row of body.by_provider) {
     const provider = (row.provider ?? "(unknown)").padEnd(14);
     print(
-      `    ${provider} $${formatNumber(row.cost_usd)}  (${row.tokens_used} tokens, ${row.handoff_count} dispatches)`,
+      `    ${provider} ${formatNumber(row.cost_usd)}  (${String(row.tokens_used)} tokens, ${String(row.handoff_count)} dispatches)`,
     );
   }
+}
+
+function quotaUrlAndHeaders(
+  opts: RunCostOpts,
+  paramsString: string,
+): { url: string; headers: { authorization: string } | undefined } {
+  const suffix = paramsString ? `?${paramsString}` : "";
+  if (opts.fetch) return { url: `/usage/quota_status${suffix}`, headers: undefined };
+  const daemon = resolveDaemon(opts.storageRoot);
+  return {
+    url: `${daemon.baseUrl}/usage/quota_status${suffix}`,
+    headers: { authorization: `Bearer ${daemon.token}` },
+  };
 }
 
 export async function runCostQuota(opts: RunCostOpts): Promise<void> {
@@ -138,24 +152,16 @@ export async function runCostQuota(opts: RunCostOpts): Promise<void> {
   const params = new URLSearchParams();
   if (since) params.set("since", since);
 
-  const url = opts.fetch
-    ? `/usage/quota_status${params.toString() ? `?${params.toString()}` : ""}`
-    : (() => {
-        const daemon = resolveDaemon(opts.storageRoot);
-        return `${daemon.baseUrl}/usage/quota_status${params.toString() ? `?${params.toString()}` : ""}`;
-      })();
-  const headers = opts.fetch
-    ? undefined
-    : { authorization: `Bearer ${resolveDaemon(opts.storageRoot).token}` };
+  const { url, headers } = quotaUrlAndHeaders(opts, params.toString());
   const res = await fetcher(url, headers ? { headers } : undefined);
   if (!res.ok) {
-    print(`error: HTTP ${res.status}`);
+    print(`error: HTTP ${String(res.status)}`);
     return;
   }
 
   const body = (await res.json()) as {
     window: { from: string; to: string };
-    providers: Array<{
+    providers: {
       provider: string;
       model?: string;
       used_usd: number | null;
@@ -166,7 +172,7 @@ export async function runCostQuota(opts: RunCostOpts): Promise<void> {
       quota_tokens: number | null;
       remaining_tokens: number | null;
       remaining_pct_tokens: number | null;
-    }>;
+    }[];
   };
 
   if (opts.json) {
@@ -184,19 +190,41 @@ export async function runCostQuota(opts: RunCostOpts): Promise<void> {
   const labels = body.providers.map((p) => (p.model ? `${p.provider}/${p.model}` : p.provider));
   const labelWidth = Math.max(14, ...labels.map((l) => l.length));
 
-  for (let i = 0; i < body.providers.length; i++) {
-    const row = body.providers[i]!;
-    const label = labels[i]!.padEnd(labelWidth);
-    if (row.quota_usd != null) {
-      print(
-        `  ${label} $${formatNumber(row.used_usd, 2)} / $${formatNumber(row.quota_usd, 2)}   (${formatPercent(row.remaining_pct_usd)}% remaining)`,
-      );
+  for (const [i, row] of body.providers.entries()) {
+    const labelText = labels[i] ?? "";
+    const label = labelText.padEnd(labelWidth);
+    if (row.quota_usd !== null) {
+      printQuotaUsd(print, label, row);
       continue;
     }
-    if (row.quota_tokens != null) {
-      print(
-        `  ${label} ${row.used_tokens} / ${row.quota_tokens} tokens   (${formatPercent(row.remaining_pct_tokens)}% remaining)`,
-      );
+    if (row.quota_tokens !== null) {
+      printQuotaTokens(print, label, row);
     }
   }
+}
+
+function printQuotaUsd(
+  print: (s: string) => void,
+  label: string,
+  row: { used_usd: number | null; quota_usd: number | null; remaining_pct_usd: number | null },
+): void {
+  const usedDollars = "$" + formatNumber(row.used_usd, 2);
+  const quotaDollars = "$" + formatNumber(row.quota_usd, 2);
+  print(
+    `  ${label} ${usedDollars} / ${quotaDollars}   (${formatPercent(row.remaining_pct_usd)}% remaining)`,
+  );
+}
+
+function printQuotaTokens(
+  print: (s: string) => void,
+  label: string,
+  row: {
+    used_tokens: number;
+    quota_tokens: number | null;
+    remaining_pct_tokens: number | null;
+  },
+): void {
+  print(
+    `  ${label} ${String(row.used_tokens)} / ${String(row.quota_tokens)} tokens   (${formatPercent(row.remaining_pct_tokens)}% remaining)`,
+  );
 }

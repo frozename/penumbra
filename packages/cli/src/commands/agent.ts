@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
 import {
   type AgentPerformanceRow,
   type AgentSmokePass,
@@ -8,6 +6,8 @@ import {
   RecordOperatorAgentPerformanceInputSchema,
   resolveDaemonStorageRoot,
 } from "@penumbra/core";
+import { readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 
 export interface RunAgentRankOpts {
   task_type: string;
@@ -67,7 +67,7 @@ function resolveDaemon(storageRoot?: string): { baseUrl: string; token: string }
   if (!token) {
     throw new Error(`penumbra agent: empty daemon token in ${join(root, "token")}`);
   }
-  return { baseUrl: `http://127.0.0.1:${Number(port)}`, token };
+  return { baseUrl: `http://127.0.0.1:${String(Number(port))}`, token };
 }
 
 function buildDaemonRequest(
@@ -87,43 +87,68 @@ function buildDaemonRequest(
 }
 
 function daemonError(prefix: string, pathname: string, status: number): Error {
-  return new Error(`${prefix}: daemon ${pathname} returned HTTP ${status}`);
+  return new Error(`${prefix}: daemon ${pathname} returned HTTP ${String(status)}`);
+}
+
+interface AgentRankRow {
+  agent_name: string;
+  score: number;
+  samples: number;
+  success_rate: number;
+  avg_rounds: number | null;
+  avg_latency_ms: number | null;
+  cost_per_success_usd: number | null;
+}
+
+interface AgentRankBody {
+  task_type: string;
+  window: { from: string | null; to: string };
+  candidates: AgentRankRow[];
+}
+
+function buildAgentRankParams(opts: RunAgentRankOpts): URLSearchParams {
+  const params = new URLSearchParams();
+  params.set("task_type", opts.task_type);
+  if (opts.since) params.set("since", opts.since);
+  if (opts.min_samples !== undefined) params.set("min_samples", String(opts.min_samples));
+  if (opts.include_neutral !== undefined)
+    params.set("include_neutral", String(opts.include_neutral));
+  if (opts.include_cost !== undefined) params.set("include_cost", String(opts.include_cost));
+  return params;
+}
+
+function formatAgentRankRow(row: AgentRankRow): string {
+  const agent = row.agent_name.padEnd(19);
+  const score = `${(row.score * 100).toFixed(1)}%`.padEnd(6);
+  const samples = String(row.samples).padEnd(7);
+  const success = `${(row.success_rate * 100).toFixed(1)}%`.padEnd(8);
+  const rounds = (row.avg_rounds === null ? "-" : row.avg_rounds.toFixed(1)).padEnd(10);
+  const cost = (
+    row.cost_per_success_usd === null ? "-" : "$" + row.cost_per_success_usd.toFixed(4)
+  ).padEnd(13);
+  const latency =
+    row.avg_latency_ms === null ? "-" : `${String(Math.round(row.avg_latency_ms / 1000))}s`;
+  return `  ${agent} ${score} ${samples} ${success} ${rounds} ${cost} ${latency}`;
 }
 
 export async function runAgentRank(opts: RunAgentRankOpts): Promise<void> {
   const fetcher = opts.fetch ?? fetch;
   const print = opts.print ?? defaultPrint;
-  const params = new URLSearchParams();
-  params.set("task_type", opts.task_type);
-  if (opts.since) params.set("since", opts.since);
-  if (opts.min_samples != null) params.set("min_samples", String(opts.min_samples));
-  if (opts.include_neutral != null) params.set("include_neutral", String(opts.include_neutral));
-  if (opts.include_cost != null) params.set("include_cost", String(opts.include_cost));
+  const params = buildAgentRankParams(opts);
 
   const daemon = opts.fetch ? null : resolveDaemon(opts.storageRoot);
-  const url = opts.fetch
-    ? `/agents/rank?${params.toString()}`
-    : `${daemon!.baseUrl}/agents/rank?${params.toString()}`;
+  const url =
+    daemon === null
+      ? `/agents/rank?${params.toString()}`
+      : `${daemon.baseUrl}/agents/rank?${params.toString()}`;
   const headers = daemon ? { authorization: `Bearer ${daemon.token}` } : undefined;
   const res = await fetcher(url, headers ? { headers } : undefined);
   if (!res.ok) {
-    print(`error: HTTP ${res.status}`);
+    print(`error: HTTP ${String(res.status)}`);
     return;
   }
 
-  const body = (await res.json()) as {
-    task_type: string;
-    window: { from: string | null; to: string };
-    candidates: Array<{
-      agent_name: string;
-      score: number;
-      samples: number;
-      success_rate: number;
-      avg_rounds: number | null;
-      avg_latency_ms: number | null;
-      cost_per_success_usd: number | null;
-    }>;
-  };
+  const body = (await res.json()) as AgentRankBody;
 
   if (opts.json) {
     print(JSON.stringify(body, null, 2));
@@ -140,16 +165,7 @@ export async function runAgentRank(opts: RunAgentRankOpts): Promise<void> {
     return;
   }
   for (const row of body.candidates) {
-    const agent = row.agent_name.padEnd(19);
-    const score = `${(row.score * 100).toFixed(1)}%`.padEnd(6);
-    const samples = String(row.samples).padEnd(7);
-    const success = `${(row.success_rate * 100).toFixed(1)}%`.padEnd(8);
-    const rounds = (row.avg_rounds == null ? "-" : row.avg_rounds.toFixed(1)).padEnd(10);
-    const cost = (
-      row.cost_per_success_usd == null ? "-" : `$${row.cost_per_success_usd.toFixed(4)}`
-    ).padEnd(13);
-    const latency = row.avg_latency_ms == null ? "-" : `${Math.round(row.avg_latency_ms / 1000)}s`;
-    print(`  ${agent} ${score} ${samples} ${success} ${rounds} ${cost} ${latency}`);
+    print(formatAgentRankRow(row));
   }
 }
 
@@ -226,7 +242,7 @@ export async function runAgentLedgerImport(opts: RunAgentLedgerImportOpts): Prom
     );
 
   const body = (await res.json()) as ImportMarkdownResult;
-  print(`imported: ${body.imported}, skipped: ${body.skipped}`);
+  print(`imported: ${String(body.imported)}, skipped: ${String(body.skipped)}`);
 }
 
 export async function runAgentLedgerRender(opts: RunAgentLedgerRenderOpts): Promise<void> {
@@ -250,7 +266,7 @@ export async function runAgentLedgerRender(opts: RunAgentLedgerRenderOpts): Prom
   }
 
   (opts.stdoutWrite ?? process.stdout.write.bind(process.stdout))(markdown);
-  const confirmation = `wrote ${Buffer.byteLength(markdown, "utf8")} bytes to stdout`;
+  const confirmation = `wrote ${String(Buffer.byteLength(markdown, "utf8"))} bytes to stdout`;
   if (opts.print) {
     opts.print(confirmation);
     return;

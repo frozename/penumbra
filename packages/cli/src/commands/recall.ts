@@ -39,7 +39,7 @@ export async function runRecall(opts: RunRecallOpts): Promise<RecallHit[]> {
   }
   const port = Number(readFileSync(portPath, "utf8").trim());
   const token = readFileSync(tokenPath, "utf8").trim();
-  const res = await fetch(`http://127.0.0.1:${port}/recall`, {
+  const res = await fetch(`http://127.0.0.1:${String(port)}/recall`, {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
     body: JSON.stringify({
@@ -54,7 +54,7 @@ export async function runRecall(opts: RunRecallOpts): Promise<RecallHit[]> {
     }),
   });
   if (!res.ok) {
-    throw new Error(`penumbra recall: daemon /recall returned HTTP ${res.status}`);
+    throw new Error(`penumbra recall: daemon /recall returned HTTP ${String(res.status)}`);
   }
   const body = (await res.json()) as { results: RecallHit[] };
   return body.results;

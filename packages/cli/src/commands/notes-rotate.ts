@@ -1,5 +1,5 @@
-import { readdirSync, renameSync, mkdirSync, statSync } from "node:fs";
-import { join, dirname, basename } from "node:path";
+import { mkdirSync, readdirSync, renameSync, statSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 
 const PREFIXES = ["maestro-continuation-", "session-summary-"] as const;
 const DEFAULT_KEEP_COUNT = 10;
@@ -25,10 +25,10 @@ export interface NotesRotateResult {
   skipped_modified: number;
 }
 
-export async function runNotesRotate(opts: NotesRotateOpts): Promise<NotesRotateResult> {
+function runNotesRotateSync(opts: NotesRotateOpts): NotesRotateResult {
   const keepCount = opts.keepCount ?? DEFAULT_KEEP_COUNT;
   if (keepCount < SANITY_MIN_KEEP_COUNT) {
-    throw new Error(`keep-count must be at least ${SANITY_MIN_KEEP_COUNT}`);
+    throw new Error(`keep-count must be at least ${String(SANITY_MIN_KEEP_COUNT)}`);
   }
 
   const notesDir = join(opts.rootDir, "docs", "notes");
@@ -41,7 +41,7 @@ export async function runNotesRotate(opts: NotesRotateOpts): Promise<NotesRotate
 
   if (modifiedCount > 0) {
     throw new Error(
-      `refusing — ${modifiedCount} modified files in candidate set; commit or stash first`,
+      `refusing — ${String(modifiedCount)} modified files in candidate set; commit or stash first`,
     );
   }
 
@@ -72,7 +72,15 @@ export async function runNotesRotate(opts: NotesRotateOpts): Promise<NotesRotate
   };
 }
 
-function scanCandidates(notesDir: string): Array<{ prefix: string; files: string[] }> {
+export function runNotesRotate(opts: NotesRotateOpts): Promise<NotesRotateResult> {
+  try {
+    return Promise.resolve(runNotesRotateSync(opts));
+  } catch (err) {
+    return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+  }
+}
+
+function scanCandidates(notesDir: string): { prefix: string; files: string[] }[] {
   const names = readdirSync(notesDir).filter((name) =>
     PREFIXES.some((prefix) => name.startsWith(prefix)),
   );
@@ -82,7 +90,8 @@ function scanCandidates(notesDir: string): Array<{ prefix: string; files: string
   for (const name of names) {
     const prefix = PREFIXES.find((candidate) => name.startsWith(candidate));
     if (!prefix) continue;
-    grouped.get(prefix)!.push(name);
+    const bucket = grouped.get(prefix);
+    if (bucket) bucket.push(name);
   }
 
   return PREFIXES.map((prefix) => ({
@@ -108,7 +117,7 @@ function countModifiedCandidates(rootDir: string, relativeFiles: string[]): numb
     .split("\n")
     .map((line) => line.trimEnd())
     .filter(Boolean)
-    .filter((line) => line.length >= 2 && line[0] !== "?").length;
+    .filter((line) => line.length >= 2 && !line.startsWith("?")).length;
 }
 
 function existsLike(path: string): boolean {
@@ -123,5 +132,5 @@ function existsLike(path: string): boolean {
 function monthKey(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
-  return `${year}-${month}`;
+  return `${String(year)}-${month}`;
 }

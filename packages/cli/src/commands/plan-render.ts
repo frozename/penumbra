@@ -6,12 +6,12 @@ export interface PlanRenderInput {
     status: string;
     registered_at?: number;
   };
-  tasks: Array<{
+  tasks: {
     task_meta_id: string;
     project_id: string;
     task_id_in_board: string | null;
     status: string;
-  }>;
+  }[];
 }
 
 export function renderPlanTree(input: PlanRenderInput): string {

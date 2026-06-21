@@ -19,6 +19,7 @@ interface TaskRecord {
   expected_artifacts: unknown[] | null;
   eligibility: Record<string, unknown>;
   review_eligibility: Record<string, unknown> | null;
+
   requires_review: boolean;
   status: string;
   result_summary: string | null;
@@ -26,7 +27,7 @@ interface TaskRecord {
   failure_reason: string | null;
   chain_id: string | null;
   origin: string | null;
-  lease?: unknown | null;
+  lease?: unknown;
   events?: unknown[] | null;
 }
 
@@ -34,7 +35,7 @@ interface TaskListResponse {
   tasks: TaskRecord[];
 }
 
-interface TaskShowResponse extends TaskRecord {}
+type TaskShowResponse = TaskRecord;
 
 interface MaestroSessionResponse {
   task_id: string;
@@ -133,7 +134,17 @@ function resolveDaemon(storageRoot: string): { baseUrl: string; token: string } 
   if (!token) {
     throw new Error(`penumbra task: empty daemon token in ${join(storageRoot, "token")}`);
   }
-  return { baseUrl: `http://127.0.0.1:${port}`, token };
+  return { baseUrl: `http://127.0.0.1:${String(port)}`, token };
+}
+
+function buildDaemonUrl(
+  fetchOverride: typeof fetch | undefined,
+  daemon: { baseUrl: string } | null,
+  path: string,
+): string {
+  if (fetchOverride) return path;
+  if (!daemon) throw new Error("penumbra task: daemon not resolved");
+  return `${daemon.baseUrl}${path}`;
 }
 
 function prettyTask(task: TaskRecord): string {
@@ -147,7 +158,7 @@ function prettyTask(task: TaskRecord): string {
 }
 
 function formatTimestamp(ts: number | null | undefined): string {
-  if (ts == null) return "—";
+  if (ts === null || ts === undefined) return "—";
   return new Date(ts).toISOString();
 }
 
@@ -175,13 +186,13 @@ function formatDollars(cents: number | null | undefined): string {
 }
 
 function renderStatus(session: MaestroSessionResponse): string {
-  if (session.terminated_at == null) return "running";
+  if (session.terminated_at === null) return "running";
   return `terminated:${session.termination_reason ?? "unknown"}`;
 }
 
 function prettyMaestroSession(session: MaestroSessionResponse): string {
   const wallClockUsedMs =
-    session.terminated_at == null
+    session.terminated_at === null
       ? Date.now() - session.started_at
       : session.terminated_at - session.started_at;
   const wallPct = formatPercent(wallClockUsedMs, session.wall_clock_budget_ms);
@@ -191,10 +202,10 @@ function prettyMaestroSession(session: MaestroSessionResponse): string {
     "Maestro session",
     `  agent:               ${session.agent_id}`,
     `  chain:               ${session.chain_handoff_id ?? "—"}`,
-    `  started:             ${formatTimestamp(session.started_at)} (${formatElapsedMinutes(session.started_at)}m ago)`,
-    `  wall clock:          ${formatMsMinutes(wallClockUsedMs)} / ${formatMsMinutes(session.wall_clock_budget_ms)}  (${wallPct}%)`,
-    `  cost:                ${formatDollars(session.cost_consumed_cents)} / ${formatDollars(session.cost_budget_cents)}  (${costPct}%)`,
-    `  sub-dispatches:      ${session.sub_dispatches_consumed ?? 0} / ${session.sub_dispatch_budget}  (${subPct}%)`,
+    `  started:             ${formatTimestamp(session.started_at)} (${String(formatElapsedMinutes(session.started_at))}m ago)`,
+    `  wall clock:          ${formatMsMinutes(wallClockUsedMs)} / ${formatMsMinutes(session.wall_clock_budget_ms)}  (${String(wallPct)}%)`,
+    `  cost:                ${formatDollars(session.cost_consumed_cents)} / ${formatDollars(session.cost_budget_cents)}  (${String(costPct)}%)`,
+    `  sub-dispatches:      ${String(session.sub_dispatches_consumed ?? 0)} / ${String(session.sub_dispatch_budget)}  (${String(subPct)}%)`,
     `  warned at:           ${formatTimestamp(session.soft_warned_at)}`,
     `  status:              ${renderStatus(session)}`,
   ].join("\n");
@@ -208,9 +219,7 @@ async function tryFetchMaestroSession(opts: {
 }): Promise<MaestroSessionResponse | null> {
   try {
     const res = await (opts.fetch ?? fetch)(
-      opts.fetch
-        ? `/maestro/sessions/${opts.id}`
-        : `${opts.daemon!.baseUrl}/maestro/sessions/${opts.id}`,
+      buildDaemonUrl(opts.fetch, opts.daemon, `/maestro/sessions/${opts.id}`),
       {
         headers: opts.daemon ? { authorization: `Bearer ${opts.daemon.token}` } : undefined,
       },
@@ -235,10 +244,11 @@ function buildNewTaskPayload(opts: RunTaskNewOpts): Record<string, unknown> {
   if (opts.min_tier) eligibility.min_tier = opts.min_tier;
   if ((opts.allow_agents ?? []).length > 0) eligibility.allow_agents = opts.allow_agents;
   const bounds: Record<string, unknown> = {};
-  if (opts.bounds_wall_clock_min != null)
+  if (opts.bounds_wall_clock_min !== undefined)
     bounds.wall_clock_ms = opts.bounds_wall_clock_min * 60_000;
-  if (opts.bounds_cost_cents != null) bounds.cost_cents = opts.bounds_cost_cents;
-  if (opts.bounds_sub_dispatches != null) bounds.max_sub_dispatches = opts.bounds_sub_dispatches;
+  if (opts.bounds_cost_cents !== undefined) bounds.cost_cents = opts.bounds_cost_cents;
+  if (opts.bounds_sub_dispatches !== undefined)
+    bounds.max_sub_dispatches = opts.bounds_sub_dispatches;
   const payload: Record<string, unknown> = {
     prompt: opts.prompt,
     priority: opts.priority ?? "normal",
@@ -274,7 +284,7 @@ export async function runTaskNew(opts: RunTaskNewOpts): Promise<void> {
     applyGhCreate(body, opts);
   }
   const daemon = opts.fetch ? null : resolveDaemon(opts.storageRoot);
-  const res = await (opts.fetch ?? fetch)(opts.fetch ? "/tasks" : `${daemon!.baseUrl}/tasks`, {
+  const res = await (opts.fetch ?? fetch)(buildDaemonUrl(opts.fetch, daemon, "/tasks"), {
     method: "POST",
     headers: {
       ...(daemon ? { authorization: `Bearer ${daemon.token}` } : {}),
@@ -283,7 +293,8 @@ export async function runTaskNew(opts: RunTaskNewOpts): Promise<void> {
     },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`penumbra task new: daemon /tasks returned HTTP ${res.status}`);
+  if (!res.ok)
+    throw new Error(`penumbra task new: daemon /tasks returned HTTP ${String(res.status)}`);
   const created = (await res.json()) as {
     task_id: string;
     gh_issue_url?: string;
@@ -310,12 +321,13 @@ export async function runTaskList(opts: RunTaskListOpts): Promise<void> {
   if (opts.mine) params.set("origin", "cli");
   const daemon = opts.fetch ? null : resolveDaemon(opts.storageRoot);
   const res = await (opts.fetch ?? fetch)(
-    opts.fetch ? `/tasks?${params}` : `${daemon!.baseUrl}/tasks?${params}`,
+    buildDaemonUrl(opts.fetch, daemon, `/tasks?${params.toString()}`),
     {
       headers: daemon ? { authorization: `Bearer ${daemon.token}` } : undefined,
     },
   );
-  if (!res.ok) throw new Error(`penumbra task list: daemon /tasks returned HTTP ${res.status}`);
+  if (!res.ok)
+    throw new Error(`penumbra task list: daemon /tasks returned HTTP ${String(res.status)}`);
   const body = (await res.json()) as TaskListResponse;
   if (opts.json) {
     print(JSON.stringify(body, null, 2));
@@ -332,15 +344,15 @@ export async function runTaskShow(opts: RunTaskShowOpts): Promise<void> {
   const print = opts.print ?? defaultPrint;
   const daemon = opts.fetch ? null : resolveDaemon(opts.storageRoot);
   const res = await (opts.fetch ?? fetch)(
-    opts.fetch
-      ? `/tasks/${opts.id}?include=lease,events`
-      : `${daemon!.baseUrl}/tasks/${opts.id}?include=lease,events`,
+    buildDaemonUrl(opts.fetch, daemon, `/tasks/${opts.id}?include=lease,events`),
     {
       headers: daemon ? { authorization: `Bearer ${daemon.token}` } : undefined,
     },
   );
   if (!res.ok)
-    throw new Error(`penumbra task show: daemon /tasks/${opts.id} returned HTTP ${res.status}`);
+    throw new Error(
+      `penumbra task show: daemon /tasks/${opts.id} returned HTTP ${String(res.status)}`,
+    );
   const body = (await res.json()) as TaskShowResponse;
   if (opts.json) {
     print(JSON.stringify(body, null, 2));
@@ -361,7 +373,7 @@ export async function runTaskShow(opts: RunTaskShowOpts): Promise<void> {
 export async function runTaskCancel(opts: RunTaskCancelOpts): Promise<void> {
   const daemon = opts.fetch ? null : resolveDaemon(opts.storageRoot);
   const res = await (opts.fetch ?? fetch)(
-    opts.fetch ? `/tasks/${opts.id}/cancel` : `${daemon!.baseUrl}/tasks/${opts.id}/cancel`,
+    buildDaemonUrl(opts.fetch, daemon, `/tasks/${opts.id}/cancel`),
     {
       method: "POST",
       headers: {
@@ -373,24 +385,21 @@ export async function runTaskCancel(opts: RunTaskCancelOpts): Promise<void> {
   );
   if (!res.ok)
     throw new Error(
-      `penumbra task cancel: daemon /tasks/${opts.id}/cancel returned HTTP ${res.status}`,
+      `penumbra task cancel: daemon /tasks/${opts.id}/cancel returned HTTP ${String(res.status)}`,
     );
 }
 
 export async function runTaskReview(opts: RunTaskReviewOpts): Promise<void> {
   const print = opts.print ?? defaultPrint;
   const daemon = opts.fetch ? null : resolveDaemon(opts.storageRoot);
-  const leaseRes = await (opts.fetch ?? fetch)(
-    opts.fetch ? "/tasks/lease" : `${daemon!.baseUrl}/tasks/lease`,
-    {
-      method: "POST",
-      headers: {
-        ...(daemon ? { authorization: `Bearer ${daemon.token}` } : {}),
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ agent_id: "cli-human" }),
+  const leaseRes = await (opts.fetch ?? fetch)(buildDaemonUrl(opts.fetch, daemon, "/tasks/lease"), {
+    method: "POST",
+    headers: {
+      ...(daemon ? { authorization: `Bearer ${daemon.token}` } : {}),
+      "content-type": "application/json",
     },
-  );
+    body: JSON.stringify({ agent_id: "cli-human" }),
+  });
   if (leaseRes.status !== 200) {
     print(`task ${opts.id} is not claimable`);
     return;
@@ -398,9 +407,7 @@ export async function runTaskReview(opts: RunTaskReviewOpts): Promise<void> {
   const lease = (await leaseRes.json()) as TaskLeaseResponse;
   if (lease.task_id !== opts.id) {
     await (opts.fetch ?? fetch)(
-      opts.fetch
-        ? `/tasks/${lease.task_id}/cancel`
-        : `${daemon!.baseUrl}/tasks/${lease.task_id}/cancel`,
+      buildDaemonUrl(opts.fetch, daemon, `/tasks/${lease.task_id}/cancel`),
       {
         method: "POST",
         headers: {
@@ -414,9 +421,7 @@ export async function runTaskReview(opts: RunTaskReviewOpts): Promise<void> {
     return;
   }
   const taskRes = await (opts.fetch ?? fetch)(
-    opts.fetch
-      ? `/tasks/${opts.id}?include=lease,events`
-      : `${daemon!.baseUrl}/tasks/${opts.id}?include=lease,events`,
+    buildDaemonUrl(opts.fetch, daemon, `/tasks/${opts.id}?include=lease,events`),
     {
       headers: daemon ? { authorization: `Bearer ${daemon.token}` } : undefined,
     },
@@ -445,11 +450,11 @@ export async function runTaskReview(opts: RunTaskReviewOpts): Promise<void> {
       passed?: boolean;
       notes?: string;
     };
-    if (parsed?.passed !== true || typeof parsed?.notes !== "string") {
+    if (parsed.passed !== true || typeof parsed.notes !== "string") {
       throw new Error("penumbra task review: editor file must contain passed: true and notes");
     }
     const completeRes = await (opts.fetch ?? fetch)(
-      opts.fetch ? `/tasks/${opts.id}/complete` : `${daemon!.baseUrl}/tasks/${opts.id}/complete`,
+      buildDaemonUrl(opts.fetch, daemon, `/tasks/${opts.id}/complete`),
       {
         method: "POST",
         headers: {
@@ -465,7 +470,7 @@ export async function runTaskReview(opts: RunTaskReviewOpts): Promise<void> {
     );
     if (!completeRes.ok)
       throw new Error(
-        `penumbra task review: daemon /tasks/${opts.id}/complete returned HTTP ${completeRes.status}`,
+        `penumbra task review: daemon /tasks/${opts.id}/complete returned HTTP ${String(completeRes.status)}`,
       );
     print(`reviewed ${opts.id}`);
   } finally {
@@ -476,52 +481,52 @@ export async function runTaskReview(opts: RunTaskReviewOpts): Promise<void> {
 export async function runTaskWatch(opts: RunTaskWatchOpts): Promise<void> {
   const print = opts.print ?? defaultPrint;
   const daemon = opts.fetch ? null : resolveDaemon(opts.storageRoot);
-  const res = await (opts.fetch ?? fetch)(
-    opts.fetch ? "/tasks/events" : `${daemon!.baseUrl}/tasks/events`,
-    {
-      headers: daemon ? { authorization: `Bearer ${daemon.token}` } : undefined,
-    },
-  );
+  const res = await (opts.fetch ?? fetch)(buildDaemonUrl(opts.fetch, daemon, "/tasks/events"), {
+    headers: daemon ? { authorization: `Bearer ${daemon.token}` } : undefined,
+  });
   if (!res.ok || !res.body)
-    throw new Error(`penumbra task watch: daemon /tasks/events returned HTTP ${res.status}`);
-  const reader = res.body.getReader();
+    throw new Error(
+      `penumbra task watch: daemon /tasks/events returned HTTP ${String(res.status)}`,
+    );
+  const reader = (res.body as ReadableStream<Uint8Array>).getReader();
   const decoder = new TextDecoder();
   let buf = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    buf += decoder.decode(chunk.value, { stream: true });
     let idx: number;
     while ((idx = buf.indexOf("\n\n")) >= 0) {
-      const chunk = buf.slice(0, idx);
+      const part = buf.slice(0, idx);
       buf = buf.slice(idx + 2);
-      const dataLine = chunk.split("\n").find((line) => line.startsWith("data: "));
+      const dataLine = part.split("\n").find((line) => line.startsWith("data: "));
       if (!dataLine) continue;
-      const event = JSON.parse(dataLine.slice(6)) as {
-        kind: string;
-        task_id: string;
-        actor: string | null;
-        ts: string;
-      };
-      if (event.kind === "orchestrate_spawned") {
-        print(
-          `[${event.ts}] orchestrate-spawned task=${event.task_id} agent=${(event as unknown as { agent: string }).agent} chain=${(event as unknown as { chain_handoff_id: string }).chain_handoff_id.slice(0, 8)}`,
-        );
-        continue;
-      }
-      if (event.kind === "orchestrate_warning") {
-        print(
-          `[${event.ts}] orchestrate-warning task=${event.task_id} pct=${(event as unknown as { pct: number }).pct}%`,
-        );
-        continue;
-      }
-      if (event.kind === "orchestrate_terminated") {
-        print(
-          `[${event.ts}] orchestrate-terminated task=${event.task_id} reason=${(event as unknown as { reason: string }).reason}`,
-        );
-        continue;
-      }
-      print(`[${event.ts}] ${event.kind} task=${event.task_id} actor=${event.actor ?? "-"}`);
+      const event = JSON.parse(dataLine.slice(6)) as TaskWatchEvent;
+      print(formatTaskWatchEvent(event));
     }
   }
+}
+
+interface TaskWatchEvent {
+  kind: string;
+  task_id: string;
+  actor: string | null;
+  ts: string;
+  agent?: string;
+  chain_handoff_id?: string;
+  pct?: number;
+  reason?: string;
+}
+
+function formatTaskWatchEvent(event: TaskWatchEvent): string {
+  if (event.kind === "orchestrate_spawned") {
+    return `[${event.ts}] orchestrate-spawned task=${event.task_id} agent=${event.agent ?? ""} chain=${(event.chain_handoff_id ?? "").slice(0, 8)}`;
+  }
+  if (event.kind === "orchestrate_warning") {
+    return `[${event.ts}] orchestrate-warning task=${event.task_id} pct=${String(event.pct ?? 0)}%`;
+  }
+  if (event.kind === "orchestrate_terminated") {
+    return `[${event.ts}] orchestrate-terminated task=${event.task_id} reason=${event.reason ?? ""}`;
+  }
+  return `[${event.ts}] ${event.kind} task=${event.task_id} actor=${event.actor ?? "-"}`;
 }

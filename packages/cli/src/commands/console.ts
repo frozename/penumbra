@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -184,7 +184,7 @@ function ensureDistReady(distPath: string): void {
 }
 
 function safeJoin(root: string, requested: string): string | null {
-  let rel = requested.replace(/\\/g, "/");
+  let rel = requested.replaceAll("\\", "/");
   if (rel.startsWith("/")) rel = rel.slice(1);
   const candidate = normalize(join(root, rel));
   const rootNorm = normalize(root);
@@ -209,13 +209,13 @@ function parseCookies(header: string | null): Map<string, string> {
 
 function filterUpstreamHeaders(upstream: Headers): Headers {
   const out = new Headers();
-  upstream.forEach((value, key) => {
+  for (const [key, value] of upstream.entries()) {
     const lk = key.toLowerCase();
-    if (HOP_BY_HOP.has(lk)) return;
-    if (lk === "set-cookie") return;
-    if (lk === "authorization") return;
+    if (HOP_BY_HOP.has(lk)) continue;
+    if (lk === "set-cookie") continue;
+    if (lk === "authorization") continue;
     out.set(key, value);
-  });
+  }
   applySecurityHeaders(out);
   return out;
 }
@@ -234,15 +234,15 @@ function makeUpstreamRequestInit(
   body: ArrayBuffer | undefined,
 ): RequestInit {
   const fwdHeaders = new Headers();
-  req.headers.forEach((value, key) => {
+  for (const [key, value] of req.headers.entries()) {
     const lk = key.toLowerCase();
-    if (HOP_BY_HOP.has(lk)) return;
-    if (lk === "cookie") return;
-    if (lk === "host") return;
-    if (lk === "authorization") return;
-    if (lk === "content-length") return;
+    if (HOP_BY_HOP.has(lk)) continue;
+    if (lk === "cookie") continue;
+    if (lk === "host") continue;
+    if (lk === "authorization") continue;
+    if (lk === "content-length") continue;
     fwdHeaders.set(key, value);
-  });
+  }
   fwdHeaders.set("Authorization", `Bearer ${token}`);
 
   const init: RequestInit = {
@@ -264,7 +264,7 @@ async function fetchUpstream(
   daemon: DaemonBootstrap,
   body: ArrayBuffer | undefined,
 ): Promise<{ upstream: Response | null; error: Error | null }> {
-  const targetUrl = `http://127.0.0.1:${daemon.port()}${targetPath || "/"}`;
+  const targetUrl = `http://127.0.0.1:${String(daemon.port())}${targetPath || "/"}`;
   const init = makeUpstreamRequestInit(req, daemon.token(), body);
   try {
     const upstream = await fetch(targetUrl, init);
@@ -304,13 +304,37 @@ async function proxyToDaemon(req: Request, url: URL, daemon: DaemonBootstrap): P
     );
   }
 
-  const headers = filterUpstreamHeaders(attempt.upstream!.headers);
+  if (!attempt.upstream) throw new Error("upstream missing after non-error attempt");
+  const headers = filterUpstreamHeaders(attempt.upstream.headers);
   setProxyVary(headers);
-  return new Response(attempt.upstream!.body, {
-    status: attempt.upstream!.status,
-    statusText: attempt.upstream!.statusText,
+  return new Response(attempt.upstream.body, {
+    status: attempt.upstream.status,
+    statusText: attempt.upstream.statusText,
     headers,
   });
+}
+
+async function handleApiRequest(
+  req: Request,
+  url: URL,
+  daemon: DaemonBootstrap,
+  sessionNonce: string,
+): Promise<Response> {
+  const cookies = parseCookies(req.headers.get("cookie"));
+  if (cookies.get(SESSION_COOKIE) !== sessionNonce) {
+    return jsonError(401, { error: "invalid_session" });
+  }
+  if (isMutatingMethod(req.method)) {
+    const secFetchSite = req.headers.get("sec-fetch-site");
+    const requestOrigin = req.headers.get("origin");
+    const expectedOrigin = `${url.protocol}//${url.host}`;
+    if (secFetchSite !== "same-origin" || requestOrigin !== expectedOrigin) {
+      const res = jsonError(403, { error: "cross_site_request_forbidden" });
+      setProxyVary(res.headers);
+      return res;
+    }
+  }
+  return await proxyToDaemon(req, url, daemon);
 }
 
 function jsonError(status: number, body: unknown): Response {
@@ -319,7 +343,7 @@ function jsonError(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers });
 }
 
-export async function prepareConsoleServer(
+export function prepareConsoleServer(
   opts: PrepareConsoleServerOpts,
 ): Promise<PreparedConsoleServer> {
   const storageRoot = resolveStorageRoot(opts.storageRoot);
@@ -337,21 +361,7 @@ export async function prepareConsoleServer(
       const url = new URL(req.url);
 
       if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
-        const cookies = parseCookies(req.headers.get("cookie"));
-        if (cookies.get(SESSION_COOKIE) !== sessionNonce) {
-          return jsonError(401, { error: "invalid_session" });
-        }
-        if (isMutatingMethod(req.method)) {
-          const secFetchSite = req.headers.get("sec-fetch-site");
-          const requestOrigin = req.headers.get("origin");
-          const expectedOrigin = `${url.protocol}//${url.host}`;
-          if (secFetchSite !== "same-origin" || requestOrigin !== expectedOrigin) {
-            const res = jsonError(403, { error: "cross_site_request_forbidden" });
-            setProxyVary(res.headers);
-            return res;
-          }
-        }
-        return proxyToDaemon(req, url, daemon);
+        return await handleApiRequest(req, url, daemon, sessionNonce);
       }
 
       const requested = url.pathname === "/" ? "/index.html" : url.pathname;
@@ -369,9 +379,7 @@ export async function prepareConsoleServer(
       }
 
       if (isIndex) {
-        if (cachedStrictIndex === null) {
-          cachedStrictIndex = strictIndexCsp(readFileSync(file, "utf8"));
-        }
+        cachedStrictIndex ??= strictIndexCsp(readFileSync(file, "utf8"));
         const headers = new Headers({
           "content-type": "text/html; charset=utf-8",
           "cache-control": "no-store",
@@ -388,15 +396,15 @@ export async function prepareConsoleServer(
   });
 
   const port = server.port ?? opts.port ?? 0;
-  const url = `http://127.0.0.1:${port}`;
-  return {
+  const url = `http://127.0.0.1:${String(port)}`;
+  return Promise.resolve({
     port,
     url,
     sessionNonce,
-    async stop() {
-      server.stop();
+    stop: async (): Promise<void> => {
+      await server.stop();
     },
-  };
+  });
 }
 
 function openBrowser(url: string, stderr: (line: string) => void): void {
@@ -425,8 +433,16 @@ function openBrowser(url: string, stderr: (line: string) => void): void {
 }
 
 export async function runConsole(opts: PrepareConsoleServerOpts): Promise<{ exitCode: number }> {
-  const stdout = opts._stdout ?? ((line: string) => process.stdout.write(`${line}\n`));
-  const stderr = opts._stderr ?? ((line: string) => process.stderr.write(`${line}\n`));
+  const stdout =
+    opts._stdout ??
+    ((line: string): void => {
+      process.stdout.write(`${line}\n`);
+    });
+  const stderr =
+    opts._stderr ??
+    ((line: string): void => {
+      process.stderr.write(`${line}\n`);
+    });
 
   let prepared: PreparedConsoleServer;
   try {
@@ -453,11 +469,12 @@ export async function runConsole(opts: PrepareConsoleServerOpts): Promise<{ exit
 
   await new Promise<void>((resolveSignal) => {
     let stopping = false;
-    const stop = async () => {
+    const stop = (): void => {
       if (stopping) return;
       stopping = true;
-      await prepared.stop();
-      resolveSignal();
+      void prepared.stop().then(() => {
+        resolveSignal();
+      });
     };
     process.once("SIGINT", stop);
     process.once("SIGTERM", stop);

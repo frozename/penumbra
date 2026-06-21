@@ -9,7 +9,7 @@ export interface ConfigShowOpts {
 // env vars (e.g. from launchd), use this command in a shell with the same
 // environment to compare. A daemon-side introspection endpoint is a separate
 // follow-up.
-export async function runConfigShow(opts: ConfigShowOpts): Promise<void> {
+export function runConfigShow(opts: ConfigShowOpts): Promise<void> {
   let bundle;
   try {
     bundle = getConfig();
@@ -20,4 +20,5 @@ export async function runConfigShow(opts: ConfigShowOpts): Promise<void> {
   }
   const output = formatEnvConfig(bundle, { json: opts.json });
   process.stdout.write(output + "\n");
+  return Promise.resolve();
 }

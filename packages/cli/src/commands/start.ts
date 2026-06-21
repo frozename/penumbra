@@ -1,41 +1,43 @@
-import { Database } from "bun:sqlite";
-import {
-  readFileSync,
-  writeFileSync,
-  unlinkSync,
-  openSync,
-  writeSync,
-  closeSync,
-  existsSync,
-} from "node:fs";
-import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import type { AgentRoutingConfig, Logger, ProviderQuota } from "@penumbra/core";
+
+import { loadShellConfig } from "@penumbra/agentchat/worker/shell-config";
 import {
   applyRuntimePragmas,
   assertEmbedderDim,
   buildServices,
+  BundledEmbedder,
+  defaultProjectRegistryPath,
+  loadProjectRegistry,
   loadSqliteVec,
   migrate,
   resolveEmbedder,
-  BundledEmbedder,
-  type Logger,
 } from "@penumbra/core";
 import { buildRegistry as buildWorkflowRegistry } from "@penumbra/workflows";
-import { loadShellConfig } from "@penumbra/agentchat/worker/shell-config";
-import { readEmbedderEnv } from "./sirius-env.js";
-import { ShellSessionPool } from "../../../daemon/src/services/shell-session-pool.js";
-import { InProcessPermissionService } from "../../../daemon/src/services/in-process-permission-service.js";
-import { createWorkflowRunsRegistry } from "../../../daemon/src/services/workflow-runs-registry.js";
-import { serve, type DaemonHandle } from "../../../daemon/src/serve.js";
-import { wrapDatabaseWithSlowQueryLog } from "../../../daemon/src/slow-query.js";
+import { Database } from "bun:sqlite";
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { resolveStorageDbPath } from "../../../core/src/db/storage-db-path.js";
 import {
   loadAgentChatConfig,
   resolveAgentChatConfigPath,
 } from "../../../daemon/src/agentchat-config.js";
-import { resolveStorageDbPath } from "../../../core/src/db/storage-db-path.js";
-import { defaultProjectRegistryPath, loadProjectRegistry } from "@penumbra/core";
-import type { AgentRoutingConfig, ProviderQuota } from "@penumbra/core";
+import { type DaemonHandle, serve } from "../../../daemon/src/serve.js";
+import { InProcessPermissionService } from "../../../daemon/src/services/in-process-permission-service.js";
+import { ShellSessionPool } from "../../../daemon/src/services/shell-session-pool.js";
+import { createWorkflowRunsRegistry } from "../../../daemon/src/services/workflow-runs-registry.js";
+import { wrapDatabaseWithSlowQueryLog } from "../../../daemon/src/slow-query.js";
+import { readEmbedderEnv } from "./sirius-env.js";
 
 const { resolveLegacyOperatorConfigPath, resolveOperatorConfigPath } = createRequire(
   import.meta.url,
@@ -48,7 +50,7 @@ const { resolveLegacyOperatorConfigPath, resolveOperatorConfigPath } = createReq
 };
 
 function isEnvTruthy(value: string | undefined): boolean {
-  if (value == null) return false;
+  if (value === undefined) return false;
   return (
     value !== "" &&
     value !== "0" &&
@@ -58,13 +60,108 @@ function isEnvTruthy(value: string | undefined): boolean {
   );
 }
 
+function resolveSlowQueryThreshold(): number {
+  const raw = process.env.PENUMBRA_SLOW_QUERY_THRESHOLD_MS;
+  const parsed = raw === undefined || raw.trim() === "" ? Number.NaN : Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 250;
+}
+
+async function buildWorkflowRegistrySafe(workflowDirs: {
+  playbooksDir: string;
+  workflowsDir: string;
+}): Promise<Awaited<ReturnType<typeof buildWorkflowRegistry>> | undefined> {
+  try {
+    return await buildWorkflowRegistry(workflowDirs);
+  } catch (err) {
+    process.stderr.write(
+      `penumbra: failed to build workflow registry: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    return undefined;
+  }
+}
+
+type RuntimeServicesExtras = {
+  shellConfig?: ReturnType<typeof loadShellConfig>;
+  shellSessionPool?: ShellSessionPool;
+  agentchatConfig?: ReturnType<typeof loadAgentChatConfig>;
+};
+
+function wireShellSessionPool(
+  runtimeServices: RuntimeServicesExtras,
+  services: ReturnType<typeof buildServices>,
+  agentchatConfig: ReturnType<typeof loadAgentChatConfig> | null,
+): (() => void) | undefined {
+  if (!agentchatConfig) return undefined;
+  const shellConfig = loadShellConfig({ agentchat: agentchatConfig });
+  runtimeServices.shellConfig = shellConfig;
+  runtimeServices.agentchatConfig = agentchatConfig;
+  if (!shellConfig.enabled) return undefined;
+  const shellSessionPool = new ShellSessionPool({
+    config: shellConfig,
+    uuid: (): string => crypto.randomUUID(),
+    handoffStatusReader: {
+      getStatus: (handoffId): Promise<string | null> =>
+        Promise.resolve(services.handoffReader.get(handoffId)?.status ?? null),
+    },
+  });
+  runtimeServices.shellSessionPool = shellSessionPool;
+  const timer = setInterval((): void => {
+    void shellSessionPool.reapTerminalHandoffs();
+    void shellSessionPool.reapIdleSessions();
+  }, 30_000);
+  return (): void => {
+    clearInterval(timer);
+    void shellSessionPool.shutdown();
+  };
+}
+
+interface AgentchatBundle {
+  agentRegistry: string[] | null;
+  agentRouting: AgentRoutingConfig | null;
+  providerQuotas: ProviderQuota[];
+  agentchatConfig: ReturnType<typeof loadAgentChatConfig> | null;
+}
+
+function loadAgentchatBundle(): AgentchatBundle {
+  const configPath = resolveAgentChatConfigPath(process.env);
+  if (!existsSync(configPath)) {
+    return { agentRegistry: null, agentRouting: null, providerQuotas: [], agentchatConfig: null };
+  }
+  try {
+    const agentchatConfig = loadAgentChatConfig(process.env);
+    return {
+      agentchatConfig,
+      agentRegistry: agentchatConfig.agents.map((agent) => agent.name),
+      agentRouting: {
+        agents: agentchatConfig.agents.map((agent) => ({ name: agent.name, roles: agent.roles })),
+        default_roles: agentchatConfig.default_roles,
+        role_exploration_policy:
+          agentchatConfig.role_routing?.exploration_policy ?? "unsampled-first",
+      },
+      providerQuotas: agentchatConfig.providers.map((provider) => ({
+        provider: provider.name,
+        model: provider.model,
+        quota_usd_per_24h: provider.quota_usd_per_24h,
+        quota_tokens_per_24h: provider.quota_tokens_per_24h,
+        quota_tokens_per_5h: provider.quota_tokens_per_5h,
+        pressure_caps: provider.pressure_caps,
+      })),
+    };
+  } catch (err) {
+    process.stderr.write(
+      `penumbra: failed to load agentchat config from ${configPath}: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    return { agentRegistry: null, agentRouting: null, providerQuotas: [], agentchatConfig: null };
+  }
+}
+
 function warnLegacyOperatorConfigFiles(): void {
   for (const filename of ["projects.yaml", "workers.yaml"] as const) {
     const legacyPath = resolveLegacyOperatorConfigPath(filename, process.env);
     const currentPath = resolveOperatorConfigPath(filename, process.env);
     if (!existsSync(legacyPath) || legacyPath === currentPath) continue;
-    console.warn(
-      `penumbra: WARN legacy ${filename} found at ${legacyPath}; move it to ${currentPath} or run 'penumbra config split --source-dir ${dirname(legacyPath)} --dest ${dirname(currentPath)}'`,
+    process.stderr.write(
+      `penumbra: WARN legacy ${filename} found at ${legacyPath}; move it to ${currentPath} or run 'penumbra config split --source-dir ${dirname(legacyPath)} --dest ${dirname(currentPath)}'\n`,
     );
   }
 }
@@ -98,22 +195,15 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
   const dbPath = resolveStorageDbPath(opts.storageRoot);
   const rawDb = new Database(dbPath);
 
-  const rawSlowQueryThreshold = process.env.PENUMBRA_SLOW_QUERY_THRESHOLD_MS;
-  const parsedSlowQueryThreshold =
-    rawSlowQueryThreshold == null || rawSlowQueryThreshold.trim() === ""
-      ? Number.NaN
-      : Number(rawSlowQueryThreshold);
-  const slowQueryThreshold =
-    Number.isFinite(parsedSlowQueryThreshold) && parsedSlowQueryThreshold >= 0
-      ? parsedSlowQueryThreshold
-      : 250;
+  const slowQueryThreshold = resolveSlowQueryThreshold();
   let activeLog: Logger | undefined;
-  const db = wrapDatabaseWithSlowQueryLog(rawDb, slowQueryThreshold, {
-    warn: (obj: any, msg: string) => {
-      if (activeLog) activeLog.warn(obj, msg);
-      else console.warn(msg, obj);
+  const slowLogger: Pick<Logger, "warn"> = {
+    warn: (obj: unknown, msg?: string): void => {
+      if (activeLog) activeLog.warn(obj as Record<string, unknown>, msg);
+      else process.stderr.write(`${msg ?? ""} ${JSON.stringify(obj)}\n`);
     },
-  } as any);
+  };
+  const db = wrapDatabaseWithSlowQueryLog(rawDb, slowQueryThreshold, slowLogger as Logger);
 
   let handle: DaemonHandle | undefined;
   try {
@@ -129,47 +219,15 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
     });
     assertEmbedderDim(db, embedder.dim, embedder.name);
 
-    // Load agent registry + provider quotas from the same agentchat.yaml.
-    let agentRegistry: string[] | null = null;
-    let agentRouting: AgentRoutingConfig | null = null;
-    let providerQuotas: ProviderQuota[] = [];
-    let agentchatConfig: ReturnType<typeof loadAgentChatConfig> | null = null;
-    const configPath = resolveAgentChatConfigPath(process.env);
-    if (existsSync(configPath)) {
-      try {
-        agentchatConfig = loadAgentChatConfig(process.env);
-        agentRegistry = agentchatConfig.agents.map((agent) => agent.name);
-        agentRouting = {
-          agents: agentchatConfig.agents.map((agent) => ({ name: agent.name, roles: agent.roles })),
-          default_roles: agentchatConfig.default_roles,
-          role_exploration_policy:
-            agentchatConfig.role_routing?.exploration_policy ?? "unsampled-first",
-        };
-        providerQuotas = agentchatConfig.providers.map((provider) => ({
-          provider: provider.name,
-          model: provider.model,
-          quota_usd_per_24h: provider.quota_usd_per_24h,
-          quota_tokens_per_24h: provider.quota_tokens_per_24h,
-          quota_tokens_per_5h: provider.quota_tokens_per_5h,
-          pressure_caps: provider.pressure_caps,
-        }));
-      } catch (err) {
-        // Log warning but don't fail startup; validation will be skipped or fail late.
-        console.warn(`penumbra: failed to load agentchat config from ${configPath}: ${err}`);
-      }
-    }
+    const loadedAgentchat = loadAgentchatBundle();
+    const { agentRegistry, agentRouting, providerQuotas, agentchatConfig } = loadedAgentchat;
 
     const repoRoot = process.cwd();
     const workflowDirs = {
       playbooksDir: join(repoRoot, "plugin/playbooks"),
       workflowsDir: join(repoRoot, "plugin/workflows"),
     };
-    let workflowRegistry: Awaited<ReturnType<typeof buildWorkflowRegistry>> | undefined;
-    try {
-      workflowRegistry = await buildWorkflowRegistry(workflowDirs);
-    } catch (err) {
-      console.warn(`penumbra: failed to build workflow registry: ${err}`);
-    }
+    const workflowRegistry = await buildWorkflowRegistrySafe(workflowDirs);
 
     const projectRegistryPath = process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath();
     const projectRegistry = loadProjectRegistry(projectRegistryPath);
@@ -195,12 +253,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       permissionService?: InProcessPermissionService;
       workflowDirs?: { playbooksDir: string; workflowsDir: string };
     };
-    const runtimeServicesWithWorkflowRuns = runtimeServices as Omit<
-      typeof runtimeServices,
-      "workflowRuns"
-    > & {
-      workflowRuns?: Awaited<ReturnType<typeof createWorkflowRunsRegistry>>;
-    };
+    const runtimeServicesWithWorkflowRuns = runtimeServices;
     runtimeServicesWithWorkflowRuns.workflowRuns = createWorkflowRunsRegistry({
       uuid: () => services.uuid(),
       clock: () => services.clock(),
@@ -220,30 +273,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
     permissionService.start();
     runtimeServices.permissionService = permissionService;
     services.subscriptionPressureCache.start();
-    let stopShellSweeper: (() => void) | undefined;
-    if (agentchatConfig) {
-      const shellConfig = loadShellConfig({ agentchat: agentchatConfig as any });
-      runtimeServices.shellConfig = shellConfig;
-      runtimeServices.agentchatConfig = agentchatConfig as any;
-      if (shellConfig.enabled) {
-        const shellSessionPool = new ShellSessionPool({
-          config: shellConfig,
-          uuid: () => crypto.randomUUID(),
-          handoffStatusReader: {
-            getStatus: async (handoffId) => services.handoffReader.get(handoffId)?.status ?? null,
-          },
-        });
-        runtimeServices.shellSessionPool = shellSessionPool;
-        const timer = setInterval(() => {
-          void shellSessionPool.reapTerminalHandoffs();
-          void shellSessionPool.reapIdleSessions();
-        }, 30_000);
-        stopShellSweeper = () => {
-          clearInterval(timer);
-          void shellSessionPool.shutdown();
-        };
-      }
-    }
+    const stopShellSweeper = wireShellSessionPool(runtimeServices, services, agentchatConfig);
     services.log.info({ embedder: embedder.name, dim: embedder.dim }, "embedder selected");
 
     handle = serve({
@@ -262,32 +292,39 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
         }
       },
     });
-    writeFileSync(portPath, `${handle.port}\n`, { mode: 0o644 });
+    writeFileSync(portPath, `${String(handle.port)}\n`, { mode: 0o644 });
     services.log.info({ pid: process.pid, port: handle.port }, "penumbra running");
     return handle;
   } catch (err) {
-    if (handle) {
-      // handle.stop() will invoke onStop which closes db.
-      handle.stop();
-    } else {
-      // handle was never created; close db directly.
-      try {
-        db.close();
-      } catch {
-        /* already closed */
-      }
-    }
-    try {
-      unlinkSync(pidPath);
-    } catch {
-      /* already gone */
-    }
-    try {
-      unlinkSync(portPath);
-    } catch {
-      /* never written */
-    }
+    cleanupAfterFailedStart(handle, db, pidPath, portPath);
     throw err;
+  }
+}
+
+function cleanupAfterFailedStart(
+  handle: DaemonHandle | undefined,
+  db: Database,
+  pidPath: string,
+  portPath: string,
+): void {
+  if (handle) {
+    void handle.stop();
+  } else {
+    try {
+      db.close();
+    } catch {
+      /* already closed */
+    }
+  }
+  try {
+    unlinkSync(pidPath);
+  } catch {
+    /* already gone */
+  }
+  try {
+    unlinkSync(portPath);
+  } catch {
+    /* never written */
   }
 }
 
@@ -296,7 +333,7 @@ function claimPidFile(pidPath: string): void {
     try {
       const fd = openSync(pidPath, "wx");
       try {
-        writeSync(fd, `${process.pid}\n`);
+        writeSync(fd, `${String(process.pid)}\n`);
       } finally {
         closeSync(fd);
       }
@@ -308,7 +345,7 @@ function claimPidFile(pidPath: string): void {
     // EEXIST: someone else has the file. Check liveness.
     const existing = Number(readFileSync(pidPath, "utf8"));
     if (Number.isInteger(existing) && existing > 0 && isAlive(existing)) {
-      throw new Error(`penumbra already running (pid=${existing})`);
+      throw new Error(`penumbra already running (pid=${String(existing)})`);
     }
 
     // Stale. Best-effort takeover. unlink+open('wx') still has a tiny race
@@ -345,7 +382,7 @@ export async function runStartDetached(opts: RunStartOpts): Promise<RunStartDeta
   if (existsSync(pidPath)) {
     const existing = Number(readFileSync(pidPath, "utf8").trim());
     if (Number.isInteger(existing) && existing > 0 && isAlive(existing)) {
-      throw new Error(`penumbra already running (pid=${existing})`);
+      throw new Error(`penumbra already running (pid=${String(existing)})`);
     }
   }
 
@@ -372,20 +409,9 @@ export async function runStartDetached(opts: RunStartOpts): Promise<RunStartDeta
 
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    if (existsSync(portPath)) {
-      const port = Number(readFileSync(portPath, "utf8").trim());
-      if (Number.isInteger(port) && port > 0) {
-        try {
-          const res = await fetch(`http://${resolveHealthcheckHost(hostname)}:${port}/health`, {
-            signal: AbortSignal.timeout(500),
-          });
-          if (res.ok) return { pid: proc.pid!, port, logPath };
-        } catch {
-          /* not ready yet */
-        }
-      }
-    }
-    await new Promise((r) => setTimeout(r, 200));
+    const ready = await probeDaemonReady(hostname, portPath);
+    if (ready !== null) return { pid: proc.pid, port: ready, logPath };
+    await new Promise<void>((r) => setTimeout(r, 200));
   }
 
   try {
@@ -398,8 +424,27 @@ export async function runStartDetached(opts: RunStartOpts): Promise<RunStartDeta
   );
 }
 
+async function probeDaemonReady(hostname: string, portPath: string): Promise<number | null> {
+  if (!existsSync(portPath)) return null;
+  const port = Number(readFileSync(portPath, "utf8").trim());
+  if (!Number.isInteger(port) || port <= 0) return null;
+  try {
+    const res = await fetch(`http://${resolveHealthcheckHost(hostname)}:${String(port)}/health`, {
+      signal: AbortSignal.timeout(500),
+    });
+    if (res.ok) return port;
+  } catch {
+    /* not ready yet */
+  }
+  return null;
+}
+
 function resolveDaemonHost(host?: string): string {
-  return host?.trim() || process.env.PENUMBRA_DAEMON_HOST?.trim() || "127.0.0.1";
+  const trimmed = host?.trim();
+  if (trimmed) return trimmed;
+  const fromEnv = process.env.PENUMBRA_DAEMON_HOST?.trim();
+  if (fromEnv) return fromEnv;
+  return "127.0.0.1";
 }
 
 function resolveHealthcheckHost(hostname: string): string {

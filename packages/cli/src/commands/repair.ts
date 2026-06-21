@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
+
 import { runStatus } from "./status.js";
 
 export type RepairOutcome = "ok" | "recovered" | "restored-from-backup" | "failed";

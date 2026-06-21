@@ -23,13 +23,13 @@ export async function runStatus(opts: { storageRoot: string }): Promise<StatusRe
   }
   try {
     const token = readFileSync(tokenPath, "utf8").trim();
-    const res = await fetch(`http://127.0.0.1:${port}/metrics`, {
+    const res = await fetch(`http://127.0.0.1:${String(port)}/metrics`, {
       headers: { authorization: `Bearer ${token}` },
     });
     if (!res.ok) return { status: "stale", pid, port };
     const body = (await res.json()) as { embedder: { name: string; dim: number } };
     const dispatchEventsRes = await fetch(
-      `http://127.0.0.1:${port}/dispatch/events?handoff_id=__penumbra_status_probe__`,
+      `http://127.0.0.1:${String(port)}/dispatch/events?handoff_id=__penumbra_status_probe__`,
       {
         headers: { authorization: `Bearer ${token}` },
       },

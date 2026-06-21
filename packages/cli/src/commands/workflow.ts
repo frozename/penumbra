@@ -1,6 +1,6 @@
+import { resolveDaemonStorageRoot } from "@penumbra/core";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { resolveDaemonStorageRoot } from "@penumbra/core";
 
 function resolveDaemon(storageRoot?: string): { baseUrl: string; token: string } {
   const root = storageRoot ?? resolveDaemonStorageRoot();
@@ -18,8 +18,8 @@ function resolveDaemon(storageRoot?: string): { baseUrl: string; token: string }
 async function daemonGet(path: string, storageRoot: string): Promise<unknown> {
   const d = resolveDaemon(storageRoot);
   const r = await fetch(`${d.baseUrl}${path}`, { headers: { authorization: `Bearer ${d.token}` } });
-  if (!r.ok) throw new Error(`${path} → ${r.status}`);
-  return r.json();
+  if (!r.ok) throw new Error(`${path} → ${String(r.status)}`);
+  return await r.json();
 }
 
 async function daemonPost(path: string, body: unknown, storageRoot: string): Promise<unknown> {
@@ -29,8 +29,8 @@ async function daemonPost(path: string, body: unknown, storageRoot: string): Pro
     headers: { authorization: `Bearer ${d.token}`, "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(`${path} → ${r.status}`);
-  return r.json();
+  if (!r.ok) throw new Error(`${path} → ${String(r.status)}`);
+  return await r.json();
 }
 
 export type WorkflowSummary = { name: string; description: string; triggers: unknown[] };
@@ -98,8 +98,13 @@ export async function dispatchWorkflowSubcommand(
   storageRoot: string,
 ): Promise<number> {
   const sub = args[0];
-  const out = (s: string) => process.stdout.write(`${s}\n`);
+  const out = (s: string): void => {
+    process.stdout.write(`${s}\n`);
+  };
   switch (sub) {
+    case undefined:
+      process.stderr.write("usage: penumbra workflow <list|run|history|suggest>\n");
+      return 2;
     case "list": {
       const showTriggers = args.includes("--triggers");
       await runWorkflowList({

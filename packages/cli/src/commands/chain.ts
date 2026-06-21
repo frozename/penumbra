@@ -22,7 +22,29 @@ function resolveDaemon(storageRoot: string): { baseUrl: string; token: string } 
   if (!token) {
     throw new Error(`penumbra chain: empty daemon token in ${join(storageRoot, "token")}`);
   }
-  return { baseUrl: `http://127.0.0.1:${port}`, token };
+  return { baseUrl: `http://127.0.0.1:${String(port)}`, token };
+}
+
+function chainSendError(status: number, handoffId: string, path: string, detail: string): Error {
+  const suffix = detail ? ` (${detail})` : "";
+  if (status === 404) {
+    return new Error(
+      `penumbra chain send-message: no live session for handoff ${handoffId}${suffix}`,
+    );
+  }
+  if (status === 409) {
+    return new Error(
+      `penumbra chain send-message: adapter does not support mid-session inject${suffix}`,
+    );
+  }
+  if (status === 410) {
+    return new Error(
+      `penumbra chain send-message: handoff ${handoffId} is no longer running${suffix}`,
+    );
+  }
+  return new Error(
+    `penumbra chain send-message: daemon ${path} returned HTTP ${String(status)}${suffix}`,
+  );
 }
 
 export async function runChainSendMessage(opts: RunChainSendMessageOpts): Promise<void> {
@@ -45,26 +67,9 @@ export async function runChainSendMessage(opts: RunChainSendMessageOpts): Promis
   let detail = "";
   try {
     const body = (await res.json()) as { error?: { code?: string; message?: string } };
-    if (body?.error?.message) detail = body.error.message;
+    if (body.error?.message) detail = body.error.message;
   } catch {
     /* ignore */
   }
-  if (res.status === 404) {
-    throw new Error(
-      `penumbra chain send-message: no live session for handoff ${opts.handoff_id}${detail ? ` (${detail})` : ""}`,
-    );
-  }
-  if (res.status === 409) {
-    throw new Error(
-      `penumbra chain send-message: adapter does not support mid-session inject${detail ? ` (${detail})` : ""}`,
-    );
-  }
-  if (res.status === 410) {
-    throw new Error(
-      `penumbra chain send-message: handoff ${opts.handoff_id} is no longer running${detail ? ` (${detail})` : ""}`,
-    );
-  }
-  throw new Error(
-    `penumbra chain send-message: daemon ${path} returned HTTP ${res.status}${detail ? ` (${detail})` : ""}`,
-  );
+  throw chainSendError(res.status, opts.handoff_id, path, detail);
 }

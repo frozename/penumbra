@@ -40,7 +40,7 @@ function defaultPrint(line: string): void {
 function resolveDaemon(storageRoot: string): { baseUrl: string; token: string } {
   const port = Number(readFileSync(join(storageRoot, "port"), "utf8").trim());
   const token = readFileSync(join(storageRoot, "token"), "utf8").trim();
-  return { baseUrl: `http://127.0.0.1:${port}`, token };
+  return { baseUrl: `http://127.0.0.1:${String(port)}`, token };
 }
 
 async function request(
@@ -51,7 +51,7 @@ async function request(
 ): Promise<unknown> {
   const localFetch = opts.fetch;
   const daemon = localFetch ? null : resolveDaemon(opts.storageRoot);
-  const url = localFetch ? path : `${daemon!.baseUrl}${path}`;
+  const url = daemon === null ? path : `${daemon.baseUrl}${path}`;
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (daemon) headers.authorization = `Bearer ${daemon.token}`;
   const res = await (localFetch ?? fetch)(url, {
@@ -59,15 +59,13 @@ async function request(
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) throw new Error(`penumbra long-lived: HTTP ${res.status}: ${await res.text()}`);
+  if (!res.ok)
+    throw new Error(`penumbra long-lived: HTTP ${String(res.status)}: ${await res.text()}`);
   if (res.status === 204) return null;
   return await res.json();
 }
 
-async function printJson(
-  opts: { json: boolean; print?: (line: string) => void },
-  body: unknown,
-): Promise<void> {
+function printJson(opts: { json: boolean; print?: (line: string) => void }, body: unknown): void {
   const print = opts.print ?? defaultPrint;
   print(JSON.stringify(body, null, 2));
 }
@@ -78,11 +76,11 @@ export async function runLongLivedList(opts: RunLongLivedOpts): Promise<void> {
     "GET",
     "/long-lived",
   );
-  await printJson(opts, body);
+  printJson(opts, body);
 }
 
 export async function runLongLivedGet(opts: RunLongLivedIdOpts): Promise<void> {
-  await printJson(
+  printJson(
     opts,
     await request(
       { storageRoot: opts.storageRoot, fetch: opts.fetch },
@@ -93,7 +91,7 @@ export async function runLongLivedGet(opts: RunLongLivedIdOpts): Promise<void> {
 }
 
 export async function runLongLivedPause(opts: RunLongLivedActionOpts): Promise<void> {
-  await printJson(
+  printJson(
     opts,
     await request(
       { storageRoot: opts.storageRoot, fetch: opts.fetch },
@@ -104,7 +102,7 @@ export async function runLongLivedPause(opts: RunLongLivedActionOpts): Promise<v
 }
 
 export async function runLongLivedResume(opts: RunLongLivedActionOpts): Promise<void> {
-  await printJson(
+  printJson(
     opts,
     await request(
       { storageRoot: opts.storageRoot, fetch: opts.fetch },
@@ -115,7 +113,7 @@ export async function runLongLivedResume(opts: RunLongLivedActionOpts): Promise<
 }
 
 export async function runLongLivedRetire(opts: RunLongLivedActionOpts): Promise<void> {
-  await printJson(
+  printJson(
     opts,
     await request(
       { storageRoot: opts.storageRoot, fetch: opts.fetch },
@@ -126,7 +124,7 @@ export async function runLongLivedRetire(opts: RunLongLivedActionOpts): Promise<
 }
 
 export async function runLongLivedStateGet(opts: RunLongLivedIdOpts): Promise<void> {
-  await printJson(
+  printJson(
     opts,
     await request(
       { storageRoot: opts.storageRoot, fetch: opts.fetch },
@@ -137,7 +135,7 @@ export async function runLongLivedStateGet(opts: RunLongLivedIdOpts): Promise<vo
 }
 
 export async function runLongLivedStateSet(opts: RunLongLivedStateSetOpts): Promise<void> {
-  await printJson(
+  printJson(
     opts,
     await request(
       { storageRoot: opts.storageRoot, fetch: opts.fetch },
@@ -152,7 +150,7 @@ export async function runLongLivedStateSet(opts: RunLongLivedStateSetOpts): Prom
 }
 
 export async function runLongLivedPending(opts: RunLongLivedIdOpts): Promise<void> {
-  await printJson(
+  printJson(
     opts,
     await request(
       { storageRoot: opts.storageRoot, fetch: opts.fetch },
@@ -163,7 +161,7 @@ export async function runLongLivedPending(opts: RunLongLivedIdOpts): Promise<voi
 }
 
 export async function runLongLivedApprove(opts: RunLongLivedApproveOpts): Promise<void> {
-  await printJson(
+  printJson(
     opts,
     await request(
       { storageRoot: opts.storageRoot, fetch: opts.fetch },
@@ -174,7 +172,7 @@ export async function runLongLivedApprove(opts: RunLongLivedApproveOpts): Promis
 }
 
 export async function runLongLivedReject(opts: RunLongLivedRejectOpts): Promise<void> {
-  await printJson(
+  printJson(
     opts,
     await request(
       { storageRoot: opts.storageRoot, fetch: opts.fetch },
@@ -186,7 +184,7 @@ export async function runLongLivedReject(opts: RunLongLivedRejectOpts): Promise<
 }
 
 export async function runLongLivedInject(opts: RunLongLivedInjectOpts): Promise<void> {
-  await printJson(
+  printJson(
     opts,
     await request(
       { storageRoot: opts.storageRoot, fetch: opts.fetch },
@@ -204,7 +202,7 @@ export async function runLongLivedAudit(
   if (opts.since) query.set("since", opts.since);
   if (opts.limit) query.set("limit", opts.limit);
   const suffix = query.toString() ? `?${query.toString()}` : "";
-  await printJson(
+  printJson(
     opts,
     await request(
       { storageRoot: opts.storageRoot, fetch: opts.fetch },
@@ -221,7 +219,7 @@ export async function runLongLivedTicks(
   if (opts.since) query.set("since", opts.since);
   if (opts.limit) query.set("limit", opts.limit);
   const suffix = query.toString() ? `?${query.toString()}` : "";
-  await printJson(
+  printJson(
     opts,
     await request(
       { storageRoot: opts.storageRoot, fetch: opts.fetch },
@@ -231,147 +229,180 @@ export async function runLongLivedTicks(
   );
 }
 
+type IdRunner = (opts: { json: boolean; storageRoot: string; id: string }) => Promise<void>;
+
+async function runIdCommand(
+  args: string[],
+  storageRoot: string,
+  usage: string,
+  runner: IdRunner,
+): Promise<number> {
+  const id = args[1];
+  if (!id || id.startsWith("-")) return invalidUsage(usage);
+  await runner({ json: args.includes("--json"), storageRoot, id });
+  return 0;
+}
+
+async function runStateCommand(args: string[], storageRoot: string): Promise<number> {
+  const usage =
+    "penumbra long-lived state <get|set> <id> [--intent-summary <text>] [--working-memory <json>] [--json]";
+  const action = args[1];
+  const id = args[2];
+  if (!id || id.startsWith("-")) return invalidUsage(usage);
+  if (action === "get") {
+    await runLongLivedStateGet({ json: args.includes("--json"), storageRoot, id });
+    return 0;
+  }
+  if (action !== "set") return invalidUsage(usage);
+  const intentSummary = readArgValue(args, "--intent-summary");
+  const workingMemoryRaw = readArgValue(args, "--working-memory");
+  let workingMemory: object | undefined;
+  if (workingMemoryRaw !== undefined) {
+    try {
+      workingMemory = JSON.parse(workingMemoryRaw) as object;
+    } catch {
+      return invalidUsage("penumbra long-lived state set: --working-memory must be valid JSON");
+    }
+  }
+  await runLongLivedStateSet({
+    json: args.includes("--json"),
+    storageRoot,
+    id,
+    intent_summary: intentSummary,
+    working_memory: workingMemory,
+  });
+  return 0;
+}
+
+async function runApproveCommand(args: string[], storageRoot: string): Promise<number> {
+  const actionId = args[1];
+  if (!actionId || actionId.startsWith("-"))
+    return invalidUsage("penumbra long-lived approve <action_id> [--json]");
+  await runLongLivedApprove({
+    json: args.includes("--json"),
+    storageRoot,
+    action_id: actionId,
+  });
+  return 0;
+}
+
+async function runRejectCommand(args: string[], storageRoot: string): Promise<number> {
+  const actionId = args[1];
+  if (!actionId || actionId.startsWith("-"))
+    return invalidUsage("penumbra long-lived reject <action_id> [--reason <text>] [--json]");
+  await runLongLivedReject({
+    json: args.includes("--json"),
+    storageRoot,
+    action_id: actionId,
+    reason: readArgValue(args, "--reason") ?? undefined,
+  });
+  return 0;
+}
+
+async function runInjectGoalCommand(args: string[], storageRoot: string): Promise<number> {
+  const usage = "penumbra long-lived inject-goal <id> --goal <text> [--json]";
+  const id = args[1];
+  if (!id || id.startsWith("-")) return invalidUsage(usage);
+  const goal = readArgValue(args, "--goal");
+  if (!goal) return invalidUsage(usage);
+  await runLongLivedInject({ json: args.includes("--json"), storageRoot, id, goal });
+  return 0;
+}
+
+async function runHistoryCommand(
+  args: string[],
+  storageRoot: string,
+  usage: string,
+  runner: (opts: {
+    json: boolean;
+    storageRoot: string;
+    id: string;
+    since?: string;
+    limit?: string;
+  }) => Promise<void>,
+): Promise<number> {
+  const id = args[1];
+  if (!id || id.startsWith("-")) return invalidUsage(usage);
+  await runner({
+    json: args.includes("--json"),
+    storageRoot,
+    id,
+    since: readArgValue(args, "--since") ?? undefined,
+    limit: readArgValue(args, "--limit") ?? undefined,
+  });
+  return 0;
+}
+
 export async function dispatchLongLivedSubcommand(
   args: string[],
   storageRoot: string,
 ): Promise<number> {
   const sub = args[0];
   switch (sub) {
+    case undefined:
+      return invalidUsage(
+        "penumbra long-lived <list|get|pause|resume|retire|state|pending-actions|approve|reject|inject-goal|audit|ticks>",
+      );
     case "list":
       await runLongLivedList({ json: args.includes("--json"), storageRoot });
       return 0;
-    case "get": {
-      const id = args[1];
-      if (!id || id.startsWith("-")) return invalidUsage("penumbra long-lived get <id> [--json]");
-      await runLongLivedGet({ json: args.includes("--json"), storageRoot, id });
-      return 0;
-    }
-    case "pause": {
-      const id = args[1];
-      if (!id || id.startsWith("-")) return invalidUsage("penumbra long-lived pause <id> [--json]");
-      await runLongLivedPause({ json: args.includes("--json"), storageRoot, id });
-      return 0;
-    }
-    case "resume": {
-      const id = args[1];
-      if (!id || id.startsWith("-"))
-        return invalidUsage("penumbra long-lived resume <id> [--json]");
-      await runLongLivedResume({ json: args.includes("--json"), storageRoot, id });
-      return 0;
-    }
-    case "retire": {
-      const id = args[1];
-      if (!id || id.startsWith("-"))
-        return invalidUsage("penumbra long-lived retire <id> [--json]");
-      await runLongLivedRetire({ json: args.includes("--json"), storageRoot, id });
-      return 0;
-    }
-    case "state": {
-      const action = args[1];
-      const id = args[2];
-      if (!id || id.startsWith("-"))
-        return invalidUsage(
-          "penumbra long-lived state <get|set> <id> [--intent-summary <text>] [--working-memory <json>] [--json]",
-        );
-      if (action === "get") {
-        await runLongLivedStateGet({ json: args.includes("--json"), storageRoot, id });
-        return 0;
-      }
-      if (action === "set") {
-        const intentSummary = readArgValue(args, "--intent-summary");
-        const workingMemoryRaw = readArgValue(args, "--working-memory");
-        let workingMemory: object | undefined;
-        if (workingMemoryRaw !== undefined) {
-          try {
-            workingMemory = JSON.parse(workingMemoryRaw) as object;
-          } catch {
-            return invalidUsage(
-              "penumbra long-lived state set: --working-memory must be valid JSON",
-            );
-          }
-        }
-        await runLongLivedStateSet({
-          json: args.includes("--json"),
-          storageRoot,
-          id,
-          intent_summary: intentSummary,
-          working_memory: workingMemory,
-        });
-        return 0;
-      }
-      return invalidUsage(
-        "penumbra long-lived state <get|set> <id> [--intent-summary <text>] [--working-memory <json>] [--json]",
+    case "get":
+      return await runIdCommand(
+        args,
+        storageRoot,
+        "penumbra long-lived get <id> [--json]",
+        runLongLivedGet,
       );
-    }
-    case "pending-actions": {
-      const id = args[1];
-      if (!id || id.startsWith("-"))
-        return invalidUsage("penumbra long-lived pending-actions <id> [--json]");
-      await runLongLivedPending({ json: args.includes("--json"), storageRoot, id });
-      return 0;
-    }
-    case "approve": {
-      const actionId = args[1];
-      if (!actionId || actionId.startsWith("-"))
-        return invalidUsage("penumbra long-lived approve <action_id> [--json]");
-      await runLongLivedApprove({
-        json: args.includes("--json"),
+    case "pause":
+      return await runIdCommand(
+        args,
         storageRoot,
-        action_id: actionId,
-      });
-      return 0;
-    }
-    case "reject": {
-      const actionId = args[1];
-      if (!actionId || actionId.startsWith("-"))
-        return invalidUsage("penumbra long-lived reject <action_id> [--reason <text>] [--json]");
-      await runLongLivedReject({
-        json: args.includes("--json"),
+        "penumbra long-lived pause <id> [--json]",
+        runLongLivedPause,
+      );
+    case "resume":
+      return await runIdCommand(
+        args,
         storageRoot,
-        action_id: actionId,
-        reason: readArgValue(args, "--reason") ?? undefined,
-      });
-      return 0;
-    }
-    case "inject-goal": {
-      const id = args[1];
-      if (!id || id.startsWith("-"))
-        return invalidUsage("penumbra long-lived inject-goal <id> --goal <text> [--json]");
-      const goal = readArgValue(args, "--goal");
-      if (!goal) return invalidUsage("penumbra long-lived inject-goal <id> --goal <text> [--json]");
-      await runLongLivedInject({ json: args.includes("--json"), storageRoot, id, goal });
-      return 0;
-    }
-    case "audit": {
-      const id = args[1];
-      if (!id || id.startsWith("-"))
-        return invalidUsage(
-          "penumbra long-lived audit <id> [--since <cursor>] [--limit <n>] [--json]",
-        );
-      await runLongLivedAudit({
-        json: args.includes("--json"),
+        "penumbra long-lived resume <id> [--json]",
+        runLongLivedResume,
+      );
+    case "retire":
+      return await runIdCommand(
+        args,
         storageRoot,
-        id,
-        since: readArgValue(args, "--since") ?? undefined,
-        limit: readArgValue(args, "--limit") ?? undefined,
-      });
-      return 0;
-    }
-    case "ticks": {
-      const id = args[1];
-      if (!id || id.startsWith("-"))
-        return invalidUsage(
-          "penumbra long-lived ticks <id> [--since <cursor>] [--limit <n>] [--json]",
-        );
-      await runLongLivedTicks({
-        json: args.includes("--json"),
+        "penumbra long-lived retire <id> [--json]",
+        runLongLivedRetire,
+      );
+    case "state":
+      return await runStateCommand(args, storageRoot);
+    case "pending-actions":
+      return await runIdCommand(
+        args,
         storageRoot,
-        id,
-        since: readArgValue(args, "--since") ?? undefined,
-        limit: readArgValue(args, "--limit") ?? undefined,
-      });
-      return 0;
-    }
+        "penumbra long-lived pending-actions <id> [--json]",
+        runLongLivedPending,
+      );
+    case "approve":
+      return await runApproveCommand(args, storageRoot);
+    case "reject":
+      return await runRejectCommand(args, storageRoot);
+    case "inject-goal":
+      return await runInjectGoalCommand(args, storageRoot);
+    case "audit":
+      return await runHistoryCommand(
+        args,
+        storageRoot,
+        "penumbra long-lived audit <id> [--since <cursor>] [--limit <n>] [--json]",
+        runLongLivedAudit,
+      );
+    case "ticks":
+      return await runHistoryCommand(
+        args,
+        storageRoot,
+        "penumbra long-lived ticks <id> [--since <cursor>] [--limit <n>] [--json]",
+        runLongLivedTicks,
+      );
     default:
       return invalidUsage(
         "penumbra long-lived <list|get|pause|resume|retire|state|pending-actions|approve|reject|inject-goal|audit|ticks>",
@@ -388,6 +419,6 @@ function readArgValue(args: string[], flag: string): string | undefined {
 }
 
 function invalidUsage(message: string): number {
-  console.error(`usage: ${message}`);
+  process.stderr.write(`usage: ${message}\n`);
   return 1;
 }

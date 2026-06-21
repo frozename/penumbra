@@ -1,7 +1,8 @@
+import type { T0EventInput } from "@penumbra/core";
+
+import { resolveProjectId } from "@penumbra/core";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { T0EventInput } from "@penumbra/core";
-import { resolveProjectId } from "@penumbra/core";
 
 export interface MapOpts {
   project: string | null;
@@ -76,11 +77,16 @@ function lifecycleToHookEventName(event: LifecycleEvent): string {
       return "PreToolUse";
     case "post-tool-use":
       return "PostToolUse";
+    default:
+      return event;
   }
 }
 
 export function claudeCodeEventToLifecycle(name: string | undefined | null): LifecycleEvent | null {
   switch (name) {
+    case undefined:
+    case null:
+      return null;
     case "SessionStart":
       return "session-start";
     case "PreCompact":
@@ -98,7 +104,7 @@ export function claudeCodeEventToLifecycle(name: string | undefined | null): Lif
   }
 }
 
-export async function defaultLifecycleForwardFn(
+export function defaultLifecycleForwardFn(
   storageRoot: string,
   cwd: string,
   sessionContext?: {
@@ -106,7 +112,7 @@ export async function defaultLifecycleForwardFn(
     projectId?: string | null;
     transcriptPath?: string | null;
   },
-): Promise<LifecycleForwardFn> {
+): LifecycleForwardFn {
   const daemon = resolveDaemon(storageRoot);
   return async (event) => {
     try {
@@ -153,14 +159,20 @@ export function classifyOrigin(sessionId: string | null): "maestro" | "dispatch"
   return "unknown";
 }
 
-export function mapClaudeCodeEvent(raw: unknown, opts: MapOpts): T0EventInput | null {
-  if (!raw || typeof raw !== "object") return null;
-  const ev = raw as ClaudeCodeHookEvent;
-  const ts = new Date().toISOString();
-  // Precedence: explicit --project flag > derived-from-cwd > null. Derivation
-  // uses the same resolver other penumbra surfaces use (git remote hash + relpath,
-  // .penumbra-project marker, else null), so a hook event from /repos/foo gets
-  // the same project_id as a memory observation written from inside that repo.
+interface MapBaseFields {
+  ts: string;
+  projectId: string | null;
+  sessionId: string | null;
+  origin: "maestro" | "dispatch" | "unknown";
+}
+
+function shouldDropRecallSelfReference(ev: ClaudeCodeHookEvent): boolean {
+  if (ev.hook_event_name !== "PreToolUse" && ev.hook_event_name !== "PostToolUse") return false;
+  const toolName = typeof ev.tool_name === "string" ? ev.tool_name : "";
+  return toolName === "mcp__penumbra__memory_recall";
+}
+
+function resolveProjectIdForEvent(ev: ClaudeCodeHookEvent, opts: MapOpts): string | null {
   let projectId: string | null = opts.project ?? null;
   if (!projectId && typeof ev.cwd === "string" && ev.cwd.length > 0) {
     try {
@@ -169,39 +181,41 @@ export function mapClaudeCodeEvent(raw: unknown, opts: MapOpts): T0EventInput | 
       // Best-effort: if git isn't available or cwd is gone, fall through to null.
     }
   }
-  const sessionId = opts.sessionId ?? ev.session_id ?? null;
-  const origin = classifyOrigin(sessionId);
+  return projectId;
+}
 
-  // Skip Pre/PostToolUse capture for the memory_recall MCP call itself. Both
-  // the call (event=PreToolUse) and its response body (event=PostToolUse)
-  // contain the verbatim query terms, which would forever rank as top matches
-  // for any future recall on the same terms — recall would surface its own
-  // history before any real content. Audit value of these rows is near-zero
-  // since the recall call is recoverable from the conversation transcript.
-  const toolNameForFilter = typeof ev.tool_name === "string" ? ev.tool_name : "";
-  if (
-    (ev.hook_event_name === "PreToolUse" || ev.hook_event_name === "PostToolUse") &&
-    toolNameForFilter === "mcp__penumbra__memory_recall"
-  ) {
-    return null;
-  }
+export function mapClaudeCodeEvent(raw: unknown, opts: MapOpts): T0EventInput | null {
+  if (!raw || typeof raw !== "object") return null;
+  const ev = raw as ClaudeCodeHookEvent;
+  const projectId = resolveProjectIdForEvent(ev, opts);
+  const sessionId = opts.sessionId ?? ev.session_id ?? null;
+  const base: MapBaseFields = {
+    ts: new Date().toISOString(),
+    projectId,
+    sessionId,
+    origin: classifyOrigin(sessionId),
+  };
+
+  if (shouldDropRecallSelfReference(ev)) return null;
 
   switch (ev.hook_event_name) {
+    case undefined:
+      return null;
     case "UserPromptSubmit": {
       const prompt = typeof ev.prompt === "string" ? ev.prompt : "";
       return {
-        ts,
+        ts: base.ts,
         source: "claude-code",
         source_detail: "user-prompt",
-        project_id: projectId,
-        session_id: sessionId,
+        project_id: base.projectId,
+        session_id: base.sessionId,
         event_type: "agent-prompt",
         lane: "cli-subscription",
         payload_json: { prompt, cwd: ev.cwd ?? null },
         payload_summary: prompt.length > 0 ? prompt.slice(0, 240) : null,
         user_id: "claude-code",
         machine_id: "local",
-        origin,
+        origin: base.origin,
       };
     }
     case "PreToolUse": {
@@ -209,18 +223,18 @@ export function mapClaudeCodeEvent(raw: unknown, opts: MapOpts): T0EventInput | 
       const input = ev.tool_input ?? null;
       const summary = `${toolName}(${JSON.stringify(input ?? {}).slice(0, 200)})`;
       return {
-        ts,
+        ts: base.ts,
         source: "claude-code",
         source_detail: `tool:${toolName}`,
-        project_id: projectId,
-        session_id: sessionId,
+        project_id: base.projectId,
+        session_id: base.sessionId,
         event_type: "agent-tool-use",
         lane: "cli-subscription",
         payload_json: { tool: toolName, input },
         payload_summary: summary,
         user_id: "claude-code",
         machine_id: "local",
-        origin,
+        origin: base.origin,
       };
     }
     case "PostToolUse": {
@@ -228,18 +242,18 @@ export function mapClaudeCodeEvent(raw: unknown, opts: MapOpts): T0EventInput | 
       const out = ev.tool_response ?? null;
       const summary = `${toolName} -> ${JSON.stringify(out ?? {}).slice(0, 200)}`;
       return {
-        ts,
+        ts: base.ts,
         source: "claude-code",
         source_detail: `tool-response:${toolName}`,
-        project_id: projectId,
-        session_id: sessionId,
+        project_id: base.projectId,
+        session_id: base.sessionId,
         event_type: "agent-response",
         lane: "cli-subscription",
         payload_json: { tool: toolName, response: out },
         payload_summary: summary,
         user_id: "claude-code",
         machine_id: "local",
-        origin,
+        origin: base.origin,
       };
     }
     case "SessionStart":
@@ -252,11 +266,79 @@ export function mapClaudeCodeEvent(raw: unknown, opts: MapOpts): T0EventInput | 
   }
 }
 
+async function touchSession(
+  storageRoot: string,
+  sessionId: string,
+  projectId: string | null,
+): Promise<void> {
+  try {
+    const daemon = resolveDaemon(storageRoot);
+    await fetch(`${daemon.baseUrl}/sessions/touch`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${daemon.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, project_id: projectId }),
+    });
+  } catch {
+    // Best-effort
+  }
+}
+
+async function dispatchLifecycle(
+  opts: RunHookOpts,
+  lifecycleEvent: LifecycleEvent,
+  ev: ClaudeCodeHookEvent | null,
+  sessionId: string | null,
+  projectIdForTouch: string | null,
+  cwd: string,
+): Promise<void> {
+  const transcriptPath = typeof ev?.transcript_path === "string" ? ev.transcript_path : null;
+  const toolNameForCtx = typeof ev?.tool_name === "string" ? ev.tool_name : null;
+  const toolInputForCtx = ev?.tool_input as { file_path?: unknown } | null | undefined;
+  const filePathForCtx =
+    toolInputForCtx && typeof toolInputForCtx.file_path === "string"
+      ? toolInputForCtx.file_path
+      : null;
+  try {
+    const forwardFn = defaultLifecycleForwardFn(opts.storageRoot, cwd, {
+      sessionId,
+      projectId: projectIdForTouch,
+      transcriptPath,
+    });
+    await runLifecycleForward({
+      event: lifecycleEvent,
+      cwd,
+      forwardFn,
+      hookContext: { tool_name: toolNameForCtx, file_path: filePathForCtx },
+    });
+  } catch {
+    // Best-effort
+  }
+}
+
+function resolveTouchProjectId(opts: RunHookOpts, cwdForResolve: string): string | null {
+  let projectIdForTouch: string | null = opts.project ?? null;
+  if (!projectIdForTouch) {
+    try {
+      projectIdForTouch = resolveProjectId({ cwd: cwdForResolve }).project_id;
+    } catch {
+      projectIdForTouch = null;
+    }
+  }
+  return projectIdForTouch;
+}
+
+function isLifecycleTerminator(lifecycleEvent: LifecycleEvent): boolean {
+  return (
+    lifecycleEvent === "session-start" ||
+    lifecycleEvent === "pre-compact" ||
+    lifecycleEvent === "stop"
+  );
+}
+
 export async function runHook(opts: RunHookOpts): Promise<number> {
   const portPath = join(opts.storageRoot, "port");
   const tokenPath = join(opts.storageRoot, "token");
   if (!existsSync(portPath) || !existsSync(tokenPath)) {
-    // Daemon not running. Hooks are best-effort — never block Claude Code.
     return 0;
   }
 
@@ -270,63 +352,15 @@ export async function runHook(opts: RunHookOpts): Promise<number> {
   const ev = parsed as ClaudeCodeHookEvent | null;
   const sessionId = opts.sessionId ?? ev?.session_id ?? null;
   const cwdForResolve = typeof ev?.cwd === "string" && ev.cwd.length > 0 ? ev.cwd : process.cwd();
-  let projectIdForTouch: string | null = opts.project ?? null;
-  if (!projectIdForTouch) {
-    try {
-      projectIdForTouch = resolveProjectId({ cwd: cwdForResolve }).project_id;
-    } catch {
-      projectIdForTouch = null;
-    }
-  }
+  const projectIdForTouch = resolveTouchProjectId(opts, cwdForResolve);
   if (sessionId) {
-    try {
-      const daemon = resolveDaemon(opts.storageRoot);
-      await fetch(`${daemon.baseUrl}/sessions/touch`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${daemon.token}`, "content-type": "application/json" },
-        body: JSON.stringify({
-          session_id: sessionId,
-          project_id: projectIdForTouch,
-        }),
-      });
-    } catch {
-      // Best-effort: never fail the hook if /sessions/touch fails.
-    }
+    await touchSession(opts.storageRoot, sessionId, projectIdForTouch);
   }
 
   const lifecycleEvent = claudeCodeEventToLifecycle(ev?.hook_event_name);
   if (lifecycleEvent) {
-    const cwd = cwdForResolve;
-    const transcriptPath =
-      typeof ev?.transcript_path === "string" ? ev.transcript_path : (ev?.transcript_path ?? null);
-    const toolNameForCtx = typeof ev?.tool_name === "string" ? ev.tool_name : null;
-    const toolInputForCtx = ev?.tool_input as { file_path?: unknown } | null | undefined;
-    const filePathForCtx =
-      toolInputForCtx && typeof toolInputForCtx.file_path === "string"
-        ? toolInputForCtx.file_path
-        : null;
-    try {
-      const forwardFn = await defaultLifecycleForwardFn(opts.storageRoot, cwd, {
-        sessionId,
-        projectId: projectIdForTouch,
-        transcriptPath,
-      });
-      await runLifecycleForward({
-        event: lifecycleEvent,
-        cwd,
-        forwardFn,
-        hookContext: { tool_name: toolNameForCtx, file_path: filePathForCtx },
-      });
-    } catch {
-      // Best-effort: never fail the hook if lifecycle forwarding fails.
-    }
-    if (
-      lifecycleEvent === "session-start" ||
-      lifecycleEvent === "pre-compact" ||
-      lifecycleEvent === "stop"
-    ) {
-      return 0;
-    }
+    await dispatchLifecycle(opts, lifecycleEvent, ev, sessionId, projectIdForTouch, cwdForResolve);
+    if (isLifecycleTerminator(lifecycleEvent)) return 0;
   }
 
   const event = mapClaudeCodeEvent(parsed, { project: opts.project, sessionId: opts.sessionId });
@@ -345,7 +379,7 @@ export async function runHook(opts: RunHookOpts): Promise<number> {
       body: JSON.stringify(event),
     });
   } catch {
-    // Best-effort: never fail the hook if observation fails.
+    // Best-effort
   }
   return 0;
 }

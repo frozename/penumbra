@@ -1,6 +1,7 @@
+import type { DispatchReliabilityReport } from "@penumbra/core";
+
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { DispatchReliabilityReport } from "@penumbra/core";
 
 export interface DispatchAuditResponse {
   report: DispatchReliabilityReport;
@@ -36,7 +37,7 @@ function resolveDaemon(storageRoot: string): { baseUrl: string; token: string } 
     throw new Error(`penumbra dispatch audit: empty daemon token in ${tokenPath}`);
   }
 
-  return { baseUrl: `http://127.0.0.1:${port}`, token };
+  return { baseUrl: `http://127.0.0.1:${String(port)}`, token };
 }
 
 export function formatDispatchAudit(report: DispatchReliabilityReport): string {
@@ -67,7 +68,9 @@ export async function runDispatchAudit(opts: RunDispatchAuditOpts): Promise<void
     headers: { authorization: `Bearer ${daemon.token}` },
   });
   if (!res.ok) {
-    throw new Error(`penumbra dispatch audit: daemon /dispatch/audit returned HTTP ${res.status}`);
+    throw new Error(
+      `penumbra dispatch audit: daemon /dispatch/audit returned HTTP ${String(res.status)}`,
+    );
   }
 
   const body = (await res.json()) as DispatchAuditResponse;

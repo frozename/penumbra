@@ -1,9 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { mkdtempSync } from "node:fs";
-import { createInterface } from "node:readline/promises";
+import { join } from "node:path";
 import { stdin as processStdin, stdout as processStdout } from "node:process";
+import { createInterface } from "node:readline/promises";
 
 export interface DispatchTimelineEvent {
   handoff_id: string;
@@ -52,7 +51,7 @@ interface DispatchLandConflictError {
 }
 
 interface ReconcilerVerdictsResponse {
-  verdicts: Array<{
+  verdicts: {
     handoff_id?: string | null;
     to_agent?: string | null;
     verdict?: {
@@ -63,7 +62,7 @@ interface ReconcilerVerdictsResponse {
       lines_deleted?: number;
       summary?: string;
     };
-  }>;
+  }[];
 }
 
 export interface RunDispatchTimelineOpts {
@@ -119,7 +118,7 @@ function resolveDaemon(storageRoot: string): { baseUrl: string; token: string } 
     throw new Error(`penumbra dispatch timeline: empty daemon token in ${tokenPath}`);
   }
 
-  return { baseUrl: `http://127.0.0.1:${port}`, token };
+  return { baseUrl: `http://127.0.0.1:${String(port)}`, token };
 }
 
 function stripEditorCommentsAndTrim(raw: string): string {
@@ -150,10 +149,14 @@ function buildEditorTemplate(handoffId: string): string {
   let diffStat = "(unable to read git diff --stat)";
   try {
     recentCommits = runGitRead(["log", "--oneline", "-10", branch]).trim() || "(no commits)";
-  } catch {}
+  } catch {
+    // best-effort
+  }
   try {
     diffStat = runGitRead(["diff", "--stat", `main..${branch}`]).trim() || "(no diff)";
-  } catch {}
+  } catch {
+    // best-effort
+  }
 
   const commitLines = recentCommits
     .split("\n")
@@ -204,7 +207,7 @@ async function openEditorAndReadMessage(opts: {
   });
   const code = await proc.exited;
   if (code !== 0) {
-    throw new Error(`penumbra dispatch land: editor exited with code ${code}`);
+    throw new Error(`penumbra dispatch land: editor exited with code ${String(code)}`);
   }
   const edited = await Bun.file(filePath).text();
   const cleaned = stripEditorCommentsAndTrim(edited);
@@ -229,21 +232,49 @@ function printConflictFiles(print: (line: string) => void, files: unknown, hint:
   if (typeof hint === "string") print(hint);
 }
 
+function stringifyVerdictField(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return "unknown";
+}
+
 function printVerdictFailure(
   print: (line: string) => void,
   verdict: Record<string, unknown>,
 ): void {
-  print(
-    `verdict failed: typecheck=${String(verdict.typecheck ?? "unknown")} tests=${String(verdict.tests ?? "unknown")}`,
-  );
+  const typecheck = stringifyVerdictField(verdict.typecheck);
+  const tests = stringifyVerdictField(verdict.tests);
+  print(`verdict failed: typecheck=${typecheck} tests=${tests}`);
   if (typeof verdict.summary === "string" && verdict.summary.length > 0) {
     print(`summary: ${verdict.summary}`);
   }
 }
 
+type Conflict409Outcome = "abort_merge_conflict" | "abort_cancelled" | "retry_force" | "unknown";
+
+async function handle409Conflict(
+  res: Response,
+  force: boolean,
+  confirm: (prompt: string) => Promise<boolean>,
+  print: (line: string) => void,
+): Promise<Conflict409Outcome> {
+  const conflict = await parseConflictErrorResponse(res);
+  if (conflict.code === "merge_conflict") {
+    printConflictFiles(print, conflict.files, conflict.hint);
+    return "abort_merge_conflict";
+  }
+  if (conflict.code === "verdict_unverified" && !force) {
+    printVerdictFailure(print, conflict.verdict ?? {});
+    const shouldForce = await confirm("land anyway? [y/N] ");
+    if (!shouldForce) return "abort_cancelled";
+    return "retry_force";
+  }
+  return "unknown";
+}
+
 async function parseConflictErrorResponse(res: Response): Promise<DispatchLandConflictError> {
   const body = (await res.json().catch(() => ({}))) as { error?: DispatchLandConflictError };
-  return body?.error ?? {};
+  return body.error ?? {};
 }
 
 export async function runDispatchTimeline(opts: RunDispatchTimelineOpts): Promise<void> {
@@ -256,7 +287,7 @@ export async function runDispatchTimeline(opts: RunDispatchTimelineOpts): Promis
   });
   if (!res.ok) {
     throw new Error(
-      `penumbra dispatch timeline: daemon /dispatch/events returned HTTP ${res.status}`,
+      `penumbra dispatch timeline: daemon /dispatch/events returned HTTP ${String(res.status)}`,
     );
   }
 
@@ -272,12 +303,13 @@ export async function runDispatchTimeline(opts: RunDispatchTimelineOpts): Promis
   }
 
   for (const event of body.events) {
-    const meta = event.meta == null ? "-" : JSON.stringify(event.meta);
+    const meta = event.meta === null ? "-" : JSON.stringify(event.meta);
     print(`${event.ts}  ${event.source}  ${event.kind}  ${meta}`);
     if (event.kind === "dispatch.end" && event.meta?.classifier_declined === true) {
       print("safety_classifier:");
       print("  classifier_declined: yes");
-      print(`  decline_reason: ${String(event.meta.decline_reason ?? "unknown")}`);
+      const declineReason = event.meta.decline_reason;
+      print(`  decline_reason: ${typeof declineReason === "string" ? declineReason : "unknown"}`);
     }
   }
 }
@@ -298,7 +330,7 @@ export async function runDispatchLand(opts: RunDispatchLandOpts): Promise<void> 
   const confirm = opts.confirm ?? defaultConfirm;
 
   const post = async (force: boolean): Promise<Response> =>
-    fetcher(`${daemon.baseUrl}/dispatch/land`, {
+    await fetcher(`${daemon.baseUrl}/dispatch/land`, {
       method: "POST",
       headers: {
         authorization: `Bearer ${daemon.token}`,
@@ -316,27 +348,21 @@ export async function runDispatchLand(opts: RunDispatchLandOpts): Promise<void> 
   let force = Boolean(opts.force);
   let res = await post(force);
   while (res.status === 409) {
-    const conflict = await parseConflictErrorResponse(res);
-    if (conflict.code === "merge_conflict") {
-      printConflictFiles(print, conflict.files, conflict.hint);
-      throw new Error("merge conflict");
-    }
-    if (conflict.code === "verdict_unverified" && !force) {
-      const verdict = conflict.verdict ?? {};
-      printVerdictFailure(print, verdict);
-      const shouldForce = await confirm("land anyway? [y/N] ");
-      if (!shouldForce) {
-        throw new Error("dispatch land cancelled by user");
-      }
+    const next = await handle409Conflict(res, force, confirm, print);
+    if (next === "abort_merge_conflict") throw new Error("merge conflict");
+    if (next === "abort_cancelled") throw new Error("dispatch land cancelled by user");
+    if (next === "retry_force") {
       force = true;
       res = await post(force);
       continue;
     }
-    throw new Error(`penumbra dispatch land: daemon /dispatch/land returned HTTP 409`);
+    throw new Error("penumbra dispatch land: daemon /dispatch/land returned HTTP 409");
   }
 
   if (!res.ok && res.status !== 202) {
-    throw new Error(`penumbra dispatch land: daemon /dispatch/land returned HTTP ${res.status}`);
+    throw new Error(
+      `penumbra dispatch land: daemon /dispatch/land returned HTTP ${String(res.status)}`,
+    );
   }
 
   const terminalBody =
@@ -354,6 +380,28 @@ export async function runDispatchLand(opts: RunDispatchLandOpts): Promise<void> 
   if (terminalBody.pr_closed) {
     print(`PR closed for agent/${opts.handoffId}`);
   }
+}
+
+function rewindStatus(
+  body: DispatchLandTaskStatusResponse,
+  print: (line: string) => void,
+): DispatchLandResponse | null {
+  if (body.status === "done") {
+    if (!body.result) throw new Error("penumbra dispatch land: missing task result");
+    return body.result;
+  }
+  if (body.status === "failed") {
+    const error = body.error ?? { code: "unknown" };
+    if (error.code === "merge_conflict") {
+      printConflictFiles(print, error.files, error.hint);
+      throw new Error("merge conflict");
+    }
+    if (error.code === "verdict_unverified") {
+      printVerdictFailure(print, error.verdict ?? {});
+    }
+    throw new Error(`penumbra dispatch land failed: ${error.code}`);
+  }
+  return null;
 }
 
 async function pollDispatchLandTask(input: {
@@ -375,26 +423,13 @@ async function pollDispatchLandTask(input: {
     );
     if (!res.ok) {
       throw new Error(
-        `penumbra dispatch land: daemon /dispatch/land/${taskId} returned HTTP ${res.status}`,
+        `penumbra dispatch land: daemon /dispatch/land/${taskId} returned HTTP ${String(res.status)}`,
       );
     }
     const body = (await res.json()) as DispatchLandTaskStatusResponse;
     status = body.status;
-    if (body.status === "done") {
-      if (!body.result) throw new Error("penumbra dispatch land: missing task result");
-      return body.result;
-    }
-    if (body.status === "failed") {
-      const error = body.error ?? { code: "unknown" };
-      if (error.code === "merge_conflict") {
-        printConflictFiles(input.print, error.files, error.hint);
-        throw new Error("merge conflict");
-      }
-      if (error.code === "verdict_unverified") {
-        printVerdictFailure(input.print, (error.verdict ?? {}) as Record<string, unknown>);
-      }
-      throw new Error(`penumbra dispatch land failed: ${error.code}`);
-    }
+    const terminal = rewindStatus(body, input.print);
+    if (terminal) return terminal;
   }
   throw new Error("penumbra dispatch land: task did not reach terminal state");
 }
@@ -413,12 +448,12 @@ export async function runDispatchListPending(opts: RunDispatchListPendingOpts): 
   );
   if (!res.ok) {
     throw new Error(
-      `penumbra dispatch list-pending: daemon /reconciler/verdicts returned HTTP ${res.status}`,
+      `penumbra dispatch list-pending: daemon /reconciler/verdicts returned HTTP ${String(res.status)}`,
     );
   }
 
   const body = (await res.json()) as ReconcilerVerdictsResponse;
-  if (!Array.isArray(body.verdicts) || body.verdicts.length === 0) {
+  if (body.verdicts.length === 0) {
     print("(no verdicts)");
     return;
   }
@@ -432,7 +467,7 @@ export async function runDispatchListPending(opts: RunDispatchListPendingOpts): 
     const added = v.lines_added ?? 0;
     const deleted = v.lines_deleted ?? 0;
     print(
-      `${handoffId}  agent=${row.to_agent ?? "-"}  typecheck=${typecheck}  tests=${tests}  files=${files}  +${added}/-${deleted}`,
+      `${handoffId}  agent=${row.to_agent ?? "-"}  typecheck=${typecheck}  tests=${tests}  files=${String(files)}  +${String(added)}/-${String(deleted)}`,
     );
     print(`  hint: penumbra dispatch land ${handoffId}`);
   }
