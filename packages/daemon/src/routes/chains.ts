@@ -1473,7 +1473,26 @@ export async function chainsMessagesRoute(req: Request, services: Services): Pro
         .filter((t) => t.length > 0)
     : undefined;
 
-  const events = services.chainReader.getMessages(conversation_id, types);
+  const limitParam = url.searchParams.get("limit");
+  const offsetParam = url.searchParams.get("offset");
+  const beforeTsParam = url.searchParams.get("before_ts");
+  const parsedLimit = limitParam !== null ? Number.parseInt(limitParam, 10) : undefined;
+  const parsedOffset = offsetParam !== null ? Number.parseInt(offsetParam, 10) : undefined;
+  const limit =
+    parsedLimit !== undefined && Number.isFinite(parsedLimit) && parsedLimit > 0
+      ? parsedLimit
+      : undefined;
+  const offset =
+    parsedOffset !== undefined && Number.isFinite(parsedOffset) && parsedOffset >= 0
+      ? parsedOffset
+      : undefined;
+  const before_ts = beforeTsParam !== null && beforeTsParam.length > 0 ? beforeTsParam : undefined;
+
+  const events = services.chainReader.getMessages(conversation_id, types, {
+    limit,
+    offset,
+    before_ts,
+  });
   return json({ events });
 }
 

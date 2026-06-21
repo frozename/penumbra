@@ -117,7 +117,13 @@ export class ChainReader {
     // A chain = one conversation_id, summarized from its handoffs. The
     // window picks the latest handoff per conversation, ordered by ts DESC.
     // The `status` filter is applied to the *latest* handoff; the
-    // `project_id` filter applies to any handoff in the conversation.
+    // `project_id` filter applies to the latest handoff's project_id (or NULL).
+    //
+    // Window-function rewrite: the previous implementation ran 6 correlated
+    // subqueries per conversation across ALL conversations before LIMIT/OFFSET.
+    // This version makes one pass over handoffs, picks the latest row per
+    // conversation_id via ROW_NUMBER, and computes COUNT/MIN/MAX via window
+    // aggregates — same result set, columns, and ordering.
     const where: string[] = [];
     const params: (string | number)[] = [];
     if (opts.status) {
@@ -131,6 +137,28 @@ export class ChainReader {
     const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
 
     const sql = `
+      WITH ranked AS (
+        SELECT
+          conversation_id,
+          project_id,
+          status,
+          ts,
+          to_agent,
+          to_role,
+          ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY ts DESC) AS rn_latest,
+          MIN(ts) OVER (PARTITION BY conversation_id) AS earliest_ts,
+          MAX(ts) OVER (PARTITION BY conversation_id) AS latest_ts,
+          COUNT(*) OVER (PARTITION BY conversation_id) AS handoff_count
+        FROM handoffs
+      ),
+      roots AS (
+        SELECT
+          conversation_id,
+          handoff_id,
+          ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY ts ASC) AS rn_root
+        FROM handoffs
+        WHERE parent_handoff_id IS NULL
+      )
       SELECT
         conversation_id,
         project_id,
@@ -143,17 +171,19 @@ export class ChainReader {
         to_role
       FROM (
         SELECT
-          h.conversation_id AS conversation_id,
-          (SELECT project_id FROM handoffs WHERE conversation_id = h.conversation_id ORDER BY ts DESC LIMIT 1) AS project_id,
-          (SELECT status FROM handoffs WHERE conversation_id = h.conversation_id ORDER BY ts DESC LIMIT 1) AS latest_status,
-          MAX(h.ts) AS latest_ts,
-          MIN(h.ts) AS earliest_ts,
-          COUNT(*) AS handoff_count,
-          (SELECT handoff_id FROM handoffs WHERE conversation_id = h.conversation_id AND parent_handoff_id IS NULL ORDER BY ts ASC LIMIT 1) AS root_handoff_id,
-          (SELECT to_agent FROM handoffs WHERE conversation_id = h.conversation_id ORDER BY ts DESC LIMIT 1) AS to_agent,
-          (SELECT to_role FROM handoffs WHERE conversation_id = h.conversation_id ORDER BY ts DESC LIMIT 1) AS to_role
-        FROM handoffs h
-        GROUP BY h.conversation_id
+          r.conversation_id AS conversation_id,
+          r.project_id AS project_id,
+          r.status AS latest_status,
+          r.latest_ts AS latest_ts,
+          r.earliest_ts AS earliest_ts,
+          r.handoff_count AS handoff_count,
+          rt.handoff_id AS root_handoff_id,
+          r.to_agent AS to_agent,
+          r.to_role AS to_role
+        FROM ranked r
+        LEFT JOIN roots rt
+          ON rt.conversation_id = r.conversation_id AND rt.rn_root = 1
+        WHERE r.rn_latest = 1
       )
       ${whereClause}
       ORDER BY latest_ts DESC
@@ -242,6 +272,7 @@ export class ChainReader {
   getMessages(
     conversation_id: string,
     types?: string[],
+    opts: { limit?: number; offset?: number; before_ts?: string } = {},
   ): {
     event_id: string;
     ts: string;
@@ -251,6 +282,20 @@ export class ChainReader {
     user_id: string | null;
     payload: unknown;
   }[] {
+    // High default so existing small-conversation reads remain functionally
+    // unchanged. Pathological conversations (thousands of events) were
+    // returning an unbounded result set and JSON.parsing every row — the
+    // cap bounds that worst case without truncating typical reads.
+    const DEFAULT_LIMIT = 1000;
+    const limit =
+      typeof opts.limit === "number" && Number.isFinite(opts.limit) && opts.limit > 0
+        ? Math.floor(opts.limit)
+        : DEFAULT_LIMIT;
+    const offset =
+      typeof opts.offset === "number" && Number.isFinite(opts.offset) && opts.offset >= 0
+        ? Math.floor(opts.offset)
+        : 0;
+
     let sql = `
       SELECT event_id, ts, event_type, source, source_detail, user_id, payload_json
       FROM t0_events
@@ -264,7 +309,14 @@ export class ChainReader {
       params.push(...types);
     }
 
+    if (typeof opts.before_ts === "string" && opts.before_ts.length > 0) {
+      sql += ` AND ts < ?`;
+      params.push(opts.before_ts);
+    }
+
     sql += ` ORDER BY ts ASC, ingest_ts ASC, event_id ASC`;
+    sql += ` LIMIT ? OFFSET ?`;
+    params.push(limit, offset);
 
     const rows = this.db
       .query<
