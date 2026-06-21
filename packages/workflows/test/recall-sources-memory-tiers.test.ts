@@ -1,23 +1,25 @@
-import { expect, test } from "bun:test";
+import { loadSqliteVec, migrate } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
+import { runMemorySearchSource } from "../src/recall-sources/memory.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  // already loaded
+}
 
-import { loadSqliteVec, migrate } from "@penumbra/core";
-import { TestEmbedder } from "@penumbra/core/testing";
-import { runMemorySearchSource } from "../src/recall-sources/memory.js";
-
-function setupT1Tables(db: Database) {
+function setupT1Tables(db: Database): void {
   // Real schema comes from migrate(); this helper exists only to keep the test
   // fixture name stable while relying on t1_rollups/t1_fts.
   void db;
 }
 
-function insertT2Memory(db: Database, id: string, ts: string, body: string) {
+function insertT2Memory(db: Database, id: string, ts: string, body: string): void {
   db.prepare(
     `
     INSERT INTO t2_memories (
@@ -47,7 +49,7 @@ function insertT2Memory(db: Database, id: string, ts: string, body: string) {
   );
 }
 
-function insertT1Memory(db: Database, id: string, ts: string, body: string) {
+function insertT1Memory(db: Database, id: string, ts: string, body: string): void {
   db.prepare(
     `
     INSERT INTO t1_rollups (
@@ -59,7 +61,7 @@ function insertT1Memory(db: Database, id: string, ts: string, body: string) {
   ).run(id, "demo", "u1", `s-${id}`, ts, ts, 1, body, body, body);
 }
 
-function freshDb() {
+function freshDb(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });

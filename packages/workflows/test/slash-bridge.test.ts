@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { buildRegistry } from "../src/registry.js";
 import { writeSlashCommands } from "../src/slash-bridge.js";
 
-const PB = (name: string, slash: string) => `---
+const PB = (name: string, slash: string): string => `---
 name: ${name}
 description: D for ${name}
 triggers:

@@ -4,7 +4,7 @@ import { runAgentsSource } from "../src/recall-sources/agents.js";
 
 test("agents source returns registry agents", () => {
   const stub = {
-    listAgents() {
+    listAgents(): { name: string }[] {
       return [{ name: "a" }, { name: "b" }];
     },
   };

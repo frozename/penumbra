@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { buildRegistry } from "../src/registry.js";
 
 const PLAYBOOK_A = `---
@@ -46,7 +47,7 @@ run:
 ---
 `;
 
-function setupFixtures() {
+function setupFixtures(): { root: string; playbooksDir: string; workflowsDir: string } {
   const root = mkdtempSync(join(tmpdir(), "reg-"));
   const playbooksDir = join(root, "playbooks");
   const workflowsDir = join(root, "workflows");

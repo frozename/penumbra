@@ -20,7 +20,8 @@ export async function emitNextSessionPromptOutput(input: {
     await mkdir(input.storageRoot, { recursive: true });
     await writeFile(target, input.body, "utf8");
     return { warnings: [], path: target };
-  } catch (err: any) {
-    return { warnings: [`output next-session-prompt: ${err?.message ?? String(err)}`] };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { warnings: [`output next-session-prompt: ${msg}`] };
   }
 }

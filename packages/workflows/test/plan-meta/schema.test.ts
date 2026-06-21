@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { TaskMetaSchema } from "../../src/plan-meta/schema.js";
 
 test("accepts a minimal valid block", () => {

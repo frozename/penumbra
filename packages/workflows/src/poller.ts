@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+
 import { findActiveTranscriptForCwd } from "./transcript-reader.js";
 
 export type StateMetrics = {
@@ -66,7 +67,9 @@ export function computeStateMetrics(opts: ComputeStateMetricsOpts): StateMetrics
       commitsSinceLastHandoff = Number.MAX_SAFE_INTEGER;
     }
   }
-  const transcriptReader = opts.transcriptReader ?? ((o) => findActiveTranscriptForCwd(o));
+  const transcriptReader =
+    opts.transcriptReader ??
+    ((o: { cwd: string }): { estimatedTokens: number } | null => findActiveTranscriptForCwd(o));
   const cwd = opts.cwd ?? process.cwd();
   const transcript = transcriptReader({ cwd });
   const budget = opts.contextBudgetTokens ?? 200_000;

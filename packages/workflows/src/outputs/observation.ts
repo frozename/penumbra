@@ -63,7 +63,7 @@ export async function emitObservationOutput(
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
-      return { warnings: [`output observation: daemon responded ${res.status}`] };
+      return { warnings: [`output observation: daemon responded ${String(res.status)}`] };
     }
     const data = (await res.json().catch(() => null)) as { event_id?: string } | null;
     return { warnings: [], eventId: data?.event_id };

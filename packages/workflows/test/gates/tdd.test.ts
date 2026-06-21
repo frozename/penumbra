@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { verifyTdd } from "../../src/gates/tdd.js";
 
 test("passes on bun test output with pass count", () => {

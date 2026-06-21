@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { renderTemplate } from "../src/template.js";
 
 test("substitutes simple {{path}}", () => {

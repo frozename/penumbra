@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { verifyVerificationBeforeComplete } from "../../src/gates/verification-before-complete.js";
 
 test("passes when result text shows run-and-saw evidence", () => {

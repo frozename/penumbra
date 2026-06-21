@@ -2,8 +2,39 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { taskOutput, type TaskOutputCtx } from "../../src/outputs/task.js";
 import { WorkflowSpecSchema } from "../../src/schema.js";
-import { taskOutput } from "../../src/outputs/task.js";
+
+type FetchInput = Parameters<typeof globalThis.fetch>[0];
+type FetchInit = Parameters<typeof globalThis.fetch>[1];
+type TaskBody = Record<string, unknown> & {
+  prompt?: string;
+  acceptance_criteria?: string;
+  priority?: string;
+  created_by_kind?: string;
+  created_by_id?: string;
+  origin?: string | null;
+  eligibility?: { required_tags?: string[]; allow_agents?: string[]; min_tier?: string };
+  review_eligibility?: { min_tier?: string };
+  kind?: string;
+  bounds?: { wall_clock_ms?: number; cost_cents?: number; max_sub_dispatches?: number };
+};
+
+function bodyString(init: FetchInit): string {
+  const body = init?.body;
+  if (typeof body === "string") return body;
+  if (body === undefined || body === null) return "";
+  // RequestInit body in tests is always a string here; stringify defensively
+  // rather than triggering [object Object] coercion.
+  return JSON.stringify(body);
+}
+
+function fetchAsString(input: FetchInput): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+}
 
 test("task output schema parses minimal config and rejects missing prompt", () => {
   const parsed = WorkflowSpecSchema.parse({
@@ -33,13 +64,15 @@ test("taskOutput resolves templates and posts the workflow task payload", async 
   writeFileSync(join(root, "port"), "54321");
   writeFileSync(join(root, "token"), "test-token");
   try {
-    let captured: { url: string; init: RequestInit | undefined } | null = null;
-    globalThis.fetch = (async (input, init) => {
-      captured = { url: String(input), init };
-      return new Response(JSON.stringify({ task_id: "task-1" }), {
-        status: 201,
-        headers: { "content-type": "application/json" },
-      });
+    let captured: { url: string; init: FetchInit } | null = null;
+    globalThis.fetch = ((input: FetchInput, init?: FetchInit) => {
+      captured = { url: fetchAsString(input), init };
+      return Promise.resolve(
+        new Response(JSON.stringify({ task_id: "task-1" }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        }),
+      );
     }) as typeof globalThis.fetch;
 
     await taskOutput(
@@ -53,29 +86,30 @@ test("taskOutput resolves templates and posts the workflow task payload", async 
       },
       {
         workflow: { name: "task-wf", origin: undefined },
-        now: () => new Date("2026-05-05T08:00:00Z"),
+        now: (): Date => new Date("2026-05-05T08:00:00Z"),
         project: "penumbra",
         sessionStart: "2026-05-05T07:00:00Z",
         tz: "UTC",
         filePath: "src/foo.ts",
         storageRoot: root,
-      } as any,
+      } as TaskOutputCtx,
     );
 
     expect(captured).not.toBeNull();
-    expect(captured!.url).toBe("http://127.0.0.1:54321/tasks");
-    expect(captured!.init?.method).toBe("POST");
-    const headers = captured!.init?.headers as Record<string, string>;
+    const captured1 = captured as unknown as { url: string; init: FetchInit };
+    expect(captured1.url).toBe("http://127.0.0.1:54321/tasks");
+    expect(captured1.init?.method).toBe("POST");
+    const headers = captured1.init?.headers as Record<string, string>;
     expect(headers.authorization).toBe("Bearer test-token");
-    const body = JSON.parse(String(captured!.init?.body));
+    const body = JSON.parse(bodyString(captured1.init)) as TaskBody;
     expect(body.prompt).toBe("investigate src/foo.ts");
     expect(body.acceptance_criteria).toBe("confirm src/foo.ts is fixed");
     expect(body.priority).toBe("high");
     expect(body.created_by_kind).toBe("workflow");
     expect(body.created_by_id).toBe("task-wf");
     expect(body.origin).toBeNull();
-    expect(body.eligibility.required_tags).toEqual(["penumbra"]);
-    expect(body.review_eligibility.min_tier).toBe("penumbra");
+    expect(body.eligibility?.required_tags).toEqual(["penumbra"]);
+    expect(body.review_eligibility?.min_tier).toBe("penumbra");
   } finally {
     globalThis.fetch = realFetch;
     rmSync(root, { recursive: true, force: true });
@@ -88,13 +122,15 @@ test("taskOutput passes through task_kind=orchestrate and bounds", async () => {
   writeFileSync(join(root, "port"), "54321");
   writeFileSync(join(root, "token"), "test-token");
   try {
-    let capturedBody: any = null;
-    globalThis.fetch = (async (_input, init) => {
-      capturedBody = JSON.parse(String(init?.body));
-      return new Response(JSON.stringify({ task_id: "task-1" }), {
-        status: 201,
-        headers: { "content-type": "application/json" },
-      });
+    let capturedBody: TaskBody | null = null;
+    globalThis.fetch = ((_input: FetchInput, init?: FetchInit) => {
+      capturedBody = JSON.parse(bodyString(init)) as TaskBody;
+      return Promise.resolve(
+        new Response(JSON.stringify({ task_id: "task-1" }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        }),
+      );
     }) as typeof globalThis.fetch;
 
     await taskOutput(
@@ -107,16 +143,17 @@ test("taskOutput passes through task_kind=orchestrate and bounds", async () => {
       },
       {
         workflow: { name: "task-wf", origin: undefined },
-        now: () => new Date("2026-05-05T08:00:00Z"),
+        now: (): Date => new Date("2026-05-05T08:00:00Z"),
         project: "penumbra",
         sessionStart: "2026-05-05T07:00:00Z",
         tz: "UTC",
         storageRoot: root,
-      } as any,
+      } as TaskOutputCtx,
     );
 
-    expect(capturedBody.kind).toBe("orchestrate");
-    expect(capturedBody.bounds).toEqual({
+    const body = capturedBody as TaskBody | null;
+    expect(body?.kind).toBe("orchestrate");
+    expect(body?.bounds).toEqual({
       wall_clock_ms: 60_000,
       cost_cents: 50,
       max_sub_dispatches: 5,
@@ -133,26 +170,29 @@ test("taskOutput omits kind/bounds when not specified", async () => {
   writeFileSync(join(root, "port"), "54321");
   writeFileSync(join(root, "token"), "test-token");
   try {
-    let capturedBody: any = null;
-    globalThis.fetch = (async (_input, init) => {
-      capturedBody = JSON.parse(String(init?.body));
-      return new Response(JSON.stringify({ task_id: "task-1" }), {
-        status: 201,
-        headers: { "content-type": "application/json" },
-      });
+    let capturedBody: TaskBody | null = null;
+    globalThis.fetch = ((_input: FetchInput, init?: FetchInit) => {
+      capturedBody = JSON.parse(bodyString(init)) as TaskBody;
+      return Promise.resolve(
+        new Response(JSON.stringify({ task_id: "task-1" }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        }),
+      );
     }) as typeof globalThis.fetch;
 
     await taskOutput({ kind: "task", prompt: "no orchestrate" }, {
       workflow: { name: "task-wf", origin: undefined },
-      now: () => new Date("2026-05-05T08:00:00Z"),
+      now: (): Date => new Date("2026-05-05T08:00:00Z"),
       project: "penumbra",
       sessionStart: "2026-05-05T07:00:00Z",
       tz: "UTC",
       storageRoot: root,
-    } as any);
+    } as TaskOutputCtx);
 
-    expect(capturedBody.kind).toBeUndefined();
-    expect(capturedBody.bounds).toBeUndefined();
+    const body = capturedBody as TaskBody | null;
+    expect(body?.kind).toBeUndefined();
+    expect(body?.bounds).toBeUndefined();
   } finally {
     globalThis.fetch = realFetch;
     rmSync(root, { recursive: true, force: true });
@@ -165,25 +205,31 @@ test("taskOutput propagates workflow origin", async () => {
   writeFileSync(join(root, "port"), "54321");
   writeFileSync(join(root, "token"), "test-token");
   try {
-    let capturedBody: any = null;
-    globalThis.fetch = (async (_input, init) => {
-      capturedBody = JSON.parse(String(init?.body));
-      return new Response(JSON.stringify({ task_id: "task-1" }), {
-        status: 201,
-        headers: { "content-type": "application/json" },
-      });
+    let capturedBody: TaskBody | null = null;
+    globalThis.fetch = ((_input: FetchInput, init?: FetchInit) => {
+      capturedBody = JSON.parse(bodyString(init)) as TaskBody;
+      return Promise.resolve(
+        new Response(JSON.stringify({ task_id: "task-1" }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        }),
+      );
     }) as typeof globalThis.fetch;
 
-    await taskOutput({ kind: "task", prompt: "do it" }, {
-      workflow: { name: "task-wf", origin: "wf-test" },
-      now: () => new Date("2026-05-05T08:00:00Z"),
-      project: "penumbra",
-      sessionStart: "2026-05-05T07:00:00Z",
-      tz: "UTC",
-      storageRoot: root,
-    } as any);
+    await taskOutput(
+      { kind: "task", prompt: "do it" },
+      {
+        workflow: { name: "task-wf", origin: "wf-test" },
+        now: (): Date => new Date("2026-05-05T08:00:00Z"),
+        project: "penumbra",
+        sessionStart: "2026-05-05T07:00:00Z",
+        tz: "UTC",
+        storageRoot: root,
+      },
+    );
 
-    expect(capturedBody.origin).toBe("wf-test");
+    const body = capturedBody as TaskBody | null;
+    expect(body?.origin).toBe("wf-test");
   } finally {
     globalThis.fetch = realFetch;
     rmSync(root, { recursive: true, force: true });

@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
-import { executeWorkflow } from "../src/exec.js";
+
 import type { WorkflowSpec } from "../src/schema.js";
+
+import { executeWorkflow } from "../src/exec.js";
 
 test("session-reminder sink populates result.sessionReminder with rendered template", async () => {
   const spec: WorkflowSpec = {

@@ -42,7 +42,7 @@ function isLowSignalExcerpt(title: string): boolean {
   if (trimmed.startsWith("<recent-relevant-context>")) return true;
   if (/^The following snippets were recalled from past observations/i.test(trimmed)) return true;
   const bareContinuation =
-    /^(continue|continue from where we left|lets? continue|carry on|resume)\s*\.?$/i;
+    /^(?:continue|continue from where we left|lets? continue|carry on|resume)\s*\.?$/i;
   if (bareContinuation.test(trimmed)) return true;
   return false;
 }
@@ -53,27 +53,19 @@ function isLowSignalExcerpt(title: string): boolean {
 // keep the meaningful tokens.
 function sanitizeFtsQuery(q: string): string {
   return q
-    .replace(/[^A-Za-z0-9\s]+/g, " ")
-    .replace(/\s+/g, " ")
+    .replaceAll(/[^A-Za-z0-9\s]+/g, " ")
+    .replaceAll(/\s+/g, " ")
     .trim();
 }
 
-export async function runMemorySearchSource(input: MemorySearchInput): Promise<MemorySearchOutput> {
-  const { db, args } = input;
-  const limit = args.limit ?? 20;
-  const warnings: string[] = [];
-  const tiers = args.tiers ?? ["t2"];
+type Filters = { conditions: string[]; params: unknown[]; obsTypeIdx: number | null };
 
-  // The original gate required a query / date / obs_type to prevent unbounded
-  // scans. A project-scoped recent-N pull (no query, no date) is bounded by
-  // LIMIT and a small per-project index, so allow it when `project` is set.
-  if (!args.query && !args.dateStart && !args.dateEnd && !args.obs_type && !args.project) {
-    return { hits: [], warnings: ["memory_search: no query/date/obs_type/project provided"] };
-  }
-
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-
+function appendScalarFilters(
+  args: MemorySearchInput["args"],
+  conditions: string[],
+  params: unknown[],
+): number | null {
+  let obsTypeIdx: number | null = null;
   if (args.project) {
     conditions.push("(t.project_id = ? OR t.project_id IS NULL OR t.project_id = '')");
     params.push(args.project);
@@ -86,18 +78,19 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
     conditions.push("t.created_at <= ?");
     params.push(args.dateEnd);
   }
-  // Track obs_type's position so the t1 branch can drop it from both the
-  // condition list AND tierParams — t1_rollups has no obs_type column, and the
-  // previous in-place column substitution produced a broken `1=1 = ?` WHERE
-  // clause that silently zeroed every t1 recall hit whenever obs_type was set.
-  // At this point params.length === conditions.length (the earlier filters are
-  // strictly 1-condition-to-1-param), so a single index identifies both.
-  let obsTypeIdx: number | null = null;
   if (args.obs_type) {
     obsTypeIdx = conditions.length;
     conditions.push("t.obs_type = ?");
     params.push(args.obs_type);
   }
+  return obsTypeIdx;
+}
+
+function appendListFilters(
+  args: MemorySearchInput["args"],
+  conditions: string[],
+  params: unknown[],
+): void {
   if (Array.isArray(args.exclude_user_ids) && args.exclude_user_ids.length > 0) {
     const placeholders = args.exclude_user_ids.map(() => "?").join(", ");
     conditions.push(`t.user_id NOT IN (${placeholders})`);
@@ -111,155 +104,181 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
     for (const prefix of args.exclude_session_prefix) params.push(`${prefix}%`);
   }
   if (Array.isArray(args.origin) && args.origin.length > 0) {
-    // Legacy rows have NULL origin and are treated as 'unknown'-equivalent —
-    // give them a free pass so the filter doesn't exclude pre-tagging history.
     const placeholders = args.origin.map(() => "?").join(", ");
     conditions.push(`(t.origin IN (${placeholders}) OR t.origin IS NULL)`);
     for (const o of args.origin) params.push(o);
   }
+}
+
+function buildFilters(args: MemorySearchInput["args"]): Filters {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  const obsTypeIdx = appendScalarFilters(args, conditions, params);
+  appendListFilters(args, conditions, params);
   if (!args.include_untrusted) {
     conditions.push(`COALESCE(json_extract(t.metadata_json, '$.trust'), '') != 'untrusted'`);
   }
+  return { conditions, params, obsTypeIdx };
+}
 
+type T1Row = {
+  rollup_id: string;
+  title: string | null;
+  body: string | null;
+  ts: string;
+  score: number;
+};
+
+function runT1(
+  db: Database,
+  filters: Filters,
+  sanitizedQuery: string,
+  hasQuery: boolean,
+  limit: number,
+): MemoryHit[] {
+  const tierConditions = [...filters.conditions];
+  const tierParams: unknown[] = [...filters.params];
+  if (filters.obsTypeIdx !== null) {
+    tierConditions.splice(filters.obsTypeIdx, 1);
+    tierParams.splice(filters.obsTypeIdx, 1);
+  }
+  const whereConditions = tierConditions
+    .map((c) =>
+      c
+        .replaceAll(/\bt\.project_id\b/g, "r.project_id")
+        .replaceAll(/\bt\.created_at\b/g, "COALESCE(r.ended_at, r.started_at)")
+        .replaceAll(
+          /COALESCE\(json_extract\(t\.metadata_json[^)]*\)[^)]*\)\s*!=\s*'untrusted'/g,
+          "1=1",
+        ),
+    )
+    .filter((c) => c !== "1=1");
+  const useQuery = hasQuery && sanitizedQuery.length > 0;
+  const sql = useQuery
+    ? `
+      SELECT r.rollup_id AS rollup_id, r.first_prompt_excerpt AS title,
+             r.last_response_excerpt AS body, COALESCE(r.ended_at, r.started_at) AS ts,
+             bm25(t1_fts) AS score
+      FROM t1_fts f
+      JOIN t1_rollups r ON r.rowid = f.rowid
+      WHERE t1_fts MATCH ?
+      ${whereConditions.length ? "AND " + whereConditions.join(" AND ") : ""}
+      ORDER BY score
+      LIMIT ?
+    `
+    : `
+      SELECT rollup_id, first_prompt_excerpt AS title, last_response_excerpt AS body,
+             COALESCE(ended_at, started_at) AS ts, 0 AS score
+      FROM t1_rollups r
+      ${whereConditions.length ? "WHERE " + whereConditions.join(" AND ") : ""}
+      ORDER BY ts DESC
+      LIMIT ?
+    `;
+  if (useQuery) tierParams.unshift(sanitizedQuery);
+  tierParams.push(limit);
+  const rows = db.query(sql).all(...(tierParams as never[])) as T1Row[];
+  const out: MemoryHit[] = [];
+  for (const r of rows) {
+    const { title, snippet } = buildTitleSnippet(r.title ?? "", r.body ?? "");
+    if (isLowSignalExcerpt(title)) continue;
+    out.push({ id: `t1:${r.rollup_id}`, title, snippet, ts: r.ts, score: r.score });
+  }
+  return out;
+}
+
+type T2Row = {
+  memory_id: string;
+  title: string;
+  body: string;
+  created_at: string;
+  score: number;
+};
+
+function runT2(
+  db: Database,
+  filters: Filters,
+  sanitizedQuery: string,
+  hasQuery: boolean,
+  limit: number,
+  tier: string,
+): MemoryHit[] {
+  const tierConditions = [...filters.conditions];
+  const tierParams: unknown[] = [...filters.params];
+  const tierFts = "t2_fts";
+  const tierTable = "t2_memories";
+  let sql: string;
+  if (hasQuery && sanitizedQuery.length > 0) {
+    sql = `
+      SELECT t.memory_id AS memory_id, t.title AS title, t.body AS body, t.created_at AS created_at, bm25(${tierFts}) AS score
+      FROM ${tierFts} f
+      JOIN ${tierTable} t ON t.rowid = f.rowid
+      WHERE ${tierFts} MATCH ?
+      ${tierConditions.length ? "AND " + tierConditions.join(" AND ") : ""}
+      ORDER BY score
+      LIMIT ?
+    `;
+    tierParams.unshift(sanitizedQuery);
+  } else {
+    const whereConditions = tierConditions.map((c) => c.replaceAll(/\bt\./g, ""));
+    sql = `
+      SELECT memory_id, title, body, created_at, 0 AS score
+      FROM ${tierTable}
+      ${whereConditions.length ? "WHERE " + whereConditions.join(" AND ") : ""}
+      ORDER BY created_at DESC
+      LIMIT ?
+    `;
+  }
+  tierParams.push(limit);
+  const rows = db.query(sql).all(...(tierParams as never[])) as T2Row[];
+  const out: MemoryHit[] = [];
+  for (const r of rows) {
+    const { title, snippet } = buildTitleSnippet(r.title, r.body);
+    if (isLowSignalExcerpt(title)) continue;
+    out.push({
+      id: `${tier}:${r.memory_id}`,
+      title,
+      snippet,
+      ts: r.created_at,
+      score: r.score,
+    });
+  }
+  return out;
+}
+
+function runMemorySearchSync(input: MemorySearchInput): MemorySearchOutput {
+  const { db, args } = input;
+  const limit = args.limit ?? 20;
+  const warnings: string[] = [];
+  const tiers = args.tiers ?? ["t2"];
+
+  if (!args.query && !args.dateStart && !args.dateEnd && !args.obs_type && !args.project) {
+    return { hits: [], warnings: ["memory_search: no query/date/obs_type/project provided"] };
+  }
+
+  const filters = buildFilters(args);
   const sanitizedQuery = args.query ? sanitizeFtsQuery(args.query) : "";
-  if (args.query && sanitizedQuery.length === 0) {
+  const hasQuery = Boolean(args.query);
+  if (hasQuery && sanitizedQuery.length === 0) {
     return { hits: [], warnings: ["memory_search: query reduced to empty after sanitization"] };
   }
 
   try {
     const hits: MemoryHit[] = [];
     for (const tier of tiers) {
-      const tierConditions = [...conditions];
-      const tierParams: unknown[] = [...params];
-
       if (tier === "t1") {
-        // Drop obs_type entirely on the t1 branch — both the WHERE fragment and
-        // its bound param — so the placeholder count stays aligned with params.
-        if (obsTypeIdx !== null) {
-          tierConditions.splice(obsTypeIdx, 1);
-          tierParams.splice(obsTypeIdx, 1);
-        }
-        const whereConditions = tierConditions
-          .map((c) =>
-            c
-              .replace(/\bt\.project_id\b/g, "r.project_id")
-              .replace(/\bt\.created_at\b/g, "COALESCE(r.ended_at, r.started_at)")
-              // t1_rollups has no metadata_json column, so the trust filter cannot
-              // apply on the t1 branch — neutralize it to 1=1 (then it is dropped
-              // by the filter below) rather than referencing a nonexistent column,
-              // which would raise a SQL error and silently return zero t1 hits.
-              .replace(
-                /COALESCE\(json_extract\(t\.metadata_json[^)]*\)[^)]*\)\s*!=\s*'untrusted'/g,
-                "1=1",
-              ),
-          )
-          .filter((c) => c !== "1=1");
-        const sql =
-          args.query && sanitizedQuery.length > 0
-            ? `
-            SELECT r.rollup_id AS rollup_id, r.first_prompt_excerpt AS title,
-                   r.last_response_excerpt AS body, COALESCE(r.ended_at, r.started_at) AS ts,
-                   bm25(t1_fts) AS score
-            FROM t1_fts f
-            JOIN t1_rollups r ON r.rowid = f.rowid
-            WHERE t1_fts MATCH ?
-            ${whereConditions.length ? "AND " + whereConditions.join(" AND ") : ""}
-            ORDER BY score
-            LIMIT ?
-          `
-            : `
-            SELECT rollup_id, first_prompt_excerpt AS title, last_response_excerpt AS body,
-                   COALESCE(ended_at, started_at) AS ts, 0 AS score
-            FROM t1_rollups r
-            ${whereConditions.length ? "WHERE " + whereConditions.join(" AND ") : ""}
-            ORDER BY ts DESC
-            LIMIT ?
-          `;
-        if (args.query && sanitizedQuery.length > 0) {
-          tierParams.unshift(sanitizedQuery);
-        }
-        tierParams.push(limit);
-        const rows = db.query(sql).all(...(tierParams as never[])) as Array<{
-          rollup_id: string;
-          title: string | null;
-          body: string | null;
-          ts: string;
-          score: number;
-        }>;
-        for (const r of rows) {
-          const { title, snippet } = buildTitleSnippet(r.title ?? "", r.body ?? "");
-          if (isLowSignalExcerpt(title)) continue;
-          hits.push({ id: `t1:${r.rollup_id}`, title, snippet, ts: r.ts, score: r.score });
-        }
-        continue;
-      }
-
-      const tierFts = "t2_fts";
-      const tierTable = "t2_memories";
-      if (args.query && sanitizedQuery.length > 0) {
-        const sql = `
-          SELECT t.memory_id AS memory_id, t.title AS title, t.body AS body, t.created_at AS created_at, bm25(${tierFts}) AS score
-          FROM ${tierFts} f
-          JOIN ${tierTable} t ON t.rowid = f.rowid
-          WHERE ${tierFts} MATCH ?
-          ${tierConditions.length ? "AND " + tierConditions.join(" AND ") : ""}
-          ORDER BY score
-          LIMIT ?
-        `;
-        tierParams.unshift(sanitizedQuery);
-        tierParams.push(limit);
-        const rows = db.query(sql).all(...(tierParams as never[])) as Array<{
-          memory_id: string;
-          title: string;
-          body: string;
-          created_at: string;
-          score: number;
-        }>;
-        for (const r of rows) {
-          const { title, snippet } = buildTitleSnippet(r.title, r.body);
-          if (isLowSignalExcerpt(title)) continue;
-          hits.push({
-            id: `${tier}:${r.memory_id}`,
-            title,
-            snippet,
-            ts: r.created_at,
-            score: r.score,
-          });
-        }
+        hits.push(...runT1(db, filters, sanitizedQuery, hasQuery, limit));
       } else {
-        const whereConditions = tierConditions.map((c) => c.replace(/\bt\./g, ""));
-        const sql = `
-          SELECT memory_id, title, body, created_at, 0 AS score
-          FROM ${tierTable}
-          ${whereConditions.length ? "WHERE " + whereConditions.join(" AND ") : ""}
-          ORDER BY created_at DESC
-          LIMIT ?
-        `;
-        tierParams.push(limit);
-        const rows = db.query(sql).all(...(tierParams as never[])) as Array<{
-          memory_id: string;
-          title: string;
-          body: string;
-          created_at: string;
-          score: number;
-        }>;
-        for (const r of rows) {
-          const { title, snippet } = buildTitleSnippet(r.title, r.body);
-          if (isLowSignalExcerpt(title)) continue;
-          hits.push({
-            id: `${tier}:${r.memory_id}`,
-            title,
-            snippet,
-            ts: r.created_at,
-            score: r.score,
-          });
-        }
+        hits.push(...runT2(db, filters, sanitizedQuery, hasQuery, limit, tier));
       }
     }
     hits.sort((a, b) => a.score - b.score || b.ts.localeCompare(a.ts));
-    const finalHits = hits.slice(0, limit);
-    return { hits: finalHits, warnings };
-  } catch (err: any) {
-    return { hits: [], warnings: [`memory_search: ${err?.message ?? String(err)}`] };
+    return { hits: hits.slice(0, limit), warnings };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { hits: [], warnings: [`memory_search: ${msg}`] };
   }
+}
+
+export function runMemorySearchSource(input: MemorySearchInput): Promise<MemorySearchOutput> {
+  return Promise.resolve(runMemorySearchSync(input));
 }

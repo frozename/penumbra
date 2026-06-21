@@ -1,24 +1,26 @@
-import { expect, test } from "bun:test";
+import { loadSqliteVec, migrate } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { execSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import {
+  buildRegistry,
+  composeRecall,
+  evaluateTriggerEvent,
+  executeWorkflow,
+} from "../../src/index.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
-
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { execSync } from "node:child_process";
-import { loadSqliteVec, migrate } from "@penumbra/core";
-import { TestEmbedder } from "@penumbra/core/testing";
-import {
-  buildRegistry,
-  composeRecall,
-  executeWorkflow,
-  evaluateTriggerEvent,
-} from "../../src/index.js";
+} catch {
+  // already loaded
+}
 
 function seedRepo(dir: string): string {
   execSync("git init -q -b main", { cwd: dir });
@@ -119,14 +121,14 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
       "low",
     );
 
-    db.exec(`
+    db.run(`
       INSERT INTO dispatch_events (id, handoff_id, source, kind, ts, meta_json)
       VALUES
         (1, 'h-pending-1', 'worker', 'dispatch.start', '2026-05-04T10:05:00Z', '{}'),
         (2, 'h-pending-1', 'worker', 'dispatch.end',   '2026-05-04T10:10:00Z', '{}');
     `);
 
-    db.exec(`
+    db.run(`
       INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status)
       VALUES
         ('h-pending-1', '2026-05-04T10:05:00Z', 'c1', 'maestro', 'worker', 'session-handoff seed message', 'pending');
@@ -173,7 +175,7 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
 
     const events = db
       .query("SELECT event_type FROM t0_events WHERE event_type LIKE 'workflow.%' ORDER BY ts")
-      .all() as Array<{ event_type: string }>;
+      .all() as { event_type: string }[];
     expect(events.map((e) => e.event_type)).toEqual([
       "workflow.run",
       "workflow.recall",

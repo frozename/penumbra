@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { emitFileOutput } from "../src/outputs/file.js";
 import { emitNextSessionPromptOutput } from "../src/outputs/next-session-prompt.js";
 
@@ -94,7 +95,7 @@ test("emitFileOutput mode=unique-suffix writes to base path when target does not
   const dir = mkdtempSync(join(tmpdir(), "out-"));
   try {
     const target = join(dir, "out.md");
-    const r = await emitFileOutput({ path: target, body: "b", mode: "unique-suffix" as any });
+    const r = await emitFileOutput({ path: target, body: "b", mode: "unique-suffix" });
     expect(r.warnings).toEqual([]);
     expect(r.path).toBe(target);
     expect(r.skipped).toBe(false);
@@ -110,7 +111,7 @@ test("emitFileOutput mode=unique-suffix writes to -2 when base path exists and p
   try {
     const target = join(dir, "out.md");
     await Bun.write(target, "a");
-    const r = await emitFileOutput({ path: target, body: "b", mode: "unique-suffix" as any });
+    const r = await emitFileOutput({ path: target, body: "b", mode: "unique-suffix" });
     expect(r.warnings).toEqual([]);
 
     const expectedPath = join(dir, "out-2.md");
@@ -135,7 +136,7 @@ test("emitFileOutput mode=unique-suffix writes to -3 when base and -2 exist", as
     await Bun.write(target, "a");
     await Bun.write(target2, "a2");
 
-    const r = await emitFileOutput({ path: target, body: "b", mode: "unique-suffix" as any });
+    const r = await emitFileOutput({ path: target, body: "b", mode: "unique-suffix" });
     expect(r.warnings).toEqual([]);
 
     const expectedPath = join(dir, "out-3.md");
@@ -158,7 +159,7 @@ test("emitFileOutput mode=unique-suffix with NO extension (e.g. NOTES)", async (
   try {
     const target = join(dir, "NOTES");
     await Bun.write(target, "a");
-    const r = await emitFileOutput({ path: target, body: "b", mode: "unique-suffix" as any });
+    const r = await emitFileOutput({ path: target, body: "b", mode: "unique-suffix" });
     expect(r.warnings).toEqual([]);
 
     const expectedPath = join(dir, "NOTES-2");
@@ -178,7 +179,7 @@ test("emitFileOutput mode=unique-suffix with multi-dot filename (e.g. report.v2.
   try {
     const target = join(dir, "report.v2.md");
     await Bun.write(target, "a");
-    const r = await emitFileOutput({ path: target, body: "b", mode: "unique-suffix" as any });
+    const r = await emitFileOutput({ path: target, body: "b", mode: "unique-suffix" });
     expect(r.warnings).toEqual([]);
 
     const expectedPath = join(dir, "report.v2-2.md");
@@ -200,7 +201,7 @@ test("emitFileOutput mode=unique-suffix is atomic during a write storm", async (
     const promises = [];
     for (let i = 0; i < 10; i++) {
       promises.push(
-        emitFileOutput({ path: target, body: `content-${i}`, mode: "unique-suffix" as any }),
+        emitFileOutput({ path: target, body: `content-${String(i)}`, mode: "unique-suffix" }),
       );
     }
     const results = await Promise.all(promises);

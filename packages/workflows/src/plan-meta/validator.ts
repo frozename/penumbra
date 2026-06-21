@@ -1,5 +1,6 @@
 import { access } from "node:fs/promises";
 import { resolve } from "node:path";
+
 import type { TaskMeta } from "./schema.js";
 
 export type ValidationError = { task_id: string; rule: string; message: string };
@@ -61,6 +62,24 @@ function parseDep(
   return { project: declarerProject, id: dep, qualified: false };
 }
 
+function recordCycleFromStack(
+  key: string,
+  stack: string[],
+  stackIndex: Map<string, number>,
+  cycleNodes: Set<string>,
+): void {
+  const start = stackIndex.get(key);
+  if (start !== undefined) {
+    for (let index = start; index < stack.length; index += 1) {
+      const cycleNode = stack[index];
+      if (cycleNode !== undefined) {
+        cycleNodes.add(cycleNode);
+      }
+    }
+  }
+  cycleNodes.add(key);
+}
+
 function collectCycleNodes(
   tasks: ValidatorTask[],
   header: ValidatorPlanHeader | undefined,
@@ -79,16 +98,7 @@ function collectCycleNodes(
   const visit = (key: string): void => {
     const current = state.get(key);
     if (current === 1) {
-      const start = stackIndex.get(key);
-      if (start !== undefined) {
-        for (let index = start; index < stack.length; index += 1) {
-          const cycleNode = stack[index];
-          if (cycleNode !== undefined) {
-            cycleNodes.add(cycleNode);
-          }
-        }
-      }
-      cycleNodes.add(key);
+      recordCycleFromStack(key, stack, stackIndex, cycleNodes);
       return;
     }
     if (current === 2) {
@@ -127,6 +137,102 @@ function collectCycleNodes(
   return cycleNodes;
 }
 
+function validateParallel(
+  task: ValidatorTask,
+  tasks: ValidatorTask[],
+  taskIndex: TaskIndex,
+  errors: ValidationError[],
+): void {
+  for (const parallelId of task.parallel_with) {
+    const parallelTaskIndex = taskIndex.get(parallelId);
+    if (parallelTaskIndex === undefined) {
+      errors.push({
+        task_id: task.id,
+        rule: "parallel_with_unknown",
+        message: `parallel_with references unknown task id "${parallelId}"`,
+      });
+      continue;
+    }
+    const parallelTask = tasks[parallelTaskIndex];
+    if (!parallelTask) {
+      continue;
+    }
+    if (!parallelTask.parallel_with.includes(task.id)) {
+      errors.push({
+        task_id: task.id,
+        rule: "parallel_with_not_reciprocal",
+        message: `parallel_with must be reciprocated by task "${parallelId}"`,
+      });
+    }
+  }
+}
+
+async function validateFiles(
+  task: ValidatorTask,
+  repoRoot: string,
+  errors: ValidationError[],
+): Promise<void> {
+  if (task.file_scope !== "new") return;
+  for (const file of task.files) {
+    const filePath = resolve(repoRoot, file);
+    if (await pathExists(filePath)) {
+      errors.push({
+        task_id: task.id,
+        rule: "file_already_exists",
+        message: `file already exists: ${file}`,
+      });
+    }
+  }
+}
+
+function validateAgents(
+  task: ValidatorTask,
+  knownAgents: Set<string>,
+  errors: ValidationError[],
+): void {
+  if (!knownAgents.has(task.preferred_agent)) {
+    errors.push({
+      task_id: task.id,
+      rule: "preferred_agent_unknown",
+      message: `preferred_agent "${task.preferred_agent}" is not in the registry`,
+    });
+  }
+  if (!knownAgents.has(task.fallback_agent)) {
+    errors.push({
+      task_id: task.id,
+      rule: "fallback_agent_unknown",
+      message: `fallback_agent "${task.fallback_agent}" is not in the registry`,
+    });
+  }
+}
+
+function validateDeps(
+  task: ValidatorTask,
+  eff: string | undefined,
+  canonicalIndex: Map<string, ValidatorTask>,
+  cycleNodes: Set<string>,
+  errors: ValidationError[],
+): void {
+  for (const dependency of task.depends_on) {
+    const parsed = parseDep(dependency, eff);
+    const depKey = canonicalKey(parsed.project, parsed.id);
+    if (!canonicalIndex.has(depKey)) {
+      errors.push({
+        task_id: task.id,
+        rule: "unknown_dep_target",
+        message: `depends_on "${dependency}" not found in plan`,
+      });
+    }
+  }
+  if (cycleNodes.has(canonicalKey(eff, task.id))) {
+    errors.push({
+      task_id: task.id,
+      rule: "depends_on_cycle",
+      message: "depends_on cycle detected",
+    });
+  }
+}
+
 export async function validatePlan(
   tasks: ValidatorTask[],
   opts: ValidateOpts,
@@ -143,60 +249,9 @@ export async function validatePlan(
 
   for (const task of tasks) {
     const eff = effectiveProject(task, opts.header);
-
-    for (const parallelId of task.parallel_with) {
-      const parallelTaskIndex = taskIndex.get(parallelId);
-      if (parallelTaskIndex === undefined) {
-        errors.push({
-          task_id: task.id,
-          rule: "parallel_with_unknown",
-          message: `parallel_with references unknown task id "${parallelId}"`,
-        });
-        continue;
-      }
-
-      const parallelTask = tasks[parallelTaskIndex];
-      if (!parallelTask) {
-        continue;
-      }
-      if (!parallelTask.parallel_with.includes(task.id)) {
-        errors.push({
-          task_id: task.id,
-          rule: "parallel_with_not_reciprocal",
-          message: `parallel_with must be reciprocated by task "${parallelId}"`,
-        });
-      }
-    }
-
-    if (task.file_scope === "new") {
-      for (const file of task.files) {
-        const filePath = resolve(opts.repoRoot, file);
-        if (await pathExists(filePath)) {
-          errors.push({
-            task_id: task.id,
-            rule: "file_already_exists",
-            message: `file already exists: ${file}`,
-          });
-        }
-      }
-    }
-
-    if (!opts.knownAgents.has(task.preferred_agent)) {
-      errors.push({
-        task_id: task.id,
-        rule: "preferred_agent_unknown",
-        message: `preferred_agent "${task.preferred_agent}" is not in the registry`,
-      });
-    }
-
-    if (!opts.knownAgents.has(task.fallback_agent)) {
-      errors.push({
-        task_id: task.id,
-        rule: "fallback_agent_unknown",
-        message: `fallback_agent "${task.fallback_agent}" is not in the registry`,
-      });
-    }
-
+    validateParallel(task, tasks, taskIndex, errors);
+    await validateFiles(task, opts.repoRoot, errors);
+    validateAgents(task, opts.knownAgents, errors);
     if (opts.projectRegistry && eff && !opts.projectRegistry.has(eff)) {
       errors.push({
         task_id: task.id,
@@ -204,26 +259,7 @@ export async function validatePlan(
         message: `unknown project "${eff}" (not in registry)`,
       });
     }
-
-    for (const dependency of task.depends_on) {
-      const parsed = parseDep(dependency, eff);
-      const depKey = canonicalKey(parsed.project, parsed.id);
-      if (!canonicalIndex.has(depKey)) {
-        errors.push({
-          task_id: task.id,
-          rule: "unknown_dep_target",
-          message: `depends_on "${dependency}" not found in plan`,
-        });
-      }
-    }
-
-    if (cycleNodes.has(canonicalKey(eff, task.id))) {
-      errors.push({
-        task_id: task.id,
-        rule: "depends_on_cycle",
-        message: "depends_on cycle detected",
-      });
-    }
+    validateDeps(task, eff, canonicalIndex, cycleNodes, errors);
   }
 
   return errors.sort((left, right) => {

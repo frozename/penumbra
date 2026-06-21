@@ -1,12 +1,14 @@
+import { loadSqliteVec, migrate } from "@penumbra/core";
+import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Database } from "bun:sqlite";
-import { loadSqliteVec, migrate } from "@penumbra/core";
-import { executeWorkflow } from "../src/exec.js";
+
 import type { WorkflowCtx } from "../src/ctx.js";
 import type { WorkflowSpec } from "../src/schema.js";
+
+import { executeWorkflow } from "../src/exec.js";
 
 test("markdown spec renders body with bundle and writes to file", async () => {
   const tmp = mkdtempSync(join(tmpdir(), "exec-"));
@@ -41,7 +43,7 @@ test("ts spec runs fn and surfaces result", async () => {
     output: [],
     run: { kind: "ts-function" },
   };
-  const fn = async () => ({ note: "ran" });
+  const fn = (): Promise<{ note: string }> => Promise.resolve({ note: "ran" });
   const result = await executeWorkflow({
     spec,
     bundle: { byKey: {}, warnings: [], estimatedTokens: 0 },
@@ -61,7 +63,7 @@ test("ts fn throw → outcome=run_error", async () => {
     output: [],
     run: { kind: "ts-function" },
   };
-  const fn = async () => {
+  const fn = (): Promise<never> => {
     throw new Error("boom");
   };
   const result = await executeWorkflow({
@@ -85,9 +87,14 @@ test("ts ctx.fileWrite result is captured as artifact", async () => {
   };
 
   const ctx: WorkflowCtx = {
-    dispatch: async () => ({ conversation_id: "conv", handoff_id: "hid" }),
-    awaitChain: async () => ({ status: "completed", final_agent: "codex", response_text: "ok" }),
-    fileWrite: async () => "/tmp/workflow-out.txt",
+    dispatch: () => Promise.resolve({ conversation_id: "conv", handoff_id: "hid" }),
+    awaitChain: () =>
+      Promise.resolve({
+        status: "completed" as const,
+        final_agent: "codex",
+        response_text: "ok",
+      }),
+    fileWrite: () => Promise.resolve("/tmp/workflow-out.txt"),
     config: {},
     cwd: "/tmp",
     storageRoot: "/tmp",
@@ -95,7 +102,7 @@ test("ts ctx.fileWrite result is captured as artifact", async () => {
     args: {},
   };
 
-  const fn = async (workflowCtx: WorkflowCtx) => {
+  const fn = async (workflowCtx: WorkflowCtx): Promise<{ ok: boolean }> => {
     await workflowCtx.fileWrite("ignored.txt", "body");
     return { ok: true };
   };
@@ -176,7 +183,9 @@ test("captureCtx wires capture and writes t0 + workflow_stats rows", async () =>
   if (process.platform === "darwin") {
     try {
       Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-    } catch {}
+    } catch {
+      // already loaded
+    }
   }
   const db = new Database(":memory:");
   loadSqliteVec(db);
@@ -197,7 +206,7 @@ test("captureCtx wires capture and writes t0 + workflow_stats rows", async () =>
   });
   const stats = db
     .query("SELECT samples, successes FROM workflow_stats WHERE workflow_name='capture-demo'")
-    .get() as any;
+    .get() as { samples: number; successes: number };
   expect(stats.samples).toBe(1);
   expect(stats.successes).toBe(1);
 });

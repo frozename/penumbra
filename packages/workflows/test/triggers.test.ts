@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildRegistry } from "../src/registry.js";
-import { evaluateTriggerEvent, evaluateStateThresholds } from "../src/triggers.js";
 
-const PB = (name: string, triggers: string) => `---
+import { buildRegistry } from "../src/registry.js";
+import { evaluateStateThresholds, evaluateTriggerEvent } from "../src/triggers.js";
+
+const PB = (name: string, triggers: string): string => `---
 name: ${name}
 description: d
 triggers:
@@ -19,7 +20,10 @@ run:
 body
 `;
 
-async function setup() {
+async function setup(): Promise<{
+  root: string;
+  reg: Awaited<ReturnType<typeof import("../src/registry.js").buildRegistry>>;
+}> {
   const root = mkdtempSync(join(tmpdir(), "tr-"));
   const playbooks = join(root, "playbooks");
   const workflows = join(root, "workflows");

@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
-import { WorkflowSpecSchema, type WorkflowSpec } from "../schema.js";
+
+import { type WorkflowSpec, WorkflowSpecSchema } from "../schema.js";
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
 
 export function loadMarkdownPlaybook(path: string): WorkflowSpec {
   const text = readFileSync(path, "utf8");
-  const match = text.match(FRONTMATTER_RE);
+  const match = FRONTMATTER_RE.exec(text);
   if (!match) {
     throw new Error(`playbook ${path}: missing or malformed frontmatter`);
   }

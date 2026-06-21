@@ -1,9 +1,11 @@
+import { describe, expect, test } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
-import { validatePlan } from "../../src/plan-meta/validator.js";
+
 import type { TaskMeta } from "../../src/plan-meta/schema.js";
+
+import { validatePlan } from "../../src/plan-meta/validator.js";
 
 function task(overrides: Partial<TaskMeta> & Pick<TaskMeta, "id">): TaskMeta {
   return {
@@ -20,7 +22,7 @@ function task(overrides: Partial<TaskMeta> & Pick<TaskMeta, "id">): TaskMeta {
 }
 
 async function emptyRepoRoot(): Promise<string> {
-  return mkdtemp(join(tmpdir(), "plan-meta-validator-"));
+  return await mkdtemp(join(tmpdir(), "plan-meta-validator-"));
 }
 
 describe("validatePlan", () => {

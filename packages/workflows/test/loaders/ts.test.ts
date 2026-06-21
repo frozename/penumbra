@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { loadTsWorkflow } from "../../src/loaders/ts.js";
 
 const VALID_MODULE = `
@@ -87,7 +88,13 @@ test("throws on invalid spec", async () => {
   try {
     const path = join(dir, "workflow.ts");
     writeFileSync(path, INVALID_MODULE);
-    await expect(loadTsWorkflow(path)).rejects.toThrow();
+    let caught: unknown;
+    try {
+      await loadTsWorkflow(path);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -1,15 +1,17 @@
-import { expect, test } from "bun:test";
+import { loadSqliteVec, migrate } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
+import { runMemorySearchSource } from "../../src/recall-sources/memory.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
-
-import { loadSqliteVec, migrate } from "@penumbra/core";
-import { TestEmbedder } from "@penumbra/core/testing";
-import { runMemorySearchSource } from "../../src/recall-sources/memory.js";
+} catch {
+  // already loaded
+}
 
 function insertMemory(
   db: Database,
@@ -17,10 +19,10 @@ function insertMemory(
   projectId: string | null,
   body: string,
   ts: string,
-  userId: string = "u1",
+  userId = "u1",
   sessionIds: string[] = [id],
   origin: string | null = null,
-) {
+): void {
   db.prepare(
     `
     INSERT INTO t2_memories (

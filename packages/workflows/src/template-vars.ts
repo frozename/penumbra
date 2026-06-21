@@ -29,7 +29,7 @@ function localHourInTz(d: Date, tz: string): number {
 }
 
 function stringifyTemplateValue(value: unknown): string {
-  if (value == null) return "";
+  if (value === null || value === undefined) return "";
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return "";
@@ -51,28 +51,31 @@ function resolveArgsToken(
 }
 
 export function resolveTemplateVars(s: string, ctx: TemplateVarContext): string {
-  return s.replace(/\{\{([a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)*)\}\}/g, (full, name: string) => {
-    const argsValue = resolveArgsToken(name, ctx.args);
-    if (argsValue !== undefined) return argsValue;
-    const now = ctx.now();
-    switch (name) {
-      case "date":
-      case "today":
-        return fmtDateInTz(now, ctx.tz);
-      case "period":
-        return localHourInTz(now, ctx.tz) < 12 ? "am" : "pm";
-      case "project":
-        return ctx.project;
-      case "session_start":
-        return ctx.sessionStart;
-      case "cwd":
-        return ctx.cwd ?? "";
-      case "repo_root":
-        return ctx.repoRoot ?? ctx.cwd ?? "";
-      case "file_path":
-        return ctx.filePath ?? "";
-      default:
-        return full;
-    }
-  });
+  return s.replaceAll(
+    /\{\{([a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)*)\}\}/g,
+    (full, name: string) => {
+      const argsValue = resolveArgsToken(name, ctx.args);
+      if (argsValue !== undefined) return argsValue;
+      const now = ctx.now();
+      switch (name) {
+        case "date":
+        case "today":
+          return fmtDateInTz(now, ctx.tz);
+        case "period":
+          return localHourInTz(now, ctx.tz) < 12 ? "am" : "pm";
+        case "project":
+          return ctx.project;
+        case "session_start":
+          return ctx.sessionStart;
+        case "cwd":
+          return ctx.cwd ?? "";
+        case "repo_root":
+          return ctx.repoRoot ?? ctx.cwd ?? "";
+        case "file_path":
+          return ctx.filePath ?? "";
+        default:
+          return full;
+      }
+    },
+  );
 }

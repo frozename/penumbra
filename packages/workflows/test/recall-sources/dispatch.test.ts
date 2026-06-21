@@ -1,22 +1,24 @@
-import { expect, test } from "bun:test";
+import { loadSqliteVec, migrate } from "@penumbra/core";
 import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
+import { runDispatchEventsSource } from "../../src/recall-sources/dispatch.js";
+import { runHandoffPendingSource } from "../../src/recall-sources/handoff.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
-
-import { loadSqliteVec, migrate } from "@penumbra/core";
-import { runDispatchEventsSource } from "../../src/recall-sources/dispatch.js";
-import { runHandoffPendingSource } from "../../src/recall-sources/handoff.js";
+} catch {
+  // already loaded
+}
 
 test("dispatch_events filters by since", () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
-  db.exec(`
+  db.run(`
     INSERT INTO dispatch_events (id, handoff_id, source, kind, ts, meta_json)
     VALUES
       (1, 'h1', 'worker', 'dispatch.start', '2026-05-04T10:00:00Z', '{}'),
@@ -35,7 +37,7 @@ test("dispatch_events excludes heartbeat/watchdog ticks by default", () => {
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
-  db.exec(`
+  db.run(`
     INSERT INTO dispatch_events (id, handoff_id, source, kind, ts, meta_json)
     VALUES
       (1, '',   'worker', 'heartbeat.received', '2026-05-07T10:00:00Z', '{}'),
@@ -57,7 +59,7 @@ test("dispatch_events restores heartbeat/watchdog when include_heartbeats=true",
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
-  db.exec(`
+  db.run(`
     INSERT INTO dispatch_events (id, handoff_id, source, kind, ts, meta_json)
     VALUES
       (1, '',   'worker', 'heartbeat.received', '2026-05-07T10:00:00Z', '{}'),
@@ -74,7 +76,7 @@ test("dispatch_events outcomes_only=true returns one summary per handoff with de
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
-  db.exec(`
+  db.run(`
     INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status)
     VALUES
       ('h1', '2026-05-07T10:00:00Z', 'c1', 'maestro', 'codex', 'msg1', 'dispatched'),
@@ -82,7 +84,7 @@ test("dispatch_events outcomes_only=true returns one summary per handoff with de
       ('h3', '2026-05-07T12:00:00Z', 'c1', 'maestro', 'claude', 'msg3', 'dispatched');
   `);
 
-  db.exec(`
+  db.run(`
     INSERT INTO dispatch_events (id, handoff_id, source, kind, ts, meta_json)
     VALUES
       (1, 'h1', 'worker', 'dispatch.start',         '2026-05-07T10:00:00Z', '{}'),
@@ -134,11 +136,11 @@ test("dispatch_events outcomes_only=true keeps failed kinds for successful termi
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
-  db.exec(`
+  db.run(`
     INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status)
     VALUES ('h1', '2026-05-07T10:00:00Z', 'c1', 'maestro', 'codex', 'msg1', 'dispatched');
   `);
-  db.exec(`
+  db.run(`
     INSERT INTO dispatch_events (id, handoff_id, source, kind, ts, meta_json)
     VALUES
       (1, 'h1', 'worker', 'dispatch.start',         '2026-05-07T10:00:00Z', '{}'),
@@ -155,11 +157,11 @@ test("dispatch_events outcomes_only=true marks cancel kinds as failed", () => {
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
-  db.exec(`
+  db.run(`
     INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status)
     VALUES ('h1', '2026-05-07T10:00:00Z', 'c1', 'maestro', 'codex', 'msg1', 'failed');
   `);
-  db.exec(`
+  db.run(`
     INSERT INTO dispatch_events (id, handoff_id, source, kind, ts, meta_json)
     VALUES
       (1, 'h1', 'worker', 'dispatch.start',  '2026-05-07T10:00:00Z', '{}'),
@@ -215,7 +217,7 @@ test("handoff.list_pending returns pending only", () => {
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
-  db.exec(`
+  db.run(`
     INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status)
     VALUES
       ('h1', '2026-05-04T10:00:00Z', 'c1', 'a', 'b', 'msg1', 'pending'),

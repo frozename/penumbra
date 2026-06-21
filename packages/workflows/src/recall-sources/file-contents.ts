@@ -1,5 +1,5 @@
-import { open, stat } from "node:fs/promises";
 import { realpathSync } from "node:fs";
+import { open, stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 
 const DEFAULT_MAX_BYTES = 65_536;
@@ -46,13 +46,50 @@ function decodeUtf8Prefix(buffer: Buffer): string | null {
     if (end < 0) break;
     try {
       return decoder.decode(buffer.subarray(0, end));
-    } catch {}
+    } catch {
+      // try trimming one more trailing byte (partial multi-byte sequence)
+    }
   }
   return null;
 }
 
+function isPathAllowed(realAbsPath: string, candidateRoots: string[], cwd: string): boolean {
+  for (const root of candidateRoots) {
+    let realRoot: string;
+    try {
+      realRoot = realpathSync(resolve(cwd, root));
+    } catch {
+      continue;
+    }
+    if (realAbsPath === realRoot || realAbsPath.startsWith(`${realRoot}${sep}`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function readBoundedBody(
+  absPath: string,
+  byteSize: number,
+  limit: number,
+): Promise<{ body: string; truncated: boolean }> {
+  const bytesToRead = Math.min(byteSize, limit);
+  const truncated = byteSize > limit;
+  const handle = await open(absPath, "r");
+  try {
+    const raw = Buffer.alloc(bytesToRead);
+    if (bytesToRead > 0) {
+      await handle.read(raw, 0, bytesToRead, 0);
+    }
+    const decoded = decodeUtf8Prefix(raw);
+    return { body: decoded ?? "<binary file omitted>", truncated };
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function runFileContents(input: FileContentsInput): Promise<FileContentsOutput> {
-  const requested = input.args.path?.trim() ?? "";
+  const requested = input.args.path.trim();
   if (requested.length === 0) {
     return { result: { path: "", body: null, error: "not_found" }, warnings: [] };
   }
@@ -60,33 +97,17 @@ export async function runFileContents(input: FileContentsInput): Promise<FileCon
   const candidateRoots = [input.cwd, input.storageRoot, ...(input.args.allowed_roots ?? [])].filter(
     (root): root is string => typeof root === "string" && root.length > 0,
   );
-  const realAbsPath = (() => {
-    try {
-      return realpathSync(absPath);
-    } catch {
-      return null;
-    }
-  })();
-  if (realAbsPath !== null) {
-    let allowed = false;
-    for (const root of candidateRoots) {
-      let realRoot: string;
-      try {
-        realRoot = realpathSync(resolve(input.cwd, root));
-      } catch {
-        continue;
-      }
-      if (realAbsPath === realRoot || realAbsPath.startsWith(`${realRoot}${sep}`)) {
-        allowed = true;
-        break;
-      }
-    }
-    if (!allowed) {
-      return {
-        result: { path: absPath, body: null, error: "path_outside_allowed_roots" },
-        warnings: [],
-      };
-    }
+  let realAbsPath: string | null = null;
+  try {
+    realAbsPath = realpathSync(absPath);
+  } catch {
+    realAbsPath = null;
+  }
+  if (realAbsPath !== null && !isPathAllowed(realAbsPath, candidateRoots, input.cwd)) {
+    return {
+      result: { path: absPath, body: null, error: "path_outside_allowed_roots" },
+      warnings: [],
+    };
   }
   const maxBytes = input.args.max_bytes ?? DEFAULT_MAX_BYTES;
   let byteSize: number;
@@ -97,50 +118,25 @@ export async function runFileContents(input: FileContentsInput): Promise<FileCon
     }
     byteSize = info.size;
   } catch {
-    return {
-      result: { path: absPath, body: null, error: "not_found" },
-      warnings: [],
-    };
+    return { result: { path: absPath, body: null, error: "not_found" }, warnings: [] };
   }
 
   const limit = Math.max(0, maxBytes);
-  const bytesToRead = Math.min(byteSize, limit);
-  const truncated = byteSize > limit;
   const warnings: string[] = [];
-  if (truncated) {
+  if (byteSize > limit) {
     warnings.push(
-      `file.contents: ${absPath} exceeds max_bytes=${limit}; returning first ${bytesToRead} bytes`,
+      `file.contents: ${absPath} exceeds max_bytes=${String(limit)}; returning first ${String(Math.min(byteSize, limit))} bytes`,
     );
   }
-
-  const handle = await open(absPath, "r");
-  try {
-    const raw = Buffer.alloc(bytesToRead);
-    if (bytesToRead > 0) {
-      await handle.read(raw, 0, bytesToRead, 0);
-    }
-    const body = decodeUtf8Prefix(raw);
-    if (body === null) {
-      return {
-        result: {
-          path: absPath,
-          body: "<binary file omitted>",
-          truncated: false,
-          byte_size: byteSize,
-        },
-        warnings,
-      };
-    }
+  const { body, truncated } = await readBoundedBody(absPath, byteSize, limit);
+  if (body === "<binary file omitted>") {
     return {
-      result: {
-        path: absPath,
-        body,
-        truncated,
-        byte_size: byteSize,
-      },
+      result: { path: absPath, body, truncated: false, byte_size: byteSize },
       warnings,
     };
-  } finally {
-    await handle.close();
   }
+  return {
+    result: { path: absPath, body, truncated, byte_size: byteSize },
+    warnings,
+  };
 }

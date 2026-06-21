@@ -1,4 +1,3 @@
-import { z } from "zod";
 import {
   BoundsInputSchema,
   EligibilitySchema,
@@ -6,6 +5,7 @@ import {
   TaskKindSchema,
   TaskPrioritySchema,
 } from "@penumbra/core";
+import { z } from "zod";
 
 export const TriggerSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("slash"), command: z.string().min(1) }),

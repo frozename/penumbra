@@ -1,25 +1,27 @@
-import { expect, test } from "bun:test";
+import { loadSqliteVec, migrate } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { execSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import {
+  buildRegistry,
+  composeRecall,
+  evaluateTriggerEvent,
+  executeWorkflow,
+  type TemplateVarContext,
+} from "../../src/index.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
-
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { execSync } from "node:child_process";
-import { loadSqliteVec, migrate } from "@penumbra/core";
-import { TestEmbedder } from "@penumbra/core/testing";
-import {
-  buildRegistry,
-  composeRecall,
-  executeWorkflow,
-  evaluateTriggerEvent,
-  type TemplateVarContext,
-} from "../../src/index.js";
+} catch {
+  // already loaded
+}
 
 function seedRepo(dir: string): string {
   execSync("git init -q -b main", { cwd: dir });
@@ -89,7 +91,7 @@ test("session-summarize fires on stop, writes markdown file, and POSTs observati
       JSON.stringify(["workflows"]),
       "low",
     );
-    db.exec(`
+    db.run(`
       INSERT INTO dispatch_events (id, handoff_id, source, kind, ts, meta_json)
       VALUES
         (1, 'h-1', 'worker', 'dispatch.start', '2026-05-05T07:15:00Z', '{}'),
@@ -104,7 +106,7 @@ test("session-summarize fires on stop, writes markdown file, and POSTs observati
     };
 
     const templateCtx: TemplateVarContext = {
-      now: () => new Date("2026-05-05T08:00:00Z"),
+      now: (): Date => new Date("2026-05-05T08:00:00Z"),
       project: "penumbra",
       sessionStart,
       tz: "UTC",
@@ -119,10 +121,27 @@ test("session-summarize fires on stop, writes markdown file, and POSTs observati
       templateCtx,
     });
 
-    const observationCalls: any[] = [];
-    const fakeFetch: typeof globalThis.fetch = async (input, init) => {
-      observationCalls.push({ url: String(input), body: JSON.parse(String(init?.body)) });
-      return new Response(JSON.stringify({ event_id: "evt-stop-1" }), { status: 200 });
+    type ObservationCall = {
+      url: string;
+      body: {
+        source_detail?: string;
+        session_id?: string;
+        project_id?: string;
+        payload_json?: { full_summary?: string };
+      };
+    };
+    const observationCalls: ObservationCall[] = [];
+    const fakeFetch: typeof globalThis.fetch = (
+      input: Parameters<typeof globalThis.fetch>[0],
+      init?: Parameters<typeof globalThis.fetch>[1],
+    ) => {
+      const urlStr =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const bodyStr = typeof init?.body === "string" ? init.body : "";
+      observationCalls.push({ url: urlStr, body: JSON.parse(bodyStr) as ObservationCall["body"] });
+      return Promise.resolve(
+        new Response(JSON.stringify({ event_id: "evt-stop-1" }), { status: 200 }),
+      );
     };
     globalThis.fetch = fakeFetch;
     let result;
@@ -154,11 +173,11 @@ test("session-summarize fires on stop, writes markdown file, and POSTs observati
     expect(body).toContain("fix: a bug");
 
     expect(observationCalls.length).toBe(1);
-    expect(observationCalls[0].url).toBe("http://127.0.0.1:54321/observations");
-    expect(observationCalls[0].body.source_detail).toBe("workflow:session-summarize");
-    expect(observationCalls[0].body.session_id).toBe("sess-actual");
-    expect(observationCalls[0].body.project_id).toBe("penumbra");
-    expect(observationCalls[0].body.payload_json.full_summary).toContain("Session summary");
+    expect(observationCalls[0]?.url).toBe("http://127.0.0.1:54321/observations");
+    expect(observationCalls[0]?.body.source_detail).toBe("workflow:session-summarize");
+    expect(observationCalls[0]?.body.session_id).toBe("sess-actual");
+    expect(observationCalls[0]?.body.project_id).toBe("penumbra");
+    expect(observationCalls[0]?.body.payload_json?.full_summary).toContain("Session summary");
     expect(result.artifacts).toContain("observation:evt-stop-1");
   } finally {
     rmSync(root, { recursive: true, force: true });

@@ -1,25 +1,27 @@
-import { expect, test } from "bun:test";
+import { loadSqliteVec, migrate } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-try {
-  if (process.platform === "darwin") {
-    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-  }
-} catch {}
-
-import { loadSqliteVec, migrate } from "@penumbra/core";
-import { buildRegistry } from "../src/registry.js";
 import {
   computeStateMetrics,
   defaultGitLogSinceCounter,
   type GitLogSinceCounter,
 } from "../src/poller.js";
+import { buildRegistry } from "../src/registry.js";
 import { evaluateStateThresholds } from "../src/triggers.js";
 
-function freshDb() {
+try {
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
+  }
+} catch {
+  // already loaded
+}
+
+function freshDb(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
@@ -40,7 +42,7 @@ test("computeStateMetrics returns zeros on empty db", () => {
 
 test("counts pending handoffs and computes queue-idle-min from latest dispatch.end", () => {
   const db = freshDb();
-  db.exec(`
+  db.run(`
     INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status)
     VALUES ('h1', '2026-05-04T11:00:00Z', 'c1', 'a', 'b', 'msg1', 'pending');
 
@@ -59,7 +61,7 @@ test("counts pending handoffs and computes queue-idle-min from latest dispatch.e
 
 test("counts open review lanes across task classes", () => {
   const db = freshDb();
-  db.exec(`
+  db.run(`
     INSERT INTO lane_ledger (
       lane_id, ts_opened, ts_closed, task_class, implementer_handoff,
       reviewer_handoff, gate_status, recalled_memory_ids, recalled_query, override_reason, metadata_json

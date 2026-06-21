@@ -1,3 +1,8 @@
+import { verifyBrainstormFirst } from "./brainstorm-first.js";
+import { verifyTdd } from "./tdd.js";
+import { verifyVerificationBeforeComplete } from "./verification-before-complete.js";
+import { verifyWorktreeIsolation } from "./worktree-isolation.js";
+
 export type GateInput = {
   text?: string;
   dispatchResult?: { stdout?: string; stderr?: string; outcome?: string };
@@ -21,15 +26,10 @@ export type GateName =
 
 export type GateVerifier = (input: GateInput) => GateResult;
 
-export { verifyVerificationBeforeComplete } from "./verification-before-complete.js";
-export { verifyTdd } from "./tdd.js";
 export { verifyBrainstormFirst } from "./brainstorm-first.js";
+export { verifyTdd } from "./tdd.js";
+export { verifyVerificationBeforeComplete } from "./verification-before-complete.js";
 export { verifyWorktreeIsolation } from "./worktree-isolation.js";
-
-import { verifyVerificationBeforeComplete } from "./verification-before-complete.js";
-import { verifyTdd } from "./tdd.js";
-import { verifyBrainstormFirst } from "./brainstorm-first.js";
-import { verifyWorktreeIsolation } from "./worktree-isolation.js";
 
 export const GATES: Record<GateName, GateVerifier> = {
   "verification-before-complete": verifyVerificationBeforeComplete,

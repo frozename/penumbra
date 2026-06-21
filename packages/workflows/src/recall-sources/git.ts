@@ -1,5 +1,5 @@
-import { promisify } from "node:util";
 import { execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
 
 const execFile = promisify(execFileCb);
 
@@ -14,7 +14,7 @@ export type GitShowInput = {
   args: { range?: string; since?: string; max_commits?: number };
 };
 export type GitShowOutput = {
-  commits: Array<{ sha: string; subject: string; body: string; ts: string }>;
+  commits: { sha: string; subject: string; body: string; ts: string }[];
   warnings: string[];
 };
 
@@ -122,8 +122,9 @@ export async function runGitLog(input: GitSourceInput): Promise<GitSourceOutput>
   try {
     const { stdout } = await execFile("git", gitArgs);
     return { text: stdout, warnings: [] };
-  } catch (err: any) {
-    return { text: "", warnings: [`git.log: ${err?.message ?? String(err)}`] };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { text: "", warnings: [`git.log: ${msg}`] };
   }
 }
 
@@ -138,8 +139,9 @@ export async function runGitDiff(input: GitSourceInput): Promise<GitSourceOutput
   try {
     const { stdout } = await execFile("git", gitArgs);
     return { text: stdout, warnings: [] };
-  } catch (err: any) {
-    return { text: "", warnings: [`git.diff: ${err?.message ?? String(err)}`] };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { text: "", warnings: [`git.diff: ${msg}`] };
   }
 }
 
@@ -172,7 +174,8 @@ export async function runGitShow(input: GitShowInput): Promise<GitShowOutput> {
       commits.push({ sha, subject, ts, body: truncateBody(body) });
     }
     return { commits, warnings: [] };
-  } catch (err: any) {
-    return { commits: [], warnings: [`git.show: ${err?.message ?? String(err)}`] };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { commits: [], warnings: [`git.show: ${msg}`] };
   }
 }

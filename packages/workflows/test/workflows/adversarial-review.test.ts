@@ -1,29 +1,49 @@
+import type { RecallBundle, WorkflowCtx, WorkflowFn, WorkflowSpec } from "@penumbra/workflows";
+import type { z } from "zod";
+
+import { AgentPerformanceWriter, loadSqliteVec, migrate } from "@penumbra/core";
+import { Database } from "bun:sqlite";
 import { expect, mock, test } from "bun:test";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { Database } from "bun:sqlite";
-import { AgentPerformanceWriter, loadSqliteVec, migrate } from "@penumbra/core";
-import type { WorkflowCtx, RecallBundle } from "@penumbra/workflows";
 import { parse as parseYaml } from "yaml";
+
+// Plugin workflows live outside packages/ and so are not in the eslint
+// tsconfig include — typed imports resolve to `any`. Wrap the dynamic import
+// once and cast the exports to typed views, so the rest of the file lints
+// with real type info.
+import * as adversarialReviewModule from "../../../../plugin/workflows/adversarial-review/workflow.js";
 import {
   loadAgentChatConfigFromDir,
   reloadAgentChatConfig,
-} from "../../../config/src/files/load.ts";
-import spec, {
-  buildMemoryQuery,
-  buildPriorFindingsBlock,
-  diffTouchesUI,
-  fn,
-  inputSchema,
-  summarizePersonaCompletionOutcome,
-} from "../../../../plugin/workflows/adversarial-review/workflow.ts";
+} from "../../../config/src/files/load.js";
+
+type ReviewModule = {
+  default: WorkflowSpec;
+  fn: WorkflowFn;
+  inputSchema: z.ZodType;
+  buildMemoryQuery: (...args: unknown[]) => string;
+  buildPriorFindingsBlock: (...args: unknown[]) => string;
+  diffTouchesUI: (...args: unknown[]) => boolean;
+  summarizePersonaCompletionOutcome: (...args: unknown[]) => unknown;
+};
+const reviewMod = adversarialReviewModule as unknown as ReviewModule;
+const spec = reviewMod.default;
+const fn = reviewMod.fn;
+const inputSchema = reviewMod.inputSchema;
+const buildMemoryQuery = reviewMod.buildMemoryQuery;
+const buildPriorFindingsBlock = reviewMod.buildPriorFindingsBlock;
+const diffTouchesUI = reviewMod.diffTouchesUI;
+const summarizePersonaCompletionOutcome = reviewMod.summarizePersonaCompletionOutcome;
 
 if (process.platform === "darwin") {
   try {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-  } catch {}
+  } catch {
+    // already loaded
+  }
 }
 
 const NOW = new Date(Date.now() - 60_000).toISOString();
@@ -60,7 +80,26 @@ function recallWithDiff(diffText: string): RecallBundle {
   };
 }
 
-function makeConfig() {
+type AdvReviewConfig = {
+  personas: Record<
+    string,
+    {
+      preferred_agent: string;
+      bias: string;
+      system_prompt: string;
+      category_hints?: string[];
+    }
+  >;
+  workloads: {
+    review_adversarial: {
+      eligible_agents: string[];
+      fan_out: number;
+      synthesizer: string | string[];
+    };
+  };
+};
+
+function makeConfig(): AdvReviewConfig {
   return {
     personas: {
       security: {
@@ -102,46 +141,59 @@ function makeConfig() {
   };
 }
 
+type DispatchInputReview = {
+  agent: string;
+  message: string;
+  task_type?: string;
+  use_worktree?: boolean;
+};
+type DispatchResultReview = { conversation_id: string; handoff_id: string };
+type AwaitResultReview = {
+  status: "completed" | "failed" | "timeout";
+  final_agent: string | null;
+  response_text: string | null;
+};
+type DispatchImplReview = (input: DispatchInputReview) => Promise<DispatchResultReview>;
+type AwaitImplReview = (
+  conversationId: string,
+  opts?: { timeoutMs?: number },
+) => Promise<AwaitResultReview>;
+
+type MakeReviewCtxResult = {
+  ctx: WorkflowCtx;
+  root: string;
+  writes: { path: string; body: string }[];
+  dispatch: ReturnType<typeof mock<DispatchImplReview>>;
+  awaitChain: ReturnType<typeof mock<AwaitImplReview>>;
+};
+
 function makeCtx(opts?: {
   args?: Record<string, unknown>;
-  dispatchImpl?: (input: {
-    agent: string;
-    message: string;
-    task_type?: string;
-    use_worktree?: boolean;
-  }) => Promise<{ conversation_id: string; handoff_id: string }>;
-  awaitImpl?: (
-    conversationId: string,
-    opts?: { timeoutMs?: number },
-  ) => Promise<{
-    status: "completed" | "failed" | "timeout";
-    final_agent: string | null;
-    response_text: string | null;
-  }>;
+  dispatchImpl?: DispatchImplReview;
+  awaitImpl?: AwaitImplReview;
   db?: () => Database;
-}) {
+}): MakeReviewCtxResult {
   const root = mkdtempSync(join(tmpdir(), "adv-review-"));
-  const writes: Array<{ path: string; body: string }> = [];
-  const dispatch = mock(
-    opts?.dispatchImpl ??
-      (async ({ agent }: { agent: string }) => ({
-        conversation_id: `${agent}-conv`,
-        handoff_id: `${agent}-handoff`,
-      })),
-  );
-  const awaitChain = mock(
-    opts?.awaitImpl ??
-      (async (conversationId: string) => ({
-        status: "completed" as const,
-        final_agent: "agent",
-        response_text: `review for ${conversationId}\n\n\`\`\`json\n[{"persona":"x","severity":"high","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n\`\`\``,
-      })),
-  );
+  const writes: { path: string; body: string }[] = [];
+  const defaultDispatch: DispatchImplReview = ({ agent }) =>
+    Promise.resolve({
+      conversation_id: `${agent}-conv`,
+      handoff_id: `${agent}-handoff`,
+    });
+  const defaultAwait: AwaitImplReview = (conversationId) =>
+    Promise.resolve({
+      status: "completed" as const,
+      final_agent: "agent",
+      response_text: `review for ${conversationId}\n\n\`\`\`json\n[{"persona":"x","severity":"high","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n\`\`\``,
+    });
+  const dispatch = mock(opts?.dispatchImpl ?? defaultDispatch);
+  const awaitChain = mock(opts?.awaitImpl ?? defaultAwait);
 
+  const parsedArgs = inputSchema.parse(opts?.args ?? {}) as Record<string, unknown>;
   const ctx: WorkflowCtx = {
     dispatch,
     awaitChain,
-    fileWrite: async (relativePath, body) => {
+    fileWrite: async (relativePath, body): Promise<string> => {
       const path = isAbsolute(relativePath) ? relativePath : join(root, relativePath);
       writes.push({ path, body });
       await mkdir(dirname(path), { recursive: true });
@@ -152,7 +204,7 @@ function makeCtx(opts?: {
     cwd: root,
     storageRoot: root,
     project: "penumbra",
-    args: inputSchema.parse(opts?.args ?? {}),
+    args: parsedArgs,
     db: opts?.db,
   };
   return { ctx, root, writes, dispatch, awaitChain };
@@ -186,10 +238,10 @@ function loadFixtureConfig(): ReturnType<typeof loadAgentChatConfigFromDir> {
 
 function parseSynthesisFrontmatter(content: string): Record<string, unknown> | null {
   // Allow an optional banner line before the frontmatter block
-  const match = content.match(/---\n([\s\S]*?)\n---/);
+  const match = /---\n([\s\S]*?)\n---/.exec(content);
   if (!match) return null;
   try {
-    const parsed = parseYaml(match[1]);
+    const parsed: unknown = parseYaml(match[1] ?? "");
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : null;
@@ -430,9 +482,12 @@ test("persona prompt includes caller focus when provided", async () => {
       focus: "scrutinize the regex",
       personas: ["security"],
     },
-    dispatchImpl: async (input) => {
+    dispatchImpl: (input) => {
       dispatchMessages.push(input.message);
-      return { conversation_id: `${input.agent}-conv`, handoff_id: `${input.agent}-handoff` };
+      return Promise.resolve({
+        conversation_id: `${input.agent}-conv`,
+        handoff_id: `${input.agent}-handoff`,
+      });
     },
   });
   try {
@@ -451,7 +506,7 @@ test("persona mapping uses personas.<name>.preferred_agent, not workload key", a
     args: {
       personas: ["security"],
     },
-    awaitImpl: async (conversationId: string) => {
+    awaitImpl: (conversationId: string) => {
       if (conversationId === "claude-acp-sonnet-conv") {
         return {
           status: "completed",
@@ -520,33 +575,28 @@ test("relative out_dir resolves under cwd", async () => {
 });
 
 test("all personas succeed: writes persona artifacts and synthesis with handoff_id frontmatter", async () => {
-  const dispatchCalls: Array<{
+  const dispatchCalls: {
     agent: string;
     message: string;
     task_type?: string;
     use_worktree?: boolean;
-  }> = [];
+  }[] = [];
   const { ctx, root, dispatch } = makeCtx();
   try {
     dispatch.mockImplementation(
-      async (input: {
-        agent: string;
-        message: string;
-        task_type?: string;
-        use_worktree?: boolean;
-      }) => {
+      (input: { agent: string; message: string; task_type?: string; use_worktree?: boolean }) => {
         dispatchCalls.push(input);
-        return {
+        return Promise.resolve({
           conversation_id: `${input.agent}-conv`,
           handoff_id: `${input.agent}-handoff`,
-        };
+        });
       },
     );
     const result = (await fn(ctx, baseRecall())) as {
       ok: boolean;
       out_dir: string;
       synthesis_path: string | null;
-      personas: Array<{ name: string; status: string; findings_count: number | null }>;
+      personas: { name: string; status: string; findings_count: number | null }[];
       synthesizer_status: string | null;
     };
     expect(result.ok).toBe(true);
@@ -592,11 +642,11 @@ test("all personas succeed: writes persona artifacts and synthesis with handoff_
 
 test("one persona dispatch fails: workflow still synthesizes remaining results", async () => {
   const { ctx, root, dispatch } = makeCtx({
-    dispatchImpl: async ({ agent }) => {
+    dispatchImpl: ({ agent }) => {
       if (agent === "performance") {
         throw new Error("dispatch failed");
       }
-      return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
+      return Promise.resolve({ conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` });
     },
   });
   try {
@@ -630,7 +680,7 @@ test("one persona dispatch fails: workflow still synthesizes remaining results",
 
 test("all personas fail: synthesizer is not dispatched and synthesis_path is null", async () => {
   const { ctx, root, dispatch } = makeCtx({
-    dispatchImpl: async () => {
+    dispatchImpl: () => {
       throw new Error("no route");
     },
   });
@@ -651,11 +701,12 @@ test("all personas fail: synthesizer is not dispatched and synthesis_path is nul
 
 test("all persona awaits fail: synthesizer is not dispatched and synthesis_path is null", async () => {
   const { ctx, root, dispatch } = makeCtx({
-    awaitImpl: async () => ({
-      status: "failed",
-      final_agent: null,
-      response_text: null,
-    }),
+    awaitImpl: () =>
+      Promise.resolve({
+        status: "failed" as const,
+        final_agent: null,
+        response_text: null,
+      }),
   });
   try {
     const result = (await fn(ctx, baseRecall())) as {
@@ -704,7 +755,7 @@ test("args.personas selects only subset of configured personas", async () => {
   try {
     const result = (await fn(ctx, baseRecall())) as {
       ok: boolean;
-      personas: Array<{ name: string }>;
+      personas: { name: string }[];
     };
     expect(result.ok).toBe(true);
     expect(result.personas.map((p) => p.name)).toEqual(["security"]);
@@ -740,7 +791,7 @@ diff --git a/docs/review.md b/docs/review.md
     withVision.ctx.config = configured;
     const result = (await fn(withVision.ctx, recallWithDiff(uiDiff))) as {
       ok: boolean;
-      personas: Array<{ name: string }>;
+      personas: { name: string }[];
     };
     expect(result.ok).toBe(true);
     expect(result.personas.map((persona) => persona.name)).toContain("vision_verify");
@@ -753,7 +804,7 @@ diff --git a/docs/review.md b/docs/review.md
     nonUi.ctx.config = configured;
     const result = (await fn(nonUi.ctx, recallWithDiff(nonUiDiff))) as {
       ok: boolean;
-      personas: Array<{ name: string }>;
+      personas: { name: string }[];
     };
     expect(result.ok).toBe(true);
     expect(result.personas.map((persona) => persona.name)).not.toContain("vision_verify");
@@ -771,7 +822,7 @@ diff --git a/docs/review.md b/docs/review.md
     };
     const result = (await fn(withoutVision.ctx, recallWithDiff(uiDiff))) as {
       ok: boolean;
-      personas: Array<{ name: string }>;
+      personas: { name: string }[];
     };
     expect(result.ok).toBe(true);
     expect(result.personas.map((persona) => persona.name)).not.toContain("vision_verify");
@@ -789,9 +840,9 @@ test("optional UI persona dispatch failure does not fail an otherwise successful
 +<button>Save</button>`;
   const configured = loadFixtureConfig();
   const { ctx, root } = makeCtx({
-    dispatchImpl: async ({ agent }) => {
+    dispatchImpl: ({ agent }) => {
       if (agent === "google-gemini-pro-acp") throw new Error("vision worker unavailable");
-      return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
+      return Promise.resolve({ conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` });
     },
   });
   try {
@@ -849,9 +900,9 @@ workloads:
 `);
   const { ctx, root } = makeCtx({
     args: { content_path: contentPath },
-    dispatchImpl: async ({ agent }) => {
+    dispatchImpl: ({ agent }) => {
       if (agent === "google-gemini-pro-acp") throw new Error("vision worker unavailable");
-      return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
+      return Promise.resolve({ conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` });
     },
   });
   try {
@@ -875,7 +926,7 @@ workloads:
       ok: boolean;
       outcome: string;
       failed_personas: string[];
-      personas: Array<{ name: string; status: string }>;
+      personas: { name: string; status: string }[];
     };
     expect(result.ok).toBe(true);
     expect(result.outcome).toBe("success_partial");
@@ -897,7 +948,7 @@ test("fuzzy-matches requested persona names and returns warnings", async () => {
     const result = (await fn(ctx, baseRecall())) as {
       ok: boolean;
       warnings?: string[];
-      personas: Array<{ name: string }>;
+      personas: { name: string }[];
     };
     expect(result.ok).toBe(true);
     expect(result.personas.map((p) => p.name)).toEqual(["simplicity"]);
@@ -929,7 +980,7 @@ test("keeps unknown_personas when fuzzy match is ambiguous", async () => {
 
 test("trivial response with no json findings is downgraded to failed", async () => {
   const { ctx, root } = makeCtx({
-    awaitImpl: async (conversationId: string) => {
+    awaitImpl: (conversationId: string) => {
       if (conversationId.startsWith("security")) {
         return {
           status: "completed",
@@ -969,7 +1020,7 @@ test("trivial response with no json findings is downgraded to failed", async () 
 test("substantive response without findings is not downgraded", async () => {
   const longNoJson = `Let me read the key files and evaluate architecture choices.\n\n${"analysis ".repeat(40)}`;
   const { ctx, root } = makeCtx({
-    awaitImpl: async (conversationId: string) => {
+    awaitImpl: (conversationId: string) => {
       if (conversationId.startsWith("security")) {
         return {
           status: "completed",
@@ -1009,9 +1060,12 @@ test("content_path mode injects content-mode preamble into persona dispatches", 
   const dispatchMessages: string[] = [];
   const { ctx, root } = makeCtx({
     args: { content_path: "/repo/docs/state-of-penumbra.md" },
-    dispatchImpl: async (input) => {
+    dispatchImpl: (input) => {
       dispatchMessages.push(input.message);
-      return { conversation_id: `${input.agent}-conv`, handoff_id: `${input.agent}-handoff` };
+      return Promise.resolve({
+        conversation_id: `${input.agent}-conv`,
+        handoff_id: `${input.agent}-handoff`,
+      });
     },
   });
   try {
@@ -1031,9 +1085,12 @@ test("diff mode does not inject content-mode preamble into persona dispatches", 
   const dispatchMessages: string[] = [];
   const { ctx, root } = makeCtx({
     // no content_path — diff mode
-    dispatchImpl: async (input) => {
+    dispatchImpl: (input) => {
       dispatchMessages.push(input.message);
-      return { conversation_id: `${input.agent}-conv`, handoff_id: `${input.agent}-handoff` };
+      return Promise.resolve({
+        conversation_id: `${input.agent}-conv`,
+        handoff_id: `${input.agent}-handoff`,
+      });
     },
   });
   try {
@@ -1067,9 +1124,9 @@ test("outcome=success when all personas complete", async () => {
 
 test("outcome=success_partial when pass rate meets threshold", async () => {
   const { ctx, root } = makeCtx({
-    dispatchImpl: async ({ agent }) => {
+    dispatchImpl: ({ agent }) => {
       if (agent === "performance") throw new Error("timed out");
-      return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
+      return Promise.resolve({ conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` });
     },
   });
   // 1 of 2 fails → 50% pass; set threshold to 45 so 50% >= 45% → success_partial
@@ -1090,9 +1147,9 @@ test("outcome=success_partial when pass rate meets threshold", async () => {
 
 test("outcome=failed and ok=false when pass rate falls below threshold", async () => {
   const { ctx, root } = makeCtx({
-    dispatchImpl: async ({ agent }) => {
+    dispatchImpl: ({ agent }) => {
       if (agent === "performance") throw new Error("timed out");
-      return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
+      return Promise.resolve({ conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` });
     },
   });
   // 1 of 2 fails → 50% pass < 80% default threshold → failed
@@ -1112,9 +1169,9 @@ test("outcome=failed and ok=false when pass rate falls below threshold", async (
 
 test("synthesis banner is prepended when persona failures occur", async () => {
   const { ctx, root } = makeCtx({
-    dispatchImpl: async ({ agent }) => {
+    dispatchImpl: ({ agent }) => {
       if (agent === "performance") throw new Error("timed out");
-      return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
+      return Promise.resolve({ conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` });
     },
   });
   ctx.config.review_min_personas_pass_pct = 45; // success_partial so synthesis runs
@@ -1157,7 +1214,7 @@ test("synthesizer pool resolves through pressure without changing persona fan-ou
   writePressure(db, "openai", 5);
   const { ctx, root, dispatch } = makeCtx({ args: { personas: ["security"] } });
   try {
-    ctx.db = () => db;
+    ctx.db = (): Database => db;
     ctx.config.agents = [
       {
         name: "claude-acp-sonnet",
@@ -1196,9 +1253,9 @@ test("synthesizer pool resolves through pressure without changing persona fan-ou
 test("retries persona dispatch once on 503 no_worker_registered and records retry_count", async () => {
   const { ctx, root, dispatch } = makeCtx({
     args: { personas: ["security"] },
-    dispatchImpl: (() => {
+    dispatchImpl: ((): DispatchImplReview => {
       let securityAttempts = 0;
-      return async ({ agent }) => {
+      return ({ agent }) => {
         if (agent === "security") {
           securityAttempts += 1;
           if (securityAttempts === 1) {
@@ -1207,7 +1264,10 @@ test("retries persona dispatch once on 503 no_worker_registered and records retr
             );
           }
         }
-        return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
+        return Promise.resolve({
+          conversation_id: `${agent}-conv`,
+          handoff_id: `${agent}-handoff`,
+        });
       };
     })(),
   });
@@ -1230,9 +1290,9 @@ test("retries synthesizer once on 503 no_worker_registered and annotates synthes
   const synthAgents: string[] = [];
   const { ctx, root, dispatch } = makeCtx({
     args: { personas: ["security"] },
-    dispatchImpl: (() => {
+    dispatchImpl: ((): DispatchImplReview => {
       let synthAttempts = 0;
-      return async ({ agent }) => {
+      return ({ agent }) => {
         if (agent === "codex") {
           synthAgents.push(agent);
           synthAttempts += 1;
@@ -1242,10 +1302,13 @@ test("retries synthesizer once on 503 no_worker_registered and annotates synthes
             );
           }
         }
-        return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
+        return Promise.resolve({
+          conversation_id: `${agent}-conv`,
+          handoff_id: `${agent}-handoff`,
+        });
       };
     })(),
-    awaitImpl: async (conversationId: string) => {
+    awaitImpl: (conversationId: string) => {
       if (conversationId === "codex-conv") {
         return {
           status: "completed",
@@ -1279,11 +1342,11 @@ test("fails over synthesizer pool when completed output is the failure marker", 
   const synthAgents: string[] = [];
   const { ctx, root, dispatch } = makeCtx({
     args: { personas: ["security"] },
-    dispatchImpl: async ({ agent }) => {
+    dispatchImpl: ({ agent }) => {
       if (agent === "codex" || agent === "gemini") synthAgents.push(agent);
-      return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
+      return Promise.resolve({ conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` });
     },
-    awaitImpl: async (conversationId: string) => {
+    awaitImpl: (conversationId: string) => {
       if (conversationId === "codex-conv") {
         return {
           status: "completed",
@@ -1334,11 +1397,11 @@ test("does not fail over when a long synthesis merely quotes the failure marker"
   const quotingSynthesis = `<synthesizer failed: failed> is the marker this review discusses.\n\n${"The synthesis itself succeeded and analyzes the failover handling in depth. ".repeat(10)}`;
   const { ctx, root } = makeCtx({
     args: { personas: ["security"] },
-    dispatchImpl: async ({ agent }) => {
+    dispatchImpl: ({ agent }) => {
       if (agent === "codex" || agent === "gemini") synthAgents.push(agent);
-      return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
+      return Promise.resolve({ conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` });
     },
-    awaitImpl: async (conversationId: string) => {
+    awaitImpl: (conversationId: string) => {
       if (conversationId === "codex-conv") {
         return {
           status: "completed",
@@ -1376,11 +1439,11 @@ test("caps synthesis failover when every pool agent returns a failure marker", a
   const synthAgents: string[] = [];
   const { ctx, root, dispatch } = makeCtx({
     args: { personas: ["security"] },
-    dispatchImpl: async ({ agent }) => {
+    dispatchImpl: ({ agent }) => {
       if (agent === "codex" || agent === "gemini") synthAgents.push(agent);
-      return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
+      return Promise.resolve({ conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` });
     },
-    awaitImpl: async (conversationId: string) => {
+    awaitImpl: (conversationId: string) => {
       if (conversationId === "codex-conv" || conversationId === "gemini-conv") {
         return {
           status: "completed",
@@ -1426,7 +1489,7 @@ function insertT2Memory(
   id: string,
   title: string,
   body: string,
-  ts: string = "2026-05-05T00:00:00Z",
+  ts = "2026-05-05T00:00:00Z",
 ): void {
   db.prepare(
     `INSERT INTO t2_memories (
@@ -1517,7 +1580,7 @@ test("fn: PENUMBRA_REVIEW_MEMORY_CONTEXT unset -> no prior findings in dispatch 
     await fn(ctx, baseRecall());
     const messages: string[] = dispatch.mock.calls.map((c: unknown[]) => {
       const arg = c[0] as { message?: string };
-      return arg?.message ?? "";
+      return arg.message ?? "";
     });
     expect(messages.some((m) => m.includes("Prior related findings"))).toBe(false);
   } finally {
@@ -1544,11 +1607,11 @@ test("fn: PENUMBRA_REVIEW_MEMORY_CONTEXT=1, DB has matches -> prior findings blo
     const personaMessages: string[] = dispatch.mock.calls
       .filter((c: unknown[]) => {
         const arg = c[0] as { task_type?: string };
-        return arg?.task_type === "review_adversarial";
+        return arg.task_type === "review_adversarial";
       })
       .map((c: unknown[]) => {
         const arg = c[0] as { message?: string };
-        return arg?.message ?? "";
+        return arg.message ?? "";
       });
     expect(personaMessages.length).toBeGreaterThan(0);
     expect(personaMessages.every((m) => m.includes("Prior related findings"))).toBe(true);
@@ -1573,11 +1636,11 @@ test("fn: PENUMBRA_REVIEW_MEMORY_CONTEXT=1, empty DB -> no prior findings block"
     const personaMessages: string[] = dispatch.mock.calls
       .filter((c: unknown[]) => {
         const arg = c[0] as { task_type?: string };
-        return arg?.task_type === "review_adversarial";
+        return arg.task_type === "review_adversarial";
       })
       .map((c: unknown[]) => {
         const arg = c[0] as { message?: string };
-        return arg?.message ?? "";
+        return arg.message ?? "";
       });
     expect(personaMessages.length).toBeGreaterThan(0);
     expect(personaMessages.every((m) => !m.includes("Prior related findings"))).toBe(true);
@@ -1591,7 +1654,7 @@ test("awaitChain uses persona timeout_ms override when configured", async () => 
   const seenTimeouts: number[] = [];
   const { ctx, root } = makeCtx({
     args: { personas: ["security"] },
-    awaitImpl: async (_conversationId, options) => {
+    awaitImpl: (_conversationId, options) => {
       seenTimeouts.push(options?.timeoutMs ?? -1);
       return {
         status: "completed",

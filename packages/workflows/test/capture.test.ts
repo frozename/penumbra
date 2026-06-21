@@ -1,16 +1,31 @@
-import { expect, test } from "bun:test";
+import { loadSqliteVec, migrate } from "@penumbra/core";
 import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
+import { captureWorkflowOutcome } from "../src/capture.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  // already loaded
+}
 
-import { loadSqliteVec, migrate } from "@penumbra/core";
-import { captureWorkflowOutcome } from "../src/capture.js";
+type WorkflowStatsRow = {
+  samples: number;
+  successes: number;
+  failures: number;
+  consecutive_failures: number;
+  quarantined: number;
+  quarantine_reason: string | null;
+  refresh_runs: number;
+  intentional_runs: number;
+  last_failure_at: string | null;
+  last_failure_reason: string | null;
+};
 
-function freshDb() {
+function freshDb(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
@@ -31,11 +46,11 @@ test("writes t0 events for run + recall + outcome", () => {
     sessionId: "s1",
     userId: "u",
     machineId: "m",
-    now: () => new Date("2026-05-04T15:00:00Z"),
+    now: (): Date => new Date("2026-05-04T15:00:00Z"),
   });
   const rows = db
     .query("SELECT event_type FROM t0_events WHERE event_type LIKE 'workflow.%' ORDER BY ts")
-    .all() as Array<{ event_type: string }>;
+    .all() as { event_type: string }[];
   expect(rows.map((r) => r.event_type)).toEqual([
     "workflow.run",
     "workflow.recall",
@@ -58,14 +73,14 @@ test("upserts workflow_stats incrementing samples + successes", () => {
       sessionId: "s",
       userId: "u",
       machineId: "m",
-      now: () => new Date(),
+      now: (): Date => new Date(),
     });
   }
   const row = db
     .query(
       "SELECT samples, successes, failures, consecutive_failures, quarantined FROM workflow_stats WHERE workflow_name='demo'",
     )
-    .get() as any;
+    .get() as WorkflowStatsRow;
   expect(row.samples).toBe(3);
   expect(row.successes).toBe(3);
   expect(row.failures).toBe(0);
@@ -83,19 +98,19 @@ test("quarantines after 3 consecutive failures", () => {
       artifacts: [],
       warnings: [],
       recallSummary: { sources: [], itemCount: 0 },
-      errorMessage: `boom ${i}`,
+      errorMessage: `boom ${String(i)}`,
       project: "t",
       sessionId: "s",
       userId: "u",
       machineId: "m",
-      now: () => new Date(),
+      now: (): Date => new Date(),
     });
   }
   const row = db
     .query(
       "SELECT consecutive_failures, quarantined, quarantine_reason FROM workflow_stats WHERE workflow_name='flaky'",
     )
-    .get() as any;
+    .get() as WorkflowStatsRow;
   expect(row.consecutive_failures).toBe(3);
   expect(row.quarantined).toBe(1);
   expect(row.quarantine_reason).toContain("3 consecutive");
@@ -114,11 +129,13 @@ test("refresh kind increments refresh_runs only", () => {
     sessionId: "s",
     userId: "u",
     machineId: "m",
-    now: () => new Date(),
+    now: (): Date => new Date(),
   };
   captureWorkflowOutcome({ ...base, outcome: "success", kind: "refresh" });
   captureWorkflowOutcome({ ...base, outcome: "success", kind: "intentional" });
-  const row = db.query("SELECT * FROM workflow_stats WHERE workflow_name = ?").get("wf") as any;
+  const row = db
+    .query("SELECT * FROM workflow_stats WHERE workflow_name = ?")
+    .get("wf") as WorkflowStatsRow;
   expect(row.refresh_runs).toBe(1);
   expect(row.intentional_runs).toBe(1);
   expect(row.samples).toBe(2);
@@ -138,9 +155,11 @@ test("default kind is intentional", () => {
     sessionId: "s",
     userId: "u",
     machineId: "m",
-    now: () => new Date(),
+    now: (): Date => new Date(),
   });
-  const row = db.query("SELECT * FROM workflow_stats WHERE workflow_name = ?").get("wf") as any;
+  const row = db
+    .query("SELECT * FROM workflow_stats WHERE workflow_name = ?")
+    .get("wf") as WorkflowStatsRow;
   expect(row.refresh_runs).toBe(0);
   expect(row.intentional_runs).toBe(1);
 });
@@ -158,14 +177,14 @@ test("preserves last_failure_at and last_failure_reason on success after failure
     sessionId: "s",
     userId: "u",
     machineId: "m",
-    now: () => new Date(),
+    now: (): Date => new Date(),
   };
   captureWorkflowOutcome({ ...args, outcome: "run_error", errorMessage: "kaboom" });
   const afterFailure = db
     .query(
       "SELECT last_failure_at, last_failure_reason FROM workflow_stats WHERE workflow_name='sticky'",
     )
-    .get() as any;
+    .get() as WorkflowStatsRow;
   expect(afterFailure.last_failure_at).not.toBeNull();
   expect(afterFailure.last_failure_reason).toBe("kaboom");
 
@@ -174,7 +193,7 @@ test("preserves last_failure_at and last_failure_reason on success after failure
     .query(
       "SELECT last_failure_at, last_failure_reason FROM workflow_stats WHERE workflow_name='sticky'",
     )
-    .get() as any;
+    .get() as WorkflowStatsRow;
   expect(afterSuccess.last_failure_at).toBe(afterFailure.last_failure_at);
   expect(afterSuccess.last_failure_reason).toBe("kaboom");
 });
@@ -185,7 +204,7 @@ test("rolls back t0 events when workflow_stats upsert throws", () => {
   // verifies the three t0 inserts roll back atomically with the failed write.
   db.run("DROP TABLE workflow_stats");
 
-  expect(() =>
+  expect(() => {
     captureWorkflowOutcome({
       db,
       workflowName: "atomic",
@@ -198,9 +217,9 @@ test("rolls back t0 events when workflow_stats upsert throws", () => {
       sessionId: "s",
       userId: "u",
       machineId: "m",
-      now: () => new Date(),
-    }),
-  ).toThrow();
+      now: (): Date => new Date(),
+    });
+  }).toThrow();
 
   const rows = db
     .query("SELECT COUNT(*) AS c FROM t0_events WHERE event_type LIKE 'workflow.%'")
@@ -221,7 +240,7 @@ test("resets consecutive_failures on success after failures", () => {
     sessionId: "s",
     userId: "u",
     machineId: "m",
-    now: () => new Date(),
+    now: (): Date => new Date(),
   };
   captureWorkflowOutcome({ ...args, outcome: "run_error", errorMessage: "a" });
   captureWorkflowOutcome({ ...args, outcome: "run_error", errorMessage: "b" });
@@ -230,7 +249,7 @@ test("resets consecutive_failures on success after failures", () => {
     .query(
       "SELECT consecutive_failures, quarantined, samples, successes, failures FROM workflow_stats WHERE workflow_name='recovers'",
     )
-    .get() as any;
+    .get() as WorkflowStatsRow;
   expect(row.samples).toBe(3);
   expect(row.successes).toBe(1);
   expect(row.failures).toBe(2);

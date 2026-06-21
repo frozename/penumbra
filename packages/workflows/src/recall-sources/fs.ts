@@ -11,7 +11,8 @@ export async function runFsGlob(input: FsGlobInput): Promise<FsGlobOutput> {
       matches.push(path);
     }
     return { matches, warnings: [] };
-  } catch (err: any) {
-    return { matches: [], warnings: [`fs.glob: ${err?.message ?? String(err)}`] };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { matches: [], warnings: [`fs.glob: ${msg}`] };
   }
 }

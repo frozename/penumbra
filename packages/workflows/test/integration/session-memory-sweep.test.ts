@@ -1,18 +1,20 @@
-import { expect, test } from "bun:test";
+import { loadSqliteVec, migrate } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { buildRegistry, composeRecall, executeWorkflow } from "../../src/index.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
-
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { loadSqliteVec, migrate } from "@penumbra/core";
-import { TestEmbedder } from "@penumbra/core/testing";
-import { buildRegistry, composeRecall, executeWorkflow } from "../../src/index.js";
+} catch {
+  // already loaded
+}
 
 function insertEvent(db: Database, id: string, sessionId: string, summary: string): void {
   db.prepare(
@@ -129,10 +131,16 @@ test("session-memory-sweep writes next-session-prompt output", async () => {
           storageRoot: root,
           project: "penumbra",
           args: { session_id: sessionId, project_id: "penumbra" },
-          db: () => db,
-          dispatch: async () => ({ conversation_id: "conversation", handoff_id: "handoff" }),
-          awaitChain: async () => ({ status: "timeout", final_agent: null, response_text: null }),
-          fileWrite: async () => "/tmp/out",
+          db: (): Database => db,
+          dispatch: () =>
+            Promise.resolve({ conversation_id: "conversation", handoff_id: "handoff" }),
+          awaitChain: () =>
+            Promise.resolve({
+              status: "timeout" as const,
+              final_agent: null,
+              response_text: null,
+            }),
+          fileWrite: () => Promise.resolve("/tmp/out"),
         },
         captureCtx: { db, project: "penumbra", sessionId, userId: "u", machineId: "m" },
       });
@@ -150,7 +158,7 @@ test("session-memory-sweep writes next-session-prompt output", async () => {
       else process.env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS = previousMinEvents;
     }
   } finally {
-    server?.stop(true);
+    await server?.stop(true);
     rmSync(root, { recursive: true, force: true });
   }
 });

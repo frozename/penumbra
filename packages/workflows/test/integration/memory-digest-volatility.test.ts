@@ -1,18 +1,21 @@
-import { expect, test } from "bun:test";
+import { loadSqliteVec, migrate } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadSqliteVec, migrate } from "@penumbra/core";
-import { TestEmbedder } from "@penumbra/core/testing";
+
+import { formatSessionMemorySweepSoakResult } from "../../../../scripts/session-memory-sweep-soak.js";
 import { buildRegistry, composeRecall, executeWorkflow } from "../../src/index.js";
-import { formatSessionMemorySweepSoakResult } from "../../../../scripts/session-memory-sweep-soak";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  // already loaded
+}
 
 async function withEnv<T>(
   name: string,
@@ -20,21 +23,30 @@ async function withEnv<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   const previous = process.env[name];
-  if (value === undefined) delete process.env[name];
-  else process.env[name] = value;
+  if (value === undefined) {
+    Reflect.deleteProperty(process.env, name);
+  } else {
+    process.env[name] = value;
+  }
   try {
     return await fn();
   } finally {
-    if (previous === undefined) delete process.env[name];
-    else process.env[name] = previous;
+    if (previous === undefined) {
+      Reflect.deleteProperty(process.env, name);
+    } else {
+      process.env[name] = previous;
+    }
   }
 }
 
 function withDigestEnv<T>(dir: string, fn: () => Promise<T>): Promise<T> {
-  return withEnv("PENUMBRA_MEMORY_DIGEST_STATUS_ROWS", "5", async () =>
-    withEnv("PENUMBRA_MEMORY_DIGEST_PATTERN_ROWS", "10", () =>
-      withEnv("PENUMBRA_CC_MEMORY_DIR", dir, fn),
-    ),
+  return withEnv(
+    "PENUMBRA_MEMORY_DIGEST_STATUS_ROWS",
+    "5",
+    async () =>
+      await withEnv("PENUMBRA_MEMORY_DIGEST_PATTERN_ROWS", "10", () =>
+        withEnv("PENUMBRA_CC_MEMORY_DIR", dir, fn),
+      ),
   );
 }
 
@@ -73,7 +85,10 @@ function seedMemory(
   );
 }
 
-async function loadWorkflow(root: string, name: string) {
+async function loadWorkflow(
+  root: string,
+  name: string,
+): Promise<NonNullable<ReturnType<Awaited<ReturnType<typeof buildRegistry>>["getEntry"]>>> {
   const workflowDir = join(root, "workflows", name);
   mkdirSync(workflowDir, { recursive: true });
   writeFileSync(
@@ -84,7 +99,8 @@ async function loadWorkflow(root: string, name: string) {
   expect(registry.errors).toEqual([]);
   const entry = registry.getEntry(name);
   expect(entry).toBeTruthy();
-  return entry!;
+  if (!entry) throw new Error(`workflow ${name} not registered`);
+  return entry;
 }
 
 function countOccurrences(text: string, needle: string): number {
@@ -101,24 +117,26 @@ test("memory-digest volatility budgets are stable and session sweep is read-only
     migrate(db, { embeddingDim: 384 });
 
     for (let i = 0; i < 30; i += 1) {
+      const idx = String(i);
       seedMemory(db, {
-        memoryId: `status-${i}`,
-        title: `Status ${i}`,
-        slug: `status-${i}`,
-        hook: `Status hook ${i}`,
+        memoryId: `status-${idx}`,
+        title: `Status ${idx}`,
+        slug: `status-${idx}`,
+        hook: `Status hook ${idx}`,
         durability: "volatile",
         isEpisodic: true,
-        updatedAt: `2026-06-11T12:00:${String(i).padStart(2, "0")}.000Z`,
+        updatedAt: `2026-06-11T12:00:${idx.padStart(2, "0")}.000Z`,
       });
     }
     for (let i = 0; i < 50; i += 1) {
+      const idx = String(i);
       seedMemory(db, {
-        memoryId: `pattern-${i}`,
-        title: `Pattern ${i}`,
-        slug: `pattern-${i}`,
-        hook: `Pattern hook ${i}`,
+        memoryId: `pattern-${idx}`,
+        title: `Pattern ${idx}`,
+        slug: `pattern-${idx}`,
+        hook: `Pattern hook ${idx}`,
         durability: "durable",
-        updatedAt: `2026-06-11T13:00:${String(i).padStart(2, "0")}.000Z`,
+        updatedAt: `2026-06-11T13:00:${idx.padStart(2, "0")}.000Z`,
       });
     }
 
@@ -131,16 +149,22 @@ test("memory-digest volatility budgets are stable and session sweep is read-only
       sources: digestEntry.spec.recall,
       budgetTokens: digestEntry.spec.recall_budget_tokens,
     });
+    const liveDb = db;
     const digestCtx = {
       config: {},
       cwd: root,
       storageRoot: root,
       project: "penumbra",
       args: { db },
-      db: () => db!,
-      dispatch: async () => ({ conversation_id: "conversation", handoff_id: "handoff" }),
-      awaitChain: async () => ({ status: "timeout", final_agent: null, response_text: null }),
-      fileWrite: async () => "/tmp/out",
+      db: (): Database => liveDb,
+      dispatch: (): Promise<{ conversation_id: string; handoff_id: string }> =>
+        Promise.resolve({ conversation_id: "conversation", handoff_id: "handoff" }),
+      awaitChain: (): Promise<{
+        status: "timeout";
+        final_agent: null;
+        response_text: null;
+      }> => Promise.resolve({ status: "timeout" as const, final_agent: null, response_text: null }),
+      fileWrite: (): Promise<string> => Promise.resolve("/tmp/out"),
     };
 
     await withDigestEnv(memoryDir, async () => {
@@ -187,10 +211,20 @@ test("memory-digest volatility budgets are stable and session sweep is read-only
           storageRoot: root,
           project: "penumbra",
           args: { db, session_id: "missing-session", project_id: "penumbra" },
-          db: () => db!,
-          dispatch: async () => ({ conversation_id: "conversation", handoff_id: "handoff" }),
-          awaitChain: async () => ({ status: "timeout", final_agent: null, response_text: null }),
-          fileWrite: async () => "/tmp/out",
+          db: (): Database => liveDb,
+          dispatch: (): Promise<{ conversation_id: string; handoff_id: string }> =>
+            Promise.resolve({ conversation_id: "conversation", handoff_id: "handoff" }),
+          awaitChain: (): Promise<{
+            status: "timeout";
+            final_agent: null;
+            response_text: null;
+          }> =>
+            Promise.resolve({
+              status: "timeout" as const,
+              final_agent: null,
+              response_text: null,
+            }),
+          fileWrite: (): Promise<string> => Promise.resolve("/tmp/out"),
         },
       });
       expect(sweep.outcome).toBe("success");

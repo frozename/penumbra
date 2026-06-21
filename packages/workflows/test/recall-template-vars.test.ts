@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { loadSqliteVec, migrate } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { composeRecall } from "../src/recall.js";
 
 test("resolves {{today}} in memory.search dateStart before SQL", async () => {

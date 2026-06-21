@@ -1,14 +1,16 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { loadSqliteVec, migrate } from "@penumbra/core";
 import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+
+import type { WorkflowFn } from "../../src/index.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
-
-import { loadSqliteVec, migrate } from "@penumbra/core";
-import type { WorkflowFn } from "../../src/index.js";
+} catch {
+  // already loaded
+}
 
 // Load the workflow fn straight from source — the daemon discovers it the same way
 // (plugin/workflows/<name>/workflow.ts), so this exercises the shipped artifact.
@@ -34,7 +36,8 @@ function makeDb(): Database {
 // source_detail='tool:NAME'). seq drives a monotonic ts so ORDER BY ts DESC is stable.
 function seedTool(sessionId: string, toolName: string): void {
   seq += 1;
-  const ts = `2026-06-15T00:00:${String(seq).padStart(2, "0")}Z`;
+  const idx = String(seq).padStart(2, "0");
+  const ts = `2026-06-15T00:00:${idx}Z`;
   db.prepare(
     `INSERT INTO t0_events (
        event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id,
@@ -42,7 +45,7 @@ function seedTool(sessionId: string, toolName: string): void {
      ) VALUES (?, ?, ?, 'claude-code', ?, 'penumbra', 'claude-code', 'local',
        ?, 'agent-tool-use', 'cli-subscription', ?, ?, 'maestro')`,
   ).run(
-    `e${seq}`,
+    `e${String(seq)}`,
     ts,
     ts,
     `tool:${toolName}`,
@@ -52,7 +55,23 @@ function seedTool(sessionId: string, toolName: string): void {
   );
 }
 
-function ctx(args: { session_id?: string }) {
+type DriftCtx = {
+  config: Record<string, never>;
+  cwd: string;
+  storageRoot: string;
+  project: string;
+  args: { session_id?: string };
+  db: () => Database;
+  dispatch: () => Promise<{ conversation_id: string; handoff_id: string }>;
+  awaitChain: () => Promise<{
+    status: "timeout";
+    final_agent: null;
+    response_text: null;
+  }>;
+  fileWrite: () => Promise<string>;
+};
+
+function ctx(args: { session_id?: string }): DriftCtx {
   return {
     config: {},
     cwd: "/tmp",
@@ -60,18 +79,25 @@ function ctx(args: { session_id?: string }) {
     project: "penumbra",
     args,
     db: () => db,
-    dispatch: async () => ({ conversation_id: "c", handoff_id: "h" }),
-    awaitChain: async () => ({
-      status: "timeout" as const,
-      final_agent: null,
-      response_text: null,
-    }),
-    fileWrite: async () => "/tmp/out",
+    dispatch: () => Promise.resolve({ conversation_id: "c", handoff_id: "h" }),
+    awaitChain: () =>
+      Promise.resolve({
+        status: "timeout" as const,
+        final_agent: null,
+        response_text: null,
+      }),
+    fileWrite: () => Promise.resolve("/tmp/out"),
   };
 }
 
+const emptyBundle: Parameters<typeof fn>[1] = {
+  byKey: {},
+  warnings: [],
+  estimatedTokens: 0,
+};
+
 async function run(args: { session_id?: string }): Promise<string> {
-  const out = await fn(ctx(args) as any, { byKey: {}, warnings: [] } as any);
+  const out = await fn(ctx(args), emptyBundle);
   return typeof out === "string" ? out : "";
 }
 
@@ -90,15 +116,18 @@ beforeEach(() => {
   seq = 0;
   for (const k of ENV_KEYS) {
     savedEnv[k] = process.env[k];
-    delete process.env[k];
+    Reflect.deleteProperty(process.env, k);
   }
 });
 
 afterEach(() => {
   db.close();
   for (const k of ENV_KEYS) {
-    if (savedEnv[k] === undefined) delete process.env[k];
-    else process.env[k] = savedEnv[k];
+    if (savedEnv[k] === undefined) {
+      Reflect.deleteProperty(process.env, k);
+    } else {
+      process.env[k] = savedEnv[k];
+    }
   }
 });
 
@@ -167,11 +196,11 @@ test("PENUMBRA_SOLO_DRIFT_THRESHOLD lowers the bar", async () => {
 test("a throwing ctx.db returns empty, not a throw", async () => {
   const throwingCtx = {
     ...ctx({ session_id: MAESTRO_SESSION }),
-    db: () => {
+    db: (): Database => {
       throw new Error("db open failed");
     },
   };
-  const out = await fn(throwingCtx as any, { byKey: {}, warnings: [] } as any);
+  const out = await fn(throwingCtx, emptyBundle);
   expect(typeof out === "string" ? out : "").toBe("");
 });
 

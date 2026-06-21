@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -19,7 +19,7 @@ export type FindTranscriptOpts = {
 const TOKENS_PER_CHAR = 0.25;
 
 function dirNameForCwd(cwd: string): string {
-  return cwd.replace(/\//g, "-");
+  return cwd.replaceAll("/", "-");
 }
 
 function estimateTokensFromJsonlLine(line: string): number {
@@ -51,11 +51,7 @@ function estimateTokensFromJsonlLine(line: string): number {
   return total;
 }
 
-export function findActiveTranscriptForCwd(opts: FindTranscriptOpts): TranscriptInfo | null {
-  const root = opts.claudeProjectsRoot ?? join(homedir(), ".claude", "projects");
-  if (!existsSync(root)) return null;
-  const subdir = join(root, dirNameForCwd(opts.cwd));
-  if (!existsSync(subdir)) return null;
+function pickNewestJsonl(subdir: string): { path: string; mtimeMs: number } | null {
   let entries: string[];
   try {
     entries = readdirSync(subdir);
@@ -64,7 +60,6 @@ export function findActiveTranscriptForCwd(opts: FindTranscriptOpts): Transcript
   }
   const jsonl = entries.filter((e) => e.endsWith(".jsonl"));
   if (jsonl.length === 0) return null;
-
   let bestPath: string | null = null;
   let bestMtime = 0;
   for (const file of jsonl) {
@@ -80,16 +75,25 @@ export function findActiveTranscriptForCwd(opts: FindTranscriptOpts): Transcript
     }
   }
   if (!bestPath) return null;
+  return { path: bestPath, mtimeMs: bestMtime };
+}
+
+export function findActiveTranscriptForCwd(opts: FindTranscriptOpts): TranscriptInfo | null {
+  const root = opts.claudeProjectsRoot ?? join(homedir(), ".claude", "projects");
+  if (!existsSync(root)) return null;
+  const subdir = join(root, dirNameForCwd(opts.cwd));
+  if (!existsSync(subdir)) return null;
+  const newest = pickNewestJsonl(subdir);
+  if (!newest) return null;
+  const bestPath = newest.path;
+  const bestMtime = newest.mtimeMs;
 
   const now = opts.now ?? new Date();
   const stalenessMin = (now.getTime() - bestMtime) / 60_000;
   const limit = opts.staleAfterMin ?? 30;
   if (stalenessMin > limit) return null;
 
-  const sessionId = bestPath
-    .split("/")
-    .pop()!
-    .replace(/\.jsonl$/, "");
+  const sessionId = (bestPath.split("/").pop() ?? "").replace(/\.jsonl$/, "");
 
   let totalTokens = 0;
   try {

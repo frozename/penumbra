@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { emitClipboardOutput } from "../src/outputs/clipboard.js";
 
 test("emitClipboardOutput kills a hung child and resolves with a timeout warning", async () => {

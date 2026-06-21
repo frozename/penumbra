@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, mkdir, writeFile, utimes } from "node:fs/promises";
+import { mkdir, mkdtemp, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { findActiveTranscriptForCwd } from "../src/transcript-reader.js";
 
 const CWD = "/Volumes/WorkSSD/repos/test-project";

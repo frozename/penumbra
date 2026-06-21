@@ -1,17 +1,18 @@
-import type { WorkflowSpec } from "./schema.js";
-import { renderTemplate } from "./template.js";
-import { resolveTemplateVars, type TemplateVarContext } from "./template-vars.js";
-import type { RecallBundle } from "./recall.js";
 import type { WorkflowCtx } from "./ctx.js";
-import { GATES, type GateName } from "./gates/index.js";
+import type { RecallBundle } from "./recall.js";
+import type { WorkflowSpec } from "./schema.js";
+
+import { type GateName, GATES } from "./gates/index.js";
 import {
-  emitFileOutput,
   emitClipboardOutput,
+  emitFileOutput,
   emitNextSessionPromptOutput,
-  emitSessionReminder,
   emitObservationOutput,
+  emitSessionReminder,
   taskOutput,
 } from "./outputs/index.js";
+import { resolveTemplateVars, type TemplateVarContext } from "./template-vars.js";
+import { renderTemplate } from "./template.js";
 
 export type ExecuteOutcome = "success" | "render_error" | "run_error" | "gated_failure";
 
@@ -30,8 +31,8 @@ export type ExecuteResult = {
 export type ExecuteOpts = {
   spec: WorkflowSpec;
   bundle: RecallBundle;
-  fn?: WorkflowFn<any>;
-  ctx?: WorkflowCtx<any>;
+  fn?: WorkflowFn;
+  ctx?: WorkflowCtx;
   storageRoot: string;
   captureCtx?: {
     db: import("bun:sqlite").Database;
@@ -59,9 +60,10 @@ function nestDottedKeys(flat: Record<string, unknown>): Record<string, unknown> 
   const out: Record<string, unknown> = {};
   for (const [key, val] of Object.entries(flat)) {
     const parts = key.split(".");
+    if (parts.length === 0) continue;
     let cur: Record<string, unknown> = out;
     for (let i = 0; i < parts.length - 1; i++) {
-      const p = parts[i]!;
+      const p = parts[i] ?? "";
       const next = cur[p];
       if (next && typeof next === "object" && !Array.isArray(next)) {
         cur = next as Record<string, unknown>;
@@ -71,7 +73,7 @@ function nestDottedKeys(flat: Record<string, unknown>): Record<string, unknown> 
         cur = fresh;
       }
     }
-    cur[parts[parts.length - 1]!] = val;
+    cur[parts[parts.length - 1] ?? ""] = val;
   }
   return out;
 }
@@ -83,6 +85,148 @@ function nestDottedKeys(flat: Record<string, unknown>): Record<string, unknown> 
 const EXECUTOR_SATISFIABLE_GATES: ReadonlySet<GateName> = new Set<GateName>([
   "verification-before-complete",
 ]);
+
+function bodyFromRunResult(composedPrompt: string | undefined, runResult: unknown): string {
+  if (composedPrompt !== undefined) return composedPrompt;
+  if (typeof runResult === "string") return runResult;
+  return JSON.stringify(runResult ?? {});
+}
+
+async function composePromptOrRun(
+  spec: WorkflowSpec,
+  bundle: RecallBundle,
+  fn: WorkflowFn | undefined,
+  baseCtx: WorkflowCtx,
+  artifacts: string[],
+  warnings: string[],
+  tplCtx: TemplateVarContext,
+): Promise<{ composedPrompt?: string; runResult?: unknown }> {
+  if (spec.run.kind === "markdown-template") {
+    const preExpanded = resolveTemplateVars(spec.run.template, tplCtx);
+    const composedPrompt = renderTemplate(
+      preExpanded,
+      { recall: nestDottedKeys(bundle.byKey) },
+      { warnings },
+    );
+    return { composedPrompt };
+  }
+  if (!fn) throw new Error("ts-function workflow has no fn bound");
+  const context: WorkflowCtx = {
+    ...baseCtx,
+    fileWrite: async (relativePath: string, body: string): Promise<string> => {
+      if (typeof baseCtx.fileWrite !== "function") {
+        throw new Error("workflow ctx.fileWrite is not available");
+      }
+      const path = await baseCtx.fileWrite(relativePath, body);
+      artifacts.push(path);
+      return path;
+    },
+  };
+  const runResult = await fn(context, bundle);
+  return { runResult };
+}
+
+function runProcessGates(
+  spec: WorkflowSpec,
+  body: string,
+): { gateEvidence: Partial<Record<GateName, string>>; blockingFailure: boolean } {
+  const gateEvidence: Partial<Record<GateName, string>> = {};
+  let blockingFailure = false;
+  if (!spec.process_gates || spec.process_gates.length === 0) {
+    return { gateEvidence, blockingFailure };
+  }
+  const gateInput = { text: body };
+  for (const name of spec.process_gates) {
+    const verify = GATES[name];
+    const r = verify(gateInput);
+    if (!r.passed) {
+      gateEvidence[name] = r.evidence;
+      if (r.severity === "blocking-in-session") blockingFailure = true;
+    }
+  }
+  return { gateEvidence, blockingFailure };
+}
+
+type OutputCtx = {
+  body: string;
+  storageRoot: string;
+  spec: WorkflowSpec;
+  tplCtx: TemplateVarContext;
+  opts: ExecuteOpts;
+  start: number;
+};
+
+async function emitOneSink(
+  sink: WorkflowSpec["output"][number],
+  octx: OutputCtx,
+  artifacts: string[],
+  warnings: string[],
+  sessionReminderTexts: string[],
+): Promise<void> {
+  const { body, storageRoot, spec, tplCtx, opts, start } = octx;
+  switch (sink.kind) {
+    case "file": {
+      const r = await emitFileOutput({
+        path: resolveTemplateVars(sink.path, tplCtx),
+        body,
+        mode: sink.mode,
+        repoRoot: opts.repoRoot,
+      });
+      warnings.push(...r.warnings);
+      if (r.path) artifacts.push(r.path);
+      return;
+    }
+    case "clipboard": {
+      const r = await emitClipboardOutput({ body });
+      warnings.push(...r.warnings);
+      return;
+    }
+    case "next-session-prompt": {
+      const r = await emitNextSessionPromptOutput({ body, storageRoot });
+      warnings.push(...r.warnings);
+      if (r.path) artifacts.push(r.path);
+      return;
+    }
+    case "session-reminder": {
+      const r = emitSessionReminder({ text: body });
+      if (r.text) sessionReminderTexts.push(r.text);
+      return;
+    }
+    case "observation": {
+      const r = await emitObservationOutput({
+        body,
+        storageRoot,
+        workflowName: spec.name,
+        project: opts.observationCtx?.projectId ?? opts.captureCtx?.project ?? null,
+        sessionId: opts.observationCtx?.sessionId ?? null,
+        ts: new Date(start).toISOString(),
+      });
+      warnings.push(...r.warnings);
+      if (r.eventId) artifacts.push(`observation:${r.eventId}`);
+      return;
+    }
+    case "task": {
+      const r = await taskOutput(sink, {
+        storageRoot,
+        workflow: {
+          name: spec.name,
+          origin: (spec as WorkflowSpec & { origin?: string | null }).origin ?? undefined,
+        },
+        now: tplCtx.now,
+        project: tplCtx.project,
+        sessionStart: tplCtx.sessionStart,
+        tz: tplCtx.tz,
+        filePath: tplCtx.filePath,
+      });
+      warnings.push(...r.warnings);
+      if (r.taskId) artifacts.push(`task:${r.taskId}`);
+      return;
+    }
+    case "commit":
+    case "dispatch":
+      return;
+  }
+}
 
 export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult> {
   const start = Date.now();
@@ -112,7 +256,7 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
   }
 
   const tplCtx: TemplateVarContext = opts.templateCtx ?? {
-    now: () => new Date(),
+    now: (): Date => new Date(),
     project: opts.captureCtx?.project ?? "unknown",
     sessionStart: new Date(start).toISOString(),
     tz: process.env.TZ ?? "UTC",
@@ -124,60 +268,25 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
   let runResult: unknown;
 
   try {
-    if (spec.run.kind === "markdown-template") {
-      const preExpanded = resolveTemplateVars(spec.run.template, tplCtx);
-      composedPrompt = renderTemplate(
-        preExpanded,
-        { recall: nestDottedKeys(bundle.byKey) } as Record<string, unknown>,
-        { warnings },
-      );
-    } else if (spec.run.kind === "ts-function") {
-      if (!fn) throw new Error("ts-function workflow has no fn bound");
-      const baseCtx = opts.ctx ?? ({} as WorkflowCtx);
-      const context: WorkflowCtx = {
-        ...baseCtx,
-        fileWrite: async (relativePath: string, body: string) => {
-          if (typeof baseCtx.fileWrite !== "function") {
-            throw new Error("workflow ctx.fileWrite is not available");
-          }
-          const path = await baseCtx.fileWrite(relativePath, body);
-          artifacts.push(path);
-          return path;
-        },
-      };
-      runResult = await fn(context, bundle);
-    }
-  } catch (err: any) {
+    const baseCtx = opts.ctx ?? ({} as WorkflowCtx);
+    const ran = await composePromptOrRun(spec, bundle, fn, baseCtx, artifacts, warnings, tplCtx);
+    composedPrompt = ran.composedPrompt;
+    runResult = ran.runResult;
+  } catch (err: unknown) {
     const result: ExecuteResult = {
       outcome: spec.run.kind === "markdown-template" ? "render_error" : "run_error",
       composedPrompt,
       artifacts,
       warnings,
-      errorMessage: err?.message ?? String(err),
+      errorMessage: err instanceof Error ? err.message : String(err),
       latencyMs: Date.now() - start,
     };
     await runCapture(opts, result, recallSourceNames, itemCount);
     return result;
   }
 
-  const gateEvidence: Partial<Record<GateName, string>> = {};
-  let blockingFailure = false;
-  if (spec.process_gates && spec.process_gates.length > 0) {
-    const gateInput = {
-      text:
-        composedPrompt ??
-        (typeof runResult === "string" ? runResult : JSON.stringify(runResult ?? {})),
-    };
-    for (const name of spec.process_gates) {
-      const verify = GATES[name];
-      if (!verify) continue;
-      const r = verify(gateInput);
-      if (!r.passed) {
-        gateEvidence[name] = r.evidence;
-        if (r.severity === "blocking-in-session") blockingFailure = true;
-      }
-    }
-  }
+  const body = bodyFromRunResult(composedPrompt, runResult);
+  const { gateEvidence, blockingFailure } = runProcessGates(spec, body);
   if (blockingFailure) {
     const result: ExecuteResult = {
       outcome: "gated_failure",
@@ -193,61 +302,9 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
   }
 
   const sessionReminderTexts: string[] = [];
+  const octx: OutputCtx = { body, storageRoot, spec, tplCtx, opts, start };
   for (const sink of spec.output) {
-    // For ts-function workflows, treat a string runResult as the body verbatim
-    // (mirrors the process-gates input shape at line ~144). Stringifying a
-    // markdown-returning function would emit `"# Header\n..."` with literal
-    // escapes, which breaks session-reminder output.
-    const body =
-      composedPrompt ??
-      (typeof runResult === "string" ? runResult : JSON.stringify(runResult ?? {}));
-    if (sink.kind === "file") {
-      const resolvedPath = resolveTemplateVars(sink.path, tplCtx);
-      const r = await emitFileOutput({
-        path: resolvedPath,
-        body,
-        mode: sink.mode,
-        repoRoot: opts.repoRoot,
-      });
-      warnings.push(...r.warnings);
-      if (r.path) artifacts.push(r.path);
-    } else if (sink.kind === "clipboard") {
-      const r = await emitClipboardOutput({ body });
-      warnings.push(...r.warnings);
-    } else if (sink.kind === "next-session-prompt") {
-      const r = await emitNextSessionPromptOutput({ body, storageRoot });
-      warnings.push(...r.warnings);
-      if (r.path) artifacts.push(r.path);
-    } else if (sink.kind === "session-reminder") {
-      const r = emitSessionReminder({ text: body });
-      if (r.text) sessionReminderTexts.push(r.text);
-    } else if (sink.kind === "observation") {
-      const r = await emitObservationOutput({
-        body,
-        storageRoot,
-        workflowName: spec.name,
-        project: opts.observationCtx?.projectId ?? opts.captureCtx?.project ?? null,
-        sessionId: opts.observationCtx?.sessionId ?? null,
-        ts: new Date(start).toISOString(),
-      });
-      warnings.push(...r.warnings);
-      if (r.eventId) artifacts.push(`observation:${r.eventId}`);
-    } else if (sink.kind === "task") {
-      const r = await taskOutput(sink, {
-        storageRoot,
-        workflow: {
-          name: spec.name,
-          origin: (spec as WorkflowSpec & { origin?: string | null }).origin ?? undefined,
-        },
-        now: tplCtx.now,
-        project: tplCtx.project,
-        sessionStart: tplCtx.sessionStart,
-        tz: tplCtx.tz,
-        filePath: tplCtx.filePath,
-      });
-      warnings.push(...r.warnings);
-      if (r.taskId) artifacts.push(`task:${r.taskId}`);
-    }
+    await emitOneSink(sink, octx, artifacts, warnings, sessionReminderTexts);
   }
 
   const result: ExecuteResult = {
@@ -286,7 +343,7 @@ async function runCapture(
     sessionId: opts.captureCtx.sessionId,
     userId: opts.captureCtx.userId,
     machineId: opts.captureCtx.machineId,
-    now: opts.captureCtx.now ?? (() => new Date()),
+    now: opts.captureCtx.now ?? ((): Date => new Date()),
     kind: opts.captureKind ?? "intentional",
   });
 }

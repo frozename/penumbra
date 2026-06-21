@@ -9,7 +9,7 @@ export function verifyWorktreeIsolation(input: GateInput): GateResult {
     };
   }
   return {
-    passed: input.spec.use_worktree === true,
+    passed: input.spec.use_worktree,
     evidence: input.spec.use_worktree
       ? "dispatch ran in worktree"
       : "dispatch did not use worktree",

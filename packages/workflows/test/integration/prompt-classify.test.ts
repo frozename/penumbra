@@ -1,25 +1,27 @@
-import { expect, test } from "bun:test";
+import { loadSqliteVec, migrate } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { execSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import {
+  buildRegistry,
+  composeRecall,
+  evaluateTriggerEvent,
+  executeWorkflow,
+  type TemplateVarContext,
+} from "../../src/index.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
-
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { execSync } from "node:child_process";
-import { loadSqliteVec, migrate } from "@penumbra/core";
-import { TestEmbedder } from "@penumbra/core/testing";
-import {
-  buildRegistry,
-  composeRecall,
-  executeWorkflow,
-  evaluateTriggerEvent,
-  type TemplateVarContext,
-} from "../../src/index.js";
+} catch {
+  // already loaded
+}
 
 function seedRepo(dir: string): string {
   execSync("git init -q -b main", { cwd: dir });

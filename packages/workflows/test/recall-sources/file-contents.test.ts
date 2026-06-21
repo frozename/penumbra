@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { runFileContents } from "../../src/recall-sources/file-contents.js";
 
 test("file.contents returns text body when file exists and fits", async () => {

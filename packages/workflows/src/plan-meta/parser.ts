@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import YAML from "yaml";
-import { PlanHeaderSchema, TaskMetaSchema, type PlanHeader, type TaskMeta } from "./schema.js";
+
+import { type PlanHeader, PlanHeaderSchema, type TaskMeta, TaskMetaSchema } from "./schema.js";
 
 export type ParseError = { line: number; reason: string };
 export type ParseResult = { header?: PlanHeader; tasks: TaskMeta[]; errors: ParseError[] };
@@ -22,11 +23,11 @@ export function parsePlanMeta(markdown: string): ParseResult {
   let currentLine = 0;
   let currentKind: "task" | "header" | null = null;
   let pendingTaskHeading: string | null = null;
-  let currentProseTaskIndex: number | null = null;
+  let currentProseTaskIndex = -1;
   let currentProseLines: string[] = [];
 
-  const finalizeCurrentProse = () => {
-    if (currentProseTaskIndex === null) {
+  const finalizeCurrentProse = (): void => {
+    if (currentProseTaskIndex < 0) {
       currentProseLines = [];
       return;
     }
@@ -38,11 +39,11 @@ export function parsePlanMeta(markdown: string): ParseResult {
         task.body = prose;
       }
     }
-    currentProseTaskIndex = null;
+    currentProseTaskIndex = -1;
     currentProseLines = [];
   };
 
-  const flushBlock = () => {
+  const flushBlock = (): void => {
     if (currentBody === null) {
       return;
     }
@@ -85,48 +86,56 @@ export function parsePlanMeta(markdown: string): ParseResult {
     currentBody = null;
   };
 
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? "";
-    if (line.startsWith("### ")) {
-      finalizeCurrentProse();
-      pendingTaskHeading = line.slice(4).trim();
-      continue;
+  const handleInsideBlock = (line: string): void => {
+    const isCloser =
+      (currentKind === "task" && line === "```") || (currentKind === "header" && line === "---");
+    if (isCloser) {
+      flushBlock();
+    } else {
+      currentBody?.push(line);
     }
+  };
 
-    if (line.startsWith("## ")) {
-      finalizeCurrentProse();
-      pendingTaskHeading = null;
-    }
-
-    if (currentBody !== null) {
-      if (
-        (currentKind === "task" && line === "```") ||
-        (currentKind === "header" && line === "---")
-      ) {
-        flushBlock();
-      } else {
-        currentBody.push(line);
-      }
-      continue;
-    }
-
+  const startBlockIfMatching = (line: string, index: number): boolean => {
     if (!header && line === "---") {
       currentLine = index + 1;
       currentKind = "header";
       currentBody = [];
-      continue;
+      return true;
     }
-
     if (line === "```yaml meta") {
       currentLine = index + 1;
       currentKind = "task";
       currentBody = [];
-      continue;
+      return true;
     }
+    return false;
+  };
 
-    if (currentProseTaskIndex !== null) {
+  const processLine = (line: string, index: number): void => {
+    if (line.startsWith("### ")) {
+      finalizeCurrentProse();
+      pendingTaskHeading = line.slice(4).trim();
+      return;
+    }
+    if (line.startsWith("## ")) {
+      finalizeCurrentProse();
+      pendingTaskHeading = null;
+    }
+    if (currentBody !== null) {
+      handleInsideBlock(line);
+      return;
+    }
+    if (startBlockIfMatching(line, index)) {
+      return;
+    }
+    if (currentProseTaskIndex >= 0) {
       currentProseLines.push(line);
     }
+  };
+
+  for (const [index, line] of lines.entries()) {
+    processLine(line, index);
   }
 
   finalizeCurrentProse();

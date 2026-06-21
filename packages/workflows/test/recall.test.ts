@@ -1,18 +1,20 @@
-import { expect, test } from "bun:test";
+import { loadSqliteVec, migrate } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { composeRecall } from "../src/recall.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
-
-import { loadSqliteVec, migrate } from "@penumbra/core";
-import { TestEmbedder } from "@penumbra/core/testing";
-import { composeRecall } from "../src/recall.js";
+} catch {
+  // already loaded
+}
 
 function insertMemory(
   db: Database,
@@ -67,12 +69,12 @@ test("composes bundle from multiple sources, partial failures captured as warnin
     obs_type: "bugfix",
   });
 
-  db.exec(`
+  db.run(`
     INSERT INTO dispatch_events (id, handoff_id, source, kind, ts, meta_json)
     VALUES (1, 'h1', 'worker', 'dispatch.start', '2026-05-04T11:00:00Z', '{}');
   `);
 
-  db.exec(`
+  db.run(`
     INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status)
     VALUES ('h1', '2026-05-04T11:00:00Z', 'c1', 'a', 'b', 'pending message', 'pending');
   `);
@@ -105,11 +107,12 @@ test("budget trim drops oldest items first", async () => {
 
   for (let i = 0; i < 50; i++) {
     const day = String(i + 1).padStart(2, "0");
+    const idx = String(i);
     insertMemory(db, {
-      memory_id: `m${i}`,
+      memory_id: `m${idx}`,
       project_id: "demo",
-      title: `Memory ${i}`,
-      body: `Body of memory number ${i} with some additional padding text to consume tokens`,
+      title: `Memory ${idx}`,
+      body: `Body of memory number ${idx} with some additional padding text to consume tokens`,
       created_at: `2026-03-${day}T10:00:00Z`,
     });
   }
@@ -135,12 +138,14 @@ test("budget trim preserves string sources before memory items", async () => {
   migrate(db, { embeddingDim: 384 });
 
   for (let i = 0; i < 60; i++) {
+    const idx = String(i);
+    const day = String((i % 9) + 1);
     insertMemory(db, {
-      memory_id: `m${i}`,
+      memory_id: `m${idx}`,
       project_id: "demo",
-      title: `Memory ${i}`,
-      body: `Memory ${i} body text`,
-      created_at: `2026-05-0${(i % 9) + 1}T10:00:00Z`,
+      title: `Memory ${idx}`,
+      body: `Memory ${idx} body text`,
+      created_at: `2026-05-0${day}T10:00:00Z`,
     });
   }
 

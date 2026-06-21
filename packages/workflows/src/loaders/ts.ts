@@ -1,13 +1,16 @@
+import type { z } from "zod";
+
 import { mkdtempSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { WorkflowSpecSchema, type WorkflowSpec } from "../schema.js";
+
 import type { WorkflowFn } from "../exec.js";
-import type { ZodTypeAny } from "zod";
+
+import { type WorkflowSpec, WorkflowSpecSchema } from "../schema.js";
 
 export type LoadedTsWorkflow = {
   spec: WorkflowSpec;
   fn?: WorkflowFn;
-  inputSchema?: ZodTypeAny;
+  inputSchema?: z.ZodType;
 };
 
 // Bun caches ESM imports by resolved filesystem path; query-string and
@@ -37,14 +40,23 @@ export async function loadTsWorkflow(path: string): Promise<LoadedTsWorkflow> {
       external: EXTERNAL,
     });
     if (!build.success) {
-      const reason = build.logs.map((log) => String(log)).join("\n");
+      const reason = build.logs
+        .map((log: unknown) => {
+          if (log instanceof Error) return log.message;
+          if (typeof log === "object" && log !== null && "message" in log) {
+            const m = log.message;
+            if (typeof m === "string") return m;
+          }
+          return JSON.stringify(log);
+        })
+        .join("\n");
       throw new Error(`workflow ${path}: build failed\n${reason}`);
     }
     const builtPath = build.outputs[0]?.path;
     if (!builtPath) {
       throw new Error(`workflow ${path}: build produced no outputs`);
     }
-    mod = await import(builtPath);
+    mod = (await import(builtPath)) as Record<string, unknown>;
   } finally {
     try {
       rmSync(outDir, { recursive: true, force: true });
@@ -59,7 +71,7 @@ export async function loadTsWorkflow(path: string): Promise<LoadedTsWorkflow> {
   const spec = WorkflowSpecSchema.parse(rawSpec);
   const fn = (mod.fn ?? mod.run ?? undefined) as LoadedTsWorkflow["fn"];
   const inputSchema = mod.inputSchema as LoadedTsWorkflow["inputSchema"];
-  if (inputSchema !== undefined && typeof inputSchema?.parse !== "function") {
+  if (inputSchema !== undefined && typeof inputSchema.parse !== "function") {
     throw new Error(`workflow ${path}: \`inputSchema\` must be a zod schema`);
   }
   if (spec.run.kind === "ts-function" && !fn) {

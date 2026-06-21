@@ -1,11 +1,12 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import {
   type BoundsInput,
   type Eligibility,
   type FileTaskInput,
   type TaskPriority,
 } from "@penumbra/core";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { resolveTemplateVars, type TemplateVarContext } from "../template-vars.js";
 
 export type TaskOutputConfig = {
@@ -95,7 +96,7 @@ export async function taskOutput(
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
-      return { warnings: [`output task: daemon responded ${res.status}`] };
+      return { warnings: [`output task: daemon responded ${String(res.status)}`] };
     }
     const data = (await res.json().catch(() => null)) as { task_id?: string } | null;
     return { warnings: [], taskId: data?.task_id };

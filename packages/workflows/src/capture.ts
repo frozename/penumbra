@@ -1,9 +1,11 @@
 import type { Database } from "bun:sqlite";
-import type { ExecuteOutcome } from "./exec.js";
+
 import { randomUUID } from "node:crypto";
 
+import type { ExecuteOutcome } from "./exec.js";
+
 const QUARANTINE_THRESHOLD = 3;
-const FAILURE_OUTCOMES: ExecuteOutcome[] = ["render_error", "run_error", "gated_failure"];
+const FAILURE_OUTCOMES = new Set<ExecuteOutcome>(["render_error", "run_error", "gated_failure"]);
 
 export type CaptureInput = {
   db: Database;
@@ -133,14 +135,14 @@ export function captureWorkflowOutcome(input: CaptureInput): void {
         }
       | undefined;
 
-    const isFailure = FAILURE_OUTCOMES.includes(input.outcome);
+    const isFailure = FAILURE_OUTCOMES.has(input.outcome);
     const samples = (existing?.samples ?? 0) + 1;
     const successes = (existing?.successes ?? 0) + (isFailure ? 0 : 1);
     const failures = (existing?.failures ?? 0) + (isFailure ? 1 : 0);
     const consecutive = isFailure ? (existing?.consecutive_failures ?? 0) + 1 : 0;
     const quarantined = consecutive >= QUARANTINE_THRESHOLD;
     const quarantineReason = quarantined
-      ? `${consecutive} consecutive failures (last: ${input.errorMessage ?? input.outcome})`
+      ? `${String(consecutive)} consecutive failures (last: ${input.errorMessage ?? input.outcome})`
       : null;
     const prevAvg = existing?.avg_latency_ms ?? 0;
     const avgLatency = Math.round((prevAvg * (samples - 1) + input.latencyMs) / samples);

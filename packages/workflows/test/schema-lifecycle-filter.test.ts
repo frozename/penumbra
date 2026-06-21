@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { TriggerSchema } from "../src/schema.js";
 
 test("lifecycle trigger accepts tool_name filter", () => {

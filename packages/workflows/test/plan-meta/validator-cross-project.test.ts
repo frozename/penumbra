@@ -1,10 +1,11 @@
+import { describe, expect, test } from "bun:test";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
+
 import {
-  validatePlan,
   type ProjectRegistryLike,
+  validatePlan,
   type ValidatorTask,
 } from "../../src/plan-meta/validator.js";
 
@@ -31,7 +32,7 @@ function task(overrides: Partial<ValidatorTask> & Pick<ValidatorTask, "id">): Va
 const KNOWN_AGENTS = new Set(["codex-acp-fast", "claude-acp-sonnet"]);
 
 async function emptyRepoRoot(): Promise<string> {
-  return mkdtemp(join(tmpdir(), "plan-meta-validator-cross-project-"));
+  return await mkdtemp(join(tmpdir(), "plan-meta-validator-cross-project-"));
 }
 
 describe("validatePlan cross-project rules", () => {

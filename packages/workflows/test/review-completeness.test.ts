@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { isReviewClean, isReviewComplete } from "../src/review-completeness";
+import { isReviewClean, isReviewComplete } from "../src/review-completeness.js";
 
 describe("review-completeness", () => {
   test("isReviewComplete", () => {

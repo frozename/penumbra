@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { resolveTemplateVars, type TemplateVarContext } from "../src/template-vars.js";
 
 const ctx: TemplateVarContext = {

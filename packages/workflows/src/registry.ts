@@ -1,12 +1,15 @@
-import { readdirSync, statSync, existsSync } from "node:fs";
-import { join } from "node:path";
 import type {
   BuildRegistryOpts,
   RegistryEntry as CoreRegistryEntry,
   RegistryError,
   WorkflowRegistry,
 } from "@penumbra/core";
-import type { WorkflowSpec, Trigger } from "./schema.js";
+
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+
+import type { Trigger, WorkflowSpec } from "./schema.js";
+
 import { loadMarkdownPlaybook } from "./loaders/markdown.js";
 import { loadTsWorkflow } from "./loaders/ts.js";
 
@@ -15,54 +18,67 @@ export type RegistryEntry<Spec = WorkflowSpec> = CoreRegistryEntry<Spec> & {
 };
 
 export type Registry = Omit<WorkflowRegistry<WorkflowSpec, Trigger>, "entries" | "getEntry"> & {
-  entries(): RegistryEntry<WorkflowSpec>[];
-  getEntry(name: string): RegistryEntry<WorkflowSpec> | undefined;
+  entries(): RegistryEntry[];
+  getEntry(name: string): RegistryEntry | undefined;
 };
 
 export type { BuildRegistryOpts, RegistryError } from "@penumbra/core";
 
+function loadPlaybooks(
+  playbooksDir: string,
+  entries: RegistryEntry[],
+  errors: RegistryError[],
+): void {
+  if (!existsSync(playbooksDir)) return;
+  for (const name of readdirSync(playbooksDir)) {
+    const dir = join(playbooksDir, name);
+    if (!statSync(dir).isDirectory()) continue;
+    const path = join(dir, "playbook.md");
+    if (!existsSync(path)) continue;
+    try {
+      const spec = loadMarkdownPlaybook(path);
+      entries.push({ spec, source: "markdown", path });
+    } catch (err: unknown) {
+      errors.push({ path, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+}
+
+async function loadTsWorkflows(
+  workflowsDir: string,
+  entries: RegistryEntry[],
+  errors: RegistryError[],
+): Promise<void> {
+  if (!existsSync(workflowsDir)) return;
+  for (const name of readdirSync(workflowsDir)) {
+    const dir = join(workflowsDir, name);
+    if (!statSync(dir).isDirectory()) continue;
+    const path = join(dir, "workflow.ts");
+    if (!existsSync(path)) continue;
+    try {
+      const { spec, fn, inputSchema } = await loadTsWorkflow(path);
+      entries.push({
+        spec,
+        source: "ts",
+        path,
+        fn: fn as CoreRegistryEntry<WorkflowSpec>["fn"],
+        inputSchema,
+      });
+    } catch (err: unknown) {
+      errors.push({ path, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+}
+
 export async function buildRegistry(opts: BuildRegistryOpts): Promise<Registry> {
   const { playbooksDir, workflowsDir } = opts;
-  const entries: RegistryEntry<WorkflowSpec>[] = [];
+  const entries: RegistryEntry[] = [];
   const errors: RegistryError[] = [];
 
-  if (existsSync(playbooksDir)) {
-    for (const name of readdirSync(playbooksDir)) {
-      const dir = join(playbooksDir, name);
-      if (!statSync(dir).isDirectory()) continue;
-      const path = join(dir, "playbook.md");
-      if (!existsSync(path)) continue;
-      try {
-        const spec = loadMarkdownPlaybook(path);
-        entries.push({ spec, source: "markdown", path });
-      } catch (err: any) {
-        errors.push({ path, error: err?.message ?? String(err) });
-      }
-    }
-  }
+  loadPlaybooks(playbooksDir, entries, errors);
+  await loadTsWorkflows(workflowsDir, entries, errors);
 
-  if (existsSync(workflowsDir)) {
-    for (const name of readdirSync(workflowsDir)) {
-      const dir = join(workflowsDir, name);
-      if (!statSync(dir).isDirectory()) continue;
-      const path = join(dir, "workflow.ts");
-      if (!existsSync(path)) continue;
-      try {
-        const { spec, fn, inputSchema } = await loadTsWorkflow(path);
-        entries.push({
-          spec,
-          source: "ts",
-          path,
-          fn: fn as CoreRegistryEntry<WorkflowSpec>["fn"],
-          inputSchema,
-        });
-      } catch (err: any) {
-        errors.push({ path, error: err?.message ?? String(err) });
-      }
-    }
-  }
-
-  const byName = new Map<string, RegistryEntry<WorkflowSpec>>();
+  const byName = new Map<string, RegistryEntry>();
   for (const e of entries) {
     if (byName.has(e.spec.name)) {
       errors.push({ path: e.path, error: `duplicate workflow name: ${e.spec.name}` });

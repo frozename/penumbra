@@ -1,9 +1,10 @@
+import type { ChainStartRequest, Services } from "@penumbra/core";
+
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { realpathSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import type { ChainStartRequest, Services } from "@penumbra/core";
+
 import { buildWorkflowCtx } from "../src/ctx.js";
 
 function fakeServices(): Services {
@@ -171,14 +172,15 @@ test("awaitChain returns timeout when terminal state never arrives", async () =>
           headers: { "content-type": "application/json" },
         }),
       ),
-    readChainStatus: async () => ({
-      terminal: false,
-      status: "failed",
-      final_agent: null,
-      response_text: null,
-    }),
+    readChainStatus: () =>
+      Promise.resolve({
+        terminal: false,
+        status: "failed" as const,
+        final_agent: null,
+        response_text: null,
+      }),
     pollIntervalMs: 1,
-    sleep: async () => {},
+    sleep: () => Promise.resolve(),
   });
 
   const out = await ctx.awaitChain("conv-1", { timeoutMs: 1 });
@@ -203,17 +205,19 @@ test("awaitChain uses exponential backoff up to a 2000ms cap", async () => {
           headers: { "content-type": "application/json" },
         }),
       ),
-    readChainStatus: async () => ({
-      terminal: false,
-      status: "failed",
-      final_agent: null,
-      response_text: null,
-    }),
-    sleep: async (ms) => {
+    readChainStatus: () =>
+      Promise.resolve({
+        terminal: false,
+        status: "failed" as const,
+        final_agent: null,
+        response_text: null,
+      }),
+    sleep: (ms: number) => {
       sleepCalls.push(ms);
       nowMs += ms;
+      return Promise.resolve();
     },
-    now: () => nowMs,
+    now: (): number => nowMs,
   });
 
   const out = await ctx.awaitChain("conv-1", { timeoutMs: 10000 });
@@ -482,9 +486,14 @@ test("fileWrite rejects absolute paths outside allowed roots", async () => {
           }),
         ),
     });
-    await expect(ctx.fileWrite(outsidePath, "nope")).rejects.toThrow(
-      "fileWrite path outside allowed roots",
-    );
+    let caught: unknown;
+    try {
+      await ctx.fileWrite(outsidePath, "nope");
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(String(caught)).toContain("fileWrite path outside allowed roots");
     rmSync(outsideRoot, { recursive: true, force: true });
   } finally {
     rmSync(root, { recursive: true, force: true });

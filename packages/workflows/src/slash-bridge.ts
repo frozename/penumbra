@@ -1,8 +1,9 @@
-import { writeFileSync, mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
 import type { Registry } from "./registry.js";
 
-const SLASH_COMMAND_TEMPLATE = (name: string, description: string) => `---
+const SLASH_COMMAND_TEMPLATE = (name: string, description: string): string => `---
 description: ${description}
 ---
 
