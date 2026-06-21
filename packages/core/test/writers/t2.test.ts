@@ -843,6 +843,68 @@ test("writeDirectT2Memory persists why/source_quote/obs_type and sets learned_at
   expect(row?.learned_at).toBe(row?.created_at);
 });
 
+test("writeDirectT2Memory rolls back t2_vec DELETE on slug-UPDATE when re-INSERT fails", () => {
+  const original = new Float32Array(384);
+  original[0] = 0.5;
+  original[1] = -0.25;
+  const first = writeDirectT2Memory(db, {
+    title: "Slug embed survives",
+    body: "Initial body",
+    embedding: original,
+    project_id: "p1",
+    slug: "shared-slug",
+  });
+
+  const rowid = db
+    .query<{ rowid: number }, [string]>("SELECT rowid FROM t2_memories WHERE memory_id = ?")
+    .get(first.memory_id)!.rowid;
+
+  const before = db
+    .query<{ embedding: unknown }, [number]>("SELECT embedding FROM t2_vec WHERE rowid = ?")
+    .get(rowid);
+  expect(before).not.toBeNull();
+  const beforeBytes = Buffer.from(before!.embedding as ArrayBuffer | Uint8Array as Uint8Array);
+
+  const originalRun = db.run.bind(db);
+  const failingRun: typeof db.run = ((sql: string, ...rest: unknown[]) => {
+    if (typeof sql === "string" && sql.startsWith("INSERT INTO t2_vec")) {
+      throw new Error("forced t2_vec INSERT failure");
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- forwarded variadic args
+    return (originalRun as any)(sql, ...rest);
+  }) as typeof db.run;
+  (db as any).run = failingRun;
+
+  try {
+    expect(() =>
+      writeDirectT2Memory(db, {
+        title: "Slug embed survives",
+        body: "Replacement body",
+        embedding: new Float32Array(384),
+        project_id: "p1",
+        slug: "shared-slug",
+      }),
+    ).toThrow();
+  } finally {
+    (db as any).run = originalRun;
+  }
+
+  const after = db
+    .query<{ embedding: unknown }, [number]>("SELECT embedding FROM t2_vec WHERE rowid = ?")
+    .get(rowid);
+  expect(after).not.toBeNull();
+  const afterBytes = Buffer.from(after!.embedding as ArrayBuffer | Uint8Array as Uint8Array);
+  expect(afterBytes.equals(beforeBytes)).toBe(true);
+
+  const vecCount = db.query<{ c: number }, []>("SELECT COUNT(*) c FROM t2_vec").get();
+  expect(vecCount?.c).toBe(1);
+
+  const bodyRow = db
+    .query<{ body: string }, [string]>("SELECT body FROM t2_memories WHERE memory_id = ?")
+    .get(first.memory_id);
+  expect(bodyRow?.body).toBe("Initial body");
+});
+
 test("writeDirectT2Memory persists durability/is_episodic and defaults omitted values", () => {
   const withMetadata = writeDirectT2Memory(db, {
     title: "Direct volatile status",

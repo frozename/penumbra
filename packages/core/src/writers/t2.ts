@@ -76,92 +76,98 @@ export function writeDirectT2Memory(db: Database, input: DirectT2WriteInput): Di
   ].filter((id) => id.length > 0);
   const sourceSessionIdsJson = JSON.stringify(sourceSessionIds);
 
-  if (slug !== null) {
-    const existing = db
-      .query<
-        { memory_id: string },
-        [string, string | null]
-      >("SELECT memory_id FROM t2_memories WHERE slug = ? AND COALESCE(project_id, '') = COALESCE(?, '')")
-      .get(slug, projectId);
-    if (existing) {
-      db.run(
-        `UPDATE t2_memories
-         SET kind = 'direct', origin = 'direct', title = ?, body = ?, hook = ?, sub_kind = ?, cc_kind = ?, why = ?, source_quote = ?, obs_type = ?, durability = ?, is_episodic = ?, project_id = ?,
-             source_session_ids = CASE WHEN ? = '[]' THEN source_session_ids ELSE ? END,
-             learned_at = ?, updated_at = ?, retired_at = NULL
-         WHERE memory_id = ?`,
-        [
-          input.title,
-          input.body,
-          hook,
-          subKind,
-          ccKind,
-          why,
-          sourceQuote,
-          obsType,
-          durability,
-          isEpisodic,
-          projectId,
-          sourceSessionIdsJson,
-          sourceSessionIdsJson,
-          now,
-          now,
-          existing.memory_id,
-        ],
-      );
-      const rowid = db
-        .query<{ rowid: number }, [string]>("SELECT rowid FROM t2_memories WHERE memory_id = ?")
-        .get(existing.memory_id)!.rowid;
-      db.run("DELETE FROM t2_vec WHERE rowid = ?", [rowid]);
-      db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [rowid, input.embedding]);
-      return { memory_id: existing.memory_id, created: false };
+  // Wrap t2_memories + t2_vec mutations in a transaction so a t2_vec INSERT
+  // failure rolls back the prior DELETE (UPDATE path) or the t2_memories
+  // INSERT (create path). Atomicity is structural here so unwrapped callers
+  // (e.g. gate-quality-digest) are automatically safe.
+  return db.transaction((): DirectT2WriteResult => {
+    if (slug !== null) {
+      const existing = db
+        .query<
+          { memory_id: string },
+          [string, string | null]
+        >("SELECT memory_id FROM t2_memories WHERE slug = ? AND COALESCE(project_id, '') = COALESCE(?, '')")
+        .get(slug, projectId);
+      if (existing) {
+        db.run(
+          `UPDATE t2_memories
+           SET kind = 'direct', origin = 'direct', title = ?, body = ?, hook = ?, sub_kind = ?, cc_kind = ?, why = ?, source_quote = ?, obs_type = ?, durability = ?, is_episodic = ?, project_id = ?,
+               source_session_ids = CASE WHEN ? = '[]' THEN source_session_ids ELSE ? END,
+               learned_at = ?, updated_at = ?, retired_at = NULL
+           WHERE memory_id = ?`,
+          [
+            input.title,
+            input.body,
+            hook,
+            subKind,
+            ccKind,
+            why,
+            sourceQuote,
+            obsType,
+            durability,
+            isEpisodic,
+            projectId,
+            sourceSessionIdsJson,
+            sourceSessionIdsJson,
+            now,
+            now,
+            existing.memory_id,
+          ],
+        );
+        const rowid = db
+          .query<{ rowid: number }, [string]>("SELECT rowid FROM t2_memories WHERE memory_id = ?")
+          .get(existing.memory_id)!.rowid;
+        db.run("DELETE FROM t2_vec WHERE rowid = ?", [rowid]);
+        db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [rowid, input.embedding]);
+        return { memory_id: existing.memory_id, created: false };
+      }
     }
-  }
 
-  const memoryId = randomUUID();
-  db.run(
-    `INSERT INTO t2_memories(
-      memory_id, project_id, user_id, kind, source_session_ids,
-      window_start, window_end, title, body, metadata_json, compressed_from,
-      created_at, updated_at, slug, hook, sub_kind, cc_kind, why, source_quote, obs_type,
-      durability, is_episodic, learned_at, origin
-    )
-    VALUES (?, ?, 'system', 'direct', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'direct')`,
-    [
-      memoryId,
-      projectId,
-      sourceSessionIdsJson,
-      now,
-      now,
-      input.title,
-      input.body,
-      "{}",
-      null,
-      now,
-      now,
-      slug,
-      hook,
-      subKind,
-      ccKind,
-      why,
-      sourceQuote,
-      obsType,
-      durability,
-      isEpisodic,
-      now,
-    ],
-  );
+    const memoryId = randomUUID();
+    db.run(
+      `INSERT INTO t2_memories(
+        memory_id, project_id, user_id, kind, source_session_ids,
+        window_start, window_end, title, body, metadata_json, compressed_from,
+        created_at, updated_at, slug, hook, sub_kind, cc_kind, why, source_quote, obs_type,
+        durability, is_episodic, learned_at, origin
+      )
+      VALUES (?, ?, 'system', 'direct', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'direct')`,
+      [
+        memoryId,
+        projectId,
+        sourceSessionIdsJson,
+        now,
+        now,
+        input.title,
+        input.body,
+        "{}",
+        null,
+        now,
+        now,
+        slug,
+        hook,
+        subKind,
+        ccKind,
+        why,
+        sourceQuote,
+        obsType,
+        durability,
+        isEpisodic,
+        now,
+      ],
+    );
 
-  const rowid = db
-    .query<{ rowid: number }, [string]>("SELECT rowid FROM t2_memories WHERE memory_id = ?")
-    .get(memoryId)!.rowid;
-  // Defensive DELETE: SQLite reuses recently-freed rowids on INSERT, so an
-  // orphan t2_vec row (left behind by a t2_memories DELETE that didn't cascade)
-  // collides with the fresh INSERT here. vec0 virtual tables don't accept
-  // INSERT OR REPLACE, so explicit DELETE+INSERT is the canonical pattern.
-  db.run("DELETE FROM t2_vec WHERE rowid = ?", [rowid]);
-  db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [rowid, input.embedding]);
-  return { memory_id: memoryId, created: true };
+    const rowid = db
+      .query<{ rowid: number }, [string]>("SELECT rowid FROM t2_memories WHERE memory_id = ?")
+      .get(memoryId)!.rowid;
+    // Defensive DELETE: SQLite reuses recently-freed rowids on INSERT, so an
+    // orphan t2_vec row (left behind by a t2_memories DELETE that didn't cascade)
+    // collides with the fresh INSERT here. vec0 virtual tables don't accept
+    // INSERT OR REPLACE, so explicit DELETE+INSERT is the canonical pattern.
+    db.run("DELETE FROM t2_vec WHERE rowid = ?", [rowid]);
+    db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [rowid, input.embedding]);
+    return { memory_id: memoryId, created: true };
+  })();
 }
 
 export function verifyMemory(
