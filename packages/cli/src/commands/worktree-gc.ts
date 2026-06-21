@@ -45,30 +45,34 @@ export async function runWorktreeGc(opts: WorktreeGcOpts): Promise<WorktreeGcRes
 
   const dbPath = resolveStorageDbPath(storageRoot);
   const db = new Database(dbPath, { readonly: true });
-  loadSqliteVec(db);
+  let candidates: WorktreeGcCandidate[];
+  try {
+    loadSqliteVec(db);
 
-  const handoffReader = new HandoffReader({ db });
+    const handoffReader = new HandoffReader({ db });
 
-  // Hard refusal: any in-flight dispatches
-  const pending = handoffReader.listByStatus({ statuses: ["dispatched", "pending", "approved"] });
-  if (pending.length > 0) {
+    // Hard refusal: any in-flight dispatches
+    const pending = handoffReader.listByStatus({
+      statuses: ["dispatched", "pending", "approved"],
+    });
+    if (pending.length > 0) {
+      throw new PendingHandoffsError(pending.map((h) => h.handoff_id));
+    }
+
+    const worktreeManager: WorktreeGcManager = opts.worktreeManager ?? new WorktreeManager();
+    const handles = worktreeManager.listWorktrees();
+    const orphanHandles = (await worktreeManager.discoverOrphanWorktrees?.()) ?? [];
+
+    candidates = selectWorktreeGcCandidates({
+      trackedHandles: handles,
+      orphanHandles,
+      handoffReader,
+      gracePeriodMs,
+      nowMs,
+    });
+  } finally {
     db.close();
-    throw new PendingHandoffsError(pending.map((h) => h.handoff_id));
   }
-
-  const worktreeManager: WorktreeGcManager = opts.worktreeManager ?? new WorktreeManager();
-  const handles = worktreeManager.listWorktrees();
-  const orphanHandles = (await worktreeManager.discoverOrphanWorktrees?.()) ?? [];
-
-  const candidates = selectWorktreeGcCandidates({
-    trackedHandles: handles,
-    orphanHandles,
-    handoffReader,
-    gracePeriodMs,
-    nowMs,
-  });
-
-  db.close();
 
   let n_removed = 0;
   let n_failed = 0;
@@ -76,50 +80,52 @@ export async function runWorktreeGc(opts: WorktreeGcOpts): Promise<WorktreeGcRes
   if (apply) {
     // Re-open writable for GC events
     const writableDb = new Database(resolveStorageDbPath(storageRoot));
-    loadSqliteVec(writableDb);
-    const gcManager: WorktreeGcManager = opts.worktreeManager ?? new WorktreeManager();
-    const writableHandoffReader = new HandoffReader({ db: writableDb });
+    try {
+      loadSqliteVec(writableDb);
+      const gcManager: WorktreeGcManager = opts.worktreeManager ?? new WorktreeManager();
+      const writableHandoffReader = new HandoffReader({ db: writableDb });
 
-    for (const candidate of candidates) {
-      try {
-        const activeHandoff = writableHandoffReader
-          .listByStatus({
-            statuses: ["dispatched", "pending", "approved"],
-          })
-          .find((handoff) => handoff.handoff_id === candidate.handoff_id);
+      for (const candidate of candidates) {
+        try {
+          const activeHandoff = writableHandoffReader
+            .listByStatus({
+              statuses: ["dispatched", "pending", "approved"],
+            })
+            .find((handoff) => handoff.handoff_id === candidate.handoff_id);
 
-        if (activeHandoff) {
-          continue;
-        }
+          if (activeHandoff) {
+            continue;
+          }
 
-        await gcManager.teardownWorktree(candidate.handoff_id, /*force=*/ true);
-        const ts = new Date().toISOString();
-        writableDb
-          .query<unknown, [string, string, string]>(
-            `INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
-             VALUES (?, NULL, 'cli-gc', 'worktree.gc', ?, ?)`,
-          )
-          .run(
-            candidate.handoff_id,
-            ts,
-            JSON.stringify({
-              handoff_id: candidate.handoff_id,
-              branch_name: candidate.branch,
-              status: candidate.status,
-              age_ms: candidate.age_ms,
-              reason: candidate.reason,
-            }),
+          await gcManager.teardownWorktree(candidate.handoff_id, /*force=*/ true);
+          const ts = new Date().toISOString();
+          writableDb
+            .query<unknown, [string, string, string]>(
+              `INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+               VALUES (?, NULL, 'cli-gc', 'worktree.gc', ?, ?)`,
+            )
+            .run(
+              candidate.handoff_id,
+              ts,
+              JSON.stringify({
+                handoff_id: candidate.handoff_id,
+                branch_name: candidate.branch,
+                status: candidate.status,
+                age_ms: candidate.age_ms,
+                reason: candidate.reason,
+              }),
+            );
+          console.log(
+            `reaped worktree ${candidate.handoff_id}: ${candidate.reason} (${candidate.path})`,
           );
-        console.log(
-          `reaped worktree ${candidate.handoff_id}: ${candidate.reason} (${candidate.path})`,
-        );
-        n_removed++;
-      } catch {
-        n_failed++;
+          n_removed++;
+        } catch {
+          n_failed++;
+        }
       }
+    } finally {
+      writableDb.close();
     }
-
-    writableDb.close();
   }
 
   return { candidates, n_removed, n_failed, dry_run: !apply };

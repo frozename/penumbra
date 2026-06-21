@@ -205,6 +205,42 @@ describe("runWorktreeGc", () => {
     expect(teardownCalls).toEqual(["h-orphan-old"]);
   });
 
+  test("closes the db handle when enumeration throws mid-run", async () => {
+    seedHandoff(storageRoot, "h-throw", "completed", OLD_RESOLVED);
+
+    const originalClose = Database.prototype.close;
+    let closeCount = 0;
+    (Database.prototype as unknown as { close: typeof originalClose }).close = function (
+      this: Database,
+      ...args: Parameters<typeof originalClose>
+    ) {
+      closeCount++;
+      return originalClose.apply(this, args);
+    };
+
+    try {
+      const wm = {
+        listWorktrees: (): WorktreeHandle[] => {
+          throw new Error("boom");
+        },
+        teardownWorktree: async () => {},
+      };
+
+      await expect(
+        runWorktreeGc({
+          storageRoot,
+          apply: false,
+          gracePeriodMs: GRACE_MS,
+          worktreeManager: wm,
+        }),
+      ).rejects.toThrow("boom");
+
+      expect(closeCount).toBeGreaterThanOrEqual(1);
+    } finally {
+      (Database.prototype as unknown as { close: typeof originalClose }).close = originalClose;
+    }
+  });
+
   test("reaps old missing-handoff orphans and skips known non-terminal orphans", async () => {
     seedHandoff(storageRoot, "h-orphan-active", "redirected", OLD_RESOLVED);
     const missing = makeOrphan("h-orphan-missing");
