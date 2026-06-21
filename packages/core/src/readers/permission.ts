@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+
 import type { PermissionRequestRow, PermissionStatus } from "../schemas/permission.js";
 
 export interface PermissionReaderOpts {

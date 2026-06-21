@@ -17,8 +17,8 @@ export function recallStatus(db: Database): RecallStatus {
     t2: db.query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM t2_memories`).get()?.c ?? 0,
   };
 
-  const histo = (rows: Array<{ k: string | null; c: number }>): Record<string, number> =>
-    Object.fromEntries(rows.filter((r) => r.k !== null).map((r) => [r.k as string, r.c]));
+  const histo = (rows: { k: string | null; c: number }[]): Record<string, number> =>
+    Object.fromEntries(rows.flatMap((r) => (r.k === null ? [] : [[r.k, r.c] as [string, number]])));
 
   const t2ByType = histo(
     db

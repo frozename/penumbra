@@ -1,7 +1,10 @@
 import type { Database, SQLQueryBindings } from "bun:sqlite";
+
 import { randomUUID } from "node:crypto";
+
 import type { Embedder } from "../embedder/interface.js";
 import type { HybridHit } from "./hybrid.js";
+
 import {
   combineFilters,
   conceptFilter,
@@ -36,7 +39,7 @@ export interface CorpusSummary {
   created_at: string;
 }
 
-export async function buildCorpus(
+export function buildCorpus(
   db: Database,
   _embedder: Embedder,
   input: BuildCorpusInput,
@@ -80,7 +83,10 @@ export async function buildCorpus(
       { corpus_id: string; created_at: string },
       [string]
     >(`SELECT corpus_id, created_at FROM corpora WHERE name=?`)
-    .get(input.name)!;
+    .get(input.name);
+  if (!existing) {
+    throw new Error(`buildCorpus: corpus "${input.name}" not found after upsert`);
+  }
 
   db.run(`DELETE FROM corpus_members WHERE corpus_id=?`, [existing.corpus_id]);
   if (rows.length > 0) {
@@ -90,13 +96,13 @@ export async function buildCorpus(
     for (const r of rows) insertMember.run(existing.corpus_id, r.memory_id, now);
   }
 
-  return {
+  return Promise.resolve({
     corpus_id: existing.corpus_id,
     name: input.name,
     description: input.description ?? null,
     member_count: rows.length,
     created_at: existing.created_at,
-  };
+  });
 }
 
 export function listCorpora(db: Database): CorpusSummary[] {
@@ -168,7 +174,8 @@ export async function queryCorpus(
   if (candidates.length === 0) return [];
 
   const [qvec] = await embedder.embed([req.query]);
-  const qBlob = new Float32Array(qvec!);
+  if (!qvec) throw new Error("queryCorpus: embedder returned no vector");
+  const qBlob = new Float32Array(qvec);
   const candPlaceholders = candidates.map(() => "?").join(",");
   const ranked = db
     .query<{ rowid: number; distance: number }, SQLQueryBindings[]>(

@@ -16,8 +16,8 @@ export function combineFilters(contribs: FilterContrib[]): {
   };
 }
 
-export { typeFilter } from "./type.js";
-export { projectFilter } from "./project.js";
-export { dateFilter } from "./date.js";
 export { conceptFilter } from "./concept.js";
+export { dateFilter } from "./date.js";
 export { fileFilter } from "./file.js";
+export { projectFilter } from "./project.js";
+export { typeFilter } from "./type.js";

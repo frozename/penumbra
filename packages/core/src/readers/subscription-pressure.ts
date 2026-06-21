@@ -39,7 +39,7 @@ export function readSubscriptionPressure(
   db: Database,
   opts: ReadSubscriptionPressureOpts = {},
 ): PressureResult {
-  const now = opts.now ?? (() => new Date());
+  const now = opts.now ?? ((): Date => new Date());
   const staleAfterSeconds = opts.stale_after_seconds ?? 1800;
   const rows = (
     opts.provider

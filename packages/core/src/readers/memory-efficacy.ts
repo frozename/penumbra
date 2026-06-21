@@ -1,8 +1,11 @@
 import type { Database } from "bun:sqlite";
+
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+
 import type { JudgeChatFn } from "../services/judge-chat.js";
-import { type Finding, classifyFindings } from "../services/memory-efficacy-classifier.js";
+
+import { classifyFindings, type Finding } from "../services/memory-efficacy-classifier.js";
 
 export interface MemoryEfficacyRecent {
   total: number;
@@ -12,13 +15,13 @@ export interface MemoryEfficacyRecent {
     memory_ignored: number;
     not_memory_related: number;
   };
-  recent: Array<{
+  recent: {
     ts: string;
     finding_text: string;
     classification: string;
     severity: string | null;
     raw_response?: string | null;
-  }>;
+  }[];
 }
 
 export function getMemoryEfficacyRecent(
@@ -94,7 +97,7 @@ export function getMemoryEfficacyRecent(
 }
 
 function hashFinding(synthesisPath: string, index: number, text: string): string {
-  const input = `${synthesisPath}|${index}|${text}`;
+  const input = `${synthesisPath}|${String(index)}|${text}`;
   const hasher = new Bun.CryptoHasher("sha256");
   hasher.update(input);
   return hasher.digest("hex").slice(0, 32);
@@ -106,6 +109,41 @@ interface ParsedFinding {
   index: number;
 }
 
+// Supports two synthesis formats:
+// 1. **High — Title** suffix
+// 2. 1. [High] Title suffix
+const BOLD_LINE_RE =
+  /^\d+\. +\*\*(?:(High|Medium|Low) *[—–-] +)?(\S[^*\n]*?)\*\*(?: +(\S[^\n]*))?$/;
+const BRACKET_LINE_RE = /^\d+[.)\]] +\[(High|Medium|Low)\] +(\S.*)$/;
+
+function matchFindingLine(line: string): { text: string; severity: string | null } | null {
+  const bold = BOLD_LINE_RE.exec(line);
+  if (bold) {
+    const head = bold[2] ?? "";
+    const tail = bold[3];
+    const text = `${head}${tail ? " " + tail : ""}`.trim().slice(0, 200);
+    return { text, severity: bold[1] ?? null };
+  }
+  const bracket = BRACKET_LINE_RE.exec(line);
+  if (bracket) {
+    return { text: (bracket[2] ?? "").trim().slice(0, 200), severity: bracket[1] ?? null };
+  }
+  return null;
+}
+
+function inferTsFromPath(synthesisPath: string): string {
+  const tsMatch = /\/(\d{4}-\d{2}-\d{2}T\d{2}[-:]\d{2}[-:]\d{2})\//.exec(synthesisPath);
+  const tsRaw = tsMatch?.[1];
+  if (!tsRaw) return new Date().toISOString();
+  return tsRaw.replace(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2})[-:](\d{2})[-:](\d{2})$/,
+    "$1-$2-$3T$4:$5:$6Z",
+  );
+}
+
+const FINDINGS_SECTION_RE =
+  /(?:\*\*)?[ \t]*severity[- ]ranked[ \t]+findings?[ \t]*(?:\*\*[ \t]*)?\n([\s\S]*?)(?=\n\*\*(?:Recommended actions|Skipped\/failed personas|Shared concerns|Contradictions)\*\*[ \t]*\n|\n##|\n#|$)/i;
+
 async function parseFindings(
   synthesisPath: string,
 ): Promise<{ ts: string; findings: ParsedFinding[] } | null> {
@@ -116,50 +154,22 @@ async function parseFindings(
     return null;
   }
 
-  const tsMatch = synthesisPath.match(/\/(\d{4}-\d{2}-\d{2}T\d{2}[-:]\d{2}[-:]\d{2})\//);
-  const ts = tsMatch
-    ? tsMatch[1]!.replace(
-        /^(\d{4})-(\d{2})-(\d{2})T(\d{2})[-:](\d{2})[-:](\d{2})$/,
-        "$1-$2-$3T$4:$5:$6Z",
-      )
-    : new Date().toISOString();
-
-  const findingsSection = content.match(
-    /(?:\*\*)?\s*severity[- ]ranked\s+findings?\s*(?:\*\*)?\s*\n([\s\S]*?)(?=\n\*\*(?:Recommended actions|Skipped\/failed personas|Shared concerns|Contradictions)\*\*\s*\n|\n##|\n#|$)/i,
-  );
-  if (!findingsSection) return null;
-
-  const sectionText = findingsSection[1]!;
-  const lines = sectionText.split("\n");
+  const sectionText = FINDINGS_SECTION_RE.exec(content)?.[1];
+  if (!sectionText) return null;
 
   const findings: ParsedFinding[] = [];
   let index = 0;
-  // Supports two synthesis formats:
-  // 1. **High — Title** suffix
-  // 2. 1. [High] Title suffix
-  const BOLD_LINE_RE = /^(\d+)\.\s+\*\*(?:(High|Medium|Low)\s*[—–-]\s+)?(.+?)\*\*\s*(.*)?$/;
-  const BRACKET_LINE_RE = /^(\d+)[.)\]]\s+\[(High|Medium|Low)\]\s+(.+)$/;
-  for (const line of lines) {
-    let match = line.match(BOLD_LINE_RE);
-    let text: string;
-    let severity: string | null;
-    if (match) {
-      severity = match[2] ?? null;
-      text = `${match[3] ?? ""}${match[4] ? " " + match[4] : ""}`.trim().slice(0, 200);
-    } else {
-      match = line.match(BRACKET_LINE_RE);
-      if (!match) continue;
-      severity = match[2] ?? null;
-      text = match[3]!.trim().slice(0, 200);
-    }
+  for (const line of sectionText.split("\n")) {
+    const matched = matchFindingLine(line);
+    if (!matched) continue;
     index += 1;
-    if (text.length > 0) {
-      findings.push({ text, severity, index });
+    if (matched.text.length > 0) {
+      findings.push({ text: matched.text, severity: matched.severity, index });
     }
   }
 
   if (findings.length === 0) return null;
-  return { ts, findings };
+  return { ts: inferTsFromPath(synthesisPath), findings };
 }
 
 interface ToClassifyEntry {
@@ -177,14 +187,16 @@ async function mapWithConcurrency<T, R>(
   concurrency: number,
   worker: (item: T, index: number) => Promise<R>,
 ): Promise<R[]> {
-  const results: R[] = new Array(items.length);
+  const results: R[] = Array.from({ length: items.length });
   let nextIndex = 0;
 
   async function runWorker(): Promise<void> {
-    while (true) {
+    for (;;) {
       const i = nextIndex++;
       if (i >= items.length) return;
-      results[i] = await worker(items[i]!, i);
+      const item = items[i];
+      if (item === undefined) return;
+      results[i] = await worker(item, i);
     }
   }
 
@@ -193,69 +205,62 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-/** Build the memory efficacy cache with batched classification and sequential persistence. */
-export async function buildMemoryEfficacyCache(
-  db: Database,
-  opts: {
-    reviewsDir: string;
-    judgeChat: JudgeChatFn;
-    model: string;
-    sinceISO?: string;
-    concurrency?: number;
-  },
-): Promise<{ scanned: number; classified: number; skipped: number }> {
-  let scanned = 0;
-  let classified = 0;
-  let skipped = 0;
-  const concurrency = opts.concurrency ?? OUTER_BATCH_CONCURRENCY;
+interface CacheStmts {
+  getIdStmt: ReturnType<Database["prepare"]>;
+  insertStmt: ReturnType<Database["prepare"]>;
+}
 
-  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32) {
-    throw new Error(
-      `buildMemoryEfficacyCache: concurrency must be integer in [1, 32], got ${opts.concurrency}`,
-    );
-  }
+function prepareCacheStmts(db: Database): CacheStmts {
+  return {
+    getIdStmt: db.prepare(`SELECT 1 FROM memory_efficacy_cache WHERE finding_id = ? LIMIT 1`),
+    insertStmt: db.prepare(
+      `INSERT OR IGNORE INTO memory_efficacy_cache (
+        finding_id, synthesis_path, ts, finding_index, finding_text,
+        severity, classification, classifier_model, classified_at, raw_response_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ),
+  };
+}
 
-  const now = new Date().toISOString();
-
-  let entries: string[];
+async function listReviewEntries(reviewsDir: string): Promise<string[]> {
   try {
-    entries = (await readdir(opts.reviewsDir, { withFileTypes: true }))
+    return (await readdir(reviewsDir, { withFileTypes: true }))
       .filter((d) => d.isDirectory())
       .map((d) => d.name)
       .sort();
   } catch {
-    return { scanned: 0, classified: 0, skipped: 0 };
+    return [];
   }
+}
 
-  const sinceCutoff = new Date(opts.sinceISO ?? "1970-01-01T00:00:00Z").toISOString();
+interface CollectFindingsResult {
+  toClassify: ToClassifyEntry[];
+  scanned: number;
+  skipped: number;
+}
 
-  const getIdStmt = db.prepare(`SELECT 1 FROM memory_efficacy_cache WHERE finding_id = ? LIMIT 1`);
-  const insertStmt = db.prepare(
-    `INSERT OR IGNORE INTO memory_efficacy_cache (
-      finding_id, synthesis_path, ts, finding_index, finding_text,
-      severity, classification, classifier_model, classified_at, raw_response_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-
+async function collectPendingFindings(
+  reviewsDir: string,
+  entries: readonly string[],
+  sinceCutoff: string,
+  getIdStmt: CacheStmts["getIdStmt"],
+): Promise<CollectFindingsResult> {
   const toClassify: ToClassifyEntry[] = [];
-
+  let scanned = 0;
+  let skipped = 0;
   for (const entry of entries) {
     const dirTs = entry.replace(
       /^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})$/,
       "$1-$2-$3T$4:$5:$6Z",
     );
     if (dirTs < sinceCutoff) continue;
-
-    const synthesisPath = join(opts.reviewsDir, entry, "synthesis.md");
+    const synthesisPath = join(reviewsDir, entry, "synthesis.md");
     const parsed = await parseFindings(synthesisPath);
     if (!parsed) continue;
-
     scanned += parsed.findings.length;
-
     for (const finding of parsed.findings) {
       const findingId = hashFinding(synthesisPath, finding.index, finding.text);
-      const cached = getIdStmt.get(findingId);
-      if (cached) {
+      if (getIdStmt.get(findingId)) {
         skipped += 1;
         continue;
       }
@@ -272,62 +277,105 @@ export async function buildMemoryEfficacyCache(
       });
     }
   }
+  return { toClassify, scanned, skipped };
+}
 
-  const batches: ToClassifyEntry[][] = [];
-  for (let i = 0; i < toClassify.length; i += OUTER_BATCH_SIZE) {
-    batches.push(toClassify.slice(i, i + OUTER_BATCH_SIZE));
+function chunk<T>(items: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(items.slice(i, i + size));
   }
+  return out;
+}
 
-  interface BatchResult {
-    batch: ToClassifyEntry[];
-    classifications: Awaited<ReturnType<typeof classifyFindings>>;
-  }
+interface BatchResult {
+  batch: ToClassifyEntry[];
+  classifications: Awaited<ReturnType<typeof classifyFindings>>;
+}
 
-  const batchResults = await mapWithConcurrency(
-    batches,
-    concurrency,
-    async (batch): Promise<BatchResult> => {
-      const batchFindings = batch.map((e) => ({
-        ...e.finding,
-        findingId: e.findingId,
-      }));
+async function classifyBatches(
+  toClassify: readonly ToClassifyEntry[],
+  concurrency: number,
+  judgeChat: JudgeChatFn,
+  model: string,
+): Promise<BatchResult[]> {
+  const batches = chunk(toClassify, OUTER_BATCH_SIZE);
+  return await mapWithConcurrency(batches, concurrency, async (batch): Promise<BatchResult> => {
+    const batchFindings = batch.map((e) => ({ ...e.finding, findingId: e.findingId }));
+    const classifications = await classifyFindings(batchFindings, { judgeChat, model });
+    return { batch, classifications };
+  });
+}
 
-      const classifications = await classifyFindings(batchFindings, {
-        judgeChat: opts.judgeChat,
-        model: opts.model,
-      });
-
-      return { batch, classifications };
-    },
-  );
-
-  for (const { batch, classifications } of batchResults) {
+function persistBatchResults(
+  insertStmt: CacheStmts["insertStmt"],
+  results: readonly BatchResult[],
+  model: string,
+  now: string,
+): number {
+  let classified = 0;
+  for (const { batch, classifications } of results) {
     const clsByFindingId = new Map<string, (typeof classifications)[number]>();
-    for (const cls of classifications) {
-      clsByFindingId.set(cls.findingId, cls);
-    }
-
-    for (let j = 0; j < batch.length; j++) {
-      const entry = batch[j]!;
+    for (const cls of classifications) clsByFindingId.set(cls.findingId, cls);
+    for (const [j, entry] of batch.entries()) {
       const cls = clsByFindingId.get(entry.findingId) ?? classifications[j];
       if (!cls) continue;
-      const normalizedTs = new Date(entry.ts).toISOString();
-
       insertStmt.run(
         entry.findingId,
         entry.synthesisPath,
-        normalizedTs,
+        new Date(entry.ts).toISOString(),
         entry.finding.index,
         entry.finding.text.slice(0, 200),
         entry.finding.severity,
         cls.classification,
-        opts.model,
+        model,
         now,
         cls.raw_response_json,
       );
       classified += 1;
     }
   }
+  return classified;
+}
+
+function resolveConcurrency(requested: number | undefined): number {
+  const concurrency = requested ?? OUTER_BATCH_CONCURRENCY;
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32) {
+    throw new Error(
+      `buildMemoryEfficacyCache: concurrency must be integer in [1, 32], got ${String(requested)}`,
+    );
+  }
+  return concurrency;
+}
+
+/** Build the memory efficacy cache with batched classification and sequential persistence. */
+export async function buildMemoryEfficacyCache(
+  db: Database,
+  opts: {
+    reviewsDir: string;
+    judgeChat: JudgeChatFn;
+    model: string;
+    sinceISO?: string;
+    concurrency?: number;
+  },
+): Promise<{ scanned: number; classified: number; skipped: number }> {
+  const concurrency = resolveConcurrency(opts.concurrency);
+  const now = new Date().toISOString();
+  const sinceCutoff = new Date(opts.sinceISO ?? "1970-01-01T00:00:00Z").toISOString();
+
+  const entries = await listReviewEntries(opts.reviewsDir);
+  if (entries.length === 0) return { scanned: 0, classified: 0, skipped: 0 };
+
+  const { getIdStmt, insertStmt } = prepareCacheStmts(db);
+  const { toClassify, scanned, skipped } = await collectPendingFindings(
+    opts.reviewsDir,
+    entries,
+    sinceCutoff,
+    getIdStmt,
+  );
+
+  const batchResults = await classifyBatches(toClassify, concurrency, opts.judgeChat, opts.model);
+  const classified = persistBatchResults(insertStmt, batchResults, opts.model, now);
 
   return { scanned, classified, skipped };
 }

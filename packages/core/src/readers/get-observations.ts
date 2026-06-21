@@ -1,9 +1,10 @@
 import type { Database } from "bun:sqlite";
+
 import {
   computeAgeDays,
-  staleThresholdDays,
   type GetObservationsRequest,
   type ObservationDetail,
+  staleThresholdDays,
 } from "../schemas/recall.js";
 
 /**
@@ -44,23 +45,18 @@ export function getObservations(db: Database, req: GetObservationsRequest): Obse
   for (const id of req.ids) {
     const r = byId.get(id);
     if (!r) continue;
+    const ageDays = computeAgeDays(now, r.created_at, r.last_verified_at);
     out.push({
-      age_days: (() => {
-        const ageDays = computeAgeDays(now, r.created_at, r.last_verified_at);
-        return ageDays ?? undefined;
-      })(),
-      stale: (() => {
-        const ageDays = computeAgeDays(now, r.created_at, r.last_verified_at);
-        return ageDays === null ? true : ageDays >= staleThresholdDays(r.obs_type);
-      })(),
+      age_days: ageDays ?? undefined,
+      stale: ageDays === null ? true : ageDays >= staleThresholdDays(r.obs_type),
       id: r.memory_id,
       tier: "t2",
       ts: r.created_at,
       project_id: r.project_id,
       obs_type: r.obs_type,
       severity: r.severity,
-      concepts: JSON.parse(r.concepts ?? "[]"),
-      file_paths: JSON.parse(r.file_paths ?? "[]"),
+      concepts: JSON.parse(r.concepts ?? "[]") as string[],
+      file_paths: JSON.parse(r.file_paths ?? "[]") as string[],
       title: r.title,
       body: r.body,
       last_verified_at: r.last_verified_at,

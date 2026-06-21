@@ -35,8 +35,54 @@ export interface RrfFuseOptions {
 const DEFAULT_K = 60;
 
 function normalizeK(k: number | undefined): number {
-  if (!Number.isFinite(k) || k! <= 0) return DEFAULT_K;
-  return k!;
+  if (k === undefined || !Number.isFinite(k) || k <= 0) return DEFAULT_K;
+  return k;
+}
+
+type RrfAccum<T> = RankedResult<T> & {
+  fusedScore: number;
+  sources: number[];
+  firstListIndex: number;
+  firstRank: number;
+};
+
+function processList<T>(
+  list: readonly RankedResult<T>[],
+  listIndex: number,
+  k: number,
+  byId: Map<string, RrfAccum<T>>,
+): void {
+  const seenInList = new Set<string>();
+  let rank = 0;
+  for (const item of list) {
+    const id = item.id;
+    if (id.length === 0 || seenInList.has(id)) continue;
+    seenInList.add(id);
+
+    rank += 1;
+    const add = 1 / (k + rank);
+
+    const existing = byId.get(id);
+    if (!existing) {
+      byId.set(id, {
+        id,
+        score: item.score,
+        payload: item.payload,
+        fusedScore: add,
+        sources: [listIndex],
+        firstListIndex: listIndex,
+        firstRank: rank,
+      });
+      continue;
+    }
+
+    existing.fusedScore += add;
+    if (existing.sources[existing.sources.length - 1] !== listIndex) {
+      // `lists` are processed in increasing listIndex, so this preserves
+      // sorted unique source indices without extra sorting.
+      existing.sources = [...existing.sources, listIndex];
+    }
+  }
 }
 
 /**
@@ -54,9 +100,9 @@ function normalizeK(k: number | undefined): number {
  * preserve list provenance via the input list ordering).
  */
 export function fuseRRF<T>(
-  lists: ReadonlyArray<ReadonlyArray<RankedResult<T>>>,
+  lists: readonly (readonly RankedResult<T>[])[],
   opts?: RrfFuseOptions,
-): Array<RankedResult<T> & { fusedScore: number; sources: number[] }> {
+): (RankedResult<T> & { fusedScore: number; sources: number[] })[] {
   if (lists.length === 0) return [];
 
   const limit = opts?.limit;
@@ -64,53 +110,10 @@ export function fuseRRF<T>(
 
   const k = normalizeK(opts?.k);
 
-  type Accum = RankedResult<T> & {
-    fusedScore: number;
-    sources: number[];
-    firstListIndex: number;
-    firstRank: number;
-  };
+  const byId = new Map<string, RrfAccum<T>>();
 
-  const byId = new Map<string, Accum>();
-
-  for (let listIndex = 0; listIndex < lists.length; listIndex++) {
-    const list = lists[listIndex] ?? [];
-    const seenInList = new Set<string>();
-    let rank = 0;
-
-    for (let i = 0; i < list.length; i++) {
-      const item = list[i];
-      if (!item) continue;
-
-      const id = item.id;
-      if (!id) continue;
-      if (seenInList.has(id)) continue;
-      seenInList.add(id);
-
-      rank += 1;
-      const add = 1 / (k + rank);
-
-      const existing = byId.get(id);
-      if (!existing) {
-        byId.set(id, {
-          id,
-          score: item.score,
-          payload: item.payload,
-          fusedScore: add,
-          sources: [listIndex],
-          firstListIndex: listIndex,
-          firstRank: rank,
-        });
-        continue;
-      }
-
-      existing.fusedScore += add;
-      if (existing.sources[existing.sources.length - 1] !== listIndex) {
-        // `lists` are processed in increasing listIndex, so this preserves
-        // sorted unique source indices without extra sorting.
-        existing.sources = [...existing.sources, listIndex];
-      }
-    }
+  for (const [listIndex, list] of lists.entries()) {
+    processList(list, listIndex, k, byId);
   }
 
   const fused = Array.from(byId.values());

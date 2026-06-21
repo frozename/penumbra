@@ -1,5 +1,7 @@
 import type { Database, SQLQueryBindings } from "bun:sqlite";
+
 import type { Embedder } from "../embedder/interface.js";
+
 import {
   combineFilters,
   conceptFilter,
@@ -84,7 +86,8 @@ export async function hybridSearch(
 
   // Stage 2: vector rerank against just those rowids.
   const [qvec] = await embedder.embed([req.query]);
-  const qBlob = new Float32Array(qvec!);
+  if (!qvec) throw new Error("hybridSearch: embedder returned no vector");
+  const qBlob = new Float32Array(qvec);
   const placeholders = candidates.map(() => "?").join(",");
   const ranked = db
     .query<{ rowid: number; distance: number }, SQLQueryBindings[]>(

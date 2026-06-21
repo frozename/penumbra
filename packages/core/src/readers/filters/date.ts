@@ -7,5 +7,6 @@ export function dateFilter(
   if (!start && !end) return null;
   if (start && !end) return { sql: `${col} >= ?`, params: [start] };
   if (!start && end) return { sql: `${col} <= ?`, params: [end] };
-  return { sql: `${col} BETWEEN ? AND ?`, params: [start!, end!] };
+  if (start && end) return { sql: `${col} BETWEEN ? AND ?`, params: [start, end] };
+  return null;
 }

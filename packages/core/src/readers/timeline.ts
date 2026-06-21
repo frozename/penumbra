@@ -1,9 +1,10 @@
 import type { Database } from "bun:sqlite";
+
 import {
   computeAgeDays,
   staleThresholdDays,
-  type TimelineRequest,
   type TimelineEntry,
+  type TimelineRequest,
 } from "../schemas/recall.js";
 
 /**
@@ -49,7 +50,7 @@ export function timeline(db: Database, req: TimelineRequest): TimelineEntry[] {
     )
     .all(
       ...(useProjectFilter
-        ? [anchor.created_at, projectId as string, req.depth_before]
+        ? [anchor.created_at, projectId, req.depth_before]
         : [anchor.created_at, req.depth_before]),
     )
     .reverse();
@@ -97,7 +98,7 @@ export function timeline(db: Database, req: TimelineRequest): TimelineEntry[] {
     )
     .all(
       ...(useProjectFilter
-        ? [anchor.created_at, projectId as string, req.depth_after]
+        ? [anchor.created_at, projectId, req.depth_after]
         : [anchor.created_at, req.depth_after]),
     );
 

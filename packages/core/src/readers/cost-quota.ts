@@ -1,9 +1,10 @@
 import type { Database } from "bun:sqlite";
+
 import {
   collectSubscriptionPressure,
   indexSubscriptionPressureByProvider,
-  recentCost,
   readRecentSubscriptionPressureSnapshots,
+  recentCost,
   type SubscriptionPressureRow,
 } from "./cost.js";
 
@@ -48,6 +49,69 @@ export interface QuotaStatusOutput {
   providers: QuotaStatusProviderRow[];
 }
 
+interface UsageRow {
+  cost_usd: number | null;
+  cost_usd_billed: number | null;
+  cost_usd_synth: number | null;
+  tokens_used: number;
+  tokens_cache_read: number;
+  tokens_cache_write: number;
+  cache_read_pct: number | null;
+}
+
+const EMPTY_USAGE: UsageRow = {
+  cost_usd: null,
+  cost_usd_billed: null,
+  cost_usd_synth: null,
+  tokens_used: 0,
+  tokens_cache_read: 0,
+  tokens_cache_write: 0,
+  cache_read_pct: null,
+};
+
+function pctOf(numer: number | null, denom: number | null): number | null {
+  if (numer === null || denom === null || denom <= 0) return null;
+  return Math.round((numer / denom) * 1000) / 10;
+}
+
+function buildQuotaProviderRow(
+  p: ProviderQuota,
+  usage: UsageRow,
+  input: QuotaStatusInput,
+  subscription_pressure: SubscriptionPressureRow[],
+): QuotaStatusProviderRow {
+  const used_usd = p.quota_usd_per_24h !== undefined ? (usage.cost_usd_billed ?? 0) : null;
+  const quota_usd = p.quota_usd_per_24h ?? null;
+  const remaining_usd =
+    used_usd !== null && quota_usd !== null ? Math.max(0, quota_usd - used_usd) : null;
+  const used_tokens = usage.tokens_used;
+  const quota_tokens =
+    input.window === "5h" ? (p.quota_tokens_per_5h ?? null) : (p.quota_tokens_per_24h ?? null);
+  const remaining_tokens = quota_tokens !== null ? Math.max(0, quota_tokens - used_tokens) : null;
+  const usd_quota_mode: QuotaStatusProviderRow["usd_quota_mode"] =
+    p.pressure_caps || p.synthetic_cap ? "display_only" : quota_usd !== null ? "billed" : "none";
+
+  const row: QuotaStatusProviderRow = {
+    provider: p.provider,
+    usd_quota_mode,
+    used_usd,
+    used_usd_synth: usage.cost_usd_synth,
+    quota_usd,
+    remaining_usd,
+    remaining_pct_usd: pctOf(remaining_usd, quota_usd),
+    used_tokens,
+    tokens_cache_read: usage.tokens_cache_read,
+    tokens_cache_write: usage.tokens_cache_write,
+    cache_read_pct: usage.cache_read_pct,
+    quota_tokens,
+    remaining_tokens,
+    remaining_pct_tokens: pctOf(remaining_tokens, quota_tokens),
+  };
+  if (subscription_pressure.length > 0) row.subscription_pressure = subscription_pressure;
+  if (p.model) row.model = p.model;
+  return row;
+}
+
 export function quotaStatus(
   db: Database,
   providers: ProviderQuota[],
@@ -72,7 +136,7 @@ export function quotaStatus(
     }
   >();
   for (const row of recent.by_provider) {
-    if (row.provider == null) continue;
+    if (row.provider === null) continue;
     usageByProvider.set(row.provider, {
       cost_usd: row.cost_usd,
       cost_usd_billed: row.cost_usd_billed,
@@ -96,7 +160,7 @@ export function quotaStatus(
     }
   >();
   for (const row of recent.by_provider_model) {
-    if (row.provider == null) continue;
+    if (row.provider === null) continue;
     const k = `${row.provider}\0${row.model ?? ""}`;
     usageByProviderModel.set(k, {
       cost_usd: row.cost_usd,
@@ -111,70 +175,13 @@ export function quotaStatus(
 
   const out: QuotaStatusProviderRow[] = providers.map((p) => {
     const usage = p.model
-      ? (usageByProviderModel.get(`${p.provider}\0${p.model}`) ?? {
-          cost_usd: null,
-          cost_usd_billed: null,
-          cost_usd_synth: null,
-          tokens_used: 0,
-          tokens_cache_read: 0,
-          tokens_cache_write: 0,
-          cache_read_pct: null,
-        })
-      : (usageByProvider.get(p.provider) ?? {
-          cost_usd: null,
-          cost_usd_billed: null,
-          cost_usd_synth: null,
-          tokens_used: 0,
-          tokens_cache_read: 0,
-          tokens_cache_write: 0,
-          cache_read_pct: null,
-        });
-
-    const used_usd = p.quota_usd_per_24h !== undefined ? (usage.cost_usd_billed ?? 0) : null;
-    const used_usd_synth = usage.cost_usd_synth;
-    const quota_usd = p.quota_usd_per_24h ?? null;
-    const remaining_usd =
-      used_usd !== null && quota_usd !== null ? Math.max(0, quota_usd - used_usd) : null;
-    const remaining_pct_usd =
-      remaining_usd !== null && quota_usd !== null && quota_usd > 0
-        ? Math.round((remaining_usd / quota_usd) * 1000) / 10
-        : null;
-
-    const used_tokens = usage.tokens_used;
-    const quota_tokens =
-      input.window === "5h" ? (p.quota_tokens_per_5h ?? null) : (p.quota_tokens_per_24h ?? null);
-    const remaining_tokens = quota_tokens !== null ? Math.max(0, quota_tokens - used_tokens) : null;
-    const remaining_pct_tokens =
-      remaining_tokens !== null && quota_tokens !== null && quota_tokens > 0
-        ? Math.round((remaining_tokens / quota_tokens) * 1000) / 10
-        : null;
+      ? (usageByProviderModel.get(`${p.provider}\0${p.model}`) ?? EMPTY_USAGE)
+      : (usageByProvider.get(p.provider) ?? EMPTY_USAGE);
     const subscription_pressure = collectSubscriptionPressure(
       pressureByProvider.get(p.provider) ?? [],
       p.model,
     );
-
-    const usd_quota_mode =
-      p.pressure_caps || p.synthetic_cap ? "display_only" : quota_usd !== null ? "billed" : "none";
-
-    const row: QuotaStatusProviderRow = {
-      provider: p.provider,
-      usd_quota_mode,
-      used_usd,
-      used_usd_synth,
-      quota_usd,
-      remaining_usd,
-      remaining_pct_usd,
-      used_tokens,
-      tokens_cache_read: usage.tokens_cache_read,
-      tokens_cache_write: usage.tokens_cache_write,
-      cache_read_pct: usage.cache_read_pct,
-      quota_tokens,
-      remaining_tokens,
-      remaining_pct_tokens,
-    };
-    if (subscription_pressure.length > 0) row.subscription_pressure = subscription_pressure;
-    if (p.model) row.model = p.model;
-    return row;
+    return buildQuotaProviderRow(p, usage, input, subscription_pressure);
   });
 
   return { window: recent.window, providers: out };

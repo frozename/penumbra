@@ -1,9 +1,10 @@
 import type { Database } from "bun:sqlite";
+
 import {
-  TaskDraftEscalationPayloadSchema,
-  TaskDraftPayloadSchema,
   type TaskDraftEscalationPayload,
+  TaskDraftEscalationPayloadSchema,
   type TaskDraftPayload,
+  TaskDraftPayloadSchema,
 } from "../schemas/task-draft.js";
 
 export type PendingTaskDraft = {
@@ -214,14 +215,14 @@ export class TaskDraftReader {
     latestEventType: ListPendingInput["latest_event_type"],
     limit: number,
     projectId: string,
-  ): Array<{
+  ): {
     event_id: string;
     ts: string;
     project_id: string | null;
     event_type: string;
     draft_id: string;
     payload_json: string;
-  }> {
+  }[] {
     const sql = `WITH ranked AS (
         SELECT
           event_id, ts, ingest_ts, project_id, event_type, payload_json,
@@ -288,25 +289,29 @@ export class TaskDraftReader {
     event_type: string;
     payload_json: string;
   }): TaskDraftPayload {
-    const rawPayload =
-      typeof row.payload_json === "string" ? JSON.parse(row.payload_json) : row.payload_json;
-    return TaskDraftPayloadSchema.parse(rawPayload as unknown);
+    const rawPayload: unknown =
+      typeof row.payload_json === "string"
+        ? (JSON.parse(row.payload_json) as unknown)
+        : row.payload_json;
+    return TaskDraftPayloadSchema.parse(rawPayload);
   }
 
   private parseDraftPayload(payloadJson: string): TaskDraftPayload {
-    const rawPayload = typeof payloadJson === "string" ? JSON.parse(payloadJson) : payloadJson;
-    return TaskDraftPayloadSchema.parse(rawPayload as unknown);
+    const rawPayload: unknown =
+      typeof payloadJson === "string" ? (JSON.parse(payloadJson) as unknown) : payloadJson;
+    return TaskDraftPayloadSchema.parse(rawPayload);
   }
 
   private parseEscalationPayload(payloadJson: string): TaskDraftEscalationPayload {
-    const rawPayload = typeof payloadJson === "string" ? JSON.parse(payloadJson) : payloadJson;
-    return TaskDraftEscalationPayloadSchema.parse(rawPayload as unknown);
+    const rawPayload: unknown =
+      typeof payloadJson === "string" ? (JSON.parse(payloadJson) as unknown) : payloadJson;
+    return TaskDraftEscalationPayloadSchema.parse(rawPayload);
   }
 
   private queryPendingEscalations(
     limit: number,
     projectId: string,
-  ): Array<{
+  ): {
     escalation_event_id: string;
     escalation_ts: string;
     escalation_payload: string;
@@ -315,7 +320,7 @@ export class TaskDraftReader {
     original_ts: string;
     original_project_id: string | null;
     original_payload: string;
-  }> {
+  }[] {
     const sql = `WITH ranked AS (
         SELECT
           event_id, ts, ingest_ts, project_id, event_type, payload_json,

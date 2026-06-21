@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+
 import type { HandoffRow, HandoffStatus } from "../schemas/handoff.js";
 
 export interface HandoffReaderOpts {
@@ -8,7 +9,7 @@ export interface HandoffReaderOpts {
 function coerceBoolCol(v: unknown): boolean | null {
   if (v === 1) return true;
   if (v === 0) return false;
-  if (v == null) return null;
+  if (v === null || v === undefined) return null;
   return v as boolean;
 }
 
@@ -63,7 +64,7 @@ export class HandoffReader {
     }
 
     const conditions = [`h.status IN (${opts.statuses.map(() => "?").join(",")})`];
-    const params: Array<string> = [...opts.statuses];
+    const params: string[] = [...opts.statuses];
 
     if (opts.conversation_id) {
       conditions.push("h.conversation_id=?");
@@ -93,7 +94,7 @@ export class HandoffReader {
     if (staleWorkerIds.length === 0) return [];
     const placeholders = staleWorkerIds.map(() => "?").join(",");
     let sql = `SELECT * FROM handoffs WHERE status='dispatched' AND worker_id IN (${placeholders}) ORDER BY ts ASC`;
-    if (limit != null) {
+    if (limit !== undefined) {
       sql += " LIMIT ?";
       return this.db
         .query<HandoffRow, (string | number)[]>(sql)
@@ -159,7 +160,7 @@ export class HandoffReader {
   }
 
   /** Lists active handoffs (non-terminal) that have a cancel request. */
-  listActiveCancellations(): Array<{ conversation_id: string; handoff_id: string }> {
+  listActiveCancellations(): { conversation_id: string; handoff_id: string }[] {
     return this.db
       .query<{ conversation_id: string; handoff_id: string }, []>(
         `SELECT conversation_id, handoff_id FROM handoffs 
@@ -186,7 +187,7 @@ export class HandoffReader {
     let cur: string = handoff_id;
     for (let i = 0; i < SPAWN_DEPTH_SANITY_CAP; i++) {
       const row = stmt.get(cur);
-      if (!row || !row.parent_handoff_id) return i;
+      if (!row?.parent_handoff_id) return i;
       cur = row.parent_handoff_id;
     }
     return SPAWN_DEPTH_SANITY_CAP;

@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+
 import type { HandoffStatus } from "../schemas/handoff.js";
 
 export interface ChainTerminatedEvent {
@@ -56,8 +57,8 @@ export class ChainReader {
     // null), so filtering on it silently drops legitimate responses and
     // regresses completed_with_output to no_changes. Optional scoping remains
     // available to callers that can guarantee their rows are stamped.
-    const projectClause = opts.project_id != null ? "AND project_id = ?" : "";
-    const projectArgs: string[] = opts.project_id != null ? [opts.project_id] : [];
+    const projectClause = typeof opts.project_id === "string" ? "AND project_id = ?" : "";
+    const projectArgs: string[] = typeof opts.project_id === "string" ? [opts.project_id] : [];
     const baseSelect = `
       SELECT event_id, ts, ingest_ts, source_detail, source, user_id, payload_json
       FROM t0_events
@@ -69,7 +70,7 @@ export class ChainReader {
       ${orderSql}
       ${limitSql}
     `;
-    const getUnscoped = () =>
+    const getUnscoped = (): ResponseRow[] =>
       this.db
         .query<ResponseRow, string[]>(`${baseSelect}${orderLimit}`)
         .all(conversation_id, ...projectArgs);
@@ -224,7 +225,7 @@ export class ChainReader {
     return row?.found === 1;
   }
 
-  listHistory(conversation_id: string, limit: number = 50): ChainTerminatedEvent[] {
+  listHistory(conversation_id: string, limit = 50): ChainTerminatedEvent[] {
     const rows = this.db
       .query<{ ts: string; session_id: string; payload_json: string }, [string, number]>(
         `
@@ -247,11 +248,7 @@ export class ChainReader {
       try {
         const parsed = JSON.parse(row.payload_json) as unknown;
         if (parsed && typeof parsed === "object") {
-          payload = parsed as {
-            reason?: string | null;
-            hop_count?: number | null;
-            terminal_handoff_id?: string | null;
-          };
+          payload = parsed;
         }
       } catch {
         // null is handled below
@@ -334,9 +331,9 @@ export class ChainReader {
       .all(...params);
 
     return rows.map((row) => {
-      let payload = null;
+      let payload: unknown = null;
       try {
-        payload = JSON.parse(row.payload_json);
+        payload = JSON.parse(row.payload_json) as unknown;
       } catch {
         // null is returned on malformed json
       }
