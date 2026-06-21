@@ -222,4 +222,41 @@ describe("runPendingExpiry", () => {
     const kinds = DispatchEventKindSchema.options as string[];
     expect(kinds).toContain("long_lived.action.expired");
   });
+
+  it("per-action body is atomic: rolls back pending-action + audit writes if the working_memory step throws", () => {
+    const db = setup();
+    db.query(
+      `INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES ('tick-1', 'home', 'manual', 100)`,
+    ).run();
+    db.query(
+      `INSERT INTO long_lived_pending_actions (id, agent_id, tick_id, action_kind, action_target, payload_json, status, expires_at, created_at) VALUES ('pa-atomic', 'home', 'tick-1', 'ha:light.turn_on', 'light.kitchen', '{}', 'pending', 50, 100)`,
+    ).run();
+
+    // Corrupt working_memory_json so the JSON.parse step inside the per-action
+    // body throws. The fixed implementation wraps the body in db.transaction,
+    // so the earlier pending-action UPDATE and audit INSERT must be rolled back.
+    db.query(
+      `UPDATE long_lived_agents SET working_memory_json='{not-valid-json' WHERE id='home'`,
+    ).run();
+
+    expect(() => runPendingExpiry(db, { now: 100 })).toThrow();
+
+    const pa = db
+      .query<
+        { status: string; decided_by: string | null },
+        []
+      >("SELECT status, decided_by FROM long_lived_pending_actions WHERE id='pa-atomic'")
+      .get();
+    expect(pa).not.toBeNull();
+    expect(pa!.status).toBe("pending");
+    expect(pa!.decided_by).toBeNull();
+
+    const auditCount = db
+      .query<
+        { n: number },
+        []
+      >("SELECT COUNT(*) AS n FROM long_lived_action_audit WHERE pending_action_id='pa-atomic'")
+      .get();
+    expect(auditCount!.n).toBe(0);
+  });
 });
