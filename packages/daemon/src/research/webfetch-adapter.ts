@@ -81,15 +81,7 @@ export class WebFetchAdapter implements WebResearchAdapter {
     ];
   }
 
-  async scrape(args: { url: string }): Promise<WebResearchResult> {
-    let parsed: URL;
-    try {
-      parsed = new URL(args.url);
-    } catch {
-      throw `invalid URL: ${args.url}`;
-    }
-    const hostname = parsed.hostname;
-
+  private checkHost(hostname: string): void {
     if (isInternalOrMetadataHost(hostname)) {
       throw `internal host blocked: ${hostname}`;
     }
@@ -98,12 +90,47 @@ export class WebFetchAdapter implements WebResearchAdapter {
         throw `domain not allowed: ${hostname}`;
       }
     }
+  }
 
-    const res = await fetch(args.url);
+  async scrape(args: { url: string }): Promise<WebResearchResult> {
+    let currentUrl: string;
+    try {
+      currentUrl = new URL(args.url).toString();
+    } catch {
+      throw `invalid URL: ${args.url}`;
+    }
+    this.checkHost(new URL(currentUrl).hostname);
+
+    // Manual redirect following: re-check each redirect target against the
+    // private-host blocker AND the allowlist. Without this, a 302 to a cloud
+    // metadata IP or non-allowlisted host bypasses scrape-time validation.
+    const maxRedirects = 5;
+    let res: Response | undefined;
+    for (let hops = 0; hops <= maxRedirects; hops++) {
+      res = await fetch(currentUrl, { redirect: "manual" });
+      if (res.status >= 300 && res.status < 400) {
+        const loc = res.headers.get("location");
+        if (!loc) break;
+        let nextUrl: URL;
+        try {
+          nextUrl = new URL(loc, currentUrl);
+        } catch {
+          throw `invalid redirect URL: ${loc}`;
+        }
+        this.checkHost(nextUrl.hostname);
+        currentUrl = nextUrl.toString();
+        continue;
+      }
+      break;
+    }
+    if (!res) throw `fetch failed: ${args.url}`;
+    if (res.status >= 300 && res.status < 400) {
+      throw `too many redirects: ${args.url}`;
+    }
     const html = await res.text();
     const markdown = htmlToMarkdown(html);
     return {
-      url: args.url,
+      url: currentUrl,
       title: "",
       markdown,
       fetched_at: new Date().toISOString(),

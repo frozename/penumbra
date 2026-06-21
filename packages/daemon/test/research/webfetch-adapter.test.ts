@@ -107,6 +107,115 @@ it("rejects malformed URLs", async () => {
   await expect(adapter.scrape({ url: "not a url" })).rejects.toMatch(/invalid URL/i);
 });
 
+it("blocks redirect target on internal/metadata host", async () => {
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    const u = typeof url === "string" ? url : url.toString();
+    if (u.startsWith("https://example.com")) {
+      return new Response(null, {
+        status: 302,
+        headers: { location: "http://169.254.169.254/latest/meta-data/" },
+      });
+    }
+    return new Response("ok", { status: 200 });
+  }) as unknown as typeof fetch;
+
+  const adapter = new WebFetchAdapter();
+  await expect(adapter.scrape({ url: "https://example.com/redir" })).rejects.toMatch(
+    /internal host blocked/i,
+  );
+});
+
+it("blocks redirect target outside allowlist", async () => {
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    const u = typeof url === "string" ? url : url.toString();
+    if (u.startsWith("https://example.com")) {
+      return new Response(null, {
+        status: 301,
+        headers: { location: "https://evil.com/exfil" },
+      });
+    }
+    return new Response("ok", { status: 200 });
+  }) as unknown as typeof fetch;
+
+  const adapter = new WebFetchAdapter({ allowedDomains: ["example.com"] });
+  await expect(adapter.scrape({ url: "https://example.com/redir" })).rejects.toMatch(
+    /domain not allowed/i,
+  );
+});
+
+it("follows allowed redirects and returns final body", async () => {
+  const visited: string[] = [];
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    const u = typeof url === "string" ? url : url.toString();
+    visited.push(u);
+    if (u === "https://example.com/a") {
+      return new Response(null, { status: 302, headers: { location: "/b" } });
+    }
+    if (u === "https://example.com/b") {
+      return new Response("<html><body>final</body></html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+    }
+    return new Response("unexpected", { status: 500 });
+  }) as unknown as typeof fetch;
+
+  const adapter = new WebFetchAdapter({ allowedDomains: ["example.com"] });
+  const result = await adapter.scrape({ url: "https://example.com/a" });
+  expect(visited).toEqual(["https://example.com/a", "https://example.com/b"]);
+  expect(result.markdown).toContain("final");
+  expect(result.url).toBe("https://example.com/b");
+});
+
+it("caps redirect chain length", async () => {
+  let count = 0;
+  globalThis.fetch = (async () => {
+    count++;
+    return new Response(null, {
+      status: 302,
+      headers: { location: "https://example.com/loop" },
+    });
+  }) as unknown as typeof fetch;
+
+  const adapter = new WebFetchAdapter({ allowedDomains: ["example.com"] });
+  await expect(adapter.scrape({ url: "https://example.com/loop" })).rejects.toMatch(
+    /too many redirects/i,
+  );
+  expect(count).toBeLessThanOrEqual(6);
+});
+
+it("firecrawl-fallback path blocks redirect to internal host (401 -> webfetch)", async () => {
+  const stubFirecrawl = {
+    search: async () => {
+      const err = Object.assign(new Error("unauthorized"), { status: 401 });
+      throw err;
+    },
+    scrape: async () => {
+      const err = Object.assign(new Error("unauthorized"), { status: 401 });
+      throw err;
+    },
+  };
+
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    const u = typeof url === "string" ? url : url.toString();
+    if (u.startsWith("https://example.com")) {
+      return new Response(null, {
+        status: 302,
+        headers: { location: "http://169.254.169.254/latest/meta-data/" },
+      });
+    }
+    return new Response("ok", { status: 200 });
+  }) as unknown as typeof fetch;
+
+  const adapter = createResearchAdapter(
+    { provider: "firecrawl", allowedDomains: ["example.com"] },
+    stubFirecrawl,
+  );
+  await expect(adapter.scrape({ url: "https://example.com/redir" })).rejects.toMatch(
+    /internal host blocked/i,
+  );
+});
+
 it("isInternalOrMetadataHost flags expected ranges and passes public hosts", () => {
   expect(isInternalOrMetadataHost("127.0.0.1")).toBe(true);
   expect(isInternalOrMetadataHost("10.1.2.3")).toBe(true);
