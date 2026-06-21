@@ -49,7 +49,7 @@ if (!path) {
 }
 
 const raw = await Bun.file(path).text();
-const parsed = JSON.parse(raw) as { tools?: Array<{ name: string }> } | Array<{ name: string }>;
+const parsed = JSON.parse(raw) as { tools?: { name: string }[] } | { name: string }[];
 const list = Array.isArray(parsed) ? parsed : (parsed.tools ?? []);
 const have = new Set(list.map((t) => t.name));
 const present = REQUIRED_TOOLS.filter((t) => have.has(t));

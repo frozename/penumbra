@@ -1,12 +1,12 @@
+import { Database } from "bun:sqlite";
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { homedir } from "node:os";
-import { Database } from "bun:sqlite";
+import { join } from "node:path";
 
 function run(cmd: string): string {
   try {
-    return execSync(cmd, { encoding: "utf8", timeout: 10000 }).trim();
+    return execSync(cmd, { encoding: "utf8", timeout: 10_000 }).trim();
   } catch {
     return "";
   }
@@ -26,13 +26,15 @@ function resolveStorageRoot(): string | null {
   return null;
 }
 
-async function daemonGet(baseUrl: string, token: string, path: string): Promise<unknown | null> {
+async function daemonGet(baseUrl: string, token: string, path: string): Promise<unknown> {
   try {
     const res = await fetch(`${baseUrl}${path}`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(8000),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      return null;
+    }
     return await res.json();
   } catch {
     return null;
@@ -41,123 +43,151 @@ async function daemonGet(baseUrl: string, token: string, path: string): Promise<
 
 function resolveProjectId(): string | null {
   const remoteUrl = run("git config --get remote.origin.url");
-  if (!remoteUrl) return null;
-  const match = remoteUrl.match(/[:/]([^/]+?)(?:\.git)?$/);
+  if (!remoteUrl) {
+    return null;
+  }
+  const match = /[:/]([^/]+?)(?:\.git)?$/.exec(remoteUrl);
   return match?.[1] ?? null;
 }
 
-async function main() {
-  const gitStatusDirtyCount = parseInt(run("git status --porcelain | wc -l"), 10) || 0;
-  const headSha = run("git rev-parse HEAD") || null;
-  const originMainSha = run("git rev-parse origin/main") || null;
+function getArrayLen(data: unknown, key: string): number | null {
+  if (!data || typeof data !== "object") {
+    return null;
+  }
+  const obj = data as Record<string, unknown>;
+  const value = obj[key];
+  return Array.isArray(value) ? value.length : null;
+}
 
-  let daemonPid: number | null = null;
+function readDaemonPid(): number | null {
   try {
     const lcOut = execSync("launchctl list", { encoding: "utf8", timeout: 5000 });
     const line = lcOut.split("\n").find((l) => l.includes("dev.penumbra.daemon"));
-    if (line) {
-      const pidStr = line.trim().split(/\s+/)[0];
-      const pid = parseInt(pidStr, 10);
-      if (!isNaN(pid) && pid > 0) daemonPid = pid;
+    if (!line) {
+      return null;
     }
-  } catch {}
+    const pidStr = line.trim().split(/\s+/)[0];
+    if (!pidStr) {
+      return null;
+    }
+    const pid = parseInt(pidStr, 10);
+    if (Number.isNaN(pid) || pid <= 0) {
+      return null;
+    }
+    return pid;
+  } catch {
+    return null;
+  }
+}
 
-  const storageRoot = resolveStorageRoot();
-  let daemonHealthy = false;
-  let workerCount: number | null = null;
-  let pendingHandoffs: number | null = null;
+type DaemonSnapshot = {
+  daemonHealthy: boolean;
+  pendingHandoffs: number | null;
+  pendingTaskDrafts: number | null;
+  openLanes: number | null;
+};
+
+async function readDaemonState(baseUrl: string, token: string): Promise<DaemonSnapshot> {
+  const health = await daemonGet(baseUrl, token, "/health");
+  const daemonHealthy =
+    !!health && typeof health === "object" && (health as Record<string, unknown>).status === "ok";
+
+  const handoffsData = await daemonGet(baseUrl, token, "/handoffs");
+  const pendingHandoffs = getArrayLen(handoffsData, "handoffs");
+
   let pendingTaskDrafts: number | null = null;
-  let openLanes: number | null = null;
+  const projectId = resolveProjectId();
+  if (projectId) {
+    const draftsData = await daemonGet(
+      baseUrl,
+      token,
+      `/task-drafts/pending?latest_event_type=task_draft&project_id=${encodeURIComponent(projectId)}`,
+    );
+    pendingTaskDrafts = getArrayLen(draftsData, "drafts");
+  }
 
-  let baseUrl = "";
-  let token = "";
+  const lanesData = await daemonGet(baseUrl, token, "/lanes/recent?status=open&limit=200");
+  const openLanes = getArrayLen(lanesData, "lanes");
 
+  return { daemonHealthy, pendingHandoffs, pendingTaskDrafts, openLanes };
+}
+
+type GateDeltas = { filtered: number | null; neardup: number | null };
+
+function readGateDeltas(storageRoot: string): GateDeltas {
+  const deltas: GateDeltas = { filtered: null, neardup: null };
+  const dbPath = join(storageRoot, "db.sqlite");
+  if (!existsSync(dbPath)) {
+    return deltas;
+  }
+  let db: Database | null = null;
+  try {
+    db = new Database(dbPath, { readonly: true });
+    const filteredRow = db
+      .query<
+        { c: number },
+        []
+      >("SELECT COUNT(*) AS c FROM t1_rollups WHERE promotion_filtered_at IS NOT NULL")
+      .get();
+    deltas.filtered = filteredRow?.c ?? null;
+
+    const neardupRow = db
+      .query<
+        { c: number },
+        []
+      >("SELECT COUNT(*) AS c FROM dream_actions WHERE source = 't2_promotion_near_dup_gate' AND status IN ('queued', 'approved', 'auto_applied')")
+      .get();
+    deltas.neardup = neardupRow?.c ?? null;
+  } catch {
+    // degrade gracefully
+  } finally {
+    db?.close();
+  }
+  return deltas;
+}
+
+async function main(): Promise<void> {
+  const gitStatusDirtyCount = parseInt(run("git status --porcelain | wc -l"), 10) || 0;
+  const headSha = run("git rev-parse HEAD") || null;
+  const originMainSha = run("git rev-parse origin/main") || null;
+  const daemonPid = readDaemonPid();
+  const storageRoot = resolveStorageRoot();
+
+  let daemonState: DaemonSnapshot = {
+    daemonHealthy: false,
+    pendingHandoffs: null,
+    pendingTaskDrafts: null,
+    openLanes: null,
+  };
   if (storageRoot) {
     try {
       const port = readFileSync(join(storageRoot, "port"), "utf8").trim();
-      token = readFileSync(join(storageRoot, "token"), "utf8").trim();
-      baseUrl = `http://127.0.0.1:${port}`;
-
-      const health = await daemonGet(baseUrl, token, "/health");
-      daemonHealthy = health != null && (health as Record<string, unknown>)?.status === "ok";
-
-      const handoffsData = await daemonGet(baseUrl, token, "/handoffs");
-      if (handoffsData && typeof handoffsData === "object" && "handoffs" in handoffsData) {
-        pendingHandoffs = Array.isArray((handoffsData as Record<string, unknown>).handoffs)
-          ? ((handoffsData as Record<string, unknown>).handoffs as unknown[]).length
-          : null;
-      }
-
-      const projectId = resolveProjectId();
-      if (projectId) {
-        const draftsData = await daemonGet(
-          baseUrl,
-          token,
-          `/task-drafts/pending?latest_event_type=task_draft&project_id=${encodeURIComponent(projectId)}`,
-        );
-        if (draftsData && typeof draftsData === "object" && "drafts" in draftsData) {
-          pendingTaskDrafts = Array.isArray((draftsData as Record<string, unknown>).drafts)
-            ? ((draftsData as Record<string, unknown>).drafts as unknown[]).length
-            : null;
-        }
-      }
-
-      const lanesData = await daemonGet(baseUrl, token, "/lanes/recent?status=open&limit=200");
-      if (lanesData && typeof lanesData === "object" && "lanes" in lanesData) {
-        openLanes = Array.isArray((lanesData as Record<string, unknown>).lanes)
-          ? ((lanesData as Record<string, unknown>).lanes as unknown[]).length
-          : null;
-      }
-    } catch {}
-  }
-
-  let gateDeltas: { filtered: number | null; neardup: number | null } = {
-    filtered: null,
-    neardup: null,
-  };
-  if (storageRoot) {
-    const dbPath = join(storageRoot, "db.sqlite");
-    if (existsSync(dbPath)) {
-      let db: Database | null = null;
-      try {
-        db = new Database(dbPath, { readonly: true });
-        const filteredRow = db
-          .query<
-            { c: number },
-            []
-          >("SELECT COUNT(*) AS c FROM t1_rollups WHERE promotion_filtered_at IS NOT NULL")
-          .get();
-        gateDeltas.filtered = filteredRow?.c ?? null;
-
-        const neardupRow = db
-          .query<
-            { c: number },
-            []
-          >("SELECT COUNT(*) AS c FROM dream_actions WHERE source = 't2_promotion_near_dup_gate' AND status IN ('queued', 'approved', 'auto_applied')")
-          .get();
-        gateDeltas.neardup = neardupRow?.c ?? null;
-      } catch {
-        // degrade gracefully
-      } finally {
-        db?.close();
-      }
+      const token = readFileSync(join(storageRoot, "token"), "utf8").trim();
+      const baseUrl = `http://127.0.0.1:${port}`;
+      daemonState = await readDaemonState(baseUrl, token);
+    } catch {
+      // unreachable daemon; keep defaults
     }
   }
+
+  const gateDeltas: GateDeltas = storageRoot
+    ? readGateDeltas(storageRoot)
+    : { filtered: null, neardup: null };
 
   const result = {
     git_status_dirty_count: gitStatusDirtyCount,
     head_sha: headSha,
     origin_main_sha: originMainSha,
     daemon_pid: daemonPid,
-    daemon_healthy: daemonHealthy,
-    worker_count: workerCount,
-    pending_handoffs: pendingHandoffs,
-    pending_task_drafts: pendingTaskDrafts,
+    daemon_healthy: daemonState.daemonHealthy,
+    worker_count: null,
+    pending_handoffs: daemonState.pendingHandoffs,
+    pending_task_drafts: daemonState.pendingTaskDrafts,
     gate_deltas: gateDeltas,
-    open_lanes: openLanes,
+    open_lanes: daemonState.openLanes,
   };
 
-  console.log(JSON.stringify(result));
+  process.stdout.write(JSON.stringify(result) + "\n");
 }
 
-main();
+await main();

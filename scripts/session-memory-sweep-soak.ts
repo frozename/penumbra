@@ -1,13 +1,15 @@
+import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { Database } from "bun:sqlite";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  // already loaded in this process
+}
 
 type SessionExtractCandidate = {
   action?: string;
@@ -97,7 +99,7 @@ async function extractSession(
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`/memory/session-extract -> ${res.status}${body ? ` ${body}` : ""}`);
+    throw new Error(`/memory/session-extract -> ${String(res.status)}${body ? ` ${body}` : ""}`);
   }
   return (await res.json()) as SessionExtractResponse;
 }
@@ -124,10 +126,10 @@ async function main(): Promise<number> {
     const storageRoot = resolveStorageRoot();
     const sessionId = readLatestSessionId(storageRoot);
     const response = await extractSession(readDaemon(storageRoot), sessionId);
-    console.log(formatSessionMemorySweepSoakResult(summarize(sessionId, response)));
+    process.stdout.write(formatSessionMemorySweepSoakResult(summarize(sessionId, response)) + "\n");
     return 0;
   } catch (error) {
-    console.log(formatError(error));
+    process.stdout.write(formatError(error) + "\n");
     return 1;
   }
 }

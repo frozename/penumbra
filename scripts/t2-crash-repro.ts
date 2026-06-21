@@ -1,4 +1,18 @@
 import { Database } from "bun:sqlite";
+import { copyFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import type { Embedder } from "../packages/core/src/embedder/interface.js";
+
+import { readEmbedderEnv } from "../packages/cli/src/commands/sirius-env.js";
+import { assertEmbedderDim } from "../packages/core/src/db/migrations.js";
+import { applyRuntimePragmas, loadSqliteVec } from "../packages/core/src/db/sqlite-vec.js";
+import { BundledEmbedder } from "../packages/core/src/embedder/bundled.js";
+import { resolveEmbedder } from "../packages/core/src/embedder/resolve.js";
+import { type T2MemoryExtraction, T2Promotion } from "../packages/core/src/writers/t2.js";
+import { createJudgePool, type JudgeEntry } from "../packages/daemon/src/workers/t2-judge-pool.js";
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
@@ -6,18 +20,6 @@ try {
 } catch {
   // The SQLite library may already be loaded in this process.
 }
-import { existsSync, copyFileSync, mkdtempSync, rmSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { applyRuntimePragmas, loadSqliteVec } from "../packages/core/src/db/sqlite-vec.js";
-import { assertEmbedderDim } from "../packages/core/src/db/migrations.js";
-import { BundledEmbedder } from "../packages/core/src/embedder/bundled.js";
-import type { Embedder } from "../packages/core/src/embedder/interface.js";
-import { resolveEmbedder } from "../packages/core/src/embedder/resolve.js";
-import { T2Promotion, type T2MemoryExtraction } from "../packages/core/src/writers/t2.js";
-import { readEmbedderEnv } from "../packages/cli/src/commands/sirius-env.js";
-import { createJudgePool, type JudgeEntry } from "../packages/daemon/src/workers/t2-judge-pool.js";
 
 const DEFAULT_RUNTIMES = ["~/.bun-canary/bin/bun", "~/.bun/bin/bun"] as const;
 const DEFAULT_RUNS_PER_RUNTIME = 3;
@@ -87,50 +89,75 @@ interface ChildResult {
   promoted_count: number;
 }
 
+interface MutableCliState {
+  tick: boolean;
+  runtimes: string[];
+  runsPerRuntime: number;
+  stubEmbed: boolean;
+}
+
+function applyRuntimesFlag(value: string | undefined, state: MutableCliState): void {
+  if (!value) {
+    throw new Error("--runtimes requires a comma-separated value");
+  }
+  const list = value
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+  if (list.length === 0) {
+    throw new Error("--runtimes requires at least one runtime");
+  }
+  state.runtimes = list;
+}
+
+function applyRunsFlag(value: string | undefined, state: MutableCliState): void {
+  if (!value) {
+    throw new Error("--runs requires a number");
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error("--runs must be a positive integer");
+  }
+  state.runsPerRuntime = parsed;
+}
+
 export function parseCliArgs(argv: string[]): CliArgs {
-  let tick = false;
-  let runtimes = [...DEFAULT_RUNTIMES];
-  let runsPerRuntime = DEFAULT_RUNS_PER_RUNTIME;
-  let stubEmbed = false;
+  const state: MutableCliState = {
+    tick: false,
+    runtimes: [...DEFAULT_RUNTIMES],
+    runsPerRuntime: DEFAULT_RUNS_PER_RUNTIME,
+    stubEmbed: false,
+  };
 
   for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]!;
+    const arg = argv[i];
     if (arg === "--tick") {
-      tick = true;
+      state.tick = true;
       continue;
     }
     if (arg === "--stub-embed") {
-      stubEmbed = true;
+      state.stubEmbed = true;
       continue;
     }
     if (arg === "--runtimes") {
-      const value = argv[++i];
-      if (!value) throw new Error("--runtimes requires a comma-separated value");
-      runtimes = value
-        .split(",")
-        .map((v) => v.trim())
-        .filter(Boolean);
-      if (runtimes.length === 0) throw new Error("--runtimes requires at least one runtime");
+      applyRuntimesFlag(argv[++i], state);
       continue;
     }
     if (arg === "--runs") {
-      const value = argv[++i];
-      if (!value) throw new Error("--runs requires a number");
-      runsPerRuntime = Number(value);
-      if (!Number.isInteger(runsPerRuntime) || runsPerRuntime < 1) {
-        throw new Error("--runs must be a positive integer");
-      }
+      applyRunsFlag(argv[++i], state);
       continue;
     }
-    throw new Error(`unknown argument: ${arg}`);
+    throw new Error(`unknown argument: ${String(arg)}`);
   }
 
-  if (tick) return { mode: "child", stubEmbed };
+  if (state.tick) {
+    return { mode: "child", stubEmbed: state.stubEmbed };
+  }
   return {
     mode: "parent",
-    runtimes: runtimes.map(expandPath),
-    runsPerRuntime,
-    stubEmbed,
+    runtimes: state.runtimes.map(expandPath),
+    runsPerRuntime: state.runsPerRuntime,
+    stubEmbed: state.stubEmbed,
   };
 }
 
@@ -147,7 +174,28 @@ async function runParent(args: ParentArgs): Promise<void> {
       runs.push(await runChild(runtime, bunVersion, scriptPath, args.stubEmbed));
     }
   }
-  console.log(buildSummaryLine(runs));
+  process.stdout.write(buildSummaryLine(runs) + "\n");
+}
+
+function resolveOutcome(
+  parsed: ChildResult | null,
+  signal: string | null,
+  exitCode: number | null,
+  stderr: string,
+): string {
+  if (parsed?.outcome) {
+    return parsed.outcome;
+  }
+  if (signal) {
+    return "crashed";
+  }
+  if (exitCode === 0) {
+    return "completed";
+  }
+  if (stderr.includes("Segmentation fault")) {
+    return "crashed";
+  }
+  return "error";
 }
 
 async function runChild(
@@ -158,7 +206,9 @@ async function runChild(
 ): Promise<RunSummary> {
   const started = Date.now();
   const childArgs = [runtimeBinary, scriptPath, "--tick"];
-  if (stubEmbed) childArgs.push("--stub-embed");
+  if (stubEmbed) {
+    childArgs.push("--stub-embed");
+  }
   const proc = Bun.spawn(childArgs, {
     stdout: "pipe",
     stderr: "pipe",
@@ -169,18 +219,10 @@ async function runChild(
     new Response(proc.stderr).text(),
     proc.exited,
   ]);
-  const signal = ((proc as unknown as { signalCode?: string | null }).signalCode ?? null) || null;
+  const signal = (proc as unknown as { signalCode?: string | null }).signalCode ?? null;
   const lastLine = lastStdoutLine(stdout);
   const parsed = parseChildLine(lastLine);
-  const outcome =
-    parsed?.outcome ??
-    (signal
-      ? "crashed"
-      : exitCode === 0
-        ? "completed"
-        : stderr.includes("Segmentation fault")
-          ? "crashed"
-          : "error");
+  const outcome = resolveOutcome(parsed, signal, exitCode, stderr);
   return {
     runtime_binary: runtimeBinary,
     bun_version: bunVersion,
@@ -198,8 +240,10 @@ function readBunVersion(runtimeBinary: string): string {
       stderr: "pipe",
     });
     const out = proc.stdout.toString().trim();
-    if (out) return out;
-    return `unknown(exit=${proc.exitCode ?? "null"})`;
+    if (out) {
+      return out;
+    }
+    return `unknown(exit=${String(proc.exitCode)})`;
   } catch (err) {
     return `unavailable:${err instanceof Error ? err.message : String(err)}`;
   }
@@ -226,13 +270,15 @@ async function runChildTick(stubEmbed: boolean): Promise<ChildResult> {
     const t2 = new T2Promotion({
       db,
       embedder,
-      clock: () => new Date(),
+      clock: (): Date => new Date(),
       uuid: createUuidSequence(),
-      llm: (transcript) => judge.invoke(transcript),
+      llm: (transcript: string): Promise<string> => judge.invoke(transcript),
     });
     const [rollupId] = t2.detectEligibleRollups(0, new Date());
     const selectedRollupId = rollupId ?? latestRollupId(db);
-    if (!selectedRollupId) return { outcome: "completed", promoted_count: 0 };
+    if (!selectedRollupId) {
+      return { outcome: "completed", promoted_count: 0 };
+    }
     try {
       const promoted = await t2.promoteRollup(selectedRollupId);
       return { outcome: "completed", promoted_count: promoted };
@@ -245,31 +291,39 @@ async function runChildTick(stubEmbed: boolean): Promise<ChildResult> {
     return { outcome: "error", promoted_count: 0 };
   } finally {
     db?.close();
-    if (tempDir) rmSync(tempDir, { recursive: true, force: true });
+    if (tempDir) {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   }
 }
 
 function debugError(err: unknown): void {
-  if (process.env.PENUMBRA_T2_CRASH_REPRO_DEBUG !== "1") return;
+  if (process.env.PENUMBRA_T2_CRASH_REPRO_DEBUG !== "1") {
+    return;
+  }
   console.error(err instanceof Error ? (err.stack ?? err.message) : String(err));
 }
 
 function copyLiveDb(): { tempDir: string; dbPath: string } {
   const sourceDb = expandPath(LIVE_DB);
-  if (!existsSync(sourceDb)) throw new Error(`live db not found: ${sourceDb}`);
+  if (!existsSync(sourceDb)) {
+    throw new Error(`live db not found: ${sourceDb}`);
+  }
   const tempDir = mkdtempSync(join(tmpdir(), "penumbra-t2-crash-repro-"));
   const targetDb = join(tempDir, "db.sqlite");
   copyFileSync(sourceDb, targetDb);
   for (const suffix of ["-wal", "-shm"]) {
     const sidecar = `${sourceDb}${suffix}`;
-    if (existsSync(sidecar)) copyFileSync(sidecar, `${targetDb}${suffix}`);
+    if (existsSync(sidecar)) {
+      copyFileSync(sidecar, `${targetDb}${suffix}`);
+    }
   }
   return { tempDir, dbPath: targetDb };
 }
 
 async function createDaemonLikeEmbedder(): Promise<Embedder> {
   const embedderEnv = readEmbedderEnv(process.env) ?? { mode: "auto" as const };
-  return resolveEmbedder({
+  return await resolveEmbedder({
     mode: embedderEnv.mode,
     remote: embedderEnv.remote,
     fallback: new BundledEmbedder(),
@@ -280,8 +334,8 @@ function createStubEmbedder(): Embedder {
   return {
     name: "stub-constant-384",
     dim: 384,
-    async embed(texts: string[]): Promise<Float32Array[]> {
-      return texts.map(() => new Float32Array(384).fill(0.001));
+    embed(texts: string[]): Promise<Float32Array[]> {
+      return Promise.resolve(texts.map(() => new Float32Array(384).fill(0.001)));
     },
   };
 }
@@ -311,37 +365,51 @@ function lastStdoutLine(stdout: string): string | null {
 }
 
 function parseChildLine(line: string | null): ChildResult | null {
-  if (!line) return null;
+  if (!line) {
+    return null;
+  }
+  let parsed: Partial<ChildResult>;
   try {
-    const parsed = JSON.parse(line) as Partial<ChildResult>;
-    if (
-      (parsed.outcome === "completed" ||
-        parsed.outcome === "judge_failed" ||
-        parsed.outcome === "error") &&
-      typeof parsed.promoted_count === "number"
-    ) {
-      return { outcome: parsed.outcome, promoted_count: parsed.promoted_count };
-    }
+    parsed = JSON.parse(line) as Partial<ChildResult>;
   } catch {
     return null;
+  }
+  if (
+    (parsed.outcome === "completed" ||
+      parsed.outcome === "judge_failed" ||
+      parsed.outcome === "error") &&
+    typeof parsed.promoted_count === "number"
+  ) {
+    return { outcome: parsed.outcome, promoted_count: parsed.promoted_count };
   }
   return null;
 }
 
+const REASONING_TAG_PATTERN = /<(?:think|reasoning)>[\s\S]*?<\/(?:think|reasoning)>\s*/gi;
+
 function stripReasoningTags(content: string): string {
-  return content.replace(/<(think|reasoning)>[\s\S]*?<\/\1>\s*/gi, "");
+  return content.replaceAll(REASONING_TAG_PATTERN, "");
 }
+
+// ANSI / bracketed-paste artifacts; constructed from String.fromCharCode so the
+// source file does not contain a literal ESC control character.
+const ESC = String.fromCharCode(0x1b);
+const ANSI_ESC_PATTERN = new RegExp(`${ESC}\\[[0-9;]*[A-Za-z]`, "g");
+const BRACKET_ARTIFACT_PATTERN = /(?:^|\s)\[[0-9;]+[A-Za-z]/g;
+const JSON_FENCE_PATTERN = /^```(?:json|JSON)?\n?([\s\S]+?)\n?```$/;
 
 function stripJsonFence(content: string): string {
   const detagged = stripReasoningTags(content).trim();
-  if (/^(none|null|n\/?a|nothing|empty)\.?$/i.test(detagged)) {
+  if (/^(?:none|null|n\/?a|nothing|empty)\.?$/i.test(detagged)) {
     return '{"memories":[]}';
   }
   const stripped = detagged
-    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")
-    .replace(/(?:^|\s)\[[0-9;]+[A-Za-z]/g, " ");
-  const fenced = stripped.match(/^```(?:json|JSON)?\s*\n?([\s\S]*?)\n?```$/);
-  if (fenced) return fenced[1]!.trim();
+    .replaceAll(ANSI_ESC_PATTERN, "")
+    .replaceAll(BRACKET_ARTIFACT_PATTERN, " ");
+  const fenced = JSON_FENCE_PATTERN.exec(stripped);
+  if (fenced?.[1]) {
+    return fenced[1].trim();
+  }
   const firstBrace = stripped.indexOf("{");
   const lastBrace = stripped.lastIndexOf("}");
   if (firstBrace >= 0 && lastBrace > firstBrace) {
@@ -361,12 +429,16 @@ function parseJudgeResponse(content: string): T2MemoryExtraction[] {
   if (!Array.isArray(extractions)) {
     return [];
   }
-  return extractions;
+  return extractions as T2MemoryExtraction[];
 }
 
 function expandPath(path: string): string {
-  if (path === "~") return homedir();
-  if (path.startsWith("~/")) return join(homedir(), path.slice(2));
+  if (path === "~") {
+    return homedir();
+  }
+  if (path.startsWith("~/")) {
+    return join(homedir(), path.slice(2));
+  }
   return resolve(path);
 }
 
@@ -378,9 +450,9 @@ const REPRO_JUDGE: JudgeEntry = {
 };
 
 const quietLog = {
-  info: () => undefined,
-  warn: () => undefined,
-  error: () => undefined,
+  info: (): undefined => undefined,
+  warn: (): undefined => undefined,
+  error: (): undefined => undefined,
 };
 
 if (import.meta.main) {
@@ -391,15 +463,15 @@ if (import.meta.main) {
       process.exitCode = 0;
     } else {
       const result = await runChildTick(args.stubEmbed);
-      console.log(JSON.stringify(result));
+      process.stdout.write(JSON.stringify(result) + "\n");
       process.exitCode = result.outcome === "completed" ? 0 : 1;
     }
   } catch {
     if (Bun.argv.includes("--tick")) {
-      console.log(JSON.stringify({ outcome: "error", promoted_count: 0 }));
+      process.stdout.write(JSON.stringify({ outcome: "error", promoted_count: 0 }) + "\n");
       process.exitCode = 1;
     } else {
-      console.log(buildSummaryLine([]));
+      process.stdout.write(buildSummaryLine([]) + "\n");
       process.exitCode = 0;
     }
   }

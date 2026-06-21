@@ -137,10 +137,19 @@ const LABELS: Record<
   },
 };
 
+type SourceRow = {
+  memory_id: string;
+  title: string;
+  body_first_200: string;
+  cached_verdict_qwen: string;
+};
+
 const out: string[] = [];
 for (const line of readFileSync(SOURCE, "utf8").split(/\r?\n/)) {
-  if (!line.trim()) continue;
-  const row = JSON.parse(line);
+  if (!line.trim()) {
+    continue;
+  }
+  const row = JSON.parse(line) as SourceRow;
   const label = LABELS[row.memory_id];
   if (!label) {
     console.error(`No label for memory_id ${row.memory_id} — skipping`);
@@ -160,4 +169,4 @@ for (const line of readFileSync(SOURCE, "utf8").split(/\r?\n/)) {
 }
 
 writeFileSync(TARGET, out.join("\n") + "\n");
-process.stdout.write(`Wrote ${out.length} cases to ${TARGET}\n`);
+process.stdout.write(`Wrote ${String(out.length)} cases to ${TARGET}\n`);

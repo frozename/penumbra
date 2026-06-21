@@ -30,7 +30,7 @@ const MAX_BUFFER_BYTES = 256 * 1024 * 1024;
 const MISSING_RULE_KEY = "(no-rule-id)";
 
 function formatDate(date: Date): string {
-  const year = date.getFullYear();
+  const year = String(date.getFullYear());
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
@@ -53,7 +53,7 @@ const eslint = spawnSync(ESLINT_BIN, [".", "--format", "json"], {
 
 if (typeof eslint.stdout !== "string" || eslint.stdout.trim().length === 0) {
   throw new Error(
-    `eslint did not produce JSON on stdout (status=${eslint.status}):\n${eslint.stderr}`,
+    `eslint did not produce JSON on stdout (status=${String(eslint.status)}):\n${eslint.stderr}`,
   );
 }
 
@@ -83,7 +83,8 @@ const today = formatDate(new Date());
 // tracked docs/quality/ tree on every run (which showed up as perpetual
 // untracked churn). Manual runs still default to the committed
 // docs/quality/lint-baseline-<today>.json snapshot path.
-const outputPath = process.env.LINT_BASELINE_OUT ?? `docs/quality/lint-baseline-${today}.json`;
+const outputPath: string =
+  process.env.LINT_BASELINE_OUT ?? `docs/quality/lint-baseline-${today}.json`;
 mkdirSync(dirname(outputPath), { recursive: true });
 writeFileSync(outputPath, JSON.stringify(baseline, null, 2) + "\n", "utf8");
 process.stdout.write(`wrote ${outputPath}\n`);

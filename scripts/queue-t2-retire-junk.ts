@@ -1,7 +1,7 @@
+import { Branding, MAX_BODY_CHARS, resolveStorageDbPath, validateT2Body } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
-import { Branding, MAX_BODY_CHARS, resolveStorageDbPath, validateT2Body } from "@penumbra/core";
 
 try {
   if (process.platform === "darwin") {
@@ -137,32 +137,34 @@ function enqueueRetireActions(
 }
 
 function printCandidates(candidates: Candidate[]): void {
-  console.log(`Candidates: ${candidates.length}`);
-  if (candidates.length === 0) return;
+  process.stdout.write(`Candidates: ${String(candidates.length)}\n`);
+  if (candidates.length === 0) {
+    return;
+  }
   for (const candidate of candidates) {
-    console.log(
-      `- ${candidate.memory_id} reason=${candidate.reason} body_chars=${candidate.body_chars} title=${candidate.title}`,
+    process.stdout.write(
+      `- ${candidate.memory_id} reason=${candidate.reason} body_chars=${String(candidate.body_chars)} title=${candidate.title}\n`,
     );
   }
 }
 
-async function main(): Promise<void> {
+function runMain(): void {
   const { dbPath, apply } = parseArgs(process.argv.slice(2));
   const db = new Database(dbPath);
   try {
     const candidates = loadCandidates(db);
     printCandidates(candidates);
     if (!apply) {
-      console.log("Mode: dry-run (no writes)");
+      process.stdout.write("Mode: dry-run (no writes)\n");
       return;
     }
     const result = enqueueRetireActions(db, candidates);
-    console.log(
-      `Mode: apply (queued=${result.queued}, already_queued=${result.alreadyQueued}, total=${candidates.length})`,
+    process.stdout.write(
+      `Mode: apply (queued=${String(result.queued)}, already_queued=${String(result.alreadyQueued)}, total=${String(candidates.length)})\n`,
     );
   } finally {
     db.close();
   }
 }
 
-await main();
+runMain();

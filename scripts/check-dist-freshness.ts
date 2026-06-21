@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-import { readdirSync, statSync, rmSync, existsSync } from "fs";
-import { join } from "path";
+import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 const CHECK_MODE = process.argv.includes("--check") || process.env.DIST_CHECK_STRICT === "1";
 
@@ -9,7 +9,7 @@ const packagesDir = process.env.PENUMBRA_PACKAGES_DIR ?? join(import.meta.dir, "
 
 function newestMtime(dir: string, ext: string): number {
   let newest = 0;
-  function walk(d: string) {
+  function walk(d: string): void {
     let entries;
     try {
       entries = readdirSync(d, { withFileTypes: true });
@@ -23,8 +23,12 @@ function newestMtime(dir: string, ext: string): number {
       } else if (e.isFile() && e.name.endsWith(ext)) {
         try {
           const mtime = statSync(full).mtimeMs;
-          if (mtime > newest) newest = mtime;
-        } catch {}
+          if (mtime > newest) {
+            newest = mtime;
+          }
+        } catch {
+          // best-effort scan; skip files we cannot stat
+        }
       }
     }
   }
@@ -48,18 +52,24 @@ for (const entry of entries) {
   const srcDir = join(pkg, "src");
   const distDir = join(pkg, "dist");
 
-  if (!existsSync(srcDir) || !existsSync(distDir)) continue;
+  if (!existsSync(srcDir) || !existsSync(distDir)) {
+    continue;
+  }
 
   const newestSrc = newestMtime(srcDir, ".ts");
   const newestDist = newestMtime(distDir, ".d.ts");
 
   // Skip if either side has no relevant files
-  if (newestSrc === 0 || newestDist === 0) continue;
+  if (newestSrc === 0 || newestDist === 0) {
+    continue;
+  }
 
   if (newestSrc > newestDist) {
     stale.push(pkg);
   }
 }
+
+const ARTIFACT_SUFFIX = /(?:\.d\.ts|\.js)$/;
 
 function walkStrayArtifacts(dir: string): void {
   let children;
@@ -74,28 +84,40 @@ function walkStrayArtifacts(dir: string): void {
       walkStrayArtifacts(full);
       continue;
     }
-    if (!child.isFile()) continue;
+    if (!child.isFile()) {
+      continue;
+    }
     const isArtifact = child.name.endsWith(".js") || child.name.endsWith(".d.ts");
-    if (!isArtifact) continue;
-    const baseName = child.name.replace(/(\.d\.ts|\.js)$/, "");
+    if (!isArtifact) {
+      continue;
+    }
+    const baseName = child.name.replace(ARTIFACT_SUFFIX, "");
     const hasSourceSibling =
       existsSync(join(dir, `${baseName}.ts`)) || existsSync(join(dir, `${baseName}.tsx`));
-    if (!hasSourceSibling) continue;
+    if (!hasSourceSibling) {
+      continue;
+    }
     strayArtifacts.push(full);
   }
 }
 
 for (const entry of entries) {
-  if (entry.name === "daemon") continue;
+  if (entry.name === "daemon") {
+    continue;
+  }
   const srcDir = join(packagesDir, entry.name, "src");
-  if (!existsSync(srcDir)) continue;
+  if (!existsSync(srcDir)) {
+    continue;
+  }
   walkStrayArtifacts(srcDir);
 }
 
 if (strayArtifacts.length > 0) {
   if (CHECK_MODE) {
-    console.error(`stray src artifacts (${strayArtifacts.length}):`);
-    for (const p of strayArtifacts) console.error(`  ${p}`);
+    console.error(`stray src artifacts (${String(strayArtifacts.length)}):`);
+    for (const p of strayArtifacts) {
+      console.error(`  ${p}`);
+    }
     process.exit(2);
   }
   for (const p of strayArtifacts) {
@@ -111,8 +133,10 @@ if (stale.length === 0) {
 }
 
 if (CHECK_MODE) {
-  console.error(`stale dist dirs (${stale.length}):`);
-  for (const p of stale) console.error(`  ${p}`);
+  console.error(`stale dist dirs (${String(stale.length)}):`);
+  for (const p of stale) {
+    console.error(`  ${p}`);
+  }
   process.exit(2);
 }
 
@@ -121,11 +145,11 @@ for (const p of stale) {
 }
 const removedParts = [];
 if (stale.length > 0) {
-  removedParts.push(`${stale.length} stale dist dir${stale.length === 1 ? "" : "s"}`);
+  removedParts.push(`${String(stale.length)} stale dist dir${stale.length === 1 ? "" : "s"}`);
 }
 if (strayArtifacts.length > 0) {
   removedParts.push(
-    `${strayArtifacts.length} stray src artifact${strayArtifacts.length === 1 ? "" : "s"}`,
+    `${String(strayArtifacts.length)} stray src artifact${strayArtifacts.length === 1 ? "" : "s"}`,
   );
 }
 process.stdout.write(`removed ${removedParts.join(" and ")}\n`);

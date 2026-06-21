@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { buildSummaryLine, parseCliArgs } from "./t2-crash-repro.ts";
 
 test("parseCliArgs accepts parent runtimes and stub flag", () => {

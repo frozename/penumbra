@@ -1,13 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync } from "fs";
-import { join } from "path";
-import { tmpdir } from "os";
+import { mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 describe("no-raw-env lint", () => {
   const SCRIPT = join(import.meta.dir, "no-raw-env.ts");
   const fixtureRoot = join(tmpdir(), `no-raw-env-${crypto.randomUUID()}`);
 
-  function run(paths: string, extraArgs: string[] = []) {
+  function run(
+    paths: string,
+    extraArgs: string[] = [],
+  ): { exitCode: number; stdout: string; stderr: string } {
     const result = Bun.spawnSync({
       cmd: [process.execPath, SCRIPT, "--paths", paths, ...extraArgs],
       env: {
@@ -19,9 +22,9 @@ describe("no-raw-env lint", () => {
       stderr: "pipe",
     });
     return {
-      exitCode: result.exitCode ?? -1,
-      stdout: new TextDecoder().decode(result.stdout ?? new Uint8Array()).trim(),
-      stderr: new TextDecoder().decode(result.stderr ?? new Uint8Array()).trim(),
+      exitCode: result.exitCode,
+      stdout: new TextDecoder().decode(result.stdout).trim(),
+      stderr: new TextDecoder().decode(result.stderr).trim(),
     };
   }
 

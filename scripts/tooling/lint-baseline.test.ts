@@ -4,6 +4,13 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+type RuleCounts = { errors: number; warnings: number };
+type BaselineFile = {
+  totals: RuleCounts;
+  byRule: Record<string, RuleCounts>;
+  byFile: Record<string, RuleCounts>;
+};
+
 describe("lint baseline capture", () => {
   it("writes a per-rule violation JSON to the configured path", () => {
     // Capture into a temp dir via LINT_BASELINE_OUT so the run asserts the
@@ -22,7 +29,7 @@ describe("lint baseline capture", () => {
       expect(res.error).toBeUndefined();
       expect(res.status).toBe(0);
       expect(existsSync(out)).toBe(true);
-      const data = JSON.parse(readFileSync(out, "utf8"));
+      const data = JSON.parse(readFileSync(out, "utf8")) as BaselineFile;
       expect(typeof data.totals.errors).toBe("number");
       expect(typeof data.totals.warnings).toBe("number");
       expect(typeof data.byRule).toBe("object");

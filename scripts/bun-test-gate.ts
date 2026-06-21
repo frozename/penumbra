@@ -30,18 +30,28 @@ const res = spawnSync(
     stdio: ["inherit", "pipe", "pipe"],
   },
 );
-const raw = (res.stdout ?? "") + (res.stderr ?? "");
+const raw = res.stdout + res.stderr;
 // Echo the child's output so CI logs are unchanged.
-if (res.stdout) process.stdout.write(res.stdout);
-if (res.stderr) process.stderr.write(res.stderr);
+if (res.stdout) {
+  process.stdout.write(res.stdout);
+}
+if (res.stderr) {
+  process.stderr.write(res.stderr);
+}
 
 const code = res.status ?? 1;
-if (code === 0) process.exit(0);
+if (code === 0) {
+  process.exit(0);
+}
 
-const out = raw.replace(/\x1b\[[0-9;]*m/g, ""); // strip ANSI before parsing
+// Build the ANSI-escape pattern from String.fromCharCode so the source does
+// not contain a literal ESC control character (no-control-regex).
+const ANSI_PATTERN = new RegExp(`${String.fromCharCode(0x1b)}\\[[0-9;]*m`, "g");
+const out = raw.replaceAll(ANSI_PATTERN, ""); // strip ANSI before parsing
 const lastNum = (re: RegExp): number | null => {
-  const m = [...out.matchAll(re)].pop();
-  return m ? Number(m[1]) : null;
+  const matches = [...out.matchAll(re)];
+  const last = matches.at(-1);
+  return last ? Number(last[1]) : null;
 };
 const fails = lastNum(/(\d+)\s+fail\b/g);
 const errors = lastNum(/(\d+)\s+error\b/g) ?? 0;
@@ -50,12 +60,12 @@ const knownPanic = /Bun has crashed|panic\(main thread\)/.test(out);
 
 if (reachedSummary && fails === 0 && errors === 0 && knownPanic) {
   console.error(
-    `::warning:: bun test exited ${code} via the known NAPI-teardown panic, but reported 0 failures / 0 errors across all suites — treating as pass. See scripts/bun-test-gate.ts.`,
+    `::warning:: bun test exited ${String(code)} via the known NAPI-teardown panic, but reported 0 failures / 0 errors across all suites — treating as pass. See scripts/bun-test-gate.ts.`,
   );
   process.exit(0);
 }
 
 console.error(
-  `bun-test-gate: failing (exit ${code}; fails=${fails} errors=${errors} reachedSummary=${reachedSummary} knownPanic=${knownPanic}).`,
+  `bun-test-gate: failing (exit ${String(code)}; fails=${String(fails)} errors=${String(errors)} reachedSummary=${String(reachedSummary)} knownPanic=${String(knownPanic)}).`,
 );
 process.exit(code);

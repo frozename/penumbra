@@ -1,11 +1,17 @@
-import { describe, test, expect } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, rmSync, existsSync } from "fs";
-import { join } from "path";
-import { tmpdir } from "os";
+import { describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const SCRIPT = join(import.meta.dir, "check-dist-freshness.ts");
 
-function run(packagesDir: string, args: string[] = []) {
+type RunResult = {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+};
+
+function run(packagesDir: string, args: string[] = []): RunResult {
   const result = Bun.spawnSync({
     cmd: [process.execPath, SCRIPT, ...args],
     env: { ...process.env, PENUMBRA_PACKAGES_DIR: packagesDir },
@@ -13,25 +19,25 @@ function run(packagesDir: string, args: string[] = []) {
     stderr: "pipe",
   });
   return {
-    exitCode: result.exitCode ?? -1,
-    stdout: new TextDecoder().decode(result.stdout ?? new Uint8Array()).trim(),
-    stderr: new TextDecoder().decode(result.stderr ?? new Uint8Array()).trim(),
+    exitCode: result.exitCode,
+    stdout: new TextDecoder().decode(result.stdout).trim(),
+    stderr: new TextDecoder().decode(result.stderr).trim(),
   };
 }
 
-function setMtime(path: string, ms: number) {
+function setMtime(path: string, ms: number): void {
   const t = new Date(ms);
   utimesSync(path, t, t);
 }
 
-function mkPkg(root: string, name: string) {
+function mkPkg(root: string, name: string): string {
   const pkg = join(root, name);
   mkdirSync(join(pkg, "src"), { recursive: true });
   mkdirSync(join(pkg, "dist"), { recursive: true });
   return pkg;
 }
 
-function withTmp(fn: (root: string) => void) {
+function withTmp(fn: (root: string) => void): void {
   const root = mkdtempSync(join(tmpdir(), "dist-check-"));
   try {
     fn(root);

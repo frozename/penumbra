@@ -4,8 +4,8 @@ import { join } from "node:path";
 import {
   FEW_SHOT_EXAMPLES,
   REWRITE_RESPONSE_SCHEMA,
-  SYSTEM_PROMPT,
   type RewriteResponse,
+  SYSTEM_PROMPT,
 } from "../packages/daemon/src/dreaming/dream-rewriter-prompt-content.js";
 import { buildDreamQueryRewritePrompt } from "../packages/daemon/src/dreaming/dream-rewriter-prompt.js";
 import { llmInvoke } from "../packages/daemon/src/services/llm-invoke.js";
@@ -24,6 +24,11 @@ interface ModelConfig {
 }
 
 type PromptVariant = "current" | "revised";
+
+interface PromptMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
 
 interface CellResult {
   model_id: string;
@@ -79,31 +84,31 @@ const RAW_OUTPUT_PATH = join(
   `docs/notes/rewriter-bench-2026-05-25${OUTPUT_SUFFIX}-raw.json`,
 );
 
-function buildRevisedPrompt(input: { title: string; bodyFirst200: string }) {
+function buildRevisedPrompt(input: { title: string; bodyFirst200: string }): PromptMessage[] {
   const examples = [REVISED_FIRST_SHOT, ...FEW_SHOT_EXAMPLES.slice(1)];
   return [
-    { role: "system" as const, content: SYSTEM_PROMPT },
-    ...examples.flatMap((example) => [
+    { role: "system", content: SYSTEM_PROMPT },
+    ...examples.flatMap((example): PromptMessage[] => [
       {
-        role: "user" as const,
+        role: "user",
         content: JSON.stringify({
           title: example.input.title,
           body_first_200: example.input.body_first_200,
         }),
       },
       {
-        role: "assistant" as const,
+        role: "assistant",
         content: JSON.stringify(example.output),
       },
     ]),
     {
-      role: "user" as const,
+      role: "user",
       content: JSON.stringify({ title: input.title, body_first_200: input.bodyFirst200 }),
     },
   ];
 }
 
-function buildPrompt(variant: PromptVariant, caseItem: EvalCase) {
+function buildPrompt(variant: PromptVariant, caseItem: EvalCase): PromptMessage[] {
   if (variant === "current") {
     return buildDreamQueryRewritePrompt({
       title: caseItem.title,
@@ -115,6 +120,41 @@ function buildPrompt(variant: PromptVariant, caseItem: EvalCase) {
     title: caseItem.title,
     bodyFirst200: caseItem.body_first_200,
   });
+}
+
+function parseEvalLine(line: string, lineNumber: number): EvalCase {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch (error) {
+    throw new Error(
+      `Invalid JSON in ${EVAL_PATH} line ${String(lineNumber)}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error(`Malformed eval row at ${EVAL_PATH} line ${String(lineNumber)}`);
+  }
+  const obj = parsed as Record<string, unknown>;
+  if (
+    typeof obj.id !== "string" ||
+    typeof obj.title !== "string" ||
+    typeof obj.body_first_200 !== "string" ||
+    typeof obj.expected_verdict !== "string"
+  ) {
+    throw new Error(`Malformed eval row at ${EVAL_PATH} line ${String(lineNumber)}`);
+  }
+  const expected = obj.expected_verdict;
+  if (expected !== "skip" && expected !== "query") {
+    throw new Error(
+      `Invalid expected_verdict "${expected}" at ${EVAL_PATH} line ${String(lineNumber)}`,
+    );
+  }
+  return {
+    id: obj.id,
+    title: obj.title,
+    body_first_200: obj.body_first_200,
+    expected_verdict: expected,
+  };
 }
 
 function loadEvalCases(): EvalCase[] {
@@ -129,36 +169,7 @@ function loadEvalCases(): EvalCase[] {
     if (!line.trim()) {
       continue;
     }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line);
-    } catch (error) {
-      throw new Error(
-        `Invalid JSON in ${EVAL_PATH} line ${index + 1}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      typeof (parsed as { id?: unknown }).id !== "string" ||
-      typeof (parsed as { title?: unknown }).title !== "string" ||
-      typeof (parsed as { body_first_200?: unknown }).body_first_200 !== "string" ||
-      typeof (parsed as { expected_verdict?: unknown }).expected_verdict !== "string"
-    ) {
-      throw new Error(`Malformed eval row at ${EVAL_PATH} line ${index + 1}`);
-    }
-
-    const expected = (parsed as { expected_verdict: string }).expected_verdict;
-    if (expected !== "skip" && expected !== "query") {
-      throw new Error(`Invalid expected_verdict "${expected}" at ${EVAL_PATH} line ${index + 1}`);
-    }
-
-    cases.push({
-      id: (parsed as { id: string }).id,
-      title: (parsed as { title: string }).title,
-      body_first_200: (parsed as { body_first_200: string }).body_first_200,
-      expected_verdict: expected,
-    });
+    cases.push(parseEvalLine(line, index + 1));
   }
 
   return cases;
@@ -232,18 +243,120 @@ function renderCellResult(expected: RewriteResponse["kind"], result: CellResult)
   return `${result.verdict === expected ? "✅" : "❌"} ${result.verdict}`;
 }
 
-function formatPercent(n: number, d: number) {
+function formatPercent(n: number, d: number): string {
   if (d === 0) {
     return "0/0";
   }
-  return `${n}/${d}`;
+  return `${String(n)}/${String(d)}`;
 }
 
-function average(values: number[]) {
+function average(values: number[]): number {
   if (values.length === 0) {
     return 0;
   }
   return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+}
+
+function buildSummaryRow(
+  model: ModelConfig,
+  variant: PromptVariant,
+  results: CellResult[],
+  cases: EvalCase[],
+): string {
+  const scoped = results.filter((r) => r.model_id === model.id && r.variant === variant);
+  const errors = scoped.filter((item) => item.error !== null).length;
+  const skipCases = cases.filter((item) => bucketFor(item) === "skip");
+  const queryCases = cases.filter((item) => bucketFor(item) === "query");
+  const borderlineCases = cases.filter((item) => bucketFor(item) === "borderline");
+  const correctForBucket = (bucket: "skip" | "query" | "borderline"): number =>
+    scoped.filter(
+      (item) =>
+        cases.find((c) => c.id === item.case_id && bucketFor(c) === bucket) !== undefined &&
+        item.correct,
+    ).length;
+  const correct = scoped.filter((item) => item.correct).length;
+  const latency = average(scoped.map((item) => item.latency_ms));
+
+  return `| ${model.id} | ${variant} | ${formatPercent(correct, cases.length)} | ${String(errors)} | ${formatPercent(
+    correctForBucket("skip"),
+    skipCases.length,
+  )} | ${formatPercent(correctForBucket("query"), queryCases.length)} | ${formatPercent(
+    correctForBucket("borderline"),
+    borderlineCases.length,
+  )} | ${String(latency)} |`;
+}
+
+function buildPerCaseSection(
+  variant: PromptVariant,
+  results: CellResult[],
+  cases: EvalCase[],
+): string {
+  const lines = [
+    `## Per-case results (${variant} prompt)`,
+    "",
+    "| Case ID | Expected | granite-4.1-3b | qwen3.6-35b-a3b |",
+    "|---|---|---|---|",
+  ];
+  for (const caseItem of cases) {
+    const byModel = (modelId: string): CellResult | undefined =>
+      results.find(
+        (r) => r.case_id === caseItem.id && r.model_id === modelId && r.variant === variant,
+      );
+
+    const granite = byModel("granite-4.1-3b");
+    const qwen = byModel("qwen3.6-35b-a3b");
+
+    lines.push(
+      `| ${caseItem.id} | ${caseItem.expected_verdict} | ${
+        granite ? renderCellResult(caseItem.expected_verdict, granite) : "n/a"
+      } | ${qwen ? renderCellResult(caseItem.expected_verdict, qwen) : "n/a"} |`,
+    );
+  }
+  return lines.join("\n");
+}
+
+function renderDisagreementRow(out: string[], row: CellResult): void {
+  out.push(`- ${row.model_id} (${row.variant}):`);
+  out.push(`  - verdict: ${row.verdict ?? "error"}`);
+  out.push(`  - query_or_reason: ${row.query_or_reason || "(empty)"}`);
+  if (row.error !== null) {
+    out.push(`  - error: ${row.error}`);
+  }
+  out.push("  - raw:");
+  out.push("    ```text");
+  out.push(row.raw ? row.raw : "(no raw output)");
+  out.push("    ```");
+}
+
+function buildDisagreementSection(results: CellResult[], cases: EvalCase[]): string[] {
+  const disagreementRows = results.filter(
+    (r) => r.error !== null || r.verdict !== r.expected_verdict,
+  );
+  const out = ["## Disagreements with expected", ""];
+  if (disagreementRows.length === 0) {
+    out.push("No disagreements against expected.");
+    return out;
+  }
+  const byCase = new Map<string, CellResult[]>();
+  for (const row of disagreementRows) {
+    const existing = byCase.get(row.case_id);
+    if (existing) {
+      existing.push(row);
+    } else {
+      byCase.set(row.case_id, [row]);
+    }
+  }
+
+  for (const [caseId, rows] of byCase) {
+    const expected = cases.find((item) => item.id === caseId)?.expected_verdict ?? "unknown";
+    out.push(`### ${caseId}`);
+    out.push(`- expected: ${expected}`);
+    for (const row of rows) {
+      renderDisagreementRow(out, row);
+    }
+    out.push("");
+  }
+  return out;
 }
 
 function buildMarkdownOutput(results: CellResult[], cases: EvalCase[]): string {
@@ -257,106 +370,21 @@ function buildMarkdownOutput(results: CellResult[], cases: EvalCase[]): string {
   const summaryRows: string[] = [];
   for (const model of MODELS) {
     for (const variant of PROMPT_VARIANTS) {
-      const scoped = results.filter((r) => r.model_id === model.id && r.variant === variant);
-      const errors = scoped.filter((item) => item.error !== null).length;
-      const skipCases = cases.filter((item) => bucketFor(item) === "skip");
-      const queryCases = cases.filter((item) => bucketFor(item) === "query");
-      const borderlineCases = cases.filter((item) => bucketFor(item) === "borderline");
-      const correctSkip = scoped.filter(
-        (item) =>
-          cases.find((c) => c.id === item.case_id && bucketFor(c) === "skip")?.id && item.correct,
-      ).length;
-      const correctQuery = scoped.filter(
-        (item) =>
-          cases.find((c) => c.id === item.case_id && bucketFor(c) === "query")?.id && item.correct,
-      ).length;
-      const correctBorderline = scoped.filter(
-        (item) =>
-          cases.find((c) => c.id === item.case_id && bucketFor(c) === "borderline")?.id &&
-          item.correct,
-      ).length;
-      const correct = scoped.filter((item) => item.correct).length;
-      const latency = average(scoped.map((item) => item.latency_ms));
-
-      summaryRows.push(
-        `| ${model.id} | ${variant} | ${formatPercent(correct, cases.length)} | ${errors} | ${formatPercent(
-          correctSkip,
-          skipCases.length,
-        )} | ${formatPercent(correctQuery, queryCases.length)} | ${formatPercent(
-          correctBorderline,
-          borderlineCases.length,
-        )} | ${latency} |`,
-      );
+      summaryRows.push(buildSummaryRow(model, variant, results, cases));
     }
   }
 
-  const perCaseSections = PROMPT_VARIANTS.map((variant) => {
-    const lines = [
-      `## Per-case results (${variant} prompt)`,
-      "",
-      "| Case ID | Expected | granite-4.1-3b | qwen3.6-35b-a3b |",
-      "|---|---|---|---|",
-    ];
-    for (const caseItem of cases) {
-      const byModel = (modelId: string) =>
-        results.find(
-          (r) => r.case_id === caseItem.id && r.model_id === modelId && r.variant === variant,
-        );
-
-      const granite = byModel("granite-4.1-3b");
-      const qwen = byModel("qwen3.6-35b-a3b");
-
-      lines.push(
-        `| ${caseItem.id} | ${caseItem.expected_verdict} | ${
-          granite ? renderCellResult(caseItem.expected_verdict, granite) : "n/a"
-        } | ${qwen ? renderCellResult(caseItem.expected_verdict, qwen) : "n/a"} |`,
-      );
-    }
-    return lines.join("\n");
-  });
-
-  const disagreementRows = results.filter(
-    (r) => r.error !== null || r.verdict !== r.expected_verdict,
+  const perCaseSections = PROMPT_VARIANTS.map((variant) =>
+    buildPerCaseSection(variant, results, cases),
   );
-  const disagreementsHeader = ["## Disagreements with expected", ""];
-  if (disagreementRows.length === 0) {
-    disagreementsHeader.push("No disagreements against expected.");
-  } else {
-    const byCase = new Map<string, CellResult[]>();
-    for (const row of disagreementRows) {
-      const existing = byCase.get(row.case_id);
-      if (existing) {
-        existing.push(row);
-      } else {
-        byCase.set(row.case_id, [row]);
-      }
-    }
 
-    for (const [caseId, rows] of byCase) {
-      const expected = cases.find((item) => item.id === caseId)?.expected_verdict ?? "unknown";
-      disagreementsHeader.push(`### ${caseId}`);
-      disagreementsHeader.push(`- expected: ${expected}`);
-      for (const row of rows) {
-        disagreementsHeader.push(`- ${row.model_id} (${row.variant}):`);
-        disagreementsHeader.push(`  - verdict: ${row.verdict ?? "error"}`);
-        disagreementsHeader.push(`  - query_or_reason: ${row.query_or_reason || "(empty)"}`);
-        if (row.error !== null) {
-          disagreementsHeader.push(`  - error: ${row.error}`);
-        }
-        disagreementsHeader.push("  - raw:");
-        disagreementsHeader.push("    ```text");
-        disagreementsHeader.push(row.raw ? row.raw : "(no raw output)");
-        disagreementsHeader.push("    ```");
-      }
-      disagreementsHeader.push("");
-    }
-  }
+  const disagreementsBlock = buildDisagreementSection(results, cases);
 
   return [
     "# Rewriter A/B benchmark — 2026-05-25",
     "",
     `Run: ${now}`,
-    `Eval cases: ${cases.length} (${caseCounts.skip} skip / ${caseCounts.query} query / ${caseCounts.borderline} borderline)`,
+    `Eval cases: ${String(cases.length)} (${String(caseCounts.skip)} skip / ${String(caseCounts.query)} query / ${String(caseCounts.borderline)} borderline)`,
     "",
     "## Summary",
     "",
@@ -364,33 +392,37 @@ function buildMarkdownOutput(results: CellResult[], cases: EvalCase[]): string {
     "|---|---|---|---|---|---|---|---|",
     ...summaryRows,
     "",
-    perCaseSections[0],
+    perCaseSections[0] ?? "",
     "",
-    perCaseSections[1],
+    perCaseSections[1] ?? "",
     "",
-    ...disagreementsHeader,
+    ...disagreementsBlock,
     "",
   ].join("\n");
 }
 
-async function runSmokeCheck(cases: EvalCase[]) {
+async function runSmokeCheck(cases: EvalCase[]): Promise<void> {
   const smokeCase =
     cases.find((item) => item.id === "skip-code-identifier") ??
     cases.find((item) => item.expected_verdict === "skip");
   if (!smokeCase) {
     throw new Error("No skip-class case available for smoke test");
   }
-  const result = await runCase(MODELS[0], "current", smokeCase);
+  const firstModel = MODELS[0];
+  if (!firstModel) {
+    throw new Error("No model configured for smoke test");
+  }
+  const result = await runCase(firstModel, "current", smokeCase);
   if (result.error !== null || result.verdict !== "skip") {
     throw new Error(
-      `Smoke test failed for ${smokeCase.id} on ${MODELS[0].id}: verdict=${result.verdict ?? "error"}, error=${
+      `Smoke test failed for ${smokeCase.id} on ${firstModel.id}: verdict=${result.verdict ?? "error"}, error=${
         result.error ?? "none"
       }`,
     );
   }
 }
 
-async function main() {
+async function main(): Promise<void> {
   const cases = loadEvalCases();
   await runSmokeCheck(cases);
 
@@ -410,7 +442,7 @@ async function main() {
   writeFileSync(RAW_OUTPUT_PATH, JSON.stringify(allResults, null, 2));
 }
 
-main().catch((error) => {
+main().catch((error: unknown) => {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 });

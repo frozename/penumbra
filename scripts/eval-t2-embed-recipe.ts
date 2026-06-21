@@ -1,14 +1,15 @@
 import { Database } from "bun:sqlite";
 import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
+
 import { loadSqliteVec } from "../packages/core/src/db/sqlite-vec.js";
+import { BundledEmbedder } from "../packages/core/src/embedder/bundled.js";
 import {
-  evaluateCandidatesFromFixtures,
   type CandidateKey,
   type EmbedRecipeRow,
+  evaluateCandidatesFromFixtures,
   writeDecision,
 } from "../packages/core/test/readers/embed-recipe-bench.js";
-import { BundledEmbedder } from "../packages/core/src/embedder/bundled.js";
 
 try {
   if (process.platform === "darwin") {
@@ -49,7 +50,7 @@ async function captureFixtures(db: Database): Promise<{
         ORDER BY query_text COLLATE NOCASE ASC`,
     )
     .all();
-  const queries = queryRows.map((r) => r.query_text);
+  const queries: string[] = queryRows.map((r) => r.query_text);
 
   const activeWithVec = db
     .query<T2MemoryRow, []>(
@@ -83,6 +84,9 @@ async function captureFixtures(db: Database): Promise<{
   const poolIds = new Set<string>();
   for (const queryText of queries) {
     const [qvec] = await embedder.embed([queryText]);
+    if (!qvec) {
+      continue;
+    }
     const top = db
       .query<{ id: string }, [Float32Array]>(
         `SELECT m.memory_id AS id
@@ -93,8 +97,10 @@ async function captureFixtures(db: Database): Promise<{
             AND m.retired_at IS NULL
           ORDER BY v.distance ASC`,
       )
-      .all(qvec!);
-    for (const hit of top) poolIds.add(hit.id);
+      .all(qvec);
+    for (const hit of top) {
+      poolIds.add(hit.id);
+    }
   }
 
   const weakRows = activeWithVec.filter((row) => !recalledIds.has(row.id) && !poolIds.has(row.id));
@@ -117,20 +123,30 @@ function chooseDecision(scorecard: Awaited<ReturnType<typeof evaluateCandidatesF
     throw new Error("No runnable candidates. Ensure at least AllMiniLML6V2 is available.");
   }
 
-  const passing = runnable.filter((row) => (row.weakLift ?? -Infinity) >= 40 && (row.regressionCount ?? Infinity) <= 5);
-  const sortBest = (a: (typeof runnable)[number], b: (typeof runnable)[number]) =>
+  const passing = runnable.filter(
+    (row) => (row.weakLift ?? -Infinity) >= 40 && (row.regressionCount ?? Infinity) <= 5,
+  );
+  const sortBest = (a: (typeof runnable)[number], b: (typeof runnable)[number]): number =>
     (b.weakLift ?? -Infinity) - (a.weakLift ?? -Infinity) ||
     (a.regressionCount ?? Infinity) - (b.regressionCount ?? Infinity) ||
     a.key.localeCompare(b.key);
 
   if (passing.length > 0) {
     passing.sort(sortBest);
-    return { key: passing[0]!.key };
+    const best = passing[0];
+    if (!best) {
+      throw new Error("expected at least one passing candidate");
+    }
+    return { key: best.key };
   }
 
   runnable.sort(sortBest);
+  const fallback = runnable[0];
+  if (!fallback) {
+    throw new Error("expected at least one runnable candidate");
+  }
   return {
-    key: runnable[0]!.key,
+    key: fallback.key,
     note: "No candidate met weakLift>=40 and regressionCount<=5 in this run; selected best available runnable candidate.",
   };
 }
@@ -143,10 +159,22 @@ async function main(): Promise<void> {
   loadSqliteVec(db);
   try {
     const fixtures = await captureFixtures(db);
-    await Bun.write(join(FIXTURE_DIR, "weak-rows.json"), `${JSON.stringify(fixtures.weakRows, null, 2)}\n`);
-    await Bun.write(join(FIXTURE_DIR, "golden-rows.json"), `${JSON.stringify(fixtures.goldenRows, null, 2)}\n`);
-    await Bun.write(join(FIXTURE_DIR, "corpus-rows.json"), `${JSON.stringify(fixtures.corpusRows, null, 2)}\n`);
-    await Bun.write(join(FIXTURE_DIR, "queries.json"), `${JSON.stringify(fixtures.queries, null, 2)}\n`);
+    await Bun.write(
+      join(FIXTURE_DIR, "weak-rows.json"),
+      `${JSON.stringify(fixtures.weakRows, null, 2)}\n`,
+    );
+    await Bun.write(
+      join(FIXTURE_DIR, "golden-rows.json"),
+      `${JSON.stringify(fixtures.goldenRows, null, 2)}\n`,
+    );
+    await Bun.write(
+      join(FIXTURE_DIR, "corpus-rows.json"),
+      `${JSON.stringify(fixtures.corpusRows, null, 2)}\n`,
+    );
+    await Bun.write(
+      join(FIXTURE_DIR, "queries.json"),
+      `${JSON.stringify(fixtures.queries, null, 2)}\n`,
+    );
 
     const scorecard = await evaluateCandidatesFromFixtures(fixtures);
     const decision = chooseDecision(scorecard);
@@ -156,7 +184,7 @@ async function main(): Promise<void> {
       note: decision.note,
     });
 
-    console.log(
+    process.stdout.write(
       JSON.stringify(
         {
           dbPath,
@@ -170,7 +198,7 @@ async function main(): Promise<void> {
         },
         null,
         2,
-      ),
+      ) + "\n",
     );
   } finally {
     db.close();
