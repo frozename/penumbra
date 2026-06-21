@@ -1,17 +1,18 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
 import {
   dimColor,
-  truncateId,
-  formatElapsed,
-  glyphFor,
+  formatChainGetResponse,
   formatChainStart,
   formatChainStatus,
   formatChainWait,
-  formatChainGetResponse,
+  formatElapsed,
   formatHandoffGet,
   formatHandoffListPending,
-  formatPermissionListPending,
   formatPermissionApprove,
+  formatPermissionListPending,
+  glyphFor,
+  truncateId,
   wrapWithSummary,
 } from "../src/format-summary.js";
 
@@ -103,7 +104,7 @@ describe("per-tool formatters", () => {
         resolved_at: new Date().toISOString(),
         error_summary: null,
       }),
-    ).toMatch(/^● chain_status  h-7d3a91a…  completed on worker-b  /);
+    ).toMatch(/^● chain_status {2}h-7d3a91a… {2}completed on worker-b {2}/);
   });
 
   test("formatChainWait", () => {
@@ -175,7 +176,7 @@ describe("per-tool formatters", () => {
           { permission_id: "p2", requested_at: new Date(Date.now() - 60_000).toISOString() },
         ],
       }),
-    ).toMatch(/^◐ permission_list_pending  2 pending  oldest 12m/);
+    ).toMatch(/^◐ permission_list_pending {2}2 pending {2}oldest 12m/);
   });
 
   test("formatPermissionListPending empty", () => {

@@ -1,8 +1,9 @@
-import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { afterEach, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { withDaemonDb } from "../src/runtime-db.js";
 
 const ORIGINAL_HOME = process.env.HOME;
@@ -31,10 +32,13 @@ test("withDaemonDb applies a non-zero busy_timeout pragma to the opened connecti
   process.env.PENUMBRA_STORAGE_ROOT = storageRoot;
 
   try {
-    const observed = await withDaemonDb(async (db) => {
+    const observed = await withDaemonDb((db) => {
       const busyTimeoutRow = db.query("PRAGMA busy_timeout").get() as { timeout: number };
       const journalRow = db.query("PRAGMA journal_mode").get() as { journal_mode: string };
-      return { busyTimeout: busyTimeoutRow.timeout, journalMode: journalRow.journal_mode };
+      return Promise.resolve({
+        busyTimeout: busyTimeoutRow.timeout,
+        journalMode: journalRow.journal_mode,
+      });
     });
     expect(observed.busyTimeout).toBeGreaterThan(0);
     expect(observed.journalMode.toLowerCase()).toBe("wal");

@@ -1,5 +1,9 @@
 import { afterEach, expect, mock, test } from "bun:test";
+
 import { DaemonClient, DaemonHttpError } from "../src/daemon-client.js";
+
+type FetchInput = Parameters<typeof fetch>[0];
+type FetchInit = Parameters<typeof fetch>[1];
 
 const originalFetch = globalThis.fetch;
 
@@ -8,19 +12,37 @@ afterEach(() => {
 });
 
 function mockFetch(handler: typeof fetch): void {
-  globalThis.fetch = handler as any;
+  globalThis.fetch = handler;
+}
+
+function readUrl(input: FetchInput): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+}
+
+function readBody(init?: FetchInit): string {
+  const body = init?.body;
+  if (typeof body !== "string") {
+    throw new Error("expected string body in test fetch mock");
+  }
+  return body;
+}
+
+function readJsonBody(init?: FetchInit): unknown {
+  return JSON.parse(readBody(init));
 }
 
 test("observe POSTs to /observations with bearer token", async () => {
   let received: { url: string; headers: HeadersInit; body: unknown } | null = null;
   mockFetch(
-    mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    mock((input: FetchInput, init?: FetchInit) => {
       received = {
-        url: String(input),
+        url: readUrl(input),
         headers: init?.headers ?? {},
-        body: JSON.parse(String(init?.body)),
+        body: readJsonBody(init),
       };
-      return Response.json({ event_id: "x" });
+      return Promise.resolve(Response.json({ event_id: "x" }));
     }),
   );
   const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
@@ -34,50 +56,61 @@ test("observe POSTs to /observations with bearer token", async () => {
     machine_id: "m1",
   });
   expect(r.event_id).toBe("x");
-  expect(received?.url).toBe("http://localhost:1234/observations");
-  expect((received?.headers as Record<string, string>).authorization).toBe("Bearer tk");
+  expect(received).not.toBeNull();
+  const captured = received as unknown as { url: string; headers: Record<string, string> };
+  expect(captured.url).toBe("http://localhost:1234/observations");
+  expect(captured.headers.authorization).toBe("Bearer tk");
 });
 
 test("recall POSTs to /recall and returns results", async () => {
   mockFetch(
-    mock(async () =>
-      Response.json({
-        results: [
-          {
-            id: "a",
-            tier: "t1",
-            score: 0.9,
-            body: "x",
-            title: null,
-            project_id: null,
-            source_session_ids: [],
-            created_at: "now",
-          },
-        ],
-      }),
+    mock(() =>
+      Promise.resolve(
+        Response.json({
+          results: [
+            {
+              id: "a",
+              tier: "t1",
+              score: 0.9,
+              body: "x",
+              title: null,
+              project_id: null,
+              source_session_ids: [],
+              created_at: "now",
+            },
+          ],
+        }),
+      ),
     ),
   );
   const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
   const r = await c.recall({ query: "q", project_id: null });
-  expect(r.results[0]!.id).toBe("a");
+  expect(r.results[0]?.id).toBe("a");
 });
 
 test("recall throws on non-2xx", async () => {
-  mockFetch(mock(async () => new Response("boom", { status: 500 })));
+  mockFetch(mock(() => Promise.resolve(new Response("boom", { status: 500 }))));
   const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
-  await expect(c.recall({ query: "q", project_id: null })).rejects.toThrow(/HTTP 500/);
+  let thrown: unknown = null;
+  try {
+    await c.recall({ query: "q", project_id: null });
+  } catch (err) {
+    thrown = err;
+  }
+  expect(thrown).toBeInstanceOf(Error);
+  expect((thrown as Error).message).toMatch(/HTTP 500/);
 });
 
 test("resolves baseUrl/token lazily so daemon restarts at a new port stay reachable", async () => {
   const seen: string[] = [];
   mockFetch(
-    mock(async (input: RequestInfo | URL) => {
-      seen.push(String(input));
-      return Response.json({ ok: true });
+    mock((input: FetchInput) => {
+      seen.push(readUrl(input));
+      return Promise.resolve(Response.json({ ok: true }));
     }),
   );
   let current = { baseUrl: "http://localhost:1234", token: "tk1" };
-  const c = new DaemonClient({ resolve: () => current });
+  const c = new DaemonClient({ resolve: (): { baseUrl: string; token: string } => current });
   await c.endSession("s1");
   current = { baseUrl: "http://localhost:4321", token: "tk2" };
   const r = await c.endSession("s2");
@@ -89,26 +122,33 @@ test("resolves baseUrl/token lazily so daemon restarts at a new port stay reacha
 });
 
 test("endSession POSTs to /sessions/end with session_id body", async () => {
-  let received: { url: string; body: unknown } | null = null;
+  let received: { url: string; body: { session_id: string } } | null = null;
   mockFetch(
-    mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      received = { url: new URL(String(input)).pathname, body: JSON.parse(String(init?.body)) };
-      return Response.json({ ok: true });
+    mock((input: FetchInput, init?: FetchInit) => {
+      received = {
+        url: new URL(readUrl(input)).pathname,
+        body: readJsonBody(init) as { session_id: string },
+      };
+      return Promise.resolve(Response.json({ ok: true }));
     }),
   );
   const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
   const r = await c.endSession("sess-123");
-  expect(received!.url).toBe("/sessions/end");
-  expect((received!.body as { session_id: string }).session_id).toBe("sess-123");
+  expect(received).not.toBeNull();
+  const captured = received as unknown as { url: string; body: { session_id: string } };
+  expect(captured.url).toBe("/sessions/end");
+  expect(captured.body.session_id).toBe("sess-123");
   expect(r.ok).toBe(true);
 });
 
 test("listChainAgents GETs /chains/agents and returns ordered names", async () => {
   let receivedPath: string | null = null;
   mockFetch(
-    mock(async (input: RequestInfo | URL) => {
-      receivedPath = new URL(String(input)).pathname;
-      return Response.json({ agents: [{ name: "planner" }, { name: "executor" }] });
+    mock((input: FetchInput) => {
+      receivedPath = new URL(readUrl(input)).pathname;
+      return Promise.resolve(
+        Response.json({ agents: [{ name: "planner" }, { name: "executor" }] }),
+      );
     }),
   );
   const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
@@ -120,9 +160,11 @@ test("listChainAgents GETs /chains/agents and returns ordered names", async () =
 test("reconcilerSweepOrphanPrs POSTs to /reconciler/sweep-orphan-prs", async () => {
   let received: { path: string; body: unknown } | null = null;
   mockFetch(
-    mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      received = { path: new URL(String(input)).pathname, body: JSON.parse(String(init?.body)) };
-      return Response.json({ scanned: 3, superseded: 1, stale: 1, errored: 0, actions: [] });
+    mock((input: FetchInput, init?: FetchInit) => {
+      received = { path: new URL(readUrl(input)).pathname, body: readJsonBody(init) };
+      return Promise.resolve(
+        Response.json({ scanned: 3, superseded: 1, stale: 1, errored: 0, actions: [] }),
+      );
     }),
   );
   const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
@@ -135,10 +177,10 @@ test("reconcilerSweepOrphanPrs POSTs to /reconciler/sweep-orphan-prs", async () 
 test("reconcilerVerdicts GETs /reconciler/verdicts with filters", async () => {
   let received: { path: string; search: string } | null = null;
   mockFetch(
-    mock(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input));
+    mock((input: FetchInput) => {
+      const url = new URL(readUrl(input));
       received = { path: url.pathname, search: url.search };
-      return Response.json({ verdicts: [] });
+      return Promise.resolve(Response.json({ verdicts: [] }));
     }),
   );
   const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
@@ -157,24 +199,28 @@ test("reconcilerVerdicts GETs /reconciler/verdicts with filters", async () => {
 test("getFederationTools GETs the agent federation tools route with bearer auth", async () => {
   let received: { path: string; headers: Headers } | null = null;
   mockFetch(
-    mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      received = { path: new URL(String(input)).pathname, headers: new Headers(init?.headers) };
-      return Response.json({ tools: [{ name: "ha:state_get", description: "x" }] });
+    mock((input: FetchInput, init?: FetchInit) => {
+      received = { path: new URL(readUrl(input)).pathname, headers: new Headers(init?.headers) };
+      return Promise.resolve(
+        Response.json({ tools: [{ name: "ha:state_get", description: "x" }] }),
+      );
     }),
   );
   const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
   const result = await c.getFederationTools("agent-1");
-  expect(received?.path).toBe("/long-lived/agents/agent-1/federation-tools");
-  expect(received?.headers.get("authorization")).toBe("Bearer tk");
+  expect(received).not.toBeNull();
+  const captured = received as unknown as { path: string; headers: Headers };
+  expect(captured.path).toBe("/long-lived/agents/agent-1/federation-tools");
+  expect(captured.headers.get("authorization")).toBe("Bearer tk");
   expect(result).toEqual({ tools: [{ name: "ha:state_get", description: "x" }] });
 });
 
 test("longLivedStateSet POSTs to /long-lived/<id>/state with body wrapped under partial", async () => {
   let received: { path: string; body: unknown } | null = null;
   mockFetch(
-    mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      received = { path: new URL(String(input)).pathname, body: JSON.parse(String(init?.body)) };
-      return Response.json({ ok: true });
+    mock((input: FetchInput, init?: FetchInit) => {
+      received = { path: new URL(readUrl(input)).pathname, body: readJsonBody(init) };
+      return Promise.resolve(Response.json({ ok: true }));
     }),
   );
   const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
@@ -186,17 +232,19 @@ test("longLivedStateSet POSTs to /long-lived/<id>/state with body wrapped under 
 test("dispatchLand throws DaemonHttpError when the async task reports status=failed", async () => {
   let postCount = 0;
   mockFetch(
-    mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = new URL(String(input));
+    mock((input: FetchInput, init?: FetchInit) => {
+      const url = new URL(readUrl(input));
       if (init?.method === "POST" && url.pathname === "/dispatch/land") {
         postCount += 1;
-        return Response.json({ task_id: "task-async-1" }, { status: 202 });
+        return Promise.resolve(Response.json({ task_id: "task-async-1" }, { status: 202 }));
       }
       if (url.pathname === "/dispatch/land/task-async-1") {
-        return Response.json({
-          status: "failed",
-          error: { code: "lifecycle_busy", message: "another land in flight" },
-        });
+        return Promise.resolve(
+          Response.json({
+            status: "failed",
+            error: { code: "lifecycle_busy", message: "another land in flight" },
+          }),
+        );
       }
       throw new Error(`unexpected fetch: ${url.pathname}`);
     }),
@@ -220,9 +268,9 @@ test("dispatchLand throws DaemonHttpError when the async task reports status=fai
 test("mcpCall POSTs to /long-lived/mcp/call with the request body", async () => {
   let received: unknown = null;
   mockFetch(
-    mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      received = JSON.parse(String(init?.body));
-      return Response.json({ action_status: "executed", result: { ok: true } });
+    mock((_input: FetchInput, init?: FetchInit) => {
+      received = readJsonBody(init);
+      return Promise.resolve(Response.json({ action_status: "executed", result: { ok: true } }));
     }),
   );
   const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });

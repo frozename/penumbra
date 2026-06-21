@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
+
 import {
+  type InvocationSummaryInputRow,
   parseLines,
   summarize,
-  type InvocationSummaryInputRow,
 } from "../src/invocation-summary.js";
 
 const ROWS: InvocationSummaryInputRow[] = [

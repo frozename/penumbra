@@ -1,16 +1,17 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { connectInMemory } from "./helpers.js";
-import { DaemonClient } from "../src/daemon-client.js";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
+import { conversationsCancelRoute } from "../../daemon/src/routes/conversations.js";
 import {
-  handoffsCreateRoute,
   handoffsApproveRoute,
   handoffsCompleteRoute,
+  handoffsCreateRoute,
   handoffsGetRoute,
 } from "../../daemon/src/routes/handoffs.js";
-import { conversationsCancelRoute } from "../../daemon/src/routes/conversations.js";
+import { DaemonClient } from "../src/daemon-client.js";
+import { connectInMemory, fakeDaemon, firstJson, firstText } from "./helpers.js";
 
 try {
   if (process.platform === "darwin") {
@@ -33,7 +34,7 @@ function tempServices(): Services {
     clock: () => new Date("2026-04-27T00:00:00Z"),
     uuid: (() => {
       let n = 0;
-      return () => `h-${++n}`;
+      return (): string => `h-${String(++n)}`;
     })(),
   });
 }
@@ -52,23 +53,28 @@ async function createHandoff(services: Services, conversation_id: string): Promi
     }),
     services,
   );
-  const body = await res.json();
-  return body.handoff_id as string;
+  const body = (await res.json()) as { handoff_id: string };
+  return body.handoff_id;
 }
 
-function startDaemon(services: Services) {
+interface ServeHandle {
+  port: number;
+  stop(closeActiveConnections?: boolean): void;
+}
+
+function startDaemon(services: Services): ServeHandle {
   return Bun.serve({
     port: 0,
     fetch: async (req) => {
       const url = new URL(req.url);
       if (req.method === "GET" && url.pathname.startsWith("/handoffs/")) {
         const handoff_id = decodeURIComponent(url.pathname.slice("/handoffs/".length));
-        return handoffsGetRoute(req, handoff_id, services);
+        return await handoffsGetRoute(req, handoff_id, services);
       }
 
-      const cancelMatch = url.pathname.match(/^\/conversations\/([^/]+)\/cancel$/);
+      const cancelMatch = /^\/conversations\/([^/]+)\/cancel$/.exec(url.pathname);
       if (req.method === "POST" && cancelMatch) {
-        return conversationsCancelRoute(req, decodeURIComponent(cancelMatch[1]!), services);
+        return await conversationsCancelRoute(req, decodeURIComponent(cancelMatch[1]!), services);
       }
 
       return Response.json(
@@ -76,7 +82,7 @@ function startDaemon(services: Services) {
         { status: 404 },
       );
     },
-  });
+  }) as unknown as ServeHandle;
 }
 
 test("chain.cancel on a dispatched handoff returns cancel_requested and persists cancel_requested_at", async () => {
@@ -92,13 +98,16 @@ test("chain.cancel on a dispatched handoff returns cancel_requested and persists
   const srv = startDaemon(services);
   let client: Awaited<ReturnType<typeof connectInMemory>> | undefined;
   try {
-    const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: "t" });
+    const daemon = new DaemonClient({
+      baseUrl: `http://localhost:${String(srv.port)}`,
+      token: "t",
+    });
     client = await connectInMemory(daemon);
     const out = await client.callTool({
       name: "chain_cancel",
       arguments: { handoff_id },
     });
-    const parsed = JSON.parse((out.content as any[])[0]!.text);
+    const parsed = firstJson(out);
 
     expect(parsed).toEqual({ status: "cancel_requested", current_status: "dispatched" });
     expect(services.handoffReader.get(handoff_id)?.cancel_requested_at).toBe(
@@ -158,13 +167,16 @@ test("chain.cancel on a completed handoff returns already_terminal", async () =>
   const srv = startDaemon(services);
   let client: Awaited<ReturnType<typeof connectInMemory>> | undefined;
   try {
-    const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: "t" });
+    const daemon = new DaemonClient({
+      baseUrl: `http://localhost:${String(srv.port)}`,
+      token: "t",
+    });
     client = await connectInMemory(daemon);
     const out = await client.callTool({
       name: "chain_cancel",
       arguments: { handoff_id },
     });
-    const parsed = JSON.parse((out.content as any[])[0]!.text);
+    const parsed = firstJson(out);
 
     expect(parsed).toEqual({ status: "already_terminal", current_status: "completed" });
     expect(services.handoffReader.get(handoff_id)?.cancel_requested_at).toBeNull();
@@ -179,13 +191,16 @@ test("chain.cancel on an unknown handoff returns the 404 envelope", async () => 
   const srv = startDaemon(services);
   let client: Awaited<ReturnType<typeof connectInMemory>> | undefined;
   try {
-    const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: "t" });
+    const daemon = new DaemonClient({
+      baseUrl: `http://localhost:${String(srv.port)}`,
+      token: "t",
+    });
     client = await connectInMemory(daemon);
     const out = await client.callTool({
       name: "chain_cancel",
       arguments: { handoff_id: "h-missing" },
     });
-    const parsed = JSON.parse((out.content as any[])[0]!.text);
+    const parsed = firstJson(out);
 
     expect(parsed).toEqual({
       error: { code: "not_found", message: "handoff h-missing not found" },
@@ -197,12 +212,12 @@ test("chain.cancel on an unknown handoff returns the 404 envelope", async () => 
 });
 
 test("chain_send_message forwards content to the daemon", async () => {
-  const daemon = {
-    sendChainMessage: async (body: { handoff_id: string; content: string }) => {
+  const daemon = fakeDaemon({
+    sendChainMessage: (body: { handoff_id: string; content: string }) => {
       expect(body).toEqual({ handoff_id: "h-123", content: "answer the question" });
-      return { ok: true as const };
+      return Promise.resolve({ ok: true as const });
     },
-  } as any;
+  });
   let client: Awaited<ReturnType<typeof connectInMemory>> | undefined;
   try {
     client = await connectInMemory(daemon);
@@ -210,7 +225,7 @@ test("chain_send_message forwards content to the daemon", async () => {
       name: "chain_send_message",
       arguments: { handoff_id: "h-123", content: "answer the question" },
     });
-    expect(out.content[0]!.text).toContain('"ok": true');
+    expect(firstText(out)).toContain('"ok": true');
   } finally {
     await client?.close();
   }

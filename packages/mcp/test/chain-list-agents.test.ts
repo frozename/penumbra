@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { connectInMemory } from "./helpers.js";
+
 import { DaemonClient } from "../src/daemon-client.js";
+import { connectInMemory } from "./helpers.js";
 
 test("chain.list_agents forwards to daemon and returns results", async () => {
   let receivedPath: string | undefined;
@@ -15,11 +16,14 @@ test("chain.list_agents forwards to daemon and returns results", async () => {
       receivedMethod = req.method;
       return Response.json({ agents: [{ name: "planner" }, { name: "executor" }] });
     },
-  });
+  }) as unknown as { port: number; stop(closeActiveConnections?: boolean): void };
 
   let client: Awaited<ReturnType<typeof connectInMemory>> | undefined;
   try {
-    const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: "t" });
+    const daemon = new DaemonClient({
+      baseUrl: `http://localhost:${String(srv.port)}`,
+      token: "t",
+    });
     client = await connectInMemory(daemon);
     const out = await client.callTool({
       name: "chain_list_agents",
@@ -31,7 +35,7 @@ test("chain.list_agents forwards to daemon and returns results", async () => {
       })
       .parse(out);
 
-    expect(JSON.parse(parsed.content[0].text)).toEqual({
+    expect(JSON.parse(parsed.content[0]!.text) as unknown).toEqual({
       agents: [{ name: "planner" }, { name: "executor" }],
     });
     expect(receivedPath).toBe("/chains/agents");

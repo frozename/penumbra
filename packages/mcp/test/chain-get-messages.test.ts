@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { connectInMemory } from "./helpers.js";
+
 import { DaemonClient } from "../src/daemon-client.js";
+import { connectInMemory } from "./helpers.js";
 
 test("chain.get_messages forwards to daemon and returns results", async () => {
   let receivedPath: string | undefined;
@@ -29,11 +30,14 @@ test("chain.get_messages forwards to daemon and returns results", async () => {
       receivedQuery = url.search;
       return Response.json({ events: mockEvents });
     },
-  });
+  }) as unknown as { port: number; stop(closeActiveConnections?: boolean): void };
 
   let client: Awaited<ReturnType<typeof connectInMemory>> | undefined;
   try {
-    const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: "t" });
+    const daemon = new DaemonClient({
+      baseUrl: `http://localhost:${String(srv.port)}`,
+      token: "t",
+    });
     client = await connectInMemory(daemon);
     const out = await client.callTool({
       name: "chain_get_messages",
@@ -44,7 +48,7 @@ test("chain.get_messages forwards to daemon and returns results", async () => {
         content: z.array(z.object({ type: z.string(), text: z.string() })).min(1),
       })
       .parse(out);
-    const result = JSON.parse(parsed.content[0].text);
+    const result = JSON.parse(parsed.content[0]!.text) as { events: unknown[] };
 
     expect(result.events).toEqual(mockEvents);
     expect(receivedPath).toBe("/chains/messages");

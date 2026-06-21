@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { connectInMemory } from "./helpers.js";
+
 import { DaemonClient } from "../src/daemon-client.js";
+import { connectInMemory, firstJson } from "./helpers.js";
 
 test("session.end forwards to daemon", async () => {
   let body: unknown = null;
@@ -12,18 +13,19 @@ test("session.end forwards to daemon", async () => {
       body = await req.json();
       return Response.json({ ok: true, rollup_id: "r1" });
     },
-  });
+  }) as unknown as { port: number; stop(closeActiveConnections?: boolean): void };
   let client: Awaited<ReturnType<typeof connectInMemory>> | undefined;
   try {
-    const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: "t" });
+    const daemon = new DaemonClient({
+      baseUrl: `http://localhost:${String(srv.port)}`,
+      token: "t",
+    });
     client = await connectInMemory(daemon);
     const out = await client.callTool({
       name: "session_end",
       arguments: { session_id: "sX" },
     });
-    const payload = JSON.parse(
-      (out as unknown as { content: { type: string; text: string }[] }).content[0]!.text,
-    );
+    const payload = firstJson<{ rollup_id: string }>(out);
     expect(payload.rollup_id).toBe("r1");
     expect(body).toEqual({ session_id: "sX" });
     expect(receivedMethod).toBe("POST");

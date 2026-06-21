@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+
 import { HandleStore } from "../src/handle-store.js";
 
 describe("HandleStore", () => {
@@ -6,7 +7,9 @@ describe("HandleStore", () => {
   beforeEach(() => {
     store = new HandleStore({ ttlMs: 80 });
   });
-  afterEach(() => store.close());
+  afterEach(() => {
+    store.close();
+  });
 
   it("stores and retrieves content by returned id", () => {
     const id = store.put("large content blob");

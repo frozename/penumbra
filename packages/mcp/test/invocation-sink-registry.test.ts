@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+
 import {
   closeSink,
   getSink,
@@ -39,9 +40,14 @@ describe("invocation sink registry — lifecycle", () => {
   it("initSink throws when already initialized (no silent reconfiguration)", async () => {
     const path = join(makeTempDir(), "mcp-invocations.jsonl");
     await initSink(path);
-    await expect(initSink(join(makeTempDir(), "other.jsonl"))).rejects.toThrow(
-      /already initialized/,
-    );
+    let thrown: unknown = null;
+    try {
+      await initSink(join(makeTempDir(), "other.jsonl"));
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toMatch(/already initialized/);
   });
 
   it("getSink throws before initSink (no silent no-op writes)", () => {
@@ -57,8 +63,20 @@ describe("invocation sink registry — lifecycle", () => {
   });
 
   it("closeSink is idempotent and a no-op when nothing is open", async () => {
-    await expect(closeSink()).resolves.toBeUndefined();
-    await expect(closeSink()).resolves.toBeUndefined();
+    let firstError: unknown = null;
+    let secondError: unknown = null;
+    try {
+      await closeSink();
+    } catch (err) {
+      firstError = err;
+    }
+    try {
+      await closeSink();
+    } catch (err) {
+      secondError = err;
+    }
+    expect(firstError).toBeNull();
+    expect(secondError).toBeNull();
   });
 
   it("concurrent close requests share one promise (no torn-open second writer)", async () => {
@@ -133,7 +151,7 @@ describe("invocation sink registry — XDG path resolution", () => {
       ],
       { cwd: repoRoot, encoding: "utf8" },
     );
-    const combined = `${check.stdout ?? ""}${check.stderr ?? ""}`.trim();
+    const combined = `${check.stdout}${check.stderr}`.trim();
     expect(combined).toBe("");
   });
 });

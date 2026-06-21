@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { connectInMemory } from "./helpers.js";
+
 import { DaemonClient } from "../src/daemon-client.js";
+import { connectInMemory } from "./helpers.js";
 
 test("reconciler.verdicts forwards to daemon and returns results", async () => {
   let receivedPath: string | undefined;
@@ -33,11 +34,14 @@ test("reconciler.verdicts forwards to daemon and returns results", async () => {
       receivedQuery = url.search;
       return Response.json({ verdicts: mockVerdicts });
     },
-  });
+  }) as unknown as { port: number; stop(closeActiveConnections?: boolean): void };
 
   let client: Awaited<ReturnType<typeof connectInMemory>> | undefined;
   try {
-    const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: "t" });
+    const daemon = new DaemonClient({
+      baseUrl: `http://localhost:${String(srv.port)}`,
+      token: "t",
+    });
     client = await connectInMemory(daemon);
     const out = await client.callTool({
       name: "reconciler_verdicts",
@@ -49,7 +53,7 @@ test("reconciler.verdicts forwards to daemon and returns results", async () => {
         content: z.array(z.object({ type: z.string(), text: z.string() })).min(1),
       })
       .parse(out);
-    const verdicts = JSON.parse(parsed.content[0].text);
+    const verdicts = JSON.parse(parsed.content[0]!.text) as unknown;
 
     expect(verdicts).toEqual({ verdicts: mockVerdicts });
     expect(receivedPath).toBe("/reconciler/verdicts");

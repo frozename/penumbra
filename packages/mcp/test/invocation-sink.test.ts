@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { EventEmitter } from "node:events";
 import {
   chmodSync,
   existsSync,
@@ -11,15 +12,15 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { gunzipSync } from "node:zlib";
+
 import {
   closeWriteStream,
+  type InvocationRow,
   openInvocationSink,
   openInvocationSinkForTest,
-  type InvocationRow,
 } from "../src/invocation-sink.js";
 
 const EXPECTED_KEYS = [
@@ -66,14 +67,20 @@ describe("invocation sink", () => {
 
     const text = readFileSync(filePath, "utf8").trim();
     expect(text.length).toBeGreaterThan(0);
-    const row = JSON.parse(text);
+    const row = JSON.parse(text) as InvocationRow;
     expect(row.tool).toBe("test_tool");
   });
 
   it("double close does not throw", async () => {
     const sink = openInvocationSink(join(dir, "inv.jsonl"));
     await sink.close();
-    await expect(sink.close()).resolves.toBeUndefined();
+    let secondError: unknown = null;
+    try {
+      await sink.close();
+    } catch (err) {
+      secondError = err;
+    }
+    expect(secondError).toBeNull();
   });
 
   it("creates parent directories if missing", async () => {
@@ -89,7 +96,9 @@ describe("invocation sink", () => {
     const filePath = join(dir, "inv.jsonl");
     const sink = openInvocationSink(filePath);
     await sink.close();
-    expect(() => sink.write(makeRow())).not.toThrow();
+    expect(() => {
+      sink.write(makeRow());
+    }).not.toThrow();
   });
 
   it("security: file is mode 0o600", async () => {
@@ -116,7 +125,7 @@ describe("invocation sink", () => {
     sink.write(makeRow());
     await sink.close();
 
-    const row = JSON.parse(readFileSync(filePath, "utf8").trim());
+    const row = JSON.parse(readFileSync(filePath, "utf8").trim()) as InvocationRow;
     expect(Object.keys(row).sort()).toEqual(EXPECTED_KEYS);
   });
 
@@ -125,7 +134,7 @@ describe("invocation sink", () => {
     const sink = openInvocationSink(filePath, { maxBytesPerDay: 100 });
 
     for (let i = 0; i < 10; i += 1) {
-      sink.write(makeRow({ ts: `2026-01-01T00:00:0${i}.000Z`, tool: `tool_${i}` }));
+      sink.write(makeRow({ ts: `2026-01-01T00:00:0${String(i)}.000Z`, tool: `tool_${String(i)}` }));
     }
     await sink.close();
 
@@ -148,7 +157,7 @@ describe("invocation sink", () => {
     expect(text).not.toContain("must not leak");
     expect(text).not.toContain("raw_input_json");
     expect(text).not.toContain("result_payload");
-    const row = JSON.parse(text);
+    const row = JSON.parse(text) as InvocationRow;
     expect(Object.keys(row).sort()).toEqual(EXPECTED_KEYS);
   });
 
@@ -198,7 +207,9 @@ describe("invocation sink", () => {
     const filePath = join(dir, "inv.jsonl");
     const sinkA = openInvocationSink(filePath, { maxBytesPerDay: 200 });
     for (let i = 0; i < 5; i += 1) {
-      sinkA.write(makeRow({ ts: `2026-01-01T00:00:0${i}.000Z`, tool: `tool_${i}` }));
+      sinkA.write(
+        makeRow({ ts: `2026-01-01T00:00:0${String(i)}.000Z`, tool: `tool_${String(i)}` }),
+      );
     }
     await sinkA.close();
     const sizeAfterA = statSync(filePath).size;
@@ -210,7 +221,9 @@ describe("invocation sink", () => {
 
     const sinkB = openInvocationSink(filePath, { maxBytesPerDay: 200 });
     for (let i = 0; i < 50; i += 1) {
-      sinkB.write(makeRow({ ts: `2026-01-01T00:00:0${i}.000Z`, tool: `tool_${i}` }));
+      sinkB.write(
+        makeRow({ ts: `2026-01-01T00:00:0${String(i)}.000Z`, tool: `tool_${String(i)}` }),
+      );
     }
     await sinkB.close();
 
@@ -266,7 +279,9 @@ describe("invocation sink", () => {
     const filePath = join(dir, "inv.jsonl");
     const sink = openInvocationSink(filePath);
     await sink.close();
-    expect(() => sink.write(makeRow())).not.toThrow();
+    expect(() => {
+      sink.write(makeRow());
+    }).not.toThrow();
   });
 
   it("restart on a new day rotates immediately based on existing file mtime day", async () => {
@@ -279,7 +294,7 @@ describe("invocation sink", () => {
     const fakeNow = "2026-01-02T12:00:00.000Z";
     class FakeDate extends RealDate {
       constructor(value?: ConstructorParameters<typeof Date>[0]) {
-        super(value === undefined ? fakeNow : value);
+        super(value ?? fakeNow);
       }
       static now(): number {
         return new RealDate(fakeNow).getTime();
@@ -333,14 +348,19 @@ describe("invocation sink", () => {
       }
     }
 
-    await expect(
-      closeWriteStream(
+    let thrown: unknown = null;
+    try {
+      await closeWriteStream(
         new FakeStream() as unknown as {
           once: (event: string, cb: (...args: unknown[]) => void) => void;
           end: () => void;
         },
-      ),
-    ).rejects.toThrow(/flush failed/);
+      );
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toMatch(/flush failed/);
   });
 
   it("writes continue while background gzip is still running after day rollover", async () => {
@@ -396,7 +416,7 @@ describe("invocation sink", () => {
 
   it("same-day writes take a synchronous fast path (counter increments inline)", async () => {
     const filePath = join(dir, "inv.jsonl");
-    let now = "2026-01-01T12:00:00.000Z";
+    const now = "2026-01-01T12:00:00.000Z";
     let syncWrites = 0;
     const sink = openInvocationSinkForTest(filePath, {
       testHooks: {
@@ -408,7 +428,7 @@ describe("invocation sink", () => {
     });
 
     for (let i = 0; i < 50; i += 1) {
-      sink.write(makeRow({ ts: now, tool: `tool_${i}` }));
+      sink.write(makeRow({ ts: now, tool: `tool_${String(i)}` }));
     }
     expect(syncWrites).toBe(50);
     await sink.close();
@@ -421,7 +441,9 @@ describe("invocation sink", () => {
     const pause = new Promise<void>((resolve) => {
       releasePause = resolve;
     });
-    const warnSpy = spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = spyOn(console, "error").mockImplementation(() => {
+      // Swallow noisy error lines emitted during this rotation-overflow test.
+    });
 
     const sink = openInvocationSinkForTest(filePath, {
       testHooks: {
@@ -437,19 +459,19 @@ describe("invocation sink", () => {
     now = "2026-01-02T12:00:00.000Z";
     sink.write(makeRow({ ts: now, tool: "start-rotate" }));
     for (let i = 0; i < 50; i += 1) {
-      sink.write(makeRow({ ts: now, tool: `queued_${i}` }));
+      sink.write(makeRow({ ts: now, tool: `queued_${String(i)}` }));
     }
 
     releasePause?.();
     await sink.close();
 
     const warnMessages = warnSpy.mock.calls
-      .map((call) => call[0])
+      .map((call): unknown => call[0])
       .filter((msg) => String(msg).includes("pending-overflow"));
     expect(warnMessages.length).toBe(1);
 
-    const overflowSummary = warnSpy.mock.calls
-      .map((call) => call[0])
+    const overflowSummary: unknown = warnSpy.mock.calls
+      .map((call): unknown => call[0])
       .find((msg) => String(msg).includes("rotation overflow: dropped"));
     expect(overflowSummary).toContain(
       "rotation overflow: dropped 41 invocation lines during rotation",
@@ -458,7 +480,7 @@ describe("invocation sink", () => {
     warnSpy.mockRestore();
 
     const lines = readFileSync(filePath, "utf8").trim().split("\n").filter(Boolean);
-    const toolRows = lines.map((line) => JSON.parse(line).tool as string);
+    const toolRows = lines.map((line) => (JSON.parse(line) as InvocationRow).tool);
     expect(toolRows).toContain("start-rotate");
     expect(toolRows).toContain("queued_8");
     expect(toolRows).not.toContain("queued_49");

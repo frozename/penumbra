@@ -3,15 +3,16 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { gunzipSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
+
 import { compressStaged, pruneOldRotations, rotateIfNeeded } from "../src/invocation-rotation.js";
 
 let dir = "";
@@ -43,7 +44,7 @@ describe("invocation rotation", () => {
     expect(roundTrip).toBe('{"tool":"x"}\n');
   });
 
-  it("pruneOldRotations deletes files older than retainDays", async () => {
+  it("pruneOldRotations deletes files older than retainDays", () => {
     for (let i = 0; i < 20; i += 1) {
       writeFileSync(join(dir, `mcp-invocations.${dayKey(i)}.jsonl.gz`), "fake");
     }
@@ -57,7 +58,7 @@ describe("invocation rotation", () => {
     expect(names).not.toContain(`mcp-invocations.${dayKey(15)}.jsonl.gz`);
   });
 
-  it("pruneOldRotations leaves the live mcp-invocations.jsonl file untouched", async () => {
+  it("pruneOldRotations leaves the live mcp-invocations.jsonl file untouched", () => {
     const live = join(dir, "mcp-invocations.jsonl");
     writeFileSync(live, '{"tool":"live"}\n');
     writeFileSync(join(dir, `mcp-invocations.${dayKey(99)}.jsonl.gz`), "old");
@@ -67,7 +68,7 @@ describe("invocation rotation", () => {
     expect(existsSync(live)).toBe(true);
   });
 
-  it("pruneOldRotations leaves unrelated files untouched", async () => {
+  it("pruneOldRotations leaves unrelated files untouched", () => {
     const unrelated = ["random.txt", "mcp-invocations.OTHER.gz", "notamatch.jsonl.gz"];
     for (const name of unrelated) {
       writeFileSync(join(dir, name), "keep");
@@ -83,7 +84,7 @@ describe("invocation rotation", () => {
 
   it("rotateIfNeeded returns null when live path does not exist", async () => {
     const missing = join(dir, "mcp-invocations.jsonl");
-    await expect(rotateIfNeeded(missing)).resolves.toBeNull();
+    expect(await rotateIfNeeded(missing)).toBeNull();
   });
 
   it("rotateIfNeeded writes gzip file with 0o600 mode", async () => {
@@ -95,7 +96,7 @@ describe("invocation rotation", () => {
     expect(statSync(gzPath!).mode & 0o777).toBe(0o600);
   });
 
-  it("pruneOldRotations keeps the exact retention boundary day", async () => {
+  it("pruneOldRotations keeps the exact retention boundary day", () => {
     const boundary = `mcp-invocations.${dayKey(14)}.jsonl.gz`;
     const old = `mcp-invocations.${dayKey(15)}.jsonl.gz`;
     writeFileSync(join(dir, boundary), "keep");
@@ -114,7 +115,13 @@ describe("invocation rotation", () => {
     const gzPath = `${staged}.gz`;
     mkdirSync(gzPath);
 
-    await expect(rotateIfNeeded(live, new Date("2026-01-01T00:00:00.000Z"))).rejects.toThrow();
+    let thrown: unknown = null;
+    try {
+      await rotateIfNeeded(live, new Date("2026-01-01T00:00:00.000Z"));
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
     expect(existsSync(staged)).toBe(false);
   });
 

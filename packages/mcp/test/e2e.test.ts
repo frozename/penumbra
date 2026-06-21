@@ -1,13 +1,14 @@
-import { expect, test, beforeEach, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { runInit } from "../../cli/src/commands/init.js";
 import { runStart } from "../../cli/src/commands/start.js";
 import { runStop } from "../../cli/src/commands/stop.js";
-import { connectInMemory } from "./helpers.js";
 import { DaemonClient } from "../src/daemon-client.js";
+import { connectInMemory, firstJson } from "./helpers.js";
 
 try {
   if (process.platform === "darwin") {
@@ -31,8 +32,15 @@ afterEach(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+interface RecallPayload {
+  results: { tier: string; body: string }[];
+}
+
 test("observe → session.end → recall returns the session content", async () => {
-  const daemon = new DaemonClient({ baseUrl: `http://127.0.0.1:${handle!.port}`, token: "t" });
+  const daemon = new DaemonClient({
+    baseUrl: `http://127.0.0.1:${String(handle!.port)}`,
+    token: "t",
+  });
   const client = await connectInMemory(daemon);
   try {
     await client.callTool({
@@ -78,19 +86,20 @@ test("observe → session.end → recall returns the session content", async () 
         limit: 5,
       },
     });
-    const text = (recall as unknown as { content: { type: string; text: string }[] }).content[0]!
-      .text;
-    const payload = JSON.parse(text);
+    const payload = firstJson<RecallPayload>(recall);
     expect(payload.results.length).toBe(1);
-    expect(payload.results[0].tier).toBe("t1");
-    expect(payload.results[0].body).toContain("refactor");
+    expect(payload.results[0]?.tier).toBe("t1");
+    expect(payload.results[0]?.body).toContain("refactor");
   } finally {
     await client.close();
   }
 });
 
 test("context file is written for the project after session.end", async () => {
-  const daemon = new DaemonClient({ baseUrl: `http://127.0.0.1:${handle!.port}`, token: "t" });
+  const daemon = new DaemonClient({
+    baseUrl: `http://127.0.0.1:${String(handle!.port)}`,
+    token: "t",
+  });
   const client = await connectInMemory(daemon);
   try {
     await client.callTool({

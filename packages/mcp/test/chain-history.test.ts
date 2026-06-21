@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { connectInMemory } from "./helpers.js";
+
 import { DaemonClient } from "../src/daemon-client.js";
+import { connectInMemory } from "./helpers.js";
 
 test("chain.history forwards to daemon and returns results", async () => {
   let receivedPath: string | undefined;
@@ -27,11 +28,14 @@ test("chain.history forwards to daemon and returns results", async () => {
       receivedQuery = url.search;
       return Response.json({ history: mockHistory });
     },
-  });
+  }) as unknown as { port: number; stop(closeActiveConnections?: boolean): void };
 
   let client: Awaited<ReturnType<typeof connectInMemory>> | undefined;
   try {
-    const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: "t" });
+    const daemon = new DaemonClient({
+      baseUrl: `http://localhost:${String(srv.port)}`,
+      token: "t",
+    });
     client = await connectInMemory(daemon);
     const out = await client.callTool({
       name: "chain_history",
@@ -42,7 +46,7 @@ test("chain.history forwards to daemon and returns results", async () => {
         content: z.array(z.object({ type: z.string(), text: z.string() })).min(1),
       })
       .parse(out);
-    const history = JSON.parse(parsed.content[0].text);
+    const history = JSON.parse(parsed.content[0]!.text) as unknown;
 
     expect(history).toEqual(mockHistory);
     expect(receivedPath).toBe("/chains/history");

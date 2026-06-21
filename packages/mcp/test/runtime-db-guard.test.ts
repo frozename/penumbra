@@ -1,8 +1,9 @@
-import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { afterEach, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { withDaemonDb } from "../src/runtime-db.js";
 
 const ORIGINAL_HOME = process.env.HOME;
@@ -31,9 +32,14 @@ test("withDaemonDb refuses opening the production db path while running tests", 
   process.env.PENUMBRA_STORAGE_ROOT = storageRoot;
 
   try {
-    await expect(withDaemonDb(async () => 1)).rejects.toThrow(
-      /refusing to open production database path/i,
-    );
+    let thrown: unknown = null;
+    try {
+      await withDaemonDb(() => Promise.resolve(1));
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toMatch(/refusing to open production database path/i);
   } finally {
     rmSync(fakeHome, { recursive: true, force: true });
   }

@@ -1,8 +1,9 @@
 import { describe, expect, it, test } from "bun:test";
 import { z } from "zod";
-import { connectInMemory } from "./helpers.js";
+
 import { DaemonClient } from "../src/daemon-client.js";
 import { ObserveInputShape } from "../src/tools/observe.js";
+import { connectInMemory } from "./helpers.js";
 
 test("memory.observe forwards to daemon and returns event_id", async () => {
   let received: unknown = null;
@@ -14,10 +15,13 @@ test("memory.observe forwards to daemon and returns event_id", async () => {
       received = await req.json();
       return Response.json({ event_id: "e-42" });
     },
-  });
+  }) as unknown as { port: number; stop(closeActiveConnections?: boolean): void };
   let client: Awaited<ReturnType<typeof connectInMemory>> | undefined;
   try {
-    const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: "t" });
+    const daemon = new DaemonClient({
+      baseUrl: `http://localhost:${String(srv.port)}`,
+      token: "t",
+    });
     client = await connectInMemory(daemon);
     const out = await client.callTool({
       name: "memory_observe",
@@ -31,7 +35,8 @@ test("memory.observe forwards to daemon and returns event_id", async () => {
     });
     const content = (out as unknown as { content: { type: string; text: string }[] }).content;
     const text = content[0]!.text;
-    expect(JSON.parse(text).event_id).toBe("e-42");
+    const parsed = JSON.parse(text) as { event_id: string };
+    expect(parsed.event_id).toBe("e-42");
     expect(received).toMatchObject({ source: "mcp", event_type: "agent-prompt" });
     expect(receivedMethod).toBe("POST");
   } finally {
