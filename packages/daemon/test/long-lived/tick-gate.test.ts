@@ -5,6 +5,7 @@ import { applySchema } from "@penumbra/core/db/schema";
 import { reconcileLongLivedAgents } from "@penumbra/daemon/long-lived/reconciler";
 import {
   createTickGate,
+  PENDING_CHAIN_SENTINEL,
   reconcileOrphanTickRows,
   type TickAttempt,
 } from "@penumbra/daemon/long-lived/tick-gate";
@@ -145,6 +146,59 @@ describe("tick-gate", () => {
     const r3 = gate.attempt({ agent_id: "a", trigger_kind: "cron" });
     expect(r3.outcome).toBe("concurrency_skip");
     expect(spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a pending-sentinel tick as in-flight across the cold-start window", () => {
+    seedAgent(db);
+    let spawnCount = 0;
+    const spawn = mock(() => {
+      spawnCount++;
+      return { chain_id: PENDING_CHAIN_SENTINEL, tick_id: "irrelevant" };
+    });
+    // Cold-start: no handoff is registered for "pending" yet.
+    const isChainActive = (chain_id: string) => chain_id !== PENDING_CHAIN_SENTINEL;
+    let nowVal = 100;
+    const gate = createTickGate({
+      db,
+      spawn,
+      isChainActive,
+      now: () => nowVal,
+      debounceWindowMs: 1000,
+    });
+
+    const r1 = gate.attempt({ agent_id: "a", trigger_kind: "cron" });
+    expect(r1.outcome).toBe("spawned");
+    expect(spawnCount).toBe(1);
+
+    // Advance past the 1s debounce window while the spawn is still mid cold-start
+    // (chain_id is still the "pending" sentinel; no real handoff exists yet).
+    nowVal = 5100;
+    const r2 = gate.attempt({ agent_id: "a", trigger_kind: "cron" });
+    expect(r2.outcome).toBe("concurrency_skip");
+    expect(spawnCount).toBe(1);
+  });
+
+  it("treats an in-flight tick with NULL chain_id (pre-spawn) as active", () => {
+    seedAgent(db);
+    // Simulate the race window: tick INSERT committed by the gate's transaction
+    // but spawn() has not yet stamped a chain_id.
+    db.query(
+      `INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at)
+       VALUES (?, ?, ?, ?)`,
+    ).run("tick-prespawn", "a", "cron", 50);
+    db.query("UPDATE long_lived_agents SET last_tick_started_at=? WHERE id='a'").run(50);
+
+    const spawn = mock(() => ({ chain_id: "ch-new", tick_id: "t-new" }));
+    const gate = createTickGate({
+      db,
+      spawn,
+      isChainActive: () => false,
+      now: () => 5050, // well past the 1s debounce window
+      debounceWindowMs: 1000,
+    });
+    const r = gate.attempt({ agent_id: "a", trigger_kind: "cron" });
+    expect(r.outcome).toBe("concurrency_skip");
+    expect(spawn).not.toHaveBeenCalled();
   });
 
   it("reconciles an orphaned in-flight tick when the last chain is inactive", () => {

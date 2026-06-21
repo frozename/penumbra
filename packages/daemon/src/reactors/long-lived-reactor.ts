@@ -3,7 +3,12 @@ import { createLogger } from "@penumbra/core";
 import type { McpEventBus } from "../events/mcp-event-bus.js";
 import { reconcileLongLivedAgents } from "../long-lived/reconciler.js";
 import { createCronScheduler, type CronScheduler } from "../long-lived/cron-scheduler.js";
-import { createTickGate, type TickAttempt, type TickGateResult } from "../long-lived/tick-gate.js";
+import {
+  createTickGate,
+  PENDING_CHAIN_SENTINEL,
+  type TickAttempt,
+  type TickGateResult,
+} from "../long-lived/tick-gate.js";
 import { runPendingExpiry } from "../long-lived/pending-expiry.js";
 import { runSnapshotPurge } from "../long-lived/snapshot-purge.js";
 import type { McpPool } from "../long-lived/mcp-pool.js";
@@ -119,9 +124,27 @@ export function createLongLivedReactor(deps: LongLivedReactorDeps): LongLivedRea
               { err, agent_id: attempt.agent_id, tick_id: attempt.tick_id },
               "long-lived tick spawn failed",
             );
+            try {
+              deps.db
+                .query(
+                  `UPDATE long_lived_ticks
+                     SET completed_at = ?, outcome = 'spawn_failed', error_summary = ?
+                     WHERE id = ? AND completed_at IS NULL`,
+                )
+                .run(
+                  deps.now(),
+                  String((err as Error)?.message ?? err).slice(0, 500),
+                  attempt.tick_id,
+                );
+            } catch (markErr) {
+              log.error(
+                { err: markErr, agent_id: attempt.agent_id, tick_id: attempt.tick_id },
+                "long-lived tick spawn_failed marker update failed",
+              );
+            }
           },
         );
-      return { chain_id: "pending", tick_id: attempt.tick_id };
+      return { chain_id: PENDING_CHAIN_SENTINEL, tick_id: attempt.tick_id };
     },
     isChainActive: deps.isChainActive,
     now: deps.now,
