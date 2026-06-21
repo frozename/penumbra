@@ -23,7 +23,9 @@ export interface RegisterFederatedToolsResult {
 
 interface RegisterFederatedToolsOpts {
   server: McpServer;
-  daemon: DaemonClient;
+  // Narrowed to the two methods this function actually calls so tests can
+  // build typed mocks without satisfying the full DaemonClient surface.
+  daemon: Pick<DaemonClient, "getFederationTools" | "mcpCall">;
   agentId?: string;
   tickId?: string;
   envAllowlist?: Set<string>;

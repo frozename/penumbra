@@ -1,15 +1,63 @@
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { afterEach, expect, mock, spyOn, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+
+import type { DaemonClient } from "../../src/daemon-client.js";
+
 import { registerFederatedTools } from "../../src/federation/client.js";
 import { HandleStore } from "../../src/handle-store.js";
-import { openInvocationSink } from "../../src/invocation-sink.js";
 import * as registry from "../../src/invocation-sink-registry.js";
+import { openInvocationSink } from "../../src/invocation-sink.js";
 import { setLongLivedRuntimeContextFromEnv } from "../../src/long-lived-context.js";
 import { isEnvelopeResult } from "../../src/responses/envelope.js";
 import { readHandleHandler } from "../../src/tools/read-handle.js";
+
+type FederationDaemon = Pick<DaemonClient, "getFederationTools" | "mcpCall">;
+type GetFederationTools = DaemonClient["getFederationTools"];
+type McpCall = DaemonClient["mcpCall"];
+
+const defaultGetFederationTools: GetFederationTools = () => Promise.resolve({ tools: [] });
+const defaultMcpCall: McpCall = () =>
+  Promise.resolve({ action_status: "executed", result: { ok: true } });
+
+function makeDaemon(opts: {
+  getFederationTools?: GetFederationTools;
+  mcpCall?: McpCall;
+}): FederationDaemon {
+  return {
+    getFederationTools: mock(opts.getFederationTools ?? defaultGetFederationTools),
+    mcpCall: mock(opts.mcpCall ?? defaultMcpCall),
+  };
+}
+
+function makeMcpServer(): McpServer {
+  return new McpServer({ name: "probe", version: "0.0.0" });
+}
+
+interface RegisteredToolEntry {
+  handler: (args: unknown, extra: unknown) => Promise<unknown>;
+  inputSchema: { parse: (x: unknown) => unknown };
+}
+
+// The MCP SDK marks `_registeredTools` as private on McpServer; that's a real
+// library type gap (the field exists at runtime and is the only way to access
+// the stored handler/inputSchema in these regression tests). Cast through
+// unknown once via this typed shim instead of sprinkling `as any` at every site.
+interface RegisteredToolsView {
+  _registeredTools: Record<string, RegisteredToolEntry>;
+}
+
+function getRegisteredTools(server: McpServer): Record<string, RegisteredToolEntry> {
+  return (server as unknown as RegisteredToolsView)._registeredTools;
+}
+
+function getRegisteredTool(server: McpServer, name: string): RegisteredToolEntry {
+  const entry = getRegisteredTools(server)[name];
+  if (!entry) throw new Error(`registered tool not found: ${name}`);
+  return entry;
+}
 
 afterEach(async () => {
   mock.restore();
@@ -22,50 +70,53 @@ afterEach(async () => {
 
 test("returns empty and registers no tools when no long-lived identity is available", async () => {
   setLongLivedRuntimeContextFromEnv({});
-  const server = { registerTool: mock(() => {}) } as any;
-  const daemon = { getFederationTools: mock(async () => ({ tools: [] })) } as any;
+  const server = makeMcpServer();
+  const registerSpy = spyOn(server, "registerTool");
+  const daemon = makeDaemon({});
   const result = await registerFederatedTools({ server, daemon });
   expect(result).toEqual({ registered: [], skipped: [] });
-  expect(server.registerTool).not.toHaveBeenCalled();
+  expect(registerSpy).not.toHaveBeenCalled();
 });
 
 test("bootstraps federated tools from daemon and registers one handler per tool", async () => {
   process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
   process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
   setLongLivedRuntimeContextFromEnv(process.env);
-  const server = { registerTool: mock(() => {}) } as any;
-  const daemon = {
-    getFederationTools: mock(async () => ({
-      tools: [
-        { name: "ha.state_get", description: "get state" },
-        { name: "ha.state_set", inputSchema: { type: "object" } },
-      ],
-    })),
-    mcpCall: mock(async () => ({ action_status: "executed", result: { ok: true } })),
-  } as any;
+  const server = makeMcpServer();
+  const registerSpy = spyOn(server, "registerTool");
+  const daemon = makeDaemon({
+    getFederationTools: () =>
+      Promise.resolve({
+        tools: [
+          { name: "ha.state_get", description: "get state" },
+          { name: "ha.state_set", inputSchema: { type: "object" } },
+        ],
+      }),
+  });
   const result = await registerFederatedTools({ server, daemon });
   expect(result.registered).toEqual([
     { name: "ha.state_get", description: "get state" },
     { name: "ha.state_set", inputSchema: { type: "object" } },
   ]);
   expect(result.skipped).toEqual([]);
-  expect(server.registerTool).toHaveBeenCalledTimes(2);
+  expect(registerSpy).toHaveBeenCalledTimes(2);
 });
 
 test("env allowlist filters federated tools before registration", async () => {
   process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
   process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
   setLongLivedRuntimeContextFromEnv(process.env);
-  const server = { registerTool: mock(() => {}) } as any;
-  const daemon = {
-    getFederationTools: mock(async () => ({
-      tools: [
-        { name: "ha.ha_get_state", description: "get state" },
-        { name: "ha.ha_call_service", description: "call service" },
-      ],
-    })),
-    mcpCall: mock(async () => ({ action_status: "executed", result: { ok: true } })),
-  } as any;
+  const server = makeMcpServer();
+  const registerSpy = spyOn(server, "registerTool");
+  const daemon = makeDaemon({
+    getFederationTools: () =>
+      Promise.resolve({
+        tools: [
+          { name: "ha.ha_get_state", description: "get state" },
+          { name: "ha.ha_call_service", description: "call service" },
+        ],
+      }),
+  });
   const result = await registerFederatedTools({
     server,
     daemon,
@@ -73,83 +124,80 @@ test("env allowlist filters federated tools before registration", async () => {
   });
   expect(result.registered).toEqual([{ name: "ha.ha_get_state", description: "get state" }]);
   expect(result.skipped).toEqual([]);
-  expect(server.registerTool).toHaveBeenCalledTimes(1);
+  expect(registerSpy).toHaveBeenCalledTimes(1);
 });
 
 test("env allowlist accepts canonical federation tool ids", async () => {
   process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
   process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
   setLongLivedRuntimeContextFromEnv(process.env);
-  const server = { registerTool: mock(() => {}) } as any;
-  const daemon = {
-    getFederationTools: mock(async () => ({
-      tools: [
-        { name: "ha.ha_get_state", description: "state" },
-        { name: "ha.ha_call_service", description: "service" },
-      ],
-    })),
-    mcpCall: mock(async () => ({ action_status: "executed", result: { ok: true } })),
-  } as any;
+  const server = makeMcpServer();
+  const registerSpy = spyOn(server, "registerTool");
+  const daemon = makeDaemon({
+    getFederationTools: () =>
+      Promise.resolve({
+        tools: [
+          { name: "ha.ha_get_state", description: "state" },
+          { name: "ha.ha_call_service", description: "service" },
+        ],
+      }),
+  });
   const result = await registerFederatedTools({
     server,
     daemon,
     envAllowlist: new Set(["ha.ha_get_state", "ha.ha_call_service"]),
   });
   expect(result.registered.map((t) => t.name)).toEqual(["ha.ha_get_state", "ha.ha_call_service"]);
-  expect(server.registerTool).toHaveBeenCalledTimes(2);
+  expect(registerSpy).toHaveBeenCalledTimes(2);
 });
 
 test("virtual tool handler posts to daemon and returns executed result verbatim", async () => {
   process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
   process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
   setLongLivedRuntimeContextFromEnv(process.env);
-  let handler: ((args: unknown) => Promise<unknown>) | null = null;
-  const server = {
-    registerTool: mock((_name: string, _desc: unknown, fn: unknown) => {
-      handler = fn as any;
-    }),
-  } as any;
-  const daemon = {
-    getFederationTools: mock(async () => ({ tools: [{ name: "ha.state_get" }] })),
-    mcpCall: mock(async (req: any) => {
+  const server = makeMcpServer();
+  const daemon = makeDaemon({
+    getFederationTools: () => Promise.resolve({ tools: [{ name: "ha.state_get" }] }),
+    mcpCall: (req) => {
       expect(req).toEqual({
         agent_id: "agent-1",
         tick_id: "tick-1",
         tool: "ha:state_get",
         args: { entity_id: "light.kitchen" },
       });
-      return { action_status: "executed", result: { ok: true } };
-    }),
-  } as any;
+      return Promise.resolve({ action_status: "executed", result: { ok: true } });
+    },
+  });
   await registerFederatedTools({ server, daemon });
-  expect(await handler!({ entity_id: "light.kitchen" })).toEqual({ ok: true });
+  const entry = getRegisteredTool(server, "ha.state_get");
+  const validated = entry.inputSchema.parse({ entity_id: "light.kitchen" });
+  expect(await entry.handler(validated, {})).toEqual({ ok: true });
 });
 
 test("virtual tool handler canonicalizes dotted federation tool names before daemon calls", async () => {
   process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
   process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
   setLongLivedRuntimeContextFromEnv(process.env);
-  let handler: ((args: unknown) => Promise<unknown>) | null = null;
-  const server = {
-    registerTool: mock((_name: string, _desc: unknown, fn: unknown) => {
-      handler = fn as any;
-    }),
-  } as any;
-  const mcpCall = mock(async (req: any) => {
+  const server = makeMcpServer();
+  const mcpCall = mock<McpCall>((req) => {
     expect(req).toEqual({
       agent_id: "agent-1",
       tick_id: "tick-1",
       tool: "ha:ha_get_state",
       args: { entity_id: "light.kitchen" },
     });
-    return { action_status: "executed", result: { ok: true } };
+    return Promise.resolve({ action_status: "executed", result: { ok: true } });
   });
-  const daemon = {
-    getFederationTools: mock(async () => ({ tools: [{ name: "ha.ha_get_state" }] })),
+  const daemon: FederationDaemon = {
+    getFederationTools: mock<GetFederationTools>(() =>
+      Promise.resolve({ tools: [{ name: "ha.ha_get_state" }] }),
+    ),
     mcpCall,
-  } as any;
+  };
   await registerFederatedTools({ server, daemon });
-  expect(await handler!({ entity_id: "light.kitchen" })).toEqual({ ok: true });
+  const entry = getRegisteredTool(server, "ha.ha_get_state");
+  const validated = entry.inputSchema.parse({ entity_id: "light.kitchen" });
+  expect(await entry.handler(validated, {})).toEqual({ ok: true });
   expect(mcpCall).toHaveBeenCalledTimes(1);
 });
 
@@ -157,18 +205,15 @@ test("queued results are normalized into text envelopes", async () => {
   process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
   process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
   setLongLivedRuntimeContextFromEnv(process.env);
-  let handler: ((args: unknown) => Promise<unknown>) | null = null;
-  const server = {
-    registerTool: mock((_name: string, _desc: unknown, fn: unknown) => {
-      handler = fn as any;
-    }),
-  } as any;
-  const daemon = {
-    getFederationTools: mock(async () => ({ tools: [{ name: "ha.state_get" }] })),
-    mcpCall: mock(async () => ({ action_status: "queued", pending_action_id: "pa-1" })),
-  } as any;
+  const server = makeMcpServer();
+  const daemon = makeDaemon({
+    getFederationTools: () => Promise.resolve({ tools: [{ name: "ha.state_get" }] }),
+    mcpCall: () => Promise.resolve({ action_status: "queued", pending_action_id: "pa-1" }),
+  });
   await registerFederatedTools({ server, daemon });
-  expect(await handler!({})).toEqual({
+  const entry = getRegisteredTool(server, "ha.state_get");
+  const validated = entry.inputSchema.parse({});
+  expect(await entry.handler(validated, {})).toEqual({
     content: [
       {
         type: "text",
@@ -185,22 +230,20 @@ test("rejected and unavailable results are wrapped with isError", async () => {
   process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
   process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
   setLongLivedRuntimeContextFromEnv(process.env);
-  let handler: ((args: unknown) => Promise<unknown>) | null = null;
-  const server = {
-    registerTool: mock((_name: string, _desc: unknown, fn: unknown) => {
-      handler = fn as any;
-    }),
-  } as any;
-  const daemon = {
-    getFederationTools: mock(async () => ({ tools: [{ name: "ha.state_get" }] })),
-    mcpCall: mock(async () => ({
-      action_status: "rejected",
-      error: "not_allowed",
-      details: { reason: "x" },
-    })),
-  } as any;
+  const server = makeMcpServer();
+  const daemon = makeDaemon({
+    getFederationTools: () => Promise.resolve({ tools: [{ name: "ha.state_get" }] }),
+    mcpCall: () =>
+      Promise.resolve({
+        action_status: "rejected",
+        error: "not_allowed",
+        details: { reason: "x" },
+      }),
+  });
   await registerFederatedTools({ server, daemon });
-  expect(await handler!({})).toEqual({
+  const entry = getRegisteredTool(server, "ha.state_get");
+  const validated = entry.inputSchema.parse({});
+  expect(await entry.handler(validated, {})).toEqual({
     content: [
       {
         type: "text",
@@ -214,22 +257,15 @@ test("rejected and unavailable results are wrapped with isError", async () => {
     isError: true,
   });
 
-  const unavailableDaemon = {
-    getFederationTools: mock(async () => ({ tools: [{ name: "ha.state_get" }] })),
-    mcpCall: mock(async () => {
-      throw new Error("offline");
-    }),
-  } as any;
-  handler = null;
-  await registerFederatedTools({
-    server: {
-      registerTool: mock((_name: string, _desc: unknown, fn: unknown) => {
-        handler = fn as any;
-      }),
-    } as any,
-    daemon: unavailableDaemon,
+  const unavailableServer = makeMcpServer();
+  const unavailableDaemon = makeDaemon({
+    getFederationTools: () => Promise.resolve({ tools: [{ name: "ha.state_get" }] }),
+    mcpCall: () => Promise.reject(new Error("offline")),
   });
-  expect(await handler!({})).toEqual({
+  await registerFederatedTools({ server: unavailableServer, daemon: unavailableDaemon });
+  const unavailableEntry = getRegisteredTool(unavailableServer, "ha.state_get");
+  const unavailableValidated = unavailableEntry.inputSchema.parse({});
+  expect(await unavailableEntry.handler(unavailableValidated, {})).toEqual({
     content: [
       {
         type: "text",
@@ -255,24 +291,24 @@ test("registers tools on a real McpServer when inputSchema is JSON Schema (regre
   process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
   process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
   setLongLivedRuntimeContextFromEnv(process.env);
-  const server = new McpServer({ name: "probe", version: "0.0.0" });
-  const daemon = {
-    getFederationTools: mock(async () => ({
-      tools: [
-        {
-          name: "ha.ha_get_state",
-          description: "get state",
-          inputSchema: {
-            type: "object",
-            properties: { entity_id: { type: "string" } },
-            required: ["entity_id"],
+  const server = makeMcpServer();
+  const daemon = makeDaemon({
+    getFederationTools: () =>
+      Promise.resolve({
+        tools: [
+          {
+            name: "ha.ha_get_state",
+            description: "get state",
+            inputSchema: {
+              type: "object",
+              properties: { entity_id: { type: "string" } },
+              required: ["entity_id"],
+            },
           },
-        },
-        { name: "ha.ha_call_service" },
-      ],
-    })),
-    mcpCall: mock(async () => ({ action_status: "executed", result: { ok: true } })),
-  } as any;
+          { name: "ha.ha_call_service" },
+        ],
+      }),
+  });
   const result = await registerFederatedTools({ server, daemon });
   expect(result.registered.map((t) => t.name)).toEqual(["ha.ha_get_state", "ha.ha_call_service"]);
   expect(result.skipped).toEqual([]);
@@ -289,28 +325,22 @@ test("preserves tool-call arguments end-to-end on a real McpServer (regression f
   process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
   process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
   setLongLivedRuntimeContextFromEnv(process.env);
-  const server = new McpServer({ name: "probe", version: "0.0.0" });
+  const server = makeMcpServer();
   const seen: unknown[] = [];
-  const daemon = {
-    getFederationTools: mock(async () => ({ tools: [{ name: "ha.ha_get_state" }] })),
-    mcpCall: mock(async (req: any) => {
+  const daemon = makeDaemon({
+    getFederationTools: () => Promise.resolve({ tools: [{ name: "ha.ha_get_state" }] }),
+    mcpCall: (req) => {
       seen.push(req.args);
-      return { action_status: "executed", result: { ok: true } };
-    }),
-  } as any;
+      return Promise.resolve({ action_status: "executed", result: { ok: true } });
+    },
+  });
   await registerFederatedTools({ server, daemon });
-
-  const registry = (server as any)._registeredTools as Record<
-    string,
-    { handler: Function; inputSchema: { parse: (x: unknown) => unknown } }
-  >;
-  const entry = registry["ha.ha_get_state"];
-  expect(entry).toBeDefined();
+  const entry = getRegisteredTool(server, "ha.ha_get_state");
   // The SDK runs the registered Zod schema over incoming args before invoking
   // the handler. Replicate that path to assert keys survive validation.
   const validated = entry.inputSchema.parse({ entity_id: "light.kitchen", brightness: 50 });
   expect(validated).toEqual({ entity_id: "light.kitchen", brightness: 50 });
-  await entry.handler(validated, {} as any);
+  await entry.handler(validated, {});
   expect(seen).toEqual([{ entity_id: "light.kitchen", brightness: 50 }]);
 });
 
@@ -318,17 +348,12 @@ test("forwards extra._meta to daemon.mcpCall", async () => {
   process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
   process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
   setLongLivedRuntimeContextFromEnv(process.env);
-  const server = new McpServer({ name: "probe", version: "0.0.0" });
-  const daemon = {
-    getFederationTools: mock(async () => ({ tools: [{ name: "ha.ha_get_state" }] })),
-    mcpCall: mock(async () => ({ action_status: "executed", result: { ok: true } })),
-  } as any;
+  const server = makeMcpServer();
+  const daemon = makeDaemon({
+    getFederationTools: () => Promise.resolve({ tools: [{ name: "ha.ha_get_state" }] }),
+  });
   await registerFederatedTools({ server, daemon });
-  const registry = (server as any)._registeredTools as Record<
-    string,
-    { handler: Function; inputSchema: { parse: (x: unknown) => unknown } }
-  >;
-  const entry = registry["ha.ha_get_state"];
+  const entry = getRegisteredTool(server, "ha.ha_get_state");
   const validated = entry.inputSchema.parse({ entity_id: "light.kitchen" });
   await entry.handler(validated, { _meta: { origin: "claude-code", trace: "abc" } });
 
@@ -346,19 +371,14 @@ test("client drops _meta when UTF-8 byte count > 2048 even if .length stays with
   process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
   process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
   setLongLivedRuntimeContextFromEnv(process.env);
-  const server = new McpServer({ name: "probe", version: "0.0.0" });
-  const daemon = {
-    getFederationTools: mock(async () => ({ tools: [{ name: "ha.ha_get_state" }] })),
-    mcpCall: mock(async () => ({ action_status: "executed", result: { ok: true } })),
-  } as any;
-  const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+  const server = makeMcpServer();
+  const daemon = makeDaemon({
+    getFederationTools: () => Promise.resolve({ tools: [{ name: "ha.ha_get_state" }] }),
+  });
+  const errorSpy = spyOn(console, "error").mockImplementation(() => undefined);
   await registerFederatedTools({ server, daemon });
 
-  const registry = (server as any)._registeredTools as Record<
-    string,
-    { handler: Function; inputSchema: { parse: (x: unknown) => unknown } }
-  >;
-  const entry = registry["ha.ha_get_state"];
+  const entry = getRegisteredTool(server, "ha.ha_get_state");
   const validated = entry.inputSchema.parse({ entity_id: "light.kitchen" });
   await entry.handler(validated, { _meta: { origin: "claude-code", blob: "😀".repeat(600) } });
 
@@ -376,19 +396,14 @@ test("oversized _meta drops are logged on every occurrence with running total", 
   process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
   process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
   setLongLivedRuntimeContextFromEnv(process.env);
-  const server = new McpServer({ name: "probe", version: "0.0.0" });
-  const daemon = {
-    getFederationTools: mock(async () => ({ tools: [{ name: "ha.ha_get_state" }] })),
-    mcpCall: mock(async () => ({ action_status: "executed", result: { ok: true } })),
-  } as any;
-  const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+  const server = makeMcpServer();
+  const daemon = makeDaemon({
+    getFederationTools: () => Promise.resolve({ tools: [{ name: "ha.ha_get_state" }] }),
+  });
+  const errorSpy = spyOn(console, "error").mockImplementation(() => undefined);
   await registerFederatedTools({ server, daemon });
 
-  const registry = (server as any)._registeredTools as Record<
-    string,
-    { handler: Function; inputSchema: { parse: (x: unknown) => unknown } }
-  >;
-  const entry = registry["ha.ha_get_state"];
+  const entry = getRegisteredTool(server, "ha.ha_get_state");
   const validated = entry.inputSchema.parse({ entity_id: "light.kitchen" });
   await entry.handler(validated, { _meta: { origin: "claude-code", blob: "x".repeat(3000) } });
   await entry.handler(validated, { _meta: { origin: "claude-code", blob: "x".repeat(3000) } });
@@ -405,50 +420,48 @@ test("oversized _meta drops are logged on every occurrence with running total", 
     tool: "ha:ha_get_state",
     args: { entity_id: "light.kitchen" },
   });
+  // console.error is typed `(...args: any[]) => void` in Node's lib.dom — a
+  // genuine library type gap. Narrow the spy's recorded calls once through
+  // `unknown` to a typed shape so the per-call asserts below are typed-safe.
+  const errorCalls = errorSpy.mock.calls as unknown as [
+    string,
+    { total_drops?: number } | undefined,
+  ][];
   expect(errorSpy).toHaveBeenCalledTimes(2);
-  expect(errorSpy.mock.calls[0]?.[0]).toBe("[federation] dropped oversized _meta");
-  expect(errorSpy.mock.calls[0]?.[1]).toEqual(
-    expect.objectContaining({ total_drops: expect.any(Number) }),
-  );
-  expect(errorSpy.mock.calls[1]?.[0]).toBe("[federation] dropped oversized _meta");
-  expect(errorSpy.mock.calls[1]?.[1]).toEqual(
-    expect.objectContaining({ total_drops: expect.any(Number) }),
-  );
-  const firstDropCount = (errorSpy.mock.calls[0]?.[1] as { total_drops?: number } | undefined)
-    ?.total_drops;
-  const secondDropCount = (errorSpy.mock.calls[1]?.[1] as { total_drops?: number } | undefined)
-    ?.total_drops;
+  expect(errorCalls[0]?.[0]).toBe("[federation] dropped oversized _meta");
+  expect(errorCalls[0]?.[1]?.total_drops).toEqual(expect.any(Number) as unknown as number);
+  expect(errorCalls[1]?.[0]).toBe("[federation] dropped oversized _meta");
+  expect(errorCalls[1]?.[1]?.total_drops).toEqual(expect.any(Number) as unknown as number);
+  const firstDropCount = errorCalls[0]?.[1]?.total_drops;
+  const secondDropCount = errorCalls[1]?.[1]?.total_drops;
   expect(typeof firstDropCount).toBe("number");
   expect(typeof secondDropCount).toBe("number");
-  expect(secondDropCount).toBe((firstDropCount as number) + 1);
+  expect(secondDropCount).toBe(firstDropCount! + 1);
 });
 
 test("omits _meta when extra is missing, _meta is missing, or _meta is not an object", async () => {
   process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
   process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
   setLongLivedRuntimeContextFromEnv(process.env);
-  const server = new McpServer({ name: "probe", version: "0.0.0" });
-  const daemon = {
-    getFederationTools: mock(async () => ({ tools: [{ name: "ha.ha_get_state" }] })),
-    mcpCall: mock(async () => ({ action_status: "executed", result: { ok: true } })),
-  } as any;
+  const server = makeMcpServer();
+  const daemon = makeDaemon({
+    getFederationTools: () => Promise.resolve({ tools: [{ name: "ha.ha_get_state" }] }),
+  });
   await registerFederatedTools({ server, daemon });
 
-  const registry = (server as any)._registeredTools as Record<
-    string,
-    { handler: Function; inputSchema: { parse: (x: unknown) => unknown } }
-  >;
-  const entry = registry["ha.ha_get_state"];
+  const entry = getRegisteredTool(server, "ha.ha_get_state");
   const validated = entry.inputSchema.parse({ entity_id: "light.kitchen" });
 
-  await entry.handler(validated);
-  await entry.handler(validated, {} as any);
+  await entry.handler(validated, undefined);
+  await entry.handler(validated, {});
   await entry.handler(validated, { _meta: "x" });
   await entry.handler(validated, { _meta: ["x"] });
   await entry.handler(validated, { _meta: null });
 
   expect(daemon.mcpCall).toHaveBeenCalledTimes(5);
-  for (const call of daemon.mcpCall.mock.calls) {
+  const callList = (daemon.mcpCall as unknown as { mock: { calls: Parameters<McpCall>[] } }).mock
+    .calls;
+  for (const call of callList) {
     expect(call[0]).toEqual({
       agent_id: "agent-1",
       tick_id: "tick-1",
@@ -462,21 +475,23 @@ test("skips a federated tool whose registration throws without killing the rest"
   process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
   process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
   setLongLivedRuntimeContextFromEnv(process.env);
+  const server = makeMcpServer();
   let calls = 0;
-  const server = {
-    registerTool: mock((name: string) => {
-      calls += 1;
-      if (name === "ha.bad") throw new Error("boom");
-    }),
-  } as any;
-  const daemon = {
-    getFederationTools: mock(async () => ({
-      tools: [{ name: "ha.ok_one" }, { name: "ha.bad" }, { name: "ha.ok_two" }],
-    })),
-    mcpCall: mock(async () => ({ action_status: "executed", result: { ok: true } })),
-  } as any;
+  const registerSpy = spyOn(server, "registerTool").mockImplementation(((name: string) => {
+    calls += 1;
+    if (name === "ha.bad") throw new Error("boom");
+    // Return value is unused by registerFederatedTools.
+    return undefined;
+  }) as unknown as McpServer["registerTool"]);
+  const daemon = makeDaemon({
+    getFederationTools: () =>
+      Promise.resolve({
+        tools: [{ name: "ha.ok_one" }, { name: "ha.bad" }, { name: "ha.ok_two" }],
+      }),
+  });
   const result = await registerFederatedTools({ server, daemon });
   expect(calls).toBe(3);
+  expect(registerSpy).toHaveBeenCalledTimes(3);
   expect(result.registered.map((t) => t.name)).toEqual(["ha.ok_one", "ha.ok_two"]);
   expect(result.skipped).toEqual([{ name: "ha.bad", reason: "boom" }]);
 });
@@ -485,15 +500,14 @@ test("bootstrap failure returns no federated tools", async () => {
   process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
   process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
   setLongLivedRuntimeContextFromEnv(process.env);
-  const server = { registerTool: mock(() => {}) } as any;
-  const daemon = {
-    getFederationTools: mock(async () => {
-      throw new Error("boom");
-    }),
-  } as any;
+  const server = makeMcpServer();
+  const registerSpy = spyOn(server, "registerTool");
+  const daemon = makeDaemon({
+    getFederationTools: () => Promise.reject(new Error("boom")),
+  });
   const result = await registerFederatedTools({ server, daemon });
   expect(result).toEqual({ registered: [], skipped: [] });
-  expect(server.registerTool).not.toHaveBeenCalled();
+  expect(registerSpy).not.toHaveBeenCalled();
 });
 
 test("federated tool invocation writes exactly one log row (single wrap)", async () => {
@@ -507,25 +521,22 @@ test("federated tool invocation writes exactly one log row (single wrap)", async
   const sink = openInvocationSink(logPath);
   spyOn(registry, "getSink").mockReturnValue(sink);
 
-  let handler: ((args: unknown, extra: unknown) => Promise<unknown>) | null = null;
-  const server = {
-    registerTool: mock((_name: string, _schema: unknown, fn: unknown) => {
-      handler = fn as any;
-    }),
-  } as any;
-  const daemon = {
-    getFederationTools: mock(async () => ({ tools: [{ name: "ha.ha_get_state" }] })),
-    mcpCall: mock(async () => ({ action_status: "executed", result: { ok: true } })),
-  } as any;
+  const server = makeMcpServer();
+  const daemon = makeDaemon({
+    getFederationTools: () => Promise.resolve({ tools: [{ name: "ha.ha_get_state" }] }),
+  });
 
   try {
     await registerFederatedTools({ server, daemon });
-    await handler!({ entity_id: "light.kitchen" }, { _meta: { origin: "federation-test" } });
+    const entry = getRegisteredTool(server, "ha.ha_get_state");
+    const validated = entry.inputSchema.parse({ entity_id: "light.kitchen" });
+    await entry.handler(validated, { _meta: { origin: "federation-test" } });
     await sink.close();
     const text = readFileSync(logPath, "utf8").trim();
-    const rows = text.length === 0 ? [] : text.split("\n").map((line) => JSON.parse(line));
+    const rows =
+      text.length === 0 ? [] : text.split("\n").map((line) => JSON.parse(line) as { tool: string });
     expect(rows).toHaveLength(1);
-    expect(rows[0].tool).toBe("ha.ha_get_state");
+    expect(rows[0]?.tool).toBe("ha.ha_get_state");
   } finally {
     rmSync(stateRoot, { recursive: true, force: true });
   }
@@ -536,17 +547,12 @@ test("oversized federated result is truncated with a handle_id that read_handle 
   process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
   setLongLivedRuntimeContextFromEnv(process.env);
 
-  let handler: ((args: unknown, extra: unknown) => Promise<unknown>) | null = null;
-  const server = {
-    registerTool: mock((_name: string, _schema: unknown, fn: unknown) => {
-      handler = fn as any;
-    }),
-  } as any;
+  const server = makeMcpServer();
   const large = { blob: "x".repeat(256) };
-  const daemon = {
-    getFederationTools: mock(async () => ({ tools: [{ name: "ha.ha_get_state" }] })),
-    mcpCall: mock(async () => ({ action_status: "executed", result: large })),
-  } as any;
+  const daemon = makeDaemon({
+    getFederationTools: () => Promise.resolve({ tools: [{ name: "ha.ha_get_state" }] }),
+    mcpCall: () => Promise.resolve({ action_status: "executed", result: large }),
+  });
   const handleStore = new HandleStore();
   try {
     await registerFederatedTools({
@@ -556,15 +562,20 @@ test("oversized federated result is truncated with a handle_id that read_handle 
       responseBudgetTokens: 1,
       handleStore,
     });
-    const out = (await handler!({}, {})) as any;
+    const entry = getRegisteredTool(server, "ha.ha_get_state");
+    const validated = entry.inputSchema.parse({});
+    const out = await entry.handler(validated, {});
     expect(isEnvelopeResult(out)).toBe(true);
-    expect(out._meta.token_budget.truncated).toBe(true);
-    expect(out._meta.handle_id).toBeTruthy();
+    const envelopeOut = out as {
+      _meta: { token_budget: { truncated: boolean }; handle_id: string };
+    };
+    expect(envelopeOut._meta.token_budget.truncated).toBe(true);
+    expect(envelopeOut._meta.handle_id).toBeTruthy();
     const readOut = (await readHandleHandler(handleStore)({
-      handle_id: out._meta.handle_id,
-    })) as any;
+      handle_id: envelopeOut._meta.handle_id,
+    })) as { isError?: unknown; content: { text: string }[] };
     expect(readOut.isError).toBeUndefined();
-    expect(readOut.content[0].text).toBe(JSON.stringify(large));
+    expect(readOut.content[0]?.text).toBe(JSON.stringify(large));
   } finally {
     handleStore.close();
   }
@@ -575,24 +586,21 @@ test("budget set but no handle store: federated result passes through unbudgeted
   process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
   setLongLivedRuntimeContextFromEnv(process.env);
 
-  let handler: ((args: unknown, extra: unknown) => Promise<unknown>) | null = null;
-  const server = {
-    registerTool: mock((_name: string, _schema: unknown, fn: unknown) => {
-      handler = fn as any;
-    }),
-  } as any;
+  const server = makeMcpServer();
   const large = { blob: "x".repeat(256) };
-  const daemon = {
-    getFederationTools: mock(async () => ({ tools: [{ name: "ha.ha_get_state" }] })),
-    mcpCall: mock(async () => ({ action_status: "executed", result: large })),
-  } as any;
+  const daemon = makeDaemon({
+    getFederationTools: () => Promise.resolve({ tools: [{ name: "ha.ha_get_state" }] }),
+    mcpCall: () => Promise.resolve({ action_status: "executed", result: large }),
+  });
   await registerFederatedTools({
     server,
     daemon,
     invocationLogEnabled: false,
     responseBudgetTokens: 1,
   });
-  const out = (await handler!({}, {})) as any;
+  const entry = getRegisteredTool(server, "ha.ha_get_state");
+  const validated = entry.inputSchema.parse({});
+  const out = await entry.handler(validated, {});
   expect(isEnvelopeResult(out)).toBe(false);
   expect(out).toEqual(large);
 });
