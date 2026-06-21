@@ -456,12 +456,14 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
               project,
               agentchatConfig:
                 (services as any).agentchatConfig ??
-                ({} as Parameters<typeof buildWorkflowCtx>[0]["agentchatConfig"]),
+                ({} as Parameters<
+                  typeof buildWorkflowCtx<Record<string, unknown>>
+                >[0]["agentchatConfig"]),
               args,
               workflowRunId,
               chainStart: (input) =>
                 chainStartFromInput(input, services, { applyMaestroBudgetGate: true }),
-            } as Parameters<typeof buildWorkflowCtx>[0])
+            } as Parameters<typeof buildWorkflowCtx<Record<string, unknown>>>[0])
           : undefined,
       storageRoot:
         (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? "/tmp",
@@ -730,12 +732,14 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
                 project,
                 agentchatConfig:
                   (services as any).agentchatConfig ??
-                  ({} as Parameters<typeof buildWorkflowCtx>[0]["agentchatConfig"]),
+                  ({} as Parameters<
+                    typeof buildWorkflowCtx<Record<string, unknown>>
+                  >[0]["agentchatConfig"]),
                 args,
                 workflowRunId,
                 chainStart: (input) =>
                   chainStartFromInput(input, services, { applyMaestroBudgetGate: true }),
-              } as Parameters<typeof buildWorkflowCtx>[0])
+              } as Parameters<typeof buildWorkflowCtx<Record<string, unknown>>>[0])
             : undefined,
         storageRoot:
           (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? "/tmp",
