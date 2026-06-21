@@ -25,15 +25,22 @@ const SOURCE_GLOBS = [
 
 export default tseslint.config(
   {
+    // Global ignores MUST be the SOLE key in this object, or eslint treats them
+    // as config-scoped (not global) and built dist/ artifacts, generated .d.ts,
+    // and .claude workflow JS leak into the lint as parse errors.
     ignores: [
       "**/dist/**",
+      "**/*.d.ts",
       "coverage/**",
       "node_modules/**",
       "bun.lock",
       ".penumbra/**",
+      ".claude/**",
       "docs/notes/**",
       "eslint.config.mjs",
     ],
+  },
+  {
     linterOptions: {
       reportUnusedDisableDirectives: "error",
       reportUnusedInlineConfigs: "error",
