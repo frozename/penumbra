@@ -15,6 +15,8 @@ export interface ThoughtCaptureDeps {
   enqueue: (event: DispatchEventInput) => void;
   workerId?: string | null;
   now?: () => Date;
+  /** Max retained per-dispatch state entries before LRU eviction. Default 1024. */
+  perDispatchCapacity?: number;
 }
 
 const REDACTION_PATTERNS: RegExp[] = [
@@ -32,13 +34,24 @@ function redactCredentials(text: string): string {
   return out;
 }
 
-export class ThoughtCapture {
-  private readonly perDispatch = new Map<
-    string,
-    { sequence: number; bytesUsed: number; streamCapHit: boolean }
-  >();
+interface DispatchState {
+  sequence: number;
+  bytesUsed: number;
+  streamCapHit: boolean;
+}
 
-  constructor(private readonly deps: ThoughtCaptureDeps) {}
+const DEFAULT_PER_DISPATCH_CAPACITY = 1024;
+
+export class ThoughtCapture {
+  private readonly perDispatch = new Map<string, DispatchState>();
+  private readonly perDispatchCapacity: number;
+
+  constructor(private readonly deps: ThoughtCaptureDeps) {
+    this.perDispatchCapacity = Math.max(
+      1,
+      deps.perDispatchCapacity ?? DEFAULT_PER_DISPATCH_CAPACITY,
+    );
+  }
 
   isAdapterEnabled(adapter: string, agentName: string): boolean {
     if (!this.deps.config.enabled) return false;
@@ -51,11 +64,7 @@ export class ThoughtCapture {
   recordThought(input: RecordThoughtInput): void {
     if (!this.isAdapterEnabled(input.adapter, input.agentName)) return;
 
-    const state = this.perDispatch.get(input.handoffId) ?? {
-      sequence: 0,
-      bytesUsed: 0,
-      streamCapHit: false,
-    };
+    const state = this.getOrCreateState(input.handoffId);
     if (state.streamCapHit) return;
 
     const ts = input.ts ?? (this.deps.now ?? (() => new Date()))().toISOString();
@@ -71,7 +80,7 @@ export class ThoughtCapture {
     if (truncated.length > remaining) {
       const totalDropped = redacted.length + 0;
       state.streamCapHit = true;
-      this.perDispatch.set(input.handoffId, state);
+      this.touchState(input.handoffId, state);
       this.deps.enqueue({
         handoff_id: input.handoffId,
         worker_id: this.deps.workerId ?? null,
@@ -84,7 +93,7 @@ export class ThoughtCapture {
     }
 
     state.bytesUsed += truncated.length;
-    this.perDispatch.set(input.handoffId, state);
+    this.touchState(input.handoffId, state);
 
     const thoughtMeta: Record<string, unknown> = {
       sequence_n: sequence,
@@ -117,5 +126,37 @@ export class ThoughtCapture {
 
   resetDispatch(handoffId: string): void {
     this.perDispatch.delete(handoffId);
+  }
+
+  /** @internal Test-only: current per-dispatch state size. */
+  _perDispatchSize(): number {
+    return this.perDispatch.size;
+  }
+
+  /**
+   * Get-or-create a dispatch's state and refresh its LRU position. When the
+   * map exceeds its capacity, evicts the oldest-by-insertion entry. JS Map
+   * iteration is insertion-ordered, so re-inserting on touch keeps hot ids
+   * at the tail and ages stale ids out.
+   */
+  private getOrCreateState(handoffId: string): DispatchState {
+    const existing = this.perDispatch.get(handoffId);
+    if (existing) {
+      this.perDispatch.delete(handoffId);
+      this.perDispatch.set(handoffId, existing);
+      return existing;
+    }
+    if (this.perDispatch.size >= this.perDispatchCapacity) {
+      const oldest = this.perDispatch.keys().next().value;
+      if (oldest !== undefined) this.perDispatch.delete(oldest);
+    }
+    const state: DispatchState = { sequence: 0, bytesUsed: 0, streamCapHit: false };
+    this.perDispatch.set(handoffId, state);
+    return state;
+  }
+
+  private touchState(handoffId: string, state: DispatchState): void {
+    if (this.perDispatch.has(handoffId)) this.perDispatch.delete(handoffId);
+    this.perDispatch.set(handoffId, state);
   }
 }
