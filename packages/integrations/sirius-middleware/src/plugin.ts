@@ -10,6 +10,8 @@ import {
   type ChatResponseLike,
 } from "./observation-builder.js";
 
+type PromptEvent = ReturnType<typeof buildPromptEvent>;
+
 export interface PenumbraPluginOptions {
   baseUrl?: string;
   token?: string;
@@ -20,6 +22,7 @@ export interface PenumbraPluginOptions {
 export interface PenumbraSession {
   sessionId: string;
   promptInput: BuildPromptInput;
+  promptEvent: PromptEvent;
 }
 
 declare module "fastify" {
@@ -124,23 +127,13 @@ export const penumbraObservePlugin: FastifyPluginAsync<PenumbraPluginOptions> = 
         captureStartTs,
       };
 
-      req.penumbraSession = { sessionId, promptInput };
-
       const promptEvent = buildPromptEvent(promptInput);
 
-      queueMicrotask(() => {
-        client.observe(promptEvent).catch((err: unknown) => {
-          dropped_observations++;
-          logger.warn({
-            msg: "penumbra observe failed — dropping event",
-            project_id: projectId,
-            request_id: sessionId,
-            route: req.url,
-            error: err instanceof Error ? err.message : String(err),
-            dropped_observations_total: dropped_observations,
-          });
-        });
-      });
+      // Stash the prompt event on the request; defer dispatch to onSend so we
+      // can gate persistence on the upstream response status. A 4xx/5xx upstream
+      // (bad key, 429, model not found, etc.) means the prompt — which may carry
+      // secrets — must NOT be persisted to t0_events.
+      req.penumbraSession = { sessionId, promptInput, promptEvent };
     });
 
     fastify.addHook("onSend", (req, reply, payload, done) => {
@@ -148,7 +141,21 @@ export const penumbraObservePlugin: FastifyPluginAsync<PenumbraPluginOptions> = 
       if (!session || pathOnly(req.url) !== CHAT_COMPLETIONS_PATH) return done(null, payload);
       if (reply.statusCode >= 400) return done(null, payload);
 
-      const { sessionId, promptInput } = session;
+      const { sessionId, promptInput, promptEvent } = session;
+
+      queueMicrotask(() => {
+        client.observe(promptEvent).catch((err: unknown) => {
+          dropped_observations++;
+          logger.warn({
+            msg: "penumbra observe failed — dropping event",
+            project_id: promptInput.projectId,
+            request_id: sessionId,
+            route: req.url,
+            error: err instanceof Error ? err.message : String(err),
+            dropped_observations_total: dropped_observations,
+          });
+        });
+      });
 
       if (typeof payload === "string") {
         try {

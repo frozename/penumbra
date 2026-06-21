@@ -314,7 +314,7 @@ describe("penumbraObservePlugin execution", () => {
     expect(responseBody.model).toBe("gpt-3.5-turbo");
   });
 
-  test("skips agent-response observation when reply status is >= 400", async () => {
+  test("skips both prompt and response observations when reply status is >= 400", async () => {
     const fastify = Fastify();
     const mockFetch = mock((_url: string | URL | Request, _init?: RequestInit) => {
       return new Response(JSON.stringify({ status: "ok" }));
@@ -342,9 +342,88 @@ describe("penumbraObservePlugin execution", () => {
     expect(response.statusCode).toBe(404);
     await new Promise((r) => setTimeout(r, 10));
 
-    // Only the prompt observation should have fired — no response observation on error.
+    // SECURITY: a rejected upstream request must not persist the prompt
+    // (which may contain secrets) OR the response. No observations fire on 4xx/5xx.
     const eventTypes = mockFetch.mock.calls.map((c) => JSON.parse((c[1] as any).body).event_type);
-    expect(eventTypes).toEqual(["agent-prompt"]);
+    expect(eventTypes).toEqual([]);
+  });
+
+  test("prompt with potentially-sensitive content is not persisted on 401 upstream reject", async () => {
+    const fastify = Fastify();
+    const mockFetch = mock((_url: string | URL | Request, _init?: RequestInit) => {
+      return new Response(JSON.stringify({ status: "ok" }));
+    });
+    global.fetch = mockFetch as any;
+
+    await fastify.register(penumbraObservePlugin, {
+      baseUrl: "http://mock-daemon",
+      token: "fake-token",
+      logger: { warn: () => {}, info: () => {} } as any,
+    });
+
+    fastify.post("/v1/chat/completions", async (_req, reply) => {
+      // Simulate the proxy passing through an upstream 401 (bad API key).
+      reply.code(401);
+      return { error: { message: "invalid_api_key" } };
+    });
+
+    const SECRET_LIKE_PAYLOAD = "sk-live-DO-NOT-PERSIST-this-secret-prompt-content";
+
+    const response = await fastify.inject({
+      method: "POST",
+      url: "/v1/chat/completions",
+      headers: { "x-penumbra-project": "test-project", "x-request-id": "req-401" },
+      payload: {
+        model: "gpt-4",
+        messages: [{ role: "user", content: SECRET_LIKE_PAYLOAD }],
+      },
+    });
+
+    expect(response.statusCode).toBe(401);
+    await new Promise((r) => setTimeout(r, 10));
+
+    // No fetch to /observations should have been made at all.
+    expect(mockFetch.mock.calls.length).toBe(0);
+
+    // Defense-in-depth: even if a future regression resurrects the dispatch, the
+    // secret-like payload must never appear in any observation body.
+    const allBodies = mockFetch.mock.calls
+      .map((c) => (c[1] as any)?.body)
+      .filter((b): b is string => typeof b === "string");
+    for (const b of allBodies) {
+      expect(b).not.toContain(SECRET_LIKE_PAYLOAD);
+    }
+  });
+
+  test("2xx upstream still persists both prompt and response (positive regression)", async () => {
+    const fastify = Fastify();
+    const mockFetch = mock((_url: string | URL | Request, _init?: RequestInit) => {
+      return new Response(JSON.stringify({ status: "ok" }));
+    });
+    global.fetch = mockFetch as any;
+
+    await fastify.register(penumbraObservePlugin, {
+      baseUrl: "http://mock-daemon",
+      token: "fake-token",
+      logger: { warn: () => {}, info: () => {} } as any,
+    });
+
+    fastify.post("/v1/chat/completions", async () => ({
+      choices: [{ message: { role: "assistant", content: "ok" } }],
+    }));
+
+    const response = await fastify.inject({
+      method: "POST",
+      url: "/v1/chat/completions",
+      headers: { "x-penumbra-project": "test-project", "x-request-id": "req-2xx" },
+      payload: { model: "gpt-4", messages: [{ role: "user", content: "hi" }] },
+    });
+
+    expect(response.statusCode).toBe(200);
+    await new Promise((r) => setTimeout(r, 10));
+
+    const eventTypes = mockFetch.mock.calls.map((c) => JSON.parse((c[1] as any).body).event_type);
+    expect(eventTypes).toEqual(["agent-prompt", "agent-response"]);
   });
 
   test("agent-response model is the prompt input model, not the upstream echo", async () => {
