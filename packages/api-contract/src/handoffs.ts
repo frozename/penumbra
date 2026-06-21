@@ -49,7 +49,7 @@ export const HandoffsListQuerySchema = z
   .object({
     conversation_id: z.string().min(1).optional(),
     status: z.string().min(1).optional(),
-    since: z.string().datetime().optional(),
+    since: z.iso.datetime().optional(),
   })
   .strict();
 

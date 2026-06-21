@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+
 import { DispatchEventsListResponseSchema } from "../src/dispatch-events.js";
 
 describe("dispatch event contract", () => {

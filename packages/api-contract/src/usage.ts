@@ -2,14 +2,14 @@ import { z } from "zod";
 
 export const UsageRecentQuerySchema = z
   .object({
-    since: z.string().datetime().optional(),
+    since: z.iso.datetime().optional(),
     project_id: z.string().min(1).nullable().optional(),
   })
   .strict();
 
 export const UsageQuotaQuerySchema = z
   .object({
-    since: z.string().datetime().optional(),
+    since: z.iso.datetime().optional(),
     window: z.enum(["24h", "5h"]).optional(),
   })
   .strict();
