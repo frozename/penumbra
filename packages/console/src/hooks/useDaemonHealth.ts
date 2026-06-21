@@ -21,13 +21,17 @@ export function useDaemonHealth(opts?: UseDaemonHealthOpts): "unknown" | "ok" | 
 
   useEffect(() => {
     let isMounted = true;
+    let latestSeq = 0;
     const poll = async () => {
+      const seq = ++latestSeq;
       try {
         await client.health();
         if (!isMounted) return;
+        if (seq !== latestSeq) return;
         useDaemonStore.getState().setHealth("ok", Date.now());
       } catch {
         if (!isMounted) return;
+        if (seq !== latestSeq) return;
         useDaemonStore.getState().setHealth("down", Date.now());
       }
     };
