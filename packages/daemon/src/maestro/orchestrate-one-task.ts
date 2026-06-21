@@ -219,14 +219,22 @@ export async function orchestrateOneTask(
     // orchestrate_terminated event from the `failed` status returned below.
     try {
       const releasedAt = now();
-      const leaseRelease = opts.db.run(
-        `UPDATE task_leases SET released_at = ?, release_reason = 'chain_start_failed' WHERE task_id = ? AND released_at IS NULL`,
-        [releasedAt, taskId],
-      );
-      // Only revert + emit if we actually closed the open lease (guards against a
-      // concurrent release). Mirror the lease-sweeper: flip the task to pending,
-      // keep the gh status-sync invariant, and record a 'released' audit event.
-      if (leaseRelease.changes > 0) {
+      // Wrap the four writes in a single transaction so they either all commit
+      // or all roll back. A mid-failure (e.g. a transient SQLITE_BUSY on the
+      // task_events INSERT) must not leave the lease released while the task
+      // never gets reverted to 'pending' or vice versa — the inconsistent
+      // half-compensated state is exactly what the lease-sweeper backstop is
+      // not designed to repair, so the rollback hands the recovery off cleanly
+      // to the TTL-expiry path instead. Mirrors task-leases.ts:33.
+      opts.db.transaction(() => {
+        const leaseRelease = opts.db.run(
+          `UPDATE task_leases SET released_at = ?, release_reason = 'chain_start_failed' WHERE task_id = ? AND released_at IS NULL`,
+          [releasedAt, taskId],
+        );
+        // Only revert + emit if we actually closed the open lease (guards against a
+        // concurrent release). Mirror the lease-sweeper: flip the task to pending,
+        // keep the gh status-sync invariant, and record a 'released' audit event.
+        if (leaseRelease.changes === 0) return;
         opts.db.run(
           `UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ? AND status = 'leased'`,
           [releasedAt, taskId],
@@ -237,7 +245,7 @@ export async function orchestrateOneTask(
            VALUES (?, ?, 'released', NULL, ?)`,
           [taskId, releasedAt, JSON.stringify({ reason: "chain_start_failed", lease_id: leaseId })],
         );
-      }
+      })();
     } catch {
       // best-effort; the lease sweeper reclaims the task on TTL expiry if this fails
     }

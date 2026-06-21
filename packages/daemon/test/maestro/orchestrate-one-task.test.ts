@@ -304,6 +304,137 @@ test("orchestrateOneTask: chainStart succeeds but sessions.start throws -> chain
   db.close();
 });
 
+test("orchestrateOneTask: chainStart fails -> compensation commits all four writes atomically", async () => {
+  const db = setupDb();
+  const bus = new TaskEventBus();
+  const sessions = new MaestroSessionWriter({ db });
+  const taskWriter = new TaskWriter(db, {
+    bus,
+    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+  });
+
+  const { task_id } = taskWriter.file({
+    prompt: "chain_start failure compensation",
+    kind: "orchestrate",
+    eligibility: { allow_agents: [MAESTRO_AGENT.name] },
+    created_by_kind: "human",
+    created_by_id: "cli",
+  });
+  // gh-link the task so enqueueGhStatusSyncOnDb actually writes a gh_outbox row
+  // — exercises the third compensation write end-to-end.
+  db.run(`UPDATE tasks SET gh_issue_number = 42, gh_issue_repo = 'owner/repo' WHERE id = ?`, [
+    task_id,
+  ]);
+
+  const result = await orchestrateOneTask(task_id, {
+    db,
+    sessions,
+    taskWriter,
+    chainStart: async () => {
+      throw new Error("chain start blew up");
+    },
+    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    defaults: DEFAULT_BOUNDS,
+  });
+
+  expect(result.status).toBe("failed");
+
+  // 1) lease released with the chain_start_failed reason
+  const leaseRow = db
+    .query<
+      { released_at: number | null; release_reason: string | null },
+      [string]
+    >(`SELECT released_at, release_reason FROM task_leases WHERE task_id = ?`)
+    .get(task_id);
+  expect(leaseRow?.released_at).not.toBeNull();
+  expect(leaseRow?.release_reason).toBe("chain_start_failed");
+
+  // 2) task reverted to pending
+  expect(taskWriter.get(task_id).status).toBe("pending");
+
+  // 3) gh status-sync push enqueued (gh-linked task)
+  const ghRow = db
+    .query<{ op: string }, [string]>(`SELECT op FROM gh_outbox WHERE task_id = ? AND op = ?`)
+    .get(task_id, "gh_push_status");
+  expect(ghRow?.op).toBe("gh_push_status");
+
+  // 4) 'released' task_event recorded
+  const releasedEvent = db
+    .query<
+      { payload_json: string | null },
+      [string]
+    >(`SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'released'`)
+    .get(task_id);
+  expect(releasedEvent).not.toBeNull();
+  expect(JSON.parse(releasedEvent!.payload_json!).reason).toBe("chain_start_failed");
+
+  db.close();
+});
+
+test("orchestrateOneTask: mid-compensation failure rolls back all four writes", async () => {
+  const db = setupDb();
+  const bus = new TaskEventBus();
+  const sessions = new MaestroSessionWriter({ db });
+  const taskWriter = new TaskWriter(db, {
+    bus,
+    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+  });
+
+  const { task_id } = taskWriter.file({
+    prompt: "mid-compensation rollback",
+    kind: "orchestrate",
+    eligibility: { allow_agents: [MAESTRO_AGENT.name] },
+    created_by_kind: "human",
+    created_by_id: "cli",
+  });
+  // gh-link so enqueueGhStatusSyncOnDb tries to INSERT into gh_outbox.
+  db.run(`UPDATE tasks SET gh_issue_number = 7, gh_issue_repo = 'owner/repo' WHERE id = ?`, [
+    task_id,
+  ]);
+
+  const result = await orchestrateOneTask(task_id, {
+    db,
+    sessions,
+    taskWriter,
+    chainStart: async () => {
+      // Force the third compensation write (gh_outbox INSERT inside
+      // enqueueGhStatusSyncOnDb) to throw by dropping the table after the
+      // lease was acquired but before the catch block runs. The transaction
+      // wrapping the four writes must then roll back the first two writes too.
+      db.run(`DROP TABLE gh_outbox`);
+      throw new Error("chain start blew up");
+    },
+    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    defaults: DEFAULT_BOUNDS,
+  });
+
+  expect(result.status).toBe("failed");
+
+  // 1) lease NOT released — the rollback restored its open state.
+  const leaseRow = db
+    .query<
+      { released_at: number | null; release_reason: string | null },
+      [string]
+    >(`SELECT released_at, release_reason FROM task_leases WHERE task_id = ?`)
+    .get(task_id);
+  expect(leaseRow?.released_at).toBeNull();
+  expect(leaseRow?.release_reason).toBeNull();
+
+  // 2) task NOT reverted to pending — the lease-TTL sweeper takes over.
+  expect(taskWriter.get(task_id).status).toBe("leased");
+
+  // 3) no 'released' task_event recorded.
+  const releasedEvent = db
+    .query<
+      { id: number },
+      [string]
+    >(`SELECT id FROM task_events WHERE task_id = ? AND kind = 'released'`)
+    .get(task_id);
+  expect(releasedEvent).toBeNull();
+
+  db.close();
+});
+
 test("orchestrateOneTask fails with unknown_agent when selected agent does not resolve", async () => {
   const db = setupDb();
   const taskWriter = new TaskWriter(db, {
