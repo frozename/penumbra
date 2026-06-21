@@ -76,5 +76,21 @@ export const QuotasConfigSchema = z
   .object({
     providers: z.array(ProviderQuotaConfigSchema).default([]),
   })
-  .strict();
+  .strict()
+  .superRefine((data, ctx) => {
+    const seen = new Map<string, number>();
+    for (let i = 0; i < data.providers.length; i++) {
+      const name = data.providers[i]!.name;
+      const first = seen.get(name);
+      if (first !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["providers", i, "name"],
+          message: `duplicate provider name '${name}' (also at providers[${first}]); quota rows are keyed by provider name, so the later entry would silently drop one quota config`,
+        });
+      } else {
+        seen.set(name, i);
+      }
+    }
+  });
 export type QuotasConfig = z.infer<typeof QuotasConfigSchema>;

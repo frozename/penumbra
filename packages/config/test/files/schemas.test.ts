@@ -516,6 +516,35 @@ describe("QuotasConfigSchema", () => {
     ).toThrow(/typo_field/);
   });
 
+  test("rejects duplicate provider names (would silently drop one quota config)", () => {
+    const result = QuotasConfigSchema.safeParse({
+      providers: [
+        { name: "anthropic", quota_usd_per_24h: 50 },
+        { name: "openai", quota_usd_per_24h: 25 },
+        { name: "anthropic", quota_usd_per_24h: 100 },
+      ],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const dupIssue = result.error.issues.find((i) => /duplicate provider name/.test(i.message));
+      expect(dupIssue).toBeDefined();
+      expect(dupIssue?.path).toEqual(["providers", 2, "name"]);
+      expect(dupIssue?.message).toContain("'anthropic'");
+    }
+  });
+
+  test("accepts providers with all-unique names (regression: refine should not false-positive)", () => {
+    expect(() =>
+      QuotasConfigSchema.parse({
+        providers: [
+          { name: "anthropic", quota_usd_per_24h: 50 },
+          { name: "openai", quota_usd_per_24h: 25 },
+          { name: "google", quota_usd_per_24h: 80 },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
   test("rejects non-canonical name 'OpenAI' with name-path error", () => {
     const result = QuotasConfigSchema.safeParse({
       providers: [{ name: "OpenAI", quota_usd_per_24h: 50 }],
