@@ -80,10 +80,10 @@ describe("useDaemonHealth", () => {
 
     await waitFor(() => expect(resolvers.length).toBeGreaterThanOrEqual(2));
 
-    resolvers[1].resolve({ status: "ok" });
+    resolvers[1]!.resolve({ status: "ok" });
     await waitFor(() => expect(useDaemonStore.getState().health).toBe("ok"));
 
-    resolvers[0].reject(new Error("stale"));
+    resolvers[0]!.reject(new Error("stale"));
     for (let i = 0; i < 5; i++) await Promise.resolve();
 
     expect(useDaemonStore.getState().health).toBe("ok");

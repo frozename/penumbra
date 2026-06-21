@@ -47,10 +47,10 @@ function installFetchStub(sessionId: string) {
       });
     }
     if (url.includes("/workspace")) {
-      return new Response(
-        JSON.stringify({ projectId: null, branch: null, dirty: null }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
+      return new Response(JSON.stringify({ projectId: null, branch: null, dirty: null }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
     }
     return new Response(JSON.stringify({}), {
       status: 200,

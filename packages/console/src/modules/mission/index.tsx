@@ -40,12 +40,11 @@ export function MissionControl(): JSX.Element {
 
   const capTrip = pressure.windows.find((window) => window.used_pct >= window.refuse_pct);
   const sessionData = session.data;
-  const hasRealSession = Boolean(sessionData && sessionData.id !== "no-session");
-  const startedAt = sessionData ? new Date(sessionData.started_at).getTime() : NaN;
+  const realSession = sessionData && sessionData.id !== "no-session" ? sessionData : undefined;
+  const hasRealSession = realSession !== undefined;
+  const startedAt = realSession ? new Date(realSession.started_at).getTime() : NaN;
   const elapsed =
-    hasRealSession && Number.isFinite(startedAt)
-      ? fmtDur((Date.now() - startedAt) / 1000)
-      : "0m";
+    hasRealSession && Number.isFinite(startedAt) ? fmtDur((Date.now() - startedAt) / 1000) : "0m";
   const liveChains = liveChainCount(dispatchedChains.data?.chains);
   const pendingCount = pendingHandoffs.data?.handoffs.length ?? 0;
 
@@ -55,7 +54,7 @@ export function MissionControl(): JSX.Element {
         <div className="glow-bg" />
         <div style={{ position: "relative", zIndex: 1 }}>
           <h1>
-            Mission control <em>· {hasRealSession ? sessionData.project.name : "no project"}</em>
+            Mission control <em>· {realSession ? realSession.project.name : "no project"}</em>
           </h1>
           <p className="lede">
             <em className="brand">{liveChains}</em> chains in flight ·{" "}
@@ -67,22 +66,22 @@ export function MissionControl(): JSX.Element {
                 {capTrip.window_label}
               </>
             )}
-            . Maestro session {hasRealSession ? sessionData.id : "no-session"}
+            . Maestro session {realSession ? realSession.id : "no-session"}
             {hasRealSession ? `, ${elapsed} in.` : "."}
           </p>
           <div className="heads-row">
-            <span className="chip">session · {hasRealSession ? sessionData.id : "no-session"}</span>
-            <span className="chip">project · {hasRealSession ? sessionData.project.id : "—"}</span>
+            <span className="chip">session · {realSession ? realSession.id : "no-session"}</span>
+            <span className="chip">project · {realSession ? realSession.project.id : "—"}</span>
             <span className="chip">
-              budget · {hasRealSession ? sessionData.budget.current : 0}/
-              {hasRealSession ? sessionData.budget.max_concurrent : 0} concurrent
+              budget · {realSession ? realSession.budget.current : 0}/
+              {realSession ? realSession.budget.max_concurrent : 0} concurrent
             </span>
-            <span className="chip">dispatched · {hasRealSession ? sessionData.dispatched : 0}</span>
+            <span className="chip">dispatched · {realSession ? realSession.dispatched : 0}</span>
             <span className="chip" style={{ color: "var(--color-ok)" }}>
-              resolved · {hasRealSession ? sessionData.resolved : 0}
+              resolved · {realSession ? realSession.resolved : 0}
             </span>
             <span className="chip" style={{ color: "var(--color-err)" }}>
-              failed · {hasRealSession ? sessionData.failed : 0}
+              failed · {realSession ? realSession.failed : 0}
             </span>
           </div>
         </div>

@@ -30,10 +30,12 @@ export function isInternalOrMetadataHost(hostname: string): boolean {
   if (h.startsWith("fe80:") || h.startsWith("fe80::")) return true;
   if (/^f[cd][0-9a-f]{2}:/.test(h)) return true;
 
-  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  const m = /^(\d{1,3})\.(\d{1,3})\.(?:\d{1,3})\.(?:\d{1,3})$/.exec(h);
   if (m) {
-    const a = parseInt(m[1], 10);
-    const b = parseInt(m[2], 10);
+    const [, aStr, bStr] = m;
+    if (aStr === undefined || bStr === undefined) return false;
+    const a = parseInt(aStr, 10);
+    const b = parseInt(bStr, 10);
     if (a === 127) return true;
     if (a === 0) return true;
     if (a === 10) return true;

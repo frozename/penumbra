@@ -163,7 +163,7 @@ describe("ClaudeJsonlReader", () => {
       // i.e. we only read the [byte_offset, size) range — not the whole file.
       let bytesRequested = 0;
       for (const call of readSyncSpy.mock.calls) {
-        const lengthArg = call[3];
+        const lengthArg = (call as readonly unknown[])[3];
         if (typeof lengthArg === "number") bytesRequested += lengthArg;
       }
       expect(bytesRequested).toBeGreaterThan(0);
