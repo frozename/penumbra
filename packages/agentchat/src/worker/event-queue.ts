@@ -11,6 +11,7 @@ export interface DispatchEventQueueOpts {
 export class DispatchEventQueue {
   private buffer: DispatchEventInput[] = [];
   private dropped = 0;
+  private sendFailures = 0;
   private timer: ReturnType<typeof setInterval> | null;
   private flushing = false;
   private flushPromise: Promise<void> | null = null;
@@ -39,6 +40,10 @@ export class DispatchEventQueue {
 
   droppedCount(): number {
     return this.dropped;
+  }
+
+  sendFailureCount(): number {
+    return this.sendFailures;
   }
 
   async flush(): Promise<void> {
@@ -72,6 +77,13 @@ export class DispatchEventQueue {
             }
           } catch {
             controller.abort(new Error(`event_queue_send_timeout_${this.sendTimeoutMs}ms`));
+            this.sendFailures++;
+            this.buffer.unshift(...batch);
+            while (this.buffer.length > this.maxQueue) {
+              this.buffer.shift();
+              this.dropped++;
+            }
+            break;
           }
         }
       } finally {
