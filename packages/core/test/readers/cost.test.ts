@@ -506,6 +506,148 @@ describe("recentCost.by_provider_model", () => {
     expect(googleModel?.subscription_pressure).toEqual(google?.subscription_pressure);
   });
 
+  it("aggregates totals / by_provider / by_provider_model consistently on a multi-provider, multi-model, multi-lane fixture", () => {
+    const db = makeDb();
+    insertUsageRow(db, {
+      event_id: "a1",
+      ts: "2026-05-09T10:00:00Z",
+      provider: "anthropic",
+      model: "claude-sonnet",
+      lane: "cloud",
+      cost_usd: 3.0,
+      used: 600,
+      tokens_input: 400,
+      tokens_cache_read: 200,
+      tokens_cache_write: 30,
+      handoff_id: "ha1",
+    });
+    insertUsageRow(db, {
+      event_id: "a2",
+      ts: "2026-05-09T10:01:00Z",
+      provider: "anthropic",
+      model: "claude-sonnet",
+      lane: "cloud",
+      cost_usd: 4.0,
+      used: 800,
+      tokens_input: 500,
+      tokens_cache_read: 250,
+      tokens_cache_write: 40,
+      handoff_id: "ha1",
+    });
+    insertUsageRow(db, {
+      event_id: "a3",
+      ts: "2026-05-09T10:02:00Z",
+      provider: "anthropic",
+      model: "claude-opus",
+      lane: "cli-subscription",
+      cost_usd: 5.0,
+      used: 1000,
+      tokens_input: 700,
+      tokens_cache_read: 300,
+      tokens_cache_write: 50,
+      handoff_id: "ha2",
+    });
+    insertUsageRow(db, {
+      event_id: "g1",
+      ts: "2026-05-09T10:03:00Z",
+      provider: "google",
+      model: "gemini-flash",
+      lane: "cli-subscription",
+      cost_usd: 1.2,
+      used: 200,
+      tokens_input: 150,
+      tokens_cache_read: 60,
+      tokens_cache_write: 10,
+      handoff_id: "hg1",
+    });
+    insertUsageRow(db, {
+      event_id: "o1",
+      ts: "2026-05-09T10:04:00Z",
+      provider: "openai",
+      model: "gpt-4",
+      lane: "cloud",
+      cost_usd: null,
+      used: 50,
+      tokens_input: 50,
+      tokens_cache_read: 0,
+      tokens_cache_write: 0,
+      handoff_id: "ho1",
+    });
+
+    const out = recentCost(
+      db,
+      { since: "2026-05-09T00:00:00Z" },
+      () => new Date("2026-05-09T11:00:00Z"),
+    );
+
+    expect(out.handoff_count).toBe(4);
+    expect(out.total_cost_usd).toBe(4.0 + 5.0 + 1.2);
+    expect(out.total_cost_usd_billed).toBe(4.0);
+    expect(out.total_cost_usd_synth).toBe(5.0 + 1.2);
+    expect(out.total_tokens_used).toBe(800 + 1000 + 200 + 50);
+
+    expect(out.by_provider.map((r) => r.provider)).toEqual(["anthropic", "google", "openai"]);
+    const anth = out.by_provider.find((r) => r.provider === "anthropic")!;
+    expect(anth).toMatchObject({
+      cost_usd: 9.0,
+      cost_usd_billed: 4.0,
+      cost_usd_synth: 5.0,
+      tokens_used: 1800,
+      tokens_cache_read: 250 + 300,
+      tokens_cache_write: 40 + 50,
+      handoff_count: 2,
+    });
+    expect(anth.cache_read_pct).toBeCloseTo((250 + 300) / (250 + 300 + 500 + 700), 12);
+    const google = out.by_provider.find((r) => r.provider === "google")!;
+    expect(google).toMatchObject({
+      cost_usd: 1.2,
+      cost_usd_billed: null,
+      cost_usd_synth: 1.2,
+      tokens_used: 200,
+      tokens_cache_read: 60,
+      tokens_cache_write: 10,
+      handoff_count: 1,
+    });
+    const openai = out.by_provider.find((r) => r.provider === "openai")!;
+    expect(openai).toMatchObject({
+      cost_usd: null,
+      cost_usd_billed: null,
+      cost_usd_synth: null,
+      tokens_used: 50,
+      handoff_count: 1,
+    });
+
+    const sonnet = out.by_provider_model.find(
+      (r) => r.provider === "anthropic" && r.model === "claude-sonnet",
+    )!;
+    expect(sonnet).toMatchObject({
+      cost_usd: 4.0,
+      cost_usd_billed: 4.0,
+      cost_usd_synth: null,
+      tokens_used: 800,
+      tokens_cache_read: 250,
+      tokens_cache_write: 40,
+      handoff_count: 1,
+    });
+    const opus = out.by_provider_model.find(
+      (r) => r.provider === "anthropic" && r.model === "claude-opus",
+    )!;
+    expect(opus).toMatchObject({
+      cost_usd: 5.0,
+      cost_usd_billed: null,
+      cost_usd_synth: 5.0,
+      tokens_used: 1000,
+      tokens_cache_read: 300,
+      tokens_cache_write: 50,
+      handoff_count: 1,
+    });
+    expect(out.by_provider_model.find((r) => r.provider === "openai")).toMatchObject({
+      cost_usd: null,
+      handoff_count: 1,
+      tokens_used: 50,
+    });
+  });
+
   it("keeps only the latest snapshot per (provider, window_label, model)", () => {
     const db = makeDb();
     insertUsageRow(db, {

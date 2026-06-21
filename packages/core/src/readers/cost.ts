@@ -139,6 +139,71 @@ export function collectSubscriptionPressure(
   }));
 }
 
+interface PerHandoffModelRow {
+  handoff_key: string;
+  provider: string | null;
+  model: string | null;
+  handoff_cost_usd: number | null;
+  handoff_cost_usd_billed: number | null;
+  handoff_cost_usd_synth: number | null;
+  handoff_tokens: number | null;
+  handoff_input_tokens: number | null;
+  handoff_tokens_cache_read: number | null;
+  handoff_tokens_cache_write: number | null;
+}
+
+interface PerHandoffProviderRow {
+  provider: string | null;
+  handoff_cost_usd: number | null;
+  handoff_cost_usd_billed: number | null;
+  handoff_cost_usd_synth: number | null;
+  handoff_tokens: number | null;
+  handoff_input_tokens: number;
+  handoff_tokens_cache_read: number;
+  handoff_tokens_cache_write: number;
+}
+
+interface ProviderAgg {
+  provider: string | null;
+  cost_usd_sum: number;
+  cost_usd_billed_sum: number;
+  cost_usd_synth_sum: number;
+  has_cost: boolean;
+  has_cost_billed: boolean;
+  has_cost_synth: boolean;
+  tokens_used: number;
+  tokens_cache_read: number;
+  tokens_cache_write: number;
+  input_tokens: number;
+  handoff_count: number;
+}
+
+interface ProviderModelAgg extends ProviderAgg {
+  model: string | null;
+}
+
+const NULL_KEY = "\u0001NULL";
+
+function maxNullable(a: number | null, b: number | null): number | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return a > b ? a : b;
+}
+
+function cacheReadPct(read: number, input: number): number | null {
+  return read + input > 0 ? read / (read + input) : null;
+}
+
+function compareCostDesc(a: ProviderAgg, b: ProviderAgg): number {
+  const aNull = !a.has_cost;
+  const bNull = !b.has_cost;
+  if (aNull !== bNull) return aNull ? 1 : -1;
+  const aCost = a.has_cost ? a.cost_usd_sum : 0;
+  const bCost = b.has_cost ? b.cost_usd_sum : 0;
+  if (aCost !== bCost) return bCost - aCost;
+  return b.tokens_used - a.tokens_used;
+}
+
 export function recentCost(
   db: Database,
   input: RecentCostInput,
@@ -153,192 +218,216 @@ export function recentCost(
     readRecentSubscriptionPressureSnapshots(db, { since, projectId: input.projectId ?? null }),
   );
 
-  const totalsRow = db
+  const perHandoffModelRows = db
     .prepare(
       `
-    WITH per_handoff AS (
-      SELECT
-        COALESCE(json_extract(payload_json, '$.handoff_id'), event_id) AS handoff_key,
-        provider,
-        MAX(cost_usd) AS handoff_cost_usd,
-        MAX(CASE WHEN lane = 'cloud' THEN cost_usd END) AS handoff_cost_usd_billed,
-        MAX(CASE WHEN lane = 'cli-subscription' THEN cost_usd END) AS handoff_cost_usd_synth,
-        MAX(CAST(json_extract(payload_json, '$.used') AS INTEGER)) AS handoff_tokens,
-        MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_input') AS INTEGER), tokens_in, 0)) AS handoff_input_tokens,
-        MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_cache_read') AS INTEGER), 0)) AS handoff_tokens_cache_read,
-        MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_cache_write') AS INTEGER), 0)) AS handoff_tokens_cache_write
-      FROM t0_events
-      WHERE event_type = 'usage-update'
-        AND ts >= ?
-        AND (? IS NULL OR project_id = ?)
-      GROUP BY handoff_key, provider
-    )
     SELECT
-      SUM(handoff_cost_usd) AS sum_cost,
-      SUM(handoff_cost_usd_billed) AS sum_cost_billed,
-      SUM(handoff_cost_usd_synth) AS sum_cost_synth,
-      SUM(handoff_tokens)   AS sum_tokens,
-      COUNT(*)              AS n,
-      SUM(CASE WHEN handoff_cost_usd IS NOT NULL THEN 1 ELSE 0 END) AS n_with_cost,
-      SUM(CASE WHEN handoff_cost_usd_billed IS NOT NULL THEN 1 ELSE 0 END) AS n_with_cost_billed,
-      SUM(CASE WHEN handoff_cost_usd_synth IS NOT NULL THEN 1 ELSE 0 END) AS n_with_cost_synth
-    FROM per_handoff
-  `,
-    )
-    .get(since, input.projectId ?? null, input.projectId ?? null) as
-    | {
-        sum_cost: number | null;
-        sum_cost_billed: number | null;
-        sum_cost_synth: number | null;
-        sum_tokens: number | null;
-        n: number;
-        n_with_cost: number | null;
-        n_with_cost_billed: number | null;
-        n_with_cost_synth: number | null;
-      }
-    | undefined;
-
-  const byProviderRows = db
-    .prepare(
-      `
-    WITH per_handoff AS (
-      SELECT
-        COALESCE(json_extract(payload_json, '$.handoff_id'), event_id) AS handoff_key,
-        provider,
-        MAX(cost_usd) AS handoff_cost_usd,
-        MAX(CASE WHEN lane = 'cloud' THEN cost_usd END) AS handoff_cost_usd_billed,
-        MAX(CASE WHEN lane = 'cli-subscription' THEN cost_usd END) AS handoff_cost_usd_synth,
-        MAX(CAST(json_extract(payload_json, '$.used') AS INTEGER)) AS handoff_tokens,
-        MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_input') AS INTEGER), tokens_in, 0)) AS handoff_input_tokens,
-        MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_cache_read') AS INTEGER), 0)) AS handoff_tokens_cache_read,
-        MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_cache_write') AS INTEGER), 0)) AS handoff_tokens_cache_write
-      FROM t0_events
-      WHERE event_type = 'usage-update'
-        AND ts >= ?
-        AND (? IS NULL OR project_id = ?)
-      GROUP BY handoff_key, provider
-    )
-    SELECT
-      provider,
-      SUM(handoff_cost_usd) AS cost_usd,
-      SUM(handoff_cost_usd_billed) AS cost_usd_billed,
-      SUM(handoff_cost_usd_synth) AS cost_usd_synth,
-      SUM(handoff_tokens)   AS tokens_used,
-      SUM(handoff_tokens_cache_read) AS tokens_cache_read,
-      SUM(handoff_tokens_cache_write) AS tokens_cache_write,
-      CASE
-        WHEN SUM(handoff_tokens_cache_read) + SUM(handoff_input_tokens) > 0
-          THEN CAST(SUM(handoff_tokens_cache_read) AS REAL) / (SUM(handoff_tokens_cache_read) + SUM(handoff_input_tokens))
-        ELSE NULL
-      END AS cache_read_pct,
-      COUNT(*)              AS handoff_count
-    FROM per_handoff
-    GROUP BY provider
-    ORDER BY (cost_usd IS NULL) ASC, cost_usd DESC, tokens_used DESC
-  `,
-    )
-    .all(since, input.projectId ?? null, input.projectId ?? null) as Array<{
-    provider: string | null;
-    cost_usd: number | null;
-    cost_usd_billed: number | null;
-    cost_usd_synth: number | null;
-    tokens_used: number | null;
-    tokens_cache_read: number | null;
-    tokens_cache_write: number | null;
-    cache_read_pct: number | null;
-    handoff_count: number;
-  }>;
-
-  const byProviderModelRows = db
-    .prepare(
-      `
-    WITH per_handoff AS (
-      SELECT
-        COALESCE(json_extract(payload_json, '$.handoff_id'), event_id) AS handoff_key,
-        provider,
-        model,
-        MAX(cost_usd) AS handoff_cost_usd,
-        MAX(CASE WHEN lane = 'cloud' THEN cost_usd END) AS handoff_cost_usd_billed,
-        MAX(CASE WHEN lane = 'cli-subscription' THEN cost_usd END) AS handoff_cost_usd_synth,
-        MAX(CAST(json_extract(payload_json, '$.used') AS INTEGER)) AS handoff_tokens,
-        MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_input') AS INTEGER), tokens_in, 0)) AS handoff_input_tokens,
-        MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_cache_read') AS INTEGER), 0)) AS handoff_tokens_cache_read,
-        MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_cache_write') AS INTEGER), 0)) AS handoff_tokens_cache_write
-      FROM t0_events
-      WHERE event_type = 'usage-update'
-        AND ts >= ?
-        AND (? IS NULL OR project_id = ?)
-      GROUP BY handoff_key, provider, model
-    )
-    SELECT
+      COALESCE(json_extract(payload_json, '$.handoff_id'), event_id) AS handoff_key,
       provider,
       model,
-      SUM(handoff_cost_usd) AS cost_usd,
-      SUM(handoff_cost_usd_billed) AS cost_usd_billed,
-      SUM(handoff_cost_usd_synth) AS cost_usd_synth,
-      SUM(handoff_tokens)   AS tokens_used,
-      SUM(handoff_tokens_cache_read) AS tokens_cache_read,
-      SUM(handoff_tokens_cache_write) AS tokens_cache_write,
-      CASE
-        WHEN SUM(handoff_tokens_cache_read) + SUM(handoff_input_tokens) > 0
-          THEN CAST(SUM(handoff_tokens_cache_read) AS REAL) / (SUM(handoff_tokens_cache_read) + SUM(handoff_input_tokens))
-        ELSE NULL
-      END AS cache_read_pct,
-      COUNT(*)              AS handoff_count
-    FROM per_handoff
-    GROUP BY provider, model
-    ORDER BY (cost_usd IS NULL) ASC, cost_usd DESC, tokens_used DESC
+      MAX(cost_usd) AS handoff_cost_usd,
+      MAX(CASE WHEN lane = 'cloud' THEN cost_usd END) AS handoff_cost_usd_billed,
+      MAX(CASE WHEN lane = 'cli-subscription' THEN cost_usd END) AS handoff_cost_usd_synth,
+      MAX(CAST(json_extract(payload_json, '$.used') AS INTEGER)) AS handoff_tokens,
+      MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_input') AS INTEGER), tokens_in, 0)) AS handoff_input_tokens,
+      MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_cache_read') AS INTEGER), 0)) AS handoff_tokens_cache_read,
+      MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_cache_write') AS INTEGER), 0)) AS handoff_tokens_cache_write
+    FROM t0_events
+    WHERE event_type = 'usage-update'
+      AND ts >= ?
+      AND (? IS NULL OR project_id = ?)
+    GROUP BY handoff_key, provider, model
   `,
     )
-    .all(since, input.projectId ?? null, input.projectId ?? null) as Array<{
-    provider: string | null;
-    model: string | null;
-    cost_usd: number | null;
-    cost_usd_billed: number | null;
-    cost_usd_synth: number | null;
-    tokens_used: number | null;
-    tokens_cache_read: number | null;
-    tokens_cache_write: number | null;
-    cache_read_pct: number | null;
-    handoff_count: number;
-  }>;
+    .all(since, input.projectId ?? null, input.projectId ?? null) as Array<
+    PerHandoffModelRow & { handoff_key: string }
+  >;
 
-  const total_cost_usd = (totalsRow?.n_with_cost ?? 0) > 0 ? (totalsRow?.sum_cost ?? 0) : null;
-  const total_cost_usd_billed =
-    (totalsRow?.n_with_cost_billed ?? 0) > 0 ? (totalsRow?.sum_cost_billed ?? 0) : null;
-  const total_cost_usd_synth =
-    (totalsRow?.n_with_cost_synth ?? 0) > 0 ? (totalsRow?.sum_cost_synth ?? 0) : null;
+  const perHandoffProvider = new Map<string, PerHandoffProviderRow>();
+  for (const row of perHandoffModelRows) {
+    const key = `${row.handoff_key}\u0000${row.provider ?? NULL_KEY}`;
+    const existing = perHandoffProvider.get(key);
+    if (!existing) {
+      perHandoffProvider.set(key, {
+        provider: row.provider,
+        handoff_cost_usd: row.handoff_cost_usd,
+        handoff_cost_usd_billed: row.handoff_cost_usd_billed,
+        handoff_cost_usd_synth: row.handoff_cost_usd_synth,
+        handoff_tokens: row.handoff_tokens,
+        handoff_input_tokens: row.handoff_input_tokens ?? 0,
+        handoff_tokens_cache_read: row.handoff_tokens_cache_read ?? 0,
+        handoff_tokens_cache_write: row.handoff_tokens_cache_write ?? 0,
+      });
+    } else {
+      existing.handoff_cost_usd = maxNullable(existing.handoff_cost_usd, row.handoff_cost_usd);
+      existing.handoff_cost_usd_billed = maxNullable(
+        existing.handoff_cost_usd_billed,
+        row.handoff_cost_usd_billed,
+      );
+      existing.handoff_cost_usd_synth = maxNullable(
+        existing.handoff_cost_usd_synth,
+        row.handoff_cost_usd_synth,
+      );
+      existing.handoff_tokens = maxNullable(existing.handoff_tokens, row.handoff_tokens);
+      existing.handoff_input_tokens = Math.max(
+        existing.handoff_input_tokens,
+        row.handoff_input_tokens ?? 0,
+      );
+      existing.handoff_tokens_cache_read = Math.max(
+        existing.handoff_tokens_cache_read,
+        row.handoff_tokens_cache_read ?? 0,
+      );
+      existing.handoff_tokens_cache_write = Math.max(
+        existing.handoff_tokens_cache_write,
+        row.handoff_tokens_cache_write ?? 0,
+      );
+    }
+  }
+
+  let sumCost = 0;
+  let sumCostBilled = 0;
+  let sumCostSynth = 0;
+  let sumTokens = 0;
+  let totalHandoffs = 0;
+  let totalWithCost = 0;
+  let totalWithCostBilled = 0;
+  let totalWithCostSynth = 0;
+
+  const byProviderMap = new Map<string, ProviderAgg>();
+
+  for (const v of perHandoffProvider.values()) {
+    totalHandoffs++;
+    if (v.handoff_cost_usd !== null) {
+      totalWithCost++;
+      sumCost += v.handoff_cost_usd;
+    }
+    if (v.handoff_cost_usd_billed !== null) {
+      totalWithCostBilled++;
+      sumCostBilled += v.handoff_cost_usd_billed;
+    }
+    if (v.handoff_cost_usd_synth !== null) {
+      sumCostSynth += v.handoff_cost_usd_synth;
+      totalWithCostSynth++;
+    }
+    sumTokens += v.handoff_tokens ?? 0;
+
+    const pKey = v.provider ?? NULL_KEY;
+    let pa = byProviderMap.get(pKey);
+    if (!pa) {
+      pa = {
+        provider: v.provider,
+        cost_usd_sum: 0,
+        cost_usd_billed_sum: 0,
+        cost_usd_synth_sum: 0,
+        has_cost: false,
+        has_cost_billed: false,
+        has_cost_synth: false,
+        tokens_used: 0,
+        tokens_cache_read: 0,
+        tokens_cache_write: 0,
+        input_tokens: 0,
+        handoff_count: 0,
+      };
+      byProviderMap.set(pKey, pa);
+    }
+    pa.handoff_count++;
+    if (v.handoff_cost_usd !== null) {
+      pa.has_cost = true;
+      pa.cost_usd_sum += v.handoff_cost_usd;
+    }
+    if (v.handoff_cost_usd_billed !== null) {
+      pa.has_cost_billed = true;
+      pa.cost_usd_billed_sum += v.handoff_cost_usd_billed;
+    }
+    if (v.handoff_cost_usd_synth !== null) {
+      pa.has_cost_synth = true;
+      pa.cost_usd_synth_sum += v.handoff_cost_usd_synth;
+    }
+    pa.tokens_used += v.handoff_tokens ?? 0;
+    pa.input_tokens += v.handoff_input_tokens;
+    pa.tokens_cache_read += v.handoff_tokens_cache_read;
+    pa.tokens_cache_write += v.handoff_tokens_cache_write;
+  }
+
+  const byProviderModelMap = new Map<string, ProviderModelAgg>();
+  for (const row of perHandoffModelRows) {
+    const pmKey = `${row.provider ?? NULL_KEY}\u0000${row.model ?? NULL_KEY}`;
+    let pma = byProviderModelMap.get(pmKey);
+    if (!pma) {
+      pma = {
+        provider: row.provider,
+        model: row.model,
+        cost_usd_sum: 0,
+        cost_usd_billed_sum: 0,
+        cost_usd_synth_sum: 0,
+        has_cost: false,
+        has_cost_billed: false,
+        has_cost_synth: false,
+        tokens_used: 0,
+        tokens_cache_read: 0,
+        tokens_cache_write: 0,
+        input_tokens: 0,
+        handoff_count: 0,
+      };
+      byProviderModelMap.set(pmKey, pma);
+    }
+    pma.handoff_count++;
+    if (row.handoff_cost_usd !== null) {
+      pma.has_cost = true;
+      pma.cost_usd_sum += row.handoff_cost_usd;
+    }
+    if (row.handoff_cost_usd_billed !== null) {
+      pma.has_cost_billed = true;
+      pma.cost_usd_billed_sum += row.handoff_cost_usd_billed;
+    }
+    if (row.handoff_cost_usd_synth !== null) {
+      pma.has_cost_synth = true;
+      pma.cost_usd_synth_sum += row.handoff_cost_usd_synth;
+    }
+    pma.tokens_used += row.handoff_tokens ?? 0;
+    pma.input_tokens += row.handoff_input_tokens ?? 0;
+    pma.tokens_cache_read += row.handoff_tokens_cache_read ?? 0;
+    pma.tokens_cache_write += row.handoff_tokens_cache_write ?? 0;
+  }
+
+  const total_cost_usd = totalWithCost > 0 ? sumCost : null;
+  const total_cost_usd_billed = totalWithCostBilled > 0 ? sumCostBilled : null;
+  const total_cost_usd_synth = totalWithCostSynth > 0 ? sumCostSynth : null;
+
+  const byProviderSorted = [...byProviderMap.values()].sort(compareCostDesc);
+  const byProviderModelSorted = [...byProviderModelMap.values()].sort(compareCostDesc);
+
   return {
     total_cost_usd,
     total_cost_usd_billed,
     total_cost_usd_synth,
-    total_tokens_used: totalsRow?.sum_tokens ?? 0,
-    handoff_count: totalsRow?.n ?? 0,
-    by_provider: byProviderRows.map((r) => ({
+    total_tokens_used: sumTokens,
+    handoff_count: totalHandoffs,
+    by_provider: byProviderSorted.map((r) => ({
       provider: r.provider,
-      cost_usd: r.cost_usd,
-      cost_usd_billed: r.cost_usd_billed,
-      cost_usd_synth: r.cost_usd_synth,
-      tokens_used: r.tokens_used ?? 0,
-      tokens_cache_read: r.tokens_cache_read ?? 0,
-      tokens_cache_write: r.tokens_cache_write ?? 0,
-      cache_read_pct: r.cache_read_pct,
+      cost_usd: r.has_cost ? r.cost_usd_sum : null,
+      cost_usd_billed: r.has_cost_billed ? r.cost_usd_billed_sum : null,
+      cost_usd_synth: r.has_cost_synth ? r.cost_usd_synth_sum : null,
+      tokens_used: r.tokens_used,
+      tokens_cache_read: r.tokens_cache_read,
+      tokens_cache_write: r.tokens_cache_write,
+      cache_read_pct: cacheReadPct(r.tokens_cache_read, r.input_tokens),
       handoff_count: r.handoff_count,
       subscription_pressure:
         r.provider == null
           ? []
           : collectSubscriptionPressure(pressureByProvider.get(r.provider) ?? [], null),
     })),
-    by_provider_model: byProviderModelRows.map((r) => ({
+    by_provider_model: byProviderModelSorted.map((r) => ({
       provider: r.provider,
       model: r.model,
-      cost_usd: r.cost_usd,
-      cost_usd_billed: r.cost_usd_billed,
-      cost_usd_synth: r.cost_usd_synth,
-      tokens_used: r.tokens_used ?? 0,
-      tokens_cache_read: r.tokens_cache_read ?? 0,
-      tokens_cache_write: r.tokens_cache_write ?? 0,
-      cache_read_pct: r.cache_read_pct,
+      cost_usd: r.has_cost ? r.cost_usd_sum : null,
+      cost_usd_billed: r.has_cost_billed ? r.cost_usd_billed_sum : null,
+      cost_usd_synth: r.has_cost_synth ? r.cost_usd_synth_sum : null,
+      tokens_used: r.tokens_used,
+      tokens_cache_read: r.tokens_cache_read,
+      tokens_cache_write: r.tokens_cache_write,
+      cache_read_pct: cacheReadPct(r.tokens_cache_read, r.input_tokens),
       handoff_count: r.handoff_count,
       subscription_pressure:
         r.provider == null
