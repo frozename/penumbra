@@ -233,7 +233,11 @@ export function createResearchAdapter(
   transport?: FirecrawlTransport,
 ): WebResearchAdapter {
   if (opts.provider === "off") return new OffAdapter();
-  if (opts.provider === "webfetch") return new WebFetchAdapter();
+  if (opts.provider === "webfetch")
+    return new WebFetchAdapter({ allowedDomains: opts.allowedDomains });
   const primary = new FirecrawlAdapter({ allowedDomains: opts.allowedDomains }, transport);
-  return new FirecrawlWithFallbackAdapter(primary, new WebFetchAdapter());
+  return new FirecrawlWithFallbackAdapter(
+    primary,
+    new WebFetchAdapter({ allowedDomains: opts.allowedDomains }),
+  );
 }
