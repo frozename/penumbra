@@ -30,8 +30,12 @@ type CreateWorktreeFn = WorktreeManager["createWorktree"];
 function asWorktreeManager(impl: {
   createWorktree: CreateWorktreeFn;
   getWorktree?: WorktreeManager["getWorktree"];
+  projectRootFor?: WorktreeManager["projectRootFor"];
 }): WorktreeManager {
-  return impl as unknown as WorktreeManager;
+  // applyWorktreeOverride calls projectRootFor unconditionally on the real
+  // WorktreeManager type; provide an inert default for mocks that don't care.
+  const defaults = { projectRootFor: (): string | undefined => undefined };
+  return { ...defaults, ...impl } as unknown as WorktreeManager;
 }
 
 // gemini-cli options carry cwd/env at runtime; AgentOptions is a wider union
@@ -374,7 +378,6 @@ test("applyWorktreeOverride leaves dispatch event emission to the worker layer",
   const result = await applyWorktreeOverride(
     {
       handoff_id: "h-setup-event",
-      conversation_id: "conv-setup-event",
       project_id: null,
       to_agent: "gemini",
       use_worktree: true,

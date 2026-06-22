@@ -21,13 +21,20 @@ export interface SpawnSandboxedResult {
   killReason?: "timeout" | "output_overflow" | "cancelled";
 }
 
+type Subprocess = ReturnType<typeof Bun.spawn>;
+
 const PASS_THROUGH_ENV_KEYS = ["LANG", "LC_ALL"];
 
-export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSandboxedResult> {
-  if (!opts.argv && !opts.cmd) throw new Error("spawnSandboxed: argv or cmd required");
+function isExecutableMissingError(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const code = (err as { code?: unknown }).code;
+  if (code === "ENOENT") return true;
+  const message = (err as { message?: unknown }).message;
+  if (typeof message !== "string") return false;
+  return /Executable not found/i.test(message);
+}
 
-  const argv = opts.argv ?? ["bash", "-c", opts.cmd ?? ""];
-
+function buildSandboxEnv(opts: SpawnSandboxedOpts): Record<string, string> {
   const env: Record<string, string> = {
     PATH: opts.path ?? "/usr/bin:/bin",
     HOME: opts.cwd,
@@ -39,9 +46,57 @@ export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSan
     if (v !== undefined) env[key] = v;
   }
   for (const [k, v] of Object.entries(opts.envOverride ?? {})) env[k] = v;
+  return env;
+}
+
+function killProc(proc: Subprocess): void {
+  try {
+    proc.kill("SIGTERM");
+  } catch {
+    /* SIGTERM may race with natural exit */
+  }
+  setTimeout(() => {
+    try {
+      proc.kill("SIGKILL");
+    } catch {
+      /* SIGKILL may race with natural exit */
+    }
+  }, 2000);
+}
+
+async function readStream(
+  s: ReadableStream<Uint8Array> | null,
+  ingest: (c: string) => void,
+): Promise<void> {
+  if (!s) return;
+  const reader = s.getReader();
+  const dec = new TextDecoder();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      ingest(dec.decode(value, { stream: true }));
+    }
+    const tail = dec.decode();
+    if (tail) ingest(tail);
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* releaseLock may throw if stream already finalized */
+    }
+  }
+}
+
+export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSandboxedResult> {
+  if (!opts.argv && !opts.cmd) throw new Error("spawnSandboxed: argv or cmd required");
+
+  const argv = opts.argv ?? ["bash", "-c", opts.cmd ?? ""];
+  const env = buildSandboxEnv(opts);
+  const envKeys = Object.keys(env);
 
   const start = performance.now();
-  let proc: ReturnType<typeof Bun.spawn> | null = null;
+  let proc: Subprocess;
   try {
     proc = Bun.spawn(argv, {
       cwd: opts.cwd,
@@ -50,8 +105,8 @@ export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSan
       stdout: "pipe",
       stderr: "pipe",
     });
-  } catch (err: any) {
-    if (err?.code === "ENOENT" || /Executable not found/i.test(String(err?.message ?? err))) {
+  } catch (err) {
+    if (isExecutableMissingError(err)) {
       return {
         exitCode: 127,
         signal: null,
@@ -59,7 +114,7 @@ export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSan
         truncated: false,
         durationMs: Math.round(performance.now() - start),
         argv,
-        envKeys: Object.keys(env),
+        envKeys,
       };
     }
     throw err;
@@ -69,7 +124,7 @@ export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSan
   let truncated = false;
   let killReason: SpawnSandboxedResult["killReason"];
 
-  const ingest = (chunk: string) => {
+  const ingest = (chunk: string): void => {
     if (truncated) return;
     const currentBytes = Buffer.byteLength(buf, "utf8");
     const chunkBytes = Buffer.byteLength(chunk, "utf8");
@@ -78,68 +133,22 @@ export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSan
       buf += chunk.slice(0, Math.max(0, remaining));
       truncated = true;
       killReason = "output_overflow";
-      if (proc) {
-        try {
-          proc.kill("SIGTERM");
-        } catch {}
-        setTimeout(() => {
-          try {
-            proc.kill("SIGKILL");
-          } catch {}
-        }, 2000);
-      }
+      killProc(proc);
       return;
     }
     buf += chunk;
   };
 
-  const readStream = async (s: ReadableStream<Uint8Array> | null) => {
-    if (!s) return;
-    const reader = s.getReader();
-    const dec = new TextDecoder();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        ingest(dec.decode(value, { stream: true }));
-      }
-      const tail = dec.decode();
-      if (tail) ingest(tail);
-    } finally {
-      try {
-        reader.releaseLock();
-      } catch {}
-    }
-  };
-
   const timeoutHandle = setTimeout(() => {
-    if (proc?.exitCode !== null) return;
+    if (proc.exitCode !== null) return;
     killReason ??= "timeout";
-    if (proc) {
-      try {
-        proc.kill("SIGTERM");
-      } catch {}
-      setTimeout(() => {
-        try {
-          proc.kill("SIGKILL");
-        } catch {}
-      }, 2000);
-    }
+    killProc(proc);
   }, opts.timeoutMs);
 
-  const onAbort = () => {
-    if (proc?.exitCode !== null) return;
+  const onAbort = (): void => {
+    if (proc.exitCode !== null) return;
     killReason ??= "cancelled";
-    if (proc) {
-      try {
-        proc.kill("SIGTERM");
-      } catch {}
-      setTimeout(() => {
-        try {
-          proc.kill("SIGKILL");
-        } catch {}
-      }, 2000);
-    }
+    killProc(proc);
   };
 
   if (opts.signal) {
@@ -149,8 +158,8 @@ export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSan
 
   try {
     await Promise.all([
-      readStream(proc.stdout as ReadableStream<Uint8Array> | null),
-      readStream(proc.stderr as ReadableStream<Uint8Array> | null),
+      readStream(proc.stdout as ReadableStream<Uint8Array> | null, ingest),
+      readStream(proc.stderr as ReadableStream<Uint8Array> | null, ingest),
     ]);
     await proc.exited;
   } finally {
@@ -160,7 +169,7 @@ export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSan
 
   const durationMs = Math.round(performance.now() - start);
   const exitCode = proc.exitCode ?? -1;
-  const sig = (proc.signalCode as NodeJS.Signals | null) ?? null;
+  const sig = proc.signalCode ?? null;
 
   return {
     exitCode,
@@ -169,7 +178,7 @@ export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSan
     truncated,
     durationMs,
     argv,
-    envKeys: Object.keys(env),
+    envKeys,
     killReason,
   };
 }

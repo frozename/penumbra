@@ -1,4 +1,5 @@
-import type { WorktreeManager, WorktreeHandle } from "@penumbra/core";
+import type { WorktreeHandle, WorktreeManager } from "@penumbra/core";
+
 import type { AgentChatConfig } from "../config/types.js";
 
 export interface WorktreePromptRewrite {
@@ -17,12 +18,46 @@ export interface WorktreeSetupContext {
   signal?: AbortSignal;
 }
 
+/**
+ * Subset of HandoffRow fields consumed by applyWorktreeOverride. Narrow shape
+ * lets tests construct stub handoffs without filling every column on the full
+ * row schema.
+ */
+export interface WorktreeOverrideHandoff {
+  handoff_id: string;
+  to_agent: string;
+  use_worktree?: boolean | number | null;
+  project_id?: string | null;
+  branch_base?: string | null;
+  isolated_install?: boolean | number | null;
+}
+
 export function rewriteWorktreeHandoffMessage(
   message: string,
   rewrite: WorktreePromptRewrite,
 ): string {
   const rewrittenMessage = message.split(rewrite.mainRepoPath).join(rewrite.worktreePath);
   return `${rewrittenMessage}\n\n${rewrite.guardText}`;
+}
+
+const WORKTREE_CAPABLE_ADAPTERS: ReadonlySet<string> = new Set([
+  "claude-cli",
+  "gemini-cli",
+  "codex-cli",
+  "opencode-cli",
+  "stdio-acp",
+  "opencode-acp",
+]);
+
+function resolveBaseRef(branch_base: string | null | undefined): string | undefined {
+  return typeof branch_base === "string" && branch_base.length > 0 ? branch_base : undefined;
+}
+
+function resolveProjectRoot(
+  manager: WorktreeManager,
+  project_id: string | null | undefined,
+): string | undefined {
+  return manager.projectRootFor(project_id ?? undefined);
 }
 
 /**
@@ -36,9 +71,9 @@ export function rewriteWorktreeHandoffMessage(
  * "Worktree for handoff X not found".
  */
 export async function applyWorktreeOverride(
-  handoff: any,
+  handoff: WorktreeOverrideHandoff,
   config: AgentChatConfig,
-  storageRoot: string,
+  _storageRoot: string,
   worktreeManager: WorktreeManager,
   mainRepoPath = process.cwd(),
   setupContext?: WorktreeSetupContext,
@@ -51,86 +86,24 @@ export async function applyWorktreeOverride(
   // use_worktree=true silently get no worktree, and worktree-scoped MCP tools
   // (fs.glob, fs.grep) fail with `not_found` even when the dispatch asked
   // for isolation. Surfaced by the Phase 1b.2 smoke test.
-  const isWorktreeCapableAdapter =
-    targetAgent &&
-    ["claude-cli", "gemini-cli", "codex-cli", "opencode-cli", "stdio-acp", "opencode-acp"].includes(
-      targetAgent.adapter,
-    );
-
-  if (useWorktree && isWorktreeCapableAdapter) {
-    try {
-      const handle = await worktreeManager.createWorktree(handoff.handoff_id as string, {
-        baseRef:
-          typeof handoff.branch_base === "string" && handoff.branch_base.length > 0
-            ? handoff.branch_base
-            : undefined,
-        project_id: handoff.project_id ?? undefined,
-        isolated_install: handoff.isolated_install === true || handoff.isolated_install === 1,
-        signal: setupContext?.signal,
-      });
-      const guardText =
-        "This dispatch is isolated to the assigned worktree only.\n" +
-        `Work only in: ${handle.path}\n` +
-        "Do not read, edit, or commit in the shared main checkout.\n\n" +
-        "When running pytest, pip, or any Python tool inside a git worktree, prepend `PYTHONPATH=$PWD` to the command. " +
-        "A sibling checkout's .venv can otherwise shadow the worktree's source and make tests run against stale code. " +
-        'If behavior looks wrong, verify imports with: python3 -c "import <pkg>; print(<pkg>.__file__)".';
-      const overrideConfig: AgentChatConfig = {
-        ...config,
-        agents: config.agents.map((a) => {
-          if (a.name === targetAgent.name) {
-            const baseOpts = (a.options as any) ?? {};
-            return {
-              ...a,
-              options: {
-                ...baseOpts,
-                cwd: handle.path,
-                // Pool scope: stable across this project's per-handoff
-                // worktrees so an ACP warm process is reused across them and
-                // re-sessioned at each dispatch's cwd. Falls back to the main
-                // repo path when the project root is unknown.
-                repoRoot:
-                  (
-                    worktreeManager as {
-                      projectRootFor?: (project_id?: string) => string | undefined;
-                    }
-                  ).projectRootFor?.(handoff.project_id) ?? mainRepoPath,
-                env: { ...baseOpts.env, PENUMBRA_STORAGE_ROOT: handle.storageRoot },
-              },
-            };
-          }
-          return a;
-        }),
-      };
-      return {
-        overrideConfig,
-        handle,
-        worktreePromptRewrite: {
-          mainRepoPath,
-          worktreePath: handle.path,
-          guardText,
-        },
-      };
-    } catch (err) {
-      throw new Error(
-        "worktree creation failed for " +
-          String(handoff.handoff_id) +
-          ": " +
-          (err instanceof Error ? err.message : String(err)),
-        { cause: err instanceof Error ? err : new Error(String(err)) },
-      );
-    }
+  if (useWorktree && targetAgent && WORKTREE_CAPABLE_ADAPTERS.has(targetAgent.adapter)) {
+    return await createWorktreeOverride({
+      handoff,
+      config,
+      worktreeManager,
+      mainRepoPath,
+      setupContext,
+      targetAgent,
+    });
   }
 
-  const projectRoot = (
-    worktreeManager as { projectRootFor?: (project_id?: string) => string | undefined }
-  ).projectRootFor?.(handoff.project_id);
-  if (projectRoot && targetAgent) {
+  const projectRoot = resolveProjectRoot(worktreeManager, handoff.project_id);
+  if (projectRoot !== undefined && targetAgent) {
     const overrideConfig: AgentChatConfig = {
       ...config,
       agents: config.agents.map((a) => {
         if (a.name !== targetAgent.name) return a;
-        const baseOpts = (a.options as Record<string, unknown>) ?? {};
+        const baseOpts = a.options ?? {};
         return {
           ...a,
           options: { ...baseOpts, cwd: projectRoot, repoRoot: projectRoot },
@@ -141,4 +114,74 @@ export async function applyWorktreeOverride(
   }
 
   return { overrideConfig: config, handle: null, worktreePromptRewrite: null };
+}
+
+type AgentInConfig = AgentChatConfig["agents"][number];
+
+interface CreateWorktreeOverrideArgs {
+  handoff: WorktreeOverrideHandoff;
+  config: AgentChatConfig;
+  worktreeManager: WorktreeManager;
+  mainRepoPath: string;
+  setupContext: WorktreeSetupContext | undefined;
+  targetAgent: AgentInConfig;
+}
+
+async function createWorktreeOverride(
+  args: CreateWorktreeOverrideArgs,
+): Promise<WorktreeOverrideResult> {
+  const { handoff, config, worktreeManager, mainRepoPath, setupContext, targetAgent } = args;
+  let handle: WorktreeHandle;
+  try {
+    handle = await worktreeManager.createWorktree(handoff.handoff_id, {
+      baseRef: resolveBaseRef(handoff.branch_base),
+      project_id: handoff.project_id ?? undefined,
+      isolated_install: handoff.isolated_install === true || handoff.isolated_install === 1,
+      signal: setupContext?.signal,
+    });
+  } catch (err) {
+    throw new Error(
+      `worktree creation failed for ${handoff.handoff_id}: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err instanceof Error ? err : new Error(String(err)) },
+    );
+  }
+
+  const guardText =
+    "This dispatch is isolated to the assigned worktree only.\n" +
+    `Work only in: ${handle.path}\n` +
+    "Do not read, edit, or commit in the shared main checkout.\n\n" +
+    "When running pytest, pip, or any Python tool inside a git worktree, prepend `PYTHONPATH=$PWD` to the command. " +
+    "A sibling checkout's .venv can otherwise shadow the worktree's source and make tests run against stale code. " +
+    'If behavior looks wrong, verify imports with: python3 -c "import <pkg>; print(<pkg>.__file__)".';
+
+  const overrideConfig: AgentChatConfig = {
+    ...config,
+    agents: config.agents.map((a) => {
+      if (a.name !== targetAgent.name) return a;
+      const baseOpts = a.options ?? {};
+      return {
+        ...a,
+        options: {
+          ...baseOpts,
+          cwd: handle.path,
+          // Pool scope: stable across this project's per-handoff
+          // worktrees so an ACP warm process is reused across them and
+          // re-sessioned at each dispatch's cwd. Falls back to the main
+          // repo path when the project root is unknown.
+          repoRoot: resolveProjectRoot(worktreeManager, handoff.project_id) ?? mainRepoPath,
+          env: { ...baseOpts.env, PENUMBRA_STORAGE_ROOT: handle.storageRoot },
+        },
+      };
+    }),
+  };
+
+  return {
+    overrideConfig,
+    handle,
+    worktreePromptRewrite: {
+      mainRepoPath,
+      worktreePath: handle.path,
+      guardText,
+    },
+  };
 }

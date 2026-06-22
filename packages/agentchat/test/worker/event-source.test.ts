@@ -3,13 +3,15 @@ import { expect, mock, test } from "bun:test";
 import {
   type EventSourceClient,
   type EventSourceOpts,
+  type EventSourceRow,
   startEventSource,
 } from "../../src/worker/event-source.js";
 
-interface HandoffRow {
-  handoff_id: string;
+// Test-local row: extends the wider production `EventSourceRow` contract with
+// a status field used by the synthetic mock data. Keeping it as an extension
+// keeps `(row: HandoffRow) => void` assignable to the onEvent contract.
+interface HandoffRow extends EventSourceRow {
   status: string;
-  project_id?: string;
 }
 
 interface ListHandoffsOpts {
@@ -49,7 +51,7 @@ async function* hangHandoffs(): AsyncGenerator<HandoffRow, void, undefined> {
 }
 
 test("drains backlog from listHandoffs(status=approved,redirected) on startup", async () => {
-  const handler = mock((_row: HandoffRow) => undefined);
+  const handler = mock((_row: EventSourceRow) => undefined);
   const client: EventSourceClient = {
     listHandoffs: mock(() =>
       Promise.resolve({
@@ -75,7 +77,7 @@ test("drains backlog from listHandoffs(status=approved,redirected) on startup", 
 });
 
 test("hard isolation polls only project-scoped queue", async () => {
-  const handler = mock((_row: HandoffRow) => undefined);
+  const handler = mock((_row: EventSourceRow) => undefined);
   const listHandoffs = mock((_opts: ListHandoffsOpts) =>
     Promise.resolve({
       handoffs: [{ handoff_id: "filtered", status: "approved" }],
@@ -103,7 +105,7 @@ test("hard isolation polls only project-scoped queue", async () => {
 });
 
 test("sticky isolation falls back to shared queue when project queue is empty", async () => {
-  const handler = mock((_row: HandoffRow) => undefined);
+  const handler = mock((_row: EventSourceRow) => undefined);
   const calls: ListHandoffsOpts[] = [];
   const listHandoffs = mock((opts: ListHandoffsOpts) => {
     calls.push(opts);
@@ -134,7 +136,7 @@ test("sticky isolation falls back to shared queue when project queue is empty", 
 });
 
 test("shared isolation ignores project_id for listHandoffs polling", async () => {
-  const handler = mock((_row: HandoffRow) => undefined);
+  const handler = mock((_row: EventSourceRow) => undefined);
   const listHandoffs = mock((_opts: ListHandoffsOpts) =>
     Promise.resolve({
       handoffs: [{ handoff_id: "shared-only", status: "approved" }],
@@ -161,7 +163,7 @@ test("shared isolation ignores project_id for listHandoffs polling", async () =>
 });
 
 test("SSE events are delivered to handler", async () => {
-  const handler = mock((_row: HandoffRow) => undefined);
+  const handler = mock((_row: EventSourceRow) => undefined);
   const client: EventSourceClient = {
     listHandoffs: mock(() => Promise.resolve({ handoffs: [] as HandoffRow[] })),
     subscribeHandoffEvents: () =>
@@ -197,7 +199,7 @@ async function* yieldHandoffsThenHang(
 }
 
 test("hard isolation drops SSE handoff events from other projects", async () => {
-  const handler = mock((_row: HandoffRow) => undefined);
+  const handler = mock((_row: EventSourceRow) => undefined);
   const client: EventSourceClient = {
     listHandoffs: mock(() => Promise.resolve({ handoffs: [] as HandoffRow[] })),
     subscribeHandoffEvents: () =>
@@ -223,7 +225,7 @@ test("hard isolation drops SSE handoff events from other projects", async () => 
 });
 
 test("dedupes by handoff_id across SSE + poll", async () => {
-  const handler = mock((_row: HandoffRow) => undefined);
+  const handler = mock((_row: EventSourceRow) => undefined);
   let pollCount = 0;
   const client: EventSourceClient = {
     listHandoffs: mock(() => {
@@ -246,7 +248,7 @@ test("dedupes by handoff_id across SSE + poll", async () => {
 });
 
 test("SSE error switches to polling and resumes when SSE recovers", async () => {
-  const handler = mock((_row: HandoffRow) => undefined);
+  const handler = mock((_row: EventSourceRow) => undefined);
   let sseAttempt = 0;
   const client: EventSourceClient = {
     listHandoffs: mock(() =>
@@ -274,7 +276,7 @@ test("SSE error switches to polling and resumes when SSE recovers", async () => 
 });
 
 test("stop() cancels SSE iterator and stops polling", async () => {
-  const handler = mock((_row: HandoffRow) => undefined);
+  const handler = mock((_row: EventSourceRow) => undefined);
   const client: EventSourceClient = {
     listHandoffs: mock(() => Promise.resolve({ handoffs: [] as HandoffRow[] })),
     subscribeHandoffEvents: hangHandoffs,
@@ -293,7 +295,7 @@ test("stop() cancels SSE iterator and stops polling", async () => {
 });
 
 test("forget(id) drops the dedup entry so a future event for that id re-fires the handler", async () => {
-  const handler = mock((_row: HandoffRow) => undefined);
+  const handler = mock((_row: EventSourceRow) => undefined);
   const pollResults: HandoffRow[] = [{ handoff_id: "h1", status: "approved" }];
   const client: EventSourceClient = {
     listHandoffs: mock(() => Promise.resolve({ handoffs: pollResults })),
@@ -322,7 +324,7 @@ test("forget(id) drops the dedup entry so a future event for that id re-fires th
 });
 
 test("dedup set stays bounded by dedupCapacity under a flood of distinct ids", async () => {
-  const handler = mock((_row: HandoffRow) => undefined);
+  const handler = mock((_row: EventSourceRow) => undefined);
   const capacity = 5;
   const flood = 200;
   let pollCount = 0;
@@ -360,7 +362,7 @@ test("dedup set stays bounded by dedupCapacity under a flood of distinct ids", a
 });
 
 test("evicted ids re-fire the handler; recently-seen ids stay hot", async () => {
-  const handler = mock((_row: HandoffRow) => undefined);
+  const handler = mock((_row: EventSourceRow) => undefined);
   const capacity = 3;
   let batch: HandoffRow[] = [];
   const client: EventSourceClient = {

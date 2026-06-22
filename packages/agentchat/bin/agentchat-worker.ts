@@ -1801,7 +1801,6 @@ const eventSource = startEventSource({
   project_id: workerProjectId,
   isolation: workerIsolation,
   onEvent: (row) => {
-    if (!row) return;
     void dispatcher.handle(row as HandoffRow);
   },
   log,
