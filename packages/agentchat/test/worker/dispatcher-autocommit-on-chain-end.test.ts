@@ -1,11 +1,14 @@
-import { expect, test, mock } from "bun:test";
-import { createWorkerDispatcher, type WorkerDispatcherDeps } from "../../src/worker/dispatcher.js";
+import type { Logger } from "@penumbra/core";
+import type { execFile as nodeExecFile } from "node:child_process";
+
+import { expect, mock, test } from "bun:test";
+
 import {
   autocommitOnChainEnd,
   filterAutocommitPaths,
   parseGitStatusPaths,
 } from "../../src/worker/autocommit-on-chain-end.js";
-import type { execFile as nodeExecFile } from "node:child_process";
+import { createWorkerDispatcher, type WorkerDispatcherDeps } from "../../src/worker/dispatcher.js";
 
 const handoff = {
   handoff_id: "h-auto",
@@ -25,6 +28,26 @@ const handoff = {
   chain_trust_mode: null,
 };
 
+// Bun's mock() returns Mock<(...args: unknown[]) => unknown>; the .mock.calls
+// array is therefore unknown[][] and TypeScript loses the concrete arg tuple
+// across the cast. Single helper laundering through `as unknown as` lets each
+// caller declare the tuple it expects without re-asserting at every read site.
+function mockCalls<T extends readonly unknown[] = unknown[]>(fn: unknown): T[] {
+  return (fn as { mock: { calls: T[] } }).mock.calls;
+}
+
+// pino's Logger has heavily-overloaded info/warn/debug signatures the bun mock
+// can't structurally satisfy. Single laundering helper produces a Logger-typed
+// stub from a plain {info,warn,debug} shape so each test reads the original
+// mock spies for assertions but the dispatcher sees a Logger.
+function asLogger(stub: { info: unknown; warn: unknown; debug: unknown }): Logger {
+  return stub as unknown as Logger;
+}
+
+function makeLog(): Logger {
+  return asLogger({ info: mock(), warn: mock(), debug: mock() });
+}
+
 function expectOnChainEndCall(
   onChainEnd: ReturnType<typeof mock>,
   expected: {
@@ -35,7 +58,7 @@ function expectOnChainEndCall(
     committed: boolean;
     minWallMs?: number;
   },
-) {
+): void {
   expect(onChainEnd).toHaveBeenCalledTimes(1);
   const call = onChainEnd.mock.calls[0];
   if (!call) throw new Error("expected onChainEnd call");
@@ -60,8 +83,17 @@ function asExecFile(fn: ReturnType<typeof mock>): typeof nodeExecFile {
 
 function callArg(fn: ReturnType<typeof mock>, callIndex: number, argIndex: number): unknown {
   const call = fn.mock.calls[callIndex];
-  if (!call) throw new Error(`expected call ${callIndex}`);
+  if (!call) throw new Error(`expected call ${String(callIndex)}`);
   return call[argIndex];
+}
+
+interface DispatchEventLike {
+  kind?: string;
+  handoff_id?: string;
+  conversation_id?: string;
+  project_id?: string;
+  agent?: string;
+  meta?: Record<string, unknown>;
 }
 
 function deps(over: Partial<WorkerDispatcherDeps> = {}): WorkerDispatcherDeps {
@@ -75,7 +107,7 @@ function deps(over: Partial<WorkerDispatcherDeps> = {}): WorkerDispatcherDeps {
     }),
     postProgress: mock().mockResolvedValue(undefined),
     complete: mock().mockResolvedValue(undefined),
-    log: { info: mock(), warn: mock(), debug: mock() } as any,
+    log: makeLog(),
     concurrency: 1,
     onDispatchEvent: mock(),
     getWorktreeSnapshot: mock().mockResolvedValue({
@@ -109,7 +141,9 @@ test("no changes skips autocommit and still runs onChainEnd", async () => {
 
   expect(autocommitOnChainEnd).not.toHaveBeenCalled();
   expect(
-    onDispatchEvent.mock.calls.some((call) => call[0]?.kind === "autocommit_on_chain_end"),
+    mockCalls<[DispatchEventLike]>(onDispatchEvent).some(
+      (call) => call[0].kind === "autocommit_on_chain_end",
+    ),
   ).toBe(false);
   expectOnChainEndCall(onChainEnd, {
     handoff,
@@ -204,14 +238,16 @@ test("dispatch.end meta reflects post-recovery snapshot after autocommit", async
   await dispatcher.handle(handoff);
   await dispatcher.idle();
 
-  const dispatchEnd = onEvent.mock.calls.find((call) => call[0]?.kind === "dispatch.end")?.[0];
+  const dispatchEnd = mockCalls<[DispatchEventLike]>(onEvent).find(
+    (call) => call[0].kind === "dispatch.end",
+  )?.[0];
   expect(dispatchEnd?.meta).toEqual(
     expect.objectContaining({
       status: "ok",
       dirty: false,
       committed: true,
       worktree_changed: false,
-    }),
+    }) as Record<string, unknown>,
   );
   expectOnChainEndCall(onChainEnd, {
     handoff,
@@ -260,7 +296,7 @@ test("autocommit failures warn and still run onChainEnd", async () => {
   const warn = mock();
   const d = deps({
     onChainEnd,
-    log: { info: mock(), warn, debug: mock() } as any,
+    log: asLogger({ info: mock(), warn, debug: mock() }),
     autocommitOnChainEnd: mock().mockRejectedValue(new Error("git commit failed")),
     getWorktreeSnapshot: mock().mockResolvedValue({
       worktreeChanged: true,
@@ -289,18 +325,18 @@ test("autocommit failures warn and still run onChainEnd", async () => {
   });
 });
 
-test("parseGitStatusPaths and filterAutocommitPaths reject denied entries", async () => {
+test("parseGitStatusPaths and filterAutocommitPaths reject denied entries", () => {
   const paths = parseGitStatusPaths(
     " M packages/app/src/index.ts\n M .env\n?? docs/notes.md\n?? secret.pem\n",
   );
   expect(filterAutocommitPaths(paths)).toEqual(["packages/app/src/index.ts", "docs/notes.md"]);
 });
 
-test("filterAutocommitPaths rejects case-variant secret paths", async () => {
+test("filterAutocommitPaths rejects case-variant secret paths", () => {
   expect(filterAutocommitPaths([".ENV", "secret.PEM", "private.Key"])).toEqual([]);
 });
 
-test("filterAutocommitPaths rejects secret filename variants", async () => {
+test("filterAutocommitPaths rejects secret filename variants", () => {
   expect(
     filterAutocommitPaths([
       "id_rsa",
@@ -324,7 +360,7 @@ test("autocommit skips malformed handoff ids", async () => {
   const committed = await autocommitOnChainEnd(
     { handoff_id: "../../etc/passwd", conversation_id: "conv-1", to_agent: "executor" },
     { path: "/tmp/repo" },
-    { execFile: asExecFile(execFile), log: { warn, debug: mock() } as any },
+    { execFile: asExecFile(execFile), log: { warn, debug: mock() } },
   );
 
   expect(committed).toBe(false);
@@ -352,7 +388,7 @@ test("autocommit stages only allowed paths and skips empty filtered sets", async
       to_agent: "executor",
     },
     { path: "/tmp/repo" },
-    { execFile: asExecFile(execFile), log: { warn, debug: mock() } as any },
+    { execFile: asExecFile(execFile), log: { warn, debug: mock() } },
   );
 
   expect(committed).toBe(true);
@@ -372,7 +408,9 @@ test("autocommit stages only allowed paths and skips empty filtered sets", async
   ]);
   expect(callArg(execFile, 2, 1)).toEqual(["-C", "/tmp/repo", "add", "--", "docs/notes.md"]);
   expect((callArg(execFile, 3, 1) as string[])[2]).toBe("commit");
-  expect(execFile.mock.calls.some((call) => String(call[1]).includes(".env"))).toBe(false);
+  expect(
+    mockCalls<[string, string[]]>(execFile).some((call) => String(call[1]).includes(".env")),
+  ).toBe(false);
 
   const emptyExecFile = mock().mockResolvedValueOnce({ stdout: " M .env\n" });
   const skipped = await autocommitOnChainEnd(
@@ -382,10 +420,16 @@ test("autocommit stages only allowed paths and skips empty filtered sets", async
       to_agent: "executor",
     },
     { path: "/tmp/repo" },
-    { execFile: asExecFile(emptyExecFile), log: { warn, debug: mock() } as any },
+    { execFile: asExecFile(emptyExecFile), log: { warn, debug: mock() } },
   );
 
   expect(skipped).toBe(false);
-  expect(emptyExecFile.mock.calls.some((call) => call[1]?.[2] === "commit")).toBe(false);
-  expect(warn.mock.calls.some((call) => call[1] === "autocommit on chain end skipped")).toBe(true);
+  expect(mockCalls<[string, string[]]>(emptyExecFile).some((call) => call[1][2] === "commit")).toBe(
+    false,
+  );
+  expect(
+    mockCalls<[unknown, string]>(warn).some(
+      (call) => call[1] === "autocommit on chain end skipped",
+    ),
+  ).toBe(true);
 });
