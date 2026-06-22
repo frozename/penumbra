@@ -1,5 +1,7 @@
-import { describe, expect, it } from "bun:test";
 import type { ProviderQuota } from "@penumbra/core";
+
+import { describe, expect, it } from "bun:test";
+
 import { buildProviderCaps } from "../../src/maestro/build-provider-caps.js";
 
 describe("buildProviderCaps", () => {

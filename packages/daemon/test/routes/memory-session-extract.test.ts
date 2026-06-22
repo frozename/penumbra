@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
-import { TestEmbedder } from "@penumbra/core/testing";
+
 import { createDaemonFetchHandler } from "../../src/serve.js";
 
 try {
@@ -69,12 +70,12 @@ function makeDaemon(): {
     services,
     db,
     root,
-    fetch: ((input: string | URL | Request, init?: RequestInit) =>
-      handler(new Request(input as string, init))) as (
-      input: string | URL | Request,
-      init?: RequestInit,
-    ) => Promise<Response>,
+    fetch: (input, init) => handler(input instanceof Request ? input : new Request(input, init)),
   };
+}
+
+function requestUrl(input: string | URL | Request): string {
+  return input instanceof Request ? input.url : String(input);
 }
 
 function seedT0(db: Database, sessionId: string): void {
@@ -175,16 +176,20 @@ function writeAgentchatConfigWithoutJudge(root: string): string {
 }
 
 describe("POST /memory/session-extract", () => {
-  const handles: Array<{ db: Database; root: string }> = [];
+  const handles: { db: Database; root: string }[] = [];
 
   afterEach(() => {
     for (const handle of handles) {
       try {
         handle.db.close();
-      } catch {}
+      } catch {
+        // The in-memory database may already be closed if setup failed.
+      }
       try {
         rmSync(handle.root, { recursive: true, force: true });
-      } catch {}
+      } catch {
+        // Temp cleanup is best-effort for failed route tests.
+      }
     }
     handles.length = 0;
   });
@@ -196,37 +201,39 @@ describe("POST /memory/session-extract", () => {
     seedT0(daemon.db, "session-extract-route");
     seedExistingT2(daemon.db);
 
-    globalThis.fetch = (async () =>
-      new Response(
-        JSON.stringify({
-          choices: [
-            {
-              message: {
-                content: JSON.stringify({
-                  memories: [
-                    {
-                      title: "Session Extract Existing Rule",
-                      body: "Session extract should update existing slug rows because preview candidates must not duplicate direct memories.",
-                      kind: "decision",
-                      why: "The route has to surface update intent when a title maps onto an existing durable memory slug.",
-                      source_quote: "update existing slug rows",
-                      depth: 2,
-                    },
-                    {
-                      title: "Tiny Candidate",
-                      body: "Too short.",
-                      kind: "fact",
-                      why: "This why is long enough but the body is shallow and should still be filtered.",
-                      depth: 1,
-                    },
-                  ],
-                }),
+    globalThis.fetch = (): Promise<Response> =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    memories: [
+                      {
+                        title: "Session Extract Existing Rule",
+                        body: "Session extract should update existing slug rows because preview candidates must not duplicate direct memories.",
+                        kind: "decision",
+                        why: "The route has to surface update intent when a title maps onto an existing durable memory slug.",
+                        source_quote: "update existing slug rows",
+                        depth: 2,
+                      },
+                      {
+                        title: "Tiny Candidate",
+                        body: "Too short.",
+                        kind: "fact",
+                        why: "This why is long enough but the body is shallow and should still be filtered.",
+                        depth: 1,
+                      },
+                    ],
+                  }),
+                },
               },
-            },
-          ],
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      )) as typeof globalThis.fetch;
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
 
     const res = await daemon.fetch("http://x/memory/session-extract", {
       method: "POST",
@@ -243,21 +250,22 @@ describe("POST /memory/session-extract", () => {
 
     expect(res.status).toBe(200);
     const payload = (await res.json()) as {
-      candidates: Array<{
+      candidates: {
         body: string;
         update_existing_slug?: string;
         existing_memory_id?: string;
-      }>;
+      }[];
     };
 
     expect(payload.candidates.length).toBeGreaterThanOrEqual(1);
     expect(payload.candidates.some((candidate) => candidate.body.length < 80)).toBe(false);
-    expect(payload.candidates).toContainEqual(
-      expect.objectContaining({
-        update_existing_slug: "session-extract-existing-rule",
-        existing_memory_id: "m-existing-route",
-      }),
-    );
+    expect(
+      payload.candidates.some(
+        (candidate) =>
+          candidate.update_existing_slug === "session-extract-existing-rule" &&
+          candidate.existing_memory_id === "m-existing-route",
+      ),
+    ).toBe(true);
   });
 
   test("uses an agentchat memory-refiner judge when sirius env is unset", async () => {
@@ -272,32 +280,34 @@ describe("POST /memory/session-extract", () => {
     );
 
     const judgeRequests: string[] = [];
-    globalThis.fetch = (async (input: string | URL | Request) => {
-      judgeRequests.push(String(input));
-      return new Response(
-        JSON.stringify({
-          choices: [
-            {
-              message: {
-                content: JSON.stringify({
-                  memories: [
-                    {
-                      title: "Agentchat Judge Route",
-                      body: "Session extraction should use the agentchat memory-refiner pool when Sirius environment variables are absent.",
-                      kind: "decision",
-                      why: "Production memory-refiner agents can serve extraction without requiring the legacy Sirius env path.",
-                      source_quote: "agentchat memory-refiner pool",
-                      depth: 2,
-                    },
-                  ],
-                }),
+    globalThis.fetch = (input: string | URL | Request): Promise<Response> => {
+      judgeRequests.push(requestUrl(input));
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    memories: [
+                      {
+                        title: "Agentchat Judge Route",
+                        body: "Session extraction should use the agentchat memory-refiner pool when Sirius environment variables are absent.",
+                        kind: "decision",
+                        why: "Production memory-refiner agents can serve extraction without requiring the legacy Sirius env path.",
+                        source_quote: "agentchat memory-refiner pool",
+                        depth: 2,
+                      },
+                    ],
+                  }),
+                },
               },
-            },
-          ],
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
       );
-    }) as typeof globalThis.fetch;
+    };
 
     const res = await daemon.fetch("http://x/memory/session-extract", {
       method: "POST",
@@ -313,10 +323,10 @@ describe("POST /memory/session-extract", () => {
 
     expect(res.status).toBe(200);
     expect(judgeRequests).toEqual(["http://agentchat-judge/v1/chat/completions"]);
-    const payload = (await res.json()) as { candidates: Array<{ title: string }> };
-    expect(payload.candidates).toContainEqual(
-      expect.objectContaining({ title: "Agentchat Judge Route" }),
-    );
+    const payload = (await res.json()) as { candidates: { title: string }[] };
+    expect(
+      payload.candidates.some((candidate) => candidate.title === "Agentchat Judge Route"),
+    ).toBe(true);
   });
 
   test("returns judge_unconfigured when no sirius env or agentchat judge is available", async () => {
@@ -354,11 +364,13 @@ describe("POST /memory/session-extract", () => {
     process.env.PENUMBRA_CONFIG_DIR = writeAgentchatConfigWithoutJudge(daemon.root);
     seedT0(daemon.db, "session-extract-judge-fails");
 
-    globalThis.fetch = (async () =>
-      new Response("backend offline", {
-        status: 500,
-        headers: { "content-type": "text/plain" },
-      })) as typeof globalThis.fetch;
+    globalThis.fetch = (): Promise<Response> =>
+      Promise.resolve(
+        new Response("backend offline", {
+          status: 500,
+          headers: { "content-type": "text/plain" },
+        }),
+      );
 
     const res = await daemon.fetch("http://x/memory/session-extract", {
       method: "POST",
@@ -374,12 +386,9 @@ describe("POST /memory/session-extract", () => {
 
     expect(res.status).toBe(502);
     expect(res.headers.get("content-type")).toContain("application/json");
-    expect(await res.json()).toEqual({
-      error: {
-        code: "judge_failed",
-        message: expect.stringContaining("Sirius returned 500: backend offline"),
-      },
-    });
+    const payload = (await res.json()) as { error: { code: string; message: string } };
+    expect(payload.error.code).toBe("judge_failed");
+    expect(payload.error.message).toContain("Sirius returned 500: backend offline");
   });
 
   test("uses transcript_path to build judge transcript from assistant text blocks", async () => {
@@ -407,7 +416,10 @@ describe("POST /memory/session-extract", () => {
 
     let judgePrompt = "";
     let fetchCalls = 0;
-    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = async (
+      _input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
       fetchCalls += 1;
       let bodyText = "";
       if (typeof init?.body === "string") {
@@ -415,7 +427,9 @@ describe("POST /memory/session-extract", () => {
       } else if (_input instanceof Request && !_input.bodyUsed) {
         try {
           bodyText = await _input.text();
-        } catch {}
+        } catch {
+          bodyText = "";
+        }
       }
       if (bodyText) {
         judgePrompt = bodyText;
@@ -443,7 +457,7 @@ describe("POST /memory/session-extract", () => {
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
-    }) as typeof globalThis.fetch;
+    };
 
     const res = await daemon.fetch("http://x/memory/session-extract", {
       method: "POST",
@@ -465,11 +479,11 @@ describe("POST /memory/session-extract", () => {
     expect(judgePrompt).not.toContain(toolTranscript.slice(0, 24));
 
     const payload = (await res.json()) as {
-      candidates: Array<{ title: string; body: string; why: string }>;
+      candidates: { title: string; body: string; why: string }[];
     };
-    expect(payload.candidates).toContainEqual(
-      expect.objectContaining({ title: "Session Transcript Candidate" }),
-    );
+    expect(
+      payload.candidates.some((candidate) => candidate.title === "Session Transcript Candidate"),
+    ).toBe(true);
   });
 
   test("returns zero candidates for transcript_path with no durable assistant prose", async () => {
@@ -491,23 +505,27 @@ describe("POST /memory/session-extract", () => {
     );
 
     let judgeCalled = false;
-    globalThis.fetch = (async () => {
+    globalThis.fetch = (): Promise<Response> => {
       judgeCalled = true;
-      return new Response(
-        JSON.stringify({
-          choices: [
-            {
-              message: {
-                content: JSON.stringify({
-                  memories: [{ title: "unused", body: "n/a", kind: "fact", why: "skip", depth: 2 }],
-                }),
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    memories: [
+                      { title: "unused", body: "n/a", kind: "fact", why: "skip", depth: 2 },
+                    ],
+                  }),
+                },
               },
-            },
-          ],
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
       );
-    }) as typeof globalThis.fetch;
+    };
 
     const res = await daemon.fetch("http://x/memory/session-extract", {
       method: "POST",
@@ -523,7 +541,7 @@ describe("POST /memory/session-extract", () => {
     });
 
     expect(res.status).toBe(200);
-    const payload = (await res.json()) as { candidates: Array<{ title: string }> };
+    const payload = (await res.json()) as { candidates: { title: string }[] };
     expect(payload.candidates).toEqual([]);
     expect(judgeCalled).toBe(false);
   });

@@ -1,22 +1,25 @@
+import { ProjectRegistry, type Services } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Database } from "bun:sqlite";
-import { ProjectRegistry } from "@penumbra/core";
-import { TestEmbedder } from "@penumbra/core/testing";
+
 import { workflowsWaitRoute } from "../../src/routes/workflows.js";
 import { createWorkflowRunsRegistry } from "../../src/services/workflow-runs-registry.js";
 
 if (process.platform === "darwin") {
   try {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-  } catch {}
+  } catch {
+    // Optional Homebrew SQLite is unavailable in some CI images.
+  }
 }
 
-function freshDb() {
+function freshDb(): Database {
   const db = new Database(":memory:");
-  db.exec(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS workflow_runs (
       id TEXT PRIMARY KEY,
       project_id TEXT,
@@ -36,7 +39,7 @@ function freshDb() {
   return db;
 }
 
-function markTrustedRoot(root: string) {
+function markTrustedRoot(root: string): void {
   writeFileSync(join(root, ".penumbra-project"), "proj-a\n");
 }
 
@@ -44,7 +47,8 @@ function makeServices(
   root: string,
   db: Database,
   workflowRuns: ReturnType<typeof createWorkflowRunsRegistry>,
-) {
+): Services {
+  // workflowsWaitRoute reads only this route-local subset of daemon services.
   return {
     workflowRuns,
     projectRegistry: new ProjectRegistry(
@@ -53,7 +57,7 @@ function makeServices(
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     settings: { storageRoot: root },
-  } as any;
+  } as unknown as Services;
 }
 
 test("POST /workflows/wait returns full result inline even when oversized", async () => {

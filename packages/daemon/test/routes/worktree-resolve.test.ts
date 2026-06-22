@@ -1,12 +1,15 @@
+import { WorktreeManager } from "@penumbra/core";
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { WorktreeManager } from "@penumbra/core";
+
 import {
-  resolveWorktreeForHandoff,
   projectIdForHandoff,
+  resolveWorktreeForHandoff,
 } from "../../src/routes/worktree-resolve.js";
+
+type WorktreeResolveDeps = Parameters<typeof projectIdForHandoff>[0];
 
 /**
  * Regression: the worktree-scoped MCP tools (fs_grep/fs_glob/shell_run/
@@ -32,9 +35,9 @@ describe("resolveWorktreeForHandoff", () => {
     const worktreeManager = new WorktreeManager({
       rootDir: defaultRoot,
       mainRepoDir: projectRoot,
-      resolveProjectRoot: (id) => (id === "llamactl" ? projectRoot : undefined),
+      resolveProjectRoot: (id): string | undefined => (id === "llamactl" ? projectRoot : undefined),
     });
-    const services = {
+    const services: WorktreeResolveDeps = {
       worktreeManager,
       handoffReader: {
         get: (id: string) => (id === handoffId ? { project_id: "llamactl" } : null),
@@ -44,8 +47,8 @@ describe("resolveWorktreeForHandoff", () => {
     // The bug: project_id-blind lookup misses the project-scoped worktree.
     expect(worktreeManager.getWorktree(handoffId)).toBeNull();
     // The fix: threading project_id resolves it at the project base.
-    expect(projectIdForHandoff(services as any, handoffId)).toBe("llamactl");
-    expect(resolveWorktreeForHandoff(services as any, handoffId)?.path).toBe(wtPath);
+    expect(projectIdForHandoff(services, handoffId)).toBe("llamactl");
+    expect(resolveWorktreeForHandoff(services, handoffId)?.path).toBe(wtPath);
   });
 
   test("project_id null (non-project dispatch) falls back to the default rootDir", () => {
@@ -53,21 +56,19 @@ describe("resolveWorktreeForHandoff", () => {
     const handoffId = "h-default-1";
     mkdirSync(join(defaultRoot, handoffId, ".git"), { recursive: true });
     const worktreeManager = new WorktreeManager({ rootDir: defaultRoot, mainRepoDir: defaultRoot });
-    const services = {
+    const services: WorktreeResolveDeps = {
       worktreeManager,
       handoffReader: { get: () => ({ project_id: null }) },
     };
-    expect(projectIdForHandoff(services as any, handoffId)).toBeUndefined();
-    expect(resolveWorktreeForHandoff(services as any, handoffId)?.path).toBe(
-      join(defaultRoot, handoffId),
-    );
+    expect(projectIdForHandoff(services, handoffId)).toBeUndefined();
+    expect(resolveWorktreeForHandoff(services, handoffId)?.path).toBe(join(defaultRoot, handoffId));
   });
 
   test("unknown handoff (no DB record) → undefined project_id, null worktree", () => {
     const defaultRoot = mkdtempSync(join(tmpdir(), "wtres-default-"));
     const worktreeManager = new WorktreeManager({ rootDir: defaultRoot, mainRepoDir: defaultRoot });
-    const services = { worktreeManager, handoffReader: { get: () => null } };
-    expect(projectIdForHandoff(services as any, "nope")).toBeUndefined();
-    expect(resolveWorktreeForHandoff(services as any, "nope")).toBeNull();
+    const services: WorktreeResolveDeps = { worktreeManager, handoffReader: { get: () => null } };
+    expect(projectIdForHandoff(services, "nope")).toBeUndefined();
+    expect(resolveWorktreeForHandoff(services, "nope")).toBeNull();
   });
 });

@@ -1,17 +1,21 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { type DispatchEvent, DispatchEventSchema } from "@penumbra/api-contract";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { createDaemonFetchHandler } from "../../src/serve.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  // Optional Homebrew SQLite is unavailable in some CI images.
+}
 
 function startTestDaemon(): {
   fetch: (path: string, init?: RequestInit) => Promise<Response>;
@@ -40,29 +44,46 @@ function startTestDaemon(): {
     fetch: (path, init) => handler(new Request(`http://x${path}`, init)),
     services,
     token,
-    stop: () => {
+    stop: (): void => {
       try {
         services.supervisor.stopAll();
-      } catch {}
+      } catch {
+        // Tests should still release the temp directory if shutdown races.
+      }
       try {
         db.close();
-      } catch {}
+      } catch {
+        // Closing an already-finalized in-memory database is harmless here.
+      }
       rmSync(root, { recursive: true, force: true });
     },
   };
 }
 
-function authHeaders(token: string, headers: HeadersInit = {}): HeadersInit {
+function authHeaders(token: string, headers: Record<string, string> = {}): Record<string, string> {
   return { authorization: `Bearer ${token}`, ...headers };
+}
+
+function collectSseFrame(frame: string, data: DispatchEvent[], comments: string[]): void {
+  const trimmed = frame.trim();
+  if (!trimmed) return;
+  if (trimmed.startsWith(":")) {
+    comments.push(trimmed);
+    return;
+  }
+  const dataLine = frame.split("\n").find((line) => line.startsWith("data: "));
+  if (!dataLine) return;
+  const parsed: unknown = JSON.parse(dataLine.slice(6));
+  data.push(DispatchEventSchema.parse(parsed));
 }
 
 async function readSseFrames(
   stream: ReadableStream<Uint8Array>,
   n: number,
   timeoutMs = 1000,
-): Promise<{ data: any[]; comments: string[] }> {
+): Promise<{ data: DispatchEvent[]; comments: string[] }> {
   const reader = stream.getReader();
-  const data: any[] = [];
+  const data: DispatchEvent[] = [];
   const comments: string[] = [];
   const decoder = new TextDecoder();
   let buf = "";
@@ -72,25 +93,19 @@ async function readSseFrames(
       reader.read(),
       new Promise<{ value: undefined; done: true }>((resolve) =>
         setTimeout(
-          () => resolve({ value: undefined, done: true }),
+          () => {
+            resolve({ value: undefined, done: true });
+          },
           Math.max(1, deadline - Date.now()),
         ),
       ),
     ]);
     if (done) break;
-    if (!value) continue;
     buf += decoder.decode(value, { stream: true });
     const frames = buf.split("\n\n");
     buf = frames.pop() ?? "";
     for (const frame of frames) {
-      const trimmed = frame.trim();
-      if (!trimmed) continue;
-      if (trimmed.startsWith(":")) {
-        comments.push(trimmed);
-        continue;
-      }
-      const dataLine = frame.split("\n").find((line) => line.startsWith("data: "));
-      if (dataLine) data.push(JSON.parse(dataLine.slice(6)));
+      collectSseFrame(frame, data, comments);
     }
   }
   reader.releaseLock();
@@ -171,7 +186,7 @@ test("replays rows from `since` (unix ms) before live events", async () => {
     ]);
 
     const since = new Date("2026-04-23T11:59:59.000Z").getTime();
-    const res = await daemon.fetch(`/dispatch/events/stream?since=${since}`, {
+    const res = await daemon.fetch(`/dispatch/events/stream?since=${String(since)}`, {
       headers: authHeaders(daemon.token),
     });
 

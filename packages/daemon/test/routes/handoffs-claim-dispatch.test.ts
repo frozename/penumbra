@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { createDaemonFetchHandler } from "../../src/serve.js";
 import { registerWorkerForTest } from "../../test-utils.js";
 
@@ -14,6 +15,24 @@ try {
 }
 
 const SHARED_TOKEN = "shared-sec";
+
+type ErrorResponse = { error: { code: string } };
+type ClaimResponse = { status: string };
+type WorkerAuthz = Map<string, { isolation: "sticky" | "hard" | "shared"; project_id?: string }>;
+type ClaimServices = Services & {
+  workerAuthz?: WorkerAuthz;
+};
+
+async function readErrorCode(res: Response): Promise<string> {
+  const body = (await res.json()) as ErrorResponse;
+  return body.error.code;
+}
+
+function requireToken(tokens: Map<string, string>, workerId: string): string {
+  const token = tokens.get(workerId);
+  if (!token) throw new Error(`missing token for ${workerId}`);
+  return token;
+}
 
 function tempServices(): Services {
   const db = new Database(":memory:");
@@ -28,7 +47,7 @@ function tempServices(): Services {
     clock: () => new Date("2026-05-21T10:00:00Z"),
     uuid: (() => {
       let n = 0;
-      return () => `e-${++n}`;
+      return () => `e-${String(++n)}`;
     })(),
   });
 }
@@ -87,8 +106,7 @@ test("/handoffs/:id/claim with shared bearer returns 403 worker_token_required",
     }),
   );
   expect(res.status).toBe(403);
-  const body = await res.json();
-  expect((body as any).error.code).toBe("worker_token_required");
+  expect(await readErrorCode(res)).toBe("worker_token_required");
 
   const row = services.db
     .query<
@@ -120,8 +138,7 @@ test("/handoffs/:id/claim with worker token + mismatched body returns 403 worker
     }),
   );
   expect(res.status).toBe(403);
-  const body = await res.json();
-  expect((body as any).error.code).toBe("worker_id_mismatch");
+  expect(await readErrorCode(res)).toBe("worker_id_mismatch");
 
   const row = services.db
     .query<{ status: string }, [string]>("SELECT status FROM handoffs WHERE handoff_id = ?")
@@ -149,8 +166,8 @@ test("/handoffs/:id/claim with worker token + matching body claims successfully"
     }),
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
-  expect((body as any).status).toBe("dispatched");
+  const body = (await res.json()) as ClaimResponse;
+  expect(body.status).toBe("dispatched");
 
   const row = services.db
     .query<
@@ -223,7 +240,7 @@ test("workflow fan-out sibling claims are spread across active workers without e
   }
 
   for (let i = 0; i < 10; i++) {
-    seedApprovedHandoff(services, `fanout-${i}`, null, {
+    seedApprovedHandoff(services, `fanout-${String(i)}`, null, {
       dispatch_kind: "workflow",
       workflow_run_id: "workflow-spread-1",
       tsOffsetMs: i,
@@ -232,9 +249,9 @@ test("workflow fan-out sibling claims are spread across active workers without e
 
   for (let i = 0; i < 5; i++) {
     const res = await fetchHandler(
-      new Request(`http://x/handoffs/fanout-${i}/claim`, {
+      new Request(`http://x/handoffs/fanout-${String(i)}/claim`, {
         method: "POST",
-        headers: { authorization: `Bearer ${tokens.get("W-A")}` },
+        headers: { authorization: `Bearer ${requireToken(tokens, "W-A")}` },
         body: JSON.stringify({ worker_id: "W-A" }),
       }),
     );
@@ -244,18 +261,17 @@ test("workflow fan-out sibling claims are spread across active workers without e
   const overCap = await fetchHandler(
     new Request("http://x/handoffs/fanout-5/claim", {
       method: "POST",
-      headers: { authorization: `Bearer ${tokens.get("W-A")}` },
+      headers: { authorization: `Bearer ${requireToken(tokens, "W-A")}` },
       body: JSON.stringify({ worker_id: "W-A" }),
     }),
   );
   expect(overCap.status).toBe(409);
-  const overCapBody = await overCap.json();
-  expect((overCapBody as any).error.code).toBe("claim_spread_cap");
+  expect(await readErrorCode(overCap)).toBe("claim_spread_cap");
 
   const spreadClaim = await fetchHandler(
     new Request("http://x/handoffs/fanout-5/claim", {
       method: "POST",
-      headers: { authorization: `Bearer ${tokens.get("W-B")}` },
+      headers: { authorization: `Bearer ${requireToken(tokens, "W-B")}` },
       body: JSON.stringify({ worker_id: "W-B" }),
     }),
   );
@@ -279,15 +295,11 @@ test("workflow fan-out sibling claims are spread across active workers without e
 
 test("workflow sibling spreading does not block a warm-pool home worker", async () => {
   const services = tempServices();
-  (services as Services & { agentchatConfig?: any }).agentchatConfig = {
+  services.agentchatConfig = {
     agents: [{ name: "warm-agent", roles: [], options: { warm_pool: true } }],
   };
   const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
-  (
-    services as {
-      workerAuthz?: Map<string, { project_id?: string; isolation: "sticky" | "hard" | "shared" }>;
-    }
-  ).workerAuthz = new Map([
+  (services as ClaimServices).workerAuthz = new Map([
     ["W-HOME", { project_id: "project-a", isolation: "sticky" }],
     ["W-OTHER", { project_id: "project-b", isolation: "sticky" }],
     ["W-THIRD", { project_id: "project-c", isolation: "sticky" }],
@@ -305,7 +317,7 @@ test("workflow sibling spreading does not block a warm-pool home worker", async 
   }
 
   for (let i = 0; i < 8; i++) {
-    seedApprovedHandoff(services, `warm-${i}`, "project-a", {
+    seedApprovedHandoff(services, `warm-${String(i)}`, "project-a", {
       to: "warm-agent",
       dispatch_kind: "workflow",
       workflow_run_id: "workflow-warm-1",
@@ -315,9 +327,9 @@ test("workflow sibling spreading does not block a warm-pool home worker", async 
 
   for (let i = 0; i < 5; i++) {
     const res = await fetchHandler(
-      new Request(`http://x/handoffs/warm-${i}/claim`, {
+      new Request(`http://x/handoffs/warm-${String(i)}/claim`, {
         method: "POST",
-        headers: { authorization: `Bearer ${tokens.get("W-HOME")}` },
+        headers: { authorization: `Bearer ${requireToken(tokens, "W-HOME")}` },
         body: JSON.stringify({ worker_id: "W-HOME" }),
       }),
     );
@@ -348,8 +360,7 @@ test("/handoffs/:id/claim without Authorization returns 401", async () => {
     }),
   );
   expect(res.status).toBe(401);
-  const body = await res.json();
-  expect((body as any).error.code).toBe("unauthorized");
+  expect(await readErrorCode(res)).toBe("unauthorized");
 });
 
 test("/handoffs/:id/claim hard-isolated worker cannot claim foreign project handoff", async () => {
@@ -358,11 +369,9 @@ test("/handoffs/:id/claim hard-isolated worker cannot claim foreign project hand
   seedApprovedHandoff(services, "h-6", "project-b");
 
   const workerId = "worker-extras-hard-projA";
-  (
-    services as {
-      workerAuthz?: Map<string, { project_id?: string; isolation: "sticky" | "hard" | "shared" }>;
-    }
-  ).workerAuthz = new Map([[workerId, { project_id: "project-a", isolation: "hard" }]]);
+  (services as ClaimServices).workerAuthz = new Map([
+    [workerId, { project_id: "project-a", isolation: "hard" }],
+  ]);
 
   const { worker_token } = await registerWorkerForTest({
     baseUrl: "http://x",
@@ -380,8 +389,7 @@ test("/handoffs/:id/claim hard-isolated worker cannot claim foreign project hand
   );
 
   expect(res.status).toBe(403);
-  const body = await res.json();
-  expect((body as any).error.code).toBe("project_mismatch");
+  expect(await readErrorCode(res)).toBe("project_mismatch");
 
   const row = services.db
     .query<

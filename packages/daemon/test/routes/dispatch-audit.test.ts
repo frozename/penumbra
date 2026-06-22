@@ -1,9 +1,10 @@
-import { describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { createDaemonFetchHandler } from "../../src/serve.js";
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
+
 import { dispatchAuditRoute } from "../../src/routes/dispatch-audit.js";
+import { createDaemonFetchHandler } from "../../src/serve.js";
 
 function services(): Services {
   const db = new Database(":memory:");
@@ -17,7 +18,7 @@ function services(): Services {
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date("2026-05-01T00:00:20.000Z"),
-    uuid: () => `id-${++n}`,
+    uuid: () => `id-${String(++n)}`,
   });
 }
 
@@ -129,7 +130,14 @@ describe("dispatchAuditRoute", () => {
       svc,
     );
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as {
+      report: {
+        evidence: { response_count: number };
+        handoff_id: string;
+        status: string;
+        trustworthy: boolean;
+      };
+    };
     expect(body.report.handoff_id).toBe("h-1");
     expect(body.report.status).toBe("no_agent_output");
     expect(body.report.trustworthy).toBe(false);
@@ -147,7 +155,12 @@ describe("dispatchAuditRoute", () => {
       svc,
     );
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as {
+      report: {
+        evidence: { response_count: number };
+        status: string;
+      };
+    };
     expect(body.report.status).toBe("complete");
     expect(body.report.evidence.response_count).toBe(1);
   });

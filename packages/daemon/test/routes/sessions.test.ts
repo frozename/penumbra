@@ -1,24 +1,32 @@
-import { expect, test } from "bun:test";
+import { loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec, migrate } from "@penumbra/core";
-import { sessionsTouchRoute, lookupSessionStart } from "../../src/routes/sessions.js";
+import { expect, test } from "bun:test";
+
+import { lookupSessionStart, sessionsTouchRoute } from "../../src/routes/sessions.js";
 
 if (process.platform === "darwin") {
   try {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-  } catch {}
+  } catch {
+    // Optional Homebrew SQLite is unavailable in some CI images.
+  }
 }
 
-function freshDb() {
+function freshDb(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   return db;
 }
 
+function makeServices(db: Database): Services {
+  // sessionsTouchRoute only reads services.db; the full daemon service graph is irrelevant here.
+  return { db } as unknown as Services;
+}
+
 test("POST /sessions/touch creates a row on first call", async () => {
   const db = freshDb();
-  const services = { db } as any;
+  const services = makeServices(db);
   const req = new Request("http://localhost/sessions/touch", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -46,7 +54,7 @@ test("POST /sessions/touch creates a row on first call", async () => {
 
 test("POST /sessions/touch updates last_seen_at, preserves session_start_at", async () => {
   const db = freshDb();
-  const services = { db } as any;
+  const services = makeServices(db);
 
   await sessionsTouchRoute(
     new Request("http://localhost/sessions/touch", {
@@ -81,7 +89,7 @@ test("POST /sessions/touch updates last_seen_at, preserves session_start_at", as
 
 test("POST /sessions/touch missing session_id returns 400", async () => {
   const db = freshDb();
-  const services = { db } as any;
+  const services = makeServices(db);
   const res = await sessionsTouchRoute(
     new Request("http://localhost/sessions/touch", {
       method: "POST",
@@ -95,7 +103,7 @@ test("POST /sessions/touch missing session_id returns 400", async () => {
 
 test("lookupSessionStart returns the stored start time", async () => {
   const db = freshDb();
-  const services = { db } as any;
+  const services = makeServices(db);
   await sessionsTouchRoute(
     new Request("http://localhost/sessions/touch", {
       method: "POST",

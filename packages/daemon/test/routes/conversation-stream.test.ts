@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { conversationStreamRoute } from "../../src/routes/conversation-stream.js";
 
 try {
@@ -25,18 +26,31 @@ function tempServices(): Services {
     clock: () => new Date("2026-04-26T00:00:00Z"),
     uuid: (() => {
       let n = 0;
-      return () => `e-${++n}`;
+      return () => `e-${String(++n)}`;
     })(),
   });
+}
+
+type ConversationStreamEvent = Record<string, unknown> & {
+  handoff_id?: string;
+  type: string;
+};
+
+function parseConversationStreamEvent(raw: string): ConversationStreamEvent {
+  const parsed: unknown = JSON.parse(raw);
+  if (!parsed || typeof parsed !== "object" || !("type" in parsed)) {
+    throw new Error("invalid conversation stream event");
+  }
+  return parsed as ConversationStreamEvent;
 }
 
 async function readSseEvents(
   stream: ReadableStream<Uint8Array>,
   n: number,
   timeoutMs = 1000,
-): Promise<any[]> {
+): Promise<ConversationStreamEvent[]> {
   const reader = stream.getReader();
-  const events: any[] = [];
+  const events: ConversationStreamEvent[] = [];
   const decoder = new TextDecoder();
   let buf = "";
   const deadline = Date.now() + timeoutMs;
@@ -45,19 +59,20 @@ async function readSseEvents(
       reader.read(),
       new Promise<{ value: undefined; done: true }>((resolve) =>
         setTimeout(
-          () => resolve({ value: undefined, done: true }),
+          () => {
+            resolve({ value: undefined, done: true });
+          },
           Math.max(0, deadline - Date.now()),
         ),
       ),
     ]);
     if (done) break;
-    if (!value) continue;
     buf += decoder.decode(value, { stream: true });
     const frames = buf.split("\n\n");
     buf = frames.pop() ?? "";
     for (const frame of frames) {
       const dataLine = frame.split("\n").find((l) => l.startsWith("data: "));
-      if (dataLine) events.push(JSON.parse(dataLine.slice(6)));
+      if (dataLine) events.push(parseConversationStreamEvent(dataLine.slice(6)));
     }
   }
   reader.releaseLock();

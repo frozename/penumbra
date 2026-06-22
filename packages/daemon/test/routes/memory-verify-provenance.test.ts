@@ -1,17 +1,20 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { createDaemonFetchHandler } from "../../src/serve.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  // Optional Homebrew SQLite is unavailable in some CI images.
+}
 
 function startTestDaemon(): {
   fetch: (path: string, init?: RequestInit) => Promise<Response>;
@@ -39,13 +42,17 @@ function startTestDaemon(): {
     fetch: (path, init) => handler(new Request(`http://x${path}`, init)),
     services,
     token,
-    stop: () => {
+    stop: (): void => {
       try {
         services.supervisor.stopAll();
-      } catch {}
+      } catch {
+        // Shutdown may race with route cleanup in failure paths.
+      }
       try {
         db.close();
-      } catch {}
+      } catch {
+        // Closing an already-finalized in-memory database is harmless here.
+      }
       rmSync(root, { recursive: true, force: true });
     },
   };
@@ -118,7 +125,7 @@ test("POST /memory/verify stores provenance and search returns it", async () => 
       body: JSON.stringify({ query: "memory-route-1", project_id: null, limit: 5, tiers: ["t2"] }),
     });
     expect(searchRes.status).toBe(200);
-    const body = (await searchRes.json()) as { hits: Array<Record<string, unknown>> };
+    const body = (await searchRes.json()) as { hits: Record<string, unknown>[] };
     expect(body.hits[0]).toMatchObject({
       id: "memory-route-1",
       last_verified_reason: "manual spot check",

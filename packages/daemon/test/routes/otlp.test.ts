@@ -1,9 +1,10 @@
-import { describe, it, expect, afterEach } from "bun:test";
-import { Database } from "bun:sqlite";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { afterEach, describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { ProtoWriter } from "../../../core/test/otlp/encoder.js";
 import { otlpLogsRoute, otlpMetricsRoute, otlpTracesRoute } from "../../src/routes/otlp.js";
 
@@ -56,7 +57,7 @@ describe("otlpLogsRoute", () => {
     expect(res.status).toBe(200);
     const rows = services.db
       .prepare(`SELECT provider, model, event_type FROM t0_events WHERE event_type='usage-update'`)
-      .all() as Array<{ provider: string; model: string; event_type: string }>;
+      .all() as { event_type: string; model: string; provider: string }[];
     expect(rows.length).toBeGreaterThanOrEqual(1);
     expect(rows[0]!.provider).toBe("google");
     expect(rows[0]!.model).toBe("gemini-3-flash-preview");
@@ -126,14 +127,24 @@ describe("otlpLogsRoute protobuf", () => {
   it("accepts application/x-protobuf and ingests usage events", async () => {
     const services = makeServices();
 
-    const resourceAttr = kv("service.name", (w) => w.writeString(1, "gemini-cli"));
-    const eventNameAttr = kv("event.name", (w) =>
-      w.writeString(1, "gen_ai.client.inference.operation.details"),
-    );
-    const providerAttr = kv("gen_ai.provider.name", (w) => w.writeString(1, "gcp.vertex_ai"));
-    const modelAttr = kv("gen_ai.request.model", (w) => w.writeString(1, "gemini-3-flash-preview"));
-    const inAttr = kv("gen_ai.usage.input_tokens", (w) => w.writeVarintField(3, 100));
-    const outAttr = kv("gen_ai.usage.output_tokens", (w) => w.writeVarintField(3, 5));
+    const resourceAttr = kv("service.name", (w) => {
+      w.writeString(1, "gemini-cli");
+    });
+    const eventNameAttr = kv("event.name", (w) => {
+      w.writeString(1, "gen_ai.client.inference.operation.details");
+    });
+    const providerAttr = kv("gen_ai.provider.name", (w) => {
+      w.writeString(1, "gcp.vertex_ai");
+    });
+    const modelAttr = kv("gen_ai.request.model", (w) => {
+      w.writeString(1, "gemini-3-flash-preview");
+    });
+    const inAttr = kv("gen_ai.usage.input_tokens", (w) => {
+      w.writeVarintField(3, 100);
+    });
+    const outAttr = kv("gen_ai.usage.output_tokens", (w) => {
+      w.writeVarintField(3, 5);
+    });
 
     const resource = new ProtoWriter();
     resource.writeNested(1, resourceAttr);
@@ -169,7 +180,7 @@ describe("otlpLogsRoute protobuf", () => {
     expect(res.status).toBe(200);
     const rows = services.db
       .prepare(`SELECT provider, model FROM t0_events WHERE event_type='usage-update'`)
-      .all() as Array<{ provider: string; model: string }>;
+      .all() as { model: string; provider: string }[];
     expect(rows.length).toBeGreaterThanOrEqual(1);
     expect(rows[0]!.provider).toBe("google");
     expect(rows[0]!.model).toBe("gemini-3-flash-preview");

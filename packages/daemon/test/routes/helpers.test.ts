@@ -1,11 +1,13 @@
 import { expect, test } from "bun:test";
+
 import { bodyJson, json } from "../../src/routes/_helpers.js";
 
 test("json helper returns JSON response with status and content type", async () => {
   const res = json({ ok: true }, 201);
   expect(res.status).toBe(201);
   expect(res.headers.get("content-type")).toBe("application/json");
-  await expect(res.json()).resolves.toEqual({ ok: true });
+  const body = await res.json();
+  expect(body).toEqual({ ok: true });
 });
 
 test("bodyJson helper returns parsed payload on valid JSON", async () => {
@@ -14,7 +16,8 @@ test("bodyJson helper returns parsed payload on valid JSON", async () => {
     body: JSON.stringify({ a: 1 }),
     headers: { "content-type": "application/json" },
   });
-  await expect(bodyJson(req)).resolves.toEqual({ a: 1 });
+  const body = await bodyJson(req);
+  expect(body).toEqual({ a: 1 });
 });
 
 test("bodyJson helper returns null on invalid JSON", async () => {
@@ -23,5 +26,6 @@ test("bodyJson helper returns null on invalid JSON", async () => {
     body: "{not-json",
     headers: { "content-type": "application/json" },
   });
-  await expect(bodyJson(req)).resolves.toBeNull();
+  const body = await bodyJson(req);
+  expect(body).toBeNull();
 });

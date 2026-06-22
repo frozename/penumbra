@@ -1,13 +1,14 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import {
-  type Services,
-  migrate,
   loadSqliteVec,
-  PermissionWriter,
-  PermissionReader,
+  migrate,
   PermissionEventBus,
+  PermissionReader,
+  PermissionWriter,
+  type Services,
 } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { permissionsCreateRoute } from "../../src/routes/permissions.js";
 
 try {
@@ -27,9 +28,9 @@ function makeServices(db: Database): Services {
     machineId: { get: () => "machine-test" },
     uuid: () => "uuid-not-used", // route uses client-supplied permission_id
     clock: () => new Date("2026-04-28T12:00:00.000Z"),
-    t0Writer: { write: () => {} },
+    t0Writer: { write: () => undefined },
     settings: { permission_ttl_seconds: 300 },
-    log: { info: () => {}, warn: () => {} },
+    log: { info: () => undefined, warn: () => undefined },
   } as unknown as Services;
 }
 
