@@ -42,7 +42,13 @@ export function rewriteWorktreeHandoffMessage(
 
 const WORKTREE_CAPABLE_ADAPTERS: ReadonlySet<string> = new Set([
   "claude-cli",
+  // "agy-cli" is the kind the gemini/agy CLI agents (google-gemini-cli,
+  // google-gemini-flash-cli, agy-gptoss-120b) actually register; without it a
+  // use_worktree dispatch to those agents skips the cwd override and the CLI
+  // runs in the worker's cwd (the MAIN checkout), contaminating it. "gemini-cli"
+  // is vestigial (no agent registers that kind) but kept for compatibility.
   "gemini-cli",
+  "agy-cli",
   "codex-cli",
   "opencode-cli",
   "stdio-acp",
