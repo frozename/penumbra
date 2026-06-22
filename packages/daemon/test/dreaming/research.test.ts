@@ -1,8 +1,102 @@
-import { describe, test, expect, mock } from "bun:test";
+import {
+  applySchema,
+  loadSqliteVec,
+  type WebResearchAdapter,
+  type WebResearchResult,
+} from "@penumbra/core";
 import { Database } from "bun:sqlite";
+import { describe, expect, mock, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { applySchema, loadSqliteVec } from "@penumbra/core";
-import { runP5Phase } from "../../src/dreaming/research.js";
+
+import type { DreamConfig } from "../../src/dreaming/config.js";
+import type { ResearchDeps } from "../../src/dreaming/research.js";
+
+import { hashQuery, runP5Phase } from "../../src/dreaming/research.js";
+
+interface DreamActionResearchRow {
+  payload_json: string;
+  status: string;
+  untrusted_source: number;
+}
+
+interface DreamActionStatusRow {
+  decided_by: string | null;
+  status: string;
+}
+
+interface CacheCountRow {
+  c: number;
+}
+
+interface CacheNegativeRow {
+  is_negative: number;
+}
+
+interface CacheUrlRow {
+  url: string;
+}
+
+function testConfig(overrides?: Partial<DreamConfig>): DreamConfig {
+  return {
+    enabled: true,
+    cronMinutes: 30,
+    perCycleUsd: 0.5,
+    dailyUsd: 5.0,
+    pressureGuardEnabled: true,
+    perCycleEmbeddingUsd: 0.1,
+    perCycleResearchUsd: 0.25,
+    linkAutoThreshold: 0.75,
+    p1BatchSize: 10,
+    contentQualityThreshold: 0.7,
+    reembedBatchSize: 100,
+    skipPhases: new Set(),
+    eventTriggerEnabled: true,
+    idleMinutes: 15,
+    triggerCooldownMinutes: 5,
+    briefRefreshHours: 24,
+    pc1BatchSize: 10,
+    pc2MinClusterSize: 3,
+    pc2ClusterLinkThreshold: 0.85,
+    pc2AutoThreshold: 0.97,
+    curatorEnabled: false,
+    rewriterEnabled: false,
+    rewriterBaseUrl: "",
+    rewriterModel: "",
+    rewriterTimeoutMs: 30_000,
+    rewriterCacheTtlMs: 86_400_000,
+    rewriterConcurrency: 1,
+    ...overrides,
+  };
+}
+
+function webfetchResult(overrides: Partial<WebResearchResult>): WebResearchResult {
+  return {
+    url: "https://example.com",
+    title: "",
+    markdown: "",
+    fetched_at: new Date(0).toISOString(),
+    source_provider: "webfetch",
+    ...overrides,
+  };
+}
+
+function depsWithAdapter(
+  adapter: WebResearchAdapter,
+  dreaming: Record<string, unknown>,
+): ResearchDeps {
+  return {
+    projectRegistry: { get: () => ({ dreaming }) },
+    getResearchAdapter: () => adapter,
+  };
+}
+
+function unusedSearch(): Promise<WebResearchResult[]> {
+  return Promise.reject(new Error("search should not be used"));
+}
+
+function unusedScrape(): Promise<WebResearchResult> {
+  return Promise.reject(new Error("scrape should not be used"));
+}
 
 describe("P5: Active Research", () => {
   test("P5 action rows carry untrusted_source=1 and status=queued", async () => {
@@ -18,19 +112,17 @@ describe("P5: Active Research", () => {
       "INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('a1', 'cycle1', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', '{\"query\":\"test query\"}')",
     ).run();
 
-    const stubAdapter = {
-      search: async () => [
-        { url: "http://test.com", markdown: "test", source_provider: "webfetch" },
-      ],
+    const stubAdapter: WebResearchAdapter = {
+      search: () => Promise.resolve([webfetchResult({ url: "http://test.com", markdown: "test" })]),
+      scrape: unusedScrape,
     };
-    const deps = {
-      projectRegistry: { get: () => ({ dreaming: { research_provider: "webfetch" } }) },
-      getResearchAdapter: () => stubAdapter,
-    };
+    const deps = depsWithAdapter(stubAdapter, { research_provider: "webfetch" });
 
-    await runP5Phase(db, "cycle1", {} as any, deps as any);
+    await runP5Phase(db, "cycle1", testConfig(), deps);
 
-    const actions = db.prepare("SELECT * FROM dream_actions WHERE phase='P5'").all() as any[];
+    const actions = db
+      .prepare("SELECT * FROM dream_actions WHERE phase='P5'")
+      .all() as DreamActionResearchRow[];
     expect(actions.length).toBe(1);
     expect(actions[0].untrusted_source).toBe(1);
     expect(actions[0].status).toBe("queued");
@@ -48,22 +140,19 @@ describe("P5: Active Research", () => {
       "INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('a1', 'cycle1', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', '{\"url\":\"http://bad.com\"}')",
     ).run();
 
-    const deps = {
-      projectRegistry: {
-        get: () => ({ dreaming: { research_provider: "webfetch", allowed_domains: ["good.com"] } }),
+    const deps = depsWithAdapter(
+      {
+        search: unusedSearch,
+        scrape: () => Promise.reject(new Error("should not scrape")),
       },
-      getResearchAdapter: () => ({
-        scrape: async () => {
-          throw new Error("should not scrape");
-        },
-      }),
-    };
+      { research_provider: "webfetch", allowed_domains: ["good.com"] },
+    );
 
-    await runP5Phase(db, "cycle1", {} as any, deps as any);
+    await runP5Phase(db, "cycle1", testConfig(), deps);
 
     const p4_action = db
       .prepare("SELECT status FROM dream_actions WHERE action_id='a1'")
-      .get() as any;
+      .get() as DreamActionStatusRow;
     expect(p4_action.status).toBe("failed");
 
     const p5_actions = db.prepare("SELECT * FROM dream_actions WHERE phase='P5'").all();
@@ -82,29 +171,28 @@ describe("P5: Active Research", () => {
       "INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('a1', 'cycle1', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', '{\"query\":\"test query\"}')",
     ).run();
 
-    // Seed cache
+    const cacheKey = hashQuery("test query", "test query");
     db.prepare(
-      "INSERT INTO dream_research_cache(cache_key, provider, project_id, url, markdown, fetched_at, expires_at) VALUES('hash1', 'webfetch', 'proj1', 'http://cached.com', 'cached text', 1, 9999999999)",
-    ).run();
+      "INSERT INTO dream_research_cache(cache_key, provider, project_id, url, markdown, fetched_at, expires_at) VALUES(?, 'webfetch', 'proj1', 'http://cached.com', 'cached text', 1, 9999999999)",
+    ).run(cacheKey);
 
-    const mockSearch = mock(async () => []);
-    const deps = {
-      projectRegistry: { get: () => ({ dreaming: { research_provider: "webfetch" } }) },
-      getResearchAdapter: () => ({ search: mockSearch }),
-    };
+    const mockSearch = mock((): Promise<WebResearchResult[]> => Promise.resolve([]));
+    const deps = depsWithAdapter(
+      {
+        search: mockSearch,
+        scrape: unusedScrape,
+      },
+      { research_provider: "webfetch" },
+    );
 
-    // Hack: override crypto.createHash to return 'hash1'
-    const originalHash = require("node:crypto").createHash;
-    require("node:crypto").createHash = () => ({ update: () => ({ digest: () => "hash1" }) });
-
-    await runP5Phase(db, "cycle1", {} as any, deps as any);
-
-    require("node:crypto").createHash = originalHash;
+    await runP5Phase(db, "cycle1", testConfig(), deps);
 
     expect(mockSearch.mock.calls.length).toBe(0);
-    const actions = db.prepare("SELECT * FROM dream_actions WHERE phase='P5'").all() as any[];
+    const actions = db
+      .prepare("SELECT * FROM dream_actions WHERE phase='P5'")
+      .all() as DreamActionResearchRow[];
     expect(actions.length).toBe(1);
-    expect(actions[0].payload_json).toContain("cached text");
+    expect(actions[0]!.payload_json).toContain("cached text");
   });
 
   test("P5 caches empty search results as negative and short-circuits on second hit", async () => {
@@ -125,14 +213,17 @@ describe("P5: Active Research", () => {
       "INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('a2', 'cycle2', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', '{\"query\":\"empty results query\"}')",
     ).run();
 
-    const searchMock = mock(async () => []);
-    const deps = {
-      projectRegistry: { get: () => ({ dreaming: { research_provider: "webfetch" } }) },
-      getResearchAdapter: () => ({ search: searchMock }),
-    };
+    const searchMock = mock((): Promise<WebResearchResult[]> => Promise.resolve([]));
+    const deps = depsWithAdapter(
+      {
+        search: searchMock,
+        scrape: unusedScrape,
+      },
+      { research_provider: "webfetch" },
+    );
 
-    await runP5Phase(db, "cycle1", {} as any, deps as any);
-    await runP5Phase(db, "cycle2", {} as any, deps as any);
+    await runP5Phase(db, "cycle1", testConfig(), deps);
+    await runP5Phase(db, "cycle2", testConfig(), deps);
 
     expect(searchMock.mock.calls.length).toBe(1);
 
@@ -141,16 +232,16 @@ describe("P5: Active Research", () => {
       .digest("hex");
     const cacheRow = db
       .prepare("SELECT is_negative FROM dream_research_cache WHERE cache_key=?")
-      .get(cacheKey) as { is_negative: number } | null;
+      .get(cacheKey) as CacheNegativeRow | null;
     expect(cacheRow).not.toBeNull();
     expect(cacheRow?.is_negative).toBe(1);
 
     const a1 = db
       .prepare("SELECT status, decided_by FROM dream_actions WHERE action_id='a1'")
-      .get() as { status: string; decided_by: string | null };
+      .get() as DreamActionStatusRow;
     const a2 = db
       .prepare("SELECT status, decided_by FROM dream_actions WHERE action_id='a2'")
-      .get() as { status: string; decided_by: string | null };
+      .get() as DreamActionStatusRow;
     expect(a1.status).toBe("failed");
     expect(a2.status).toBe("failed");
     expect(a2.decided_by).toBe("negative-cache-hit");
@@ -174,25 +265,26 @@ describe("P5: Active Research", () => {
       "INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('b2', 'cycle2', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', '{\"query\":\"domain filtered query\"}')",
     ).run();
 
-    const searchMock = mock(async () => [
+    const searchMock = mock(
+      (): Promise<WebResearchResult[]> =>
+        Promise.resolve([
+          webfetchResult({
+            url: "https://forbidden.example/page",
+            title: "Nope",
+            markdown: "nope",
+          }),
+        ]),
+    );
+    const deps = depsWithAdapter(
       {
-        url: "https://forbidden.example/page",
-        title: "Nope",
-        markdown: "nope",
-        source_provider: "webfetch",
+        search: searchMock,
+        scrape: unusedScrape,
       },
-    ]);
-    const deps = {
-      projectRegistry: {
-        get: () => ({
-          dreaming: { research_provider: "webfetch", allowed_domains: ["allowed.example"] },
-        }),
-      },
-      getResearchAdapter: () => ({ search: searchMock }),
-    };
+      { research_provider: "webfetch", allowed_domains: ["allowed.example"] },
+    );
 
-    await runP5Phase(db, "cycle1", {} as any, deps as any);
-    await runP5Phase(db, "cycle2", {} as any, deps as any);
+    await runP5Phase(db, "cycle1", testConfig(), deps);
+    await runP5Phase(db, "cycle2", testConfig(), deps);
 
     expect(searchMock.mock.calls.length).toBe(1);
 
@@ -201,16 +293,16 @@ describe("P5: Active Research", () => {
       .digest("hex");
     const cacheRow = db
       .prepare("SELECT is_negative FROM dream_research_cache WHERE cache_key=?")
-      .get(cacheKey) as { is_negative: number } | null;
+      .get(cacheKey) as CacheNegativeRow | null;
     expect(cacheRow).not.toBeNull();
     expect(cacheRow?.is_negative).toBe(1);
 
     const b1 = db
       .prepare("SELECT status, decided_by FROM dream_actions WHERE action_id='b1'")
-      .get() as { status: string; decided_by: string | null };
+      .get() as DreamActionStatusRow;
     const b2 = db
       .prepare("SELECT status, decided_by FROM dream_actions WHERE action_id='b2'")
-      .get() as { status: string; decided_by: string | null };
+      .get() as DreamActionStatusRow;
     expect(b1.status).toBe("failed");
     expect(b2.status).toBe("failed");
     expect(b2.decided_by).toBe("negative-cache-hit");
@@ -228,51 +320,28 @@ describe("P5: Active Research", () => {
       "INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('a1', 'cycle1', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', '{\"query\":\"test query\"}')",
     ).run();
 
-    const deps = {
-      projectRegistry: { get: () => ({ dreaming: { research_provider: "webfetch" } }) },
-      getResearchAdapter: () => ({
-        search: async () => [
-          {
-            url: "https://example.com/a",
-            title: "A",
-            markdown: "a",
-            source_provider: "webfetch",
-            fetched_at: new Date().toISOString(),
-          },
-          {
-            url: "https://example.com/b",
-            title: "B",
-            markdown: "b",
-            source_provider: "webfetch",
-            fetched_at: new Date().toISOString(),
-          },
-          {
-            url: "https://example.com/c",
-            title: "C",
-            markdown: "c",
-            source_provider: "webfetch",
-            fetched_at: new Date().toISOString(),
-          },
-        ],
-        scrape: async () => {
-          throw new Error("scrape should not be used");
-        },
-      }),
-    };
+    const deps = depsWithAdapter(
+      {
+        search: () =>
+          Promise.resolve([
+            webfetchResult({ url: "https://example.com/a", title: "A", markdown: "a" }),
+            webfetchResult({ url: "https://example.com/b", title: "B", markdown: "b" }),
+            webfetchResult({ url: "https://example.com/c", title: "C", markdown: "c" }),
+          ]),
+        scrape: unusedScrape,
+      },
+      { research_provider: "webfetch" },
+    );
 
-    await runP5Phase(db, "cycle1", {} as any, deps as any);
+    await runP5Phase(db, "cycle1", testConfig(), deps);
 
     const cache = db
       .prepare("SELECT COUNT(*) as c FROM dream_research_cache WHERE project_id='proj1'")
-      .get() as {
-      c: number;
-    };
+      .get() as CacheCountRow;
     expect(cache.c).toBe(3);
     const rows = db
       .prepare("SELECT url FROM dream_research_cache WHERE project_id='proj1' ORDER BY url")
-      .all() as {
-      url: string;
-    }[];
+      .all() as CacheUrlRow[];
     expect(rows).toEqual([
       { url: "https://example.com/a" },
       { url: "https://example.com/b" },
@@ -301,34 +370,39 @@ describe("P5: Active Research", () => {
        VALUES(?, 'negative', 'proj1', 'expired neg query', ?, '', '', 1, 1, 0, 1)`,
     ).run(cacheKey, cacheKey);
 
-    const searchMock = mock(async () => [
+    const searchMock = mock(
+      (): Promise<WebResearchResult[]> =>
+        Promise.resolve([
+          webfetchResult({
+            url: "https://example.com/fresh",
+            title: "Fresh",
+            markdown: "fresh body",
+          }),
+        ]),
+    );
+    const deps = depsWithAdapter(
       {
-        url: "https://example.com/fresh",
-        title: "Fresh",
-        markdown: "fresh body",
-        source_provider: "webfetch",
+        search: searchMock,
+        scrape: unusedScrape,
       },
-    ]);
-    const deps = {
-      projectRegistry: { get: () => ({ dreaming: { research_provider: "webfetch" } }) },
-      getResearchAdapter: () => ({ search: searchMock }),
-    };
+      { research_provider: "webfetch" },
+    );
 
-    await runP5Phase(db, "cycle1", {} as any, deps as any);
+    await runP5Phase(db, "cycle1", testConfig(), deps);
 
     // Expired negative should have been treated as cache MISS → re-fetch.
     expect(searchMock.mock.calls.length).toBe(1);
 
     const p4 = db
       .prepare("SELECT status, decided_by FROM dream_actions WHERE action_id='a1'")
-      .get() as { status: string; decided_by: string | null };
+      .get() as DreamActionStatusRow;
     expect(p4.status).toBe("completed");
     expect(p4.decided_by).not.toBe("negative-cache-hit");
 
     // A real enrichment row with the freshly-fetched markdown should have been minted.
     const enrichment = db
       .prepare("SELECT payload_json FROM dream_actions WHERE phase='P5'")
-      .all() as Array<{ payload_json: string }>;
+      .all() as { payload_json: string }[];
     expect(enrichment.length).toBe(1);
     expect(enrichment[0]!.payload_json).toContain("fresh body");
   });
@@ -351,23 +425,29 @@ describe("P5: Active Research", () => {
       "INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('a2', 'cycle2', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', '{\"query\":\"repeated topic\"}')",
     ).run();
 
-    const searchMock = mock(async () => [
+    const searchMock = mock(
+      (): Promise<WebResearchResult[]> =>
+        Promise.resolve([
+          {
+            url: "https://example.com/article",
+            title: "Article",
+            markdown: "body",
+            fetched_at: new Date().toISOString(),
+            source_provider: "firecrawl",
+            source_billed_usd: 0.02,
+          },
+        ]),
+    );
+    const deps = depsWithAdapter(
       {
-        url: "https://example.com/article",
-        title: "Article",
-        markdown: "body",
-        source_provider: "firecrawl",
-        fetched_at: new Date().toISOString(),
-        source_billed_usd: 0.02,
+        search: searchMock,
+        scrape: unusedScrape,
       },
-    ]);
-    const deps = {
-      projectRegistry: { get: () => ({ dreaming: { research_provider: "firecrawl" } }) },
-      getResearchAdapter: () => ({ search: searchMock }),
-    };
+      { research_provider: "firecrawl" },
+    );
 
-    await runP5Phase(db, "cycle1", {} as any, deps as any);
-    await runP5Phase(db, "cycle2", {} as any, deps as any);
+    await runP5Phase(db, "cycle1", testConfig(), deps);
+    await runP5Phase(db, "cycle2", testConfig(), deps);
 
     expect(searchMock.mock.calls.length).toBe(1);
   });

@@ -1,14 +1,15 @@
-import { describe, expect, it, beforeAll, afterAll } from "bun:test";
+import { reloadAgentChatConfig } from "@penumbra/config";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { reloadAgentChatConfig } from "@penumbra/config";
+
 import {
   buildDreamingPromptBlock,
-  parseDreamingJudgeResponse,
   createDreamingJudgePool,
   createDreamingJudgePoolFromAgentchat,
   type DreamingJudgeEntry,
+  parseDreamingJudgeResponse,
 } from "../../src/dreaming/dreaming-judge-pool.js";
 
 beforeAll(() => {
@@ -79,7 +80,7 @@ function makeVoteResponse(promote: boolean, confidence: number): Response {
       choices: [
         {
           message: {
-            content: JSON.stringify({ promote, confidence, rationale: `vote:${promote}` }),
+            content: JSON.stringify({ promote, confidence, rationale: `vote:${String(promote)}` }),
           },
         },
       ],
@@ -91,38 +92,44 @@ function makeVoteResponse(promote: boolean, confidence: number): Response {
 describe("DreamingJudgePool.judgeAll", () => {
   it("fans out to all judges in parallel and returns one result per judge", async () => {
     const callLog: string[] = [];
-    const fakeFetch = async (url: string): Promise<Response> => {
-      callLog.push(url as string);
-      if ((url as string).includes("1111")) return makeVoteResponse(true, 0.9);
-      return makeVoteResponse(false, 0.3);
+    const fakeFetch: typeof fetch = (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      callLog.push(url);
+      return Promise.resolve(
+        url.includes("1111") ? makeVoteResponse(true, 0.9) : makeVoteResponse(false, 0.3),
+      );
     };
 
     const judges: DreamingJudgeEntry[] = [
       { name: "j1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" },
       { name: "j2", baseUrl: "http://localhost:2222/v1", apiKey: "", model: "local" },
     ];
-    const pool = createDreamingJudgePool(judges, fakeFetch as typeof fetch);
+    const pool = createDreamingJudgePool(judges, fakeFetch);
     const results = await pool.judgeAll!({ body: "test", kind: "promote_t1" });
 
     expect(results).toHaveLength(2);
     expect(callLog).toHaveLength(2);
-    const yesVote = results.find((r) => r.promote === true);
-    const noVote = results.find((r) => r.promote === false);
+    const yesVote = results.find((r) => r.promote);
+    const noVote = results.find((r) => !r.promote);
     expect(yesVote?.confidence).toBe(0.9);
     expect(noVote?.confidence).toBe(0.3);
   });
 
   it("returns judge_error sentinel for a failing judge without throwing", async () => {
-    const fakeFetch = async (url: string): Promise<Response> => {
-      if ((url as string).includes("1111")) return makeVoteResponse(true, 0.95);
-      return new Response("server error", { status: 500 });
+    const fakeFetch: typeof fetch = (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      return Promise.resolve(
+        url.includes("1111")
+          ? makeVoteResponse(true, 0.95)
+          : new Response("server error", { status: 500 }),
+      );
     };
 
     const judges: DreamingJudgeEntry[] = [
       { name: "j1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" },
       { name: "j2", baseUrl: "http://localhost:9999/v1", apiKey: "", model: "local" },
     ];
-    const pool = createDreamingJudgePool(judges, fakeFetch as typeof fetch);
+    const pool = createDreamingJudgePool(judges, fakeFetch);
     const results = await pool.judgeAll!({ body: "test", kind: "promote_t1" });
 
     expect(results).toHaveLength(2);
@@ -136,16 +143,17 @@ describe("DreamingJudgePool.judgeAll", () => {
 describe("DreamingJudgePool.judge", () => {
   it("round-robins across judges: 4 calls with 2 judges → each called exactly twice", async () => {
     const callLog: string[] = [];
-    const fakeFetch = async (url: string): Promise<Response> => {
-      callLog.push(url as string);
-      return makeVoteResponse(true, 0.8);
+    const fakeFetch: typeof fetch = (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      callLog.push(url);
+      return Promise.resolve(makeVoteResponse(true, 0.8));
     };
 
     const judges: DreamingJudgeEntry[] = [
       { name: "j1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" },
       { name: "j2", baseUrl: "http://localhost:2222/v1", apiKey: "", model: "local" },
     ];
-    const pool = createDreamingJudgePool(judges, fakeFetch as typeof fetch);
+    const pool = createDreamingJudgePool(judges, fakeFetch);
 
     for (let i = 0; i < 4; i++) {
       await pool.judge({ body: "x", kind: "promote_t1" });
@@ -158,10 +166,10 @@ describe("DreamingJudgePool.judge", () => {
   });
 
   it("returns yes verdict for promote=true response", async () => {
-    const fakeFetch = async (): Promise<Response> => makeVoteResponse(true, 0.85);
+    const fakeFetch: typeof fetch = () => Promise.resolve(makeVoteResponse(true, 0.85));
     const pool = createDreamingJudgePool(
       [{ name: "j1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" }],
-      fakeFetch as typeof fetch,
+      fakeFetch,
     );
     const result = await pool.judge({ body: "good memory", kind: "promote_t1" });
     expect(result.verdict).toBe("yes");
@@ -169,10 +177,10 @@ describe("DreamingJudgePool.judge", () => {
   });
 
   it("returns no verdict for promote=false response", async () => {
-    const fakeFetch = async (): Promise<Response> => makeVoteResponse(false, 0.1);
+    const fakeFetch: typeof fetch = () => Promise.resolve(makeVoteResponse(false, 0.1));
     const pool = createDreamingJudgePool(
       [{ name: "j1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" }],
-      fakeFetch as typeof fetch,
+      fakeFetch,
     );
     const result = await pool.judge({ body: "noisy memory", kind: "promote_t1" });
     expect(result.verdict).toBe("no");
@@ -181,7 +189,7 @@ describe("DreamingJudgePool.judge", () => {
 
 // --- factory: agentchat config integration ---
 
-const tmpConfigPath = join(tmpdir(), `dreaming-judge-pool-test-${process.pid}`);
+const tmpConfigPath = join(tmpdir(), `dreaming-judge-pool-test-${String(process.pid)}`);
 
 afterAll(() => {
   rmSync(tmpConfigPath, { recursive: true, force: true });

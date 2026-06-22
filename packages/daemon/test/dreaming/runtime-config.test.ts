@@ -1,7 +1,8 @@
-import { describe, test, expect } from "bun:test";
-import { Database } from "bun:sqlite";
-import { applySchema, loadSqliteVec } from "@penumbra/core";
 import { getConfig } from "@penumbra/config";
+import { applySchema, loadSqliteVec } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
+
 import { buildDreamingConfig } from "../../src/dreaming/config.js";
 import { resolveDreamRuntimeConfig } from "../../src/dreaming/runtime-config.js";
 
