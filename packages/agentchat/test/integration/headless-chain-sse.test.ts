@@ -156,7 +156,7 @@ serviceTest(
       // Disable polling by setting it to a value larger than the test timeout
       pollIntervalMs: 30000,
       onEvent: (row) => {
-        void dispatcher.handle(row);
+        void dispatcher.handle(row as HandoffRow);
       },
     });
 

@@ -1802,7 +1802,7 @@ const eventSource = startEventSource({
   isolation: workerIsolation,
   onEvent: (row) => {
     if (!row) return;
-    void dispatcher.handle(row);
+    void dispatcher.handle(row as HandoffRow);
   },
   log,
 });

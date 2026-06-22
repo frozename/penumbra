@@ -154,7 +154,7 @@ serviceTest(
       statuses: ["approved", "redirected"],
       pollIntervalMs: 50,
       onEvent: (row) => {
-        void dispatcher.handle(row);
+        void dispatcher.handle(row as HandoffRow);
       },
     });
 
