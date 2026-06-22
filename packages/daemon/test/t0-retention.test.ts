@@ -1,14 +1,15 @@
 import { expect } from "bun:test";
-import { serviceTest } from "./helpers/service-gates.js";
-import { makeTempDaemon } from "./helpers.js";
+
 import { createT0RetentionWorker } from "../src/workers/t0-retention.js";
+import { makeTempDaemon } from "./helpers.js";
+import { serviceTest } from "./helpers/service-gates.js";
 
 function insertEvent(
   d: ReturnType<typeof makeTempDaemon>,
   id: string,
   ts: string,
   session: string | null,
-) {
+): void {
   d.services.db.run(
     `INSERT INTO t0_events(event_id, ts, ingest_ts, source, project_id, user_id, machine_id, session_id, event_type, lane, payload_json)
      VALUES(?, ?, ?, 'mcp', 'pA', 'u', 'm', ?, 'agent-prompt', 'local', '{}')`,
@@ -68,7 +69,7 @@ function insertRollup(
   d: ReturnType<typeof makeTempDaemon>,
   session: string,
   endedAt: string | null,
-) {
+): void {
   d.services.db.run(
     `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
      VALUES(?, 'pA', 'u', ?, '2026-01-01T00:00:00Z', ?, 1, '{}', '{}')`,
@@ -166,19 +167,23 @@ serviceTest(
     try {
       const oldTs = new Date(d.services.clock().getTime() - 40 * 24 * 60 * 60 * 1000).toISOString();
       for (let i = 0; i < 5; i++) {
-        insertEvent(d, `e_yield_${i}`, oldTs, "s_yield");
+        insertEvent(d, `e_yield_${String(i)}`, oldTs, "s_yield");
       }
       insertRollup(d, "s_yield", oldTs);
 
       let batchInvocations = 0;
-      const originalTransaction = d.services.db.transaction.bind(d.services.db);
-      d.services.db.transaction = (fn: any) => {
+      type DeleteBatchCallback = (threshold: string, limit: number) => number;
+      type DeleteBatchTransaction = (fn: DeleteBatchCallback) => DeleteBatchCallback;
+      const originalTransaction = d.services.db.transaction.bind(
+        d.services.db,
+      ) as DeleteBatchTransaction;
+      d.services.db.transaction = ((fn: DeleteBatchCallback): DeleteBatchCallback => {
         const wrapped = originalTransaction(fn);
-        return ((...args: any[]) => {
+        return (threshold: string, limit: number): number => {
           batchInvocations += 1;
-          return wrapped(...args);
-        }) as typeof wrapped;
-      };
+          return wrapped(threshold, limit);
+        };
+      }) as typeof d.services.db.transaction;
 
       const worker = createT0RetentionWorker({
         services: d.services,

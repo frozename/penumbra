@@ -1,20 +1,32 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import type { Services } from "@penumbra/core";
+
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+
 import { createBearerAuth } from "../src/auth.js";
 import {
-  worktreesReadRoute,
-  worktreesWriteRoute,
   worktreesEditRoute,
+  worktreesExecRoute,
   worktreesGlobRoute,
   worktreesGrepRoute,
-  worktreesExecRoute,
+  worktreesReadRoute,
+  worktreesWriteRoute,
 } from "../src/routes/fs.js";
+
+interface HandoffStub {
+  to_agent?: string;
+  worker_id?: string | null;
+}
+
+interface ErrorResponseBody {
+  error: { code: string };
+}
 
 function stampWorkerPrincipal(req: Request, workerId: string, token: string): Request {
   const store = {
-    lookup: (t: string) =>
+    lookup: (t: string): { token_hash: string; worker_id: string } | null =>
       t === token ? { token_hash: `hash-${workerId}`, worker_id: workerId } : null,
   };
   const auth = createBearerAuth({ token: "shared-does-not-match", workerTokenStore: store });
@@ -27,8 +39,8 @@ function stampWorkerPrincipal(req: Request, workerId: string, token: string): Re
 
 function fakeServices(
   worktrees: Record<string, string>,
-  handoffs: Record<string, { worker_id?: string | null; to_agent?: string }>,
-): any {
+  handoffs: Record<string, HandoffStub>,
+): Services {
   return {
     worktreeManager: {
       getWorktree: (id: string) => (worktrees[id] ? { handoffId: id, path: worktrees[id] } : null),
@@ -37,7 +49,11 @@ function fakeServices(
       get: (id: string) => handoffs[id] ?? null,
     },
     shellConfig: undefined,
-  };
+  } as unknown as Services;
+}
+
+async function responseJson<T>(res: Response): Promise<T> {
+  return await res.json();
 }
 
 describe("worktree fs routes — worker ownership enforcement", () => {
@@ -61,13 +77,13 @@ describe("worktree fs routes — worker ownership enforcement", () => {
     return stampWorkerPrincipal(req, "worker-B", "tok-B");
   }
 
-  const services = () => fakeServices({ H_A: tmp }, { H_A: { worker_id: "worker-A" } });
+  const services = (): Services => fakeServices({ H_A: tmp }, { H_A: { worker_id: "worker-A" } });
 
   it("read: returns 403 when worker-B accesses handoff owned by worker-A", async () => {
     const req = peerRequest("http://x/worktrees/H_A/read", { path: "hello.txt" });
     const res = await worktreesReadRoute(req, "H_A", services());
     expect(res.status).toBe(403);
-    const body = await res.json();
+    const body = await responseJson<ErrorResponseBody>(res);
     expect(body.error.code).toBe("ownership_mismatch");
   });
 
@@ -75,7 +91,7 @@ describe("worktree fs routes — worker ownership enforcement", () => {
     const req = peerRequest("http://x/worktrees/H_A/write", { path: "x.txt", content: "bad" });
     const res = await worktreesWriteRoute(req, "H_A", services());
     expect(res.status).toBe(403);
-    const body = await res.json();
+    const body = await responseJson<ErrorResponseBody>(res);
     expect(body.error.code).toBe("ownership_mismatch");
   });
 
@@ -87,7 +103,7 @@ describe("worktree fs routes — worker ownership enforcement", () => {
     });
     const res = await worktreesEditRoute(req, "H_A", services());
     expect(res.status).toBe(403);
-    const body = await res.json();
+    const body = await responseJson<ErrorResponseBody>(res);
     expect(body.error.code).toBe("ownership_mismatch");
   });
 
@@ -95,7 +111,7 @@ describe("worktree fs routes — worker ownership enforcement", () => {
     const req = peerRequest("http://x/worktrees/H_A/glob", { pattern: "*.txt" });
     const res = await worktreesGlobRoute(req, "H_A", services());
     expect(res.status).toBe(403);
-    const body = await res.json();
+    const body = await responseJson<ErrorResponseBody>(res);
     expect(body.error.code).toBe("ownership_mismatch");
   });
 
@@ -103,7 +119,7 @@ describe("worktree fs routes — worker ownership enforcement", () => {
     const req = peerRequest("http://x/worktrees/H_A/grep", { pattern: "hello" });
     const res = await worktreesGrepRoute(req, "H_A", services());
     expect(res.status).toBe(403);
-    const body = await res.json();
+    const body = await responseJson<ErrorResponseBody>(res);
     expect(body.error.code).toBe("ownership_mismatch");
   });
 
@@ -111,7 +127,7 @@ describe("worktree fs routes — worker ownership enforcement", () => {
     const req = peerRequest("http://x/worktrees/H_A/exec", { command: "echo hi" });
     const res = await worktreesExecRoute(req, "H_A", services());
     expect(res.status).toBe(403);
-    const body = await res.json();
+    const body = await responseJson<ErrorResponseBody>(res);
     expect(body.error.code).toBe("ownership_mismatch");
   });
 

@@ -1,9 +1,97 @@
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { serve } from "bun";
 import { expect, test } from "bun:test";
-import { createJudgePool, type JudgeEntry } from "../src/workers/t2-judge-pool.js";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import {
+  createJudgePool,
+  type JudgeEntry,
+  type JudgePool,
+  type JudgePoolOpts,
+} from "../src/workers/t2-judge-pool.js";
+
+type FetchMock = NonNullable<JudgePoolOpts["fetch"]>;
+type FetchInput = Parameters<FetchMock>[0];
+type FetchInitWithTls = RequestInit & { tls?: { ca?: string } };
+
+const okJudgeResponse = (): Response =>
+  new Response(JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }), {
+    status: 200,
+  });
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function readRequestBody(init: RequestInit | undefined): Record<string, unknown> {
+  if (typeof init?.body !== "string") {
+    throw new Error("expected string request body");
+  }
+  const parsed = JSON.parse(init.body) as unknown;
+  if (!isRecord(parsed)) {
+    throw new Error("expected JSON object request body");
+  }
+  return parsed;
+}
+
+function readPromptContent(init: RequestInit | undefined): string {
+  const body = readRequestBody(init);
+  const messages = body.messages;
+  if (!Array.isArray(messages)) {
+    throw new Error("expected messages array");
+  }
+  const first = messages[0] as unknown;
+  if (!isRecord(first) || typeof first.content !== "string") {
+    throw new Error("expected first message content");
+  }
+  return first.content;
+}
+
+function logRecord(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error("expected log record");
+  }
+  return value;
+}
+
+function fetchInputText(input: FetchInput): string {
+  if (typeof input === "string") {
+    return input;
+  }
+  if (input instanceof URL) {
+    return input.toString();
+  }
+  return input.url;
+}
+
+function serverPort(port: number | undefined): number {
+  if (port === undefined) {
+    throw new Error("test server did not expose a port");
+  }
+  return port;
+}
+
+async function expectInvokeToThrow(
+  pool: JudgePool,
+  transcript: string,
+  expected: RegExp | string,
+): Promise<void> {
+  try {
+    await pool.invoke(transcript);
+  } catch (err) {
+    if (!(err instanceof Error)) {
+      throw err;
+    }
+    if (typeof expected === "string") {
+      expect(err.message).toContain(expected);
+    } else {
+      expect(err.message).toMatch(expected);
+    }
+    return;
+  }
+  throw new Error("expected judge invocation to reject");
+}
 
 function makeJudge(name: string, baseUrl: string, model = "judge-model"): JudgeEntry {
   return { name, baseUrl, apiKey: "", model };
@@ -14,14 +102,11 @@ test("round-robin distributes calls across two healthy judges", async () => {
   const pool = createJudgePool({
     judges: [makeJudge("a", "http://a"), makeJudge("b", "http://b")],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: async (url: any, init: any) => {
-      const body = JSON.parse(init?.body as string);
-      seen.push(String(url).includes("http://a") ? "a" : "b");
-      return new Response(
-        JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }),
-        { status: 200 },
-      );
-    },
+    fetch: ((url, init): Promise<Response> => {
+      readRequestBody(init);
+      seen.push(fetchInputText(url).includes("http://a") ? "a" : "b");
+      return Promise.resolve(okJudgeResponse());
+    }) satisfies FetchMock,
     promptBuilder: (transcript) => transcript,
     parseResponse: () => [],
   });
@@ -38,15 +123,12 @@ test("judge that fails twice in a tick is skipped for the rest of that tick", as
   const pool = createJudgePool({
     judges: [makeJudge("a", "http://a"), makeJudge("b", "http://b")],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: async (url: any) => {
-      const which = String(url).includes("http://a") ? "a" : "b";
+    fetch: ((url): Promise<Response> => {
+      const which = fetchInputText(url).includes("http://a") ? "a" : "b";
       seen.push(which);
-      if (which === "a") throw new Error("a-fail");
-      return new Response(
-        JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }),
-        { status: 200 },
-      );
-    },
+      if (which === "a") return Promise.reject(new Error("a-fail"));
+      return Promise.resolve(okJudgeResponse());
+    }) satisfies FetchMock,
     unhealthyAfter: 2,
     promptBuilder: (transcript) => transcript,
     parseResponse: () => [],
@@ -66,15 +148,12 @@ test("resetTickHealth re-enables a previously unhealthy judge", async () => {
   const pool = createJudgePool({
     judges: [makeJudge("a", "http://a"), makeJudge("b", "http://b")],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: async (url: any) => {
-      const which = String(url).includes("http://a") ? "a" : "b";
+    fetch: ((url): Promise<Response> => {
+      const which = fetchInputText(url).includes("http://a") ? "a" : "b";
       seen.push(which);
-      if (which === "a" && aShouldFail) throw new Error("a-fail");
-      return new Response(
-        JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }),
-        { status: 200 },
-      );
-    },
+      if (which === "a" && aShouldFail) return Promise.reject(new Error("a-fail"));
+      return Promise.resolve(okJudgeResponse());
+    }) satisfies FetchMock,
     unhealthyAfter: 2,
     promptBuilder: (transcript) => transcript,
     parseResponse: () => [],
@@ -97,17 +176,15 @@ test("all judges unhealthy this tick throws", async () => {
   const pool = createJudgePool({
     judges: [makeJudge("a", "http://a"), makeJudge("b", "http://b")],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: async () => {
-      throw new Error("fetch failed");
-    },
+    fetch: ((): Promise<Response> => Promise.reject(new Error("fetch failed"))) satisfies FetchMock,
     unhealthyAfter: 2,
     promptBuilder: (transcript) => transcript,
     parseResponse: () => [],
   });
 
-  await expect(pool.invoke("1")).rejects.toThrow("fetch failed");
-  await expect(pool.invoke("2")).rejects.toThrow("all judges unhealthy this tick");
-  await expect(pool.invoke("3")).rejects.toThrow("all judges unhealthy this tick");
+  await expectInvokeToThrow(pool, "1", "fetch failed");
+  await expectInvokeToThrow(pool, "2", "all judges unhealthy this tick");
+  await expectInvokeToThrow(pool, "3", "all judges unhealthy this tick");
 });
 
 test("single-judge pool degenerates to that one judge", async () => {
@@ -115,14 +192,10 @@ test("single-judge pool degenerates to that one judge", async () => {
   const pool = createJudgePool({
     judges: [makeJudge("a", "http://a")],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: async (url: any, init: any) => {
-      const body = JSON.parse(init?.body as string);
-      seen.push(body.messages[0].content);
-      return new Response(
-        JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }),
-        { status: 200 },
-      );
-    },
+    fetch: ((_url, init): Promise<Response> => {
+      seen.push(readPromptContent(init));
+      return Promise.resolve(okJudgeResponse());
+    }) satisfies FetchMock,
     promptBuilder: (transcript) => transcript,
     parseResponse: () => [],
   });
@@ -139,12 +212,14 @@ test("parseResponse error counts as judge failure", async () => {
   const pool = createJudgePool({
     judges: [makeJudge("a", "http://a"), makeJudge("b", "http://b")],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: async (url: any) => {
-      const which = String(url).includes("http://a") ? "a" : "b";
+    fetch: ((url): Promise<Response> => {
+      const which = fetchInputText(url).includes("http://a") ? "a" : "b";
       seen.push(which);
       const content = which === "a" ? "not-json" : '{"memories":[]}';
-      return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 });
-    },
+      return Promise.resolve(
+        new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 }),
+      );
+    }) satisfies FetchMock,
     unhealthyAfter: 1,
     promptBuilder: (transcript) => transcript,
     parseResponse: (rawContent) => {
@@ -153,8 +228,8 @@ test("parseResponse error counts as judge failure", async () => {
     },
   });
 
-  await expect(pool.invoke("x")).resolves.toEqual([]);
-  await expect(pool.invoke("y")).resolves.toEqual([]);
+  expect(await pool.invoke("x")).toEqual([]);
+  expect(await pool.invoke("y")).toEqual([]);
 
   expect(seen).toEqual(["a", "b", "b"]);
 });
@@ -165,20 +240,20 @@ test("judge caPath is plumbed into fetch tls.ca", async () => {
   const caPath = join(dir, "judge-ca.pem");
   writeFileSync(caPath, pemText, "utf8");
 
-  const seen: any[] = [];
+  const seen: FetchInitWithTls[] = [];
   const pool = createJudgePool({
     judges: [
       { name: "with-ca", baseUrl: "http://a", apiKey: "", model: "judge-model", caPath },
       { name: "without-ca", baseUrl: "http://b", apiKey: "", model: "judge-model" },
     ],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: async (_url: any, init: any) => {
-      seen.push(init);
-      return new Response(
-        JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }),
-        { status: 200 },
-      );
-    },
+    fetch: ((_url, init): Promise<Response> => {
+      if (init === undefined) {
+        throw new Error("expected request init");
+      }
+      seen.push(init as FetchInitWithTls);
+      return Promise.resolve(okJudgeResponse());
+    }) satisfies FetchMock,
     unhealthyAfter: 1,
     promptBuilder: (transcript) => transcript,
     parseResponse: () => [],
@@ -196,7 +271,7 @@ test("judge caPath is plumbed into fetch tls.ca", async () => {
 test("judge pool init skips one bad caPath and keeps healthy judges", () => {
   const dir = mkdtempSync(join(tmpdir(), "t2-judge-pool-init-"));
   const badCaPath = join(dir, "missing.pem");
-  const warnSpy: Array<Record<string, unknown>> = [];
+  const warnSpy: Record<string, unknown>[] = [];
 
   const pool = createJudgePool({
     judges: [
@@ -206,15 +281,12 @@ test("judge pool init skips one bad caPath and keeps healthy judges", () => {
     ],
     log: {
       info: () => undefined,
-      warn: (...args: any[]) => {
-        warnSpy.push(args[0] as Record<string, unknown>);
+      warn: (...args: unknown[]): void => {
+        warnSpy.push(logRecord(args[0]));
       },
       error: () => undefined,
     },
-    fetch: async (_url: any) =>
-      new Response(JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }), {
-        status: 200,
-      }),
+    fetch: ((): Promise<Response> => Promise.resolve(okJudgeResponse())) satisfies FetchMock,
     promptBuilder: (transcript) => transcript,
     parseResponse: () => [],
   });
@@ -230,7 +302,7 @@ test("judge pool init skips one bad caPath and keeps healthy judges", () => {
 test("judge pool init throws no_judges_available when all ca paths fail", () => {
   const dir = mkdtempSync(join(tmpdir(), "t2-judge-pool-init-all-"));
   const badPath = join(dir, "missing.pem");
-  const warnSpy: Array<Record<string, unknown>> = [];
+  const warnSpy: Record<string, unknown>[] = [];
 
   expect(() =>
     createJudgePool({
@@ -241,15 +313,12 @@ test("judge pool init throws no_judges_available when all ca paths fail", () => 
       ],
       log: {
         info: () => undefined,
-        warn: (...args: any[]) => {
-          warnSpy.push(args[0] as Record<string, unknown>);
+        warn: (...args: unknown[]): void => {
+          warnSpy.push(logRecord(args[0]));
         },
         error: () => undefined,
       },
-      fetch: async (_url: any) =>
-        new Response(JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }), {
-          status: 200,
-        }),
+      fetch: ((): Promise<Response> => Promise.resolve(okJudgeResponse())) satisfies FetchMock,
       promptBuilder: (transcript) => transcript,
       parseResponse: () => [],
     }),
@@ -271,12 +340,15 @@ test("judge pool enforces programmatic timeout and reports failure correctly", a
     },
   });
 
-  const warnSpy: any[] = [];
+  const warnSpy: Record<string, unknown>[] = [];
+  const port = serverPort(server.port);
   const pool = createJudgePool({
-    judges: [makeJudge("slow-judge", `http://localhost:${server.port}`)],
+    judges: [makeJudge("slow-judge", `http://localhost:${String(port)}`)],
     log: {
       info: () => undefined,
-      warn: (...args: any[]) => warnSpy.push(args[0]),
+      warn: (...args: unknown[]): void => {
+        warnSpy.push(logRecord(args[0]));
+      },
       error: () => undefined,
     },
     timeoutMs: 10,
@@ -285,13 +357,13 @@ test("judge pool enforces programmatic timeout and reports failure correctly", a
     parseResponse: () => [],
   });
 
-  await expect(pool.invoke("1")).rejects.toThrow(/judge slow-judge timed out after 10ms/i);
+  await expectInvokeToThrow(pool, "1", /judge slow-judge timed out after 10ms/i);
 
   expect(warnSpy.length).toBeGreaterThan(0);
-  expect(warnSpy[0].err).toMatch(/timed out after 10ms/i);
+  expect(String(warnSpy[0]?.err)).toMatch(/timed out after 10ms/i);
   expect(warnSpy[0].judge).toBe("slow-judge");
 
-  server.stop(true);
+  await server.stop(true);
 });
 
 test("judge pool uses env timeout and parses values correctly", async () => {
@@ -305,7 +377,8 @@ test("judge pool uses env timeout and parses values correctly", async () => {
     },
   });
 
-  const testEnv = async (val: string | undefined, expectTimeoutMs: number) => {
+  const port = serverPort(server.port);
+  const testEnv = async (val: string | undefined, expectTimeoutMs: number): Promise<void> => {
     const originalEnv = process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS;
     try {
       if (val === undefined) {
@@ -315,7 +388,7 @@ test("judge pool uses env timeout and parses values correctly", async () => {
       }
 
       const pool = createJudgePool({
-        judges: [makeJudge("env-judge", `http://localhost:${server.port}`)],
+        judges: [makeJudge("env-judge", `http://localhost:${String(port)}`)],
         log: { info: () => undefined, warn: () => undefined, error: () => undefined },
         unhealthyAfter: 2,
         promptBuilder: (t) => t,
@@ -323,11 +396,13 @@ test("judge pool uses env timeout and parses values correctly", async () => {
       });
 
       if (expectTimeoutMs < 50) {
-        await expect(pool.invoke("1")).rejects.toThrow(
-          new RegExp(`judge env-judge timed out after ${expectTimeoutMs}ms`, "i"),
+        await expectInvokeToThrow(
+          pool,
+          "1",
+          new RegExp(`judge env-judge timed out after ${String(expectTimeoutMs)}ms`, "i"),
         );
       } else {
-        await expect(pool.invoke("1")).resolves.toEqual([]);
+        expect(await pool.invoke("1")).toEqual([]);
       }
     } finally {
       if (originalEnv !== undefined) {
@@ -345,7 +420,7 @@ test("judge pool uses env timeout and parses values correctly", async () => {
   await testEnv("-5", 900000);
   await testEnv(undefined, 900000);
 
-  server.stop(true);
+  await server.stop(true);
 });
 
 test("programmatic override beats env variable", async () => {
@@ -363,8 +438,9 @@ test("programmatic override beats env variable", async () => {
       },
     });
 
+    const port = serverPort(server.port);
     const pool = createJudgePool({
-      judges: [makeJudge("override-judge", `http://localhost:${server.port}`)],
+      judges: [makeJudge("override-judge", `http://localhost:${String(port)}`)],
       log: { info: () => undefined, warn: () => undefined, error: () => undefined },
       timeoutMs: 10,
       unhealthyAfter: 2,
@@ -372,8 +448,8 @@ test("programmatic override beats env variable", async () => {
       parseResponse: () => [],
     });
 
-    await expect(pool.invoke("1")).rejects.toThrow(/judge override-judge timed out after 10ms/i);
-    server.stop(true);
+    await expectInvokeToThrow(pool, "1", /judge override-judge timed out after 10ms/i);
+    await server.stop(true);
   } finally {
     if (originalEnv !== undefined) {
       process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS = originalEnv;

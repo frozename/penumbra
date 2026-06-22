@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { serviceTest } from "./helpers/service-gates.js";
+
 import { makeTempDaemon } from "./helpers.js";
+import { serviceTest } from "./helpers/service-gates.js";
 
 serviceTest("POST /sessions/end triggers an immediate rollup for that session", async () => {
   const d = makeTempDaemon();

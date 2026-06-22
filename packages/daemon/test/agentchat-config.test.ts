@@ -1,7 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../src/agentchat-config.js";
 
 function writeSplitConfig(dir: string): void {
@@ -67,7 +68,7 @@ test("resolveAgentChatConfigPath honors PENUMBRA_CONFIG_DIR override", () => {
   expect(
     resolveAgentChatConfigPath({
       PENUMBRA_CONFIG_DIR: "/tmp/custom-penumbra",
-    } as NodeJS.ProcessEnv),
+    }),
   ).toBe("/tmp/custom-penumbra");
 });
 

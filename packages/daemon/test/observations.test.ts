@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { serviceTest } from "./helpers/service-gates.js";
+
 import { makeTempDaemon } from "./helpers.js";
+import { serviceTest } from "./helpers/service-gates.js";
 
 serviceTest("POST /observations writes a T0 row and returns event_id", async () => {
   const d = makeTempDaemon();
@@ -55,7 +56,7 @@ serviceTest(
   async () => {
     const d = makeTempDaemon();
     const originalWrite = d.services.t0Writer.write.bind(d.services.t0Writer);
-    d.services.t0Writer.write = () => {
+    d.services.t0Writer.write = (): never => {
       const err = new Error("disk I/O error") as Error & { name: string; code?: string };
       err.name = "SQLiteError";
       err.code = "SQLITE_IOERR";
@@ -90,7 +91,7 @@ serviceTest(
 serviceTest("POST /observations returns 503 when the writer reports SQLITE_BUSY", async () => {
   const d = makeTempDaemon();
   const originalWrite = d.services.t0Writer.write.bind(d.services.t0Writer);
-  d.services.t0Writer.write = () => {
+  d.services.t0Writer.write = (): never => {
     const err = new Error("database is locked") as Error & { name: string; code?: string };
     err.name = "SQLiteError";
     err.code = "SQLITE_BUSY";

@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { serviceTest } from "./helpers/service-gates.js";
+
 import { makeTempDaemon } from "./helpers.js";
+import { serviceTest } from "./helpers/service-gates.js";
 
 serviceTest("GET /metrics returns counts, embedder name/dim, and version", async () => {
   const d = makeTempDaemon();
