@@ -1,37 +1,145 @@
-import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import {
   AgentPerformanceWriter,
+  type AgentRoutingConfig,
   buildServices,
   ChainStartRequestSchema,
   loadSqliteVec,
   migrate,
-  type AgentRoutingConfig,
+  ProjectRegistry,
   type Services,
+  type Watchdog,
+  type WorkflowRunsRegistry,
 } from "@penumbra/core";
-import { ChainStartResponseSchema } from "../../../api-contract/src/chains.js";
-import { ProjectRegistry } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { createWorkflowRunsRegistry } from "../../src/services/workflow-runs-registry.js";
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
+
+import { ChainStartResponseSchema } from "../../../api-contract/src/chains.js";
+import { HandoffRowSchema as ApiHandoffRowSchema } from "../../../api-contract/src/handoffs.js";
 import {
-  handoffsCreateRoute,
-  handoffsApproveRoute,
-  handoffsCompleteRoute,
-} from "../../src/routes/handoffs.js";
-import {
-  chainsStartRoute,
-  chainsHistoryRoute,
-  chainsResponsesRoute,
-  chainsListAgentsRoute,
   chainSendMessageRoute,
+  chainsHistoryRoute,
+  chainsListAgentsRoute,
+  chainsResponsesRoute,
+  chainsStartRoute,
   chainStartFromInput,
 } from "../../src/routes/chains.js";
-import { HandoffRowSchema as ApiHandoffRowSchema } from "../../../api-contract/src/handoffs.js";
+import {
+  handoffsApproveRoute,
+  handoffsCompleteRoute,
+  handoffsCreateRoute,
+} from "../../src/routes/handoffs.js";
+import { createWorkflowRunsRegistry } from "../../src/services/workflow-runs-registry.js";
 
-try {
-  if (process.platform === "darwin")
+if (process.platform === "darwin") {
+  try {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-} catch {}
+  } catch (err) {
+    // best-effort: fall back to default sqlite when the homebrew build is missing
+    void err;
+  }
+}
+
+type ChainResponseBody = {
+  ok?: boolean;
+  conversation_id?: string;
+  handoff_id?: string;
+  routed_agent?: string;
+  routed_role?: string | null;
+  routing_task_type?: string | null;
+  routing_warning?: {
+    code: string;
+    project_id?: string;
+    suggested_project_id?: string;
+    mentioned_paths?: string[];
+    missing_in_project?: string[];
+    hint?: string;
+  };
+  routing_advisory?: { code: string };
+  error?: {
+    code?: string;
+    agent?: string;
+    hint?: string;
+    did_you_mean?: string[];
+    workers?: { worker_id: string; last_seen_age_ms: number }[];
+    field_errors?: { path: string[]; message: string }[];
+    long_lived_agent_id?: string;
+    long_lived_tick_id?: string;
+    message?: string;
+  };
+};
+
+type ChainHistoryBody = {
+  history: { reason: string; hop_count: number; conversation_id: string }[];
+};
+
+type ChainResponseListBody = {
+  responses: { agent: string; text: string; ts: string; error?: { message: string } }[];
+};
+
+type ChainMessagesBody = {
+  events: { event_type: string; payload: Record<string, unknown> | null; ts: string }[];
+};
+
+type ChainAgentsListBody = {
+  agents: { name: string }[];
+};
+
+type HandoffRawRow = {
+  handoff_id: string;
+  ts: string;
+  project_id: string | null;
+  conversation_id: string;
+  from_agent: string;
+  to_agent: string;
+  to_role: string | null;
+  message: string;
+  status: string;
+  resolved_by: string | null;
+  resolved_at: string | null;
+  chain_max_hops: number | null;
+  chain_trust_mode: string | null;
+  chain_task_type: string | null;
+  use_worktree: number | null;
+  isolated_install: number | null;
+  open_pr_on_review: number | null;
+  dispatch_kind: string | null;
+  long_lived_agent_id: string | null;
+  long_lived_tick_id: string | null;
+};
+
+type T0PayloadRow = {
+  payload_json: string | Record<string, unknown> | null;
+};
+
+async function readJsonBody<T>(res: Response): Promise<T> {
+  return (await res.json()) as T;
+}
+
+function selectHandoff(services: Services, handoff_id: string): HandoffRawRow {
+  const row = services.db
+    .query<HandoffRawRow, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
+    .get(handoff_id);
+  if (!row) {
+    throw new Error(`handoff not found: ${handoff_id}`);
+  }
+  return row;
+}
+
+type WorkerSessionMock = {
+  adapter?: string | null;
+  inject?: (msg: { role: string; text: string }) => Promise<void> | void;
+};
+type WorkerManagerMock = {
+  lookupSession: (handoff_id: string) => Promise<WorkerSessionMock | null>;
+};
+function installWorkerManager(services: Services, mock: WorkerManagerMock): void {
+  services.workerManager = mock;
+}
+
+function noopLog(): undefined {
+  return undefined;
+}
 
 function tempServices(opts?: {
   agentRegistry?: string[] | null;
@@ -49,20 +157,21 @@ function tempServices(opts?: {
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date("2026-04-26T00:00:00Z"),
-    uuid: () => `id-${++n}`,
+    uuid: () => `id-${String(++n)}`,
     agentRegistry: opts?.agentRegistry,
     agentRouting: opts?.agentRouting,
     worktreeRootDir: "/private/tmp/penumbra-test-worktrees",
   });
   services.projectRegistry = opts?.projectRegistry;
   // Mock watchdog for chains testing (by default hasActiveWorker=true to pass existing tests)
-  services.watchdog = {
-    recordHeartbeat: () => {},
-    hasActiveWorker: () => true,
-    getStaleWorkers: () => [],
-    getStaleHeartbeatAges: () => [],
-    tick: async () => {},
+  const watchdog: Watchdog = {
+    recordHeartbeat: (): void => undefined,
+    hasActiveWorker: (): boolean => true,
+    getStaleWorkers: (): string[] => [],
+    getStaleHeartbeatAges: (): { worker_id: string; last_seen_age_ms: number }[] => [],
+    tick: (): Promise<void> => Promise.resolve(),
   };
+  services.watchdog = watchdog;
   return services;
 }
 
@@ -165,7 +274,7 @@ function seedPerformance(
     rounds?: number;
     smoke_pass?: "y" | "n";
   },
-) {
+): void {
   new AgentPerformanceWriter(services.db).upsert({
     performance_id: input.performance_id,
     ts: "2026-04-25T00:00:00.000Z",
@@ -198,9 +307,9 @@ function writeAgentResponse(
     source_detail?: string | null;
     user_id?: string;
     session_id: string;
-    payload_json: unknown;
+    payload_json: Record<string, unknown>;
   },
-) {
+): void {
   services.t0Writer.write({
     event_id: input.event_id,
     ts: input.ts,
@@ -220,12 +329,12 @@ function writeAgentResponse(
     cost_usd: null,
     latency_ms: null,
     request_id: null,
-    payload_json: input.payload_json as any,
+    payload_json: input.payload_json,
     payload_summary: "response",
   });
 }
 
-function writeConversationMarker(services: Services, session_id: string) {
+function writeConversationMarker(services: Services, session_id: string): void {
   services.t0Writer.write({
     event_id: `marker-${session_id}`,
     ts: "2026-04-26T11:00:00Z",
@@ -270,7 +379,7 @@ async function createHandoff(services: Services, conversation_id: string): Promi
 
 test("POST /chains/start returns 400 if initial_agent is not in registry", async () => {
   const services = tempServices({ agentRegistry: ["planner", "executor"] });
-  const warnSpy = spyOn(services.log, "warn").mockImplementation(() => undefined as any);
+  const warnSpy = spyOn(services.log, "warn").mockImplementation(noopLog);
   const res = await chainsStartRoute(
     new Request("http://x/chains/start", {
       method: "POST",
@@ -279,7 +388,7 @@ test("POST /chains/start returns 400 if initial_agent is not in registry", async
     services,
   );
   expect(res.status).toBe(400);
-  const body = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body.error.code).toBe("unknown_agent");
   expect(body.error.agent).toBe("bogus-agent");
   expect(body.error.hint).toBe("use chain.list_agents to enumerate valid agents");
@@ -294,19 +403,8 @@ test("POST /chains/start returns 400 if initial_agent is not in registry", async
 
 test("POST /chains/start does not run DDL on the request path", async () => {
   const services = tempServices();
-  const originalExec = services.db.exec.bind(services.db);
-  const originalQuery = services.db.query.bind(services.db);
-  const ddlCalls: string[] = [];
   const ddlRe = /\b(?:PRAGMA|ALTER\s+TABLE|CREATE\s+TABLE|DROP\s+TABLE)\b/i;
-
-  (services.db as any).exec = (sql: string) => {
-    if (ddlRe.test(sql)) ddlCalls.push(`exec:${sql}`);
-    return originalExec(sql);
-  };
-  (services.db as any).query = (sql: string, ...rest: any[]) => {
-    if (ddlRe.test(sql)) ddlCalls.push(`query:${sql}`);
-    return originalQuery(sql, ...rest);
-  };
+  const querySpy = spyOn(services.db, "query");
 
   const res = await chainsStartRoute(
     new Request("http://x/chains/start", {
@@ -317,6 +415,9 @@ test("POST /chains/start does not run DDL on the request path", async () => {
   );
 
   expect(res.status).toBe(200);
+  const ddlCalls = querySpy.mock.calls
+    .map((args) => (typeof args[0] === "string" ? args[0] : ""))
+    .filter((sql) => ddlRe.test(sql));
   expect(ddlCalls).toEqual([]);
 });
 
@@ -614,7 +715,7 @@ test("POST /chains/start exempts long_lived_tick dispatches with a valid tick id
     )
     .run("tick-42", "agent-42", "manual", 1715385600000);
 
-  const logSpy = spyOn(services.log, "info").mockImplementation(() => undefined as any);
+  const logSpy = spyOn(services.log, "info").mockImplementation(noopLog);
   const res = await chainsStartRoute(
     new Request("http://x/chains/start", {
       method: "POST",
@@ -685,22 +786,24 @@ test("POST /chains/start rejects forged long_lived_tick dispatch exemptions", as
 test("POST /chains/start exempts workflow dispatches with a valid run id from the explicit project gate", async () => {
   process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID = "1";
   const services = tempServices();
-  services.workflowRuns = {
+  const workflowRunsMock: WorkflowRunsRegistry = {
     verify: (workflowRunId: string) =>
       workflowRunId === "workflow-42"
         ? { workflow_name: "home-mgmt", project_id: null, registered_at: 1715385600000 }
         : null,
-    register: () => null,
-    unregister: () => undefined,
-    recordResult: async () => undefined,
-    recordError: async () => undefined,
-    getStatus: async () => null,
-    waitForResult: async () => null,
-    setPersistenceStatus: () => undefined,
-    setExecutionRecord: () => undefined,
-  } as any;
+    register: (): null => null,
+    unregister: (): undefined => undefined,
+    recordResult: (): Promise<void> => Promise.resolve(),
+    recordError: (): Promise<void> => Promise.resolve(),
+    getStatus: (): Promise<null> => Promise.resolve(null),
+    getStatusLight: (): Promise<null> => Promise.resolve(null),
+    waitForResult: (): Promise<null> => Promise.resolve(null),
+    setPersistenceStatus: (): void => undefined,
+    setExecutionRecord: (): void => undefined,
+  };
+  services.workflowRuns = workflowRunsMock;
 
-  const logSpy = spyOn(services.log, "info").mockImplementation(() => undefined as any);
+  const logSpy = spyOn(services.log, "info").mockImplementation(noopLog);
   const res = await chainsStartRoute(
     new Request("http://x/chains/start", {
       method: "POST",
@@ -729,7 +832,7 @@ test("POST /chains/start exempts workflow dispatches with a valid run id from th
 test("POST /chains/start exempts thought_analyzer dispatches with missing project_id but rejects normal dispatches under strict mode", async () => {
   process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID = "1";
   const services = tempServices();
-  const logSpy = spyOn(services.log, "info").mockImplementation(() => undefined as any);
+  const logSpy = spyOn(services.log, "info").mockImplementation(noopLog);
 
   const thoughtAnalyzerRes = await chainsStartRoute(
     new Request("http://x/chains/start", {
@@ -805,15 +908,16 @@ test("POST /chains/:handoff_id/messages injects content into a running ACP sessi
   const services = tempServices();
   const handoff_id = await createHandoff(services, "conv-running");
 
-  const injected: Array<{ role: string; text: string }> = [];
-  (services as any).workerManager = {
-    lookupSession: async () => ({
-      adapter: "claude-acp-sonnet",
-      inject: async (message: { role: "user"; text: string }) => {
-        injected.push(message);
-      },
-    }),
-  };
+  const injected: { role: string; text: string }[] = [];
+  installWorkerManager(services, {
+    lookupSession: (): Promise<WorkerSessionMock> =>
+      Promise.resolve({
+        adapter: "claude-acp-sonnet",
+        inject: (message: { role: string; text: string }): void => {
+          injected.push(message);
+        },
+      }),
+  });
 
   const res = await chainSendMessageRoute(
     new Request(`http://x/chains/${handoff_id}/messages`, {
@@ -825,15 +929,15 @@ test("POST /chains/:handoff_id/messages injects content into a running ACP sessi
   );
 
   expect(res.status).toBe(200);
-  expect(await res.json()).toEqual({ ok: true });
+  expect(await readJsonBody<ChainResponseBody>(res)).toEqual({ ok: true });
   expect(injected).toEqual([{ role: "user", text: "answer the question" }]);
 });
 
 test("POST /chains/:handoff_id/messages returns 404 for an unknown handoff", async () => {
   const services = tempServices();
-  (services as any).workerManager = {
-    lookupSession: async () => null,
-  };
+  installWorkerManager(services, {
+    lookupSession: (): Promise<null> => Promise.resolve(null),
+  });
 
   const res = await chainSendMessageRoute(
     new Request("http://x/chains/h-missing/messages", {
@@ -850,9 +954,9 @@ test("POST /chains/:handoff_id/messages returns 404 for an unknown handoff", asy
 test("POST /chains/:handoff_id/messages returns 409 when the adapter does not support injection", async () => {
   const services = tempServices();
   const handoff_id = await createHandoff(services, "conv-unsupported");
-  (services as any).workerManager = {
-    lookupSession: async () => ({ adapter: null }),
-  };
+  installWorkerManager(services, {
+    lookupSession: (): Promise<WorkerSessionMock> => Promise.resolve({ adapter: null }),
+  });
 
   const res = await chainSendMessageRoute(
     new Request(`http://x/chains/${handoff_id}/messages`, {
@@ -880,9 +984,9 @@ test("POST /chains/:handoff_id/messages returns 410 for a terminal handoff", asy
     handoff_id,
     services,
   );
-  (services as any).workerManager = {
-    lookupSession: async () => null,
-  };
+  installWorkerManager(services, {
+    lookupSession: (): Promise<null> => Promise.resolve(null),
+  });
 
   const res = await chainSendMessageRoute(
     new Request(`http://x/chains/${handoff_id}/messages`, {
@@ -963,13 +1067,11 @@ test("POST /chains/start routes role targets to the best ledger-ranked role agen
   );
 
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body.routed_agent).toBe("codex-mini");
   expect(body.routed_role).toBe("executor");
   expect(body.routing_task_type).toBe("implement_substantial");
-  const handoff = services.db
-    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
-    .get(body.handoff_id);
+  const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.to_agent).toBe("codex-mini");
   expect(handoff.to_role).toBe("executor");
 });
@@ -1000,12 +1102,10 @@ test("POST /chains/start treats a name that is also a configured role as a role 
   );
 
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body.routed_agent).toBe("codex-spark");
   expect(body.routed_role).toBe("executor");
-  const handoff = services.db
-    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
-    .get(body.handoff_id);
+  const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.to_agent).toBe("codex-spark");
   expect(handoff.to_role).toBe("executor");
 });
@@ -1036,12 +1136,10 @@ test("POST /chains/start supports agent: prefix to force exact routing through a
   );
 
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body.routed_agent).toBeUndefined();
   expect(body.routed_role).toBeUndefined();
-  const handoff = services.db
-    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
-    .get(body.handoff_id);
+  const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.to_agent).toBe("executor");
   expect(handoff.to_role).toBeNull();
   expect(handoff.chain_task_type).toBe("implement_small");
@@ -1077,12 +1175,10 @@ test("POST /chains/start treats exact agent names as explicit routing even when 
   );
 
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body.routed_agent).toBeUndefined();
   expect(body.routed_role).toBeUndefined();
-  const handoff = services.db
-    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
-    .get(body.handoff_id);
+  const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.to_agent).toBe("gemini");
   expect(handoff.to_role).toBeNull();
 });
@@ -1110,12 +1206,10 @@ test("POST /chains/start explores an unsampled non-default role agent before the
   );
 
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body.routed_agent).toBe("codex-mini");
   expect(body.routed_role).toBe("executor");
-  const handoff = services.db
-    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
-    .get(body.handoff_id);
+  const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.to_agent).toBe("codex-mini");
   expect(handoff.to_role).toBe("executor");
   expect(handoff.chain_task_type).toBe("implement_substantial");
@@ -1154,12 +1248,10 @@ test("POST /chains/start honors ranked-first exploration policy for role routing
   );
 
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body.routed_agent).toBe("gemini");
   expect(body.routed_role).toBe("executor");
-  const handoff = services.db
-    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
-    .get(body.handoff_id);
+  const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.to_agent).toBe("gemini");
   expect(handoff.to_role).toBe("executor");
 });
@@ -1184,12 +1276,10 @@ test("POST /chains/start falls back to default role agent when no alternate need
   );
 
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body.routed_agent).toBe("gemini");
   expect(body.routed_role).toBe("executor");
-  const handoff = services.db
-    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
-    .get(body.handoff_id);
+  const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.to_agent).toBe("gemini");
   expect(handoff.to_role).toBe("executor");
 });
@@ -1199,7 +1289,7 @@ test("chain-start drops unknown project_id and continues when registry has entri
   services.projectRegistry = new ProjectRegistry(
     new Map([["penumbra", { project_id: "penumbra", root_path: "/tmp/penumbra" }]]),
   );
-  const warnSpy = spyOn(services.log, "warn").mockImplementation(() => undefined as any);
+  const warnSpy = spyOn(services.log, "warn").mockImplementation(noopLog);
 
   const req = new Request("http://t/chains/start", {
     method: "POST",
@@ -1211,7 +1301,7 @@ test("chain-start drops unknown project_id and continues when registry has entri
   });
   const res = await chainsStartRoute(req, services);
   expect(res.status).toBe(200);
-  const body: any = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body.error).toBeUndefined();
   expect(warnSpy).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -1266,7 +1356,7 @@ test("chain-start skips routing guard when project_id is null even with a popula
   });
   const res = await chainsStartRoute(req, services);
   expect(res.status).toBe(200);
-  const body: any = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body.routing_warning).toBeUndefined();
   expect(body.routing_advisory).toBeUndefined();
 });
@@ -1300,7 +1390,7 @@ test("chain-start attaches a routing warning and dispatches when strict mode is 
   });
   const res = await chainsStartRoute(req, services);
   expect(res.status).toBe(200);
-  const body: any = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body).toHaveProperty(
     "routing_warning",
     expect.objectContaining({
@@ -1370,7 +1460,7 @@ test("chain-start warns and dispatches in strict mode when the mismatch has no s
     ),
   });
   process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = "true";
-  const warnSpy = spyOn(services.log, "warn").mockImplementation(() => undefined as any);
+  const warnSpy = spyOn(services.log, "warn").mockImplementation(noopLog);
 
   const req = new Request("http://t/chains/start", {
     method: "POST",
@@ -1383,17 +1473,15 @@ test("chain-start warns and dispatches in strict mode when the mismatch has no s
   });
   const res = await chainsStartRoute(req, services);
   expect(res.status).toBe(200);
-  const body: any = await res.json();
-  expect(body.routing_warning).toEqual(
-    expect.objectContaining({
-      code: "prompt_project_mismatch",
-      project_id: "penumbra",
-      mentioned_paths: ["/tmp/projects/shared/src/foo.ts"],
-      missing_in_project: [],
-      hint: "pass project_id explicitly or update prompt paths",
-    }),
-  );
-  expect(body.routing_warning.suggested_project_id).toBeUndefined();
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.routing_warning).toMatchObject({
+    code: "prompt_project_mismatch",
+    project_id: "penumbra",
+    mentioned_paths: ["/tmp/projects/shared/src/foo.ts"],
+    missing_in_project: [],
+    hint: "pass project_id explicitly or update prompt paths",
+  });
+  expect(body.routing_warning?.suggested_project_id).toBeUndefined();
   expect(warnSpy).toHaveBeenCalledWith(
     expect.objectContaining({
       event: "chain_start.routing_guard.mismatch",
@@ -1429,7 +1517,7 @@ test("chain-start allows strict workflow dispatches to cross project prompts", a
     storageRoot: "/private/tmp/penumbra-test-storage",
   });
   const workflowRunId = services.workflowRuns.register("cross-project-workflow", "penumbra");
-  const warnSpy = spyOn(services.log, "warn").mockImplementation(() => undefined as any);
+  const warnSpy = spyOn(services.log, "warn").mockImplementation(noopLog);
 
   try {
     const req = new Request("http://t/chains/start", {
@@ -1445,7 +1533,7 @@ test("chain-start allows strict workflow dispatches to cross project prompts", a
     });
     const res = await chainsStartRoute(req, services);
     expect(res.status).toBe(200);
-    const body: any = await res.json();
+    const body = await readJsonBody<ChainResponseBody>(res);
     expect(body).toHaveProperty(
       "routing_warning",
       expect.objectContaining({
@@ -1486,7 +1574,7 @@ test("chain-start rejects spoofed workflow dispatch_kind without valid workflow_
     ),
   });
   process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = "true";
-  const warnSpy = spyOn(services.log, "warn").mockImplementation(() => undefined as any);
+  const warnSpy = spyOn(services.log, "warn").mockImplementation(noopLog);
 
   const req = new Request("http://t/chains/start", {
     method: "POST",
@@ -1537,7 +1625,7 @@ test("chain-start rejects forged workflow_run_id", async () => {
     ),
   });
   process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = "1";
-  const warnSpy = spyOn(services.log, "warn").mockImplementation(() => undefined as any);
+  const warnSpy = spyOn(services.log, "warn").mockImplementation(noopLog);
 
   const req = new Request("http://t/chains/start", {
     method: "POST",
@@ -1629,7 +1717,7 @@ test("chain-start rejects workflow exemption when request lacks project_id", asy
   });
   const workflowRunId = services.workflowRuns.register("cross-project-workflow", "penumbra");
   process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = "1";
-  const warnSpy = spyOn(services.log, "warn").mockImplementation(() => undefined as any);
+  const warnSpy = spyOn(services.log, "warn").mockImplementation(noopLog);
 
   const req = new Request("http://t/chains/start", {
     method: "POST",
@@ -1671,7 +1759,7 @@ test("chain-start rejects spoofed parent_handoff_id in strict mode when the pare
     ),
   });
   process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = "true";
-  const warnSpy = spyOn(services.log, "warn").mockImplementation(() => undefined as any);
+  const warnSpy = spyOn(services.log, "warn").mockImplementation(noopLog);
 
   const req = new Request("http://t/chains/start", {
     method: "POST",
@@ -1774,7 +1862,7 @@ test("chain-start allows strict internal parent_handoff_id hops from the same pr
     ),
   });
   process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = "true";
-  const warnSpy = spyOn(services.log, "warn").mockImplementation(() => undefined as any);
+  const warnSpy = spyOn(services.log, "warn").mockImplementation(noopLog);
 
   services.db
     .query(
@@ -1806,7 +1894,7 @@ test("chain-start allows strict internal parent_handoff_id hops from the same pr
   });
   const res = await chainsStartRoute(req, services);
   expect(res.status).toBe(200);
-  const body: any = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body).toHaveProperty(
     "routing_warning",
     expect.objectContaining({
@@ -1840,7 +1928,7 @@ test("chain-start warns and dispatches for strict long-lived tick hops", async (
     ),
   });
   process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = "1";
-  const warnSpy = spyOn(services.log, "warn").mockImplementation(() => undefined as any);
+  const warnSpy = spyOn(services.log, "warn").mockImplementation(noopLog);
 
   services.db
     .query(
@@ -1885,7 +1973,7 @@ test("chain-start warns and dispatches for strict long-lived tick hops", async (
   });
   const res = await chainsStartRoute(req, services);
   expect(res.status).toBe(200);
-  const body: any = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body).toHaveProperty(
     "routing_warning",
     expect.objectContaining({
@@ -1921,7 +2009,7 @@ test("chain-start attaches a routing advisory when the registry cannot be loaded
   });
   const res = await chainsStartRoute(req, services);
   expect(res.status).toBe(200);
-  const body: any = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body).toHaveProperty("routing_advisory", {
     code: "project_registry_unavailable",
   });
@@ -1945,7 +2033,7 @@ test("POST /chains/start success response parses against ChainStartResponseSchem
   );
 
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(() => ChainStartResponseSchema.parse(body)).not.toThrow();
 });
 
@@ -1963,7 +2051,7 @@ test("chain-start skips the routing guard when no project registry is available"
   });
   const res = await chainsStartRoute(req, services);
   expect(res.status).toBe(200);
-  const body: any = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body.routing_warning).toBeUndefined();
   expect(body.routing_advisory).toBeUndefined();
 });
@@ -1978,10 +2066,8 @@ test("POST /chains/start auto-strips leading @ from initial_agent", async () => 
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
-  const handoff = services.db
-    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
-    .get(body.handoff_id);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.to_agent).toBe("planner");
 });
 
@@ -2045,7 +2131,7 @@ test("POST /chains/start strips only the first leading @ before registry validat
 
 test("POST /chains/start returns 503 if no active worker has heartbeated", async () => {
   const services = tempServices();
-  services.watchdog.hasActiveWorker = () => false;
+  services.watchdog.hasActiveWorker = (): boolean => false;
 
   const res = await chainsStartRoute(
     new Request("http://x/chains/start", {
@@ -2055,14 +2141,17 @@ test("POST /chains/start returns 503 if no active worker has heartbeated", async
     services,
   );
   expect(res.status).toBe(503);
-  const body = await res.json();
-  expect(body.error.code).toBe("no_worker_registered");
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.error?.code).toBe("no_worker_registered");
 });
 
 test("POST /chains/start distinguishes stale workers from no registered workers", async () => {
   const services = tempServices();
-  services.watchdog.hasActiveWorker = () => false;
-  services.watchdog.getStaleHeartbeatAges = () => [
+  services.watchdog.hasActiveWorker = (): boolean => false;
+  services.watchdog.getStaleHeartbeatAges = (): {
+    worker_id: string;
+    last_seen_age_ms: number;
+  }[] => [
     { worker_id: "worker-a", last_seen_age_ms: 92_000 },
     { worker_id: "worker-b", last_seen_age_ms: 125_000 },
   ];
@@ -2075,7 +2164,7 @@ test("POST /chains/start distinguishes stale workers from no registered workers"
     services,
   );
   expect(res.status).toBe(503);
-  const body = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body.error.code).toBe("worker_heartbeats_stale");
   expect(body.error.workers).toEqual([
     { worker_id: "worker-a", last_seen_age_ms: 92_000 },
@@ -2099,14 +2188,14 @@ test("POST /chains/start writes user-prompt event + approved handoff and returns
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(typeof body.conversation_id).toBe("string");
   expect(typeof body.handoff_id).toBe("string");
 
   const t0Row =
     services.db
-      .query<any, [string]>(`SELECT * FROM t0_events WHERE event_id=?`)
-      .get(body.handoff_id) ?? null;
+      .query<Record<string, unknown>, [string]>(`SELECT * FROM t0_events WHERE event_id=?`)
+      .get(body.handoff_id ?? "") ?? null;
   // The user-prompt event_id is body.handoff_id's predecessor — we wrote both in one tx.
   // Check counts instead.
   const events = services.db
@@ -2114,9 +2203,7 @@ test("POST /chains/start writes user-prompt event + approved handoff and returns
     .all();
   expect(events.find((e) => e.event_type === "user-prompt")).toBeDefined();
 
-  const handoff = services.db
-    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
-    .get(body.handoff_id);
+  const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.status).toBe("approved");
   expect(handoff.from_agent).toBe("user");
   expect(handoff.to_agent).toBe("planner");
@@ -2137,10 +2224,8 @@ test("POST /chains/start respects use_worktree: false", async () => {
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
-  const handoff = services.db
-    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
-    .get(body.handoff_id);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.use_worktree).toBe(0);
 });
 
@@ -2154,10 +2239,8 @@ test("POST /chains/start respects use_worktree: true", async () => {
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
-  const handoff = services.db
-    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
-    .get(body.handoff_id);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.use_worktree).toBe(1);
 });
 
@@ -2170,10 +2253,8 @@ test("POST /chains/start defaults use_worktree to true if omitted", async () => 
     }),
     services,
   );
-  const body = await res.json();
-  const handoff = services.db
-    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
-    .get(body.handoff_id);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.use_worktree).toBe(1);
 });
 
@@ -2187,10 +2268,8 @@ test("POST /chains/start persists open_pr_on_review: true", async () => {
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
-  const handoff = services.db
-    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
-    .get(body.handoff_id);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.open_pr_on_review).toBe(1);
 });
 
@@ -2204,10 +2283,8 @@ test("POST /chains/start defaults open_pr_on_review to null when omitted", async
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
-  const handoff = services.db
-    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
-    .get(body.handoff_id);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.open_pr_on_review).toBeNull();
 });
 
@@ -2225,10 +2302,8 @@ test("POST /chains/start persists isolated_install: true", async () => {
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
-  const handoff = services.db
-    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
-    .get(body.handoff_id);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.isolated_install).toBe(1);
   expect(ApiHandoffRowSchema.parse(handoff).isolated_install).toBe(true);
 });
@@ -2247,10 +2322,8 @@ test("POST /chains/start persists isolated_install: false", async () => {
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
-  const handoff = services.db
-    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
-    .get(body.handoff_id);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.isolated_install).toBe(0);
 });
 
@@ -2268,10 +2341,8 @@ test("POST /chains/start leaves BOUNDARY isolated_install off by default", async
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
-  const handoff = services.db
-    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
-    .get(body.handoff_id);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.isolated_install).toBeNull();
 });
 
@@ -2290,10 +2361,8 @@ test("POST /chains/start auto-enables BOUNDARY isolated_install only behind env"
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
-  const handoff = services.db
-    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
-    .get(body.handoff_id);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.isolated_install).toBe(1);
 });
 
@@ -2341,13 +2410,8 @@ test("POST /chains/start persists long-lived dispatch identity fields when suppl
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
-  const handoff = services.db
-    .query<
-      any,
-      [string]
-    >(`SELECT dispatch_kind, long_lived_agent_id, long_lived_tick_id FROM handoffs WHERE handoff_id=?`)
-    .get(body.handoff_id);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.dispatch_kind).toBe("long_lived_tick");
   expect(handoff.long_lived_agent_id).toBe("agent-42");
   expect(handoff.long_lived_tick_id).toBe("tick-42");
@@ -2366,13 +2430,8 @@ test("POST /chains/start defaults long-lived dispatch identity fields to null wh
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
-  const handoff = services.db
-    .query<
-      any,
-      [string]
-    >(`SELECT dispatch_kind, long_lived_agent_id, long_lived_tick_id FROM handoffs WHERE handoff_id=?`)
-    .get(body.handoff_id);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.dispatch_kind).toBeNull();
   expect(handoff.long_lived_agent_id).toBeNull();
   expect(handoff.long_lived_tick_id).toBeNull();
@@ -2430,25 +2489,24 @@ test("POST /chains/start stamps long-lived tick dispatch prompts before persisti
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   const handoff = services.db
-    .query<any, [string]>(`SELECT message FROM handoffs WHERE handoff_id=?`)
-    .get(body.handoff_id);
-  expect(handoff.message).not.toBe(rawMessage);
-  expect(handoff.message).toContain("Tick id: tick-42");
+    .query<{ message: string }, [string]>(`SELECT message FROM handoffs WHERE handoff_id=?`)
+    .get(body.handoff_id ?? "");
+  expect(handoff?.message).not.toBe(rawMessage);
+  expect(handoff?.message).toContain("Tick id: tick-42");
 
   const promptEvent = services.db
-    .query<any, [string]>(
+    .query<T0PayloadRow, [string]>(
       `SELECT payload_json FROM t0_events
      WHERE session_id=? AND event_type='user-prompt'
      ORDER BY ts DESC
      LIMIT 1`,
     )
-    .get(body.conversation_id);
+    .get(body.conversation_id ?? "");
+  const rawPayload = promptEvent?.payload_json ?? null;
   const payloadJson =
-    typeof promptEvent.payload_json === "string"
-      ? JSON.parse(promptEvent.payload_json)
-      : promptEvent.payload_json;
+    typeof rawPayload === "string" ? (JSON.parse(rawPayload) as unknown) : rawPayload;
   expect(payloadJson).toEqual({ prompt: rawMessage });
 });
 
@@ -2468,7 +2526,7 @@ test("POST /chains/start returns unknown_long_lived_agent when long-lived dispat
     services,
   );
   expect(res.status).toBe(400);
-  const body = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body.error.code).toBe("unknown_long_lived_agent");
 });
 
@@ -2539,7 +2597,7 @@ test("POST /chains/start rejects mismatched long-lived agent/tick identity", asy
   );
 
   expect(res.status).toBe(400);
-  const body = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body.error.code).toBe("cross_identity_long_lived");
   expect(body.error.long_lived_agent_id).toBe("agent-b");
   expect(body.error.long_lived_tick_id).toBe("tick-a");
@@ -2558,7 +2616,7 @@ test("POST /chains/start honors caller-supplied conversation_id", async () => {
     }),
     services,
   );
-  const body = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body.conversation_id).toBe("conv-mine");
 });
 
@@ -2599,7 +2657,7 @@ test("POST /chains/start still returns schema validation_error for empty initial
     services,
   );
   expect(res.status).toBe(400);
-  const body = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body.error.code).toBe("validation_error");
   expect(body.error.field_errors).toContainEqual({
     path: ["initial_agent"],
@@ -2609,8 +2667,10 @@ test("POST /chains/start still returns schema validation_error for empty initial
 
 test("POST /chains/start emits exactly one handoff-events event for the new approved row", async () => {
   const services = tempServices();
-  const seen: any[] = [];
-  services.handoffEvents.subscribe((row) => seen.push(row));
+  const seen: { status: string }[] = [];
+  services.handoffEvents.subscribe((row) => {
+    seen.push({ status: row.status });
+  });
 
   await chainsStartRoute(
     new Request("http://x/chains/start", {
@@ -2655,11 +2715,11 @@ test("GET /chains/history returns chain-terminated events for a conversation", a
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonBody<ChainHistoryBody>(res);
   expect(body.history.length).toBe(1);
-  expect(body.history[0].reason).toBe("max_hops reached");
-  expect(body.history[0].hop_count).toBe(5);
-  expect(body.history[0].conversation_id).toBe("c1");
+  expect(body.history[0]?.reason).toBe("max_hops reached");
+  expect(body.history[0]?.hop_count).toBe(5);
+  expect(body.history[0]?.conversation_id).toBe("c1");
 });
 
 test("GET /chains/history returns 400 if conversation_id is missing", async () => {
@@ -2708,21 +2768,21 @@ test("GET /chains/responses returns agent responses for a conversation", async (
     services,
   );
   expect(resFinal.status).toBe(200);
-  const bodyFinal = await resFinal.json();
+  const bodyFinal = await readJsonBody<ChainResponseListBody>(resFinal);
   expect(bodyFinal.responses.length).toBe(1);
-  expect(bodyFinal.responses[0].agent).toBe("executor");
-  expect(bodyFinal.responses[0].text).toBe("hello from executor");
+  expect(bodyFinal.responses[0]?.agent).toBe("executor");
+  expect(bodyFinal.responses[0]?.text).toBe("hello from executor");
 
   const resAll = await chainsResponsesRoute(
     new Request("http://x/chains/responses?conversation_id=c1&which=all"),
     services,
   );
-  const bodyAll = await resAll.json();
+  const bodyAll = await readJsonBody<ChainResponseListBody>(resAll);
   expect(bodyAll.responses.length).toBe(2);
-  expect(bodyAll.responses[0].agent).toBe("planner");
-  expect(bodyAll.responses[0].text).toBe("hello from planner");
-  expect(bodyAll.responses[1].agent).toBe("executor");
-  expect(bodyAll.responses[1].text).toBe("hello from executor");
+  expect(bodyAll.responses[0]?.agent).toBe("planner");
+  expect(bodyAll.responses[0]?.text).toBe("hello from planner");
+  expect(bodyAll.responses[1]?.agent).toBe("executor");
+  expect(bodyAll.responses[1]?.text).toBe("hello from executor");
 });
 
 test("GET /chains/responses returns agent name from user_id for production agent-response rows", async () => {
@@ -2742,7 +2802,7 @@ test("GET /chains/responses returns agent name from user_id for production agent
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body.responses).toEqual([
     { agent: "planner", text: "hello from planner", ts: "2026-04-26T12:00:00Z" },
   ]);
@@ -2793,7 +2853,7 @@ test("GET /chains/responses decodes multiline responses and surfaces error paylo
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body.responses).toEqual([
     { agent: "planner", text: "line1\nline2", ts: "2026-04-26T12:00:00Z" },
     {
@@ -2807,7 +2867,7 @@ test("GET /chains/responses decodes multiline responses and surfaces error paylo
 
 test("GET /chains/responses handles malformed payload_json rows without 500ing", async () => {
   const services = tempServices();
-  services.db.exec(`
+  services.db.run(`
     INSERT INTO t0_events (
       event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id, session_id,
       event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms, request_id,
@@ -2824,7 +2884,7 @@ test("GET /chains/responses handles malformed payload_json rows without 500ing",
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonBody<ChainResponseBody>(res);
   expect(body.responses).toEqual([
     {
       agent: "planner",
@@ -2877,8 +2937,8 @@ test("GET /chains/responses orders same-ts rows deterministically by ingest_ts t
     services,
   );
   expect(resAll.status).toBe(200);
-  const bodyAll = await resAll.json();
-  expect(bodyAll.responses.map((response: any) => response.agent)).toEqual([
+  const bodyAll = await readJsonBody<ChainResponseListBody>(resAll);
+  expect(bodyAll.responses.map((response) => response.agent)).toEqual([
     "planner",
     "executor",
     "reviewer",
@@ -2893,7 +2953,7 @@ test("GET /chains/responses returns 400 if conversation_id is missing", async ()
 
 test("GET /chains/messages returns all events for a conversation chronologically", async () => {
   const services = tempServices();
-  services.db.exec(`
+  services.db.run(`
     INSERT INTO t0_events (
       event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id, session_id,
       event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms, request_id,
@@ -2909,7 +2969,7 @@ test("GET /chains/messages returns all events for a conversation chronologically
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonBody<ChainMessagesBody>(res);
   expect(body.events.length).toBe(2);
   expect(body.events[0].event_type).toBe("user-prompt");
   expect(body.events[0].payload).toEqual({ prompt: "hi" });
@@ -2919,7 +2979,7 @@ test("GET /chains/messages returns all events for a conversation chronologically
 
 test("GET /chains/messages filters by types array", async () => {
   const services = tempServices();
-  services.db.exec(`
+  services.db.run(`
     INSERT INTO t0_events (
       event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id, session_id,
       event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms, request_id,
@@ -2935,14 +2995,14 @@ test("GET /chains/messages filters by types array", async () => {
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonBody<ChainMessagesBody>(res);
   expect(body.events.length).toBe(1);
   expect(body.events[0].event_type).toBe("agent-response");
 });
 
 test("GET /chains/messages parses malformed JSON safely as null", async () => {
   const services = tempServices();
-  services.db.exec(`
+  services.db.run(`
     INSERT INTO t0_events (
       event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id, session_id,
       event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms, request_id,
@@ -2957,7 +3017,7 @@ test("GET /chains/messages parses malformed JSON safely as null", async () => {
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonBody<ChainMessagesBody>(res);
   expect(body.events.length).toBe(1);
   expect(body.events[0].payload).toBeNull();
 });
@@ -2977,6 +3037,6 @@ test("GET /chains/messages returns empty events array for unknown conversation_i
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonBody<ChainMessagesBody>(res);
   expect(body.events.length).toBe(0);
 });
