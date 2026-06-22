@@ -45,10 +45,10 @@ describe("stdio-acp warm pool real subprocess cold fallback", () => {
       clientCapabilities: {},
       clientInfo: { name: "test", version: "1" },
     });
-    const sessionResult = (await staleClient.request("session/new", {
+    const sessionResult = await staleClient.request("session/new", {
       cwd,
       mcpServers: [],
-    })) as unknown;
+    });
     pool.deposit(key, {
       handle: staleHandle,
       client: staleClient,

@@ -1,14 +1,22 @@
+import {
+  type HandoffRow,
+  type Logger,
+  type Settings,
+  type WorktreeHandle,
+  type WorktreeManager,
+} from "@penumbra/core";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { type HandoffRow, type Logger, type Settings, type WorktreeManager } from "@penumbra/core";
-import { createDispatchPR, renderDispatchPRBody } from "./github-pr-helper.js";
+
 import type { RuntimeThoughtsConfig } from "./thought-config.js";
+
+import { createDispatchPR, renderDispatchPRBody } from "./github-pr-helper.js";
 import {
   runThoughtAnalyzer,
-  type ThoughtRow,
   type ThoughtAnalyzerDeps,
+  type ThoughtRow,
 } from "./thought-analyzer.js";
 
 export interface MergeResult {
@@ -117,7 +125,7 @@ export function resolveAffectedPackages(paths: string[]): string[] | null {
 
 export interface ReconcilerDeps {
   worktreeManager: WorktreeManager;
-  postProgress: (handoffId: string, payload: any) => Promise<void>;
+  postProgress: (handoffId: string, payload: Record<string, unknown>) => Promise<void>;
   notifyResult?: (handoffId: string, result: MergeResult) => Promise<void> | void;
   captureResult?: (handoffId: string, result: MergeResult) => Promise<void> | void;
   emitVerdict?: (verdict: ReconcilerVerdict) => Promise<void> | void;
@@ -213,9 +221,52 @@ function isValidPackageRoot(path: string): boolean {
   return true;
 }
 
+class CommandFailure extends Error {
+  readonly exitCode: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+
+  constructor(opts: { message: string; exitCode: number | null; stdout: string; stderr: string }) {
+    super(opts.message);
+    this.name = "CommandFailure";
+    this.exitCode = opts.exitCode;
+    this.stdout = opts.stdout;
+    this.stderr = opts.stderr;
+  }
+}
+
+interface CommandErrorInfo {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+function commandErrorInfo(err: unknown): CommandErrorInfo {
+  if (err instanceof CommandFailure) {
+    return {
+      exitCode: err.exitCode ?? -1,
+      stdout: err.stdout,
+      stderr: err.stderr,
+    };
+  }
+  if (typeof err === "object" && err !== null) {
+    const e = err as { code?: unknown; stdout?: unknown; stderr?: unknown };
+    return {
+      exitCode: typeof e.code === "number" ? e.code : -1,
+      stdout: typeof e.stdout === "string" ? e.stdout : "",
+      stderr: typeof e.stderr === "string" ? e.stderr : "",
+    };
+  }
+  return { exitCode: -1, stdout: "", stderr: "" };
+}
+
 /** Small wrapper so command construction stays type-safe at call sites. */
 function toCommandArgs(file: string, args: string[]): CommandArgs {
   return [file, ...args];
+}
+
+function noop(): void {
+  // intentionally empty: used as a cancel-shim when the command is mocked
 }
 
 /**
@@ -232,7 +283,7 @@ function startCommand(
   if (execFn) {
     return {
       promise: execFn(argv, { cwd }),
-      cancel: () => {},
+      cancel: noop,
     };
   }
 
@@ -245,10 +296,10 @@ function startCommand(
   let stdout = "";
   let stderr = "";
 
-  proc.stdout?.on("data", (d) => {
+  proc.stdout.on("data", (d: Buffer) => {
     stdout += d.toString();
   });
-  proc.stderr?.on("data", (d) => {
+  proc.stderr.on("data", (d: Buffer) => {
     stderr += d.toString();
   });
 
@@ -258,11 +309,14 @@ function startCommand(
         if (code === 0) {
           resolve({ stdout, stderr });
         } else {
-          const err: any = new Error(`Command failed with code ${code}: ${commandText}`);
-          err.stdout = stdout;
-          err.stderr = stderr;
-          err.code = code;
-          reject(err);
+          reject(
+            new CommandFailure({
+              message: `Command failed with code ${String(code)}: ${commandText}`,
+              exitCode: code,
+              stdout,
+              stderr,
+            }),
+          );
         }
       });
 
@@ -270,7 +324,7 @@ function startCommand(
         reject(err);
       });
     }),
-    cancel: () => {
+    cancel: (): void => {
       log.warn({ cmd: commandText, pid: proc.pid }, "command timed out, killing process group");
       if (!proc.pid) return;
       try {
@@ -295,10 +349,10 @@ async function runCommand(
 ): Promise<CommandResult & { timedOut?: boolean }> {
   const run = startCommand(argv, cwd, log, exec);
   if (!timeoutSeconds) {
-    return run.promise;
+    return await run.promise;
   }
 
-  return new Promise((resolve, reject) => {
+  return await new Promise((resolve, reject) => {
     let settled = false;
     const timeout = setTimeout(() => {
       if (settled) return;
@@ -314,11 +368,11 @@ async function runCommand(
         clearTimeout(timeout);
         resolve(res);
       },
-      (err) => {
+      (err: unknown) => {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
-        reject(err);
+        reject(err instanceof Error ? err : new Error(String(err)));
       },
     );
   });
@@ -329,13 +383,17 @@ function parseShortStat(shortStat: string): {
   linesAdded: number;
   linesDeleted: number;
 } {
-  const filesChangedMatch = shortStat.match(/(\d+)\s+file[s]?\s+changed/);
-  const linesAddedMatch = shortStat.match(/(\d+)\s+insertion[s]?\(\+\)/);
-  const linesDeletedMatch = shortStat.match(/(\d+)\s+deletion[s]?\(-\)/);
+  const filesChangedMatch = /(\d+)\s+files?\s+changed/.exec(shortStat);
+  const linesAddedMatch = /(\d+)\s+insertions?\(\+\)/.exec(shortStat);
+  const linesDeletedMatch = /(\d+)\s+deletions?\(-\)/.exec(shortStat);
+  const pickCount = (m: RegExpExecArray | null): number => {
+    const raw = m?.[1];
+    return raw === undefined ? 0 : Number.parseInt(raw, 10);
+  };
   return {
-    filesChanged: filesChangedMatch ? Number.parseInt(filesChangedMatch[1]!, 10) : 0,
-    linesAdded: linesAddedMatch ? Number.parseInt(linesAddedMatch[1]!, 10) : 0,
-    linesDeleted: linesDeletedMatch ? Number.parseInt(linesDeletedMatch[1]!, 10) : 0,
+    filesChanged: pickCount(filesChangedMatch),
+    linesAdded: pickCount(linesAddedMatch),
+    linesDeleted: pickCount(linesDeletedMatch),
   };
 }
 
@@ -347,7 +405,7 @@ interface TypecheckDiagnostic {
   message: string;
 }
 
-const TYPECHECK_ERROR_RE = /^([^\s:(]+\.tsx?)\((\d+),(\d+)\):\s+error\s+(TS\d+):\s+(.+)$/gm;
+const TYPECHECK_ERROR_RE = /^([^\s:(]+\.tsx?)\((\d+),(\d+)\):\s+error\s+(TS\d+):\s+(\S.*)$/gm;
 
 function parseTypecheckDiagnostics(output: string): TypecheckDiagnostic[] {
   const diagnostics: TypecheckDiagnostic[] = [];
@@ -369,9 +427,12 @@ function parseTypecheckDiagnostics(output: string): TypecheckDiagnostic[] {
 function formatTypecheckDiagnostics(diagnostics: TypecheckDiagnostic[]): string {
   const visible = diagnostics
     .slice(0, 20)
-    .map((diag) => `${diag.file}:${diag.line}:${diag.col} ${diag.code}: ${diag.message}`);
+    .map(
+      (diag) =>
+        `${diag.file}:${String(diag.line)}:${String(diag.col)} ${diag.code}: ${diag.message}`,
+    );
   if (diagnostics.length > 20) {
-    visible.push(`... (${diagnostics.length - 20} more)`);
+    visible.push(`... (${String(diagnostics.length - 20)} more)`);
   }
   return visible.join("\n");
 }
@@ -382,7 +443,912 @@ interface WorkspacePackageJson {
   devDependencies?: Record<string, string>;
 }
 
-export function createMergeReconciler(deps: ReconcilerDeps) {
+interface ReconcileState {
+  typecheckStatus: CheckStatus;
+  testStatus: CheckStatus;
+  diffStats: { filesChanged: number; linesAdded: number; linesDeleted: number };
+  rebaseOutcome: RebaseOutcome;
+  affectedPackages: string[] | null;
+  packagesToBuild: string[] | null;
+  changedFiles: Set<string>;
+  testCommandUsed: string;
+}
+
+interface ReconcileCtx {
+  deps: ReconcilerDeps;
+  handoffId: string;
+  handoff: HandoffRow | null;
+  wt: WorktreeHandle;
+  baseRef: string;
+  startedAtMs: number;
+  packageJsonCache: Map<string, WorkspacePackageJson | null>;
+  state: ReconcileState;
+}
+
+type CmdResultWithTimeout = CommandResult & { timedOut?: boolean };
+
+async function execCmd(
+  ctx: ReconcileCtx,
+  argv: CommandArgs,
+  cwd: string,
+  timeoutSeconds?: number,
+): Promise<CmdResultWithTimeout> {
+  return await runCommand(argv, cwd, ctx.deps.log, ctx.deps.exec, timeoutSeconds);
+}
+
+async function execGit(
+  ctx: ReconcileCtx,
+  args: string[],
+  cwd: string,
+  timeoutSeconds?: number,
+): Promise<CmdResultWithTimeout> {
+  return await execCmd(ctx, toCommandArgs("git", args), cwd, timeoutSeconds);
+}
+
+async function execGitSafe(
+  ctx: ReconcileCtx,
+  args: string[],
+  cwd: string,
+): Promise<CmdResultWithTimeout | null> {
+  try {
+    return await execGit(ctx, args, cwd);
+  } catch {
+    return null;
+  }
+}
+
+interface GitProbeResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+// Probe variant that returns the process exit code so callers can distinguish
+// "command ran and reported the expected non-zero answer" (e.g. is-ancestor → 1)
+// from "command errored out" (e.g. unknown ref → 128). Returns exitCode = -1
+// when the underlying error has no numeric code attached (rare; mostly test mocks).
+async function execGitProbe(
+  ctx: ReconcileCtx,
+  args: string[],
+  cwd: string,
+): Promise<GitProbeResult> {
+  try {
+    const res = await execGit(ctx, args, cwd);
+    return { exitCode: 0, stdout: res.stdout, stderr: res.stderr };
+  } catch (err: unknown) {
+    return commandErrorInfo(err);
+  }
+}
+
+async function readWorkspacePackageJson(
+  ctx: ReconcileCtx,
+  packageRoot: string,
+): Promise<{ pkgJson: WorkspacePackageJson | null; canonicalName: string }> {
+  const { packageJsonCache, deps, handoffId, wt } = ctx;
+  if (packageJsonCache.has(packageRoot)) {
+    const cached = packageJsonCache.get(packageRoot) ?? null;
+    return {
+      pkgJson: cached,
+      canonicalName: cached?.name ?? packageRoot.slice("packages/".length),
+    };
+  }
+  try {
+    const body = await readFile(join(wt.path, packageRoot, "package.json"), "utf8");
+    const parsed = JSON.parse(body) as WorkspacePackageJson;
+    packageJsonCache.set(packageRoot, parsed);
+    if (typeof parsed.name !== "string" || parsed.name.trim() === "") {
+      deps.log.warn(
+        { handoffId, path: join(wt.path, packageRoot, "package.json") },
+        "workspace package missing name field; falling back to folder name",
+      );
+    }
+    return {
+      pkgJson: parsed,
+      canonicalName: parsed.name ?? packageRoot.slice("packages/".length),
+    };
+  } catch (err) {
+    packageJsonCache.set(packageRoot, null);
+    deps.log.error(
+      { handoffId, path: join(wt.path, packageRoot, "package.json"), err: String(err) },
+      "workspace package manifest missing or invalid; treating package as affected",
+    );
+    return {
+      pkgJson: null,
+      canonicalName: packageRoot.slice("packages/".length),
+    };
+  }
+}
+
+interface AffectedClosure {
+  prefixes: string[];
+  packages: string[];
+}
+
+async function discoverWorkspacePackageRoots(ctx: ReconcileCtx): Promise<string[]> {
+  const fallbackWorkspacePackageRoots = [
+    "packages/agentchat",
+    "packages/cli",
+    "packages/core",
+    "packages/daemon",
+    "packages/mcp",
+    "packages/workflows",
+  ];
+  try {
+    const packageDirEntries = await readdir(join(ctx.wt.path, "packages"), {
+      withFileTypes: true,
+    });
+    const candidates = await Promise.all(
+      packageDirEntries
+        .filter((entry) => entry.isDirectory())
+        .map(async (entry) => {
+          const packageRoot = `packages/${entry.name}`;
+          try {
+            await stat(join(ctx.wt.path, packageRoot, "package.json"));
+            return packageRoot;
+          } catch {
+            return null;
+          }
+        }),
+    );
+    return candidates.filter((root): root is string => root !== null).sort();
+  } catch {
+    ctx.deps.log.warn(
+      { handoffId: ctx.handoffId, path: ctx.wt.path },
+      "workspace package discovery failed, using fallback list",
+    );
+    return fallbackWorkspacePackageRoots;
+  }
+}
+
+function isWorkspaceDep(depName: string, depVersion: string): boolean {
+  return (
+    depVersion === "workspace:*" ||
+    depVersion === "*" ||
+    depVersion.startsWith("workspace:") ||
+    depName.startsWith("@penumbra/")
+  );
+}
+
+function collectPackageDeps(pkgJson: WorkspacePackageJson): [string, string][] {
+  return [
+    ...Object.entries(pkgJson.dependencies ?? {}),
+    ...Object.entries(pkgJson.devDependencies ?? {}),
+  ];
+}
+
+function addReverseDep(
+  reverseDeps: Map<string, Set<string>>,
+  depRoot: string,
+  pkgPrefix: string,
+): void {
+  let dependents = reverseDeps.get(depRoot);
+  if (!dependents) {
+    dependents = new Set<string>();
+    reverseDeps.set(depRoot, dependents);
+  }
+  dependents.add(pkgPrefix);
+}
+
+function indexPackageReverseDeps(
+  packageRoot: string,
+  pkgJson: WorkspacePackageJson,
+  workspacePackageNames: Map<string, string>,
+  reverseDeps: Map<string, Set<string>>,
+): void {
+  const pkgPrefix = `${packageRoot}/`;
+  for (const [depName, depVersion] of collectPackageDeps(pkgJson)) {
+    const depRoot = workspacePackageNames.get(depName);
+    if (!depRoot) continue;
+    if (!isWorkspaceDep(depName, depVersion)) continue;
+    addReverseDep(reverseDeps, depRoot, pkgPrefix);
+  }
+}
+
+function indexReverseDeps(
+  pkgJsons: { packageRoot: string; pkgJson: WorkspacePackageJson | null }[],
+  workspacePackageNames: Map<string, string>,
+): { reverseDeps: Map<string, Set<string>>; malformed: Set<string> } {
+  const reverseDeps = new Map<string, Set<string>>();
+  const malformed = new Set<string>();
+  for (const { packageRoot, pkgJson } of pkgJsons) {
+    if (!pkgJson) {
+      malformed.add(packageRoot);
+      continue;
+    }
+    indexPackageReverseDeps(packageRoot, pkgJson, workspacePackageNames, reverseDeps);
+  }
+  return { reverseDeps, malformed };
+}
+
+function expandClosureBfs(
+  seedPackages: readonly string[],
+  reverseDeps: Map<string, Set<string>>,
+): { closure: Set<string>; buildPackages: Set<string> } {
+  const closure = new Set<string>(seedPackages.map((pkg) => `${pkg}/`));
+  const buildPackages = new Set<string>(seedPackages);
+  const queue = [...seedPackages];
+  const visited = new Set(queue);
+  while (queue.length > 0) {
+    const packageRoot = queue.shift();
+    if (packageRoot === undefined) break;
+    const dependents = reverseDeps.get(packageRoot);
+    if (!dependents) continue;
+    for (const dependentPrefix of dependents) {
+      const dependentRoot = dependentPrefix.slice(0, -1);
+      if (visited.has(dependentRoot)) continue;
+      visited.add(dependentRoot);
+      closure.add(dependentPrefix);
+      buildPackages.add(dependentRoot);
+      queue.push(dependentRoot);
+    }
+  }
+  return { closure, buildPackages };
+}
+
+async function loadWorkspacePackageJsons(
+  ctx: ReconcileCtx,
+  workspacePackageRoots: readonly string[],
+): Promise<
+  {
+    packageRoot: string;
+    pkgJson: WorkspacePackageJson | null;
+    canonicalName: string;
+  }[]
+> {
+  return await Promise.all(
+    workspacePackageRoots.map(async (packageRoot) => {
+      const { pkgJson, canonicalName } = await readWorkspacePackageJson(ctx, packageRoot);
+      return { packageRoot, pkgJson, canonicalName };
+    }),
+  );
+}
+
+async function computeAffectedPackageClosure(ctx: ReconcileCtx): Promise<AffectedClosure> {
+  const { affectedPackages } = ctx.state;
+  if (affectedPackages === null) {
+    return { prefixes: ["packages/"], packages: [] };
+  }
+  if (affectedPackages.length === 0) {
+    return { prefixes: [], packages: [] };
+  }
+
+  const workspacePackageRoots = await discoverWorkspacePackageRoots(ctx);
+  const pkgJsons = await loadWorkspacePackageJsons(ctx, workspacePackageRoots);
+
+  const workspacePackageNames = new Map<string, string>();
+  for (const { packageRoot, canonicalName } of pkgJsons) {
+    workspacePackageNames.set(canonicalName, packageRoot);
+  }
+
+  const { reverseDeps, malformed } = indexReverseDeps(pkgJsons, workspacePackageNames);
+  const { closure, buildPackages } = expandClosureBfs(affectedPackages, reverseDeps);
+
+  for (const packageRoot of malformed) {
+    closure.add(`${packageRoot}/`);
+    buildPackages.add(packageRoot);
+  }
+
+  return {
+    prefixes: Array.from(closure).sort(),
+    packages: Array.from(buildPackages).sort(),
+  };
+}
+
+async function rebaseInScratch(ctx: ReconcileCtx, scratchPath: string): Promise<RebaseOutcome> {
+  const { wt, baseRef, handoffId, deps } = ctx;
+  await execGit(ctx, ["worktree", "add", "--detach", scratchPath, baseRef], deps.mainRepoDir);
+  await execGit(ctx, ["checkout", wt.branchName], scratchPath);
+  try {
+    await execGit(ctx, ["rebase", baseRef], scratchPath);
+  } catch {
+    const conflictRes = await execGitSafe(
+      ctx,
+      ["diff", "--name-only", "--diff-filter=U"],
+      scratchPath,
+    );
+    const files =
+      conflictRes?.stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean) ?? [];
+    await execGitSafe(ctx, ["rebase", "--abort"], scratchPath);
+    return { attempted: true, result: "conflict", conflictFiles: files };
+  }
+
+  const rebasedTip = (await execGit(ctx, ["rev-parse", wt.branchName], scratchPath)).stdout.trim();
+  await execGit(ctx, ["merge-base", "--is-ancestor", baseRef, rebasedTip], scratchPath);
+  if (baseRef !== "main") {
+    // Guard: only force-push when baseRef is the canonical main branch.
+    // Pushing a rebase against a non-main base could silently rewrite a
+    // sibling agent/stage branch on origin (the old behavior hardcoded
+    // 'main', which rebased onto main regardless of the intended base).
+    deps.log.info(
+      { handoffId, baseRef, branch: wt.branchName },
+      "auto-rebase succeeded locally; skipping force-push because baseRef is not main",
+    );
+    return { attempted: true, result: "success_local_only", rebasedBranch: wt.branchName };
+  }
+  try {
+    await execGit(
+      ctx,
+      ["push", "--force-with-lease", "origin", `${wt.branchName}:${wt.branchName}`],
+      scratchPath,
+    );
+    return { attempted: true, result: "success", rebasedBranch: wt.branchName };
+  } catch (err) {
+    deps.log.warn({ handoffId, err: String(err) }, "auto-rebase push failed; keeping local rebase");
+    return {
+      attempted: true,
+      result: "success_local_only",
+      rebasedBranch: wt.branchName,
+    };
+  }
+}
+
+async function attemptAutoRebase(ctx: ReconcileCtx): Promise<void> {
+  const { deps, wt, handoffId, baseRef, state } = ctx;
+  if (deps.reconcilerAutoRebase === false) {
+    state.rebaseOutcome = { attempted: false, result: "skipped" };
+    return;
+  }
+  const ffProbe = await execGitProbe(
+    ctx,
+    ["merge-base", "--is-ancestor", baseRef, wt.branchName],
+    deps.mainRepoDir,
+  );
+  if (ffProbe.exitCode === 0) {
+    state.rebaseOutcome = { attempted: false, result: "skipped" };
+    return;
+  }
+  if (ffProbe.exitCode !== 1) {
+    deps.log.warn(
+      {
+        handoffId,
+        baseRef,
+        branch: wt.branchName,
+        exitCode: ffProbe.exitCode,
+        stderr: ffProbe.stderr.slice(0, 200),
+      },
+      "merge-base is-ancestor probe failed; skipping auto-rebase",
+    );
+    state.rebaseOutcome = { attempted: false, result: "skipped" };
+    return;
+  }
+
+  state.rebaseOutcome = { attempted: true, result: "skipped" };
+  const scratchRoot = deps.rebaseScratchRoot ?? join(homedir(), ".penumbra", "rebase-scratch");
+  const scratchPath = join(scratchRoot, handoffId);
+  await mkdir(scratchRoot, { recursive: true });
+
+  await execGitSafe(ctx, ["worktree", "remove", "--force", scratchPath], deps.mainRepoDir);
+  await rm(scratchPath, { recursive: true, force: true }).catch(noop);
+
+  try {
+    state.rebaseOutcome = await rebaseInScratch(ctx, scratchPath);
+  } catch (err) {
+    deps.log.warn({ handoffId, err: String(err) }, "auto-rebase failed unexpectedly");
+  } finally {
+    await execGitSafe(ctx, ["worktree", "remove", "--force", scratchPath], deps.mainRepoDir);
+    await rm(scratchPath, { recursive: true, force: true }).catch(noop);
+  }
+}
+
+function buildVerdictSummary(
+  state: ReconcileState,
+  result: MergeResult,
+  ff_mergeable: boolean,
+  pr_url: string | null,
+): string {
+  const summaryParts = [
+    `typecheck:${state.typecheckStatus}`,
+    `tests:${state.testStatus}`,
+    `files:${String(state.diffStats.filesChanged)}`,
+    `rebase:${state.rebaseOutcome.result}`,
+    ff_mergeable ? "ff-ready" : "rebase-required",
+  ];
+  if (pr_url) summaryParts.push("pr-opened");
+  if (result.status === "no_changes") summaryParts.push("no-changes");
+  if (result.status === "typecheck_failed" || result.status === "test_failed") {
+    summaryParts.push("verification-failed");
+  }
+  return summaryParts.join(" | ").slice(0, 220);
+}
+
+async function buildVerdict(ctx: ReconcileCtx, result: MergeResult): Promise<ReconcilerVerdict> {
+  const { deps, wt, baseRef, handoffId, handoff, state, startedAtMs } = ctx;
+  const [headShaRes, baseShaRes, ffProbe] = await Promise.all([
+    execGitSafe(ctx, ["rev-parse", wt.branchName], deps.mainRepoDir),
+    execGitSafe(ctx, ["rev-parse", baseRef], deps.mainRepoDir),
+    execGitProbe(ctx, ["merge-base", "--is-ancestor", baseRef, wt.branchName], deps.mainRepoDir),
+  ]);
+
+  const head_sha = headShaRes?.stdout.trim() ?? "";
+  const base_sha = baseShaRes?.stdout.trim() ?? "";
+  const ff_mergeable = ffProbe.exitCode === 0;
+  const rebase_required = ffProbe.exitCode === 1;
+  if (ffProbe.exitCode !== 0 && ffProbe.exitCode !== 1) {
+    deps.log.warn(
+      {
+        handoffId,
+        baseRef,
+        branch: wt.branchName,
+        exitCode: ffProbe.exitCode,
+        stderr: ffProbe.stderr.slice(0, 200),
+      },
+      "verdict merge-base probe errored; treating ancestry as unknown",
+    );
+  }
+  const pr_url = result.pr_url ?? null;
+  const duration_ms = Date.now() - startedAtMs;
+  const summary = buildVerdictSummary(state, result, ff_mergeable, pr_url);
+
+  const rebaseExtras: Pick<ReconcilerVerdict, "rebase_conflict_files" | "rebased_branch"> = {};
+  if (state.rebaseOutcome.conflictFiles) {
+    rebaseExtras.rebase_conflict_files = state.rebaseOutcome.conflictFiles;
+  }
+  if (state.rebaseOutcome.rebasedBranch) {
+    rebaseExtras.rebased_branch = state.rebaseOutcome.rebasedBranch;
+  }
+
+  return {
+    handoff_id: handoffId,
+    conversation_id: handoff?.conversation_id ?? "unknown",
+    branch: wt.branchName,
+    head_sha: head_sha === "" ? "unknown" : head_sha,
+    base_sha: base_sha === "" ? "unknown" : base_sha,
+    typecheck: state.typecheckStatus,
+    tests: state.testStatus,
+    files_changed: state.diffStats.filesChanged,
+    lines_added: state.diffStats.linesAdded,
+    lines_deleted: state.diffStats.linesDeleted,
+    ff_mergeable,
+    rebase_required,
+    rebase_attempted: state.rebaseOutcome.attempted,
+    rebase_result: state.rebaseOutcome.result,
+    ...rebaseExtras,
+    pr_url,
+    verified_at: new Date().toISOString(),
+    duration_ms,
+    summary,
+  };
+}
+
+async function runThoughtAnalyzerIfEnabled(ctx: ReconcileCtx, result: MergeResult): Promise<void> {
+  const { deps, handoffId } = ctx;
+  const config = deps.thoughtsConfig;
+  if (
+    !config?.analyze.enabled ||
+    !config.analyze.onlyWhen.includes(result.status) ||
+    !deps.listThoughtEvents ||
+    !deps.runThoughtAnalyzer ||
+    !deps.thoughtAnalyzerDeps
+  ) {
+    return;
+  }
+  const parentHandoffId = deps.getParentHandoffId ? await deps.getParentHandoffId(handoffId) : null;
+  if (parentHandoffId !== null) return;
+  const thoughts = await deps.listThoughtEvents(handoffId);
+  if (thoughts.length === 0) return;
+  await deps.runThoughtAnalyzer({
+    handoffId,
+    thoughts,
+    mergeStatus: result.status,
+    config,
+    deps: deps.thoughtAnalyzerDeps,
+  });
+}
+
+async function emitResult(ctx: ReconcileCtx, result: MergeResult): Promise<void> {
+  const { deps, handoffId } = ctx;
+  await deps.postProgress(handoffId, {
+    type: "merge-result",
+    handoff_id: handoffId,
+    ...result,
+  });
+  if (deps.captureResult) {
+    try {
+      await deps.captureResult(handoffId, result);
+    } catch (err) {
+      deps.log.warn({ handoffId, err: String(err) }, "agent performance capture failed");
+    }
+  }
+  if (deps.emitVerdict) {
+    try {
+      await deps.emitVerdict(await buildVerdict(ctx, result));
+    } catch (err) {
+      deps.log.warn({ handoffId, err: String(err) }, "reconciler verdict emit failed");
+    }
+  }
+  if (deps.notifyResult) {
+    try {
+      await deps.notifyResult(handoffId, result);
+    } catch (err) {
+      deps.log.warn({ handoffId, err: String(err) }, "merge-result notification failed");
+    }
+  }
+  try {
+    await runThoughtAnalyzerIfEnabled(ctx, result);
+  } catch (err) {
+    deps.log.warn({ handoffId, err: String(err) }, "thought analyzer failed");
+  }
+}
+
+async function emitInvalidInputResult(
+  ctx: ReconcileCtx,
+  code: NonNullable<MergeResult["error_code"]>,
+  details: Record<string, string>,
+): Promise<MergeResult> {
+  const { deps, handoffId } = ctx;
+  const result: MergeResult = {
+    status: "test_failed",
+    error_code: code,
+    regression_summary: JSON.stringify({ code, ...details }),
+  };
+  await deps.postProgress(handoffId, {
+    type: "merge-result",
+    handoff_id: handoffId,
+    ...result,
+  });
+  if (deps.captureResult) {
+    try {
+      await deps.captureResult(handoffId, result);
+    } catch (err) {
+      deps.log.warn({ handoffId, err: String(err) }, "agent performance capture failed");
+    }
+  }
+  if (deps.notifyResult) {
+    try {
+      await deps.notifyResult(handoffId, result);
+    } catch (err) {
+      deps.log.warn({ handoffId, err: String(err) }, "merge-result notification failed");
+    }
+  }
+  return result;
+}
+
+async function gatherChangedFiles(ctx: ReconcileCtx): Promise<void> {
+  const { deps, wt, baseRef, state } = ctx;
+  const timeout = deps.settings?.reconcileTypecheckTimeoutSec ?? 120;
+  try {
+    // Use the symmetric-difference operator (`A...B`) consistently with the
+    // no-changes gate and shortstat below so that scoping (which packages to
+    // typecheck/test) and gating (does the branch differ?) measure the SAME
+    // file set: changes B introduced since branching from A.
+    const diffRes = await execGit(
+      ctx,
+      ["diff", "--name-only", `${baseRef}...${wt.branchName}`],
+      deps.mainRepoDir,
+      timeout,
+    );
+    const diffFiles = diffRes.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    state.changedFiles = new Set(diffFiles);
+    state.affectedPackages = resolveAffectedPackages(diffFiles);
+  } catch {
+    state.affectedPackages = null;
+  }
+}
+
+async function runTypecheckOnAllPackages(
+  ctx: ReconcileCtx,
+  timeoutSeconds: number,
+): Promise<MergeResult | null> {
+  ctx.deps.log.debug({ handoffId: ctx.handoffId }, "running full typecheck in worktree");
+  const res = await execCmd(ctx, ["bun", "run", "typecheck"], ctx.wt.path, timeoutSeconds);
+  if (res.timedOut) {
+    ctx.state.typecheckStatus = "fail";
+    const result: MergeResult = {
+      status: "typecheck_failed",
+      timed_out: true,
+      regression_summary: "typecheck timed out",
+    };
+    await emitResult(ctx, result);
+    return result;
+  }
+  ctx.state.typecheckStatus = "pass";
+  return null;
+}
+
+async function runScopedTypecheck(
+  ctx: ReconcileCtx,
+  affectedPackages: string[],
+  timeoutSeconds: number,
+): Promise<MergeResult | null> {
+  for (const packageRoot of affectedPackages) {
+    if (!isValidPackageRoot(packageRoot)) {
+      return await emitInvalidInputResult(ctx, "invalid_test_package_path", {
+        field: "package_root",
+        value: packageRoot,
+      });
+    }
+  }
+  const affectedClosure = await computeAffectedPackageClosure(ctx);
+  ctx.deps.log.debug(
+    { handoffId: ctx.handoffId, affectedPackages },
+    "running scoped typecheck in worktree",
+  );
+  const packagesToBuild = affectedClosure.packages.includes("packages/core")
+    ? affectedClosure.packages
+    : ["packages/core", ...affectedClosure.packages];
+  ctx.state.packagesToBuild = packagesToBuild;
+  const typecheckCommand = toCommandArgs("bun", ["tsc", "-b", ...packagesToBuild]);
+  const res = await execCmd(ctx, typecheckCommand, ctx.wt.path, timeoutSeconds);
+  if (res.timedOut) {
+    ctx.state.typecheckStatus = "fail";
+    const result: MergeResult = {
+      status: "typecheck_failed",
+      timed_out: true,
+      regression_summary: `typecheck timed out for ${packagesToBuild.join(", ")}`,
+    };
+    await emitResult(ctx, result);
+    return result;
+  }
+  ctx.state.typecheckStatus = "pass";
+  return null;
+}
+
+async function handleTypecheckErrorWithDiagnostics(
+  ctx: ReconcileCtx,
+  diagnostics: TypecheckDiagnostic[],
+): Promise<MergeResult | null> {
+  const { state, deps, handoffId } = ctx;
+  const affectedPackagePrefixes = (await computeAffectedPackageClosure(ctx)).prefixes;
+  const directHits = diagnostics.filter((diag) => state.changedFiles.has(diag.file));
+  const closureHits = diagnostics.filter(
+    (diag) =>
+      !state.changedFiles.has(diag.file) &&
+      affectedPackagePrefixes.some((prefix) => diag.file.startsWith(prefix)),
+  );
+  const preExisting = diagnostics.filter(
+    (diag) =>
+      !state.changedFiles.has(diag.file) &&
+      !affectedPackagePrefixes.some((prefix) => diag.file.startsWith(prefix)),
+  );
+  const attributed = [...directHits, ...closureHits];
+  if (attributed.length === 0) {
+    deps.log.warn(
+      {
+        component: "reconciler-typecheck-baseline-filter",
+        handoff_id: handoffId,
+        pre_existing_error_count: preExisting.length,
+      },
+      "pre-existing typecheck errors detected, not attributed to dispatched agent",
+    );
+    state.typecheckStatus = "pass";
+    return null;
+  }
+  if (preExisting.length > 0) {
+    deps.log.warn(
+      {
+        component: "reconciler-typecheck-baseline-filter",
+        handoff_id: handoffId,
+        pre_existing_error_count: preExisting.length,
+        attributed_error_count: attributed.length,
+      },
+      "typecheck errors detected outside the dispatch closure",
+    );
+  }
+  const result: MergeResult = {
+    status: "typecheck_failed",
+    regression_summary: formatTypecheckDiagnostics(attributed),
+  };
+  await emitResult(ctx, result);
+  return result;
+}
+
+async function handleTypecheckErrorUnparsed(
+  ctx: ReconcileCtx,
+  err: CommandErrorInfo,
+  rawText: string,
+): Promise<MergeResult> {
+  const { state, deps, handoffId } = ctx;
+  deps.log.warn(
+    {
+      component: "reconciler-typecheck-parse-fallback",
+      handoff_id: handoffId,
+      raw_len: rawText.length,
+    },
+    "unable to parse typecheck diagnostics, falling back to raw output",
+  );
+  const affectedPackages = state.affectedPackages;
+  const buildPackages =
+    state.packagesToBuild ??
+    (affectedPackages && affectedPackages.length > 0
+      ? affectedPackages.includes("packages/core")
+        ? affectedPackages
+        : ["packages/core", ...affectedPackages]
+      : []);
+  const detail = err.stderr || err.stdout || rawText || "typecheck failed";
+  const result: MergeResult = {
+    status: "typecheck_failed",
+    regression_summary:
+      affectedPackages && affectedPackages.length > 0
+        ? `${buildPackages.join(", ")}: ${detail}`
+        : detail,
+  };
+  await emitResult(ctx, result);
+  return result;
+}
+
+async function runTypecheckStage(ctx: ReconcileCtx): Promise<MergeResult | null> {
+  const timeout = ctx.deps.settings?.reconcileTypecheckTimeoutSec ?? 120;
+  const affectedPackages = ctx.state.affectedPackages;
+  try {
+    if (affectedPackages === null) {
+      return await runTypecheckOnAllPackages(ctx, timeout);
+    }
+    if (affectedPackages.length === 0) {
+      ctx.deps.log.debug({ handoffId: ctx.handoffId }, "skipping typecheck for docs-only diff");
+      ctx.state.typecheckStatus = "skipped";
+      return null;
+    }
+    return await runScopedTypecheck(ctx, affectedPackages, timeout);
+  } catch (err: unknown) {
+    ctx.state.typecheckStatus = "fail";
+    const info = commandErrorInfo(err);
+    const output = `${info.stdout}${info.stderr}`;
+    const diagnostics = parseTypecheckDiagnostics(output);
+    if (diagnostics.length > 0 && (ctx.state.changedFiles.size > 0 || affectedPackages === null)) {
+      return await handleTypecheckErrorWithDiagnostics(ctx, diagnostics);
+    }
+    return await handleTypecheckErrorUnparsed(ctx, info, output);
+  }
+}
+
+async function runTestsStage(ctx: ReconcileCtx): Promise<MergeResult | null> {
+  const { deps, wt, handoffId, state } = ctx;
+  try {
+    deps.log.debug({ handoffId }, "scoping tests from git diff");
+    const timeout = deps.settings?.reconcileTestTimeoutSec ?? 300;
+    const affectedPackages = state.affectedPackages;
+
+    if (affectedPackages === null) {
+      deps.log.debug({ handoffId }, "running full test suite in worktree");
+      state.testCommandUsed = "bun test";
+      const res = await execCmd(ctx, ["bun", "test"], wt.path, timeout);
+      if (res.timedOut) {
+        state.testStatus = "fail";
+        const result: MergeResult = {
+          status: "test_failed",
+          timed_out: true,
+          regression_summary: "tests timed out",
+        };
+        await emitResult(ctx, result);
+        return result;
+      }
+      state.testStatus = "pass";
+      return null;
+    }
+    if (affectedPackages.length === 0) {
+      deps.log.debug({ handoffId }, "skipping tests for docs-only diff");
+      state.testCommandUsed = "skipped (docs-only diff)";
+      state.testStatus = "skipped";
+      return null;
+    }
+    const scopedTestPaths = affectedPackages.map((pkg) => `${pkg}/test/`);
+    for (const testPath of scopedTestPaths) {
+      if (!isValidTestPackagePath(testPath)) {
+        return await emitInvalidInputResult(ctx, "invalid_test_package_path", {
+          field: "test_path",
+          value: testPath,
+        });
+      }
+    }
+    deps.log.debug({ handoffId, affectedPackages }, "running scoped tests in worktree");
+    state.testCommandUsed = `bun test ${scopedTestPaths.join(" ")}`;
+    const res = await execCmd(ctx, ["bun", "test", ...scopedTestPaths], wt.path, timeout);
+    if (res.timedOut) {
+      state.testStatus = "fail";
+      const result: MergeResult = {
+        status: "test_failed",
+        timed_out: true,
+        regression_summary: "tests timed out",
+      };
+      await emitResult(ctx, result);
+      return result;
+    }
+    state.testStatus = "pass";
+    return null;
+  } catch (err: unknown) {
+    state.testStatus = "fail";
+    const info = commandErrorInfo(err);
+    const result: MergeResult = {
+      status: "test_failed",
+      regression_summary: info.stderr || info.stdout || String(err),
+    };
+    await emitResult(ctx, result);
+    return result;
+  }
+}
+
+async function runPrCreationStage(ctx: ReconcileCtx): Promise<MergeResult> {
+  const { deps, wt, baseRef, handoffId, handoff, state } = ctx;
+  deps.log.debug({ handoffId }, "acquired global merge lock");
+  try {
+    const dispatchPrompt = handoff?.message ?? "<unknown>";
+    const agentName = handoff?.to_agent ?? "<unknown>";
+    const conversationId = handoff?.conversation_id ?? null;
+    const diffNames = await execGit(
+      ctx,
+      ["diff", "--name-only", `${baseRef}...${wt.branchName}`],
+      deps.mainRepoDir,
+    );
+    if (!diffNames.stdout.trim()) {
+      const result: MergeResult = { status: "no_changes" };
+      deps.log.info(
+        { handoffId, branch: wt.branchName },
+        "reconciliation complete — no branch changes",
+      );
+      await emitResult(ctx, result);
+      return result;
+    }
+    const diffStatsRes = await execGit(
+      ctx,
+      ["diff", `${baseRef}...${wt.branchName}`, "--shortstat"],
+      wt.path,
+    );
+    state.diffStats = parseShortStat(diffStatsRes.stdout);
+    await attemptAutoRebase(ctx);
+    const shouldOpenPr = handoff?.open_pr_on_review === true;
+    if (!shouldOpenPr) {
+      const result: MergeResult = { status: "verified" };
+      deps.log.info(
+        { handoffId, branch: wt.branchName },
+        "reconciliation complete — verified without PR",
+      );
+      await emitResult(ctx, result);
+      return result;
+    }
+    const createPR = deps.createDispatchPR ?? createDispatchPR;
+    const titleLine = dispatchPrompt.split("\n")[0] ?? "";
+    const prResult = await createPR(
+      {
+        branch: wt.branchName,
+        baseBranch: baseRef,
+        title: `[${agentName}] ${titleLine.slice(0, 60)}`,
+        body: renderDispatchPRBody({
+          agentName,
+          handoffId,
+          conversationId,
+          prompt: dispatchPrompt,
+          typecheckStatus: "pass",
+          testCommand: state.testCommandUsed,
+          testSummary: "pass",
+          diffStats: diffStatsRes.stdout,
+        }),
+        draft: false,
+        cwd: wt.path,
+      },
+      deps.log,
+    );
+
+    const result: MergeResult = {
+      status: "pr_opened",
+      pr_url: prResult.url,
+      pr_number: prResult.number,
+    };
+    deps.log.info(
+      { handoffId, prUrl: prResult.url, prNumber: prResult.number },
+      "reconciliation complete — PR opened",
+    );
+    await emitResult(ctx, result);
+    return result;
+  } catch (err: unknown) {
+    deps.log.error({ handoffId, err: String(err) }, "PR creation failed");
+    const result: MergeResult = {
+      status: "pr_creation_failed",
+      regression_summary: String(err),
+    };
+    await emitResult(ctx, result);
+    return result;
+  }
+}
+
+export function createMergeReconciler(
+  deps: ReconcilerDeps,
+): (handoffId: string) => Promise<MergeResult> {
   return async function reconcileWorktree(handoffId: string): Promise<MergeResult> {
     const wt = deps.worktreeManager.getWorktree(handoffId);
     if (!wt) {
@@ -393,776 +1359,54 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
     deps.log.info({ handoffId, path: wt.path }, "starting worktree reconciliation");
     const startedAtMs = Date.now();
     const handoff = await deps.getHandoff(handoffId);
-    let typecheckStatus: CheckStatus = "skipped";
-    let testStatus: CheckStatus = "skipped";
-    let diffStats = { filesChanged: 0, linesAdded: 0, linesDeleted: 0 };
-    let rebaseOutcome: RebaseOutcome = { attempted: false, result: "skipped" };
-    const packageJsonCache = new Map<string, WorkspacePackageJson | null>();
-
-    // Compute baseRef up front so the rebase/verdict/no-changes/diffStats closures
-    // all close over the same value. Validation happens later, once
-    // emitInvalidInputResult is in scope.
+    // Compute baseRef up front so the rebase/verdict/no-changes/diffStats stages
+    // all share the same value. Validation happens after the ctx is in scope.
     const baseRef =
       handoff?.branch_base && handoff.branch_base !== "main" ? handoff.branch_base : "main";
 
-    const runCmd = async (argv: CommandArgs, cwd: string, timeoutSeconds?: number) => {
-      return runCommand(argv, cwd, deps.log, deps.exec, timeoutSeconds);
-    };
-    const runGit = async (args: string[], cwd: string, timeoutSeconds?: number) => {
-      return runCmd(toCommandArgs("git", args), cwd, timeoutSeconds);
-    };
-
-    const runGitSafe = async (args: string[], cwd: string) => {
-      try {
-        return await runGit(args, cwd);
-      } catch {
-        return null;
-      }
-    };
-
-    // Probe variant that returns the process exit code so callers can distinguish
-    // "command ran and reported the expected non-zero answer" (e.g. is-ancestor → 1)
-    // from "command errored out" (e.g. unknown ref → 128). Returns exitCode = -1
-    // when the underlying error has no numeric code attached (rare; mostly test mocks).
-    const runGitProbe = async (
-      args: string[],
-      cwd: string,
-    ): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
-      try {
-        const res = await runGit(args, cwd);
-        return { exitCode: 0, stdout: res.stdout, stderr: res.stderr };
-      } catch (err: any) {
-        const exitCode = typeof err?.code === "number" ? err.code : -1;
-        return {
-          exitCode,
-          stdout: typeof err?.stdout === "string" ? err.stdout : "",
-          stderr: typeof err?.stderr === "string" ? err.stderr : "",
-        };
-      }
-    };
-
-    const readWorkspacePackageJson = async (
-      packageRoot: string,
-    ): Promise<{ pkgJson: WorkspacePackageJson | null; canonicalName: string }> => {
-      if (packageJsonCache.has(packageRoot)) {
-        const cached = packageJsonCache.get(packageRoot) ?? null;
-        return {
-          pkgJson: cached,
-          canonicalName: cached?.name ?? packageRoot.slice("packages/".length),
-        };
-      }
-      try {
-        const body = await readFile(join(wt.path, packageRoot, "package.json"), "utf8");
-        const parsed = JSON.parse(body) as WorkspacePackageJson;
-        packageJsonCache.set(packageRoot, parsed);
-        if (typeof parsed.name !== "string" || parsed.name.trim() === "") {
-          deps.log.warn(
-            { handoffId, path: join(wt.path, packageRoot, "package.json") },
-            "workspace package missing name field; falling back to folder name",
-          );
-        }
-        return {
-          pkgJson: parsed,
-          canonicalName: parsed.name ?? packageRoot.slice("packages/".length),
-        };
-      } catch (err) {
-        packageJsonCache.set(packageRoot, null);
-        deps.log.error(
-          { handoffId, path: join(wt.path, packageRoot, "package.json"), err: String(err) },
-          "workspace package manifest missing or invalid; treating package as affected",
-        );
-        return {
-          pkgJson: null,
-          canonicalName: packageRoot.slice("packages/".length),
-        };
-      }
-    };
-
-    const computeAffectedPackageClosure = async (): Promise<{
-      prefixes: string[];
-      packages: string[];
-    }> => {
-      if (affectedPackages === null) {
-        return { prefixes: ["packages/"], packages: [] };
-      }
-      if (affectedPackages.length === 0) {
-        return { prefixes: [], packages: [] };
-      }
-
-      const closure = new Set<string>(affectedPackages.map((pkg) => `${pkg}/`));
-      const buildPackages = new Set<string>(affectedPackages);
-      const queue = [...affectedPackages];
-      const visited = new Set(queue);
-      const reverseDeps = new Map<string, Set<string>>();
-      const fallbackWorkspacePackageRoots = [
-        "packages/agentchat",
-        "packages/cli",
-        "packages/core",
-        "packages/daemon",
-        "packages/mcp",
-        "packages/workflows",
-      ];
-      const malformedWorkspacePackages = new Set<string>();
-      let workspacePackageRoots: string[];
-      try {
-        const packageDirEntries = await readdir(join(wt.path, "packages"), { withFileTypes: true });
-        workspacePackageRoots = (
-          await Promise.all(
-            packageDirEntries
-              .filter((entry) => entry.isDirectory())
-              .map(async (entry) => {
-                const packageRoot = `packages/${entry.name}`;
-                try {
-                  await stat(join(wt.path, packageRoot, "package.json"));
-                  return packageRoot;
-                } catch {
-                  return null;
-                }
-              }),
-          )
-        )
-          .filter((root): root is string => root !== null)
-          .sort();
-      } catch {
-        deps.log.warn(
-          { handoffId, path: wt.path },
-          "workspace package discovery failed, using fallback list",
-        );
-        workspacePackageRoots = fallbackWorkspacePackageRoots;
-      }
-      const workspacePackageNames = new Map<string, string>();
-      const pkgJsons = await Promise.all(
-        workspacePackageRoots.map(async (packageRoot) => {
-          const { pkgJson, canonicalName } = await readWorkspacePackageJson(packageRoot);
-          return { packageRoot, pkgJson, canonicalName };
-        }),
-      );
-
-      for (const { packageRoot, pkgJson, canonicalName } of pkgJsons) {
-        workspacePackageNames.set(canonicalName, packageRoot);
-      }
-
-      for (const { packageRoot, pkgJson } of pkgJsons) {
-        if (!pkgJson) {
-          malformedWorkspacePackages.add(packageRoot);
-          continue;
-        }
-        const knownDeps = new Set<string>();
-        const depEntries = [
-          ...Object.entries(pkgJson.dependencies ?? {}),
-          ...Object.entries(pkgJson.devDependencies ?? {}),
-        ];
-        for (const [depName, depVersion] of depEntries) {
-          const depRoot = workspacePackageNames.get(depName);
-          if (!depRoot) continue;
-          if (
-            depVersion === "workspace:*" ||
-            depVersion === "*" ||
-            depVersion.startsWith("workspace:") ||
-            depName.startsWith("@penumbra/")
-          ) {
-            knownDeps.add(depRoot);
-          }
-        }
-
-        const pkgPrefix = `${packageRoot}/`;
-        for (const depRoot of knownDeps) {
-          if (!reverseDeps.has(depRoot)) {
-            reverseDeps.set(depRoot, new Set<string>());
-          }
-          reverseDeps.get(depRoot)!.add(pkgPrefix);
-        }
-      }
-
-      while (queue.length > 0) {
-        const packageRoot = queue.shift()!;
-        const dependents = reverseDeps.get(packageRoot);
-        if (!dependents) continue;
-        for (const dependentPrefix of dependents) {
-          const dependentRoot = dependentPrefix.slice(0, -1);
-          if (visited.has(dependentRoot)) continue;
-          visited.add(dependentRoot);
-          closure.add(dependentPrefix);
-          buildPackages.add(dependentRoot);
-          queue.push(dependentRoot);
-        }
-      }
-      if (malformedWorkspacePackages.size > 0) {
-        for (const packageRoot of malformedWorkspacePackages) {
-          closure.add(`${packageRoot}/`);
-          buildPackages.add(packageRoot);
-        }
-      }
-
-      return { prefixes: Array.from(closure).sort(), packages: Array.from(buildPackages).sort() };
-    };
-
-    const attemptAutoRebaseIfNeeded = async (): Promise<void> => {
-      if (deps.reconcilerAutoRebase === false) {
-        rebaseOutcome = { attempted: false, result: "skipped" };
-        return;
-      }
-      const ffProbe = await runGitProbe(
-        ["merge-base", "--is-ancestor", baseRef, wt.branchName],
-        deps.mainRepoDir,
-      );
-      if (ffProbe.exitCode === 0) {
-        // baseRef is already an ancestor of the branch → ff-mergeable, no rebase.
-        rebaseOutcome = { attempted: false, result: "skipped" };
-        return;
-      }
-      if (ffProbe.exitCode !== 1) {
-        // Any other exit code (e.g. 128 unknown-ref) means git itself errored.
-        // Do not assume a rebase is needed against a base we could not probe;
-        // the previous null-on-any-failure path conflated this with not-ancestor.
-        deps.log.warn(
-          {
-            handoffId,
-            baseRef,
-            branch: wt.branchName,
-            exitCode: ffProbe.exitCode,
-            stderr: ffProbe.stderr.slice(0, 200),
-          },
-          "merge-base is-ancestor probe failed; skipping auto-rebase",
-        );
-        rebaseOutcome = { attempted: false, result: "skipped" };
-        return;
-      }
-
-      rebaseOutcome = { attempted: true, result: "skipped" };
-      const scratchRoot = deps.rebaseScratchRoot ?? join(homedir(), ".penumbra", "rebase-scratch");
-      const scratchPath = join(scratchRoot, handoffId);
-      await mkdir(scratchRoot, { recursive: true });
-
-      await runGitSafe(["worktree", "remove", "--force", scratchPath], deps.mainRepoDir);
-      await rm(scratchPath, { recursive: true, force: true }).catch(() => {});
-
-      try {
-        await runGit(["worktree", "add", "--detach", scratchPath, baseRef], deps.mainRepoDir);
-        await runGit(["checkout", wt.branchName], scratchPath);
-        try {
-          await runGit(["rebase", baseRef], scratchPath);
-        } catch {
-          const conflictRes = await runGitSafe(
-            ["diff", "--name-only", "--diff-filter=U"],
-            scratchPath,
-          );
-          const files =
-            conflictRes?.stdout
-              .split("\n")
-              .map((line) => line.trim())
-              .filter(Boolean) ?? [];
-          await runGitSafe(["rebase", "--abort"], scratchPath);
-          rebaseOutcome = {
-            attempted: true,
-            result: "conflict",
-            conflictFiles: files,
-          };
-          return;
-        }
-
-        const rebasedTip = (await runGit(["rev-parse", wt.branchName], scratchPath)).stdout.trim();
-        await runGit(["merge-base", "--is-ancestor", baseRef, rebasedTip], scratchPath);
-        if (baseRef === "main") {
-          try {
-            await runGit(
-              ["push", "--force-with-lease", "origin", `${wt.branchName}:${wt.branchName}`],
-              scratchPath,
-            );
-            rebaseOutcome = {
-              attempted: true,
-              result: "success",
-              rebasedBranch: wt.branchName,
-            };
-          } catch (err) {
-            deps.log.warn(
-              { handoffId, err: String(err) },
-              "auto-rebase push failed; keeping local rebase",
-            );
-            rebaseOutcome = {
-              attempted: true,
-              result: "success_local_only",
-              rebasedBranch: wt.branchName,
-            };
-          }
-        } else {
-          // Guard: only force-push when baseRef is the canonical main branch.
-          // Pushing a rebase against a non-main base could silently rewrite a
-          // sibling agent/stage branch on origin (the old behavior hardcoded
-          // 'main', which rebased onto main regardless of the intended base).
-          deps.log.info(
-            { handoffId, baseRef, branch: wt.branchName },
-            "auto-rebase succeeded locally; skipping force-push because baseRef is not main",
-          );
-          rebaseOutcome = {
-            attempted: true,
-            result: "success_local_only",
-            rebasedBranch: wt.branchName,
-          };
-        }
-      } catch (err) {
-        deps.log.warn({ handoffId, err: String(err) }, "auto-rebase failed unexpectedly");
-      } finally {
-        await runGitSafe(["worktree", "remove", "--force", scratchPath], deps.mainRepoDir);
-        await rm(scratchPath, { recursive: true, force: true }).catch(() => {});
-      }
-    };
-
-    const buildVerdict = async (result: MergeResult): Promise<ReconcilerVerdict> => {
-      const [headShaRes, baseShaRes, ffProbe] = await Promise.all([
-        runGitSafe(["rev-parse", wt.branchName], deps.mainRepoDir),
-        runGitSafe(["rev-parse", baseRef], deps.mainRepoDir),
-        runGitProbe(["merge-base", "--is-ancestor", baseRef, wt.branchName], deps.mainRepoDir),
-      ]);
-
-      const head_sha = headShaRes?.stdout.trim() || "unknown";
-      const base_sha = baseShaRes?.stdout.trim() || "unknown";
-      // exit 0 → baseRef is ancestor → ff-mergeable.
-      // exit 1 → not ancestor → rebase required.
-      // Any other exit (e.g. 128 unknown ref) is an error: surface as
-      // not-ff-mergeable but do NOT claim a rebase is required against a
-      // base we could not probe.
-      const ff_mergeable = ffProbe.exitCode === 0;
-      const rebase_required = ffProbe.exitCode === 1;
-      if (ffProbe.exitCode !== 0 && ffProbe.exitCode !== 1) {
-        deps.log.warn(
-          {
-            handoffId,
-            baseRef,
-            branch: wt.branchName,
-            exitCode: ffProbe.exitCode,
-            stderr: ffProbe.stderr.slice(0, 200),
-          },
-          "verdict merge-base probe errored; treating ancestry as unknown",
-        );
-      }
-      const pr_url = result.pr_url ?? null;
-      const duration_ms = Date.now() - startedAtMs;
-      const summaryParts = [
-        `typecheck:${typecheckStatus}`,
-        `tests:${testStatus}`,
-        `files:${diffStats.filesChanged}`,
-        `rebase:${rebaseOutcome.result}`,
-        ff_mergeable ? "ff-ready" : "rebase-required",
-      ];
-      if (pr_url) summaryParts.push("pr-opened");
-      if (result.status === "no_changes") summaryParts.push("no-changes");
-      if (result.status === "typecheck_failed" || result.status === "test_failed")
-        summaryParts.push("verification-failed");
-
-      return {
-        handoff_id: handoffId,
-        conversation_id: handoff?.conversation_id ?? "unknown",
-        branch: wt.branchName,
-        head_sha,
-        base_sha,
-        typecheck: typecheckStatus,
-        tests: testStatus,
-        files_changed: diffStats.filesChanged,
-        lines_added: diffStats.linesAdded,
-        lines_deleted: diffStats.linesDeleted,
-        ff_mergeable,
-        rebase_required,
-        rebase_attempted: rebaseOutcome.attempted,
-        rebase_result: rebaseOutcome.result,
-        ...(rebaseOutcome.conflictFiles
-          ? { rebase_conflict_files: rebaseOutcome.conflictFiles }
-          : {}),
-        ...(rebaseOutcome.rebasedBranch ? { rebased_branch: rebaseOutcome.rebasedBranch } : {}),
-        pr_url,
-        verified_at: new Date().toISOString(),
-        duration_ms,
-        summary: summaryParts.join(" | ").slice(0, 220),
-      };
-    };
-
-    const emitResult = async (result: MergeResult): Promise<void> => {
-      await deps.postProgress(handoffId, {
-        type: "merge-result",
-        handoff_id: handoffId,
-        ...result,
-      });
-      if (deps.captureResult) {
-        try {
-          await deps.captureResult(handoffId, result);
-        } catch (err) {
-          deps.log.warn({ handoffId, err: String(err) }, "agent performance capture failed");
-        }
-      }
-      if (deps.emitVerdict) {
-        try {
-          await deps.emitVerdict(await buildVerdict(result));
-        } catch (err) {
-          deps.log.warn({ handoffId, err: String(err) }, "reconciler verdict emit failed");
-        }
-      }
-      if (deps.notifyResult) {
-        try {
-          await deps.notifyResult(handoffId, result);
-        } catch (err) {
-          deps.log.warn({ handoffId, err: String(err) }, "merge-result notification failed");
-        }
-      }
-      try {
-        if (
-          deps.thoughtsConfig?.analyze?.enabled &&
-          deps.thoughtsConfig.analyze.onlyWhen.includes(result.status) &&
-          deps.listThoughtEvents &&
-          deps.runThoughtAnalyzer
-        ) {
-          const parentHandoffId = deps.getParentHandoffId
-            ? await deps.getParentHandoffId(handoffId)
-            : null;
-          if (parentHandoffId == null) {
-            const thoughts = await deps.listThoughtEvents(handoffId);
-            if (thoughts.length > 0) {
-              await deps.runThoughtAnalyzer({
-                handoffId,
-                thoughts,
-                mergeStatus: result.status,
-                config: deps.thoughtsConfig,
-                deps: deps.thoughtAnalyzerDeps!,
-              });
-            }
-          }
-        }
-      } catch (err) {
-        deps.log?.warn?.({ handoffId, err: String(err) }, "thought analyzer failed");
-      }
-    };
-
-    const emitInvalidInputResult = async (
-      code: NonNullable<MergeResult["error_code"]>,
-      details: Record<string, string>,
-    ): Promise<MergeResult> => {
-      const result: MergeResult = {
-        status: "test_failed",
-        error_code: code,
-        regression_summary: JSON.stringify({ code, ...details }),
-      };
-      await deps.postProgress(handoffId, {
-        type: "merge-result",
-        handoff_id: handoffId,
-        ...result,
-      });
-      if (deps.captureResult) {
-        try {
-          await deps.captureResult(handoffId, result);
-        } catch (err) {
-          deps.log.warn({ handoffId, err: String(err) }, "agent performance capture failed");
-        }
-      }
-      if (deps.notifyResult) {
-        try {
-          await deps.notifyResult(handoffId, result);
-        } catch (err) {
-          deps.log.warn({ handoffId, err: String(err) }, "merge-result notification failed");
-        }
-      }
-      return result;
+    const ctx: ReconcileCtx = {
+      deps,
+      handoffId,
+      handoff,
+      wt,
+      baseRef,
+      startedAtMs,
+      packageJsonCache: new Map<string, WorkspacePackageJson | null>(),
+      state: {
+        typecheckStatus: "skipped",
+        testStatus: "skipped",
+        diffStats: { filesChanged: 0, linesAdded: 0, linesDeleted: 0 },
+        rebaseOutcome: { attempted: false, result: "skipped" },
+        affectedPackages: null,
+        packagesToBuild: null,
+        changedFiles: new Set<string>(),
+        testCommandUsed: "bun test",
+      },
     };
 
     if (!isValidGitRef(wt.branchName)) {
-      return emitInvalidInputResult("invalid_branch", { field: "branch", value: wt.branchName });
+      return await emitInvalidInputResult(ctx, "invalid_branch", {
+        field: "branch",
+        value: wt.branchName,
+      });
     }
-
     if (!isValidGitRef(baseRef)) {
-      return emitInvalidInputResult("invalid_branch_base", {
+      return await emitInvalidInputResult(ctx, "invalid_branch_base", {
         field: "branch_base",
         value: baseRef,
       });
     }
 
-    const timeout = deps.settings?.reconcileTypecheckTimeoutSec ?? 120;
-    let affectedPackages: string[] | null = null;
-    let packagesToBuild: string[] | null = null;
-    let changedFiles = new Set<string>();
-    try {
-      // Use the symmetric-difference operator (`A...B`) consistently with the
-      // no-changes gate and shortstat below so that scoping (which packages to
-      // typecheck/test) and gating (does the branch differ?) measure the SAME
-      // file set: changes B introduced since branching from A.
-      const diffRes = await runGit(
-        ["diff", "--name-only", `${baseRef}...${wt.branchName}`],
-        deps.mainRepoDir,
-        timeout,
-      );
-      const diffFiles = diffRes.stdout
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean);
-      changedFiles = new Set(diffFiles);
-      affectedPackages = resolveAffectedPackages(diffFiles);
-    } catch {
-      affectedPackages = null;
-    }
+    await gatherChangedFiles(ctx);
 
-    // 1. Run typecheck
-    try {
-      if (affectedPackages === null) {
-        deps.log.debug({ handoffId }, "running full typecheck in worktree");
-        const res = await runCmd(["bun", "run", "typecheck"], wt.path, timeout);
-        if (res.timedOut) {
-          typecheckStatus = "fail";
-          const result: MergeResult = {
-            status: "typecheck_failed",
-            timed_out: true,
-            regression_summary: "typecheck timed out",
-          };
-          await emitResult(result);
-          return result;
-        }
-        typecheckStatus = "pass";
-      } else if (affectedPackages.length === 0) {
-        deps.log.debug({ handoffId }, "skipping typecheck for docs-only diff");
-        typecheckStatus = "skipped";
-      } else {
-        for (const packageRoot of affectedPackages) {
-          if (!isValidPackageRoot(packageRoot)) {
-            return await emitInvalidInputResult("invalid_test_package_path", {
-              field: "package_root",
-              value: packageRoot,
-            });
-          }
-        }
-        const affectedClosure = await computeAffectedPackageClosure();
-        deps.log.debug({ handoffId, affectedPackages }, "running scoped typecheck in worktree");
-        packagesToBuild = affectedClosure.packages.includes("packages/core")
-          ? affectedClosure.packages
-          : ["packages/core", ...affectedClosure.packages];
-        const typecheckCommand = toCommandArgs("bun", ["tsc", "-b", ...packagesToBuild]);
-        const res = await runCmd(typecheckCommand, wt.path, timeout);
-        if (res.timedOut) {
-          typecheckStatus = "fail";
-          const result: MergeResult = {
-            status: "typecheck_failed",
-            timed_out: true,
-            regression_summary: `typecheck timed out for ${packagesToBuild.join(", ")}`,
-          };
-          await emitResult(result);
-          return result;
-        }
-        typecheckStatus = "pass";
-      }
-    } catch (err: any) {
-      typecheckStatus = "fail";
-      const output = `${err.stdout || ""}${err.stderr || ""}`;
-      const diagnostics = parseTypecheckDiagnostics(output);
-      if (diagnostics.length > 0 && (changedFiles.size > 0 || affectedPackages === null)) {
-        const affectedPackagePrefixes = (await computeAffectedPackageClosure()).prefixes;
-        const directHits = diagnostics.filter((diag) => changedFiles.has(diag.file));
-        const closureHits = diagnostics.filter(
-          (diag) =>
-            !changedFiles.has(diag.file) &&
-            affectedPackagePrefixes.some((prefix) => diag.file.startsWith(prefix)),
-        );
-        const preExisting = diagnostics.filter(
-          (diag) =>
-            !changedFiles.has(diag.file) &&
-            !affectedPackagePrefixes.some((prefix) => diag.file.startsWith(prefix)),
-        );
-        const attributed = [...directHits, ...closureHits];
-        if (attributed.length === 0) {
-          deps.log.warn(
-            {
-              component: "reconciler-typecheck-baseline-filter",
-              handoff_id: handoffId,
-              pre_existing_error_count: preExisting.length,
-            },
-            "pre-existing typecheck errors detected, not attributed to dispatched agent",
-          );
-          typecheckStatus = "pass";
-        } else {
-          if (preExisting.length > 0) {
-            deps.log.warn(
-              {
-                component: "reconciler-typecheck-baseline-filter",
-                handoff_id: handoffId,
-                pre_existing_error_count: preExisting.length,
-                attributed_error_count: attributed.length,
-              },
-              "typecheck errors detected outside the dispatch closure",
-            );
-          }
-          const result: MergeResult = {
-            status: "typecheck_failed",
-            regression_summary: formatTypecheckDiagnostics(attributed),
-          };
-          await emitResult(result);
-          return result;
-        }
-        // Continue to tests when only pre-existing errors were detected.
-      } else {
-        deps.log.warn(
-          {
-            component: "reconciler-typecheck-parse-fallback",
-            handoff_id: handoffId,
-            raw_len: output.length,
-          },
-          "unable to parse typecheck diagnostics, falling back to raw output",
-        );
-        const buildPackages =
-          packagesToBuild ??
-          (affectedPackages && affectedPackages.length > 0
-            ? affectedPackages.includes("packages/core")
-              ? affectedPackages
-              : ["packages/core", ...affectedPackages]
-            : []);
-        const result: MergeResult = {
-          status: "typecheck_failed",
-          regression_summary:
-            affectedPackages && affectedPackages.length > 0
-              ? `${buildPackages.join(", ")}: ${err.stderr || err.stdout || String(err)}`
-              : err.stderr || err.stdout || String(err),
-        };
-        await emitResult(result);
-        return result;
-      }
-    }
+    const typecheckResult = await runTypecheckStage(ctx);
+    if (typecheckResult) return typecheckResult;
 
-    // 2. Run tests
-    let testCommandUsed = "bun test";
-    try {
-      deps.log.debug({ handoffId }, "scoping tests from git diff");
-      const timeout = deps.settings?.reconcileTestTimeoutSec ?? 300;
+    const testResult = await runTestsStage(ctx);
+    if (testResult) return testResult;
 
-      if (affectedPackages === null) {
-        deps.log.debug({ handoffId }, "running full test suite in worktree");
-        testCommandUsed = "bun test";
-        const res = await runCmd(["bun", "test"], wt.path, timeout);
-        if (res.timedOut) {
-          testStatus = "fail";
-          const result: MergeResult = {
-            status: "test_failed",
-            timed_out: true,
-            regression_summary: "tests timed out",
-          };
-          await emitResult(result);
-          return result;
-        }
-        testStatus = "pass";
-      } else if (affectedPackages.length === 0) {
-        deps.log.debug({ handoffId }, "skipping tests for docs-only diff");
-        testCommandUsed = "skipped (docs-only diff)";
-        testStatus = "skipped";
-      } else {
-        const scopedTestPaths = affectedPackages.map((pkg) => `${pkg}/test/`);
-        for (const testPath of scopedTestPaths) {
-          if (!isValidTestPackagePath(testPath)) {
-            return await emitInvalidInputResult("invalid_test_package_path", {
-              field: "test_path",
-              value: testPath,
-            });
-          }
-        }
-        deps.log.debug({ handoffId, affectedPackages }, "running scoped tests in worktree");
-        testCommandUsed = `bun test ${scopedTestPaths.join(" ")}`;
-        const res = await runCmd(["bun", "test", ...scopedTestPaths], wt.path, timeout);
-        if (res.timedOut) {
-          testStatus = "fail";
-          const result: MergeResult = {
-            status: "test_failed",
-            timed_out: true,
-            regression_summary: "tests timed out",
-          };
-          await emitResult(result);
-          return result;
-        }
-        testStatus = "pass";
-      }
-    } catch (err: any) {
-      testStatus = "fail";
-      const result: MergeResult = {
-        status: "test_failed",
-        regression_summary: err.stderr || err.stdout || String(err),
-      };
-      await emitResult(result);
-      return result;
-    }
-
-    // 3. Serialized PR creation block
-    return globalMergeLock.withLock(async () => {
-      deps.log.debug({ handoffId }, "acquired global merge lock");
-
-      // 4. Gather diff metadata and optionally open PR
-      try {
-        const dispatchPrompt = handoff?.message ?? "<unknown>";
-        const agentName = handoff?.to_agent ?? "<unknown>";
-        const conversationId = handoff?.conversation_id ?? null;
-        const diffNames = await runGit(
-          ["diff", "--name-only", `${baseRef}...${wt.branchName}`],
-          deps.mainRepoDir,
-        );
-        if (!diffNames.stdout.trim()) {
-          const result: MergeResult = { status: "no_changes" };
-          deps.log.info(
-            { handoffId, branch: wt.branchName },
-            "reconciliation complete — no branch changes",
-          );
-          await emitResult(result);
-          return result;
-        }
-        const diffStatsRes = await runGit(
-          ["diff", `${baseRef}...${wt.branchName}`, "--shortstat"],
-          wt.path,
-        );
-        diffStats = parseShortStat(diffStatsRes.stdout);
-        await attemptAutoRebaseIfNeeded();
-        const shouldOpenPr =
-          handoff?.open_pr_on_review === true ||
-          (handoff as unknown as { open_pr_on_review?: unknown })?.open_pr_on_review === 1;
-        if (!shouldOpenPr) {
-          const result: MergeResult = { status: "verified" };
-          deps.log.info(
-            { handoffId, branch: wt.branchName },
-            "reconciliation complete — verified without PR",
-          );
-          await emitResult(result);
-          return result;
-        }
-        const createPR = deps.createDispatchPR ?? createDispatchPR;
-        const titleLine = dispatchPrompt.split("\n")[0] ?? "";
-        const prResult = await createPR(
-          {
-            branch: wt.branchName,
-            baseBranch: baseRef,
-            title: `[${agentName}] ${titleLine.slice(0, 60)}`,
-            body: renderDispatchPRBody({
-              agentName,
-              handoffId,
-              conversationId,
-              prompt: dispatchPrompt,
-              typecheckStatus: "pass",
-              testCommand: testCommandUsed,
-              testSummary: "pass",
-              diffStats: diffStatsRes.stdout,
-            }),
-            draft: false,
-            cwd: wt.path,
-          },
-          deps.log,
-        );
-
-        const result: MergeResult = {
-          status: "pr_opened",
-          pr_url: prResult.url,
-          pr_number: prResult.number,
-        };
-        deps.log.info(
-          { handoffId, prUrl: prResult.url, prNumber: prResult.number },
-          "reconciliation complete — PR opened",
-        );
-        await emitResult(result);
-        return result;
-      } catch (err: any) {
-        deps.log.error({ handoffId, err: String(err) }, "PR creation failed");
-        const result: MergeResult = {
-          status: "pr_creation_failed",
-          regression_summary: String(err),
-        };
-        await emitResult(result);
-        return result;
-      }
+    return await globalMergeLock.withLock(async () => {
+      return await runPrCreationStage(ctx);
     });
   };
 }

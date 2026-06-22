@@ -1,6 +1,6 @@
-import { promisify } from "node:util";
 import { execFile as execFileCb } from "node:child_process";
 import { basename, extname } from "node:path";
+import { promisify } from "node:util";
 
 export interface WorktreeHandle {
   path: string;
@@ -9,8 +9,8 @@ export interface WorktreeHandle {
 export interface AutocommitDeps {
   execFile?: typeof execFileCb;
   log: {
-    warn: (meta: any, msg: string) => void;
-    debug: (meta: any, msg: string) => void;
+    warn: (meta: Record<string, unknown>, msg: string) => void;
+    debug: (meta: Record<string, unknown>, msg: string) => void;
   };
 }
 
@@ -48,19 +48,18 @@ function isAllowedPath(path: string): boolean {
     path.startsWith("packages/") ||
     path.startsWith("docs/") ||
     path.startsWith("plugin/") ||
-    /^[^/]+\.(md|ts|json)$/.test(path)
+    /^[^/]+\.(?:md|ts|json)$/.test(path)
   );
 }
 
 function isDeniedPath(path: string): boolean {
   const candidate = path.toLowerCase();
   const base = basename(candidate);
-  const extension = extname(candidate);
-  const strippedBase = base.replace(/(~|\.bak|\.old|\.orig|\.swp|\.swo|\.tmp|\.disabled)$/, "");
+  const strippedBase = base.replace(/(?:~|\.bak|\.old|\.orig|\.swp|\.swo|\.tmp|\.disabled)$/, "");
   const matchesSecretName = (name: string): boolean =>
-    /^id_(rsa|dsa|ecdsa|ed25519)(\..*)?$/.test(name) ||
+    /^id_(?:rsa|dsa|ecdsa|ed25519)(?:\..*)?$/.test(name) ||
     DEFAULT_DENIED_EXTENSIONS.has(extname(name)) ||
-    /^\.env(\..*)?$/.test(name);
+    /^\.env(?:\..*)?$/.test(name);
   if (matchesSecretName(base)) return true;
   if (base !== strippedBase && matchesSecretName(strippedBase)) return true;
   return DEFAULT_DENIED_PATTERNS.some((pattern) => {
@@ -78,7 +77,9 @@ export function parseGitStatusPaths(stdout: string): string[] {
     .flatMap((entry) => {
       if (!entry) return [];
       const renamed = entry.split(" -> ");
-      return renamed.length > 1 ? [renamed[renamed.length - 1]!] : [entry];
+      const last = renamed[renamed.length - 1];
+      if (renamed.length > 1 && last !== undefined) return [last];
+      return [entry];
     });
 }
 

@@ -86,12 +86,11 @@ interface NewSessionResponse {
   sessionId?: string;
 }
 
-// StdioAcpClient.request returns Promise<any>; the JSON-RPC payload shape is
+// StdioAcpClient.request returns Promise<unknown>; the JSON-RPC payload shape is
 // method-specific and lives outside our type system. This single typed
 // factory bridges that SDK gap so per-call type assertions are not needed.
 async function rpc<T>(client: StdioAcpClient, method: string, params?: unknown): Promise<T> {
-  const pending = client.request(method, params) as unknown as Promise<unknown>;
-  const result = await pending;
+  const result = await client.request(method, params);
   return result as T;
 }
 
