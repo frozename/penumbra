@@ -1,42 +1,61 @@
+import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+
 import {
-  installPrOrphanSweeper,
-  runPrOrphanSweep,
   type GhClient,
+  installPrOrphanSweeper,
   type PrOrphanSweeperDeps,
+  runPrOrphanSweep,
 } from "../../src/sweepers/pr-orphan-sweeper.js";
+
+type OpenPullRequest = Awaited<ReturnType<GhClient["listOpenPullRequests"]>>[number];
+
+type SweepPayload = {
+  action?: string;
+  event?: string;
+  sweeper?: string;
+} & Record<string, unknown>;
+
+interface CapturedEvent {
+  event_type: string;
+  payload_json: SweepPayload;
+}
+
+function noop(): void {
+  return undefined;
+}
 
 function makeDeps(overrides: Partial<PrOrphanSweeperDeps> = {}): {
   deps: PrOrphanSweeperDeps;
-  events: Array<{ event_type: string; payload_json: any }>;
+  events: CapturedEvent[];
 } {
-  const t0: Array<{ event_type: string; payload_json: any }> = [];
+  const t0: CapturedEvent[] = [];
   const deps: PrOrphanSweeperDeps = {
     clock: () => new Date("2026-05-08T12:00:00.000Z"),
     uuid: (() => {
       let i = 0;
-      return () => `evt-${++i}`;
+      return () => `evt-${String(++i)}`;
     })(),
     machineId: { get: () => "machine-test" },
     t0Writer: {
-      write: (row: any) => {
+      write: (row: CapturedEvent) => {
         t0.push({ event_type: row.event_type, payload_json: row.payload_json });
       },
     },
     log: {
-      info: () => {},
-      warn: () => {},
+      info: noop,
+      warn: noop,
     },
     ghClient: {
-      listOpenPullRequests: async () => [],
-      closePullRequest: async () => {},
+      listOpenPullRequests: () => Promise.resolve([]),
+      closePullRequest: () => Promise.resolve(),
     },
     gitClient: {
-      resolveMainSha: async () => "main-sha-1",
-      isAncestorOfMain: async () => false,
-      isObjectReachable: async () => true,
-      fetchHeadRef: async () => {},
-      isThreeDotDiffEmptyVsMain: async () => false,
+      resolveMainSha: () => Promise.resolve("main-sha-1"),
+      isAncestorOfMain: () => Promise.resolve(false),
+      isObjectReachable: () => Promise.resolve(true),
+      fetchHeadRef: () => Promise.resolve(),
+      isThreeDotDiffEmptyVsMain: () => Promise.resolve(false),
     },
     dryRun: false,
   };
@@ -59,7 +78,7 @@ function pr(
     headRefOid: string;
     updatedAt: string;
   },
-) {
+): OpenPullRequest {
   return {
     title: "agent dispatch",
     ...partial,
@@ -67,42 +86,44 @@ function pr(
 }
 
 test("superseded and stale agent PRs are closed with correct actions and t0 events", async () => {
-  const closed: Array<{ number: number; comment: string; deleteBranch: boolean }> = [];
+  const closed: { number: number; comment: string; deleteBranch: boolean }[] = [];
   const { deps, events } = makeDeps({
     ghClient: {
-      listOpenPullRequests: async () => [
-        pr({
-          number: 10,
-          headRefName: "agent/11111111-1111-1111-1111-111111111111",
-          headRefOid: "sha-sup",
-          updatedAt: "2026-05-05T00:00:00.000Z",
-        }),
-        pr({
-          number: 11,
-          headRefName: "agent/22222222-2222-2222-2222-222222222222",
-          headRefOid: "sha-stale",
-          updatedAt: "2026-04-28T00:00:00.000Z",
-        }),
-        pr({
-          number: 12,
-          headRefName: "agent/33333333-3333-3333-3333-333333333333",
-          headRefOid: "sha-active",
-          updatedAt: "2026-05-07T00:00:00.000Z",
-        }),
-        pr({
-          number: 13,
-          headRefName: "feature/manual-pr",
-          headRefOid: "sha-manual",
-          updatedAt: "2026-04-01T00:00:00.000Z",
-        }),
-      ],
-      closePullRequest: async (input) => {
+      listOpenPullRequests: () =>
+        Promise.resolve([
+          pr({
+            number: 10,
+            headRefName: "agent/11111111-1111-1111-1111-111111111111",
+            headRefOid: "sha-sup",
+            updatedAt: "2026-05-05T00:00:00.000Z",
+          }),
+          pr({
+            number: 11,
+            headRefName: "agent/22222222-2222-2222-2222-222222222222",
+            headRefOid: "sha-stale",
+            updatedAt: "2026-04-28T00:00:00.000Z",
+          }),
+          pr({
+            number: 12,
+            headRefName: "agent/33333333-3333-3333-3333-333333333333",
+            headRefOid: "sha-active",
+            updatedAt: "2026-05-07T00:00:00.000Z",
+          }),
+          pr({
+            number: 13,
+            headRefName: "feature/manual-pr",
+            headRefOid: "sha-manual",
+            updatedAt: "2026-04-01T00:00:00.000Z",
+          }),
+        ]),
+      closePullRequest: (input) => {
         closed.push(input);
+        return Promise.resolve();
       },
     },
     gitClient: {
-      resolveMainSha: async () => "main-sha-1",
-      isAncestorOfMain: async (sha: string) => sha === "sha-sup",
+      resolveMainSha: () => Promise.resolve("main-sha-1"),
+      isAncestorOfMain: (sha: string) => Promise.resolve(sha === "sha-sup"),
     },
   });
 
@@ -136,27 +157,29 @@ test("dry-run mode emits events and report actions but does not close PRs", asyn
   const { deps, events } = makeDeps({
     dryRun: true,
     ghClient: {
-      listOpenPullRequests: async () => [
-        pr({
-          number: 20,
-          headRefName: "agent/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-          headRefOid: "sha-sup",
-          updatedAt: "2026-05-05T00:00:00.000Z",
-        }),
-        pr({
-          number: 21,
-          headRefName: "agent/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-          headRefOid: "sha-stale",
-          updatedAt: "2026-04-20T00:00:00.000Z",
-        }),
-      ],
-      closePullRequest: async (input) => {
+      listOpenPullRequests: () =>
+        Promise.resolve([
+          pr({
+            number: 20,
+            headRefName: "agent/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            headRefOid: "sha-sup",
+            updatedAt: "2026-05-05T00:00:00.000Z",
+          }),
+          pr({
+            number: 21,
+            headRefName: "agent/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            headRefOid: "sha-stale",
+            updatedAt: "2026-04-20T00:00:00.000Z",
+          }),
+        ]),
+      closePullRequest: (input) => {
         closed.push(input.number);
+        return Promise.resolve();
       },
     },
     gitClient: {
-      resolveMainSha: async () => "main-sha-2",
-      isAncestorOfMain: async (sha: string) => sha === "sha-sup",
+      resolveMainSha: () => Promise.resolve("main-sha-2"),
+      isAncestorOfMain: (sha: string) => Promise.resolve(sha === "sha-sup"),
     },
   });
 
@@ -171,21 +194,23 @@ test("young PRs are not auto-closed even when superseded", async () => {
   const closed: number[] = [];
   const { deps } = makeDeps({
     ghClient: {
-      listOpenPullRequests: async () => [
-        pr({
-          number: 30,
-          headRefName: "agent/cccccccc-cccc-cccc-cccc-cccccccccccc",
-          headRefOid: "sha-sup",
-          updatedAt: "2026-05-08T08:00:00.000Z",
-        }),
-      ],
-      closePullRequest: async (input) => {
+      listOpenPullRequests: () =>
+        Promise.resolve([
+          pr({
+            number: 30,
+            headRefName: "agent/cccccccc-cccc-cccc-cccc-cccccccccccc",
+            headRefOid: "sha-sup",
+            updatedAt: "2026-05-08T08:00:00.000Z",
+          }),
+        ]),
+      closePullRequest: (input) => {
         closed.push(input.number);
+        return Promise.resolve();
       },
     },
     gitClient: {
-      resolveMainSha: async () => "main-sha-3",
-      isAncestorOfMain: async () => true,
+      resolveMainSha: () => Promise.resolve("main-sha-3"),
+      isAncestorOfMain: () => Promise.resolve(true),
     },
   });
 
@@ -197,27 +222,29 @@ test("young PRs are not auto-closed even when superseded", async () => {
 test("per-PR failures are isolated and counted as errored", async () => {
   const { deps } = makeDeps({
     ghClient: {
-      listOpenPullRequests: async () => [
-        pr({
-          number: 40,
-          headRefName: "agent/dddddddd-dddd-dddd-dddd-dddddddddddd",
-          headRefOid: "sha-sup-ok",
-          updatedAt: "2026-05-04T00:00:00.000Z",
-        }),
-        pr({
-          number: 41,
-          headRefName: "agent/eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
-          headRefOid: "sha-sup-fail",
-          updatedAt: "2026-05-04T00:00:00.000Z",
-        }),
-      ],
-      closePullRequest: async (input) => {
+      listOpenPullRequests: () =>
+        Promise.resolve([
+          pr({
+            number: 40,
+            headRefName: "agent/dddddddd-dddd-dddd-dddd-dddddddddddd",
+            headRefOid: "sha-sup-ok",
+            updatedAt: "2026-05-04T00:00:00.000Z",
+          }),
+          pr({
+            number: 41,
+            headRefName: "agent/eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+            headRefOid: "sha-sup-fail",
+            updatedAt: "2026-05-04T00:00:00.000Z",
+          }),
+        ]),
+      closePullRequest: (input) => {
         if (input.number === 41) throw new Error("gh failed");
+        return Promise.resolve();
       },
     },
     gitClient: {
-      resolveMainSha: async () => "main-sha-4",
-      isAncestorOfMain: async () => true,
+      resolveMainSha: () => Promise.resolve("main-sha-4"),
+      isAncestorOfMain: () => Promise.resolve(true),
     },
   });
 
@@ -230,27 +257,29 @@ test("maxClose limits actions during a manual sweep", async () => {
   const closed: number[] = [];
   const { deps } = makeDeps({
     ghClient: {
-      listOpenPullRequests: async () => [
-        pr({
-          number: 50,
-          headRefName: "agent/ffffffff-ffff-ffff-ffff-ffffffffffff",
-          headRefOid: "sha-sup",
-          updatedAt: "2026-05-01T00:00:00.000Z",
-        }),
-        pr({
-          number: 51,
-          headRefName: "agent/99999999-9999-9999-9999-999999999999",
-          headRefOid: "sha-stale",
-          updatedAt: "2026-04-20T00:00:00.000Z",
-        }),
-      ],
-      closePullRequest: async (input) => {
+      listOpenPullRequests: () =>
+        Promise.resolve([
+          pr({
+            number: 50,
+            headRefName: "agent/ffffffff-ffff-ffff-ffff-ffffffffffff",
+            headRefOid: "sha-sup",
+            updatedAt: "2026-05-01T00:00:00.000Z",
+          }),
+          pr({
+            number: 51,
+            headRefName: "agent/99999999-9999-9999-9999-999999999999",
+            headRefOid: "sha-stale",
+            updatedAt: "2026-04-20T00:00:00.000Z",
+          }),
+        ]),
+      closePullRequest: (input) => {
         closed.push(input.number);
+        return Promise.resolve();
       },
     },
     gitClient: {
-      resolveMainSha: async () => "main-sha-5",
-      isAncestorOfMain: async (sha: string) => sha === "sha-sup",
+      resolveMainSha: () => Promise.resolve("main-sha-5"),
+      isAncestorOfMain: (sha: string) => Promise.resolve(sha === "sha-sup"),
     },
     maxClose: 1,
   });
@@ -261,27 +290,29 @@ test("maxClose limits actions during a manual sweep", async () => {
 });
 
 test("classifies as superseded when head is not ancestor but three-dot diff vs main is empty", async () => {
-  const closed: Array<{ number: number; comment: string; deleteBranch: boolean }> = [];
+  const closed: { number: number; comment: string; deleteBranch: boolean }[] = [];
   const { deps } = makeDeps({
     ghClient: {
-      listOpenPullRequests: async () => [
-        pr({
-          number: 60,
-          headRefName: "agent/12121212-3434-5656-7878-909090909090",
-          headRefOid: "sha-rebased",
-          updatedAt: "2026-05-02T00:00:00.000Z",
-        }),
-      ],
-      closePullRequest: async (input) => {
+      listOpenPullRequests: () =>
+        Promise.resolve([
+          pr({
+            number: 60,
+            headRefName: "agent/12121212-3434-5656-7878-909090909090",
+            headRefOid: "sha-rebased",
+            updatedAt: "2026-05-02T00:00:00.000Z",
+          }),
+        ]),
+      closePullRequest: (input) => {
         closed.push(input);
+        return Promise.resolve();
       },
     },
     gitClient: {
-      resolveMainSha: async () => "main-sha-6",
-      isAncestorOfMain: async () => false,
-      isObjectReachable: async () => true,
-      fetchHeadRef: async () => {},
-      isThreeDotDiffEmptyVsMain: async () => true,
+      resolveMainSha: () => Promise.resolve("main-sha-6"),
+      isAncestorOfMain: () => Promise.resolve(false),
+      isObjectReachable: () => Promise.resolve(true),
+      fetchHeadRef: () => Promise.resolve(),
+      isThreeDotDiffEmptyVsMain: () => Promise.resolve(true),
     },
   });
 
@@ -309,19 +340,19 @@ test("runPrOrphanSweep processes candidate PR checks in parallel batches", async
   const prs = [1, 2, 3, 4, 5, 6].map((n) =>
     pr({
       number: 600 + n,
-      headRefName: `agent/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa0${n}`,
-      headRefOid: `sha-${n}`,
+      headRefName: `agent/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa0${String(n)}`,
+      headRefOid: `sha-${String(n)}`,
       updatedAt: "2026-05-01T00:00:00.000Z",
     }),
   );
 
   const { deps } = makeDeps({
     ghClient: {
-      listOpenPullRequests: async () => prs,
-      closePullRequest: async () => {},
+      listOpenPullRequests: () => Promise.resolve(prs),
+      closePullRequest: () => Promise.resolve(),
     },
     gitClient: {
-      resolveMainSha: async () => "main-sha-batch",
+      resolveMainSha: () => Promise.resolve("main-sha-batch"),
       isAncestorOfMain: async () => {
         active += 1;
         maxActive = Math.max(maxActive, active);
@@ -329,9 +360,9 @@ test("runPrOrphanSweep processes candidate PR checks in parallel batches", async
         active -= 1;
         return false;
       },
-      isObjectReachable: async () => true,
-      fetchHeadRef: async () => {},
-      isThreeDotDiffEmptyVsMain: async () => false,
+      isObjectReachable: () => Promise.resolve(true),
+      fetchHeadRef: () => Promise.resolve(),
+      isThreeDotDiffEmptyVsMain: () => Promise.resolve(false),
     },
   });
 
@@ -345,9 +376,9 @@ test("scheduled sweeper skips overlapping ticks and emits sweeper.skip_tick", as
   const infos: unknown[] = [];
 
   const handle = installPrOrphanSweeper({
-    db: {} as any,
+    db: new Database(":memory:"),
     intervalMs: 1,
-    t0Writer: { write: () => {} },
+    t0Writer: { write: noop },
     uuid: () => "evt-1",
     clock: () => new Date("2026-05-08T12:00:00.000Z"),
     machineId: { get: () => "machine-test" },
@@ -360,20 +391,20 @@ test("scheduled sweeper skips overlapping ticks and emits sweeper.skip_tick", as
         });
         return [];
       },
-      closePullRequest: async () => {},
+      closePullRequest: () => Promise.resolve(),
     },
     gitClient: {
-      resolveMainSha: async () => "main",
-      isAncestorOfMain: async () => false,
-      isObjectReachable: async () => true,
-      fetchHeadRef: async () => {},
-      isThreeDotDiffEmptyVsMain: async () => false,
+      resolveMainSha: () => Promise.resolve("main"),
+      isAncestorOfMain: () => Promise.resolve(false),
+      isObjectReachable: () => Promise.resolve(true),
+      fetchHeadRef: () => Promise.resolve(),
+      isThreeDotDiffEmptyVsMain: () => Promise.resolve(false),
     },
     log: {
       info: (obj: unknown) => {
         infos.push(obj);
       },
-      warn: () => {},
+      warn: noop,
     },
   });
 
@@ -385,7 +416,13 @@ test("scheduled sweeper skips overlapping ticks and emits sweeper.skip_tick", as
   expect(listCalls).toBe(1);
   expect(
     infos.some(
-      (row: any) => row?.event === "sweeper.skip_tick" && row?.sweeper === "pr-orphan-sweeper",
+      (row) =>
+        typeof row === "object" &&
+        row !== null &&
+        "event" in row &&
+        row.event === "sweeper.skip_tick" &&
+        "sweeper" in row &&
+        row.sweeper === "pr-orphan-sweeper",
     ),
   ).toBe(true);
 });

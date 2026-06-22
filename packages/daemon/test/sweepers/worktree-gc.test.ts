@@ -1,21 +1,28 @@
-import { describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import {
-  type Services,
-  migrate,
-  loadSqliteVec,
-  HandoffWriter,
   HandoffReader,
+  HandoffWriter,
+  loadSqliteVec,
+  migrate,
+  type Services,
   type WorktreeHandle,
 } from "@penumbra/core";
-import { runWorktreeGcTick } from "../../src/sweepers/worktree-gc.js";
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
+
 import { lifecycleLock, resetLifecycleLock } from "../../src/dispatch/lifecycle-lock.js";
+import { runWorktreeGcTick } from "../../src/sweepers/worktree-gc.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  noop();
+}
+
+function noop(): void {
+  return undefined;
+}
 
 function setupDb(): Database {
   const db = new Database(":memory:");
@@ -28,23 +35,23 @@ function makeServices(
   db: Database,
   worktreeHandles: WorktreeHandle[],
   teardownSpy: (id: string, force?: boolean) => Promise<void>,
-  orphanHandles: Array<{ path: string; handoffId: string }> = [],
+  orphanHandles: { path: string; handoffId: string }[] = [],
 ): Services {
   return {
     db,
     handoffWriter: new HandoffWriter({ db }),
     handoffReader: new HandoffReader({ db }),
-    t0Writer: { write: () => {} },
+    t0Writer: { write: noop },
     machineId: { get: () => "machine-test" },
     uuid: (() => {
       let n = 0;
-      return () => `evt-${++n}`;
+      return () => `evt-${String(++n)}`;
     })(),
     clock: () => new Date(),
-    log: { info: () => {}, warn: () => {} },
+    log: { info: noop, warn: noop },
     worktreeManager: {
       listWorktrees: () => worktreeHandles,
-      discoverOrphanWorktrees: async () => orphanHandles,
+      discoverOrphanWorktrees: () => Promise.resolve(orphanHandles),
       teardownWorktree: teardownSpy,
     },
   } as unknown as Services;
@@ -87,7 +94,7 @@ function makeOrphan(handoffId: string): { path: string; handoffId: string } {
 
 const GRACE_MS = 2 * 60 * 60_000; // 2h
 const NOW = new Date("2026-05-19T10:00:00.000Z");
-const NOW_FN = () => NOW;
+const NOW_FN = (): Date => NOW;
 
 describe("runWorktreeGcTick", () => {
   test("completed worktree resolved within grace is NOT removed", async () => {
@@ -97,8 +104,9 @@ describe("runWorktreeGcTick", () => {
     insertHandoff(db, "h-recent", "completed", resolvedAt);
 
     const teardownCalls: string[] = [];
-    const svc = makeServices(db, [makeHandle("h-recent")], async (id) => {
+    const svc = makeServices(db, [makeHandle("h-recent")], (id) => {
       teardownCalls.push(id);
+      return Promise.resolve();
     });
 
     const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
@@ -115,8 +123,9 @@ describe("runWorktreeGcTick", () => {
     insertHandoff(db, "h-old", "completed", resolvedAt);
 
     const teardownCalls: string[] = [];
-    const svc = makeServices(db, [makeHandle("h-old")], async (id) => {
+    const svc = makeServices(db, [makeHandle("h-old")], (id) => {
       teardownCalls.push(id);
+      return Promise.resolve();
     });
 
     const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
@@ -136,8 +145,9 @@ describe("runWorktreeGcTick", () => {
       insertHandoff(db, "h-deferred", "completed", resolvedAt);
 
       const teardownCalls: string[] = [];
-      const svc = makeServices(db, [makeHandle("h-deferred")], async (id) => {
+      const svc = makeServices(db, [makeHandle("h-deferred")], (id) => {
         teardownCalls.push(id);
+        return Promise.resolve();
       });
 
       const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
@@ -158,8 +168,9 @@ describe("runWorktreeGcTick", () => {
     insertHandoff(db, "h-live", "dispatched", null);
 
     const teardownCalls: string[] = [];
-    const svc = makeServices(db, [makeHandle("h-live")], async (id) => {
+    const svc = makeServices(db, [makeHandle("h-live")], (id) => {
       teardownCalls.push(id);
+      return Promise.resolve();
     });
 
     const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
@@ -174,8 +185,9 @@ describe("runWorktreeGcTick", () => {
     insertHandoff(db, "h-expired", "expired", resolvedAt);
 
     const teardownCalls: string[] = [];
-    const svc = makeServices(db, [makeHandle("h-expired")], async (id) => {
+    const svc = makeServices(db, [makeHandle("h-expired")], (id) => {
       teardownCalls.push(id);
+      return Promise.resolve();
     });
 
     const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
@@ -189,7 +201,7 @@ describe("runWorktreeGcTick", () => {
     const resolvedAt = new Date(NOW.getTime() - 3 * 60 * 60_000).toISOString();
     insertHandoff(db, "h-ev", "completed", resolvedAt);
 
-    const svc = makeServices(db, [makeHandle("h-ev")], async () => {});
+    const svc = makeServices(db, [makeHandle("h-ev")], () => Promise.resolve());
 
     const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
 
@@ -221,8 +233,9 @@ describe("runWorktreeGcTick", () => {
     const svc = makeServices(
       db,
       [],
-      async (id) => {
+      (id) => {
         teardownCalls.push(id);
+        return Promise.resolve();
       },
       [makeOrphan("h-orphan-old")],
     );
@@ -244,8 +257,9 @@ describe("runWorktreeGcTick", () => {
     const svc = makeServices(
       db,
       [],
-      async (id) => {
+      (id) => {
         teardownCalls.push(id);
+        return Promise.resolve();
       },
       [makeOrphan("h-orphan-recent")],
     );
@@ -265,8 +279,9 @@ describe("runWorktreeGcTick", () => {
     const svc = makeServices(
       db,
       [],
-      async (id) => {
+      (id) => {
         teardownCalls.push(id);
+        return Promise.resolve();
       },
       [makeOrphan("h-orphan-live")],
     );

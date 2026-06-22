@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
+import { loadSqliteVec, migrate, T0Writer } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { T0Writer, loadSqliteVec, migrate } from "@penumbra/core";
+import { expect, test } from "bun:test";
+
 import { TaskDraftReader } from "../../../core/src/readers/task-draft.js";
 import { createRefiningStuckRecoverySweeper } from "../../src/sweepers/refining-stuck-recovery.js";
 
@@ -8,7 +9,13 @@ try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  noop();
+}
+
+function noop(): void {
+  return undefined;
+}
 
 function setupDb(): Database {
   const db = new Database(":memory:");
@@ -33,7 +40,7 @@ function insertEvent(
       | "task_draft_escalation";
     payload: unknown;
   },
-) {
+): void {
   db.run(
     `INSERT INTO t0_events(event_id, ts, ingest_ts, source, project_id, user_id, machine_id, event_type, lane, payload_json)
      VALUES (?, ?, ?, 'mcp', ?, 'u', 'm', ?, 'unknown', ?)`,
@@ -52,16 +59,16 @@ test("reopens a stuck refining draft and restores it to pending", () => {
   const db = setupDb();
   const reader = new TaskDraftReader({ db });
   const writer = new T0Writer(db);
-  let nowMs = Date.parse("2026-05-16T01:00:00.000Z");
+  const nowMs = Date.parse("2026-05-16T01:00:00.000Z");
   let counter = 0;
   const sweeper = createRefiningStuckRecoverySweeper({
     db,
     reader,
     t0Writer: writer,
     now: () => nowMs,
-    uuid: () => `event-${++counter}`,
+    uuid: () => `event-${String(++counter)}`,
     machineId: { get: () => "machine-1" },
-    log: { info: () => {} },
+    log: { info: noop },
   });
 
   const draftId = "11111111-1111-4111-8111-111111111111";
@@ -127,16 +134,16 @@ test("exhausted stuck refining draft is marked stale", () => {
   const db = setupDb();
   const reader = new TaskDraftReader({ db });
   const writer = new T0Writer(db);
-  let nowMs = Date.parse("2026-05-16T01:00:00.000Z");
+  const nowMs = Date.parse("2026-05-16T01:00:00.000Z");
   let counter = 0;
   const sweeper = createRefiningStuckRecoverySweeper({
     db,
     reader,
     t0Writer: writer,
     now: () => nowMs,
-    uuid: () => `event-${++counter}`,
+    uuid: () => `event-${String(++counter)}`,
     machineId: { get: () => "machine-1" },
-    log: { info: () => {} },
+    log: { info: noop },
   });
 
   const draftId = "22222222-2222-4222-8222-222222222222";
@@ -188,13 +195,13 @@ test("poison-pill row does not block recovery of other stuck drafts", () => {
   const writer = new T0Writer(db);
   const nowMs = Date.parse("2026-05-16T01:00:00.000Z");
   let counter = 0;
-  const logs: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+  const logs: { obj: Record<string, unknown>; msg: string }[] = [];
   const sweeper = createRefiningStuckRecoverySweeper({
     db,
     reader,
     t0Writer: writer,
     now: () => nowMs,
-    uuid: () => `event-${++counter}`,
+    uuid: () => `event-${String(++counter)}`,
     machineId: { get: () => "machine-1" },
     log: { info: (obj, msg) => logs.push({ obj, msg }) },
   });
@@ -291,16 +298,16 @@ test("already-open draft is untouched on subsequent tick", () => {
   const db = setupDb();
   const reader = new TaskDraftReader({ db });
   const writer = new T0Writer(db);
-  let nowMs = Date.parse("2026-05-16T01:00:00.000Z");
+  const nowMs = Date.parse("2026-05-16T01:00:00.000Z");
   let counter = 0;
   const sweeper = createRefiningStuckRecoverySweeper({
     db,
     reader,
     t0Writer: writer,
     now: () => nowMs,
-    uuid: () => `event-${++counter}`,
+    uuid: () => `event-${String(++counter)}`,
     machineId: { get: () => "machine-1" },
-    log: { info: () => {} },
+    log: { info: noop },
   });
 
   const draftId = "33333333-3333-4333-8333-333333333333";

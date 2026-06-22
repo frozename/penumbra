@@ -1,15 +1,44 @@
-import { expect, test } from "bun:test";
+import { loadSqliteVec, migrate, PlanWriter, TaskEventBus, TaskWriter } from "@penumbra/core";
 import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadSqliteVec, migrate, PlanWriter, TaskWriter, TaskEventBus } from "@penumbra/core";
+import { join } from "node:path";
+
 import { createPlanRuntimeSweeper } from "../../src/sweepers/plan-runtime.js";
 
 try {
   if (process.platform === "darwin")
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-} catch {}
+} catch {
+  noop();
+}
+
+interface ParsedPlanHeader {
+  home_project: string;
+  plan_id: string;
+}
+
+interface ParsedPlanTask {
+  depends_on: string[];
+  fallback_agent?: string;
+  file_scope: string;
+  files: string[];
+  id: string;
+  preferred_agent: string;
+  risk_class: string;
+  task_size: string;
+}
+
+interface ParsedPlan {
+  errors: string[];
+  header: ParsedPlanHeader;
+  tasks: ParsedPlanTask[];
+}
+
+function noop(): void {
+  return undefined;
+}
 
 function makeDb(): Database {
   const db = new Database(":memory:");
@@ -25,8 +54,8 @@ function makePlanFile(name: string): string {
   return path;
 }
 
-function fakeParser(header: any, tasks: any[]) {
-  return async (_path: string) => ({ header, tasks, errors: [] });
+function fakeParser(header: ParsedPlanHeader, tasks: ParsedPlanTask[]): () => Promise<ParsedPlan> {
+  return () => Promise.resolve({ header, tasks, errors: [] });
 }
 
 function makeTaskWriter(db: Database, bus: TaskEventBus): TaskWriter {

@@ -1,26 +1,54 @@
-import { expect, test, mock } from "bun:test";
-import { Database } from "bun:sqlite";
 import {
-  type Services,
-  migrate,
-  loadSqliteVec,
-  HandoffWriter,
   HandoffReader,
+  HandoffWriter,
+  loadSqliteVec,
+  migrate,
+  type Services,
 } from "@penumbra/core";
-import {
-  runStaleHandoffSweep,
-  type StaleHandoffSweeperOpts,
-} from "../../src/sweepers/stale-handoff.js";
+import { Database } from "bun:sqlite";
+import { expect, mock, test } from "bun:test";
+
 import {
   resolveStaleAfterMs,
   resolveSweeperSqlCutoffMs,
 } from "../../src/sweepers/stale-handoff-thresholds.js";
+import {
+  runStaleHandoffSweep,
+  type StaleHandoffSweeperOpts,
+} from "../../src/sweepers/stale-handoff.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  noop();
+}
+
+type TransactionCallback = (...args: unknown[]) => unknown;
+
+function noop(): void {
+  return undefined;
+}
+
+function readJsonRecord(text: string): Record<string, unknown> {
+  const parsed: unknown = JSON.parse(text);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+  return parsed as Record<string, unknown>;
+}
+
+function injectBeforeNextTransaction(db: Database, inject: () => void): void {
+  const originalTransaction = db.transaction.bind(db);
+  let injected = false;
+  db.transaction = (<Callback extends TransactionCallback>(fn: Callback) =>
+    originalTransaction((...args: Parameters<Callback>): ReturnType<Callback> => {
+      if (!injected) {
+        inject();
+        injected = true;
+      }
+      return fn(...args) as ReturnType<Callback>;
+    })) as typeof db.transaction;
+}
 
 function setupDb(): Database {
   const db = new Database(":memory:");
@@ -34,14 +62,14 @@ function makeServices(db: Database): Services {
     db,
     handoffWriter: new HandoffWriter({ db }),
     handoffReader: new HandoffReader({ db }),
-    t0Writer: { write: () => {} },
+    t0Writer: { write: noop },
     machineId: { get: () => "machine-test" },
     uuid: (() => {
       let n = 0;
-      return () => `evt-${++n}`;
+      return () => `evt-${String(++n)}`;
     })(),
     clock: () => new Date(),
-    log: { info: () => {}, warn: () => {} },
+    log: { info: noop, warn: noop },
   } as unknown as Services;
 }
 
@@ -171,7 +199,7 @@ test("stale dispatched handoff with no dispatch.end → force-resolved", () => {
     .get("h-wedged");
   expect(endRow).not.toBeNull();
   expect(endRow!.source).toBe("sweeper");
-  expect(JSON.parse(endRow!.meta_json ?? "{}").reason).toBe("stale_force_resolve");
+  expect(readJsonRecord(endRow!.meta_json ?? "{}").reason).toBe("stale_force_resolve");
 
   const handoff = services.handoffReader.get("h-wedged");
   expect(handoff?.status).toBe("failed");
@@ -185,7 +213,7 @@ test("markFailed crash rolls back synthetic dispatch.end but does not throw", ()
   const originalMarkFailed = services.handoffWriter.markFailed.bind(services.handoffWriter);
   services.handoffWriter.markFailed = mock(() => {
     throw new Error("markFailed crashed");
-  }) as typeof services.handoffWriter.markFailed;
+  });
 
   insertDispatchedHandoff(db, "h-rollback", "2026-05-04T11:50:00.000Z");
   insertEvent(db, "h-rollback", "dispatch.start", "2026-05-04T11:50:01.000Z");
@@ -226,12 +254,14 @@ test("candidate flipping to terminal mid-loop skips gracefully without throwing"
   insertEvent(db, "h-flip", "dispatch.start", "2026-05-04T11:50:01.000Z");
   insertEvent(db, "h-next", "dispatch.start", "2026-05-04T11:50:01.000Z");
 
-  services.handoffWriter.markFailed = mock((handoffId, opts) => {
-    if (handoffId === "h-flip") {
-      db.run("UPDATE handoffs SET status = 'completed' WHERE handoff_id = ?", [handoffId]);
-    }
-    return originalMarkFailed(handoffId, opts);
-  }) as typeof services.handoffWriter.markFailed;
+  services.handoffWriter.markFailed = mock<typeof services.handoffWriter.markFailed>(
+    (handoffId, opts) => {
+      if (handoffId === "h-flip") {
+        db.run("UPDATE handoffs SET status = 'completed' WHERE handoff_id = ?", [handoffId]);
+      }
+      return originalMarkFailed(handoffId, opts);
+    },
+  );
 
   const state = { lastSwept: new Map<string, number>() };
   const result = runStaleHandoffSweep(
@@ -266,12 +296,14 @@ test("markFailed genuine exception skips candidate but continues to others", () 
   insertEvent(db, "h-crash", "dispatch.start", "2026-05-04T11:50:01.000Z");
   insertEvent(db, "h-ok", "dispatch.start", "2026-05-04T11:50:01.000Z");
 
-  services.handoffWriter.markFailed = mock((handoffId, opts) => {
-    if (handoffId === "h-crash") {
-      throw new Error("markFailed crashed");
-    }
-    return originalMarkFailed(handoffId, opts);
-  }) as typeof services.handoffWriter.markFailed;
+  services.handoffWriter.markFailed = mock<typeof services.handoffWriter.markFailed>(
+    (handoffId, opts) => {
+      if (handoffId === "h-crash") {
+        throw new Error("markFailed crashed");
+      }
+      return originalMarkFailed(handoffId, opts);
+    },
+  );
 
   const state = { lastSwept: new Map<string, number>() };
   const result = runStaleHandoffSweep(
@@ -477,7 +509,7 @@ test("constant resolveStaleAfterMs still behaves like a fixed threshold", () => 
 test("deprecated staleAfterMs alias still works and warns once", () => {
   const db = setupDb();
   const services = makeServices(db);
-  const warn = mock(() => {});
+  const warn = mock(noop);
   insertDispatchedHandoff(db, "h-alias", "2026-05-04T11:44:00.000Z", "review_adversarial");
   insertEvent(db, "h-alias", "dispatch.start", "2026-05-04T11:44:01.000Z");
 
@@ -693,17 +725,9 @@ test("TOCTOU race closed: dispatch.end injected before markFailed prevents stale
   insertDispatchedHandoff(db, "h-race-end", "2026-05-04T11:50:00.000Z");
   insertEvent(db, "h-race-end", "dispatch.start", "2026-05-04T11:50:01.000Z");
 
-  const originalTransaction = services.db.transaction.bind(services.db);
-  let injected = false;
-  services.db.transaction = mock((fn: any) => {
-    return originalTransaction((...args: any[]) => {
-      if (!injected) {
-        insertEvent(db, "h-race-end", "dispatch.end", "2026-05-04T11:59:59.000Z");
-        injected = true;
-      }
-      return fn(...args);
-    });
-  }) as any;
+  injectBeforeNextTransaction(services.db, () => {
+    insertEvent(db, "h-race-end", "dispatch.end", "2026-05-04T11:59:59.000Z");
+  });
 
   const state = { lastSwept: new Map<string, number>() };
   const result = runStaleHandoffSweep(
@@ -723,18 +747,9 @@ test("TOCTOU race closed: recent heartbeat injected before markFailed prevents s
   insertDispatchedHandoff(db, "h-race-heartbeat", "2026-05-04T11:50:00.000Z");
   insertEvent(db, "h-race-heartbeat", "dispatch.start", "2026-05-04T11:50:01.000Z");
 
-  const originalTransaction = services.db.transaction.bind(services.db);
-  let injected = false;
-  services.db.transaction = mock((fn: any) => {
-    return originalTransaction((...args: any[]) => {
-      if (!injected) {
-        // Inject heartbeat within the 5-min activityIdle window
-        insertEvent(db, "h-race-heartbeat", "agent.heartbeat", "2026-05-04T11:58:00.000Z");
-        injected = true;
-      }
-      return fn(...args);
-    });
-  }) as any;
+  injectBeforeNextTransaction(services.db, () => {
+    insertEvent(db, "h-race-heartbeat", "agent.heartbeat", "2026-05-04T11:58:00.000Z");
+  });
 
   const state = { lastSwept: new Map<string, number>() };
   const result = runStaleHandoffSweep(
