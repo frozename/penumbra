@@ -1,12 +1,28 @@
-import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
-import * as childProcess from "node:child_process";
+import type { DispatchEventInput } from "@penumbra/core";
+
 import { describe, expect, spyOn, test } from "bun:test";
+import * as childProcess from "node:child_process";
+
+import type { DispatchEvent } from "../../src/sdk/adapter.js";
+import type { RecordThoughtInput } from "../../src/worker/thought-capture.js";
+
 import {
+  type CapacityError,
   detectCapacityError,
   spawnCliAdapter,
   spawnCliAdapterStream,
 } from "../../src/adapters/cli-spawn.js";
+import {
+  expectRejection,
+  makeMockChildProcess,
+  makeThoughtCaptureStub,
+} from "../helpers/cli-spawn-fixtures.js";
+
+const noopLogger = {
+  debug: (): void => {
+    /* intentional no-op for tests */
+  },
+};
 
 test("spawnCliAdapter pipes prompt to stdin and returns stdout", async () => {
   const out = await spawnCliAdapter({
@@ -30,8 +46,8 @@ test("spawnCliAdapter passes prompt via argv when configured", async () => {
 });
 
 test("spawnCliAdapter throws on non-zero exit", async () => {
-  const calls: any[] = [];
-  await expect(
+  const calls: CapacityError[] = [];
+  await expectRejection(
     spawnCliAdapter({
       command: "sh",
       args: [
@@ -42,7 +58,8 @@ test("spawnCliAdapter throws on non-zero exit", async () => {
       signal: new AbortController().signal,
       onCapacityError: (err) => calls.push(err),
     }),
-  ).rejects.toThrow(/exit code 7/);
+    /exit code 7/,
+  );
   expect(calls).toHaveLength(1);
   expect(calls[0]).toMatchObject({ provider: "google", model: "gemini-3.1-pro-preview" });
 });
@@ -93,10 +110,8 @@ test("spawnCliAdapter without strip_patterns leaves output untouched", async () 
 });
 
 test("parses <thinking>…</thinking> blocks from stdout when emit_stdout_thoughts is true", async () => {
-  const calls: any[] = [];
-  const thoughtCapture = {
-    recordThought: (input: any) => calls.push(input),
-  };
+  const calls: RecordThoughtInput[] = [];
+  const thoughtCapture = makeThoughtCaptureStub((input) => calls.push(input));
 
   const out = await spawnCliAdapter({
     command: "sh",
@@ -109,7 +124,7 @@ test("parses <thinking>…</thinking> blocks from stdout when emit_stdout_though
     emit_stdout_thoughts: true,
     thoughtCapture,
     eventContext: { handoffId: "h-think", workerId: "w-cli", agentName: "gemini-cli" },
-  } as any);
+  });
 
   expect(out.text).toBe(
     "<thinking> first pass </thinking>\nVISIBLE\n<thinking>second pass</thinking>\n<thinking>   </thinking>\n",
@@ -121,10 +136,8 @@ test("parses <thinking>…</thinking> blocks from stdout when emit_stdout_though
 });
 
 test("does not parse <thinking> blocks when emit_stdout_thoughts is false (default)", async () => {
-  const calls: any[] = [];
-  const thoughtCapture = {
-    recordThought: (input: any) => calls.push(input),
-  };
+  const calls: RecordThoughtInput[] = [];
+  const thoughtCapture = makeThoughtCaptureStub((input) => calls.push(input));
 
   const out = await spawnCliAdapter({
     command: "sh",
@@ -133,7 +146,7 @@ test("does not parse <thinking> blocks when emit_stdout_thoughts is false (defau
     signal: new AbortController().signal,
     thoughtCapture,
     eventContext: { handoffId: "h-think-off", workerId: "w-cli", agentName: "gemini-cli" },
-  } as any);
+  });
 
   expect(out.text).toBe("<thinking> first pass </thinking>\nVISIBLE\n");
   expect(calls).toHaveLength(0);
@@ -148,7 +161,7 @@ test("spawnCliAdapter aborts on signal", async () => {
     signal: ac.signal,
   });
   ac.abort();
-  await expect(p).rejects.toThrow();
+  await expectRejection(p);
 });
 
 test("spawnCliAdapter escalates from SIGTERM to SIGKILL after the cancel grace", async () => {
@@ -161,11 +174,11 @@ test("spawnCliAdapter escalates from SIGTERM to SIGKILL after the cancel grace",
     env: { PENUMBRA_CANCEL_GRACE_S: "0.05" },
   });
   ac.abort();
-  await expect(p).rejects.toThrow();
+  await expectRejection(p);
 });
 
 test("spawnCliAdapter throws when the child exits due to signal", async () => {
-  await expect(
+  await expectRejection(
     spawnCliAdapter({
       command: "sh",
       args: ["-c", "kill -TERM $$"],
@@ -173,35 +186,36 @@ test("spawnCliAdapter throws when the child exits due to signal", async () => {
       signal: new AbortController().signal,
       pass_via: "argv",
     }),
-  ).rejects.toThrow(/signal SIGTERM/);
+    /signal SIGTERM/,
+  );
 });
 
 test("spawnCliAdapter emits lifecycle events only when eventContext is present", async () => {
-  const withoutContext: any[] = [];
+  const withoutContext: DispatchEventInput[] = [];
   await spawnCliAdapter({
     command: "sh",
     args: ["-c", "echo ok"],
     prompt: "",
     signal: new AbortController().signal,
-    onEvent: (event: any) => withoutContext.push(event),
-  } as any);
+    onEvent: (event) => withoutContext.push(event),
+  });
   expect(withoutContext).toHaveLength(0);
 
-  const events: any[] = [];
+  const events: DispatchEventInput[] = [];
   await spawnCliAdapter({
     command: "sh",
     args: ["-c", "echo ok"],
     prompt: "",
     signal: new AbortController().signal,
     eventContext: { handoffId: "h-cli", workerId: "w-cli" },
-    onEvent: (event: any) => events.push(event),
-  } as any);
+    onEvent: (event) => events.push(event),
+  });
   expect(events.map((event) => event.kind)).toEqual(["proc.spawn", "proc.exited.resolved"]);
   expect(events[0]).toMatchObject({ handoff_id: "h-cli", worker_id: "w-cli", source: "worker" });
 });
 
 test("spawnCliAdapter emits proc.kill.sent on abort", async () => {
-  const events: any[] = [];
+  const events: DispatchEventInput[] = [];
   const ac = new AbortController();
   const p = spawnCliAdapter({
     command: "sleep",
@@ -209,18 +223,18 @@ test("spawnCliAdapter emits proc.kill.sent on abort", async () => {
     prompt: "",
     signal: ac.signal,
     eventContext: { handoffId: "h-kill", workerId: "w-cli" },
-    onEvent: (event: any) => events.push(event),
-  } as any);
+    onEvent: (event) => events.push(event),
+  });
 
   ac.abort();
-  await expect(p).rejects.toThrow();
+  await expectRejection(p);
   expect(
     events.some((event) => event.kind === "proc.kill.sent" && event.meta?.signal === "SIGTERM"),
   ).toBe(true);
 });
 
 test("spawnCliAdapterStream emits proc.exited.resolved on watchdog timeout before throwing", async () => {
-  const events: any[] = [];
+  const events: DispatchEventInput[] = [];
   const stream = spawnCliAdapterStream({
     command: "sleep",
     args: ["60"],
@@ -228,10 +242,10 @@ test("spawnCliAdapterStream emits proc.exited.resolved on watchdog timeout befor
     signal: new AbortController().signal,
     env: { PENUMBRA_DISPATCH_TIMEOUT_S: "0.1" },
     eventContext: { handoffId: "h-watchdog-stream", workerId: "w-cli" },
-    onEvent: (event: any) => events.push(event),
-  } as any);
+    onEvent: (event) => events.push(event),
+  });
 
-  const seen: any[] = [];
+  const seen: DispatchEvent[] = [];
   let thrown: unknown;
   try {
     for await (const ev of stream) {
@@ -249,49 +263,58 @@ test("spawnCliAdapterStream emits proc.exited.resolved on watchdog timeout befor
       (event) =>
         event.kind === "proc.exited.resolved" &&
         event.meta?.signal === "SIGKILL" &&
-        event.meta?.reason === "watchdog",
+        event.meta.reason === "watchdog",
     ),
   ).toBe(true);
 });
 
 test("spawnCliAdapterStream kills a live child when stdout iteration throws mid-stream", async () => {
   let killed = false;
-  const spawnSpy = spyOn(childProcess, "spawn").mockImplementation(() => {
-    const proc = new EventEmitter() as any;
-    proc.pid = 1234;
-    proc.exitCode = null;
-    proc.signalCode = null;
-    proc.stdin = new PassThrough();
-    proc.stderr = new PassThrough();
-    proc.kill = (signal: string) => {
-      killed = true;
-      proc.signalCode = signal as NodeJS.Signals;
-      queueMicrotask(() => {
-        proc.stderr.end();
-        proc.emit("exit", null, signal);
-      });
-      return true;
-    };
-    proc.stdout = {
-      async *[Symbol.asyncIterator]() {
-        yield Buffer.from("partial");
-        throw new Error("stdout broke");
+  // Single documented cast: spawn() has an overloaded signature whose return type
+  // depends on the stdio tuple. The mock returns a ChildProcessWithoutNullStreams
+  // shape but the overload union cannot be matched structurally, so cast the
+  // mock implementation through `typeof childProcess.spawn` once at the call site.
+  const spawnImpl = (): ReturnType<typeof childProcess.spawn> =>
+    makeMockChildProcess({
+      onKill: (signal, proc) => {
+        killed = true;
+        proc.signalCode = signal;
+        queueMicrotask(() => {
+          proc.stderr.end();
+          proc.emit("exit", null, signal);
+        });
+        return true;
       },
-    };
-    return proc;
-  });
+      stdout: {
+        [Symbol.asyncIterator]: () => {
+          let yielded = false;
+          return {
+            next: (): Promise<IteratorResult<Buffer>> => {
+              if (!yielded) {
+                yielded = true;
+                return Promise.resolve({ value: Buffer.from("partial"), done: false });
+              }
+              return Promise.reject(new Error("stdout broke"));
+            },
+          };
+        },
+      },
+    });
+  const spawnSpy = spyOn(childProcess, "spawn").mockImplementation(
+    spawnImpl as typeof childProcess.spawn,
+  );
 
   let thrown: unknown;
-  const events: any[] = [];
+  const events: DispatchEventInput[] = [];
   try {
     for await (const ev of spawnCliAdapterStream({
       command: "mock-cli",
       args: [],
       prompt: "",
       signal: new AbortController().signal,
-      onEvent: (event: any) => events.push(event),
-      log: { debug: () => {} },
-    } as any)) {
+      onEvent: (event) => events.push(event),
+      log: noopLogger,
+    })) {
       void ev;
     }
   } catch (err) {
@@ -306,8 +329,8 @@ test("spawnCliAdapterStream kills a live child when stdout iteration throws mid-
 });
 
 test("spawnCliAdapter emits proc.exited.resolved on watchdog timeout before throwing", async () => {
-  const events: any[] = [];
-  await expect(
+  const events: DispatchEventInput[] = [];
+  await expectRejection(
     spawnCliAdapter({
       command: "sleep",
       args: ["60"],
@@ -315,59 +338,62 @@ test("spawnCliAdapter emits proc.exited.resolved on watchdog timeout before thro
       signal: new AbortController().signal,
       env: { PENUMBRA_DISPATCH_TIMEOUT_S: "0.1" },
       eventContext: { handoffId: "h-watchdog", workerId: "w-cli" },
-      onEvent: (event: any) => events.push(event),
-    } as any),
-  ).rejects.toThrow(/dispatch exceeded 100ms \(watchdog\)/);
+      onEvent: (event) => events.push(event),
+    }),
+    /dispatch exceeded 100ms \(watchdog\)/,
+  );
 
   expect(
     events.some(
       (event) =>
         event.kind === "proc.exited.resolved" &&
         event.meta?.signal === "SIGKILL" &&
-        event.meta?.reason === "watchdog",
+        event.meta.reason === "watchdog",
     ),
   ).toBe(true);
 });
 
 test("spawnCliAdapterStream throws before spawn when signal is already aborted", async () => {
-  const events: any[] = [];
+  const events: DispatchEventInput[] = [];
   const ctrl = new AbortController();
   ctrl.abort();
 
-  await expect(
-    (async () => {
+  await expectRejection(
+    (async (): Promise<void> => {
       const stream = spawnCliAdapterStream({
         command: "sleep",
         args: ["60"],
         prompt: "",
         signal: ctrl.signal,
         eventContext: { handoffId: "h-preabort-stream", workerId: "w-cli" },
-        onEvent: (event: any) => events.push(event),
-      } as any);
+        onEvent: (event) => events.push(event),
+      });
       for await (const _ of stream) {
         void _;
       }
     })(),
-  ).rejects.toThrow(/signal aborted before spawn/);
+    /signal aborted before spawn/,
+  );
 
   expect(events).toHaveLength(0);
 });
 
 test("spawnCliAdapter throws before spawn when signal is already aborted", async () => {
-  const events: any[] = [];
+  const events: DispatchEventInput[] = [];
   const ctrl = new AbortController();
   ctrl.abort();
 
-  await expect(
+  await expectRejection(
     spawnCliAdapter({
       command: "sleep",
       args: ["60"],
       prompt: "",
       signal: ctrl.signal,
       eventContext: { handoffId: "h-preabort", workerId: "w-cli" },
-      onEvent: (event: any) => events.push(event),
-    } as any),
-  ).rejects.toThrow(/signal aborted before spawn/);
+      onEvent: (event) => events.push(event),
+    }),
+    /signal aborted before spawn/,
+  );
 
   expect(events).toHaveLength(0);
 });
@@ -391,7 +417,7 @@ describe("detectCapacityError", () => {
 
 describe("spawnCliAdapter onCapacityError callback", () => {
   test("fires onCapacityError when stderr matches a capacity pattern", async () => {
-    const calls: any[] = [];
+    const calls: CapacityError[] = [];
     const result = await spawnCliAdapter({
       command: "sh",
       args: [
@@ -408,7 +434,7 @@ describe("spawnCliAdapter onCapacityError callback", () => {
   });
 
   test("does NOT fire onCapacityError when stderr is clean", async () => {
-    const calls: any[] = [];
+    const calls: CapacityError[] = [];
     await spawnCliAdapter({
       command: "sh",
       args: ["-c", "echo OK"],

@@ -1,10 +1,12 @@
 import { expect, test } from "bun:test";
+
 import { AgyCliAdapter } from "../../src/adapters/agy-cli.js";
 import { ClaudeCliAdapter } from "../../src/adapters/claude-cli.js";
-import { GeminiCliAdapter } from "../../src/adapters/gemini-cli.js";
 import { CodexCliAdapter } from "../../src/adapters/codex-cli.js";
+import { GeminiCliAdapter } from "../../src/adapters/gemini-cli.js";
 import { OpencodeCliAdapter } from "../../src/adapters/opencode-cli.js";
 import { buildAdapter } from "../../src/adapters/registry.js";
+import { expectRejection } from "../helpers/cli-spawn-fixtures.js";
 
 test("claude-cli adapter pipes prompt → command → text", async () => {
   const adapter = new ClaudeCliAdapter({ command: "cat", args: [] });
@@ -60,7 +62,7 @@ test("gemini-cli adapter removes Gemini CLI operational noise from final output"
   }
   const done = events.at(-1);
   expect(done?.type).toBe("done");
-  expect(done && done.type === "done" ? done.result.text : null).toBe("GEMINI_DISPATCH_SMOKE_OK\n");
+  expect(done?.type === "done" ? done.result.text : null).toBe("GEMINI_DISPATCH_SMOKE_OK\n");
 });
 
 test("agy-cli adapter pipes prompt → command → text", async () => {
@@ -117,7 +119,7 @@ test("opencode-cli adapter throws on stderr even with exit code 0", async () => 
     signal: new AbortController().signal,
   });
 
-  await expect(promise).rejects.toThrow(/opencode-cli error: Error: Model not found: bogus/);
+  await expectRejection(promise, /opencode-cli error: Error: Model not found: bogus/);
 });
 
 test("registry resolves all four CLI adapters", () => {

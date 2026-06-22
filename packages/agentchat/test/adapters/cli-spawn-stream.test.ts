@@ -1,9 +1,14 @@
+import type { DispatchEventInput } from "@penumbra/core";
+
 import { describe, expect, test } from "bun:test";
-import { spawnCliAdapterStream } from "../../src/adapters/cli-spawn.js";
+
+import type { DispatchEvent } from "../../src/sdk/adapter.js";
+
 import { ClaudeCliAdapter } from "../../src/adapters/claude-cli.js";
+import { spawnCliAdapterStream } from "../../src/adapters/cli-spawn.js";
 import { CodexCliAdapter } from "../../src/adapters/codex-cli.js";
 import { GeminiCliAdapter } from "../../src/adapters/gemini-cli.js";
-import type { DispatchEvent } from "../../src/sdk/adapter.js";
+import { assertDoneEvent } from "../helpers/cli-spawn-fixtures.js";
 
 async function collect(stream: AsyncIterable<DispatchEvent>): Promise<DispatchEvent[]> {
   const events: DispatchEvent[] = [];
@@ -11,6 +16,11 @@ async function collect(stream: AsyncIterable<DispatchEvent>): Promise<DispatchEv
     events.push(ev);
   }
   return events;
+}
+
+interface CapacityErrorRecord {
+  provider: string;
+  model: string | null;
 }
 
 describe("spawnCliAdapterStream", () => {
@@ -23,9 +33,8 @@ describe("spawnCliAdapterStream", () => {
       pass_via: "argv",
     });
     const events = await collect(stream);
-    const done = events.at(-1);
-    expect(done?.type).toBe("done");
-    expect((done as Extract<DispatchEvent, { type: "done" }>).result.text).toBe("ABC");
+    const done = assertDoneEvent(events.at(-1));
+    expect(done.result.text).toBe("ABC");
     const deltas = events.filter(
       (e): e is Extract<DispatchEvent, { type: "delta" }> => e.type === "delta",
     );
@@ -35,7 +44,7 @@ describe("spawnCliAdapterStream", () => {
 
   test("on abort mid-stream yields done with partial text and does not throw", async () => {
     const ac = new AbortController();
-    const lifecycleEvents: any[] = [];
+    const lifecycleEvents: DispatchEventInput[] = [];
     const stream = spawnCliAdapterStream({
       command: "sh",
       args: ["-c", 'printf "part1"; sleep 10; printf "part2"'],
@@ -44,7 +53,7 @@ describe("spawnCliAdapterStream", () => {
       pass_via: "argv",
       env: { PENUMBRA_CANCEL_GRACE_S: "0.1" },
       eventContext: { handoffId: "h-stream-abort", workerId: "w-stream" },
-      onEvent: (event: any) => lifecycleEvents.push(event),
+      onEvent: (event) => lifecycleEvents.push(event),
     });
 
     const events: DispatchEvent[] = [];
@@ -59,10 +68,8 @@ describe("spawnCliAdapterStream", () => {
     }
 
     expect(threw).toBe(false);
-    const done = events.find((e) => e.type === "done");
-    expect(done).toBeDefined();
-    const text = (done as Extract<DispatchEvent, { type: "done" }>).result.text;
-    expect(text).toBe("part1");
+    const done = assertDoneEvent(events.find((e) => e.type === "done"));
+    expect(done.result.text).toBe("part1");
     expect(
       lifecycleEvents.some(
         (event) => event.kind === "proc.kill.sent" && event.meta?.signal === "SIGTERM",
@@ -73,7 +80,7 @@ describe("spawnCliAdapterStream", () => {
 
   test("on abort before any output does not wait for descendant processes that keep stdio open", async () => {
     const ac = new AbortController();
-    const lifecycleEvents: any[] = [];
+    const lifecycleEvents: DispatchEventInput[] = [];
     const stream = spawnCliAdapterStream({
       command: "node",
       args: [
@@ -90,12 +97,14 @@ describe("spawnCliAdapterStream", () => {
       pass_via: "argv",
       env: { PENUMBRA_CANCEL_GRACE_S: "0.05" },
       eventContext: { handoffId: "h-stream-no-output", workerId: "w-stream" },
-      onEvent: (event: any) => lifecycleEvents.push(event),
+      onEvent: (event) => lifecycleEvents.push(event),
     });
 
-    setTimeout(() => ac.abort(), 25);
+    setTimeout(() => {
+      ac.abort();
+    }, 25);
 
-    const consume = (async () => {
+    const consume = (async (): Promise<DispatchEvent[]> => {
       const events: DispatchEvent[] = [];
       for await (const ev of stream) {
         events.push(ev);
@@ -103,15 +112,21 @@ describe("spawnCliAdapterStream", () => {
       return events;
     })();
 
-    const events = await Promise.race([
-      consume,
-      new Promise<symbol>((resolve) => setTimeout(() => resolve(Symbol.for("timeout")), 300)),
+    const raced = await Promise.race<
+      { kind: "events"; value: DispatchEvent[] } | { kind: "timeout" }
+    >([
+      consume.then((value) => ({ kind: "events", value }) as const),
+      new Promise((resolve) => {
+        setTimeout(() => {
+          resolve({ kind: "timeout" });
+        }, 300);
+      }),
     ]);
 
-    expect(events).not.toBe(Symbol.for("timeout"));
-    const done = (events as DispatchEvent[]).find((e) => e.type === "done");
-    expect(done).toBeDefined();
-    expect((done as Extract<DispatchEvent, { type: "done" }>).result.text).toBe("");
+    expect(raced.kind).toBe("events");
+    if (raced.kind !== "events") throw new Error("unreachable");
+    const done = assertDoneEvent(raced.value.find((e) => e.type === "done"));
+    expect(done.result.text).toBe("");
     expect(lifecycleEvents.some((event) => event.kind === "proc.exited.resolved")).toBe(true);
   });
 
@@ -159,9 +174,8 @@ describe("spawnCliAdapterStream", () => {
       thrownErr = err;
     }
 
-    const done = events.find((e) => e.type === "done");
-    expect(done).toBeDefined();
-    expect((done as Extract<DispatchEvent, { type: "done" }>).result.text).toBe("x");
+    const done = assertDoneEvent(events.find((e) => e.type === "done"));
+    expect(done.result.text).toBe("x");
     expect(thrownErr).toBeInstanceOf(Error);
     expect((thrownErr as Error).message).toMatch(/exit code 2/);
   });
@@ -191,7 +205,7 @@ describe("spawnCliAdapterStream", () => {
   });
 
   test("fires onCapacityError callback for matching stderr", async () => {
-    const calls: unknown[] = [];
+    const calls: CapacityErrorRecord[] = [];
     const stream = spawnCliAdapterStream({
       command: "sh",
       args: ["-c", 'echo "No capacity available for model gemini-3.1-pro-preview" 1>&2; echo OK'],
@@ -202,8 +216,7 @@ describe("spawnCliAdapterStream", () => {
     });
 
     const events = await collect(stream);
-    const done = events.at(-1);
-    expect(done?.type).toBe("done");
+    assertDoneEvent(events.at(-1));
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({ provider: "google", model: "gemini-3.1-pro-preview" });
   });
@@ -217,9 +230,8 @@ describe("spawnCliAdapterStream", () => {
     });
 
     const events = await collect(stream);
-    const done = events.at(-1);
-    expect(done?.type).toBe("done");
-    expect((done as Extract<DispatchEvent, { type: "done" }>).result.text).toBe("hello from stdin");
+    const done = assertDoneEvent(events.at(-1));
+    expect(done.result.text).toBe("hello from stdin");
   });
 
   test("applies strip_patterns to the final done text", async () => {
@@ -233,8 +245,8 @@ describe("spawnCliAdapterStream", () => {
     });
 
     const events = await collect(stream);
-    const done = events.at(-1);
-    expect((done as Extract<DispatchEvent, { type: "done" }>).result.text.trim()).toBe("result");
+    const done = assertDoneEvent(events.at(-1));
+    expect(done.result.text.trim()).toBe("result");
   });
 
   test("delta text does not have strip_patterns applied (raw chunks emitted as-is)", async () => {
@@ -271,10 +283,10 @@ describe("adapter dispatchStream wiring", () => {
       pass_via: "argv",
     });
     expect(typeof adapter.dispatchStream).toBe("function");
-    const events = await collect(adapter.dispatchStream!(fakeInput));
-    const done = events.at(-1);
-    expect(done?.type).toBe("done");
-    expect((done as Extract<DispatchEvent, { type: "done" }>).result.text).toBe("gemini-out");
+    const stream = adapter.dispatchStream(fakeInput);
+    const events = await collect(stream);
+    const done = assertDoneEvent(events.at(-1));
+    expect(done.result.text).toBe("gemini-out");
   });
 
   test("ClaudeCliAdapter.dispatchStream yields done with correct text", async () => {
@@ -284,10 +296,10 @@ describe("adapter dispatchStream wiring", () => {
       pass_via: "argv",
     });
     expect(typeof adapter.dispatchStream).toBe("function");
-    const events = await collect(adapter.dispatchStream!(fakeInput));
-    const done = events.at(-1);
-    expect(done?.type).toBe("done");
-    expect((done as Extract<DispatchEvent, { type: "done" }>).result.text).toBe("claude-out");
+    const stream = adapter.dispatchStream(fakeInput);
+    const events = await collect(stream);
+    const done = assertDoneEvent(events.at(-1));
+    expect(done.result.text).toBe("claude-out");
   });
 
   test("CodexCliAdapter.dispatchStream yields done with correct text", async () => {
@@ -297,10 +309,10 @@ describe("adapter dispatchStream wiring", () => {
       pass_via: "argv",
     });
     expect(typeof adapter.dispatchStream).toBe("function");
-    const events = await collect(adapter.dispatchStream!(fakeInput));
-    const done = events.at(-1);
-    expect(done?.type).toBe("done");
-    expect((done as Extract<DispatchEvent, { type: "done" }>).result.text).toBe("codex-out");
+    const stream = adapter.dispatchStream(fakeInput);
+    const events = await collect(stream);
+    const done = assertDoneEvent(events.at(-1));
+    expect(done.result.text).toBe("codex-out");
   });
 
   test("dispatch() buffered path still returns correct text on GeminiCliAdapter", async () => {
