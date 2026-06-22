@@ -49,5 +49,5 @@ export interface UsageReader {
    */
   readonly machineGlobal?: boolean;
   /** Read backing state from `previousCursor` to "now"; return new cursor + deltas. */
-  read(previousCursor: unknown | null): Promise<UsageReaderResult>;
+  read(previousCursor: unknown): Promise<UsageReaderResult>;
 }

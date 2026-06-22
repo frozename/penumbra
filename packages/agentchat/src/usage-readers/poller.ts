@@ -2,14 +2,18 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+
 import type { RateLimitDelta, UsageReader, UsageReaderResult } from "./index.js";
 
 export interface PollerOptions {
   readers: UsageReader[];
   intervalMs?: number;
   cursorPath: string;
-  emit: (event: any) => Promise<{ event_id: string }>;
-  log: { info: (m: any, ...rest: any[]) => void; error: (m: any, ...rest: any[]) => void };
+  emit: (event: UsagePollerEvent) => Promise<{ event_id: string }>;
+  log: {
+    info: (m: Record<string, unknown>, ...rest: unknown[]) => void;
+    error: (m: Record<string, unknown>, ...rest: unknown[]) => void;
+  };
   /**
    * Per-tick gate for `machineGlobal` readers. Returns true when THIS worker
    * holds the machine usage-poll lock and should run the host-shared readers.
@@ -33,8 +37,29 @@ export interface PollerHandle {
 
 type CursorMap = Record<string, unknown>;
 
+interface UsagePollerEvent extends Record<string, unknown> {
+  event_id: string;
+  ts: string;
+  source: "agentchat";
+  source_detail: string;
+  user_id: "local-user";
+  machine_id: "local";
+  session_id: null;
+  event_type: string;
+  lane: "cli-subscription";
+  provider: string;
+  model: string | null;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  cost_usd: number | null;
+  latency_ms: null;
+  request_id: string | null;
+  payload_json: Record<string, unknown> & { source_kind?: string; model?: string | null };
+  payload_summary: string;
+}
+
 export function usageCursorTempPath(cursorPath: string, pid = process.pid): string {
-  return `${cursorPath}.${pid}.tmp`;
+  return `${cursorPath}.${String(pid)}.tmp`;
 }
 
 export function resolveUsageCursorPath(opts: {
@@ -45,7 +70,7 @@ export function resolveUsageCursorPath(opts: {
   if (opts.env.PENUMBRA_PER_WORKER_USAGE_CURSOR === "0") {
     return join(opts.storageRoot, "local-state-cursors.json");
   }
-  const safeWorkerId = opts.workerId.replace(/[^A-Za-z0-9_.-]/g, "_");
+  const safeWorkerId = opts.workerId.replaceAll(/[^A-Za-z0-9_.-]/g, "_");
   return join(opts.storageRoot, `local-state-cursors.${safeWorkerId}.json`);
 }
 
@@ -92,56 +117,32 @@ export function startUsagePoller(opts: PollerOptions): PollerHandle {
   const runOnce = async (): Promise<void> => {
     const holdsLock = opts.acquireMachineLock ? opts.acquireMachineLock() : true;
     if (opts.acquireMachineLock && holdsLock !== heldLock) {
-      const wasHolder = heldLock === true;
+      const previousHeldLock = heldLock;
       heldLock = holdsLock;
-      if (holdsLock) {
-        if (!wasHolder) {
-          // Took over: reload cursors so we resume where the previous holder
-          // left off (shared cursor file), avoiding a re-read burst.
-          cursors = loadCursors(opts.cursorPath, opts.log);
-        }
-        opts.log.info(
-          { holdsLock },
-          "usage-poller: holding machine poll lock; running machine-global readers",
-        );
-      } else {
-        opts.log.info(
-          { holdsLock, holder: opts.describeLockHolder?.() ?? null },
-          "usage-poller: another worker holds the machine poll lock; skipping machine-global readers",
-        );
+      if (onLockTransition(opts, previousHeldLock, holdsLock)) {
+        cursors = loadCursors(opts.cursorPath, opts.log);
       }
     }
-    let dirty = false;
-    for (const reader of opts.readers) {
-      if (reader.machineGlobal && !holdsLock) continue;
-      try {
-        if (await runReader(reader)) dirty = true;
-      } catch (err) {
-        opts.log.error({ err: String(err), reader: reader.id }, "usage-poller: reader failed");
-      }
-    }
-    if (dirty) {
-      try {
-        await persist();
-      } catch (err) {
-        opts.log.error({ err: String(err) }, "usage-poller: cursor persist failed");
-      }
-    }
+    const dirty = await runEligibleReaders(opts, holdsLock, runReader);
+    await persistIfDirty(dirty, persist, opts.log);
   };
 
   const timer = setInterval(() => {
     if (stopped) return;
-    runOnce().catch((err) => opts.log.error({ err: String(err) }, "usage-poller: tick failed"));
+    runOnce().catch((err: unknown) => {
+      opts.log.error({ err: String(err) }, "usage-poller: tick failed");
+    });
   }, intervalMs);
-  if (typeof (timer as any).unref === "function") (timer as any).unref();
+  const timerWithUnref = timer as ReturnType<typeof setInterval> & { unref?: () => void };
+  if (typeof timerWithUnref.unref === "function") timerWithUnref.unref();
 
   return {
-    stop: () => {
+    stop: (): void => {
       stopped = true;
       clearInterval(timer);
     },
     runOnce,
-    persistCount: () => persistCount,
+    persistCount: (): number => persistCount,
   };
 }
 
@@ -149,7 +150,7 @@ function loadCursors(cursorPath: string, log: PollerOptions["log"]): CursorMap {
   if (!existsSync(cursorPath)) return {};
   try {
     const raw = readFileSync(cursorPath, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       return parsed as CursorMap;
     }
@@ -160,6 +161,55 @@ function loadCursors(cursorPath: string, log: PollerOptions["log"]): CursorMap {
     );
   }
   return {};
+}
+
+function onLockTransition(
+  opts: PollerOptions,
+  previousHeldLock: boolean | undefined,
+  holdsLock: boolean,
+): boolean {
+  if (holdsLock) {
+    opts.log.info(
+      { holdsLock },
+      "usage-poller: holding machine poll lock; running machine-global readers",
+    );
+    return previousHeldLock !== true;
+  }
+  opts.log.info(
+    { holdsLock, holder: opts.describeLockHolder?.() ?? null },
+    "usage-poller: another worker holds the machine poll lock; skipping machine-global readers",
+  );
+  return false;
+}
+
+async function runEligibleReaders(
+  opts: PollerOptions,
+  holdsLock: boolean,
+  runReader: (reader: UsageReader) => Promise<boolean>,
+): Promise<boolean> {
+  let dirty = false;
+  for (const reader of opts.readers) {
+    if (reader.machineGlobal && !holdsLock) continue;
+    try {
+      if (await runReader(reader)) dirty = true;
+    } catch (err) {
+      opts.log.error({ err: String(err), reader: reader.id }, "usage-poller: reader failed");
+    }
+  }
+  return dirty;
+}
+
+async function persistIfDirty(
+  dirty: boolean,
+  persist: () => Promise<void>,
+  log: PollerOptions["log"],
+): Promise<void> {
+  if (!dirty) return;
+  try {
+    await persist();
+  } catch (err) {
+    log.error({ err: String(err) }, "usage-poller: cursor persist failed");
+  }
 }
 
 async function emitResult(
@@ -228,8 +278,10 @@ function buildBaseEvent(
   eventType: string,
   provider: string,
   model: string | null,
-): any {
+  eventId: string,
+): UsagePollerEvent {
   return {
+    event_id: eventId,
     ts: new Date().toISOString(),
     source: "agentchat",
     source_detail: `usage-poller-${readerId}`,
@@ -244,18 +296,19 @@ function buildBaseEvent(
     tokens_out: null,
     cost_usd: null,
     latency_ms: null,
-    request_id: null,
+    request_id: eventId,
     payload_json: {},
     payload_summary: "",
   };
 }
 
-function buildUsageEvent(readerId: string, delta: UsageReaderResult["usage_deltas"][number]): any {
-  const used = Number(delta.tokens_input ?? 0) + Number(delta.tokens_output ?? 0);
-  const event = buildBaseEvent(readerId, "usage-update", delta.provider, delta.model);
+function buildUsageEvent(
+  readerId: string,
+  delta: UsageReaderResult["usage_deltas"][number],
+): UsagePollerEvent {
+  const used = delta.tokens_input + delta.tokens_output;
   const stableId = stableUsageEventId(readerId, delta);
-  event.event_id = stableId;
-  event.request_id = stableId;
+  const event = buildBaseEvent(readerId, "usage-update", delta.provider, delta.model, stableId);
   event.tokens_in = delta.tokens_input;
   event.tokens_out = delta.tokens_output;
   event.cost_usd = delta.cost_usd;
@@ -270,7 +323,10 @@ function buildUsageEvent(readerId: string, delta: UsageReaderResult["usage_delta
     window_end: delta.window_end,
     source_kind: `local-state-${readerId}`,
   };
-  event.payload_summary = `${delta.provider}/${delta.model ?? "?"}: ${used} tokens`.slice(0, 240);
+  event.payload_summary = `${delta.provider}/${delta.model ?? "?"}: ${String(used)} tokens`.slice(
+    0,
+    240,
+  );
   return event;
 }
 
@@ -289,12 +345,14 @@ function stableUsageEventId(
   return `usage-poller-${createHash("sha256").update(key).digest("hex").slice(0, 32)}`;
 }
 
-function buildRateLimitEvent(readerId: string, snapshot: RateLimitDelta): any {
+function buildRateLimitEvent(readerId: string, snapshot: RateLimitDelta): UsagePollerEvent {
+  const stableId = stableRateLimitEventId(readerId, snapshot);
   const event = buildBaseEvent(
     readerId,
     "rate-limit-snapshot",
     snapshot.provider,
     snapshot.model ?? null,
+    stableId,
   );
   event.payload_json = {
     window_label: snapshot.window_label,
@@ -306,6 +364,19 @@ function buildRateLimitEvent(readerId: string, snapshot: RateLimitDelta): any {
     source_kind: `local-state-${readerId}`,
   };
   event.payload_summary =
-    `${snapshot.provider}/${snapshot.window_label}: ${snapshot.used_pct}%`.slice(0, 240);
+    `${snapshot.provider}/${snapshot.window_label}: ${String(snapshot.used_pct)}%`.slice(0, 240);
   return event;
+}
+
+function stableRateLimitEventId(readerId: string, snapshot: RateLimitDelta): string {
+  const key = JSON.stringify({
+    readerId,
+    provider: snapshot.provider,
+    model: snapshot.model ?? null,
+    window_label: snapshot.window_label,
+    used_pct: snapshot.used_pct,
+    window_minutes: snapshot.window_minutes ?? null,
+    resets_at: snapshot.resets_at ?? null,
+  });
+  return `usage-poller-${createHash("sha256").update(key).digest("hex").slice(0, 32)}`;
 }

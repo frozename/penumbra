@@ -1,12 +1,16 @@
+import type {
+  ApprovePermissionRequest,
+  CreatePermissionRequest,
+  DispatchEventInput,
+  DispatchReliabilityReport,
+  HandoffRow,
+  PermissionRequestRow,
+  WorktreeHandle,
+} from "@penumbra/core";
+
+import { resolveDaemonStorageRoot } from "@penumbra/core";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { resolveDaemonStorageRoot } from "@penumbra/core";
-import type {
-  CreatePermissionRequest,
-  ApprovePermissionRequest,
-  DispatchEventInput,
-  PermissionRequestRow,
-} from "@penumbra/core";
 
 export interface PenumbraClientOpts {
   storageRoot?: string;
@@ -44,6 +48,39 @@ export interface QuotaStatusResponse {
   providers: QuotaStatusProviderRow[];
 }
 
+export type JsonObject = Record<string, unknown>;
+
+export type HandoffProgressEvent = JsonObject;
+
+export interface HandoffSseEvent extends JsonObject {
+  handoff_id?: string;
+  project_id?: string | null;
+}
+
+export interface WorkerControlSseEvent extends JsonObject {
+  type: string;
+  conversation_id?: string;
+  handoff_id?: string;
+  probe_id?: string;
+  worker_id?: string;
+}
+
+export interface ConversationSseEvent extends JsonObject {
+  type?: string;
+  agent_name?: string;
+  delta?: string;
+  error?: string;
+  next_handoff_id?: string;
+  reason?: string;
+}
+
+export interface DispatchTimelineEvent extends JsonObject {
+  kind: string;
+  meta?: JsonObject | null;
+}
+
+export type WorktreeGrepResult = JsonObject;
+
 type ChainStartInput = {
   initial_agent: string;
   message: string;
@@ -63,6 +100,29 @@ export interface PenumbraClientLogger {
 }
 const NULL_PROJECT_ID_SENTINEL = "__null__"; // Sentinel token that maps to SQL NULL in /handoffs query.
 type ProjectScope = "global";
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeDispatchTimelineEvent(event: unknown): DispatchTimelineEvent[] {
+  if (!isJsonObject(event) || typeof event.kind !== "string") return [];
+  const meta = isJsonObject(event.meta) ? event.meta : event.meta === null ? null : undefined;
+  return [{ ...event, kind: event.kind, ...(meta === undefined ? {} : { meta }) }];
+}
+
+async function readJson<T>(res: Response): Promise<T> {
+  const payload = await res.json();
+  return payload as T;
+}
+
+async function readJsonOrNull(res: Response): Promise<unknown> {
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
 
 export class PenumbraClient {
   private readonly storageRoot: string | undefined;
@@ -98,7 +158,7 @@ export class PenumbraClient {
   }
 
   async observe(event: Record<string, unknown>): Promise<{ event_id: string }> {
-    return this.post("/observations", event);
+    return await this.post("/observations", event);
   }
   async recall(body: {
     query: string;
@@ -110,7 +170,7 @@ export class PenumbraClient {
     include_raw?: boolean;
     sources?: ("t0" | "t1" | "t2")[];
   }): Promise<{
-    results: Array<{
+    results: {
       id: string;
       tier: "t0" | "t1" | "t2";
       score: number;
@@ -120,12 +180,12 @@ export class PenumbraClient {
       source_session_ids: string[];
       created_at: string;
       ts: string;
-    }>;
+    }[];
   }> {
-    return this.post("/recall", body);
+    return await this.post("/recall", body);
   }
   async corpusQuery(body: { name: string; query: string; limit?: number }): Promise<{
-    hits: Array<{
+    hits: {
       id: string;
       ts: string;
       obs_type: string | null;
@@ -133,9 +193,9 @@ export class PenumbraClient {
       body: string;
       score: number;
       project_id: string | null;
-    }>;
+    }[];
   }> {
-    return this.post("/memory/corpus/query", body);
+    return await this.post("/memory/corpus/query", body);
   }
   async createHandoff(body: {
     from: string;
@@ -154,20 +214,20 @@ export class PenumbraClient {
     routed_role?: string;
     routing_task_type?: string;
   }> {
-    return this.post("/handoffs", body);
+    return await this.post("/handoffs", body);
   }
-  async listPending(opts?: { conversation_id?: string }): Promise<{ handoffs: any[] }> {
+  async listPending(opts?: { conversation_id?: string }): Promise<{ handoffs: HandoffRow[] }> {
     const qs = opts?.conversation_id
       ? `?conversation_id=${encodeURIComponent(opts.conversation_id)}`
       : "";
-    return this.get(`/handoffs/pending${qs}`);
+    return await this.get(`/handoffs/pending${qs}`);
   }
   async listHandoffs(opts: {
     statuses: string[];
     conversation_id?: string;
     project_id?: string | null;
     project_scope?: ProjectScope;
-  }): Promise<{ handoffs: any[] }> {
+  }): Promise<{ handoffs: HandoffRow[] }> {
     const params = new URLSearchParams();
     params.set("status", opts.statuses.join(","));
     if (opts.conversation_id) params.set("conversation_id", opts.conversation_id);
@@ -178,10 +238,10 @@ export class PenumbraClient {
     } else if (opts.project_id) {
       params.set("project_id", opts.project_id);
     }
-    return this.get(`/handoffs?${params.toString()}`);
+    return await this.get(`/handoffs?${params.toString()}`);
   }
-  async getHandoff(id: string): Promise<{ handoff: any }> {
-    return this.get(`/handoffs/${id}`);
+  async getHandoff(id: string): Promise<{ handoff: HandoffRow }> {
+    return await this.get(`/handoffs/${id}`);
   }
   async getHandoffStatus(handoff_id: string): Promise<{
     handoff_id: string;
@@ -198,7 +258,7 @@ export class PenumbraClient {
       summary: string;
     };
   }> {
-    return this.get(`/handoffs/${encodeURIComponent(handoff_id)}/status`);
+    return await this.get(`/handoffs/${encodeURIComponent(handoff_id)}/status`);
   }
   async getChainResponses(
     conversation_id: string,
@@ -206,20 +266,20 @@ export class PenumbraClient {
   ): Promise<{
     responses: { agent: string; text: string; error?: { message: string }; ts: string }[];
   }> {
-    return this.get(
+    return await this.get(
       `/chains/responses?conversation_id=${encodeURIComponent(conversation_id)}&which=${which}`,
     );
   }
   async getDispatchTimeline(handoff_id: string): Promise<{ events: unknown[] }> {
-    return this.get(`/dispatch/events?handoff_id=${encodeURIComponent(handoff_id)}`);
+    return await this.get(`/dispatch/events?handoff_id=${encodeURIComponent(handoff_id)}`);
   }
-  async dispatchAudit(handoff_id: string): Promise<{ report: any }> {
-    return this.get(`/dispatch/audit?handoff_id=${encodeURIComponent(handoff_id)}`);
+  async dispatchAudit(handoff_id: string): Promise<{ report: DispatchReliabilityReport }> {
+    return await this.get(`/dispatch/audit?handoff_id=${encodeURIComponent(handoff_id)}`);
   }
   async inspectWorktree(
     handoff_id: string,
-  ): Promise<{ worktree: any; diff_against_main: string; branch_log: string }> {
-    return this.get(`/worktrees/${encodeURIComponent(handoff_id)}`);
+  ): Promise<{ worktree: WorktreeHandle; diff_against_main: string; branch_log: string }> {
+    return await this.get(`/worktrees/${encodeURIComponent(handoff_id)}`);
   }
   async grepInWorktree(
     handoff_id: string,
@@ -229,36 +289,36 @@ export class PenumbraClient {
       output_mode?: "content" | "files_with_matches";
       max_results?: number;
     },
-  ): Promise<{ results: any[]; truncated: boolean }> {
-    return this.post(`/worktrees/${encodeURIComponent(handoff_id)}/grep`, args);
+  ): Promise<{ results: WorktreeGrepResult[]; truncated: boolean }> {
+    return await this.post(`/worktrees/${encodeURIComponent(handoff_id)}/grep`, args);
   }
   async approve(
     id: string,
     body: { redirect_to?: string; reject?: boolean; reason?: string; resolved_by?: string } = {},
   ): Promise<{ handoff_id: string; status: string }> {
-    return this.post(`/handoffs/${id}/approve`, body);
+    return await this.post(`/handoffs/${id}/approve`, body);
   }
   async claimHandoff(
     id: string,
     worker_id: string,
   ): Promise<{ handoff_id: string; status: string }> {
-    return this.postWorker(`/handoffs/${id}/claim`, { worker_id });
+    return await this.postWorker(`/handoffs/${id}/claim`, { worker_id });
   }
   async completeHandoff(
     id: string,
     worker_id?: string,
   ): Promise<{ handoff_id: string; status: string }> {
-    return this.postWorker(`/handoffs/${id}/complete`, { worker_id });
+    return await this.postWorker(`/handoffs/${id}/complete`, { worker_id });
   }
   async markFailed(
     id: string,
     reason: string,
     worker_id?: string,
   ): Promise<{ handoff_id: string; status: string }> {
-    return this.postWorker(`/handoffs/${id}/fail`, { reason, worker_id });
+    return await this.postWorker(`/handoffs/${id}/fail`, { reason, worker_id });
   }
-  async postProgress(handoff_id: string, event: any): Promise<void> {
-    return this.post(`/handoffs/${handoff_id}/progress`, event);
+  async postProgress(handoff_id: string, event: HandoffProgressEvent): Promise<void> {
+    await this.post(`/handoffs/${handoff_id}/progress`, event);
   }
   async postDispatchEvents(events: DispatchEventInput[], signal?: AbortSignal): Promise<void> {
     if (events.length === 0) return;
@@ -283,7 +343,7 @@ export class PenumbraClient {
     framework_overhead_ms?: number | null;
     result: Record<string, unknown>;
   }): Promise<void> {
-    return this.post("/agents/performance/reconciler", body);
+    await this.post("/agents/performance/reconciler", body);
   }
   async captureAgentPerformanceFromDispatch(body: {
     handoff_id: string;
@@ -307,15 +367,7 @@ export class PenumbraClient {
     // guard binds caller-supplied hints (task_type / worktree_changed /
     // final response summary) to the worker principal that owns the handoff —
     // posting with the shared bearer would leave that guard inert.
-    return this.postWorker("/agents/performance/dispatch", body) as Promise<{
-      performance: {
-        outcome: string;
-        notes: string | null;
-        metadata_json: string;
-        task_type: string;
-        [k: string]: unknown;
-      };
-    }>;
+    return await this.postWorker("/agents/performance/dispatch", body);
   }
   async agentRank(query: {
     task_type: string;
@@ -324,25 +376,18 @@ export class PenumbraClient {
     include_neutral?: boolean;
   }): Promise<{
     task_type: string;
-    candidates: Array<{ agent_name: string; score: number; success_rate: number; samples: number }>;
+    candidates: { agent_name: string; score: number; success_rate: number; samples: number }[];
   }> {
     const params = new URLSearchParams();
     params.set("task_type", query.task_type);
     if (query.since) params.set("since", query.since);
-    if (query.min_samples != null) params.set("min_samples", String(query.min_samples));
-    if (query.include_neutral != null) params.set("include_neutral", String(query.include_neutral));
-    return this.get(`/agents/rank?${params.toString()}`) as Promise<{
-      task_type: string;
-      candidates: Array<{
-        agent_name: string;
-        score: number;
-        success_rate: number;
-        samples: number;
-      }>;
-    }>;
+    if (query.min_samples !== undefined) params.set("min_samples", String(query.min_samples));
+    if (query.include_neutral !== undefined)
+      params.set("include_neutral", String(query.include_neutral));
+    return await this.get(`/agents/rank?${params.toString()}`);
   }
   async listRoutingBiases(query?: { scope?: "provider" | "agent"; value?: string }): Promise<
-    Array<{
+    {
       bias_id: string;
       scope: "provider" | "agent";
       value: string;
@@ -351,14 +396,14 @@ export class PenumbraClient {
       reason: string | null;
       created_at: string;
       expires_at: string;
-    }>
+    }[]
   > {
     const params = new URLSearchParams();
     if (query?.scope) params.set("scope", query.scope);
     if (query?.value) params.set("value", query.value);
     const qs = params.toString();
-    const res = (await this.get(`/routing/bias${qs ? `?${qs}` : ""}`)) as {
-      biases: Array<{
+    const res = await this.get<{
+      biases: {
         bias_id: string;
         scope: "provider" | "agent";
         value: string;
@@ -367,12 +412,12 @@ export class PenumbraClient {
         reason: string | null;
         created_at: string;
         expires_at: string;
-      }>;
-    };
+      }[];
+    }>(`/routing/bias${qs ? `?${qs}` : ""}`);
     return res.biases;
   }
   async postHeartbeat(worker_id: string, signal?: AbortSignal): Promise<void> {
-    return this.postWorker("/worker/heartbeat", { worker_id }, { signal });
+    await this.postWorker("/worker/heartbeat", { worker_id }, { signal });
   }
   async reregisterWorker(): Promise<void> {
     if (this.workerId === null) throw new Error("worker_id is not registered");
@@ -381,26 +426,26 @@ export class PenumbraClient {
   async reconcileDispatchOrphans(
     worker_id: string,
   ): Promise<{ requeued: number; exhausted: number }> {
-    return this.postWorker("/worker/reconcile-orphans", { worker_id });
+    return await this.postWorker("/worker/reconcile-orphans", { worker_id });
   }
   async sendProbeAck(worker_id: string, probe_id: string): Promise<void> {
-    return this.postWorkerNoContent("/worker/probe-ack", { worker_id, probe_id });
+    await this.postWorkerNoContent("/worker/probe-ack", { worker_id, probe_id });
   }
   async reconcileLongLivedOrphans(): Promise<{ reconciled: number }> {
-    return this.post("/long-lived/reconcile-orphans", {});
+    return await this.post("/long-lived/reconcile-orphans", {});
   }
   async cancelConversation(id: string): Promise<void> {
-    return this.post(`/conversations/${id}/cancel`, {});
+    await this.post(`/conversations/${id}/cancel`, {});
   }
   async startChain(
     body: ChainStartInput,
   ): Promise<{ conversation_id: string; handoff_id: string }> {
-    return this.post("/chains/start", body);
+    return await this.post("/chains/start", body);
   }
   async chainStart(
     body: ChainStartInput,
   ): Promise<{ conversation_id: string; handoff_id: string }> {
-    return this.startChain(body);
+    return await this.startChain(body);
   }
   async chainWait(input: {
     conversation_id: string;
@@ -417,9 +462,8 @@ export class PenumbraClient {
           statuses: ["completed", "failed", "rejected", "expired"],
           conversation_id: input.conversation_id,
         });
-        const rows = terminal as Array<{ status?: string }>;
-        const anyCompleted = rows.some((h) => h?.status === "completed");
-        const anyFailed = rows.some((h) => h?.status === "failed");
+        const anyCompleted = terminal.some((h) => h.status === "completed");
+        const anyFailed = terminal.some((h) => h.status === "failed");
         return { status: anyCompleted && !anyFailed ? "completed" : "failed" };
       }
       await new Promise((resolve) =>
@@ -430,23 +474,23 @@ export class PenumbraClient {
   }
   async chainResponse(input: {
     conversation_id: string;
-  }): Promise<{ responses: Array<{ text?: string }> }> {
+  }): Promise<{ responses: { text?: string }[] }> {
     const result = await this.getChainResponses(input.conversation_id, "all");
     return { responses: result.responses };
   }
   async getDispatchEvents(input: {
     handoff_id: string;
-  }): Promise<{ events: Array<{ kind: string; meta?: Record<string, unknown> | null }> }> {
+  }): Promise<{ events: { kind: string; meta?: Record<string, unknown> | null }[] }> {
     const result = await this.getDispatchTimeline(input.handoff_id);
     return {
-      events: result.events as Array<{ kind: string; meta?: Record<string, unknown> | null }>,
+      events: result.events.flatMap(normalizeDispatchTimelineEvent),
     };
   }
   async createPermission(body: CreatePermissionRequest): Promise<CreatePermissionResult> {
-    return this.post("/permissions", body);
+    return await this.post("/permissions", body);
   }
   async getPermission(permission_id: string): Promise<{ permission: PermissionRequestRow }> {
-    return this.get(`/permissions/${encodeURIComponent(permission_id)}`);
+    return await this.get(`/permissions/${encodeURIComponent(permission_id)}`);
   }
   async listPermissions(opts?: {
     status?: string;
@@ -458,13 +502,13 @@ export class PenumbraClient {
     if (opts?.conversation_id) params.set("conversation_id", opts.conversation_id);
     if (opts?.parent_handoff_id) params.set("parent_handoff_id", opts.parent_handoff_id);
     const qs = params.toString();
-    return this.get(qs ? `/permissions?${qs}` : "/permissions");
+    return await this.get(qs ? `/permissions?${qs}` : "/permissions");
   }
   async decidePermission(
     permission_id: string,
     body: ApprovePermissionRequest,
   ): Promise<DecidePermissionResult> {
-    return this.post(`/permissions/${encodeURIComponent(permission_id)}/decide`, body);
+    return await this.post(`/permissions/${encodeURIComponent(permission_id)}/decide`, body);
   }
   async fetchQuotaStatus(
     args?: string | { since?: string; window?: "24h" | "5h" },
@@ -475,37 +519,46 @@ export class PenumbraClient {
     if (since) params.set("since", since);
     if (window) params.set("window", window);
     const qs = params.toString();
-    return this.get(qs ? `/usage/quota_status?${qs}` : "/usage/quota_status");
+    return await this.get(qs ? `/usage/quota_status?${qs}` : "/usage/quota_status");
   }
-  async *subscribeHandoffEvents(opts: { signal?: AbortSignal } = {}): AsyncIterable<any> {
-    yield* this.subscribeSse("/handoffs/events", "handoff", opts.signal);
+  async *subscribeHandoffEvents(
+    opts: { signal?: AbortSignal } = {},
+  ): AsyncIterable<HandoffSseEvent> {
+    yield* this.subscribeSse<HandoffSseEvent>("/handoffs/events", "handoff", opts.signal);
   }
-  async *subscribeWorkerControl(opts: { signal?: AbortSignal } = {}): AsyncIterable<any> {
-    yield* this.subscribeSse("/worker/control", "control", opts.signal);
+  async *subscribeWorkerControl(
+    opts: { signal?: AbortSignal } = {},
+  ): AsyncIterable<WorkerControlSseEvent> {
+    yield* this.subscribeSse<WorkerControlSseEvent>("/worker/control", "control", opts.signal);
   }
   async *subscribeConversation(
     id: string,
     opts: { signal?: AbortSignal } = {},
-  ): AsyncIterable<any> {
-    yield* this.subscribeSse(`/conversations/${id}/stream`, "progress", opts.signal);
+  ): AsyncIterable<ConversationSseEvent> {
+    yield* this.subscribeSse<ConversationSseEvent>(
+      `/conversations/${id}/stream`,
+      "progress",
+      opts.signal,
+    );
   }
 
-  private async *subscribeSse(
+  private async *subscribeSse<T>(
     path: string,
     eventName: string,
     signal?: AbortSignal,
-  ): AsyncIterable<any> {
+  ): AsyncIterable<T> {
     const { baseUrl, token } = this.resolve();
     const res = await this.fetcher(`${baseUrl}${path}`, {
       headers: { authorization: `Bearer ${token}`, accept: "text/event-stream" },
       signal,
     });
-    if (!res.ok || !res.body) throw new Error(`penumbra ${path}: HTTP ${res.status}`);
-    const reader = res.body.getReader();
+    if (!res.ok) throw new Error(`penumbra ${path}: HTTP ${String(res.status)}`);
+    const body = res.body as ReadableStream<Uint8Array>;
+    const reader = body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
     try {
-      while (true) {
+      for (;;) {
         const { value, done } = await reader.read();
         if (done) break;
         buf += decoder.decode(value, { stream: true });
@@ -514,13 +567,16 @@ export class PenumbraClient {
         for (const frame of frames) {
           const eventLine = frame.split("\n").find((l) => l.startsWith(`event: ${eventName}`));
           const dataLine = frame.split("\n").find((l) => l.startsWith("data: "));
-          if (dataLine && eventLine) yield JSON.parse(dataLine.slice(6));
+          if (dataLine && eventLine) {
+            const parsed = JSON.parse(dataLine.slice(6)) as unknown;
+            yield parsed as T;
+          }
         }
       }
     } finally {
       reader.releaseLock();
       try {
-        await res.body.cancel();
+        await body.cancel();
       } catch {
         /* noop */
       }
@@ -535,9 +591,11 @@ export class PenumbraClient {
       await this.reregisterInFlight;
       return;
     }
-    this.reregisterInFlight = (async () => {
+    const workerId = this.workerId;
+    if (workerId === null) throw new Error("worker_id is not registered");
+    this.reregisterInFlight = (async (): Promise<void> => {
       try {
-        await this.registerWorker({ worker_id: this.workerId!, metadata: this.workerMetadata });
+        await this.registerWorker({ worker_id: workerId, metadata: this.workerMetadata });
         this.logger?.info(
           {
             worker_id: this.workerId,
@@ -580,7 +638,7 @@ export class PenumbraClient {
     body: unknown,
     init?: { signal?: AbortSignal },
   ): Promise<T> {
-    return this.withWorkerTokenRetry(async () => {
+    return await this.withWorkerTokenRetry(async () => {
       const { baseUrl } = this.resolve();
       const token = this.requireWorkerToken(path);
       const res = await this.fetcher(`${baseUrl}${path}`, {
@@ -590,14 +648,18 @@ export class PenumbraClient {
         signal: init?.signal,
       });
       if (!res.ok) {
-        const errorBody = await res.json().catch(() => null);
-        throw new PenumbraHttpError(`penumbra ${path}: HTTP ${res.status}`, res.status, errorBody);
+        const errorBody = await readJsonOrNull(res);
+        throw new PenumbraHttpError(
+          `penumbra ${path}: HTTP ${String(res.status)}`,
+          res.status,
+          errorBody,
+        );
       }
-      return (await res.json()) as T;
+      return await readJson<T>(res);
     });
   }
   private async postWorkerNoContent(path: string, body: unknown): Promise<void> {
-    return this.withWorkerTokenRetry(async () => {
+    await this.withWorkerTokenRetry(async () => {
       const { baseUrl } = this.resolve();
       const token = this.requireWorkerToken(path);
       const res = await this.fetcher(`${baseUrl}${path}`, {
@@ -606,8 +668,12 @@ export class PenumbraClient {
         body: JSON.stringify(body),
       });
       if (!res.ok) {
-        const errorBody = await res.json().catch(() => null);
-        throw new PenumbraHttpError(`penumbra ${path}: HTTP ${res.status}`, res.status, errorBody);
+        const errorBody = await readJsonOrNull(res);
+        throw new PenumbraHttpError(
+          `penumbra ${path}: HTTP ${String(res.status)}`,
+          res.status,
+          errorBody,
+        );
       }
       return;
     });
@@ -629,7 +695,7 @@ export class PenumbraClient {
     }
     const port = Number(readFileSync(portPath, "utf8").trim());
     const token = readFileSync(tokenPath, "utf8").trim();
-    return { baseUrl: `http://127.0.0.1:${port}`, token };
+    return { baseUrl: `http://127.0.0.1:${String(port)}`, token };
   }
   private async post<T>(path: string, body: unknown, init?: { signal?: AbortSignal }): Promise<T> {
     const { baseUrl, token } = this.resolve();
@@ -640,10 +706,14 @@ export class PenumbraClient {
       signal: init?.signal,
     });
     if (!res.ok) {
-      const errorBody = await res.json().catch(() => null);
-      throw new PenumbraHttpError(`penumbra ${path}: HTTP ${res.status}`, res.status, errorBody);
+      const errorBody = await readJsonOrNull(res);
+      throw new PenumbraHttpError(
+        `penumbra ${path}: HTTP ${String(res.status)}`,
+        res.status,
+        errorBody,
+      );
     }
-    return (await res.json()) as T;
+    return await readJson<T>(res);
   }
   private async get<T>(path: string): Promise<T> {
     const { baseUrl, token } = this.resolve();
@@ -651,10 +721,14 @@ export class PenumbraClient {
       headers: { authorization: `Bearer ${token}` },
     });
     if (!res.ok) {
-      const errorBody = await res.json().catch(() => null);
-      throw new PenumbraHttpError(`penumbra ${path}: HTTP ${res.status}`, res.status, errorBody);
+      const errorBody = await readJsonOrNull(res);
+      throw new PenumbraHttpError(
+        `penumbra ${path}: HTTP ${String(res.status)}`,
+        res.status,
+        errorBody,
+      );
     }
-    return (await res.json()) as T;
+    return await readJson<T>(res);
   }
 }
 
@@ -667,7 +741,7 @@ export class PenumbraHttpError extends Error {
   constructor(
     message: string,
     public readonly status: number,
-    public readonly body: any = null,
+    public readonly body: unknown = null,
   ) {
     super(message);
     this.name = "PenumbraHttpError";

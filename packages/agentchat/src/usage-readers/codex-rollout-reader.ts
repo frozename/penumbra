@@ -1,8 +1,18 @@
-import * as fs from "node:fs";
 import { Buffer } from "node:buffer";
-import { join } from "node:path";
+import * as fs from "node:fs";
 import { homedir } from "node:os";
-import type { UsageReader, UsageReaderResult, RateLimitDelta } from "./index.js";
+import { join } from "node:path";
+
+import type { RateLimitDelta, UsageReader, UsageReaderResult } from "./index.js";
+
+import {
+  isRecord,
+  numberFrom,
+  parseJsonRecord,
+  readNumber,
+  readRecord,
+  readString,
+} from "./json-guards.js";
 
 export interface CodexRolloutReaderOptions {
   rootDir?: string;
@@ -47,10 +57,14 @@ export class CodexRolloutReader implements UsageReader {
   constructor(opts: CodexRolloutReaderOptions = {}) {
     this.rootDir = opts.rootDir ?? join(homedir(), ".codex", "sessions");
     this.lookbackHours = opts.lookbackHours ?? 24;
-    this.now = opts.now ?? (() => Date.now());
+    this.now = opts.now ?? ((): number => Date.now());
   }
 
-  async read(previousCursor: unknown | null): Promise<UsageReaderResult> {
+  read(previousCursor: unknown): Promise<UsageReaderResult> {
+    return Promise.resolve(this.readSync(previousCursor));
+  }
+
+  private readSync(previousCursor: unknown): UsageReaderResult {
     if (!fs.existsSync(this.rootDir)) {
       return {
         cursor: previousCursor ?? { files: {} },
@@ -58,12 +72,10 @@ export class CodexRolloutReader implements UsageReader {
         rate_limit_snapshots: [],
       };
     }
-    const cursor: CodexRolloutCursor = (previousCursor as CodexRolloutCursor | null) ?? {
-      files: {},
-    };
+    const cursor = normalizeCursor(previousCursor);
     const newCursor: CodexRolloutCursor = { files: { ...cursor.files } };
 
-    const files = await this.listRolloutFiles();
+    const files = this.listRolloutFiles();
     const allRateLimitSnapshots: RateLimitDelta[] = [];
     const cutoff = this.now() - this.lookbackHours * 60 * 60 * 1000;
 
@@ -80,37 +92,9 @@ export class CodexRolloutReader implements UsageReader {
       }
       const slice = readTail(filePath, offset, size - offset);
 
-      let latestRateLimits: any = null;
-      for (const rawLine of slice.split("\n")) {
-        const line = rawLine.trim();
-        if (!line) continue;
-        let obj: any;
-        try {
-          obj = JSON.parse(line);
-        } catch {
-          continue;
-        }
-        if (
-          obj?.type === "event_msg" &&
-          obj?.payload?.type === "token_count" &&
-          obj?.payload?.rate_limits
-        ) {
-          latestRateLimits = obj.payload.rate_limits;
-        }
-      }
+      const latestRateLimits = findLatestRateLimits(slice);
       if (latestRateLimits) {
-        for (const key of ["primary", "secondary"]) {
-          const w = latestRateLimits[key];
-          if (!w) continue;
-          allRateLimitSnapshots.push({
-            provider: this.canonicalizeProvider(latestRateLimits.limit_id),
-            window_label: key,
-            used_pct: Number(w.used_percent),
-            window_minutes: typeof w.window_minutes === "number" ? w.window_minutes : undefined,
-            resets_at: typeof w.resets_at === "number" ? w.resets_at : undefined,
-            extra: { plan_type: latestRateLimits.plan_type, limit_id: latestRateLimits.limit_id },
-          });
-        }
+        allRateLimitSnapshots.push(...this.buildRateLimitSnapshots(latestRateLimits));
       }
       newCursor.files[filePath] = { byte_offset: size, mtime_ms };
     }
@@ -118,9 +102,9 @@ export class CodexRolloutReader implements UsageReader {
     return { cursor: newCursor, usage_deltas: [], rate_limit_snapshots: allRateLimitSnapshots };
   }
 
-  private async listRolloutFiles(): Promise<string[]> {
+  private listRolloutFiles(): string[] {
     const out: string[] = [];
-    const walk = (dir: string) => {
+    const walk = (dir: string): void => {
       let entries: import("node:fs").Dirent[];
       try {
         entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -142,4 +126,53 @@ export class CodexRolloutReader implements UsageReader {
     if (!limit_id || limit_id === "codex") return "openai";
     return limit_id;
   }
+
+  private buildRateLimitSnapshots(latestRateLimits: Record<string, unknown>): RateLimitDelta[] {
+    const snapshots: RateLimitDelta[] = [];
+    const limitId = readString(latestRateLimits, "limit_id") ?? undefined;
+    for (const key of ["primary", "secondary"] as const) {
+      const windowState = readRecord(latestRateLimits, key);
+      if (!windowState) continue;
+      snapshots.push({
+        provider: this.canonicalizeProvider(limitId),
+        window_label: key,
+        used_pct: numberFrom(windowState.used_percent),
+        window_minutes: readNumber(windowState, "window_minutes") ?? undefined,
+        resets_at: readNumber(windowState, "resets_at") ?? undefined,
+        extra: {
+          plan_type: readString(latestRateLimits, "plan_type"),
+          limit_id: limitId,
+        },
+      });
+    }
+    return snapshots;
+  }
+}
+
+function normalizeCursor(cursor: unknown): CodexRolloutCursor {
+  if (!isRecord(cursor) || !isRecord(cursor.files)) return { files: {} };
+  const files: Record<string, FileCursor> = {};
+  for (const [path, value] of Object.entries(cursor.files)) {
+    if (!isRecord(value)) continue;
+    files[path] = {
+      byte_offset: numberFrom(value.byte_offset),
+      mtime_ms: numberFrom(value.mtime_ms),
+    };
+  }
+  return { files };
+}
+
+function findLatestRateLimits(slice: string): Record<string, unknown> | null {
+  let latest: Record<string, unknown> | null = null;
+  for (const rawLine of slice.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const obj = parseJsonRecord(line);
+    const payload = obj ? readRecord(obj, "payload") : null;
+    const rateLimits = payload ? readRecord(payload, "rate_limits") : null;
+    if (obj?.type === "event_msg" && payload?.type === "token_count" && rateLimits) {
+      latest = rateLimits;
+    }
+  }
+  return latest;
 }

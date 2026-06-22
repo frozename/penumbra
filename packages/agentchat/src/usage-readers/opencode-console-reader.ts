@@ -1,5 +1,6 @@
-import { readCookieFile } from "./cookie-file.js";
 import type { RateLimitDelta, UsageReader, UsageReaderResult } from "./index.js";
+
+import { readCookieFile } from "./cookie-file.js";
 
 export interface OpenCodeConsoleReaderConfig {
   workspace_id: string;
@@ -51,10 +52,10 @@ export class OpenCodeConsoleReader implements UsageReader {
     this.config = config;
     this.fetchImpl = deps.fetch ?? fetch;
     this.readCookieFileImpl = deps.readCookieFile ?? readCookieFile;
-    this.now = deps.now ?? (() => Date.now());
+    this.now = deps.now ?? ((): number => Date.now());
   }
 
-  async read(previousCursor: unknown | null): Promise<UsageReaderResult> {
+  async read(previousCursor: unknown): Promise<UsageReaderResult> {
     const cursor = normalizeCursor(previousCursor);
 
     const cookie = await this.readCookieFileImpl(this.config.cookie_file);
@@ -77,7 +78,7 @@ export class OpenCodeConsoleReader implements UsageReader {
     }
     if (!res.ok || isAuthRedirect(res)) {
       this.warnOnce(
-        `opencode-console: auth failed (HTTP ${res.status}) — cookie at ${this.config.cookie_file} may be expired, re-paste it`,
+        `opencode-console: auth failed (HTTP ${String(res.status)}) — cookie at ${this.config.cookie_file} may be expired, re-paste it`,
       );
       return { cursor, ...EMPTY };
     }
@@ -142,21 +143,21 @@ export function parseUsageSnapshots(html: string, nowSeconds: number): RateLimit
 }
 
 function capture(source: string, re: RegExp): string {
-  const m = source.match(re);
+  const m = re.exec(source);
   return m?.[1] ?? "";
 }
 
 function stripMarkup(value: string): string {
   return value
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/<[^>]*>/g, "")
-    .replace(/\s+/g, " ")
+    .replaceAll(/<!--[\s\S]*?-->/g, "")
+    .replaceAll(/<[^>]*>/g, "")
+    .replaceAll(/\s+/g, " ")
     .trim();
 }
 
 function parsePct(value: string): number | null {
-  const m = value.match(/(\d+(?:\.\d+)?)/);
-  return m && m[1] !== undefined ? clampPct(Number(m[1])) : null;
+  const m = /(\d+(?:\.\d+)?)/.exec(value);
+  return m?.[1] !== undefined ? clampPct(Number(m[1])) : null;
 }
 
 function parseResetSeconds(text: string): number | null {
@@ -185,10 +186,10 @@ function parseResetSeconds(text: string): number | null {
 }
 
 function isAuthRedirect(res: Response): boolean {
-  return Boolean(res.redirected) && /\/(auth|login|signin|sign-in)\b/.test(res.url ?? "");
+  return res.redirected && /\/(?:auth|login|signin|sign-in)\b/.test(res.url);
 }
 
-function normalizeCursor(cursor: unknown | null): OpenCodeConsoleCursor {
+function normalizeCursor(cursor: unknown): OpenCodeConsoleCursor {
   if (cursor && typeof cursor === "object" && "last_fetched_at" in cursor) {
     const v = (cursor as Record<string, unknown>).last_fetched_at;
     if (typeof v === "string") return { last_fetched_at: v };

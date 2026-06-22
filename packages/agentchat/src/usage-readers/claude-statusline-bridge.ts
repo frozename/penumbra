@@ -1,5 +1,8 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
-import type { UsageReader, UsageReaderResult, RateLimitDelta } from "./index.js";
+
+import type { RateLimitDelta, UsageReader, UsageReaderResult } from "./index.js";
+
+import { isRecord, numberFrom, parseJsonRecord, readNumber, readRecord } from "./json-guards.js";
 
 export interface ClaudeStatusLineBridgeOptions {
   cachePath?: string;
@@ -20,7 +23,11 @@ export class ClaudeStatusLineBridge implements UsageReader {
     this.cachePath = opts.cachePath ?? DEFAULT_CACHE_PATH;
   }
 
-  async read(previousCursor: unknown | null): Promise<UsageReaderResult> {
+  read(previousCursor: unknown): Promise<UsageReaderResult> {
+    return Promise.resolve(this.readSync(previousCursor));
+  }
+
+  private readSync(previousCursor: unknown): UsageReaderResult {
     if (!existsSync(this.cachePath)) {
       return {
         cursor: previousCursor ?? { last_seen_mtime_ms: 0 },
@@ -29,18 +36,14 @@ export class ClaudeStatusLineBridge implements UsageReader {
       };
     }
 
-    const cursor: BridgeCursor = (previousCursor as BridgeCursor | null) ?? {
-      last_seen_mtime_ms: 0,
-    };
+    const cursor = normalizeCursor(previousCursor);
     const stats = statSync(this.cachePath);
     if (stats.mtimeMs <= cursor.last_seen_mtime_ms) {
       return { cursor, usage_deltas: [], rate_limit_snapshots: [] };
     }
 
-    let body: any;
-    try {
-      body = JSON.parse(readFileSync(this.cachePath, "utf8"));
-    } catch {
+    const body = parseJsonRecord(readFileSync(this.cachePath, "utf8"));
+    if (!body) {
       return {
         cursor: { last_seen_mtime_ms: stats.mtimeMs },
         usage_deltas: [],
@@ -50,15 +53,15 @@ export class ClaudeStatusLineBridge implements UsageReader {
 
     const snapshots: RateLimitDelta[] = [];
     for (const key of ["five_hour", "seven_day"]) {
-      const windowState = body?.[key];
+      const windowState = readRecord(body, key);
       if (!windowState) continue;
-      const used_pct = Number(windowState.used_percentage ?? windowState.utilization);
+      const used_pct = numberFrom(windowState.used_percentage ?? windowState.utilization, NaN);
       if (!Number.isFinite(used_pct)) continue;
       snapshots.push({
         provider: "anthropic",
         window_label: key,
         used_pct,
-        resets_at: typeof windowState.resets_at === "number" ? windowState.resets_at : undefined,
+        resets_at: readNumber(windowState, "resets_at") ?? undefined,
       });
     }
 
@@ -68,4 +71,9 @@ export class ClaudeStatusLineBridge implements UsageReader {
       rate_limit_snapshots: snapshots,
     };
   }
+}
+
+function normalizeCursor(cursor: unknown): BridgeCursor {
+  if (!isRecord(cursor)) return { last_seen_mtime_ms: 0 };
+  return { last_seen_mtime_ms: numberFrom(cursor.last_seen_mtime_ms) };
 }

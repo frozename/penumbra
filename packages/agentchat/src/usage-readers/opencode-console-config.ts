@@ -1,8 +1,9 @@
+import { QuotasConfigSchema } from "@penumbra/config";
+import { load as parseYaml } from "js-yaml";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { load as parseYaml } from "js-yaml";
-import { QuotasConfigSchema } from "@penumbra/config";
+
 import { expandHome } from "./cookie-file.js";
 
 export interface ResolvedConsoleConfig {
@@ -31,7 +32,7 @@ export function loadOpencodeConsoleConfig(
   const configDir =
     opts.configDir ?? process.env.PENUMBRA_CONFIG_DIR ?? join(homedir(), ".config", "penumbra");
   const quotasPath = join(configDir, "quotas.yaml");
-  const read = opts.readFileImpl ?? ((p: string) => readFileSync(p, "utf8"));
+  const read = opts.readFileImpl ?? ((p: string): string => readFileSync(p, "utf8"));
 
   let raw: string;
   try {
