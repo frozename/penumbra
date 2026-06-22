@@ -1,4 +1,4 @@
-import { createAcpWarmPool, type AcpWarmPool } from "./acp-warm-pool.js";
+import { type AcpWarmPool, createAcpWarmPool } from "./acp-warm-pool.js";
 
 export interface AcpWarmPoolRegistryOptions {
   warmPoolIdleGraceMs?: number;
@@ -16,12 +16,12 @@ function positiveInt(value: string | undefined): number | undefined {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-function resolveMaxEntries(opts: AcpWarmPoolRegistryOptions): number | undefined {
+function resolveMaxEntries(opts: AcpWarmPoolRegistryOptions): number {
   const envCap = positiveInt(process.env.PENUMBRA_WARM_PREWARM_CAP) ?? DEFAULT_WARM_PREWARM_CAP;
-  if (opts.warmPoolMaxEntries !== undefined && envCap !== undefined) {
+  if (opts.warmPoolMaxEntries !== undefined) {
     return Math.min(opts.warmPoolMaxEntries, envCap);
   }
-  return opts.warmPoolMaxEntries ?? envCap;
+  return envCap;
 }
 
 export function getOrCreateAcpWarmPool(

@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import * as net from "node:net";
 
 const DEFAULT_BOOT_TIMEOUT_MS = 10_000;
@@ -29,6 +29,10 @@ export interface StartAcpServerOptions {
   spawn?: AcpServerSpawner;
 }
 
+function noop(): void {
+  /* intentionally empty */
+}
+
 function appendBootOutput(output: string, chunk: string): string {
   const next = output + chunk;
   if (next.length <= MAX_BOOT_OUTPUT_CHARS) return next;
@@ -54,15 +58,19 @@ function waitForExit(
 ): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (code: number | null, signal: NodeJS.Signals | null) => {
+    const finish = (code: number | null, signal: NodeJS.Signals | null): void => {
       if (settled) return;
       settled = true;
       child.removeListener("exit", onExit);
       child.removeListener("close", onClose);
       resolve({ code, signal });
     };
-    const onExit = (code: number | null, signal: NodeJS.Signals | null) => finish(code, signal);
-    const onClose = (code: number | null, signal: NodeJS.Signals | null) => finish(code, signal);
+    const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
+      finish(code, signal);
+    };
+    const onClose = (code: number | null, signal: NodeJS.Signals | null): void => {
+      finish(code, signal);
+    };
     child.once("exit", onExit);
     child.once("close", onClose);
   });
@@ -75,7 +83,9 @@ function getFreePort(): Promise<number> {
     srv.on("error", reject);
     srv.listen(0, "127.0.0.1", () => {
       const port = (srv.address() as net.AddressInfo).port;
-      srv.close(() => resolve(port));
+      srv.close(() => {
+        resolve(port);
+      });
     });
   });
 }
@@ -83,20 +93,21 @@ function getFreePort(): Promise<number> {
 function waitForPort(port: number, timeoutMs: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
-      return reject(createAbortError(signal.reason));
+      reject(createAbortError(signal.reason));
+      return;
     }
 
     const start = Date.now();
     let timer: NodeJS.Timeout | null = null;
     let settled = false;
 
-    function cleanup() {
+    function cleanup(): void {
       settled = true;
       if (timer) clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
     }
 
-    function onAbort() {
+    function onAbort(): void {
       if (settled) return;
       cleanup();
       reject(createAbortError(signal?.reason));
@@ -104,11 +115,12 @@ function waitForPort(port: number, timeoutMs: number, signal?: AbortSignal): Pro
 
     signal?.addEventListener("abort", onAbort, { once: true });
 
-    function attempt() {
+    function attempt(): void {
       if (settled) return;
       if (Date.now() - start > timeoutMs) {
         cleanup();
-        return reject(new Error(`Timed out waiting for port ${port}`));
+        reject(new Error(`Timed out waiting for port ${String(port)}`));
+        return;
       }
 
       const socket = net.connect(port, "127.0.0.1");
@@ -129,27 +141,14 @@ function waitForPort(port: number, timeoutMs: number, signal?: AbortSignal): Pro
   });
 }
 
-export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpServerHandle> {
-  if (opts.signal?.aborted) {
-    throw createAbortError(opts.signal.reason);
-  }
+interface ChildErrorBridge {
+  childError: Promise<never>;
+  onChildError: (err: Error) => void;
+  markBootSettled: () => void;
+  isBootSettled: () => boolean;
+}
 
-  const port = await getFreePort();
-  if (opts.signal?.aborted) {
-    throw createAbortError(opts.signal.reason);
-  }
-
-  const args = ["acp", "--port", port.toString(), "--cwd", opts.cwd];
-  if (opts.pure !== false) args.push("--pure");
-
-  const spawnProcess = opts.spawn ?? spawn;
-  const child = spawnProcess(opts.opencodeBinary ?? "opencode", args, {
-    cwd: opts.cwd,
-    stdio: ["pipe", "pipe", "pipe"],
-    env: opts.env ? { ...process.env, ...opts.env } : undefined,
-    detached: process.platform !== "win32",
-  });
-
+function installChildErrorBridge(child: ChildProcessWithoutNullStreams): ChildErrorBridge {
   let bootSettled = false;
   let rejectChildError!: (err: Error) => void;
   const childError = new Promise<never>((_, reject) => {
@@ -159,8 +158,8 @@ export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpSe
   // settled (or after a pre-race throw, e.g. the missing-pid path) must never
   // escape as an unhandled rejection — that is the worker-killing bug this
   // module exists to prevent.
-  void childError.catch(() => {});
-  const onChildError = (err: Error) => {
+  void childError.catch(noop);
+  const onChildError = (err: Error): void => {
     if (!bootSettled) {
       rejectChildError(err);
     } else {
@@ -168,40 +167,40 @@ export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpSe
     }
   };
   child.on("error", onChildError);
+  return {
+    childError,
+    onChildError,
+    markBootSettled: (): void => {
+      bootSettled = true;
+    },
+    isBootSettled: (): boolean => bootSettled,
+  };
+}
 
-  if (!child.stdin || !child.stdout || !child.stderr) {
-    throw new Error("ACP server failed to start: spawn returned null streams");
-  }
-  const streamChild = child as ChildProcessWithoutNullStreams;
-
-  if (child.pid == null) {
-    throw new Error("ACP server failed to start: child process has no pid");
-  }
-
-  streamChild.stdout.setEncoding("utf8");
-  streamChild.stderr.setEncoding("utf8");
-
-  const exited = waitForExit(streamChild);
-  void exited.finally(() => {
-    child.removeListener("error", onChildError);
-  });
+function createKiller(
+  child: ChildProcessWithoutNullStreams,
+  exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>,
+): (timeoutMs?: number) => Promise<void> {
   let killPromise: Promise<void> | null = null;
-  const signalProcess = (signal: NodeJS.Signals) => {
+  const signalProcess = (sig: NodeJS.Signals): void => {
     if (!child.pid) return;
     try {
       if (process.platform !== "win32" && process.env.PENUMBRA_OPENCODE_GROUP_KILL !== "0") {
-        process.kill(-child.pid, signal);
+        process.kill(-child.pid, sig);
       } else {
-        child.kill(signal);
+        child.kill(sig);
       }
     } catch {
       // Process may already be gone.
     }
   };
 
-  const kill = async (timeoutMs = DEFAULT_KILL_TIMEOUT_MS): Promise<void> => {
-    if (killPromise) return killPromise;
-    killPromise = (async () => {
+  return async (timeoutMs = DEFAULT_KILL_TIMEOUT_MS): Promise<void> => {
+    if (killPromise) {
+      await killPromise;
+      return;
+    }
+    killPromise = (async (): Promise<void> => {
       if (child.exitCode !== null || child.signalCode !== null) {
         await exited;
         return;
@@ -212,9 +211,11 @@ export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpSe
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const result = await Promise.race([
-          exited.then(() => "exited" as const),
+          exited.then((): "exited" => "exited"),
           new Promise<"timeout">((resolve) => {
-            timer = setTimeout(() => resolve("timeout"), timeoutMs);
+            timer = setTimeout(() => {
+              resolve("timeout");
+            }, timeoutMs);
           }),
         ]);
 
@@ -227,54 +228,113 @@ export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpSe
       }
     })();
 
-    return killPromise;
+    await killPromise;
   };
+}
+
+export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpServerHandle> {
+  if (opts.signal?.aborted) {
+    throw createAbortError(opts.signal.reason);
+  }
+
+  const port = await getFreePort();
+  if (opts.signal?.aborted) {
+    throw createAbortError(opts.signal.reason);
+  }
+
+  const child = spawnAcpChild(opts, port);
+
+  const bridge = installChildErrorBridge(child);
+
+  if (child.pid === undefined) {
+    throw new Error("ACP server failed to start: child process has no pid");
+  }
+
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+
+  const exited = waitForExit(child);
+  void exited.finally(() => {
+    child.removeListener("error", bridge.onChildError);
+  });
+
+  const kill = createKiller(child, exited);
 
   const bootTimeoutMs = opts.bootTimeoutMs ?? DEFAULT_BOOT_TIMEOUT_MS;
+  await runBootRace(child, port, bootTimeoutMs, opts.signal, bridge, kill, exited);
+
+  return {
+    port,
+    baseUrl: `http://127.0.0.1:${String(port)}`,
+    pid: child.pid,
+    kill,
+    exited,
+  };
+}
+
+function spawnAcpChild(opts: StartAcpServerOptions, port: number): ChildProcessWithoutNullStreams {
+  const args = ["acp", "--port", port.toString(), "--cwd", opts.cwd];
+  if (opts.pure !== false) args.push("--pure");
+
+  const spawnProcess = opts.spawn ?? spawn;
+  const child = spawnProcess(opts.opencodeBinary ?? "opencode", args, {
+    cwd: opts.cwd,
+    stdio: ["pipe", "pipe", "pipe"],
+    env: opts.env ? { ...process.env, ...opts.env } : undefined,
+    detached: process.platform !== "win32",
+  });
+
+  if (!child.stdin || !child.stdout || !child.stderr) {
+    throw new Error("ACP server failed to start: spawn returned null streams");
+  }
+  return child as ChildProcessWithoutNullStreams;
+}
+
+async function runBootRace(
+  child: ChildProcessWithoutNullStreams,
+  port: number,
+  bootTimeoutMs: number,
+  signal: AbortSignal | undefined,
+  bridge: ChildErrorBridge,
+  kill: (timeoutMs?: number) => Promise<void>,
+  exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>,
+): Promise<void> {
   let bootOutput = "";
 
-  const onStdout = (chunk: string | Buffer) => {
+  const onStdout = (chunk: string | Buffer): void => {
     bootOutput = appendBootOutput(bootOutput, chunk.toString());
   };
-  const onStderr = (chunk: string | Buffer) => {
+  const onStderr = (chunk: string | Buffer): void => {
     bootOutput = appendBootOutput(bootOutput, chunk.toString());
   };
 
-  streamChild.stdout.on("data", onStdout);
-  streamChild.stderr.on("data", onStderr);
+  child.stdout.on("data", onStdout);
+  child.stderr.on("data", onStderr);
 
   try {
     await Promise.race([
-      waitForPort(port, bootTimeoutMs, opts.signal),
-      childError,
+      waitForPort(port, bootTimeoutMs, signal),
+      bridge.childError,
       exited.then((info) => {
         // Only an exit DURING boot is a boot failure. After a successful boot
         // this dangling continuation still runs on natural exit; throwing then
         // would be an unhandled rejection that kills the worker.
-        if (bootSettled) return undefined as never;
+        if (bridge.isBootSettled()) return undefined as never;
         throw formatBootError(
-          `ACP server exited before TCP port was bound (code=${info.code}, signal=${info.signal})`,
+          `ACP server exited before TCP port was bound (code=${String(info.code)}, signal=${String(info.signal)})`,
           bootOutput,
         );
       }),
     ]);
   } catch (err) {
-    bootSettled = true;
-    streamChild.stdout.removeListener("data", onStdout);
-    streamChild.stderr.removeListener("data", onStderr);
-    await kill().catch(() => {});
+    bridge.markBootSettled();
+    child.stdout.removeListener("data", onStdout);
+    child.stderr.removeListener("data", onStderr);
+    await kill().catch(noop);
     throw err;
   }
 
-  bootSettled = true;
-  streamChild.stdout.removeListener("data", onStdout);
-  streamChild.stderr.removeListener("data", onStderr);
-
-  return {
-    port,
-    baseUrl: `http://127.0.0.1:${port}`,
-    pid: child.pid,
-    kill,
-    exited,
-  };
+  bridge.markBootSettled();
+  child.stdout.removeListener("data", onStdout);
+  child.stderr.removeListener("data", onStderr);
 }

@@ -164,7 +164,8 @@ async function main(): Promise<void> {
   });
 
   const fsReadPaths: string[] = [];
-  client.onRequest("fs/read_text_file", (params: { path?: string }) => {
+  client.onRequest("fs/read_text_file", (rawParams: unknown) => {
+    const params = rawParams as { path?: string };
     const p = params.path ?? "";
     fsReadPaths.push(p);
     log("fs/read_text_file requested path:", p);
@@ -175,7 +176,8 @@ async function main(): Promise<void> {
     }
   });
   client.onRequest("fs/write_text_file", () => ({}));
-  client.onRequest("session/request_permission", (params: PermissionRequest) => {
+  client.onRequest("session/request_permission", (rawParams: unknown) => {
+    const params = rawParams as PermissionRequest;
     const opts = params.options ?? [];
     const allow = opts.find((o) => /allow/i.test(o.optionId ?? o.kind ?? o.name ?? "")) ?? opts[0];
     log("permission requested -> approving", allow?.optionId ?? allow?.kind);
@@ -183,7 +185,8 @@ async function main(): Promise<void> {
   });
 
   const agentText: string[] = [];
-  client.on("session/update", (params: SessionUpdateParams) => {
+  client.on("session/update", (rawParams: unknown) => {
+    const params = rawParams as SessionUpdateParams;
     const u: SessionUpdate = params.update ?? params;
     const kind = u.sessionUpdate ?? u.kind;
     const text = extractUpdateText(u.content);

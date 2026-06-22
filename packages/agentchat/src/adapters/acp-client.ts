@@ -1,16 +1,100 @@
 import {
-  AcpSession,
-  AcpCreateSessionRequest,
-  AcpMessageRequest,
-  AcpEvent,
-  AcpTool,
-  AcpPermissionReply,
-  AcpPermissionResponse,
+  type AcpCreateSessionRequest,
+  type AcpEvent,
+  type AcpPermissionReply,
+  type AcpPermissionResponse,
+  type AcpTool,
 } from "./acp-types.js";
 
 export interface AcpClientOptions {
   baseUrl: string;
   signal?: AbortSignal;
+}
+
+interface AcpModelObj {
+  providerID?: string;
+  modelID: string;
+}
+
+interface AcpMessageWireRequest {
+  messageID: string;
+  model: AcpModelObj;
+  agent: string;
+  tools: Record<string, AcpTool>;
+  parts: { type: "text"; text: string }[];
+}
+
+interface AcpOpenSessionResponse {
+  id?: string;
+  sessionID?: string;
+  session?: string;
+  workspaceID?: string;
+  workspace?: string;
+}
+
+interface SendMessageOptions {
+  tools?: AcpTool[];
+  model?: string;
+  agent?: string;
+  directory?: string;
+  workspace?: string;
+}
+
+function buildModelObj(model: string | undefined): AcpModelObj {
+  if (typeof model === "string" && model.includes("/")) {
+    const slash = model.indexOf("/");
+    return { providerID: model.slice(0, slash), modelID: model.slice(slash + 1) };
+  }
+  return { modelID: model ?? "default" };
+}
+
+function buildToolsRecord(tools: AcpTool[] | undefined): Record<string, AcpTool> {
+  const out: Record<string, AcpTool> = {};
+  for (const t of tools ?? []) out[t.name] = t;
+  return out;
+}
+
+function buildMessageRequest(
+  content: string,
+  opts: SendMessageOptions | undefined,
+): AcpMessageWireRequest {
+  return {
+    messageID: "msg_" + crypto.randomUUID().replaceAll("-", ""),
+    model: buildModelObj(opts?.model),
+    // OpenCode rejects agent='default' with "Agent not found"; its built-in
+    // agents are build/explorer/etc. 'build' is the standard starting agent.
+    agent: opts?.agent ?? "build",
+    tools: buildToolsRecord(opts?.tools),
+    parts: [{ type: "text", text: content }],
+  };
+}
+
+function parseSseChunk(chunk: string): AcpEvent[] {
+  const events: AcpEvent[] = [];
+  for (const line of chunk.split("\n")) {
+    if (!line.startsWith("data:")) continue;
+    const data = line.slice(5).trim();
+    if (!data || data === "[DONE]") continue;
+    try {
+      events.push(JSON.parse(data) as AcpEvent);
+    } catch {
+      // Ignore parse errors for partial or malformed events
+    }
+  }
+  return events;
+}
+
+function drainSseBoundaries(buffer: string): { events: AcpEvent[]; remaining: string } {
+  const events: AcpEvent[] = [];
+  let cursor = 0;
+  for (;;) {
+    const boundary = buffer.indexOf("\n\n", cursor);
+    if (boundary === -1) break;
+    const chunk = buffer.slice(cursor, boundary);
+    cursor = boundary + 2;
+    for (const event of parseSseChunk(chunk)) events.push(event);
+  }
+  return { events, remaining: buffer.slice(cursor) };
 }
 
 /**
@@ -41,15 +125,9 @@ export class AcpClient {
     });
     if (!res.ok) {
       const errorText = await res.text().catch(() => "No error body");
-      throw new Error(`ACP openSession failed (HTTP ${res.status}): ${errorText}`);
+      throw new Error(`ACP openSession failed (HTTP ${String(res.status)}): ${errorText}`);
     }
-    const data = (await res.json()) as {
-      id?: string;
-      sessionID?: string;
-      session?: string;
-      workspaceID?: string;
-      workspace?: string;
-    };
+    const data = (await res.json()) as AcpOpenSessionResponse;
     const sessionId = data.sessionID ?? data.id ?? data.session;
     const workspaceId = data.workspaceID ?? data.workspace;
     if (!sessionId) {
@@ -68,7 +146,7 @@ export class AcpClient {
       signal: this.signal,
     });
     if (!res.ok && res.status !== 404) {
-      throw new Error(`ACP closeSession failed (HTTP ${res.status})`);
+      throw new Error(`ACP closeSession failed (HTTP ${String(res.status)})`);
     }
   }
 
@@ -79,13 +157,7 @@ export class AcpClient {
   async *sendMessage(
     sessionId: string,
     content: string,
-    opts?: {
-      tools?: AcpTool[];
-      model?: string;
-      agent?: string;
-      directory?: string;
-      workspace?: string;
-    },
+    opts?: SendMessageOptions,
   ): AsyncIterable<AcpEvent> {
     const directory = opts?.directory ?? ".";
     // OpenCode's /event endpoint validates `workspace` as a wrk_* prefixed
@@ -103,28 +175,7 @@ export class AcpClient {
     //    - model must be { providerID?, modelID } object, NOT a plain string
     //    - tools must be a record (object keyed by tool name), NOT an array
     //    Build the wire shape here so callers keep the convenient string form.
-    const modelOpt = opts?.model;
-    let modelObj: { providerID?: string; modelID: string };
-    if (typeof modelOpt === "object" && modelOpt !== null) {
-      modelObj = modelOpt as { providerID?: string; modelID: string };
-    } else if (typeof modelOpt === "string" && modelOpt.includes("/")) {
-      const slash = modelOpt.indexOf("/");
-      modelObj = { providerID: modelOpt.slice(0, slash), modelID: modelOpt.slice(slash + 1) };
-    } else {
-      modelObj = { modelID: modelOpt ?? "default" };
-    }
-    const toolsRecord: Record<string, AcpTool> = {};
-    for (const t of opts?.tools ?? []) toolsRecord[t.name] = t;
-
-    const messageRequest = {
-      messageID: "msg_" + crypto.randomUUID().replace(/-/g, ""),
-      model: modelObj,
-      // OpenCode rejects agent='default' with "Agent not found"; its built-in
-      // agents are build/explorer/etc. 'build' is the standard starting agent.
-      agent: opts?.agent ?? "build",
-      tools: toolsRecord,
-      parts: [{ type: "text", text: content }],
-    };
+    const messageRequest = buildMessageRequest(content, opts);
 
     const sendPromise = fetch(`${this.baseUrl}/session/${sessionId}/message`, {
       method: "POST",
@@ -134,13 +185,13 @@ export class AcpClient {
     }).then(async (res) => {
       if (!res.ok) {
         const errorText = await res.text().catch(() => "No error body");
-        throw new Error(`ACP sendMessage failed (HTTP ${res.status}): ${errorText}`);
+        throw new Error(`ACP sendMessage failed (HTTP ${String(res.status)}): ${errorText}`);
       }
     });
 
     let sendError: Error | undefined;
-    sendPromise.catch((err) => {
-      sendError = err;
+    sendPromise.catch((err: unknown) => {
+      sendError = err instanceof Error ? err : new Error(String(err));
     });
 
     // 3. Yield events until 'done' or error
@@ -180,40 +231,24 @@ export class AcpClient {
 
     if (!res.ok) {
       const errorText = await res.text().catch(() => "No error body");
-      throw new Error(`ACP subscribeEvents failed (HTTP ${res.status}): ${errorText}`);
+      throw new Error(`ACP subscribeEvents failed (HTTP ${String(res.status)}): ${errorText}`);
     }
     if (!res.body) {
       throw new Error("ACP subscribeEvents: response body is empty");
     }
 
-    const reader = res.body.getReader();
+    const reader = res.body.getReader() as ReadableStreamDefaultReader<Uint8Array>;
     const decoder = new TextDecoder();
     let buffer = "";
 
     try {
-      while (true) {
+      for (;;) {
         const { value, done } = await reader.read();
         if (done) break;
-
         buffer += decoder.decode(value, { stream: true });
-        let boundary: number;
-        while ((boundary = buffer.indexOf("\n\n")) !== -1) {
-          const chunk = buffer.slice(0, boundary);
-          buffer = buffer.slice(boundary + 2);
-
-          for (const line of chunk.split("\n")) {
-            if (line.startsWith("data:")) {
-              const data = line.slice(5).trim();
-              if (!data || data === "[DONE]") continue;
-              try {
-                const event = JSON.parse(data) as AcpEvent;
-                yield event;
-              } catch (err) {
-                // Ignore parse errors for partial or malformed events
-              }
-            }
-          }
-        }
+        const { events, remaining } = drainSseBoundaries(buffer);
+        buffer = remaining;
+        for (const event of events) yield event;
       }
     } finally {
       reader.releaseLock();
@@ -231,7 +266,7 @@ export class AcpClient {
       body: JSON.stringify(reply),
       signal: this.signal,
     });
-    if (!res.ok) throw new Error(`ACP replyPermission failed (HTTP ${res.status})`);
+    if (!res.ok) throw new Error(`ACP replyPermission failed (HTTP ${String(res.status)})`);
   }
 
   /**
@@ -249,6 +284,6 @@ export class AcpClient {
       body: JSON.stringify(response),
       signal: this.signal,
     });
-    if (!res.ok) throw new Error(`ACP respondPermission failed (HTTP ${res.status})`);
+    if (!res.ok) throw new Error(`ACP respondPermission failed (HTTP ${String(res.status)})`);
   }
 }

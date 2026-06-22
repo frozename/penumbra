@@ -27,6 +27,28 @@ export function detectStdioAcpClassifierDecline(input: {
   return detectClassifierDecline(input);
 }
 
+// File-local typed bridge for ACP handler registrations. StdioAcpClient.on /
+// onRequest accept the wire-shape `(params: unknown) => ...` so that test mocks
+// (which mirror that concrete signature) can be assigned via
+// `StdioAcpClient["on"|"onRequest"]`. Handlers in this module are written
+// against typed wire shapes (AcpFooParams) for readability; the helpers below
+// erase the typed param to `unknown` at the storage boundary while preserving
+// the param-type at the wrapping callsite for documentation. The phantom
+// `__params` marker uses T twice in each helper signature so no-unnecessary-
+// type-parameters does not flag the erasure.
+type TypedRequestFn<T> = ((params: unknown) => unknown) & {
+  readonly __params?: T;
+};
+type TypedNotifyFn<T> = ((params: unknown) => void) & { readonly __params?: T };
+
+function typedRequest<T>(fn: (params: T) => unknown): TypedRequestFn<T> {
+  return fn as unknown as TypedRequestFn<T>;
+}
+
+function typedNotify<T>(fn: (params: T) => void): TypedNotifyFn<T> {
+  return fn as unknown as TypedNotifyFn<T>;
+}
+
 const ERROR_CODE_MAP: Record<string, number> = {
   outside_worktree: -32001,
   not_a_file: -32002,
@@ -600,106 +622,121 @@ interface DispatchTurnContext {
 
 function registerFsHandlers(ctx: DispatchTurnContext, opts: StdioAcpOptions): void {
   if (opts.fsReadTextFile === true) {
-    ctx.client.onRequest("fs/read_text_file", async (params: AcpReadTextFileParams) => {
-      ctx.arm();
-      if (typeof params.path !== "string") throw new Error("fs/read_text_file: missing path");
-      try {
-        return await executeReadTextFile(
-          { path: params.path, line: params.line, limit: params.limit },
-          ctx.cwd,
-        );
-      } catch (err) {
-        if (err instanceof ReadTextFileError) {
-          // Format the error message so client-side string-matchers
-          // recognise file-not-found correctly. Gemini-cli's
-          // AcpFileSystemService.normalizeFileSystemError checks for
-          // 'ENOENT' / 'No such file' / 'Resource not found' / 'does not exist'.
-          if (err.code === "not_found") {
-            throw new Error(`ENOENT: No such file or directory: ${err.message}`);
-          }
-          throw new Error(`fs/read_text_file ${err.code}: ${err.message}`);
-        }
-        throw err;
-      } finally {
+    ctx.client.onRequest(
+      "fs/read_text_file",
+      typedRequest<AcpReadTextFileParams>(async (params) => {
         ctx.arm();
-      }
-    });
+        if (typeof params.path !== "string") throw new Error("fs/read_text_file: missing path");
+        try {
+          return await executeReadTextFile(
+            { path: params.path, line: params.line, limit: params.limit },
+            ctx.cwd,
+          );
+        } catch (err) {
+          if (err instanceof ReadTextFileError) {
+            // Format the error message so client-side string-matchers
+            // recognise file-not-found correctly. Gemini-cli's
+            // AcpFileSystemService.normalizeFileSystemError checks for
+            // 'ENOENT' / 'No such file' / 'Resource not found' / 'does not exist'.
+            if (err.code === "not_found") {
+              throw new Error(`ENOENT: No such file or directory: ${err.message}`);
+            }
+            throw new Error(`fs/read_text_file ${err.code}: ${err.message}`);
+          }
+          throw err;
+        } finally {
+          ctx.arm();
+        }
+      }),
+    );
   }
   if (opts.fsWriteTextFile === true) {
-    ctx.client.onRequest("fs/write_text_file", async (params: AcpWriteTextFileParams) => {
-      ctx.arm();
-      if (!ctx.input.executor) throw new Error("fs/write_text_file: no executor in dispatch input");
-      if (typeof params.path !== "string") throw new Error("fs/write_text_file: missing path");
-      try {
-        await ctx.input.executor.writeTextFile(
-          { path: params.path, content: params.content },
-          {
-            toolName: "fs.write_text_file",
-            rawInput: {
-              path: params.path,
-              content_bytes:
-                typeof params.content === "string" ? Buffer.byteLength(params.content, "utf8") : 0,
-            },
-            dispatchId: ctx.input.handoff_id ?? "unknown",
-          },
-        );
-        return {};
-      } catch (err) {
-        throw mapWriteToolsError(err);
-      } finally {
+    ctx.client.onRequest(
+      "fs/write_text_file",
+      typedRequest<AcpWriteTextFileParams>(async (params) => {
         ctx.arm();
-      }
-    });
+        if (!ctx.input.executor)
+          throw new Error("fs/write_text_file: no executor in dispatch input");
+        if (typeof params.path !== "string") throw new Error("fs/write_text_file: missing path");
+        try {
+          await ctx.input.executor.writeTextFile(
+            { path: params.path, content: params.content },
+            {
+              toolName: "fs.write_text_file",
+              rawInput: {
+                path: params.path,
+                content_bytes:
+                  typeof params.content === "string"
+                    ? Buffer.byteLength(params.content, "utf8")
+                    : 0,
+              },
+              dispatchId: ctx.input.handoff_id ?? "unknown",
+            },
+          );
+          return {};
+        } catch (err) {
+          throw mapWriteToolsError(err);
+        } finally {
+          ctx.arm();
+        }
+      }),
+    );
   }
 }
 
 function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOptions): void {
   if (opts.terminal !== true) return;
   const { client, input, arm } = ctx;
-  client.onRequest("terminal/create", async (params: AcpTerminalCreateParams) => {
-    arm();
-    if (!input.executor) throw new Error("terminal/create: no executor");
-    try {
-      return await input.executor.terminalCreate(
-        {
-          command: params.command,
-          argv: params.args,
-          cwd: params.cwd,
-          output_byte_limit: params.output_byte_limit,
-        },
-        {
-          toolName: "terminal.create",
-          rawInput: {
-            argv: params.args ?? null,
-            cmd: params.command ?? null,
-            cwd: params.cwd ?? ".",
-          },
-          dispatchId: input.handoff_id ?? "unknown",
-        },
-      );
-    } catch (err) {
-      throw mapWriteToolsError(err);
-    } finally {
+  client.onRequest(
+    "terminal/create",
+    typedRequest<AcpTerminalCreateParams>(async (params) => {
       arm();
-    }
-  });
-  type TerminalExecutor = NonNullable<DispatchInput["executor"]>;
-  const wrapTerminalCommand = (
-    method: string,
-    fn: (executor: TerminalExecutor, terminalId: string) => Promise<unknown>,
-  ): void => {
-    client.onRequest(method, async (params: AcpTerminalIdParams) => {
-      arm();
-      const executor = input.executor;
-      if (!executor) throw new Error(`${method}: no executor`);
+      if (!input.executor) throw new Error("terminal/create: no executor");
       try {
-        return await fn(executor, params.terminal_id ?? "");
+        return await input.executor.terminalCreate(
+          {
+            command: params.command,
+            argv: params.args,
+            cwd: params.cwd,
+            output_byte_limit: params.output_byte_limit,
+          },
+          {
+            toolName: "terminal.create",
+            rawInput: {
+              argv: params.args ?? null,
+              cmd: params.command ?? null,
+              cwd: params.cwd ?? ".",
+            },
+            dispatchId: input.handoff_id ?? "unknown",
+          },
+        );
       } catch (err) {
         throw mapWriteToolsError(err);
       } finally {
         arm();
       }
-    });
+    }),
+  );
+  type TerminalExecutor = NonNullable<DispatchInput["executor"]>;
+  const wrapTerminalCommand = (
+    method: string,
+    fn: (executor: TerminalExecutor, terminalId: string) => Promise<unknown>,
+  ): void => {
+    client.onRequest(
+      method,
+      typedRequest<AcpTerminalIdParams>(async (params) => {
+        arm();
+        const executor = input.executor;
+        if (!executor) throw new Error(`${method}: no executor`);
+        try {
+          return await fn(executor, params.terminal_id ?? "");
+        } catch (err) {
+          throw mapWriteToolsError(err);
+        } finally {
+          arm();
+        }
+      }),
+    );
   };
   wrapTerminalCommand(
     "terminal/output",
@@ -793,14 +830,17 @@ async function handlePermissionRequest(
 
 function registerPermissionHandler(ctx: DispatchTurnContext, opts: StdioAcpOptions): void {
   if (!supportsClientCapability(opts)) return;
-  ctx.client.onRequest("session/request_permission", async (params: AcpRequestPermissionParams) => {
-    ctx.arm();
-    try {
-      return await handlePermissionRequest(ctx, params);
-    } finally {
+  ctx.client.onRequest(
+    "session/request_permission",
+    typedRequest<AcpRequestPermissionParams>(async (params) => {
       ctx.arm();
-    }
-  });
+      try {
+        return await handlePermissionRequest(ctx, params);
+      } finally {
+        ctx.arm();
+      }
+    }),
+  );
 }
 
 function resolveToolName(update: AcpSessionUpdate, toolNames: Map<string, string>): string | null {
@@ -1512,7 +1552,10 @@ export class StdioAcpAdapter implements Adapter {
       });
 
       const lifecycleHandles = setupServerLifecycleHandles(server, state, turnCtx);
-      client.on("session/update", buildSessionUpdateHandler(turnCtx, state, armPromptTimeout));
+      const sessionUpdateHandler = typedNotify<AcpSessionUpdateParams>(
+        buildSessionUpdateHandler(turnCtx, state, armPromptTimeout),
+      );
+      client.on("session/update", sessionUpdateHandler);
 
       if (!acquired.reusedSession && this.opts.modelWarmupPrompt !== undefined) {
         const warmupResult = { warmupTimedOutRef: { current: false } };

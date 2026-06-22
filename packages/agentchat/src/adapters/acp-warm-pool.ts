@@ -75,129 +75,55 @@ export function acpSpecHash(o: {
   });
 }
 
-export function createAcpWarmPool(
-  deps: {
-    now?: () => number;
-    graceMs?: number;
-    maxAgeMs?: number;
-    maxEntries?: number;
-    maxEntriesPerKey?: number;
-    canAddEntry?: () => boolean;
-  } = {},
-): AcpWarmPool {
-  const now = deps.now ?? Date.now;
-  const graceMs = deps.graceMs ?? 5 * 60_000;
-  const maxAgeMs = deps.maxAgeMs ?? 30 * 60_000;
-  const maxEntries = deps.maxEntries ?? 3;
-  const maxEntriesPerKey = deps.maxEntriesPerKey ?? 1;
-  const entries = new Map<string, AcpWarmPoolEntry[]>();
-  let closed = false;
-  const sweepTimer = setInterval(() => {
-    sweep();
-  }, 60_000);
-  sweepTimer.unref?.();
+export interface AcpWarmPoolDeps {
+  now?: () => number;
+  graceMs?: number;
+  maxAgeMs?: number;
+  maxEntries?: number;
+  maxEntriesPerKey?: number;
+  canAddEntry?: () => boolean;
+}
 
-  function isRunning(entry: AcpWarmPoolEntry): boolean {
-    const handle = entry.handle as StdioAcpHandle & {
-      exitCode?: number | null;
-      signalCode?: NodeJS.Signals | null;
-    };
-    return (
-      !entry.tornDown &&
-      handle.exitCode == null &&
-      handle.signalCode == null &&
-      Boolean(handle.stdin?.writable)
-    );
+interface KeyedEntry {
+  key: string;
+  entry: AcpWarmPoolEntry;
+}
+
+class AcpWarmPoolImpl implements AcpWarmPool {
+  private readonly now: () => number;
+  private readonly graceMs: number;
+  private readonly maxAgeMs: number;
+  private readonly maxEntries: number;
+  private readonly maxEntriesPerKey: number;
+  private readonly canAddEntry?: () => boolean;
+  private readonly entries = new Map<string, AcpWarmPoolEntry[]>();
+  private readonly sweepTimer: NodeJS.Timeout;
+  private closed = false;
+
+  constructor(deps: AcpWarmPoolDeps) {
+    this.now = deps.now ?? Date.now;
+    this.graceMs = deps.graceMs ?? 5 * 60_000;
+    this.maxAgeMs = deps.maxAgeMs ?? 30 * 60_000;
+    this.maxEntries = deps.maxEntries ?? 3;
+    this.maxEntriesPerKey = deps.maxEntriesPerKey ?? 1;
+    this.canAddEntry = deps.canAddEntry;
+    this.sweepTimer = setInterval(() => {
+      this.sweep();
+    }, 60_000);
+    this.sweepTimer.unref();
   }
 
-  function removeEntry(key: string, entry: AcpWarmPoolEntry): void {
-    const list = entries.get(key);
-    if (!list) return;
-    const next = list.filter((candidate) => candidate !== entry);
-    if (next.length === 0) entries.delete(key);
-    else entries.set(key, next);
-  }
-
-  function teardown(key: string, entry: AcpWarmPoolEntry): void {
-    removeEntry(key, entry);
-    if (entry.tornDown) return;
-    entry.tornDown = true;
-    try {
-      entry.handle.kill();
-    } catch {
-      /* ignore */
-    }
-  }
-
-  function idleEntriesFor(key: string): AcpWarmPoolEntry[] {
-    return (entries.get(key) ?? []).filter((entry) => entry.refs.size === 0);
-  }
-
-  function allIdleEntries(): Array<{ key: string; entry: AcpWarmPoolEntry }> {
-    const out: Array<{ key: string; entry: AcpWarmPoolEntry }> = [];
-    for (const [key, list] of entries) {
-      for (const entry of list) {
-        if (entry.refs.size === 0) out.push({ key, entry });
-      }
-    }
-    return out;
-  }
-
-  function oldestIdle(
-    candidates: Array<{ key: string; entry: AcpWarmPoolEntry }>,
-  ): { key: string; entry: AcpWarmPoolEntry } | undefined {
-    return candidates.sort(
-      (a, b) =>
-        (a.entry.lastReleaseAt ?? a.entry.spawnedAt) - (b.entry.lastReleaseAt ?? b.entry.spawnedAt),
-    )[0];
-  }
-
-  function totalEntries(): number {
-    let total = 0;
-    for (const list of entries.values()) total += list.length;
-    return total;
-  }
-
-  function rejectDeposit(entry: AcpWarmPoolDeposit): null {
-    try {
-      entry.handle.kill();
-    } catch {
-      /* ignore */
-    }
-    return null;
-  }
-
-  function sweep(): void {
-    if (closed) return;
-    const threshold = now() - graceMs;
-    for (const [key, list] of [...entries]) {
-      for (const entry of [...list]) {
-        if (!isRunning(entry)) {
-          teardown(key, entry);
-          continue;
-        }
-        if (entry.refs.size !== 0) continue;
-        if (entry.pinned) {
-          // Pre-warmed connections are kept warm deliberately: skip the
-          // idle-grace teardown, but reap once past max-age so a stale pinned
-          // entry can't outlive its spec (the pre-warm loop re-warms a fresh one).
-          if (now() - entry.spawnedAt > maxAgeMs) teardown(key, entry);
-          continue;
-        }
-        if (entry.lastReleaseAt !== undefined && entry.lastReleaseAt <= threshold) {
-          teardown(key, entry);
-        }
-      }
-    }
-  }
-
-  function acquire(holderId: string, key: string, specHash: string): AcpWarmPoolEntry | null {
-    if (closed) return null;
-    const list = entries.get(key) ?? [];
+  acquire(holderId: string, key: string, specHash: string): AcpWarmPoolEntry | null {
+    if (this.closed) return null;
+    const list = this.entries.get(key) ?? [];
     for (const entry of [...list]) {
       if (entry.refs.size > 0) continue;
-      if (!isRunning(entry) || now() - entry.spawnedAt > maxAgeMs || entry.specHash !== specHash) {
-        teardown(key, entry);
+      if (
+        !this.isRunning(entry) ||
+        this.now() - entry.spawnedAt > this.maxAgeMs ||
+        entry.specHash !== specHash
+      ) {
+        this.teardown(key, entry);
         continue;
       }
       entry.refs.add(holderId);
@@ -207,115 +133,213 @@ export function createAcpWarmPool(
     return null;
   }
 
-  function deposit(key: string, depositEntry: AcpWarmPoolDeposit): AcpWarmPoolEntry | null {
-    if (closed) {
+  deposit(key: string, depositEntry: AcpWarmPoolDeposit): AcpWarmPoolEntry | null {
+    if (this.closed) {
       return rejectDeposit(depositEntry);
     }
-    const list = entries.get(key) ?? [];
-    if (list.length >= maxEntriesPerKey) {
-      const oldest = oldestIdle(idleEntriesFor(key).map((entry) => ({ key, entry })));
-      if (!oldest) return rejectDeposit(depositEntry);
-      teardown(oldest.key, oldest.entry);
-    }
-    if (totalEntries() >= maxEntries) {
-      const oldest = oldestIdle(allIdleEntries());
-      if (!oldest) return rejectDeposit(depositEntry);
-      teardown(oldest.key, oldest.entry);
-    }
-    if (deps.canAddEntry && !deps.canAddEntry()) return rejectDeposit(depositEntry);
+    if (!this.makeRoomForKey(key)) return rejectDeposit(depositEntry);
+    if (!this.makeRoomTotal()) return rejectDeposit(depositEntry);
+    if (this.canAddEntry && !this.canAddEntry()) return rejectDeposit(depositEntry);
+
     const entry: AcpWarmPoolEntry = {
       ...depositEntry,
       refs: new Set(),
-      spawnedAt: now(),
-      lastReleaseAt: now(),
+      spawnedAt: this.now(),
+      lastReleaseAt: this.now(),
     };
-    const updated = entries.get(key) ?? [];
+    const updated = this.entries.get(key) ?? [];
     updated.push(entry);
-    entries.set(key, updated);
-    entry.handle.exited.then((code) => {
-      if (code !== 0 && entry.refs.size === 0) teardown(key, entry);
+    this.entries.set(key, updated);
+    void entry.handle.exited.then((code) => {
+      if (code !== 0 && entry.refs.size === 0) this.teardown(key, entry);
     });
     return entry;
   }
 
-  function release(holderId: string, key: string): void {
-    const list = entries.get(key) ?? [];
+  release(holderId: string, key: string): void {
+    const list = this.entries.get(key) ?? [];
     for (const entry of list) {
       if (!entry.refs.delete(holderId)) continue;
-      if (entry.refs.size === 0) entry.lastReleaseAt = now();
+      if (entry.refs.size === 0) entry.lastReleaseAt = this.now();
       return;
     }
   }
 
-  function evict(key: string, entry?: AcpWarmPoolEntry): void {
+  evict(key: string, entry?: AcpWarmPoolEntry): void {
     if (entry) {
-      teardown(key, entry);
+      this.teardown(key, entry);
       return;
     }
-    for (const candidate of [...(entries.get(key) ?? [])]) {
-      teardown(key, candidate);
+    for (const candidate of [...(this.entries.get(key) ?? [])]) {
+      this.teardown(key, candidate);
     }
   }
 
-  function shutdown(): void {
-    if (closed) return;
-    closed = true;
-    clearInterval(sweepTimer);
-    for (const [key, list] of [...entries]) {
-      for (const entry of [...list]) teardown(key, entry);
+  shutdown(): void {
+    if (this.closed) return;
+    this.closed = true;
+    clearInterval(this.sweepTimer);
+    for (const [key, list] of [...this.entries]) {
+      for (const entry of [...list]) this.teardown(key, entry);
     }
-    entries.clear();
+    this.entries.clear();
   }
 
-  function size(): number {
-    return totalEntries();
+  size(): number {
+    return this.totalEntries();
   }
 
-  function has(key: string): boolean {
-    return (entries.get(key) ?? []).some((entry) => isRunning(entry));
+  has(key: string): boolean {
+    return (this.entries.get(key) ?? []).some((entry) => this.isRunning(entry));
   }
 
-  function liveEntryCount(key: string): number {
-    return (entries.get(key) ?? []).filter((entry) => isRunning(entry)).length;
+  liveEntryCount(key: string): number {
+    return (this.entries.get(key) ?? []).filter((entry) => this.isRunning(entry)).length;
   }
 
   // Diagnostic mirror of acquire()'s match logic — read-only, no teardown — so a
   // cold dispatch can record WHY it missed before acquire() prunes the evidence.
-  function peekMissReason(key: string, specHash: string): string {
-    const list = entries.get(key) ?? [];
+  peekMissReason(key: string, specHash: string): string {
+    const list = this.entries.get(key) ?? [];
     if (list.length === 0) return "no_entry";
     const reasons: string[] = [];
     for (const entry of list) {
-      if (entry.refs.size > 0) {
-        reasons.push("in_use");
-      } else if (!isRunning(entry)) {
-        reasons.push("not_running");
-      } else if (now() - entry.spawnedAt > maxAgeMs) {
-        reasons.push("aged");
-      } else if (entry.specHash !== specHash) {
-        reasons.push("spec_mismatch");
-      } else {
-        return "would_hit";
-      }
+      const reason = this.classifyMiss(entry, specHash);
+      if (reason === "would_hit") return "would_hit";
+      reasons.push(reason);
     }
     return reasons[0] ?? "unknown";
   }
 
-  function debugKeys(): string[] {
-    return [...entries.keys()];
+  debugKeys(): string[] {
+    return [...this.entries.keys()];
   }
 
-  return {
-    acquire,
-    deposit,
-    release,
-    evict,
-    shutdown,
-    size,
-    has,
-    liveEntryCount,
-    peekMissReason,
-    debugKeys,
-    _sweep: sweep,
-  };
+  _sweep(): void {
+    this.sweep();
+  }
+
+  private classifyMiss(entry: AcpWarmPoolEntry, specHash: string): string {
+    if (entry.refs.size > 0) return "in_use";
+    if (!this.isRunning(entry)) return "not_running";
+    if (this.now() - entry.spawnedAt > this.maxAgeMs) return "aged";
+    if (entry.specHash !== specHash) return "spec_mismatch";
+    return "would_hit";
+  }
+
+  private isRunning(entry: AcpWarmPoolEntry): boolean {
+    const handle = entry.handle as StdioAcpHandle & {
+      exitCode?: number | null;
+      signalCode?: NodeJS.Signals | null;
+    };
+    return (
+      !entry.tornDown &&
+      (handle.exitCode === null || handle.exitCode === undefined) &&
+      (handle.signalCode === null || handle.signalCode === undefined) &&
+      handle.stdin.writable
+    );
+  }
+
+  private removeEntry(key: string, entry: AcpWarmPoolEntry): void {
+    const list = this.entries.get(key);
+    if (!list) return;
+    const next = list.filter((candidate) => candidate !== entry);
+    if (next.length === 0) this.entries.delete(key);
+    else this.entries.set(key, next);
+  }
+
+  private teardown(key: string, entry: AcpWarmPoolEntry): void {
+    this.removeEntry(key, entry);
+    if (entry.tornDown) return;
+    entry.tornDown = true;
+    try {
+      entry.handle.kill();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private idleEntriesFor(key: string): AcpWarmPoolEntry[] {
+    return (this.entries.get(key) ?? []).filter((entry) => entry.refs.size === 0);
+  }
+
+  private allIdleEntries(): KeyedEntry[] {
+    const out: KeyedEntry[] = [];
+    for (const [key, list] of this.entries) {
+      for (const entry of list) {
+        if (entry.refs.size === 0) out.push({ key, entry });
+      }
+    }
+    return out;
+  }
+
+  private totalEntries(): number {
+    let total = 0;
+    for (const list of this.entries.values()) total += list.length;
+    return total;
+  }
+
+  private makeRoomForKey(key: string): boolean {
+    const list = this.entries.get(key) ?? [];
+    if (list.length < this.maxEntriesPerKey) return true;
+    const candidates = this.idleEntriesFor(key).map((entry): KeyedEntry => ({ key, entry }));
+    const oldest = oldestIdle(candidates);
+    if (!oldest) return false;
+    this.teardown(oldest.key, oldest.entry);
+    return true;
+  }
+
+  private makeRoomTotal(): boolean {
+    if (this.totalEntries() < this.maxEntries) return true;
+    const oldest = oldestIdle(this.allIdleEntries());
+    if (!oldest) return false;
+    this.teardown(oldest.key, oldest.entry);
+    return true;
+  }
+
+  private sweep(): void {
+    if (this.closed) return;
+    const threshold = this.now() - this.graceMs;
+    for (const [key, list] of [...this.entries]) {
+      for (const entry of [...list]) this.sweepEntry(key, entry, threshold);
+    }
+  }
+
+  private sweepEntry(key: string, entry: AcpWarmPoolEntry, threshold: number): void {
+    if (!this.isRunning(entry)) {
+      this.teardown(key, entry);
+      return;
+    }
+    if (entry.refs.size !== 0) return;
+    if (entry.pinned) {
+      // Pre-warmed connections are kept warm deliberately: skip the
+      // idle-grace teardown, but reap once past max-age so a stale pinned
+      // entry can't outlive its spec (the pre-warm loop re-warms a fresh one).
+      if (this.now() - entry.spawnedAt > this.maxAgeMs) this.teardown(key, entry);
+      return;
+    }
+    if (entry.lastReleaseAt !== undefined && entry.lastReleaseAt <= threshold) {
+      this.teardown(key, entry);
+    }
+  }
+}
+
+function oldestIdle(candidates: KeyedEntry[]): KeyedEntry | undefined {
+  return candidates.sort(
+    (a, b) =>
+      (a.entry.lastReleaseAt ?? a.entry.spawnedAt) - (b.entry.lastReleaseAt ?? b.entry.spawnedAt),
+  )[0];
+}
+
+function rejectDeposit(entry: AcpWarmPoolDeposit): null {
+  try {
+    entry.handle.kill();
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+export function createAcpWarmPool(deps: AcpWarmPoolDeps = {}): AcpWarmPool {
+  return new AcpWarmPoolImpl(deps);
 }

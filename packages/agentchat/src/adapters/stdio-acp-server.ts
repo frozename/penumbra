@@ -1,5 +1,6 @@
-import { spawn } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
+
+import { spawn } from "node:child_process";
 
 export interface StartStdioAcpServerOptions {
   binary: string;
@@ -26,9 +27,7 @@ export interface StdioAcpHandle {
   getStderrTail: () => string;
 }
 
-export async function startStdioAcpServer(
-  opts: StartStdioAcpServerOptions,
-): Promise<StdioAcpHandle> {
+export function startStdioAcpServer(opts: StartStdioAcpServerOptions): Promise<StdioAcpHandle> {
   const {
     binary,
     args = [],
@@ -52,7 +51,7 @@ export async function startStdioAcpServer(
 
   const tailChunks: Buffer[] = [];
   let tailBytes = 0;
-  child.stderr?.on("data", (chunk: Buffer) => {
+  child.stderr.on("data", (chunk: Buffer) => {
     try {
       process.stderr.write(chunk);
     } catch {
@@ -61,7 +60,7 @@ export async function startStdioAcpServer(
     tailChunks.push(chunk);
     tailBytes += chunk.length;
     while (tailBytes > stderrTailBytes && tailChunks.length > 0) {
-      const head = tailChunks[0]!;
+      const head = tailChunks[0] ?? Buffer.alloc(0);
       const overflow = tailBytes - stderrTailBytes;
       if (head.length <= overflow) {
         tailChunks.shift();
@@ -74,24 +73,28 @@ export async function startStdioAcpServer(
   });
 
   const exited = new Promise<number | null>((resolve) => {
-    child.on("exit", (code) => resolve(code));
-    child.on("error", () => resolve(null));
+    child.on("exit", (code) => {
+      resolve(code);
+    });
+    child.on("error", () => {
+      resolve(null);
+    });
   });
 
-  const signalProcess = (signal: NodeJS.Signals) => {
+  const signalProcess = (sig: NodeJS.Signals): void => {
     if (!child.pid) return;
     try {
       if (process.platform !== "win32") {
-        process.kill(-child.pid, signal);
+        process.kill(-child.pid, sig);
       } else {
-        child.kill(signal);
+        child.kill(sig);
       }
     } catch {
       // Process may already be gone.
     }
   };
 
-  const kill = () => {
+  const kill = (): void => {
     signalProcess("SIGTERM");
     const timer = setTimeout(() => {
       signalProcess("SIGKILL");
@@ -100,15 +103,23 @@ export async function startStdioAcpServer(
   };
 
   if (signal) {
-    signal.addEventListener("abort", () => kill(), { once: true });
+    signal.addEventListener(
+      "abort",
+      () => {
+        kill();
+      },
+      { once: true },
+    );
   }
 
-  return {
-    stdin: child.stdin!,
-    stdout: child.stdout!,
+  const stdin: Writable = child.stdin;
+  const stdout: Readable = child.stdout;
+  return Promise.resolve({
+    stdin,
+    stdout,
     kill,
     exited,
     pid: child.pid,
     getStderrTail: () => Buffer.concat(tailChunks).toString("utf8"),
-  };
+  });
 }
