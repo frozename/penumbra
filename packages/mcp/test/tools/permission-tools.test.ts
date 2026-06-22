@@ -1,44 +1,68 @@
 import { describe, expect, test } from "bun:test";
+
+import type { DaemonClient } from "../../src/daemon-client.js";
+
 import { DaemonHttpError } from "../../src/daemon-client.js";
+import { permissionApproveHandler } from "../../src/tools/permission-approve.js";
+import { permissionGetHandler } from "../../src/tools/permission-get.js";
 import {
   permissionListPendingHandler,
   PermissionListPendingInputShape,
 } from "../../src/tools/permission-list-pending.js";
-import { permissionGetHandler, PermissionGetInputShape } from "../../src/tools/permission-get.js";
-import {
-  permissionApproveHandler,
-  PermissionApproveInputShape,
-} from "../../src/tools/permission-approve.js";
+import { fakeDaemon } from "../helpers.js";
 
-function makeFakeDaemon() {
-  return {
-    listPermissions: async (opts: any) => ({
-      permissions: [
-        {
-          permission_id: "p-1",
-          status: "pending",
-          tool_name: "t",
-          conversation_id: opts.conversation_id ?? "c",
-        },
-      ],
-    }),
-    getPermission: async (id: string) => ({
+type ListPermissionsFn = DaemonClient["listPermissions"];
+type GetPermissionFn = DaemonClient["getPermission"];
+type ApprovePermissionFn = DaemonClient["approvePermission"];
+
+interface FakeDaemonHandles {
+  listPermissions: ListPermissionsFn;
+  getPermission: GetPermissionFn;
+  approvePermission: ApprovePermissionFn;
+}
+
+function makeFakeDaemon(overrides: Partial<FakeDaemonHandles> = {}): DaemonClient {
+  const listPermissions: ListPermissionsFn = (opts) =>
+    Promise.resolve({
+      permissions: [{ permission_id: "p-1", requested_at: "t", ...(opts ?? {}) }] as {
+        permission_id: string;
+        requested_at: string;
+      }[],
+    });
+  const getPermission: GetPermissionFn = (id) =>
+    Promise.resolve({
       permission: { permission_id: id, status: "pending", tool_name: "t" },
-    }),
-    approvePermission: async (id: string, body: any) => ({
+    });
+  const approvePermission: ApprovePermissionFn = (id, body) =>
+    Promise.resolve({
       permission_id: id,
       status: body.decision === "approve" ? "approved" : "rejected",
-      decided_at: "t",
-    }),
-  } as any;
+    });
+  return fakeDaemon({
+    listPermissions: overrides.listPermissions ?? listPermissions,
+    getPermission: overrides.getPermission ?? getPermission,
+    approvePermission: overrides.approvePermission ?? approvePermission,
+  });
+}
+
+function firstBlockText(content: { type: string; text: string }[]): string {
+  const block = content[0];
+  if (block === undefined) throw new Error("expected content[0]");
+  return block.text;
+}
+
+interface PermissionGetBody {
+  permission?: { permission_id: string };
+  error?: { code: string; message?: string; hint?: string };
 }
 
 describe("permission-list-pending tool", () => {
   test("forwards conversation_id filter to daemon and returns rows", async () => {
     const handler = permissionListPendingHandler(makeFakeDaemon());
     const out = await handler({ conversation_id: "conv-123" });
-    expect(out.content[0].text).toMatch(/^[◌◐●◑] permission_list_pending  /);
-    expect(out.content[0].text).toContain('"conversation_id": "conv-123"');
+    const text = firstBlockText(out.content);
+    expect(text).toMatch(/^[◌◐●◑] permission_list_pending {2}/);
+    expect(text).toContain('"conversation_id": "conv-123"');
   });
   test("input shape declares optional fields", () => {
     expect(PermissionListPendingInputShape).toBeDefined();
@@ -49,22 +73,19 @@ describe("permission-get tool", () => {
   test("returns the row", async () => {
     const handler = permissionGetHandler(makeFakeDaemon());
     const out = await handler({ permission_id: "p-1" });
-    const body = JSON.parse((out.content[0] as any).text);
-    expect(body.permission.permission_id).toBe("p-1");
+    const body = JSON.parse(firstBlockText(out.content)) as PermissionGetBody;
+    expect(body.permission?.permission_id).toBe("p-1");
   });
   test("returns 404-shaped body when daemon throws not_found", async () => {
-    const fake = makeFakeDaemon();
-    fake.getPermission = async () => {
-      throw new DaemonHttpError("daemon /permissions/nope: HTTP 404", 404);
-    };
-    const handler = permissionGetHandler(fake);
+    const getPermission: GetPermissionFn = () =>
+      Promise.reject(new DaemonHttpError("daemon /permissions/nope: HTTP 404", 404));
+    const handler = permissionGetHandler(makeFakeDaemon({ getPermission }));
     const out = await handler({ permission_id: "nope" });
-    const body = JSON.parse((out.content[0] as any).text);
+    const body = JSON.parse(firstBlockText(out.content)) as PermissionGetBody;
     expect(body.error?.code).toBe("not_found");
   });
 
   test("passes through structured error body from daemon (preserves richer 404 info)", async () => {
-    const fake = makeFakeDaemon();
     const richBody = {
       error: {
         code: "not_found",
@@ -72,12 +93,11 @@ describe("permission-get tool", () => {
         hint: "check spelling",
       },
     };
-    fake.getPermission = async () => {
-      throw new DaemonHttpError("daemon: HTTP 404", 404, richBody);
-    };
-    const handler = permissionGetHandler(fake);
+    const getPermission: GetPermissionFn = () =>
+      Promise.reject(new DaemonHttpError("daemon: HTTP 404", 404, richBody));
+    const handler = permissionGetHandler(makeFakeDaemon({ getPermission }));
     const out = await handler({ permission_id: "perm-x" });
-    const body = JSON.parse((out.content[0] as any).text);
+    const body = JSON.parse(firstBlockText(out.content)) as PermissionGetBody;
     expect(body.error?.hint).toBe("check spelling");
   });
 });
@@ -90,8 +110,9 @@ describe("permission-approve tool", () => {
       decision: "approve",
       remember: "this_dispatch",
     });
-    expect(out.content[0].text).toMatch(/^[◌◐●◑] permission  /);
-    expect(out.content[0].text).toContain('"status": "approved"');
+    const text = firstBlockText(out.content);
+    expect(text).toMatch(/^[◌◐●◑] permission {2}/);
+    expect(text).toContain('"status": "approved"');
   });
   test("reject passes through", async () => {
     const handler = permissionApproveHandler(makeFakeDaemon());
@@ -100,7 +121,8 @@ describe("permission-approve tool", () => {
       decision: "reject",
       reason: "no third-party calls",
     });
-    expect(out.content[0].text).toMatch(/^[◌◐●◑] permission  /);
-    expect(out.content[0].text).toContain('"status": "rejected"');
+    const text = firstBlockText(out.content);
+    expect(text).toMatch(/^[◌◐●◑] permission {2}/);
+    expect(text).toContain('"status": "rejected"');
   });
 });

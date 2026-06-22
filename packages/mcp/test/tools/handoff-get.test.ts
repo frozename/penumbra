@@ -1,14 +1,22 @@
-import { expect, test, mock } from "bun:test";
+import { expect, test } from "bun:test";
+import { z } from "zod";
+
+import type { DaemonClient, HandoffShape } from "../../src/daemon-client.js";
+
 import { DaemonHttpError } from "../../src/daemon-client.js";
 import { handoffGetHandler, HandoffGetInputShape } from "../../src/tools/handoff-get.js";
+import { fakeDaemon } from "../helpers.js";
+
+type GetHandoffFn = DaemonClient["getHandoff"];
 
 test("HandoffGetInputShape requires handoff_id", () => {
-  expect(() => (HandoffGetInputShape as any).handoff_id.parse(undefined)).toThrow();
-  expect((HandoffGetInputShape as any).handoff_id.parse("h1")).toBe("h1");
+  const schema = z.object(HandoffGetInputShape);
+  expect(() => schema.parse({})).toThrow();
+  expect(schema.parse({ handoff_id: "h1" }).handoff_id).toBe("h1");
 });
 
 test("handoffGetHandler calls daemon.getHandoff and formats output", async () => {
-  const handoffFixture = {
+  const handoffFixture: HandoffShape = {
     handoff_id: "h1",
     status: "completed",
     error_message: null,
@@ -20,34 +28,34 @@ test("handoffGetHandler calls daemon.getHandoff and formats output", async () =>
     from_agent: "user",
     to_agent: "agent",
   };
-  const daemon = {
-    getHandoff: async (handoff_id: string) => {
-      expect(handoff_id).toBe("h1");
-      return { handoff: handoffFixture };
-    },
-  } as any;
-  const handler = handoffGetHandler(daemon);
+  const getHandoff: GetHandoffFn = (handoff_id) => {
+    expect(handoff_id).toBe("h1");
+    return Promise.resolve({ handoff: handoffFixture });
+  };
+  const handler = handoffGetHandler(fakeDaemon({ getHandoff }));
   const res = await handler({ handoff_id: "h1" });
-  expect(res.content[0].type).toBe("text");
-  expect(res.content[0].text).toMatch(/^[◌◐●◑] handoff  /);
-  expect(res.content[0].text).toContain('"handoff_id": "h1"');
+  const block = res.content[0];
+  if (block === undefined) throw new Error("expected content[0]");
+  expect(block.type).toBe("text");
+  expect(block.text).toMatch(/^[◌◐●◑] handoff {2}/);
+  expect(block.text).toContain('"handoff_id": "h1"');
 });
 
 test("handoffGetHandler maps daemon 404s to a structured not_found payload", async () => {
   const err = new DaemonHttpError("daemon /handoffs/missing: HTTP 404", 404, {
     error: { code: "not_found", message: "handoff missing not found" },
   });
-  const daemon = {
-    getHandoff: mock().mockRejectedValue(err),
-  } as any;
-  const handler = handoffGetHandler(daemon);
+  const getHandoff: GetHandoffFn = () => Promise.reject(err);
+  const handler = handoffGetHandler(fakeDaemon({ getHandoff }));
   const res = await handler({ handoff_id: "missing" });
-  expect(res.content[0].text).toMatch(/^◑ handoff  /);
-  expect(res.content[0].text).toContain('"code": "not_found"');
+  const block = res.content[0];
+  if (block === undefined) throw new Error("expected content[0]");
+  expect(block.text).toMatch(/^◑ handoff {2}/);
+  expect(block.text).toContain('"code": "not_found"');
 });
 
 test("handoffGetHandler surfaces error_message for failed handoffs", async () => {
-  const handoffFixture = {
+  const handoffFixture: HandoffShape = {
     handoff_id: "h2",
     status: "failed",
     error_message: "something went wrong",
@@ -59,72 +67,84 @@ test("handoffGetHandler surfaces error_message for failed handoffs", async () =>
     from_agent: "user",
     to_agent: "agent",
   };
-  const daemon = {
-    getHandoff: mock().mockResolvedValue({ handoff: handoffFixture }),
-  } as any;
-  const handler = handoffGetHandler(daemon);
+  const getHandoff: GetHandoffFn = () => Promise.resolve({ handoff: handoffFixture });
+  const handler = handoffGetHandler(fakeDaemon({ getHandoff }));
   const res = await handler({ handoff_id: "h2" });
-  expect(res.content[0].text).toMatch(/^◑ handoff  /);
-  expect(res.content[0].text).toContain('"error_message": "something went wrong"');
+  const block = res.content[0];
+  if (block === undefined) throw new Error("expected content[0]");
+  expect(block.text).toMatch(/^◑ handoff {2}/);
+  expect(block.text).toContain('"error_message": "something went wrong"');
 });
 
+async function expectRejects(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected promise to reject but it resolved");
+}
+
 test("handoffGetHandler rethrows non-404 daemon errors", async () => {
-  const daemon = {
-    getHandoff: mock().mockRejectedValue(new Error("daemon /handoffs/h1: HTTP 500")),
-  } as any;
-  const handler = handoffGetHandler(daemon);
-  await expect(handler({ handoff_id: "h1" })).rejects.toThrow("HTTP 500");
+  const getHandoff: GetHandoffFn = () => Promise.reject(new Error("daemon /handoffs/h1: HTTP 500"));
+  const handler = handoffGetHandler(fakeDaemon({ getHandoff }));
+  const err = await expectRejects(handler({ handoff_id: "h1" }));
+  expect(err).toBeInstanceOf(Error);
+  expect((err as Error).message).toContain("HTTP 500");
 });
 
 test("handoffGetHandler rethrows DaemonHttpError 500s instead of masking them as not_found", async () => {
   const err = new DaemonHttpError("test", 500, "oops");
-  const daemon = {
-    getHandoff: mock().mockRejectedValue(err),
-  } as any;
-  const handler = handoffGetHandler(daemon);
-  await expect(handler({ handoff_id: "h1" })).rejects.toBe(err);
+  const getHandoff: GetHandoffFn = () => Promise.reject(err);
+  const handler = handoffGetHandler(fakeDaemon({ getHandoff }));
+  const caught = await expectRejects(handler({ handoff_id: "h1" }));
+  expect(caught).toBe(err);
 });
 
 test("handoff_get with compact:true omits message and truncates resolution_reason", async () => {
   const longMessage = "x".repeat(5000);
   const longReason =
     "a".repeat(500) + "MIDDLE-MARKER" + "b".repeat(500) + "END-MARKER" + "c".repeat(500);
-  const daemon = {
-    getHandoff: mock().mockResolvedValue({
+  const getHandoff: GetHandoffFn = () =>
+    Promise.resolve({
       handoff: {
         handoff_id: "h-1",
         ts: "2026-04-28T00:00:00Z",
         status: "failed",
+        conversation_id: "c1",
         from_agent: "user",
         to_agent: "codex-mini",
         message: longMessage,
         resolution_reason: longReason,
       },
-    }),
-  } as any;
-  const handler = handoffGetHandler(daemon);
+    });
+  const handler = handoffGetHandler(fakeDaemon({ getHandoff }));
   const res = await handler({ handoff_id: "h-1", compact: true });
-  expect(res.content[0].text).toMatch(/^[◌◐●◑] handoff  /);
-  expect(res.content[0].text).not.toContain('"message":');
-  expect(res.content[0].text).toContain("truncated");
-  expect(res.content[0].text).not.toContain("MIDDLE-MARKER");
+  const block = res.content[0];
+  if (block === undefined) throw new Error("expected content[0]");
+  expect(block.text).toMatch(/^[◌◐●◑] handoff {2}/);
+  expect(block.text).not.toContain('"message":');
+  expect(block.text).toContain("truncated");
+  expect(block.text).not.toContain("MIDDLE-MARKER");
 });
 
 test("handoff_get without compact preserves backward-compat shape", async () => {
   const longMessage = "x".repeat(5000);
-  const daemon = {
-    getHandoff: mock().mockResolvedValue({
+  const getHandoff: GetHandoffFn = () =>
+    Promise.resolve({
       handoff: {
         handoff_id: "h-1",
+        conversation_id: "c1",
         message: longMessage,
         resolution_reason: "short",
         status: "pending",
       },
-    }),
-  } as any;
-  const handler = handoffGetHandler(daemon);
+    });
+  const handler = handoffGetHandler(fakeDaemon({ getHandoff }));
   const res = await handler({ handoff_id: "h-1" });
-  expect(res.content[0].text).toMatch(/^[◌◐●◑] handoff  /);
-  expect(res.content[0].text).toContain(longMessage);
-  expect(res.content[0].text).toContain('"resolution_reason": "short"');
+  const block = res.content[0];
+  if (block === undefined) throw new Error("expected content[0]");
+  expect(block.text).toMatch(/^[◌◐●◑] handoff {2}/);
+  expect(block.text).toContain(longMessage);
+  expect(block.text).toContain('"resolution_reason": "short"');
 });
