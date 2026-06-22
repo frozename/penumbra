@@ -1,15 +1,16 @@
-import { expect, test, spyOn } from "bun:test";
-import { performance } from "node:perf_hooks";
+import { Database } from "bun:sqlite";
+import { expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Database } from "bun:sqlite";
+import { performance } from "node:perf_hooks";
+
 import { createWorkflowRunsRegistry } from "../../src/services/workflow-runs-registry.js";
 
-function freshDb(path: string) {
+function freshDb(path: string): Database {
   const db = new Database(path);
-  db.exec(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS workflow_runs (
       id TEXT PRIMARY KEY,
       project_id TEXT,
@@ -29,10 +30,48 @@ function freshDb(path: string) {
   return db;
 }
 
+async function expectResolvesEqual<T>(promise: Promise<T>, expected: unknown): Promise<void> {
+  expect(await promise).toEqual(expected);
+}
+
+async function expectResolvesMatchObject<T>(promise: Promise<T>, expected: object): Promise<void> {
+  expect(await promise).toMatchObject(expected);
+}
+
+async function expectResolvesNull<T>(promise: Promise<T | null>): Promise<void> {
+  expect(await promise).toBeNull();
+}
+
+async function expectRejectsWith(
+  promise: Promise<unknown>,
+  expected: string | RegExp,
+): Promise<void> {
+  try {
+    await promise;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (typeof expected === "string") {
+      expect(message).toContain(expected);
+    } else {
+      expect(message).toMatch(expected);
+    }
+    return;
+  }
+  throw new Error("expected promise to reject but it resolved");
+}
+
+class SpillWriteError extends Error {
+  readonly code = "disk_full";
+
+  toJSON(): { code: string; message: string } {
+    return { code: this.code, message: this.message };
+  }
+}
+
 test("register returns a fresh id each call", () => {
   let n = 0;
   const registry = createWorkflowRunsRegistry({
-    uuid: () => `wfrun-${++n}`,
+    uuid: () => `wfrun-${String(++n)}`,
     clock: () => new Date("2026-04-26T00:00:00Z"),
     db: freshDb(":memory:"),
     storageRoot: tmpdir(),
@@ -71,7 +110,7 @@ test("register persists status and results across registry re-instantiation", as
   const root = mkdtempSync(join(tmpdir(), "wfr-"));
   const dbPath = join(root, "db.sqlite");
   try {
-    let now = new Date("2026-04-26T00:00:00Z");
+    const now = new Date("2026-04-26T00:00:00Z");
     const registry1 = createWorkflowRunsRegistry({
       uuid: () => "wfrun-1",
       clock: () => now,
@@ -80,7 +119,7 @@ test("register persists status and results across registry re-instantiation", as
     });
     const id = registry1.register("wf-a", "proj");
     expect(id).toBe("wfrun-1");
-    await expect(registry1.getStatus("wfrun-1")).resolves.toEqual({
+    await expectResolvesEqual(registry1.getStatus("wfrun-1"), {
       status: "running",
       started_at: now.getTime(),
     });
@@ -92,7 +131,7 @@ test("register persists status and results across registry re-instantiation", as
       db: freshDb(dbPath),
       storageRoot: root,
     });
-    await expect(registry2.getStatus("wfrun-1")).resolves.toEqual({
+    await expectResolvesEqual(registry2.getStatus("wfrun-1"), {
       status: "completed",
       started_at: now.getTime(),
       finished_at: now.getTime(),
@@ -140,7 +179,7 @@ test("getStatusLight reports a running run without a result", async () => {
   });
   expect(registry.register("wf-a", "proj")).toBe("wfrun-1");
 
-  await expect(registry.getStatusLight("wfrun-1")).resolves.toEqual({
+  await expectResolvesEqual(registry.getStatusLight("wfrun-1"), {
     status: "running",
     started_at: now.getTime(),
     result_available: false,
@@ -160,7 +199,7 @@ test("getStatusLight keeps result_available true for completed null payloads", a
   expect(registry.register("wf-a", "proj")).toBe("wfrun-1");
   await registry.recordResult("wfrun-1", null);
 
-  await expect(registry.getStatusLight("wfrun-1")).resolves.toEqual({
+  await expectResolvesEqual(registry.getStatusLight("wfrun-1"), {
     status: "completed",
     started_at: now.getTime(),
     finished_at: now.getTime(),
@@ -176,7 +215,7 @@ test("recordResult/recordError persist result_bytes/error_bytes matching seriali
   const registry = createWorkflowRunsRegistry({
     uuid: (() => {
       let n = 0;
-      return () => `wfrun-${++n}`;
+      return (): string => `wfrun-${String(++n)}`;
     })(),
     clock: () => now,
     db,
@@ -191,12 +230,12 @@ test("recordResult/recordError persist result_bytes/error_bytes matching seriali
   const errorPayload = { code: "boom", detail: "something failed" };
   await registry.recordError("wfrun-2", errorPayload);
 
-  await expect(registry.getStatusLight("wfrun-1")).resolves.toMatchObject({
+  await expectResolvesMatchObject(registry.getStatusLight("wfrun-1"), {
     result_bytes: Buffer.byteLength(JSON.stringify(resultPayload)),
     error_bytes: 0,
     result_available: true,
   });
-  await expect(registry.getStatusLight("wfrun-2")).resolves.toMatchObject({
+  await expectResolvesMatchObject(registry.getStatusLight("wfrun-2"), {
     result_bytes: 0,
     error_bytes: Buffer.byteLength(JSON.stringify(errorPayload)),
     result_available: false,
@@ -206,7 +245,7 @@ test("recordResult/recordError persist result_bytes/error_bytes matching seriali
 test("register refuses to evict running runs when capacity is exhausted", () => {
   let n = 0;
   const registry = createWorkflowRunsRegistry({
-    uuid: () => `wfrun-${++n}`,
+    uuid: () => `wfrun-${String(++n)}`,
     clock: () => new Date("2026-04-26T00:00:00Z"),
     db: freshDb(":memory:"),
     storageRoot: tmpdir(),
@@ -225,7 +264,7 @@ test("register refuses to evict running runs when capacity is exhausted", () => 
 test("register evicts terminal runs before active runs", async () => {
   let n = 0;
   const registry = createWorkflowRunsRegistry({
-    uuid: () => `wfrun-${++n}`,
+    uuid: () => `wfrun-${String(++n)}`,
     clock: () => new Date("2026-04-26T00:00:00Z"),
     db: freshDb(":memory:"),
     storageRoot: tmpdir(),
@@ -251,7 +290,7 @@ test("register sweeps expired terminal runs before checking capacity", async () 
   let now = new Date("2026-04-26T00:00:00Z");
   let n = 0;
   const registry = createWorkflowRunsRegistry({
-    uuid: () => `wfrun-${++n}`,
+    uuid: () => `wfrun-${String(++n)}`,
     clock: () => now,
     db: freshDb(":memory:"),
     storageRoot: tmpdir(),
@@ -276,7 +315,7 @@ test("evictIfNeeded drains all expired terminal runs in one pass", async () => {
   let now = new Date("2026-04-26T00:00:00Z");
   let n = 0;
   const registry = createWorkflowRunsRegistry({
-    uuid: () => `wfrun-${++n}`,
+    uuid: () => `wfrun-${String(++n)}`,
     clock: () => now,
     db: freshDb(":memory:"),
     storageRoot: tmpdir(),
@@ -299,7 +338,7 @@ test("evictIfNeeded drains all expired terminal runs in one pass", async () => {
 test("capacity-pressure eviction clears persistence state alongside the entry", async () => {
   let n = 0;
   const registry = createWorkflowRunsRegistry({
-    uuid: () => `wfrun-evict-orphan-${++n}`,
+    uuid: () => `wfrun-evict-orphan-${String(++n)}`,
     clock: () => new Date("2026-04-26T00:00:00Z"),
     db: freshDb(":memory:"),
     storageRoot: tmpdir(),
@@ -312,7 +351,7 @@ test("capacity-pressure eviction clears persistence state alongside the entry", 
   await registry.recordResult(id1!, { ok: true });
   await registry.recordResult(id2!, { ok: true });
 
-  await expect(registry.getStatus(id1!)).resolves.toMatchObject({
+  await expectResolvesMatchObject(registry.getStatus(id1!), {
     persistence_status: "persisted",
   });
 
@@ -333,7 +372,7 @@ test("waitForResult enforces waiter caps", async () => {
   });
   const id = registry.register("wf-a", "proj");
   const first = registry.waitForResult(id!, 10_000);
-  await expect(registry.waitForResult(id!, 10_000)).rejects.toThrow("waiter_capacity_exhausted");
+  await expectRejectsWith(registry.waitForResult(id!, 10_000), "waiter_capacity_exhausted");
   await registry.recordResult(id!, { ok: true });
   expect(await first).toEqual({
     status: "completed",
@@ -360,7 +399,7 @@ test("verify keeps running runs readable after TTL", async () => {
     project_id: "proj",
     registered_at: new Date("2026-04-26T00:10:01Z").getTime(),
   });
-  await expect(registry.getStatus("wfrun-1")).resolves.toEqual({
+  await expectResolvesEqual(registry.getStatus("wfrun-1"), {
     status: "running",
     started_at: new Date("2026-04-26T00:10:01Z").getTime(),
   });
@@ -381,7 +420,7 @@ test("TTL keeps running workflow runs readable and writable after expiry", async
     const id = registry.register("wf-a", "proj");
     expect(id).toBe("wfrun-1");
     now = new Date("2026-04-26T00:10:12Z");
-    await expect(registry.getStatus("wfrun-1")).resolves.toEqual({
+    await expectResolvesEqual(registry.getStatus("wfrun-1"), {
       status: "running",
       started_at: new Date("2026-04-26T00:10:01Z").getTime(),
     });
@@ -409,7 +448,7 @@ test("terminal workflow runs keep their result through the retention window and 
     let now = new Date("2026-04-26T00:10:00Z");
     let n = 0;
     const registry = createWorkflowRunsRegistry({
-      uuid: () => `wfrun-${++n}`,
+      uuid: () => `wfrun-${String(++n)}`,
       clock: () => now,
       db: freshDb(dbPath),
       storageRoot: root,
@@ -420,13 +459,13 @@ test("terminal workflow runs keep their result through the retention window and 
     now = new Date("2026-04-26T00:10:18Z");
     await registry.recordResult("wfrun-1", { ok: true });
 
-    await expect(registry.getStatus("wfrun-1")).resolves.toMatchObject({
+    await expectResolvesMatchObject(registry.getStatus("wfrun-1"), {
       status: "completed",
       started_at: new Date("2026-04-26T00:10:00Z").getTime(),
       finished_at: new Date("2026-04-26T00:10:18Z").getTime(),
       result: { ok: true },
     });
-    await expect(registry.waitForResult("wfrun-1", 10)).resolves.toEqual({
+    await expectResolvesEqual(registry.waitForResult("wfrun-1", 10), {
       status: "completed",
       started_at: new Date("2026-04-26T00:10:00Z").getTime(),
       finished_at: new Date("2026-04-26T00:10:18Z").getTime(),
@@ -444,7 +483,7 @@ test("terminal workflow runs keep their result through the retention window and 
       expires_at: new Date("2026-04-26T00:10:28Z").getTime(),
       completed_at: new Date("2026-04-26T00:10:18Z").getTime(),
     });
-    await expect(registry.getStatus("wfrun-1")).resolves.toMatchObject({
+    await expectResolvesMatchObject(registry.getStatus("wfrun-1"), {
       status: "completed",
       started_at: new Date("2026-04-26T00:10:00Z").getTime(),
       finished_at: new Date("2026-04-26T00:10:18Z").getTime(),
@@ -454,8 +493,8 @@ test("terminal workflow runs keep their result through the retention window and 
     now = new Date("2026-04-26T00:10:29Z");
     expect(registry.register("wf-b", "proj")).toBe("wfrun-2");
     expect(registry.verify("wfrun-1")).toBeNull();
-    await expect(registry.getStatus("wfrun-1")).resolves.toBeNull();
-    await expect(registry.waitForResult("wfrun-1", 10)).resolves.toBeNull();
+    await expectResolvesNull(registry.getStatus("wfrun-1"));
+    await expectResolvesNull(registry.waitForResult("wfrun-1", 10));
     const row = freshDb(dbPath)
       .query<
         { count: number },
@@ -488,7 +527,7 @@ test("waitForResult resolves after the in-memory entry is replaced", async () =>
       storageRoot: root,
     });
     await registry2.recordResult("wfrun-1", { ok: true });
-    await expect(waiter).resolves.toEqual({
+    await expectResolvesEqual(waiter, {
       status: "completed",
       started_at: new Date("2026-04-26T00:10:01Z").getTime(),
       finished_at: new Date("2026-04-26T00:10:01Z").getTime(),
@@ -499,7 +538,7 @@ test("waitForResult resolves after the in-memory entry is replaced", async () =>
   }
 });
 
-test("purgeExpiredRows leaves running runs alone after TTL", async () => {
+test("purgeExpiredRows leaves running runs alone after TTL", () => {
   const root = mkdtempSync(join(tmpdir(), "wfr-ttl-"));
   const dbPath = join(root, "db.sqlite");
   let now = new Date("2026-04-26T00:10:01Z");
@@ -550,7 +589,7 @@ test("waitForResult hydrates terminal payloads after restart", async () => {
       db: freshDb(dbPath),
       storageRoot: root,
     });
-    await expect(registry2.waitForResult("wfrun-1", 10_000)).resolves.toEqual({
+    await expectResolvesEqual(registry2.waitForResult("wfrun-1", 10_000), {
       status: "completed",
       started_at: startedAt.getTime(),
       finished_at: startedAt.getTime(),
@@ -574,7 +613,7 @@ test("recordResult persists large payloads without trusting inline spill envelop
     const id = registry.register("wf-a", "proj");
     expect(id).toBe("wfrun-1");
     await registry.recordResult("wfrun-1", { __kind: "spill", path: "../../escape" });
-    await expect(registry.getStatus("wfrun-1")).resolves.toMatchObject({
+    await expectResolvesMatchObject(registry.getStatus("wfrun-1"), {
       status: "completed",
       started_at: new Date("2026-04-26T00:00:00Z").getTime(),
       finished_at: new Date("2026-04-26T00:00:00Z").getTime(),
@@ -605,7 +644,8 @@ test("recordResult stores large payloads only in spill files and nulls the inlin
         [string]
       >(`SELECT result_json, result_spill_path FROM workflow_runs WHERE id = ? LIMIT 1`)
       .get("wfrun-1");
-    expect(row).toEqual({ result_json: null, result_spill_path: expect.any(String) });
+    expect(row?.result_json).toBeNull();
+    expect(typeof row?.result_spill_path).toBe("string");
     const light = await registry.getStatusLight("wfrun-1");
     expect(light?.result_bytes).toBe(expectedBytes);
     expect(light?.result_bytes).toBeGreaterThan(0);
@@ -615,7 +655,7 @@ test("recordResult stores large payloads only in spill files and nulls the inlin
       db: freshDb(dbPath),
       storageRoot: root,
     });
-    await expect(freshRegistry.getStatus("wfrun-1")).resolves.toEqual({
+    await expectResolvesEqual(freshRegistry.getStatus("wfrun-1"), {
       status: "completed",
       started_at: new Date("2026-04-26T00:00:00Z").getTime(),
       finished_at: new Date("2026-04-26T00:00:00Z").getTime(),
@@ -647,7 +687,8 @@ test("recordError stores large payloads only in spill files and tracks error_byt
         [string]
       >(`SELECT error_json, error_spill_path FROM workflow_runs WHERE id = ? LIMIT 1`)
       .get("wfrun-1");
-    expect(row).toEqual({ error_json: null, error_spill_path: expect.any(String) });
+    expect(row?.error_json).toBeNull();
+    expect(typeof row?.error_spill_path).toBe("string");
     const light = await registry.getStatusLight("wfrun-1");
     expect(light?.result_available).toBe(false);
     expect(light?.error_bytes).toBe(expectedBytes);
@@ -679,61 +720,64 @@ test("readPayload rejects traversal, absolute paths, and symlink escapes", async
       "../../etc/passwd",
       "wfrun-1",
     );
-    await expect(
+    await expectResolvesEqual(
       createWorkflowRunsRegistry({
         uuid: () => "wfrun-2",
         clock: () => new Date("2026-04-26T00:00:00Z"),
         db: freshDb(dbPath),
         storageRoot: root,
       }).getStatus("wfrun-1"),
-    ).resolves.toEqual({
-      status: "completed",
-      started_at: new Date("2026-04-26T00:00:00Z").getTime(),
-      finished_at: new Date("2026-04-26T00:00:00Z").getTime(),
-      result: null,
-      persistence_status: "persisted",
-    });
+      {
+        status: "completed",
+        started_at: new Date("2026-04-26T00:00:00Z").getTime(),
+        finished_at: new Date("2026-04-26T00:00:00Z").getTime(),
+        result: null,
+        persistence_status: "persisted",
+      },
+    );
     db.query(`UPDATE workflow_runs SET result_spill_path = ? WHERE id = ?`).run(
       "/etc/passwd",
       "wfrun-1",
     );
-    await expect(
+    await expectResolvesEqual(
       createWorkflowRunsRegistry({
         uuid: () => "wfrun-3",
         clock: () => new Date("2026-04-26T00:00:00Z"),
         db: freshDb(dbPath),
         storageRoot: root,
       }).getStatus("wfrun-1"),
-    ).resolves.toEqual({
-      status: "completed",
-      started_at: new Date("2026-04-26T00:00:00Z").getTime(),
-      finished_at: new Date("2026-04-26T00:00:00Z").getTime(),
-      result: null,
-      persistence_status: "persisted",
-    });
-    const realpathSpy = spyOn(fsPromises, "realpath").mockImplementation(async (path: string) => {
+      {
+        status: "completed",
+        started_at: new Date("2026-04-26T00:00:00Z").getTime(),
+        finished_at: new Date("2026-04-26T00:00:00Z").getTime(),
+        result: null,
+        persistence_status: "persisted",
+      },
+    );
+    const realpathSpy = spyOn(fsPromises, "realpath").mockImplementation((path: string) => {
       if (path === root) return root;
       if (path === join(root, ".penumbra", "workflow-runs", "escape.json")) return outsideFile;
-      return path;
+      return Promise.resolve(path);
     });
     db.query(`UPDATE workflow_runs SET result_spill_path = ? WHERE id = ?`).run(
       join(".penumbra", "workflow-runs", "escape.json"),
       "wfrun-1",
     );
-    await expect(
+    await expectResolvesEqual(
       createWorkflowRunsRegistry({
         uuid: () => "wfrun-4",
         clock: () => new Date("2026-04-26T00:00:00Z"),
         db: freshDb(dbPath),
         storageRoot: root,
       }).getStatus("wfrun-1"),
-    ).resolves.toEqual({
-      status: "completed",
-      started_at: new Date("2026-04-26T00:00:00Z").getTime(),
-      finished_at: new Date("2026-04-26T00:00:00Z").getTime(),
-      result: null,
-      persistence_status: "persisted",
-    });
+      {
+        status: "completed",
+        started_at: new Date("2026-04-26T00:00:00Z").getTime(),
+        finished_at: new Date("2026-04-26T00:00:00Z").getTime(),
+        result: null,
+        persistence_status: "persisted",
+      },
+    );
     realpathSpy.mockRestore();
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -753,18 +797,19 @@ test("recordResult falls back to inline error when spill writing fails and relea
     });
     expect(registry.register("wf-a", "proj")).toBe("wfrun-1");
     const waiter = registry.waitForResult("wfrun-1", 10_000);
-    const spillWriteError = { code: "disk_full", message: "disk full" };
+    const spillWriteError = new SpillWriteError("disk full");
     const expectedErrorBytes = Buffer.byteLength(JSON.stringify(spillWriteError));
-    const writeSpy = spyOn(fsPromises, "writeFile").mockImplementationOnce(async () => {
-      throw spillWriteError;
-    });
+    const writeSpy = spyOn(fsPromises, "writeFile").mockImplementationOnce(() =>
+      Promise.reject(spillWriteError),
+    );
     await registry.recordResult("wfrun-1", { data: "x".repeat(200_000) });
-    await expect(waiter).resolves.toEqual({
+    const waitResult = await waiter;
+    expect(waitResult).toMatchObject({
       status: "failed",
       started_at: new Date("2026-04-26T00:00:00Z").getTime(),
       finished_at: new Date("2026-04-26T00:00:00Z").getTime(),
-      error: expect.anything(),
     });
+    expect(waitResult?.error).toBeTruthy();
     const row = freshDb(dbPath)
       .query<
         {
@@ -807,7 +852,7 @@ test("recordResult yields before the spill write completes and persists the resu
     await Promise.resolve();
     expect(performance.now() - started).toBeLessThan(10);
     await writePromise;
-    await expect(registry.getStatus("wfrun-1")).resolves.toMatchObject({
+    await expectResolvesMatchObject(registry.getStatus("wfrun-1"), {
       status: "completed",
       started_at: new Date("2026-04-26T00:00:00Z").getTime(),
       finished_at: new Date("2026-04-26T00:00:00Z").getTime(),

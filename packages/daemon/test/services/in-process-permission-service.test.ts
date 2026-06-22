@@ -1,22 +1,40 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import {
-  type Services,
-  migrate,
   loadSqliteVec,
-  PermissionWriter,
-  PermissionReader,
+  migrate,
   PermissionEventBus,
+  PermissionReader,
+  PermissionWriter,
+  type Services,
 } from "@penumbra/core";
-import { InProcessPermissionService } from "../../src/services/in-process-permission-service.js";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { permissionsDecideRoute } from "../../src/routes/permissions.js";
+import { InProcessPermissionService } from "../../src/services/in-process-permission-service.js";
 import { runPermissionTtlSweep } from "../../src/sweepers/permission-ttl.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  // setCustomSQLite throws after SQLite has already loaded in the process.
+}
+
+async function expectRejectsWith(promise: Promise<unknown>, expected: RegExp): Promise<void> {
+  try {
+    await promise;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    expect(message).toMatch(expected);
+    return;
+  }
+  throw new Error("expected promise to reject but it resolved");
+}
+
+function noop(): void {
+  return undefined;
+}
 
 function makeServices(
   db: Database,
@@ -30,14 +48,14 @@ function makeServices(
     permissionReader: new PermissionReader({ db }),
     permissionEvents: new PermissionEventBus(),
     machineId: { get: () => "machine-test" },
-    uuid: () => `id-${++nUuid}`,
+    uuid: () => `id-${String(++nUuid)}`,
     clock: () => now,
-    t0Writer: { write: () => {} },
+    t0Writer: { write: noop },
     settings: { permission_ttl_seconds: 300 },
-    log: { info: () => {}, warn: () => {} },
+    log: { info: noop, warn: noop },
     handoffReader: {
       get: (id: string) =>
-        opts?.handoff && opts.handoff.handoff_id === id
+        opts?.handoff?.handoff_id === id
           ? { handoff_id: id, conversation_id: opts.handoff.conversation_id, status: "pending" }
           : null,
     },
@@ -129,10 +147,10 @@ test("requestPermission rejects when ttl sweep marks expired", async () => {
   });
 
   // Advance the clock past TTL and run the sweeper.
-  (services as any).clock = () => new Date("2026-05-03T12:00:10.000Z");
+  services.clock = (): Date => new Date("2026-05-03T12:00:10.000Z");
   runPermissionTtlSweep(services);
 
-  await expect(decision).rejects.toThrow(/expired/);
+  await expectRejectsWith(decision, /expired/);
   svc.stop();
 });
 
@@ -186,7 +204,7 @@ test("stop() rejects pending waiters", async () => {
   });
 
   svc.stop();
-  await expect(decision).rejects.toThrow(/stopped/);
+  await expectRejectsWith(decision, /stopped/);
 });
 
 test("throws if started twice or used before start", async () => {
@@ -199,14 +217,15 @@ test("throws if started twice or used before start", async () => {
   });
   const svc = new InProcessPermissionService(services);
 
-  await expect(
+  await expectRejectsWith(
     svc.requestPermission({
       parent_handoff_id: "h-1",
       agent_name: "codex-acp-zed",
       tool_name: "shell_run",
       context: {},
     }),
-  ).rejects.toThrow(/not started/);
+    /not started/,
+  );
 
   svc.start();
   svc.start(); // idempotent

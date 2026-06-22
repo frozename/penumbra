@@ -1,12 +1,23 @@
-import { expect, test } from "bun:test";
+import {
+  loadSqliteVec,
+  migrate,
+  PlanWriter,
+  type TaskEvent,
+  TaskEventBus,
+  TaskWriter,
+} from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec, migrate, PlanWriter, TaskWriter, TaskEventBus } from "@penumbra/core";
+import { expect, test } from "bun:test";
+
 import { createPlanRuntimeSweeper } from "../../src/sweepers/plan-runtime.js";
 
 try {
-  if (process.platform === "darwin")
+  if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-} catch {}
+  }
+} catch {
+  // setCustomSQLite throws after SQLite has already loaded in the process.
+}
 
 function makeDb(): Database {
   const db = new Database(":memory:");
@@ -21,7 +32,10 @@ test("plan-runtime sweeper start/stop is safe to call repeatedly", () => {
   const bus = new TaskEventBus();
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name: string) => ({ name, maestro_capable: true }),
+    resolveAgent: (name: string): { name: string; maestro_capable: boolean } => ({
+      name,
+      maestro_capable: true,
+    }),
   });
 
   const sweeper = createPlanRuntimeSweeper({ db, plans, taskWriter, intervalMs: 100 });
@@ -40,7 +54,10 @@ test("plan-runtime subscribe/unsubscribe is clean against a live bus", async () 
   const bus = new TaskEventBus();
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name: string) => ({ name, maestro_capable: true }),
+    resolveAgent: (name: string): { name: string; maestro_capable: boolean } => ({
+      name,
+      maestro_capable: true,
+    }),
   });
 
   const sweeper = createPlanRuntimeSweeper({ db, plans, taskWriter });
@@ -48,14 +65,17 @@ test("plan-runtime subscribe/unsubscribe is clean against a live bus", async () 
   const unsub = sweeper.subscribe(bus);
   unsub();
 
-  bus.publish({
+  const event: TaskEvent = {
     kind: "completed",
     task_id: "fake-task",
     at: Date.now(),
     actor: null,
     payload: null,
-  } as any);
-  await new Promise((r) => setTimeout(r, 50));
+  };
+  bus.publish(event);
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 50);
+  });
 
   expect(true).toBe(true);
 });
