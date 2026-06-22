@@ -1,27 +1,20 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { DaemonClient } from "../../src/daemon-client.js";
-import {
-  LaneLedgerRecentInputShape,
-  laneLedgerRecentHandler,
-} from "../../src/tools/lane-ledger-recent.js";
 
-function parseToolResult(out: unknown): unknown {
-  const content = (out as { content: Array<{ type: string; text: string }> }).content;
-  expect(content[0]?.type).toBe("text");
-  return JSON.parse(content[0]!.text);
+import {
+  laneLedgerRecentHandler,
+  LaneLedgerRecentInputShape,
+} from "../../src/tools/lane-ledger-recent.js";
+import { installFetchMock, requestUrl } from "../helpers.js";
+
+interface MockToolResult {
+  content: { type: string; text: string }[];
 }
 
-function makeDaemon(fetchImpl: typeof fetch) {
-  const original = globalThis.fetch;
-  globalThis.fetch = fetchImpl;
-  const daemon = new DaemonClient({ baseUrl: "http://daemon", token: "t" });
-  return {
-    daemon,
-    restore() {
-      globalThis.fetch = original;
-    },
-  };
+function parseToolResult(out: unknown): unknown {
+  const content = (out as MockToolResult).content;
+  expect(content[0]?.type).toBe("text");
+  return JSON.parse(content[0]!.text);
 }
 
 test("LaneLedgerRecentInputShape accepts optional lane query filters", () => {
@@ -49,31 +42,33 @@ test("laneLedgerRecentHandler GETs /lanes/recent with filters and returns lanes 
   let receivedPath: string | undefined;
   let receivedSearch: string | undefined;
   let receivedAuth: string | undefined;
-  const { daemon, restore } = makeDaemon(async (input, init) => {
-    const url = new URL(String(input));
+  const { daemon, restore } = installFetchMock((input, init): Promise<Response> => {
+    const url = new URL(requestUrl(input));
     receivedMethod = init?.method;
     receivedPath = url.pathname;
     receivedSearch = url.search;
     receivedAuth = init?.headers
-      ? (new Headers(init.headers as HeadersInit).get("authorization") ?? undefined)
+      ? (new Headers(init.headers).get("authorization") ?? undefined)
       : undefined;
-    return Response.json({
-      lanes: [
-        {
-          lane_id: "lane-recent-1",
-          ts_opened: "2026-05-12T00:00:00Z",
-          ts_closed: "2026-05-12T00:01:00Z",
-          task_class: "STANDARD",
-          implementer_handoff: "h-recent-1",
-          reviewer_handoff: "h-review-1",
-          gate_status: "passed",
-          recalled_memory_ids: [],
-          recalled_query: null,
-          override_reason: null,
-          metadata_json: "{}",
-        },
-      ],
-    });
+    return Promise.resolve(
+      Response.json({
+        lanes: [
+          {
+            lane_id: "lane-recent-1",
+            ts_opened: "2026-05-12T00:00:00Z",
+            ts_closed: "2026-05-12T00:01:00Z",
+            task_class: "STANDARD",
+            implementer_handoff: "h-recent-1",
+            reviewer_handoff: "h-review-1",
+            gate_status: "passed",
+            recalled_memory_ids: [],
+            recalled_query: null,
+            override_reason: null,
+            metadata_json: "{}",
+          },
+        ],
+      }),
+    );
   });
 
   try {
@@ -109,9 +104,9 @@ test("laneLedgerRecentHandler GETs /lanes/recent with filters and returns lanes 
 
 test("laneLedgerRecentHandler omits query params when no filters are given", async () => {
   let receivedSearch: string | undefined;
-  const { daemon, restore } = makeDaemon(async (input) => {
-    receivedSearch = new URL(String(input)).search;
-    return Response.json({ lanes: [] });
+  const { daemon, restore } = installFetchMock((input): Promise<Response> => {
+    receivedSearch = new URL(requestUrl(input)).search;
+    return Promise.resolve(Response.json({ lanes: [] }));
   });
 
   try {
@@ -123,18 +118,32 @@ test("laneLedgerRecentHandler omits query params when no filters are given", asy
 });
 
 test("laneLedgerRecentHandler surfaces daemon 400 errors", async () => {
-  const { daemon, restore } = makeDaemon(
-    async () =>
-      new Response(JSON.stringify({ error: { code: "validation_failed" } }), {
-        status: 400,
-        headers: { "content-type": "application/json" },
-      }),
+  const { daemon, restore } = installFetchMock(
+    (): Promise<Response> =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: { code: "validation_failed" } }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
   );
   try {
-    await expect(laneLedgerRecentHandler(daemon)({ status: "failed" })).rejects.toThrow(
+    await expectRejection(
+      laneLedgerRecentHandler(daemon)({ status: "failed" }),
       "daemon /lanes/recent: HTTP 400",
     );
   } finally {
     restore();
   }
 });
+
+async function expectRejection(promise: Promise<unknown>, needle: string): Promise<void> {
+  try {
+    await promise;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    expect(message).toContain(needle);
+    return;
+  }
+  throw new Error(`expected promise to reject containing ${JSON.stringify(needle)}`);
+}

@@ -1,24 +1,17 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { DaemonClient } from "../../src/daemon-client.js";
-import { LaneOpenInputShape, laneOpenHandler } from "../../src/tools/lane-open.js";
 
-function parseToolResult(out: unknown): unknown {
-  const content = (out as { content: Array<{ type: string; text: string }> }).content;
-  expect(content[0]?.type).toBe("text");
-  return JSON.parse(content[0]!.text);
+import { laneOpenHandler, LaneOpenInputShape } from "../../src/tools/lane-open.js";
+import { bodyAsString, installFetchMock, requestUrl } from "../helpers.js";
+
+interface MockToolResult {
+  content: { type: string; text: string }[];
 }
 
-function makeDaemon(fetchImpl: typeof fetch) {
-  const original = globalThis.fetch;
-  globalThis.fetch = fetchImpl;
-  const daemon = new DaemonClient({ baseUrl: "http://daemon", token: "t" });
-  return {
-    daemon,
-    restore() {
-      globalThis.fetch = original;
-    },
-  };
+function parseToolResult(out: unknown): unknown {
+  const content = (out as MockToolResult).content;
+  expect(content[0]?.type).toBe("text");
+  return JSON.parse(content[0]!.text);
 }
 
 test("LaneOpenInputShape requires implementer_handoff_id and a valid task class", () => {
@@ -39,33 +32,35 @@ test("laneOpenHandler posts lane_open to the daemon and returns the response", a
   let receivedPath: string | undefined;
   let receivedAuth: string | undefined;
   let receivedBody: unknown;
-  const { daemon, restore } = makeDaemon(async (input, init) => {
+  const { daemon, restore } = installFetchMock((input, init): Promise<Response> => {
     receivedMethod = init?.method;
-    receivedPath = new URL(String(input)).pathname;
+    receivedPath = new URL(requestUrl(input)).pathname;
     receivedAuth = init?.headers
-      ? (new Headers(init.headers as HeadersInit).get("authorization") ?? undefined)
+      ? (new Headers(init.headers).get("authorization") ?? undefined)
       : undefined;
-    receivedBody = JSON.parse(String(init?.body));
-    return Response.json({
-      lane_id: (receivedBody as { lane_id: string }).lane_id,
-      ts_opened: "2026-05-12T00:00:00Z",
-      ts_closed: null,
-      task_class: "STANDARD",
-      implementer_handoff: "handoff-1",
-      reviewer_handoff: null,
-      gate_status: "open",
-      recalled_memory_ids: [],
-      recalled_query: null,
-      override_reason: null,
-      metadata_json: "{}",
-    });
+    receivedBody = JSON.parse(bodyAsString(init?.body));
+    return Promise.resolve(
+      Response.json({
+        lane_id: (receivedBody as { lane_id: string }).lane_id,
+        ts_opened: "2026-05-12T00:00:00Z",
+        ts_closed: null,
+        task_class: "STANDARD",
+        implementer_handoff: "handoff-1",
+        reviewer_handoff: null,
+        gate_status: "open",
+        recalled_memory_ids: [],
+        recalled_query: null,
+        override_reason: null,
+        metadata_json: "{}",
+      }),
+    );
   });
 
   try {
     const out = parseToolResult(
       await laneOpenHandler(daemon)({
-      implementer_handoff_id: "handoff-1",
-      task_class: "STANDARD",
+        implementer_handoff_id: "handoff-1",
+        task_class: "STANDARD",
       }),
     );
 
@@ -96,18 +91,32 @@ test("laneOpenHandler posts lane_open to the daemon and returns the response", a
 });
 
 test("laneOpenHandler surfaces daemon 400 errors", async () => {
-  const { daemon, restore } = makeDaemon(
-    async () =>
-      new Response(JSON.stringify({ error: { code: "validation_failed" } }), {
-        status: 400,
-        headers: { "content-type": "application/json" },
-      }),
+  const { daemon, restore } = installFetchMock(
+    (): Promise<Response> =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: { code: "validation_failed" } }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
   );
   try {
-    await expect(
+    await expectRejection(
       laneOpenHandler(daemon)({ implementer_handoff_id: "handoff-1", task_class: "STANDARD" }),
-    ).rejects.toThrow("daemon /lanes/open: HTTP 400");
+      "daemon /lanes/open: HTTP 400",
+    );
   } finally {
     restore();
   }
 });
+
+async function expectRejection(promise: Promise<unknown>, needle: string): Promise<void> {
+  try {
+    await promise;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    expect(message).toContain(needle);
+    return;
+  }
+  throw new Error(`expected promise to reject containing ${JSON.stringify(needle)}`);
+}

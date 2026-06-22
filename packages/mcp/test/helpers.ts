@@ -2,8 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { type AgentConfig } from "@penumbra/config";
 
-import type { DaemonClient } from "../src/daemon-client.js";
-
+import { DaemonClient } from "../src/daemon-client.js";
 import { buildServer } from "../src/server.js";
 
 export type LongLivedAgentFixture = AgentConfig & { display_name?: string };
@@ -78,4 +77,49 @@ export function firstText(result: CallToolResult): string {
 
 export function firstJson<T = unknown>(result: CallToolResult): T {
   return JSON.parse(firstText(result)) as T;
+}
+
+export type FetchImpl = typeof fetch;
+
+export interface FetchHarness {
+  daemon: DaemonClient;
+  restore: () => void;
+}
+
+// Installs a fetch mock for tools that talk to the daemon via the real fetch
+// path. Returned `restore` is an arrow (not a method shorthand) so callers can
+// destructure it without losing `this` and tripping `@typescript-eslint/unbound-method`.
+export function installFetchMock(fetchImpl: FetchImpl): FetchHarness {
+  const original = globalThis.fetch;
+  globalThis.fetch = fetchImpl;
+  const daemon = new DaemonClient({ baseUrl: "http://daemon", token: "t" });
+  return {
+    daemon,
+    restore: (): void => {
+      globalThis.fetch = original;
+    },
+  };
+}
+
+// `typeof fetch` accepts `Request | URL | string` as the first arg, but
+// `Request` lacks a meaningful `toString()` for our test asserts. Resolve to a
+// concrete URL string without relying on default Object stringification, which
+// keeps `@typescript-eslint/no-base-to-string` quiet.
+export function requestUrl(input: Request | URL | string): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
+}
+
+// Same shape concern as `requestUrl`, but for the request body. The mock-only
+// JSON paths in these tests always send a JSON string body; assert it instead
+// of coercing arbitrary BodyInit shapes through `String(...)`. The input type
+// matches `RequestInit["body"]` without naming `BodyInit`, which Node's typings
+// expose as an error-fallback type the strict eslint config refuses to union.
+export function bodyAsString(body: RequestInit["body"]): string {
+  if (typeof body !== "string") {
+    const tag = body === null || body === undefined ? String(body) : typeof body;
+    throw new TypeError(`expected request body to be a string, got ${tag}`);
+  }
+  return body;
 }

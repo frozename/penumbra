@@ -1,39 +1,43 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { z } from "zod";
 import { buildServices, loadSqliteVec, migrate } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { DaemonClient } from "../../src/daemon-client.js";
-import { LaneCloseInputShape, laneCloseHandler } from "../../src/tools/lane-close.js";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { z } from "zod";
+
 import { createDaemonFetchHandler } from "../../../daemon/src/serve.js";
+import { DaemonClient } from "../../src/daemon-client.js";
+import { laneCloseHandler, LaneCloseInputShape } from "../../src/tools/lane-close.js";
+import { bodyAsString, type FetchHarness, installFetchMock, requestUrl } from "../helpers.js";
+
+interface MockToolResult {
+  content: { type: string; text: string }[];
+}
 
 function parseToolResult(out: unknown): unknown {
-  const content = (out as { content: Array<{ type: string; text: string }> }).content;
+  const content = (out as MockToolResult).content;
   expect(content[0]?.type).toBe("text");
   return JSON.parse(content[0]!.text);
 }
 
-function makeDaemon(fetchImpl: typeof fetch) {
-  const original = globalThis.fetch;
-  globalThis.fetch = fetchImpl;
-  const daemon = new DaemonClient({ baseUrl: "http://daemon", token: "t" });
-  return {
-    daemon,
-    restore() {
-      globalThis.fetch = original;
-    },
-  };
+interface LiveDaemonHarness {
+  daemon: DaemonClient;
+  services: ReturnType<typeof buildServices>;
+  token: string;
+  fetchImpl: (input: Request | URL | string, init?: RequestInit) => Promise<Response>;
+  stop: () => void;
 }
 
-function makeLiveDaemon() {
+function makeLiveDaemon(): LiveDaemonHarness {
   try {
     if (process.platform === "darwin") {
       Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
     }
-  } catch {}
+  } catch {
+    // Custom SQLite override is best-effort; bun:sqlite's bundled lib is fine if homebrew is absent.
+  }
 
   const db = new Database(":memory:");
   loadSqliteVec(db);
@@ -53,18 +57,33 @@ function makeLiveDaemon() {
     daemon: new DaemonClient({ baseUrl: "http://daemon", token }),
     services,
     token,
-    fetchImpl: async (input: RequestInfo | URL, init?: RequestInit) =>
-      handler(new Request(String(input), init)),
-    stop() {
+    fetchImpl: async (input, init): Promise<Response> =>
+      await handler(new Request(requestUrl(input), init)),
+    stop: (): void => {
       try {
         services.supervisor.stopAll();
-      } catch {}
+      } catch {
+        // Supervisor may already be torn down; ignore so cleanup completes.
+      }
       try {
         db.close();
-      } catch {}
+      } catch {
+        // Database close races with in-flight statements during teardown; ignore.
+      }
       rmSync(root, { recursive: true, force: true });
     },
   };
+}
+
+async function expectRejection(promise: Promise<unknown>, needle: string): Promise<void> {
+  try {
+    await promise;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    expect(message).toContain(needle);
+    return;
+  }
+  throw new Error(`expected promise to reject containing ${JSON.stringify(needle)}`);
 }
 
 test("LaneCloseInputShape requires a closing gate status", () => {
@@ -82,30 +101,32 @@ test("laneCloseHandler posts lane_close to the daemon and returns the response",
   const receivedPaths: string[] = [];
   let receivedAuth: string | undefined;
   const receivedBodies: unknown[] = [];
-  const { daemon, restore } = makeDaemon(async (input, init) => {
+  const { daemon, restore } = installFetchMock((input, init): Promise<Response> => {
     receivedMethod = init?.method;
-    const receivedPath = new URL(String(input)).pathname;
+    const receivedPath = new URL(requestUrl(input)).pathname;
     receivedPaths.push(receivedPath);
     receivedAuth = init?.headers
-      ? (new Headers(init.headers as HeadersInit).get("authorization") ?? undefined)
+      ? (new Headers(init.headers).get("authorization") ?? undefined)
       : undefined;
-    receivedBodies.push(JSON.parse(String(init?.body)));
+    receivedBodies.push(JSON.parse(bodyAsString(init?.body)));
     if (receivedPath === "/lanes/close") {
-      return Response.json({
-        lane_id: "lane-1234",
-        ts_opened: "2026-05-12T00:00:00Z",
-        ts_closed: "2026-05-12T00:00:00Z",
-        task_class: "STANDARD",
-        implementer_handoff: "h-impl",
-        reviewer_handoff: "reviewer-1",
-        gate_status: "passed",
-        recalled_memory_ids: [],
-        recalled_query: null,
-        override_reason: "validated in review",
-        metadata_json: "{}",
-      });
+      return Promise.resolve(
+        Response.json({
+          lane_id: "lane-1234",
+          ts_opened: "2026-05-12T00:00:00Z",
+          ts_closed: "2026-05-12T00:00:00Z",
+          task_class: "STANDARD",
+          implementer_handoff: "h-impl",
+          reviewer_handoff: "reviewer-1",
+          gate_status: "passed",
+          recalled_memory_ids: [],
+          recalled_query: null,
+          override_reason: "validated in review",
+          metadata_json: "{}",
+        }),
+      );
     }
-    return Response.json({ ok: true, authorized: true, events_written: 1 });
+    return Promise.resolve(Response.json({ ok: true, authorized: true, events_written: 1 }));
   });
 
   try {
@@ -147,28 +168,30 @@ test("laneCloseHandler posts lane_close to the daemon and returns the response",
 });
 
 test("laneCloseHandler authorizes memory verification after a successful close", async () => {
-  const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
-  const { daemon, restore } = makeDaemon(async (input, init) => {
-    const path = new URL(String(input)).pathname;
-    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+  const calls: { path: string; body: Record<string, unknown> }[] = [];
+  const { daemon, restore } = installFetchMock((input, init): Promise<Response> => {
+    const path = new URL(requestUrl(input)).pathname;
+    const body = JSON.parse(bodyAsString(init?.body)) as Record<string, unknown>;
     calls.push({ path, body });
     if (path === "/lanes/close") {
-      return Response.json({
-        lane_id: "lane-1234",
-        ts_opened: "2026-05-12T00:00:00Z",
-        ts_closed: "2026-05-12T00:00:00Z",
-        task_class: "STANDARD",
-        gate_status: "passed",
-        implementer_handoff: "h-impl",
-        reviewer_handoff: "h-review",
-        recalled_memory_ids: [],
-        recalled_query: null,
-        override_reason: null,
-        metadata_json: "{}",
-      });
+      return Promise.resolve(
+        Response.json({
+          lane_id: "lane-1234",
+          ts_opened: "2026-05-12T00:00:00Z",
+          ts_closed: "2026-05-12T00:00:00Z",
+          task_class: "STANDARD",
+          gate_status: "passed",
+          implementer_handoff: "h-impl",
+          reviewer_handoff: "h-review",
+          recalled_memory_ids: [],
+          recalled_query: null,
+          override_reason: null,
+          metadata_json: "{}",
+        }),
+      );
     }
     if (path === "/memory-verify/authorize") {
-      return Response.json({ ok: true, authorized: true, events_written: 2 });
+      return Promise.resolve(Response.json({ ok: true, authorized: true, events_written: 2 }));
     }
     throw new Error(`unexpected path ${path}`);
   });
@@ -209,41 +232,51 @@ test("laneCloseHandler authorizes memory verification after a successful close",
 });
 
 test("laneCloseHandler surfaces daemon 400 errors", async () => {
-  const { daemon, restore } = makeDaemon(
-    async () =>
-      new Response(JSON.stringify({ error: { code: "validation_failed" } }), {
-        status: 400,
-        headers: { "content-type": "application/json" },
-      }),
+  const { daemon, restore } = installFetchMock(
+    (): Promise<Response> =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: { code: "validation_failed" } }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
   );
   try {
-    await expect(
+    await expectRejection(
       laneCloseHandler(daemon)({ lane_id: "lane-1234", gate_status: "failed" }),
-    ).rejects.toThrow("daemon /lanes/close: HTTP 400");
+      "daemon /lanes/close: HTTP 400",
+    );
   } finally {
     restore();
   }
 });
 
+interface LaneCloseRequestBody {
+  lane_id: string;
+  metadata?: { high_findings?: number; round_count?: number; notes?: string };
+}
+
 test("lane_close forwards metadata to daemon POST body", async () => {
-  let capturedBody: unknown;
+  let capturedBody: LaneCloseRequestBody | undefined;
   let callCount = 0;
-  const { daemon, restore } = makeDaemon(async (_input, init) => {
+  const { daemon, restore } = installFetchMock((_input, init): Promise<Response> => {
     callCount += 1;
-    capturedBody = JSON.parse(String(init?.body));
-    return Response.json({
-      lane_id: "lane-meta",
-      ts_opened: "2026-05-12T00:00:00Z",
-      ts_closed: "2026-05-12T00:00:00Z",
-      task_class: "STANDARD",
-      implementer_handoff: "h-meta",
-      reviewer_handoff: null,
-      gate_status: "skipped",
-      recalled_memory_ids: [],
-      recalled_query: null,
-      override_reason: null,
-      metadata_json: "{}",
-    });
+    capturedBody = JSON.parse(bodyAsString(init?.body)) as LaneCloseRequestBody;
+    return Promise.resolve(
+      Response.json({
+        lane_id: "lane-meta",
+        ts_opened: "2026-05-12T00:00:00Z",
+        ts_closed: "2026-05-12T00:00:00Z",
+        task_class: "STANDARD",
+        implementer_handoff: "h-meta",
+        reviewer_handoff: null,
+        gate_status: "skipped",
+        recalled_memory_ids: [],
+        recalled_query: null,
+        override_reason: null,
+        metadata_json: "{}",
+      }),
+    );
   });
 
   try {
@@ -253,8 +286,8 @@ test("lane_close forwards metadata to daemon POST body", async () => {
       metadata: { high_findings: 3, round_count: 2, notes: "clean pass" },
     });
     expect(callCount).toBe(1);
-    expect((capturedBody as any).lane_id).toBe("lane-meta");
-    expect((capturedBody as any).metadata).toEqual({
+    expect(capturedBody?.lane_id).toBe("lane-meta");
+    expect(capturedBody?.metadata).toEqual({
       high_findings: 3,
       round_count: 2,
       notes: "clean pass",
@@ -288,7 +321,7 @@ test("lane_close round-trips through the live daemon contract and authorizes mem
     // both the lane's implementer_handoff and the reviewer_handoff to resolve to
     // known handoffs, with the reviewer agent differing from the implementer.
     // Seed both so the close exercises the real with-reviewer authorize path.
-    const seedHandoff = (handoff_id: string, to: string) =>
+    const seedHandoff = (handoff_id: string, to: string): void => {
       live.services.handoffWriter.createApproved({
         handoff_id,
         ts: "2026-05-12T00:00:00.000Z",
@@ -308,6 +341,7 @@ test("lane_close round-trips through the live daemon contract and authorizes mem
         parent_handoff_id: null,
         branch_base: null,
       });
+    };
     seedHandoff("h-live-impl", "codex");
     seedHandoff("h-live-review", "gemini");
 
@@ -348,30 +382,34 @@ test("lane_close round-trips through the live daemon contract and authorizes mem
 });
 
 test("lane_close omits metadata key when not provided", async () => {
-  let capturedBody: unknown;
+  let capturedBody: Record<string, unknown> | undefined;
   let callCount = 0;
-  const { daemon, restore } = makeDaemon(async (_input, init) => {
+  const { daemon, restore } = installFetchMock((_input, init): Promise<Response> => {
     callCount += 1;
-    capturedBody = JSON.parse(String(init?.body));
-    return Response.json({
-      lane_id: "lane-nometa",
-      ts_opened: "2026-05-12T00:00:00Z",
-      ts_closed: "2026-05-12T00:00:00Z",
-      task_class: "STANDARD",
-      implementer_handoff: "h-nometa",
-      reviewer_handoff: null,
-      gate_status: "skipped",
-      recalled_memory_ids: [],
-      recalled_query: null,
-      override_reason: null,
-      metadata_json: "{}",
-    });
+    capturedBody = JSON.parse(bodyAsString(init?.body)) as Record<string, unknown>;
+    return Promise.resolve(
+      Response.json({
+        lane_id: "lane-nometa",
+        ts_opened: "2026-05-12T00:00:00Z",
+        ts_closed: "2026-05-12T00:00:00Z",
+        task_class: "STANDARD",
+        implementer_handoff: "h-nometa",
+        reviewer_handoff: null,
+        gate_status: "skipped",
+        recalled_memory_ids: [],
+        recalled_query: null,
+        override_reason: null,
+        metadata_json: "{}",
+      }),
+    );
   });
 
   try {
     await laneCloseHandler(daemon)({ lane_id: "lane-nometa", gate_status: "skipped" });
     expect(callCount).toBe(1);
-    expect(Object.prototype.hasOwnProperty.call(capturedBody, "metadata")).toBe(false);
+    expect(
+      capturedBody !== undefined && Object.prototype.hasOwnProperty.call(capturedBody, "metadata"),
+    ).toBe(false);
   } finally {
     restore();
   }
@@ -389,21 +427,23 @@ test("LaneCloseInputShape rejects unknown metadata keys at MCP boundary", () => 
 
 test("lane_close without a reviewer returns the row and skips memory-verify authorization", async () => {
   const receivedPaths: string[] = [];
-  const { daemon, restore } = makeDaemon(async (input) => {
-    receivedPaths.push(new URL(String(input)).pathname);
-    return Response.json({
-      lane_id: "lane-noreviewer",
-      ts_opened: "2026-05-12T00:00:00Z",
-      ts_closed: "2026-05-12T00:00:00Z",
-      task_class: "STANDARD",
-      implementer_handoff: "h-impl",
-      reviewer_handoff: null,
-      gate_status: "passed",
-      recalled_memory_ids: [],
-      recalled_query: null,
-      override_reason: null,
-      metadata_json: "{}",
-    });
+  const { daemon, restore } = installFetchMock((input): Promise<Response> => {
+    receivedPaths.push(new URL(requestUrl(input)).pathname);
+    return Promise.resolve(
+      Response.json({
+        lane_id: "lane-noreviewer",
+        ts_opened: "2026-05-12T00:00:00Z",
+        ts_closed: "2026-05-12T00:00:00Z",
+        task_class: "STANDARD",
+        implementer_handoff: "h-impl",
+        reviewer_handoff: null,
+        gate_status: "passed",
+        recalled_memory_ids: [],
+        recalled_query: null,
+        override_reason: null,
+        metadata_json: "{}",
+      }),
+    );
   });
 
   try {
@@ -424,26 +464,28 @@ test("lane_close without a reviewer returns the row and skips memory-verify auth
 });
 
 test("lane_close authorizes memory verification on a failed close with a reviewer", async () => {
-  const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
-  const { daemon, restore } = makeDaemon(async (input, init) => {
-    const path = new URL(String(input)).pathname;
-    calls.push({ path, body: JSON.parse(String(init?.body)) as Record<string, unknown> });
+  const calls: { path: string; body: Record<string, unknown> }[] = [];
+  const { daemon, restore } = installFetchMock((input, init): Promise<Response> => {
+    const path = new URL(requestUrl(input)).pathname;
+    calls.push({ path, body: JSON.parse(bodyAsString(init?.body)) as Record<string, unknown> });
     if (path === "/lanes/close") {
-      return Response.json({
-        lane_id: "lane-failed",
-        ts_opened: "2026-05-12T00:00:00Z",
-        ts_closed: "2026-05-12T00:00:00Z",
-        task_class: "STANDARD",
-        implementer_handoff: "h-impl",
-        reviewer_handoff: "h-review",
-        gate_status: "failed",
-        recalled_memory_ids: [],
-        recalled_query: null,
-        override_reason: null,
-        metadata_json: "{}",
-      });
+      return Promise.resolve(
+        Response.json({
+          lane_id: "lane-failed",
+          ts_opened: "2026-05-12T00:00:00Z",
+          ts_closed: "2026-05-12T00:00:00Z",
+          task_class: "STANDARD",
+          implementer_handoff: "h-impl",
+          reviewer_handoff: "h-review",
+          gate_status: "failed",
+          recalled_memory_ids: [],
+          recalled_query: null,
+          override_reason: null,
+          metadata_json: "{}",
+        }),
+      );
     }
-    return Response.json({ ok: true, authorized: true, events_written: 1 });
+    return Promise.resolve(Response.json({ ok: true, authorized: true, events_written: 1 }));
   });
 
   try {
@@ -461,21 +503,23 @@ test("lane_close authorizes memory verification on a failed close with a reviewe
 
 test("lane_close never authorizes on a review_debt close", async () => {
   const receivedPaths: string[] = [];
-  const { daemon, restore } = makeDaemon(async (input) => {
-    receivedPaths.push(new URL(String(input)).pathname);
-    return Response.json({
-      lane_id: "lane-debt",
-      ts_opened: "2026-05-12T00:00:00Z",
-      ts_closed: "2026-05-12T00:00:00Z",
-      task_class: "STANDARD",
-      implementer_handoff: "h-impl",
-      reviewer_handoff: "h-review",
-      gate_status: "review_debt",
-      recalled_memory_ids: [],
-      recalled_query: null,
-      override_reason: null,
-      metadata_json: "{}",
-    });
+  const { daemon, restore } = installFetchMock((input): Promise<Response> => {
+    receivedPaths.push(new URL(requestUrl(input)).pathname);
+    return Promise.resolve(
+      Response.json({
+        lane_id: "lane-debt",
+        ts_opened: "2026-05-12T00:00:00Z",
+        ts_closed: "2026-05-12T00:00:00Z",
+        task_class: "STANDARD",
+        implementer_handoff: "h-impl",
+        reviewer_handoff: "h-review",
+        gate_status: "review_debt",
+        recalled_memory_ids: [],
+        recalled_query: null,
+        override_reason: null,
+        metadata_json: "{}",
+      }),
+    );
   });
 
   try {
@@ -491,18 +535,22 @@ test("lane_close never authorizes on a review_debt close", async () => {
 });
 
 test("lane_close still rejects a passed close missing implementer_handoff", async () => {
-  const { daemon, restore } = makeDaemon(async () =>
-    Response.json({
-      lane_id: "lane-malformed",
-      gate_status: "passed",
-      implementer_handoff: null,
-      reviewer_handoff: null,
-    }),
+  const { daemon, restore } = installFetchMock(
+    (): Promise<Response> =>
+      Promise.resolve(
+        Response.json({
+          lane_id: "lane-malformed",
+          gate_status: "passed",
+          implementer_handoff: null,
+          reviewer_handoff: null,
+        }),
+      ),
   );
   try {
-    await expect(
+    await expectRejection(
       laneCloseHandler(daemon)({ lane_id: "lane-malformed", gate_status: "passed" }),
-    ).rejects.toThrow("missing implementer_handoff");
+      "missing implementer_handoff",
+    );
   } finally {
     restore();
   }
@@ -510,28 +558,32 @@ test("lane_close still rejects a passed close missing implementer_handoff", asyn
 
 test("lane_close still returns the persisted close response when memory-verify authorize fails", async () => {
   const receivedPaths: string[] = [];
-  const { daemon, restore } = makeDaemon(async (input) => {
-    const path = new URL(String(input)).pathname;
+  const { daemon, restore }: FetchHarness = installFetchMock((input): Promise<Response> => {
+    const path = new URL(requestUrl(input)).pathname;
     receivedPaths.push(path);
     if (path === "/lanes/close") {
-      return Response.json({
-        lane_id: "lane-authfail",
-        ts_opened: "2026-05-12T00:00:00Z",
-        ts_closed: "2026-05-12T00:00:00Z",
-        task_class: "STANDARD",
-        implementer_handoff: "h-impl",
-        reviewer_handoff: "h-review",
-        gate_status: "passed",
-        recalled_memory_ids: [],
-        recalled_query: null,
-        override_reason: null,
-        metadata_json: "{}",
-      });
+      return Promise.resolve(
+        Response.json({
+          lane_id: "lane-authfail",
+          ts_opened: "2026-05-12T00:00:00Z",
+          ts_closed: "2026-05-12T00:00:00Z",
+          task_class: "STANDARD",
+          implementer_handoff: "h-impl",
+          reviewer_handoff: "h-review",
+          gate_status: "passed",
+          recalled_memory_ids: [],
+          recalled_query: null,
+          override_reason: null,
+          metadata_json: "{}",
+        }),
+      );
     }
-    return new Response(JSON.stringify({ error: { code: "internal" } }), {
-      status: 500,
-      headers: { "content-type": "application/json" },
-    });
+    return Promise.resolve(
+      new Response(JSON.stringify({ error: { code: "internal" } }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      }),
+    );
   });
 
   try {
@@ -562,10 +614,10 @@ test("lane_close round-trips a reviewer-less passed close through the live daemo
   // authorize call is asserted, not assumed (the test's own setup calls go
   // through live.fetchImpl directly and bypass this recorder).
   const shimPaths: string[] = [];
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    shimPaths.push(new URL(String(input)).pathname);
-    return live.fetchImpl(input, init);
-  }) as typeof fetch;
+  globalThis.fetch = async (input, init): Promise<Response> => {
+    shimPaths.push(new URL(requestUrl(input)).pathname);
+    return await live.fetchImpl(input, init);
+  };
 
   try {
     const opened = await live.fetchImpl("http://daemon/lanes/open", {
@@ -601,7 +653,7 @@ test("lane_close round-trips a reviewer-less passed close through the live daemo
       headers: { authorization: `Bearer ${live.token}` },
     });
     expect(recent.status).toBe(200);
-    const lanes = ((await recent.json()) as { lanes: Array<{ lane_id: string }> }).lanes;
+    const lanes = ((await recent.json()) as { lanes: { lane_id: string }[] }).lanes;
     expect(lanes.find((l) => l.lane_id === "lane-live-noreviewer")).toMatchObject({
       gate_status: "passed",
       implementer_handoff: "h-live-impl-2",

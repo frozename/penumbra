@@ -1,24 +1,30 @@
+import { ProjectRegistry } from "@penumbra/core";
 import { beforeAll, describe, expect, it, mock } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync, utimesSync } from "node:fs";
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-let TOOL_REGISTRY: Record<string, any> | null = null;
-let createProjectIdResolverFromCwd:
-  | ((opts?: {
-      cwd?: string;
-      registryPath?: string;
-      loadRegistry?: (path: string) => any;
-      findProjectId?: (registry: any, cwd: string) => string | undefined;
-      statPath?: (path: string) => { mtimeMs: number };
-    }) => () => string | undefined)
-  | null = null;
+import type { DaemonClient } from "../../src/daemon-client.js";
+import type { ToolDef } from "../../src/tools/registry.js";
+
+import { fakeDaemon } from "../helpers.js";
+
+type RegistryModule = typeof import("../../src/tools/registry.js");
+type ToolRegistry = RegistryModule["TOOL_REGISTRY"];
+type RegistryEntry = ToolDef;
+type CreateResolverFn = RegistryModule["createProjectIdResolverFromCwd"];
+type ResolverOpts = NonNullable<Parameters<CreateResolverFn>[0]>;
+type LoadRegistryFn = NonNullable<ResolverOpts["loadRegistry"]>;
+type FindProjectIdFn = NonNullable<ResolverOpts["findProjectId"]>;
+
+let TOOL_REGISTRY: ToolRegistry | null = null;
+let createProjectIdResolverFromCwd: CreateResolverFn | null = null;
 let resetProjectRegistryCache: (() => void) | null = null;
 let importError: unknown = null;
 
 beforeAll(async () => {
   try {
-    const mod = await import("../../src/tools/registry");
+    const mod = await import("../../src/tools/registry.js");
     TOOL_REGISTRY = mod.TOOL_REGISTRY;
     createProjectIdResolverFromCwd = mod.createProjectIdResolverFromCwd;
     resetProjectRegistryCache = mod.__resetProjectRegistryCacheForTest;
@@ -278,6 +284,11 @@ const MUTATING_TOOL_NAMES = [
   "worktree_cleanup",
 ] as const;
 
+interface ActingOnEnvelope {
+  acting_on: { kind: string; id: string };
+  content: { text: string }[];
+}
+
 describe("TOOL_REGISTRY", () => {
   it("module loads", () => {
     expect(importError).toBeNull();
@@ -300,60 +311,68 @@ describe("TOOL_REGISTRY", () => {
     expect([...allNames].sort()).toEqual([...TOOL_NAMES].sort());
 
     for (const name of TOOL_NAMES) {
-      const entry = TOOL_REGISTRY[name];
+      const entry: RegistryEntry | undefined = TOOL_REGISTRY[name];
       expect(entry).toBeDefined();
-      expect(typeof entry.descriptor?.description).toBe("string");
-      expect(entry.descriptor.description.length).toBeGreaterThan(0);
-      expect(typeof entry.makeHandler).toBe("function");
-      expect(typeof entry.readOnly).toBe("boolean");
-      expect(entry.readOnly).toBe(READ_ONLY_TOOL_NAMES.includes(name));
+      expect(typeof entry?.descriptor.description).toBe("string");
+      expect(entry?.descriptor.description.length ?? 0).toBeGreaterThan(0);
+      expect(typeof entry?.makeHandler).toBe("function");
+      expect(typeof entry?.readOnly).toBe("boolean");
+      const readOnlyExpected: boolean = (READ_ONLY_TOOL_NAMES as readonly string[]).includes(name);
+      expect(entry?.readOnly).toBe(readOnlyExpected);
     }
 
     for (const name of READ_ONLY_TOOL_NAMES) {
-      expect(TOOL_REGISTRY[name].readOnly).toBe(true);
+      expect(TOOL_REGISTRY[name]?.readOnly).toBe(true);
     }
 
     for (const name of MUTATING_TOOL_NAMES) {
-      expect(TOOL_REGISTRY[name].readOnly).toBe(false);
+      expect(TOOL_REGISTRY[name]?.readOnly).toBe(false);
     }
   });
 
   it("wraps handoff_get results with acting_on for handoff_id inputs", async () => {
     if (importError || !TOOL_REGISTRY) return;
 
-    const daemon = {
-      getHandoff: async (handoffId: string) => ({
-        handoff: {
-          handoff_id: handoffId,
-          status: "pending",
-          from_agent: "user",
-          to_agent: "codex",
-        },
-      }),
-    } as any;
-    const handler = TOOL_REGISTRY["handoff_get"].makeHandler(daemon);
-    const result = await handler({ handoff_id: "abc" });
+    const daemon: DaemonClient = fakeDaemon({
+      getHandoff: (handoffId: string) =>
+        Promise.resolve({
+          handoff: {
+            handoff_id: handoffId,
+            status: "pending",
+            conversation_id: "c-1",
+            from_agent: "user",
+            to_agent: "codex",
+          },
+        }),
+    });
+    const entry = TOOL_REGISTRY["handoff_get"];
+    expect(entry).toBeDefined();
+    const handler = entry!.makeHandler(daemon);
+    const result = (await handler({ handoff_id: "abc" })) as ActingOnEnvelope;
 
-    expect((result as any).acting_on).toEqual({ kind: "handoff", id: "abc" });
-    expect(Object.keys(result as Record<string, unknown>)[0]).toBe("acting_on");
-    expect((result as any).content?.[0]?.text).toContain('"handoff_id": "abc"');
+    expect(result.acting_on).toEqual({ kind: "handoff", id: "abc" });
+    expect(Object.keys(result)[0]).toBe("acting_on");
+    expect(result.content[0]?.text).toContain('"handoff_id": "abc"');
   });
 
   it("wraps task_get results with acting_on for task_id inputs", async () => {
     if (importError || !TOOL_REGISTRY) return;
 
-    const daemon = {
-      taskGet: async (taskId: string) => ({
-        task_id: taskId,
-        status: "open",
-      }),
-    } as any;
-    const handler = TOOL_REGISTRY["task_get"].makeHandler(daemon);
-    const result = await handler({ task_id: "xyz" });
+    const daemon: DaemonClient = fakeDaemon({
+      taskGet: (taskId: string) =>
+        Promise.resolve({
+          task_id: taskId,
+          status: "open",
+        }),
+    });
+    const entry = TOOL_REGISTRY["task_get"];
+    expect(entry).toBeDefined();
+    const handler = entry!.makeHandler(daemon);
+    const result = (await handler({ task_id: "xyz" })) as ActingOnEnvelope;
 
-    expect((result as any).acting_on).toEqual({ kind: "task", id: "xyz" });
-    expect(Object.keys(result as Record<string, unknown>)[0]).toBe("acting_on");
-    expect((result as any).content?.[0]?.text).toMatch(/"task_id"\s*:\s*"xyz"/);
+    expect(result.acting_on).toEqual({ kind: "task", id: "xyz" });
+    expect(Object.keys(result)[0]).toBe("acting_on");
+    expect(result.content[0]?.text).toMatch(/"task_id"\s*:\s*"xyz"/);
   });
 
   it("chain_start makeHandler injects cwd-resolved project_id when omitted", async () => {
@@ -367,20 +386,24 @@ describe("TOOL_REGISTRY", () => {
       "utf8",
     );
 
-    const daemon = {
-      startChain: mock().mockResolvedValue({ conversation_id: "conv-1", handoff_id: "h-1" }),
-    } as any;
+    type StartChainFn = DaemonClient["startChain"];
+    const startChainMock = mock<StartChainFn>(() =>
+      Promise.resolve({ conversation_id: "conv-1", handoff_id: "h-1" }),
+    );
+    const daemon: DaemonClient = fakeDaemon({ startChain: startChainMock });
     const previous = process.env.PENUMBRA_PROJECTS_YAML;
 
     try {
       process.env.PENUMBRA_PROJECTS_YAML = registryPath;
       delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
       resetProjectRegistryCache();
-      const handler = TOOL_REGISTRY["chain_start"].makeHandler(daemon);
+      const entry = TOOL_REGISTRY["chain_start"];
+      expect(entry).toBeDefined();
+      const handler = entry!.makeHandler(daemon);
 
       await handler({ initial_agent: "planner", message: "hi" });
 
-      expect(daemon.startChain).toHaveBeenCalledWith(
+      expect(startChainMock).toHaveBeenCalledWith(
         expect.objectContaining({
           initial_agent: "planner",
           message: "hi",
@@ -406,8 +429,9 @@ describe("TOOL_REGISTRY", () => {
       "utf8",
     );
 
-    const loadRegistry = mock((path: string) => ({ path }));
-    const findProjectId = mock((_registry: any, _cwd: string) => "penumbra");
+    const fakeRegistry = new ProjectRegistry(new Map());
+    const loadRegistry = mock<LoadRegistryFn>(() => fakeRegistry);
+    const findProjectId = mock<FindProjectIdFn>(() => "penumbra");
 
     try {
       resetProjectRegistryCache();
