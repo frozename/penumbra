@@ -1,15 +1,37 @@
-import { expect, it, beforeEach, afterEach } from "bun:test";
-import { Database } from "bun:sqlite";
-import { loadSqliteVec, applySchema } from "@penumbra/core";
 import type { Services } from "@penumbra/core";
+
+import { applySchema, loadSqliteVec } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, expect, it } from "bun:test";
+
+import type { WorkerTokenStoreLike } from "../../src/auth.js";
+
+import { createBearerAuth } from "../../src/auth.js";
 import {
-  curatorPatternsListRoute,
   curatorPatternsAddRoute,
   curatorPatternsApproveRoute,
   curatorPatternsDisableRoute,
+  curatorPatternsListRoute,
 } from "../../src/routes/curator.js";
-import { createBearerAuth } from "../../src/auth.js";
-import type { WorkerTokenStoreLike } from "../../src/auth.js";
+
+interface PatternRow {
+  pattern: string;
+  status: string;
+  enabled: number;
+}
+interface PatternsListBody {
+  patterns: PatternRow[];
+}
+interface PatternIdBody {
+  pattern_id: string;
+}
+interface OkPatternBody {
+  ok: boolean;
+  pattern_id: string;
+}
+interface ErrorBody {
+  error: { code: string };
+}
 
 function makeWorkerRequest(url: string, method = "POST", body?: unknown): Request {
   const req = new Request(url, {
@@ -47,7 +69,9 @@ try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* already loaded */
+}
 
 let db: Database;
 
@@ -83,6 +107,12 @@ function seedPattern(opts: {
   );
 }
 
+function readPatternRow(pattern_id: string): PatternRow {
+  return db
+    .prepare(`SELECT pattern, status, enabled FROM curator_ephemera_patterns WHERE pattern_id=?`)
+    .get(pattern_id) as PatternRow;
+}
+
 it("GET /curator/patterns returns approved patterns only by default", async () => {
   seedPattern({ pattern: "URL: %", status: "approved", enabled: 1 });
   seedPattern({ pattern: "Other: %", status: "queued" });
@@ -91,9 +121,9 @@ it("GET /curator/patterns returns approved patterns only by default", async () =
     makeServices(),
   );
   expect(res.status).toBe(200);
-  const body = (await res.json()) as { patterns: any[] };
+  const body = (await res.json()) as PatternsListBody;
   expect(body.patterns).toHaveLength(1);
-  expect(body.patterns[0].pattern).toBe("URL: %");
+  expect(body.patterns[0]?.pattern).toBe("URL: %");
 });
 
 it("GET /curator/patterns?status=all returns all rows", async () => {
@@ -103,7 +133,7 @@ it("GET /curator/patterns?status=all returns all rows", async () => {
     new Request("http://x/curator/patterns?status=all"),
     makeServices(),
   );
-  const body = (await res.json()) as { patterns: any[] };
+  const body = (await res.json()) as PatternsListBody;
   expect(body.patterns).toHaveLength(2);
 });
 
@@ -124,11 +154,9 @@ it("POST /curator/patterns inserts a queued pattern and returns pattern_id", asy
     makeServices(),
   );
   expect(res.status).toBe(200);
-  const body = (await res.json()) as { pattern_id: string };
+  const body = (await res.json()) as PatternIdBody;
   expect(typeof body.pattern_id).toBe("string");
-  const row = db
-    .prepare(`SELECT status, enabled FROM curator_ephemera_patterns WHERE pattern_id=?`)
-    .get(body.pattern_id) as any;
+  const row = readPatternRow(body.pattern_id);
   expect(row.status).toBe("queued");
   expect(row.enabled).toBe(0);
 });
@@ -149,12 +177,10 @@ it("POST /curator/patterns/:id/approve flips status + enabled", async () => {
     "p1",
   );
   expect(res.status).toBe(200);
-  const body = (await res.json()) as { ok: boolean; pattern_id: string };
+  const body = (await res.json()) as OkPatternBody;
   expect(body.ok).toBe(true);
   expect(body.pattern_id).toBe("p1");
-  const row = db
-    .prepare(`SELECT status, enabled FROM curator_ephemera_patterns WHERE pattern_id='p1'`)
-    .get() as any;
+  const row = readPatternRow("p1");
   expect(row.status).toBe("approved");
   expect(row.enabled).toBe(1);
 });
@@ -176,11 +202,9 @@ it("POST /curator/patterns/:id/disable sets enabled=0 without changing status", 
     "p1",
   );
   expect(res.status).toBe(200);
-  const body = (await res.json()) as { ok: boolean; pattern_id: string };
+  const body = (await res.json()) as OkPatternBody;
   expect(body.ok).toBe(true);
-  const row = db
-    .prepare(`SELECT status, enabled FROM curator_ephemera_patterns WHERE pattern_id='p1'`)
-    .get() as any;
+  const row = readPatternRow("p1");
   expect(row.status).toBe("approved");
   expect(row.enabled).toBe(0);
 });
@@ -203,7 +227,7 @@ it("POST /curator/patterns succeeds for daemon/shared principal", async () => {
     makeServices(),
   );
   expect(res.status).toBe(200);
-  const body = (await res.json()) as { pattern_id: string };
+  const body = (await res.json()) as PatternIdBody;
   expect(typeof body.pattern_id).toBe("string");
 });
 
@@ -213,7 +237,7 @@ it("POST /curator/patterns rejects worker bearer with 403 admin_only", async () 
     makeServices(),
   );
   expect(res.status).toBe(403);
-  const body = (await res.json()) as any;
+  const body = (await res.json()) as ErrorBody;
   expect(body.error.code).toBe("admin_only");
 });
 
@@ -227,7 +251,7 @@ it("POST /curator/patterns requires non-worker bearer for admin operations", asy
     makeServices(),
   );
   expect(res.status).toBe(403);
-  const body = (await res.json()) as { error: { code: string } };
+  const body = (await res.json()) as ErrorBody;
   expect(body.error.code).toBe("admin_only");
 });
 
@@ -239,7 +263,7 @@ it("POST /curator/patterns/:id/approve rejects worker bearer with 403", async ()
     "p-w",
   );
   expect(res.status).toBe(403);
-  const body = (await res.json()) as any;
+  const body = (await res.json()) as ErrorBody;
   expect(body.error.code).toBe("admin_only");
 });
 
@@ -251,7 +275,7 @@ it("POST /curator/patterns/:id/disable rejects worker bearer with 403", async ()
     "p-w2",
   );
   expect(res.status).toBe(403);
-  const body = (await res.json()) as any;
+  const body = (await res.json()) as ErrorBody;
   expect(body.error.code).toBe("admin_only");
 });
 

@@ -1,13 +1,14 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import {
-  type Services,
-  migrate,
   loadSqliteVec,
-  PermissionWriter,
-  PermissionReader,
+  migrate,
   PermissionEventBus,
+  PermissionReader,
+  PermissionWriter,
+  type Services,
 } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import {
   permissionsCreateRoute,
   permissionsGetRoute,
@@ -17,7 +18,20 @@ import {
 try {
   if (process.platform === "darwin")
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-} catch {}
+} catch {
+  /* already loaded */
+}
+
+interface PermissionRowView {
+  permission_id: string;
+  status: string;
+}
+interface PermissionGetBody {
+  permission: PermissionRowView;
+}
+interface PermissionListBody {
+  permissions: PermissionRowView[];
+}
 
 function makeServices(db: Database): Services {
   return {
@@ -28,9 +42,9 @@ function makeServices(db: Database): Services {
     machineId: { get: () => "machine-test" },
     uuid: () => "evt-1",
     clock: () => new Date("2026-04-28T12:00:00.000Z"),
-    t0Writer: { write: () => {} },
+    t0Writer: { write: () => undefined },
     settings: { permission_ttl_seconds: 300 },
-    log: { info: () => {}, warn: () => {} },
+    log: { info: () => undefined, warn: () => undefined },
   } as unknown as Services;
 }
 
@@ -39,7 +53,7 @@ async function seed(
   permission_id: string,
   conversation_id = "c-1",
   parent_handoff_id = "h-1",
-) {
+): Promise<void> {
   await permissionsCreateRoute(
     new Request("http://x/permissions", {
       method: "POST",
@@ -69,7 +83,7 @@ test("GET /permissions/:id returns the row", async () => {
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = (await res.json()) as PermissionGetBody;
   expect(body.permission.permission_id).toBe("perm-1");
   expect(body.permission.status).toBe("pending");
 });
@@ -91,8 +105,8 @@ test("GET /permissions filters by status (default pending)", async () => {
   await seed(services, "perm-1");
   await seed(services, "perm-2");
   const res = await permissionsListRoute(new Request("http://x/permissions"), services);
-  const body = await res.json();
-  expect(body.permissions.map((p: any) => p.permission_id).sort()).toEqual(["perm-1", "perm-2"]);
+  const body = (await res.json()) as PermissionListBody;
+  expect(body.permissions.map((p) => p.permission_id).sort()).toEqual(["perm-1", "perm-2"]);
 });
 
 test("GET /permissions filters by conversation_id", async () => {
@@ -106,8 +120,8 @@ test("GET /permissions filters by conversation_id", async () => {
     new Request("http://x/permissions?conversation_id=conv-A"),
     services,
   );
-  const body = await res.json();
-  expect(body.permissions.map((p: any) => p.permission_id)).toEqual(["perm-A"]);
+  const body = (await res.json()) as PermissionListBody;
+  expect(body.permissions.map((p) => p.permission_id)).toEqual(["perm-A"]);
 });
 
 test("GET /permissions filters by parent_handoff_id", async () => {
@@ -121,8 +135,8 @@ test("GET /permissions filters by parent_handoff_id", async () => {
     new Request("http://x/permissions?parent_handoff_id=h-A"),
     services,
   );
-  const body = await res.json();
-  expect(body.permissions.map((p: any) => p.permission_id)).toEqual(["perm-A"]);
+  const body = (await res.json()) as PermissionListBody;
+  expect(body.permissions.map((p) => p.permission_id)).toEqual(["perm-A"]);
 });
 
 test("GET /permissions accepts comma-separated status list", async () => {
@@ -143,8 +157,8 @@ test("GET /permissions accepts comma-separated status list", async () => {
     new Request("http://x/permissions?status=pending,approved"),
     services,
   );
-  const body = await res.json();
-  expect(body.permissions.map((p: any) => p.permission_id).sort()).toEqual(["perm-1", "perm-2"]);
+  const body = (await res.json()) as PermissionListBody;
+  expect(body.permissions.map((p) => p.permission_id).sort()).toEqual(["perm-1", "perm-2"]);
 });
 
 test("GET /permissions returns 400 for unknown status", async () => {

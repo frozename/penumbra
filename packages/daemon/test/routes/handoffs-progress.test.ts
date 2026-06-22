@@ -1,15 +1,18 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import {
-  type Services,
-  migrate,
-  loadSqliteVec,
-  HandoffWriter,
-  HandoffReader,
   ConversationStreamBus,
+  type ConversationStreamEvent,
+  HandoffEventBus,
+  HandoffReader,
+  HandoffWriter,
+  loadSqliteVec,
+  migrate,
+  type Services,
 } from "@penumbra/core";
-import { handoffsCreateRoute } from "../../src/routes/handoffs.js";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { handoffsProgressRoute } from "../../src/routes/handoffs-progress.js";
+import { handoffsCreateRoute } from "../../src/routes/handoffs.js";
 
 try {
   if (process.platform === "darwin") {
@@ -19,26 +22,36 @@ try {
   /* already loaded */
 }
 
+interface HandoffCreateBody {
+  handoff_id: string;
+}
+interface ProgressCapErrorBody {
+  error: { code: string; message: string };
+}
+
 function makeServices(db: Database): Services {
   return makeServicesWithClock(db, () => new Date("2026-04-25T20:00:00.000Z"));
 }
 
 function makeServicesWithClock(db: Database, clock: () => Date): Services {
-  const handoffEvents = { subscribe: () => {}, emit: () => {} };
+  const handoffEvents = new HandoffEventBus();
   const conversationStream = new ConversationStreamBus();
   return {
     db,
-    handoffWriter: new HandoffWriter({ db, events: handoffEvents as any }),
+    handoffWriter: new HandoffWriter({ db, events: handoffEvents }),
     handoffReader: new HandoffReader({ db }),
     conversationStream,
     uuid: (() => {
       let n = 0;
-      return () => `evt-${++n}`;
+      return (): string => {
+        n += 1;
+        return `evt-${String(n)}`;
+      };
     })(),
     clock,
-    t0Writer: { write: () => {} },
+    t0Writer: { write: () => undefined },
     machineId: { get: () => "machine-test" },
-    log: { info: () => {}, warn: () => {}, debug: () => {} },
+    log: { info: () => undefined, warn: () => undefined, debug: () => undefined },
   } as unknown as Services;
 }
 
@@ -91,7 +104,7 @@ async function postProgress(
   handoff_id: string,
   body: Record<string, unknown>,
 ): Promise<Response> {
-  return handoffsProgressRoute(
+  return await handoffsProgressRoute(
     new Request(`http://x/handoffs/${handoff_id}/progress`, {
       method: "POST",
       body: JSON.stringify({ handoff_id, ...body }),
@@ -121,7 +134,7 @@ test("POST /handoffs/:id/progress resolves conversation_id and emits to stream",
     }),
     services,
   );
-  const { handoff_id } = await createRes.json();
+  const { handoff_id } = (await createRes.json()) as HandoffCreateBody;
 
   // 2. Push hop-start
   const startReq = new Request(`http://x/handoffs/${handoff_id}/progress`, {
@@ -149,7 +162,7 @@ test("POST /handoffs/:id/progress resolves conversation_id and emits to stream",
   });
 
   let emittedConv: string | null = null;
-  let emittedEvent: any = null;
+  let emittedEvent: ConversationStreamEvent | null = null;
   services.conversationStream.subscribe((convId, event) => {
     emittedConv = convId;
     emittedEvent = event;
@@ -182,7 +195,7 @@ test("POST /handoffs/:id/progress accepts terminal handoff progress and emits to
   createTerminalHandoff(services, handoff_id, "c1");
 
   let emittedConv: string | null = null;
-  let emittedEvent: any = null;
+  let emittedEvent: ConversationStreamEvent | null = null;
   services.conversationStream.subscribe((convId, event) => {
     emittedConv = convId;
     emittedEvent = event;
@@ -263,7 +276,8 @@ test("POST /handoffs/:id/progress enforces the terminal cap on the 51st post", a
 
   const capped = await postProgress(services, handoff_id, { type: "token", seq: 51, delta: "x" });
   expect(capped.status).toBe(429);
-  await expect(capped.json()).resolves.toEqual({
+  const cappedBody = (await capped.json()) as ProgressCapErrorBody;
+  expect(cappedBody).toEqual({
     error: {
       code: "progress_cap_exceeded",
       message: "terminal handoff terminal-cap-single exceeded the progress cap of 50",
