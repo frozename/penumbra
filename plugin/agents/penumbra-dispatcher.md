@@ -32,19 +32,35 @@ Your task message contains a fenced ```dispatch block of JSON:
 2. Call `mcp__penumbra__chain_start` with `initial_agent`, `message`, `task_class`,
    `task_type`, `trust_mode`, `use_worktree`, `max_hops`, and `branch_base` if the
    spec includes it. Capture whatever `conversation_id` and `handoff_id` the result returns.
-3. Wait for terminal with SHORT polls so you never stall: repeatedly call
+3. Wait for terminal with SHORT polls so you never stall. First compute a FINITE
+   iteration budget `N = min(25, ceil((spec.timeout_ms || 1800000) / 90000))` — this is
+   always a finite number even when the spec omits `timeout_ms`, so you NEVER loop
+   unbounded. Repeatedly call
    `mcp__penumbra__chain_wait({ conversation_id, timeout_ms: 90000 })` — each returns
    within ~90s, under the workflow runtime's no-progress watchdog — until status is
-   terminal (completed/failed), for at most `ceil(spec.timeout_ms / 90000)` iterations.
-   Do NOT issue a single long blocking wait (it trips the watchdog → kill + retry →
-   duplicate dispatches). Between polls you MAY call
+   terminal (completed/failed) OR you have made `N` calls. Do NOT issue a single long
+   blocking wait (it trips the watchdog → kill + retry → duplicate dispatches), and do
+   NOT keep waiting past `N` iterations. Between polls you MAY call
    `mcp__penumbra__chain_status({ handoff_id })` for a cheap liveness check.
-4. On terminal, call `mcp__penumbra__chain_get_response({ conversation_id, which: "final" })`.
-5. Return StructuredOutput per schema. Set `ok=true` ONLY when the chain reached a
-   completed terminal state. On failure/timeout/transport error set `ok=false` with
-   `status` and a short `error_summary`. Do NOT retry — report and let the
-   orchestrator decide. If a worktree branch was created, report it as
-   `agent/<handoff_id>`.
+4. SALVAGE a committed-but-eventless dispatch. A worker can finish the task and commit
+   its branch WITHOUT the chain ever emitting a terminal `dispatch.end` event — so if
+   the `N` iterations are exhausted with NO terminal state, do NOT hang and do NOT fail
+   blindly. Call `mcp__penumbra__worktree_inspect({ handoff_id })`. If it shows the
+   branch `agent/<handoff_id>` has at least one commit ahead of its base AND a clean
+   tree (no uncommitted changes), treat the dispatch as COMPLETE: set `ok=true`,
+   `status="completed_via_inspection"`, report `branch=agent/<handoff_id>` with the
+   commit, and put "no terminal dispatch.end event; salvaged via worktree inspection" in
+   `error_summary`. Only if inspection shows NO commits (or an unrecoverable dirty tree)
+   → `ok=false`, `status="stalled"`.
+5. On a terminal `completed` state, call
+   `mcp__penumbra__chain_get_response({ conversation_id, which: "final" })` for the
+   worker's reported outcome. (Skip if you salvaged via inspection and the worker left
+   no final response.)
+6. Return StructuredOutput per schema. Set `ok=true` for a `completed` terminal state OR
+   a `completed_via_inspection` salvage that found commits. On `failed` / `stalled` /
+   transport error set `ok=false` with `status` and a short `error_summary`. Do NOT
+   retry — report and let the orchestrator decide. Always report the branch as
+   `agent/<handoff_id>` whenever a worktree was created.
 
 ## Hard rules
 
