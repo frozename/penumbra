@@ -1,12 +1,32 @@
 import { expect, test } from "bun:test";
-import { gradeSchemaTask, runGrade } from "./bench-grade.js";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import type { BenchTask } from "./bench-prompts.js";
 
+import { gradeSchemaTask, runGrade } from "./bench-grade.js";
+
 interface ChatCompletionRequestBody {
-  messages: Array<{ content: string }>;
+  messages: { content: string }[];
+}
+
+interface JudgeChoice {
+  message: { content: string };
+}
+
+function makeJudgeResponse(choices: JudgeChoice[]): Response {
+  return new Response(JSON.stringify({ choices }), {
+    headers: { "content-type": "application/json" },
+  });
+}
+
+// Bun's `typeof fetch` includes a `preconnect` method that plain function
+// literals do not satisfy. Tests provide a fetch implementation that only
+// services request/response, so widen via a single documented cast helper.
+type MinimalFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+function asFetch(fn: MinimalFetch): typeof fetch {
+  return fn as unknown as typeof fetch;
 }
 
 test("runGrade: parses JSONL and dispatches grading prompts to mock HTTP", async () => {
@@ -21,20 +41,15 @@ test("runGrade: parses JSONL and dispatches grading prompts to mock HTTP", async
   writeFileSync(jsonlPath, testEntries.map((e) => JSON.stringify(e)).join("\n"));
 
   let callCount = 0;
-  const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+  const fetchImpl = asFetch(async (input, init): Promise<Response> => {
     callCount++;
     const req = input instanceof Request ? input : new Request(String(input), init);
     const body = (await req.json()) as ChatCompletionRequestBody;
     expect(body.messages.at(0)?.content).toContain("GROUND TRUTH:");
     expect(body.messages.at(0)?.content).toContain("MODEL ANSWER:");
 
-    return new Response(
-      JSON.stringify({
-        choices: [{ message: { content: "PASS" } }],
-      }),
-      { headers: { "content-type": "application/json" } },
-    );
-  }) as any;
+    return makeJudgeResponse([{ message: { content: "PASS" } }]);
+  });
 
   try {
     const url = `http://stub/v1`;
@@ -62,16 +77,11 @@ test("runGrade: handles PARTIAL and FAIL verdicts correctly", async () => {
   writeFileSync(jsonlPath, JSON.stringify({ task: "T4", answer: "maybe", model: "m", label: "l" }));
 
   let call = 0;
-  const fetchImpl: typeof fetch = (async () => {
+  const fetchImpl = asFetch((): Promise<Response> => {
     call++;
     const content = call === 1 ? "PARTIAL verdict" : "totally WRONG";
-    return new Response(
-      JSON.stringify({
-        choices: [{ message: { content } }],
-      }),
-      { headers: { "content-type": "application/json" } },
-    );
-  }) as any;
+    return Promise.resolve(makeJudgeResponse([{ message: { content } }]));
+  });
 
   try {
     const url = `http://stub/v1`;
@@ -94,9 +104,9 @@ test("gradeResults: short-circuits empty answers and errors before judge", async
     ].join("\n"),
   );
 
-  const fetchImpl: typeof fetch = (async () => {
+  const fetchImpl = asFetch((): Promise<Response> => {
     throw new Error("judge should not be called for empty/error results");
-  }) as any;
+  });
 
   try {
     const results = await runGrade({
@@ -127,10 +137,9 @@ test("gradeSchemaTask: rejects malformed JSON", () => {
     schema: "T2MemoryExtraction[]",
   };
 
-  expect(gradeSchemaTask(task, "{not json")).toEqual({
-    verdict: "FAIL",
-    detail: expect.stringContaining("malformed JSON"),
-  });
+  const result = gradeSchemaTask(task, "{not json");
+  expect(result.verdict).toBe("FAIL");
+  expect(result.detail).toContain("malformed JSON");
 });
 
 test("gradeSchemaTask: rejects schema violations", () => {
@@ -145,10 +154,9 @@ test("gradeSchemaTask: rejects schema violations", () => {
     schema: "T2MemoryExtraction[]",
   };
 
-  expect(gradeSchemaTask(task, '[{"title":"a","body":"b"}]')).toEqual({
-    verdict: "FAIL",
-    detail: expect.stringContaining("schema violation"),
-  });
+  const result = gradeSchemaTask(task, '[{"title":"a","body":"b"}]');
+  expect(result.verdict).toBe("FAIL");
+  expect(result.detail).toContain("schema violation");
 });
 
 test("gradeSchemaTask: passes when all expected extractions are present", () => {

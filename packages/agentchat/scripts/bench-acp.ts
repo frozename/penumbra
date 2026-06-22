@@ -1,8 +1,59 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BENCH_TASKS, BENCH_SYSTEM_PROMPT } from "./bench-prompts.js";
-import { gradeResults } from "./bench-grade.js";
+
 import { PenumbraClient } from "../src/penumbra-client.js";
+import { type GradeResult, gradeResults, type GradeResultsOpts } from "./bench-grade.js";
+import { BENCH_SYSTEM_PROMPT, BENCH_TASKS, type BenchTask } from "./bench-prompts.js";
+
+interface BenchStartChainInput {
+  initial_agent: string;
+  message: string;
+  task_type: string;
+  use_worktree: boolean;
+  trust_mode: "all" | "config";
+  caller_cwd: string;
+  project_id: string;
+}
+
+interface BenchStartChainResult {
+  conversation_id: string;
+  handoff_id: string;
+}
+
+interface BenchHandoffStatus {
+  status: string;
+  latency_seconds: number | null;
+}
+
+interface BenchChainResponse {
+  text: string;
+}
+
+interface BenchChainResponses {
+  responses: BenchChainResponse[];
+}
+
+interface BenchTokenBudget {
+  tokens_in?: number;
+  tokens_out?: number;
+}
+
+interface BenchTimelineEvent {
+  _meta?: { token_budget?: BenchTokenBudget };
+}
+
+interface BenchTimeline {
+  events: BenchTimelineEvent[];
+}
+
+export interface BenchAcpClient {
+  startChain(body: BenchStartChainInput): Promise<BenchStartChainResult>;
+  getHandoffStatus(handoff_id: string): Promise<BenchHandoffStatus>;
+  getChainResponses(conversation_id: string, which: "final" | "all"): Promise<BenchChainResponses>;
+  getDispatchTimeline(handoff_id: string): Promise<BenchTimeline>;
+}
+
+export type GradeResultsFn = (opts: GradeResultsOpts) => Promise<GradeResult[]>;
 
 export interface RunBenchAcpOpts {
   agents: string[];
@@ -15,105 +66,250 @@ export interface RunBenchAcpOpts {
   outPath?: string;
   configPath?: string;
   projectId?: string;
-  client?: any;
-  gradeResultsFn?: any;
+  client?: BenchAcpClient;
+  gradeResultsFn?: GradeResultsFn;
 }
 
-export async function runBenchAcp(opts: RunBenchAcpOpts) {
-  const agents = opts.agents;
-  const tasks = opts.tasks ? BENCH_TASKS.filter((t) => opts.tasks!.includes(t.id)) : BENCH_TASKS;
-  const concurrency = opts.concurrency || 2;
-  const client = opts.client || new PenumbraClient();
-  const gradeFn = opts.gradeResultsFn || gradeResults;
+interface RawResult {
+  agent: string;
+  task: BenchTask["id"];
+  answer: string;
+  latency_s: number;
+  tokens: number;
+  model: string;
+  label: string;
+}
 
-  const queue: { agent: string; task: (typeof BENCH_TASKS)[number] }[] = [];
+interface FinalResult {
+  agent: string;
+  task: BenchTask["id"];
+  verdict: string;
+  latency_s: number;
+  tokens: number;
+  response_excerpt: string;
+}
 
-  for (const agent of agents) {
-    for (const task of tasks) {
-      queue.push({ agent, task });
-    }
-  }
+export interface SummaryRow {
+  agent: string;
+  passRate: number;
+  medianLatency: number;
+  totalTokens: number;
+}
 
-  async function processItem(item: { agent: string; task: (typeof BENCH_TASKS)[number] }) {
-    const fixturePath = join(import.meta.dirname, item.task.fixturePath);
-    const fixtureBody = readFileSync(fixturePath, "utf8");
-    const prompt = `--- File: ${item.task.fixtureLabel} ---\n${fixtureBody}\n\n---\n\n${item.task.question}`;
-    const message = BENCH_SYSTEM_PROMPT + "\n\n" + prompt;
+interface SummaryAccumulator {
+  agent: string;
+  passes: number;
+  total: number;
+  latencies: number[];
+  totalTokens: number;
+}
 
-    const start = await client.startChain({
-      initial_agent: item.agent,
-      message: message,
-      task_type: "unknown",
-      use_worktree: false,
-      trust_mode: "all",
-      caller_cwd: join(import.meta.dirname, "../../.."),
-      project_id: opts.projectId ?? "penumbra",
-    });
+interface QueueItem {
+  agent: string;
+  task: BenchTask;
+}
 
-    let status;
-    while (true) {
-      status = await client.getHandoffStatus(start.handoff_id);
-      if (["completed", "failed", "cancelled", "rejected"].includes(status.status)) {
-        break;
-      }
-      await new Promise((r) => setTimeout(r, 2000));
-    }
+const REPO_ROOT_FROM_SCRIPTS = "../../..";
 
-    const responses = await client.getChainResponses(start.conversation_id, "final");
-    const finalAnswer =
-      responses.responses && responses.responses.length > 0
-        ? responses.responses[responses.responses.length - 1].text
-        : "";
-
-    let totalTokens = 0;
-    try {
-      const timeline = await client.getDispatchTimeline(start.handoff_id);
-      for (const ev of timeline.events) {
-        if (ev._meta && ev._meta.token_budget) {
-          totalTokens +=
-            (ev._meta.token_budget.tokens_in || 0) + (ev._meta.token_budget.tokens_out || 0);
+function bridgePenumbraClient(client: PenumbraClient): BenchAcpClient {
+  return {
+    startChain: async (body): Promise<BenchStartChainResult> => await client.startChain(body),
+    getHandoffStatus: async (id): Promise<BenchHandoffStatus> => {
+      const res = await client.getHandoffStatus(id);
+      return { status: res.status, latency_seconds: res.latency_seconds };
+    },
+    getChainResponses: async (id, which): Promise<BenchChainResponses> => {
+      const res = await client.getChainResponses(id, which);
+      return { responses: res.responses.map((r) => ({ text: r.text })) };
+    },
+    getDispatchTimeline: async (id): Promise<BenchTimeline> => {
+      const res = await client.getDispatchTimeline(id);
+      const events: BenchTimelineEvent[] = [];
+      for (const ev of res.events) {
+        if (ev !== null && typeof ev === "object" && "_meta" in ev) {
+          events.push(ev as BenchTimelineEvent);
+        } else {
+          events.push({});
         }
       }
-    } catch (e) {
-      // ignore
+      return { events };
+    },
+  };
+}
+
+function sumTokensFromTimeline(timeline: BenchTimeline): number {
+  let total = 0;
+  for (const ev of timeline.events) {
+    const budget = ev._meta?.token_budget;
+    if (budget) {
+      total += (budget.tokens_in ?? 0) + (budget.tokens_out ?? 0);
     }
+  }
+  return total;
+}
 
-    const latency = status.latency_seconds || 0;
+async function processItem(
+  client: BenchAcpClient,
+  item: QueueItem,
+  projectId: string,
+): Promise<RawResult> {
+  const fixturePath = join(import.meta.dirname, item.task.fixturePath);
+  const fixtureBody = readFileSync(fixturePath, "utf8");
+  const prompt = `--- File: ${item.task.fixtureLabel} ---\n${fixtureBody}\n\n---\n\n${item.task.question}`;
+  const message = BENCH_SYSTEM_PROMPT + "\n\n" + prompt;
 
-    return {
-      agent: item.agent,
-      task: item.task.id,
-      answer: finalAnswer,
-      latency_s: latency,
-      tokens: totalTokens,
-      model: item.agent,
-      label: item.task.fixtureLabel,
-    };
+  const start = await client.startChain({
+    initial_agent: item.agent,
+    message,
+    task_type: "unknown",
+    use_worktree: false,
+    trust_mode: "all",
+    caller_cwd: join(import.meta.dirname, REPO_ROOT_FROM_SCRIPTS),
+    project_id: projectId,
+  });
+
+  let status: BenchHandoffStatus;
+  for (;;) {
+    status = await client.getHandoffStatus(start.handoff_id);
+    if (["completed", "failed", "cancelled", "rejected"].includes(status.status)) {
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 2000));
   }
 
-  const rawResults: any[] = [];
-  const workers = [];
+  const responses = await client.getChainResponses(start.conversation_id, "final");
+  const finalAnswer =
+    responses.responses.length > 0 ? (responses.responses.at(-1)?.text ?? "") : "";
+
+  let totalTokens = 0;
+  try {
+    const timeline = await client.getDispatchTimeline(start.handoff_id);
+    totalTokens = sumTokensFromTimeline(timeline);
+  } catch {
+    // best-effort token accounting
+  }
+
+  return {
+    agent: item.agent,
+    task: item.task.id,
+    answer: finalAnswer,
+    latency_s: status.latency_seconds ?? 0,
+    tokens: totalTokens,
+    model: item.agent,
+    label: item.task.fixtureLabel,
+  };
+}
+
+async function runWorkers(
+  client: BenchAcpClient,
+  queue: QueueItem[],
+  concurrency: number,
+  projectId: string,
+): Promise<RawResult[]> {
+  const rawResults: RawResult[] = [];
   let index = 0;
 
-  async function worker() {
+  async function worker(): Promise<void> {
     while (index < queue.length) {
       const item = queue[index++];
-      if (!item) continue;
+      if (item === undefined) {
+        continue;
+      }
       try {
-        const res = await processItem(item);
+        const res = await processItem(client, item, projectId);
         rawResults.push(res);
-      } catch (err) {
+      } catch (err: unknown) {
         console.error(`Error processing agent=${item.agent} task=${item.task.id}`, err);
       }
     }
   }
 
+  const workers: Promise<void>[] = [];
   for (let i = 0; i < concurrency; i++) {
     workers.push(worker());
   }
   await Promise.all(workers);
+  return rawResults;
+}
 
-  // Grade results
+function buildFinalResults(rawResults: RawResult[], graded: GradeResult[]): FinalResult[] {
+  return rawResults.map((r) => {
+    const match = graded.find((g) => g.task === r.task && g.model === r.model);
+    return {
+      agent: r.agent,
+      task: r.task,
+      verdict: match ? match.verdict : "ERROR",
+      latency_s: r.latency_s,
+      tokens: r.tokens,
+      response_excerpt: r.answer.slice(0, 100).replaceAll("\n", " "),
+    };
+  });
+}
+
+function medianOf(values: number[]): number {
+  if (values.length === 0) {
+    return 0;
+  }
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 !== 0) {
+    return sorted[mid] ?? 0;
+  }
+  return ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2;
+}
+
+function accumulateRow(map: Map<string, SummaryAccumulator>, r: FinalResult): void {
+  let acc = map.get(r.agent);
+  if (!acc) {
+    acc = { agent: r.agent, passes: 0, total: 0, latencies: [], totalTokens: 0 };
+    map.set(r.agent, acc);
+  }
+  acc.total++;
+  if (r.verdict === "PASS") {
+    acc.passes++;
+  }
+  acc.latencies.push(r.latency_s);
+  acc.totalTokens += r.tokens;
+}
+
+function computeSummary(finalResults: FinalResult[]): SummaryRow[] {
+  const summaryMap = new Map<string, SummaryAccumulator>();
+  for (const r of finalResults) {
+    accumulateRow(summaryMap, r);
+  }
+
+  const summary: SummaryRow[] = [];
+  for (const s of summaryMap.values()) {
+    summary.push({
+      agent: s.agent,
+      passRate: s.total === 0 ? 0 : s.passes / s.total,
+      medianLatency: medianOf(s.latencies),
+      totalTokens: s.totalTokens,
+    });
+  }
+
+  summary.sort((a, b) => b.passRate - a.passRate || a.medianLatency - b.medianLatency);
+  return summary;
+}
+
+export async function runBenchAcp(
+  opts: RunBenchAcpOpts,
+): Promise<{ jsonl: string; summary: SummaryRow[]; rows: FinalResult[] }> {
+  const tasks = opts.tasks ? BENCH_TASKS.filter((t) => opts.tasks?.includes(t.id)) : BENCH_TASKS;
+  const concurrency = opts.concurrency ?? 2;
+  const client: BenchAcpClient = opts.client ?? bridgePenumbraClient(new PenumbraClient());
+  const gradeFn: GradeResultsFn = opts.gradeResultsFn ?? gradeResults;
+  const projectId = opts.projectId ?? "penumbra";
+
+  const queue: QueueItem[] = [];
+  for (const agent of opts.agents) {
+    for (const task of tasks) {
+      queue.push({ agent, task });
+    }
+  }
+
+  const rawResults = await runWorkers(client, queue, concurrency, projectId);
+
   const gradingInput = rawResults.map((r) => ({
     task: r.task,
     answer: r.answer,
@@ -121,25 +317,15 @@ export async function runBenchAcp(opts: RunBenchAcpOpts) {
     label: r.label,
   }));
 
-  const gradeRes = await gradeFn({
+  const graded = await gradeFn({
     results: gradingInput,
-    url: opts.judgeUrl || "https://api.openai.com/v1",
-    model: opts.judgeModel || "gpt-4o",
+    url: opts.judgeUrl ?? "https://api.openai.com/v1",
+    model: opts.judgeModel ?? "gpt-4o",
     authToken: opts.judgeAuthToken,
     caPath: opts.judgeCaPath,
   });
 
-  const finalResults = rawResults.map((r) => {
-    const graded = gradeRes.find((g: any) => g.task === r.task && g.model === r.model);
-    return {
-      agent: r.agent,
-      task: r.task,
-      verdict: graded ? graded.verdict : "ERROR",
-      latency_s: r.latency_s,
-      tokens: r.tokens,
-      response_excerpt: r.answer.slice(0, 100).replace(/\n/g, " "),
-    };
-  });
+  const finalResults = buildFinalResults(rawResults, graded);
 
   let jsonl = "";
   for (const r of finalResults) {
@@ -150,42 +336,7 @@ export async function runBenchAcp(opts: RunBenchAcpOpts) {
     writeFileSync(opts.outPath, jsonl);
   }
 
-  // Summary tabulator
-  const summaryMap = new Map();
-  for (const r of finalResults) {
-    if (!summaryMap.has(r.agent)) {
-      summaryMap.set(r.agent, {
-        agent: r.agent,
-        passes: 0,
-        total: 0,
-        latencies: [],
-        totalTokens: 0,
-      });
-    }
-    const s = summaryMap.get(r.agent);
-    s.total++;
-    if (r.verdict === "PASS") s.passes++;
-    s.latencies.push(r.latency_s);
-    s.totalTokens += r.tokens;
-  }
-
-  const summary = Array.from(summaryMap.values()).map((s) => {
-    s.latencies.sort((a: number, b: number) => a - b);
-    const mid = Math.floor(s.latencies.length / 2);
-    const median =
-      s.latencies.length % 2 !== 0
-        ? s.latencies[mid]
-        : (s.latencies[mid - 1] + s.latencies[mid]) / 2;
-    return {
-      agent: s.agent,
-      passRate: s.passes / s.total,
-      medianLatency: median || 0,
-      totalTokens: s.totalTokens,
-    };
-  });
-
-  summary.sort((a, b) => b.passRate - a.passRate || a.medianLatency - b.medianLatency);
-
+  const summary = computeSummary(finalResults);
   return { jsonl, summary, rows: finalResults };
 }
 
@@ -193,11 +344,13 @@ if (import.meta.main) {
   const argv = process.argv.slice(2);
   const flag = (name: string): string | undefined => {
     const i = argv.indexOf(`--${name}`);
-    if (i >= 0 && i + 1 < argv.length) return argv[i + 1];
+    if (i >= 0 && i + 1 < argv.length) {
+      return argv[i + 1];
+    }
     return undefined;
   };
 
-  const parseCsv = (val: string | undefined) =>
+  const parseCsv = (val: string | undefined): string[] | undefined =>
     val ? val.split(",").map((s) => s.trim()) : undefined;
 
   const agents = parseCsv(flag("agents"));
@@ -213,8 +366,8 @@ if (import.meta.main) {
   const judgeModel = flag("judge-model");
   const outPath = flag("out");
   const configPath = flag("config-path");
-  const projectId = flag("project-id") || "penumbra";
-  const concurrency = parseInt(flag("concurrency") || "2", 10);
+  const projectId = flag("project-id") ?? "penumbra";
+  const concurrency = parseInt(flag("concurrency") ?? "2", 10);
 
   runBenchAcp({
     agents,
@@ -227,12 +380,12 @@ if (import.meta.main) {
     concurrency,
   })
     .then((result) => {
-      console.log("JSONL Output:");
-      console.log(result.jsonl);
-      console.log("\nSummary:");
-      console.table(result.summary);
+      process.stdout.write("JSONL Output:\n");
+      process.stdout.write(result.jsonl);
+      process.stdout.write("\nSummary:\n");
+      process.stdout.write(JSON.stringify(result.summary, null, 2) + "\n");
     })
-    .catch((err) => {
+    .catch((err: unknown) => {
       console.error(err);
       process.exit(1);
     });

@@ -1,10 +1,24 @@
-import { expect, test, mock, describe, beforeEach } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
+
+import type { BenchAcpClient, GradeResultsFn } from "./bench-acp.js";
+import type { GradeResultsOpts } from "./bench-grade.js";
+
 import { runBenchAcp } from "./bench-acp.js";
-import { BENCH_TASKS, BENCH_SYSTEM_PROMPT } from "./bench-prompts.js";
+import { BENCH_SYSTEM_PROMPT } from "./bench-prompts.js";
+
+interface StartChainArgs {
+  initial_agent: string;
+  task_type: string;
+  use_worktree: boolean;
+  trust_mode: string;
+  message: string;
+}
 
 function first<T>(items: T[]): T {
   const item = items[0];
-  if (item === undefined) throw new Error("expected at least one item");
+  if (item === undefined) {
+    throw new Error("expected at least one item");
+  }
   return item;
 }
 
@@ -14,40 +28,50 @@ describe("bench-acp runner", () => {
   });
 
   test("builds correct prompt, polls to terminal, captures response, grades and tabulates", async () => {
-    const mockStartChain = mock(async () => ({ handoff_id: "h1", conversation_id: "c1" }));
+    const mockStartChain = mock(
+      (): Promise<{ handoff_id: string; conversation_id: string }> =>
+        Promise.resolve({ handoff_id: "h1", conversation_id: "c1" }),
+    );
     let pollCount = 0;
-    const mockGetHandoffStatus = mock(async (id: string) => {
-      pollCount++;
-      if (pollCount < 2)
-        return { status: "pending", reliability: { status: "ok" }, latency_seconds: null };
-      return { status: "completed", reliability: { status: "ok" }, latency_seconds: 2.5 };
-    });
-    const mockGetChainResponses = mock(async () => ({
-      responses: [{ text: "Mocked final answer", agent: "mock-agent", ts: "2026-05-01T00:00:00Z" }],
-    }));
-    const mockGetDispatchTimeline = mock(async () => ({
-      events: [
-        { type: "agent-response", _meta: { token_budget: { tokens_in: 10, tokens_out: 20 } } },
-      ],
-    }));
+    const mockGetHandoffStatus = mock(
+      (): Promise<{ status: string; latency_seconds: number | null }> => {
+        pollCount++;
+        if (pollCount < 2) {
+          return Promise.resolve({ status: "pending", latency_seconds: null });
+        }
+        return Promise.resolve({ status: "completed", latency_seconds: 2.5 });
+      },
+    );
+    const mockGetChainResponses = mock(
+      (): Promise<{ responses: { text: string }[] }> =>
+        Promise.resolve({ responses: [{ text: "Mocked final answer" }] }),
+    );
+    const mockGetDispatchTimeline = mock(
+      (): Promise<{
+        events: { _meta?: { token_budget?: { tokens_in?: number; tokens_out?: number } } }[];
+      }> =>
+        Promise.resolve({
+          events: [{ _meta: { token_budget: { tokens_in: 10, tokens_out: 20 } } }],
+        }),
+    );
 
-    const mockClient = {
+    const mockClient: BenchAcpClient = {
       startChain: mockStartChain,
       getHandoffStatus: mockGetHandoffStatus,
       getChainResponses: mockGetChainResponses,
       getDispatchTimeline: mockGetDispatchTimeline,
-      dispatchAudit: mock(async () => ({ report: {} })),
-      inspectWorktree: mock(async () => ({ worktree: {} })),
-    } as any;
+    };
 
-    const mockGradeResults = mock(async (opts: any) => {
-      return opts.results.map((r: any) => ({
-        task: r.task,
-        verdict: "PASS",
-        model: r.model,
-        label: r.label,
-      }));
-    });
+    const mockGradeResults: GradeResultsFn = mock((opts: GradeResultsOpts) =>
+      Promise.resolve(
+        opts.results.map((r) => ({
+          task: r.task,
+          verdict: "PASS",
+          model: r.model,
+          label: r.label,
+        })),
+      ),
+    );
 
     const result = await runBenchAcp({
       agents: ["mock-agent"],
@@ -60,20 +84,8 @@ describe("bench-acp runner", () => {
     });
 
     expect(mockStartChain).toHaveBeenCalledTimes(1);
-    const startArgs = first(
-      mockStartChain.mock.calls as unknown as Array<
-        [
-          {
-            initial_agent: string;
-            task_type: string;
-            use_worktree: boolean;
-            trust_mode: string;
-            message: string;
-          },
-        ]
-      >,
-    )[0];
-    if (startArgs === undefined) throw new Error("expected startChain args");
+    const startCalls = mockStartChain.mock.calls as unknown as [StartChainArgs][];
+    const startArgs = first(startCalls)[0];
     expect(startArgs.initial_agent).toBe("mock-agent");
     expect(startArgs.task_type).toBe("unknown");
     expect(startArgs.use_worktree).toBe(false);
@@ -89,36 +101,50 @@ describe("bench-acp runner", () => {
     expect(result.summary).toBeDefined();
     const summary = first(result.summary);
     expect(summary.agent).toBe("mock-agent");
-    expect(summary.passRate).toBe(1); // 1/1
+    expect(summary.passRate).toBe(1);
     expect(summary.medianLatency).toBe(2.5);
-    expect(summary.totalTokens).toBe(30); // 10 + 20
+    expect(summary.totalTokens).toBe(30);
   });
 
   test("respects concurrency limit", async () => {
     let active = 0;
     let maxActive = 0;
+    let chainId = 0;
 
-    const mockStartChain = mock(async () => {
+    const mockStartChain = mock((): Promise<{ handoff_id: string; conversation_id: string }> => {
+      chainId++;
       active++;
       maxActive = Math.max(maxActive, active);
-      return { handoff_id: "h" + active, conversation_id: "c" + active };
+      return Promise.resolve({
+        handoff_id: `h${String(chainId)}`,
+        conversation_id: `c${String(chainId)}`,
+      });
     });
 
-    const mockGetHandoffStatus = mock(async () => {
-      await new Promise((r) => setTimeout(r, 10));
-      active--;
-      return { status: "completed", reliability: { status: "ok" }, latency_seconds: 1 };
-    });
+    const mockGetHandoffStatus = mock(
+      async (): Promise<{ status: string; latency_seconds: number | null }> => {
+        await new Promise((r) => setTimeout(r, 10));
+        active--;
+        return { status: "completed", latency_seconds: 1 };
+      },
+    );
 
-    const mockClient = {
+    const mockClient: BenchAcpClient = {
       startChain: mockStartChain,
       getHandoffStatus: mockGetHandoffStatus,
-      getChainResponses: mock(async () => ({ responses: [{ text: "a" }] })),
-      getDispatchTimeline: mock(async () => ({ events: [] })),
-    } as any;
+      getChainResponses: () => Promise.resolve({ responses: [{ text: "a" }] }),
+      getDispatchTimeline: () => Promise.resolve({ events: [] }),
+    };
 
-    const mockGradeResults = mock(async (opts: any) =>
-      opts.results.map((r: any) => ({ ...r, verdict: "PASS" })),
+    const mockGradeResults: GradeResultsFn = mock((opts: GradeResultsOpts) =>
+      Promise.resolve(
+        opts.results.map((r) => ({
+          task: r.task,
+          verdict: "PASS",
+          model: r.model,
+          label: r.label,
+        })),
+      ),
     );
 
     await runBenchAcp({
