@@ -1,24 +1,57 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import {
   buildServices,
   loadSqliteVec,
   migrate,
   ProjectRegistry,
   type Services,
+  TaskEventBus,
+  TaskWriter,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { TaskWriter, TaskEventBus } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { createDaemonFetchHandler } from "../../src/serve.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* ignored: best-effort darwin sqlite hint */
+}
+
+const noop = (): void => undefined;
+
+interface TestAgentchatAgent {
+  name: string;
+  tags?: string[];
+  tier?: string;
+  cost_cents_per_run?: number;
+}
+interface TestAgentchatConfig {
+  agents: TestAgentchatAgent[];
+}
+function setAgentchatConfig(services: Services, config: TestAgentchatConfig): void {
+  // Test fixtures inject agent shapes (tags, tier) outside the strict daemon
+  // agentchatConfig schema. Object.assign widens at runtime without changing
+  // the static Services type at call sites.
+  Object.assign(services, { agentchatConfig: config });
+}
+
+interface PlanRow {
+  plan_id: string;
+  home_project: string;
+  status: string;
+}
+interface PlanTaskRow {
+  task_meta_id: string;
+  task_id_in_board: string | null;
+  status: string;
+}
 
 function startTestDaemon(): {
   fetch: (path: string, init?: RequestInit) => Promise<Response>;
@@ -57,21 +90,23 @@ function startTestDaemon(): {
     projectRegistry,
   });
   services.watchdog = {
-    recordHeartbeat: () => {},
-    hasActiveWorker: () => true,
-    tick: async () => {},
+    recordHeartbeat: noop,
+    hasActiveWorker: (): boolean => true,
+    getStaleWorkers: (): string[] => [],
+    getStaleHeartbeatAges: (): { worker_id: string; last_seen_age_ms: number }[] => [],
+    tick: (): Promise<void> => Promise.resolve(),
   };
 
-  (services as Services & { agentchatConfig?: any }).agentchatConfig = {
+  setAgentchatConfig(services, {
     agents: [
       { name: "claude-acp-sonnet", tags: ["typescript"], tier: "cli", cost_cents_per_run: 50 },
       { name: "codex-acp-fast", tags: ["typescript"], tier: "cli", cost_cents_per_run: 30 },
     ],
-  };
+  });
 
   const taskEvents = new TaskEventBus();
   const taskWriter = new TaskWriter(db, {
-    now: () => services.clock().getTime(),
+    now: (): number => services.clock().getTime(),
     bus: taskEvents,
   });
 
@@ -79,28 +114,33 @@ function startTestDaemon(): {
   const handler = createDaemonFetchHandler({ services, token, taskEvents, taskWriter });
 
   return {
-    fetch: (path, init) => handler(new Request(`http://x${path}`, init)),
+    fetch: (path: string, init?: RequestInit): Promise<Response> =>
+      handler(new Request(`http://x${path}`, init)),
     services,
     token,
     taskWriter,
     root,
-    stop: () => {
+    stop: (): void => {
       try {
         services.supervisor.stopAll();
-      } catch {}
+      } catch {
+        /* ignored: best-effort teardown */
+      }
       try {
         db.close();
-      } catch {}
+      } catch {
+        /* ignored: best-effort teardown */
+      }
       rmSync(root, { recursive: true, force: true });
     },
   };
 }
 
-function authHeaders(token: string): HeadersInit {
+function authHeaders(token: string): Record<string, string> {
   return { authorization: `Bearer ${token}` };
 }
 
-function authJsonHeaders(token: string): HeadersInit {
+function authJsonHeaders(token: string): Record<string, string> {
   return {
     authorization: `Bearer ${token}`,
     "content-type": "application/json",
@@ -108,7 +148,7 @@ function authJsonHeaders(token: string): HeadersInit {
 }
 
 function fixturePlan(
-  opts: { home_project?: string; tasks?: Array<{ id: string; project?: string }> } = {},
+  opts: { home_project?: string; tasks?: { id: string; project?: string }[] } = {},
 ): string {
   const home = opts.home_project ?? "penumbra";
   const tasks = opts.tasks ?? [{ id: "1.1" }, { id: "1.2" }];
@@ -163,13 +203,13 @@ test("POST /plans registers a plan and GET /plans/:plan_id returns plan + tasks"
       headers: authHeaders(daemon.token),
     });
     expect(get.status).toBe(200);
-    const body = (await get.json()) as { plan: any; tasks: any[] };
+    const body = (await get.json()) as { plan: PlanRow; tasks: PlanTaskRow[] };
     expect(body.plan.plan_id).toBe(created.plan_id);
     expect(body.plan.home_project).toBe("penumbra");
     expect(body.plan.status).toBe("running");
     expect(body.tasks).toHaveLength(2);
-    expect(body.tasks[0].status).toBe("pending");
-    expect(body.tasks[0].task_id_in_board).toBeNull();
+    expect(body.tasks[0]?.status).toBe("pending");
+    expect(body.tasks[0]?.task_id_in_board).toBeNull();
   } finally {
     daemon.stop();
   }
@@ -192,21 +232,21 @@ test("GET /plans filters by status", async () => {
 
     const all = await daemon.fetch("/plans", { headers: authHeaders(daemon.token) });
     expect(all.status).toBe(200);
-    const allBody = (await all.json()) as { plans: Array<{ plan_id: string }> };
+    const allBody = (await all.json()) as { plans: { plan_id: string }[] };
     expect(allBody.plans).toHaveLength(2);
 
     const running = await daemon.fetch("/plans?status=running", {
       headers: authHeaders(daemon.token),
     });
     expect(running.status).toBe(200);
-    const runningBody = (await running.json()) as { plans: any[] };
+    const runningBody = (await running.json()) as { plans: PlanRow[] };
     expect(runningBody.plans).toHaveLength(2);
 
     const completed = await daemon.fetch("/plans?status=completed", {
       headers: authHeaders(daemon.token),
     });
     expect(completed.status).toBe(200);
-    const completedBody = (await completed.json()) as { plans: any[] };
+    const completedBody = (await completed.json()) as { plans: PlanRow[] };
     expect(completedBody.plans).toHaveLength(0);
 
     const bogus = await daemon.fetch("/plans?status=does-not-exist", {
@@ -237,15 +277,13 @@ test("GET /plans/:plan_id hydrates bound task_id_in_board + status=running", asy
     daemon.services.planWriter.bindTaskToBoard(plan_id, "1.1", "task-board-aaa");
 
     const get = await daemon.fetch(`/plans/${plan_id}`, { headers: authHeaders(daemon.token) });
-    const body = (await get.json()) as {
-      tasks: Array<{ task_meta_id: string; task_id_in_board: string | null; status: string }>;
-    };
-    const bound = body.tasks.find((t) => t.task_meta_id === "1.1")!;
-    expect(bound.task_id_in_board).toBe("task-board-aaa");
-    expect(bound.status).toBe("running");
-    const unbound = body.tasks.find((t) => t.task_meta_id === "1.2")!;
-    expect(unbound.task_id_in_board).toBeNull();
-    expect(unbound.status).toBe("pending");
+    const body = (await get.json()) as { tasks: PlanTaskRow[] };
+    const bound = body.tasks.find((t) => t.task_meta_id === "1.1");
+    expect(bound?.task_id_in_board).toBe("task-board-aaa");
+    expect(bound?.status).toBe("running");
+    const unbound = body.tasks.find((t) => t.task_meta_id === "1.2");
+    expect(unbound?.task_id_in_board).toBeNull();
+    expect(unbound?.status).toBe("pending");
   } finally {
     daemon.stop();
   }
@@ -288,8 +326,8 @@ test("POST /plans/:plan_id/cancel flips plan status and cancels running children
     expect(cancelBody.status).toBe("cancelled");
     expect(cancelBody.cancelled_running_count).toBe(1);
 
-    const after = daemon.services.planWriter.getPlan(plan_id)!;
-    expect(after.status).toBe("cancelled");
+    const after = daemon.services.planWriter.getPlan(plan_id);
+    expect(after?.status).toBe("cancelled");
 
     const childTask = daemon.taskWriter.get(filed.task_id);
     expect(childTask.status).toBe("cancelled");

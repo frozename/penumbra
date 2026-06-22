@@ -1,24 +1,65 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import {
   AgentTaskTypeSchema,
-  ProjectRegistry,
   buildServices,
   loadSqliteVec,
   migrate,
+  ProjectRegistry,
   type Services,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { createDaemonFetchHandler } from "../../src/serve.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* ignored: best-effort darwin sqlite hint */
+}
+
+const noop = (): void => undefined;
+
+// File-local widening: tests stub agentchatConfig and workflowRegistry with
+// shapes that intentionally exceed the strict daemon schema (extra
+// maestro-only fields like maestro_capable, task_types, task_types_supported).
+// A single documented widening at the seam keeps call sites typed.
+function partialAs<T>(value: Partial<T>): T {
+  return value as unknown as T;
+}
+
+interface TestAgentchatAgent {
+  name: string;
+  adapter?: string;
+  options?: Record<string, unknown>;
+  roles?: string[];
+  maestro_capable?: boolean;
+  task_types?: string[];
+  task_types_supported?: string[];
+}
+interface TestAgentchatConfig {
+  agents: TestAgentchatAgent[];
+  default_roles?: Record<string, unknown>;
+}
+function setAgentchatConfig(services: Services, config: TestAgentchatConfig): void {
+  // Test fixtures inject agent shapes (maestro_capable, task_types) outside
+  // the strict daemon agentchatConfig schema. Object.assign widens at runtime
+  // without changing the static Services type at call sites.
+  Object.assign(services, { agentchatConfig: config });
+}
+
+interface TestWorkflowRegistry {
+  list: () => { name: string; description: string; triggers: { kind: string }[] }[];
+  errors: { path: string; error: string }[];
+}
+function setWorkflowRegistry(services: Services, registry: TestWorkflowRegistry): void {
+  Object.assign(services, { workflowRegistry: registry });
+}
 
 function startTestDaemon(): {
   fetch: (path: string, init?: RequestInit) => Promise<Response>;
@@ -48,31 +89,38 @@ function startTestDaemon(): {
     mainRepoDir,
   });
   services.watchdog = {
-    recordHeartbeat: () => {},
-    hasActiveWorker: () => true,
-    tick: async () => {},
+    recordHeartbeat: noop,
+    hasActiveWorker: (): boolean => true,
+    getStaleWorkers: (): string[] => [],
+    getStaleHeartbeatAges: (): { worker_id: string; last_seen_age_ms: number }[] => [],
+    tick: (): Promise<void> => Promise.resolve(),
   };
-  (services as { mainRepoDir?: string }).mainRepoDir = mainRepoDir;
+  Object.assign(services, { mainRepoDir });
   const token = "tok";
   const handler = createDaemonFetchHandler({ services, token });
   return {
-    fetch: (path, init) => handler(new Request(`http://x${path}`, init)),
+    fetch: (path: string, init?: RequestInit): Promise<Response> =>
+      handler(new Request(`http://x${path}`, init)),
     services,
     token,
     mainRepoDir,
-    stop: () => {
+    stop: (): void => {
       try {
         services.supervisor.stopAll();
-      } catch {}
+      } catch {
+        /* ignored: best-effort teardown */
+      }
       try {
         db.close();
-      } catch {}
+      } catch {
+        /* ignored: best-effort teardown */
+      }
       rmSync(root, { recursive: true, force: true });
     },
   };
 }
 
-function authHeaders(token: string, headers: HeadersInit = {}): HeadersInit {
+function authHeaders(token: string, headers: Record<string, string> = {}): Record<string, string> {
   return {
     authorization: `Bearer ${token}`,
     ...headers,
@@ -129,18 +177,37 @@ function insertHandoff(
 
 function setMaestroAgents(
   daemon: ReturnType<typeof startTestDaemon>,
-  agents: Array<{
+  agents: {
     name: string;
     maestro_capable?: boolean;
     task_types?: string[];
     task_types_supported?: string[];
-  }>,
+  }[],
 ): void {
-  (daemon.services as Services & { agentchatConfig?: any }).agentchatConfig = {
+  setAgentchatConfig(daemon.services, {
     agents: agents.map((agent) => ({ adapter: "noop", options: {}, roles: [], ...agent })),
     default_roles: {},
-  };
+  });
   daemon.services.agentRegistry = agents.map((agent) => agent.name);
+}
+
+interface SessionPayload {
+  task_id: string;
+  chain_handoff_id: string | null;
+  agent_id: string;
+  started_at: number;
+  wall_clock_budget_ms: number;
+  cost_budget_cents: number;
+  sub_dispatch_budget: number;
+  cost_consumed_cents: number;
+  sub_dispatches_consumed: number;
+  soft_warned_at: number | null;
+  terminated_at: number | null;
+  termination_reason: string | null;
+}
+
+interface ValidationErrorBody {
+  error: { code: string; field_errors: { path: string[] }[] };
 }
 
 test("GET /maestro/sessions/:task_id returns the hydrated record", async () => {
@@ -176,7 +243,8 @@ test("GET /maestro/sessions/:task_id returns the hydrated record", async () => {
       headers: authHeaders(daemon.token),
     });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({
+    const body = (await res.json()) as SessionPayload;
+    expect(body).toEqual({
       task_id: "task-1",
       chain_handoff_id: "handoff-1",
       agent_id: "codex",
@@ -202,7 +270,8 @@ test("GET /maestro/sessions/:task_id returns 404 for unknown task_id", async () 
       headers: authHeaders(daemon.token),
     });
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body).toEqual({
       error: {
         code: "not_found",
         message: "maestro session unknown-id not found",
@@ -231,7 +300,7 @@ test("GET /maestro/sessions/:task_id requires bearer auth", async () => {
 test("GET /maestro/capabilities returns canonical agents, task_types, and workflows", async () => {
   const daemon = startTestDaemon();
   try {
-    (daemon.services as Services & { agentchatConfig?: any }).agentchatConfig = {
+    setAgentchatConfig(daemon.services, {
       agents: [
         {
           name: "claude-acp-sonnet",
@@ -259,22 +328,22 @@ test("GET /maestro/capabilities returns canonical agents, task_types, and workfl
         { name: "gemini-missing", adapter: "noop", options: {}, roles: [], maestro_capable: true },
       ],
       default_roles: {},
-    };
+    });
     daemon.services.agentRegistry = ["claude-acp-sonnet", "codex-acp-fast", "gemini-missing"];
-    (daemon.services as Services & { workflowRegistry?: any }).workflowRegistry = {
+    setWorkflowRegistry(daemon.services, {
       list: () => [
         { name: "brainstorm", description: "Brainstorm", triggers: [{ kind: "manual" }] },
         { name: "handoff", description: "Handoff", triggers: [{ kind: "manual" }] },
       ],
       errors: [],
-    };
+    });
 
     const res = await daemon.fetch("/maestro/capabilities", {
       headers: authHeaders(daemon.token),
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      agents: Array<{ name: string; task_types?: string[]; maestro_capable: boolean }>;
+      agents: { name: string; task_types?: string[]; maestro_capable: boolean }[];
       task_types: string[];
       workflows: string[];
     };
@@ -320,7 +389,8 @@ test("POST /maestro/sessions creates a session and returns 201", async () => {
       }),
     });
     expect(res.status).toBe(201);
-    expect(await res.json()).toEqual({
+    const body = (await res.json()) as SessionPayload;
+    expect(body).toEqual({
       task_id: "task-post-1",
       chain_handoff_id: "handoff-post-1",
       agent_id: "codex-acp-fast",
@@ -356,7 +426,8 @@ test("POST /maestro/sessions accepts missing chain_handoff_id and persists null"
       }),
     });
     expect(res.status).toBe(201);
-    expect(await res.json()).toEqual({
+    const body = (await res.json()) as SessionPayload;
+    expect(body).toEqual({
       task_id: "task-post-null-chain",
       chain_handoff_id: null,
       agent_id: "codex-acp-fast",
@@ -418,7 +489,11 @@ test("POST /maestro/sessions returns 409 with existing row when task session alr
       }),
     });
     expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({
+    const body = (await res.json()) as {
+      error: { code: string; message: string };
+      session: SessionPayload;
+    };
+    expect(body).toEqual({
       error: {
         code: "already_exists",
         message: "maestro session already exists for task task-dup-1",
@@ -464,7 +539,8 @@ test("POST /maestro/sessions returns 404 not_found.task for unknown task_id", as
       }),
     });
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body).toEqual({
       error: {
         code: "not_found.task",
         message: "task missing-task not found",
@@ -493,7 +569,8 @@ test("POST /maestro/sessions returns 404 not_found.handoff for unknown chain_han
       }),
     });
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body).toEqual({
       error: {
         code: "not_found.handoff",
         message: "handoff missing-handoff not found",
@@ -523,7 +600,8 @@ test("POST /maestro/sessions returns 422 handoff_task_mismatch when chain does n
       }),
     });
     expect(res.status).toBe(422);
-    expect(await res.json()).toEqual({
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body).toEqual({
       error: {
         code: "handoff_task_mismatch",
         message: "handoff handoff-post-mismatch does not belong to task task-post-mismatch",
@@ -556,7 +634,8 @@ test("POST /maestro/sessions returns 404 not_found.agent when agent is unknown",
       }),
     });
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body).toEqual({
       error: {
         code: "not_found.agent",
         message: "agent ghost-agent not found",
@@ -592,7 +671,8 @@ test("POST /maestro/sessions returns 422 agent_not_maestro_capable when agent is
       }),
     });
     expect(res.status).toBe(422);
-    expect(await res.json()).toEqual({
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body).toEqual({
       error: {
         code: "agent_not_maestro_capable",
         message: "agent codex-acp-fast must set maestro_capable: true",
@@ -628,9 +708,7 @@ test("POST /maestro/sessions validates budgets as positive integers", async () =
       }),
     });
     expect(zeroCost.status).toBe(400);
-    const zeroCostBody = (await zeroCost.json()) as {
-      error: { code: string; field_errors: Array<{ path: string[] }> };
-    };
+    const zeroCostBody = (await zeroCost.json()) as ValidationErrorBody;
     expect(zeroCostBody.error.code).toBe("validation_error");
     expect(
       zeroCostBody.error.field_errors.some((entry) => entry.path.join(".") === "cost_budget_cents"),
@@ -649,9 +727,7 @@ test("POST /maestro/sessions validates budgets as positive integers", async () =
       }),
     });
     expect(negativeSubDispatch.status).toBe(400);
-    const negativeSubDispatchBody = (await negativeSubDispatch.json()) as {
-      error: { code: string; field_errors: Array<{ path: string[] }> };
-    };
+    const negativeSubDispatchBody = (await negativeSubDispatch.json()) as ValidationErrorBody;
     expect(negativeSubDispatchBody.error.code).toBe("validation_error");
     expect(
       negativeSubDispatchBody.error.field_errors.some(
@@ -748,9 +824,7 @@ test("POST /maestro/sessions/adhoc validates required fields", async () => {
       }),
     });
     expect(res.status).toBe(400);
-    const body = (await res.json()) as {
-      error: { code: string; field_errors: Array<{ path: string[] }> };
-    };
+    const body = (await res.json()) as ValidationErrorBody;
     expect(body.error.code).toBe("validation_error");
     const errorPaths = body.error.field_errors.map((entry) => entry.path.join("."));
     expect(errorPaths).toContain("message");
@@ -852,13 +926,13 @@ test("POST /maestro/sessions/adhoc falls back when scope cannot be resolved but 
   delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
   try {
     const mainRepoDir = daemon.mainRepoDir;
-    daemon.services.projectRegistry = {
+    // The route only invokes projectRegistry.list() in this branch; widen a
+    // throwing stub at the test seam so we can simulate a registry outage.
+    daemon.services.projectRegistry = partialAs<ProjectRegistry>({
       list: () => {
         throw new Error("registry unavailable");
       },
-    } as {
-      list: () => Array<{ readonly project_id: string; readonly root_path: string }>;
-    };
+    });
     setMaestroAgents(daemon, [{ name: "claude-acp-sonnet", maestro_capable: true }]);
 
     writeFileSync(join(mainRepoDir, ".penumbra-project"), `registry-unavailable-proj\n`);

@@ -1,17 +1,37 @@
-import { beforeAll, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import {
+  buildServices,
+  loadSqliteVec,
+  migrate,
+  type RecallRequest,
+  type RecallResult,
+  type Services,
+} from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { beforeAll, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { createDaemonFetchHandler } from "../../src/serve.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* ignored: best-effort darwin sqlite hint */
+}
+
+const noop = (): void => undefined;
+
+// File-local widening: tests stub partial RecallResult fixtures because the
+// /lanes/open route only reads id/title/body from recall hits. The schema's
+// other required fields (tier, score, project_id, etc.) are noise here. A
+// single documented widening at the test seam keeps fixtures concise.
+function partialAs<T>(value: Partial<T>): T {
+  return value as unknown as T;
+}
 
 beforeAll(() => {
   delete process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
@@ -36,37 +56,42 @@ function startTestDaemon(): {
     clock: () => new Date("2026-04-23T12:00:00.000Z"),
   });
   services.watchdog = {
-    recordHeartbeat: () => {},
-    hasActiveWorker: () => true,
-    getStaleWorkers: () => [],
-    getStaleHeartbeatAges: () => [],
-    tick: async () => {},
+    recordHeartbeat: noop,
+    hasActiveWorker: (): boolean => true,
+    getStaleWorkers: (): string[] => [],
+    getStaleHeartbeatAges: (): { worker_id: string; last_seen_age_ms: number }[] => [],
+    tick: (): Promise<void> => Promise.resolve(),
   };
 
   const token = "tok";
   const handler = createDaemonFetchHandler({ services, token });
 
   return {
-    fetch: (path, init) => handler(new Request(`http://x${path}`, init)),
+    fetch: (path: string, init?: RequestInit): Promise<Response> =>
+      handler(new Request(`http://x${path}`, init)),
     services,
     token,
-    stop: () => {
+    stop: (): void => {
       try {
         services.supervisor.stopAll();
-      } catch {}
+      } catch {
+        /* ignored: best-effort teardown */
+      }
       try {
         db.close();
-      } catch {}
+      } catch {
+        /* ignored: best-effort teardown */
+      }
       rmSync(root, { recursive: true, force: true });
     },
   };
 }
 
-function authHeaders(token: string, headers: HeadersInit = {}): HeadersInit {
+function authHeaders(token: string, headers: Record<string, string> = {}): Record<string, string> {
   return { authorization: `Bearer ${token}`, ...headers };
 }
 
-async function postJson(
+function postJson(
   daemon: ReturnType<typeof startTestDaemon>,
   path: string,
   body: unknown,
@@ -154,6 +179,20 @@ function insertPerformance(
     );
 }
 
+interface LaneRow {
+  lane_id: string;
+  ts_opened: string;
+  ts_closed: string | null;
+  task_class: string;
+  implementer_handoff: string;
+  reviewer_handoff: string | null;
+  gate_status: string;
+  recalled_memory_ids: string[];
+  recalled_query: string | null;
+  override_reason: string | null;
+  metadata_json: string;
+}
+
 test("open then close then recent returns lane with closed status", async () => {
   const daemon = startTestDaemon();
   try {
@@ -191,7 +230,7 @@ test("open then close then recent returns lane with closed status", async () => 
     const recent = await daemon.fetch("/lanes/recent", { headers: authHeaders(daemon.token) });
     expect(recent.status).toBe(200);
     const recentBody = (await recent.json()) as {
-      lanes: Array<{ lane_id: string; gate_status: string; ts_closed: string | null }>;
+      lanes: { lane_id: string; gate_status: string; ts_closed: string | null }[];
     };
     expect(recentBody.lanes).toHaveLength(1);
     expect(recentBody.lanes[0]?.lane_id).toBe("lane-1");
@@ -659,7 +698,8 @@ test("close records an audit event when override_reason bypasses a guard", async
       .get("h-impl-override");
     expect(row?.kind).toBe("lane.override");
     expect(row?.source).toBe("daemon");
-    expect(JSON.parse(row!.meta_json!)).toEqual({
+    const meta = JSON.parse(row?.meta_json ?? "{}") as unknown;
+    expect(meta).toEqual({
       control: "same_agent_self_review",
       lane_id: "lane-override-audit",
       gate_status: "passed",
@@ -684,12 +724,12 @@ test("override close persists when audit event recording fails after commit", as
       task_class: "BOUNDARY",
     });
 
-    daemon.services.dispatchEventLog.record = ((event) => {
+    daemon.services.dispatchEventLog.record = (event): void => {
       if (event.kind === "lane.override") {
         throw new Error("audit write failed");
       }
       originalRecord(event);
-    }) as typeof daemon.services.dispatchEventLog.record;
+    };
 
     // The close is the authoritative record and commits before audit events
     // publish (live-bus delivery cannot roll back). An audit failure is logged
@@ -802,13 +842,13 @@ test("manual open with a mismatched task_class returns 409 instead of adopting t
 test("manual open stores recalled_memory_ids from implementer handoff recall hits", async () => {
   const daemon = startTestDaemon();
   try {
-    const recallArgs: unknown[] = [];
-    daemon.services.recallReader.recall = async (args) => {
+    const recallArgs: RecallRequest[] = [];
+    daemon.services.recallReader.recall = (args): Promise<RecallResult[]> => {
       recallArgs.push(args);
-      return [
-        { id: "manual-m1", title: "manual memo 1", body: "first" },
-        { id: "manual-m2", title: "manual memo 2", body: "second" },
-      ] as any;
+      return Promise.resolve([
+        partialAs<RecallResult>({ id: "manual-m1", title: "manual memo 1", body: "first" }),
+        partialAs<RecallResult>({ id: "manual-m2", title: "manual memo 2", body: "second" }),
+      ]);
     };
     insertHandoff(daemon, "h-manual-recall", "codex", {
       message: "Fix lane memory authorization",
@@ -841,7 +881,7 @@ test("manual open stores recalled_memory_ids from implementer handoff recall hit
 test("manual open stores empty recalled_memory_ids when implementer handoff recall has no hits", async () => {
   const daemon = startTestDaemon();
   try {
-    daemon.services.recallReader.recall = async () => [] as any;
+    daemon.services.recallReader.recall = (): Promise<RecallResult[]> => Promise.resolve([]);
     insertHandoff(daemon, "h-manual-no-recall", "codex", {
       message: "No matching memories",
       project_id: "penumbra",
@@ -927,7 +967,7 @@ test("open returns the full persisted lane row", async () => {
       recalled_query: null,
       override_reason: null,
       metadata_json: "{}",
-    });
+    } satisfies LaneRow);
   } finally {
     daemon.stop();
   }
@@ -997,7 +1037,7 @@ test("close returns the closed lane payload even if the row disappears after upd
         "{}",
       );
 
-    daemon.services.db.exec(`
+    daemon.services.db.run(`
       CREATE TRIGGER delete_lane_after_gate_outcome_update
       AFTER UPDATE OF gate_outcome ON agent_performance
       BEGIN
@@ -1022,7 +1062,7 @@ test("close returns the closed lane payload even if the row disappears after upd
       recalled_query: null,
       override_reason: null,
       metadata_json: "{}",
-    });
+    } satisfies LaneRow);
   } finally {
     daemon.stop();
   }
@@ -1349,7 +1389,7 @@ test("recent filters by status", async () => {
       headers: authHeaders(daemon.token),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { lanes: Array<{ lane_id: string }> };
+    const body = (await res.json()) as { lanes: { lane_id: string }[] };
     expect(body.lanes.map((lane) => lane.lane_id)).toEqual(["lane-passed"]);
   } finally {
     daemon.stop();
@@ -1376,7 +1416,9 @@ test("close with metadata persists serialized JSON to DB", async () => {
         [string]
       >("SELECT metadata_json FROM lane_ledger WHERE lane_id = ?")
       .get("lane-meta");
-    expect(JSON.parse(row!.metadata_json)).toEqual({
+    expect(row).toBeTruthy();
+    const parsed = JSON.parse(row?.metadata_json ?? "{}") as unknown;
+    expect(parsed).toEqual({
       high_findings: 2,
       round_count: 2,
       reviewer_agent: "codex-acp-deep",
@@ -1454,8 +1496,8 @@ test("recent limit is capped at 200", async () => {
   try {
     for (let i = 0; i < 3; i++) {
       await postJson(daemon, "/lanes/open", {
-        lane_id: `lane-${i}`,
-        implementer_handoff: `h-${i}`,
+        lane_id: `lane-${String(i)}`,
+        implementer_handoff: `h-${String(i)}`,
         task_class: "STANDARD",
       });
     }
@@ -1464,7 +1506,7 @@ test("recent limit is capped at 200", async () => {
       headers: authHeaders(daemon.token),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { lanes: Array<unknown> };
+    const body = (await res.json()) as { lanes: unknown[] };
     expect(body.lanes).toHaveLength(3);
 
     const capped = await daemon.fetch("/lanes/recent?limit=200", {
@@ -1492,14 +1534,14 @@ test("GET /lanes/recent?since= returns same lanes for UTC and offset-equivalent 
       headers: authHeaders(daemon.token),
     });
     expect(resUtc.status).toBe(200);
-    const utcBody = (await resUtc.json()) as { lanes: Array<unknown> };
+    const utcBody = (await resUtc.json()) as { lanes: unknown[] };
 
     // Same instant with +05:00 offset (raw string looks like a later date/time)
     const resOffset = await daemon.fetch("/lanes/recent?since=2026-04-23T16%3A59%3A00%2B05%3A00", {
       headers: authHeaders(daemon.token),
     });
     expect(resOffset.status).toBe(200);
-    const offsetBody = (await resOffset.json()) as { lanes: Array<unknown> };
+    const offsetBody = (await resOffset.json()) as { lanes: unknown[] };
 
     expect(utcBody.lanes).toHaveLength(1);
     expect(offsetBody.lanes).toHaveLength(utcBody.lanes.length);
