@@ -1,48 +1,53 @@
-import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { spawn } from "node:child_process";
 import readline from "node:readline";
-import type { Readable, Writable } from "node:stream";
 
-export function parseShellArgs(s: string): string[] {
-  const out: string[] = [];
-  let cur = "";
-  let quote: '"' | "'" | null = null;
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i];
-    if (c === undefined) continue;
-    if (quote) {
-      if (c === quote) {
-        quote = null;
-        continue;
-      }
-      cur += c;
-    } else {
-      if (c === '"' || c === "'") {
-        quote = c;
-        continue;
-      }
-      if (/\s/.test(c)) {
-        if (cur) {
-          out.push(cur);
-          cur = "";
-        }
-        continue;
-      }
-      cur += c;
-    }
+type ParseState = { cur: string; out: string[]; quote: '"' | "'" | null };
+
+function handleQuotedChar(c: string, state: ParseState): void {
+  if (c === state.quote) {
+    state.quote = null;
+    return;
   }
-  if (cur) out.push(cur);
-  if (quote) throw new Error("unbalanced quote");
-  return out;
+  state.cur += c;
 }
 
-type JsonRpcMessage = {
+function handleUnquotedChar(c: string, state: ParseState): void {
+  if (c === '"' || c === "'") {
+    state.quote = c;
+    return;
+  }
+  if (/\s/.test(c)) {
+    if (state.cur) {
+      state.out.push(state.cur);
+      state.cur = "";
+    }
+    return;
+  }
+  state.cur += c;
+}
+
+export function parseShellArgs(s: string): string[] {
+  const state: ParseState = { cur: "", out: [], quote: null };
+  for (const c of s) {
+    if (state.quote !== null) {
+      handleQuotedChar(c, state);
+    } else {
+      handleUnquotedChar(c, state);
+    }
+  }
+  if (state.cur) state.out.push(state.cur);
+  if (state.quote !== null) throw new Error("unbalanced quote");
+  return state.out;
+}
+
+interface JsonRpcMessage {
   jsonrpc?: string;
   id?: string | number;
   method?: string;
   params?: Record<string, unknown>;
   result?: Record<string, unknown>;
   error?: Record<string, unknown>;
-};
+}
 
 const PENDING_METHOD_CAP = 256;
 
@@ -57,6 +62,11 @@ function must(k: string): string {
     process.exit(2);
   }
   return v;
+}
+
+function getStringField(obj: Record<string, unknown> | undefined, key: string): string | undefined {
+  const v = obj?.[key];
+  return typeof v === "string" ? v : undefined;
 }
 
 if (import.meta.main) {
@@ -78,18 +88,18 @@ if (import.meta.main) {
     // direct child. Without this, killing child.pid reparents grandchildren to
     // pid 1: the orphan-accumulation leak. Mirrors acp-server.ts / stdio-acp-server.ts.
     detached: process.platform !== "win32",
-  }) as ChildProcessByStdio<Writable, Readable, null>;
+  });
 
   const pendingMethod = new Map<string | number, string>();
 
   const clientLines = readline.createInterface({ input: process.stdin });
   const upstreamLines = readline.createInterface({ input: child.stdout });
 
-  function writeJsonRpc(value: unknown) {
+  function writeJsonRpc(value: unknown): void {
     process.stdout.write(JSON.stringify(value) + "\n");
   }
 
-  function queuePendingMethod(id: string | number, method: string) {
+  function queuePendingMethod(id: string | number, method: string): boolean {
     if (pendingMethod.has(id)) {
       writeJsonRpc({
         jsonrpc: "2.0",
@@ -99,7 +109,7 @@ if (import.meta.main) {
       return false;
     }
     if (pendingMethod.size >= PENDING_METHOD_CAP) {
-      const oldest = pendingMethod.keys().next().value as string | number | undefined;
+      const oldest = pendingMethod.keys().next().value;
       if (oldest !== undefined) {
         process.stderr.write(`[mcp-allowlist-proxy] evicting pending id ${String(oldest)}\n`);
         pendingMethod.delete(oldest);
@@ -109,7 +119,7 @@ if (import.meta.main) {
     return true;
   }
 
-  function rejectBatch(batch: JsonRpcMessage[], reason: string) {
+  function rejectBatch(batch: JsonRpcMessage[], reason: string): void {
     const responses = batch
       .filter((msg) => msg.id !== undefined)
       .map((msg) => ({
@@ -120,47 +130,57 @@ if (import.meta.main) {
     if (responses.length > 0) writeJsonRpc(responses);
   }
 
-  function processClientMessage(msg: JsonRpcMessage | JsonRpcMessage[]) {
-    if (Array.isArray(msg)) {
-      for (const item of msg) {
-        if (item.method === "tools/call") {
-          const params = item.params as Record<string, unknown> | undefined;
-          const name = params?.["name"] as string | undefined;
-          if (!allowlist.has(name ?? "")) {
-            rejectBatch(msg, `tool not in allowlist: ${name}`);
-            return;
-          }
-        }
-      }
-      for (const item of msg) {
-        if (item.id !== undefined && item.method) {
-          if (!queuePendingMethod(item.id, item.method)) return;
-        }
-      }
-      child.stdin.write(JSON.stringify(msg) + "\n");
-      return;
-    }
-    if (msg["method"] === "tools/call") {
-      const params = msg["params"] as Record<string, unknown> | undefined;
-      const name = params?.["name"] as string | undefined;
+  function checkBatchAllowlist(msg: JsonRpcMessage[]): boolean {
+    for (const item of msg) {
+      if (item.method !== "tools/call") continue;
+      const name = getStringField(item.params, "name");
       if (!allowlist.has(name ?? "")) {
-        if (msg["id"] !== undefined) {
+        rejectBatch(msg, `tool not in allowlist: ${name ?? "<unknown>"}`);
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function processBatchMessage(msg: JsonRpcMessage[]): void {
+    if (!checkBatchAllowlist(msg)) return;
+    for (const item of msg) {
+      if (item.id !== undefined && item.method) {
+        if (!queuePendingMethod(item.id, item.method)) return;
+      }
+    }
+    child.stdin.write(JSON.stringify(msg) + "\n");
+  }
+
+  function processSingleMessage(msg: JsonRpcMessage): void {
+    if (msg.method === "tools/call") {
+      const name = getStringField(msg.params, "name");
+      if (!allowlist.has(name ?? "")) {
+        if (msg.id !== undefined) {
           writeJsonRpc({
             jsonrpc: "2.0",
-            id: msg["id"],
-            error: { code: -32601, message: `tool not in allowlist: ${name}` },
+            id: msg.id,
+            error: { code: -32601, message: `tool not in allowlist: ${name ?? "<unknown>"}` },
           });
         }
         return;
       }
     }
-    if (msg["id"] !== undefined && msg["method"]) {
-      if (!queuePendingMethod(msg["id"] as string | number, msg["method"] as string)) return;
+    if (msg.id !== undefined && msg.method) {
+      if (!queuePendingMethod(msg.id, msg.method)) return;
     }
     child.stdin.write(JSON.stringify(msg) + "\n");
   }
 
-  function processUpstreamMessage(msg: JsonRpcMessage | JsonRpcMessage[]) {
+  function processClientMessage(msg: JsonRpcMessage | JsonRpcMessage[]): void {
+    if (Array.isArray(msg)) {
+      processBatchMessage(msg);
+      return;
+    }
+    processSingleMessage(msg);
+  }
+
+  function processUpstreamMessage(msg: JsonRpcMessage | JsonRpcMessage[]): void {
     if (Array.isArray(msg)) {
       const out = msg.map((item) => filterUpstreamItem(item));
       writeJsonRpc(out);
@@ -169,20 +189,21 @@ if (import.meta.main) {
     writeJsonRpc(filterUpstreamItem(msg));
   }
 
-  function filterUpstreamItem(msg: JsonRpcMessage) {
-    const id = msg["id"] as string | number | undefined;
-    if (id !== undefined && pendingMethod.has(id)) {
-      const method = pendingMethod.get(id)!;
-      pendingMethod.delete(id);
-      if (method === "tools/list") {
-        const result = msg["result"] as Record<string, unknown> | undefined;
-        if (result?.["tools"]) {
-          result["tools"] = (result["tools"] as Array<Record<string, unknown>>).filter((t) =>
-            allowlist.has(t["name"] as string),
-          );
-        }
-      }
-    }
+  function filterUpstreamItem(msg: JsonRpcMessage): JsonRpcMessage {
+    const { id } = msg;
+    if (id === undefined) return msg;
+    const method = pendingMethod.get(id);
+    if (method === undefined) return msg;
+    pendingMethod.delete(id);
+    if (method !== "tools/list") return msg;
+    const { result } = msg;
+    if (result === undefined) return msg;
+    const tools = result["tools"];
+    if (!Array.isArray(tools)) return msg;
+    result["tools"] = (tools as Record<string, unknown>[]).filter((t) => {
+      const name = t["name"];
+      return typeof name === "string" && allowlist.has(name);
+    });
     return msg;
   }
 
@@ -217,10 +238,10 @@ if (import.meta.main) {
   // direct-child kill (mirrors acp-server.ts:189-200). Wrapped in try/catch: a
   // negative-pid kill of an already-reaped group throws ESRCH, and a missing pid
   // would throw TypeError.
-  const signalProcess = (signal: NodeJS.Signals) => {
+  const signalProcess = (signal: NodeJS.Signals): void => {
     if (!child.pid) return;
     try {
-      if (process.platform !== "win32" && process.env.PENUMBRA_OPENCODE_GROUP_KILL !== "0") {
+      if (process.platform !== "win32" && process.env["PENUMBRA_OPENCODE_GROUP_KILL"] !== "0") {
         process.kill(-child.pid, signal);
       } else {
         child.kill(signal);
@@ -257,7 +278,7 @@ if (import.meta.main) {
   // grace window so it can't itself re-orphan, then exit regardless. Never exit
   // while the child tree may still be alive and un-signalled.
   let shuttingDown = false;
-  const teardownAndExit = () => {
+  const teardownAndExit = (): void => {
     if (shuttingDown) return;
     shuttingDown = true;
     signalProcess("SIGTERM");

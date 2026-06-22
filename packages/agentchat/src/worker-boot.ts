@@ -1,5 +1,6 @@
 import type { PenumbraClient } from "./penumbra-client.js";
-import { reconcileOrphansAtWorkerBoot, type BootReconcileLogger } from "./worker/boot-reconcile.js";
+
+import { type BootReconcileLogger, reconcileOrphansAtWorkerBoot } from "./worker/boot-reconcile.js";
 
 export interface WorkerBootLogger extends BootReconcileLogger {
   error(meta: Record<string, unknown>, msg: string): void;

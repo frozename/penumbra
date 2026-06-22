@@ -23,7 +23,8 @@ export function buildPrompt(input: BuildPromptInput): string {
 
   const tailBlocks: string[] = [];
   for (let i = input.recentResponses.length - 1; i >= 0; i--) {
-    const r = input.recentResponses[i]!;
+    const r = input.recentResponses[i];
+    if (!r) continue;
     const block = `## from ${r.agent}\n${r.text}`;
     if (block.length > remaining) break;
     tailBlocks.unshift(block);
