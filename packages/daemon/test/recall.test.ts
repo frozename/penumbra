@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
-import { serviceTest } from "./helpers/service-gates.js";
+
 import { makeTempDaemon } from "./helpers.js";
+import { serviceTest } from "./helpers/service-gates.js";
 
 serviceTest("POST /recall returns empty array when DB is empty", async () => {
   const d = makeTempDaemon();

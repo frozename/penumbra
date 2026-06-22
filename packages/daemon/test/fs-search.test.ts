@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+
 import { executeGlob, executeGrep } from "../src/fs-search.js";
 
 describe("executeGlob", () => {
@@ -27,14 +28,15 @@ describe("executeGlob", () => {
     fs.writeFileSync(path.join(tmp, "async.ts"), "x");
     fs.writeFileSync(path.join(tmp, "skip.md"), "y");
 
-    const originalScanSync = Bun.Glob.prototype.scanSync;
-    const originalScan = Bun.Glob.prototype.scan;
-    Bun.Glob.prototype.scanSync = function () {
+    const originalScanSync = Bun.Glob.prototype.scanSync.bind(Bun.Glob.prototype);
+    const originalScan = Bun.Glob.prototype.scan.bind(Bun.Glob.prototype);
+    Bun.Glob.prototype.scanSync = (): never => {
       throw new Error("scanSync should not be called");
-    } as any;
-    Bun.Glob.prototype.scan = function* () {
+    };
+    Bun.Glob.prototype.scan = async function* (): AsyncGenerator<string, void, unknown> {
+      await Promise.resolve();
       yield "async.ts";
-    } as any;
+    };
 
     try {
       const r = await executeGlob({ pattern: "*.ts" }, tmp);
@@ -102,7 +104,7 @@ describe("executeGlob", () => {
 
   it("caps at default 1000 and sets truncated=true when more matches exist", async () => {
     for (let i = 0; i < 1005; i++) {
-      fs.writeFileSync(path.join(tmp, `f${i}.txt`), "x");
+      fs.writeFileSync(path.join(tmp, `f${String(i)}.txt`), "x");
     }
     const r = await executeGlob({ pattern: "*.txt" }, tmp);
     expect(r.results.length).toBe(1000);
@@ -111,7 +113,7 @@ describe("executeGlob", () => {
 
   it("respects a smaller max_results override", async () => {
     for (let i = 0; i < 50; i++) {
-      fs.writeFileSync(path.join(tmp, `f${i}.txt`), "x");
+      fs.writeFileSync(path.join(tmp, `f${String(i)}.txt`), "x");
     }
     const r = await executeGlob({ pattern: "*.txt", max_results: 10 }, tmp);
     expect(r.results.length).toBe(10);
@@ -163,7 +165,7 @@ describe("executeGrep", () => {
     fs.writeFileSync(path.join(tmp, "a.ts"), "TODO\n");
     fs.writeFileSync(path.join(tmp, "a.md"), "TODO\n");
     const r = await executeGrep({ pattern: "TODO", glob: "*.ts", output_mode: "content" }, tmp);
-    expect(r.results.map((x: any) => x.path)).toEqual(["a.ts"]);
+    expect(r.results.map((x) => (typeof x === "string" ? x : x.path))).toEqual(["a.ts"]);
   });
 
   it("case_insensitive=true matches mixed case", async () => {
@@ -177,7 +179,7 @@ describe("executeGrep", () => {
 
   it("truncates content mode at default 50 and sets truncated=true", async () => {
     const lines: string[] = [];
-    for (let i = 0; i < 60; i++) lines.push("TODO line " + i);
+    for (let i = 0; i < 60; i++) lines.push("TODO line " + String(i));
     fs.writeFileSync(path.join(tmp, "big.ts"), lines.join("\n") + "\n");
     const r = await executeGrep({ pattern: "TODO", output_mode: "content" }, tmp);
     expect(r.results.length).toBe(50);
@@ -188,16 +190,20 @@ describe("executeGrep", () => {
     const long = "TODO " + "x".repeat(2000);
     fs.writeFileSync(path.join(tmp, "big.ts"), long + "\n");
     const r = await executeGrep({ pattern: "TODO", output_mode: "content" }, tmp);
-    expect(r.results[0].text.length).toBeLessThanOrEqual(1024);
-    expect(r.results[0].text.endsWith("…")).toBe(true);
+    const first = r.results[0];
+    if (typeof first === "string") throw new Error("expected content mode");
+    expect(first.text.length).toBeLessThanOrEqual(1024);
+    expect(first.text.endsWith("…")).toBe(true);
   });
 
   it("keeps capped text valid at a multi-byte boundary", async () => {
     const long = "a".repeat(1021) + "💩" + "b";
     fs.writeFileSync(path.join(tmp, "emoji.ts"), long + "\n");
     const r = await executeGrep({ pattern: "a", output_mode: "content" }, tmp);
-    expect(Buffer.byteLength(r.results[0].text, "utf8")).toBeLessThanOrEqual(1024);
-    expect(r.results[0].text).not.toContain("\uFFFD");
+    const first = r.results[0];
+    if (typeof first === "string") throw new Error("expected content mode");
+    expect(Buffer.byteLength(first.text, "utf8")).toBeLessThanOrEqual(1024);
+    expect(first.text).not.toContain("\uFFFD");
   });
 
   it("files_with_matches mode returns deduped paths", async () => {
@@ -213,8 +219,8 @@ describe("executeGrep", () => {
     try {
       await executeGrep({ pattern: "TODO", output_mode: "content" }, tmp);
       throw new Error("should have thrown");
-    } catch (err: any) {
-      expect(err.code).toBe("engine_unavailable");
+    } catch (err) {
+      expect((err as Error & { code?: string }).code).toBe("engine_unavailable");
     }
   });
 
@@ -223,8 +229,8 @@ describe("executeGrep", () => {
     try {
       await executeGrep({ pattern: "[invalid", output_mode: "content" }, tmp);
       throw new Error("should have thrown");
-    } catch (err: any) {
-      expect(err.code).toBe("bad_pattern");
+    } catch (err) {
+      expect((err as Error & { code?: string }).code).toBe("bad_pattern");
     }
   });
 
@@ -233,12 +239,17 @@ describe("executeGrep", () => {
     fs.writeFileSync(path.join(tmp, "ignored.ts"), "TODO\n");
     fs.writeFileSync(path.join(tmp, "kept.ts"), "TODO\n");
     const without = await executeGrep({ pattern: "TODO", output_mode: "content" }, tmp);
-    expect(without.results.map((x: any) => x.path).sort()).toEqual(["kept.ts"]);
+    expect(without.results.map((x) => (typeof x === "string" ? x : x.path)).sort()).toEqual([
+      "kept.ts",
+    ]);
     const withIgnored = await executeGrep(
       { pattern: "TODO", output_mode: "content", include_ignored: true },
       tmp,
     );
-    expect(withIgnored.results.map((x: any) => x.path).sort()).toEqual(["ignored.ts", "kept.ts"]);
+    expect(withIgnored.results.map((x) => (typeof x === "string" ? x : x.path)).sort()).toEqual([
+      "ignored.ts",
+      "kept.ts",
+    ]);
   });
 
   it("passes --no-config as the first rg flag", async () => {
@@ -258,6 +269,6 @@ printf '%s\n' '{"type":"match","data":{"path":{"text":"a.txt"},"line_number":1,"
 
     const r = await executeGrep({ pattern: "TODO", output_mode: "content" }, tmp);
     expect(r.results).toEqual([{ path: "a.txt", line: 1, text: "TODO" }]);
-    expect(fs.readFileSync(argsFile, "utf8").split("\n").filter(Boolean)[0]).toBe("--no-config");
+    expect(fs.readFileSync(argsFile, "utf8").split("\n").find(Boolean)).toBe("--no-config");
   });
 });

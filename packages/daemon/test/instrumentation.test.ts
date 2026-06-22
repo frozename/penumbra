@@ -1,10 +1,17 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import type { Logger } from "@penumbra/core";
+
 import { buildServices, loadSqliteVec, migrate } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+
 import { LagSampler } from "../src/lag-sampler.js";
 import { createDaemonFetchHandler } from "../src/serve.js";
 import { wrapDatabaseWithSlowQueryLog } from "../src/slow-query.js";
+
+function mockLogger(onWarn: (fields: Record<string, unknown>, msg: string) => void): Logger {
+  return { warn: onWarn } as unknown as Logger;
+}
 
 describe("instrumentation integration", () => {
   afterEach(() => {
@@ -12,17 +19,15 @@ describe("instrumentation integration", () => {
   });
 
   test("lag sampler records max lag and logs warn with a fake clock", () => {
-    let warnFields: any = null;
+    let warnFields: Record<string, unknown> | null = null;
     let warnMsg: string | null = null;
-    const fakeLog = {
-      warn: (fields: any, msg: string) => {
-        warnFields = fields;
-        warnMsg = msg;
-      },
-    };
+    const fakeLog = mockLogger((fields, msg) => {
+      warnFields = fields;
+      warnMsg = msg;
+    });
 
     let nowMs = 1000;
-    const sampler = new LagSampler(fakeLog as any, 20, 10, () => nowMs);
+    const sampler = new LagSampler(fakeLog, 20, 10, () => nowMs);
     sampler.start();
 
     nowMs += 35;
@@ -38,8 +43,8 @@ describe("instrumentation integration", () => {
   });
 
   test("lag sampler ignores wall-clock jumps when measuring interval drift", () => {
-    const originalDateNow = Date.now;
-    const originalPerfNow = performance.now;
+    const originalDateNow = Date.now.bind(Date);
+    const originalPerfNow = performance.now.bind(performance);
     let wallNowMs = 1_000_000;
     let monotonicNowMs = 2_000;
     Object.defineProperty(Date, "now", {
@@ -51,7 +56,11 @@ describe("instrumentation integration", () => {
       writable: true,
     });
 
-    const sampler = new LagSampler({ warn: () => undefined } as any, 20, 10);
+    const sampler = new LagSampler(
+      mockLogger(() => undefined),
+      20,
+      10,
+    );
 
     try {
       sampler.start();
@@ -78,7 +87,12 @@ describe("instrumentation integration", () => {
     migrate(rawDb, { embeddingDim: 384 });
 
     let nowMs = 2000;
-    const sampler = new LagSampler({ warn: () => undefined } as any, 20, 10, () => nowMs);
+    const sampler = new LagSampler(
+      mockLogger(() => undefined),
+      20,
+      10,
+      () => nowMs,
+    );
     sampler.start();
     nowMs += 45;
     sampler.sample();
@@ -121,20 +135,18 @@ describe("instrumentation integration", () => {
   });
 
   test("slow query wrapper logs statements exceeding threshold", () => {
-    let logged: any = null;
-    const fakeLog = {
-      warn: (fields: any, msg: string) => {
-        logged = fields;
-      },
-    };
+    let logged: Record<string, unknown> | null = null;
+    const fakeLog = mockLogger((fields) => {
+      logged = fields;
+    });
 
     const rawDb = new Database(":memory:");
     rawDb.run("CREATE TABLE foo(id INT);");
 
-    const db = wrapDatabaseWithSlowQueryLog(rawDb, 50, fakeLog as any);
+    const db = wrapDatabaseWithSlowQueryLog(rawDb, 50, fakeLog);
 
     // Mock performance.now()
-    const originalPerfNow = performance.now;
+    const originalPerfNow = performance.now.bind(performance);
     let nowValue = 1000;
     Object.defineProperty(performance, "now", {
       value: () => nowValue,
@@ -145,10 +157,10 @@ describe("instrumentation integration", () => {
       const stmt = db.prepare("INSERT INTO foo VALUES (1)");
 
       // Simulate taking 60ms
-      const originalRun = stmt.run;
-      stmt.run = (...args: any[]) => {
+      const originalRun = stmt.run.bind(stmt);
+      stmt.run = (...args: Parameters<typeof stmt.run>): ReturnType<typeof stmt.run> => {
         nowValue += 60;
-        return originalRun.apply(stmt, args);
+        return originalRun(...args);
       };
 
       stmt.run();
@@ -165,18 +177,16 @@ describe("instrumentation integration", () => {
   });
 
   test("slow query wrapper logs transactions exceeding threshold", () => {
-    let logged: any = null;
-    const fakeLog = {
-      warn: (fields: any) => {
-        logged = fields;
-      },
-    };
+    let logged: Record<string, unknown> | null = null;
+    const fakeLog = mockLogger((fields) => {
+      logged = fields;
+    });
 
     const rawDb = new Database(":memory:");
     rawDb.run("CREATE TABLE foo(id INT);");
-    const db = wrapDatabaseWithSlowQueryLog(rawDb, 50, fakeLog as any);
+    const db = wrapDatabaseWithSlowQueryLog(rawDb, 50, fakeLog);
 
-    const originalPerfNow = performance.now;
+    const originalPerfNow = performance.now.bind(performance);
     let nowValue = 1000;
     Object.defineProperty(performance, "now", {
       value: () => nowValue,
@@ -204,18 +214,16 @@ describe("instrumentation integration", () => {
   });
 
   test("slow query wrapper preserves and logs transaction variants", () => {
-    const logged: any[] = [];
-    const fakeLog = {
-      warn: (fields: any) => {
-        logged.push(fields);
-      },
-    };
+    const logged: Record<string, unknown>[] = [];
+    const fakeLog = mockLogger((fields) => {
+      logged.push(fields);
+    });
 
     const rawDb = new Database(":memory:");
     rawDb.run("CREATE TABLE foo(id INT);");
-    const db = wrapDatabaseWithSlowQueryLog(rawDb, 50, fakeLog as any);
+    const db = wrapDatabaseWithSlowQueryLog(rawDb, 50, fakeLog);
 
-    const originalPerfNow = performance.now;
+    const originalPerfNow = performance.now.bind(performance);
     let nowValue = 1000;
     Object.defineProperty(performance, "now", {
       value: () => nowValue,
@@ -223,18 +231,19 @@ describe("instrumentation integration", () => {
     });
 
     try {
+      type TxFn = (id: number) => void;
       const tx = db.transaction((id: number) => {
         nowValue += 60;
         db.prepare("INSERT INTO foo VALUES (?)").run(id);
-      });
+      }) as unknown as TxFn & { deferred: TxFn; immediate: TxFn; exclusive: TxFn };
 
-      expect(typeof (tx as any).deferred).toBe("function");
-      expect(typeof (tx as any).immediate).toBe("function");
-      expect(typeof (tx as any).exclusive).toBe("function");
+      expect(typeof tx.deferred).toBe("function");
+      expect(typeof tx.immediate).toBe("function");
+      expect(typeof tx.exclusive).toBe("function");
 
-      (tx as any).deferred(1);
-      (tx as any).immediate(2);
-      (tx as any).exclusive(3);
+      tx.deferred(1);
+      tx.immediate(2);
+      tx.exclusive(3);
 
       expect(rawDb.query("SELECT COUNT(*) AS n FROM foo").get()).toEqual({ n: 3 });
       expect(logged).toEqual([

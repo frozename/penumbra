@@ -1,15 +1,7 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
-import { TestEmbedder } from "@penumbra/core/testing";
-import { createDaemonFetchHandler } from "../src/serve.js";
 import {
   ChainsListResponseSchema,
-  DispatchEventsListResponseSchema,
   DispatchEventSchema,
+  DispatchEventsListResponseSchema,
   HandoffRowSchema,
   HandoffsListResponseSchema,
   TasksListResponseSchema,
@@ -17,12 +9,23 @@ import {
   UsageRecentResponseSchema,
   UsageSubscriptionPressureResponseSchema,
 } from "@penumbra/api-contract";
+import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { createDaemonFetchHandler } from "../src/serve.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  // ignore
+}
 
 interface TestHarness {
   fetch: (path: string, init?: RequestInit) => Promise<Response>;
@@ -46,21 +49,28 @@ function startHarness(): TestHarness {
   });
   const handler = createDaemonFetchHandler({ services, token: "tok" });
   return {
-    fetch: (path, init) =>
-      handler(
+    fetch: (path: string, init?: RequestInit): Promise<Response> => {
+      const headers = new Headers(init?.headers);
+      headers.set("authorization", "Bearer tok");
+      return handler(
         new Request(`http://x${path}`, {
           ...init,
-          headers: { authorization: "Bearer tok", ...(init?.headers ?? {}) },
+          headers,
         }),
-      ),
+      );
+    },
     services,
-    stop: () => {
+    stop: (): void => {
       try {
         services.supervisor.stopAll();
-      } catch {}
+      } catch {
+        // ignore
+      }
       try {
         db.close();
-      } catch {}
+      } catch {
+        // ignore
+      }
       rmSync(root, { recursive: true, force: true });
     },
   };
@@ -115,7 +125,7 @@ test("GET /handoffs?status=pending response shape matches HandoffsListResponseSc
   }
 });
 
-test("handoffs row shape parses as HandoffRowSchema", async () => {
+test("handoffs row shape parses as HandoffRowSchema", () => {
   const h = startHarness();
   try {
     h.services.handoffWriter.createApproved({

@@ -1,9 +1,10 @@
-import { afterEach, expect, mock, spyOn, test } from "bun:test";
-import { serviceTest } from "./helpers/service-gates.js";
-import { Database } from "bun:sqlite";
-import { buildServices, loadSqliteVec, migrate } from "@penumbra/core";
+import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { afterEach, expect, mock, spyOn, test } from "bun:test";
+
 import { serve } from "../src/serve.js";
+import { serviceTest } from "./helpers/service-gates.js";
 
 try {
   if (process.platform === "darwin") {
@@ -18,7 +19,7 @@ afterEach(() => {
   mock.restore();
 });
 
-function makeServices() {
+function makeServices(): Services {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
@@ -39,7 +40,7 @@ serviceTest("serve binds to 127.0.0.1 by default", async () => {
   const handle = serve({ services, token: "test-token", port: 0 });
   try {
     expect(handle.port).toBeGreaterThan(0);
-    const res = await fetch(`http://127.0.0.1:${handle.port}/health`);
+    const res = await fetch(`http://127.0.0.1:${String(handle.port)}/health`);
     expect(res.status).toBe(200);
   } finally {
     await handle.stop();
@@ -57,7 +58,7 @@ serviceTest("serve honors PENUMBRA_DAEMON_HOST override", async () => {
   const handle = serve({ services, token: "test-token", port: 0 });
   try {
     expect(handle.port).toBeGreaterThan(0);
-    const res = await fetch(`http://127.0.0.1:${handle.port}/health`);
+    const res = await fetch(`http://127.0.0.1:${String(handle.port)}/health`);
     expect(res.status).toBe(200);
   } finally {
     await handle.stop();

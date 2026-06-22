@@ -1,10 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import type { Services } from "@penumbra/core";
+
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+
 import { worktreesWriteRoute } from "../src/routes/fs.js";
 
-function fakeServices(worktrees: Record<string, string>): any {
+function fakeServices(worktrees: Record<string, string>): Services {
+  // typed mock factory for tests
   return {
     worktreeManager: {
       getWorktree: (id: string) => (worktrees[id] ? { handoffId: id, path: worktrees[id] } : null),
@@ -12,7 +16,7 @@ function fakeServices(worktrees: Record<string, string>): any {
     handoffReader: {
       get: () => null,
     },
-  };
+  } as unknown as Services;
 }
 
 describe("worktrees write route", () => {
@@ -34,7 +38,7 @@ describe("worktrees write route", () => {
     });
     const res = await worktreesWriteRoute(req, "H1", services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as { path: string; bytes_written: number; created: boolean };
     expect(body.path).toBe("new.txt");
     expect(body.bytes_written).toBe(12);
     expect(body.created).toBe(true);
@@ -49,7 +53,7 @@ describe("worktrees write route", () => {
     });
     const res = await worktreesWriteRoute(req, "H1", services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as { created: boolean };
     expect(body.created).toBe(true);
     expect(fs.readFileSync(path.join(tmp, "subdir/nested/file.txt"), "utf8")).toBe(
       "nested content",
@@ -65,7 +69,7 @@ describe("worktrees write route", () => {
     });
     const res = await worktreesWriteRoute(req, "H1", services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as { created: boolean };
     expect(body.created).toBe(false);
     expect(fs.readFileSync(path.join(tmp, "existing.txt"), "utf8")).toBe("new content");
   });
@@ -78,7 +82,7 @@ describe("worktrees write route", () => {
     });
     const res = await worktreesWriteRoute(req, "H1", services);
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("outside_worktree");
   });
 
@@ -90,7 +94,7 @@ describe("worktrees write route", () => {
     });
     const res = await worktreesWriteRoute(req, "H1", services);
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("invalid_args");
   });
 
@@ -102,7 +106,7 @@ describe("worktrees write route", () => {
     });
     const res = await worktreesWriteRoute(req, "H1", services);
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("invalid_args");
   });
 
@@ -114,7 +118,7 @@ describe("worktrees write route", () => {
     });
     const res = await worktreesWriteRoute(req, "UNKNOWN", services);
     expect(res.status).toBe(404);
-    const body = await res.json();
+    const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("not_found");
   });
 });

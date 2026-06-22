@@ -1,11 +1,12 @@
 import { expect } from "bun:test";
-import { serviceTest } from "./helpers/service-gates.js";
+
 import { makeTempDaemon } from "./helpers.js";
+import { serviceTest } from "./helpers/service-gates.js";
 
 serviceTest("GET /health returns 200", async () => {
   const d = makeTempDaemon();
   try {
-    d.services.db.exec(`
+    d.services.db.run(`
       INSERT INTO lane_ledger (
         lane_id, ts_opened, ts_closed, task_class, implementer_handoff,
         reviewer_handoff, gate_status, recalled_memory_ids, recalled_query, override_reason, metadata_json
