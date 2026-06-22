@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { createBearerAuth } from "../src/auth.js";
 
 test("returns 401 with {error:{code,message}} envelope when no Authorization header", async () => {
@@ -11,7 +12,7 @@ test("returns 401 with {error:{code,message}} envelope when no Authorization hea
   expect(typeof body.error.message).toBe("string");
 });
 
-test("returns 401 when token mismatches", async () => {
+test("returns 401 when token mismatches", () => {
   const auth = createBearerAuth({ token: "secret" });
   const req = new Request("http://x/test", {
     headers: { authorization: "Bearer wrong" },
@@ -20,7 +21,7 @@ test("returns 401 when token mismatches", async () => {
   expect(denied?.status).toBe(401);
 });
 
-test("returns null when token matches", async () => {
+test("returns null when token matches", () => {
   const auth = createBearerAuth({ token: "secret" });
   const req = new Request("http://x/test", {
     headers: { authorization: "Bearer secret" },

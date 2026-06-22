@@ -1,8 +1,9 @@
-import { expect } from "bun:test";
-import { serviceTest } from "./helpers/service-gates.js";
+import { buildServices, BundledEmbedder, loadSqliteVec, migrate } from "@penumbra/core";
 import { Database } from "bun:sqlite";
+import { expect } from "bun:test";
+
 import { serve } from "../src/serve.js";
-import { buildServices, loadSqliteVec, migrate, BundledEmbedder } from "@penumbra/core";
+import { serviceTest } from "./helpers/service-gates.js";
 
 try {
   if (process.platform === "darwin") {

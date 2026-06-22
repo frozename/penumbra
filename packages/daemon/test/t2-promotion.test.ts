@@ -1,13 +1,46 @@
+import { type Services, type T2MemoryExtraction } from "@penumbra/core";
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import {
+  createDefaultLLMJudge,
+  createT2PromotionWorker,
+  stripJsonFence,
+  wrapJudgeWithChunking,
+} from "../src/workers/t2-promotion.js";
 import { makeTempDaemon } from "./helpers.js";
 import { serviceTest } from "./helpers/service-gates.js";
-import { createT2PromotionWorker } from "../src/workers/t2-promotion.js";
-import { stripJsonFence } from "../src/workers/t2-promotion.js";
-import { wrapJudgeWithChunking } from "../src/workers/t2-promotion.js";
-import { createDefaultLLMJudge } from "../src/workers/t2-promotion.js";
+
+type T2Judge = (transcript: string) => Promise<T2MemoryExtraction[]>;
+
+interface T2Embedder {
+  name: string;
+  dim: number;
+  embed: (texts: string[]) => Promise<Float32Array[]>;
+}
+
+interface PromotionRow {
+  t2_promoted_at: string | null;
+  failed_promotion_attempts: number;
+}
+interface CountRow {
+  c: number;
+}
+
+interface LoggerStub {
+  info: (...args: unknown[]) => void;
+  error: (...args: unknown[]) => void;
+  warn: (...args: unknown[]) => void;
+}
+
+// createDefaultLLMJudge only reads `services.log`. The full Services interface
+// is nominally large but the SUT touches a narrow slice — fabricate a stub
+// with one documented `as unknown as` so callers can supply only what's read.
+function makeServicesStub(log: LoggerStub): Services {
+  return { log } as unknown as Services;
+}
 
 // Pin PENUMBRA_CONFIG_DIR to a safe fixture config dir so the serve-internal
 // t2-promotion worker created by makeTempDaemon() is always a no-op (dummy agent
@@ -78,7 +111,7 @@ test("stripJsonFence strips bare bracket CSI sequences", () => {
 test("stripJsonFence preserves bracket-like substrings inside JSON values", () => {
   const parsed = JSON.parse(
     stripJsonFence('{"memories":[{"title":"see [2 lines below]","body":"x","kind":"fact"}]}'),
-  ) as { memories: Array<{ title: string }> };
+  ) as { memories: { title: string }[] };
 
   expect(parsed.memories[0]!.title).toBe("see [2 lines below]");
 });
@@ -111,9 +144,9 @@ test("wrapJudgeWithChunking passes small transcripts through unchanged", async (
   const seen: string[] = [];
   const judge = wrapJudgeWithChunking({
     maxCharsPerChunk: 100,
-    judge: async (transcript) => {
+    judge: (transcript: string): Promise<T2MemoryExtraction[]> => {
       seen.push(transcript);
-      return [];
+      return Promise.resolve([]);
     },
   });
 
@@ -126,13 +159,13 @@ test("wrapJudgeWithChunking splits at event boundaries when transcript exceeds b
   const seen: string[] = [];
   const judge = wrapJudgeWithChunking({
     maxCharsPerChunk: 32000,
-    judge: async (transcript) => {
+    judge: (transcript: string): Promise<T2MemoryExtraction[]> => {
       seen.push(transcript);
-      return [];
+      return Promise.resolve([]);
     },
   });
 
-  const event = (role: string, body: string) => `${role}: ${body}`;
+  const event = (role: string, body: string): string => `${role}: ${body}`;
   const transcript = Array.from({ length: 10 }, (_, i) =>
     event(i % 2 === 0 ? "User" : "Assistant", "x".repeat(15000)),
   ).join("\n\n");
@@ -149,19 +182,17 @@ test("wrapJudgeWithChunking splits at event boundaries when transcript exceeds b
 test("wrapJudgeWithChunking dedupes by title", async () => {
   const judge = wrapJudgeWithChunking({
     maxCharsPerChunk: 20,
-    judge: async (transcript) => {
+    judge: (transcript: string): Promise<T2MemoryExtraction[]> => {
       if (transcript.includes("aaa")) {
-        return [{ title: "Duplicate", body: "one", kind: "fact" }];
+        return Promise.resolve([{ title: "Duplicate", body: "one", kind: "fact" }]);
       }
-      return [{ title: "duplicate", body: "two", kind: "fact" }];
+      return Promise.resolve([{ title: "duplicate", body: "two", kind: "fact" }]);
     },
   });
 
   const transcript = ["User: aaa", "Assistant: bbb", "User: ccc", "Assistant: ddd"].join("\n\n");
 
-  await expect(judge(transcript)).resolves.toEqual([
-    { title: "Duplicate", body: "one", kind: "fact" },
-  ]);
+  expect(await judge(transcript)).toEqual([{ title: "Duplicate", body: "one", kind: "fact" }]);
 });
 
 test("wrapJudgeWithChunking collapses near-duplicates via embedding similarity (longer body wins)", async () => {
@@ -176,25 +207,26 @@ test("wrapJudgeWithChunking collapses near-duplicates via embedding similarity (
     ["this is a longer body about the same thing", dupeVecJittered],
     ["totally separate topic body", distinctVec],
   ]);
-  const embedder = {
+  const embedder: T2Embedder = {
     name: "fake",
     dim,
-    embed: async (texts: string[]) => texts.map((t) => embedderMap.get(t) ?? new Float32Array(dim)),
+    embed: (texts: string[]): Promise<Float32Array[]> =>
+      Promise.resolve(texts.map((t) => embedderMap.get(t) ?? new Float32Array(dim))),
   };
 
   const judge = wrapJudgeWithChunking({
     maxCharsPerChunk: 20,
     embedder,
-    judge: async (transcript) => {
+    judge: (transcript: string): Promise<T2MemoryExtraction[]> => {
       if (transcript.includes("aaa")) {
-        return [
+        return Promise.resolve([
           { title: "thing A", body: "short body", kind: "fact" },
           { title: "distinct", body: "totally separate topic body", kind: "fact" },
-        ];
+        ]);
       }
-      return [
+      return Promise.resolve([
         { title: "thing B", body: "this is a longer body about the same thing", kind: "fact" },
-      ];
+      ]);
     },
   });
 
@@ -215,24 +247,25 @@ test("wrapJudgeWithChunking keeps semantically distinct memories under similarit
     ["beta body", new Float32Array([0, 1, 0])],
     ["gamma body", new Float32Array([0, 0, 1])],
   ]);
-  const embedder = {
+  const embedder: T2Embedder = {
     name: "fake",
     dim,
-    embed: async (texts: string[]) => texts.map((t) => vecs.get(t) ?? new Float32Array(dim)),
+    embed: (texts: string[]): Promise<Float32Array[]> =>
+      Promise.resolve(texts.map((t) => vecs.get(t) ?? new Float32Array(dim))),
   };
   let call = 0;
   const judge = wrapJudgeWithChunking({
     maxCharsPerChunk: 20,
     embedder,
-    judge: async () => {
+    judge: (): Promise<T2MemoryExtraction[]> => {
       call++;
       if (call === 1) {
-        return [
+        return Promise.resolve([
           { title: "A", body: "alpha body", kind: "fact" },
           { title: "B", body: "beta body", kind: "fact" },
-        ];
+        ]);
       }
-      return [{ title: "C", body: "gamma body", kind: "fact" }];
+      return Promise.resolve([{ title: "C", body: "gamma body", kind: "fact" }]);
     },
   });
 
@@ -247,11 +280,15 @@ test("wrapJudgeWithChunking falls back to title-only dedupe when no embedder is 
   // that differ in casing collapse, but distinct titles survive even with similar bodies.
   const judge = wrapJudgeWithChunking({
     maxCharsPerChunk: 20,
-    judge: async (transcript) => {
+    judge: (transcript: string): Promise<T2MemoryExtraction[]> => {
       if (transcript.includes("aaa")) {
-        return [{ title: "X", body: "one body that talks about the same thing", kind: "fact" }];
+        return Promise.resolve([
+          { title: "X", body: "one body that talks about the same thing", kind: "fact" },
+        ]);
       }
-      return [{ title: "Y", body: "one body that talks about the same thing", kind: "fact" }];
+      return Promise.resolve([
+        { title: "Y", body: "one body that talks about the same thing", kind: "fact" },
+      ]);
     },
   });
 
@@ -266,12 +303,12 @@ test("wrapJudgeWithChunking uses body-v1 embed text by default (inert-default)",
   const prev = process.env.PENUMBRA_T2_EMBED_RECIPE;
   delete process.env.PENUMBRA_T2_EMBED_RECIPE;
   const seen: string[][] = [];
-  const embedder = {
+  const embedder: T2Embedder = {
     name: "spy",
     dim: 4,
-    embed: async (texts: string[]) => {
+    embed: (texts: string[]): Promise<Float32Array[]> => {
       seen.push(texts);
-      return texts.map(() => new Float32Array([1, 0, 0, 0]));
+      return Promise.resolve(texts.map(() => new Float32Array([1, 0, 0, 0])));
     },
   };
 
@@ -279,11 +316,11 @@ test("wrapJudgeWithChunking uses body-v1 embed text by default (inert-default)",
     const judge = wrapJudgeWithChunking({
       maxCharsPerChunk: 20,
       embedder,
-      judge: async (transcript) => {
+      judge: (transcript: string): Promise<T2MemoryExtraction[]> => {
         if (transcript.includes("aaa")) {
-          return [{ title: "Alpha title", body: "Alpha body", kind: "fact" }];
+          return Promise.resolve([{ title: "Alpha title", body: "Alpha body", kind: "fact" }]);
         }
-        return [{ title: "Beta title", body: "Beta body", kind: "fact" }];
+        return Promise.resolve([{ title: "Beta title", body: "Beta body", kind: "fact" }]);
       },
     });
 
@@ -300,12 +337,12 @@ test("wrapJudgeWithChunking routes embed input through title recipe when enabled
   const prev = process.env.PENUMBRA_T2_EMBED_RECIPE;
   process.env.PENUMBRA_T2_EMBED_RECIPE = "title_only";
   const seen: string[][] = [];
-  const embedder = {
+  const embedder: T2Embedder = {
     name: "spy",
     dim: 4,
-    embed: async (texts: string[]) => {
+    embed: (texts: string[]): Promise<Float32Array[]> => {
       seen.push(texts);
-      return texts.map(() => new Float32Array([1, 0, 0, 0]));
+      return Promise.resolve(texts.map(() => new Float32Array([1, 0, 0, 0])));
     },
   };
 
@@ -313,11 +350,11 @@ test("wrapJudgeWithChunking routes embed input through title recipe when enabled
     const judge = wrapJudgeWithChunking({
       maxCharsPerChunk: 20,
       embedder,
-      judge: async (transcript) => {
+      judge: (transcript: string): Promise<T2MemoryExtraction[]> => {
         if (transcript.includes("aaa")) {
-          return [{ title: "Alpha title", body: "Alpha body", kind: "fact" }];
+          return Promise.resolve([{ title: "Alpha title", body: "Alpha body", kind: "fact" }]);
         }
-        return [{ title: "Beta title", body: "Beta body", kind: "fact" }];
+        return Promise.resolve([{ title: "Beta title", body: "Beta body", kind: "fact" }]);
       },
     });
 
@@ -334,10 +371,10 @@ test("wrapJudgeWithChunking continues when one chunk fails", async () => {
   let call = 0;
   const judge = wrapJudgeWithChunking({
     maxCharsPerChunk: 60,
-    judge: async (transcript) => {
+    judge: (transcript: string): Promise<T2MemoryExtraction[]> => {
       call++;
       if (transcript.includes("c".repeat(20))) throw new Error("chunk 2 failed");
-      return [{ title: `t${call}`, body: "body", kind: "fact" }];
+      return Promise.resolve([{ title: `t${String(call)}`, body: "body", kind: "fact" }]);
     },
   });
 
@@ -350,7 +387,7 @@ test("wrapJudgeWithChunking continues when one chunk fails", async () => {
     "Assistant: " + "f".repeat(20),
   ].join("\n\n");
 
-  await expect(judge(transcript)).resolves.toEqual([
+  expect(await judge(transcript)).toEqual([
     { title: "t1", body: "body", kind: "fact" },
     { title: "t2", body: "body", kind: "fact" },
     { title: "t4", body: "body", kind: "fact" },
@@ -363,17 +400,19 @@ test("wrapJudgeWithChunking preserves order of extractions across chunks", async
   let call = 0;
   const judge = wrapJudgeWithChunking({
     maxCharsPerChunk: 20,
-    judge: async () => {
+    judge: (): Promise<T2MemoryExtraction[]> => {
       call++;
-      return call === 1
-        ? [{ title: "A", body: "body-a", kind: "fact" }]
-        : [{ title: "B", body: "body-b", kind: "fact" }];
+      return Promise.resolve(
+        call === 1
+          ? [{ title: "A", body: "body-a", kind: "fact" }]
+          : [{ title: "B", body: "body-b", kind: "fact" }],
+      );
     },
   });
 
   const transcript = ["User: aaa", "Assistant: bbb", "User: ccc", "Assistant: ddd"].join("\n\n");
 
-  await expect(judge(transcript)).resolves.toEqual([
+  expect(await judge(transcript)).toEqual([
     { title: "A", body: "body-a", kind: "fact" },
     { title: "B", body: "body-b", kind: "fact" },
   ]);
@@ -415,7 +454,7 @@ serviceTest(
        VALUES ('rno', 'p1', 'u1', 'sno', ?, ?, 5, '{}', '{}')`,
         [oldTs, oldTs],
       );
-      d.services.clock = () => new Date("2026-04-27T10:00:00Z");
+      d.services.clock = (): Date => new Date("2026-04-27T10:00:00Z");
 
       // No `llm` opt — exercises createDefaultLLMJudge which returns null when env unset.
       const worker = createT2PromotionWorker({ services: d.services, delayHours: 24 });
@@ -423,13 +462,13 @@ serviceTest(
 
       // Rollup is untouched: not promoted, no failure counter increment.
       const row = d.services.db
-        .query(
-          `SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id='rno'`,
-          [],
-        )
-        .get() as any;
-      expect(row.t2_promoted_at).toBeNull();
-      expect(row.failed_promotion_attempts).toBe(0);
+        .query<
+          PromotionRow,
+          []
+        >(`SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id='rno'`)
+        .get();
+      expect(row?.t2_promoted_at).toBeNull();
+      expect(row?.failed_promotion_attempts).toBe(0);
     } finally {
       if (oldEnv.sirius) process.env.PENUMBRA_SIRIUS_BASE_URL = oldEnv.sirius;
       if (oldEnv.sirius2) process.env.SIRIUS_URL = oldEnv.sirius2;
@@ -441,7 +480,7 @@ serviceTest(
   },
 );
 
-serviceTest("worker uses agentchat-based pool when memory-refiner agents exist", async () => {
+serviceTest("worker uses agentchat-based pool when memory-refiner agents exist", () => {
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
   const dir = mkdtempSync(join(tmpdir(), "penumbra-agentchat-"));
@@ -469,7 +508,7 @@ agents:
   );
   writeFileSync(join(dir, "routing.yaml"), "default_roles: {}\n");
   writeFileSync(join(dir, "quotas.yaml"), "providers: []\n");
-  const infoSpy = spyOn(d.services.log, "info").mockImplementation(() => undefined as any);
+  const infoSpy = spyOn(d.services.log, "info").mockImplementation(() => undefined);
   try {
     createT2PromotionWorker({ services: d.services, delayHours: 24 });
     expect(
@@ -486,21 +525,19 @@ agents:
   }
 });
 
-serviceTest(
-  "worker falls back to single-judge env config when no memory-refiner agents",
-  async () => {
-    const d = makeTempDaemon();
-    d.services.supervisor.stopAll();
-    const dir = mkdtempSync(join(tmpdir(), "penumbra-agentchat-"));
-    const oldConfig = process.env.PENUMBRA_CONFIG_DIR;
-    const oldSirius = process.env.PENUMBRA_SIRIUS_BASE_URL;
-    const oldToken = process.env.PENUMBRA_SIRIUS_TOKEN;
-    process.env.PENUMBRA_CONFIG_DIR = dir;
-    process.env.PENUMBRA_SIRIUS_BASE_URL = "http://judge";
-    process.env.PENUMBRA_SIRIUS_TOKEN = "token";
-    writeFileSync(
-      join(dir, "agents.yaml"),
-      `
+serviceTest("worker falls back to single-judge env config when no memory-refiner agents", () => {
+  const d = makeTempDaemon();
+  d.services.supervisor.stopAll();
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-agentchat-"));
+  const oldConfig = process.env.PENUMBRA_CONFIG_DIR;
+  const oldSirius = process.env.PENUMBRA_SIRIUS_BASE_URL;
+  const oldToken = process.env.PENUMBRA_SIRIUS_TOKEN;
+  process.env.PENUMBRA_CONFIG_DIR = dir;
+  process.env.PENUMBRA_SIRIUS_BASE_URL = "http://judge";
+  process.env.PENUMBRA_SIRIUS_TOKEN = "token";
+  writeFileSync(
+    join(dir, "agents.yaml"),
+    `
 agents:
   - name: planner
     adapter: openai-compat-http
@@ -509,33 +546,32 @@ agents:
       model: granite
     roles: [planner]
 `,
-    );
-    writeFileSync(join(dir, "routing.yaml"), "default_roles: {}\n");
-    writeFileSync(join(dir, "quotas.yaml"), "providers: []\n");
-    const infoSpy = spyOn(d.services.log, "info").mockImplementation(() => undefined as any);
-    try {
-      createT2PromotionWorker({ services: d.services, delayHours: 24 });
-      expect(
-        infoSpy.mock.calls.some((call) => String(call[1]).includes("LLM judge configured")),
-      ).toBe(true);
-    } finally {
-      infoSpy.mockRestore();
-      if (oldConfig) process.env.PENUMBRA_CONFIG_DIR = oldConfig;
-      else delete process.env.PENUMBRA_CONFIG_DIR;
-      if (oldSirius) process.env.PENUMBRA_SIRIUS_BASE_URL = oldSirius;
-      else delete process.env.PENUMBRA_SIRIUS_BASE_URL;
-      if (oldToken) process.env.PENUMBRA_SIRIUS_TOKEN = oldToken;
-      else delete process.env.PENUMBRA_SIRIUS_TOKEN;
-      rmSync(dir, { recursive: true, force: true });
-      d.stop();
-    }
-  },
-);
+  );
+  writeFileSync(join(dir, "routing.yaml"), "default_roles: {}\n");
+  writeFileSync(join(dir, "quotas.yaml"), "providers: []\n");
+  const infoSpy = spyOn(d.services.log, "info").mockImplementation(() => undefined);
+  try {
+    createT2PromotionWorker({ services: d.services, delayHours: 24 });
+    expect(
+      infoSpy.mock.calls.some((call) => String(call[1]).includes("LLM judge configured")),
+    ).toBe(true);
+  } finally {
+    infoSpy.mockRestore();
+    if (oldConfig) process.env.PENUMBRA_CONFIG_DIR = oldConfig;
+    else delete process.env.PENUMBRA_CONFIG_DIR;
+    if (oldSirius) process.env.PENUMBRA_SIRIUS_BASE_URL = oldSirius;
+    else delete process.env.PENUMBRA_SIRIUS_BASE_URL;
+    if (oldToken) process.env.PENUMBRA_SIRIUS_TOKEN = oldToken;
+    else delete process.env.PENUMBRA_SIRIUS_TOKEN;
+    rmSync(dir, { recursive: true, force: true });
+    d.stop();
+  }
+});
 
 serviceTest("t2 promotion worker short-circuits the cycle when judge is unreachable", async () => {
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
-  d.services.clock = () => new Date("2026-04-27T10:00:00Z");
+  d.services.clock = (): Date => new Date("2026-04-27T10:00:00Z");
   try {
     const oldTs = "2026-04-20T00:00:00.000Z";
     // Three eligible rollups; first call should fail unreachable and remaining should be skipped.
@@ -553,13 +589,14 @@ serviceTest("t2 promotion worker short-circuits the cycle when judge is unreacha
     }
 
     let callCount = 0;
+    const llm: T2Judge = () => {
+      callCount++;
+      throw new Error("fetch failed: ECONNREFUSED 127.0.0.1:3030");
+    };
     const worker = createT2PromotionWorker({
       services: d.services,
       delayHours: 24,
-      llm: async () => {
-        callCount++;
-        throw new Error("fetch failed: ECONNREFUSED 127.0.0.1:3030");
-      },
+      llm,
     });
 
     await worker.tick();
@@ -574,7 +611,7 @@ serviceTest("t2 promotion worker skips on LLM failure but retries next tick", as
   const d = makeTempDaemon();
   // Fixed clock for deterministic eligibility
   const now = new Date("2026-04-27T10:00:00Z");
-  d.services.clock = () => now;
+  d.services.clock = (): Date => now;
   // Stop background workers to avoid interference
   d.services.supervisor.stopAll();
 
@@ -594,13 +631,14 @@ serviceTest("t2 promotion worker skips on LLM failure but retries next tick", as
     );
 
     let callCount = 0;
+    const llm: T2Judge = () => {
+      callCount++;
+      throw new Error("LLM down");
+    };
     const worker = createT2PromotionWorker({
       services: d.services,
       delayHours: 24,
-      llm: async () => {
-        callCount++;
-        throw new Error("LLM down");
-      },
+      llm,
     });
 
     await worker.tick();
@@ -608,21 +646,24 @@ serviceTest("t2 promotion worker skips on LLM failure but retries next tick", as
 
     // Should not be promoted
     const promoted = d.services.db
-      .query(
-        'SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id="r1"',
-        [],
-      )
-      .get() as any;
-    expect(promoted.t2_promoted_at).toBeNull();
-    expect(promoted.failed_promotion_attempts).toBe(1);
+      .query<
+        PromotionRow,
+        []
+      >('SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id="r1"')
+      .get();
+    expect(promoted?.t2_promoted_at).toBeNull();
+    expect(promoted?.failed_promotion_attempts).toBe(1);
 
     // Retry
     await worker.tick();
     expect(callCount).toBe(2);
     const promoted2 = d.services.db
-      .query('SELECT failed_promotion_attempts FROM t1_rollups WHERE rollup_id="r1"', [])
-      .get() as any;
-    expect(promoted2.failed_promotion_attempts).toBe(2);
+      .query<
+        Pick<PromotionRow, "failed_promotion_attempts">,
+        []
+      >('SELECT failed_promotion_attempts FROM t1_rollups WHERE rollup_id="r1"')
+      .get();
+    expect(promoted2?.failed_promotion_attempts).toBe(2);
   } finally {
     d.stop();
   }
@@ -631,7 +672,7 @@ serviceTest("t2 promotion worker skips on LLM failure but retries next tick", as
 serviceTest("t2 promotion worker promotes eligible rollups", async () => {
   const d = makeTempDaemon();
   const now = new Date("2026-04-27T10:00:00Z");
-  d.services.clock = () => now;
+  d.services.clock = (): Date => now;
   d.services.supervisor.stopAll();
 
   try {
@@ -648,25 +689,27 @@ serviceTest("t2 promotion worker promotes eligible rollups", async () => {
       [oldTs, oldTs],
     );
 
+    const llm: T2Judge = () =>
+      Promise.resolve([{ title: "Greet", body: "User said hello", kind: "fact" }]);
     const worker = createT2PromotionWorker({
       services: d.services,
       delayHours: 24,
-      llm: async () => [{ title: "Greet", body: "User said hello", kind: "fact" }],
+      llm,
     });
 
     await worker.tick();
 
-    const count = d.services.db.query("SELECT COUNT(*) c FROM t2_memories", []).get() as any;
-    expect(count.c).toBe(1);
+    const count = d.services.db.query<CountRow, []>("SELECT COUNT(*) c FROM t2_memories").get();
+    expect(count?.c).toBe(1);
 
     const promoted = d.services.db
-      .query(
-        'SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id="r1"',
-        [],
-      )
-      .get() as any;
-    expect(promoted.t2_promoted_at).not.toBeNull();
-    expect(promoted.failed_promotion_attempts).toBe(0);
+      .query<
+        PromotionRow,
+        []
+      >('SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id="r1"')
+      .get();
+    expect(promoted?.t2_promoted_at).not.toBeNull();
+    expect(promoted?.failed_promotion_attempts).toBe(0);
   } finally {
     d.stop();
   }
@@ -675,7 +718,7 @@ serviceTest("t2 promotion worker promotes eligible rollups", async () => {
 serviceTest("t2 promotion worker handles empty transcripts by marking as promoted", async () => {
   const d = makeTempDaemon();
   const now = new Date("2026-04-27T10:00:00Z");
-  d.services.clock = () => now;
+  d.services.clock = (): Date => now;
   d.services.supervisor.stopAll();
 
   try {
@@ -692,23 +735,27 @@ serviceTest("t2 promotion worker handles empty transcripts by marking as promote
       [oldTs, oldTs],
     );
 
+    const llm: T2Judge = () => {
+      throw new Error("Should not be called");
+    };
     const worker = createT2PromotionWorker({
       services: d.services,
       delayHours: 24,
-      llm: async () => {
-        throw new Error("Should not be called");
-      },
+      llm,
     });
 
     await worker.tick();
 
-    const count = d.services.db.query("SELECT COUNT(*) c FROM t2_memories", []).get() as any;
-    expect(count.c).toBe(0);
+    const count = d.services.db.query<CountRow, []>("SELECT COUNT(*) c FROM t2_memories").get();
+    expect(count?.c).toBe(0);
 
     const promoted = d.services.db
-      .query('SELECT t2_promoted_at FROM t1_rollups WHERE rollup_id="r1"', [])
-      .get() as any;
-    expect(promoted.t2_promoted_at).not.toBeNull();
+      .query<
+        Pick<PromotionRow, "t2_promoted_at">,
+        []
+      >('SELECT t2_promoted_at FROM t1_rollups WHERE rollup_id="r1"')
+      .get();
+    expect(promoted?.t2_promoted_at).not.toBeNull();
   } finally {
     d.stop();
   }
@@ -719,7 +766,7 @@ serviceTest(
   async () => {
     const d = makeTempDaemon();
     const now = new Date("2026-04-27T10:00:00Z");
-    d.services.clock = () => now;
+    d.services.clock = (): Date => now;
     d.services.supervisor.stopAll();
 
     try {
@@ -735,27 +782,30 @@ serviceTest(
         [oldTs, oldTs],
       );
 
+      // title is empty string — fails schema's min(1) at runtime. TS-level the
+      // shape still satisfies T2MemoryExtraction (title: string), so no cast is
+      // required to fabricate the malformed payload.
+      const llm: T2Judge = () =>
+        Promise.resolve([{ title: "", body: "missing title", kind: "fact" }]);
       const worker = createT2PromotionWorker({
         services: d.services,
         delayHours: 24,
-        llm: async () => [
-          { title: "", body: "missing title", kind: "fact" } as any, // title empty fails min(1)
-        ],
+        llm,
       });
 
       await worker.tick();
 
-      const count = d.services.db.query("SELECT COUNT(*) c FROM t2_memories", []).get() as any;
-      expect(count.c).toBe(0);
+      const count = d.services.db.query<CountRow, []>("SELECT COUNT(*) c FROM t2_memories").get();
+      expect(count?.c).toBe(0);
 
       const promoted = d.services.db
-        .query(
-          'SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id="r1"',
-          [],
-        )
-        .get() as any;
-      expect(promoted.t2_promoted_at).toBeNull();
-      expect(promoted.failed_promotion_attempts).toBe(1);
+        .query<
+          PromotionRow,
+          []
+        >('SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id="r1"')
+        .get();
+      expect(promoted?.t2_promoted_at).toBeNull();
+      expect(promoted?.failed_promotion_attempts).toBe(1);
     } finally {
       d.stop();
     }
@@ -765,7 +815,7 @@ serviceTest(
 serviceTest("t2 promotion worker stops retrying after limit", async () => {
   const d = makeTempDaemon();
   const now = new Date("2026-04-27T10:00:00Z");
-  d.services.clock = () => now;
+  d.services.clock = (): Date => now;
   d.services.supervisor.stopAll();
 
   try {
@@ -782,13 +832,14 @@ serviceTest("t2 promotion worker stops retrying after limit", async () => {
     );
 
     let callCount = 0;
+    const llm: T2Judge = () => {
+      callCount++;
+      return Promise.resolve([]);
+    };
     const worker = createT2PromotionWorker({
       services: d.services,
       delayHours: 24,
-      llm: async () => {
-        callCount++;
-        return [];
-      },
+      llm,
     });
 
     await worker.tick();
@@ -802,7 +853,7 @@ serviceTest("t2 promotion worker stops retrying after limit", async () => {
 serviceTest("t2 promotion worker defaults minEvents to 5", async () => {
   const d = makeTempDaemon();
   const now = new Date("2026-04-27T10:00:00Z");
-  d.services.clock = () => now;
+  d.services.clock = (): Date => now;
   d.services.supervisor.stopAll();
 
   try {
@@ -820,13 +871,14 @@ serviceTest("t2 promotion worker defaults minEvents to 5", async () => {
     );
 
     let callCount = 0;
+    const llm: T2Judge = () => {
+      callCount++;
+      return Promise.resolve([{ title: "Fact", body: "Fact", kind: "fact" }]);
+    };
     const worker = createT2PromotionWorker({
       services: d.services,
       delayHours: 24,
-      llm: async () => {
-        callCount++;
-        return [{ title: "Fact", body: "Fact", kind: "fact" }];
-      },
+      llm,
     });
 
     await worker.tick();
@@ -839,7 +891,7 @@ serviceTest("t2 promotion worker defaults minEvents to 5", async () => {
 serviceTest("t2 promotion worker respects configured minEvents override", async () => {
   const d = makeTempDaemon();
   const now = new Date("2026-04-27T10:00:00Z");
-  d.services.clock = () => now;
+  d.services.clock = (): Date => now;
   d.services.supervisor.stopAll();
 
   try {
@@ -857,20 +909,21 @@ serviceTest("t2 promotion worker respects configured minEvents override", async 
     );
 
     let callCount = 0;
+    const llm: T2Judge = () => {
+      callCount++;
+      return Promise.resolve([{ title: "Fact", body: "Fact", kind: "fact" }]);
+    };
     const worker = createT2PromotionWorker({
       services: d.services,
       delayHours: 24,
       minEvents: 2,
-      llm: async () => {
-        callCount++;
-        return [{ title: "Fact", body: "Fact", kind: "fact" }];
-      },
+      llm,
     });
 
     await worker.tick();
     expect(callCount).toBe(1);
-    const count = d.services.db.query("SELECT COUNT(*) c FROM t2_memories", []).get() as any;
-    expect(count.c).toBe(1);
+    const count = d.services.db.query<CountRow, []>("SELECT COUNT(*) c FROM t2_memories").get();
+    expect(count?.c).toBe(1);
   } finally {
     d.stop();
   }
@@ -883,9 +936,9 @@ test("wrapJudgeWithChunking env override PENUMBRA_T2_JUDGE_MAX_CHARS_PER_CHUNK",
     const seen: string[] = [];
     // Omit maxCharsPerChunk so it uses env
     const judge = wrapJudgeWithChunking({
-      judge: async (transcript) => {
+      judge: (transcript: string): Promise<T2MemoryExtraction[]> => {
         seen.push(transcript);
-        return [];
+        return Promise.resolve([]);
       },
     });
 
@@ -908,9 +961,9 @@ test("wrapJudgeWithChunking oversized event hard split", async () => {
   const seen: string[] = [];
   const judge = wrapJudgeWithChunking({
     maxCharsPerChunk: 50,
-    judge: async (transcript) => {
+    judge: (transcript: string): Promise<T2MemoryExtraction[]> => {
       seen.push(transcript);
-      return [];
+      return Promise.resolve([]);
     },
   });
 
@@ -919,27 +972,27 @@ test("wrapJudgeWithChunking oversized event hard split", async () => {
   await judge(transcript);
 
   expect(seen.length).toBe(3);
-  expect(seen[0].length).toBe(50);
-  expect(seen[1].length).toBe(50);
-  expect(seen[2].length).toBe(20);
+  expect(seen[0]!.length).toBe(50);
+  expect(seen[1]!.length).toBe(50);
+  expect(seen[2]!.length).toBe(20);
 });
 
 test("wrapJudgeWithChunking halves and retries on context overflow", async () => {
   const seen: string[] = [];
   const judge = wrapJudgeWithChunking({
     maxCharsPerChunk: 10000,
-    judge: async (transcript) => {
+    judge: (transcript: string): Promise<T2MemoryExtraction[]> => {
       seen.push(transcript);
       if (transcript.length > 5000) {
         throw new Error("exceeds the available context size");
       }
-      return [
+      return Promise.resolve([
         {
           title: "Found " + transcript.substring(0, 10),
           body: transcript.substring(0, 10),
           kind: "fact",
         },
-      ];
+      ]);
     },
   });
 
@@ -962,7 +1015,7 @@ test("wrapJudgeWithChunking recursion floor gives up cleanly", async () => {
   const seen: string[] = [];
   const judge = wrapJudgeWithChunking({
     maxCharsPerChunk: 10000,
-    judge: async (transcript) => {
+    judge: (transcript: string): Promise<T2MemoryExtraction[]> => {
       seen.push(transcript);
       // always throw context size error
       throw new Error("exceed_context_size_error");
@@ -985,20 +1038,20 @@ test("wrapJudgeWithChunking handles exceed-context retry within a chunked path",
   const seen: string[] = [];
   const judge = wrapJudgeWithChunking({
     maxCharsPerChunk: 10000,
-    judge: async (transcript) => {
+    judge: (transcript: string): Promise<T2MemoryExtraction[]> => {
       calls++;
       seen.push(transcript);
       // Fails only on the first combined chunk (length ~8000), succeeds on its halves (~4000)
       if (transcript.includes("fail_marker") && transcript.length > 5000) {
         throw new Error("exceeds the available context size");
       }
-      return [
+      return Promise.resolve([
         {
           title: "Found " + transcript.substring(0, 10).trim(),
           body: transcript.substring(0, 10).trim(),
           kind: "fact",
         },
-      ];
+      ]);
     },
   });
 
@@ -1025,9 +1078,9 @@ test("wrapJudgeWithChunking handles exceed-context retry within a chunked path",
   expect(seen[3]).toBe(chunk2);
 
   expect(res.length).toBe(3);
-  expect(res[0].title).toBe("Found User: fail");
-  expect(res[1].title).toBe("Found Assistant:");
-  expect(res[2].title).toBe("Found User: cccc");
+  expect(res[0]!.title).toBe("Found User: fail");
+  expect(res[1]!.title).toBe("Found Assistant:");
+  expect(res[2]!.title).toBe("Found User: cccc");
 });
 
 test("createDefaultLLMJudge enforces PENUMBRA_T2_JUDGE_TIMEOUT_MS", async () => {
@@ -1040,15 +1093,25 @@ test("createDefaultLLMJudge enforces PENUMBRA_T2_JUDGE_TIMEOUT_MS", async () => 
   });
   const prevUrl = process.env.PENUMBRA_SIRIUS_BASE_URL;
   const prevTimeout = process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS;
-  process.env.PENUMBRA_SIRIUS_BASE_URL = `http://localhost:${server.port}`;
+  process.env.PENUMBRA_SIRIUS_BASE_URL = `http://localhost:${String(server.port)}`;
   process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS = "50";
   try {
-    const judge = createDefaultLLMJudge({
-      log: { info: () => {}, error: () => {}, warn: () => {} },
-    } as any);
-    await expect(judge!("transcript")).rejects.toThrow(/judge default timed out after 50ms/);
+    const stub = makeServicesStub({
+      info: () => undefined,
+      error: () => undefined,
+      warn: () => undefined,
+    });
+    const judge = createDefaultLLMJudge(stub);
+    let caught: unknown;
+    try {
+      await judge!("transcript");
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toMatch(/judge default timed out after 50ms/);
   } finally {
-    server.stop(true);
+    await server.stop(true);
     if (prevUrl === undefined) delete process.env.PENUMBRA_SIRIUS_BASE_URL;
     else process.env.PENUMBRA_SIRIUS_BASE_URL = prevUrl;
     if (prevTimeout === undefined) delete process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS;

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { createOriginHostGuard } from "../src/origin-host.js";
 
 const guard = createOriginHostGuard({ allowRemote: false });
@@ -58,7 +59,7 @@ test("allowRemote bypass — non-loopback Origin and Host both pass", () => {
   expect(remote(req({ origin: "https://evil.example.com", host: "evil.example.com" }))).toBeNull();
 });
 
-test("default opts (no allowRemote) is fail-closed", async () => {
+test("default opts (no allowRemote) is fail-closed", () => {
   const def = createOriginHostGuard();
   const denied = def(req({ origin: "https://evil.example.com" }));
   expect(denied?.status).toBe(403);
