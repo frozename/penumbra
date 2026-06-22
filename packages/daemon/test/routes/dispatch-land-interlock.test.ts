@@ -1,17 +1,52 @@
-import { describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import {
-  dispatchLandRoute,
-  dispatchLandTaskRoute,
-  type DispatchLandDeps,
-} from "../../src/routes/dispatch-land.js";
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
+
 import {
   LifecycleLock,
   lifecycleLock,
   resetLifecycleLock,
 } from "../../src/dispatch/lifecycle-lock.js";
+import {
+  type DispatchLandDeps,
+  dispatchLandRoute,
+  dispatchLandTaskRoute,
+} from "../../src/routes/dispatch-land.js";
+
+// teardownWorktree is a class instance method; tests stub it by reassignment.
+type TeardownFn = Services["worktreeManager"]["teardownWorktree"];
+function stubTeardownWorktree(svc: Services, impl: TeardownFn): void {
+  svc.worktreeManager.teardownWorktree = impl;
+}
+
+// File-local typed envelopes for dispatch-land HTTP responses; matches the
+// route's emit shapes and what these tests inspect.
+interface LandAcceptedBody {
+  ok?: boolean;
+  task_id: string;
+  status: "queued" | "running" | "done" | "failed";
+  idempotent?: boolean;
+}
+interface LandBusyError {
+  ok: boolean;
+  error: {
+    code: string;
+    holder: string;
+    retry_after_ms: number;
+  };
+}
+interface LandTaskBody {
+  task_id: string;
+  handoff_id: string;
+  status: "queued" | "running" | "done" | "failed";
+  result: unknown;
+  error: unknown;
+}
+
+async function readJsonAs<T>(res: Response): Promise<T> {
+  return (await res.json()) as T;
+}
 
 function services(): Services {
   const db = new Database(":memory:");
@@ -25,7 +60,7 @@ function services(): Services {
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date("2026-05-08T00:00:00.000Z"),
-    uuid: () => `id-${++n}`,
+    uuid: (): string => `id-${String(++n)}`,
   });
 }
 
@@ -87,39 +122,47 @@ function writePassingVerdict(svc: Services, handoffId: string, conversationId: s
   });
 }
 
+type GitResult = { code: number; stdout: string; stderr: string };
+type RunGitFn = DispatchLandDeps["runGit"];
+
+// teardownWorktree stub: no-op success.
+const noopTeardown: TeardownFn = () =>
+  Promise.resolve({ worktreeRemoved: false, branchDeleted: false });
+
 const mockGh: DispatchLandDeps["gh"] = {
-  listOpenPullRequestsByHead: async () => [],
-  closePullRequest: async () => {},
+  listOpenPullRequestsByHead: () => Promise.resolve([]),
+  closePullRequest: () => Promise.resolve(),
 };
 
-const mockNow = () => new Date("2026-05-08T00:04:00.000Z");
+const mockNow = (): Date => new Date("2026-05-08T00:04:00.000Z");
 
-function successRunGit(handoffId: string) {
+function successRunGit(handoffId: string): RunGitFn {
   let revParseCount = 0;
-  return async (args: string[]): Promise<{ code: number; stdout: string; stderr: string }> => {
-    if (args[0] === "log") return { code: 0, stdout: `feat: ${handoffId}\n`, stderr: "" };
+  return (args: string[]): Promise<GitResult> => {
+    if (args[0] === "log")
+      return Promise.resolve({ code: 0, stdout: `feat: ${handoffId}\n`, stderr: "" });
     if (args[0] === "rev-parse") {
       revParseCount += 1;
-      return {
+      return Promise.resolve({
         code: 0,
         stdout: revParseCount === 1 ? "before-sha\n" : `after-${handoffId}\n`,
         stderr: "",
-      };
+      });
     }
     if (args[0] === "merge" || args[0] === "checkout" || args[0] === "commit")
-      return { code: 0, stdout: "", stderr: "" };
-    return { code: 0, stdout: "", stderr: "" };
+      return Promise.resolve({ code: 0, stdout: "", stderr: "" });
+    return Promise.resolve({ code: 0, stdout: "", stderr: "" });
   };
 }
 
-async function waitForLandTask(svc: Services, taskId: string): Promise<any> {
+async function waitForLandTask(svc: Services, taskId: string): Promise<LandTaskBody> {
   for (let i = 0; i < 100; i++) {
     const res = await dispatchLandTaskRoute(
       new Request(`http://x/dispatch/land/${taskId}`),
       svc,
       taskId,
     );
-    const body = (await res.json()) as any;
+    const body = await readJsonAs<LandTaskBody>(res);
     if (body.status === "done" || body.status === "failed") return body;
     await Bun.sleep(5);
   }
@@ -143,30 +186,28 @@ describe("dispatch-land lifecycle interlock", () => {
     writePassingVerdict(svc, "h-ser-1", "c-ser-1");
     writePassingVerdict(svc, "h-ser-2", "c-ser-2");
 
-    (svc.worktreeManager as any).teardownWorktree = async () => ({
-      worktreeRemoved: false,
-      branchDeleted: false,
-    });
+    stubTeardownWorktree(svc, noopTeardown);
 
-    const gitCallLog: Array<{ handoff: string; args: string[] }> = [];
-    const makeRunGit = (handoffId: string): DispatchLandDeps["runGit"] => {
+    const gitCallLog: { handoff: string; args: string[] }[] = [];
+    const makeRunGit = (handoffId: string): RunGitFn => {
       let revParseCount = 0;
-      return async (args) => {
+      return (args): Promise<GitResult> => {
         gitCallLog.push({ handoff: handoffId, args: [...args] });
-        if (args[0] === "log") return { code: 0, stdout: `feat: ${handoffId}\n`, stderr: "" };
+        if (args[0] === "log")
+          return Promise.resolve({ code: 0, stdout: `feat: ${handoffId}\n`, stderr: "" });
         if (args[0] === "rev-parse") {
           revParseCount += 1;
-          return {
+          return Promise.resolve({
             code: 0,
             stdout: revParseCount === 1 ? "before\n" : `after-${handoffId}\n`,
             stderr: "",
-          };
+          });
         }
-        return { code: 0, stdout: "", stderr: "" };
+        return Promise.resolve({ code: 0, stdout: "", stderr: "" });
       };
     };
 
-    const makeReq = (handoffId: string) =>
+    const makeReq = (handoffId: string): Request =>
       new Request("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
@@ -191,8 +232,8 @@ describe("dispatch-land lifecycle interlock", () => {
 
     expect(res1.status).toBe(202);
     expect(res2.status).toBe(202);
-    const b1 = (await res1.json()) as any;
-    const b2 = (await res2.json()) as any;
+    const b1 = await readJsonAs<LandAcceptedBody>(res1);
+    const b2 = await readJsonAs<LandAcceptedBody>(res2);
 
     const [t1, t2] = await Promise.all([
       waitForLandTask(svc, b1.task_id),
@@ -203,7 +244,6 @@ describe("dispatch-land lifecycle interlock", () => {
 
     // Verify no interleaving of write-phase git calls between the two lands.
     // Write calls are: rev-parse, checkout/merge/commit.
-    // Collect indices of write calls per handoff.
     const writeOps = new Set(["rev-parse", "merge", "checkout", "commit"]);
     const writeLog = gitCallLog.filter((e) => writeOps.has(e.args[0]!));
 
@@ -230,10 +270,7 @@ describe("dispatch-land lifecycle interlock", () => {
     writePassingVerdict(svc, "h-rej-1", "c-rej-1");
     writePassingVerdict(svc, "h-rej-2", "c-rej-2");
 
-    (svc.worktreeManager as any).teardownWorktree = async () => ({
-      worktreeRemoved: false,
-      branchDeleted: false,
-    });
+    stubTeardownWorktree(svc, noopTeardown);
 
     // latch: holds land-1 inside the git-write section until we release it
     let checkoutWaiting = false;
@@ -243,7 +280,7 @@ describe("dispatch-land lifecycle interlock", () => {
     });
 
     let revParseCount = 0;
-    const blockingRunGit: DispatchLandDeps["runGit"] = async (args) => {
+    const blockingRunGit: RunGitFn = async (args): Promise<GitResult> => {
       if (args[0] === "log") return { code: 0, stdout: "feat: land-1\n", stderr: "" };
       if (args[0] === "rev-parse") {
         revParseCount += 1;
@@ -270,7 +307,7 @@ describe("dispatch-land lifecycle interlock", () => {
       { runGit: blockingRunGit, gh: mockGh, now: mockNow },
     );
     expect(res1.status).toBe(202);
-    const b1 = (await res1.json()) as any;
+    const b1 = await readJsonAs<LandAcceptedBody>(res1);
 
     // Wait until land-1 is inside the lock (merge --ff-only is blocking)
     await pollUntil(() => checkoutWaiting);
@@ -294,7 +331,7 @@ describe("dispatch-land lifecycle interlock", () => {
       { runGit: successRunGit("h-rej-2"), gh: mockGh, now: mockNow },
     );
     expect(res2.status).toBe(200);
-    const body2 = (await res2.json()) as any;
+    const body2 = await readJsonAs<LandBusyError>(res2);
     expect(body2.ok).toBe(false);
     expect(body2.error.code).toBe("lifecycle_busy");
     expect(body2.error.holder).toBe("h-rej-1");
@@ -318,17 +355,15 @@ describe("dispatch-land lifecycle interlock", () => {
     writePassingVerdict(svc, "h-throw-1", "c-throw-1");
     writePassingVerdict(svc, "h-throw-2", "c-throw-2");
 
-    (svc.worktreeManager as any).teardownWorktree = async () => ({
-      worktreeRemoved: false,
-      branchDeleted: false,
-    });
+    stubTeardownWorktree(svc, noopTeardown);
 
     // First land throws during merge
-    const throwingRunGit: DispatchLandDeps["runGit"] = async (args) => {
-      if (args[0] === "log") return { code: 0, stdout: "feat: throw-1\n", stderr: "" };
-      if (args[0] === "rev-parse") return { code: 0, stdout: "sha\n", stderr: "" };
+    const throwingRunGit: RunGitFn = (args): Promise<GitResult> => {
+      if (args[0] === "log")
+        return Promise.resolve({ code: 0, stdout: "feat: throw-1\n", stderr: "" });
+      if (args[0] === "rev-parse") return Promise.resolve({ code: 0, stdout: "sha\n", stderr: "" });
       if (args[0] === "merge") throw new Error("simulated git crash mid-merge");
-      return { code: 0, stdout: "", stderr: "" };
+      return Promise.resolve({ code: 0, stdout: "", stderr: "" });
     };
 
     const res1 = await dispatchLandRoute(
@@ -344,7 +379,7 @@ describe("dispatch-land lifecycle interlock", () => {
       { runGit: throwingRunGit, gh: mockGh, now: mockNow },
     );
     expect(res1.status).toBe(202);
-    const b1 = (await res1.json()) as any;
+    const b1 = await readJsonAs<LandAcceptedBody>(res1);
 
     const t1 = await waitForLandTask(svc, b1.task_id);
     expect(t1.status).toBe("failed");
@@ -366,7 +401,7 @@ describe("dispatch-land lifecycle interlock", () => {
       { runGit: successRunGit("h-throw-2"), gh: mockGh, now: mockNow },
     );
     expect(res2.status).toBe(202);
-    const b2 = (await res2.json()) as any;
+    const b2 = await readJsonAs<LandAcceptedBody>(res2);
     const t2 = await waitForLandTask(svc, b2.task_id);
     expect(t2.status).toBe("done");
   });
@@ -377,10 +412,7 @@ describe("dispatch-land lifecycle interlock", () => {
     seedHandoff(svc, "h-idem-1", "c-idem-1");
     writePassingVerdict(svc, "h-idem-1", "c-idem-1");
 
-    (svc.worktreeManager as any).teardownWorktree = async () => ({
-      worktreeRemoved: false,
-      branchDeleted: false,
-    });
+    stubTeardownWorktree(svc, noopTeardown);
 
     let mergeWaiting = false;
     let releaseMergeLatch!: () => void;
@@ -389,7 +421,7 @@ describe("dispatch-land lifecycle interlock", () => {
     });
 
     let revParseCount = 0;
-    const blockingRunGit: DispatchLandDeps["runGit"] = async (args) => {
+    const blockingRunGit: RunGitFn = async (args): Promise<GitResult> => {
       if (args[0] === "log") return { code: 0, stdout: "feat: idem\n", stderr: "" };
       if (args[0] === "rev-parse") {
         revParseCount += 1;
@@ -413,7 +445,7 @@ describe("dispatch-land lifecycle interlock", () => {
       { runGit: blockingRunGit, gh: mockGh, now: mockNow },
     );
     expect(res1.status).toBe(202);
-    const b1 = (await res1.json()) as any;
+    const b1 = await readJsonAs<LandAcceptedBody>(res1);
 
     // Wait until land-1 is in-flight (merge blocking)
     await pollUntil(() => mergeWaiting);
@@ -428,7 +460,7 @@ describe("dispatch-land lifecycle interlock", () => {
       { runGit: successRunGit("h-idem-1"), gh: mockGh, now: mockNow },
     );
     expect(res2.status).toBe(202);
-    const b2 = (await res2.json()) as any;
+    const b2 = await readJsonAs<LandAcceptedBody>(res2);
     expect(b2.task_id).toBe(b1.task_id);
     expect(b2.idempotent).toBe(true);
 

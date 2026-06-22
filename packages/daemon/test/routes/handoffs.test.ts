@@ -1,27 +1,28 @@
-import { expect, test } from "bun:test";
 import {
-  handoffsCreateRoute,
-  handoffsListPendingRoute,
-  handoffsLatestRoute,
-  handoffsApproveRoute,
-  handoffsCompleteRoute,
-  handoffsFailRoute,
-  handoffsGetRoute,
-} from "../../src/routes/handoffs.js";
-import {
+  AgentPerformanceWriter,
+  buildServices,
+  DispatchEventLog,
+  HandoffReader,
+  HandoffWriter,
+  loadSqliteVec,
+  migrate,
   ProjectRegistry,
   type Services,
-  migrate,
-  loadSqliteVec,
-  buildServices,
-  HandoffWriter,
-  HandoffReader,
-  AgentPerformanceWriter,
-  DispatchEventLog,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { reconcileLongLivedAgents } from "../../src/long-lived/reconciler.js";
+import {
+  handoffsApproveRoute,
+  handoffsCompleteRoute,
+  handoffsCreateRoute,
+  handoffsFailRoute,
+  handoffsGetRoute,
+  handoffsLatestRoute,
+  handoffsListPendingRoute,
+} from "../../src/routes/handoffs.js";
 import { createDaemonFetchHandler } from "../../src/serve.js";
 import { registerWorkerForTest } from "../../test-utils.js";
 
@@ -33,24 +34,120 @@ try {
   /* already loaded */
 }
 
+// File-local response-body shapes matching the route emits this file exercises.
+// Tests only inspect the fields captured here; the route module is unchanged.
+interface HandoffSummary {
+  handoff_id: string;
+  status: string;
+  project_id: string | null;
+}
+interface CreateBody {
+  ok?: boolean;
+  status: string;
+  handoff_id: string;
+  routed_agent?: string;
+  routed_role?: string | null;
+  routing_task_type?: string | null;
+}
+interface ApproveBody {
+  handoff_id: string;
+  status: string;
+  reason?: string;
+}
+interface CompleteBody {
+  handoff_id: string;
+  status: string;
+  reason?: string;
+}
+interface FailBody {
+  handoff_id: string;
+  status: string;
+}
+interface ClaimBody {
+  handoff_id?: string;
+  status?: string;
+  current_status?: string;
+}
+interface ListBody {
+  handoffs: HandoffSummary[];
+}
+interface DoneBody {
+  done: number;
+}
+interface ProjectErrorBody {
+  error: { code: string; project_id?: string };
+}
+interface GetBody {
+  handoff: HandoffSummary;
+}
+interface GetErrorBody {
+  error: { code: string };
+}
+interface LatestBody {
+  handoff: HandoffSummary;
+}
+
+async function readJsonAs<T>(res: Response): Promise<T> {
+  return (await res.json()) as T;
+}
+
+// Tests stub log methods with no-op handlers; pino's Logger expects functions
+// returning undefined. Using a named helper avoids the no-empty-function rule
+// triggered by inline `() => {}` bodies.
+function noopLog(): undefined {
+  return undefined;
+}
+
+// workerAuthz lives on DaemonServices (daemon's serve.ts), not the core Services.
+// Routes accept DaemonServices and read it through the optional field. The cast
+// here is the single documented gap between the core Services type imported by
+// these tests and DaemonServices' workerAuthz extension.
+type WorkerAuthzMap = Map<string, { project_id?: string; isolation: "hard" | "sticky" | "shared" }>;
+function stubWorkerAuthz(
+  services: Services,
+  entries: [string, { project_id: string; isolation: "hard" | "sticky" | "shared" }][],
+): void {
+  (services as Services & { workerAuthz?: WorkerAuthzMap }).workerAuthz = new Map(entries);
+}
+
+// The Services interface from core declares dozens of required wirings. These
+// tests only exercise the handoff routes, so we mock the minimal surface and
+// route the single cross-type gap through a typed factory.
 function makeServices(db: Database): Services {
   const writer = new HandoffWriter({ db });
   const reader = new HandoffReader({ db });
+  let n = 0;
   return {
     db,
     handoffWriter: writer,
     handoffReader: reader,
     dispatchEventLog: new DispatchEventLog(db),
-    machineId: { get: () => "machine-test" },
-    uuid: (() => {
-      let n = 0;
-      return () => `evt-${++n}`;
-    })(),
-    clock: () => new Date("2026-04-25T20:00:00.000Z"),
-    t0Writer: { write: () => {} },
-    redactor: { redact: (s: unknown) => s },
-    log: { info: () => {}, warn: () => {} },
+    machineId: { get: (): string => "machine-test" },
+    uuid: (): string => `evt-${String(++n)}`,
+    clock: (): Date => new Date("2026-04-25T20:00:00.000Z"),
+    t0Writer: { write: noopLog },
+    redactor: { redact: (s: unknown): unknown => s },
+    log: { info: noopLog, warn: noopLog },
   } as unknown as Services;
+}
+
+// AgentConfig has dozens of required fields, but reconcileLongLivedAgents only
+// reads the fields supplied below. One documented `as unknown as AgentConfig`
+// cast inside a typed factory keeps the test fixture compact.
+type AgentConfigParam = Parameters<typeof reconcileLongLivedAgents>[1][number];
+function makeLongLivedAgentConfig(name: string): AgentConfigParam {
+  return {
+    name,
+    long_lived: true,
+    long_lived_config: {
+      schedule_cron: "*/15 * * * *",
+      subscriptions: [],
+      mcp_allowlist: [],
+      bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
+      circuit_breaker_threshold: 3,
+      standing_brief: "x",
+    },
+  } as unknown as AgentConfigParam;
 }
 
 function seedPerformance(
@@ -61,7 +158,7 @@ function seedPerformance(
     agent_name: string;
     outcome: "merged" | "failed";
   },
-) {
+): void {
   new AgentPerformanceWriter(db).upsert({
     performance_id: input.performance_id,
     ts: "2026-04-25T19:00:00.000Z",
@@ -104,7 +201,7 @@ test("POST /handoffs creates a pending handoff and returns the id", async () => 
   });
   const res = await handoffsCreateRoute(req, services);
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<CreateBody>(res);
   expect(body.status).toBe("pending");
   expect(typeof body.handoff_id).toBe("string");
 
@@ -137,7 +234,7 @@ test("POST /handoffs persists isolated_install", async () => {
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<CreateBody>(res);
 
   const row = db
     .query<
@@ -191,7 +288,7 @@ test("POST /handoffs routes role targets through the ledger", async () => {
   );
 
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<CreateBody>(res);
   expect(body.routed_agent).toBe("codex-mini");
   expect(body.routed_role).toBe("executor");
   expect(body.routing_task_type).toBe("implement_small");
@@ -247,7 +344,7 @@ test("POST /handoffs honors ranked-first exploration policy for role routing", a
   );
 
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<CreateBody>(res);
   expect(body.routed_agent).toBe("gemini");
   expect(body.routed_role).toBe("executor");
 
@@ -300,9 +397,9 @@ test("GET /handoffs/pending returns pending handoffs", async () => {
 
   const res = await handoffsListPendingRoute(new Request("http://x/handoffs/pending"), services);
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<ListBody>(res);
   expect(body.handoffs.length).toBe(1);
-  expect(body.handoffs[0].status).toBe("pending");
+  expect(body.handoffs[0]!.status).toBe("pending");
 });
 
 test("GET /handoffs/latest returns 400 if conversation_id is missing", async () => {
@@ -368,7 +465,7 @@ test("GET /handoffs/latest returns the most recent handoff for a conversation", 
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<LatestBody>(res);
   expect(body.handoff.handoff_id).toBe("h2");
 });
 
@@ -390,7 +487,7 @@ test("POST /handoffs/:id/approve flips to approved", async () => {
     }),
   });
   const createRes = await handoffsCreateRoute(createReq, services);
-  const create = await createRes.json();
+  const create = await readJsonAs<CreateBody>(createRes);
   const id = create.handoff_id;
 
   const res = await handoffsApproveRoute(
@@ -399,7 +496,7 @@ test("POST /handoffs/:id/approve flips to approved", async () => {
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<ApproveBody>(res);
   expect(body.status).toBe("approved");
 });
 
@@ -421,7 +518,7 @@ test("POST /handoffs/:id/approve returns 409 if already resolved", async () => {
     }),
   });
   const createRes = await handoffsCreateRoute(createReq, services);
-  const create = await createRes.json();
+  const create = await readJsonAs<CreateBody>(createRes);
   const id = create.handoff_id;
 
   await handoffsApproveRoute(
@@ -461,7 +558,7 @@ test("POST /handoffs/:id/approve accepts optional resolved_by override", async (
     }),
   });
   const createRes = await handoffsCreateRoute(createReq, services);
-  const create = await createRes.json();
+  const create = await readJsonAs<CreateBody>(createRes);
   const id = create.handoff_id;
 
   const res = await handoffsApproveRoute(
@@ -503,7 +600,7 @@ test("GET /handoffs?status=approved returns only approved rows", async () => {
     }),
     services,
   );
-  const created2 = await (
+  const created2 = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -516,8 +613,8 @@ test("GET /handoffs?status=approved returns only approved rows", async () => {
         }),
       }),
       services,
-    )
-  ).json();
+    ),
+  );
   await handoffsApproveRoute(
     new Request(`http://x/handoffs/${created2.handoff_id}/approve`, { method: "POST", body: "{}" }),
     created2.handoff_id,
@@ -529,10 +626,10 @@ test("GET /handoffs?status=approved returns only approved rows", async () => {
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<ListBody>(res);
   expect(body.handoffs.length).toBe(1);
-  expect(body.handoffs[0].handoff_id).toBe(created2.handoff_id);
-  expect(body.handoffs[0].status).toBe("approved");
+  expect(body.handoffs[0]!.handoff_id).toBe(created2.handoff_id);
+  expect(body.handoffs[0]!.status).toBe("approved");
 });
 
 test("GET /handoffs?status=approved&project_id filters by project_id", async () => {
@@ -547,7 +644,7 @@ test("GET /handoffs?status=approved&project_id filters by project_id", async () 
     ]),
   );
 
-  const created1 = await (
+  const created1 = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -561,9 +658,9 @@ test("GET /handoffs?status=approved&project_id filters by project_id", async () 
         }),
       }),
       services,
-    )
-  ).json();
-  const created2 = await (
+    ),
+  );
+  const created2 = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -577,8 +674,8 @@ test("GET /handoffs?status=approved&project_id filters by project_id", async () 
         }),
       }),
       services,
-    )
-  ).json();
+    ),
+  );
   await handoffsApproveRoute(
     new Request(`http://x/handoffs/${created1.handoff_id}/approve`, { method: "POST", body: "{}" }),
     created1.handoff_id,
@@ -595,9 +692,9 @@ test("GET /handoffs?status=approved&project_id filters by project_id", async () 
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<ListBody>(res);
   expect(body.handoffs.length).toBe(1);
-  expect(body.handoffs[0].project_id).toBe("proj-a");
+  expect(body.handoffs[0]!.project_id).toBe("proj-a");
 });
 
 test("GET /handoffs?status=approved for hard worker with no project_id is limited to worker scope", async () => {
@@ -610,11 +707,9 @@ test("GET /handoffs?status=approved for hard worker with no project_id is limite
       ["proj-b", { project_id: "proj-b", root_path: "/tmp/proj-b" }],
     ]),
   );
-  (services as any).workerAuthz = new Map([
-    ["worker-hard-projA", { project_id: "proj-a", isolation: "hard" }],
-  ]);
+  stubWorkerAuthz(services, [["worker-hard-projA", { project_id: "proj-a", isolation: "hard" }]]);
 
-  const createdA = await (
+  const createdA = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -628,9 +723,9 @@ test("GET /handoffs?status=approved for hard worker with no project_id is limite
         }),
       }),
       services,
-    )
-  ).json();
-  const createdB = await (
+    ),
+  );
+  const createdB = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -644,8 +739,8 @@ test("GET /handoffs?status=approved for hard worker with no project_id is limite
         }),
       }),
       services,
-    )
-  ).json();
+    ),
+  );
   await handoffsApproveRoute(
     new Request(`http://x/handoffs/${createdA.handoff_id}/approve`, { method: "POST", body: "{}" }),
     createdA.handoff_id,
@@ -670,9 +765,9 @@ test("GET /handoffs?status=approved for hard worker with no project_id is limite
     }),
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<ListBody>(res);
   expect(body.handoffs).toHaveLength(1);
-  expect(body.handoffs[0].project_id).toBe("proj-a");
+  expect(body.handoffs[0]!.project_id).toBe("proj-a");
 
   const approvedRows = db
     .query<{ count: number }, [string]>("SELECT COUNT(*) AS count FROM handoffs WHERE status=?")
@@ -690,11 +785,9 @@ test("GET /handoffs?status=approved&project_id=proj-b for hard worker yields pro
       ["proj-b", { project_id: "proj-b", root_path: "/tmp/proj-b" }],
     ]),
   );
-  (services as any).workerAuthz = new Map([
-    ["worker-hard-projA", { project_id: "proj-a", isolation: "hard" }],
-  ]);
+  stubWorkerAuthz(services, [["worker-hard-projA", { project_id: "proj-a", isolation: "hard" }]]);
 
-  const created = await (
+  const created = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -708,8 +801,8 @@ test("GET /handoffs?status=approved&project_id=proj-b for hard worker yields pro
         }),
       }),
       services,
-    )
-  ).json();
+    ),
+  );
   await handoffsApproveRoute(
     new Request(`http://x/handoffs/${created.handoff_id}/approve`, { method: "POST", body: "{}" }),
     created.handoff_id,
@@ -729,7 +822,7 @@ test("GET /handoffs?status=approved&project_id=proj-b for hard worker yields pro
     }),
   );
   expect(res.status).toBe(403);
-  const body = await res.json();
+  const body = await readJsonAs<ProjectErrorBody>(res);
   expect(body.error.code).toBe("project_mismatch");
 });
 
@@ -743,11 +836,11 @@ test("GET /handoffs?status=approved for sticky worker without project_id remains
       ["proj-b", { project_id: "proj-b", root_path: "/tmp/proj-b" }],
     ]),
   );
-  (services as any).workerAuthz = new Map([
+  stubWorkerAuthz(services, [
     ["worker-sticky-projA", { project_id: "proj-a", isolation: "sticky" }],
   ]);
 
-  const createdA = await (
+  const createdA = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -761,9 +854,9 @@ test("GET /handoffs?status=approved for sticky worker without project_id remains
         }),
       }),
       services,
-    )
-  ).json();
-  const createdB = await (
+    ),
+  );
+  const createdB = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -777,8 +870,8 @@ test("GET /handoffs?status=approved for sticky worker without project_id remains
         }),
       }),
       services,
-    )
-  ).json();
+    ),
+  );
   await handoffsApproveRoute(
     new Request(`http://x/handoffs/${createdA.handoff_id}/approve`, { method: "POST", body: "{}" }),
     createdA.handoff_id,
@@ -803,7 +896,7 @@ test("GET /handoffs?status=approved for sticky worker without project_id remains
     }),
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<ListBody>(res);
   expect(body.handoffs).toHaveLength(2);
 });
 
@@ -817,11 +910,9 @@ test("GET /handoffs?status=approved for unknown worker token is unscoped", async
       ["proj-b", { project_id: "proj-b", root_path: "/tmp/proj-b" }],
     ]),
   );
-  (services as any).workerAuthz = new Map([
-    ["worker-hard-projA", { project_id: "proj-a", isolation: "hard" }],
-  ]);
+  stubWorkerAuthz(services, [["worker-hard-projA", { project_id: "proj-a", isolation: "hard" }]]);
 
-  const createdA = await (
+  const createdA = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -835,9 +926,9 @@ test("GET /handoffs?status=approved for unknown worker token is unscoped", async
         }),
       }),
       services,
-    )
-  ).json();
-  const createdB = await (
+    ),
+  );
+  const createdB = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -851,8 +942,8 @@ test("GET /handoffs?status=approved for unknown worker token is unscoped", async
         }),
       }),
       services,
-    )
-  ).json();
+    ),
+  );
   await handoffsApproveRoute(
     new Request(`http://x/handoffs/${createdA.handoff_id}/approve`, { method: "POST", body: "{}" }),
     createdA.handoff_id,
@@ -877,7 +968,7 @@ test("GET /handoffs?status=approved for unknown worker token is unscoped", async
     }),
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<ListBody>(res);
   expect(body.handoffs).toHaveLength(2);
 
   const approvedRows = db
@@ -891,7 +982,7 @@ test("GET /handoffs?status=approved&project_id=__null__ returns only null-scoped
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const created1 = await (
+  const created1 = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -905,9 +996,9 @@ test("GET /handoffs?status=approved&project_id=__null__ returns only null-scoped
         }),
       }),
       services,
-    )
-  ).json();
-  const created2 = await (
+    ),
+  );
+  const created2 = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -920,8 +1011,8 @@ test("GET /handoffs?status=approved&project_id=__null__ returns only null-scoped
         }),
       }),
       services,
-    )
-  ).json();
+    ),
+  );
   await handoffsApproveRoute(
     new Request(`http://x/handoffs/${created1.handoff_id}/approve`, { method: "POST", body: "{}" }),
     created1.handoff_id,
@@ -938,9 +1029,9 @@ test("GET /handoffs?status=approved&project_id=__null__ returns only null-scoped
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<ListBody>(res);
   expect(body.handoffs.length).toBe(1);
-  expect(body.handoffs[0].project_id).toBeNull();
+  expect(body.handoffs[0]!.project_id).toBeNull();
 });
 
 test("GET /handoffs?status=approved&project_scope=global returns only null-scoped rows", async () => {
@@ -948,7 +1039,7 @@ test("GET /handoffs?status=approved&project_scope=global returns only null-scope
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const created1 = await (
+  const created1 = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -962,9 +1053,9 @@ test("GET /handoffs?status=approved&project_scope=global returns only null-scope
         }),
       }),
       services,
-    )
-  ).json();
-  const created2 = await (
+    ),
+  );
+  const created2 = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -977,8 +1068,8 @@ test("GET /handoffs?status=approved&project_scope=global returns only null-scope
         }),
       }),
       services,
-    )
-  ).json();
+    ),
+  );
   await handoffsApproveRoute(
     new Request(`http://x/handoffs/${created1.handoff_id}/approve`, { method: "POST", body: "{}" }),
     created1.handoff_id,
@@ -995,24 +1086,29 @@ test("GET /handoffs?status=approved&project_scope=global returns only null-scope
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<ListBody>(res);
   expect(body.handoffs.length).toBe(1);
-  expect(body.handoffs[0].project_id).toBeNull();
+  expect(body.handoffs[0]!.project_id).toBeNull();
 });
 
 test("GET /handoffs?status=approved&project_id=__null__ logs deprecated sentinel warning", async () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
-  const services = makeServices(db) as any;
-  const warns: unknown[] = [];
-  const anyServices = services as any;
-  anyServices.log = {
-    info: () => {},
-    warn: (...args: unknown[]) => warns.push(args),
+  const services = makeServices(db);
+  const warns: unknown[][] = [];
+  // Override log to capture deprecated-sentinel warnings. The cast targets the
+  // narrow Logger shape the route actually exercises.
+  (
+    services as Services & { log: { info: () => undefined; warn: (...args: unknown[]) => void } }
+  ).log = {
+    info: noopLog,
+    warn: (...args: unknown[]): void => {
+      warns.push(args);
+    },
   };
 
-  const created1 = await (
+  const created1 = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -1026,9 +1122,9 @@ test("GET /handoffs?status=approved&project_id=__null__ logs deprecated sentinel
         }),
       }),
       services,
-    )
-  ).json();
-  const created2 = await (
+    ),
+  );
+  const created2 = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -1041,8 +1137,8 @@ test("GET /handoffs?status=approved&project_id=__null__ logs deprecated sentinel
         }),
       }),
       services,
-    )
-  ).json();
+    ),
+  );
   await handoffsApproveRoute(
     new Request(`http://x/handoffs/${created1.handoff_id}/approve`, { method: "POST", body: "{}" }),
     created1.handoff_id,
@@ -1059,7 +1155,7 @@ test("GET /handoffs?status=approved&project_id=__null__ logs deprecated sentinel
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<ListBody>(res);
   expect(body.handoffs.length).toBe(1);
   expect(warns).toContainEqual([
     {
@@ -1076,7 +1172,7 @@ test("GET /handoffs?status=approved&project_id=proj-a&project_scope=global retur
     makeServices(new Database(":memory:")),
   );
   expect(res.status).toBe(400);
-  const body = await res.json();
+  const body = await readJsonAs<ProjectErrorBody>(res);
   expect(body.error.code).toBe("validation_error");
 });
 
@@ -1094,7 +1190,7 @@ test("GET /handoffs?status=approved rejects unknown project_id when registry exi
     services,
   );
   expect(res.status).toBe(400);
-  const body = await res.json();
+  const body = await readJsonAs<ProjectErrorBody>(res);
   expect(body.error.code).toBe("unknown_project");
   expect(body.error.project_id).toBe("proj-b");
 });
@@ -1110,7 +1206,7 @@ test("GET /handoffs?status=approved accepts unknown project_id when registry is 
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<ListBody>(res);
   expect(body.handoffs).toEqual([]);
 });
 
@@ -1120,7 +1216,7 @@ test("GET /handoffs?status=pending,approved returns both", async () => {
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
 
-  const c1 = await (
+  const c1 = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -1133,9 +1229,9 @@ test("GET /handoffs?status=pending,approved returns both", async () => {
         }),
       }),
       services,
-    )
-  ).json();
-  const c2 = await (
+    ),
+  );
+  const c2 = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -1148,8 +1244,8 @@ test("GET /handoffs?status=pending,approved returns both", async () => {
         }),
       }),
       services,
-    )
-  ).json();
+    ),
+  );
   await handoffsApproveRoute(
     new Request(`http://x/handoffs/${c2.handoff_id}/approve`, { method: "POST", body: "{}" }),
     c2.handoff_id,
@@ -1160,8 +1256,8 @@ test("GET /handoffs?status=pending,approved returns both", async () => {
     new Request(`http://x/handoffs?status=pending,approved`),
     services,
   );
-  const body = await res.json();
-  const ids = body.handoffs.map((h: any) => h.handoff_id).sort();
+  const body = await readJsonAs<ListBody>(res);
+  const ids = body.handoffs.map((h) => h.handoff_id).sort();
   expect(ids).toEqual([c1.handoff_id, c2.handoff_id].sort());
 });
 
@@ -1185,9 +1281,9 @@ test("GET /handoffs without status param defaults to pending (back-compat)", asy
   );
 
   const res = await handoffsListPendingRoute(new Request(`http://x/handoffs`), services);
-  const body = await res.json();
+  const body = await readJsonAs<ListBody>(res);
   expect(body.handoffs.length).toBe(1);
-  expect(body.handoffs[0].status).toBe("pending");
+  expect(body.handoffs[0]!.status).toBe("pending");
 });
 
 test("GET /handoffs?status=garbage returns 400", async () => {
@@ -1220,12 +1316,12 @@ test("GET /handoffs?status=completed&since returns completed count since timesta
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<DoneBody>(res);
   expect(body).toEqual({ done: 2 });
 });
 
 async function seedApproveClaim(services: Services): Promise<string> {
-  const create = await (
+  const create = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -1238,8 +1334,8 @@ async function seedApproveClaim(services: Services): Promise<string> {
         }),
       }),
       services,
-    )
-  ).json();
+    ),
+  );
   await handoffsApproveRoute(
     new Request(`http://x/handoffs/${create.handoff_id}/approve`, { method: "POST", body: "{}" }),
     create.handoff_id,
@@ -1251,29 +1347,12 @@ async function seedApproveClaim(services: Services): Promise<string> {
 
 function seedLongLivedAgentAndTick(
   db: Database,
-  opts: { agent_id: string; tick_id: string; chain_id: string },
+  opts: { agent_id: string; tick_id: string; chain_id?: string },
 ): void {
-  reconcileLongLivedAgents(
-    db,
-    [
-      {
-        name: opts.agent_id,
-        long_lived: true,
-        long_lived_config: {
-          schedule_cron: "*/15 * * * *",
-          subscriptions: [],
-          mcp_allowlist: [],
-          bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
-          circuit_breaker_threshold: 3,
-          standing_brief: "x",
-        },
-      } as any,
-    ],
-    { now: 1 },
-  );
+  reconcileLongLivedAgents(db, [makeLongLivedAgentConfig(opts.agent_id)], { now: 1 });
   db.query(
     "INSERT INTO long_lived_ticks (id, agent_id, chain_id, trigger_kind, started_at) VALUES (?, ?, ?, ?, ?)",
-  ).run(opts.tick_id, opts.agent_id, opts.chain_id, "manual", 1);
+  ).run(opts.tick_id, opts.agent_id, opts.chain_id ?? `conv-${opts.tick_id}`, "manual", 1);
 }
 
 function seedLongLivedDispatchedHandoff(
@@ -1308,7 +1387,7 @@ function seedLongLivedDispatchedHandoff(
 }
 
 function seedDispatchCostRows(db: Database, conversation_id: string, costs: number[]): void {
-  costs.forEach((cost_usd, index) => {
+  for (const [index, cost_usd] of costs.entries()) {
     db.query(
       `INSERT INTO agent_performance (
         performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type,
@@ -1316,9 +1395,9 @@ function seedDispatchCostRows(db: Database, conversation_id: string, costs: numb
         latency_ms, source, notes, agent_kind, metadata_json
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      `perf-${conversation_id}-${index + 1}`,
+      `perf-${conversation_id}-${String(index + 1)}`,
       "2026-04-25T20:00:01.000Z",
-      `handoff-${conversation_id}-${index + 1}`,
+      `handoff-${conversation_id}-${String(index + 1)}`,
       conversation_id,
       null,
       "worker-a",
@@ -1336,7 +1415,7 @@ function seedDispatchCostRows(db: Database, conversation_id: string, costs: numb
       null,
       "{}",
     );
-  });
+  }
 }
 
 test("POST /handoffs/<id>/complete flips dispatched → completed", async () => {
@@ -1352,7 +1431,7 @@ test("POST /handoffs/<id>/complete flips dispatched → completed", async () => 
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<CompleteBody>(res);
   expect(body).toEqual({ handoff_id: id, status: "completed" });
   const row = db
     .query<{ status: string }, [string]>(`SELECT status FROM handoffs WHERE handoff_id=?`)
@@ -1485,7 +1564,7 @@ test("POST /handoffs/<id>/complete cancel path tears down long-lived tick as fai
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<CompleteBody>(res);
   expect(body).toEqual({ handoff_id: id, status: "failed", reason: "cancelled" });
 
   const tick = db
@@ -1537,7 +1616,10 @@ test("POST /handoffs/<id>/complete returns success when long-lived teardown thro
 
   const originalTransaction = db.transaction.bind(db);
   let injected = false;
-  db.transaction = ((fn: () => void) =>
+  // db.transaction is a complex polymorphic call signature; bun-sqlite types
+  // model it via an interface that lint cannot widen from our simpler stub
+  // without a single documented assertion.
+  db.transaction = ((fn: () => void): unknown =>
     originalTransaction(() => {
       fn();
       if (!injected) {
@@ -1552,7 +1634,7 @@ test("POST /handoffs/<id>/complete returns success when long-lived teardown thro
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<CompleteBody>(res);
   expect(body).toEqual({ handoff_id: id, status: "completed" });
 
   const handoff = db
@@ -1566,7 +1648,7 @@ test("POST /handoffs/<id>/complete on a pending handoff returns 409", async () =
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const create = await (
+  const create = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -1579,8 +1661,8 @@ test("POST /handoffs/<id>/complete on a pending handoff returns 409", async () =
         }),
       }),
       services,
-    )
-  ).json();
+    ),
+  );
 
   const res = await handoffsCompleteRoute(
     new Request("http://x", { method: "POST" }),
@@ -1604,7 +1686,7 @@ test("POST /handoffs/<id>/complete on unknown id returns 404", async () => {
 });
 
 async function seedAndApprove(services: Services): Promise<string> {
-  const create = await (
+  const create = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -1617,8 +1699,8 @@ async function seedAndApprove(services: Services): Promise<string> {
         }),
       }),
       services,
-    )
-  ).json();
+    ),
+  );
   await handoffsApproveRoute(
     new Request(`http://x/handoffs/${create.handoff_id}/approve`, { method: "POST", body: "{}" }),
     create.handoff_id,
@@ -1628,25 +1710,29 @@ async function seedAndApprove(services: Services): Promise<string> {
 }
 
 function makeFetcher(handler: (req: Request) => Promise<Response>): typeof fetch {
-  return ((input: string | URL | Request, init?: RequestInit) =>
-    handler(new Request(input as string, init))) as typeof fetch;
+  // fetch's input parameter is the DOM RequestInfo type, which collapses to an
+  // error-typed alias in the strict-lint pass. One documented cast at the
+  // boundary keeps the helper type-safe internally.
+  return ((input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const req =
+      typeof input === "string" || input instanceof URL ? new Request(input, init) : input;
+    return handler(req);
+  }) as typeof fetch;
 }
 
 function buildClaimTestServices(): { services: Services; db: Database } {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
+  let n = 0;
   const services = buildServices({
     env: {},
     input: {},
     storageRoot: "/tmp/handoffs-claim-test",
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-04-25T20:00:00Z"),
-    uuid: (() => {
-      let n = 0;
-      return () => `e-${++n}`;
-    })(),
+    clock: (): Date => new Date("2026-04-25T20:00:00Z"),
+    uuid: (): string => `e-${String(++n)}`,
   });
   return { services, db };
 }
@@ -1671,7 +1757,7 @@ test("POST /handoffs/<id>/claim flips approved → dispatched and returns 200", 
     }),
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<ClaimBody>(res);
   expect(body).toEqual({ handoff_id: id, status: "dispatched" });
   const row = db
     .query<{ status: string }, [string]>(`SELECT status FROM handoffs WHERE handoff_id=?`)
@@ -1690,7 +1776,7 @@ test("POST /handoffs/<id>/claim a second time returns 409 with current_status", 
     worker_id: "test-worker",
     fetcher: makeFetcher(fetchHandler),
   });
-  const claimReq = () =>
+  const claimReq = (): Promise<Response> =>
     fetchHandler(
       new Request(`http://x/handoffs/${id}/claim`, {
         method: "POST",
@@ -1702,7 +1788,7 @@ test("POST /handoffs/<id>/claim a second time returns 409 with current_status", 
   await claimReq();
   const second = await claimReq();
   expect(second.status).toBe(409);
-  const body = await second.json();
+  const body = await readJsonAs<ClaimBody>(second);
   expect(body.current_status).toBe("dispatched");
 });
 
@@ -1731,7 +1817,7 @@ test("POST /handoffs/<id>/claim on a pending handoff returns 409 (not approved)"
   const { services } = buildClaimTestServices();
   const TOKEN = "test-token";
   const fetchHandler = createDaemonFetchHandler({ services, token: TOKEN });
-  const create = await (
+  const create = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -1744,8 +1830,8 @@ test("POST /handoffs/<id>/claim on a pending handoff returns 409 (not approved)"
         }),
       }),
       services,
-    )
-  ).json();
+    ),
+  );
   const { worker_token } = await registerWorkerForTest({
     baseUrl: "http://x",
     sharedBearer: TOKEN,
@@ -1768,7 +1854,7 @@ test("POST /handoffs/<id>/fail flips pending → failed", async () => {
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const create = await (
+  const create = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -1781,8 +1867,8 @@ test("POST /handoffs/<id>/fail flips pending → failed", async () => {
         }),
       }),
       services,
-    )
-  ).json();
+    ),
+  );
 
   const res = await handoffsFailRoute(
     new Request("http://x", {
@@ -1794,7 +1880,7 @@ test("POST /handoffs/<id>/fail flips pending → failed", async () => {
   );
 
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<FailBody>(res);
   expect(body).toEqual({ handoff_id: create.handoff_id, status: "failed" });
 
   const row = db
@@ -1841,7 +1927,7 @@ test("POST /handoffs/:id/approve reject path tears down long-lived tick as faile
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
   seedLongLivedAgentAndTick(db, { agent_id: "agent-reject", tick_id: "tick-reject" });
-  const create = await (
+  const create = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -1854,8 +1940,8 @@ test("POST /handoffs/:id/approve reject path tears down long-lived tick as faile
         }),
       }),
       services,
-    )
-  ).json();
+    ),
+  );
   db.query(
     "UPDATE handoffs SET dispatch_kind=?, long_lived_agent_id=?, long_lived_tick_id=? WHERE handoff_id=?",
   ).run("long_lived_tick", "agent-reject", "tick-reject", create.handoff_id);
@@ -1869,7 +1955,7 @@ test("POST /handoffs/:id/approve reject path tears down long-lived tick as faile
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<ApproveBody>(res);
   expect(body).toEqual({ handoff_id: create.handoff_id, status: "rejected" });
 
   const tick = db
@@ -1944,7 +2030,7 @@ test("POST /handoffs/<id>/fail returns 409 if already terminal", async () => {
   );
 
   expect(res.status).toBe(409);
-  const body = await res.json();
+  const body = await readJsonAs<ClaimBody>(res);
   expect(body.current_status).toBe("completed");
 });
 
@@ -1953,7 +2039,7 @@ test("GET /handoffs/<id> returns the handoff row", async () => {
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const create = await (
+  const create = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
       new Request("http://x/handoffs", {
         method: "POST",
@@ -1966,8 +2052,8 @@ test("GET /handoffs/<id> returns the handoff row", async () => {
         }),
       }),
       services,
-    )
-  ).json();
+    ),
+  );
 
   const res = await handoffsGetRoute(
     new Request(`http://x/handoffs/${create.handoff_id}`),
@@ -1975,7 +2061,7 @@ test("GET /handoffs/<id> returns the handoff row", async () => {
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJsonAs<GetBody>(res);
   expect(body.handoff.handoff_id).toBe(create.handoff_id);
   expect(body.handoff.status).toBe("pending");
 });
@@ -1987,7 +2073,7 @@ test("GET /handoffs/<id> returns 404 for unknown id", async () => {
   const services = makeServices(db);
   const res = await handoffsGetRoute(new Request("http://x/handoffs/h-nope"), "h-nope", services);
   expect(res.status).toBe(404);
-  const body = await res.json();
+  const body = await readJsonAs<GetErrorBody>(res);
   expect(body.error.code).toBe("not_found");
 });
 
@@ -2012,7 +2098,7 @@ test("GET /handoffs?status=completed&since= returns same count for UTC and offse
     services,
   );
   expect(resUtc.status).toBe(200);
-  const utcBody = (await resUtc.json()) as { done: number };
+  const utcBody = await readJsonAs<DoneBody>(resUtc);
 
   // Same instant expressed with a +05:00 offset (string form looks like a later date)
   const resOffset = await handoffsListPendingRoute(
@@ -2020,7 +2106,7 @@ test("GET /handoffs?status=completed&since= returns same count for UTC and offse
     services,
   );
   expect(resOffset.status).toBe(200);
-  const offsetBody = (await resOffset.json()) as { done: number };
+  const offsetBody = await readJsonAs<DoneBody>(resOffset);
 
   expect(utcBody.done).toBe(1);
   expect(offsetBody.done).toBe(utcBody.done);
