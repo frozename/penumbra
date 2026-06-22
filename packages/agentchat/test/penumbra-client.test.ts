@@ -1,26 +1,57 @@
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { Database } from "bun:sqlite";
-import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { buildServices, loadSqliteVec, migrate, type Services, type T0Event } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { createDaemonFetchHandler } from "@penumbra/daemon/test-utils";
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { PenumbraClient } from "../src/penumbra-client.js";
 import { serviceTest } from "./helpers/service-gates.js";
 
+// Test-only typed fetch shape: agentchat constructs Request objects from
+// (input, init), so the mock fetch sees the same arg shape the daemon proxy uses.
+type FetchImpl = (input: Request | string | URL, init?: RequestInit) => Promise<Response>;
+
+function toRequest(input: Request | URL | string, init?: RequestInit): Request {
+  if (input instanceof Request) return input;
+  return new Request(input instanceof URL ? input.toString() : input, init);
+}
+
+interface CapturedRequest {
+  body: unknown;
+  auth: string | null;
+}
+
+interface ListedHandoffRow {
+  handoff_id: string;
+}
+
+async function expectRejection(promise: Promise<unknown>, matcher: RegExp): Promise<void> {
+  let caught: unknown;
+  try {
+    await promise;
+  } catch (err) {
+    caught = err;
+  }
+  expect(caught).toBeDefined();
+  const message = caught instanceof Error ? caught.message : String(caught);
+  expect(message).toMatch(matcher);
+}
+
 test("observe POSTs /observations with bearer token", async () => {
-  let received: { body: any; auth: string | null } | null = null;
-  const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
-    const req = input instanceof Request ? input : new Request(String(input), init);
-    received = { body: await req.json(), auth: req.headers.get("authorization") };
+  let received: CapturedRequest | null = null;
+  const fetchImpl: FetchImpl = async (input, init) => {
+    const req = toRequest(input, init);
+    received = { auth: req.headers.get("authorization"), body: await req.json() };
     return Response.json({ event_id: "e" });
-  }) as any;
+  };
   const root = mkdtempSync(join(tmpdir(), "pen-client-"));
   writeFileSync(join(root, "port"), `1\n`);
   writeFileSync(join(root, "token"), "tk\n");
 
-  const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+  const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl as typeof fetch });
   await client.observe({
     ts: "2026-04-25T20:00:00Z",
     source: "mcp",
@@ -31,17 +62,19 @@ test("observe POSTs /observations with bearer token", async () => {
     machine_id: "m",
   });
   expect(received).not.toBeNull();
-  expect(received!.auth).toBe("Bearer tk");
+  // Narrow once for the asserted shape — the captured value is overwritten inside fetchImpl.
+  const captured = received as CapturedRequest | null;
+  expect(captured?.auth).toBe("Bearer tk");
 });
 
 test("createHandoff POSTs /handoffs and returns the new id", async () => {
-  const fetchImpl: typeof fetch = (async () =>
-    Response.json({ handoff_id: "h-1", status: "pending" })) as any;
+  const fetchImpl: FetchImpl = () =>
+    Promise.resolve(Response.json({ handoff_id: "h-1", status: "pending" }));
   const root = mkdtempSync(join(tmpdir(), "pen-client-"));
   writeFileSync(join(root, "port"), `1\n`);
   writeFileSync(join(root, "token"), "tk\n");
 
-  const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+  const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl as typeof fetch });
   const r = await client.createHandoff({
     from: "claude",
     to: "gemini",
@@ -55,9 +88,9 @@ test("createHandoff POSTs /handoffs and returns the new id", async () => {
 });
 
 test("captureAgentPerformanceFromDispatch sends final response summary fields", async () => {
-  let received: any = null;
-  const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
-    const req = input instanceof Request ? input : new Request(String(input), init);
+  let received: unknown = null;
+  const fetchImpl: FetchImpl = async (input, init) => {
+    const req = toRequest(input, init);
     const url = new URL(req.url).pathname;
     if (url === "/worker/register") {
       return Response.json({ worker_token: "wt-final", worker_id: "W-A" });
@@ -71,12 +104,12 @@ test("captureAgentPerformanceFromDispatch sends final response summary fields", 
         task_type: "review_adversarial",
       },
     });
-  }) as any;
+  };
   const root = mkdtempSync(join(tmpdir(), "pen-client-"));
   writeFileSync(join(root, "port"), `1\n`);
   writeFileSync(join(root, "token"), "tk\n");
 
-  const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+  const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl as typeof fetch });
   await client.registerWorker({ worker_id: "W-A" });
   await client.captureAgentPerformanceFromDispatch({
     handoff_id: "h-final",
@@ -96,13 +129,15 @@ test("captureAgentPerformanceFromDispatch sends final response summary fields", 
   rmSync(root, { recursive: true, force: true });
 });
 
-function withDaemon(): {
+interface LocalDaemon {
   client: PenumbraClient;
   services: Services;
   stop: () => void;
   storageRoot: string;
   fetchImpl: typeof fetch;
-} {
+}
+
+function withDaemon(): LocalDaemon {
   const dir = mkdtempSync(join(tmpdir(), "penumbra-cli-"));
   const db = new Database(":memory:");
   loadSqliteVec(db);
@@ -115,16 +150,19 @@ function withDaemon(): {
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date("2026-04-26T00:00:00Z"),
-    uuid: () => `id-${++n}`,
+    uuid: () => `id-${String(++n)}`,
   });
   services.agentRegistry = ["planner", "executor", "a", "b", "claude-mem"];
-  services.watchdog.hasActiveWorker = () => true;
+  services.watchdog.hasActiveWorker = (): boolean => true;
   const token = "tok";
   const handler = createDaemonFetchHandler({ services, token });
-  const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+  const fetchImpl = (async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
     const req = input instanceof Request ? input : new Request(String(input), init);
-    return handler(req);
-  }) as any;
+    return await handler(req);
+  }) as typeof fetch;
   writeFileSync(join(dir, "port"), "1");
   writeFileSync(join(dir, "token"), "tok");
   return {
@@ -132,10 +170,12 @@ function withDaemon(): {
     services,
     storageRoot: dir,
     fetchImpl,
-    stop() {
+    stop(): void {
       try {
         services.supervisor.stopAll();
-      } catch {}
+      } catch {
+        // best-effort: shutdown errors during test teardown are non-fatal
+      }
       db.close();
       rmSync(dir, { recursive: true, force: true });
     },
@@ -154,9 +194,9 @@ serviceTest("PenumbraClient.startChain calls /chains/start", async () => {
     expect(typeof res.conversation_id).toBe("string");
     expect(typeof res.handoff_id).toBe("string");
     const row = services.db
-      .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
+      .query<{ status: string }, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
       .get(res.handoff_id);
-    expect(row.status).toBe("approved");
+    expect(row?.status).toBe("approved");
   } finally {
     stop();
   }
@@ -173,7 +213,7 @@ serviceTest(
       const start = await client.startChain({ initial_agent: "planner", message: "hi" });
       const claim = await client.claimHandoff(start.handoff_id, "w1");
       expect(claim.status).toBe("dispatched");
-      await expect(worker2.claimHandoff(start.handoff_id, "w2")).rejects.toThrow(/409|conflict/i);
+      await expectRejection(worker2.claimHandoff(start.handoff_id, "w2"), /409|conflict/i);
     } finally {
       stop();
     }
@@ -189,9 +229,9 @@ serviceTest("PenumbraClient.completeHandoff flips dispatched → completed", asy
     const res = await client.completeHandoff(start.handoff_id);
     expect(res.status).toBe("completed");
     const row = services.db
-      .query<any, [string]>(`SELECT status FROM handoffs WHERE handoff_id=?`)
+      .query<{ status: string }, [string]>(`SELECT status FROM handoffs WHERE handoff_id=?`)
       .get(start.handoff_id);
-    expect(row.status).toBe("completed");
+    expect(row?.status).toBe("completed");
   } finally {
     stop();
   }
@@ -206,10 +246,13 @@ serviceTest("PenumbraClient.markFailed flips dispatched → failed", async () =>
     const res = await client.markFailed(start.handoff_id, "adapter blew up");
     expect(res.status).toBe("failed");
     const row = services.db
-      .query<any, [string]>(`SELECT status, resolution_reason FROM handoffs WHERE handoff_id=?`)
+      .query<
+        { status: string; resolution_reason: string | null },
+        [string]
+      >(`SELECT status, resolution_reason FROM handoffs WHERE handoff_id=?`)
       .get(start.handoff_id);
-    expect(row.status).toBe("failed");
-    expect(row.resolution_reason).toBe("adapter blew up");
+    expect(row?.status).toBe("failed");
+    expect(row?.resolution_reason).toBe("adapter blew up");
   } finally {
     stop();
   }
@@ -238,12 +281,12 @@ test("PenumbraClient.postDispatchEvents threads AbortSignal to fetch", async () 
   writeFileSync(join(root, "token"), "tk\n");
   try {
     let capturedSignal: AbortSignal | undefined;
-    const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
-      capturedSignal = init?.signal;
-      return Response.json({});
-    }) as any;
+    const fetchImpl: FetchImpl = (_input, init) => {
+      capturedSignal = init?.signal ?? undefined;
+      return Promise.resolve(Response.json({}));
+    };
 
-    const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+    const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl as typeof fetch });
     const externalController = new AbortController();
     await client.postDispatchEvents(
       [
@@ -273,7 +316,7 @@ serviceTest(
       const b = await client.startChain({ initial_agent: "planner", message: "hi 2" });
       await client.claimHandoff(a.handoff_id, "w1");
       const r = await client.listHandoffs({ statuses: ["approved", "dispatched"] });
-      const ids = r.handoffs.map((h: any) => h.handoff_id).sort();
+      const ids = (r.handoffs as ListedHandoffRow[]).map((h) => h.handoff_id).sort();
       expect(ids).toEqual([a.handoff_id, b.handoff_id].sort());
     } finally {
       stop();
@@ -287,13 +330,13 @@ test("PenumbraClient.listHandoffs encodes global project scope as project_scope=
   writeFileSync(join(root, "token"), "tk\n");
   try {
     let capturedUrl = "";
-    const fetchImpl: typeof fetch = ((input: string | URL | Request) => {
-      const req = input instanceof Request ? input : new Request(String(input));
+    const fetchImpl: FetchImpl = (input) => {
+      const req = toRequest(input);
       capturedUrl = req.url;
-      return Response.json({ handoffs: [] });
-    }) as unknown as typeof fetch;
+      return Promise.resolve(Response.json({ handoffs: [] }));
+    };
 
-    const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+    const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl as typeof fetch });
     await client.listHandoffs({ statuses: ["approved"], project_scope: "global" });
 
     const url = new URL(capturedUrl);
@@ -312,13 +355,13 @@ test("PenumbraClient.listHandoffs preserves encoding for project_id string", asy
   writeFileSync(join(root, "token"), "tk\n");
   try {
     let capturedUrl = "";
-    const fetchImpl: typeof fetch = ((input: string | URL | Request) => {
-      const req = input instanceof Request ? input : new Request(String(input));
+    const fetchImpl: FetchImpl = (input) => {
+      const req = toRequest(input);
       capturedUrl = req.url;
-      return Response.json({ handoffs: [] });
-    }) as unknown as typeof fetch;
+      return Promise.resolve(Response.json({ handoffs: [] }));
+    };
 
-    const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+    const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl as typeof fetch });
     await client.listHandoffs({ statuses: ["approved"], project_id: "proj/alpha one" });
 
     const url = new URL(capturedUrl);
@@ -336,16 +379,27 @@ serviceTest("PenumbraClient.subscribeHandoffEvents yields each approved handoff"
   try {
     const it = client.subscribeHandoffEvents();
     const iterator = it[Symbol.asyncIterator]();
-    const first = iterator.next();
+    // `iterator.next()` types its return as `IteratorResult<T, any>`, so cast
+    // through the void-return shape to keep `event.value` strictly typed.
+    type HandoffSseEvent = { handoff_id?: string };
+    type HandoffNextResult = IteratorResult<HandoffSseEvent, void>;
+    const first = iterator.next() as unknown as Promise<HandoffNextResult>;
     const start = await client.startChain({ initial_agent: "planner", message: "hi" });
-    const event = await Promise.race([
+    const timeout: HandoffNextResult = { value: undefined, done: true };
+    const event = await Promise.race<HandoffNextResult>([
       first,
-      new Promise<{ value: undefined; done: true }>((r) =>
-        setTimeout(() => r({ value: undefined, done: true }), 1000),
-      ),
+      new Promise<HandoffNextResult>((r) => {
+        setTimeout(() => {
+          r(timeout);
+        }, 1000);
+      }),
     ]);
-    expect((event as any).value).toBeDefined();
-    expect((event as any).value.handoff_id).toBe(start.handoff_id);
+    expect(event.value).toBeDefined();
+    const handoffEvent = event.value;
+    if (handoffEvent === undefined) {
+      throw new Error("subscribeHandoffEvents yielded no event before timeout");
+    }
+    expect(handoffEvent.handoff_id).toBe(start.handoff_id);
     await iterator.return?.();
   } finally {
     stop();
@@ -409,7 +463,7 @@ serviceTest(
 
 test("PenumbraClient.resolve() throws clear error when explicit storageRoot is bogus", async () => {
   const client = new PenumbraClient({ storageRoot: "/path/that/does/not/exist" });
-  await expect(
+  await expectRejection(
     client.observe({
       ts: "2026-04-25T20:00:00Z",
       source: "mcp",
@@ -419,7 +473,6 @@ test("PenumbraClient.resolve() throws clear error when explicit storageRoot is b
       user_id: "u",
       machine_id: "m",
     }),
-  ).rejects.toThrow(
     /penumbra not running at \/path\/that\/does\/not\/exist \(missing port\/token\)/,
   );
 });
@@ -430,7 +483,7 @@ serviceTest("PenumbraClient.getHandoffStatus reads reliability status", async ()
     await client.registerWorker({ worker_id: "w1" });
     const start = await client.startChain({ initial_agent: "planner", message: "hi" });
     await client.claimHandoff(start.handoff_id, "w1");
-    await services.dispatchEventLog.record({
+    services.dispatchEventLog.record({
       handoff_id: start.handoff_id,
       source: "worker",
       kind: "dispatch.start",
@@ -450,7 +503,7 @@ serviceTest("PenumbraClient.getHandoffStatus reads reliability status", async ()
 serviceTest("PenumbraClient.getChainResponses reads final responses", async () => {
   const { client, services, stop } = withDaemon();
   try {
-    services.t0Writer.write({
+    const event: T0Event = {
       ts: "2026-05-01T00:00:00.000Z",
       ingest_ts: "2026-05-01T00:00:00.000Z",
       event_id: "ev-client-responses",
@@ -471,13 +524,16 @@ serviceTest("PenumbraClient.getChainResponses reads final responses", async () =
       request_id: null,
       payload_json: { response: "HELLO" },
       payload_summary: "HELLO",
-    } as any);
+      origin: null,
+    };
+    services.t0Writer.write(event);
 
     const responses = await client.getChainResponses("conv-client-responses", "all");
 
-    expect(responses.responses).toEqual([
-      expect.objectContaining({ agent: "agent-a", text: "HELLO" }),
-    ]);
+    expect(responses.responses).toHaveLength(1);
+    const first = responses.responses[0];
+    expect(first?.agent).toBe("agent-a");
+    expect(first?.text).toBe("HELLO");
   } finally {
     stop();
   }
@@ -489,22 +545,27 @@ test("PenumbraClient dispatch and worktree read methods call daemon routes", asy
   writeFileSync(join(root, "token"), "tk\n");
   try {
     const seen: string[] = [];
-    const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
-      const req = input instanceof Request ? input : new Request(String(input), init);
-      seen.push(`${req.method} ${new URL(req.url).pathname}${new URL(req.url).search}`);
+    const fetchImpl: FetchImpl = (input, init) => {
+      const req = toRequest(input, init);
+      const url = new URL(req.url);
+      seen.push(`${req.method} ${url.pathname}${url.search}`);
       if (req.url.includes("/dispatch/events"))
-        return Response.json({ events: [{ kind: "dispatch.start" }] });
+        return Promise.resolve(Response.json({ events: [{ kind: "dispatch.start" }] }));
       if (req.url.includes("/dispatch/audit"))
-        return Response.json({ report: { status: "complete", trustworthy: true } });
+        return Promise.resolve(
+          Response.json({ report: { status: "complete", trustworthy: true } }),
+        );
       if (req.url.includes("/worktrees/"))
-        return Response.json({
-          worktree: { path: "/tmp/wt" },
-          diff_against_main: "",
-          branch_log: "",
-        });
-      return Response.json({});
-    }) as any;
-    const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+        return Promise.resolve(
+          Response.json({
+            worktree: { path: "/tmp/wt" },
+            diff_against_main: "",
+            branch_log: "",
+          }),
+        );
+      return Promise.resolve(Response.json({}));
+    };
+    const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl as typeof fetch });
 
     await client.getDispatchTimeline("h-1");
     await client.dispatchAudit("h-1");
@@ -528,9 +589,9 @@ test("PenumbraClient dispatch and worktree read methods call daemon routes", asy
 });
 
 describe("PenumbraClient.chainWait terminal status", () => {
-  function makeChainWaitFetch(terminalRows: Array<{ status: string }>): typeof fetch {
-    return (async (input: any, init?: any) => {
-      const req = input instanceof Request ? input : new Request(String(input), init);
+  function makeChainWaitFetch(terminalRows: { status: string }[]): FetchImpl {
+    return (input, init) => {
+      const req = toRequest(input, init);
       const url = new URL(req.url);
       if (url.pathname === "/handoffs") {
         const status = url.searchParams.get("status") ?? "";
@@ -538,11 +599,11 @@ describe("PenumbraClient.chainWait terminal status", () => {
         const isActive = requested.some((s) =>
           ["pending", "approved", "redirected", "dispatched"].includes(s),
         );
-        if (isActive) return Response.json({ handoffs: [] });
-        return Response.json({ handoffs: terminalRows });
+        if (isActive) return Promise.resolve(Response.json({ handoffs: [] }));
+        return Promise.resolve(Response.json({ handoffs: terminalRows }));
       }
-      return Response.json({});
-    }) as any;
+      return Promise.resolve(Response.json({}));
+    };
   }
 
   test("reports failed when a work hop failed even if a completed row is last by creation order", async () => {
@@ -554,7 +615,7 @@ describe("PenumbraClient.chainWait terminal status", () => {
         storageRoot: root,
         // creation-ordered rows: failed first, then completed.
         // Old at(-1) logic would report "completed"; resolution-order truth is "failed".
-        fetch: makeChainWaitFetch([{ status: "failed" }, { status: "completed" }]),
+        fetch: makeChainWaitFetch([{ status: "failed" }, { status: "completed" }]) as typeof fetch,
       });
       const result = await client.chainWait({ conversation_id: "c-1", timeout_ms: 1_000 });
       expect(result.status).toBe("failed");
@@ -570,7 +631,10 @@ describe("PenumbraClient.chainWait terminal status", () => {
     try {
       const client = new PenumbraClient({
         storageRoot: root,
-        fetch: makeChainWaitFetch([{ status: "completed" }, { status: "completed" }]),
+        fetch: makeChainWaitFetch([
+          { status: "completed" },
+          { status: "completed" },
+        ]) as typeof fetch,
       });
       const result = await client.chainWait({ conversation_id: "c-2", timeout_ms: 1_000 });
       expect(result.status).toBe("completed");
@@ -586,7 +650,7 @@ describe("PenumbraClient.chainWait terminal status", () => {
     try {
       const client = new PenumbraClient({
         storageRoot: root,
-        fetch: makeChainWaitFetch([{ status: "rejected" }, { status: "expired" }]),
+        fetch: makeChainWaitFetch([{ status: "rejected" }, { status: "expired" }]) as typeof fetch,
       });
       const result = await client.chainWait({ conversation_id: "c-3", timeout_ms: 1_000 });
       expect(result.status).toBe("failed");
@@ -604,13 +668,15 @@ describe("PenumbraClient permission methods", () => {
     try {
       let capturedUrl = "";
       let capturedMethod = "";
-      const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
-        const req = input instanceof Request ? input : new Request(String(input), init);
+      const fetchImpl: FetchImpl = (input, init) => {
+        const req = toRequest(input, init);
         capturedUrl = req.url;
         capturedMethod = req.method;
-        return Response.json({ permission_id: "p-1", status: "pending", ttl_at: "t" });
-      }) as any;
-      const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+        return Promise.resolve(
+          Response.json({ permission_id: "p-1", status: "pending", ttl_at: "t" }),
+        );
+      };
+      const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl as typeof fetch });
       const out = await client.createPermission({
         permission_id: "p-1",
         parent_handoff_id: "h-1",
@@ -634,28 +700,30 @@ describe("PenumbraClient permission methods", () => {
     writeFileSync(join(root, "token"), "tk\n");
     try {
       let capturedUrl = "";
-      const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
-        const req = input instanceof Request ? input : new Request(String(input), init);
+      const fetchImpl: FetchImpl = (input, init) => {
+        const req = toRequest(input, init);
         capturedUrl = req.url;
-        return Response.json({
-          permission: {
-            permission_id: "p-1",
-            status: "pending",
-            parent_handoff_id: "h-1",
-            conversation_id: "c",
-            agent_name: "a",
-            tool_name: "t",
-            raw_input_json: "{}",
-            remember_scope: null,
-            decision_reason: null,
-            decided_by: null,
-            ttl_at: "t",
-            created_at: "t",
-            decided_at: null,
-          },
-        });
-      }) as any;
-      const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+        return Promise.resolve(
+          Response.json({
+            permission: {
+              permission_id: "p-1",
+              status: "pending",
+              parent_handoff_id: "h-1",
+              conversation_id: "c",
+              agent_name: "a",
+              tool_name: "t",
+              raw_input_json: "{}",
+              remember_scope: null,
+              decision_reason: null,
+              decided_by: null,
+              ttl_at: "t",
+              created_at: "t",
+              decided_at: null,
+            },
+          }),
+        );
+      };
+      const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl as typeof fetch });
       const out = await client.getPermission("p-1");
       expect(out.permission.permission_id).toBe("p-1");
       expect(capturedUrl).toBe("http://127.0.0.1:1/permissions/p-1");
@@ -671,13 +739,15 @@ describe("PenumbraClient permission methods", () => {
     try {
       let capturedUrl = "";
       let capturedMethod = "";
-      const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
-        const req = input instanceof Request ? input : new Request(String(input), init);
+      const fetchImpl: FetchImpl = (input, init) => {
+        const req = toRequest(input, init);
         capturedUrl = req.url;
         capturedMethod = req.method;
-        return Response.json({ permission_id: "p-1", status: "approved", decided_at: "t" });
-      }) as any;
-      const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+        return Promise.resolve(
+          Response.json({ permission_id: "p-1", status: "approved", decided_at: "t" }),
+        );
+      };
+      const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl as typeof fetch });
       const out = await client.decidePermission("p-1", {
         decision: "approve",
         remember: "this_dispatch",
@@ -696,12 +766,12 @@ describe("PenumbraClient permission methods", () => {
     writeFileSync(join(root, "token"), "tk\n");
     try {
       let capturedUrl = "";
-      const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
-        const req = input instanceof Request ? input : new Request(String(input), init);
+      const fetchImpl: FetchImpl = (input, init) => {
+        const req = toRequest(input, init);
         capturedUrl = req.url;
-        return Response.json({ permissions: [] });
-      }) as any;
-      const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+        return Promise.resolve(Response.json({ permissions: [] }));
+      };
+      const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl as typeof fetch });
       await client.listPermissions({
         status: "pending,approved",
         conversation_id: "c-1",
@@ -722,12 +792,12 @@ describe("PenumbraClient permission methods", () => {
     writeFileSync(join(root, "token"), "tk\n");
     try {
       let capturedUrl = "";
-      const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
-        const req = input instanceof Request ? input : new Request(String(input), init);
+      const fetchImpl: FetchImpl = (input, init) => {
+        const req = toRequest(input, init);
         capturedUrl = req.url;
-        return Response.json({ permissions: [] });
-      }) as any;
-      const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+        return Promise.resolve(Response.json({ permissions: [] }));
+      };
+      const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl as typeof fetch });
       await client.listPermissions();
       expect(capturedUrl).toBe("http://127.0.0.1:1/permissions");
     } finally {
