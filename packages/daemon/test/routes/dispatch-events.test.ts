@@ -1,12 +1,14 @@
-import { beforeEach, describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { DispatchEventKindSchema } from "@penumbra/api-contract";
 import { applySchema, buildServices, loadSqliteVec, type Services } from "@penumbra/core";
-import { createDaemonFetchHandler } from "../../src/serve.js";
+import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, test } from "bun:test";
+
 import {
   dispatchEventsGetRoute,
   dispatchEventsPostRoute,
 } from "../../src/routes/dispatch-events.js";
+import { createDaemonFetchHandler } from "../../src/serve.js";
 
 function tempServices(): Services {
   const db = new Database(":memory:");
@@ -17,20 +19,20 @@ function tempServices(): Services {
     input: {},
     storageRoot: "/tmp/dispatch-events-test",
     db,
-    embedder: null as any,
+    embedder: new TestEmbedder({ dim: 384 }),
   });
 }
 
-function authHeaders(token: string): HeadersInit {
+function authHeaders(token: string): Record<string, string> {
   return { authorization: `Bearer ${token}` };
 }
 
-async function startTestDaemon(): Promise<{
+function startTestDaemon(): {
   fetch: (input: string, init?: RequestInit) => Promise<Response>;
   services: Services;
   token: string;
   url: string;
-}> {
+} {
   const services = tempServices();
   const token = "tok";
   const handler = createDaemonFetchHandler({ services, token });
@@ -172,7 +174,7 @@ describe("dispatch events routes", () => {
   });
 
   test("POST accepts agent thought event kinds and GET returns them", async () => {
-    const { fetch, services, token, url } = await startTestDaemon();
+    const { fetch, services, token, url } = startTestDaemon();
     const handoffId = "h-thoughts-1";
     const body = {
       events: [
@@ -232,7 +234,7 @@ describe("dispatch events routes", () => {
       headers: authHeaders(token),
     });
     expect(get.status).toBe(200);
-    const json = (await get.json()) as { events: Array<{ kind: string }> };
+    const json = (await get.json()) as { events: { kind: string }[] };
     expect(json.events.map((e) => e.kind)).toEqual([
       "agent.thought",
       "agent.thought.overflow",
@@ -243,7 +245,7 @@ describe("dispatch events routes", () => {
   });
 
   test("POST accepts shell event kinds and GET returns them", async () => {
-    const { fetch, services, token, url } = await startTestDaemon();
+    const { fetch, services, token, url } = startTestDaemon();
     const handoffId = "h-shell-1";
     const body = {
       events: [
@@ -291,7 +293,7 @@ describe("dispatch events routes", () => {
       headers: authHeaders(token),
     });
     expect(get.status).toBe(200);
-    const json = (await get.json()) as { events: Array<{ kind: string }> };
+    const json = (await get.json()) as { events: { kind: string }[] };
     expect(json.events.map((e) => e.kind)).toEqual([
       "shell.session.open",
       "shell.run",
@@ -301,7 +303,7 @@ describe("dispatch events routes", () => {
   });
 
   test("POST accepts worker recovery event kinds and GET returns them", async () => {
-    const { fetch, services, token, url } = await startTestDaemon();
+    const { fetch, services, token, url } = startTestDaemon();
     const handoffId = "h-recovery-1";
     const body = {
       events: [
@@ -345,7 +347,7 @@ describe("dispatch events routes", () => {
       headers: authHeaders(token),
     });
     expect(get.status).toBe(200);
-    const json = (await get.json()) as { events: Array<{ kind: string; meta: any }> };
+    const json = (await get.json()) as { events: { kind: string; meta: unknown }[] };
     expect(json.events.map((e) => e.kind)).toEqual([
       "worker.recovery.requeued",
       "worker.recovery.exhausted",
@@ -429,7 +431,7 @@ describe("dispatch events routes", () => {
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      events: Array<{ handoff_id: string; kind: string; meta: unknown }>;
+      events: { handoff_id: string; kind: string; meta: unknown }[];
     };
     expect(body.events.map((e) => e.kind)).toEqual([
       "dispatch.start",

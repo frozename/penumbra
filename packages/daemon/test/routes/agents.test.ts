@@ -1,12 +1,14 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { beforeEach, describe, expect, it } from "bun:test";
+
 import {
+  agentsFleetLatencyRoute,
   agentsPerformanceImportMarkdownRoute,
   agentsPerformanceMarkdownRoute,
   agentsPerformanceOperatorRoute,
   agentsPerformanceReconcilerRoute,
-  agentsFleetLatencyRoute,
   agentsRankRoute,
   agentsRecommendRoute,
 } from "../../src/routes/agents.js";
@@ -23,12 +25,49 @@ try {
 
 function makeServices(db: Database): Services {
   let n = 0;
-  return {
+  return buildServices({
+    env: {},
+    input: {},
+    storageRoot: "/tmp/agents-route-test",
     db,
-    uuid: () => `perf-${++n}`,
+    embedder: new TestEmbedder({ dim: 384 }),
+    uuid: () => {
+      n += 1;
+      return `perf-${String(n)}`;
+    },
     clock: () => new Date("2026-04-30T12:03:00Z"),
-    machineId: { get: () => "test-machine" },
-  } as unknown as Services;
+  });
+}
+
+interface ReconcilerCaptureResponse {
+  performance: { outcome: string };
+}
+
+interface ErrorCodeResponse {
+  error: { code: string };
+}
+
+interface RankResponse {
+  window: { from: string | null };
+  candidates: { agent_name: string }[];
+}
+
+interface OperatorCaptureResponse {
+  performance: {
+    handoff_id: string;
+    agent_name: string;
+    task_type: string;
+    outcome: string;
+    latency_ms: number;
+    source: string;
+  };
+}
+
+function makeHandlerFetcher(handler: (req: Request) => Promise<Response>): typeof fetch {
+  return (input, init): Promise<Response> => {
+    const req = input instanceof Request ? input : new Request(input, init);
+    return handler(req);
+  };
 }
 
 describe("agent routes", () => {
@@ -72,7 +111,7 @@ describe("agent routes", () => {
     });
     const res = await agentsPerformanceReconcilerRoute(req, services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as ReconcilerCaptureResponse;
     expect(body.performance.outcome).toBe("pr_opened");
   });
 
@@ -88,7 +127,7 @@ describe("agent routes", () => {
 
     const res = await agentsPerformanceReconcilerRoute(req, services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as ReconcilerCaptureResponse;
     expect(body.performance.outcome).toBe("completed_with_output");
 
     const row = db
@@ -109,10 +148,7 @@ describe("agent routes", () => {
       baseUrl: "http://x",
       sharedBearer: "tok",
       worker_id: "worker-b",
-      fetcher: (async (input: any, init?: any) => {
-        const req = input instanceof Request ? input : new Request(String(input), init);
-        return handler(req);
-      }) as typeof fetch,
+      fetcher: makeHandlerFetcher(handler),
     });
     db.prepare(`UPDATE handoffs SET worker_id = ?, chain_task_type = ? WHERE handoff_id = ?`).run(
       "worker-a",
@@ -139,7 +175,7 @@ describe("agent routes", () => {
     );
 
     expect(res.status).toBe(403);
-    const body = await res.json();
+    const body = (await res.json()) as ErrorCodeResponse;
     expect(body.error.code).toBe("handoff_worker_mismatch");
     const count = db
       .query<{ count: number }, []>(`SELECT COUNT(*) AS count FROM agent_performance`)
@@ -153,10 +189,7 @@ describe("agent routes", () => {
       baseUrl: "http://x",
       sharedBearer: "tok",
       worker_id: "worker-b",
-      fetcher: (async (input: any, init?: any) => {
-        const req = input instanceof Request ? input : new Request(String(input), init);
-        return handler(req);
-      }) as typeof fetch,
+      fetcher: makeHandlerFetcher(handler),
     });
 
     const res = await handler(
@@ -196,7 +229,7 @@ describe("agent routes", () => {
       services,
     );
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as RankResponse;
     // rank now defaults to a bounded 30-day window, so window.from is the cutoff, not null.
     expect(typeof body.window.from).toBe("string");
     expect(body.candidates[0].agent_name).toBe("claude");
@@ -238,7 +271,7 @@ describe("agent routes", () => {
       services,
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { candidates: Array<{ agent_name: string }> };
+    const body = (await res.json()) as { candidates: { agent_name: string }[] };
     expect(body.candidates).toHaveLength(1);
     expect(body.candidates[0].agent_name).toBe("orch");
   });
@@ -284,7 +317,22 @@ describe("agent routes", () => {
     );
 
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as {
+      window: { from: string; to: string; hours: number };
+      agents: {
+        agent_name: string;
+        dispatch_count: number;
+        dispatches_per_hour: number;
+        exec_ms_p50: number;
+        exec_ms_p95: number;
+        framework_overhead_ms_p50: number | null;
+        framework_overhead_ms_p95: number | null;
+        acp_session_reuse_rate: number | null;
+        framework_overhead_ms_p50_cold: number | null;
+        framework_overhead_ms_p50_reuse: number | null;
+        queue_depth: number;
+      }[];
+    };
     expect(body.window).toEqual({
       from: "2026-04-30T11:03:00.000Z",
       to: "2026-04-30T12:03:00.000Z",
@@ -322,7 +370,7 @@ describe("agent routes", () => {
       services,
     );
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as { agent_name: string }[];
     expect(body[0].agent_name).toBe("claude");
   });
 
@@ -364,7 +412,7 @@ describe("agent routes", () => {
       services,
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as Array<{ agent_name: string }>;
+    const body = (await res.json()) as { agent_name: string }[];
     expect(body).toHaveLength(1);
     expect(body[0].agent_name).toBe("orch");
   });
@@ -390,21 +438,17 @@ describe("agent routes", () => {
     );
 
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.performance).toEqual(
-      expect.objectContaining({
-        handoff_id: "h1",
-        agent_name: "claude",
-        task_type: "implement_substantial",
-        outcome: "merged",
-        latency_ms: 60_000,
-        source: "operator",
-      }),
-    );
+    const body = (await res.json()) as OperatorCaptureResponse;
+    expect(body.performance.handoff_id).toBe("h1");
+    expect(body.performance.agent_name).toBe("claude");
+    expect(body.performance.task_type).toBe("implement_substantial");
+    expect(body.performance.outcome).toBe("merged");
+    expect(body.performance.latency_ms).toBe(60_000);
+    expect(body.performance.source).toBe("operator");
 
     const persisted = db
       .query<
-        any,
+        { handoff_id: string; agent_name: string; source: string; latency_ms: number },
         [string]
       >("SELECT handoff_id, agent_name, source, latency_ms FROM agent_performance WHERE handoff_id=?")
       .get("h1");
@@ -451,7 +495,7 @@ describe("agent routes", () => {
     );
 
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = (await res.json()) as ErrorCodeResponse;
     expect(body.error.code).toBe("invalid_params");
   });
 

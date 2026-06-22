@@ -1,10 +1,11 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { conversationsCancelRoute } from "../../src/routes/conversations.js";
-import { workerControlRoute } from "../../src/routes/worker-control.js";
 import { handoffsCreateRoute } from "../../src/routes/handoffs.js";
+import { workerControlRoute } from "../../src/routes/worker-control.js";
 
 try {
   if (process.platform === "darwin") {
@@ -12,6 +13,12 @@ try {
   }
 } catch {
   /* already loaded */
+}
+
+interface WorkerControlTestEvent {
+  type: string;
+  conversation_id?: string;
+  handoff_id?: string;
 }
 
 function tempServices(): Services {
@@ -27,7 +34,10 @@ function tempServices(): Services {
     clock: () => new Date("2026-04-26T00:00:00Z"),
     uuid: (() => {
       let n = 0;
-      return () => `e-${++n}`;
+      return () => {
+        n += 1;
+        return `e-${String(n)}`;
+      };
     })(),
   });
 }
@@ -36,9 +46,9 @@ async function readSseEvents(
   stream: ReadableStream<Uint8Array>,
   n: number,
   timeoutMs = 1000,
-): Promise<any[]> {
+): Promise<WorkerControlTestEvent[]> {
   const reader = stream.getReader();
-  const events: any[] = [];
+  const events: WorkerControlTestEvent[] = [];
   const decoder = new TextDecoder();
   let buf = "";
   const deadline = Date.now() + timeoutMs;
@@ -47,19 +57,20 @@ async function readSseEvents(
       reader.read(),
       new Promise<{ value: undefined; done: true }>((resolve) =>
         setTimeout(
-          () => resolve({ value: undefined, done: true }),
+          () => {
+            resolve({ value: undefined, done: true });
+          },
           Math.max(0, deadline - Date.now()),
         ),
       ),
     ]);
     if (done) break;
-    if (!value) continue;
     buf += decoder.decode(value, { stream: true });
     const frames = buf.split("\n\n");
     buf = frames.pop() ?? "";
     for (const frame of frames) {
       const dataLine = frame.split("\n").find((l) => l.startsWith("data: "));
-      if (dataLine) events.push(JSON.parse(dataLine.slice(6)));
+      if (dataLine) events.push(JSON.parse(dataLine.slice(6)) as WorkerControlTestEvent);
     }
   }
   reader.releaseLock();
@@ -85,7 +96,7 @@ test("POST /conversations/:id/cancel records in DB and broadcasts", async () => 
     services,
   );
 
-  let emitted: any = null;
+  let emitted: WorkerControlTestEvent | null = null;
   services.workerControl.subscribe((event) => {
     emitted = event;
   });

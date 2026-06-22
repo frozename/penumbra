@@ -1,13 +1,16 @@
-import { beforeAll, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { beforeAll, expect, test } from "bun:test";
+
 import { chainsStartRoute } from "../../src/routes/chains.js";
 
 try {
   if (process.platform === "darwin")
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-} catch {}
+} catch {
+  /* already loaded */
+}
 
 // strict-mode env can leak from a live maestro shell; clear it here so test fixtures stay deterministic
 beforeAll(() => {
@@ -26,15 +29,18 @@ function tempServices(): Services {
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date("2026-05-12T00:00:00Z"),
-    uuid: () => `id-${++n}`,
+    uuid: () => {
+      n += 1;
+      return `id-${String(n)}`;
+    },
     agentRegistry: ["planner"],
   });
   services.watchdog = {
-    recordHeartbeat: () => {},
-    hasActiveWorker: () => true,
-    getStaleWorkers: () => [],
-    getStaleHeartbeatAges: () => [],
-    tick: async () => {},
+    recordHeartbeat: (): void => undefined,
+    hasActiveWorker: (): boolean => true,
+    getStaleWorkers: (): string[] => [],
+    getStaleHeartbeatAges: (): { worker_id: string; last_seen_age_ms: number }[] => [],
+    tick: (): Promise<void> => Promise.resolve(),
   };
   return services;
 }
@@ -65,7 +71,7 @@ test.each(["BOUNDARY", "STANDARD", "TRIVIAL"] as const)(
     );
 
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as { task_class: string };
     expect(body.task_class).toBe(task_class);
   },
 );
@@ -81,7 +87,7 @@ test("POST /chains/start rejects malformed task_class", async () => {
   );
 
   expect(res.status).toBe(400);
-  const body = await res.json();
+  const body = (await res.json()) as { error: { code: string; field_errors: unknown } };
   expect(body.error.code).toBe("validation_error");
   expect(JSON.stringify(body.error.field_errors)).toContain("task_class");
 });

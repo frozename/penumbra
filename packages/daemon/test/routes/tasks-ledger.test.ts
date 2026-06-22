@@ -1,25 +1,40 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import {
   buildServices,
   loadSqliteVec,
   migrate,
+  type Services,
   TaskCooldowns,
   TaskEventBus,
-  type Services,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { createDaemonFetchHandler } from "../../src/serve.js";
 import { createTaskLeaseSweeper } from "../../src/sweepers/task-leases.js";
+
+type TaskLedgerServices = Services & {
+  agentchatConfig: {
+    agents: {
+      name: string;
+      roles: string[];
+      tags: string[];
+      tier: string;
+      cost_cents_per_run: number;
+    }[];
+  };
+};
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* already loaded */
+}
 
 function startTestDaemon(startMs = Date.parse("2026-04-23T12:00:00.000Z")): {
   fetch: (path: string, init?: RequestInit) => Promise<Response>;
@@ -52,15 +67,18 @@ function startTestDaemon(startMs = Date.parse("2026-04-23T12:00:00.000Z")): {
     mainRepoDir,
   });
   services.watchdog = {
-    recordHeartbeat: () => {},
-    hasActiveWorker: () => true,
-    tick: async () => {},
+    recordHeartbeat: (): void => undefined,
+    hasActiveWorker: (): boolean => true,
+    getStaleWorkers: (): string[] => [],
+    getStaleHeartbeatAges: (): { worker_id: string; last_seen_age_ms: number }[] => [],
+    tick: (): Promise<void> => Promise.resolve(),
   };
 
-  (services as Services & { agentchatConfig?: any }).agentchatConfig = {
+  const taskServices = services as TaskLedgerServices;
+  taskServices.agentchatConfig = {
     agents: [
-      { name: "codex", tags: ["typescript"], tier: "oc", cost_cents_per_run: 15 },
-      { name: "gemini", tags: ["typescript"], tier: "premium", cost_cents_per_run: 15 },
+      { name: "codex", roles: [], tags: ["typescript"], tier: "oc", cost_cents_per_run: 15 },
+      { name: "gemini", roles: [], tags: ["typescript"], tier: "premium", cost_cents_per_run: 15 },
     ],
   };
 
@@ -73,23 +91,27 @@ function startTestDaemon(startMs = Date.parse("2026-04-23T12:00:00.000Z")): {
     services,
     token,
     taskEvents,
-    setNowMs: (ms: number) => {
+    setNowMs: (ms: number): void => {
       nowMs = ms;
     },
-    nowMs: () => nowMs,
-    stop: () => {
+    nowMs: (): number => nowMs,
+    stop: (): void => {
       try {
         services.supervisor.stopAll();
-      } catch {}
+      } catch {
+        /* already stopped */
+      }
       try {
         db.close();
-      } catch {}
+      } catch {
+        /* already closed */
+      }
       rmSync(root, { recursive: true, force: true });
     },
   };
 }
 
-function authHeaders(token: string, headers: HeadersInit = {}): HeadersInit {
+function authHeaders(token: string, headers: Record<string, string> = {}): Record<string, string> {
   return {
     authorization: `Bearer ${token}`,
     ...headers,
@@ -100,9 +122,9 @@ async function postJson(
   daemon: ReturnType<typeof startTestDaemon>,
   path: string,
   body: unknown,
-  headers: HeadersInit = {},
+  headers: Record<string, string> = {},
 ): Promise<Response> {
-  return daemon.fetch(path, {
+  return await daemon.fetch(path, {
     method: "POST",
     headers: authHeaders(daemon.token, {
       "content-type": "application/json",
@@ -153,12 +175,12 @@ async function waitForRowCount(
   expect(row?.n ?? 0).toBe(expected);
 }
 
-function readLedgerRows(daemon: ReturnType<typeof startTestDaemon>): Array<{
+function readLedgerRows(daemon: ReturnType<typeof startTestDaemon>): {
   agent_name: string;
   task_type: string;
   outcome: string;
   notes: string | null;
-}> {
+}[] {
   return daemon.services.db
     .query<{
       agent_name: string;
@@ -232,12 +254,18 @@ test("producer success with review_passed writes doer + reviewer success rows", 
     await waitForRowCount(daemon, 2);
     const rows = readLedgerRows(daemon);
     expect(rows).toHaveLength(2);
-    expect(rows).toEqual(
-      expect.arrayContaining([
-        { agent_name: "codex", task_type: "implement_small", outcome: "merged", notes: null },
-        { agent_name: "gemini", task_type: "review_adversarial", outcome: "merged", notes: null },
-      ]),
-    );
+    expect(rows).toContainEqual({
+      agent_name: "codex",
+      task_type: "implement_small",
+      outcome: "merged",
+      notes: null,
+    });
+    expect(rows).toContainEqual({
+      agent_name: "gemini",
+      task_type: "review_adversarial",
+      outcome: "merged",
+      notes: null,
+    });
   } finally {
     daemon.stop();
   }

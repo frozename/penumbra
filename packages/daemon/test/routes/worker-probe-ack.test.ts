@@ -1,8 +1,10 @@
-import { expect, test, vi } from "bun:test";
-import { Database } from "bun:sqlite";
-import { TestEmbedder } from "@penumbra/core/testing";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test, vi } from "bun:test";
+
 import { createDaemonFetchHandler } from "../../src/serve.js";
+import { WorkerHealthProbe } from "../../src/services/worker-health-probe.js";
 import { registerWorkerForTest } from "../../test-utils.js";
 
 function tempServices(): Services {
@@ -18,14 +20,30 @@ function tempServices(): Services {
     clock: () => new Date("2026-05-24T00:00:00Z"),
     uuid: (() => {
       let n = 0;
-      return () => `e-${++n}`;
+      return () => {
+        n += 1;
+        return `e-${String(n)}`;
+      };
     })(),
   });
 }
 
 function makeFetcher(handler: (req: Request) => Promise<Response>): typeof fetch {
-  return ((input: string | URL | Request, init?: RequestInit) =>
-    handler(new Request(input as string, init))) as typeof fetch;
+  return (input, init): Promise<Response> => handler(new Request(input, init));
+}
+
+function makeWorkerHealthProbe(
+  services: Services,
+  recordAck: (worker_id: string, probe_id: string) => boolean,
+): WorkerHealthProbe {
+  const probe = new WorkerHealthProbe({
+    services,
+    intervalMs: 0,
+    log: services.log,
+    controller: { onSignal: (): void => undefined },
+  });
+  probe.recordAck = recordAck;
+  return probe;
 }
 
 test("POST /worker/probe-ack records ACK and returns 200", async () => {
@@ -39,10 +57,7 @@ test("POST /worker/probe-ack records ACK and returns 200", async () => {
   const fetchHandler = createDaemonFetchHandler({
     services,
     token,
-    workerHealthProbe: {
-      ...services,
-      recordAck: (worker_id: string, probe_id: string) => recordAck(worker_id, probe_id),
-    } as any,
+    workerHealthProbe: makeWorkerHealthProbe(services, recordAck),
   });
 
   const { worker_token } = await registerWorkerForTest({
@@ -71,12 +86,9 @@ test("POST /worker/probe-ack rejects mismatched worker auth", async () => {
   const fetchHandler = createDaemonFetchHandler({
     services,
     token,
-    workerHealthProbe: {
-      ...services,
-      recordAck: () => {
-        throw new Error("should not be called");
-      },
-    } as any,
+    workerHealthProbe: makeWorkerHealthProbe(services, () => {
+      throw new Error("should not be called");
+    }),
   });
 
   const { worker_token } = await registerWorkerForTest({
@@ -94,5 +106,6 @@ test("POST /worker/probe-ack rejects mismatched worker auth", async () => {
     }),
   );
   expect(wrong.status).toBe(403);
-  expect(((await wrong.json()) as any).error.code).toBe("worker_id_mismatch");
+  const body = (await wrong.json()) as { error: { code: string } };
+  expect(body.error.code).toBe("worker_id_mismatch");
 });

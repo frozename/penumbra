@@ -1,20 +1,21 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdirSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import {
   buildServices,
+  type Embedder,
   loadSqliteVec,
   migrate,
   type Services,
-  type Embedder,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { createDaemonFetchHandler } from "../../src/serve.js";
-import { registerWorkerForTest } from "../../test-utils.js";
+import { Database } from "bun:sqlite";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { runPC1Phase } from "../../src/dreaming/curator/pc1-ephemera.js";
 import { runPC2Phase } from "../../src/dreaming/curator/pc2-cluster.js";
+import { createDaemonFetchHandler } from "../../src/serve.js";
+import { registerWorkerForTest } from "../../test-utils.js";
 
 const SHARED_TOKEN = "shared-token";
 
@@ -22,9 +23,9 @@ function makeFetcher(
   services: Services,
 ): (input: string | URL | Request, init?: RequestInit) => Promise<Response> {
   const handler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
-  return ((input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-    return handler(new Request(input as string, init));
-  }) as unknown as (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+  return (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    return handler(new Request(input, init));
+  };
 }
 
 function makeServices(embedder: Embedder = new TestEmbedder({ dim: 384 })): {
@@ -107,16 +108,20 @@ function seedCycle(db: Database, cycleId: string): void {
 }
 
 describe("POST /memory/write", () => {
-  const handles: Array<{ db: Database; root: string }> = [];
+  const handles: { db: Database; root: string }[] = [];
 
   afterEach(() => {
     for (const handle of handles) {
       try {
         handle.db.close();
-      } catch {}
+      } catch {
+        /* already closed */
+      }
       try {
         rmSync(handle.root, { recursive: true, force: true });
-      } catch {}
+      } catch {
+        /* already removed */
+      }
     }
     handles.length = 0;
   });
@@ -308,9 +313,9 @@ describe("POST /memory/write", () => {
     const embedder: Embedder = {
       name: "spy",
       dim: 384,
-      async embed(texts: string[]) {
+      embed(texts: string[]): Promise<Float32Array[]> {
         seen.push(texts);
-        return texts.map(() => new Float32Array(384));
+        return Promise.resolve(texts.map(() => new Float32Array(384)));
       },
     };
     const { db, fetch, root } = makeServices(embedder);
@@ -340,9 +345,9 @@ describe("POST /memory/write", () => {
     const embedder: Embedder = {
       name: "spy",
       dim: 384,
-      async embed(texts: string[]) {
+      embed(texts: string[]): Promise<Float32Array[]> {
         seen.push(texts);
-        return texts.map(() => new Float32Array(384));
+        return Promise.resolve(texts.map(() => new Float32Array(384)));
       },
     };
     const { db, fetch, root } = makeServices(embedder);
@@ -696,26 +701,26 @@ describe("POST /memory/write", () => {
 
     const writeDb = services.db;
     const failingDb = new Proxy(writeDb, {
-      get(target, prop, receiver) {
+      get(target, prop): unknown {
         if (prop === "prepare") {
-          return (sql: string) => {
+          return (sql: string): unknown => {
             const stmt = target.prepare(sql);
             if (sql.includes("INSERT OR IGNORE INTO memory_links(")) {
               return new Proxy(stmt, {
-                get(statementTarget, propName) {
+                get(statementTarget, propName): unknown {
                   if (propName === "run") {
-                    return () => {
+                    return (): never => {
                       throw new Error("simulated memory link upsert failure");
                     };
                   }
-                  return Reflect.get(statementTarget, propName);
+                  return statementTarget[propName as keyof typeof statementTarget];
                 },
               });
             }
             return stmt;
           };
         }
-        return Reflect.get(target, prop, receiver);
+        return target[prop as keyof Database];
       },
     });
     const failingServices = { ...services, db: failingDb };

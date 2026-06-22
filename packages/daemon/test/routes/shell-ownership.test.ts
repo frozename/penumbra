@@ -1,7 +1,14 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import {
+  applySchema,
+  buildServices,
+  loadSqliteVec,
+  type Services,
+  WorkerTokenStore,
+} from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
-import { applySchema, buildServices, loadSqliteVec, type Services } from "@penumbra/core";
-import { WorkerTokenStore } from "@penumbra/core";
+import { afterEach, describe, expect, it } from "bun:test";
+
 import { createDaemonFetchHandler } from "../../src/serve.js";
 import { ShellSessionPool } from "../../src/services/shell-session-pool.js";
 
@@ -55,7 +62,21 @@ interface Setup {
   commandsRun: string[];
 }
 
-async function makeSetup(): Promise<Setup> {
+interface ErrorResponseBody {
+  error: { code: string };
+}
+
+interface ShellRunResponseBody {
+  exit_code: number;
+}
+
+type ShellRouteServices = Services & {
+  agentchatConfig: {
+    agents: { name: string; roles: string[]; auto_approve_to: string[] }[];
+  };
+};
+
+function makeSetup(): Setup {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   applySchema(db);
@@ -64,7 +85,7 @@ async function makeSetup(): Promise<Setup> {
     input: {},
     storageRoot: "/tmp/shell-ownership-test",
     db,
-    embedder: null as any,
+    embedder: new TestEmbedder({ dim: 384 }),
   });
 
   const commandsRun: string[] = [];
@@ -72,20 +93,24 @@ async function makeSetup(): Promise<Setup> {
     config: makeShellConfig(),
     uuid: (() => {
       let i = 0;
-      return () => `sess-${++i}`;
+      return (): string => {
+        i += 1;
+        return `sess-${String(i)}`;
+      };
     })(),
   });
   pools.push(pool);
   const originalRun = pool.runCommand.bind(pool);
-  pool.runCommand = async (input) => {
+  pool.runCommand = (input): ReturnType<ShellSessionPool["runCommand"]> => {
     commandsRun.push(input.command);
     return originalRun(input);
   };
 
-  (services as any).shellSessionPool = pool;
-  (services as any).shellConfig = makeShellConfig();
-  (services as any).agentchatConfig = {
-    agents: [{ name: "claude-acp-sonnet", auto_approve_to: ["shell_run"] }],
+  services.shellSessionPool = pool;
+  services.shellConfig = makeShellConfig();
+  const shellServices = services as ShellRouteServices;
+  shellServices.agentchatConfig = {
+    agents: [{ name: "claude-acp-sonnet", roles: [], auto_approve_to: ["shell_run"] }],
   };
 
   const handler = createDaemonFetchHandler({ services, token: "shared-tok" });
@@ -93,7 +118,7 @@ async function makeSetup(): Promise<Setup> {
     db,
     services,
     commandsRun,
-    fetch: (input, init) => handler(new Request(input, init)),
+    fetch: (input, init): Promise<Response> => handler(new Request(input, init)),
   };
 }
 
@@ -101,7 +126,7 @@ const BASE = "http://x";
 
 describe("shell routes — worker ownership enforcement", () => {
   it("/shell/run returns 403 ownership_mismatch when worker-B targets worker-A's handoff", async () => {
-    const { db, fetch, commandsRun } = await makeSetup();
+    const { db, fetch, commandsRun } = makeSetup();
     insertHandoffWithWorker(db, {
       handoff_id: "h-own-1",
       to_agent: "claude-acp-sonnet",
@@ -121,13 +146,13 @@ describe("shell routes — worker ownership enforcement", () => {
     });
 
     expect(res.status).toBe(403);
-    const body = (await res.json()) as any;
+    const body = (await res.json()) as ErrorResponseBody;
     expect(body.error.code).toBe("ownership_mismatch");
     expect(commandsRun).toHaveLength(0);
   });
 
   it("/shell/run allows worker-A on its own handoff", async () => {
-    const { db, fetch, commandsRun } = await makeSetup();
+    const { db, fetch, commandsRun } = makeSetup();
     insertHandoffWithWorker(db, {
       handoff_id: "h-own-2",
       to_agent: "claude-acp-sonnet",
@@ -147,13 +172,13 @@ describe("shell routes — worker ownership enforcement", () => {
     });
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as any;
+    const body = (await res.json()) as ShellRunResponseBody;
     expect(body.exit_code).toBe(0);
     expect(commandsRun).toHaveLength(1);
   });
 
   it("/shell/run allows shared (maestro/CLI) principal on a worker-owned handoff", async () => {
-    const { db, fetch, commandsRun } = await makeSetup();
+    const { db, fetch, commandsRun } = makeSetup();
     insertHandoffWithWorker(db, {
       handoff_id: "h-own-3",
       to_agent: "claude-acp-sonnet",
@@ -172,13 +197,13 @@ describe("shell routes — worker ownership enforcement", () => {
     });
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as any;
+    const body = (await res.json()) as ShellRunResponseBody;
     expect(body.exit_code).toBe(0);
     expect(commandsRun).toHaveLength(1);
   });
 
   it("/shell/close returns 403 ownership_mismatch when worker-B targets worker-A's handoff", async () => {
-    const { db, fetch } = await makeSetup();
+    const { db, fetch } = makeSetup();
     insertHandoffWithWorker(db, {
       handoff_id: "h-own-close",
       to_agent: "claude-acp-sonnet",
@@ -194,12 +219,12 @@ describe("shell routes — worker ownership enforcement", () => {
     });
 
     expect(res.status).toBe(403);
-    const body = (await res.json()) as any;
+    const body = (await res.json()) as ErrorResponseBody;
     expect(body.error.code).toBe("ownership_mismatch");
   });
 
   it("/shell/list returns 403 ownership_mismatch when worker-B targets worker-A's handoff", async () => {
-    const { db, fetch } = await makeSetup();
+    const { db, fetch } = makeSetup();
     insertHandoffWithWorker(db, {
       handoff_id: "h-own-list",
       to_agent: "claude-acp-sonnet",
@@ -213,7 +238,7 @@ describe("shell routes — worker ownership enforcement", () => {
     });
 
     expect(res.status).toBe(403);
-    const body = (await res.json()) as any;
+    const body = (await res.json()) as ErrorResponseBody;
     expect(body.error.code).toBe("ownership_mismatch");
   });
 });

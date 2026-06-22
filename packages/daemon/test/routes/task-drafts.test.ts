@@ -1,7 +1,7 @@
-import { expect, test } from "bun:test";
+import { loadSqliteVec, migrate, TaskDraftReader } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec, migrate } from "@penumbra/core";
-import { TaskDraftReader } from "@penumbra/core";
+import { expect, test } from "bun:test";
+
 import {
   taskDraftsPendingEscalationsRoute,
   taskDraftsPendingRoute,
@@ -15,7 +15,7 @@ try {
   // already loaded
 }
 
-function freshDb() {
+function freshDb(): Database {
   const db = new Database(":memory:");
   try {
     loadSqliteVec(db);
@@ -39,7 +39,7 @@ test("GET /task-drafts/pending returns pending drafts and validates params", asy
   );
   const res = await taskDraftsPendingRoute(req, services as never);
   expect(res.status).toBe(200);
-  const body = (await res.json()) as { drafts: Array<{ event_id: string }> };
+  const body = (await res.json()) as { drafts: { event_id: string }[] };
   expect(body.drafts).toHaveLength(1);
   expect(body.drafts[0]!.event_id).toBe("e1");
 });
@@ -86,7 +86,7 @@ test("GET /task-drafts/pending-escalations returns escalations and validates par
   const res = await taskDraftsPendingEscalationsRoute(req, services as never);
   expect(res.status).toBe(200);
   const body = (await res.json()) as {
-    escalations: Array<{ event_id: string; prompt: string; escalation_reason: string }>;
+    escalations: { event_id: string; prompt: string; escalation_reason: string }[];
   };
   expect(body.escalations).toHaveLength(1);
   expect(body.escalations[0]).toMatchObject({

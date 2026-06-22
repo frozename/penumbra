@@ -1,13 +1,16 @@
-import { expect, test, beforeEach } from "bun:test";
-import { Database } from "bun:sqlite";
 import {
-  migrate,
-  loadSqliteVec,
-  HandoffWriter,
-  HandoffReader,
+  buildServices,
   DispatchEventLog,
+  HandoffReader,
+  HandoffWriter,
+  loadSqliteVec,
+  migrate,
+  type Services,
 } from "@penumbra/core";
-import type { Services } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { handoffsListPendingRoute } from "../../src/routes/handoffs.js";
 
 try {
@@ -19,21 +22,25 @@ try {
 }
 
 function makeServices(db: Database): Services {
-  return {
+  const services = buildServices({
+    env: {},
+    input: {},
+    storageRoot: "/tmp/handoffs-use-worktree-contract-test",
     db,
-    handoffWriter: new HandoffWriter({ db }),
-    handoffReader: new HandoffReader({ db }),
-    dispatchEventLog: new DispatchEventLog(db),
-    machineId: { get: () => "machine-test" },
+    embedder: new TestEmbedder({ dim: 384 }),
     uuid: (() => {
       let n = 0;
-      return () => `evt-${++n}`;
+      return (): string => {
+        n += 1;
+        return `evt-${String(n)}`;
+      };
     })(),
     clock: () => new Date("2026-05-20T00:00:00.000Z"),
-    t0Writer: { write: () => {} },
-    redactor: { redact: (s: unknown) => s },
-    log: { info: () => {}, warn: () => {} },
-  } as unknown as Services;
+  });
+  services.handoffWriter = new HandoffWriter({ db });
+  services.handoffReader = new HandoffReader({ db });
+  services.dispatchEventLog = new DispatchEventLog(db);
+  return services;
 }
 
 test("GET /handoffs returns use_worktree as boolean|null, never integer", async () => {
@@ -71,7 +78,7 @@ test("GET /handoffs returns use_worktree as boolean|null, never integer", async 
   );
   expect(res.status).toBe(200);
   const body = (await res.json()) as {
-    handoffs: Array<{ handoff_id: string; use_worktree: unknown }>;
+    handoffs: { handoff_id: string; use_worktree: unknown }[];
   };
 
   const byId = Object.fromEntries(body.handoffs.map((h) => [h.handoff_id, h.use_worktree]));
@@ -115,7 +122,7 @@ test("GET /handoffs?status=pending coerces use_worktree via listByStatus path", 
   );
   expect(res.status).toBe(200);
   const body = (await res.json()) as {
-    handoffs: Array<{ handoff_id: string; use_worktree: unknown }>;
+    handoffs: { handoff_id: string; use_worktree: unknown }[];
   };
 
   const lbs = body.handoffs.filter((h) => h.handoff_id.startsWith("h-lbs-"));

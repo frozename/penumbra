@@ -1,13 +1,20 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { buildServices, loadSqliteVec, migrate } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { memoryVerifyAuthorizeRoute } from "../../src/routes/memory-verify.js";
 
-function setup() {
+function setup(): {
+  db: Database;
+  root: string;
+  reviewsDir: string;
+  services: ReturnType<typeof buildServices>;
+  stop: () => void;
+} {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
@@ -29,7 +36,9 @@ function setup() {
     root,
     reviewsDir,
     services,
-    stop: () => rmSync(root, { recursive: true, force: true }),
+    stop: (): void => {
+      rmSync(root, { recursive: true, force: true });
+    },
   };
 }
 
