@@ -1,5 +1,3 @@
-import { beforeAll, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import {
   buildServices,
   loadSqliteVec,
@@ -8,12 +6,17 @@ import {
   type Services,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { beforeAll, expect, test } from "bun:test";
+
 import { chainsStartRoute } from "../../src/routes/chains.js";
 
 if (process.platform === "darwin") {
   try {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-  } catch {}
+  } catch {
+    // Optional Homebrew SQLite is unavailable in some CI images.
+  }
 }
 
 // strict-mode env can leak from a live maestro shell; clear it here so test fixtures stay deterministic
@@ -33,17 +36,19 @@ function tempServices(): Services {
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date("2026-05-05T00:00:00Z"),
-    uuid: () => `id-${++n}`,
+    uuid: () => `id-${String(++n)}`,
     agentRegistry: ["planner"],
     worktreeRootDir: "/tmp/penumbra-chain-start-budget-worktrees",
     mainRepoDir: "/tmp/penumbra-chain-start-budget-main",
   });
   services.watchdog = {
-    recordHeartbeat: () => {},
-    hasActiveWorker: () => true,
-    getStaleWorkers: () => [],
-    getStaleHeartbeatAges: () => [],
-    tick: async () => {},
+    recordHeartbeat: (): void => {
+      /* no-op */
+    },
+    hasActiveWorker: (): boolean => true,
+    getStaleWorkers: (): string[] => [],
+    getStaleHeartbeatAges: (): { worker_id: string; last_seen_age_ms: number }[] => [],
+    tick: (): Promise<void> => Promise.resolve(),
   };
   return services;
 }
@@ -116,7 +121,7 @@ function seedTask(db: Database, taskId: string): void {
 
 test("POST /chains/start returns 429 BudgetExceeded when parent maestro session sub-dispatch budget is exhausted", async () => {
   const services = tempServices();
-  const sessions = new MaestroSessionWriter({ db: services.db, now: () => 0 });
+  const sessions = new MaestroSessionWriter({ db: services.db, now: (): number => 0 });
   seedTask(services.db, "task-budgeted");
   sessions.start({
     task_id: "task-budgeted",

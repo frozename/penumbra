@@ -1,18 +1,34 @@
-import { beforeAll, expect, test, afterEach } from "bun:test";
-import { Database } from "bun:sqlite";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { afterEach, beforeAll, expect, test } from "bun:test";
+
 import { chainsStartRoute } from "../../src/routes/chains.js";
 
 try {
   if (process.platform === "darwin")
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-} catch {}
+} catch {
+  // Optional Homebrew SQLite is unavailable in some CI images.
+}
 
 // strict-mode env can leak from a live maestro shell; clear it here so test fixtures stay deterministic
 beforeAll(() => {
   delete process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
 });
+
+type RecursionErrorBody = {
+  error: { code: string; depth: number; cap: number };
+};
+
+type ChainStartOkBody = {
+  handoff_id: string;
+};
+
+type HandoffRow = {
+  handoff_id: string;
+  parent_handoff_id: string | null;
+};
 
 function tempServices(): Services {
   const db = new Database(":memory:");
@@ -26,13 +42,15 @@ function tempServices(): Services {
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date("2026-04-27T00:00:00Z"),
-    uuid: () => `id-${++n}`,
+    uuid: () => `id-${String(++n)}`,
     agentRegistry: ["planner", "executor"],
   });
   services.watchdog = {
-    recordHeartbeat: () => {},
-    hasActiveWorker: () => true,
-    tick: async () => {},
+    recordHeartbeat: (): void => {
+      /* no-op */
+    },
+    hasActiveWorker: (): boolean => true,
+    tick: (): Promise<void> => Promise.resolve(),
   };
   return services;
 }
@@ -43,7 +61,7 @@ function seedChain(services: Services, depth: number): string {
   let prev: string | null = null;
   let last = "";
   for (let i = 0; i < depth; i++) {
-    const id = `seed-h-${i}`;
+    const id = `seed-h-${String(i)}`;
     services.db
       .prepare(
         `
@@ -108,7 +126,7 @@ test("chain.start with parent at depth 7 (newDepth=8) rejects at cap=8", async (
     services,
   );
   expect(res.status).toBe(409);
-  const body = await res.json();
+  const body = (await res.json()) as RecursionErrorBody;
   expect(body.error.code).toBe("recursion_depth_exceeded");
   expect(body.error.depth).toBe(8);
   expect(body.error.cap).toBe(8);
@@ -165,11 +183,11 @@ test("chain.start persists parent_handoff_id when provided", async () => {
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = (await res.json()) as ChainStartOkBody;
   const handoff = services.db
-    .query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
+    .query<HandoffRow, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
     .get(body.handoff_id);
-  expect(handoff.parent_handoff_id).toBe(parentLeaf);
+  expect(handoff?.parent_handoff_id).toBe(parentLeaf);
 });
 
 test("chain.start inherits isolated_install from an isolated parent when child omits it", async () => {
@@ -206,7 +224,7 @@ test("chain.start inherits isolated_install from an isolated parent when child o
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = (await res.json()) as ChainStartOkBody;
   const handoff = services.db
     .query<
       { isolated_install: number | null },

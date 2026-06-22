@@ -1,20 +1,39 @@
-import { beforeEach, describe, expect, it } from "bun:test";
-import { Database } from "bun:sqlite";
 import { loadSqliteVec, migrate, type Services } from "@penumbra/core";
-import { createDaemonFetchHandler } from "../../src/serve.js";
+import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, it } from "bun:test";
+
 import {
+  routingBiasClearRoute,
   routingBiasListRoute,
   routingBiasSetRoute,
-  routingBiasClearRoute,
 } from "../../src/routes/routing-bias.js";
+import { createDaemonFetchHandler } from "../../src/serve.js";
 
 if (process.platform === "darwin") {
   try {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-  } catch {}
+  } catch {
+    // Optional Homebrew SQLite is unavailable in some CI images.
+  }
 }
 
 const NOW = "2026-05-01T12:00:00Z";
+
+type BiasRow = {
+  bias_id: string;
+  scope: string;
+  value: string;
+  mode: string;
+  weight: number;
+  reason: string | null;
+  expires_at: string;
+  time_remaining?: string;
+};
+
+type BiasSetResponse = BiasRow;
+type BiasListResponse = { biases: BiasRow[] };
+type BiasClearResponse = { cleared_count: number };
+type ErrorResponse = { error: { code: string } };
 
 function freshDb(): Database {
   const db = new Database(":memory:");
@@ -25,12 +44,31 @@ function freshDb(): Database {
 
 function makeServices(db: Database): Services {
   let tick = 0;
-  return {
+  const stub = {
     db,
-    clock: () => new Date(new Date(NOW).getTime() + tick++ * 1000),
-    uuid: () => "test-uuid",
-    machineId: { get: () => "test-machine" },
-  } as unknown as Services;
+    clock: (): Date => new Date(new Date(NOW).getTime() + tick++ * 1000),
+    uuid: (): string => "test-uuid",
+    machineId: { get: (): string => "test-machine" },
+  };
+  // The routing-bias routes touch only services.db, services.clock, services.uuid,
+  // and services.machineId; the full daemon service graph is irrelevant here.
+  return stub as unknown as Services;
+}
+
+async function readSetBody(res: Response): Promise<BiasSetResponse> {
+  return (await res.json()) as BiasSetResponse;
+}
+
+async function readListBody(res: Response): Promise<BiasListResponse> {
+  return (await res.json()) as BiasListResponse;
+}
+
+async function readClearBody(res: Response): Promise<BiasClearResponse> {
+  return (await res.json()) as BiasClearResponse;
+}
+
+async function readErrorBody(res: Response): Promise<ErrorResponse> {
+  return (await res.json()) as ErrorResponse;
 }
 
 describe("POST /routing/bias (set)", () => {
@@ -57,7 +95,7 @@ describe("POST /routing/bias (set)", () => {
     });
     const res = await routingBiasSetRoute(req, services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readSetBody(res);
     expect(body.scope).toBe("agent");
     expect(body.value).toBe("alpha");
     expect(body.mode).toBe("boost");
@@ -80,7 +118,7 @@ describe("POST /routing/bias (set)", () => {
     });
     const res = await routingBiasSetRoute(req, services);
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readErrorBody(res);
     expect(body.error.code).toBe("invalid_params");
   });
 
@@ -96,7 +134,7 @@ describe("POST /routing/bias (set)", () => {
     });
     const res = await routingBiasSetRoute(req, services);
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readErrorBody(res);
     expect(body.error.code).toBe("invalid_params");
   });
 
@@ -114,7 +152,7 @@ describe("POST /routing/bias (set)", () => {
       body: JSON.stringify(payload),
     });
     const res1 = await routingBiasSetRoute(req1, services);
-    const body1 = await res1.json();
+    const body1 = await readSetBody(res1);
 
     const req2 = new Request("http://x/routing/bias", {
       method: "POST",
@@ -122,7 +160,7 @@ describe("POST /routing/bias (set)", () => {
       body: JSON.stringify({ ...payload, weight: 2.0 }),
     });
     const res2 = await routingBiasSetRoute(req2, services);
-    const body2 = await res2.json();
+    const body2 = await readSetBody(res2);
 
     expect(body2.bias_id).toBe(body1.bias_id);
     expect(body2.weight).toBe(2.0);
@@ -137,7 +175,7 @@ describe("POST /routing/bias (set)", () => {
       });
       const res = await routingBiasSetRoute(req, services);
       expect(res.status).toBe(400);
-      const body = await res.json();
+      const body = await readErrorBody(res);
       expect(body.error.code).toBe("invalid_params");
     }
   });
@@ -155,7 +193,7 @@ describe("POST /routing/bias (set)", () => {
     });
     const res = await routingBiasSetRoute(req, services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readSetBody(res);
     expect(body.value).toBe("nvidia-nim");
   });
 
@@ -188,7 +226,7 @@ describe("GET /routing/bias (list)", () => {
     const req = new Request("http://x/routing/bias");
     const res = await routingBiasListRoute(req, services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readListBody(res);
     expect(body.biases).toEqual([]);
   });
 
@@ -221,12 +259,12 @@ describe("GET /routing/bias (list)", () => {
     const req = new Request("http://x/routing/bias");
     const res = await routingBiasListRoute(req, services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readListBody(res);
     expect(body.biases).toHaveLength(2);
-    expect(body.biases[0].scope).toBe("provider");
-    expect(body.biases[1].scope).toBe("agent");
-    expect(body.biases[0].time_remaining).toBeDefined();
-    expect(typeof body.biases[0].time_remaining).toBe("string");
+    expect(body.biases[0]?.scope).toBe("provider");
+    expect(body.biases[1]?.scope).toBe("agent");
+    expect(body.biases[0]?.time_remaining).toBeDefined();
+    expect(typeof body.biases[0]?.time_remaining).toBe("string");
   });
 
   it("filters by scope", async () => {
@@ -257,9 +295,9 @@ describe("GET /routing/bias (list)", () => {
     const req = new Request("http://x/routing/bias?scope=agent");
     const res = await routingBiasListRoute(req, services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readListBody(res);
     expect(body.biases).toHaveLength(1);
-    expect(body.biases[0].scope).toBe("agent");
+    expect(body.biases[0]?.scope).toBe("agent");
   });
 
   it("filters by value", async () => {
@@ -290,9 +328,9 @@ describe("GET /routing/bias (list)", () => {
     const req = new Request("http://x/routing/bias?value=alpha");
     const res = await routingBiasListRoute(req, services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readListBody(res);
     expect(body.biases).toHaveLength(1);
-    expect(body.biases[0].value).toBe("alpha");
+    expect(body.biases[0]?.value).toBe("alpha");
   });
 
   it("excludes expired biases", async () => {
@@ -311,7 +349,7 @@ describe("GET /routing/bias (list)", () => {
     const req = new Request("http://x/routing/bias");
     const res = await routingBiasListRoute(req, services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readListBody(res);
     expect(body.biases).toEqual([]);
   });
 });
@@ -333,7 +371,7 @@ describe("POST /routing/bias/clear", () => {
     });
     const res = await routingBiasClearRoute(req, services);
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readErrorBody(res);
     expect(body.error.code).toBe("invalid_params");
   });
 
@@ -357,12 +395,12 @@ describe("POST /routing/bias/clear", () => {
     });
     const res = await routingBiasClearRoute(clearReq, services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readClearBody(res);
     expect(body.cleared_count).toBe(1);
 
     const listReq = new Request("http://x/routing/bias");
     const listRes = await routingBiasListRoute(listReq, services);
-    const listBody = await listRes.json();
+    const listBody = await readListBody(listRes);
     expect(listBody.biases).toEqual([]);
   });
 
@@ -378,7 +416,7 @@ describe("POST /routing/bias/clear", () => {
       }),
     });
     const setRes = await routingBiasSetRoute(setReq, services);
-    const setBody = await setRes.json();
+    const setBody = await readSetBody(setRes);
 
     const clearReq = new Request("http://x/routing/bias/clear", {
       method: "POST",
@@ -387,7 +425,7 @@ describe("POST /routing/bias/clear", () => {
     });
     const res = await routingBiasClearRoute(clearReq, services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readClearBody(res);
     expect(body.cleared_count).toBe(1);
   });
 
@@ -411,7 +449,7 @@ describe("POST /routing/bias/clear", () => {
     });
     const res = await routingBiasClearRoute(clearReq, services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readClearBody(res);
     expect(body.cleared_count).toBe(1);
   });
 });
@@ -447,7 +485,7 @@ describe("serve.ts wires authenticated routing bias routes", () => {
       }),
     );
     expect(setRes.status).toBe(200);
-    const setBody = await setRes.json();
+    const setBody = await readSetBody(setRes);
     expect(setBody.bias_id).toBeDefined();
     expect(setBody.weight).toBe(1.5);
 
@@ -458,9 +496,9 @@ describe("serve.ts wires authenticated routing bias routes", () => {
       }),
     );
     expect(listRes.status).toBe(200);
-    const listBody = await listRes.json();
+    const listBody = await readListBody(listRes);
     expect(listBody.biases).toHaveLength(1);
-    expect(listBody.biases[0].time_remaining).toBeDefined();
+    expect(listBody.biases[0]?.time_remaining).toBeDefined();
 
     // Clear
     const clearRes = await handler(
@@ -474,7 +512,7 @@ describe("serve.ts wires authenticated routing bias routes", () => {
       }),
     );
     expect(clearRes.status).toBe(200);
-    const clearBody = await clearRes.json();
+    const clearBody = await readClearBody(clearRes);
     expect(clearBody.cleared_count).toBe(1);
 
     // Verify list is empty
@@ -483,7 +521,7 @@ describe("serve.ts wires authenticated routing bias routes", () => {
         headers: { authorization: "Bearer tok" },
       }),
     );
-    const listBody2 = await listRes2.json();
+    const listBody2 = await readListBody(listRes2);
     expect(listBody2.biases).toEqual([]);
   });
 });

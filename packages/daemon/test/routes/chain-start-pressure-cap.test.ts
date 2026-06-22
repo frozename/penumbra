@@ -1,21 +1,52 @@
-import { beforeAll, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import {
   AgentPerformanceWriter,
+  type AgentTaskType,
   buildServices,
   loadSqliteVec,
   migrate,
-  type AgentTaskType,
+  type ProviderQuota,
   type Services,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { beforeAll, expect, test } from "bun:test";
+
 import { chainStartInternal } from "../../src/routes/chains.js";
 
 if (process.platform === "darwin") {
   try {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-  } catch {}
+  } catch {
+    // Optional Homebrew SQLite is unavailable in some CI images.
+  }
 }
+
+type AgentchatConfig = NonNullable<Services["agentchatConfig"]>;
+type AgentchatAgent = NonNullable<AgentchatConfig["agents"]>[number];
+
+type T0Event = Parameters<Services["t0Writer"]["write"]>[0];
+
+type PressureCapErrorBody = {
+  error: {
+    code: string;
+    subject: "maestro" | "sub_agent";
+    agent_name: string;
+    provider: string;
+    window_label: string;
+    used_pct: number;
+    cap_pct: number;
+    snapshot_state: "fresh" | "stale_warm";
+    snapshot_age_seconds: number;
+    resets_at: number | null;
+    earliest_resets_at: number | null;
+  };
+};
+
+type ChainStartOkBody = { handoff_id: string };
+
+type ClassifierRetryBody = { error: { code: string } };
+
+type FallbackEventRow = { payload_json: string };
 
 // strict-mode env can leak from a live maestro shell; clear it here so test fixtures stay deterministic
 beforeAll(() => {
@@ -28,10 +59,11 @@ type AgentConfig = {
   subscription_provider?: string;
 };
 
-type ProviderQuotaWithPressureCaps = {
-  provider: string;
-  pressure_caps?: Record<string, { warn: number | null; refuse: number }>;
-};
+type ProviderQuotaWithPressureCaps = ProviderQuota;
+
+function toAgentchatAgent(agent: AgentConfig): AgentchatAgent {
+  return { ...agent, roles: [] };
+}
 
 const NOW = new Date("2026-05-08T01:00:00Z");
 
@@ -51,18 +83,20 @@ function tempServices(opts: {
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date(NOW),
-    uuid: () => `id-${++n}`,
+    uuid: () => `id-${String(++n)}`,
     agentRegistry: opts.agentRegistry ?? opts.agents.map((agent) => agent.name),
     worktreeRootDir: "/tmp/penumbra-chain-start-pressure-cap-worktrees",
     mainRepoDir: "/tmp/penumbra-chain-start-pressure-cap-main",
-    providerQuotas: opts.providerQuotas as any,
+    providerQuotas: opts.providerQuotas,
   });
   services.watchdog = {
-    recordHeartbeat: () => {},
-    hasActiveWorker: () => true,
-    getStaleWorkers: () => [],
-    getStaleHeartbeatAges: () => [],
-    tick: async () => {},
+    recordHeartbeat: (): void => {
+      /* no-op */
+    },
+    hasActiveWorker: (): boolean => true,
+    getStaleWorkers: (): string[] => [],
+    getStaleHeartbeatAges: (): { worker_id: string; last_seen_age_ms: number }[] => [],
+    tick: (): Promise<void> => Promise.resolve(),
   };
   attachRuntimeConfig(services, opts.agents, opts.providerQuotas ?? []);
   return services;
@@ -73,12 +107,10 @@ function attachRuntimeConfig(
   agents: AgentConfig[],
   providerQuotas: ProviderQuotaWithPressureCaps[],
 ): void {
-  (services as Services & { agentchatConfig?: any }).agentchatConfig = {
-    agents,
-    default_roles: {},
-    providers: providerQuotas,
+  services.agentchatConfig = {
+    agents: agents.map(toAgentchatAgent),
   };
-  services.providerQuotas = providerQuotas as any;
+  services.providerQuotas = providerQuotas;
 }
 
 function seedPressureSnapshot(
@@ -125,7 +157,7 @@ function seedPressureSnapshot(
 
 function seedSnapshots(
   services: Services,
-  snapshots: Array<Parameters<typeof seedPressureSnapshot>[1]>,
+  snapshots: Parameters<typeof seedPressureSnapshot>[1][],
 ): void {
   for (const snapshot of snapshots) {
     seedPressureSnapshot(services, snapshot);
@@ -223,9 +255,9 @@ function startChain(
   );
 }
 
-function fallbackEvents(services: Services): Array<{ payload_json: string }> {
+function fallbackEvents(services: Services): FallbackEventRow[] {
   return services.db
-    .query<{ payload_json: string }, []>(
+    .query<FallbackEventRow, []>(
       `SELECT payload_json
      FROM t0_events
      WHERE event_type = 'subscription-pressure-fallback'
@@ -234,36 +266,20 @@ function fallbackEvents(services: Services): Array<{ payload_json: string }> {
     .all();
 }
 
-function pressureCapBody(response: Response): Promise<{
-  error: {
-    code: string;
-    subject: "maestro" | "sub_agent";
-    agent_name: string;
-    provider: string;
-    window_label: string;
-    used_pct: number;
-    cap_pct: number;
-    snapshot_state: "fresh" | "stale_warm";
-    snapshot_age_seconds: number;
-    resets_at: number | null;
-    earliest_resets_at: number | null;
-  };
-}> {
-  return response.json() as Promise<{
-    error: {
-      code: string;
-      subject: "maestro" | "sub_agent";
-      agent_name: string;
-      provider: string;
-      window_label: string;
-      used_pct: number;
-      cap_pct: number;
-      snapshot_state: "fresh" | "stale_warm";
-      snapshot_age_seconds: number;
-      resets_at: number | null;
-      earliest_resets_at: number | null;
-    };
-  }>;
+function parseFallbackPayloads(services: Services): unknown[] {
+  return fallbackEvents(services).map((event): unknown => JSON.parse(event.payload_json));
+}
+
+function pressureCapBody(response: Response): Promise<PressureCapErrorBody> {
+  return response.json() as Promise<PressureCapErrorBody>;
+}
+
+async function readChainStartBody(response: Response): Promise<ChainStartOkBody> {
+  return (await response.json()) as ChainStartOkBody;
+}
+
+async function readClassifierRetryError(response: Response): Promise<ClassifierRetryBody> {
+  return (await response.json()) as ClassifierRetryBody;
 }
 
 test("no parent_handoff_id skips the pressure gate even with high snapshots", async () => {
@@ -357,12 +373,14 @@ test("maestro warn band does not block dispatch or emit a trip event", async () 
     },
   ]);
 
-  const tripEvents: unknown[] = [];
-  const originalWrite = services.t0Writer.write.bind(services.t0Writer);
-  services.t0Writer.write = ((event: Parameters<typeof services.t0Writer.write>[0]) => {
+  const tripEvents: T0Event[] = [];
+  const originalWrite: Services["t0Writer"]["write"] = services.t0Writer.write.bind(
+    services.t0Writer,
+  );
+  services.t0Writer.write = (event: T0Event): ReturnType<Services["t0Writer"]["write"]> => {
     if (event.event_type === "subscription-pressure-cap-trip") tripEvents.push(event);
     return originalWrite(event);
-  }) as typeof services.t0Writer.write;
+  };
 
   const res = await startChain(services, {
     initial_agent: "planner",
@@ -478,7 +496,7 @@ test("sub-agent refuse + no recommendations returns 400 and emits exhausted fall
     },
   });
 
-  const events = fallbackEvents(services).map((event) => JSON.parse(event.payload_json));
+  const events = parseFallbackPayloads(services);
   expect(events).toEqual([
     expect.objectContaining({
       parent_handoff_id: "h-parent-fallback-none",
@@ -552,14 +570,14 @@ test("sub-agent refuse falls back to top recommendation when pressure passes", a
     .get(body.handoff_id);
   expect(handoff?.to_agent).toBe("codex");
 
-  const events = fallbackEvents(services).map((event) => JSON.parse(event.payload_json));
+  const events = parseFallbackPayloads(services);
   expect(events).toEqual([
     expect.objectContaining({
       original_agent: "planner",
       candidate_agent: "codex",
       candidate_state: "selected",
       attempt_index: 0,
-      ranking: expect.objectContaining({ samples: 1 }),
+      ranking: expect.objectContaining({ samples: 1 }) as unknown,
     }),
     expect.objectContaining({
       original_agent: "planner",
@@ -612,7 +630,9 @@ test("classifier-declined parent falls back exactly once to the top recommendati
     task_type: "implement_substantial",
   });
   expect(retryRes.status).toBe(409);
-  expect((await retryRes.json()).error.code).toBe("classifier_decline_retry_exhausted");
+  expect((await readClassifierRetryError(retryRes)).error.code).toBe(
+    "classifier_decline_retry_exhausted",
+  );
 });
 
 test("sub-agent refuse skips refused top-1 and selects top-2 fallback", async () => {
@@ -691,7 +711,7 @@ test("sub-agent refuse skips refused top-1 and selects top-2 fallback", async ()
     .get(body.handoff_id);
   expect(handoff?.to_agent).toBe("gemini");
 
-  const events = fallbackEvents(services).map((event) => JSON.parse(event.payload_json));
+  const events = parseFallbackPayloads(services);
   expect(events).toEqual([
     expect.objectContaining({
       original_agent: "planner",
@@ -805,7 +825,7 @@ test("sub-agent refuse with all fallbacks refusing returns 400 and emits exhaust
     },
   });
 
-  const events = fallbackEvents(services).map((event) => JSON.parse(event.payload_json));
+  const events = parseFallbackPayloads(services);
   expect(events).toEqual([
     expect.objectContaining({
       original_agent: "planner",

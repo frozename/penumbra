@@ -1,31 +1,81 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { tmpdir } from "node:os";
-import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import {
+  buildServices,
+  loadSqliteVec,
+  migrate,
+  qualityStatus,
+  type Services,
+} from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { qualityStatus } from "@penumbra/core";
-import { createDaemonFetchHandler } from "../../src/serve.js";
-import { qualityStatusRoute } from "../../src/routes/quality.js";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+
 import {
   EFFICACY_RUNNER_HEARTBEAT_STALE_MS,
-  memoryEfficacyRecentRoute,
   memoryEfficacyRebuildRoute,
+  memoryEfficacyRecentRoute,
 } from "../../src/routes/memory.js";
+import { qualityStatusRoute } from "../../src/routes/quality.js";
+import { createDaemonFetchHandler } from "../../src/serve.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  // Optional Homebrew SQLite is unavailable in some CI images.
+}
 
-function startTestDaemon(): {
+type QualityStatusBody = {
+  generated_at: string;
+  lanes: {
+    total: number;
+    by_status: Record<string, number>;
+    by_class: Record<string, number>;
+    last_close_at: string | null;
+  };
+  adversarial: {
+    window_hours: number;
+    runs_window: number;
+    success_window: number;
+    failure_window: number;
+    avg_latency_ms_window: number | null;
+    last_run_at: string | null;
+  };
+  agent_recommendations: { task_type: string; recent: unknown[] };
+  memory_efficacy: { window_hours: number; by_class: Record<string, number> };
+  subscription_pressure: { snapshots: unknown[]; warnings: unknown[] };
+  errors?: string[];
+};
+
+type QualityStatusDegradedBody = {
+  generated_at: string;
+  lanes: null;
+  adversarial: null;
+  agent_recommendations: null;
+  memory_efficacy: null;
+  subscription_pressure: null;
+  errors: string[];
+};
+
+type ValidationErrorBody = {
+  error: { code: string; field_errors: { path: (string | number)[]; message: string }[] };
+};
+
+type BackendUnavailableBody = {
+  error: { code: string; message: string };
+};
+
+interface TestDaemon {
   fetch: (path: string, init?: RequestInit) => Promise<Response>;
   services: Services;
   token: string;
   stop: () => void;
-} {
+}
+
+function startTestDaemon(): TestDaemon {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
@@ -43,22 +93,26 @@ function startTestDaemon(): {
   const handler = createDaemonFetchHandler({ services, token });
 
   return {
-    fetch: (path, init) => handler(new Request(`http://x${path}`, init)),
+    fetch: (path, init): Promise<Response> => handler(new Request(`http://x${path}`, init)),
     services,
     token,
-    stop: () => {
+    stop: (): void => {
       try {
         services.supervisor.stopAll();
-      } catch {}
+      } catch {
+        // Supervisor stop is best-effort during teardown.
+      }
       try {
         db.close();
-      } catch {}
+      } catch {
+        // Database close is best-effort during teardown.
+      }
       rmSync(root, { recursive: true, force: true });
     },
   };
 }
 
-test("quality status composes lane, adversarial, recommendation, memory, and pressure snapshots", async () => {
+test("quality status composes lane, adversarial, recommendation, memory, and pressure snapshots", () => {
   const daemon = startTestDaemon();
   try {
     const now = Date.now();
@@ -149,27 +203,7 @@ test("quality status composes lane, adversarial, recommendation, memory, and pre
     const body = qualityStatus(daemon.services.db, {
       window_hours: 24,
       min_samples: 2,
-    }) as {
-      generated_at: string;
-      lanes: {
-        total: number;
-        by_status: Record<string, number>;
-        by_class: Record<string, number>;
-        last_close_at: string | null;
-      };
-      adversarial: {
-        window_hours: number;
-        runs_window: number;
-        success_window: number;
-        failure_window: number;
-        avg_latency_ms_window: number | null;
-        last_run_at: string | null;
-      };
-      agent_recommendations: { task_type: string; recent: unknown[] };
-      memory_efficacy: { window_hours: number; by_class: Record<string, number> };
-      subscription_pressure: { snapshots: unknown[]; warnings: unknown[] };
-      errors?: string[];
-    };
+    }) as QualityStatusBody;
 
     expect(body.generated_at).toBeTruthy();
     expect(body.lanes.total).toBe(1);
@@ -188,7 +222,7 @@ test("quality status composes lane, adversarial, recommendation, memory, and pre
   }
 });
 
-test("quality status honors task_type query override", async () => {
+test("quality status honors task_type query override", () => {
   const daemon = startTestDaemon();
   try {
     const body = qualityStatus(daemon.services.db, { task_type: "review_adversarial" });
@@ -201,12 +235,10 @@ test("quality status honors task_type query override", async () => {
 test("quality status degrades each section independently when reads fail", async () => {
   const daemon = startTestDaemon();
   try {
-    daemon.services.db.exec(`
-      DROP TABLE IF EXISTS lane_ledger;
-      DROP TABLE IF EXISTS t0_events;
-      DROP TABLE IF EXISTS agent_performance;
-      DROP TABLE IF EXISTS memory_efficacy_cache;
-    `);
+    daemon.services.db.run("DROP TABLE IF EXISTS lane_ledger");
+    daemon.services.db.run("DROP TABLE IF EXISTS t0_events");
+    daemon.services.db.run("DROP TABLE IF EXISTS agent_performance");
+    daemon.services.db.run("DROP TABLE IF EXISTS memory_efficacy_cache");
 
     const response = await qualityStatusRoute(
       new Request("http://x/quality/status"),
@@ -214,15 +246,7 @@ test("quality status degrades each section independently when reads fail", async
     );
     expect(response.status).toBe(200);
 
-    const body = (await response.json()) as {
-      generated_at: string;
-      lanes: null;
-      adversarial: null;
-      agent_recommendations: null;
-      memory_efficacy: null;
-      subscription_pressure: null;
-      errors: string[];
-    };
+    const body = (await response.json()) as QualityStatusDegradedBody;
 
     expect(body.generated_at).toBeTruthy();
     expect(body.lanes).toBeNull();
@@ -336,9 +360,7 @@ test("POST /memory/efficacy/recent validates since as an ISO timestamp", async (
     services,
   );
   expect(invalidRes.status).toBe(400);
-  const invalidBody = (await invalidRes.json()) as {
-    error: { code: string; field_errors: Array<{ path: Array<string | number>; message: string }> };
-  };
+  const invalidBody = (await invalidRes.json()) as ValidationErrorBody;
   expect(invalidBody.error.code).toBe("validation_error");
   expect(invalidBody.error.field_errors[0]?.path).toEqual(["since"]);
 
@@ -384,7 +406,8 @@ test("memory efficacy rebuild returns backend_unavailable when runner heartbeat 
   });
   const rebuildRes = await memoryEfficacyRebuildRoute(rebuildReq, services);
   expect(rebuildRes.status).toBe(503);
-  await expect(rebuildRes.json()).resolves.toEqual({
+  const rebuildBody = (await rebuildRes.json()) as BackendUnavailableBody;
+  expect(rebuildBody).toEqual({
     error: {
       code: "backend_unavailable",
       message: "no live job runner",
