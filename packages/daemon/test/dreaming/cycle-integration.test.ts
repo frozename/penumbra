@@ -1,9 +1,11 @@
-import { expect, it, beforeAll } from "bun:test";
+import { applySchema, loadSqliteVec } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec, applySchema } from "@penumbra/core";
+import { beforeAll, expect, it } from "bun:test";
+
+import type { DreamConfig } from "../../src/dreaming/config.js";
+
 import { runDreamCycle } from "../../src/dreaming/cycle.js";
 import { makeFakeJudgePool } from "../../src/dreaming/judge-pool.js";
-import type { DreamConfig } from "../../src/dreaming/config.js";
 
 try {
   if (process.platform === "darwin") {
@@ -47,8 +49,14 @@ function seedUnpromotedRollups(db: Database, n: number): void {
     db.prepare(
       `INSERT INTO t1_rollups(rollup_id, user_id, session_id, started_at, n_events, first_prompt_excerpt)
        VALUES(?, 'test-user', ?, '2026-01-01T00:00:00Z', 1, ?)`,
-    ).run(`R${i + 1}`, `session-${i + 1}`, excerpt);
+    ).run(`R${String(i + 1)}`, `session-${String(i + 1)}`, excerpt);
   }
+}
+
+interface DreamActionRow {
+  confidence: number;
+  status: string;
+  target_ids: string;
 }
 
 it("P1 with REAL judge produces well-formed dream_actions rows (no parse failure)", async () => {
@@ -56,17 +64,17 @@ it("P1 with REAL judge produces well-formed dream_actions rows (no parse failure
   seedUnpromotedRollups(db, 2);
   const realJudge = makeFakeJudgePool([{ promote: true, confidence: 1 }]);
   const cycleId = await runDreamCycle(db, testConfig(), { judgePool: realJudge });
-  const actions = db.prepare(`SELECT * FROM dream_actions WHERE phase='P1'`).all() as Array<{
-    status: string;
-    confidence: number;
-    target_ids: string;
-  }>;
+  const actions = db
+    .prepare<DreamActionRow, []>(`SELECT * FROM dream_actions WHERE phase='P1'`)
+    .all();
   expect(actions.length).toBeGreaterThanOrEqual(1);
   for (const a of actions) {
     expect(["queued", "auto_applied"]).toContain(a.status);
     expect(a.confidence).toBeGreaterThanOrEqual(0);
     expect(a.confidence).toBeLessThanOrEqual(1);
     // target_ids must be valid JSON array
-    expect(() => JSON.parse(a.target_ids)).not.toThrow();
+    expect(() => {
+      JSON.parse(a.target_ids);
+    }).not.toThrow();
   }
 });

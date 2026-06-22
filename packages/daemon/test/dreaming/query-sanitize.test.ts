@@ -1,4 +1,5 @@
-import { expect, it, describe } from "bun:test";
+import { describe, expect, it } from "bun:test";
+
 import { sanitizeTitleForQuery } from "../../src/dreaming/query-sanitize.js";
 
 describe("dreaming/query-sanitize", () => {

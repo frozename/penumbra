@@ -1,9 +1,11 @@
-import { describe, it, expect, beforeAll } from "bun:test";
-import { Database } from "bun:sqlite";
 import { applySchema, loadSqliteVec } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { beforeAll, describe, expect, it } from "bun:test";
+
+import type { DreamConfig } from "../../src/dreaming/config.js";
+
 import { runDreamCycle } from "../../src/dreaming/cycle.js";
 import { revertDreamAction } from "../../src/dreaming/reembed.js";
-import type { DreamConfig } from "../../src/dreaming/config.js";
 
 try {
   if (process.platform === "darwin") {
@@ -40,8 +42,14 @@ function makeConfig(overrides?: Partial<DreamConfig>): DreamConfig {
     pc2AutoThreshold: 2.0,
     contentQualityThreshold: 0.5,
     curatorEnabled: true,
+    rewriterEnabled: false,
+    rewriterBaseUrl: "",
+    rewriterModel: "",
+    rewriterTimeoutMs: 30_000,
+    rewriterCacheTtlMs: 86_400_000,
+    rewriterConcurrency: 1,
     ...overrides,
-  } as DreamConfig;
+  };
 }
 
 function openTestDb(): Database {
@@ -49,6 +57,29 @@ function openTestDb(): Database {
   loadSqliteVec(db);
   applySchema(db, { embeddingDim: 3 });
   return db;
+}
+
+interface ActionIdRow {
+  action_id: string;
+}
+
+interface PhasesRunRow {
+  phases_run: string;
+}
+
+interface RetiredAtRow {
+  retired_at: string | null;
+}
+
+function parsePhaseNames(json: string): string[] {
+  const parsed: unknown = JSON.parse(json);
+  if (
+    !Array.isArray(parsed) ||
+    !parsed.every((value): value is string => typeof value === "string")
+  ) {
+    throw new TypeError("expected phases_run to be a string array");
+  }
+  return parsed;
 }
 
 describe("curator e2e", () => {
@@ -64,12 +95,14 @@ describe("curator e2e", () => {
 
     await runDreamCycle(db, makeConfig({ curatorEnabled: false }));
 
-    const phases = (
-      db
-        .prepare(`SELECT phases_run FROM dream_cycles ORDER BY started_at DESC LIMIT 1`)
-        .get() as any
-    ).phases_run;
-    const arr = JSON.parse(phases) as string[];
+    const phases = db
+      .prepare<
+        PhasesRunRow,
+        []
+      >(`SELECT phases_run FROM dream_cycles ORDER BY started_at DESC LIMIT 1`)
+      .get();
+    if (phases === null) throw new TypeError("expected latest dream cycle");
+    const arr = parsePhaseNames(phases.phases_run);
     expect(arr).not.toContain("PC1");
     expect(arr).not.toContain("PC2");
     const action = db
@@ -90,9 +123,13 @@ describe("curator e2e", () => {
     await runDreamCycle(db, makeConfig({ curatorEnabled: true }));
 
     const row = db
-      .prepare(`SELECT phases_run FROM dream_cycles ORDER BY started_at DESC LIMIT 1`)
-      .get() as any;
-    const arr = JSON.parse(row.phases_run) as string[];
+      .prepare<
+        PhasesRunRow,
+        []
+      >(`SELECT phases_run FROM dream_cycles ORDER BY started_at DESC LIMIT 1`)
+      .get();
+    if (row === null) throw new TypeError("expected latest dream cycle");
+    const arr = parsePhaseNames(row.phases_run);
     expect(arr).toContain("PC1");
     expect(arr).toContain("PC2");
     const action = db
@@ -102,8 +139,9 @@ describe("curator e2e", () => {
       .get();
     expect(action).toBeDefined();
     const mem = db
-      .prepare(`SELECT retired_at FROM t2_memories WHERE memory_id=?`)
-      .get(memId) as any;
+      .prepare<RetiredAtRow, [string]>(`SELECT retired_at FROM t2_memories WHERE memory_id=?`)
+      .get(memId);
+    if (mem === null) throw new TypeError("expected t2 memory row");
     expect(mem.retired_at).toBeNull();
   });
 
@@ -118,14 +156,19 @@ describe("curator e2e", () => {
 
     await runDreamCycle(db, makeConfig({ curatorEnabled: true }));
     const action = db
-      .prepare(`SELECT action_id FROM dream_actions WHERE action_type='ephemera_retire' LIMIT 1`)
-      .get() as any;
+      .prepare<
+        ActionIdRow,
+        []
+      >(`SELECT action_id FROM dream_actions WHERE action_type='ephemera_retire' LIMIT 1`)
+      .get();
     expect(action).toBeDefined();
+    if (action === null) throw new TypeError("expected ephemera retire action");
 
     revertDreamAction(db, action.action_id, "none");
     const mem = db
-      .prepare(`SELECT retired_at FROM t2_memories WHERE memory_id=?`)
-      .get(memId) as any;
+      .prepare<RetiredAtRow, [string]>(`SELECT retired_at FROM t2_memories WHERE memory_id=?`)
+      .get(memId);
+    if (mem === null) throw new TypeError("expected t2 memory row");
     expect(mem.retired_at).toBeNull();
   });
 });

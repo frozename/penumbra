@@ -1,14 +1,15 @@
-import { describe, expect, it, beforeAll, afterAll } from "bun:test";
+import { reloadAgentChatConfig } from "@penumbra/config";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { reloadAgentChatConfig } from "@penumbra/config";
+
 import {
+  type BriefSynthesizerInput,
   buildBriefPrompt,
-  parseSynthesizerResponse,
   createBriefSynthesizer,
   createBriefSynthesizerFromAgentchat,
-  type BriefSynthesizerInput,
+  parseSynthesizerResponse,
 } from "../../src/dreaming/brief-synthesizer.js";
 
 beforeAll(() => {
@@ -115,18 +116,24 @@ function makeMarkdownResponse(markdown: string): Response {
   );
 }
 
+function fetchInputUrl(input: Parameters<typeof fetch>[0]): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
+}
+
 describe("BriefSynthesizer.synthesize", () => {
   it("fans out to configured agent and returns markdown + source_memory_ids", async () => {
     const callLog: string[] = [];
     const fakeMarkdown = "# Project Brief: test-proj\n\nThis is the synthesized brief.";
-    const fakeFetch = async (url: string): Promise<Response> => {
-      callLog.push(url as string);
-      return makeMarkdownResponse(fakeMarkdown);
+    const fakeFetch: typeof fetch = (input) => {
+      callLog.push(fetchInputUrl(input));
+      return Promise.resolve(makeMarkdownResponse(fakeMarkdown));
     };
 
     const synthesizer = createBriefSynthesizer(
       [{ name: "s1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" }],
-      fakeFetch as typeof fetch,
+      fakeFetch,
     );
 
     const input: BriefSynthesizerInput = {
@@ -150,12 +157,12 @@ describe("BriefSynthesizer.synthesize", () => {
   });
 
   it("strips code fences from agent response", async () => {
-    const fakeFetch = async (): Promise<Response> =>
-      makeMarkdownResponse("```markdown\n# Project Brief: proj\n\nContent.\n```");
+    const fakeFetch: typeof fetch = () =>
+      Promise.resolve(makeMarkdownResponse("```markdown\n# Project Brief: proj\n\nContent.\n```"));
 
     const synthesizer = createBriefSynthesizer(
       [{ name: "s1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" }],
-      fakeFetch as typeof fetch,
+      fakeFetch,
     );
 
     const result = await synthesizer.synthesize({ project_id: "proj", recent_memories: [] });
@@ -164,29 +171,37 @@ describe("BriefSynthesizer.synthesize", () => {
   });
 
   it("throws when agent returns non-2xx", async () => {
-    const fakeFetch = async (): Promise<Response> => new Response("server error", { status: 500 });
+    const fakeFetch: typeof fetch = () =>
+      Promise.resolve(new Response("server error", { status: 500 }));
     const synthesizer = createBriefSynthesizer(
       [{ name: "s1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" }],
-      fakeFetch as typeof fetch,
+      fakeFetch,
     );
-    await expect(
-      synthesizer.synthesize({ project_id: "proj", recent_memories: [] }),
-    ).rejects.toThrow();
+    let thrown: unknown;
+    try {
+      await synthesizer.synthesize({ project_id: "proj", recent_memories: [] });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
   });
 
   it("fails over to a healthy agent when the first is down", async () => {
     const callLog: string[] = [];
-    const fakeFetch = async (url: string): Promise<Response> => {
+    const fakeFetch: typeof fetch = (input) => {
+      const url = fetchInputUrl(input);
       callLog.push(url);
-      if (url.includes("1111")) throw new Error("ConnectionRefused");
-      return makeMarkdownResponse("# Project Brief: proj\n\nFrom the healthy seat.");
+      if (url.includes("1111")) return Promise.reject(new Error("ConnectionRefused"));
+      return Promise.resolve(
+        makeMarkdownResponse("# Project Brief: proj\n\nFrom the healthy seat."),
+      );
     };
     const synthesizer = createBriefSynthesizer(
       [
         { name: "down", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" },
         { name: "up", baseUrl: "http://localhost:2222/v1", apiKey: "", model: "local" },
       ],
-      fakeFetch as typeof fetch,
+      fakeFetch,
     );
     const result = await synthesizer.synthesize({ project_id: "proj", recent_memories: [] });
     expect(result.markdown).toContain("From the healthy seat.");
@@ -195,24 +210,28 @@ describe("BriefSynthesizer.synthesize", () => {
   });
 
   it("throws only when EVERY agent fails (caller then falls back to stub)", async () => {
-    const fakeFetch = async (_url: string): Promise<Response> =>
-      new Response("err", { status: 502 });
+    const fakeFetch: typeof fetch = () => Promise.resolve(new Response("err", { status: 502 }));
     const synthesizer = createBriefSynthesizer(
       [
         { name: "a", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" },
         { name: "b", baseUrl: "http://localhost:2222/v1", apiKey: "", model: "local" },
       ],
-      fakeFetch as typeof fetch,
+      fakeFetch,
     );
-    await expect(
-      synthesizer.synthesize({ project_id: "proj", recent_memories: [] }),
-    ).rejects.toThrow(/all brief synthesizer agents failed/);
+    let thrown: unknown;
+    try {
+      await synthesizer.synthesize({ project_id: "proj", recent_memories: [] });
+    } catch (error) {
+      thrown = error;
+    }
+    if (!(thrown instanceof Error)) throw new TypeError("expected synthesizer to throw");
+    expect(thrown.message).toMatch(/all brief synthesizer agents failed/);
   });
 });
 
 // --- factory: agentchat config integration ---
 
-const tmpConfigPath = join(tmpdir(), `brief-synthesizer-test-${process.pid}`);
+const tmpConfigPath = join(tmpdir(), `brief-synthesizer-test-${String(process.pid)}`);
 
 afterAll(() => {
   rmSync(tmpConfigPath, { recursive: true, force: true });

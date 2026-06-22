@@ -1,10 +1,118 @@
-import { describe, test, expect } from "bun:test";
-import { Database } from "bun:sqlite";
+import type { WebResearchAdapter, WebResearchResult } from "@penumbra/core";
+
 import { applySchema, loadSqliteVec } from "@penumbra/core";
-import type { WebResearchAdapter } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
+
+import type { DreamConfig } from "../../src/dreaming/config.js";
+import type { ContentQualityVerdict } from "../../src/dreaming/curator/content-quality-judge.js";
+import type { ResearchDeps } from "../../src/dreaming/research.js";
+
 import { ContentQualityJudge } from "../../src/dreaming/curator/content-quality-judge.js";
-import { runP5Phase } from "../../src/dreaming/research.js";
 import { buildDreamCycleDeps } from "../../src/dreaming/deps.js";
+import { runP5Phase } from "../../src/dreaming/research.js";
+
+interface DreamActionPayloadRow {
+  payload_json: string;
+  status: string;
+}
+
+interface DreamActionStatusRow {
+  status: string;
+}
+
+interface QualityPayload {
+  low_quality?: boolean;
+  quality_score: number;
+}
+
+function testConfig(overrides?: Partial<DreamConfig>): DreamConfig {
+  return {
+    enabled: true,
+    cronMinutes: 30,
+    perCycleUsd: 0.5,
+    dailyUsd: 5.0,
+    pressureGuardEnabled: true,
+    perCycleEmbeddingUsd: 0.1,
+    perCycleResearchUsd: 0.25,
+    linkAutoThreshold: 0.75,
+    p1BatchSize: 10,
+    contentQualityThreshold: 0.7,
+    reembedBatchSize: 100,
+    skipPhases: new Set(),
+    eventTriggerEnabled: true,
+    idleMinutes: 15,
+    triggerCooldownMinutes: 5,
+    briefRefreshHours: 24,
+    pc1BatchSize: 10,
+    pc2MinClusterSize: 3,
+    pc2ClusterLinkThreshold: 0.85,
+    pc2AutoThreshold: 0.97,
+    curatorEnabled: false,
+    rewriterEnabled: false,
+    rewriterBaseUrl: "",
+    rewriterModel: "",
+    rewriterTimeoutMs: 30_000,
+    rewriterCacheTtlMs: 86_400_000,
+    rewriterConcurrency: 1,
+    ...overrides,
+  };
+}
+
+function webfetchResult(overrides: Partial<WebResearchResult>): WebResearchResult {
+  return {
+    url: "https://example.com",
+    title: "",
+    markdown: "",
+    fetched_at: new Date(0).toISOString(),
+    source_provider: "webfetch",
+    ...overrides,
+  };
+}
+
+function unusedSearch(): Promise<WebResearchResult[]> {
+  return Promise.resolve([]);
+}
+
+function unusedScrape(): Promise<WebResearchResult> {
+  return Promise.reject(new Error("scrape should not be used"));
+}
+
+function p5Deps(adapter: WebResearchAdapter, dreaming: Record<string, unknown>): ResearchDeps {
+  return {
+    projectRegistry: { get: () => ({ dreaming }) },
+    getResearchAdapter: () => adapter,
+  };
+}
+
+function parseQualityPayload(json: string): QualityPayload {
+  const parsed: unknown = JSON.parse(json);
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    !("quality_score" in parsed) ||
+    typeof parsed.quality_score !== "number"
+  ) {
+    throw new TypeError("expected quality payload");
+  }
+  return {
+    quality_score: parsed.quality_score,
+    low_quality:
+      "low_quality" in parsed && typeof parsed.low_quality === "boolean"
+        ? parsed.low_quality
+        : undefined,
+  };
+}
+
+class StubContentQualityJudge extends ContentQualityJudge {
+  constructor(private readonly fn: () => ContentQualityVerdict) {
+    super({ threshold: 0.5 });
+  }
+
+  override judge(): Promise<ContentQualityVerdict> {
+    return Promise.resolve(this.fn());
+  }
+}
 
 describe("P5 content quality", () => {
   test("ContentQualityJudge scores authoritative release notes high", async () => {
@@ -73,8 +181,8 @@ describe("P5 content quality", () => {
     ).run();
 
     const adapter: WebResearchAdapter = {
-      async search() {
-        return [
+      search: () =>
+        Promise.resolve([
           {
             url: "https://bun.sh/blog/bun-1-4",
             title: "Bun 1.4 release notes",
@@ -82,37 +190,29 @@ describe("P5 content quality", () => {
             fetched_at: new Date().toISOString(),
             source_provider: "webfetch",
           },
-        ];
-      },
-      async scrape() {
-        throw new Error("scrape should not be used");
-      },
+        ]),
+      scrape: unusedScrape,
     };
 
-    const deps = {
-      projectRegistry: { get: () => ({ dreaming: { research_provider: "webfetch" } }) },
-      getResearchAdapter: () => adapter,
-      contentQualityJudge: {
-        async judge() {
-          return {
-            score: 0.8,
-            reasons: ["relevance:1.00", "depth:1.00", "spam:1.00", "domain:trusted"],
-            lowQuality: false,
-          };
-        },
-      },
+    const deps: ResearchDeps = {
+      ...p5Deps(adapter, { research_provider: "webfetch" }),
+      contentQualityJudge: new StubContentQualityJudge(() => ({
+        score: 0.8,
+        reasons: ["relevance:1.00", "depth:1.00", "spam:1.00", "domain:trusted"],
+        lowQuality: false,
+      })),
     };
 
-    await runP5Phase(db, "cycle1", {} as any, deps as any);
+    await runP5Phase(db, "cycle1", testConfig(), deps);
 
-    const action = db.prepare("SELECT * FROM dream_actions WHERE phase='P5'").get() as {
-      status: string;
-      payload_json: string;
-    };
-    const payload = JSON.parse(action.payload_json) as {
-      quality_score: number;
-      low_quality?: boolean;
-    };
+    const action = db
+      .prepare<
+        DreamActionPayloadRow,
+        []
+      >("SELECT payload_json, status FROM dream_actions WHERE phase='P5'")
+      .get();
+    if (action === null) throw new TypeError("expected P5 action row");
+    const payload = parseQualityPayload(action.payload_json);
 
     expect(action.status).toBe("queued");
     expect(payload.quality_score).toBe(0.8);
@@ -133,8 +233,8 @@ describe("P5 content quality", () => {
 
     let judgeCallCount = 0;
     const adapter: WebResearchAdapter = {
-      async search() {
-        return [
+      search: () =>
+        Promise.resolve([
           {
             url: "https://allowed.com/page",
             title: "Good",
@@ -149,32 +249,30 @@ describe("P5 content quality", () => {
             fetched_at: "",
             source_provider: "webfetch" as const,
           },
-        ];
-      },
-      async scrape() {
-        throw new Error("no scrape");
-      },
+        ]),
+      scrape: unusedScrape,
     };
 
-    const deps = {
-      projectRegistry: {
-        get: () => ({
-          dreaming: { research_provider: "webfetch", allowed_domains: ["allowed.com"] },
-        }),
-      },
-      getResearchAdapter: () => adapter,
-      contentQualityJudge: {
-        async judge(_result: any, _query: string) {
-          judgeCallCount++;
-          return { score: 0.8, reasons: [], lowQuality: false };
-        },
-      },
+    const deps: ResearchDeps = {
+      ...p5Deps(adapter, {
+        research_provider: "webfetch",
+        allowed_domains: ["allowed.com"],
+      }),
+      contentQualityJudge: new StubContentQualityJudge(() => {
+        judgeCallCount++;
+        return { score: 0.8, reasons: [], lowQuality: false };
+      }),
     };
 
-    await runP5Phase(db, "cycle1", {} as any, deps as any);
+    await runP5Phase(db, "cycle1", testConfig(), deps);
 
     expect(judgeCallCount).toBe(1);
-    const p5Actions = db.prepare("SELECT * FROM dream_actions WHERE phase='P5'").all() as any[];
+    const p5Actions = db
+      .prepare<
+        DreamActionPayloadRow,
+        []
+      >("SELECT payload_json, status FROM dream_actions WHERE phase='P5'")
+      .all();
     expect(p5Actions).toHaveLength(1);
   });
 
@@ -196,27 +294,22 @@ describe("P5 content quality", () => {
 
     let scrapeCallCount = 0;
     const adapter: WebResearchAdapter = {
-      async search() {
-        return [];
-      },
-      async scrape() {
+      search: unusedSearch,
+      scrape: () => {
         scrapeCallCount++;
-        return {
+        return Promise.resolve({
           url: targetUrl,
           title: "Bun 1.4",
           markdown: "content",
           fetched_at: new Date().toISOString(),
           source_provider: "webfetch" as const,
-        };
+        });
       },
     };
 
-    const deps = {
-      projectRegistry: { get: () => ({ dreaming: { research_provider: "webfetch" } }) },
-      getResearchAdapter: () => adapter,
-    };
+    const deps = p5Deps(adapter, { research_provider: "webfetch" });
 
-    await runP5Phase(db, "cycle1", {} as any, deps as any);
+    await runP5Phase(db, "cycle1", testConfig(), deps);
     expect(scrapeCallCount).toBe(1);
 
     // Insert second action with identical payload
@@ -224,7 +317,7 @@ describe("P5 content quality", () => {
       "INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('a2', 'cycle1', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', ?)",
     ).run(payload);
 
-    await runP5Phase(db, "cycle1", {} as any, deps as any);
+    await runP5Phase(db, "cycle1", testConfig(), deps);
     expect(scrapeCallCount).toBe(1); // cache hit — adapter NOT called again
   });
 
@@ -240,29 +333,36 @@ describe("P5 content quality", () => {
       "INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('a1', 'cycle1', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', '{\"url\":\"http://bad.com\"}')",
     ).run();
 
-    const deps = {
-      projectRegistry: {
-        get: () => ({ dreaming: { research_provider: "webfetch", allowed_domains: ["good.com"] } }),
-      },
-      getResearchAdapter: () => ({
-        scrape: async () => ({
-          url: "http://bad.com",
-          title: "x",
-          markdown: "x",
-          fetched_at: new Date().toISOString(),
-          source_provider: "webfetch",
-        }),
-      }),
+    const adapter: WebResearchAdapter = {
+      search: unusedSearch,
+      scrape: () =>
+        Promise.resolve(
+          webfetchResult({
+            url: "http://bad.com",
+            title: "x",
+            markdown: "x",
+          }),
+        ),
     };
+    const deps = p5Deps(adapter, {
+      research_provider: "webfetch",
+      allowed_domains: ["good.com"],
+    });
 
-    await runP5Phase(db, "cycle1", {} as any, deps as any);
+    await runP5Phase(db, "cycle1", testConfig(), deps);
 
-    const p4Action = db.prepare("SELECT status FROM dream_actions WHERE action_id='a1'").get() as {
-      status: string;
-    };
+    const p4Action = db
+      .prepare<DreamActionStatusRow, []>("SELECT status FROM dream_actions WHERE action_id='a1'")
+      .get();
+    if (p4Action === null) throw new TypeError("expected P4 action row");
     expect(p4Action.status).toBe("failed");
 
-    const p5Actions = db.prepare("SELECT * FROM dream_actions WHERE phase='P5'").all() as any[];
+    const p5Actions = db
+      .prepare<
+        DreamActionPayloadRow,
+        []
+      >("SELECT payload_json, status FROM dream_actions WHERE phase='P5'")
+      .all();
     expect(p5Actions.length).toBe(0);
   });
 
@@ -271,9 +371,13 @@ describe("P5 content quality", () => {
     loadSqliteVec(db);
     applySchema(db);
 
-    const deps = buildDreamCycleDeps({}, db, {
-      contentQualityThreshold: 0.7,
-    } as any);
+    const deps = buildDreamCycleDeps(
+      {},
+      db,
+      testConfig({
+        contentQualityThreshold: 0.7,
+      }),
+    );
     expect(deps.contentQualityJudge).toBeDefined();
 
     const verdict = await deps.contentQualityJudge!.judge(
