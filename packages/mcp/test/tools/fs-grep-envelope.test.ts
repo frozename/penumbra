@@ -1,17 +1,20 @@
-import { describe, it, expect, afterEach } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
+
+import type { DaemonClient } from "../../src/daemon-client.js";
+
 import { HandleStore } from "../../src/handle-store.js";
 import { isEnvelopeResult } from "../../src/responses/envelope.js";
 import { fsGrepHandler } from "../../src/tools/fs-grep.js";
 import { readHandleHandler } from "../../src/tools/read-handle.js";
 
-function fakeDaemon(grepInWorktree?: (handoffId: string, opts: unknown) => Promise<unknown>): any {
+type GrepDaemon = Pick<DaemonClient, "grepInWorktree">;
+type GrepImpl = DaemonClient["grepInWorktree"];
+type GrepResult = Awaited<ReturnType<GrepImpl>>;
+
+function fakeDaemon(impl?: GrepImpl): GrepDaemon {
   return {
     grepInWorktree:
-      grepInWorktree ??
-      (async () => ({
-        results: [],
-        truncated: false,
-      })),
+      impl ?? ((): Promise<GrepResult> => Promise.resolve({ results: [], truncated: false })),
   };
 }
 
@@ -21,49 +24,56 @@ describe("fs_grep - envelope opt-in", () => {
   });
 
   it("returns an EnvelopeResult with token_budget + result_bytes when envelope=true", async () => {
-    const grepResult = {
+    const grepResult: GrepResult = {
       results: [{ path: "src/a.ts", line_number: 1, line: "TODO" }],
       truncated: false,
     };
-    const handler = fsGrepHandler(fakeDaemon(async () => grepResult));
-    const result: any = await handler({ pattern: "TODO", handoff_id: "H1", envelope: true });
+    const handler = fsGrepHandler(fakeDaemon(() => Promise.resolve(grepResult)));
+    const result = await handler({ pattern: "TODO", handoff_id: "H1", envelope: true });
 
     expect(isEnvelopeResult(result)).toBe(true);
-    expect(result._meta.token_budget.limit).toBe(8000);
+    if (!isEnvelopeResult(result)) throw new Error("expected envelope");
+    expect(result._meta.token_budget?.limit).toBe(8000);
   });
 
   it("returns the current raw JSON shape when envelope is omitted", async () => {
-    const grepResult = {
+    const grepResult: GrepResult = {
       results: [{ path: "src/a.ts", line_number: 1, line: "TODO" }],
       truncated: false,
     };
-    const handler = fsGrepHandler(fakeDaemon(async () => grepResult));
-    const result: any = await handler({ pattern: "TODO", handoff_id: "H1" });
+    const handler = fsGrepHandler(fakeDaemon(() => Promise.resolve(grepResult)));
+    const result = await handler({ pattern: "TODO", handoff_id: "H1" });
 
     expect(isEnvelopeResult(result)).toBe(false);
-    expect(result.content[0].text).toBe(JSON.stringify(grepResult));
+    if (isEnvelopeResult(result)) throw new Error("expected raw");
+    const first = result.content[0];
+    if (!first) throw new Error("missing content[0]");
+    expect(first.text).toBe(JSON.stringify(grepResult));
   });
 
   it("keeps the non-envelope payload byte-identical when envelope=false", async () => {
-    const grepResult = {
+    const grepResult: GrepResult = {
       results: [{ path: "src/a.ts", line_number: 1, line: "TODO" }],
       truncated: false,
     };
-    const handler = fsGrepHandler(fakeDaemon(async () => grepResult));
-    const result: any = await handler({
+    const handler = fsGrepHandler(fakeDaemon(() => Promise.resolve(grepResult)));
+    const result = await handler({
       pattern: "TODO",
       handoff_id: "H1",
       envelope: false,
     });
 
     expect(isEnvelopeResult(result)).toBe(false);
-    expect(result.content[0].text).toBe(JSON.stringify(grepResult));
+    if (isEnvelopeResult(result)) throw new Error("expected raw");
+    const first = result.content[0];
+    if (!first) throw new Error("missing content[0]");
+    expect(first.text).toBe(JSON.stringify(grepResult));
   });
 
   it("spills truncated envelope payload to a handle with a valid visible preview", async () => {
-    const grepResult = {
+    const grepResult: GrepResult = {
       results: Array.from({ length: 4000 }, (_, i) => ({
-        path: `src/file-${i}.ts`,
+        path: `src/file-${String(i)}.ts`,
         line_number: i + 1,
         line: "x".repeat(50),
       })),
@@ -73,22 +83,29 @@ describe("fs_grep - envelope opt-in", () => {
     const store = new HandleStore();
     try {
       const handler = fsGrepHandler(
-        fakeDaemon(async () => grepResult),
+        fakeDaemon(() => Promise.resolve(grepResult)),
         { handleStore: store },
       );
-      const result: any = await handler({ pattern: "x", handoff_id: "H1", envelope: true });
+      const result = await handler({ pattern: "x", handoff_id: "H1", envelope: true });
 
       expect(isEnvelopeResult(result)).toBe(true);
-      expect(result._meta.token_budget.truncated).toBe(true);
+      if (!isEnvelopeResult(result)) throw new Error("expected envelope");
+      expect(result._meta.token_budget?.truncated).toBe(true);
       expect(typeof result._meta.handle_id).toBe("string");
-      expect(JSON.parse(result.content[0].text)).toEqual({
+      const first = result.content[0];
+      if (!first?.text) throw new Error("missing content[0].text");
+      expect(JSON.parse(first.text)).toEqual({
         truncated: true,
-        preview: expect.any(String),
+        preview: expect.any(String) as unknown,
       });
       expect(result._meta.result_bytes).toBe(Buffer.byteLength(rawJson, "utf8"));
 
-      const full: any = await readHandleHandler(store)({ handle_id: result._meta.handle_id });
-      expect(full.content[0].text).toBe(rawJson);
+      const handleId = result._meta.handle_id;
+      if (typeof handleId !== "string") throw new Error("expected handle_id string");
+      const full = await readHandleHandler(store)({ handle_id: handleId });
+      const fullFirst = full.content[0];
+      if (!fullFirst) throw new Error("missing content[0]");
+      expect(fullFirst.text).toBe(rawJson);
     } finally {
       store.close();
     }
@@ -96,7 +113,7 @@ describe("fs_grep - envelope opt-in", () => {
 
   it("keeps no_handoff_context error byte-identical even when envelope=true", async () => {
     const handler = fsGrepHandler(fakeDaemon());
-    const result: any = await handler({ pattern: "TODO", envelope: true });
+    const result = await handler({ pattern: "TODO", envelope: true });
 
     expect(isEnvelopeResult(result)).toBe(false);
     expect(result).toEqual({

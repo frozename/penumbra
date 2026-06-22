@@ -1,14 +1,22 @@
-import { describe, it, expect, afterEach } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
+
+import type { DaemonClient } from "../../src/daemon-client.js";
+
 import { HandleStore } from "../../src/handle-store.js";
 import { isEnvelopeResult } from "../../src/responses/envelope.js";
 import { fsReadHandler } from "../../src/tools/fs-read.js";
 import { readHandleHandler } from "../../src/tools/read-handle.js";
 
-function fakeDaemon(readInWorktree?: (handoffId: string, opts: unknown) => Promise<unknown>): any {
+type ReadDaemon = Pick<DaemonClient, "readInWorktree">;
+type ReadImpl = DaemonClient["readInWorktree"];
+type ReadResult = Awaited<ReturnType<ReadImpl>>;
+
+function fakeDaemon(impl?: ReadImpl): ReadDaemon {
   return {
     readInWorktree:
-      readInWorktree ??
-      (async () => ({ content: "hello", path: "hello.txt", bytes: 5, truncated: false })),
+      impl ??
+      ((): Promise<ReadResult> =>
+        Promise.resolve({ content: "hello", path: "hello.txt", bytes: 5, truncated: false })),
   };
 }
 
@@ -18,25 +26,29 @@ describe("fs.read handler - envelope opt-in", () => {
   });
 
   it("returns an EnvelopeResult with token_budget + result_bytes when envelope=true", async () => {
-    const result = { content: "hello", path: "hello.txt", bytes: 5, truncated: false };
-    const handler = fsReadHandler(fakeDaemon(async () => result));
-    const out: any = await handler({ path: "hello.txt", handoff_id: "H1", envelope: true });
+    const result: ReadResult = { content: "hello", path: "hello.txt", bytes: 5, truncated: false };
+    const handler = fsReadHandler(fakeDaemon(() => Promise.resolve(result)));
+    const out = await handler({ path: "hello.txt", handoff_id: "H1", envelope: true });
 
     expect(isEnvelopeResult(out)).toBe(true);
-    expect(out._meta.token_budget.limit).toBe(8000);
+    if (!isEnvelopeResult(out)) throw new Error("expected envelope");
+    expect(out._meta.token_budget?.limit).toBe(8000);
   });
 
   it("keeps compact raw payload when envelope is omitted", async () => {
-    const result = { content: "hello", path: "hello.txt", bytes: 5, truncated: false };
-    const handler = fsReadHandler(fakeDaemon(async () => result));
-    const out: any = await handler({ path: "hello.txt", handoff_id: "H1" });
+    const result: ReadResult = { content: "hello", path: "hello.txt", bytes: 5, truncated: false };
+    const handler = fsReadHandler(fakeDaemon(() => Promise.resolve(result)));
+    const out = await handler({ path: "hello.txt", handoff_id: "H1" });
 
     expect(isEnvelopeResult(out)).toBe(false);
-    expect(out.content[0].text).toBe(JSON.stringify(result));
+    if (isEnvelopeResult(out)) throw new Error("expected raw");
+    const first = out.content[0];
+    if (!first) throw new Error("missing content[0]");
+    expect(first.text).toBe(JSON.stringify(result));
   });
 
   it("spills truncated envelope payload to a handle with a valid visible preview", async () => {
-    const result = {
+    const result: ReadResult = {
       content: "x".repeat(40_000),
       path: "huge.txt",
       bytes: 40_000,
@@ -46,27 +58,34 @@ describe("fs.read handler - envelope opt-in", () => {
     const store = new HandleStore();
     try {
       const handler = fsReadHandler(
-        fakeDaemon(async () => result),
+        fakeDaemon(() => Promise.resolve(result)),
         { handleStore: store },
       );
-      const out: any = await handler({ path: "huge.txt", handoff_id: "H1", envelope: true });
+      const out = await handler({ path: "huge.txt", handoff_id: "H1", envelope: true });
 
       expect(isEnvelopeResult(out)).toBe(true);
-      expect(out._meta.token_budget.truncated).toBe(true);
+      if (!isEnvelopeResult(out)) throw new Error("expected envelope");
+      expect(out._meta.token_budget?.truncated).toBe(true);
       expect(typeof out._meta.handle_id).toBe("string");
-      expect(out._meta.handle_id.length).toBeGreaterThan(0);
+      const handleId = out._meta.handle_id;
+      if (typeof handleId !== "string") throw new Error("expected handle_id string");
+      expect(handleId.length).toBeGreaterThan(0);
       expect(out._meta.result_bytes).toBe(Buffer.byteLength(rawJson, "utf8"));
 
-      const preview = JSON.parse(out.content[0].text);
+      const first = out.content[0];
+      if (!first?.text) throw new Error("missing content[0].text");
+      const preview: unknown = JSON.parse(first.text);
       expect(preview).toEqual({
         truncated: true,
-        preview: expect.any(String),
+        preview: expect.any(String) as unknown,
       });
 
       const read = readHandleHandler(store);
-      const full: any = await read({ handle_id: out._meta.handle_id });
+      const full = await read({ handle_id: handleId });
       expect(full.isError).toBeUndefined();
-      expect(full.content[0].text).toBe(rawJson);
+      const fullFirst = full.content[0];
+      if (!fullFirst) throw new Error("missing content[0]");
+      expect(fullFirst.text).toBe(rawJson);
     } finally {
       store.close();
     }
@@ -74,7 +93,7 @@ describe("fs.read handler - envelope opt-in", () => {
 
   it("keeps no_handoff_context error shape even when envelope=true", async () => {
     const handler = fsReadHandler(fakeDaemon());
-    const out: any = await handler({ path: "f.txt", envelope: true });
+    const out = await handler({ path: "f.txt", envelope: true });
 
     expect(isEnvelopeResult(out)).toBe(false);
     expect(out).toEqual({
