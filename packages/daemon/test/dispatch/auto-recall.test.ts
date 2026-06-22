@@ -1,11 +1,29 @@
 import { expect, mock, test } from "bun:test";
+
 import { autoRecallForDispatch } from "../../src/dispatch/auto-recall.js";
 
+type RecallArgs = { query: string; top_k: number; project_id?: string };
+type RecallHit = { id: string; title: string; snippet?: string };
+type RecallResult = { hits: RecallHit[] };
+
+const expectedStringContaining = (str: string): string => {
+  const match: unknown = expect.stringContaining(str);
+  return match as string;
+};
+const expectedObjectContaining = <T>(obj: T): T => {
+  const match: unknown = expect.objectContaining(obj);
+  return match as T;
+};
+const expectedAnyString = (): string => {
+  const match: unknown = expect.any(String);
+  return match as string;
+};
+
 test("TRIVIAL class uses top_k=3", async () => {
-  const calls: any[] = [];
-  const memoryRecall = async (args: { query: string; top_k: number; project_id?: string }) => {
+  const calls: RecallArgs[] = [];
+  const memoryRecall = (args: RecallArgs): Promise<RecallResult> => {
     calls.push(args);
-    return { hits: [{ id: "t1", title: "t" }] };
+    return Promise.resolve({ hits: [{ id: "t1", title: "t" }] });
   };
 
   const result = await autoRecallForDispatch(
@@ -16,8 +34,8 @@ test("TRIVIAL class uses top_k=3", async () => {
   expect(result).toEqual({
     recalled_memory_ids: ["t1"],
     recalled_memories: [{ id: "t1", title: "t", obs_type: "memory", snippet_head: undefined }],
-    recalled_query: expect.stringContaining("TRIVIAL"),
-    injected_text: expect.stringContaining(
+    recalled_query: expectedStringContaining("TRIVIAL"),
+    injected_text: expectedStringContaining(
       "The following memories were auto-recalled at dispatch time.",
     ),
   });
@@ -27,15 +45,15 @@ test("TRIVIAL class uses top_k=3", async () => {
 });
 
 test("STANDARD recalls top 5 and injects a markdown block", async () => {
-  const memoryRecall = mock(async (args: { query: string; top_k: number; project_id?: string }) => {
+  const memoryRecall = mock((args: RecallArgs): Promise<RecallResult> => {
     expect(args.top_k).toBe(5);
     expect(args.query).toContain("task_class:STANDARD");
-    return {
+    return Promise.resolve({
       hits: [
         { id: "m1", title: "First title", snippet: "first snippet" },
         { id: "m2", title: "Second title" },
       ],
-    };
+    });
   });
 
   const result = await autoRecallForDispatch(
@@ -56,10 +74,10 @@ test("STANDARD recalls top 5 and injects a markdown block", async () => {
 });
 
 test("BOUNDARY recalls top 8", async () => {
-  const memoryRecall = mock(async (args: { query: string; top_k: number; project_id?: string }) => {
+  const memoryRecall = mock((args: RecallArgs): Promise<RecallResult> => {
     expect(args.top_k).toBe(8);
     expect(args.query).toContain("task_class:BOUNDARY");
-    return { hits: [] };
+    return Promise.resolve({ hits: [] });
   });
 
   await autoRecallForDispatch({ prompt: "harder task", task_class: "BOUNDARY" }, { memoryRecall });
@@ -68,9 +86,12 @@ test("BOUNDARY recalls top 8", async () => {
 });
 
 test("STANDARD with zero hits returns empty recall ids and null injection", async () => {
-  const memoryRecall = mock(async () => ({
-    hits: [] as Array<{ id: string; title: string; snippet?: string }>,
-  }));
+  const memoryRecall = mock(
+    (): Promise<RecallResult> =>
+      Promise.resolve({
+        hits: [],
+      }),
+  );
 
   const result = await autoRecallForDispatch(
     { prompt: "search nothing", task_class: "STANDARD" },
@@ -85,10 +106,10 @@ test("STANDARD with zero hits returns empty recall ids and null injection", asyn
 });
 
 test("STANDARD swallows memory recall errors and logs a warning", async () => {
-  const memoryRecall = mock(async () => {
-    throw new Error("boom");
+  const memoryRecall = mock((): Promise<RecallResult> => Promise.reject(new Error("boom")));
+  const logger = mock((): void => {
+    return;
   });
-  const logger = mock(() => {});
 
   const result = await autoRecallForDispatch(
     { prompt: "broken", task_class: "STANDARD" },
@@ -105,14 +126,17 @@ test("STANDARD swallows memory recall errors and logs a warning", async () => {
   expect(logger.mock.calls[0]).toEqual([
     "warn",
     "auto-recall failed",
-    expect.objectContaining({ error: expect.any(String), task_class: "STANDARD" }),
+    expectedObjectContaining({ error: expectedAnyString(), task_class: "STANDARD" }),
   ]);
 });
 
 test("project_id passes through only when provided", async () => {
-  const memoryRecall = mock(async () => ({
-    hits: [{ id: "m", title: "a" }] as Array<{ id: string; title: string; snippet?: string }>,
-  }));
+  const memoryRecall = mock(
+    (): Promise<RecallResult> =>
+      Promise.resolve({
+        hits: [{ id: "m", title: "a" }],
+      }),
+  );
 
   await autoRecallForDispatch(
     { prompt: "with project", task_class: "STANDARD", project_id: "p-1" },
@@ -135,9 +159,12 @@ test("project_id passes through only when provided", async () => {
 });
 
 test("query truncation caps recalled_query length", async () => {
-  const memoryRecall = mock(async () => ({
-    hits: [] as Array<{ id: string; title: string; snippet?: string }>,
-  }));
+  const memoryRecall = mock(
+    (): Promise<RecallResult> =>
+      Promise.resolve({
+        hits: [],
+      }),
+  );
   const prompt = "x".repeat(1000);
 
   const result = await autoRecallForDispatch({ prompt, task_class: "BOUNDARY" }, { memoryRecall });
@@ -146,15 +173,20 @@ test("query truncation caps recalled_query length", async () => {
 });
 
 test("falls back to cross-project recall when project-scoped returns zero hits", async () => {
-  const calls: any[] = [];
-  const memoryRecall = async (args: any) => {
+  const calls: RecallArgs[] = [];
+  const memoryRecall = (args: RecallArgs): Promise<RecallResult> => {
     calls.push(args);
-    if (args.project_id === "penumbra") return { hits: [] };
-    return { hits: [{ id: "cross-1", title: "global" }] };
+    if (args.project_id === "penumbra") return Promise.resolve({ hits: [] });
+    return Promise.resolve({ hits: [{ id: "cross-1", title: "global" }] });
   };
   const result = await autoRecallForDispatch(
     { prompt: "q", task_class: "STANDARD", project_id: "penumbra" },
-    { memoryRecall, logger: () => {} },
+    {
+      memoryRecall,
+      logger: (): void => {
+        return;
+      },
+    },
   );
   expect(result.recalled_memory_ids).toEqual(["cross-1"]);
   expect(result.recalled_memories).toEqual([
@@ -166,14 +198,19 @@ test("falls back to cross-project recall when project-scoped returns zero hits",
 });
 
 test("does NOT cross-project fallback when project-scoped returns hits", async () => {
-  const calls: any[] = [];
-  const memoryRecall = async (args: any) => {
+  const calls: RecallArgs[] = [];
+  const memoryRecall = (args: RecallArgs): Promise<RecallResult> => {
     calls.push(args);
-    return { hits: [{ id: "m1", title: "a" }] };
+    return Promise.resolve({ hits: [{ id: "m1", title: "a" }] });
   };
   const result = await autoRecallForDispatch(
     { prompt: "q", task_class: "STANDARD", project_id: "penumbra" },
-    { memoryRecall, logger: () => {} },
+    {
+      memoryRecall,
+      logger: (): void => {
+        return;
+      },
+    },
   );
   expect(result.recalled_memory_ids).toEqual(["m1"]);
   expect(result.recalled_memories).toEqual([
@@ -183,14 +220,19 @@ test("does NOT cross-project fallback when project-scoped returns hits", async (
 });
 
 test("does NOT cross-project fallback when no project_id was provided", async () => {
-  const calls: any[] = [];
-  const memoryRecall = async (args: any) => {
+  const calls: RecallArgs[] = [];
+  const memoryRecall = (args: RecallArgs): Promise<RecallResult> => {
     calls.push(args);
-    return { hits: [] };
+    return Promise.resolve({ hits: [] });
   };
   const result = await autoRecallForDispatch(
     { prompt: "q", task_class: "STANDARD" },
-    { memoryRecall, logger: () => {} },
+    {
+      memoryRecall,
+      logger: (): void => {
+        return;
+      },
+    },
   );
   expect(result.recalled_memory_ids).toEqual([]);
   expect(result.recalled_memories).toEqual([]);
