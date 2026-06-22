@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { resolveAdapterApiKey } from "../../src/adapters/secret.js";
 
 test("resolveAdapterApiKey: literal apiKey wins (back-compat)", () => {
@@ -36,7 +37,7 @@ test("resolveAdapterApiKey: apiKeyFile reads file content trimmed", () => {
 
 test("resolveAdapterApiKey: apiKeyKeychain shells out to security on darwin (mocked)", () => {
   const calls: string[][] = [];
-  const fakeRun = (service: string, account: string) => {
+  const fakeRun = (service: string, account: string): string => {
     calls.push([service, account]);
     return "from-keychain\n";
   };

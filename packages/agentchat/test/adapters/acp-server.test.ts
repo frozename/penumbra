@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
 import * as net from "node:net";
-import { startAcpServer, type AcpServerSpawner } from "../../src/adapters/acp-server.js";
+import { PassThrough } from "node:stream";
+
+import { type AcpServerSpawner, startAcpServer } from "../../src/adapters/acp-server.js";
+import { expectRejection } from "../helpers/cli-spawn-fixtures.js";
 import { serviceTest } from "../helpers/service-gates.js";
 
 class FakeChildProcess extends EventEmitter {
@@ -18,7 +20,7 @@ class FakeChildProcess extends EventEmitter {
     this.killed = true;
     this.signalCode = typeof signal === "string" ? signal : null;
     queueMicrotask(() => {
-      if (this.exitCode === null) this.exitCode = 0;
+      this.exitCode ??= 0;
       this.stdout.end();
       this.stderr.end();
       this.emit("exit", this.exitCode, this.signalCode);
@@ -33,7 +35,10 @@ class FakeChildProcess extends EventEmitter {
   }
 }
 
-function createSpawn(child: FakeChildProcess, onSpawn?: (args: string[]) => void) {
+function createSpawn(
+  child: FakeChildProcess,
+  onSpawn?: (args: string[]) => void,
+): AcpServerSpawner & ReturnType<typeof mock> {
   return mock((_command: string, args: string[], _options: unknown) => {
     onSpawn?.(args);
     return child as unknown as ReturnType<AcpServerSpawner>;
@@ -78,7 +83,7 @@ serviceTest(
     dummyServer.close();
 
     expect(handle.port).toBe(assignedPort);
-    expect(handle.baseUrl).toBe(`http://127.0.0.1:${assignedPort}`);
+    expect(handle.baseUrl).toBe(`http://127.0.0.1:${String(assignedPort)}`);
     expect(handle.pid).toBe(5432);
     expect(spawn.mock.calls[0]?.[0]).toBe("opencode");
     expect(spawn.mock.calls[0]?.[1]).toEqual([
@@ -112,7 +117,7 @@ serviceTest("startAcpServer rejects and kills the child when aborted during boot
   await new Promise((r) => setTimeout(r, 10));
   controller.abort();
 
-  await expect(handlePromise).rejects.toThrow("ACP server start aborted");
+  await expectRejection(handlePromise, "ACP server start aborted");
   expect(child.kill).toHaveBeenCalledWith("SIGTERM");
 });
 
@@ -120,13 +125,14 @@ serviceTest("startAcpServer rejects and kills the child when boot timeout expire
   const child = new FakeChildProcess();
   const spawn = createSpawn(child);
 
-  await expect(
+  await expectRejection(
     startAcpServer({
       cwd: "/tmp/penumbra-acp",
       spawn,
       bootTimeoutMs: 10,
     }),
-  ).rejects.toThrow(/Timed out waiting for port/);
+    /Timed out waiting for port/,
+  );
 
   expect(child.kill).toHaveBeenCalledWith("SIGTERM");
 });
@@ -139,13 +145,14 @@ serviceTest("startAcpServer rejects spawn errors through the boot promise", asyn
     });
   });
 
-  await expect(
+  await expectRejection(
     startAcpServer({
       cwd: "/tmp/penumbra-acp",
       spawn,
       bootTimeoutMs: 250,
     }),
-  ).rejects.toThrow("spawn ENOENT");
+    "spawn ENOENT",
+  );
 
   expect(child.kill).toHaveBeenCalledWith("SIGTERM");
 });
@@ -158,7 +165,7 @@ test("startAcpServer logs child errors after boot settles", async () => {
   const warnings: unknown[][] = [];
   console.warn = mock((...args: unknown[]) => {
     warnings.push(args);
-  }) as unknown as typeof console.warn;
+  });
 
   try {
     const spawn = createSpawn(child, (args) => {
@@ -174,18 +181,26 @@ test("startAcpServer logs child errors after boot settles", async () => {
     });
 
     child.emit("error", new Error("post-boot EIO"));
-    await new Promise((resolve) => queueMicrotask(resolve));
+    await new Promise((resolve) => {
+      queueMicrotask(resolve);
+    });
 
     expect(warnings.some((args) => args.some((arg) => String(arg).includes("post-boot EIO")))).toBe(
       true,
     );
-    await new Promise<void>((resolve) => dummyServer.close(() => resolve()));
+    await new Promise<void>((resolve) => {
+      dummyServer.close(() => {
+        resolve();
+      });
+    });
     await handle.kill();
   } finally {
     console.warn = warn;
     try {
       dummyServer.close();
-    } catch {}
+    } catch {
+      /* already closed */
+    }
   }
 });
 
@@ -201,7 +216,7 @@ test.if(integrationEnabled)("startAcpServer can spawn a real opencode ACP proces
   });
 
   expect(handle.port).toBeGreaterThan(0);
-  expect(handle.baseUrl).toBe(`http://127.0.0.1:${handle.port}`);
+  expect(handle.baseUrl).toBe(`http://127.0.0.1:${String(handle.port)}`);
 
   controller.abort();
   await handle.exited;

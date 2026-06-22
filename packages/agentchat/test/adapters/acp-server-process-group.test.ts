@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawn as nodeSpawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startAcpServer, type AcpServerSpawner } from "../../src/adapters/acp-server.js";
+
+import { type AcpServerSpawner, startAcpServer } from "../../src/adapters/acp-server.js";
 import { RUN_AGENTCHAT_SERVICE_TESTS } from "../helpers/service-gates.js";
 
 const cleanupPids = new Set<number>();
@@ -41,7 +42,7 @@ async function waitUntilDead(pid: number, timeoutMs = 3_000): Promise<void> {
     if (!isAlive(pid)) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`pid ${pid} is still alive`);
+  throw new Error(`pid ${String(pid)} is still alive`);
 }
 
 async function readProcessPids(stdout: NodeJS.ReadableStream): Promise<{
@@ -51,8 +52,8 @@ async function readProcessPids(stdout: NodeJS.ReadableStream): Promise<{
   let buffer = "";
   for await (const chunk of stdout) {
     buffer += chunk.toString();
-    const childMatch = buffer.match(/^child=(\d+)$/m);
-    const grandchildMatch = buffer.match(/^grandchild=(\d+)$/m);
+    const childMatch = /^child=(\d+)$/m.exec(buffer);
+    const grandchildMatch = /^grandchild=(\d+)$/m.exec(buffer);
     if (childMatch && grandchildMatch) {
       return {
         childPid: Number(childMatch[1]),

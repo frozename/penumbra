@@ -1,8 +1,17 @@
-import { describe, expect, test, vi } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { PassThrough } from "node:stream";
-import { createAcpWarmPool, poolKeyFor } from "../../src/adapters/acp-warm-pool.js";
 
-function deferred<T>() {
+import type { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
+
+import { createAcpWarmPool, poolKeyFor } from "../../src/adapters/acp-warm-pool.js";
+import { makeMockAcpHandle, type MockAcpHandle } from "../helpers/stdio-acp-fixtures.js";
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+}
+
+function deferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((r) => {
     resolve = r;
@@ -10,19 +19,27 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function handle(opts: { writable?: boolean; exited?: Promise<number | null> } = {}) {
+function handle(opts: { writable?: boolean; exited?: Promise<number | null> } = {}): MockAcpHandle {
   const stdin = new PassThrough();
   if (opts.writable === false) stdin.end();
-  return {
+  return makeMockAcpHandle({
     stdin,
-    stdout: new PassThrough(),
-    kill: vi.fn(),
-    exited: opts.exited ?? new Promise<number | null>(() => {}),
-    getStderrTail: () => "",
-  };
+    exited:
+      opts.exited ??
+      new Promise<number | null>(() => {
+        /* never resolves: idle handles stay alive until the test ends */
+      }),
+  });
 }
 
-const client = {} as any;
+// The pool only stores `client` and never invokes it on this code path, so a
+// single laundered placeholder stands in for the nominal StdioAcpClient class.
+const client = {} as unknown as StdioAcpClient;
+
+function markDeadExitCode(target: MockAcpHandle, code: number): void {
+  (target as MockAcpHandle & { exitCode: number }).exitCode = code;
+}
+
 const key = poolKeyFor({ agent: "codex-acp-fast", cwd: "/repo" });
 
 describe("AcpWarmPool", () => {
@@ -103,7 +120,7 @@ describe("AcpWarmPool", () => {
 
   test("evicts dead or non-writable entries at acquire", () => {
     const dead = handle();
-    (dead as any).exitCode = 1;
+    markDeadExitCode(dead, 1);
     const pool = createAcpWarmPool();
     pool.deposit(key, { handle: dead, client, sessionId: "dead", specHash: "spec-a" });
     expect(pool.acquire("h1", key, "spec-a")).toBeNull();
