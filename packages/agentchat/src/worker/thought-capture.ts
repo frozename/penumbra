@@ -1,4 +1,5 @@
 import type { DispatchEventInput } from "@penumbra/core";
+
 import type { RuntimeThoughtsConfig } from "./thought-config.js";
 
 export interface RecordThoughtInput {
@@ -67,7 +68,7 @@ export class ThoughtCapture {
     const state = this.getOrCreateState(input.handoffId);
     if (state.streamCapHit) return;
 
-    const ts = input.ts ?? (this.deps.now ?? (() => new Date()))().toISOString();
+    const ts = input.ts ?? (this.deps.now ?? ((): Date => new Date()))().toISOString();
     const sequence = state.sequence;
     state.sequence = sequence + 1;
 

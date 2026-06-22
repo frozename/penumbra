@@ -1,4 +1,5 @@
 import type { AgentPool } from "@penumbra/config";
+
 import type { AgentChatConfig } from "../config/types.js";
 
 export interface RuntimeThoughtCaptureConfig {
@@ -42,29 +43,29 @@ export interface RuntimeThoughtsConfig {
 }
 
 export function loadThoughtsConfig(input: { agentchat: AgentChatConfig }): RuntimeThoughtsConfig {
-  const t = input.agentchat.thoughts;
-  const enabled = t?.enabled === true;
+  const t: NonNullable<AgentChatConfig["thoughts"]> = input.agentchat.thoughts ?? {};
+  const enabled = t.enabled === true;
 
   const capture: RuntimeThoughtCaptureConfig = {
-    maxTextBytes: t?.capture?.max_text_bytes ?? 16384,
-    maxStreamBytes: t?.capture?.max_stream_bytes ?? 1048576,
-    adapters: { ...(t?.capture?.adapters ?? {}) },
-    perAgentOverrides: { ...(t?.capture?.per_agent_overrides ?? {}) },
+    maxTextBytes: t.capture?.max_text_bytes ?? 16384,
+    maxStreamBytes: t.capture?.max_stream_bytes ?? 1048576,
+    adapters: { ...(t.capture?.adapters ?? {}) },
+    perAgentOverrides: { ...(t.capture?.per_agent_overrides ?? {}) },
   };
 
-  const analyzeRequested = enabled && t?.analyze?.enabled === true;
+  const analyzeRequested = enabled && t.analyze?.enabled === true;
   const digest: RuntimeThoughtDigestConfig = {
-    enabled: analyzeRequested && t?.analyze?.digest?.enabled === true,
-    pool: t?.analyze?.digest?.agent ?? null,
-    maxInputChars: t?.analyze?.digest?.max_input_chars ?? 50000,
-    timeoutMs: t?.analyze?.digest?.timeout_ms ?? 60000,
+    enabled: analyzeRequested && t.analyze?.digest?.enabled === true,
+    pool: t.analyze?.digest?.agent ?? null,
+    maxInputChars: t.analyze?.digest?.max_input_chars ?? 50000,
+    timeoutMs: t.analyze?.digest?.timeout_ms ?? 60000,
   };
   const signals: RuntimeThoughtSignalsConfig = {
-    enabled: analyzeRequested && t?.analyze?.signals?.enabled === true,
-    pool: t?.analyze?.signals?.agent ?? null,
-    timeoutMs: t?.analyze?.signals?.timeout_ms ?? 60000,
-    maxInputChars: t?.analyze?.signals?.max_input_chars ?? null,
-    definitions: (t?.analyze?.signals?.definitions ?? []).map((d) => ({
+    enabled: analyzeRequested && t.analyze?.signals?.enabled === true,
+    pool: t.analyze?.signals?.agent ?? null,
+    timeoutMs: t.analyze?.signals?.timeout_ms ?? 60000,
+    maxInputChars: t.analyze?.signals?.max_input_chars ?? null,
+    definitions: (t.analyze?.signals?.definitions ?? []).map((d) => ({
       name: d.name,
       prompt: d.prompt,
     })),
@@ -75,7 +76,7 @@ export function loadThoughtsConfig(input: { agentchat: AgentChatConfig }): Runti
     capture,
     analyze: {
       enabled: analyzeRequested,
-      onlyWhen: t?.analyze?.only_when ?? ["pr_opened", "test_failed", "typecheck_failed"],
+      onlyWhen: t.analyze?.only_when ?? ["pr_opened", "test_failed", "typecheck_failed"],
       digest,
       signals,
     },

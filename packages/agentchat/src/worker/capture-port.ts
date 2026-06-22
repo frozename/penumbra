@@ -1,7 +1,13 @@
-import { type MaestroOutputRedactor } from "./maestro-output-redactor.js";
+import {
+  type MaestroOutputRedactor,
+  type MaestroRedactionResult,
+  type MaestroRedactionResultObject,
+} from "./maestro-output-redactor.js";
+
+export type ObservedDispatchEvent = Record<string, unknown>;
 
 export interface CapturePortOpts {
-  observe: (event: any) => Promise<{ event_id: string }>;
+  observe(event: ObservedDispatchEvent): Promise<{ event_id: string }>;
   chainId: string | null;
   handoffId: string;
   projectId: string | null;
@@ -56,6 +62,8 @@ interface HeldToolCall {
   input: unknown;
 }
 
+type RedactionHit = MaestroRedactionResult["hits"][number];
+
 const TRUNCATE_LIMIT = 8 * 1024;
 const MAESTRO_RESPONSE_BLOCKED_SENTINEL = "[maestro response withheld by output policy]";
 const MAESTRO_TOOL_USE_BLOCKED_SENTINEL = "[maestro tool-use withheld by output policy]";
@@ -67,7 +75,7 @@ function truncateIfNeeded(value: unknown): {
   bytesTotal: number;
 } {
   if (value === undefined || value === null)
-    return { value: value ?? null, truncated: false, bytesTotal: 0 };
+    return { value: null, truncated: false, bytesTotal: 0 };
   const json = JSON.stringify(value);
   const bytes = Buffer.byteLength(json, "utf8");
   if (bytes <= TRUNCATE_LIMIT) return { value, truncated: false, bytesTotal: bytes };
@@ -75,11 +83,21 @@ function truncateIfNeeded(value: unknown): {
   return { value: { __truncated_string: prefix }, truncated: true, bytesTotal: bytes };
 }
 
+function joinRuleIds(hits: RedactionHit[]): string {
+  return hits.map((h) => h.rule_id).join(",");
+}
+
+function readErrorBody(err: unknown): unknown {
+  if (typeof err !== "object" || err === null) return undefined;
+  const candidate = (err as { body?: unknown }).body;
+  return candidate;
+}
+
 export class CapturePort {
-  private opts: CapturePortOpts;
+  private readonly opts: CapturePortOpts;
   private chunkBuffer: ChunkBuffer | null = null;
-  private toolCalls = new Map<string, HeldToolCall>();
-  private inFlight = new Set<Promise<unknown>>();
+  private readonly toolCalls = new Map<string, HeldToolCall>();
+  private readonly inFlight = new Set<Promise<unknown>>();
   private stats = { sent: 0, failed: 0 };
   private closed = false;
   private usageWarnedMissing = false;
@@ -91,16 +109,23 @@ export class CapturePort {
   emit(ev: NotificationEvent): void {
     if (this.closed) return;
     try {
-      if (ev.kind === "agent_message_chunk" || ev.kind === "agent_thought_chunk") {
-        this.handleChunk(ev);
-      } else if (ev.kind === "tool_call") {
-        this.handleToolCall(ev);
-      } else if (ev.kind === "tool_call_update") {
-        this.handleToolCallUpdate(ev);
-      } else if (ev.kind === "usage_update") {
-        this.handleUsageUpdate(ev);
-      } else if (ev.kind === "capacity_error") {
-        this.handleCapacityError(ev);
+      switch (ev.kind) {
+        case "agent_message_chunk":
+        case "agent_thought_chunk":
+          this.handleChunk(ev);
+          break;
+        case "tool_call":
+          this.handleToolCall(ev);
+          break;
+        case "tool_call_update":
+          this.handleToolCallUpdate(ev);
+          break;
+        case "usage_update":
+          this.handleUsageUpdate(ev);
+          break;
+        case "capacity_error":
+          this.handleCapacityError(ev);
+          break;
       }
     } catch {
       // emit never throws
@@ -118,7 +143,7 @@ export class CapturePort {
     ]);
     if (this.inFlight.size > 0 && pendingCount > 0) {
       console.error(
-        `capture-port: close timed out after ${closeTimeoutMs}ms; pending=${this.inFlight.size}`,
+        `capture-port: close timed out after ${String(closeTimeoutMs)}ms; pending=${String(this.inFlight.size)}`,
       );
     }
   }
@@ -138,9 +163,7 @@ export class CapturePort {
     if (this.chunkBuffer && this.chunkBuffer.kind !== kind) {
       this.flushChunkBuffer();
     }
-    if (!this.chunkBuffer) {
-      this.chunkBuffer = { kind, text: "", startedAt: Date.now() };
-    }
+    this.chunkBuffer ??= { kind, text: "", startedAt: Date.now() };
     this.chunkBuffer.text += ev.content ?? "";
   }
 
@@ -166,7 +189,8 @@ export class CapturePort {
     if (this.chunkBuffer) {
       this.flushChunkBuffer();
     }
-    this.emitToolRow(ev.toolCallId, held, ev.status as string, ev.output ?? null, false);
+    const status = ev.status ?? "completed";
+    this.emitToolRow(ev.toolCallId, held, status, ev.output ?? null, false);
   }
 
   private handleUsageUpdate(ev: RegularNotificationEvent): void {
@@ -197,9 +221,11 @@ export class CapturePort {
       raw_cost: ev.cost ?? null,
       source_kind: "acp-wire",
     };
+    const usedStr = String(ev.used);
+    const sizeStr = ev.size === undefined ? "unknown" : String(ev.size);
     event.payload_summary = ev.cost
-      ? `${ev.used}/${ev.size} tokens, ${ev.cost.amount} ${ev.cost.currency}`.slice(0, 240)
-      : `${ev.used}/${ev.size} tokens`.slice(0, 240);
+      ? `${usedStr}/${sizeStr} tokens, ${String(ev.cost.amount)} ${ev.cost.currency}`.slice(0, 240)
+      : `${usedStr}/${sizeStr} tokens`.slice(0, 240);
     this.dispatch(event);
   }
 
@@ -225,39 +251,7 @@ export class CapturePort {
     const baseEventType = buf.kind === "agent_message_chunk" ? "agent-response" : "agent-thought";
 
     if (baseEventType === "agent-response" && this.opts.maestroRedactor) {
-      const result = this.opts.maestroRedactor.checkContent(buf.text);
-      if (result.decision === "blocked") {
-        const blocked = this.buildBaseEvent("agent-response-blocked", buf.startedAt);
-        blocked.payload_json = {
-          handoff_id: this.opts.handoffId,
-          hits: result.hits,
-          decision: result.decision,
-          redacted_message: MAESTRO_RESPONSE_BLOCKED_SENTINEL,
-        };
-        blocked.payload_summary =
-          `maestro response blocked by ${result.hits.map((h) => h.rule_id).join(",")}`.slice(
-            0,
-            240,
-          );
-        this.dispatch(blocked);
-        return;
-      }
-      if (result.bypassed) {
-        const note = this.buildBaseEvent("agent-response-redaction-bypassed", buf.startedAt);
-        note.payload_json = { handoff_id: this.opts.handoffId, hits: result.hits };
-        note.payload_summary = `bypass on (would-block=${result.hits.length})`.slice(0, 240);
-        this.dispatch(note);
-      } else if (result.decision === "rewritten") {
-        const note = this.buildBaseEvent("agent-response-redaction-hit", buf.startedAt);
-        note.payload_json = { handoff_id: this.opts.handoffId, hits: result.hits };
-        note.payload_summary =
-          `redaction hits: ${result.hits.map((h) => h.rule_id).join(",")}`.slice(0, 240);
-        this.dispatch(note);
-      }
-      const event = this.buildBaseEvent(baseEventType, buf.startedAt);
-      event.payload_json = { handoff_id: this.opts.handoffId, text: result.content };
-      event.payload_summary = result.content.slice(0, 240);
-      this.dispatch(event);
+      this.flushRedactedResponse(buf, this.opts.maestroRedactor);
       return;
     }
 
@@ -265,6 +259,51 @@ export class CapturePort {
     event.payload_json = { handoff_id: this.opts.handoffId, text: buf.text };
     event.payload_summary = buf.text.slice(0, 240);
     this.dispatch(event);
+  }
+
+  private flushRedactedResponse(buf: ChunkBuffer, redactor: MaestroOutputRedactor): void {
+    const result: MaestroRedactionResult = redactor.checkContent(buf.text);
+    if (result.decision === "blocked") {
+      this.dispatchResponseBlocked(buf.startedAt, result.hits);
+      return;
+    }
+    if (result.bypassed) {
+      this.dispatchResponseRedactionNote(buf.startedAt, result.hits, "bypassed");
+    } else if (result.decision === "rewritten") {
+      this.dispatchResponseRedactionNote(buf.startedAt, result.hits, "hit");
+    }
+    const event = this.buildBaseEvent("agent-response", buf.startedAt);
+    event.payload_json = { handoff_id: this.opts.handoffId, text: result.content };
+    event.payload_summary = result.content.slice(0, 240);
+    this.dispatch(event);
+  }
+
+  private dispatchResponseBlocked(startedAt: number, hits: RedactionHit[]): void {
+    const blocked = this.buildBaseEvent("agent-response-blocked", startedAt);
+    blocked.payload_json = {
+      handoff_id: this.opts.handoffId,
+      hits,
+      decision: "blocked",
+      redacted_message: MAESTRO_RESPONSE_BLOCKED_SENTINEL,
+    };
+    blocked.payload_summary = `maestro response blocked by ${joinRuleIds(hits)}`.slice(0, 240);
+    this.dispatch(blocked);
+  }
+
+  private dispatchResponseRedactionNote(
+    startedAt: number,
+    hits: RedactionHit[],
+    kind: "bypassed" | "hit",
+  ): void {
+    const eventType =
+      kind === "bypassed" ? "agent-response-redaction-bypassed" : "agent-response-redaction-hit";
+    const note = this.buildBaseEvent(eventType, startedAt);
+    note.payload_json = { handoff_id: this.opts.handoffId, hits };
+    note.payload_summary =
+      kind === "bypassed"
+        ? `bypass on (would-block=${String(hits.length)})`.slice(0, 240)
+        : `redaction hits: ${joinRuleIds(hits)}`.slice(0, 240);
+    this.dispatch(note);
   }
 
   private emitOrphans(): void {
@@ -281,102 +320,16 @@ export class CapturePort {
     output: unknown,
     orphaned: boolean,
   ): void {
-    let redactedInput: unknown = held.input;
-    let redactedOutput: unknown = output;
     const redactor = this.opts.maestroRedactor;
-    if (redactor) {
-      const result = redactor.checkValue(held.input);
-      if (result.decision === "blocked") {
-        const blocked = this.buildBaseEvent("agent-tool-use-blocked", held.startedAt);
-        blocked.payload_json = {
-          handoff_id: this.opts.handoffId,
-          tool_call_id: toolCallId,
-          hits: result.hits,
-          decision: result.decision,
-          redacted_message: MAESTRO_TOOL_USE_BLOCKED_SENTINEL,
-        };
-        blocked.payload_summary =
-          `tool call blocked by ${result.hits.map((h) => h.rule_id).join(",")}`.slice(0, 240);
-        this.dispatch(blocked);
-        return;
-      }
-      if (result.bypassed) {
-        const note = this.buildBaseEvent("agent-tool-use-redaction-bypassed", held.startedAt);
-        note.payload_json = {
-          handoff_id: this.opts.handoffId,
-          tool_call_id: toolCallId,
-          hits: result.hits,
-        };
-        note.payload_summary = `bypass on (would-block=${result.hits.length})`.slice(0, 240);
-        this.dispatch(note);
-      } else if (result.decision === "rewritten") {
-        const note = this.buildBaseEvent("agent-tool-use-redaction-hit", held.startedAt);
-        note.payload_json = {
-          handoff_id: this.opts.handoffId,
-          tool_call_id: toolCallId,
-          hits: result.hits,
-        };
-        note.payload_summary =
-          `tool redaction hits: ${result.hits.map((h) => h.rule_id).join(",")}`.slice(0, 240);
-        this.dispatch(note);
-      }
-      redactedInput = result.value;
+    const redaction = redactor
+      ? this.applyToolRedaction(toolCallId, held, output, redactor)
+      : { redactedInput: held.input, redactedOutput: output, blocked: false };
+    if (redaction.blocked) return;
 
-      const outputResult = redactor.checkAnyValue(output);
-      if (outputResult.decision === "blocked") {
-        const blocked = this.buildBaseEvent("agent-tool-result-blocked", held.startedAt);
-        blocked.payload_json = {
-          handoff_id: this.opts.handoffId,
-          tool_call_id: toolCallId,
-          hits: outputResult.hits,
-          decision: outputResult.decision,
-          redacted_message: MAESTRO_TOOL_RESULT_BLOCKED_SENTINEL,
-        };
-        blocked.payload_summary =
-          `tool result blocked by ${outputResult.hits.map((h) => h.rule_id).join(",")}`.slice(
-            0,
-            240,
-          );
-        this.dispatch(blocked);
-        redactedOutput = {
-          redacted_message: MAESTRO_TOOL_RESULT_BLOCKED_SENTINEL,
-          rule_id: outputResult.hits[0]?.rule_id ?? "maestro_output_policy",
-        };
-      } else {
-        if (outputResult.bypassed) {
-          const note = this.buildBaseEvent("agent-tool-result-redaction-bypassed", held.startedAt);
-          note.payload_json = {
-            handoff_id: this.opts.handoffId,
-            tool_call_id: toolCallId,
-            hits: outputResult.hits,
-          };
-          note.payload_summary = `bypass on (would-block=${outputResult.hits.length})`.slice(
-            0,
-            240,
-          );
-          this.dispatch(note);
-        } else if (outputResult.decision === "rewritten") {
-          const note = this.buildBaseEvent("agent-tool-result-redaction-hit", held.startedAt);
-          note.payload_json = {
-            handoff_id: this.opts.handoffId,
-            tool_call_id: toolCallId,
-            hits: outputResult.hits,
-          };
-          note.payload_summary =
-            `tool result redaction hits: ${outputResult.hits.map((h) => h.rule_id).join(",")}`.slice(
-              0,
-              240,
-            );
-          this.dispatch(note);
-        }
-        redactedOutput = outputResult.value;
-      }
-    }
-
-    const inputResult = truncateIfNeeded(redactedInput);
-    const outputResult = truncateIfNeeded(redactedOutput);
+    const inputResult = truncateIfNeeded(redaction.redactedInput);
+    const outputResult = truncateIfNeeded(redaction.redactedOutput);
     const event = this.buildBaseEvent("agent-tool-use", held.startedAt);
-    const payload: any = {
+    const payload: Record<string, unknown> = {
       handoff_id: this.opts.handoffId,
       tool_call_id: toolCallId,
       input: inputResult.value,
@@ -396,8 +349,121 @@ export class CapturePort {
     this.dispatch(event);
   }
 
-  private buildBaseEvent(eventType: string, startedAt: number): any {
-    const event: any = {
+  private applyToolRedaction(
+    toolCallId: string,
+    held: HeldToolCall,
+    output: unknown,
+    redactor: MaestroOutputRedactor,
+  ): { redactedInput: unknown; redactedOutput: unknown; blocked: boolean } {
+    const inputCheck: MaestroRedactionResultObject = redactor.checkValue(held.input);
+    if (inputCheck.decision === "blocked") {
+      this.dispatchToolUseBlocked(toolCallId, held.startedAt, inputCheck.hits);
+      return { redactedInput: held.input, redactedOutput: output, blocked: true };
+    }
+    this.dispatchToolUseRedactionNote(toolCallId, held.startedAt, inputCheck);
+    const redactedInput = inputCheck.value;
+
+    const outputCheck: MaestroRedactionResultObject = redactor.checkAnyValue(output);
+    if (outputCheck.decision === "blocked") {
+      this.dispatchToolResultBlocked(toolCallId, held.startedAt, outputCheck.hits);
+      const sentinel: Record<string, unknown> = {
+        redacted_message: MAESTRO_TOOL_RESULT_BLOCKED_SENTINEL,
+        rule_id: outputCheck.hits[0]?.rule_id ?? "maestro_output_policy",
+      };
+      return { redactedInput, redactedOutput: sentinel, blocked: false };
+    }
+    this.dispatchToolResultRedactionNote(toolCallId, held.startedAt, outputCheck);
+    return { redactedInput, redactedOutput: outputCheck.value, blocked: false };
+  }
+
+  private dispatchToolUseBlocked(
+    toolCallId: string,
+    startedAt: number,
+    hits: RedactionHit[],
+  ): void {
+    const blocked = this.buildBaseEvent("agent-tool-use-blocked", startedAt);
+    blocked.payload_json = {
+      handoff_id: this.opts.handoffId,
+      tool_call_id: toolCallId,
+      hits,
+      decision: "blocked",
+      redacted_message: MAESTRO_TOOL_USE_BLOCKED_SENTINEL,
+    };
+    blocked.payload_summary = `tool call blocked by ${joinRuleIds(hits)}`.slice(0, 240);
+    this.dispatch(blocked);
+  }
+
+  private dispatchToolUseRedactionNote(
+    toolCallId: string,
+    startedAt: number,
+    check: MaestroRedactionResultObject,
+  ): void {
+    if (check.bypassed) {
+      const note = this.buildBaseEvent("agent-tool-use-redaction-bypassed", startedAt);
+      note.payload_json = {
+        handoff_id: this.opts.handoffId,
+        tool_call_id: toolCallId,
+        hits: check.hits,
+      };
+      note.payload_summary = `bypass on (would-block=${String(check.hits.length)})`.slice(0, 240);
+      this.dispatch(note);
+    } else if (check.decision === "rewritten") {
+      const note = this.buildBaseEvent("agent-tool-use-redaction-hit", startedAt);
+      note.payload_json = {
+        handoff_id: this.opts.handoffId,
+        tool_call_id: toolCallId,
+        hits: check.hits,
+      };
+      note.payload_summary = `tool redaction hits: ${joinRuleIds(check.hits)}`.slice(0, 240);
+      this.dispatch(note);
+    }
+  }
+
+  private dispatchToolResultBlocked(
+    toolCallId: string,
+    startedAt: number,
+    hits: RedactionHit[],
+  ): void {
+    const blocked = this.buildBaseEvent("agent-tool-result-blocked", startedAt);
+    blocked.payload_json = {
+      handoff_id: this.opts.handoffId,
+      tool_call_id: toolCallId,
+      hits,
+      decision: "blocked",
+      redacted_message: MAESTRO_TOOL_RESULT_BLOCKED_SENTINEL,
+    };
+    blocked.payload_summary = `tool result blocked by ${joinRuleIds(hits)}`.slice(0, 240);
+    this.dispatch(blocked);
+  }
+
+  private dispatchToolResultRedactionNote(
+    toolCallId: string,
+    startedAt: number,
+    check: MaestroRedactionResultObject,
+  ): void {
+    if (check.bypassed) {
+      const note = this.buildBaseEvent("agent-tool-result-redaction-bypassed", startedAt);
+      note.payload_json = {
+        handoff_id: this.opts.handoffId,
+        tool_call_id: toolCallId,
+        hits: check.hits,
+      };
+      note.payload_summary = `bypass on (would-block=${String(check.hits.length)})`.slice(0, 240);
+      this.dispatch(note);
+    } else if (check.decision === "rewritten") {
+      const note = this.buildBaseEvent("agent-tool-result-redaction-hit", startedAt);
+      note.payload_json = {
+        handoff_id: this.opts.handoffId,
+        tool_call_id: toolCallId,
+        hits: check.hits,
+      };
+      note.payload_summary = `tool result redaction hits: ${joinRuleIds(check.hits)}`.slice(0, 240);
+      this.dispatch(note);
+    }
+  }
+
+  private buildBaseEvent(eventType: string, startedAt: number): ObservedDispatchEvent {
+    const event: ObservedDispatchEvent = {
       ts: new Date(startedAt).toISOString(),
       source: "agentchat",
       source_detail: this.opts.agentName,
@@ -419,7 +485,7 @@ export class CapturePort {
     return event;
   }
 
-  private dispatch(event: any): void {
+  private dispatch(event: ObservedDispatchEvent): void {
     const p = this.opts
       .observe(event)
       .then(() => {
@@ -428,8 +494,8 @@ export class CapturePort {
       .catch((err: unknown) => {
         this.stats.failed++;
         const msg = err instanceof Error ? err.message : String(err);
-        const body = (err as any)?.body;
-        const bodySuffix = body ? ` body=${JSON.stringify(body)}` : "";
+        const body = readErrorBody(err);
+        const bodySuffix = body === undefined ? "" : ` body=${JSON.stringify(body)}`;
         console.error(`capture-port: observe failed: ${msg}${bodySuffix}`);
       })
       .finally(() => {

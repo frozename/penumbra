@@ -1,4 +1,5 @@
 import type { Logger } from "@penumbra/core";
+
 import type { RecallContextConfig } from "../config/types.js";
 import type { PenumbraClient } from "../penumbra-client.js";
 
@@ -85,7 +86,7 @@ export class RecallEnricher {
   }
 
   private async queryCorpus(query: string, opts: EnrichOpts): Promise<PreambleItem[] | null> {
-    const corpusName = (opts.config.scope as string).slice("corpus:".length);
+    const corpusName = opts.config.scope.slice("corpus:".length);
     try {
       const response = await this.withTimeout(
         this.deps.client.corpusQuery({
@@ -106,12 +107,11 @@ export class RecallEnricher {
 
   private withTimeout<T>(promise: Promise<T>): Promise<T> {
     const timeoutMs = this.deps.timeoutMs ?? RECALL_TIMEOUT_MS;
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(
-        () => reject(new Error(`recall timed out after ${timeoutMs}ms`)),
-        timeoutMs,
-      ).unref?.(),
-    );
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(`recall timed out after ${String(timeoutMs)}ms`));
+      }, timeoutMs).unref();
+    });
     return Promise.race([promise, timeoutPromise]);
   }
 }
@@ -121,7 +121,7 @@ function formatPreamble(items: PreambleItem[], maxCharsPerResult: number): strin
     .map((r, i) => {
       const truncated =
         r.body.length > maxCharsPerResult ? r.body.slice(0, maxCharsPerResult) + "…" : r.body;
-      const meta = `[#${i + 1} tier=${r.tier} score=${r.score.toFixed(3)} ts=${r.ts}]`;
+      const meta = `[#${String(i + 1)} tier=${r.tier} score=${r.score.toFixed(3)} ts=${r.ts}]`;
       return `${meta}\n${truncated}`;
     })
     .join("\n\n");
