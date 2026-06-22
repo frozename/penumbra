@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { PassThrough } from "node:stream";
+
+import type { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
+import type { StdioAcpHandle } from "../../src/adapters/stdio-acp-server.js";
+import type { StdioAcpOptions } from "../../src/adapters/stdio-acp.js";
+import type { WriteToolsExecutor } from "../../src/worker/write-tools-executor.js";
+
 import { StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
 import {
   OperationRejectedError,
@@ -7,73 +13,126 @@ import {
   TerminalNotFoundError,
 } from "../../src/worker/write-tools-errors.js";
 
-function createHarness(options: Record<string, unknown> = {}, executor: Record<string, any> = {}) {
+type AcpRequestHandler = (params: unknown) => unknown;
+
+interface MockExecutor {
+  writeTextFile?: (args: unknown, ctx: unknown) => unknown;
+  editTextFile?: (args: unknown, ctx: unknown) => unknown;
+  terminalCreate?: (args: unknown, ctx: unknown) => unknown;
+  terminalOutput?: (args: unknown, ctx?: unknown) => unknown;
+  terminalWaitForExit?: (args: unknown) => unknown;
+  terminalRelease?: (args: unknown) => unknown;
+  terminalKill?: (args: unknown) => unknown;
+}
+
+// Single documented launder: WriteToolsExecutor is a nominal class with private
+// state, so structurally-shaped test doubles need one `as unknown as` to be
+// accepted by DispatchInput.executor.
+function asExecutor(mock: MockExecutor): WriteToolsExecutor {
+  return mock as unknown as WriteToolsExecutor;
+}
+
+interface MockClient {
+  onRequest: (method: string, handler: AcpRequestHandler) => void;
+  on: (method: string, handler: (params: unknown) => void) => void;
+  request: (method: string, params?: unknown) => Promise<unknown>;
+}
+
+// Single documented launder: StdioAcpClient is a nominal class with private
+// fields; structural mocks pass through here once.
+function asAcpClient(client: MockClient): StdioAcpClient {
+  return client as unknown as StdioAcpClient;
+}
+
+interface InitializeParams {
+  clientCapabilities?: { fs?: { writeTextFile?: boolean }; terminal?: boolean };
+}
+
+interface Harness {
+  runDispatch: () => Promise<void>;
+  registeredMethods: string[];
+  getInitializeParams: () => InitializeParams;
+  getHandler: (method: string) => AcpRequestHandler | undefined;
+}
+
+function createHarness(
+  options: Partial<StdioAcpOptions> = {},
+  executor: MockExecutor = {},
+): Harness {
   const registeredMethods: string[] = [];
-  const handlers = new Map<string, (params: any) => Promise<any> | any>();
-  let initializeParams: any = null;
+  const handlers = new Map<string, AcpRequestHandler>();
+  const initializeRef: { value: unknown } = { value: null };
 
-  const startServer = async () => ({
-    stdin: new PassThrough(),
-    stdout: new PassThrough(),
-    kill: () => {},
-    exited: Promise.resolve(0),
-    getStderrTail: () => "",
-  });
+  const startServer = (): Promise<StdioAcpHandle> =>
+    Promise.resolve({
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      kill: (): void => undefined,
+      exited: Promise.resolve(0),
+      getStderrTail: (): string => "",
+    });
 
-  const client = {
-    onRequest(method: string, handler: (params: any) => Promise<any> | any) {
+  const client: MockClient = {
+    onRequest: (method, handler): void => {
       registeredMethods.push(method);
       handlers.set(method, handler);
     },
-    on() {},
-    async request(method: string, params?: any) {
+    on: (): void => undefined,
+    request: (method, params): Promise<unknown> => {
       if (method === "initialize") {
-        initializeParams = params;
-        return { protocolVersion: 1 };
+        initializeRef.value = params;
+        return Promise.resolve({ protocolVersion: 1 });
       }
-      if (method === "session/new") return { sessionId: "session-123" };
-      if (method === "session/prompt") return { stopReason: "end_turn" };
-      return {};
+      if (method === "session/new") return Promise.resolve({ sessionId: "session-123" });
+      if (method === "session/prompt") return Promise.resolve({ stopReason: "end_turn" });
+      return Promise.resolve({});
     },
   };
 
   const adapter = new StdioAcpAdapter(
-    {
-      binary: "mock-acp",
-      cwd: "/tmp",
-      ...options,
-    } as any,
+    { binary: "mock-acp", cwd: "/tmp", ...options },
     {
       startServer,
-      createClient: () => client as any,
+      createClient: (): StdioAcpClient => asAcpClient(client),
     },
   );
 
-  async function runDispatch() {
-    await adapter.dispatch({
-      prompt: "hello",
-      signal: new AbortController().signal,
-      conversation: { id: "conv-1", project_id: null },
-      config: {},
-      handoff_id: "handoff-1",
-      executor: executor as any,
-    });
-  }
-
   return {
-    runDispatch,
+    runDispatch: async (): Promise<void> => {
+      await adapter.dispatch({
+        prompt: "hello",
+        signal: new AbortController().signal,
+        conversation: { id: "conv-1", project_id: null },
+        config: {},
+        handoff_id: "handoff-1",
+        executor: asExecutor(executor),
+      });
+    },
     registeredMethods,
-    getInitializeParams: () => initializeParams,
-    getHandler: (method: string) => handlers.get(method),
+    getInitializeParams: (): InitializeParams => {
+      const value = initializeRef.value;
+      if (value === null || typeof value !== "object") return {};
+      return value;
+    },
+    getHandler: (method): AcpRequestHandler | undefined => handlers.get(method),
   };
 }
 
-async function captureError(promise: Promise<any>) {
+async function captureError(promise: unknown): Promise<{ value: unknown; error: Error | null }> {
   try {
-    return { value: await promise, error: null as Error | null };
+    return { value: await promise, error: null };
   } catch (error) {
-    return { value: null, error: error as Error };
+    return {
+      value: null,
+      error: error instanceof Error ? error : new Error(String(error)),
+    };
   }
+}
+
+function errorCode(error: Error | null): number | undefined {
+  if (error === null) return undefined;
+  const code = (error as unknown as Record<string, unknown>).code;
+  return typeof code === "number" ? code : undefined;
 }
 
 describe("StdioAcpAdapter write-tool ACP handlers", () => {
@@ -90,17 +149,21 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
 
     await harness.runDispatch();
 
-    expect(harness.getInitializeParams().clientCapabilities.fs).toEqual({ writeTextFile: true });
+    expect(harness.getInitializeParams().clientCapabilities?.fs).toEqual({ writeTextFile: true });
   });
 
   test("fs/write_text_file invokes executor.writeTextFile and returns empty response", async () => {
-    const calls: any[] = [];
+    interface RecordedCall {
+      args: unknown;
+      ctx: unknown;
+    }
+    const calls: RecordedCall[] = [];
     const harness = createHarness(
       { fsWriteTextFile: true },
       {
-        writeTextFile: async (args: any, ctx: any) => {
+        writeTextFile: (args, ctx): Promise<unknown> => {
           calls.push({ args, ctx });
-          return { bytesWritten: 5, sha256: "abc" };
+          return Promise.resolve({ bytesWritten: 5, sha256: "abc" });
         },
       },
     );
@@ -109,7 +172,7 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
     const handler = harness.getHandler("fs/write_text_file");
     expect(handler).toBeDefined();
 
-    const result = await handler!({ path: "/tmp/file.txt", content: "hello" });
+    const result = await handler?.({ path: "/tmp/file.txt", content: "hello" });
 
     expect(result).toEqual({});
     expect(calls).toEqual([
@@ -128,7 +191,7 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
     const harness = createHarness(
       { fsWriteTextFile: true },
       {
-        writeTextFile: async () => {
+        writeTextFile: (): never => {
           throw new OperationRejectedError("denied");
         },
       },
@@ -136,10 +199,10 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
 
     await harness.runDispatch();
     const handler = harness.getHandler("fs/write_text_file");
-    const { error } = await captureError(handler!({ path: "/tmp/file.txt", content: "hello" }));
+    const { error } = await captureError(handler?.({ path: "/tmp/file.txt", content: "hello" }));
 
     expect(error).toBeInstanceOf(Error);
-    expect((error as any).code).toBe(-32004);
+    expect(errorCode(error)).toBe(-32004);
     expect(error?.message).toBe("denied");
   });
 
@@ -147,7 +210,7 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
     const harness = createHarness(
       { fsWriteTextFile: true },
       {
-        writeTextFile: async () => {
+        writeTextFile: (): never => {
           throw new OutsideWorktreeError("outside");
         },
       },
@@ -155,10 +218,10 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
 
     await harness.runDispatch();
     const handler = harness.getHandler("fs/write_text_file");
-    const { error } = await captureError(handler!({ path: "/tmp/file.txt", content: "hello" }));
+    const { error } = await captureError(handler?.({ path: "/tmp/file.txt", content: "hello" }));
 
     expect(error).toBeInstanceOf(Error);
-    expect((error as any).code).toBe(-32001);
+    expect(errorCode(error)).toBe(-32001);
     expect(error?.message).toBe("outside");
   });
 
@@ -167,15 +230,15 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
 
     await harness.runDispatch();
 
-    expect(harness.registeredMethods).toEqual(
-      expect.arrayContaining([
-        "terminal/create",
-        "terminal/output",
-        "terminal/wait_for_exit",
-        "terminal/release",
-        "terminal/kill",
-      ]),
-    );
+    for (const method of [
+      "terminal/create",
+      "terminal/output",
+      "terminal/wait_for_exit",
+      "terminal/release",
+      "terminal/kill",
+    ]) {
+      expect(harness.registeredMethods).toContain(method);
+    }
   });
 
   test("terminal=true advertises clientCapabilities.terminal", async () => {
@@ -183,24 +246,28 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
 
     await harness.runDispatch();
 
-    expect(harness.getInitializeParams().clientCapabilities.terminal).toBe(true);
+    expect(harness.getInitializeParams().clientCapabilities?.terminal).toBe(true);
   });
 
   test("terminal/create returns terminal_id from executor", async () => {
-    const calls: any[] = [];
+    interface RecordedCall {
+      args: unknown;
+      ctx: unknown;
+    }
+    const calls: RecordedCall[] = [];
     const harness = createHarness(
       { terminal: true },
       {
-        terminalCreate: async (args: any, ctx: any) => {
+        terminalCreate: (args, ctx): Promise<unknown> => {
           calls.push({ args, ctx });
-          return { terminal_id: "term-123" };
+          return Promise.resolve({ terminal_id: "term-123" });
         },
       },
     );
 
     await harness.runDispatch();
     const handler = harness.getHandler("terminal/create");
-    const result = await handler!({
+    const result = await handler?.({
       command: "echo hello",
       args: ["echo", "hello"],
       cwd: "/tmp",
@@ -229,17 +296,18 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
     const harness = createHarness(
       { terminal: true },
       {
-        terminalOutput: async () => ({
-          output: "hello\n",
-          truncated: false,
-          exit_status: { exitCode: 0, signal: null },
-        }),
+        terminalOutput: (): Promise<unknown> =>
+          Promise.resolve({
+            output: "hello\n",
+            truncated: false,
+            exit_status: { exitCode: 0, signal: null },
+          }),
       },
     );
 
     await harness.runDispatch();
     const handler = harness.getHandler("terminal/output");
-    const result = await handler!({ terminal_id: "term-123" });
+    const result = await handler?.({ terminal_id: "term-123" });
 
     expect(result).toEqual({
       output: "hello\n",
@@ -252,7 +320,7 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
     const harness = createHarness(
       { terminal: true },
       {
-        terminalKill: async () => {
+        terminalKill: (): never => {
           throw new TerminalNotFoundError("term-404");
         },
       },
@@ -260,10 +328,10 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
 
     await harness.runDispatch();
     const handler = harness.getHandler("terminal/kill");
-    const { error } = await captureError(handler!({ terminal_id: "term-404" }));
+    const { error } = await captureError(handler?.({ terminal_id: "term-404" }));
 
     expect(error).toBeInstanceOf(Error);
-    expect((error as any).code).toBe(-32005);
+    expect(errorCode(error)).toBe(-32005);
     expect(error?.message).toBe("terminal not found: term-404");
   });
 });

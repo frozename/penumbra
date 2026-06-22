@@ -1,6 +1,15 @@
-import { describe, it, expect, mock } from "bun:test";
+import { describe, expect, it, mock } from "bun:test";
 import { PassThrough } from "node:stream";
+
 import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
+
+function readUtf8(stream: PassThrough): string {
+  const chunk: unknown = stream.read();
+  if (chunk === null || chunk === undefined) return "";
+  if (typeof chunk === "string") return chunk;
+  if (Buffer.isBuffer(chunk)) return chunk.toString("utf8");
+  throw new Error(`readUtf8: unexpected chunk type ${typeof chunk}`);
+}
 
 describe("StdioAcpClient", () => {
   describe("framing: newline (default)", () => {
@@ -11,13 +20,13 @@ describe("StdioAcpClient", () => {
 
       const reqPromise = client.request("test/method", { foo: "bar" });
 
-      const written = stdin.read().toString("utf8");
+      const written = readUtf8(stdin);
       expect(written).toMatch(
         /{"jsonrpc":"2\.0","method":"test\/method","params":{"foo":"bar"},"id":1}\n/,
       );
 
       stdout.write('{"jsonrpc":"2.0","id":1,"result":"ok"}\n');
-      const result = await reqPromise;
+      const result: unknown = await reqPromise;
       expect(result).toBe("ok");
     });
 
@@ -102,15 +111,17 @@ describe("StdioAcpClient", () => {
 
       const reqPromise = client.request("test/method", { foo: "bar" });
 
-      const written = stdin.read().toString("utf8");
+      const written = readUtf8(stdin);
       const expectedJson = '{"jsonrpc":"2.0","method":"test/method","params":{"foo":"bar"},"id":1}';
-      const expectedHeader = `Content-Length: ${Buffer.byteLength(expectedJson, "utf8")}\r\n\r\n`;
+      const expectedHeader = `Content-Length: ${String(Buffer.byteLength(expectedJson, "utf8"))}\r\n\r\n`;
       expect(written).toBe(expectedHeader + expectedJson);
 
       const respJson = '{"jsonrpc":"2.0","id":1,"result":"framed-ok"}';
-      stdout.write(`Content-Length: ${Buffer.byteLength(respJson, "utf8")}\r\n\r\n${respJson}`);
+      stdout.write(
+        `Content-Length: ${String(Buffer.byteLength(respJson, "utf8"))}\r\n\r\n${respJson}`,
+      );
 
-      const result = await reqPromise;
+      const result: unknown = await reqPromise;
       expect(result).toBe("framed-ok");
     });
 
@@ -123,7 +134,7 @@ describe("StdioAcpClient", () => {
 
       // Simulate a read that arrives in multiple chunks
       const respJson = '{"jsonrpc":"2.0","id":1,"result":"split-ok"}';
-      const fullMessage = `Content-Length: ${Buffer.byteLength(respJson, "utf8")}\r\n\r\n${respJson}`;
+      const fullMessage = `Content-Length: ${String(Buffer.byteLength(respJson, "utf8"))}\r\n\r\n${respJson}`;
 
       const chunk1 = fullMessage.substring(0, 20);
       const chunk2 = fullMessage.substring(20, 30);
@@ -135,7 +146,7 @@ describe("StdioAcpClient", () => {
       await new Promise((r) => setTimeout(r, 5));
       stdout.write(chunk3);
 
-      const result = await reqPromise;
+      const result: unknown = await reqPromise;
       expect(result).toBe("split-ok");
     });
 
@@ -148,13 +159,17 @@ describe("StdioAcpClient", () => {
 
       // Send a malformed message
       const badJson = '{"jsonrpc":"2.0","id":999, BAD}';
-      stdout.write(`Content-Length: ${Buffer.byteLength(badJson, "utf8")}\r\n\r\n${badJson}`);
+      stdout.write(
+        `Content-Length: ${String(Buffer.byteLength(badJson, "utf8"))}\r\n\r\n${badJson}`,
+      );
 
       // Send the good message
       const goodJson = '{"jsonrpc":"2.0","id":1,"result":"recovered"}';
-      stdout.write(`Content-Length: ${Buffer.byteLength(goodJson, "utf8")}\r\n\r\n${goodJson}`);
+      stdout.write(
+        `Content-Length: ${String(Buffer.byteLength(goodJson, "utf8"))}\r\n\r\n${goodJson}`,
+      );
 
-      const result = await reqPromise;
+      const result: unknown = await reqPromise;
       expect(result).toBe("recovered");
     });
   });

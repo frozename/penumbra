@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+
 import { startStdioAcpServer } from "../../src/adapters/stdio-acp-server.js";
 
 const cleanupPids = new Set<number>();
@@ -60,7 +61,11 @@ describe("startStdioAcpServer", () => {
 
     const exited = await Promise.race([
       handle.exited.then(() => true),
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3_500)),
+      new Promise<boolean>((resolve) => {
+        setTimeout(() => {
+          resolve(false);
+        }, 3_500);
+      }),
     ]);
 
     expect(exited).toBe(true);

@@ -1,27 +1,42 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { PassThrough } from "node:stream";
+
 import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
 
-function pair() {
+interface JsonRpcReply {
+  jsonrpc?: "2.0";
+  id?: string | number | null;
+  result?: unknown;
+  error?: { code?: number; message?: string };
+  method?: string;
+}
+
+interface Pair {
+  stdin: PassThrough;
+  stdout: PassThrough;
+  written: string[];
+}
+
+function pair(): Pair {
   const stdin = new PassThrough();
   const stdout = new PassThrough();
   const written: string[] = [];
-  stdin.on("data", (d) => written.push(d.toString()));
+  stdin.on("data", (d: Buffer) => written.push(d.toString("utf8")));
   return { stdin, stdout, written };
 }
 
-function send(stream: PassThrough, msg: unknown) {
+function send(stream: PassThrough, msg: unknown): void {
   stream.write(JSON.stringify(msg) + "\n");
 }
 
-async function flush() {
-  await new Promise((r) => setTimeout(r, 10));
+function flush(): Promise<void> {
+  return new Promise((r) => setTimeout(r, 10));
 }
 
-function parseWritten(written: string[], index = 0): any {
+function parseWritten(written: string[], index = 0): JsonRpcReply {
   const line = written[index];
-  if (line === undefined) throw new Error(`expected written line at index ${index}`);
-  return JSON.parse(line.trim());
+  if (line === undefined) throw new Error(`expected written line at index ${String(index)}`);
+  return JSON.parse(line.trim()) as JsonRpcReply;
 }
 
 describe("StdioAcpClient onRequest", () => {
@@ -29,9 +44,10 @@ describe("StdioAcpClient onRequest", () => {
     const { stdin, stdout, written } = pair();
     const client = new StdioAcpClient({ stdin, stdout });
 
-    client.onRequest("fs/read_text_file", async (params) => {
-      expect(params.path).toBe("/tmp/x.txt");
-      return { content: "hello" };
+    client.onRequest("fs/read_text_file", (params: unknown) => {
+      const p = params as { path?: unknown };
+      expect(p.path).toBe("/tmp/x.txt");
+      return Promise.resolve({ content: "hello" });
     });
 
     send(stdout, {
@@ -53,7 +69,7 @@ describe("StdioAcpClient onRequest", () => {
     const { stdin, stdout, written } = pair();
     const client = new StdioAcpClient({ stdin, stdout });
 
-    client.onRequest("fs/read_text_file", async () => {
+    client.onRequest("fs/read_text_file", () => {
       throw new Error("outside worktree");
     });
 
@@ -63,7 +79,7 @@ describe("StdioAcpClient onRequest", () => {
     const reply = parseWritten(written);
     expect(reply.id).toBe(7);
     expect(reply.error).toBeDefined();
-    expect(reply.error.message).toMatch(/outside worktree/);
+    expect(reply.error?.message).toMatch(/outside worktree/);
     expect(reply.result).toBeUndefined();
   });
 
@@ -71,9 +87,9 @@ describe("StdioAcpClient onRequest", () => {
     const { stdin, stdout, written } = pair();
     const client = new StdioAcpClient({ stdin, stdout });
 
-    client.onRequest("fs/write_text_file", async () => {
-      const err = new Error("denied");
-      (err as any).code = -32004;
+    client.onRequest("fs/write_text_file", () => {
+      const err: Error & { code?: number } = new Error("denied");
+      err.code = -32004;
       throw err;
     });
 
@@ -103,15 +119,15 @@ describe("StdioAcpClient onRequest", () => {
     const { stdin, stdout, written } = pair();
     const client = new StdioAcpClient({ stdin, stdout });
 
-    let received: any = null;
-    client.on("session/update", (params) => {
-      received = params;
+    const received: { value: unknown } = { value: null };
+    client.on("session/update", (params: unknown) => {
+      received.value = params;
     });
 
     send(stdout, { jsonrpc: "2.0", method: "session/update", params: { foo: 1 } });
     await flush();
 
-    expect(received).toEqual({ foo: 1 });
+    expect(received.value).toEqual({ foo: 1 });
     expect(written.length).toBe(0);
   });
 
@@ -128,7 +144,7 @@ describe("StdioAcpClient onRequest", () => {
     send(stdout, { jsonrpc: "2.0", result: { protocolVersion: 1 }, id });
     await flush();
 
-    const result = await promise;
+    const result: unknown = await promise;
     expect(result).toEqual({ protocolVersion: 1 });
   });
 });
