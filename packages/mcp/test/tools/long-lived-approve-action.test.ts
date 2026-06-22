@@ -1,31 +1,40 @@
-import { describe, it, expect } from "bun:test";
-import { Database } from "bun:sqlite";
 import { loadSqliteVec } from "@penumbra/core";
 import { applySchema } from "@penumbra/core/db/schema";
 import { reconcileLongLivedAgents } from "@penumbra/daemon/long-lived/reconciler";
 import { handleLongLivedApproveAction } from "@penumbra/mcp/tools/long-lived-approve-action";
+import { Database } from "bun:sqlite";
+import { describe, expect, it } from "bun:test";
 
-function seed(db: Database) {
+import { buildLongLivedAgentFixture } from "../helpers.js";
+
+interface ActionRow {
+  status: string;
+  decided_by: string;
+  decided_at: number;
+}
+
+interface AgentRow {
+  working_memory_json: string;
+}
+
+interface WorkingMemoryDoc {
+  pending_goals: {
+    kind: string;
+    pending_action_id: string;
+    original_payload: unknown;
+  }[];
+}
+
+interface EmittedEvent {
+  type: string;
+  agent_id: string;
+  payload: unknown;
+}
+
+function seed(db: Database): void {
   loadSqliteVec(db);
   applySchema(db, { embeddingDim: 384 });
-  reconcileLongLivedAgents(
-    db,
-    [
-      {
-        name: "a",
-        long_lived: true,
-        long_lived_config: {
-          schedule_cron: "*/1 * * * *",
-          subscriptions: [],
-          mcp_allowlist: [],
-          bounds: { wall_clock_ms: 1, cost_cents: 1, max_sub_dispatches: 0 },
-          circuit_breaker_threshold: 3,
-          standing_brief: "x",
-        },
-      } as any,
-    ],
-    { now: 1 },
-  );
+  reconcileLongLivedAgents(db, [buildLongLivedAgentFixture({ name: "a" })], { now: 1 });
   db.query(
     "INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES ('t1', 'a', 'manual', 1)",
   ).run();
@@ -35,12 +44,12 @@ function seed(db: Database) {
 }
 
 describe("long_lived_approve_action", () => {
-  it("marks approved, injects approved_action into working memory, and emits an event", async () => {
+  it("marks approved, injects approved_action into working memory, and emits an event", () => {
     const db = new Database(":memory:");
     seed(db);
-    const events: any[] = [];
+    const events: EmittedEvent[] = [];
 
-    const result = await handleLongLivedApproveAction(
+    const result = handleLongLivedApproveAction(
       db,
       { emit: (event) => events.push(event), now: () => 50 },
       { action_id: "p1" },
@@ -48,16 +57,19 @@ describe("long_lived_approve_action", () => {
 
     expect(result.ok).toBe(true);
     const row = db
-      .query("SELECT status, decided_by, decided_at FROM long_lived_pending_actions WHERE id='p1'")
-      .get() as any;
-    expect(row.status).toBe("approved");
-    expect(row.decided_by).toBe("user");
-    expect(row.decided_at).toBe(50);
+      .query<
+        ActionRow,
+        []
+      >("SELECT status, decided_by, decided_at FROM long_lived_pending_actions WHERE id='p1'")
+      .get();
+    expect(row?.status).toBe("approved");
+    expect(row?.decided_by).toBe("user");
+    expect(row?.decided_at).toBe(50);
 
-    const wm = JSON.parse(
-      (db.query("SELECT working_memory_json FROM long_lived_agents WHERE id='a'").get() as any)
-        .working_memory_json,
-    );
+    const agentRow = db
+      .query<AgentRow, []>("SELECT working_memory_json FROM long_lived_agents WHERE id='a'")
+      .get();
+    const wm = JSON.parse(agentRow?.working_memory_json ?? "{}") as WorkingMemoryDoc;
     expect(wm.pending_goals).toHaveLength(1);
     expect(wm.pending_goals[0]).toMatchObject({
       kind: "approved_action",

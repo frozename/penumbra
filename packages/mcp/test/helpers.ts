@@ -1,9 +1,50 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { type AgentConfig } from "@penumbra/config";
 
 import type { DaemonClient } from "../src/daemon-client.js";
 
 import { buildServer } from "../src/server.js";
+
+export type LongLivedAgentFixture = AgentConfig & { display_name?: string };
+
+export interface LongLivedAgentFixtureInput {
+  name: string;
+  display_name?: string;
+  standing_brief?: string;
+  schedule_cron?: string;
+  subscriptions?: { server: string; event: string }[];
+  mcp_allowlist?: string[];
+}
+
+export function buildLongLivedAgentFixture(
+  input: LongLivedAgentFixtureInput,
+): LongLivedAgentFixture {
+  // Test boundary: the reconciler reads display_name via a side-channel
+  // (`(a as any).display_name`) that the AgentConfig schema does not expose, so
+  // we widen the fixture type with the optional field rather than smuggling it
+  // through `as any`.
+  return {
+    name: input.name,
+    adapter: "test",
+    options: {},
+    roles: [],
+    auto_approve_to: [],
+    pricing_mode: "api",
+    display_name: input.display_name,
+    long_lived: true,
+    long_lived_config: {
+      schedule_cron: input.schedule_cron ?? "*/1 * * * *",
+      subscriptions: input.subscriptions ?? [],
+      hosted_mcp_servers: [],
+      mcp_allowlist: input.mcp_allowlist ?? [],
+      require_snapshot: false,
+      bounds: { wall_clock_ms: 1, cost_cents: 1, max_sub_dispatches: 0 },
+      circuit_breaker_threshold: 3,
+      standing_brief: input.standing_brief ?? "x",
+    },
+  };
+}
 
 export async function connectInMemory(daemon: DaemonClient): Promise<Client> {
   const server = await buildServer({ daemon });

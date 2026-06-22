@@ -1,40 +1,43 @@
-import { describe, it, expect } from "bun:test";
-import { Database } from "bun:sqlite";
 import { loadSqliteVec } from "@penumbra/core";
 import { applySchema } from "@penumbra/core/db/schema";
 import { reconcileLongLivedAgents } from "@penumbra/daemon/long-lived/reconciler";
 import { handleLongLivedStateSet } from "@penumbra/mcp/tools/long-lived-state-set";
+import { Database } from "bun:sqlite";
+import { describe, expect, it } from "bun:test";
 
-function seed(db: Database) {
+import { buildLongLivedAgentFixture } from "../helpers.js";
+
+interface StateRow {
+  last_intent_summary: string | null;
+  working_memory_json: string;
+}
+
+interface WorkingMemoryDoc {
+  updated_at: number;
+}
+
+function seed(db: Database): void {
   loadSqliteVec(db);
   applySchema(db, { embeddingDim: 384 });
   reconcileLongLivedAgents(
     db,
     [
-      {
+      buildLongLivedAgentFixture({
         name: "a",
         display_name: "A",
-        long_lived: true,
-        long_lived_config: {
-          schedule_cron: "*/15 * * * *",
-          subscriptions: [],
-          mcp_allowlist: [],
-          bounds: { wall_clock_ms: 1, cost_cents: 1, max_sub_dispatches: 0 },
-          circuit_breaker_threshold: 3,
-          standing_brief: "x",
-        },
-      } as any,
+        schedule_cron: "*/15 * * * *",
+      }),
     ],
     { now: 1 },
   );
 }
 
 describe("long_lived_state_set", () => {
-  it("updates intent summary and working memory atomically", async () => {
+  it("updates intent summary and working memory atomically", () => {
     const db = new Database(":memory:");
     seed(db);
     const wm = {
-      version: 1,
+      version: 1 as const,
       updated_at: 5,
       pending_goals: [],
       open_threads: [],
@@ -42,15 +45,19 @@ describe("long_lived_state_set", () => {
       recent_decisions: [],
     };
 
-    await handleLongLivedStateSet(db, {
+    handleLongLivedStateSet(db, {
       id: "a",
       partial: { intent_summary: "checking", working_memory: wm },
     });
 
     const row = db
-      .query("SELECT last_intent_summary, working_memory_json FROM long_lived_agents WHERE id='a'")
-      .get() as any;
-    expect(row.last_intent_summary).toBe("checking");
-    expect(JSON.parse(row.working_memory_json).updated_at).toBeGreaterThan(0);
+      .query<
+        StateRow,
+        []
+      >("SELECT last_intent_summary, working_memory_json FROM long_lived_agents WHERE id='a'")
+      .get();
+    expect(row?.last_intent_summary).toBe("checking");
+    const parsed = JSON.parse(row?.working_memory_json ?? "{}") as WorkingMemoryDoc;
+    expect(parsed.updated_at).toBeGreaterThan(0);
   });
 });

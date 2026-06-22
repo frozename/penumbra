@@ -1,36 +1,49 @@
-import { describe, it, expect } from "bun:test";
-import { Database } from "bun:sqlite";
 import { loadSqliteVec } from "@penumbra/core";
 import { applySchema } from "@penumbra/core/db/schema";
 import { reconcileLongLivedAgents } from "@penumbra/daemon/long-lived/reconciler";
 import { handleLongLivedGet } from "@penumbra/mcp/tools/long-lived-get";
+import { Database } from "bun:sqlite";
+import { describe, expect, it } from "bun:test";
 
-function seed(db: Database) {
+import { buildLongLivedAgentFixture } from "../helpers.js";
+
+interface RecentTickRow {
+  trigger_payload: unknown;
+}
+
+interface PendingActionRow {
+  payload: unknown;
+}
+
+interface AuditRow {
+  decision: string;
+}
+
+interface WorkingMemoryShape {
+  version: number;
+}
+
+function seed(db: Database): void {
   loadSqliteVec(db);
   applySchema(db, { embeddingDim: 384 });
   reconcileLongLivedAgents(
     db,
     [
-      {
+      buildLongLivedAgentFixture({
         name: "home-mgmt",
         display_name: "Home Mgmt",
-        long_lived: true,
-        long_lived_config: {
-          schedule_cron: "*/15 * * * *",
-          subscriptions: [{ server: "ha", event: "state_changed" }],
-          mcp_allowlist: ["ha:state.*"],
-          bounds: { wall_clock_ms: 1, cost_cents: 1, max_sub_dispatches: 0 },
-          circuit_breaker_threshold: 3,
-          standing_brief: "watch home state",
-        },
-      } as any,
+        schedule_cron: "*/15 * * * *",
+        standing_brief: "watch home state",
+        subscriptions: [{ server: "ha", event: "state_changed" }],
+        mcp_allowlist: ["ha:state.*"],
+      }),
     ],
     { now: 1 },
   );
 }
 
 describe("long_lived_get", () => {
-  it("returns full agent detail with recent related rows", async () => {
+  it("returns full agent detail with recent related rows", () => {
     const db = new Database(":memory:");
     seed(db);
     db.query(
@@ -78,19 +91,19 @@ describe("long_lived_get", () => {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run("home-mgmt", "tick-1", "action-1", "notify", "ha:state", "approved", null, 1600);
 
-    const result = await handleLongLivedGet(db, { id: "home-mgmt" });
+    const result = handleLongLivedGet(db, { id: "home-mgmt" });
 
     expect(result.agent.id).toBe("home-mgmt");
-    expect(result.agent.working_memory.version).toBe(1);
+    expect((result.agent.working_memory as WorkingMemoryShape).version).toBe(1);
     expect(result.recent_ticks).toHaveLength(1);
-    expect(result.recent_ticks[0].trigger_payload).toEqual({ scheduled: true });
-    expect(result.pending_actions[0].payload).toEqual({ message: "ping" });
-    expect(result.recent_audit[0].decision).toBe("approved");
+    expect((result.recent_ticks[0] as RecentTickRow).trigger_payload).toEqual({ scheduled: true });
+    expect((result.pending_actions[0] as PendingActionRow).payload).toEqual({ message: "ping" });
+    expect((result.recent_audit[0] as AuditRow).decision).toBe("approved");
   });
 
-  it("rejects missing ids", async () => {
+  it("rejects missing ids", () => {
     const db = new Database(":memory:");
     seed(db);
-    await expect(handleLongLivedGet(db, {})).rejects.toThrow();
+    expect(() => handleLongLivedGet(db, {})).toThrow();
   });
 });

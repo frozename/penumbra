@@ -1,31 +1,36 @@
-import { describe, it, expect } from "bun:test";
-import { Database } from "bun:sqlite";
 import { loadSqliteVec } from "@penumbra/core";
 import { applySchema } from "@penumbra/core/db/schema";
 import { reconcileLongLivedAgents } from "@penumbra/daemon/long-lived/reconciler";
 import { handleLongLivedRejectAction } from "@penumbra/mcp/tools/long-lived-reject-action";
+import { Database } from "bun:sqlite";
+import { describe, expect, it } from "bun:test";
 
-function seed(db: Database) {
+import { buildLongLivedAgentFixture } from "../helpers.js";
+
+interface ActionRow {
+  status: string;
+  decided_by: string;
+  decided_at: number;
+}
+
+interface AgentRow {
+  working_memory_json: string;
+}
+
+interface WorkingMemoryDoc {
+  pending_goals?: unknown[];
+  recent_decisions: {
+    pending_action_id: string;
+    decision: string;
+    reason?: string;
+    decided_at: number;
+  }[];
+}
+
+function seed(db: Database): void {
   loadSqliteVec(db);
   applySchema(db, { embeddingDim: 384 });
-  reconcileLongLivedAgents(
-    db,
-    [
-      {
-        name: "a",
-        long_lived: true,
-        long_lived_config: {
-          schedule_cron: "*/1 * * * *",
-          subscriptions: [],
-          mcp_allowlist: [],
-          bounds: { wall_clock_ms: 1, cost_cents: 1, max_sub_dispatches: 0 },
-          circuit_breaker_threshold: 3,
-          standing_brief: "x",
-        },
-      } as any,
-    ],
-    { now: 1 },
-  );
+  reconcileLongLivedAgents(db, [buildLongLivedAgentFixture({ name: "a" })], { now: 1 });
   db.query(
     "INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES ('t1', 'a', 'manual', 1)",
   ).run();
@@ -35,28 +40,36 @@ function seed(db: Database) {
 }
 
 describe("long_lived_reject_action", () => {
-  it("marks rejected and appends to recent_decisions", async () => {
+  it("marks rejected and appends to recent_decisions", () => {
     const db = new Database(":memory:");
     seed(db);
 
-    const result = await handleLongLivedRejectAction(
+    const result = handleLongLivedRejectAction(
       db,
-      { emit: () => {}, now: () => 50 },
+      {
+        emit: (): void => {
+          // no-op for test
+        },
+        now: () => 50,
+      },
       { action_id: "p1", reason: "too risky right now" },
     );
 
     expect(result.ok).toBe(true);
     const row = db
-      .query("SELECT status, decided_by, decided_at FROM long_lived_pending_actions WHERE id='p1'")
-      .get() as any;
-    expect(row.status).toBe("rejected");
-    expect(row.decided_by).toBe("user");
-    expect(row.decided_at).toBe(50);
+      .query<
+        ActionRow,
+        []
+      >("SELECT status, decided_by, decided_at FROM long_lived_pending_actions WHERE id='p1'")
+      .get();
+    expect(row?.status).toBe("rejected");
+    expect(row?.decided_by).toBe("user");
+    expect(row?.decided_at).toBe(50);
 
-    const wm = JSON.parse(
-      (db.query("SELECT working_memory_json FROM long_lived_agents WHERE id='a'").get() as any)
-        .working_memory_json,
-    );
+    const agentRow = db
+      .query<AgentRow, []>("SELECT working_memory_json FROM long_lived_agents WHERE id='a'")
+      .get();
+    const wm = JSON.parse(agentRow?.working_memory_json ?? "{}") as WorkingMemoryDoc;
     expect(wm.pending_goals ?? []).toHaveLength(0);
     expect(wm.recent_decisions).toHaveLength(1);
     expect(wm.recent_decisions[0]).toMatchObject({

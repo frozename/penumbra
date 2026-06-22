@@ -1,40 +1,24 @@
-import { describe, it, expect } from "bun:test";
-import { Database } from "bun:sqlite";
 import { loadSqliteVec } from "@penumbra/core";
 import { applySchema } from "@penumbra/core/db/schema";
 import { reconcileLongLivedAgents } from "@penumbra/daemon/long-lived/reconciler";
 import { handleLongLivedPendingActions } from "@penumbra/mcp/tools/long-lived-pending-actions";
+import { Database } from "bun:sqlite";
+import { describe, expect, it } from "bun:test";
 
-function seed(db: Database) {
+import { buildLongLivedAgentFixture } from "../helpers.js";
+
+interface PendingActionRow {
+  id: string;
+}
+
+function seed(db: Database): void {
   loadSqliteVec(db);
   applySchema(db, { embeddingDim: 384 });
   reconcileLongLivedAgents(
     db,
     [
-      {
-        name: "a",
-        long_lived: true,
-        long_lived_config: {
-          schedule_cron: "*/1 * * * *",
-          subscriptions: [],
-          mcp_allowlist: [],
-          bounds: { wall_clock_ms: 1, cost_cents: 1, max_sub_dispatches: 0 },
-          circuit_breaker_threshold: 3,
-          standing_brief: "x",
-        },
-      } as any,
-      {
-        name: "b",
-        long_lived: true,
-        long_lived_config: {
-          schedule_cron: "*/1 * * * *",
-          subscriptions: [],
-          mcp_allowlist: [],
-          bounds: { wall_clock_ms: 1, cost_cents: 1, max_sub_dispatches: 0 },
-          circuit_breaker_threshold: 3,
-          standing_brief: "y",
-        },
-      } as any,
+      buildLongLivedAgentFixture({ name: "a" }),
+      buildLongLivedAgentFixture({ name: "b", standing_brief: "y" }),
     ],
     { now: 1 },
   );
@@ -53,14 +37,16 @@ function seed(db: Database) {
 }
 
 describe("long_lived_pending_actions", () => {
-  it("lists pending actions and filters by agent id and status", async () => {
+  it("lists pending actions and filters by agent id and status", () => {
     const db = new Database(":memory:");
     seed(db);
 
-    const allPending = await handleLongLivedPendingActions(db, { id: null, status: "pending" });
-    expect(allPending.pending_actions.map((row: any) => row.id)).toEqual(["pa1"]);
+    const allPending = handleLongLivedPendingActions(db, { id: null, status: "pending" });
+    expect(allPending.pending_actions.map((row) => (row as PendingActionRow).id)).toEqual(["pa1"]);
 
-    const agentPending = await handleLongLivedPendingActions(db, { id: "b", status: "approved" });
-    expect(agentPending.pending_actions.map((row: any) => row.id)).toEqual(["pa2"]);
+    const agentPending = handleLongLivedPendingActions(db, { id: "b", status: "approved" });
+    expect(agentPending.pending_actions.map((row) => (row as PendingActionRow).id)).toEqual([
+      "pa2",
+    ]);
   });
 });
