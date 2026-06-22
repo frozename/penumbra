@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { resolveSandboxConfig, DEFAULT_SANDBOX_CONFIG } from "../../src/worker/sandbox-config.js";
+
+import { DEFAULT_SANDBOX_CONFIG, resolveSandboxConfig } from "../../src/worker/sandbox-config.js";
 
 describe("resolveSandboxConfig", () => {
   test("all defaults applied when options empty", () => {

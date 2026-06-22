@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
+
 import {
+  type ClaimAffinityAgent,
   computeClaimGraceMs,
   DEFAULT_CLAIM_AFFINITY_GRACE_MS,
-  type ClaimAffinityAgent,
 } from "../../src/worker/claim-affinity.js";
 
 const MAIN = "/repos/penumbra";

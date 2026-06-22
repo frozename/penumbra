@@ -1,16 +1,20 @@
-import { describe, expect, test, beforeEach } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
+
+import type { WriteToolsExecutor } from "../../src/worker/write-tools-executor.js";
+
 import {
+  __resetExecutorRegistry,
+  lookupExecutor,
   registerExecutor,
   unregisterExecutor,
-  lookupExecutor,
-  __resetExecutorRegistry,
 } from "../../src/worker/executor-registry.js";
-import type { WriteToolsExecutor } from "../../src/worker/write-tools-executor.js";
 
 const stubExec = (id = "stub"): WriteToolsExecutor => ({ id }) as unknown as WriteToolsExecutor;
 
 describe("executor-registry", () => {
-  beforeEach(() => __resetExecutorRegistry());
+  beforeEach(() => {
+    __resetExecutorRegistry();
+  });
 
   test("lookupExecutor returns null for unknown id", () => {
     expect(lookupExecutor("missing")).toBeNull();
@@ -29,7 +33,9 @@ describe("executor-registry", () => {
   });
 
   test("unregister of unknown id is a silent no-op", () => {
-    expect(() => unregisterExecutor("never-registered")).not.toThrow();
+    expect(() => {
+      unregisterExecutor("never-registered");
+    }).not.toThrow();
   });
 
   test("multiple dispatches can coexist", () => {

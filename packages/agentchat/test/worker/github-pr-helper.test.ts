@@ -1,10 +1,27 @@
+import type { Logger } from "@penumbra/core";
+
+import { expect, mock, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { expect, mock, test } from "bun:test";
+
 import { createDispatchPR } from "../../src/worker/github-pr-helper.js";
 
+const noopLogger = (): void => {
+  // intentionally empty: silent logger for github-pr-helper tests
+};
+
+function silentLogger(): Logger {
+  return { error: mock(noopLogger) } as unknown as Logger;
+}
+
+interface RunnerCall {
+  file: string;
+  args: string[];
+  cwd: string;
+}
+
 test("createDispatchPR pushes the branch and creates a PR with a body file", async () => {
-  const calls: Array<{ file: string; args: string[]; cwd: string }> = [];
+  const calls: RunnerCall[] = [];
   let bodyFilePath = "";
   const runner = {
     run: mock(async (file: string, args: string[], options: { cwd: string }) => {
@@ -69,7 +86,7 @@ test("createDispatchPR pushes the branch and creates a PR with a body file", asy
       draft: false,
       cwd: "/worktree/h-123",
     },
-    { error: mock(() => {}) } as any,
+    silentLogger(),
     runner,
   );
 
@@ -105,28 +122,29 @@ test("createDispatchPR pushes the branch and creates a PR with a body file", asy
 test("createDispatchPR removes the temp body file when gh fails", async () => {
   let bodyFilePath = "";
   const runner = {
-    run: mock(async (file: string, args: string[]) => {
+    run: mock((file: string, args: string[]) => {
       if (file === "gh") {
         const bodyFileIndex = args.indexOf("--body-file");
         bodyFilePath = args[bodyFileIndex + 1]!;
         expect(existsSync(bodyFilePath)).toBe(true);
-        return {
+        return Promise.resolve({
           stdout: "",
           stderr: "fatal: auth required",
           code: 1,
-        };
+        });
       }
 
-      return {
+      return Promise.resolve({
         stdout: "",
         stderr: "",
         code: 0,
-      };
+      });
     }),
   };
 
-  await expect(
-    createDispatchPR(
+  let caughtMessage: string | null = null;
+  try {
+    await createDispatchPR(
       {
         branch: "agent/h-404",
         baseBranch: "main",
@@ -135,10 +153,13 @@ test("createDispatchPR removes the temp body file when gh fails", async () => {
         draft: true,
         cwd: "/worktree/h-404",
       },
-      { error: mock(() => {}) } as any,
+      silentLogger(),
       runner,
-    ),
-  ).rejects.toThrow("gh pr create failed (1): fatal: auth required");
+    );
+  } catch (err) {
+    if (err instanceof Error) caughtMessage = err.message;
+  }
+  expect(caughtMessage).toBe("gh pr create failed (1): fatal: auth required");
 
   expect(bodyFilePath).not.toBe("");
   expect(existsSync(bodyFilePath)).toBe(false);

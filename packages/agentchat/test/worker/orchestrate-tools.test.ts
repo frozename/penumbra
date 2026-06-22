@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
+
 import {
+  applyOrchestrateToolsToConfig,
   ORCHESTRATE_MAESTRO_TOOLS,
   withOrchestrateTools,
-  applyOrchestrateToolsToConfig,
 } from "../../src/worker/orchestrate-tools.js";
 
 describe("withOrchestrateTools", () => {
@@ -35,8 +36,21 @@ describe("withOrchestrateTools", () => {
   });
 });
 
+interface AgentRecord {
+  name: string;
+  options?: Record<string, unknown>;
+}
+
+interface AgentConfigFixture {
+  agents: AgentRecord[];
+}
+
+function asToolList(value: unknown): string[] {
+  return value as string[];
+}
+
 describe("applyOrchestrateToolsToConfig", () => {
-  const cfg = () => ({
+  const cfg = (): AgentConfigFixture => ({
     agents: [
       {
         name: "openai-codex-deep-acp",
@@ -51,7 +65,7 @@ describe("applyOrchestrateToolsToConfig", () => {
     const target = out.agents.find((a) => a.name === "openai-codex-deep-acp")!;
     const untouched = out.agents.find((a) => a.name === "other-agent")!;
     for (const tool of ORCHESTRATE_MAESTRO_TOOLS) {
-      expect(target.options!.allowed_tools as string[]).toContain(tool);
+      expect(asToolList(target.options!.allowed_tools)).toContain(tool);
     }
     expect(untouched.options!.allowed_tools).toEqual(["fs.readTextFile"]);
   });
@@ -63,11 +77,11 @@ describe("applyOrchestrateToolsToConfig", () => {
   });
 
   test("handles an agent with no options", () => {
-    const input: { agents: Array<{ name: string; options?: Record<string, unknown> }> } = {
+    const input: AgentConfigFixture = {
       agents: [{ name: "bare-agent" }],
     };
     const out = applyOrchestrateToolsToConfig(input, "bare-agent", "orchestrate");
     const agent = out.agents[0]!;
-    expect(agent.options!.allowed_tools as string[]).toEqual([...ORCHESTRATE_MAESTRO_TOOLS]);
+    expect(asToolList(agent.options!.allowed_tools)).toEqual([...ORCHESTRATE_MAESTRO_TOOLS]);
   });
 });

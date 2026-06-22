@@ -1,5 +1,20 @@
 import { expect, test } from "bun:test";
+
 import { MaestroOutputRedactor } from "../../src/worker/maestro-output-redactor.js";
+
+interface RedactorOverride {
+  redactor: {
+    redactValue: (value: string) => {
+      redacted: string;
+      hits: { rule_id: string; count: number }[];
+      rewritten: boolean;
+    };
+  };
+}
+
+function overrideRedactor(m: MaestroOutputRedactor, redactor: RedactorOverride["redactor"]): void {
+  (m as unknown as RedactorOverride).redactor = redactor;
+}
 
 test("orchestrator combines static and dynamic rules", () => {
   const m = new MaestroOutputRedactor({
@@ -93,15 +108,13 @@ test("checkAnyValue rewrites oversized values that contain soft secrets", () => 
     bypass: false,
     extraRules: [{ id: "soft_token", pattern: /token/g, replacement: "#" }],
   });
-  (m as any).redactor = {
-    redactValue(value: string) {
-      return {
-        redacted: value.replace("token", "#").slice(0, 64 * 1024),
-        hits: [{ rule_id: "soft_token", count: 1 }],
-        rewritten: true,
-      };
-    },
-  };
+  overrideRedactor(m, {
+    redactValue: (value: string) => ({
+      redacted: value.replace("token", "#").slice(0, 64 * 1024),
+      hits: [{ rule_id: "soft_token", count: 1 }],
+      rewritten: true,
+    }),
+  });
   const value = `${"x".repeat(10_000)} token ${"y".repeat(60_000)}`;
   const walked = m.checkAnyValue(value);
   expect(walked.decision).toBe("rewritten");

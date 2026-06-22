@@ -1,14 +1,15 @@
 import { describe, expect, test } from "bun:test";
+
 import {
-  buildSilentRetryPayload,
-  SILENT_RETRY_PREFIX,
   buildRetryPayloadOrNull,
-  shouldRetryForSilentFailure,
-  shouldRetryHandoffForSilentFailure,
-  selectRetryAgent,
+  buildSilentRetryPayload,
   resolveAgentProvider,
   type RetryAgentCandidate,
   type RoutingBiasLike,
+  selectRetryAgent,
+  shouldRetryForSilentFailure,
+  shouldRetryHandoffForSilentFailure,
+  SILENT_RETRY_PREFIX,
 } from "../../src/worker/silent-failure-retry.js";
 
 describe("shouldRetryForSilentFailure", () => {

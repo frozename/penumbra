@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+
 import { createDiscordRateLimiter } from "../../src/worker/discord-rate-limit.js";
 
 describe("createDiscordRateLimiter", () => {
@@ -18,7 +19,7 @@ describe("createDiscordRateLimiter", () => {
   });
 
   it("keys suppression by webhook route as well as coalesce key", () => {
-    let now = 2_000;
+    const now = 2_000;
     const limiter = createDiscordRateLimiter({
       now: () => now,
       windowMs: 10_000,

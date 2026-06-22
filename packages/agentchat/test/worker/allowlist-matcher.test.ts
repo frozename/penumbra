@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { matchAllowlist } from "../../src/worker/allowlist-matcher.js";
 
 describe("matchAllowlist", () => {

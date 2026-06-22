@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, test, vi } from "bun:test";
 import { PassThrough } from "node:stream";
-import { buildAdapter } from "../../src/adapters/registry.js";
-import { normalizeAdapterOptions } from "../../src/cli/adapter-options.js";
+
+import type { AcpWarmPool } from "../../src/adapters/acp-warm-pool.js";
+import type { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
 import type { AgentConfig } from "../../src/config/types.js";
+
 import {
   drainAgent,
   getOrCreateAcpWarmPool,
@@ -10,16 +12,48 @@ import {
   shutdownAllAcpWarmPools,
   totalAcpWarmPoolEntryCount,
 } from "../../src/adapters/acp-warm-pool-registry.js";
+import { buildAdapter } from "../../src/adapters/registry.js";
+import { normalizeAdapterOptions } from "../../src/cli/adapter-options.js";
 import { installAcpWarmPoolShutdownHandlers } from "../../src/cli/loop.js";
 
-function handle() {
+interface AdapterWithDeps {
+  deps: { pool?: AcpWarmPool };
+}
+
+interface AdapterWithOpts {
+  opts: { repoRoot?: string };
+}
+
+function asAdapterWithDeps(value: unknown): AdapterWithDeps {
+  return value as AdapterWithDeps;
+}
+
+function asAdapterWithOpts(value: unknown): AdapterWithOpts {
+  return value as AdapterWithOpts;
+}
+
+interface TestHandle {
+  stdin: PassThrough;
+  stdout: PassThrough;
+  kill: ReturnType<typeof vi.fn>;
+  exited: Promise<number | null>;
+  getStderrTail: () => string;
+}
+
+function handle(): TestHandle {
   return {
     stdin: new PassThrough(),
     stdout: new PassThrough(),
     kill: vi.fn(),
-    exited: new Promise<number | null>(() => {}),
+    exited: new Promise<number | null>(() => {
+      // never resolves in tests
+    }),
     getStderrTail: () => "",
   };
+}
+
+function asStdioAcpClient(value: unknown): StdioAcpClient {
+  return value as StdioAcpClient;
 }
 
 afterEach(() => {
@@ -40,7 +74,7 @@ describe("ACP warm pool worker wiring", () => {
       warmPool: true,
     });
 
-    expect((a as any).deps.pool).toBe((b as any).deps.pool);
+    expect(asAdapterWithDeps(a).deps.pool).toBe(asAdapterWithDeps(b).deps.pool);
   });
 
   test("buildAdapter keeps warm stdio-acp pools separate by configured agent name", () => {
@@ -57,7 +91,7 @@ describe("ACP warm pool worker wiring", () => {
       warmPool: true,
     });
 
-    expect((a as any).deps.pool).not.toBe((b as any).deps.pool);
+    expect(asAdapterWithDeps(a).deps.pool).not.toBe(asAdapterWithDeps(b).deps.pool);
   });
 
   test("buildAdapter leaves pool undefined when warmPool is false or absent", () => {
@@ -71,8 +105,8 @@ describe("ACP warm pool worker wiring", () => {
       model: "codex-acp-fast",
     });
 
-    expect((off as any).deps.pool).toBeUndefined();
-    expect((unset as any).deps.pool).toBeUndefined();
+    expect(asAdapterWithDeps(off).deps.pool).toBeUndefined();
+    expect(asAdapterWithDeps(unset).deps.pool).toBeUndefined();
   });
 
   test("normalizeAdapterOptions maps warm_pool yaml knobs to adapter options", () => {
@@ -107,7 +141,7 @@ describe("ACP warm pool worker wiring", () => {
     const h = handle();
     pool.deposit("codex-acp-fast\0/repo", {
       handle: h,
-      client: {} as any,
+      client: asStdioAcpClient({}),
       sessionId: "s1",
       specHash: "spec-a",
     });
@@ -133,7 +167,7 @@ describe("ACP warm pool worker wiring", () => {
       cwd: "/repos/penumbra/.worktrees/handoff-123",
     });
 
-    expect((adapter as any).opts.repoRoot).toBe("/repos/penumbra");
+    expect(asAdapterWithOpts(adapter).opts.repoRoot).toBe("/repos/penumbra");
   });
 
   test("totalAcpWarmPoolEntryCount sums live entries across every agent pool", () => {
@@ -142,7 +176,7 @@ describe("ACP warm pool worker wiring", () => {
     const fast = getOrCreateAcpWarmPool("codex-acp-fast", {});
     fast.deposit("codex-acp-fast\0/repos/penumbra", {
       handle: handle(),
-      client: {} as any,
+      client: asStdioAcpClient({}),
       sessionId: "s1",
       specHash: "spec-a",
     });
@@ -152,13 +186,13 @@ describe("ACP warm pool worker wiring", () => {
     const deep = getOrCreateAcpWarmPool("codex-acp-deep", {});
     deep.deposit("codex-acp-deep\0/repos/penumbra", {
       handle: handle(),
-      client: {} as any,
+      client: asStdioAcpClient({}),
       sessionId: "s2",
       specHash: "spec-a",
     });
     deep.deposit("codex-acp-deep\0/repos/omlx", {
       handle: handle(),
-      client: {} as any,
+      client: asStdioAcpClient({}),
       sessionId: "s3",
       specHash: "spec-a",
     });
@@ -173,12 +207,16 @@ describe("ACP warm pool worker wiring", () => {
     process.env.PENUMBRA_WARM_PREWARM_CAP = "2";
     const a = getOrCreateAcpWarmPool("a", { warmPoolSize: 2 });
     const b = getOrCreateAcpWarmPool("b", { warmPoolSize: 2 });
-    a.deposit("a\0/repo", { handle: handle(), client: {} as any, specHash: "spec-a" });
-    b.deposit("b\0/repo", { handle: handle(), client: {} as any, specHash: "spec-a" });
+    a.deposit("a\0/repo", { handle: handle(), client: asStdioAcpClient({}), specHash: "spec-a" });
+    b.deposit("b\0/repo", { handle: handle(), client: asStdioAcpClient({}), specHash: "spec-a" });
 
     const rejected = handle();
     expect(
-      a.deposit("a\0/other", { handle: rejected, client: {} as any, specHash: "spec-a" }),
+      a.deposit("a\0/other", {
+        handle: rejected,
+        client: asStdioAcpClient({}),
+        specHash: "spec-a",
+      }),
     ).toBe(null);
 
     expect(rejected.kill).toHaveBeenCalledTimes(1);
@@ -187,14 +225,15 @@ describe("ACP warm pool worker wiring", () => {
 
   test("installAcpWarmPoolShutdownHandlers wires SIGTERM and SIGINT to shutdownAll", () => {
     const handlers = new Map<string, () => void>();
-    const proc = {
+    const proc: Pick<NodeJS.Process, "on"> = {
       on: vi.fn((name: string, handler: () => void) => {
         handlers.set(name, handler);
-      }),
+        return proc;
+      }) as unknown as NodeJS.Process["on"],
     };
     const shutdownAll = vi.fn();
 
-    installAcpWarmPoolShutdownHandlers(proc as any, shutdownAll);
+    installAcpWarmPoolShutdownHandlers(proc, shutdownAll);
     handlers.get("SIGTERM")?.();
     handlers.get("SIGINT")?.();
 

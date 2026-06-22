@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+
 import { resolveNotificationRoute } from "../../src/worker/notification-router.js";
 
 describe("resolveNotificationRoute", () => {
