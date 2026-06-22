@@ -1,7 +1,19 @@
+import type { DispatchEventInput } from "@penumbra/core";
+
 import { describe, expect, it, vi } from "bun:test";
-import { PassThrough } from "node:stream";
-import { StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
+
+import type { McpServerStdio } from "../../src/adapters/acp-types.js";
+import type { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
+import type { DispatchInput } from "../../src/sdk/adapter.js";
+
 import { acpSpecHash, createAcpWarmPool, poolKeyFor } from "../../src/adapters/acp-warm-pool.js";
+import { StdioAcpAdapter, type StdioAcpOptions } from "../../src/adapters/stdio-acp.js";
+import { expectRejection } from "../helpers/cli-spawn-fixtures.js";
+import {
+  makeMockAcpClient,
+  makeMockAcpHandle,
+  type MockAcpHandle,
+} from "../helpers/stdio-acp-fixtures.js";
 
 /**
  * Phase 2 — prewarm() connects handshake-only (startServer + initialize +
@@ -10,38 +22,56 @@ import { acpSpecHash, createAcpWarmPool, poolKeyFor } from "../../src/adapters/a
  * is byte-identical and immediately acquirable.
  */
 
-function makeServer() {
-  return {
-    stdin: new PassThrough(),
-    stdout: new PassThrough(),
+interface SessionNewParamsShape {
+  cwd?: string;
+  mcpServers?: McpServerStdio[];
+}
+
+function asSessionNewParams(params: unknown): SessionNewParamsShape {
+  if (typeof params === "object" && params !== null) return params;
+  return {};
+}
+
+function makeServer(): MockAcpHandle {
+  return makeMockAcpHandle({
     pid: 4242,
-    kill: vi.fn(),
-    exited: new Promise<number | null>(() => {}),
-    getStderrTail: () => "",
-  };
+    // Never settles: the pool keeps the entry alive for the whole test;
+    // a resolving exited promise would race the dispatch and tear it down.
+    exited: new Promise<number | null>(() => {
+      /* never resolves */
+    }),
+  });
 }
 
 describe("StdioAcpAdapter.prewarm (Phase 2)", () => {
   it("connects handshake-only (initialize+authenticate once, no session) and deposits an acquirable entry", async () => {
     const pool = createAcpWarmPool({ now: () => 0 });
     const calls: { method: string }[] = [];
-    const request = vi.fn(async (method: string) => {
+    const request = vi.fn<(method: string, params?: unknown) => Promise<unknown>>((method) => {
       calls.push({ method });
-      if (method === "initialize")
-        return { protocolVersion: 1, authMethods: [{ id: "env", type: "env_var", vars: [] }] };
-      if (method === "session/new") return { sessionId: "s" };
-      if (method === "session/prompt") return { stopReason: "end_turn" };
-      return {};
+      if (method === "initialize") {
+        return Promise.resolve({
+          protocolVersion: 1,
+          authMethods: [{ id: "env", type: "env_var", vars: [] }],
+        });
+      }
+      if (method === "session/new") return Promise.resolve({ sessionId: "s" });
+      if (method === "session/prompt") return Promise.resolve({ stopReason: "end_turn" });
+      return Promise.resolve({});
     });
     const startServer = vi.fn().mockResolvedValue(makeServer());
-    const adapter = new StdioAcpAdapter(
-      { binary: "mock-acp", agentName: "codex-acp-fast", warmPool: true, repoRoot: "/repo" } as any,
-      {
-        startServer,
-        createClient: () => ({ onRequest: vi.fn(), on: vi.fn(), request }) as any,
-        pool,
-      } as any,
-    );
+    const opts: StdioAcpOptions = {
+      binary: "mock-acp",
+      agentName: "codex-acp-fast",
+      warmPool: true,
+      repoRoot: "/repo",
+    };
+    const adapter = new StdioAcpAdapter(opts, {
+      startServer,
+      createClient: (): StdioAcpClient =>
+        makeMockAcpClient({ onRequest: vi.fn(), on: vi.fn(), request }),
+      pool,
+    });
 
     await adapter.prewarm();
 
@@ -64,39 +94,47 @@ describe("StdioAcpAdapter.prewarm (Phase 2)", () => {
   it("prewarm(signal) that is already aborted throws and never spawns a child", async () => {
     const pool = createAcpWarmPool({ now: () => 0 });
     const startServer = vi.fn().mockResolvedValue(makeServer());
-    const adapter = new StdioAcpAdapter(
-      { binary: "mock-acp", agentName: "codex-acp-fast", warmPool: true, repoRoot: "/repo" } as any,
-      {
-        startServer,
-        createClient: () => ({ onRequest: vi.fn(), on: vi.fn(), request: vi.fn() }) as any,
-        pool,
-      } as any,
-    );
+    const opts: StdioAcpOptions = {
+      binary: "mock-acp",
+      agentName: "codex-acp-fast",
+      warmPool: true,
+      repoRoot: "/repo",
+    };
+    const adapter = new StdioAcpAdapter(opts, {
+      startServer,
+      createClient: (): StdioAcpClient =>
+        makeMockAcpClient({ onRequest: vi.fn(), on: vi.fn(), request: vi.fn() }),
+      pool,
+    });
 
     const ac = new AbortController();
     ac.abort(new Error("worker shutdown"));
-    await expect(adapter.prewarm(ac.signal)).rejects.toThrow();
+    await expectRejection(adapter.prewarm(ac.signal));
     expect(startServer).not.toHaveBeenCalled();
   });
 
   it("prewarm tears down the spawned child when handshake rejects for a non-timeout error", async () => {
     const pool = createAcpWarmPool({ now: () => 0 });
     const server = makeServer();
-    const request = vi.fn(async (method: string) => {
-      if (method === "initialize") throw new Error("boom");
-      return {};
+    const request = vi.fn<(method: string, params?: unknown) => Promise<unknown>>((method) => {
+      if (method === "initialize") return Promise.reject(new Error("boom"));
+      return Promise.resolve({});
     });
     const startServer = vi.fn().mockResolvedValue(server);
-    const adapter = new StdioAcpAdapter(
-      { binary: "mock-acp", agentName: "codex-acp-fast", warmPool: true, repoRoot: "/repo" } as any,
-      {
-        startServer,
-        createClient: () => ({ onRequest: vi.fn(), on: vi.fn(), request }) as any,
-        pool,
-      } as any,
-    );
+    const opts: StdioAcpOptions = {
+      binary: "mock-acp",
+      agentName: "codex-acp-fast",
+      warmPool: true,
+      repoRoot: "/repo",
+    };
+    const adapter = new StdioAcpAdapter(opts, {
+      startServer,
+      createClient: (): StdioAcpClient =>
+        makeMockAcpClient({ onRequest: vi.fn(), on: vi.fn(), request }),
+      pool,
+    });
 
-    await expect(adapter.prewarm()).rejects.toThrow("boom");
+    await expectRejection(adapter.prewarm(), "boom");
 
     expect(startServer).toHaveBeenCalledTimes(1);
     expect(server.kill).toHaveBeenCalledTimes(1);
@@ -113,55 +151,64 @@ describe("StdioAcpAdapter.prewarm (Phase 2)", () => {
     const pool = createAcpWarmPool({ now: () => 0 });
     const storageRoots: (string | undefined)[] = [];
     const calls: { method: string; cwd?: string }[] = [];
-    const request = vi.fn(async (method: string, params?: any) => {
-      calls.push({ method, cwd: params?.cwd });
-      if (method === "initialize") return { protocolVersion: 1, authMethods: [] };
-      if (method === "session/new") {
-        const penumbra = (params?.mcpServers ?? []).find((s: any) =>
-          /penumbra/.test(s?.name ?? ""),
-        );
-        const sr = (penumbra?.env ?? []).find((e: any) => e?.name === "PENUMBRA_STORAGE_ROOT");
-        storageRoots.push(sr?.value);
-        return { sessionId: `s-${calls.length}` };
-      }
-      if (method === "session/prompt") return { stopReason: "end_turn" };
-      return {};
-    });
+    const request = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(
+      (method, params) => {
+        const narrowed = asSessionNewParams(params);
+        calls.push({ method, cwd: narrowed.cwd });
+        if (method === "initialize") {
+          return Promise.resolve({ protocolVersion: 1, authMethods: [] });
+        }
+        if (method === "session/new") {
+          const servers = narrowed.mcpServers ?? [];
+          const penumbra = servers.find((s) => s.name.includes("penumbra"));
+          const sr = (penumbra?.env ?? []).find((e) => e.name === "PENUMBRA_STORAGE_ROOT");
+          storageRoots.push(sr?.value);
+          return Promise.resolve({ sessionId: `s-${String(calls.length)}` });
+        }
+        if (method === "session/prompt") return Promise.resolve({ stopReason: "end_turn" });
+        return Promise.resolve({});
+      },
+    );
     const startServer = vi.fn().mockResolvedValue(makeServer());
-    const mk = () =>
-      new StdioAcpAdapter(
-        {
-          binary: "mock-acp",
-          agentName: "codex-acp-fast",
-          warmPool: true,
-          repoRoot: "/repo",
-          cwd: "/repo/wt-a",
-          mcpServers: [{ name: "penumbra", command: "bun", args: ["/x/penumbra-mcp.ts"] }],
-          env: { PENUMBRA_STORAGE_ROOT: "/repo/wt-a/.test-storage" },
-        } as any,
-        {
-          startServer,
-          createClient: () => ({ onRequest: vi.fn(), on: vi.fn(), request }) as any,
-          pool,
-        } as any,
-      );
+    const mk = (): StdioAcpAdapter => {
+      const opts: StdioAcpOptions = {
+        binary: "mock-acp",
+        agentName: "codex-acp-fast",
+        warmPool: true,
+        repoRoot: "/repo",
+        cwd: "/repo/wt-a",
+        mcpServers: [{ name: "penumbra", command: "bun", args: ["/x/penumbra-mcp.ts"], env: [] }],
+        env: { PENUMBRA_STORAGE_ROOT: "/repo/wt-a/.test-storage" },
+      };
+      return new StdioAcpAdapter(opts, {
+        startServer,
+        createClient: (): StdioAcpClient =>
+          makeMockAcpClient({ onRequest: vi.fn(), on: vi.fn(), request }),
+        pool,
+      });
+    };
 
     await mk().prewarm();
-    const events: any[] = [];
-    await mk().dispatch({
+    const events: DispatchEventInput[] = [];
+    const dispatchInput: DispatchInput = {
       prompt: "go",
+      conversation: { id: "hA", project_id: null },
+      config: {},
       signal: new AbortController().signal,
       handoff_id: "hA",
       eventContext: { handoffId: "hA", workerId: "w1" },
-      onEvent: (e: any) => events.push(e),
-    } as any);
+      onEvent: (event): void => {
+        events.push(event);
+      },
+    };
+    await mk().dispatch(dispatchInput);
 
     expect(startServer).toHaveBeenCalledTimes(1); // prewarm spawned; the dispatch reused it
     expect(events.filter((e) => e.kind === "acp.session.reuse")).toHaveLength(1);
     expect(events.filter((e) => e.kind === "acp.server.start")).toHaveLength(0);
     const sessionNews = calls.filter((c) => c.method === "session/new");
     expect(sessionNews).toHaveLength(1); // exactly one fresh session, on the dispatch
-    expect(sessionNews[0]!.cwd).toBe("/repo/wt-a");
+    expect(sessionNews[0]?.cwd).toBe("/repo/wt-a");
     expect(storageRoots).toEqual(["/repo/wt-a/.test-storage"]); // re-injected per dispatch
   });
 });
