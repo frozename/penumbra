@@ -1,9 +1,3 @@
-import { beforeAll, expect, test, spyOn } from "bun:test";
-import { Database } from "bun:sqlite";
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   buildServices,
   loadSqliteVec,
@@ -12,22 +6,58 @@ import {
   type WorktreeHandle,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import {
-  worktreesListRoute,
-  worktreesInspectRoute,
-  worktreesCleanupRoute,
-} from "../../src/routes/worktrees.js";
+import { Database } from "bun:sqlite";
+import { beforeAll, expect, spyOn, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { chainsStartRoute } from "../../src/routes/chains.js";
+import {
+  worktreesCleanupRoute,
+  worktreesInspectRoute,
+  worktreesListRoute,
+} from "../../src/routes/worktrees.js";
 
 try {
   if (process.platform === "darwin")
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-} catch {}
+} catch (err) {
+  void err;
+}
 
 // strict-mode env can leak from a live maestro shell; clear it here so test fixtures stay deterministic
 beforeAll(() => {
   delete process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
 });
+
+interface WorktreeListBody {
+  worktrees: WorktreeHandle[];
+}
+
+interface WorktreeInspectBody {
+  worktree?: WorktreeHandle;
+  diff_against_main: string;
+  branch_log: string;
+}
+
+interface WorktreeCleanupBody {
+  status: string;
+}
+
+interface ChainsStartBody {
+  handoff_id: string;
+}
+
+interface ErrorBody {
+  error: { code?: string } | string;
+  hint?: string;
+}
+
+async function readJson<T>(res: Response): Promise<T> {
+  return (await res.json()) as T;
+}
 
 function tempServices(): Services {
   const db = new Database(":memory:");
@@ -41,13 +71,17 @@ function tempServices(): Services {
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date("2026-04-26T00:00:00Z"),
-    uuid: () => `id-${++n}`,
+    uuid: () => `id-${String(++n)}`,
     agentRegistry: ["gemini"],
   });
   services.watchdog = {
-    recordHeartbeat: () => {},
-    hasActiveWorker: () => true,
-    tick: async () => {},
+    recordHeartbeat: (): void => {
+      /* no-op */
+    },
+    hasActiveWorker: (): boolean => true,
+    getStaleWorkers: (): string[] => [],
+    getStaleHeartbeatAges: (): { worker_id: string; last_seen_age_ms: number }[] => [],
+    tick: (): Promise<void> => Promise.resolve(),
   };
   return services;
 }
@@ -58,7 +92,7 @@ test("worktree.list with no worktrees", async () => {
 
   const res = await worktreesListRoute(new Request("http://h/worktrees"), services);
   expect(res.status).toBe(200);
-  const body = (await res.json()) as any;
+  const body = await readJson<WorktreeListBody>(res);
   expect(body).toEqual({ worktrees: [] });
 });
 
@@ -76,9 +110,9 @@ test("worktree.list returns tracked worktrees", async () => {
   spyOn(services.worktreeManager, "listWorktrees").mockReturnValue([handle]);
 
   const res = await worktreesListRoute(new Request("http://h/worktrees"), services);
-  const body = (await res.json()) as any;
+  const body = await readJson<WorktreeListBody>(res);
   expect(body.worktrees).toHaveLength(1);
-  expect(body.worktrees[0].handoffId).toBe("h1");
+  expect(body.worktrees[0]?.handoffId).toBe("h1");
 });
 
 test("worktree.inspect returns 404 if not found", async () => {
@@ -87,8 +121,9 @@ test("worktree.inspect returns 404 if not found", async () => {
 
   const res = await worktreesInspectRoute(new Request("http://h/worktrees/h1"), "h1", services);
   expect(res.status).toBe(404);
-  const body = (await res.json()) as any;
-  expect(body.error.code).toBe("not_found");
+  const body = await readJson<ErrorBody>(res);
+  const err = body.error;
+  expect(typeof err === "object" ? err.code : err).toBe("not_found");
 });
 
 test("worktree.inspect includes relevant untracked files but filters framework symlinks", async () => {
@@ -121,7 +156,7 @@ test("worktree.inspect includes relevant untracked files but filters framework s
       services,
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as any;
+    const body = await readJson<WorktreeInspectBody>(res);
 
     expect(body.diff_against_main).toContain("?? acp-promotion-smoke.txt");
     expect(body.diff_against_main).not.toContain("node_modules");
@@ -133,13 +168,12 @@ test("worktree.inspect includes relevant untracked files but filters framework s
 test("worktree.inspect passes worktree paths literally to git", async () => {
   const services = tempServices();
   const dir = mkdtempSync(join(tmpdir(), "worktree-inspect-injection-"));
-  const canaries = [
-    join(tmpdir(), `worktree-inspect-canary-semi-${Date.now()}`),
-    join(tmpdir(), `worktree-inspect-canary-subst-${Date.now()}`),
-  ];
+  const canarySemi = join(tmpdir(), `worktree-inspect-canary-semi-${String(Date.now())}`);
+  const canarySubst = join(tmpdir(), `worktree-inspect-canary-subst-${String(Date.now())}`);
+  const canaries: readonly string[] = [canarySemi, canarySubst];
 
   try {
-    const variants = [`worktree; touch ${canaries[0]}`, `worktree-$(touch ${canaries[1]})`];
+    const variants = [`worktree; touch ${canarySemi}`, `worktree-$(touch ${canarySubst})`];
 
     for (const variant of variants) {
       const handle: WorktreeHandle = {
@@ -159,7 +193,7 @@ test("worktree.inspect passes worktree paths literally to git", async () => {
         services,
       );
       expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
+      const body = await readJson<WorktreeInspectBody>(res);
       expect(body.diff_against_main).toContain("[diff error:");
       expect(body.branch_log).toContain("[log error:");
     }
@@ -193,7 +227,7 @@ test("worktree.cleanup calls manager", async () => {
     services,
   );
   expect(res.status).toBe(200);
-  const body = (await res.json()) as any;
+  const body = await readJson<WorktreeCleanupBody>(res);
   expect(body.status).toBe("torn_down");
   expect(teardownSpy).toHaveBeenCalledWith("h1", true);
 });
@@ -211,7 +245,7 @@ test("chain.start respects use_worktree: false", async () => {
 
   const res = await chainsStartRoute(req, services);
   expect(res.status).toBe(200);
-  const { handoff_id } = (await res.json()) as any;
+  const { handoff_id } = await readJson<ChainsStartBody>(res);
 
   // Assert the persisted storage shape directly: sqlite stores booleans as 0/1.
   // Going through handoffReader.get would read the column via HandoffRow's
@@ -238,7 +272,7 @@ test("chain.start respects use_worktree: true", async () => {
 
   const res = await chainsStartRoute(req, services);
   expect(res.status).toBe(200);
-  const { handoff_id } = (await res.json()) as any;
+  const { handoff_id } = await readJson<ChainsStartBody>(res);
 
   const stored = services.db
     .query<
@@ -264,7 +298,7 @@ test("chain.start rejects when use_worktree is omitted (strict project_id gate)"
 
     const res = await chainsStartRoute(req, services);
     expect(res.status).toBe(400);
-    const body = (await res.json()) as any;
+    const body = await readJson<ErrorBody>(res);
     expect(body).toEqual({
       error: "project_id_required",
       hint: "pass project_id explicitly, or unset PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy behavior",

@@ -1,17 +1,51 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { workerReconcileOrphansRoute } from "../../src/routes/worker-reconcile-orphans.js";
 import { createDaemonFetchHandler } from "../../src/serve.js";
+import { OrphanHandoffRecoveryService } from "../../src/services/orphan-handoff-recovery.js";
 import { registerWorkerForTest } from "../../test-utils.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {
-  // ignore
+} catch (err) {
+  void err;
+}
+
+interface RecoveryResult {
+  requeued: number;
+  exhausted: number;
+  requeuedRowIds: string[];
+  exhaustedRowIds: string[];
+  _requeuedRows: unknown[];
+  _exhaustedRows: unknown[];
+}
+
+interface ErrorBody {
+  error: { code?: string; field_errors?: unknown };
+}
+
+interface ReconcileResultBody {
+  requeued: number;
+  exhausted: number;
+  requeuedRowIds: string[];
+  exhaustedRowIds: string[];
+}
+
+async function readJson<T>(res: Response): Promise<T> {
+  return (await res.json()) as T;
+}
+
+// Test mocks expose only the subset of OrphanHandoffRecoveryService that the route invokes.
+// Centralizing the cast keeps the production type intact while satisfying the route signature.
+function asRecoveryService(
+  mock: Pick<OrphanHandoffRecoveryService, "runOnce">,
+): OrphanHandoffRecoveryService {
+  return mock as unknown as OrphanHandoffRecoveryService;
 }
 
 function tempServices(): Services {
@@ -27,7 +61,7 @@ function tempServices(): Services {
     clock: () => new Date("2026-05-20T00:00:00Z"),
     uuid: (() => {
       let n = 0;
-      return () => `e-${++n}`;
+      return () => `e-${String(++n)}`;
     })(),
   });
 }
@@ -37,16 +71,20 @@ function makeFetcher(handler: (req: Request) => Promise<Response>): typeof fetch
     handler(new Request(input as string, init))) as typeof fetch;
 }
 
+// Placeholder recovery service used purely for routes that should never reach it (auth-rejected paths).
+// A never-invoked placeholder may use one documented `{} as unknown as T` per the helper rule.
+const PLACEHOLDER_RECOVERY = {} as unknown as OrphanHandoffRecoveryService;
+
 test("POST /worker/reconcile-orphans requires worker_id", async () => {
   const services = tempServices();
   const req = new Request("http://x/worker/reconcile-orphans", {
     method: "POST",
     body: JSON.stringify({}),
   });
-  const res = await workerReconcileOrphansRoute(req, services, {} as any);
+  const res = await workerReconcileOrphansRoute(req, services, PLACEHOLDER_RECOVERY);
   expect(res.status).toBe(400);
-  const body = await res.json();
-  expect((body as any).error.code).toBe("validation_error");
+  const body = await readJson<ErrorBody>(res);
+  expect(body.error.code).toBe("validation_error");
 });
 
 test("POST /worker/reconcile-orphans returns 400 invalid_json on missing body", async () => {
@@ -54,10 +92,10 @@ test("POST /worker/reconcile-orphans returns 400 invalid_json on missing body", 
   const req = new Request("http://x/worker/reconcile-orphans", {
     method: "POST",
   });
-  const res = await workerReconcileOrphansRoute(req, services, {} as any);
+  const res = await workerReconcileOrphansRoute(req, services, PLACEHOLDER_RECOVERY);
   expect(res.status).toBe(400);
-  const body = await res.json();
-  expect((body as any).error.code).toBe("invalid_json");
+  const body = await readJson<ErrorBody>(res);
+  expect(body.error.code).toBe("invalid_json");
 });
 
 test("POST /worker/reconcile-orphans returns 400 validation_error on malformed body (wrong types)", async () => {
@@ -66,21 +104,21 @@ test("POST /worker/reconcile-orphans returns 400 validation_error on malformed b
     method: "POST",
     body: JSON.stringify({ worker_id: 123 }), // should be string
   });
-  const res = await workerReconcileOrphansRoute(req, services, {} as any);
+  const res = await workerReconcileOrphansRoute(req, services, PLACEHOLDER_RECOVERY);
   expect(res.status).toBe(400);
-  const body = await res.json();
-  expect((body as any).error.code).toBe("validation_error");
-  expect((body as any).error.field_errors).toBeDefined();
+  const body = await readJson<ErrorBody>(res);
+  expect(body.error.code).toBe("validation_error");
+  expect(body.error.field_errors).toBeDefined();
 });
 
 test("POST /worker/reconcile-orphans returns 500 recovery_failed on runOnce error", async () => {
   const services = tempServices();
   const token = "secret-token";
-  const mockRecovery = {
+  const mockRecovery = asRecoveryService({
     runOnce: () => {
       throw new Error("database crash");
     },
-  } as any;
+  });
   const fetchHandler = createDaemonFetchHandler({
     services,
     token,
@@ -111,8 +149,8 @@ test("POST /worker/reconcile-orphans passes worker_id to runOnce", async () => {
   const token = "secret-token";
 
   let passedWorkerId: string | undefined;
-  const mockRecovery = {
-    runOnce: (workerId?: string) => {
+  const mockRecovery = asRecoveryService({
+    runOnce: (workerId?: string): RecoveryResult => {
       passedWorkerId = workerId;
       return {
         requeued: 4,
@@ -123,7 +161,7 @@ test("POST /worker/reconcile-orphans passes worker_id to runOnce", async () => {
         _exhaustedRows: [],
       };
     },
-  } as any;
+  });
 
   const fetchHandler = createDaemonFetchHandler({
     services,
@@ -198,8 +236,8 @@ test("POST /worker/reconcile-orphans auth boundary and service-unavailable", asy
   expect(await res503.json()).toEqual({ error: { code: "recovery_service_unavailable" } });
 
   // 4. Shared bearer + recovery service -> 403 (route runs, principal check fires)
-  const mockRecovery = {
-    runOnce: () => ({
+  const mockRecovery = asRecoveryService({
+    runOnce: (): RecoveryResult => ({
       requeued: 1,
       exhausted: 0,
       requeuedRowIds: ["1"],
@@ -207,7 +245,7 @@ test("POST /worker/reconcile-orphans auth boundary and service-unavailable", asy
       _requeuedRows: [],
       _exhaustedRows: [],
     }),
-  } as any;
+  });
   const fetchHandlerWithRecovery = createDaemonFetchHandler({
     services,
     token,
@@ -221,7 +259,7 @@ test("POST /worker/reconcile-orphans auth boundary and service-unavailable", asy
     }),
   );
   expect(res403.status).toBe(403);
-  expect(((await res403.json()) as any).error.code).toBe("worker_token_required");
+  expect((await readJson<ErrorBody>(res403)).error.code).toBe("worker_token_required");
 
   // 5. Worker token + valid recovery service -> 200
   const { worker_token: wt2 } = await registerWorkerForTest({
@@ -251,8 +289,8 @@ test("POST /worker/reconcile-orphans auth boundary and service-unavailable", asy
 test("POST /worker/reconcile-orphans with shared bearer returns 403 worker_token_required", async () => {
   const services = tempServices();
   const token = "secret-token";
-  const mockRecovery = {
-    runOnce: () => ({
+  const mockRecovery = asRecoveryService({
+    runOnce: (): RecoveryResult => ({
       requeued: 0,
       exhausted: 0,
       requeuedRowIds: [],
@@ -260,7 +298,7 @@ test("POST /worker/reconcile-orphans with shared bearer returns 403 worker_token
       _requeuedRows: [],
       _exhaustedRows: [],
     }),
-  } as any;
+  });
   const fetchHandler = createDaemonFetchHandler({
     services,
     token,
@@ -275,15 +313,15 @@ test("POST /worker/reconcile-orphans with shared bearer returns 403 worker_token
     }),
   );
   expect(res.status).toBe(403);
-  const body = await res.json();
-  expect((body as any).error.code).toBe("worker_token_required");
+  const body = await readJson<ErrorBody>(res);
+  expect(body.error.code).toBe("worker_token_required");
 });
 
 test("POST /worker/reconcile-orphans with worker token + mismatched body worker_id returns 403 worker_id_mismatch", async () => {
   const services = tempServices();
   const token = "secret-token";
-  const mockRecovery = {
-    runOnce: () => ({
+  const mockRecovery = asRecoveryService({
+    runOnce: (): RecoveryResult => ({
       requeued: 0,
       exhausted: 0,
       requeuedRowIds: [],
@@ -291,7 +329,7 @@ test("POST /worker/reconcile-orphans with worker token + mismatched body worker_
       _requeuedRows: [],
       _exhaustedRows: [],
     }),
-  } as any;
+  });
   const fetchHandler = createDaemonFetchHandler({
     services,
     token,
@@ -313,8 +351,8 @@ test("POST /worker/reconcile-orphans with worker token + mismatched body worker_
     }),
   );
   expect(res.status).toBe(403);
-  const body = await res.json();
-  expect((body as any).error.code).toBe("worker_id_mismatch");
+  const body = await readJson<ErrorBody>(res);
+  expect(body.error.code).toBe("worker_id_mismatch");
 });
 
 test("POST /worker/reconcile-orphans with worker token + matching body worker_id reaches the recovery service (200)", async () => {
@@ -322,8 +360,8 @@ test("POST /worker/reconcile-orphans with worker token + matching body worker_id
   const token = "secret-token";
 
   let calledWith: string | undefined;
-  const mockRecovery = {
-    runOnce: (workerId?: string) => {
+  const mockRecovery = asRecoveryService({
+    runOnce: (workerId?: string): RecoveryResult => {
       calledWith = workerId;
       return {
         requeued: 2,
@@ -334,7 +372,7 @@ test("POST /worker/reconcile-orphans with worker token + matching body worker_id
         _exhaustedRows: [],
       };
     },
-  } as any;
+  });
   const fetchHandler = createDaemonFetchHandler({
     services,
     token,
@@ -356,7 +394,7 @@ test("POST /worker/reconcile-orphans with worker token + matching body worker_id
     }),
   );
   expect(res.status).toBe(200);
-  expect(await res.json()).toEqual({
+  expect(await readJson<ReconcileResultBody>(res)).toEqual({
     requeued: 2,
     exhausted: 1,
     requeuedRowIds: ["r1", "r2"],
@@ -377,6 +415,6 @@ test("POST /worker/reconcile-orphans without Authorization returns 401", async (
     }),
   );
   expect(res.status).toBe(401);
-  const body = await res.json();
-  expect((body as any).error.code).toBe("unauthorized");
+  const body = await readJson<ErrorBody>(res);
+  expect(body.error.code).toBe("unauthorized");
 });

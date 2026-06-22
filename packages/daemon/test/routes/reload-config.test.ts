@@ -1,20 +1,101 @@
-import { afterEach, expect, spyOn, test, vi } from "bun:test";
+import type { Logger } from "pino";
+
+import { loadAgentChatConfigFromDir } from "@penumbra/config";
+import {
+  buildServices,
+  loadSqliteVec,
+  migrate,
+  type Services,
+  type WorkerControlBus,
+} from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
+import { buildRegistry as buildWorkflowRegistry } from "@penumbra/workflows";
 import { Database } from "bun:sqlite";
-import { existsSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { afterEach, expect, spyOn, test, vi } from "bun:test";
+import { load as parseYaml, dump as stringifyYaml } from "js-yaml";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
-import { TestEmbedder } from "@penumbra/core/testing";
-import { loadAgentChatConfigFromDir } from "@penumbra/config";
-import { buildRegistry as buildWorkflowRegistry } from "@penumbra/workflows";
-import { load as parseYaml, dump as stringifyYaml } from "js-yaml";
-import { reloadConfigRoute } from "../../src/routes/reload-config.js";
+
+import type { DaemonServices } from "../../src/serve.js";
+import type { ExtraWorkerSupervisor } from "../../src/workers/supervisor.js";
+
 import { formatAgentChatConfigError } from "../../src/agentchat-config.js";
+import { reloadConfigRoute } from "../../src/routes/reload-config.js";
 
 try {
   if (process.platform === "darwin")
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-} catch {}
+} catch (err) {
+  void err;
+}
+
+// ─── typed test helpers ────────────────────────────────────────────────────
+
+/** Daemon route handlers expect the augmented `DaemonServices` shape.
+ *  `Services` from core lacks optional daemon-only extras (extraWorkerSupervisor, etc.);
+ *  this narrows safely since the extras are all optional fields on the intersection. */
+function asDaemonServices(services: Services): DaemonServices {
+  return services as DaemonServices;
+}
+
+type LogFnKey = "info" | "warn" | "error" | "debug" | "trace" | "fatal";
+
+/** Logger.info/warn/error are pino overloads; mockImplementation requires the union signature.
+ *  Centralized cast satisfies the overload set without leaking `any` to callers. */
+function noopLogFn(key: LogFnKey): Logger[LogFnKey] {
+  void key;
+  return (..._args: unknown[]): undefined => undefined;
+}
+
+/** ExtraWorkerSupervisor is a class with many private fields; tests only need `reconcile`. */
+function asExtraWorkerSupervisor(
+  mock: Pick<ExtraWorkerSupervisor, "reconcile">,
+): ExtraWorkerSupervisor {
+  return mock as unknown as ExtraWorkerSupervisor;
+}
+
+/** WorkerControlBus is a class with a private listener set; tests only need `subscribe`/`emit`. */
+function asWorkerControlBus(mock: Pick<WorkerControlBus, "subscribe" | "emit">): WorkerControlBus {
+  return mock as unknown as WorkerControlBus;
+}
+
+interface NamedWorkflowSpec {
+  name: string;
+  description: string;
+}
+interface NamedWorkflowRegistry {
+  list(): NamedWorkflowSpec[];
+  get(name: string): NamedWorkflowSpec | undefined;
+}
+/** WorkflowRegistry from core is generic over Spec=unknown; tests want the markdown-spec shape. */
+function asNamedWorkflowRegistry(reg: unknown): NamedWorkflowRegistry {
+  return reg as NamedWorkflowRegistry;
+}
+
+async function readJson<T>(res: Response): Promise<T> {
+  return (await res.json()) as T;
+}
+
+// ─── body type shapes returned by reloadConfigRoute ────────────────────────
+
+interface ReloadBody {
+  ok?: boolean;
+  agent_count?: number;
+  workflow_count?: number;
+  reloaded_at?: string;
+  reactor_status?: string;
+  reactor_error?: string;
+  worker_extras?: {
+    started?: string[];
+    restarted?: string[];
+    stopped?: string[];
+    skipped?: string[];
+    errors?: { worker_id: string; message: string }[];
+    error?: string;
+  };
+  error?: string;
+}
 
 afterEach(() => {
   delete process.env.PENUMBRA_CONFIG_DIR;
@@ -25,7 +106,8 @@ const tempDirs: string[] = [];
 
 afterEach(() => {
   while (tempDirs.length > 0) {
-    rmSync(tempDirs.pop()!, { recursive: true, force: true });
+    const dir = tempDirs.pop();
+    if (dir !== undefined) rmSync(dir, { recursive: true, force: true });
   }
 });
 
@@ -45,11 +127,8 @@ function tempServices(opts?: {
     storageRoot: "/tmp/reload-config-test",
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: Object.assign(() => new Date("2026-04-26T00:00:00Z"), {
-      toISOString: () => "2026-04-26T00:00:00.000Z",
-      now: () => 1714089600000,
-    }),
-    uuid: () => `id-${++n}`,
+    clock: () => new Date("2026-04-26T00:00:00Z"),
+    uuid: () => `id-${String(++n)}`,
     agentRegistry: opts?.agentRegistry ?? ["planner", "executor"],
     worktreeRootDir,
   });
@@ -57,12 +136,12 @@ function tempServices(opts?: {
   // route doesn't pick up the live repo's playbooks during tests.
   const dirs =
     opts?.workflowDirs ??
-    (() => {
+    ((): { playbooksDir: string; workflowsDir: string } => {
       const root = mkdtempSync(join(tmpdir(), "reload-cfg-empty-"));
       tempDirs.push(root);
       return { playbooksDir: join(root, "playbooks"), workflowsDir: join(root, "workflows") };
     })();
-  (services as Services & { workflowDirs?: typeof dirs }).workflowDirs = dirs;
+  asDaemonServices(services).workflowDirs = dirs;
   return services;
 }
 
@@ -134,14 +213,14 @@ test("POST /agentchat/reload replaces agentRegistry and returns info", async () 
   `,
   );
   process.env.PENUMBRA_CONFIG_DIR = yamlPath;
-  const infoSpy = spyOn(services.log, "info").mockImplementation(() => undefined as any);
+  const infoSpy = spyOn(services.log, "info").mockImplementation(noopLogFn("info"));
   try {
     const res = await reloadConfigRoute(
       new Request("http://x/agentchat/reload", { method: "POST" }),
       services,
     );
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<ReloadBody>(res);
     expect(body.ok).toBe(true);
     expect(body.agent_count).toBe(2);
     expect(body.reloaded_at).toBe("2026-04-26T00:00:00.000Z");
@@ -198,13 +277,15 @@ role_routing:
 test("POST /agentchat/reload reloads the long-lived reactor when present", async () => {
   const services = tempServices();
   let reloadCalls = 0;
-  (services as Services & { longLivedReactor?: { reload: () => Promise<void> } }).longLivedReactor =
-    {
-      reload: async () => {
-        reloadCalls += 1;
-      },
-    };
-  const warnSpy = spyOn(services.log, "warn").mockImplementation(() => undefined as any);
+  asDaemonServices(services).longLivedReactor = {
+    manualTick: (): { outcome: string } => ({ outcome: "noop" }),
+    reload: (): Promise<void> => {
+      reloadCalls += 1;
+      return Promise.resolve();
+    },
+    shutdown: (): Promise<void> => Promise.resolve(),
+  };
+  const warnSpy = spyOn(services.log, "warn").mockImplementation(noopLogFn("warn"));
   const testDir = join("/tmp", "penumbra-reload-test");
   if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
   const yamlPath = join(testDir, "agentchat-reactor.yaml");
@@ -224,7 +305,7 @@ agents:
       services,
     );
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<ReloadBody>(res);
     expect(body.reactor_status).toBe("reloaded");
     expect(body.reactor_error).toBeUndefined();
     expect(reloadCalls).toBe(1);
@@ -236,13 +317,12 @@ agents:
 
 test("POST /agentchat/reload soft-fails long-lived reactor reload errors", async () => {
   const services = tempServices();
-  (services as Services & { longLivedReactor?: { reload: () => Promise<void> } }).longLivedReactor =
-    {
-      reload: async () => {
-        throw new Error("reactor exploded");
-      },
-    };
-  const warnSpy = spyOn(services.log, "warn").mockImplementation(() => undefined as any);
+  asDaemonServices(services).longLivedReactor = {
+    manualTick: (): { outcome: string } => ({ outcome: "noop" }),
+    reload: (): Promise<void> => Promise.reject(new Error("reactor exploded")),
+    shutdown: (): Promise<void> => Promise.resolve(),
+  };
+  const warnSpy = spyOn(services.log, "warn").mockImplementation(noopLogFn("warn"));
   const testDir = join("/tmp", "penumbra-reload-test");
   if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
   const yamlPath = join(testDir, "agentchat-reactor-fail.yaml");
@@ -255,7 +335,7 @@ test("POST /agentchat/reload soft-fails long-lived reactor reload errors", async
       services,
     );
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<ReloadBody>(res);
     expect(body.ok).toBe(true);
     expect(body.agent_count).toBe(1);
     expect(body.reactor_status).toBe("failed");
@@ -271,7 +351,7 @@ test("POST /agentchat/reload soft-fails long-lived reactor reload errors", async
 
 test("POST /agentchat/reload refreshes providerQuotas from agentchat config", async () => {
   const services = tempServices();
-  services.providerQuotas = [{ provider: "placeholder", quota_usd_per_24h: 1 } as any];
+  services.providerQuotas = [{ provider: "placeholder", quota_usd_per_24h: 1 }];
   const testDir = join("/tmp", "penumbra-reload-test");
   if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
   const yamlPath = join(testDir, "agentchat-providers.yaml");
@@ -339,17 +419,14 @@ providers:
 test("POST /agentchat/reload returns 422 if file missing", async () => {
   const services = tempServices();
   process.env.PENUMBRA_CONFIG_DIR = "/tmp/does-not-exist.yaml";
-  try {
-    const res = await reloadConfigRoute(
-      new Request("http://x/agentchat/reload", { method: "POST" }),
-      services,
-    );
-    expect(res.status).toBe(422);
-    const body = await res.json();
-    expect(body.error).toContain("not found");
-    expect(services.agentRegistry).toEqual(["planner", "executor"]); // untouched
-  } finally {
-  }
+  const res = await reloadConfigRoute(
+    new Request("http://x/agentchat/reload", { method: "POST" }),
+    services,
+  );
+  expect(res.status).toBe(422);
+  const body = await readJson<ReloadBody>(res);
+  expect(body.error).toContain("not found");
+  expect(services.agentRegistry).toEqual(["planner", "executor"]); // untouched
 });
 
 test("POST /agentchat/reload returns 422 and does not swap if yaml invalid", async () => {
@@ -373,7 +450,7 @@ agents:
       services,
     );
     expect(res.status).toBe(422);
-    const body = await res.json();
+    const body = await readJson<ReloadBody>(res);
     expect(body.error).toContain("agents.0.name");
     expect(services.agentRegistry).toEqual(["planner", "executor"]); // untouched
   } finally {
@@ -411,7 +488,7 @@ agents:
 
 test("POST /agentchat/reload refreshes agentchatConfig and shellConfig", async () => {
   const services = tempServices();
-  const runtime = services as Services & { agentchatConfig?: any; shellConfig?: any };
+  const runtime = asDaemonServices(services);
   const testDir = join("/tmp", "penumbra-reload-test");
   if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
   const yamlPath = join(testDir, "agentchat-shell.yaml");
@@ -438,7 +515,7 @@ shell:
     expect(runtime.agentchatConfig?.agents?.[0]?.name).toBe("shell-agent");
     expect(runtime.agentchatConfig?.agents?.[0]?.auto_approve_to ?? []).toEqual([]);
     expect(runtime.shellConfig?.enabled).toBe(true);
-    expect(runtime.shellConfig?.dangerousCommandsForAgent?.("shell-agent")).toEqual(["^danger\\b"]);
+    expect(runtime.shellConfig?.dangerousCommandsForAgent("shell-agent")).toEqual(["^danger\\b"]);
 
     writeAgentchat(
       yamlPath,
@@ -459,7 +536,7 @@ shell:
     );
     expect(res.status).toBe(200);
     expect(runtime.agentchatConfig?.agents?.[0]?.auto_approve_to).toEqual(["shell_run"]);
-    expect(runtime.shellConfig?.dangerousCommandsForAgent?.("shell-agent")).toEqual(["^rm\\b"]);
+    expect(runtime.shellConfig?.dangerousCommandsForAgent("shell-agent")).toEqual(["^rm\\b"]);
   } finally {
     rmSync(yamlPath, { recursive: true, force: true });
   }
@@ -547,16 +624,17 @@ test("POST /agentchat/reload rebuilds workflow registry from disk", async () => 
       services,
     );
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<ReloadBody>(res);
     expect(body.ok).toBe(true);
     expect(body.workflow_count).toBe(2);
+    const reg = asNamedWorkflowRegistry(services.workflowRegistry);
     expect(
-      services.workflowRegistry
-        ?.list()
+      reg
+        .list()
         .map((s) => s.name)
         .sort(),
     ).toEqual(["alpha", "beta"]);
-    expect(services.workflowRegistry?.get("alpha")?.description).toBe("v2");
+    expect(reg.get("alpha")?.description).toBe("v2");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -572,12 +650,13 @@ test("POST /agentchat/reload returns 500 and keeps old workflow registry on rebu
 
   // Build the initial (good) registry.
   const services = tempServices({ workflowDirs: { playbooksDir: goodPlaybooks, workflowsDir } });
+  const runtime = asDaemonServices(services);
   services.workflowRegistry = await buildWorkflowRegistry({
     playbooksDir: goodPlaybooks,
     workflowsDir,
   });
   const originalRegistry = services.workflowRegistry;
-  expect(originalRegistry?.get("alpha")?.description).toBe("v1");
+  expect(originalRegistry.get("alpha")?.description).toBe("v1");
   const yamlPath = join(root, "agentchat.yaml");
   writeAgentchat(
     yamlPath,
@@ -589,24 +668,22 @@ agents:
   );
   expect(loadAgentChatConfigFromDir(yamlPath).agents[0]?.name).toBe("old-agent");
   services.agentRegistry = ["old-agent"];
-  services.agentchatConfig = {
+  runtime.agentchatConfig = {
     agents: [{ name: "old-agent", adapter: "mock" }],
-    default_roles: {},
-    role_routing: {},
-    providers: [],
-  } as any;
-  const originalAgentchatConfig = services.agentchatConfig;
+  };
+  const originalAgentchatConfig = runtime.agentchatConfig;
   const emitSpy = vi.fn();
-  (services as any).workerControl = { emit: emitSpy };
+  services.workerControl = asWorkerControlBus({
+    subscribe: () => (): undefined => undefined,
+    emit: emitSpy,
+  });
 
   // Now point the route at a path that's a regular file, not a directory —
   // existsSync passes but readdirSync throws ENOTDIR, which buildRegistry
   // surfaces as a thrown error rather than collecting in errors[].
   const badPath = join(root, "not-a-dir");
   writeFileSync(badPath, "definitely not a directory");
-  (
-    services as Services & { workflowDirs?: { playbooksDir: string; workflowsDir: string } }
-  ).workflowDirs = {
+  runtime.workflowDirs = {
     playbooksDir: badPath,
     workflowsDir,
   };
@@ -620,19 +697,19 @@ agents:
 `,
   );
   process.env.PENUMBRA_CONFIG_DIR = yamlPath;
-  const errSpy = spyOn(services.log, "error").mockImplementation(() => undefined as any);
+  const errSpy = spyOn(services.log, "error").mockImplementation(noopLogFn("error"));
   try {
     const res = await reloadConfigRoute(
       new Request("http://x/agentchat/reload", { method: "POST" }),
       services,
     );
     expect(res.status).toBe(500);
-    const body = await res.json();
+    const body = await readJson<ReloadBody>(res);
     expect(body.error).toContain("workflow registry rebuild failed");
     expect(services.workflowRegistry).toBe(originalRegistry);
-    expect(services.workflowRegistry?.get("alpha")?.description).toBe("v1");
+    expect(services.workflowRegistry.get("alpha")?.description).toBe("v1");
     expect(services.agentRegistry).toEqual(["old-agent"]);
-    expect(services.agentchatConfig).toBe(originalAgentchatConfig);
+    expect(runtime.agentchatConfig).toBe(originalAgentchatConfig);
     expect(loadAgentChatConfigFromDir(yamlPath).agents[0]?.name).toBe("old-agent");
     expect(emitSpy).not.toHaveBeenCalled();
     expect(errSpy).toHaveBeenCalled();
@@ -656,18 +733,16 @@ test("formatAgentChatConfigError redacts apiKey/token/secret fields", () => {
 
 test("POST /agentchat/reload returns empty worker_extras when workers.yaml is absent", async () => {
   const services = tempServices();
-  const reconcile = vi.fn().mockResolvedValue({
-    started: [],
-    restarted: [],
-    stopped: [],
-    skipped: [],
-    errors: [],
-  });
-  (
-    services as Services & {
-      extraWorkerSupervisor?: { reconcile: (extras: unknown[]) => Promise<unknown> };
-    }
-  ).extraWorkerSupervisor = { reconcile };
+  const reconcile = vi.fn(() =>
+    Promise.resolve({
+      started: [],
+      restarted: [],
+      stopped: [],
+      skipped: [],
+      errors: [],
+    }),
+  );
+  asDaemonServices(services).extraWorkerSupervisor = asExtraWorkerSupervisor({ reconcile });
   const testDir = join("/tmp", "penumbra-reload-test");
   if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
   const yamlPath = join(testDir, "agentchat.yaml");
@@ -680,7 +755,7 @@ test("POST /agentchat/reload returns empty worker_extras when workers.yaml is ab
       services,
     );
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<ReloadBody>(res);
     expect(body.worker_extras).toEqual({
       started: [],
       restarted: [],
@@ -707,16 +782,16 @@ test("POST /agentchat/reload surfaces invalid workers.yaml errors without extra 
       services,
     );
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.worker_extras.error).toContain("workers.yaml");
-    expect(body.worker_extras.error).toContain(workersPath);
+    const body = await readJson<ReloadBody>(res);
+    expect(body.worker_extras?.error).toContain("workers.yaml");
+    expect(body.worker_extras?.error).toContain(workersPath);
   });
 });
 
 test("POST /agentchat/reload restarts and tracks added workers from workers.yaml", async () => {
   const services = tempServices();
   const state: string[] = ["worker-a"];
-  const reconcile = vi.fn(async (extras: { id: string }[]) => {
+  const reconcile = vi.fn((extras: { id: string }[]) => {
     const next = extras.map((item) => item.id);
     const nextSet = new Set(next);
     const started = next.filter((id) => !state.includes(id));
@@ -725,19 +800,15 @@ test("POST /agentchat/reload restarts and tracks added workers from workers.yaml
       state.splice(state.indexOf(id), 1);
     }
     for (const id of started) state.push(id);
-    return {
+    return Promise.resolve({
       started,
       restarted: [],
       stopped,
       skipped: [],
       errors: [],
-    };
+    });
   });
-  (
-    services as Services & {
-      extraWorkerSupervisor?: { reconcile: (extras: unknown[]) => Promise<unknown> };
-    }
-  ).extraWorkerSupervisor = { reconcile };
+  asDaemonServices(services).extraWorkerSupervisor = asExtraWorkerSupervisor({ reconcile });
   const testDir = join("/tmp", "penumbra-reload-test");
   if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
   const yamlPath = join(testDir, "agentchat.yaml");
@@ -773,7 +844,7 @@ extras:
       new Request("http://x/agentchat/reload", { method: "POST" }),
       services,
     );
-    const body = await res.json();
+    const body = await readJson<ReloadBody>(res);
     expect(body.worker_extras).toEqual({
       started: ["worker-b"],
       restarted: [],
@@ -787,26 +858,22 @@ extras:
 test("POST /agentchat/reload restarts and tracks removed workers from workers.yaml", async () => {
   const services = tempServices();
   const state: string[] = ["worker-a", "worker-b"];
-  const reconcile = vi.fn(async (extras: { id: string }[]) => {
+  const reconcile = vi.fn((extras: { id: string }[]) => {
     const next = extras.map((item) => item.id);
     const nextSet = new Set(next);
     const stopped = state.filter((id) => !nextSet.has(id));
     const started = next.filter((id) => !state.includes(id));
     state.splice(0);
     state.push(...next);
-    return {
+    return Promise.resolve({
       started,
       restarted: [],
       stopped,
       skipped: [],
       errors: [],
-    };
+    });
   });
-  (
-    services as Services & {
-      extraWorkerSupervisor?: { reconcile: (extras: unknown[]) => Promise<unknown> };
-    }
-  ).extraWorkerSupervisor = { reconcile };
+  asDaemonServices(services).extraWorkerSupervisor = asExtraWorkerSupervisor({ reconcile });
   const testDir = join("/tmp", "penumbra-reload-test");
   if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
   const yamlPath = join(testDir, "agentchat.yaml");
@@ -838,7 +905,7 @@ extras:
       new Request("http://x/agentchat/reload", { method: "POST" }),
       services,
     );
-    const body = await res.json();
+    const body = await readJson<ReloadBody>(res);
     expect(body.worker_extras).toEqual({
       started: [],
       restarted: [],
@@ -851,18 +918,16 @@ extras:
 
 test("POST /agentchat/reload reports worker_reconcile_errors for invalid workers.yaml", async () => {
   const services = tempServices();
-  const reconcile = vi.fn().mockResolvedValue({
-    started: [],
-    restarted: [],
-    stopped: [],
-    skipped: [],
-    errors: [],
-  });
-  (
-    services as Services & {
-      extraWorkerSupervisor?: { reconcile: (extras: unknown[]) => Promise<unknown> };
-    }
-  ).extraWorkerSupervisor = { reconcile };
+  const reconcile = vi.fn(() =>
+    Promise.resolve({
+      started: [],
+      restarted: [],
+      stopped: [],
+      skipped: [],
+      errors: [],
+    }),
+  );
+  asDaemonServices(services).extraWorkerSupervisor = asExtraWorkerSupervisor({ reconcile });
   const testDir = join("/tmp", "penumbra-reload-test");
   if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
   const yamlPath = join(testDir, "agentchat.yaml");
@@ -876,26 +941,24 @@ test("POST /agentchat/reload reports worker_reconcile_errors for invalid workers
       services,
     );
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.worker_extras.error).toEqual(expect.stringContaining(workersPath));
+    const body = await readJson<ReloadBody>(res);
+    expect(body.worker_extras?.error).toContain(workersPath);
     expect(reconcile).not.toHaveBeenCalled();
   });
 });
 
 test("POST /agentchat/reload surfaces worker reconcile spawn errors", async () => {
   const services = tempServices();
-  const reconcile = vi.fn().mockResolvedValue({
-    started: [],
-    restarted: [],
-    stopped: [],
-    skipped: ["worker-a"],
-    errors: [{ worker_id: "worker-a", message: "spawn failed" }],
-  });
-  (
-    services as Services & {
-      extraWorkerSupervisor?: { reconcile: (extras: unknown[]) => Promise<unknown> };
-    }
-  ).extraWorkerSupervisor = { reconcile };
+  const reconcile = vi.fn(() =>
+    Promise.resolve({
+      started: [],
+      restarted: [],
+      stopped: [],
+      skipped: ["worker-a"],
+      errors: [{ worker_id: "worker-a", message: "spawn failed" }],
+    }),
+  );
+  asDaemonServices(services).extraWorkerSupervisor = asExtraWorkerSupervisor({ reconcile });
   const testDir = join("/tmp", "penumbra-reload-test");
   if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
   const yamlPath = join(testDir, "agentchat.yaml");
@@ -916,7 +979,7 @@ extras:
       services,
     );
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<ReloadBody>(res);
     expect(body.worker_extras).toEqual({
       started: [],
       restarted: [],
@@ -944,7 +1007,10 @@ test("POST /agentchat/reload emits agentchat_reload to workerControl on success"
   process.env.PENUMBRA_CONFIG_DIR = yamlPath;
 
   const emitSpy = vi.fn();
-  (services as any).workerControl = { emit: emitSpy };
+  services.workerControl = asWorkerControlBus({
+    subscribe: () => (): undefined => undefined,
+    emit: emitSpy,
+  });
 
   try {
     const res = await reloadConfigRoute(
