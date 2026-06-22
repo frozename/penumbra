@@ -1,12 +1,15 @@
-import { expect, test } from "bun:test";
+import { getLane, insertLane, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { type Services, migrate, loadSqliteVec, insertLane, getLane } from "@penumbra/core";
+import { expect, test } from "bun:test";
+
 import { runOrphanLanesSweep } from "../../src/sweepers/orphan-lanes.js";
 
 try {
   if (process.platform === "darwin")
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-} catch {}
+} catch {
+  // Custom sqlite path is best-effort on non-Homebrew machines.
+}
 
 const NOW = "2026-01-01T12:00:00.000Z";
 const PAST_GRACE = "2026-01-01T11:00:00.000Z"; // 60 min ago — past the 30-min default grace
@@ -20,17 +23,21 @@ function setupDb(): Database {
 }
 
 function makeServices(db: Database, t0Sink: unknown[] = []): Services {
-  return {
+  const noopLog = (): void => undefined;
+  let nUuid = 0;
+  const stub = {
     db,
-    machineId: { get: () => "machine-test" },
-    uuid: (() => {
-      let n = 0;
-      return () => `evt-${++n}`;
-    })(),
-    clock: () => new Date(NOW),
-    t0Writer: { write: (e: unknown) => t0Sink.push(e) },
-    log: { info: () => {}, warn: () => {} },
-  } as unknown as Services;
+    machineId: { get: (): string => "machine-test" },
+    uuid: (): string => `evt-${String(++nUuid)}`,
+    clock: (): Date => new Date(NOW),
+    t0Writer: {
+      write: (e: unknown): void => {
+        t0Sink.push(e);
+      },
+    },
+    log: { info: noopLog, warn: noopLog },
+  };
+  return stub as unknown as Services;
 }
 
 function insertHandoff(

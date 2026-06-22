@@ -1,6 +1,6 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { HandoffReader, HandoffWriter, loadSqliteVec, migrate } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
 
 // Telemetry assertion (per_root_top3 in dispatch_event meta) is already covered
 // by packages/daemon/test/routes/handoffs-claim-telemetry.test.ts. This file
@@ -10,7 +10,9 @@ try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  // Custom sqlite path is best-effort on non-Homebrew machines.
+}
 
 function makeDb(): Database {
   const db = new Database(":memory:");
@@ -82,7 +84,7 @@ test("two-chain interleave: A0, B0, A1, A2, A3", () => {
 test("single-root claim order is FIFO (no perf regression)", () => {
   const db = makeDb();
   for (let i = 0; i < 8; i++) {
-    insertApproved(db, `X${i}`, "X", i === 0 ? null : "X0", i);
+    insertApproved(db, `X${String(i)}`, "X", i === 0 ? null : "X0", i);
   }
 
   const reader = new HandoffReader({ db });
@@ -90,8 +92,8 @@ test("single-root claim order is FIFO (no perf regression)", () => {
 
   for (let i = 0; i < 8; i++) {
     const next = reader.listByStatus({ statuses: ["approved"] })[0];
-    expect(next?.handoff_id).toBe(`X${i}`);
-    expect(writer.claimDispatch(next!.handoff_id, `worker-${i}`)).toBe(true);
+    expect(next?.handoff_id).toBe(`X${String(i)}`);
+    expect(writer.claimDispatch(next!.handoff_id, `worker-${String(i)}`)).toBe(true);
   }
 });
 

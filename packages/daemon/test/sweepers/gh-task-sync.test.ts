@@ -1,31 +1,95 @@
-import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec, migrate, TaskWriter, T0Writer } from "../../../core/src/index.js";
-import type { GhClient } from "../../src/services/gh-client.js";
+import { describe, expect, test } from "bun:test";
+
+import type { Services } from "../../../core/src/index.js";
+import type {
+  GhClient,
+  GhCreateIssueInput,
+  GhIssueComment,
+  GhIssueView,
+} from "../../src/services/gh-client.js";
+
+import { loadSqliteVec, migrate, T0Writer, TaskWriter } from "../../../core/src/index.js";
+import { createDaemonFetchHandler } from "../../src/serve.js";
 import {
   createGhTaskSyncService,
-  createGhTaskSyncSweeper,
   createGhTaskSyncSingleFlight,
+  createGhTaskSyncSweeper,
+  type GhTaskSyncService,
+  type GhTaskSyncSummary,
 } from "../../src/sweepers/gh-task-sync.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  // Custom sqlite path is best-effort on non-Homebrew machines.
+}
 
-function setup(): { db: Database; writer: TaskWriter; setNow: (ms: number) => void } {
+interface SetupHandle {
+  db: Database;
+  writer: TaskWriter;
+  setNow: (ms: number) => void;
+}
+
+function setup(): SetupHandle {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   let nowMs = Date.parse("2026-05-08T00:00:00.000Z");
-  const writer = new TaskWriter(db, { now: () => nowMs });
+  const writer = new TaskWriter(db, { now: (): number => nowMs });
   return {
     db,
     writer,
-    setNow: (ms) => {
+    setNow: (ms: number): void => {
       nowMs = ms;
     },
+  };
+}
+
+const rejectNotUsed = <T>(): Promise<T> => Promise.reject(new Error("not used"));
+const resolveVoid = (): Promise<void> => Promise.resolve();
+const resolveEmptyComments = (): Promise<GhIssueComment[]> => Promise.resolve([]);
+
+function makeGhClient(overrides: Partial<GhClient>): GhClient {
+  const base: GhClient = {
+    createIssue: () => rejectNotUsed<{ number: number; url: string }>(),
+    viewIssue: () => rejectNotUsed<GhIssueView>(),
+    closeIssue: () => resolveVoid(),
+    reopenIssue: () => resolveVoid(),
+    commentIssue: (_repo: string, issue: number) =>
+      Promise.resolve({
+        comment_url: `https://github.com/acordeiro/penumbra/issues/${String(issue)}#issuecomment-1`,
+      }),
+    listComments: () => resolveEmptyComments(),
+  };
+  return { ...base, ...overrides };
+}
+
+function viewOpen(issue: number, updatedAt = "2026-05-08T00:00:00.000Z"): GhIssueView {
+  return {
+    number: issue,
+    state: "OPEN",
+    stateReason: null,
+    updatedAt,
+    title: `Issue ${String(issue)}`,
+    url: `https://github.com/acordeiro/penumbra/issues/${String(issue)}`,
+  };
+}
+
+function viewClosed(
+  issue: number,
+  stateReason: GhIssueView["stateReason"],
+  updatedAt = "2026-05-08T01:00:00.000Z",
+): GhIssueView {
+  return {
+    number: issue,
+    state: "CLOSED",
+    stateReason,
+    updatedAt,
+    title: `Issue ${String(issue)}`,
+    url: `https://github.com/acordeiro/penumbra/issues/${String(issue)}`,
   };
 }
 
@@ -39,25 +103,9 @@ describe("gh-task-sync sweeper/service", () => {
     });
     writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 10 });
 
-    const ghClient: GhClient = {
-      createIssue: async () => {
-        throw new Error("not used");
-      },
-      viewIssue: async () => ({
-        number: 10,
-        state: "CLOSED",
-        stateReason: "NOT_PLANNED",
-        updatedAt: "2026-05-08T01:00:00.000Z",
-        title: "Issue 10",
-        url: "https://github.com/acordeiro/penumbra/issues/10",
-      }),
-      closeIssue: async () => {},
-      reopenIssue: async () => {},
-      commentIssue: async () => ({
-        comment_url: "https://github.com/acordeiro/penumbra/issues/10#issuecomment-1",
-      }),
-      listComments: async () => [],
-    };
+    const ghClient = makeGhClient({
+      viewIssue: () => Promise.resolve(viewClosed(10, "NOT_PLANNED")),
+    });
 
     setNow(Date.parse("2026-05-08T01:30:00.000Z"));
     const sync = createGhTaskSyncService({
@@ -84,7 +132,8 @@ describe("gh-task-sync sweeper/service", () => {
       )
       .get();
     expect(event?.event_type).toBe("task.gh_state_pulled");
-    expect(JSON.parse(event?.payload_json ?? "{}").task_id).toBe(task_id);
+    const eventPayload = JSON.parse(event?.payload_json ?? "{}") as { task_id?: string };
+    expect(eventPayload.task_id).toBe(task_id);
   });
 
   test("GH CLOSED+COMPLETED pulls to done", async () => {
@@ -96,25 +145,9 @@ describe("gh-task-sync sweeper/service", () => {
     });
     writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 12 });
 
-    const ghClient: GhClient = {
-      createIssue: async () => {
-        throw new Error("not used");
-      },
-      viewIssue: async () => ({
-        number: 12,
-        state: "CLOSED",
-        stateReason: "COMPLETED",
-        updatedAt: "2026-05-08T01:00:00.000Z",
-        title: "Issue 12",
-        url: "https://github.com/acordeiro/penumbra/issues/12",
-      }),
-      closeIssue: async () => {},
-      reopenIssue: async () => {},
-      commentIssue: async () => ({
-        comment_url: "https://github.com/acordeiro/penumbra/issues/12#issuecomment-1",
-      }),
-      listComments: async () => [],
-    };
+    const ghClient = makeGhClient({
+      viewIssue: () => Promise.resolve(viewClosed(12, "COMPLETED")),
+    });
 
     setNow(Date.parse("2026-05-08T01:30:00.000Z"));
     const sync = createGhTaskSyncService({
@@ -141,25 +174,9 @@ describe("gh-task-sync sweeper/service", () => {
     });
     writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 13 });
 
-    const ghClient: GhClient = {
-      createIssue: async () => {
-        throw new Error("not used");
-      },
-      viewIssue: async () => ({
-        number: 13,
-        state: "CLOSED",
-        stateReason: "NOT_PLANNED",
-        updatedAt: "2026-05-08T01:00:00.000Z",
-        title: "Issue 13",
-        url: "https://github.com/acordeiro/penumbra/issues/13",
-      }),
-      closeIssue: async () => {},
-      reopenIssue: async () => {},
-      commentIssue: async () => ({
-        comment_url: "https://github.com/acordeiro/penumbra/issues/13#issuecomment-1",
-      }),
-      listComments: async () => [],
-    };
+    const ghClient = makeGhClient({
+      viewIssue: () => Promise.resolve(viewClosed(13, "NOT_PLANNED")),
+    });
 
     setNow(Date.parse("2026-05-08T01:30:00.000Z"));
     const sync = createGhTaskSyncService({
@@ -186,25 +203,9 @@ describe("gh-task-sync sweeper/service", () => {
     });
     writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 14 });
 
-    const ghClient: GhClient = {
-      createIssue: async () => {
-        throw new Error("not used");
-      },
-      viewIssue: async () => ({
-        number: 14,
-        state: "CLOSED",
-        stateReason: null,
-        updatedAt: "2026-05-08T01:00:00.000Z",
-        title: "Issue 14",
-        url: "https://github.com/acordeiro/penumbra/issues/14",
-      }),
-      closeIssue: async () => {},
-      reopenIssue: async () => {},
-      commentIssue: async () => ({
-        comment_url: "https://github.com/acordeiro/penumbra/issues/14#issuecomment-1",
-      }),
-      listComments: async () => [],
-    };
+    const ghClient = makeGhClient({
+      viewIssue: () => Promise.resolve(viewClosed(14, null)),
+    });
 
     setNow(Date.parse("2026-05-08T01:30:00.000Z"));
     const sync = createGhTaskSyncService({
@@ -237,29 +238,14 @@ describe("gh-task-sync sweeper/service", () => {
       task_id,
     ]);
 
-    const closedCalls: Array<{ repo: string; issue: number; reason: "completed" | "not planned" }> =
-      [];
-    const ghClient: GhClient = {
-      createIssue: async () => {
-        throw new Error("not used");
-      },
-      viewIssue: async () => ({
-        number: 11,
-        state: "OPEN",
-        stateReason: null,
-        updatedAt: "2026-05-08T00:30:00.000Z",
-        title: "Issue 11",
-        url: "https://github.com/acordeiro/penumbra/issues/11",
-      }),
-      closeIssue: async (repo, issue, reason) => {
+    const closedCalls: { repo: string; issue: number; reason: "completed" | "not planned" }[] = [];
+    const ghClient = makeGhClient({
+      viewIssue: () => Promise.resolve(viewOpen(11, "2026-05-08T00:30:00.000Z")),
+      closeIssue: (repo, issue, reason) => {
         closedCalls.push({ repo, issue, reason });
+        return Promise.resolve();
       },
-      reopenIssue: async () => {},
-      commentIssue: async () => ({
-        comment_url: "https://github.com/acordeiro/penumbra/issues/11#issuecomment-2",
-      }),
-      listComments: async () => [],
-    };
+    });
 
     const sync = createGhTaskSyncService({
       taskWriter: writer,
@@ -298,29 +284,13 @@ describe("gh-task-sync sweeper/service", () => {
     writer.linkGhIssue(t3, { repo: "acordeiro/penumbra", issue_number: 23 });
 
     const viewed: number[] = [];
-    const ghClient: GhClient = {
-      createIssue: async () => {
-        throw new Error("not used");
-      },
-      viewIssue: async (_repo, issue) => {
+    const ghClient = makeGhClient({
+      viewIssue: (_repo, issue) => {
         viewed.push(issue);
-        if (issue === 22) throw new Error("network down");
-        return {
-          number: issue,
-          state: "OPEN",
-          stateReason: null,
-          updatedAt: "2026-05-08T00:00:00.000Z",
-          title: `Issue ${issue}`,
-          url: `https://github.com/acordeiro/penumbra/issues/${issue}`,
-        };
+        if (issue === 22) return Promise.reject(new Error("network down"));
+        return Promise.resolve(viewOpen(issue));
       },
-      closeIssue: async () => {},
-      reopenIssue: async () => {},
-      commentIssue: async () => ({
-        comment_url: "https://github.com/acordeiro/penumbra/issues/21#issuecomment-3",
-      }),
-      listComments: async () => [],
-    };
+    });
 
     const sync = createGhTaskSyncService({
       taskWriter: writer,
@@ -348,23 +318,14 @@ describe("gh-task-sync sweeper/service", () => {
     });
     writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 24 });
 
-    const warns: Array<{ obj: Record<string, unknown>; msg?: string }> = [];
-    const ghClient: GhClient = {
-      createIssue: async () => {
-        throw new Error("not used");
-      },
-      viewIssue: async () => {
+    const warns: { obj: Record<string, unknown>; msg?: string }[] = [];
+    const ghClient = makeGhClient({
+      viewIssue: () => {
         const err = new Error("network down") as Error & { code?: string };
         err.code = "ETIMEDOUT";
-        throw err;
+        return Promise.reject(err);
       },
-      closeIssue: async () => {},
-      reopenIssue: async () => {},
-      commentIssue: async () => ({
-        comment_url: "https://github.com/acordeiro/penumbra/issues/24#issuecomment-7",
-      }),
-      listComments: async () => [],
-    };
+    });
 
     const sync = createGhTaskSyncService({
       taskWriter: writer,
@@ -407,26 +368,16 @@ describe("gh-task-sync sweeper/service", () => {
       body: "full body",
     });
 
-    const createCalls: Array<{ repo: string; title: string; body: string }> = [];
-    const ghClient: GhClient = {
-      createIssue: async (input) => {
+    const createCalls: GhCreateIssueInput[] = [];
+    const ghClient = makeGhClient({
+      createIssue: (input) => {
         createCalls.push(input);
-        return {
+        return Promise.resolve({
           number: 99,
-          title: input.title,
           url: "https://github.com/acordeiro/penumbra/issues/99",
-        };
+        });
       },
-      viewIssue: async () => {
-        throw new Error("not used");
-      },
-      closeIssue: async () => {},
-      reopenIssue: async () => {},
-      commentIssue: async () => ({
-        comment_url: "https://github.com/acordeiro/penumbra/issues/99#issuecomment-1",
-      }),
-      listComments: async () => [],
-    };
+    });
 
     const sync = createGhTaskSyncService({
       taskWriter: writer,
@@ -443,7 +394,7 @@ describe("gh-task-sync sweeper/service", () => {
     expect(createCalls).toHaveLength(1);
     expect(createCalls[0]?.repo).toBe("acordeiro/penumbra");
     expect(createCalls[0]?.title).toMatch(/^[^\n]+$/);
-    expect(createCalls[0]?.title.length).toBeLessThanOrEqual(256);
+    expect((createCalls[0]?.title ?? "").length).toBeLessThanOrEqual(256);
     expect(createCalls[0]?.title).toContain("line one");
     expect(createCalls[0]?.body).toContain("full body");
     expect(createCalls[0]?.body).toMatch(/<!-- penumbra-outbox-id=\d+ -->/);
@@ -469,8 +420,8 @@ describe("gh-task-sync sweeper/service", () => {
     const firstCreateStarted = new Promise<void>((resolve) => {
       releaseCreate = resolve;
     });
-    const createCalls: { repo: string; title: string; body: string }[] = [];
-    const ghClient: GhClient = {
+    const createCalls: GhCreateIssueInput[] = [];
+    const ghClient = makeGhClient({
       createIssue: async (input) => {
         createCalls.push(input);
         if (createCalls.length === 1) {
@@ -481,16 +432,7 @@ describe("gh-task-sync sweeper/service", () => {
           url: "https://github.com/acordeiro/penumbra/issues/99",
         };
       },
-      viewIssue: async () => {
-        throw new Error("not used");
-      },
-      closeIssue: async () => {},
-      reopenIssue: async () => {},
-      commentIssue: async () => ({
-        comment_url: "https://github.com/acordeiro/penumbra/issues/99#issuecomment-1",
-      }),
-      listComments: async () => [],
-    };
+    });
 
     const sync = createGhTaskSyncService({
       taskWriter: writer,
@@ -529,7 +471,7 @@ describe("gh-task-sync sweeper/service", () => {
   });
 
   test("syncAllLinkedTasks skips GitHub side effects when real gh_outbox claim loses", async () => {
-    const { db, writer } = setup();
+    const { writer } = setup();
     const { task_id } = writer.file({
       prompt: "create issue once",
       created_by_kind: "human",
@@ -543,26 +485,16 @@ describe("gh-task-sync sweeper/service", () => {
     const [row] = writer.listPendingGhOutbox(10);
     expect(row).toBeDefined();
 
-    const createCalls: { repo: string; title: string; body: string }[] = [];
-    const ghClient: GhClient = {
-      createIssue: async (input) => {
+    const createCalls: GhCreateIssueInput[] = [];
+    const ghClient = makeGhClient({
+      createIssue: (input) => {
         createCalls.push(input);
-        return {
+        return Promise.resolve({
           number: 99,
-          title: input.title,
           url: "https://github.com/acordeiro/penumbra/issues/99",
-        };
+        });
       },
-      viewIssue: async () => {
-        throw new Error("not used");
-      },
-      closeIssue: async () => {},
-      reopenIssue: async () => {},
-      commentIssue: async () => ({
-        comment_url: "https://github.com/acordeiro/penumbra/issues/99#issuecomment-1",
-      }),
-      listComments: async () => [],
-    };
+    });
 
     async function claimAndCreate(snapshot: typeof row): Promise<void> {
       if (!snapshot) return;
@@ -586,7 +518,7 @@ describe("gh-task-sync sweeper/service", () => {
     const { db, writer } = setup();
     for (let i = 1; i <= 6; i += 1) {
       const taskId = writer.file({
-        prompt: `t${i}`,
+        prompt: `t${String(i)}`,
         created_by_kind: "human",
         created_by_id: "cli",
       }).task_id;
@@ -595,31 +527,15 @@ describe("gh-task-sync sweeper/service", () => {
 
     let active = 0;
     let maxActive = 0;
-    const ghClient: GhClient = {
-      createIssue: async () => {
-        throw new Error("not used");
-      },
+    const ghClient = makeGhClient({
       viewIssue: async (_repo, issue) => {
         active += 1;
         maxActive = Math.max(maxActive, active);
         await Bun.sleep(10);
         active -= 1;
-        return {
-          number: issue,
-          state: "OPEN",
-          stateReason: null,
-          updatedAt: "2026-05-08T00:00:00.000Z",
-          title: `Issue ${issue}`,
-          url: `https://github.com/acordeiro/penumbra/issues/${issue}`,
-        };
+        return viewOpen(issue);
       },
-      closeIssue: async () => {},
-      reopenIssue: async () => {},
-      commentIssue: async () => ({
-        comment_url: "https://github.com/acordeiro/penumbra/issues/101#issuecomment-4",
-      }),
-      listComments: async () => [],
-    };
+    });
 
     const sync = createGhTaskSyncService({
       taskWriter: writer,
@@ -643,38 +559,27 @@ describe("gh-task-sync sweeper/service", () => {
     });
     writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 55 });
 
-    const ghClient: GhClient = {
-      viewIssue: async () => ({
-        number: 55,
-        state: "OPEN",
-        stateReason: null,
-        updatedAt: "2026-05-08T03:00:00.000Z",
-        title: "Issue 55",
-        url: "https://github.com/acordeiro/penumbra/issues/55",
-      }),
-      closeIssue: async () => {},
-      reopenIssue: async () => {},
-      commentIssue: async () => ({
-        comment_url: "https://github.com/acordeiro/penumbra/issues/55#issuecomment-6",
-      }),
-      listComments: async () => [
-        {
-          id: "1001",
-          author_login: "penumbra-bot",
-          body: "<!-- penumbra:source=task:task_x kind=status_change ts=2026-05-08T03:00:00.000Z -->",
-          created_at: "2026-05-08T03:00:00.000Z",
-          url: "https://github.com/acordeiro/penumbra/issues/55#issuecomment-1001",
-        },
-        {
-          id: "1002",
-          author_login: "octocat",
-          body: "can we add test coverage?",
-          created_at: "2026-05-08T03:01:00.000Z",
-          url: "https://github.com/acordeiro/penumbra/issues/55#issuecomment-1002",
-        },
-      ],
-      getAuthenticatedLogin: async () => "penumbra-bot",
-    };
+    const ghClient = makeGhClient({
+      viewIssue: () => Promise.resolve(viewOpen(55, "2026-05-08T03:00:00.000Z")),
+      listComments: () =>
+        Promise.resolve<GhIssueComment[]>([
+          {
+            id: "1001",
+            author_login: "penumbra-bot",
+            body: "<!-- penumbra:source=task:task_x kind=status_change ts=2026-05-08T03:00:00.000Z -->",
+            created_at: "2026-05-08T03:00:00.000Z",
+            url: "https://github.com/acordeiro/penumbra/issues/55#issuecomment-1001",
+          },
+          {
+            id: "1002",
+            author_login: "octocat",
+            body: "can we add test coverage?",
+            created_at: "2026-05-08T03:01:00.000Z",
+            url: "https://github.com/acordeiro/penumbra/issues/55#issuecomment-1002",
+          },
+        ]),
+      getAuthenticatedLogin: () => Promise.resolve("penumbra-bot"),
+    });
 
     const sync = createGhTaskSyncService({
       taskWriter: writer,
@@ -697,7 +602,10 @@ describe("gh-task-sync sweeper/service", () => {
       )
       .all();
     expect(mirrored).toHaveLength(1);
-    const payload = JSON.parse(mirrored[0]!.payload_json);
+    const payload = JSON.parse(mirrored[0]!.payload_json) as {
+      comment_id?: string;
+      author_login?: string;
+    };
     expect(payload.comment_id).toBe("1002");
     expect(payload.author_login).toBe("octocat");
     expect(writer.get(task_id).gh_last_comment_id).toBe("1002");
@@ -712,27 +620,15 @@ describe("gh-task-sync sweeper/service", () => {
     });
     writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 80 });
 
-    const seenSince: Array<string | undefined> = [];
+    const seenSince: (string | undefined)[] = [];
     let pass = 0;
-    const ghClient: GhClient = {
-      viewIssue: async () => ({
-        number: 80,
-        state: "OPEN",
-        stateReason: null,
-        updatedAt: "2026-05-08T03:00:00.000Z",
-        title: "Issue 80",
-        url: "https://github.com/acordeiro/penumbra/issues/80",
-      }),
-      closeIssue: async () => {},
-      reopenIssue: async () => {},
-      commentIssue: async () => ({
-        comment_url: "https://github.com/acordeiro/penumbra/issues/80#issuecomment-1",
-      }),
-      listComments: async (_repo, _issue, opts) => {
+    const ghClient = makeGhClient({
+      viewIssue: () => Promise.resolve(viewOpen(80, "2026-05-08T03:00:00.000Z")),
+      listComments: (_repo, _issue, opts) => {
         seenSince.push(opts?.since);
         pass += 1;
-        if (pass === 1) return [];
-        return [
+        if (pass === 1) return Promise.resolve<GhIssueComment[]>([]);
+        return Promise.resolve<GhIssueComment[]>([
           {
             id: "8001",
             author_login: "octocat",
@@ -740,10 +636,10 @@ describe("gh-task-sync sweeper/service", () => {
             created_at: "2026-05-08T03:01:30.000Z",
             url: "https://github.com/acordeiro/penumbra/issues/80#issuecomment-8001",
           },
-        ];
+        ]);
       },
-      getAuthenticatedLogin: async () => "penumbra-bot",
-    };
+      getAuthenticatedLogin: () => Promise.resolve("penumbra-bot"),
+    });
 
     setNow(Date.parse("2026-05-08T03:01:00.000Z"));
     const sync = createGhTaskSyncService({
@@ -773,7 +669,7 @@ describe("gh-task-sync sweeper/service", () => {
     expect(seenSince).toEqual([undefined, "2026-05-08T03:01:00.000Z"]);
   });
 
-  test("task touch does not advance gh comment cursor", async () => {
+  test("task touch does not advance gh comment cursor", () => {
     const { db, writer } = setup();
     const { task_id } = writer.file({
       prompt: "touch should not move comment cursor",
@@ -804,27 +700,14 @@ describe("gh-task-sync sweeper/service", () => {
     writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 82 });
 
     let viewCalls = 0;
-    const ghClient: GhClient = {
+    const ghClient = makeGhClient({
       viewIssue: async () => {
         viewCalls += 1;
         await Bun.sleep(20);
-        return {
-          number: 82,
-          state: "OPEN",
-          stateReason: null,
-          updatedAt: "2026-05-08T03:00:00.000Z",
-          title: "Issue 82",
-          url: "https://github.com/acordeiro/penumbra/issues/82",
-        };
+        return viewOpen(82, "2026-05-08T03:00:00.000Z");
       },
-      closeIssue: async () => {},
-      reopenIssue: async () => {},
-      commentIssue: async () => ({
-        comment_url: "https://github.com/acordeiro/penumbra/issues/82#issuecomment-1",
-      }),
-      listComments: async () => [],
-      getAuthenticatedLogin: async () => "penumbra-bot",
-    };
+      getAuthenticatedLogin: () => Promise.resolve("penumbra-bot"),
+    });
 
     const sync = createGhTaskSyncService({
       taskWriter: writer,
@@ -862,28 +745,15 @@ describe("gh-task-sync sweeper/service", () => {
     ]);
 
     let viewCalls = 0;
-    const ghClient: GhClient = {
-      createIssue: async () => {
-        throw new Error("not used");
-      },
-      viewIssue: async () => {
+    const ghClient = makeGhClient({
+      viewIssue: () => {
         viewCalls += 1;
-        return {
-          number: 31,
-          state: viewCalls === 1 ? "OPEN" : "CLOSED",
-          stateReason: null,
-          updatedAt: "2026-05-08T00:30:00.000Z",
-          title: "Issue 31",
-          url: "https://github.com/acordeiro/penumbra/issues/31",
-        };
+        if (viewCalls === 1) {
+          return Promise.resolve(viewOpen(31, "2026-05-08T00:30:00.000Z"));
+        }
+        return Promise.resolve(viewClosed(31, null, "2026-05-08T00:30:00.000Z"));
       },
-      closeIssue: async () => {},
-      reopenIssue: async () => {},
-      commentIssue: async () => ({
-        comment_url: "https://github.com/acordeiro/penumbra/issues/31#issuecomment-5",
-      }),
-      listComments: async () => [],
-    };
+    });
 
     const sync = createGhTaskSyncService({
       taskWriter: writer,
@@ -903,9 +773,9 @@ describe("gh-task-sync sweeper/service", () => {
   test("sweeper emits skip_tick and does not overlap while prior tick is in flight", async () => {
     let release: (() => void) | null = null;
     let calls = 0;
-    const warns: unknown[] = [];
-    const service = {
-      syncAllLinkedTasks: async () => {
+    const warns: { event?: string; sweeper?: string }[] = [];
+    const service: Pick<GhTaskSyncService, "syncAllLinkedTasks"> = {
+      syncAllLinkedTasks: async (): Promise<GhTaskSyncSummary> => {
         calls += 1;
         await new Promise<void>((resolve) => {
           release = resolve;
@@ -922,11 +792,12 @@ describe("gh-task-sync sweeper/service", () => {
     };
 
     const sweeper = createGhTaskSyncSweeper({
-      service: service as any,
+      // The sweeper only exercises syncAllLinkedTasks; a Pick is sufficient.
+      service: service as unknown as GhTaskSyncService,
       intervalMs: 1,
       log: {
-        warn: (obj: unknown) => {
-          warns.push(obj);
+        warn: (obj: unknown): void => {
+          warns.push(obj as { event?: string; sweeper?: string });
         },
       },
     });
@@ -939,9 +810,7 @@ describe("gh-task-sync sweeper/service", () => {
 
     expect(calls).toBe(1);
     expect(
-      warns.some(
-        (row: any) => row?.event === "sweeper.skip_tick" && row?.sweeper === "gh-task-sync",
-      ),
+      warns.some((row) => row.event === "sweeper.skip_tick" && row.sweeper === "gh-task-sync"),
     ).toBe(true);
   });
 
@@ -973,33 +842,24 @@ describe("gh-task-sync sweeper/service", () => {
     setupNow = startedAt + 11 * 60 * 1000;
     setNow(setupNow);
 
-    const createCalls: { repo: string; title: string; body: string }[] = [];
-    const ghClient: GhClient = {
-      createIssue: async (input) => {
+    const createCalls: GhCreateIssueInput[] = [];
+    const ghClient = makeGhClient({
+      createIssue: (input) => {
         createCalls.push(input);
-        return {
+        return Promise.resolve({
           number: 1000,
           url: "https://github.com/acordeiro/penumbra/issues/1000",
-        };
+        });
       },
-      viewIssue: async () => {
-        throw new Error("not used");
-      },
-      closeIssue: async () => {},
-      reopenIssue: async () => {},
-      commentIssue: async () => ({
-        comment_url: "https://github.com/acordeiro/penumbra/issues/999#issuecomment-1",
-      }),
-      listComments: async () => [],
-    };
+    });
 
-    const markerCalls: Array<{ repo: string; marker: string }> = [];
-    const findOpenIssueByMarker = async (
+    const markerCalls: { repo: string; marker: string }[] = [];
+    const findOpenIssueByMarker = (
       repo: string,
       marker: string,
     ): Promise<{ number: number } | null> => {
       markerCalls.push({ repo, marker });
-      return { number: 999 };
+      return Promise.resolve({ number: 999 });
     };
 
     const sync = createGhTaskSyncService({
@@ -1043,27 +903,18 @@ describe("gh-task-sync sweeper/service", () => {
       body: "original body",
     });
 
-    const createCalls: { repo: string; title: string; body: string }[] = [];
-    const ghClient: GhClient = {
-      createIssue: async (input) => {
+    const createCalls: GhCreateIssueInput[] = [];
+    const ghClient = makeGhClient({
+      createIssue: (input) => {
         createCalls.push(input);
-        return {
+        return Promise.resolve({
           number: 42,
           url: "https://github.com/acordeiro/penumbra/issues/42",
-        };
+        });
       },
-      viewIssue: async () => {
-        throw new Error("not used");
-      },
-      closeIssue: async () => {},
-      reopenIssue: async () => {},
-      commentIssue: async () => ({
-        comment_url: "https://github.com/acordeiro/penumbra/issues/42#issuecomment-1",
-      }),
-      listComments: async () => [],
-    };
+    });
 
-    const findOpenIssueByMarker = async (): Promise<{ number: number } | null> => null;
+    const findOpenIssueByMarker = (): Promise<{ number: number } | null> => Promise.resolve(null);
 
     const sync = createGhTaskSyncService({
       taskWriter: writer,
@@ -1084,14 +935,9 @@ describe("gh-task-sync sweeper/service", () => {
   });
 
   test("createDaemonFetchHandler uses provided ghTaskSyncService without re-wrapping (Bug A)", async () => {
-    // Import here to avoid polluting the whole test file if not needed,
-    // but typically we can just import at the top. Since we're injecting,
-    // we'll require it.
-    const { createDaemonFetchHandler } = require("../../src/serve.ts");
-
     let callCount = 0;
-    const baseService = {
-      syncAllLinkedTasks: async () => {
+    const baseService: Pick<GhTaskSyncService, "syncAllLinkedTasks"> = {
+      syncAllLinkedTasks: async (): Promise<GhTaskSyncSummary> => {
         callCount++;
         await Bun.sleep(10);
         return {
@@ -1103,20 +949,26 @@ describe("gh-task-sync sweeper/service", () => {
           results: [],
         };
       },
-    } as any;
+    };
 
-    const singleFlightService = createGhTaskSyncSingleFlight(baseService);
+    // The single-flight wrapper only consults syncAllLinkedTasks for the gate
+    // exercised here; the rest of the GhTaskSyncService surface is unused.
+    const singleFlightService = createGhTaskSyncSingleFlight(
+      baseService as unknown as GhTaskSyncService,
+    );
 
     const { db, writer } = setup();
 
-    // Mock services enough to pass createDaemonFetchHandler
+    // Bug A only exercises the route's single-flight dispatch path. Providing
+    // the minimum Services shape that createDaemonFetchHandler reads is enough.
+    const noopWarn = (): void => undefined;
     const mockServices = {
-      log: { warn: () => {} },
+      log: { warn: noopWarn },
       db,
       workerManager: {
-        getWorkers: () => [],
+        getWorkers: (): unknown[] => [],
       },
-    } as any;
+    } as unknown as Services;
 
     const handler = createDaemonFetchHandler({
       services: mockServices,
