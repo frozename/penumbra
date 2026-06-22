@@ -1,7 +1,20 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import { applySchema, loadSqliteVec, routeAgent } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec, applySchema, routeAgent } from "@penumbra/core";
+import { beforeEach, describe, expect, it } from "bun:test";
+
 import { handleTickTeardown } from "../../src/long-lived/teardown.js";
+
+type AgentPerformanceRow = {
+  agent_kind: string;
+  handoff_id: string;
+  notes: string | null;
+};
+
+function expectRow<T>(row: T | null): T {
+  expect(row).not.toBeNull();
+  if (row === null) throw new Error("expected database row");
+  return row;
+}
 
 describe("handleTickTeardown ledger write", () => {
   let db: Database;
@@ -32,10 +45,17 @@ describe("handleTickTeardown ledger write", () => {
       now: 100,
     });
 
-    const row = db.query<any, []>(`SELECT * FROM agent_performance WHERE handoff_id='t1'`).get();
-    expect(row?.agent_kind).toBe("long_lived");
-    expect(row?.handoff_id).toBe("t1");
-    expect(row?.notes).toBe("boom");
+    const row = expectRow(
+      db
+        .query<
+          AgentPerformanceRow,
+          []
+        >(`SELECT agent_kind, handoff_id, notes FROM agent_performance WHERE handoff_id='t1'`)
+        .get(),
+    );
+    expect(row.agent_kind).toBe("long_lived");
+    expect(row.handoff_id).toBe("t1");
+    expect(row.notes).toBe("boom");
   });
 
   it("stamps successful ungated ticks as skipped so post-cutover routing scores them as success", () => {

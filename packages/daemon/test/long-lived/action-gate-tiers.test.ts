@@ -1,5 +1,5 @@
-import { describe, it, expect } from "bun:test";
 import { classifyTier } from "@penumbra/daemon/long-lived/action-gate";
+import { describe, expect, it } from "bun:test";
 
 describe("classifyTier (canary baseline)", () => {
   it("ha:light.* is tier 1", () => {

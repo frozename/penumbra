@@ -1,43 +1,83 @@
-import { describe, it, expect, mock } from "bun:test";
-import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "../../../core/src/db/sqlite-vec.js";
-import { applySchema } from "../../../core/src/db/schema.js";
-import { reconcileLongLivedAgents } from "@penumbra/daemon/long-lived/reconciler";
-import { createActionGate } from "@penumbra/daemon/long-lived/action-gate";
+import type { AgentConfig } from "@penumbra/agentchat/config";
 
-function setup() {
+import { type ActionGate, createActionGate } from "@penumbra/daemon/long-lived/action-gate";
+import { reconcileLongLivedAgents } from "@penumbra/daemon/long-lived/reconciler";
+import { Database } from "bun:sqlite";
+import { describe, expect, it, mock } from "bun:test";
+
+import { applySchema } from "../../../core/src/db/schema.js";
+import { loadSqliteVec } from "../../../core/src/db/sqlite-vec.js";
+
+type ActionGateResult = Awaited<ReturnType<ActionGate["handleCall"]>>;
+type AuditRow = { decision: string; reason: string };
+type CooldownRow = { until_at: number };
+type PendingActionRow = { action_kind: string; status: string };
+type ExecutedPendingActionRow = { executed_in_tick_id: string | null };
+
+function longLivedAgentConfig(): AgentConfig {
+  return {
+    name: "home",
+    adapter: "test",
+    options: {},
+    roles: [],
+    auto_approve_to: [],
+    pricing_mode: "api",
+    long_lived: true,
+    long_lived_config: {
+      schedule_cron: "*/15 * * * *",
+      subscriptions: [],
+      mcp_allowlist: [
+        "ha:light.*",
+        "ha:automation.set",
+        "ha:integration.install",
+        "ha:snapshot.create",
+        "penumbra:long_lived_self_state_set",
+      ],
+      hosted_mcp_servers: [],
+      require_snapshot: false,
+      bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
+      circuit_breaker_threshold: 3,
+      action_tiers: { approval_required_globs: ["ha:integration.*"], cooldown_overrides: {} },
+      standing_brief: "x",
+    },
+  };
+}
+
+function setup(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   applySchema(db, { embeddingDim: 384 });
-  reconcileLongLivedAgents(
-    db,
-    [
-      {
-        name: "home",
-        long_lived: true,
-        long_lived_config: {
-          schedule_cron: "*/15 * * * *",
-          subscriptions: [],
-          mcp_allowlist: [
-            "ha:light.*",
-            "ha:automation.set",
-            "ha:integration.install",
-            "ha:snapshot.create",
-            "penumbra:long_lived_self_state_set",
-          ],
-          bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
-          circuit_breaker_threshold: 3,
-          action_tiers: { approval_required_globs: ["ha:integration.*"], cooldown_overrides: {} },
-          standing_brief: "x",
-        },
-      } as any,
-    ],
-    { now: 1 },
-  );
+  reconcileLongLivedAgents(db, [longLivedAgentConfig()], { now: 1 });
   db.query(
     "INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES ('t1', 'home', 'manual', 1)",
   ).run();
   return db;
+}
+
+function executeOk(): Promise<{ ok: true }> {
+  return Promise.resolve({ ok: true });
+}
+
+function snapshot(id = "snap"): Promise<string> {
+  return Promise.resolve(id);
+}
+
+function expectRow<T>(row: T | null): T {
+  expect(row).not.toBeNull();
+  if (row === null) throw new Error("expected database row");
+  return row;
+}
+
+function expectRejected(result: ActionGateResult): Extract<ActionGateResult, { kind: "rejected" }> {
+  expect(result.kind).toBe("rejected");
+  if (result.kind !== "rejected") throw new Error("expected rejected action");
+  return result;
+}
+
+function expectQueued(result: ActionGateResult): Extract<ActionGateResult, { kind: "queued" }> {
+  expect(result.kind).toBe("queued");
+  if (result.kind !== "queued") throw new Error("expected queued action");
+  return result;
 }
 
 describe("action gate", () => {
@@ -45,8 +85,8 @@ describe("action gate", () => {
     const db = setup();
     const gate = createActionGate({
       db,
-      executeTool: mock(async () => ({ ok: true })),
-      takeSnapshot: mock(async () => "snap1"),
+      executeTool: mock(executeOk),
+      takeSnapshot: mock(() => snapshot("snap1")),
       now: () => 100,
     });
     const result = await gate.handleCall({
@@ -55,11 +95,15 @@ describe("action gate", () => {
       tool: "ha:integration.uninstall",
       args: { domain: "mqtt" },
     });
-    expect(result.kind).toBe("rejected");
-    expect((result as any).error).toBe("not_in_allowlist");
-    const audit = db
-      .query("SELECT decision, reason FROM long_lived_action_audit WHERE tick_id='t1'")
-      .get() as any;
+    expect(expectRejected(result).error).toBe("not_in_allowlist");
+    const audit = expectRow(
+      db
+        .query<
+          AuditRow,
+          []
+        >("SELECT decision, reason FROM long_lived_action_audit WHERE tick_id='t1'")
+        .get(),
+    );
     expect(audit.decision).toBe("gate_failed");
     expect(audit.reason).toBe("not_in_allowlist");
   });
@@ -72,8 +116,8 @@ describe("action gate", () => {
     const warn = mock(() => undefined);
     const gate = createActionGate({
       db,
-      executeTool: mock(async () => ({ ok: true })),
-      takeSnapshot: mock(async () => "snap1"),
+      executeTool: mock(executeOk),
+      takeSnapshot: mock(() => snapshot("snap1")),
       now: () => 100,
       log: { warn },
     });
@@ -85,18 +129,17 @@ describe("action gate", () => {
       args: { domain: "mqtt" },
     });
 
-    expect(result.kind).toBe("rejected");
-    expect((result as any).error).toBe("not_in_allowlist");
+    expect(expectRejected(result).error).toBe("not_in_allowlist");
     expect(warn).toHaveBeenCalled();
   });
 
   it("tier 1 executes immediately and audits success", async () => {
     const db = setup();
-    const exec = mock(async () => ({ ok: true }));
+    const exec = mock(executeOk);
     const gate = createActionGate({
       db,
       executeTool: exec,
-      takeSnapshot: mock(async () => "snap"),
+      takeSnapshot: mock(snapshot),
       now: () => 100,
     });
     const result = await gate.handleCall({
@@ -107,20 +150,25 @@ describe("action gate", () => {
     });
     expect(result.kind).toBe("executed");
     expect(exec).toHaveBeenCalledTimes(1);
-    const audit = db
-      .query("SELECT decision, reason FROM long_lived_action_audit WHERE tick_id='t1'")
-      .get() as any;
+    const audit = expectRow(
+      db
+        .query<
+          AuditRow,
+          []
+        >("SELECT decision, reason FROM long_lived_action_audit WHERE tick_id='t1'")
+        .get(),
+    );
     expect(audit.decision).toBe("executed");
     expect(audit.reason).toBe("tier_1");
   });
 
   it("tier 1 forwards _meta to executeTool", async () => {
     const db = setup();
-    const exec = mock(async () => ({ ok: true }));
+    const exec = mock(executeOk);
     const gate = createActionGate({
       db,
       executeTool: exec,
-      takeSnapshot: mock(async () => "snap"),
+      takeSnapshot: mock(snapshot),
       now: () => 100,
     });
     const result = await gate.handleCall({
@@ -140,10 +188,10 @@ describe("action gate", () => {
 
   it("tier 2 takes a snapshot, executes, sets cooldown", async () => {
     const db = setup();
-    const snap = mock(async () => "snap-id-1");
+    const snap = mock(() => snapshot("snap-id-1"));
     const gate = createActionGate({
       db,
-      executeTool: mock(async () => ({ ok: true })),
+      executeTool: mock(executeOk),
       takeSnapshot: snap,
       now: () => 100,
     });
@@ -155,21 +203,28 @@ describe("action gate", () => {
     });
     expect(r.kind).toBe("executed");
     expect(snap).toHaveBeenCalledTimes(1);
-    const cooldown = db
-      .query("SELECT until_at FROM long_lived_cooldowns WHERE agent_id='home'")
-      .get() as any;
+    const cooldown = expectRow(
+      db
+        .query<CooldownRow, []>("SELECT until_at FROM long_lived_cooldowns WHERE agent_id='home'")
+        .get(),
+    );
     expect(cooldown.until_at).toBe(100 + 600_000);
-    const audit = db
-      .query("SELECT decision, reason FROM long_lived_action_audit WHERE tick_id='t1'")
-      .get() as any;
+    const audit = expectRow(
+      db
+        .query<
+          AuditRow,
+          []
+        >("SELECT decision, reason FROM long_lived_action_audit WHERE tick_id='t1'")
+        .get(),
+    );
     expect(audit.decision).toBe("executed");
-    expect(String(audit.reason)).toContain("snapshot:snap-id-1");
+    expect(audit.reason).toContain("snapshot:snap-id-1");
   });
 
   it("tier 2 forwards _meta to executeTool", async () => {
     const db = setup();
-    const exec = mock(async () => ({ ok: true }));
-    const snap = mock(async () => "snap-id-1");
+    const exec = mock(executeOk);
+    const snap = mock(() => snapshot("snap-id-1"));
     const gate = createActionGate({ db, executeTool: exec, takeSnapshot: snap, now: () => 100 });
     const result = await gate.handleCall({
       agent_id: "home",
@@ -190,8 +245,8 @@ describe("action gate", () => {
     const db = setup();
     const gate = createActionGate({
       db,
-      executeTool: mock(async () => ({ ok: true })),
-      takeSnapshot: mock(async () => "s"),
+      executeTool: mock(executeOk),
+      takeSnapshot: mock(() => snapshot("s")),
       now: () => 100,
     });
     await gate.handleCall({
@@ -206,17 +261,16 @@ describe("action gate", () => {
       tool: "ha:automation.set",
       args: { entity_id: "automation.x" },
     });
-    expect(second.kind).toBe("rejected");
-    expect((second as any).error).toBe("cooldown_active");
+    expect(expectRejected(second).error).toBe("cooldown_active");
   });
 
   it("tier 3 files a pending action and does NOT execute", async () => {
     const db = setup();
-    const exec = mock(async () => ({ ok: true }));
+    const exec = mock(executeOk);
     const gate = createActionGate({
       db,
       executeTool: exec,
-      takeSnapshot: mock(async () => "s"),
+      takeSnapshot: mock(() => snapshot("s")),
       now: () => 100,
     });
     const r = await gate.handleCall({
@@ -227,20 +281,25 @@ describe("action gate", () => {
     });
     expect(r.kind).toBe("queued");
     expect(exec).not.toHaveBeenCalled();
-    const pa = db
-      .query("SELECT action_kind, status FROM long_lived_pending_actions WHERE tick_id='t1'")
-      .get() as any;
+    const pa = expectRow(
+      db
+        .query<
+          PendingActionRow,
+          []
+        >("SELECT action_kind, status FROM long_lived_pending_actions WHERE tick_id='t1'")
+        .get(),
+    );
     expect(pa.action_kind).toBe("ha:integration.install");
     expect(pa.status).toBe("pending");
   });
 
   it("Tier 3 queued action persists _meta in meta_json; approval forwards it intact", async () => {
     const db = setup();
-    const exec = mock(async () => ({ ok: true }));
+    const exec = mock(executeOk);
     const gate = createActionGate({
       db,
       executeTool: exec,
-      takeSnapshot: mock(async () => "s"),
+      takeSnapshot: mock(() => snapshot("s")),
       now: () => 100,
     });
     const queued = await gate.handleCall({
@@ -250,8 +309,7 @@ describe("action gate", () => {
       args: { domain: "mqtt" },
       _meta: { origin: "claude-code", trace: "t-3" },
     });
-    expect(queued.kind).toBe("queued");
-    const pendingActionId = (queued as any).pending_action_id as string;
+    const pendingActionId = expectQueued(queued).pending_action_id;
 
     const row = db
       .query<
@@ -284,11 +342,11 @@ describe("action gate", () => {
 
   it("approved-action re-entry bypasses tier 3 queue", async () => {
     const db = setup();
-    const exec = mock(async () => ({ ok: true }));
+    const exec = mock(executeOk);
     const gate = createActionGate({
       db,
       executeTool: exec,
-      takeSnapshot: mock(async () => "s"),
+      takeSnapshot: mock(() => snapshot("s")),
       now: () => 100,
     });
     const r1 = await gate.handleCall({
@@ -297,8 +355,7 @@ describe("action gate", () => {
       tool: "ha:integration.install",
       args: { domain: "mqtt" },
     });
-    expect(r1.kind).toBe("queued");
-    const paId = (r1 as any).pending_action_id;
+    const paId = expectQueued(r1).pending_action_id;
     db.query(
       "UPDATE long_lived_pending_actions SET status='approved', decided_by='user', decided_at=200 WHERE id=?",
     ).run(paId);
@@ -313,9 +370,14 @@ describe("action gate", () => {
       pending_action_id: paId,
     });
     expect(r2.kind).toBe("executed");
-    const pa = db
-      .query("SELECT executed_in_tick_id FROM long_lived_pending_actions WHERE id=?")
-      .get(paId) as any;
+    const pa = expectRow(
+      db
+        .query<
+          ExecutedPendingActionRow,
+          [string]
+        >("SELECT executed_in_tick_id FROM long_lived_pending_actions WHERE id=?")
+        .get(paId),
+    );
     expect(pa.executed_in_tick_id).toBe("t2");
   });
 });

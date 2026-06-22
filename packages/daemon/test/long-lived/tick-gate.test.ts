@@ -1,38 +1,60 @@
-import { describe, it, expect, beforeEach, mock } from "bun:test";
-import { Database } from "bun:sqlite";
+import type { AgentConfig } from "@penumbra/agentchat/config";
+
 import { loadSqliteVec } from "@penumbra/core";
 import { applySchema } from "@penumbra/core/db/schema";
 import { reconcileLongLivedAgents } from "@penumbra/daemon/long-lived/reconciler";
 import {
   createTickGate,
   PENDING_CHAIN_SENTINEL,
-  reconcileOrphanTickRows,
   type TickAttempt,
 } from "@penumbra/daemon/long-lived/tick-gate";
+import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, it, mock } from "bun:test";
 
-function seedAgent(db: Database, opts: { status?: string; lastStartedAt?: number | null } = {}) {
-  reconcileLongLivedAgents(
-    db,
-    [
-      {
-        name: "a",
-        long_lived: true,
-        long_lived_config: {
-          schedule_cron: "*/15 * * * *",
-          subscriptions: [],
-          mcp_allowlist: [],
-          bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
-          circuit_breaker_threshold: 3,
-          standing_brief: "x",
-        },
-      } as any,
-    ],
-    { now: 1 },
-  );
+type TickOutcomeRow = { outcome: string | null };
+type OrphanTickRow = {
+  completed_at: number | null;
+  error_summary: string | null;
+  outcome: string | null;
+};
+
+function agentConfig(): AgentConfig {
+  return {
+    name: "a",
+    adapter: "test",
+    options: {},
+    roles: [],
+    auto_approve_to: [],
+    pricing_mode: "api",
+    long_lived: true,
+    long_lived_config: {
+      schedule_cron: "*/15 * * * *",
+      subscriptions: [],
+      mcp_allowlist: [],
+      hosted_mcp_servers: [],
+      require_snapshot: false,
+      bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
+      circuit_breaker_threshold: 3,
+      standing_brief: "x",
+    },
+  };
+}
+
+function seedAgent(
+  db: Database,
+  opts: { status?: string; lastStartedAt?: number | null } = {},
+): void {
+  reconcileLongLivedAgents(db, [agentConfig()], { now: 1 });
   db.query("UPDATE long_lived_agents SET status=?, last_tick_started_at=? WHERE id='a'").run(
     opts.status ?? "active",
     opts.lastStartedAt ?? null,
   );
+}
+
+function expectRow<T>(row: T | null): T {
+  expect(row).not.toBeNull();
+  if (row === null) throw new Error("expected database row");
+  return row;
 }
 
 describe("tick-gate", () => {
@@ -46,7 +68,7 @@ describe("tick-gate", () => {
   it("passes when agent is active and no in-flight tick", () => {
     seedAgent(db);
     const spawn = mock(() => ({ chain_id: "ch1", tick_id: "t1" }));
-    const isChainActive = () => false;
+    const isChainActive = (): boolean => false;
     const gate = createTickGate({ db, spawn, isChainActive, now: () => 100 });
     const attempt: TickAttempt = { agent_id: "a", trigger_kind: "cron" };
     const result = gate.attempt(attempt);
@@ -70,9 +92,11 @@ describe("tick-gate", () => {
       const r = gate.attempt({ agent_id: "a", trigger_kind: "cron" });
       expect(r.outcome).toBe("skipped_status");
       expect(spawn).not.toHaveBeenCalled();
-      const tickRow = localDb
-        .query("SELECT outcome FROM long_lived_ticks WHERE agent_id='a'")
-        .get() as any;
+      const tickRow = expectRow(
+        localDb
+          .query<TickOutcomeRow, []>("SELECT outcome FROM long_lived_ticks WHERE agent_id='a'")
+          .get(),
+      );
       expect(tickRow.outcome).toBe("circuit_open");
     }
   });
@@ -80,7 +104,7 @@ describe("tick-gate", () => {
   it("blocks when in-flight tick is active (concurrency skip)", () => {
     seedAgent(db, { lastStartedAt: 50 });
     const spawn = mock(() => ({ chain_id: "ch1", tick_id: "t1" }));
-    const isChainActive = () => true;
+    const isChainActive = (): boolean => true;
     const gate = createTickGate({ db, spawn, isChainActive, now: () => 100 });
     const r = gate.attempt({ agent_id: "a", trigger_kind: "cron" });
     expect(r.outcome).toBe("concurrency_skip");
@@ -135,7 +159,7 @@ describe("tick-gate", () => {
       now: (() => {
         const times = [100, 200, 300];
         let i = 0;
-        return () => times[i++] ?? times[times.length - 1];
+        return (): number => times[i++] ?? times[times.length - 1];
       })(),
     });
 
@@ -156,7 +180,7 @@ describe("tick-gate", () => {
       return { chain_id: PENDING_CHAIN_SENTINEL, tick_id: "irrelevant" };
     });
     // Cold-start: no handoff is registered for "pending" yet.
-    const isChainActive = (chain_id: string) => chain_id !== PENDING_CHAIN_SENTINEL;
+    const isChainActive = (chain_id: string): boolean => chain_id !== PENDING_CHAIN_SENTINEL;
     let nowVal = 100;
     const gate = createTickGate({
       db,
@@ -221,13 +245,15 @@ describe("tick-gate", () => {
     expect(result.outcome).toBe("spawned");
     expect(spawn).toHaveBeenCalledTimes(1);
 
-    const orphanRow = db
-      .query(
-        `SELECT completed_at, outcome, error_summary
+    const orphanRow = expectRow(
+      db
+        .query<OrphanTickRow, []>(
+          `SELECT completed_at, outcome, error_summary
        FROM long_lived_ticks
        WHERE id = 'tick-orphan'`,
-      )
-      .get() as any;
+        )
+        .get(),
+    );
     expect(orphanRow.completed_at).not.toBeNull();
     expect(orphanRow.outcome).toBe("orphan_recovered");
     expect(orphanRow.error_summary).toBe("chain reported inactive at next tick attempt");

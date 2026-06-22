@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { loadSqliteVec, migrate } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { verifyRunningIdentity } from "../../src/long-lived/identity.js";
 
 function makeDb(): Database {
