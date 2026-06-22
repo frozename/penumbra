@@ -1,9 +1,10 @@
-import { expect, it, beforeAll } from "bun:test";
+import { applySchema, loadSqliteVec } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { beforeAll, expect, it } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadSqliteVec, applySchema } from "@penumbra/core";
+
 import { writeDailyDigest } from "../../src/dreaming/digest.js";
 
 try {

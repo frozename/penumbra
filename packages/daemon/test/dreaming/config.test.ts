@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { getConfig, resetConfigForTest } from "@penumbra/config";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+
 import { buildDreamingConfig } from "../../src/dreaming/config.js";
 
 function buildFromProcessEnv(): ReturnType<typeof buildDreamingConfig> {
@@ -7,76 +8,131 @@ function buildFromProcessEnv(): ReturnType<typeof buildDreamingConfig> {
   return buildDreamingConfig(getConfig(process.env));
 }
 
+interface EnvSlot {
+  read: () => string | undefined;
+  write: (value: string) => void;
+  clear: () => void;
+}
+
+const MANAGED_ENV: readonly EnvSlot[] = [
+  {
+    read: () => process.env.PENUMBRA_DREAMING_BRIEF_REFRESH_HOURS,
+    write: (v): void => {
+      process.env.PENUMBRA_DREAMING_BRIEF_REFRESH_HOURS = v;
+    },
+    clear: (): void => {
+      delete process.env.PENUMBRA_DREAMING_BRIEF_REFRESH_HOURS;
+    },
+  },
+  {
+    read: () => process.env.PENUMBRA_DREAMING_NEGATIVE_CACHE_TTL_MS,
+    write: (v): void => {
+      process.env.PENUMBRA_DREAMING_NEGATIVE_CACHE_TTL_MS = v;
+    },
+    clear: (): void => {
+      delete process.env.PENUMBRA_DREAMING_NEGATIVE_CACHE_TTL_MS;
+    },
+  },
+  {
+    read: () => process.env.PENUMBRA_DREAMING_REWRITER_ENABLED,
+    write: (v): void => {
+      process.env.PENUMBRA_DREAMING_REWRITER_ENABLED = v;
+    },
+    clear: (): void => {
+      delete process.env.PENUMBRA_DREAMING_REWRITER_ENABLED;
+    },
+  },
+  {
+    read: () => process.env.PENUMBRA_DREAMING_REWRITER_BASE_URL,
+    write: (v): void => {
+      process.env.PENUMBRA_DREAMING_REWRITER_BASE_URL = v;
+    },
+    clear: (): void => {
+      delete process.env.PENUMBRA_DREAMING_REWRITER_BASE_URL;
+    },
+  },
+  {
+    read: () => process.env.PENUMBRA_DREAMING_REWRITER_MODEL,
+    write: (v): void => {
+      process.env.PENUMBRA_DREAMING_REWRITER_MODEL = v;
+    },
+    clear: (): void => {
+      delete process.env.PENUMBRA_DREAMING_REWRITER_MODEL;
+    },
+  },
+  {
+    read: () => process.env.PENUMBRA_DREAMING_REWRITER_TIMEOUT_MS,
+    write: (v): void => {
+      process.env.PENUMBRA_DREAMING_REWRITER_TIMEOUT_MS = v;
+    },
+    clear: (): void => {
+      delete process.env.PENUMBRA_DREAMING_REWRITER_TIMEOUT_MS;
+    },
+  },
+  {
+    read: () => process.env.PENUMBRA_DREAMING_REWRITER_CACHE_TTL_MS,
+    write: (v): void => {
+      process.env.PENUMBRA_DREAMING_REWRITER_CACHE_TTL_MS = v;
+    },
+    clear: (): void => {
+      delete process.env.PENUMBRA_DREAMING_REWRITER_CACHE_TTL_MS;
+    },
+  },
+  {
+    read: () => process.env.PENUMBRA_DREAMING_REWRITER_CONCURRENCY,
+    write: (v): void => {
+      process.env.PENUMBRA_DREAMING_REWRITER_CONCURRENCY = v;
+    },
+    clear: (): void => {
+      delete process.env.PENUMBRA_DREAMING_REWRITER_CONCURRENCY;
+    },
+  },
+  {
+    read: () => process.env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS,
+    write: (v): void => {
+      process.env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS = v;
+    },
+    clear: (): void => {
+      delete process.env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS;
+    },
+  },
+  {
+    read: () => process.env.PENUMBRA_DREAMING_ENABLED,
+    write: (v): void => {
+      process.env.PENUMBRA_DREAMING_ENABLED = v;
+    },
+    clear: (): void => {
+      delete process.env.PENUMBRA_DREAMING_ENABLED;
+    },
+  },
+  {
+    read: () => process.env.PENUMBRA_DREAMING_DAILY_USD,
+    write: (v): void => {
+      process.env.PENUMBRA_DREAMING_DAILY_USD = v;
+    },
+    clear: (): void => {
+      delete process.env.PENUMBRA_DREAMING_DAILY_USD;
+    },
+  },
+];
+
 describe("dreaming/config", () => {
-  let originalHours: string | undefined;
-  let originalNegativeCacheTtlMs: string | undefined;
-  let originalRewriterEnabled: string | undefined;
-  let originalRewriterBaseUrl: string | undefined;
-  let originalRewriterModel: string | undefined;
-  let originalRewriterTimeoutMs: string | undefined;
-  let originalRewriterCacheTtlMs: string | undefined;
-  let originalRewriterConcurrency: string | undefined;
-  let originalT2PromotionMinEvents: string | undefined;
-  let originalDreamingEnabled: string | undefined;
-  let originalDreamingDailyUsd: string | undefined;
+  const saved = new Array<string | undefined>(MANAGED_ENV.length);
 
   beforeEach(() => {
     resetConfigForTest();
-    originalHours = process.env.PENUMBRA_DREAMING_BRIEF_REFRESH_HOURS;
-    originalNegativeCacheTtlMs = process.env.PENUMBRA_DREAMING_NEGATIVE_CACHE_TTL_MS;
-    originalRewriterEnabled = process.env.PENUMBRA_DREAMING_REWRITER_ENABLED;
-    originalRewriterBaseUrl = process.env.PENUMBRA_DREAMING_REWRITER_BASE_URL;
-    originalRewriterModel = process.env.PENUMBRA_DREAMING_REWRITER_MODEL;
-    originalRewriterTimeoutMs = process.env.PENUMBRA_DREAMING_REWRITER_TIMEOUT_MS;
-    originalRewriterCacheTtlMs = process.env.PENUMBRA_DREAMING_REWRITER_CACHE_TTL_MS;
-    originalRewriterConcurrency = process.env.PENUMBRA_DREAMING_REWRITER_CONCURRENCY;
-    originalT2PromotionMinEvents = process.env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS;
-    originalDreamingEnabled = process.env.PENUMBRA_DREAMING_ENABLED;
-    originalDreamingDailyUsd = process.env.PENUMBRA_DREAMING_DAILY_USD;
-
-    delete process.env.PENUMBRA_DREAMING_BRIEF_REFRESH_HOURS;
-    delete process.env.PENUMBRA_DREAMING_NEGATIVE_CACHE_TTL_MS;
-    delete process.env.PENUMBRA_DREAMING_REWRITER_ENABLED;
-    delete process.env.PENUMBRA_DREAMING_REWRITER_BASE_URL;
-    delete process.env.PENUMBRA_DREAMING_REWRITER_MODEL;
-    delete process.env.PENUMBRA_DREAMING_REWRITER_TIMEOUT_MS;
-    delete process.env.PENUMBRA_DREAMING_REWRITER_CACHE_TTL_MS;
-    delete process.env.PENUMBRA_DREAMING_REWRITER_CONCURRENCY;
-    delete process.env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS;
-    delete process.env.PENUMBRA_DREAMING_ENABLED;
-    delete process.env.PENUMBRA_DREAMING_DAILY_USD;
+    for (const [i, slot] of MANAGED_ENV.entries()) {
+      saved[i] = slot.read();
+      slot.clear();
+    }
   });
 
   afterEach(() => {
-    if (originalHours === undefined) delete process.env.PENUMBRA_DREAMING_BRIEF_REFRESH_HOURS;
-    else process.env.PENUMBRA_DREAMING_BRIEF_REFRESH_HOURS = originalHours;
-    if (originalNegativeCacheTtlMs === undefined)
-      delete process.env.PENUMBRA_DREAMING_NEGATIVE_CACHE_TTL_MS;
-    else process.env.PENUMBRA_DREAMING_NEGATIVE_CACHE_TTL_MS = originalNegativeCacheTtlMs;
-    if (originalRewriterEnabled === undefined)
-      delete process.env.PENUMBRA_DREAMING_REWRITER_ENABLED;
-    else process.env.PENUMBRA_DREAMING_REWRITER_ENABLED = originalRewriterEnabled;
-    if (originalRewriterBaseUrl === undefined)
-      delete process.env.PENUMBRA_DREAMING_REWRITER_BASE_URL;
-    else process.env.PENUMBRA_DREAMING_REWRITER_BASE_URL = originalRewriterBaseUrl;
-    if (originalRewriterModel === undefined) delete process.env.PENUMBRA_DREAMING_REWRITER_MODEL;
-    else process.env.PENUMBRA_DREAMING_REWRITER_MODEL = originalRewriterModel;
-    if (originalRewriterTimeoutMs === undefined)
-      delete process.env.PENUMBRA_DREAMING_REWRITER_TIMEOUT_MS;
-    else process.env.PENUMBRA_DREAMING_REWRITER_TIMEOUT_MS = originalRewriterTimeoutMs;
-    if (originalRewriterCacheTtlMs === undefined)
-      delete process.env.PENUMBRA_DREAMING_REWRITER_CACHE_TTL_MS;
-    else process.env.PENUMBRA_DREAMING_REWRITER_CACHE_TTL_MS = originalRewriterCacheTtlMs;
-    if (originalRewriterConcurrency === undefined)
-      delete process.env.PENUMBRA_DREAMING_REWRITER_CONCURRENCY;
-    else process.env.PENUMBRA_DREAMING_REWRITER_CONCURRENCY = originalRewriterConcurrency;
-    if (originalT2PromotionMinEvents === undefined)
-      delete process.env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS;
-    else process.env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS = originalT2PromotionMinEvents;
-    if (originalDreamingEnabled === undefined) delete process.env.PENUMBRA_DREAMING_ENABLED;
-    else process.env.PENUMBRA_DREAMING_ENABLED = originalDreamingEnabled;
-    if (originalDreamingDailyUsd === undefined) delete process.env.PENUMBRA_DREAMING_DAILY_USD;
-    else process.env.PENUMBRA_DREAMING_DAILY_USD = originalDreamingDailyUsd;
+    for (const [i, slot] of MANAGED_ENV.entries()) {
+      const prior = saved[i];
+      if (prior === undefined) slot.clear();
+      else slot.write(prior);
+    }
   });
 
   it("rejects negative integers at parse time (strict zod schema)", () => {
