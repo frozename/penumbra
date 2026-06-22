@@ -1,12 +1,32 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
-import * as path from "node:path";
 import * as os from "node:os";
+import * as path from "node:path";
+
 import {
   prepareOpencodeMcpConfigDir,
   translateAcpMcpServerToOpencode,
 } from "../../src/adapters/opencode-mcp-config.js";
+
+interface OpencodeLocalMcp {
+  type: "local";
+  command: string[];
+  environment: Record<string, string>;
+  enabled: boolean;
+}
+
+interface OpencodeConfigFile {
+  $schema?: string;
+  mcp?: Record<string, OpencodeLocalMcp>;
+  provider?: unknown;
+  plugin?: unknown;
+  keybinds?: unknown;
+}
+
+function readConfig(cfgPath: string): OpencodeConfigFile {
+  return JSON.parse(fs.readFileSync(cfgPath, "utf8")) as OpencodeConfigFile;
+}
 
 describe("translateAcpMcpServerToOpencode", () => {
   it("translates a stdio server with args + env", () => {
@@ -43,7 +63,7 @@ describe("translateAcpMcpServerToOpencode", () => {
 describe("prepareOpencodeMcpConfigDir", () => {
   let createdDirs: string[] = [];
 
-  afterEach(async () => {
+  afterEach(() => {
     for (const d of createdDirs) {
       try {
         fs.rmSync(d, { recursive: true, force: true });
@@ -57,12 +77,12 @@ describe("prepareOpencodeMcpConfigDir", () => {
   it("writes a config.json with the translated mcp shape", async () => {
     const { xdgConfigHome, cleanup } = await prepareOpencodeMcpConfigDir(
       [{ name: "st", command: "npx", args: ["-y", "pkg"], env: [] }],
-      path.join(os.tmpdir(), `missing-opencode-config-${Date.now()}.json`),
+      path.join(os.tmpdir(), `missing-opencode-config-${Date.now().toString()}.json`),
     );
     createdDirs.push(xdgConfigHome);
     const cfgPath = path.join(xdgConfigHome, "opencode", "config.json");
     expect(fs.existsSync(cfgPath)).toBe(true);
-    const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+    const cfg = readConfig(cfgPath);
     expect(cfg.mcp).toEqual({
       st: {
         type: "local",
@@ -92,9 +112,7 @@ describe("prepareOpencodeMcpConfigDir", () => {
     );
     createdDirs.push(xdgConfigHome);
 
-    const cfg = JSON.parse(
-      fs.readFileSync(path.join(xdgConfigHome, "opencode", "config.json"), "utf8"),
-    );
+    const cfg = readConfig(path.join(xdgConfigHome, "opencode", "config.json"));
     expect(cfg.provider).toEqual(userConfig.provider);
     expect(cfg.plugin).toEqual(userConfig.plugin);
     expect(cfg.keybinds).toEqual(userConfig.keybinds);
@@ -133,9 +151,7 @@ describe("prepareOpencodeMcpConfigDir", () => {
     );
     createdDirs.push(xdgConfigHome);
 
-    const cfg = JSON.parse(
-      fs.readFileSync(path.join(xdgConfigHome, "opencode", "config.json"), "utf8"),
-    );
+    const cfg = readConfig(path.join(xdgConfigHome, "opencode", "config.json"));
     expect(cfg.mcp).toEqual({
       st: {
         type: "local",
@@ -144,20 +160,19 @@ describe("prepareOpencodeMcpConfigDir", () => {
         enabled: true,
       },
     });
-    expect(cfg.mcp.user).toBeUndefined();
+    expect(cfg.mcp?.user).toBeUndefined();
     expect(cfg.provider).toEqual({ local: { type: "openai-compatible" } });
     await cleanup();
   });
 
   it("writes a minimal config when user config is missing", async () => {
+    const suffix = `${Date.now().toString()}-${Math.random().toString()}`;
     const { xdgConfigHome, cleanup } = await prepareOpencodeMcpConfigDir(
       [{ name: "st", command: "npx", args: ["-y", "pkg"], env: [] }],
-      path.join(os.tmpdir(), `missing-opencode-config-${Date.now()}-${Math.random()}.json`),
+      path.join(os.tmpdir(), `missing-opencode-config-${suffix}.json`),
     );
     createdDirs.push(xdgConfigHome);
-    const cfg = JSON.parse(
-      fs.readFileSync(path.join(xdgConfigHome, "opencode", "config.json"), "utf8"),
-    );
+    const cfg = readConfig(path.join(xdgConfigHome, "opencode", "config.json"));
     expect(cfg).toEqual({
       $schema: "https://opencode.ai/config.json",
       mcp: {
@@ -177,16 +192,14 @@ describe("prepareOpencodeMcpConfigDir", () => {
     createdDirs.push(tmpDir);
     const userConfigPath = path.join(tmpDir, "config.json");
     await fsp.writeFile(userConfigPath, "{ not-json");
-    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const warn = spyOn(console, "warn").mockImplementation(() => undefined);
 
     const { xdgConfigHome, cleanup } = await prepareOpencodeMcpConfigDir(
       [{ name: "st", command: "npx", args: ["-y", "pkg"], env: [] }],
       userConfigPath,
     );
     createdDirs.push(xdgConfigHome);
-    const cfg = JSON.parse(
-      fs.readFileSync(path.join(xdgConfigHome, "opencode", "config.json"), "utf8"),
-    );
+    const cfg = readConfig(path.join(xdgConfigHome, "opencode", "config.json"));
     expect(cfg).toEqual({
       $schema: "https://opencode.ai/config.json",
       mcp: {
@@ -209,7 +222,8 @@ describe("prepareOpencodeMcpConfigDir", () => {
     ]);
     createdDirs.push(xdgConfigHome);
     await cleanup();
-    await expect(cleanup()).resolves.toBeUndefined();
+    // Second call must not throw — idempotent contract.
+    await cleanup();
   });
 
   it("returns a unique dir per call", async () => {
@@ -222,9 +236,7 @@ describe("prepareOpencodeMcpConfigDir", () => {
   it("handles empty mcpServers array", async () => {
     const { xdgConfigHome, cleanup } = await prepareOpencodeMcpConfigDir([]);
     createdDirs.push(xdgConfigHome);
-    const cfg = JSON.parse(
-      fs.readFileSync(path.join(xdgConfigHome, "opencode", "config.json"), "utf8"),
-    );
+    const cfg = readConfig(path.join(xdgConfigHome, "opencode", "config.json"));
     expect(cfg.mcp).toEqual({});
     await cleanup();
   });

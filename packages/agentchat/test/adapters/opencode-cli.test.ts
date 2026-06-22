@@ -1,10 +1,29 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import * as os from "node:os";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { OpencodeCliAdapter } from "../../src/adapters/opencode-cli.js";
 import { buildAdapter } from "../../src/adapters/registry.js";
+
+interface OpencodeMcpServerCfg {
+  type: "local";
+  command: string[];
+  environment: Record<string, string>;
+  enabled: boolean;
+}
+
+interface OpencodeConfigSnapshot {
+  $schema?: string;
+  mcp: Record<string, OpencodeMcpServerCfg>;
+}
+
+interface CaptureScript {
+  markerPath: string;
+  snapshotPath: string;
+  scriptPath: string;
+}
 
 const tempDirs: string[] = [];
 
@@ -18,12 +37,15 @@ async function withTempHome<T>(fn: () => Promise<T>): Promise<T> {
     return await fn();
   } finally {
     homedirSpy.mockRestore();
-    if (prevHome === undefined) delete process.env.HOME;
-    else process.env.HOME = prevHome;
+    if (prevHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = prevHome;
+    }
   }
 }
 
-function createCaptureScript() {
+function createCaptureScript(): CaptureScript {
   const dir = mkdtempSync(join(tmpdir(), "opencode-cli-test-"));
   tempDirs.push(dir);
   const markerPath = join(dir, "xdg-home.txt");
@@ -40,6 +62,10 @@ cat
   );
   chmodSync(scriptPath, 0o755);
   return { markerPath, snapshotPath, scriptPath };
+}
+
+function readSnapshot(snapshotPath: string): OpencodeConfigSnapshot {
+  return JSON.parse(readFileSync(snapshotPath, "utf8")) as OpencodeConfigSnapshot;
 }
 
 afterEach(() => {
@@ -62,7 +88,7 @@ test("opencode-cli sets a per-dispatch XDG_CONFIG_HOME when mcpServers are provi
         command: "bun",
         args: ["/tmp/penumbra-mcp.ts"],
         env: [{ name: "PENUMBRA_STORAGE_ROOT", value: "/tmp/penumbra-live" }],
-      } as any,
+      },
     ],
   });
 
@@ -76,7 +102,7 @@ test("opencode-cli sets a per-dispatch XDG_CONFIG_HOME when mcpServers are provi
   );
 
   const xdgConfigHome = readFileSync(markerPath, "utf8");
-  const snapshot = JSON.parse(readFileSync(snapshotPath, "utf8"));
+  const snapshot = readSnapshot(snapshotPath);
 
   expect(out.text.trim()).toBe("hi opencode");
   expect(xdgConfigHome).toContain("penumbra-oc-mcp-");
@@ -107,7 +133,7 @@ test("registry forwards mcpServers to opencode-cli", async () => {
         command: "bun",
         args: ["/tmp/penumbra-mcp.ts"],
         env: [{ name: "PENUMBRA_STORAGE_ROOT", value: "/tmp/penumbra-live" }],
-      } as any,
+      },
     ],
   });
 
@@ -119,7 +145,7 @@ test("registry forwards mcpServers to opencode-cli", async () => {
   });
 
   const xdgConfigHome = readFileSync(markerPath, "utf8");
-  const snapshot = JSON.parse(readFileSync(snapshotPath, "utf8"));
+  const snapshot = readSnapshot(snapshotPath);
 
   expect(out.text.trim()).toBe("hi registry");
   expect(xdgConfigHome).toContain("penumbra-oc-mcp-");
