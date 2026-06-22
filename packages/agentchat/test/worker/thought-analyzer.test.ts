@@ -1,6 +1,32 @@
+import type { DispatchEventInput } from "@penumbra/core";
+
 import { describe, expect, it, mock } from "bun:test";
-import { runThoughtAnalyzer } from "../../src/worker/thought-analyzer.js";
+
 import type { RuntimeThoughtsConfig } from "../../src/worker/thought-config.js";
+
+import { runThoughtAnalyzer, type ThoughtAnalyzerDeps } from "../../src/worker/thought-analyzer.js";
+
+type ChainStartInput = Parameters<ThoughtAnalyzerDeps["chainStart"]>[0];
+type ChainStartResult = Awaited<ReturnType<ThoughtAnalyzerDeps["chainStart"]>>;
+type ChainWaitInput = Parameters<ThoughtAnalyzerDeps["chainWait"]>[0];
+type ChainWaitResult = Awaited<ReturnType<ThoughtAnalyzerDeps["chainWait"]>>;
+type ChainResponseResult = Awaited<ReturnType<ThoughtAnalyzerDeps["chainResponse"]>>;
+
+const noopWarn = (): void => {
+  /* swallow logs */
+};
+
+function completedWait(): Promise<ChainWaitResult> {
+  return Promise.resolve({ status: "completed" });
+}
+
+function failedWait(): Promise<ChainWaitResult> {
+  return Promise.resolve({ status: "failed" });
+}
+
+function staticResponse(text: string): () => Promise<ChainResponseResult> {
+  return (): Promise<ChainResponseResult> => Promise.resolve({ responses: [{ text }] });
+}
 
 const baseConfig: RuntimeThoughtsConfig = {
   enabled: true,
@@ -22,7 +48,9 @@ const baseConfig: RuntimeThoughtsConfig = {
   },
 };
 
-function digestOnlyConfig(pool: RuntimeThoughtsConfig["analyze"]["digest"]["pool"]) {
+function digestOnlyConfig(
+  pool: RuntimeThoughtsConfig["analyze"]["digest"]["pool"],
+): RuntimeThoughtsConfig {
   return {
     ...baseConfig,
     analyze: {
@@ -48,7 +76,7 @@ const sampleThoughts = [
   },
 ];
 
-const localGemmaPool = {
+const localGemmaPool: NonNullable<ThoughtAnalyzerDeps["agentPool"]> = {
   registry: ["local-gemma26"],
   isLocal: () => true,
   isHealthy: () => true,
@@ -56,20 +84,23 @@ const localGemmaPool = {
 
 describe("runThoughtAnalyzer", () => {
   it("dispatches digest and one signal per definition in parallel", async () => {
-    const calls: any[] = [];
-    const recorded: any[] = [];
-    const chainStart = mock(
-      async (input: { initial_agent: string; message: string; parent_handoff_id?: string }) => {
-        calls.push(input);
-        return { conversation_id: `conv-${calls.length}`, handoff_id: `h-sub-${calls.length}` };
-      },
+    const calls: ChainStartInput[] = [];
+    const recorded: DispatchEventInput[] = [];
+    const chainStart = mock((input: ChainStartInput): Promise<ChainStartResult> => {
+      calls.push(input);
+      return Promise.resolve({
+        conversation_id: `conv-${String(calls.length)}`,
+        handoff_id: `h-sub-${String(calls.length)}`,
+      });
+    });
+    const chainWait = mock(completedWait);
+    const chainResponse = mock(
+      (): Promise<ChainResponseResult> =>
+        Promise.resolve({ responses: [{ text: `response for call ${String(calls.length)}` }] }),
     );
-    const chainWait = mock(async () => ({ status: "completed" as const }));
-    const chainResponse = mock(async () => ({
-      responses: [{ text: `response for call ${calls.length}` }],
-    }));
-    const recordEvent = mock(async (e: any) => {
+    const recordEvent = mock((e: DispatchEventInput): Promise<void> => {
       recorded.push(e);
+      return Promise.resolve();
     });
 
     await runThoughtAnalyzer({
@@ -98,16 +129,19 @@ describe("runThoughtAnalyzer", () => {
     expect(recordedKinds.filter((k) => k === "agent.thought.signal")).toHaveLength(2);
     const signalNames = recorded
       .filter((r) => r.kind === "agent.thought.signal")
-      .map((r) => r.meta.signal_name);
+      .map((r) => r.meta?.signal_name);
     expect(signalNames.sort()).toEqual(["security", "uncertainty"]);
   });
 
   it("uses the first healthy local pool member and does not dispatch the cloud fallback", async () => {
-    const calls: any[] = [];
-    const recorded: any[] = [];
-    const chainStart = mock(async (input: { initial_agent: string }) => {
+    const calls: ChainStartInput[] = [];
+    const recorded: DispatchEventInput[] = [];
+    const chainStart = mock((input: ChainStartInput): Promise<ChainStartResult> => {
       calls.push(input);
-      return { conversation_id: `conv-${input.initial_agent}`, handoff_id: "h-sub" };
+      return Promise.resolve({
+        conversation_id: `conv-${input.initial_agent}`,
+        handoff_id: "h-sub",
+      });
     });
 
     await runThoughtAnalyzer({
@@ -122,16 +156,17 @@ describe("runThoughtAnalyzer", () => {
       }),
       deps: {
         chainStart,
-        chainWait: mock(async () => ({ status: "completed" as const })),
-        chainResponse: mock(async () => ({ responses: [{ text: "local digest" }] })),
-        recordEvent: mock(async (e: any) => {
+        chainWait: mock(completedWait),
+        chainResponse: mock(staticResponse("local digest")),
+        recordEvent: mock((e: DispatchEventInput): Promise<void> => {
           recorded.push(e);
+          return Promise.resolve();
         }),
         log: console,
         agentPool: {
           registry: ["local-a", "cloud-b"],
-          isLocal: (agent) => agent === "local-a",
-          isHealthy: (agent) => agent === "local-a",
+          isLocal: (agent: string): boolean => agent === "local-a",
+          isHealthy: (agent: string): boolean => agent === "local-a",
         },
       },
     });
@@ -144,16 +179,21 @@ describe("runThoughtAnalyzer", () => {
   });
 
   it("fails over to the cloud pool member when the local dispatch does not complete", async () => {
-    const calls: any[] = [];
-    const recorded: any[] = [];
-    const chainStart = mock(async (input: { initial_agent: string }) => {
+    const calls: ChainStartInput[] = [];
+    const recorded: DispatchEventInput[] = [];
+    const chainStart = mock((input: ChainStartInput): Promise<ChainStartResult> => {
       calls.push(input);
-      return { conversation_id: `conv-${input.initial_agent}`, handoff_id: "h-sub" };
+      return Promise.resolve({
+        conversation_id: `conv-${input.initial_agent}`,
+        handoff_id: "h-sub",
+      });
     });
-    const chainWait = mock(async (input: { conversation_id: string }) => ({
-      status:
-        input.conversation_id === "conv-local-a" ? ("failed" as const) : ("completed" as const),
-    }));
+    const chainWait = mock(
+      (input: ChainWaitInput): Promise<ChainWaitResult> =>
+        Promise.resolve({
+          status: input.conversation_id === "conv-local-a" ? "failed" : "completed",
+        }),
+    );
 
     await runThoughtAnalyzer({
       handoffId: "h-1",
@@ -168,14 +208,15 @@ describe("runThoughtAnalyzer", () => {
       deps: {
         chainStart,
         chainWait,
-        chainResponse: mock(async () => ({ responses: [{ text: "cloud digest" }] })),
-        recordEvent: mock(async (e: any) => {
+        chainResponse: mock(staticResponse("cloud digest")),
+        recordEvent: mock((e: DispatchEventInput): Promise<void> => {
           recorded.push(e);
+          return Promise.resolve();
         }),
         log: console,
         agentPool: {
           registry: ["local-a", "cloud-b"],
-          isLocal: (agent) => agent === "local-a",
+          isLocal: (agent: string): boolean => agent === "local-a",
           isHealthy: () => true,
         },
       },
@@ -189,9 +230,11 @@ describe("runThoughtAnalyzer", () => {
   });
 
   it("records an empty-pool marker and skips dispatch when every pool member is dropped", async () => {
-    const recorded: any[] = [];
-    const warnings: any[] = [];
-    const chainStart = mock(async () => ({ conversation_id: "x", handoff_id: "y" }));
+    const recorded: DispatchEventInput[] = [];
+    const warnings: unknown[][] = [];
+    const chainStart = mock(
+      (): Promise<ChainStartResult> => Promise.resolve({ conversation_id: "x", handoff_id: "y" }),
+    );
 
     await runThoughtAnalyzer({
       handoffId: "h-1",
@@ -205,12 +248,17 @@ describe("runThoughtAnalyzer", () => {
       }),
       deps: {
         chainStart,
-        chainWait: mock(async () => ({ status: "completed" as const })),
-        chainResponse: mock(async () => ({ responses: [{ text: "never" }] })),
-        recordEvent: mock(async (e: any) => {
+        chainWait: mock(completedWait),
+        chainResponse: mock(staticResponse("never")),
+        recordEvent: mock((e: DispatchEventInput): Promise<void> => {
           recorded.push(e);
+          return Promise.resolve();
         }),
-        log: { warn: (...args: unknown[]) => warnings.push(args) },
+        log: {
+          warn: (...args: unknown[]) => {
+            warnings.push(args);
+          },
+        },
         agentPool: {
           registry: ["local-b"],
           isLocal: () => true,
@@ -220,18 +268,21 @@ describe("runThoughtAnalyzer", () => {
     });
 
     expect(chainStart).not.toHaveBeenCalled();
-    expect(recorded[0]?.meta.digest_text).toBe("<no analyzer available: pool empty>");
+    expect(recorded[0]?.meta?.digest_text).toBe("<no analyzer available: pool empty>");
     expect(warnings).toHaveLength(1);
     expect(JSON.stringify(warnings[0])).toContain("not-in-registry");
     expect(JSON.stringify(warnings[0])).toContain("unhealthy");
   });
 
   it("records all-failed marker after every resolved pool member fails", async () => {
-    const calls: any[] = [];
-    const recorded: any[] = [];
-    const chainStart = mock(async (input: { initial_agent: string }) => {
+    const calls: ChainStartInput[] = [];
+    const recorded: DispatchEventInput[] = [];
+    const chainStart = mock((input: ChainStartInput): Promise<ChainStartResult> => {
       calls.push(input);
-      return { conversation_id: `conv-${input.initial_agent}`, handoff_id: "h-sub" };
+      return Promise.resolve({
+        conversation_id: `conv-${input.initial_agent}`,
+        handoff_id: "h-sub",
+      });
     });
 
     await runThoughtAnalyzer({
@@ -241,30 +292,34 @@ describe("runThoughtAnalyzer", () => {
       config: digestOnlyConfig(["local-a", "cloud-b"]),
       deps: {
         chainStart,
-        chainWait: mock(async () => ({ status: "failed" as const })),
-        chainResponse: mock(async () => ({ responses: [{ text: "never" }] })),
-        recordEvent: mock(async (e: any) => {
+        chainWait: mock(failedWait),
+        chainResponse: mock(staticResponse("never")),
+        recordEvent: mock((e: DispatchEventInput): Promise<void> => {
           recorded.push(e);
+          return Promise.resolve();
         }),
-        log: { warn: () => {} },
+        log: { warn: noopWarn },
         agentPool: {
           registry: ["local-a", "cloud-b"],
-          isLocal: (agent) => agent === "local-a",
+          isLocal: (agent: string): boolean => agent === "local-a",
           isHealthy: () => true,
         },
       },
     });
 
     expect(calls.map((call) => call.initial_agent)).toEqual(["local-a", "cloud-b"]);
-    expect(recorded[0]?.meta.digest_text).toBe("<analyzer failed: all 2 pool members failed>");
+    expect(recorded[0]?.meta?.digest_text).toBe("<analyzer failed: all 2 pool members failed>");
   });
 
   it("skips an unhealthy local member and falls through to the next pool member", async () => {
-    const calls: any[] = [];
-    const recorded: any[] = [];
-    const chainStart = mock(async (input: { initial_agent: string }) => {
+    const calls: ChainStartInput[] = [];
+    const recorded: DispatchEventInput[] = [];
+    const chainStart = mock((input: ChainStartInput): Promise<ChainStartResult> => {
       calls.push(input);
-      return { conversation_id: `conv-${input.initial_agent}`, handoff_id: "h-sub" };
+      return Promise.resolve({
+        conversation_id: `conv-${input.initial_agent}`,
+        handoff_id: "h-sub",
+      });
     });
 
     await runThoughtAnalyzer({
@@ -279,16 +334,17 @@ describe("runThoughtAnalyzer", () => {
       }),
       deps: {
         chainStart,
-        chainWait: mock(async () => ({ status: "completed" as const })),
-        chainResponse: mock(async () => ({ responses: [{ text: "cloud digest" }] })),
-        recordEvent: mock(async (e: any) => {
+        chainWait: mock(completedWait),
+        chainResponse: mock(staticResponse("cloud digest")),
+        recordEvent: mock((e: DispatchEventInput): Promise<void> => {
           recorded.push(e);
+          return Promise.resolve();
         }),
         log: console,
         agentPool: {
           registry: ["local-a", "cloud-b"],
-          isLocal: (agent) => agent === "local-a",
-          isHealthy: (agent) => agent !== "local-a",
+          isLocal: (agent: string): boolean => agent === "local-a",
+          isHealthy: (agent: string): boolean => agent !== "local-a",
         },
       },
     });
@@ -301,19 +357,14 @@ describe("runThoughtAnalyzer", () => {
   });
 
   it("passes parent handoff project_id into sub-dispatches", async () => {
-    const calls: any[] = [];
-    const chainStart = mock(
-      async (input: {
-        initial_agent: string;
-        message: string;
-        parent_handoff_id?: string;
-        project_id?: string | null;
-        task_type?: string;
-      }) => {
-        calls.push(input);
-        return { conversation_id: `conv-${calls.length}`, handoff_id: `h-sub-${calls.length}` };
-      },
-    );
+    const calls: ChainStartInput[] = [];
+    const chainStart = mock((input: ChainStartInput): Promise<ChainStartResult> => {
+      calls.push(input);
+      return Promise.resolve({
+        conversation_id: `conv-${String(calls.length)}`,
+        handoff_id: `h-sub-${String(calls.length)}`,
+      });
+    });
 
     await runThoughtAnalyzer({
       handoffId: "h-1",
@@ -322,11 +373,12 @@ describe("runThoughtAnalyzer", () => {
       config: baseConfig,
       deps: {
         chainStart,
-        chainWait: mock(async () => ({ status: "completed" as const })),
-        chainResponse: mock(async () => ({ responses: [{ text: "ok" }] })),
-        recordEvent: mock(async () => {}),
+        chainWait: mock(completedWait),
+        chainResponse: mock(staticResponse("ok")),
+        recordEvent: mock((): Promise<void> => Promise.resolve()),
         log: console,
-        getHandoff: async () => ({ project_id: "parent-proj" }),
+        getHandoff: (): Promise<{ project_id: string | null }> =>
+          Promise.resolve({ project_id: "parent-proj" }),
         agentPool: localGemmaPool,
       },
     });
@@ -336,7 +388,9 @@ describe("runThoughtAnalyzer", () => {
   });
 
   it("skips analyze when mergeStatus is not in onlyWhen", async () => {
-    const chainStart = mock(async () => ({ conversation_id: "x", handoff_id: "y" }));
+    const chainStart = mock(
+      (): Promise<ChainStartResult> => Promise.resolve({ conversation_id: "x", handoff_id: "y" }),
+    );
     await runThoughtAnalyzer({
       handoffId: "h-1",
       thoughts: sampleThoughts,
@@ -344,9 +398,9 @@ describe("runThoughtAnalyzer", () => {
       config: baseConfig,
       deps: {
         chainStart,
-        chainWait: mock(async () => ({ status: "completed" as const })),
-        chainResponse: mock(async () => ({ responses: [] })),
-        recordEvent: mock(async () => {}),
+        chainWait: mock(completedWait),
+        chainResponse: mock((): Promise<ChainResponseResult> => Promise.resolve({ responses: [] })),
+        recordEvent: mock((): Promise<void> => Promise.resolve()),
         log: console,
         agentPool: localGemmaPool,
       },
@@ -355,17 +409,18 @@ describe("runThoughtAnalyzer", () => {
   });
 
   it("records a digest event with failure text when the digest sub-handoff fails", async () => {
-    const recorded: any[] = [];
-    const chainStart = mock(async (input: { message: string }) => {
+    const recorded: DispatchEventInput[] = [];
+    const chainStart = mock((input: ChainStartInput): Promise<ChainStartResult> => {
       if (input.message.includes("list doubts") || input.message.includes("list security")) {
-        return { conversation_id: "sig", handoff_id: "h-sig" };
+        return Promise.resolve({ conversation_id: "sig", handoff_id: "h-sig" });
       }
-      throw new Error("digest dispatch failed");
+      return Promise.reject(new Error("digest dispatch failed"));
     });
-    const chainWait = mock(async () => ({ status: "completed" as const }));
-    const chainResponse = mock(async () => ({ responses: [{ text: "signal text" }] }));
-    const recordEvent = mock(async (e: any) => {
+    const chainWait = mock(completedWait);
+    const chainResponse = mock(staticResponse("signal text"));
+    const recordEvent = mock((e: DispatchEventInput): Promise<void> => {
       recorded.push(e);
+      return Promise.resolve();
     });
 
     await runThoughtAnalyzer({
@@ -385,15 +440,17 @@ describe("runThoughtAnalyzer", () => {
 
     const digestRow = recorded.find((r) => r.kind === "agent.thought.digest");
     expect(digestRow).toBeDefined();
-    expect(digestRow!.meta.digest_text as string).toContain("analyzer failed");
+    const digestText = digestRow?.meta?.digest_text;
+    expect(typeof digestText).toBe("string");
+    expect(digestText as string).toContain("analyzer failed");
     expect(recorded.filter((r) => r.kind === "agent.thought.signal")).toHaveLength(2);
   });
 
   it("truncates the analyzer prompt to maxInputChars and notes the truncation", async () => {
     const captured: string[] = [];
-    const chainStart = mock(async (input: { message: string }) => {
+    const chainStart = mock((input: ChainStartInput): Promise<ChainStartResult> => {
       captured.push(input.message);
-      return { conversation_id: "c", handoff_id: "h" };
+      return Promise.resolve({ conversation_id: "c", handoff_id: "h" });
     });
     const big = Array.from({ length: 200 }, (_, i) => ({
       sequence_n: i,
@@ -414,14 +471,16 @@ describe("runThoughtAnalyzer", () => {
       },
       deps: {
         chainStart,
-        chainWait: mock(async () => ({ status: "completed" as const })),
-        chainResponse: mock(async () => ({ responses: [{ text: "ok" }] })),
-        recordEvent: mock(async () => {}),
+        chainWait: mock(completedWait),
+        chainResponse: mock(staticResponse("ok")),
+        recordEvent: mock((): Promise<void> => Promise.resolve()),
         log: console,
         agentPool: localGemmaPool,
       },
     });
-    const digestPrompt = captured.find((m) => m.includes("list")) ?? captured[0]!;
+    const firstCapture = captured[0];
+    if (firstCapture === undefined) throw new Error("expected at least one captured message");
+    const digestPrompt = captured.find((m) => m.includes("list")) ?? firstCapture;
     expect(digestPrompt.length).toBeLessThan(2000);
     expect(digestPrompt).toContain("truncated");
   });

@@ -1,33 +1,56 @@
-import { describe, expect, test } from "bun:test";
-import { RecallEnricher } from "../../src/worker/recall-enricher.js";
-import { RecallContextConfigSchema } from "../../src/config/types.js";
+import type { Logger } from "@penumbra/core";
 
-function silentLog() {
-  return { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as any;
+import { describe, expect, test } from "bun:test";
+
+import type { PenumbraClient } from "../../src/penumbra-client.js";
+
+import { RecallContextConfigSchema } from "../../src/config/types.js";
+import { RecallEnricher } from "../../src/worker/recall-enricher.js";
+
+type RecallClient = Pick<PenumbraClient, "recall" | "corpusQuery">;
+type RecallBody = Parameters<RecallClient["recall"]>[0];
+type RecallResponse = Awaited<ReturnType<RecallClient["recall"]>>;
+type CorpusBody = Parameters<RecallClient["corpusQuery"]>[0];
+type CorpusResponse = Awaited<ReturnType<RecallClient["corpusQuery"]>>;
+
+type RecallBehavior = RecallResponse | Error | ((body: RecallBody) => RecallResponse);
+type CorpusBehavior = CorpusResponse | Error | ((body: CorpusBody) => CorpusResponse);
+
+// Pino's `Logger` is a complex class with many overloads; tests only need a
+// silent stub that satisfies the surface used by RecallEnricher (warn).
+function silentLog(): Logger {
+  const noop = (): void => {
+    /* noop */
+  };
+  return { info: noop, warn: noop, error: noop, debug: noop } as unknown as Logger;
+}
+
+interface FakeClientHandle {
+  client: RecallClient;
+  calls: RecallBody[];
+  recallCalls: RecallBody[];
+  corpusCalls: CorpusBody[];
 }
 
 function fakeClient(
-  opts: {
-    recall?: any;
-    corpusQuery?: any;
-  } = {},
-) {
-  const recallCalls: any[] = [];
-  const corpusCalls: any[] = [];
-  const recallResponses = opts.recall ?? { results: [] };
-  const corpusResponses = opts.corpusQuery ?? { hits: [] };
-  const client = {
-    recall: async (body: any) => {
+  opts: { recall?: RecallBehavior; corpusQuery?: CorpusBehavior } = {},
+): FakeClientHandle {
+  const recallCalls: RecallBody[] = [];
+  const corpusCalls: CorpusBody[] = [];
+  const recallBehavior: RecallBehavior = opts.recall ?? { results: [] };
+  const corpusBehavior: CorpusBehavior = opts.corpusQuery ?? { hits: [] };
+  const client: RecallClient = {
+    recall: (body: RecallBody): Promise<RecallResponse> => {
       recallCalls.push(body);
-      if (recallResponses instanceof Error) throw recallResponses;
-      if (typeof recallResponses === "function") return recallResponses(body);
-      return recallResponses;
+      if (recallBehavior instanceof Error) return Promise.reject(recallBehavior);
+      if (typeof recallBehavior === "function") return Promise.resolve(recallBehavior(body));
+      return Promise.resolve(recallBehavior);
     },
-    corpusQuery: async (body: any) => {
+    corpusQuery: (body: CorpusBody): Promise<CorpusResponse> => {
       corpusCalls.push(body);
-      if (corpusResponses instanceof Error) throw corpusResponses;
-      if (typeof corpusResponses === "function") return corpusResponses(body);
-      return corpusResponses;
+      if (corpusBehavior instanceof Error) return Promise.reject(corpusBehavior);
+      if (typeof corpusBehavior === "function") return Promise.resolve(corpusBehavior(body));
+      return Promise.resolve(corpusBehavior);
     },
   };
   return { client, calls: recallCalls, recallCalls, corpusCalls };
@@ -65,15 +88,15 @@ describe("RecallEnricher", () => {
   });
 
   test("soft-fails on timeout — original message returned", async () => {
-    const client = {
-      recall: () =>
+    const client: RecallClient = {
+      recall: (): Promise<RecallResponse> =>
         new Promise(() => {
           /* never resolves */
-        }) as any,
-      corpusQuery: () =>
+        }),
+      corpusQuery: (): Promise<CorpusResponse> =>
         new Promise(() => {
           /* never resolves */
-        }) as any,
+        }),
     };
     const enricher = new RecallEnricher({ client, log: silentLog(), timeoutMs: 10 });
     const out = await enricher.enrich({ message: "task", config: baseConfig, projectId: "p" });
@@ -108,8 +131,8 @@ describe("RecallEnricher", () => {
     expect(out).toContain("approach X");
     expect(out).toContain("tier=t1");
     expect(out).toEndWith("fix the failing test in foo.test.ts");
-    expect(calls[0].project_id).toBe("proj-a");
-    expect(calls[0].limit).toBe(3);
+    expect(calls[0]?.project_id).toBe("proj-a");
+    expect(calls[0]?.limit).toBe(3);
   });
 
   test("truncates result bodies to max_chars_per_result", async () => {
@@ -148,14 +171,14 @@ describe("RecallEnricher", () => {
     const { client, calls } = fakeClient({ recall: { results: [] } });
     const enricher = new RecallEnricher({ client, log: silentLog() });
     await enricher.enrich({ message: "go", config: baseConfig, projectId: "proj-x" });
-    expect(calls[0].project_id).toBe("proj-x");
+    expect(calls[0]?.project_id).toBe("proj-x");
   });
 
   test("falls back to global scope when projectId is null even if config requests project", async () => {
     const { client, calls } = fakeClient({ recall: { results: [] } });
     const enricher = new RecallEnricher({ client, log: silentLog() });
     await enricher.enrich({ message: "go", config: baseConfig, projectId: null });
-    expect(calls[0].project_id).toBeNull();
+    expect(calls[0]?.project_id).toBeNull();
   });
 
   test("uses global scope when explicitly configured", async () => {
@@ -163,7 +186,7 @@ describe("RecallEnricher", () => {
     const { client, calls } = fakeClient({ recall: { results: [] } });
     const enricher = new RecallEnricher({ client, log: silentLog() });
     await enricher.enrich({ message: "go", config: cfg, projectId: "proj-x" });
-    expect(calls[0].project_id).toBeNull();
+    expect(calls[0]?.project_id).toBeNull();
   });
 
   test("truncates query to first 500 chars of message", async () => {
@@ -171,7 +194,7 @@ describe("RecallEnricher", () => {
     const enricher = new RecallEnricher({ client, log: silentLog() });
     const longMessage = "a".repeat(2000);
     await enricher.enrich({ message: longMessage, config: baseConfig, projectId: "p" });
-    expect(calls[0].query.length).toBe(500);
+    expect(calls[0]?.query.length).toBe(500);
   });
 
   test("returns message unchanged when message trims to empty", async () => {
@@ -214,9 +237,9 @@ describe("RecallEnricher", () => {
       });
       expect(recallCalls).toHaveLength(0);
       expect(corpusCalls).toHaveLength(1);
-      expect(corpusCalls[0].name).toBe("acp-work");
-      expect(corpusCalls[0].limit).toBe(5);
-      expect(corpusCalls[0].query).toBe("continue ACP work");
+      expect(corpusCalls[0]?.name).toBe("acp-work");
+      expect(corpusCalls[0]?.limit).toBe(5);
+      expect(corpusCalls[0]?.query).toBe("continue ACP work");
       expect(out).toContain("<recent-relevant-context>");
       expect(out).toContain("Bumped watchdog");
       expect(out).toContain("tier=corpus");

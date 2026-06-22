@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+
 import { AgentChatConfigSchema } from "../../src/config/types.js";
 import { loadThoughtsConfig } from "../../src/worker/thought-config.js";
 
@@ -41,7 +42,7 @@ describe("thoughts config schema", () => {
       fallback_to_cloud: true,
     });
     expect(parsed.thoughts?.analyze?.signals?.agent).toEqual(["local-gemma26", "codex-acp-fast"]);
-    expect(parsed.thoughts?.analyze?.signals?.definitions?.[0]?.name).toBe("uncertainty");
+    expect(parsed.thoughts?.analyze?.signals?.definitions[0]?.name).toBe("uncertainty");
   });
 });
 
