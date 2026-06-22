@@ -63,7 +63,8 @@ test("retry exhaustion marks failed + emits chain-terminated(error) without reje
       log: createLogger({ component: "e2e-worker" }),
       concurrency: 1,
       claim: (id) => client.claimHandoff(id, "e2e-worker"),
-      postProgress: (id, payload) => client.postProgress(id, payload),
+      postProgress: (id, payload: Parameters<typeof client.postProgress>[1]) =>
+        client.postProgress(id, payload),
       complete: (id) => client.completeHandoff(id),
       dispatch: async (h: Parameters<typeof dispatchHandoff>[0]["handoff"], onChunk, signal) => {
         return await dispatchHandoff({
