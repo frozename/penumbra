@@ -1,5 +1,6 @@
-import { expect, test, mock, afterEach } from "bun:test";
+import { afterEach, expect, mock, test } from "bun:test";
 import { z } from "zod";
+
 import { llmInvoke } from "../../src/services/llm-invoke.js";
 
 const originalFetch = globalThis.fetch;
@@ -10,10 +11,12 @@ afterEach(() => {
 
 test("happy path returns parsed payload and raw content", async () => {
   const fetchMock = mock(
-    async () =>
-      new Response(JSON.stringify({ choices: [{ message: { content: '{"answer":"ok"}' } }] }), {
-        status: 200,
-      }),
+    (): Promise<Response> =>
+      Promise.resolve(
+        new Response(JSON.stringify({ choices: [{ message: { content: '{"answer":"ok"}' } }] }), {
+          status: 200,
+        }),
+      ),
   );
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 
@@ -34,10 +37,12 @@ test("happy path returns parsed payload and raw content", async () => {
 
 test("schema mismatch maps to schema_violation", async () => {
   const fetchMock = mock(
-    async () =>
-      new Response(JSON.stringify({ choices: [{ message: { content: '{"answer":3}' } }] }), {
-        status: 200,
-      }),
+    (): Promise<Response> =>
+      Promise.resolve(
+        new Response(JSON.stringify({ choices: [{ message: { content: '{"answer":3}' } }] }), {
+          status: 200,
+        }),
+      ),
   );
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 
@@ -58,10 +63,12 @@ test("schema mismatch maps to schema_violation", async () => {
 
 test("invalid JSON maps to invalid_json", async () => {
   const fetchMock = mock(
-    async () =>
-      new Response(JSON.stringify({ choices: [{ message: { content: "{not-json" } }] }), {
-        status: 200,
-      }),
+    (): Promise<Response> =>
+      Promise.resolve(
+        new Response(JSON.stringify({ choices: [{ message: { content: "{not-json" } }] }), {
+          status: 200,
+        }),
+      ),
   );
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 
@@ -73,16 +80,15 @@ test("invalid JSON maps to invalid_json", async () => {
     schema,
   });
 
-  expect(result).toEqual(
-    expect.objectContaining({
-      ok: false,
-      reason: "invalid_json",
-    }),
-  );
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("expected failure");
+  expect(result.reason).toBe("invalid_json");
 });
 
 test("non-2xx response maps to http_error", async () => {
-  const fetchMock = mock(async () => new Response("boom", { status: 500 }));
+  const fetchMock = mock(
+    (): Promise<Response> => Promise.resolve(new Response("boom", { status: 500 })),
+  );
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 
   const schema = z.object({ answer: z.string() });
@@ -102,7 +108,10 @@ test("non-2xx response maps to http_error", async () => {
 });
 
 test("response body larger than 1 MiB maps to http_error", async () => {
-  const fetchMock = mock(async () => new Response("x".repeat(1024 * 1024 + 1), { status: 200 }));
+  const fetchMock = mock(
+    (): Promise<Response> =>
+      Promise.resolve(new Response("x".repeat(1024 * 1024 + 1), { status: 200 })),
+  );
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 
   const schema = z.object({ answer: z.string() });
@@ -113,17 +122,15 @@ test("response body larger than 1 MiB maps to http_error", async () => {
     schema,
   });
 
-  expect(result).toEqual(
-    expect.objectContaining({
-      ok: false,
-      reason: "http_error",
-      failureMessage: "response too large",
-    }),
-  );
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("expected failure");
+  expect(result.reason).toBe("http_error");
+  if (result.reason !== "http_error") throw new Error("wrong reason");
+  expect(result.failureMessage).toBe("response too large");
 });
 
 test("timeout maps to timeout", async () => {
-  const fetchMock = mock(async (_, init) => {
+  const fetchMock = mock((_url: string, init?: RequestInit): Promise<Response> => {
     const signal = init?.signal;
     let cleanup: (() => void) | null = null;
     return new Promise<Response>((resolve, reject) => {
@@ -131,14 +138,16 @@ test("timeout maps to timeout", async () => {
         reject(new DOMException("Request aborted", "AbortError"));
         return;
       }
-      const onAbort = () => {
+      const onAbort = (): void => {
         if (cleanup) {
           cleanup();
         }
         reject(new DOMException("Request aborted", "AbortError"));
       };
       signal?.addEventListener("abort", onAbort, { once: true });
-      cleanup = () => signal?.removeEventListener("abort", onAbort);
+      cleanup = (): void => {
+        signal?.removeEventListener("abort", onAbort);
+      };
       setTimeout(() => {
         if (cleanup) {
           cleanup();
@@ -163,17 +172,15 @@ test("timeout maps to timeout", async () => {
     timeoutMs: 50,
   });
 
-  expect(result).toEqual(
-    expect.objectContaining({
-      ok: false,
-      reason: "timeout",
-    }),
-  );
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("expected failure");
+  expect(result.reason).toBe("timeout");
 });
 
 test("empty choices/content maps to empty_response", async () => {
   const fetchMock = mock(
-    async () => new Response(JSON.stringify({ choices: [] }), { status: 200 }),
+    (): Promise<Response> =>
+      Promise.resolve(new Response(JSON.stringify({ choices: [] }), { status: 200 })),
   );
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 
@@ -185,28 +192,27 @@ test("empty choices/content maps to empty_response", async () => {
     schema,
   });
 
-  expect(result).toEqual(
-    expect.objectContaining({
-      ok: false,
-      reason: "empty_response",
-    }),
-  );
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("expected failure");
+  expect(result.reason).toBe("empty_response");
 });
 
 test("request payload includes model, messages, temperature default, and response_format json_object", async () => {
   const fetchMock = mock(
-    async () =>
-      new Response(JSON.stringify({ choices: [{ message: { content: '{"answer":"ok"}' } }] }), {
-        status: 200,
-      }),
+    (_url: string, _init?: RequestInit): Promise<Response> =>
+      Promise.resolve(
+        new Response(JSON.stringify({ choices: [{ message: { content: '{"answer":"ok"}' } }] }), {
+          status: 200,
+        }),
+      ),
   );
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 
   const schema = z.object({ answer: z.string() });
-  const messages = [
+  const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
     { role: "system", content: "You are a strict parser" },
     { role: "user", content: "Return JSON only" },
-  ] as const;
+  ];
   const baseUrl = "http://127.0.0.1:8083";
 
   const result = await llmInvoke({
@@ -221,9 +227,9 @@ test("request payload includes model, messages, temperature default, and respons
   }
 
   expect(fetchMock).toHaveBeenCalledTimes(1);
-  const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+  const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
   expect(url).toBe("http://127.0.0.1:8083/v1/chat/completions");
-  const body = JSON.parse(init.body as string);
+  const body = JSON.parse(init.body as string) as unknown;
   expect(body).toEqual({
     model: "granite-4.1-3b",
     messages,

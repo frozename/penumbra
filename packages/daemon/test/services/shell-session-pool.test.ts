@@ -1,5 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+
 import { ShellSessionPool } from "../../src/services/shell-session-pool.js";
+
+// bun:test's `.rejects.toThrow()` is typed as void even though it awaits the
+// underlying promise at runtime. Use this helper instead.
+async function expectRejection(promise: Promise<unknown>, pattern: RegExp): Promise<void> {
+  let threw = false;
+  try {
+    await promise;
+  } catch (err) {
+    threw = true;
+    expect(String(err)).toMatch(pattern);
+  }
+  expect(threw).toBe(true);
+}
 
 type RuntimeShellConfig = ConstructorParameters<typeof ShellSessionPool>[0]["config"];
 
@@ -14,9 +28,8 @@ function makeConfig(overrides: Partial<RuntimeShellConfig> = {}): RuntimeShellCo
     outputByteLimit: 16384,
     redactOutput: true,
     unsetEnv: [],
-    dangerousCommands: baseDangerous,
-    dangerousCommandsForAgent: () => baseDangerous,
-    redactOutputForAgent: () => true,
+    dangerousCommandsForAgent: (): string[] => baseDangerous,
+    redactOutputForAgent: (): boolean => true,
     ...overrides,
   };
 }
@@ -27,7 +40,7 @@ describe("ShellSessionPool", () => {
   beforeEach(() => {
     pool = new ShellSessionPool({
       config: makeConfig(),
-      uuid: () => `sess-${Math.random().toString(36).slice(2, 8)}`,
+      uuid: (): string => `sess-${Math.random().toString(36).slice(2, 8)}`,
     });
   });
 
@@ -96,27 +109,31 @@ describe("ShellSessionPool", () => {
       pty: false,
     });
 
+    type TimeoutId = ReturnType<typeof setTimeout>;
+
     const originalSetTimeout = global.setTimeout;
     const originalClearTimeout = global.clearTimeout;
 
-    const activeTimeouts = new Set<any>();
+    const activeTimeouts = new Set<TimeoutId>();
 
-    global.setTimeout = ((...args: any[]) => {
-      const id = (originalSetTimeout as any)(...args);
+    const trackedSetTimeout = (...args: Parameters<typeof setTimeout>): TimeoutId => {
+      const id = originalSetTimeout(...args);
       activeTimeouts.add(id);
       return id;
-    }) as any;
+    };
+    global.setTimeout = trackedSetTimeout as typeof setTimeout;
 
-    global.clearTimeout = (id: any) => {
-      activeTimeouts.delete(id);
+    const trackedClearTimeout = (id?: TimeoutId): void => {
+      if (id !== undefined) activeTimeouts.delete(id);
       originalClearTimeout(id);
     };
+    global.clearTimeout = trackedClearTimeout as typeof clearTimeout;
 
     try {
       const result = await pool.runCommand({ handoffId: "h-1", sessionId, command: "echo fast" });
       expect(result.exit_code).toBe(0);
       // Let the promise race settle fully
-      await new Promise((r) => originalSetTimeout(r, 0));
+      await new Promise<void>((r) => originalSetTimeout(r, 0));
       expect(activeTimeouts.size).toBe(0);
     } finally {
       global.setTimeout = originalSetTimeout;
@@ -129,7 +146,7 @@ describe("ShellSessionPool", () => {
 
   it("returns exit_code 124 on per-command timeout and keeps session alive", async () => {
     const cfg = makeConfig({ maxCommandDurationMs: 200 });
-    const localPool = new ShellSessionPool({ config: cfg, uuid: () => "sess-t1" });
+    const localPool = new ShellSessionPool({ config: cfg, uuid: (): string => "sess-t1" });
     const { sessionId } = await localPool.createSession({
       handoffId: "h-1",
       cwd: "/tmp",
@@ -138,14 +155,18 @@ describe("ShellSessionPool", () => {
     });
     const result = await localPool.runCommand({ handoffId: "h-1", sessionId, command: "sleep 5" });
     expect(result.exit_code).toBe(124);
-    const post = await localPool.runCommand({ handoffId: "h-1", sessionId, command: "echo alive" });
+    const post = await localPool.runCommand({
+      handoffId: "h-1",
+      sessionId,
+      command: "echo alive",
+    });
     expect(post.stdout).toBe("alive\n");
     await localPool.shutdown();
   });
 
   it("truncates output at outputByteLimit and sets truncated=true", async () => {
     const cfg = makeConfig({ outputByteLimit: 32 });
-    const localPool = new ShellSessionPool({ config: cfg, uuid: () => "sess-trunc" });
+    const localPool = new ShellSessionPool({ config: cfg, uuid: (): string => "sess-trunc" });
     const { sessionId } = await localPool.createSession({
       handoffId: "h-1",
       cwd: "/tmp",
@@ -201,14 +222,15 @@ describe("ShellSessionPool", () => {
       config: cfg,
       uuid: (() => {
         let i = 0;
-        return () => `sess-${++i}`;
+        return (): string => `sess-${String(++i)}`;
       })(),
     });
     await localPool.createSession({ handoffId: "h-1", cwd: "/tmp", env: {}, pty: false });
     await localPool.createSession({ handoffId: "h-1", cwd: "/tmp", env: {}, pty: false });
-    await expect(
+    await expectRejection(
       localPool.createSession({ handoffId: "h-1", cwd: "/tmp", env: {}, pty: false }),
-    ).rejects.toThrow(/max sessions/i);
+      /max sessions/i,
+    );
     await localPool.shutdown();
   });
 
@@ -224,7 +246,7 @@ describe("ShellSessionPool", () => {
 
 describe("ShellSessionPool — PTY mode", () => {
   it("strips ANSI escape sequences from PTY output", async () => {
-    const pool = new ShellSessionPool({ config: makeConfig(), uuid: () => "sess-pty" });
+    const pool = new ShellSessionPool({ config: makeConfig(), uuid: (): string => "sess-pty" });
     let session;
     try {
       const created = await pool.createSession({
@@ -255,8 +277,12 @@ describe("ShellSessionPool — sweeping", () => {
     let status: "pending" | "completed" = "pending";
     const pool = new ShellSessionPool({
       config: makeConfig(),
-      uuid: () => "sess-sweep",
-      handoffStatusReader: { getStatus: async () => status },
+      uuid: (): string => "sess-sweep",
+      handoffStatusReader: {
+        getStatus(_handoffId: string): Promise<string | null> {
+          return Promise.resolve(status);
+        },
+      },
     });
     await pool.createSession({ handoffId: "h-1", cwd: "/tmp", env: {}, pty: false });
     expect(pool.listSessions("h-1")).toHaveLength(1);
@@ -270,8 +296,8 @@ describe("ShellSessionPool — sweeping", () => {
     let now = new Date("2026-05-01T10:00:00Z");
     const pool = new ShellSessionPool({
       config: makeConfig({ maxSessionIdleMs: 1000 }),
-      uuid: () => "sess-idle",
-      now: () => now,
+      uuid: (): string => "sess-idle",
+      now: (): Date => now,
     });
     await pool.createSession({ handoffId: "h-1", cwd: "/tmp", env: {}, pty: false });
     now = new Date("2026-05-01T10:00:02Z");

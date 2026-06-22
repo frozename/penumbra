@@ -1,12 +1,20 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import {
+  buildServices,
+  loadProjectRegistry,
+  loadSqliteVec,
+  migrate,
+  type Services,
+} from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
-import { TestEmbedder } from "@penumbra/core/testing";
+
+import type { DaemonServices } from "../../src/serve.js";
+
 import { reloadConfigRoute } from "../../src/routes/reload-config.js";
-import { defaultProjectRegistryPath, loadProjectRegistry } from "@penumbra/core";
 
 const dirs: string[] = [];
 let prevEnv: string | undefined;
@@ -67,20 +75,18 @@ test("loadProjectRegistry rejects entries that declare both gh_repo and remote",
 });
 
 test("loadProjectRegistry returns an empty registry for a missing file", () => {
-  process.env.PENUMBRA_PROJECTS_YAML = "/nonexistent/penumbra/projects.yaml";
-  const reg = loadProjectRegistry(
-    process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath(),
-  );
+  const reg = loadProjectRegistry("/nonexistent/penumbra/projects.yaml");
   expect(reg.list().length).toBe(0);
 });
 
 test("POST /agentchat/reload refreshes the project registry snapshot", async () => {
   const services = makeServices();
+  const daemonSvc = services as unknown as DaemonServices;
   const path = writeRegistry(`projects:\n  - project_id: penumbra\n    root_path: /tmp/penumbra\n`);
 
   const first = await reloadConfigRoute(
     new Request("http://x/agentchat/reload", { method: "POST" }),
-    services,
+    daemonSvc,
   );
   expect(first.status).toBe(200);
   expect(services.projectRegistry?.list().map((entry) => entry.project_id)).toEqual(["penumbra"]);
@@ -91,7 +97,7 @@ test("POST /agentchat/reload refreshes the project registry snapshot", async () 
   );
   const second = await reloadConfigRoute(
     new Request("http://x/agentchat/reload", { method: "POST" }),
-    services,
+    daemonSvc,
   );
   expect(second.status).toBe(200);
   expect(

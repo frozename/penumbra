@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+
 import { buildFramedCommand, parseFramedOutput } from "../../src/services/shell-framing.js";
 
 describe("buildFramedCommand", () => {

@@ -1,12 +1,13 @@
-import { expect, test } from "bun:test";
+import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
-import { TestEmbedder } from "@penumbra/core/testing";
+
+import { handoffsApproveRoute, handoffsCreateRoute } from "../../src/routes/handoffs.js";
 import { WatchdogService } from "../../src/services/watchdog.js";
-import { handoffsCreateRoute, handoffsApproveRoute } from "../../src/routes/handoffs.js";
 
 try {
   if (process.platform === "darwin") {
@@ -14,6 +15,14 @@ try {
   }
 } catch {
   /* already loaded */
+}
+
+interface HandoffCreated {
+  handoff_id: string;
+}
+
+function internals(w: WatchdogService): { lastHeartbeats: Map<string, number> } {
+  return w as unknown as { lastHeartbeats: Map<string, number> };
 }
 
 function tempServices(): Services {
@@ -31,7 +40,7 @@ function tempServices(): Services {
     clock: () => new Date("2026-04-26T00:00:00Z"),
     uuid: (() => {
       let n = 0;
-      return () => `e-${++n}`;
+      return (): string => `e-${String(++n)}`;
     })(),
   });
 }
@@ -39,13 +48,13 @@ function tempServices(): Services {
 test("WatchdogService fails handoffs for timed-out workers", async () => {
   const services = tempServices();
   const watchdog = new WatchdogService(services);
-  (services as any).watchdog = watchdog;
+  services.watchdog = watchdog;
 
   const w1 = "worker-1";
   const w2 = "worker-2";
 
   // 1. Seed two handoffs for different workers
-  const c1 = await (
+  const c1 = (await (
     await handoffsCreateRoute(
       new Request("http://x", {
         method: "POST",
@@ -59,8 +68,8 @@ test("WatchdogService fails handoffs for timed-out workers", async () => {
       }),
       services,
     )
-  ).json();
-  const c2 = await (
+  ).json()) as HandoffCreated;
+  const c2 = (await (
     await handoffsCreateRoute(
       new Request("http://x", {
         method: "POST",
@@ -74,7 +83,7 @@ test("WatchdogService fails handoffs for timed-out workers", async () => {
       }),
       services,
     )
-  ).json();
+  ).json()) as HandoffCreated;
 
   await handoffsApproveRoute(
     new Request("http://x", { method: "POST", body: "{}" }),
@@ -95,8 +104,8 @@ test("WatchdogService fails handoffs for timed-out workers", async () => {
   watchdog.recordHeartbeat(w2);
 
   // 3. Simulate timeout for w1
-  (watchdog as any).lastHeartbeats.set(w1, Date.now() - 100_000); // timed out
-  (watchdog as any).lastHeartbeats.set(w2, Date.now()); // healthy
+  internals(watchdog).lastHeartbeats.set(w1, Date.now() - 100_000); // timed out
+  internals(watchdog).lastHeartbeats.set(w2, Date.now()); // healthy
 
   // 4. Tick
   await watchdog.tick();
@@ -124,17 +133,17 @@ test("WatchdogService fails handoffs for timed-out workers", async () => {
 test("WatchdogService emits notification-shaped metadata for timed-out handoffs", async () => {
   const services = tempServices();
   const events: unknown[] = [];
-  (services as any).notificationEvents = {
-    emit(event: unknown) {
+  services.notificationEvents = {
+    emit(event: unknown): void {
       events.push(event);
     },
   };
 
   const watchdog = new WatchdogService(services);
-  (services as any).watchdog = watchdog;
+  services.watchdog = watchdog;
 
   const worker_id = "worker-primary";
-  const c1 = await (
+  const c1 = (await (
     await handoffsCreateRoute(
       new Request("http://x", {
         method: "POST",
@@ -149,7 +158,7 @@ test("WatchdogService emits notification-shaped metadata for timed-out handoffs"
       }),
       services,
     )
-  ).json();
+  ).json()) as HandoffCreated;
 
   await handoffsApproveRoute(
     new Request("http://x", { method: "POST", body: "{}" }),
@@ -160,7 +169,7 @@ test("WatchdogService emits notification-shaped metadata for timed-out handoffs"
   services.handoffWriter.claimDispatch(c1.handoff_id, worker_id);
 
   watchdog.recordHeartbeat(worker_id);
-  (watchdog as any).lastHeartbeats.set(worker_id, Date.now() - 100_000);
+  internals(watchdog).lastHeartbeats.set(worker_id, Date.now() - 100_000);
 
   await watchdog.tick();
 
@@ -179,12 +188,12 @@ test("WatchdogService emits notification-shaped metadata for timed-out handoffs"
 test("WatchdogService does not fail a reassigned handoff during stale worker reap", async () => {
   const services = tempServices();
   const watchdog = new WatchdogService(services);
-  (services as any).watchdog = watchdog;
-  (services as any).orphanHandoffRecovery = undefined;
+  services.watchdog = watchdog;
+  services.orphanHandoffRecovery = undefined;
 
   const stale_worker_id = "worker-stale";
   const reassigned_worker_id = "worker-live";
-  const c1 = await (
+  const c1 = (await (
     await handoffsCreateRoute(
       new Request("http://x", {
         method: "POST",
@@ -198,7 +207,7 @@ test("WatchdogService does not fail a reassigned handoff during stale worker rea
       }),
       services,
     )
-  ).json();
+  ).json()) as HandoffCreated;
 
   await handoffsApproveRoute(
     new Request("http://x", { method: "POST", body: "{}" }),
@@ -209,13 +218,12 @@ test("WatchdogService does not fail a reassigned handoff during stale worker rea
   services.handoffWriter.claimDispatch(c1.handoff_id, stale_worker_id);
   watchdog.recordHeartbeat(stale_worker_id);
 
-  services.db.run(
-    "UPDATE handoffs SET worker_id=? WHERE handoff_id=?",
+  services.db.run("UPDATE handoffs SET worker_id=? WHERE handoff_id=?", [
     reassigned_worker_id,
     c1.handoff_id,
-  );
+  ]);
 
-  (watchdog as any).lastHeartbeats.set(stale_worker_id, Date.now() - 100_000);
+  internals(watchdog).lastHeartbeats.set(stale_worker_id, Date.now() - 100_000);
   await watchdog.tick();
 
   const row = services.handoffReader.get(c1.handoff_id);
