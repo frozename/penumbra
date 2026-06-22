@@ -1,23 +1,149 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { beforeEach, describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import {
   buildServices,
   closeLane,
   insertLane,
   loadSqliteVec,
+  type Logger,
   migrate,
+  ProjectRegistry,
   type Services,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import {
   __dispatchLandInternalsForTest,
+  type DispatchLandDeps,
   dispatchLandRoute,
   dispatchLandTaskRoute,
 } from "../../src/routes/dispatch-land.js";
 import { createDaemonFetchHandler } from "../../src/serve.js";
+
+// Internal types of DispatchLandDeps are not exported; derive them through
+// the public deps type so this test does not import internal shapes.
+type RunGitFn = DispatchLandDeps["runGit"];
+type RunGitResult = Awaited<ReturnType<RunGitFn>>;
+type RunGitOpts = NonNullable<Parameters<RunGitFn>[1]>;
+type ListPrsByHead = NonNullable<DispatchLandDeps["gh"]["listOpenPullRequestsByHead"]>;
+type GhPullRequestLite = Awaited<ReturnType<ListPrsByHead>>[number];
+type ClosePullRequest = NonNullable<DispatchLandDeps["gh"]["closePullRequest"]>;
+type GhClosePullRequestInput = Parameters<ClosePullRequest>[0];
+
+// File-local typed envelopes for the dispatch-land HTTP responses. The route
+// emits the shapes captured here; the assertions in this file only read these
+// fields. Keeping them local avoids exposing/refactoring the route module.
+interface LandResult {
+  ok: boolean;
+  commit_sha?: string;
+  message_subject?: string;
+  branch_deleted?: boolean;
+  pr_closed?: boolean;
+  worktree_torn_down?: boolean;
+  already_landed?: boolean;
+}
+interface LandError {
+  code: string;
+  step?: string;
+  files?: string[];
+  stderr?: string;
+  cleanup_stderr?: string;
+  manual_repair?: string;
+  beforeMain?: string;
+  afterMain?: string;
+  verdict?: { tests?: string; typecheck?: string };
+}
+interface AcceptedBody {
+  ok?: boolean;
+  task_id: string;
+  status: "queued" | "running" | "done" | "failed";
+  idempotent?: boolean;
+}
+interface LandTaskBody {
+  task_id: string;
+  handoff_id: string;
+  status: "queued" | "running" | "done" | "failed";
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  result: LandResult | null;
+  error: LandError | null;
+}
+interface ErrorEnvelope {
+  error: LandError;
+}
+
+async function readJsonAs<T>(res: Response): Promise<T> {
+  return (await res.json()) as T;
+}
+
+// Convert a synchronous mock implementation into the Promise-returning shape
+// the route expects. Centralises the single `Promise.resolve` wrapping needed
+// across ~30 inline mocks (eslint require-await: non-async + Promise.resolve).
+type SyncRunGit = (args: string[], opts?: RunGitOpts) => RunGitResult;
+type SyncListPrs = (head: string) => GhPullRequestLite[];
+type SyncClosePr = (input: GhClosePullRequestInput) => void;
+interface LandDepsInput {
+  runGit: SyncRunGit;
+  gh?: {
+    listOpenPullRequestsByHead?: SyncListPrs;
+    closePullRequest?: SyncClosePr;
+  };
+  now?: () => Date;
+}
+function defaultListPrs(): GhPullRequestLite[] {
+  return [];
+}
+function defaultClosePr(): void {
+  /* no-op default */
+}
+function defaultNow(): Date {
+  return new Date("2026-05-08T00:00:00.000Z");
+}
+function landDeps(input: LandDepsInput): DispatchLandDeps {
+  const listPrs: SyncListPrs = input.gh?.listOpenPullRequestsByHead ?? defaultListPrs;
+  const closePr: SyncClosePr = input.gh?.closePullRequest ?? defaultClosePr;
+  return {
+    runGit: (args, opts): Promise<RunGitResult> => Promise.resolve(input.runGit(args, opts)),
+    gh: {
+      listOpenPullRequestsByHead: (head): Promise<GhPullRequestLite[]> =>
+        Promise.resolve(listPrs(head)),
+      closePullRequest: (closeInput): Promise<void> => {
+        closePr(closeInput);
+        return Promise.resolve();
+      },
+    },
+    now: input.now ?? defaultNow,
+  };
+}
+
+// teardownWorktree is a class instance method; tests stub it by reassignment.
+// Centralise the typed assignment so callers do not need to think about it.
+type TeardownFn = Services["worktreeManager"]["teardownWorktree"];
+function stubTeardownWorktree(svc: Services, impl: TeardownFn): void {
+  svc.worktreeManager.teardownWorktree = impl;
+}
+
+// ProjectRegistry has a private field, so build a real instance from a Map.
+function stubProjectRegistry(
+  svc: Services,
+  entries: Iterable<[string, { root_path: string }]>,
+): void {
+  const map = new Map<string, { project_id: string; root_path: string }>();
+  for (const [id, entry] of entries) {
+    map.set(id, { project_id: id, root_path: entry.root_path });
+  }
+  svc.projectRegistry = new ProjectRegistry(map);
+}
+
+// Tests only stub a subset of the Logger surface (typically just `warn`).
+function stubLogWarn(svc: Services, warn: (...args: unknown[]) => void): void {
+  // pino Logger has many overloaded methods; tests only need `warn` here.
+  svc.log = { warn } as unknown as Logger;
+}
 
 function services(): Services {
   const db = new Database(":memory:");
@@ -31,7 +157,7 @@ function services(): Services {
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date("2026-05-08T00:00:00.000Z"),
-    uuid: () => `id-${++n}`,
+    uuid: () => `id-${String(++n)}`,
   });
 }
 
@@ -141,7 +267,7 @@ function writeVerdictEvent(
     typecheck: "pass" | "fail";
     tests: "pass" | "fail";
   },
-) {
+): void {
   svc.t0Writer.write({
     event_id: input.eventId,
     ts: input.ts,
@@ -208,7 +334,7 @@ function seedAgentPerformanceRow(
       | "partial"
       | "bypassed";
   },
-) {
+): void {
   svc.db
     .prepare(
       `
@@ -263,7 +389,7 @@ function seedAgentPerformanceRow(
     );
 }
 
-async function waitForLandTask(svc: Services, taskId: string): Promise<any> {
+async function waitForLandTask(svc: Services, taskId: string): Promise<LandTaskBody> {
   for (let i = 0; i < 30; i += 1) {
     const res = await dispatchLandTaskRoute(
       new Request(`http://x/dispatch/land/${taskId}`),
@@ -271,12 +397,64 @@ async function waitForLandTask(svc: Services, taskId: string): Promise<any> {
       taskId,
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as any;
+    const body = await readJsonAs<LandTaskBody>(res);
     if (body.status === "done" || body.status === "failed") return body;
     await Bun.sleep(5);
   }
   throw new Error(`task ${taskId} did not finish`);
 }
+
+// Lookup-table-driven runGit mock for the squash conflict + clean retry test.
+// Extracted out of the test body so the inline mock does not hit the sonarjs
+// cognitive-complexity cap (the test asserts on many distinct branches).
+interface ConflictMockState {
+  getDirty: () => boolean;
+  setDirty: (next: boolean) => void;
+  incRevParse: () => number;
+}
+function runGitConflict(
+  args: string[],
+  gitCalls: string[],
+  state: ConflictMockState,
+): RunGitResult {
+  const cmd = args.join(" ");
+  gitCalls.push(cmd);
+  const handler = CONFLICT_HANDLERS[cmd];
+  if (handler) return handler(state);
+  return { code: 0, stdout: "", stderr: "" };
+}
+const CONFLICT_HANDLERS: Record<string, (s: ConflictMockState) => RunGitResult> = {
+  "rev-parse main": (s) => ({
+    code: 0,
+    stdout: s.incRevParse() === 3 ? "main-after-second-land\n" : "main-before\n",
+    stderr: "",
+  }),
+  "checkout main": (s) =>
+    s.getDirty()
+      ? { code: 1, stdout: "", stderr: "you need to resolve your current index first" }
+      : { code: 0, stdout: "", stderr: "" },
+  "merge --squash agent/h-4": (s) => {
+    s.setDirty(true);
+    return { code: 1, stdout: "", stderr: "CONFLICT (content)" };
+  },
+  "diff --name-only --diff-filter=U": () => ({
+    code: 0,
+    stdout: "a.txt\nb.ts\n",
+    stderr: "",
+  }),
+  "reset --merge": (s) => {
+    s.setDirty(false);
+    return { code: 0, stdout: "", stderr: "" };
+  },
+  "status --porcelain --untracked-files=no": (s) => ({
+    code: 0,
+    stdout: s.getDirty() ? "UU a.txt\n" : "",
+    stderr: "",
+  }),
+  "merge --squash agent/h-4-clean": () => ({ code: 0, stdout: "", stderr: "" }),
+  "diff --cached --quiet": () => ({ code: 1, stdout: "", stderr: "" }),
+  "commit -F -": () => ({ code: 0, stdout: "", stderr: "" }),
+};
 
 describe("dispatchLandRoute", () => {
   test("serve.ts wires authenticated POST /dispatch/land", async () => {
@@ -296,7 +474,7 @@ describe("dispatchLandRoute", () => {
       }),
     );
     expect(res.status).toBe(404);
-    const body = (await res.json()) as any;
+    const body = await readJsonAs<ErrorEnvelope>(res);
     expect(body.error.code).toBe("not_found");
   });
 
@@ -312,10 +490,9 @@ describe("dispatchLandRoute", () => {
       tests: "pass",
     });
 
-    (svc.worktreeManager as any).teardownWorktree = async () => ({
-      worktreeRemoved: true,
-      branchDeleted: true,
-    });
+    stubTeardownWorktree(svc, () =>
+      Promise.resolve({ worktreeRemoved: true, branchDeleted: true }),
+    );
 
     const gitCalls: string[] = [];
     let revParseCount = 0;
@@ -329,8 +506,8 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      {
-        runGit: async (args: string[]) => {
+      landDeps({
+        runGit: (args: string[]) => {
           gitCalls.push(args.join(" "));
           if (args[0] === "log") {
             return {
@@ -352,15 +529,17 @@ describe("dispatchLandRoute", () => {
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {
-          listOpenPullRequestsByHead: async () => [],
-          closePullRequest: async () => {},
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
         },
         now: () => new Date("2026-05-08T00:04:00.000Z"),
-      } as any,
+      }),
     );
 
     expect(post.status).toBe(202);
-    const accepted = (await post.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(post);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
     expect(body.result).toMatchObject({
@@ -384,12 +563,8 @@ describe("dispatchLandRoute", () => {
       typecheck: "pass",
       tests: "pass",
     });
-    const runGitCwd: Array<string | undefined> = [];
-    (svc as any).projectRegistry = {
-      get: (projectId: string) =>
-        projectId === "other-project" ? { root_path: "/tmp/other-repo-path" } : undefined,
-      list: () => [{ project_id: "other-project", root_path: "/tmp/other-repo-path" }],
-    };
+    const runGitCwd: (string | undefined)[] = [];
+    stubProjectRegistry(svc, [["other-project", { root_path: "/tmp/other-repo-path" }]]);
 
     const post = await dispatchLandRoute(
       new Request("http://x/dispatch/land", {
@@ -402,8 +577,8 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      {
-        runGit: async (args: string[], opts?: { stdin?: string; cwd?: string }) => {
+      landDeps({
+        runGit: (args: string[], opts?: { stdin?: string; cwd?: string }) => {
           runGitCwd.push(opts?.cwd);
           if (args[0] === "rev-parse") {
             return {
@@ -417,15 +592,17 @@ describe("dispatchLandRoute", () => {
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {
-          listOpenPullRequestsByHead: async () => [],
-          closePullRequest: async () => {},
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
         },
         now: () => new Date("2026-05-08T00:04:00.000Z"),
-      } as any,
+      }),
     );
 
     expect(post.status).toBe(202);
-    const accepted = (await post.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(post);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
     expect(body.result).toMatchObject({
@@ -462,8 +639,8 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      {
-        runGit: async (args: string[]) => {
+      landDeps({
+        runGit: (args: string[]) => {
           if (args[0] === "rev-parse") {
             revParseCount += 1;
             return {
@@ -478,15 +655,17 @@ describe("dispatchLandRoute", () => {
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {
-          listOpenPullRequestsByHead: async () => [],
-          closePullRequest: async () => {},
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
         },
         now: () => new Date("2026-05-08T00:04:00.000Z"),
-      } as any,
+      }),
     );
 
     expect(post.status).toBe(202);
-    const accepted = (await post.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(post);
     expect(accepted.task_id).toBeDefined();
     expect(accepted.status).toBe("queued");
 
@@ -525,8 +704,8 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      {
-        runGit: async (args: string[]) => {
+      landDeps({
+        runGit: (args: string[]) => {
           if (args[0] === "rev-parse" && args[1] === "main") {
             revParseCount += 1;
             return {
@@ -540,15 +719,17 @@ describe("dispatchLandRoute", () => {
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {
-          listOpenPullRequestsByHead: async () => [],
-          closePullRequest: async () => {},
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
         },
         now: () => new Date("2026-05-08T00:04:00.000Z"),
-      } as any,
+      }),
     );
 
     expect(res.status).toBe(202);
-    const accepted = (await res.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
     expect(body.result.commit_sha).toBe("post-merge-main");
@@ -566,14 +747,13 @@ describe("dispatchLandRoute", () => {
       tests: "pass",
     });
 
-    const gitCalls: Array<{ args: string[]; stdin?: string }> = [];
+    const gitCalls: { args: string[]; stdin?: string }[] = [];
     let revParseCount = 0;
-    (svc.worktreeManager as any).teardownWorktree = async () => ({
-      worktreeRemoved: true,
-      branchDeleted: true,
-    });
-    const deps = {
-      runGit: async (args: string[], opts?: { stdin?: string }) => {
+    stubTeardownWorktree(svc, () =>
+      Promise.resolve({ worktreeRemoved: true, branchDeleted: true }),
+    );
+    const deps = landDeps({
+      runGit: (args, opts) => {
         gitCalls.push({ args, stdin: opts?.stdin });
         if (args[0] === "rev-parse" && args[1] === "main") {
           revParseCount += 1;
@@ -585,14 +765,16 @@ describe("dispatchLandRoute", () => {
         return { code: 0, stdout: "", stderr: "" };
       },
       gh: {
-        listOpenPullRequestsByHead: async (head: string) => {
+        listOpenPullRequestsByHead: (head) => {
           if (head !== "agent/h-1") throw new Error(`unexpected head ${head}`);
           return [{ number: 77 }];
         },
-        closePullRequest: async () => {},
+        closePullRequest: () => {
+          /* recorded by the test below via closed.push */
+        },
       },
       now: () => new Date("2026-05-08T00:02:00.000Z"),
-    };
+    });
 
     const res = await dispatchLandRoute(
       new Request("http://x/dispatch/land", {
@@ -605,11 +787,11 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      deps as any,
+      deps,
     );
 
     expect(res.status).toBe(202);
-    const accepted = (await res.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
     expect(body.result.ok).toBe(true);
@@ -635,7 +817,7 @@ describe("dispatchLandRoute", () => {
       >(`SELECT event_type, payload_json FROM t0_events WHERE event_type='dispatch.landed' ORDER BY ts DESC LIMIT 1`)
       .get();
     expect(landed?.event_type).toBe("dispatch.landed");
-    const payload = JSON.parse(landed?.payload_json ?? "{}");
+    const payload = JSON.parse(landed?.payload_json ?? "{}") as Record<string, unknown>;
     expect(payload).toMatchObject({
       handoff_id: "h-1",
       conversation_id: "c-1",
@@ -680,8 +862,8 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      {
-        runGit: async (args: string[]) => {
+      landDeps({
+        runGit: (args: string[]) => {
           if (args[0] === "rev-parse") {
             revParseCount += 1;
             return {
@@ -696,15 +878,17 @@ describe("dispatchLandRoute", () => {
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {
-          listOpenPullRequestsByHead: async () => [],
-          closePullRequest: async () => {},
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
         },
         now: () => new Date("2026-05-08T00:04:00.000Z"),
-      } as any,
+      }),
     );
 
     expect(res.status).toBe(202);
-    const accepted = (await res.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
     expect(body.result.ok).toBe(true);
@@ -743,10 +927,9 @@ describe("dispatchLandRoute", () => {
       outcome: "no_changes",
     });
 
-    (svc.worktreeManager as any).teardownWorktree = async () => ({
-      worktreeRemoved: true,
-      branchDeleted: true,
-    });
+    stubTeardownWorktree(svc, () =>
+      Promise.resolve({ worktreeRemoved: true, branchDeleted: true }),
+    );
 
     const gitCalls: string[] = [];
     const closed: number[] = [];
@@ -761,8 +944,8 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      {
-        runGit: async (args: string[]) => {
+      landDeps({
+        runGit: (args: string[]) => {
           const cmd = args.join(" ");
           gitCalls.push(cmd);
           if (cmd === "rev-parse main") {
@@ -777,17 +960,17 @@ describe("dispatchLandRoute", () => {
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {
-          listOpenPullRequestsByHead: async () => [{ number: 88 }],
-          closePullRequest: async (input: { number: number }) => {
+          listOpenPullRequestsByHead: () => [{ number: 88 }],
+          closePullRequest: (input: { number: number }) => {
             closed.push(input.number);
           },
         },
         now: () => new Date("2026-05-08T00:04:00.000Z"),
-      } as any,
+      }),
     );
 
     expect(res.status).toBe(202);
-    const accepted = (await res.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
     expect(body.result).toMatchObject({
@@ -863,8 +1046,8 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      {
-        runGit: async (args: string[]) => {
+      landDeps({
+        runGit: (args: string[]) => {
           if (args[0] === "rev-parse" && args[1] === "main") {
             return { code: 0, stdout: `${realCommit}\n`, stderr: "" };
           }
@@ -874,15 +1057,17 @@ describe("dispatchLandRoute", () => {
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {
-          listOpenPullRequestsByHead: async () => [],
-          closePullRequest: async () => {},
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
         },
         now: () => new Date("2026-05-08T00:04:00.000Z"),
-      } as any,
+      }),
     );
 
     expect(post.status).toBe(202);
-    const accepted = (await post.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(post);
     const terminal = await waitForLandTask(svc, accepted.task_id);
     expect(terminal.status).toBe("done");
 
@@ -957,8 +1142,8 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      {
-        runGit: async (args: string[]) => {
+      landDeps({
+        runGit: (args: string[]) => {
           if (args[0] === "rev-parse" && args[1] === "main") {
             return { code: 0, stdout: `${realCommit}\n`, stderr: "" };
           }
@@ -968,15 +1153,17 @@ describe("dispatchLandRoute", () => {
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {
-          listOpenPullRequestsByHead: async () => [],
-          closePullRequest: async () => {},
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
         },
         now: () => new Date("2026-05-08T00:04:00.000Z"),
-      } as any,
+      }),
     );
 
     expect(post.status).toBe(202);
-    const accepted = (await post.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(post);
     const terminal = await waitForLandTask(svc, accepted.task_id);
     expect(terminal.status).toBe("done");
     expect(terminal.error).toBeNull();
@@ -999,7 +1186,7 @@ describe("dispatchLandRoute", () => {
       tests: "pass",
     });
 
-    const gitCalls: Array<string> = [];
+    const gitCalls: string[] = [];
     let revParseCount = 0;
     const res = await dispatchLandRoute(
       new Request("http://x/dispatch/land", {
@@ -1012,8 +1199,8 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      {
-        runGit: async (args: string[]) => {
+      landDeps({
+        runGit: (args: string[]) => {
           gitCalls.push(args.join(" "));
           if (args[0] === "rev-parse") {
             revParseCount += 1;
@@ -1026,15 +1213,17 @@ describe("dispatchLandRoute", () => {
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {
-          listOpenPullRequestsByHead: async () => [],
-          closePullRequest: async () => {},
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
         },
         now: () => new Date("2026-05-08T00:03:00.000Z"),
-      } as any,
+      }),
     );
 
     expect(res.status).toBe(202);
-    const accepted = (await res.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
     expect(body.result.commit_sha).toBe("ff-main");
@@ -1077,15 +1266,10 @@ describe("dispatchLandRoute", () => {
     const agentTip = expectGitOk(repoDir, ["rev-parse", "agent/h-ff-non-main"]);
     expectGitOk(repoDir, ["checkout", "other"]);
 
-    (svc as any).projectRegistry = {
-      get: (projectId: string) =>
-        projectId === "project-ff-non-main" ? { root_path: repoDir } : undefined,
-      list: () => [{ project_id: "project-ff-non-main", root_path: repoDir }],
-    };
-    (svc.worktreeManager as any).teardownWorktree = async () => ({
-      worktreeRemoved: false,
-      branchDeleted: false,
-    });
+    stubProjectRegistry(svc, [["project-ff-non-main", { root_path: repoDir }]]);
+    stubTeardownWorktree(svc, () =>
+      Promise.resolve({ worktreeRemoved: false, branchDeleted: false }),
+    );
 
     const gitCalls: string[] = [];
     const res = await dispatchLandRoute(
@@ -1099,21 +1283,23 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      {
-        runGit: async (args: string[], opts?: { cwd?: string }) => {
+      landDeps({
+        runGit: (args: string[], opts?: { cwd?: string }) => {
           gitCalls.push(args.join(" "));
           return runGitSync(opts?.cwd ?? repoDir, args);
         },
         gh: {
-          listOpenPullRequestsByHead: async () => [],
-          closePullRequest: async () => {},
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
         },
         now: () => new Date("2026-05-08T00:03:00.000Z"),
-      } as any,
+      }),
     );
 
     expect(res.status).toBe(202);
-    const accepted = (await res.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
     expect(body.result.commit_sha).toBe(agentTip);
@@ -1149,10 +1335,9 @@ describe("dispatchLandRoute", () => {
       outcome: "no_changes",
     });
 
-    (svc.worktreeManager as any).teardownWorktree = async () => ({
-      worktreeRemoved: true,
-      branchDeleted: true,
-    });
+    stubTeardownWorktree(svc, () =>
+      Promise.resolve({ worktreeRemoved: true, branchDeleted: true }),
+    );
 
     const gitCalls: string[] = [];
     const closed: number[] = [];
@@ -1168,8 +1353,8 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      {
-        runGit: async (args: string[]) => {
+      landDeps({
+        runGit: (args: string[]) => {
           gitCalls.push(args.join(" "));
           if (args[0] === "rev-parse" && args[1] === "main") {
             revParseCount += 1;
@@ -1181,17 +1366,17 @@ describe("dispatchLandRoute", () => {
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {
-          listOpenPullRequestsByHead: async () => [{ number: 88 }],
-          closePullRequest: async (input: { number: number }) => {
+          listOpenPullRequestsByHead: () => [{ number: 88 }],
+          closePullRequest: (input: { number: number }) => {
             closed.push(input.number);
           },
         },
         now: () => new Date("2026-05-08T00:03:00.000Z"),
-      } as any,
+      }),
     );
 
     expect(res.status).toBe(202);
-    const accepted = (await res.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
     expect(body.result).toMatchObject({
@@ -1251,10 +1436,10 @@ describe("dispatchLandRoute", () => {
     });
 
     let teardownCalled = false;
-    (svc.worktreeManager as any).teardownWorktree = async () => {
+    stubTeardownWorktree(svc, () => {
       teardownCalled = true;
-      return { worktreeRemoved: true, branchDeleted: true };
-    };
+      return Promise.resolve({ worktreeRemoved: true, branchDeleted: true });
+    });
 
     const res = await dispatchLandRoute(
       new Request("http://x/dispatch/land", {
@@ -1267,8 +1452,8 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      {
-        runGit: async (args: string[]) => {
+      landDeps({
+        runGit: (args: string[]) => {
           if (args[0] === "rev-parse" && args[1] === "main") {
             return { code: 0, stdout: "stale-main\n", stderr: "" };
           }
@@ -1278,19 +1463,19 @@ describe("dispatchLandRoute", () => {
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {
-          listOpenPullRequestsByHead: async () => {
+          listOpenPullRequestsByHead: () => {
             throw new Error("PR close should not run");
           },
-          closePullRequest: async () => {
+          closePullRequest: () => {
             throw new Error("PR close should not run");
           },
         },
         now: () => new Date("2026-05-08T00:03:00.000Z"),
-      } as any,
+      }),
     );
 
     expect(res.status).toBe(202);
-    const accepted = (await res.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("failed");
     expect(body.error).toMatchObject({
@@ -1339,23 +1524,25 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      {
-        runGit: async () => {
+      landDeps({
+        runGit: () => {
           called = true;
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {
-          listOpenPullRequestsByHead: async () => [],
-          closePullRequest: async () => {},
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
         },
-      } as any,
+      }),
     );
 
     expect(res.status).toBe(409);
     expect(called).toBe(false);
-    const body = (await res.json()) as any;
+    const body = await readJsonAs<ErrorEnvelope>(res);
     expect(body.error.code).toBe("verdict_unverified");
-    expect(body.error.verdict.tests).toBe("fail");
+    expect(body.error.verdict?.tests).toBe("fail");
   });
 
   test("auto-accepts verdict_unverified gate when dispatch audit is trustworthy + recommends accept", async () => {
@@ -1434,8 +1621,8 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      {
-        runGit: async (args: string[]) => {
+      landDeps({
+        runGit: (args: string[]) => {
           if (args[0] === "rev-parse") {
             revParseCount += 1;
             return {
@@ -1450,15 +1637,17 @@ describe("dispatchLandRoute", () => {
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {
-          listOpenPullRequestsByHead: async () => [],
-          closePullRequest: async () => {},
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
         },
         now: () => new Date("2026-05-08T00:04:00.000Z"),
-      } as any,
+      }),
     );
 
     expect(res.status).toBe(202);
-    const accepted = (await res.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
     expect(body.result.commit_sha).toBe("new-main");
@@ -1485,49 +1674,23 @@ describe("dispatchLandRoute", () => {
       tests: "pass",
     });
 
-    const gitCalls: Array<string> = [];
+    const gitCalls: string[] = [];
     let dirtyIndex = false;
     let revParseCount = 0;
-    const deps = {
-      runGit: async (args: string[]) => {
-        const cmd = args.join(" ");
-        gitCalls.push(cmd);
-        if (cmd === "rev-parse main") {
-          revParseCount += 1;
-          return {
-            code: 0,
-            stdout: revParseCount === 3 ? "main-after-second-land\n" : "main-before\n",
-            stderr: "",
-          };
-        }
-        if (cmd === "checkout main") {
-          if (dirtyIndex)
-            return { code: 1, stdout: "", stderr: "you need to resolve your current index first" };
-          return { code: 0, stdout: "", stderr: "" };
-        }
-        if (cmd === "merge --squash agent/h-4") {
-          dirtyIndex = true;
-          return { code: 1, stdout: "", stderr: "CONFLICT (content)" };
-        }
-        if (cmd === "diff --name-only --diff-filter=U")
-          return { code: 0, stdout: "a.txt\nb.ts\n", stderr: "" };
-        if (cmd === "reset --merge") {
-          dirtyIndex = false;
-          return { code: 0, stdout: "", stderr: "" };
-        }
-        if (cmd === "status --porcelain --untracked-files=no")
-          return { code: 0, stdout: dirtyIndex ? "UU a.txt\n" : "", stderr: "" };
-        if (cmd === "merge --squash agent/h-4-clean") return { code: 0, stdout: "", stderr: "" };
-        if (cmd === "diff --cached --quiet") return { code: 1, stdout: "", stderr: "" };
-        if (cmd === "commit -F -") return { code: 0, stdout: "", stderr: "" };
-        return { code: 0, stdout: "", stderr: "" };
-      },
-      gh: {
-        listOpenPullRequestsByHead: async () => [],
-        closePullRequest: async () => {},
-      },
+    const deps = landDeps({
+      runGit: (args) =>
+        runGitConflict(args, gitCalls, {
+          getDirty: () => dirtyIndex,
+          setDirty: (v) => {
+            dirtyIndex = v;
+          },
+          incRevParse: () => {
+            revParseCount += 1;
+            return revParseCount;
+          },
+        }),
       now: () => new Date("2026-05-08T00:04:00.000Z"),
-    } as any;
+    });
 
     const res = await dispatchLandRoute(
       new Request("http://x/dispatch/land", {
@@ -1543,7 +1706,7 @@ describe("dispatchLandRoute", () => {
     );
 
     expect(res.status).toBe(202);
-    const accepted = (await res.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("failed");
     expect(body.error.code).toBe("merge_conflict");
@@ -1572,7 +1735,7 @@ describe("dispatchLandRoute", () => {
       deps,
     );
     expect(retry.status).toBe(202);
-    const retryAccepted = (await retry.json()) as any;
+    const retryAccepted = await readJsonAs<AcceptedBody>(retry);
     const retryBody = await waitForLandTask(svc, retryAccepted.task_id);
     expect(retryBody.status).toBe("done");
     expect(retryBody.result.commit_sha).toBe("main-after-second-land");
@@ -1591,7 +1754,7 @@ describe("dispatchLandRoute", () => {
       tests: "pass",
     });
 
-    const gitCalls: Array<string> = [];
+    const gitCalls: string[] = [];
     const res = await dispatchLandRoute(
       new Request("http://x/dispatch/land", {
         method: "POST",
@@ -1602,8 +1765,8 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      {
-        runGit: async (args: string[]) => {
+      landDeps({
+        runGit: (args: string[]) => {
           const cmd = args.join(" ");
           gitCalls.push(cmd);
           if (cmd === "rev-parse main") return { code: 0, stdout: "main-before\n", stderr: "" };
@@ -1621,14 +1784,16 @@ describe("dispatchLandRoute", () => {
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {
-          listOpenPullRequestsByHead: async () => [],
-          closePullRequest: async () => {},
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
         },
-      } as any,
+      }),
     );
 
     expect(res.status).toBe(202);
-    const accepted = (await res.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("failed");
     expect(body.error.code).toBe("merge_conflict_cleanup_failed");
@@ -1658,9 +1823,9 @@ describe("dispatchLandRoute", () => {
       tests: "pass",
     });
 
-    const gitCalls: Array<string> = [];
-    const deps = {
-      runGit: async (args: string[]) => {
+    const gitCalls: string[] = [];
+    const deps = landDeps({
+      runGit: (args) => {
         const cmd = args.join(" ");
         gitCalls.push(cmd);
         if (cmd === "rev-parse main") return { code: 0, stdout: "main-before\n", stderr: "" };
@@ -1669,12 +1834,8 @@ describe("dispatchLandRoute", () => {
         if (cmd === "diff --name-only --diff-filter=U") return { code: 0, stdout: "", stderr: "" };
         return { code: 0, stdout: "", stderr: "" };
       },
-      gh: {
-        listOpenPullRequestsByHead: async () => [],
-        closePullRequest: async () => {},
-      },
       now: () => new Date("2026-05-08T00:06:00.000Z"),
-    } as any;
+    });
 
     const res = await dispatchLandRoute(
       new Request("http://x/dispatch/land", {
@@ -1690,7 +1851,7 @@ describe("dispatchLandRoute", () => {
     );
 
     expect(res.status).toBe(202);
-    const accepted = (await res.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("failed");
     expect(body.error.code).toBe("git_failed");
@@ -1711,7 +1872,7 @@ describe("dispatchLandRoute", () => {
       tests: "pass",
     });
 
-    const gitCalls: Array<string> = [];
+    const gitCalls: string[] = [];
     let stagedSquashResidue = false;
     let revParseCount = 0;
     const res = await dispatchLandRoute(
@@ -1724,8 +1885,8 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      {
-        runGit: async (args: string[]) => {
+      landDeps({
+        runGit: (args: string[]) => {
           const cmd = args.join(" ");
           gitCalls.push(cmd);
           if (cmd === "rev-parse main") {
@@ -1760,14 +1921,16 @@ describe("dispatchLandRoute", () => {
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {
-          listOpenPullRequestsByHead: async () => [],
-          closePullRequest: async () => {},
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
         },
-      } as any,
+      }),
     );
 
     expect(res.status).toBe(202);
-    const accepted = (await res.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("failed");
     expect(body.error.code).toBe("commit_hook_failed");
@@ -1837,21 +2000,23 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      {
-        runGit: async () => {
+      landDeps({
+        runGit: () => {
           called = true;
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {
-          listOpenPullRequestsByHead: async () => [],
-          closePullRequest: async () => {},
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
         },
-      } as any,
+      }),
     );
 
     expect(res.status).toBe(409);
     expect(called).toBe(false);
-    const body = (await res.json()) as any;
+    const body = await readJsonAs<ErrorEnvelope>(res);
     expect(body.error.code).toBe("merge_conflict");
     expect(body.error.files).toEqual(["packages/core/src/a.ts", "packages/daemon/src/b.ts"]);
   });
@@ -1868,21 +2033,16 @@ describe("dispatchLandRoute", () => {
       tests: "pass",
     });
 
-    const teardownCalls: Array<{
+    const teardownCalls: {
       handoffId: string;
       force: boolean | undefined;
       projectId: string | undefined;
       deleteBranch: boolean | undefined;
-    }> = [];
-    (svc.worktreeManager as any).teardownWorktree = async (
-      handoffId: string,
-      force?: boolean,
-      projectId?: string,
-      deleteBranch?: boolean,
-    ) => {
+    }[] = [];
+    stubTeardownWorktree(svc, (handoffId, force, projectId, deleteBranch) => {
       teardownCalls.push({ handoffId, force, projectId, deleteBranch });
-      return { worktreeRemoved: true, branchDeleted: true };
-    };
+      return Promise.resolve({ worktreeRemoved: true, branchDeleted: true });
+    });
 
     const res = await dispatchLandRoute(
       new Request("http://x/dispatch/land", {
@@ -1895,21 +2055,26 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      {
-        runGit: async (args: string[]) => {
+      landDeps({
+        runGit: (args: string[]) => {
           if (args[0] === "rev-parse") return { code: 0, stdout: "sha-wt-1\n", stderr: "" };
           if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--quiet") {
             return { code: 1, stdout: "", stderr: "" };
           }
           return { code: 0, stdout: "", stderr: "" };
         },
-        gh: { listOpenPullRequestsByHead: async () => [], closePullRequest: async () => {} },
+        gh: {
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
+        },
         now: () => new Date("2026-05-08T00:04:00.000Z"),
-      } as any,
+      }),
     );
 
     expect(res.status).toBe(202);
-    const accepted = (await res.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
     expect(body.result.worktree_torn_down).toBe(true);
@@ -1937,10 +2102,9 @@ describe("dispatchLandRoute", () => {
       tests: "pass",
     });
 
-    (svc.worktreeManager as any).teardownWorktree = async () => ({
-      worktreeRemoved: true,
-      branchDeleted: true,
-    });
+    stubTeardownWorktree(svc, () =>
+      Promise.resolve({ worktreeRemoved: true, branchDeleted: true }),
+    );
 
     const res = await dispatchLandRoute(
       new Request("http://x/dispatch/land", {
@@ -1953,21 +2117,26 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      {
-        runGit: async (args: string[]) => {
+      landDeps({
+        runGit: (args: string[]) => {
           if (args[0] === "rev-parse") return { code: 0, stdout: "sha-open-lane\n", stderr: "" };
           if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--quiet") {
             return { code: 1, stdout: "", stderr: "" };
           }
           return { code: 0, stdout: "", stderr: "" };
         },
-        gh: { listOpenPullRequestsByHead: async () => [], closePullRequest: async () => {} },
+        gh: {
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
+        },
         now: () => new Date("2026-05-08T00:04:00.000Z"),
-      } as any,
+      }),
     );
 
     expect(res.status).toBe(202);
-    const accepted = (await res.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
 
@@ -1992,12 +2161,12 @@ describe("dispatchLandRoute", () => {
       tests: "pass",
     });
 
-    (svc.worktreeManager as any).teardownWorktree = async () => {
-      throw new Error("simulated teardown failure");
-    };
+    stubTeardownWorktree(svc, () => Promise.reject(new Error("simulated teardown failure")));
 
-    const warnCalls: Array<unknown[]> = [];
-    (svc as any).log = { warn: (...args: unknown[]) => warnCalls.push(args) };
+    const warnCalls: unknown[][] = [];
+    stubLogWarn(svc, (...args) => {
+      warnCalls.push(args);
+    });
 
     const res = await dispatchLandRoute(
       new Request("http://x/dispatch/land", {
@@ -2010,21 +2179,26 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      {
-        runGit: async (args: string[]) => {
+      landDeps({
+        runGit: (args: string[]) => {
           if (args[0] === "rev-parse") return { code: 0, stdout: "sha-wt-2\n", stderr: "" };
           if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--quiet") {
             return { code: 1, stdout: "", stderr: "" };
           }
           return { code: 0, stdout: "", stderr: "" };
         },
-        gh: { listOpenPullRequestsByHead: async () => [], closePullRequest: async () => {} },
+        gh: {
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
+        },
         now: () => new Date("2026-05-08T00:04:00.000Z"),
-      } as any,
+      }),
     );
 
     expect(res.status).toBe(202);
-    const accepted = (await res.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
     expect(body.result.ok).toBe(true);
@@ -2046,10 +2220,9 @@ describe("dispatchLandRoute", () => {
       tests: "pass",
     });
 
-    (svc.worktreeManager as any).teardownWorktree = async () => ({
-      worktreeRemoved: false,
-      branchDeleted: false,
-    });
+    stubTeardownWorktree(svc, () =>
+      Promise.resolve({ worktreeRemoved: false, branchDeleted: false }),
+    );
 
     const res = await dispatchLandRoute(
       new Request("http://x/dispatch/land", {
@@ -2062,21 +2235,26 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      {
-        runGit: async (args: string[]) => {
+      landDeps({
+        runGit: (args: string[]) => {
           if (args[0] === "rev-parse") return { code: 0, stdout: "sha-wt-3\n", stderr: "" };
           if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--quiet") {
             return { code: 1, stdout: "", stderr: "" };
           }
           return { code: 0, stdout: "", stderr: "" };
         },
-        gh: { listOpenPullRequestsByHead: async () => [], closePullRequest: async () => {} },
+        gh: {
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
+        },
         now: () => new Date("2026-05-08T00:04:00.000Z"),
-      } as any,
+      }),
     );
 
     expect(res.status).toBe(202);
-    const accepted = (await res.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
     expect(body.result.ok).toBe(true);
@@ -2106,8 +2284,8 @@ describe("dispatchLandRoute", () => {
         }),
       }),
       svc,
-      {
-        runGit: async (args: string[]) => {
+      landDeps({
+        runGit: (args: string[]) => {
           if (args[0] === "rev-parse") return { code: 0, stdout: "same-main\n", stderr: "" };
           if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--quiet") {
             return { code: 1, stdout: "", stderr: "" };
@@ -2115,17 +2293,17 @@ describe("dispatchLandRoute", () => {
           return { code: 0, stdout: "", stderr: "" };
         },
         gh: {
-          listOpenPullRequestsByHead: async () => [],
-          closePullRequest: async (input: { number: number }) => {
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: (input: { number: number }) => {
             closed.push(input.number);
           },
         },
         now: () => new Date("2026-05-08T00:04:00.000Z"),
-      } as any,
+      }),
     );
 
     expect(res.status).toBe(202);
-    const accepted = (await res.json()) as any;
+    const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
     expect(body.result.pr_closed).toBe(false);
@@ -2153,7 +2331,17 @@ describe("dispatchLandTasks eviction", () => {
       created_at: finishedAtIso,
       started_at: finishedAtIso,
       finished_at: finishedAtIso,
-      result: status === "done" ? ({ ok: true } as any) : null,
+      result:
+        status === "done"
+          ? {
+              ok: true as const,
+              commit_sha: "fake",
+              message_subject: "",
+              branch_deleted: false,
+              pr_closed: false,
+              worktree_torn_down: false,
+            }
+          : null,
       error: status === "failed" ? { code: "fake" } : null,
     });
   }
@@ -2270,7 +2458,10 @@ describe("dispatchLandTasks eviction", () => {
   test("eviction is a no-op when under cap and within TTL", () => {
     const freshTs = "2026-05-08T00:59:30.000Z";
     const ids = ["evict-noop-1", "evict-noop-2", "evict-noop-3", "evict-noop-queued"];
-    for (let i = 0; i < 3; i += 1) seedTerminalEntry(ids[i]!, `h-${ids[i]}`, "done", freshTs);
+    for (let i = 0; i < 3; i += 1) {
+      const id = ids[i]!;
+      seedTerminalEntry(id, `h-${id}`, "done", freshTs);
+    }
     seedInFlightEntry("evict-noop-queued", "h-evict-noop-queued", "queued");
 
     const before = __dispatchLandInternalsForTest.tasks.size;
