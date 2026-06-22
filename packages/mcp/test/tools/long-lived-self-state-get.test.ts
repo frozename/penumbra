@@ -1,41 +1,24 @@
-import { describe, it, expect } from "bun:test";
-import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "@penumbra/core";
-import { applySchema } from "@penumbra/core/db/schema";
-import { reconcileLongLivedAgents } from "@penumbra/daemon/long-lived/reconciler";
 import { handleLongLivedSelfStateGet } from "@penumbra/mcp/tools/long-lived-self-state-get";
+import { Database } from "bun:sqlite";
+import { describe, expect, it } from "bun:test";
 
-function seed(db: Database) {
-  loadSqliteVec(db);
-  applySchema(db, { embeddingDim: 384 });
-  reconcileLongLivedAgents(
-    db,
-    [
-      {
-        name: "a",
-        long_lived: true,
-        long_lived_config: {
-          schedule_cron: "*/15 * * * *",
-          subscriptions: [],
-          mcp_allowlist: [],
-          bounds: { wall_clock_ms: 1, cost_cents: 1, max_sub_dispatches: 0 },
-          circuit_breaker_threshold: 3,
-          standing_brief: "x",
-        },
-      } as any,
-    ],
-    { now: 1 },
-  );
-  db.query(
-    "INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES ('tick-a', 'a', 'manual', 1)",
-  ).run();
+import {
+  insertLongLivedTick,
+  reconcileLongLivedTestAgents,
+  seedLongLivedAgent,
+} from "./long-lived-fixtures.js";
+
+function seedDb(): Database {
+  const db = new Database(":memory:");
+  seedLongLivedAgent(db, { name: "a", standing_brief: "x" });
+  insertLongLivedTick(db, { tick_id: "tick-a", agent_id: "a" });
+  return db;
 }
 
 describe("long_lived_self_state_get", () => {
-  it("returns the running agent's working memory", async () => {
-    const db = new Database(":memory:");
-    seed(db);
-    const result = await handleLongLivedSelfStateGet(
+  it("returns the running agent's working memory", () => {
+    const db = seedDb();
+    const result = handleLongLivedSelfStateGet(
       db,
       { running_agent_id: "a", running_tick_id: "tick-a" },
       {},
@@ -44,71 +27,48 @@ describe("long_lived_self_state_get", () => {
     expect(result.working_memory.pending_goals).toEqual([]);
   });
 
-  it("errors when running_agent_id is missing", async () => {
-    const db = new Database(":memory:");
-    seed(db);
-    await expect(handleLongLivedSelfStateGet(db, {}, {})).rejects.toThrow(
+  it("errors when running_agent_id is missing", () => {
+    const db = seedDb();
+    expect(() => handleLongLivedSelfStateGet(db, {}, {})).toThrow(/no_running_long_lived_tick/);
+  });
+
+  it("errors when running_tick_id is missing", () => {
+    const db = seedDb();
+    expect(() => handleLongLivedSelfStateGet(db, { running_agent_id: "a" }, {})).toThrow(
       /no_running_long_lived_tick/,
     );
   });
 
-  it("errors when running_tick_id is missing", async () => {
-    const db = new Database(":memory:");
-    seed(db);
-    await expect(handleLongLivedSelfStateGet(db, { running_agent_id: "a" }, {})).rejects.toThrow(
-      /no_running_long_lived_tick/,
-    );
-  });
-
-  it("errors with unknown_long_lived_tick when running_tick_id does not exist", async () => {
-    const db = new Database(":memory:");
-    seed(db);
-    await expect(
+  it("errors with unknown_long_lived_tick when running_tick_id does not exist", () => {
+    const db = seedDb();
+    expect(() =>
       handleLongLivedSelfStateGet(
         db,
         { running_agent_id: "a", running_tick_id: "tick-missing" },
         {},
       ),
-    ).rejects.toThrow(/unknown_long_lived_tick/);
+    ).toThrow(/unknown_long_lived_tick/);
   });
 
-  it("errors with cross_identity_long_lived when tick belongs to another agent", async () => {
-    const db = new Database(":memory:");
-    seed(db);
-    reconcileLongLivedAgents(
-      db,
-      [
-        {
-          name: "b",
-          long_lived: true,
-          long_lived_config: {
-            schedule_cron: "*/15 * * * *",
-            subscriptions: [],
-            mcp_allowlist: [],
-            bounds: { wall_clock_ms: 1, cost_cents: 1, max_sub_dispatches: 0 },
-            circuit_breaker_threshold: 3,
-            standing_brief: "y",
-          },
-        } as any,
-      ],
-      { now: 1 },
-    );
-    db.query(
-      "INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES ('tick-b', 'b', 'manual', 1)",
-    ).run();
-    await expect(
+  it("errors with cross_identity_long_lived when tick belongs to another agent", () => {
+    const db = seedDb();
+    reconcileLongLivedTestAgents(db, [
+      { name: "a", standing_brief: "x" },
+      { name: "b", standing_brief: "y" },
+    ]);
+    insertLongLivedTick(db, { tick_id: "tick-b", agent_id: "b" });
+    expect(() =>
       handleLongLivedSelfStateGet(db, { running_agent_id: "a", running_tick_id: "tick-b" }, {}),
-    ).rejects.toThrow(/cross_identity_long_lived/);
+    ).toThrow(/cross_identity_long_lived/);
   });
 
-  it("errors with tick_terminal_status_set when tick is already terminal", async () => {
-    const db = new Database(":memory:");
-    seed(db);
+  it("errors with tick_terminal_status_set when tick is already terminal", () => {
+    const db = seedDb();
     db.query(
       "UPDATE long_lived_ticks SET outcome='failed', completed_at=2 WHERE id='tick-a'",
     ).run();
-    await expect(
+    expect(() =>
       handleLongLivedSelfStateGet(db, { running_agent_id: "a", running_tick_id: "tick-a" }, {}),
-    ).rejects.toThrow(/tick_terminal_status_set/);
+    ).toThrow(/tick_terminal_status_set/);
   });
 });

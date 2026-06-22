@@ -1,80 +1,92 @@
-import { describe, it, expect, mock } from "bun:test";
+import { handleLongLivedInjectGoal } from "@penumbra/mcp/tools/long-lived-inject-goal";
 import { Database } from "bun:sqlite";
+import { describe, expect, it, mock } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadSqliteVec } from "@penumbra/core";
-import { applySchema } from "@penumbra/core/db/schema";
-import { reconcileLongLivedAgents } from "@penumbra/daemon/long-lived/reconciler";
-import { handleLongLivedInjectGoal } from "@penumbra/mcp/tools/long-lived-inject-goal";
 
-function seed(db: Database, scheduleCron: string | null) {
-  loadSqliteVec(db);
-  applySchema(db, { embeddingDim: 384 });
-  reconcileLongLivedAgents(
-    db,
-    [
-      {
-        name: "a",
-        long_lived: true,
-        long_lived_config: {
-          schedule_cron: scheduleCron ?? undefined,
-          subscriptions: [],
-          mcp_allowlist: [],
-          bounds: { wall_clock_ms: 1, cost_cents: 1, max_sub_dispatches: 0 },
-          circuit_breaker_threshold: 3,
-          standing_brief: "x",
-        },
-      } as any,
-    ],
-    { now: 1 },
-  );
+import { seedLongLivedAgent } from "./long-lived-fixtures.js";
+
+interface PendingGoal {
+  kind: string;
+  text: string;
+  created_at: number;
+}
+
+interface PersistedWorkingMemory {
+  pending_goals?: PendingGoal[];
+  open_threads?: { id: string; topic: string; opened_at: number; notes: string }[];
+  updated_at?: number;
+}
+
+interface SelectRow {
+  status: string;
+  schedule_cron: string | null;
+  working_memory_json: string;
+}
+
+function readWorkingMemory(db: Database, id: string): PersistedWorkingMemory {
+  const row = db
+    .query<
+      { working_memory_json: string },
+      [string]
+    >("SELECT working_memory_json FROM long_lived_agents WHERE id=?")
+    .get(id);
+  if (!row) {
+    throw new Error(`agent_not_found:${id}`);
+  }
+  return JSON.parse(row.working_memory_json) as PersistedWorkingMemory;
+}
+
+function noopFireTick(): void {
+  // no-op stand-in for tests that do not assert fireTick behaviour
 }
 
 describe("long_lived_inject_goal", () => {
-  it("appends a user_goal to pending_goals", async () => {
+  it("appends a user_goal to pending_goals", () => {
     const db = new Database(":memory:");
-    seed(db, "*/15 * * * *");
-    const fireTick = mock(() => {});
+    seedLongLivedAgent(db, { name: "a", standing_brief: "x" });
+    const fireTick = mock(noopFireTick);
 
-    const result = await handleLongLivedInjectGoal(
+    const result = handleLongLivedInjectGoal(
       db,
       { fireTick, now: () => 5 },
       { id: "a", goal: "check the dryer" },
     );
 
     expect(result.ok).toBe(true);
-    const wm = JSON.parse(
-      (db.query("SELECT working_memory_json FROM long_lived_agents WHERE id='a'").get() as any)
-        .working_memory_json,
-    );
+    const wm = readWorkingMemory(db, "a");
     expect(wm.pending_goals).toHaveLength(1);
-    expect(wm.pending_goals[0]).toMatchObject({ kind: "user_goal", text: "check the dryer" });
+    expect(wm.pending_goals?.[0]).toMatchObject({ kind: "user_goal", text: "check the dryer" });
     expect(fireTick).not.toHaveBeenCalled();
   });
 
-  it("fires an injected_goal tick when the agent has no schedule", async () => {
+  it("fires an injected_goal tick when the agent has no schedule", () => {
     const db = new Database(":memory:");
-    seed(db, null);
-    const fireTick = mock(() => {});
+    seedLongLivedAgent(db, { name: "a", standing_brief: "x", schedule_cron: null });
+    const fireTick = mock(noopFireTick);
 
-    await handleLongLivedInjectGoal(db, { fireTick, now: () => 5 }, { id: "a", goal: "do thing" });
+    handleLongLivedInjectGoal(db, { fireTick, now: () => 5 }, { id: "a", goal: "do thing" });
 
     expect(fireTick).toHaveBeenCalledTimes(1);
     expect(fireTick).toHaveBeenCalledWith({ agent_id: "a", trigger_kind: "injected_goal" });
   });
 
-  it("rejects retired agents", async () => {
+  it("rejects retired agents", () => {
     const db = new Database(":memory:");
-    seed(db, "*/1 * * * *");
+    seedLongLivedAgent(db, { name: "a", standing_brief: "x", schedule_cron: "*/1 * * * *" });
     db.query("UPDATE long_lived_agents SET status='retired' WHERE id='a'").run();
 
-    await expect(
-      handleLongLivedInjectGoal(db, { fireTick: () => {}, now: () => 5 }, { id: "a", goal: "x" }),
-    ).rejects.toThrow(/not_active/);
+    expect(() =>
+      handleLongLivedInjectGoal(
+        db,
+        { fireTick: noopFireTick, now: () => 5 },
+        { id: "a", goal: "x" },
+      ),
+    ).toThrow(/not_active/);
   });
 
-  it("acquires the write lock so a concurrent writer cannot slip in between SELECT and UPDATE", async () => {
+  it("acquires the write lock so a concurrent writer cannot slip in between SELECT and UPDATE", () => {
     // Two connections to the same WAL-mode file DB. Without BEGIN IMMEDIATE on
     // the inject's transaction, a separate connection could write its own
     // merged working_memory_json between our SELECT and our UPDATE and have
@@ -87,26 +99,36 @@ describe("long_lived_inject_goal", () => {
     try {
       const writer = new Database(dbPath);
       const racer = new Database(dbPath);
-      seed(writer, "*/15 * * * *");
+      seedLongLivedAgent(writer, { name: "a", standing_brief: "x" });
       // Set busy_timeout=0 on the racer so its contended write fails
       // immediately rather than blocking the single JS thread.
-      racer.exec("PRAGMA busy_timeout = 0");
-      writer.exec("PRAGMA busy_timeout = 5000");
+      racer.run("PRAGMA busy_timeout = 0");
+      writer.run("PRAGMA busy_timeout = 5000");
 
       let raceAttempts = 0;
       let raceErrors = 0;
       const originalQuery = writer.query.bind(writer);
-      (writer as any).query = (sql: string) => {
-        const stmt = originalQuery(sql);
+      type StatementWithGet = ReturnType<typeof originalQuery> & {
+        get: (...args: unknown[]) => unknown;
+      };
+      // Monkey-patch bun:sqlite's Database.query so we can intercept the
+      // single SELECT that drives the race. bun-types marks `query` as a
+      // method, so `as unknown as` is the genuine library-type gap that
+      // lets us substitute a spy.
+      const patchableWriter = writer as unknown as {
+        query: (sql: string) => StatementWithGet;
+      };
+      patchableWriter.query = (sql: string): StatementWithGet => {
+        const stmt = originalQuery(sql) as StatementWithGet;
         if (sql.startsWith("SELECT status, schedule_cron, working_memory_json")) {
           const originalGet = stmt.get.bind(stmt);
-          stmt.get = (...gargs: unknown[]) => {
-            const row = originalGet(...(gargs as [])) as any;
+          stmt.get = (...gargs: unknown[]): unknown => {
+            const row = originalGet(...gargs) as SelectRow;
             if (raceAttempts === 0) {
               raceAttempts += 1;
               // Try to land a competing write from a separate connection.
               try {
-                const wm = JSON.parse(row.working_memory_json);
+                const wm = JSON.parse(row.working_memory_json) as PersistedWorkingMemory;
                 wm.open_threads = [{ id: "t1", topic: "x", opened_at: 2, notes: "n" }];
                 wm.updated_at = 2;
                 racer
@@ -124,9 +146,9 @@ describe("long_lived_inject_goal", () => {
         return stmt;
       };
 
-      await handleLongLivedInjectGoal(
+      handleLongLivedInjectGoal(
         writer,
-        { fireTick: () => {}, now: () => 5 },
+        { fireTick: noopFireTick, now: () => 5 },
         { id: "a", goal: "do thing" },
       );
 
@@ -136,12 +158,9 @@ describe("long_lived_inject_goal", () => {
       // succeeded and then been clobbered by inject's UPDATE.
       expect(raceErrors).toBe(1);
 
-      const wm = JSON.parse(
-        (racer.query("SELECT working_memory_json FROM long_lived_agents WHERE id='a'").get() as any)
-          .working_memory_json,
-      );
+      const wm = readWorkingMemory(racer, "a");
       expect(wm.pending_goals ?? []).toHaveLength(1);
-      expect(wm.pending_goals[0]).toMatchObject({ kind: "user_goal", text: "do thing" });
+      expect(wm.pending_goals?.[0]).toMatchObject({ kind: "user_goal", text: "do thing" });
 
       writer.close();
       racer.close();
