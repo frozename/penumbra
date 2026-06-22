@@ -1,16 +1,41 @@
-import { describe, it, expect, vi } from "bun:test";
+import type { DispatchEventInput } from "@penumbra/core";
+
+import { describe, expect, it, vi } from "bun:test";
 import { PassThrough } from "node:stream";
+
+import type { McpServerStdio } from "../../src/adapters/acp-types.js";
+import type {
+  StartStdioAcpServerOptions,
+  StdioAcpHandle,
+} from "../../src/adapters/stdio-acp-server.js";
+import type { HostEnvPolicy, StdioAcpOptions } from "../../src/adapters/stdio-acp.js";
+import type { DispatchInput, DispatchOutput } from "../../src/sdk/adapter.js";
+import type { CapturePort } from "../../src/worker/capture-port.js";
+
+import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
 import {
-  StdioAcpAdapter,
   detectStdioAcpClassifierDecline,
   isClaudeHostEnvKey,
   resolveHostEnvPolicy,
   shouldScrubHostEnvKey,
+  StdioAcpAdapter,
 } from "../../src/adapters/stdio-acp.js";
-import type { HostEnvPolicy } from "../../src/adapters/stdio-acp.js";
-import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
-import type { DispatchInput, DispatchOutput } from "../../src/sdk/adapter.js";
 import { ThoughtCapture } from "../../src/worker/thought-capture.js";
+import { expectRejection } from "../helpers/cli-spawn-fixtures.js";
+import {
+  type AcpRequestMock,
+  asCapturedSessionParams,
+  type CapturedSessionParams,
+  flushMicrotasks,
+  makeMockAcpClient,
+  makeMockAcpHandle,
+  makeMockCapturePort,
+  makePenumbraMcpServer,
+  makeStandardClientRequest,
+  type MockAcpHandle,
+  mutableRef,
+  sleep,
+} from "../helpers/stdio-acp-fixtures.js";
 
 describe("detectStdioAcpClassifierDecline", () => {
   it("detects conservative provider safety refusals only in failed or empty-output turns", () => {
@@ -33,14 +58,6 @@ describe("detectStdioAcpClassifierDecline", () => {
   });
 });
 
-function mockClient(client: {
-  onRequest: StdioAcpClient["onRequest"];
-  on: StdioAcpClient["on"];
-  request: StdioAcpClient["request"];
-}): StdioAcpClient {
-  return client as StdioAcpClient;
-}
-
 function dispatch(
   adapter: StdioAcpAdapter,
   input: Omit<DispatchInput, "conversation" | "config"> &
@@ -53,84 +70,129 @@ function dispatch(
   });
 }
 
+type AcpStartServerMock = ReturnType<typeof vi.fn<typeof startStdioAcpServerStub>>;
+function startStdioAcpServerStub(_opts: StartStdioAcpServerOptions): Promise<StdioAcpHandle> {
+  return Promise.resolve(makeMockAcpHandle());
+}
+
+/** Build a startServer mock that captures the env passed by the adapter. */
+function envCapturingStartServer(handle: MockAcpHandle): {
+  startServer: AcpStartServerMock;
+  getEnv: () => Record<string, string> | undefined;
+} {
+  let captured: Record<string, string> | undefined;
+  const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+  startServer.mockImplementation((opts: StartStdioAcpServerOptions): Promise<StdioAcpHandle> => {
+    captured = opts.env;
+    return Promise.resolve(handle);
+  });
+  return { startServer, getEnv: (): Record<string, string> | undefined => captured };
+}
+
+/**
+ * Create a client whose request method short-circuits the standard
+ * initialize/session-new/session-prompt path. Used by env-capture tests that
+ * only care about the spawn env, not the prompt-side behavior.
+ */
+function makeCreateClientWithStandardRequest(): (h: StdioAcpHandle) => StdioAcpClient {
+  return (h: StdioAcpHandle): StdioAcpClient => {
+    const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
+    client.request = makeStandardClientRequest();
+    return client;
+  };
+}
+
+interface RequestPermissionPayload {
+  toolCall: { title?: string; name?: string; rawInput: unknown };
+  options: { kind: string; optionId: string }[];
+}
+
+type SessionPermissionHandler = (params: RequestPermissionPayload) => unknown;
+
+interface WarmPoolHarness {
+  adapter: StdioAcpAdapter;
+  pool: {
+    acquire: ReturnType<typeof vi.fn>;
+    deposit: ReturnType<typeof vi.fn>;
+    release: ReturnType<typeof vi.fn>;
+    evict: ReturnType<typeof vi.fn>;
+  };
+  mockKill: MockAcpHandle["kill"];
+  startServer: AcpStartServerMock;
+  request: AcpRequestMock;
+}
+
 function createWarmPoolHarness(opts: {
   warmPool?: boolean;
   promptThrows?: boolean;
   sessionNewThrows?: boolean;
-}) {
-  const mockStdin = new PassThrough();
-  const mockStdout = new PassThrough();
-  const mockKill = vi.fn();
-  const startServer = vi.fn().mockResolvedValue({
-    stdin: mockStdin,
-    stdout: mockStdout,
+}): WarmPoolHarness {
+  const handle = makeMockAcpHandle({
     pid: 123,
-    kill: mockKill,
-    exited: new Promise<number | null>(() => {}),
-    getStderrTail: () => "",
+    exited: new Promise<number | null>(() => {
+      // never resolves — tests assert kill behavior, not exit
+    }),
   });
+  const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+  startServer.mockResolvedValue(handle);
   const pool = {
     acquire: vi.fn().mockReturnValue(null),
     deposit: vi.fn().mockReturnValue({ refs: new Set(), sessionId: "session-123" }),
     release: vi.fn(),
     evict: vi.fn(),
   };
-  const request = vi.fn().mockImplementation(async (method: string) => {
-    if (method === "initialize") return { protocolVersion: 1, authMethods: [] };
-    if (method === "session/new") {
+  const request = makeStandardClientRequest({
+    authMethods: [],
+    onSessionNew: (): void => {
       if (opts.sessionNewThrows) throw new Error("session-new-failed");
-      return { sessionId: "session-123" };
-    }
-    if (method === "session/prompt") {
+    },
+    onSessionPrompt: (): unknown => {
       if (opts.promptThrows) throw new Error("prompt-failed");
       return { stopReason: "end_turn" };
-    }
-    return {};
+    },
   });
   const adapter = new StdioAcpAdapter(
-    { binary: "mock-acp", warmPool: opts.warmPool } as any,
+    { binary: "mock-acp", warmPool: opts.warmPool },
     {
       startServer,
-      createClient: () =>
-        mockClient({
-          onRequest: vi.fn(),
-          on: vi.fn(),
+      createClient: (): StdioAcpClient =>
+        makeMockAcpClient({
+          onRequest: vi.fn<StdioAcpClient["onRequest"]>(),
+          on: vi.fn<StdioAcpClient["on"]>(),
           request,
         }),
-      pool,
-    } as any,
+      pool: pool as unknown as NonNullable<
+        ConstructorParameters<typeof StdioAcpAdapter>[1]
+      >["pool"],
+    },
   );
-  return { adapter, pool, mockKill, startServer, request };
+  return { adapter, pool, mockKill: handle.kill, startServer, request };
+}
+
+interface PermissionHarness {
+  adapter: StdioAcpAdapter;
+  mockClientRequest: AcpRequestMock;
+  mockKill: MockAcpHandle["kill"];
+  mockStdout: PassThrough;
+  mockStdin: PassThrough;
+  getOutcome: () => unknown;
 }
 
 function createPermissionHarness(
-  adapterOptions: Record<string, unknown> = {
-    mcpServers: [{ name: "penumbra", command: "bun", args: ["/tmp/penumbra-mcp.ts"] } as any],
+  adapterOptions: Partial<StdioAcpOptions> = {
+    mcpServers: [makePenumbraMcpServer()],
   },
-) {
-  const mockStdin = new PassThrough();
-  const mockStdout = new PassThrough();
-  const mockKill = vi.fn();
-  const mockExited = Promise.resolve(0);
-  const startServer = vi.fn().mockResolvedValue({
-    stdin: mockStdin,
-    stdout: mockStdout,
-    kill: mockKill,
-    exited: mockExited,
-  });
+): PermissionHarness {
+  const handle = makeMockAcpHandle();
+  const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+  startServer.mockResolvedValue(handle);
 
-  let requestHandler: ((params: any) => Promise<any> | any) | undefined;
-  let lastOutcome: any = null;
-  const mockClientRequest = vi.fn().mockImplementation(async (method: string, _params: any) => {
-    if (method === "initialize") {
-      return { protocolVersion: 1 };
-    }
-    if (method === "session/new") {
-      return { sessionId: "session-123" };
-    }
-    if (method === "session/prompt") {
+  let requestHandler: SessionPermissionHandler | undefined;
+  let lastOutcome: unknown = null;
+  const mockClientRequest = makeStandardClientRequest({
+    onSessionPrompt: async (): Promise<unknown> => {
       if (!requestHandler) throw new Error("missing request handler");
-      const outcome = await requestHandler({
+      const outcome: unknown = await requestHandler({
         toolCall: {
           title: "mcp__penumbra__chain.list_agents",
           rawInput: { args: ["--all"] },
@@ -143,22 +205,21 @@ function createPermissionHarness(
       });
       lastOutcome = outcome;
       return { stopReason: "end_turn" };
-    }
-    return {};
+    },
   });
 
   const adapter = new StdioAcpAdapter(
     { binary: "mock-acp", ...adapterOptions },
     {
       startServer,
-      createClient: () =>
-        mockClient({
-          onRequest: (method: string, handler: (params: any) => Promise<any> | any) => {
+      createClient: (): StdioAcpClient =>
+        makeMockAcpClient({
+          onRequest: (method: string, handler: (params: unknown) => unknown): void => {
             if (method === "session/request_permission") {
               requestHandler = handler;
             }
           },
-          on: vi.fn(),
+          on: vi.fn<StdioAcpClient["on"]>(),
           request: mockClientRequest,
         }),
     },
@@ -167,30 +228,29 @@ function createPermissionHarness(
   return {
     adapter,
     mockClientRequest,
-    mockKill,
-    mockStdout,
-    mockStdin,
-    getOutcome: () => lastOutcome,
+    mockKill: handle.kill,
+    mockStdout: handle.stdout,
+    mockStdin: handle.stdin,
+    getOutcome: (): unknown => lastOutcome,
   };
 }
 
 describe("StdioAcpAdapter", () => {
   it("kills a silent child when initialize exceeds bootTimeoutMs", async () => {
-    const mockKill = vi.fn();
-    const startServer = vi.fn().mockResolvedValue({
-      stdin: new PassThrough(),
-      stdout: new PassThrough(),
+    const handle = makeMockAcpHandle({
       pid: 123,
-      kill: mockKill,
-      exited: new Promise<number | null>(() => {}),
-      getStderrTail: () => "",
+      exited: new Promise<number | null>(() => {
+        /* never resolves */
+      }),
     });
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
     const adapter = new StdioAcpAdapter(
       { binary: "mock-acp", bootTimeoutMs: 20 },
       {
         startServer,
-        createClient: (handle) =>
-          new StdioAcpClient({ stdin: handle.stdin, stdout: handle.stdout }),
+        createClient: (h: StdioAcpHandle): StdioAcpClient =>
+          new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout }),
       },
     );
 
@@ -201,45 +261,45 @@ describe("StdioAcpAdapter", () => {
     const guardedResult = Promise.race([
       result,
       new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error("test safety timeout")), 500);
+        setTimeout(() => {
+          reject(new Error("test safety timeout"));
+        }, 500);
       }),
     ]);
 
-    await expect(guardedResult).rejects.toThrow(
+    await expectRejection(
+      guardedResult,
       "stdio-acp: boot timed out after 20ms while waiting for initialize",
     );
-    expect(mockKill).toHaveBeenCalled();
+    expect(handle.kill).toHaveBeenCalled();
   });
 
   it("allows normal boot requests that complete before bootTimeoutMs", async () => {
-    const mockKill = vi.fn();
-    const request = vi.fn().mockImplementation(async (method: string) => {
-      if (method === "initialize") {
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        return { protocolVersion: 1, authMethods: [] };
-      }
-      if (method === "session/new") {
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        return { sessionId: "session-123" };
-      }
-      if (method === "session/prompt") return { stopReason: "end_turn" };
-      return {};
+    const request = makeStandardClientRequest({
+      authMethods: [],
+      beforeInitialize: async (): Promise<void> => {
+        await sleep(5);
+      },
+      beforeSessionNew: async (): Promise<void> => {
+        await sleep(5);
+      },
     });
+    const handle = makeMockAcpHandle({
+      pid: 123,
+      exited: new Promise<number | null>(() => {
+        /* never resolves */
+      }),
+    });
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
     const adapter = new StdioAcpAdapter(
       { binary: "mock-acp", bootTimeoutMs: 100 },
       {
-        startServer: vi.fn().mockResolvedValue({
-          stdin: new PassThrough(),
-          stdout: new PassThrough(),
-          pid: 123,
-          kill: mockKill,
-          exited: new Promise<number | null>(() => {}),
-          getStderrTail: () => "",
-        }),
-        createClient: () =>
-          mockClient({
-            onRequest: vi.fn(),
-            on: vi.fn(),
+        startServer,
+        createClient: (): StdioAcpClient =>
+          makeMockAcpClient({
+            onRequest: vi.fn<StdioAcpClient["onRequest"]>(),
+            on: vi.fn<StdioAcpClient["on"]>(),
             request,
           }),
       },
@@ -253,7 +313,7 @@ describe("StdioAcpAdapter", () => {
     expect(result.text).toBe("");
     expect(request).toHaveBeenCalledWith("initialize", expect.any(Object));
     expect(request).toHaveBeenCalledWith("session/new", expect.any(Object));
-    expect(mockKill).toHaveBeenCalled();
+    expect(handle.kill).toHaveBeenCalled();
   });
 
   it("keeps warm_pool disabled path cold and never calls the pool", async () => {
@@ -279,12 +339,13 @@ describe("StdioAcpAdapter", () => {
       sessionNewThrows: true,
     });
 
-    await expect(
+    await expectRejection(
       dispatch(adapter, {
         prompt: "hello",
         signal: new AbortController().signal,
       }),
-    ).rejects.toThrow("session-new-failed");
+      "session-new-failed",
+    );
 
     expect(pool.acquire).not.toHaveBeenCalled();
     expect(pool.deposit).not.toHaveBeenCalled();
@@ -314,12 +375,13 @@ describe("StdioAcpAdapter", () => {
       promptThrows: true,
     });
 
-    await expect(
+    await expectRejection(
       dispatch(adapter, {
         prompt: "hello",
         signal: new AbortController().signal,
       }),
-    ).rejects.toThrow("prompt-failed");
+      "prompt-failed",
+    );
 
     expect(pool.deposit).toHaveBeenCalledTimes(1);
     expect(pool.evict).toHaveBeenCalledTimes(1);
@@ -353,31 +415,25 @@ describe("StdioAcpAdapter", () => {
 
     try {
       const capturedEnv: Record<string, string> = {};
+      const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+      startServer.mockImplementation(
+        (opts: StartStdioAcpServerOptions): Promise<StdioAcpHandle> => {
+          Object.assign(capturedEnv, opts.env);
+          return Promise.resolve(makeMockAcpHandle());
+        },
+      );
       const adapter = new StdioAcpAdapter(
         {
           binary: "mock-acp",
           hostEnvPolicy: { claude: true },
         },
         {
-          startServer: vi.fn().mockImplementation(async (opts) => {
-            Object.assign(capturedEnv, opts.env);
-            return {
-              stdin: new PassThrough(),
-              stdout: new PassThrough(),
-              kill: vi.fn(),
-              exited: Promise.resolve(0),
-            };
-          }),
-          createClient: () =>
-            mockClient({
-              onRequest: vi.fn(),
-              on: vi.fn(),
-              request: vi.fn().mockImplementation(async (method: string) => {
-                if (method === "initialize") return { protocolVersion: 1 };
-                if (method === "session/new") return { sessionId: "session-123" };
-                if (method === "session/prompt") return { stopReason: "end_turn" };
-                return {};
-              }),
+          startServer,
+          createClient: (): StdioAcpClient =>
+            makeMockAcpClient({
+              onRequest: vi.fn<StdioAcpClient["onRequest"]>(),
+              on: vi.fn<StdioAcpClient["on"]>(),
+              request: makeStandardClientRequest(),
             }),
         },
       );
@@ -392,10 +448,14 @@ describe("StdioAcpAdapter", () => {
       expect(capturedEnv.OPENCODE_BAR).toBe("keep");
       expect(capturedEnv.ANTHROPIC_API_KEY).toBe("keep");
     } finally {
-      for (const [key, value] of Object.entries(previousEnv)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
+      if (previousEnv.CLAUDECODE === undefined) delete process.env.CLAUDECODE;
+      else process.env.CLAUDECODE = previousEnv.CLAUDECODE;
+      if (previousEnv.CLAUDE_CODE_FOO === undefined) delete process.env.CLAUDE_CODE_FOO;
+      else process.env.CLAUDE_CODE_FOO = previousEnv.CLAUDE_CODE_FOO;
+      if (previousEnv.OPENCODE_BAR === undefined) delete process.env.OPENCODE_BAR;
+      else process.env.OPENCODE_BAR = previousEnv.OPENCODE_BAR;
+      if (previousEnv.ANTHROPIC_API_KEY === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = previousEnv.ANTHROPIC_API_KEY;
     }
   });
 
@@ -441,30 +501,73 @@ describe("StdioAcpAdapter", () => {
   });
 
   function withClaudeCodeHostEnv<T>(run: () => Promise<T>): Promise<T> {
-    const claudeCodeHostEnvKeys = [
-      "CLAUDECODE",
-      "CLAUDE_CODE_ENTRYPOINT",
-      "CLAUDE_CODE_EXECPATH",
-      "CLAUDE_CODE_SESSION_ID",
-      "CLAUDE_CODE_ENABLE_TELEMETRY",
-      "CLAUDE_EFFORT",
-      "CLAUDE_PLUGIN_DATA",
-    ] as const;
-    const previous = new Map<string, string | undefined>();
-    for (const key of claudeCodeHostEnvKeys) {
-      previous.set(key, process.env[key]);
-      process.env[key] = key === "CLAUDECODE" ? "1" : `test-${key.toLowerCase()}`;
-    }
+    const prev = {
+      CLAUDECODE: process.env.CLAUDECODE,
+      CLAUDE_CODE_ENTRYPOINT: process.env.CLAUDE_CODE_ENTRYPOINT,
+      CLAUDE_CODE_EXECPATH: process.env.CLAUDE_CODE_EXECPATH,
+      CLAUDE_CODE_SESSION_ID: process.env.CLAUDE_CODE_SESSION_ID,
+      CLAUDE_CODE_ENABLE_TELEMETRY: process.env.CLAUDE_CODE_ENABLE_TELEMETRY,
+      CLAUDE_EFFORT: process.env.CLAUDE_EFFORT,
+      CLAUDE_PLUGIN_DATA: process.env.CLAUDE_PLUGIN_DATA,
+    };
+    process.env.CLAUDECODE = "1";
+    process.env.CLAUDE_CODE_ENTRYPOINT = "test-claude_code_entrypoint";
+    process.env.CLAUDE_CODE_EXECPATH = "test-claude_code_execpath";
+    process.env.CLAUDE_CODE_SESSION_ID = "test-claude_code_session_id";
+    process.env.CLAUDE_CODE_ENABLE_TELEMETRY = "test-claude_code_enable_telemetry";
+    process.env.CLAUDE_EFFORT = "test-claude_effort";
+    process.env.CLAUDE_PLUGIN_DATA = "test-claude_plugin_data";
     return run().finally(() => {
-      for (const key of claudeCodeHostEnvKeys) {
-        const value = previous.get(key);
-        if (value === undefined) {
-          delete process.env[key];
-        } else {
-          process.env[key] = value;
-        }
-      }
+      restoreClaudeHostEnv(prev);
     });
+  }
+
+  interface ClaudeHostPrev {
+    CLAUDECODE: string | undefined;
+    CLAUDE_CODE_ENTRYPOINT: string | undefined;
+    CLAUDE_CODE_EXECPATH: string | undefined;
+    CLAUDE_CODE_SESSION_ID: string | undefined;
+    CLAUDE_CODE_ENABLE_TELEMETRY: string | undefined;
+    CLAUDE_EFFORT: string | undefined;
+    CLAUDE_PLUGIN_DATA: string | undefined;
+  }
+
+  function restoreClaudeHostEnv(prev: ClaudeHostPrev): void {
+    restoreEnvPair1(prev);
+    restoreEnvPair2(prev);
+    restoreEnvPair3(prev);
+    restoreEnvPair4(prev);
+  }
+
+  function restoreEnvPair1(prev: ClaudeHostPrev): void {
+    if (prev.CLAUDECODE !== undefined) process.env.CLAUDECODE = prev.CLAUDECODE;
+    else delete process.env.CLAUDECODE;
+    if (prev.CLAUDE_CODE_ENTRYPOINT !== undefined)
+      process.env.CLAUDE_CODE_ENTRYPOINT = prev.CLAUDE_CODE_ENTRYPOINT;
+    else delete process.env.CLAUDE_CODE_ENTRYPOINT;
+  }
+
+  function restoreEnvPair2(prev: ClaudeHostPrev): void {
+    if (prev.CLAUDE_CODE_EXECPATH !== undefined)
+      process.env.CLAUDE_CODE_EXECPATH = prev.CLAUDE_CODE_EXECPATH;
+    else delete process.env.CLAUDE_CODE_EXECPATH;
+    if (prev.CLAUDE_CODE_SESSION_ID !== undefined)
+      process.env.CLAUDE_CODE_SESSION_ID = prev.CLAUDE_CODE_SESSION_ID;
+    else delete process.env.CLAUDE_CODE_SESSION_ID;
+  }
+
+  function restoreEnvPair3(prev: ClaudeHostPrev): void {
+    if (prev.CLAUDE_CODE_ENABLE_TELEMETRY !== undefined)
+      process.env.CLAUDE_CODE_ENABLE_TELEMETRY = prev.CLAUDE_CODE_ENABLE_TELEMETRY;
+    else delete process.env.CLAUDE_CODE_ENABLE_TELEMETRY;
+    if (prev.CLAUDE_EFFORT !== undefined) process.env.CLAUDE_EFFORT = prev.CLAUDE_EFFORT;
+    else delete process.env.CLAUDE_EFFORT;
+  }
+
+  function restoreEnvPair4(prev: ClaudeHostPrev): void {
+    if (prev.CLAUDE_PLUGIN_DATA !== undefined)
+      process.env.CLAUDE_PLUGIN_DATA = prev.CLAUDE_PLUGIN_DATA;
+    else delete process.env.CLAUDE_PLUGIN_DATA;
   }
 
   it("calls requestPermission with the tool call context and selects allow_always on approve", async () => {
@@ -480,7 +583,7 @@ describe("StdioAcpAdapter", () => {
     expect(requestPermission).toHaveBeenCalledWith({
       toolName: "mcp__penumbra__chain.list_agents",
       rawInput: { args: ["--all"] },
-      dispatchId: expect.any(String),
+      dispatchId: expect.any(String) as unknown,
     });
 
     expect(getOutcome()).toEqual({ outcome: { outcome: "selected", optionId: "allow-always" } });
@@ -516,24 +619,14 @@ describe("StdioAcpAdapter", () => {
 
   it("returns cancelled when requestPermission rejects the tool call", async () => {
     const requestPermission = vi.fn().mockResolvedValue("reject" as const);
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
+    const handle = makeMockAcpHandle();
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
 
-    const startServer = vi.fn().mockResolvedValue({
-      stdin: mockStdin,
-      stdout: mockStdout,
-      kill: mockKill,
-      exited: mockExited,
-    });
-
-    let requestHandler: ((params: any) => Promise<any> | any) | undefined;
-    let lastOutcome: any = null;
-    const mockClientRequest = vi.fn().mockImplementation(async (method: string) => {
-      if (method === "initialize") return { protocolVersion: 1 };
-      if (method === "session/new") return { sessionId: "session-123" };
-      if (method === "session/prompt") {
+    let requestHandler: SessionPermissionHandler | undefined;
+    let lastOutcome: unknown = null;
+    const mockClientRequest = makeStandardClientRequest({
+      onSessionPrompt: async (): Promise<unknown> => {
         if (!requestHandler) throw new Error("missing request handler");
         lastOutcome = await requestHandler({
           toolCall: {
@@ -543,25 +636,24 @@ describe("StdioAcpAdapter", () => {
           options: [{ kind: "allow_always", optionId: "allow-always" }],
         });
         return { stopReason: "end_turn" };
-      }
-      return {};
+      },
     });
 
     const adapter = new StdioAcpAdapter(
       {
         binary: "mock-acp",
-        mcpServers: [{ name: "penumbra", command: "bun", args: ["/tmp/penumbra-mcp.ts"] } as any],
+        mcpServers: [makePenumbraMcpServer()],
       },
       {
         startServer,
-        createClient: () =>
-          mockClient({
-            onRequest: (method: string, handler: (params: any) => Promise<any> | any) => {
+        createClient: (): StdioAcpClient =>
+          makeMockAcpClient({
+            onRequest: (method: string, handler: (params: unknown) => unknown): void => {
               if (method === "session/request_permission") {
                 requestHandler = handler;
               }
             },
-            on: vi.fn(),
+            on: vi.fn<StdioAcpClient["on"]>(),
             request: mockClientRequest,
           }),
       },
@@ -576,33 +668,23 @@ describe("StdioAcpAdapter", () => {
     expect(requestPermission).toHaveBeenCalledWith({
       toolName: "mcp__penumbra__chain.list_agents",
       rawInput: { args: ["--all"] },
-      dispatchId: expect.any(String),
+      dispatchId: expect.any(String) as unknown,
     });
 
     expect(lastOutcome).toEqual({ outcome: { outcome: "cancelled" } });
-    expect(mockKill).toHaveBeenCalled();
+    expect(handle.kill).toHaveBeenCalled();
   });
 
   it("returns cancelled locally without invoking requestPermission when tool title and name are both missing", async () => {
     const requestPermission = vi.fn().mockResolvedValue("approve");
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
+    const handle = makeMockAcpHandle();
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
 
-    const startServer = vi.fn().mockResolvedValue({
-      stdin: mockStdin,
-      stdout: mockStdout,
-      kill: mockKill,
-      exited: mockExited,
-    });
-
-    let requestHandler: ((params: any) => Promise<any> | any) | undefined;
-    let lastOutcome: any = null;
-    const mockClientRequest = vi.fn().mockImplementation(async (method: string) => {
-      if (method === "initialize") return { protocolVersion: 1 };
-      if (method === "session/new") return { sessionId: "session-123" };
-      if (method === "session/prompt") {
+    let requestHandler: SessionPermissionHandler | undefined;
+    let lastOutcome: unknown = null;
+    const mockClientRequest = makeStandardClientRequest({
+      onSessionPrompt: async (): Promise<unknown> => {
         if (!requestHandler) throw new Error("missing request handler");
         lastOutcome = await requestHandler({
           toolCall: {
@@ -615,25 +697,24 @@ describe("StdioAcpAdapter", () => {
           ],
         });
         return { stopReason: "end_turn" };
-      }
-      return {};
+      },
     });
 
     const adapter = new StdioAcpAdapter(
       {
         binary: "mock-acp",
-        mcpServers: [{ name: "penumbra", command: "bun", args: ["/tmp/penumbra-mcp.ts"] } as any],
+        mcpServers: [makePenumbraMcpServer()],
       },
       {
         startServer,
-        createClient: () =>
-          mockClient({
-            onRequest: (method: string, handler: (params: any) => Promise<any> | any) => {
+        createClient: (): StdioAcpClient =>
+          makeMockAcpClient({
+            onRequest: (method: string, handler: (params: unknown) => unknown): void => {
               if (method === "session/request_permission") {
                 requestHandler = handler;
               }
             },
-            on: vi.fn(),
+            on: vi.fn<StdioAcpClient["on"]>(),
             request: mockClientRequest,
           }),
       },
@@ -647,28 +728,18 @@ describe("StdioAcpAdapter", () => {
 
     expect(requestPermission).not.toHaveBeenCalled();
     expect(lastOutcome).toEqual({ outcome: { outcome: "cancelled" } });
-    expect(mockKill).toHaveBeenCalled();
+    expect(handle.kill).toHaveBeenCalled();
   });
 
   it("keeps the Phase 1a auto-allow stub when requestPermission is absent", async () => {
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
+    const handle = makeMockAcpHandle();
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
 
-    const startServer = vi.fn().mockResolvedValue({
-      stdin: mockStdin,
-      stdout: mockStdout,
-      kill: mockKill,
-      exited: mockExited,
-    });
-
-    let requestHandler: ((params: any) => Promise<any> | any) | undefined;
-    let lastOutcome: any = null;
-    const mockClientRequest = vi.fn().mockImplementation(async (method: string) => {
-      if (method === "initialize") return { protocolVersion: 1 };
-      if (method === "session/new") return { sessionId: "session-123" };
-      if (method === "session/prompt") {
+    let requestHandler: SessionPermissionHandler | undefined;
+    let lastOutcome: unknown = null;
+    const mockClientRequest = makeStandardClientRequest({
+      onSessionPrompt: async (): Promise<unknown> => {
         if (!requestHandler) throw new Error("missing request handler");
         lastOutcome = await requestHandler({
           toolCall: {
@@ -678,25 +749,24 @@ describe("StdioAcpAdapter", () => {
           options: [{ kind: "allow_always", optionId: "allow-always" }],
         });
         return { stopReason: "end_turn" };
-      }
-      return {};
+      },
     });
 
     const adapter = new StdioAcpAdapter(
       {
         binary: "mock-acp",
-        mcpServers: [{ name: "penumbra", command: "bun", args: ["/tmp/penumbra-mcp.ts"] } as any],
+        mcpServers: [makePenumbraMcpServer()],
       },
       {
         startServer,
-        createClient: () =>
-          mockClient({
-            onRequest: (method: string, handler: (params: any) => Promise<any> | any) => {
+        createClient: (): StdioAcpClient =>
+          makeMockAcpClient({
+            onRequest: (method: string, handler: (params: unknown) => unknown): void => {
               if (method === "session/request_permission") {
                 requestHandler = handler;
               }
             },
-            on: vi.fn(),
+            on: vi.fn<StdioAcpClient["on"]>(),
             request: mockClientRequest,
           }),
       },
@@ -708,27 +778,20 @@ describe("StdioAcpAdapter", () => {
     });
 
     expect(lastOutcome).toEqual({ outcome: { outcome: "selected", optionId: "allow-always" } });
-    expect(mockKill).toHaveBeenCalled();
+    expect(handle.kill).toHaveBeenCalled();
   });
 
   it("happy path: accumulates text from session/update notifications", async () => {
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
-
-    const startServer = vi.fn().mockResolvedValue({
-      stdin: mockStdin,
-      stdout: mockStdout,
-      kill: mockKill,
-      exited: mockExited,
-    });
+    const handle = makeMockAcpHandle();
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
 
     const adapter = new StdioAcpAdapter(
       { binary: "mock-acp" },
       {
         startServer,
-        createClient: (h: any) => new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout }),
+        createClient: (h: StdioAcpHandle): StdioAcpClient =>
+          new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout }),
       },
     );
 
@@ -738,20 +801,20 @@ describe("StdioAcpAdapter", () => {
     });
 
     // 1. Server sends initialize response
-    await new Promise((r) => setTimeout(r, 10));
-    mockStdout.write(
+    await sleep(10);
+    handle.stdout.write(
       JSON.stringify({ jsonrpc: "2.0", result: { protocolVersion: 1 }, id: 1 }) + "\n",
     );
 
     // 2. Server sends session/new response
-    await new Promise((r) => setTimeout(r, 10));
-    mockStdout.write(
+    await sleep(10);
+    handle.stdout.write(
       JSON.stringify({ jsonrpc: "2.0", result: { sessionId: "session-123" }, id: 2 }) + "\n",
     );
 
     // 3. Server streams agent_message_chunk session/update notifications carrying the text
-    await new Promise((r) => setTimeout(r, 10));
-    mockStdout.write(
+    await sleep(10);
+    handle.stdout.write(
       JSON.stringify({
         jsonrpc: "2.0",
         method: "session/update",
@@ -764,7 +827,7 @@ describe("StdioAcpAdapter", () => {
         },
       }) + "\n",
     );
-    mockStdout.write(
+    handle.stdout.write(
       JSON.stringify({
         jsonrpc: "2.0",
         method: "session/update",
@@ -779,18 +842,18 @@ describe("StdioAcpAdapter", () => {
     );
 
     // 4. Server sends prompt response with stopReason — signals turn complete (no text in response)
-    await new Promise((r) => setTimeout(r, 10));
-    mockStdout.write(
+    await sleep(10);
+    handle.stdout.write(
       JSON.stringify({ jsonrpc: "2.0", result: { stopReason: "end_turn" }, id: 3 }) + "\n",
     );
 
     const result = await dispatchPromise;
     expect(result.text).toBe("world");
-    expect(mockKill).toHaveBeenCalled();
+    expect(handle.kill).toHaveBeenCalled();
   });
 
   it("routes agent_thought_chunk notifications through ThoughtCapture", async () => {
-    const recorded: any[] = [];
+    const recorded: DispatchEventInput[] = [];
     const thoughtCapture = new ThoughtCapture({
       config: {
         enabled: true,
@@ -813,26 +876,21 @@ describe("StdioAcpAdapter", () => {
           },
         },
       },
-      enqueue: (event) => recorded.push(event),
+      enqueue: (event: DispatchEventInput): void => {
+        recorded.push(event);
+      },
     });
 
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
-
-    const startServer = vi.fn().mockResolvedValue({
-      stdin: mockStdin,
-      stdout: mockStdout,
-      kill: mockKill,
-      exited: mockExited,
-    });
+    const handle = makeMockAcpHandle();
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
 
     const adapter = new StdioAcpAdapter(
       { binary: "mock-acp", model: "gemini-acp-pro" },
       {
         startServer,
-        createClient: (h: any) => new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout }),
+        createClient: (h: StdioAcpHandle): StdioAcpClient =>
+          new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout }),
         thoughtCapture,
       },
     );
@@ -845,19 +903,19 @@ describe("StdioAcpAdapter", () => {
       handoff_id: "h-acp-1",
     });
 
-    await new Promise((r) => setTimeout(r, 10));
-    mockStdout.write(
+    await sleep(10);
+    handle.stdout.write(
       JSON.stringify({ jsonrpc: "2.0", result: { protocolVersion: 1, authMethods: [] }, id: 1 }) +
         "\n",
     );
 
-    await new Promise((r) => setTimeout(r, 10));
-    mockStdout.write(
+    await sleep(10);
+    handle.stdout.write(
       JSON.stringify({ jsonrpc: "2.0", result: { sessionId: "session-123" }, id: 2 }) + "\n",
     );
 
-    await new Promise((r) => setTimeout(r, 10));
-    mockStdout.write(
+    await sleep(10);
+    handle.stdout.write(
       JSON.stringify({
         jsonrpc: "2.0",
         method: "session/update",
@@ -872,8 +930,8 @@ describe("StdioAcpAdapter", () => {
       }) + "\n",
     );
 
-    await new Promise((r) => setTimeout(r, 10));
-    mockStdout.write(
+    await sleep(10);
+    handle.stdout.write(
       JSON.stringify({ jsonrpc: "2.0", result: { stopReason: "end_turn" }, id: 3 }) + "\n",
     );
 
@@ -892,31 +950,18 @@ describe("StdioAcpAdapter", () => {
   });
 
   it("emits ACP lifecycle events when eventContext is present", async () => {
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
-    const events: any[] = [];
+    const handle = makeMockAcpHandle();
+    const events: DispatchEventInput[] = [];
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
 
-    const startServer = vi.fn().mockResolvedValue({
-      stdin: mockStdin,
-      stdout: mockStdout,
-      kill: mockKill,
-      exited: mockExited,
-    });
-
-    const mockClientRequest = vi.fn().mockImplementation(async (method: string) => {
-      if (method === "initialize") return { protocolVersion: 1, authMethods: [] };
-      if (method === "session/new") return { sessionId: "session-123" };
-      if (method === "session/prompt") return { stopReason: "end_turn" };
-      return {};
-    });
+    const mockClientRequest = makeStandardClientRequest({ authMethods: [] });
 
     const adapter = new StdioAcpAdapter(
       { binary: "mock-acp" },
       {
         startServer,
-        createClient: (h: any) => {
+        createClient: (h: StdioAcpHandle): StdioAcpClient => {
           const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
           client.request = mockClientRequest;
           return client;
@@ -930,7 +975,9 @@ describe("StdioAcpAdapter", () => {
       config: {},
       signal: new AbortController().signal,
       eventContext: { handoffId: "h-acp", workerId: "w-acp" },
-      onEvent: (event: any) => events.push(event),
+      onEvent: (event: DispatchEventInput): void => {
+        events.push(event);
+      },
     });
 
     expect(events.map((event) => event.kind)).toEqual([
@@ -944,32 +991,25 @@ describe("StdioAcpAdapter", () => {
       source: "worker",
       meta: { adapter: "stdio-acp", binary: "mock-acp" },
     });
-    expect(events[1].meta).toMatchObject({ session_id: "session-123" });
-    expect(events[2].meta).toMatchObject({ stop_reason: "end_turn" });
+    expect(events[1]?.meta).toMatchObject({ session_id: "session-123" });
+    expect(events[2]?.meta).toMatchObject({ stop_reason: "end_turn" });
   });
 
   it("uses the cached tool title when a failed tool_call_update omits title and kind", async () => {
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
-    const events: any[] = [];
-
-    const startServer = vi.fn().mockResolvedValue({
-      stdin: mockStdin,
-      stdout: mockStdout,
-      kill: mockKill,
-      exited: mockExited,
-    });
+    const handle = makeMockAcpHandle();
+    const events: DispatchEventInput[] = [];
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
 
     const adapter = new StdioAcpAdapter(
       {
         binary: "mock-acp",
-        mcpServers: [{ name: "penumbra", command: "bun", args: ["/tmp/penumbra-mcp.ts"] } as any],
+        mcpServers: [makePenumbraMcpServer()],
       },
       {
         startServer,
-        createClient: (h: any) => new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout }),
+        createClient: (h: StdioAcpHandle): StdioAcpClient =>
+          new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout }),
       },
     );
 
@@ -979,22 +1019,24 @@ describe("StdioAcpAdapter", () => {
       config: {},
       signal: new AbortController().signal,
       eventContext: { handoffId: "h-acp", workerId: "w-acp" },
-      onEvent: (event: any) => events.push(event),
+      onEvent: (event: DispatchEventInput): void => {
+        events.push(event);
+      },
     });
 
-    await new Promise((r) => setTimeout(r, 10));
-    mockStdout.write(
+    await sleep(10);
+    handle.stdout.write(
       JSON.stringify({ jsonrpc: "2.0", result: { protocolVersion: 1, authMethods: [] }, id: 1 }) +
         "\n",
     );
 
-    await new Promise((r) => setTimeout(r, 10));
-    mockStdout.write(
+    await sleep(10);
+    handle.stdout.write(
       JSON.stringify({ jsonrpc: "2.0", result: { sessionId: "session-123" }, id: 2 }) + "\n",
     );
 
-    await new Promise((r) => setTimeout(r, 10));
-    mockStdout.write(
+    await sleep(10);
+    handle.stdout.write(
       JSON.stringify({
         jsonrpc: "2.0",
         method: "session/update",
@@ -1011,8 +1053,8 @@ describe("StdioAcpAdapter", () => {
       }) + "\n",
     );
 
-    await new Promise((r) => setTimeout(r, 10));
-    mockStdout.write(
+    await sleep(10);
+    handle.stdout.write(
       JSON.stringify({
         jsonrpc: "2.0",
         method: "session/update",
@@ -1028,8 +1070,8 @@ describe("StdioAcpAdapter", () => {
       }) + "\n",
     );
 
-    await new Promise((r) => setTimeout(r, 10));
-    mockStdout.write(
+    await sleep(10);
+    handle.stdout.write(
       JSON.stringify({ jsonrpc: "2.0", result: { stopReason: "end_turn" }, id: 3 }) + "\n",
     );
 
@@ -1051,23 +1093,16 @@ describe("StdioAcpAdapter", () => {
   });
 
   it("rejects tool_call session/update notifications", async () => {
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
-
-    const startServer = vi.fn().mockResolvedValue({
-      stdin: mockStdin,
-      stdout: mockStdout,
-      kill: mockKill,
-      exited: mockExited,
-    });
+    const handle = makeMockAcpHandle();
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
 
     const adapter = new StdioAcpAdapter(
       { binary: "mock-acp" },
       {
         startServer,
-        createClient: (h: any) => new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout }),
+        createClient: (h: StdioAcpHandle): StdioAcpClient =>
+          new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout }),
       },
     );
 
@@ -1077,20 +1112,20 @@ describe("StdioAcpAdapter", () => {
     });
 
     // 1. Initialize
-    await new Promise((r) => setTimeout(r, 10));
-    mockStdout.write(
+    await sleep(10);
+    handle.stdout.write(
       JSON.stringify({ jsonrpc: "2.0", result: { protocolVersion: 1 }, id: 1 }) + "\n",
     );
 
     // 2. session/new
-    await new Promise((r) => setTimeout(r, 10));
-    mockStdout.write(
+    await sleep(10);
+    handle.stdout.write(
       JSON.stringify({ jsonrpc: "2.0", result: { sessionId: "session-123" }, id: 2 }) + "\n",
     );
 
     // 3. Server emits a tool_call session/update — adapter should reject single-turn dispatch
-    await new Promise((r) => setTimeout(r, 10));
-    mockStdout.write(
+    await sleep(10);
+    handle.stdout.write(
       JSON.stringify({
         jsonrpc: "2.0",
         method: "session/update",
@@ -1105,22 +1140,14 @@ describe("StdioAcpAdapter", () => {
       }) + "\n",
     );
 
-    await expect(dispatchPromise).rejects.toThrow("stdio-acp: tool use not yet supported");
-    expect(mockKill).toHaveBeenCalled();
+    await expectRejection(dispatchPromise, "stdio-acp: tool use not yet supported");
+    expect(handle.kill).toHaveBeenCalled();
   });
 
   it("keeps tool_call session/update alive when only mcpServers are advertised", async () => {
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
-
-    const startServer = vi.fn().mockResolvedValue({
-      stdin: mockStdin,
-      stdout: mockStdout,
-      kill: mockKill,
-      exited: mockExited,
-    });
+    const handle = makeMockAcpHandle();
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
 
     const adapter = new StdioAcpAdapter(
       {
@@ -1128,11 +1155,12 @@ describe("StdioAcpAdapter", () => {
         fsReadTextFile: false,
         fsWriteTextFile: false,
         terminal: false,
-        mcpServers: [{ name: "test", command: "echo", args: [], env: [] } as any],
+        mcpServers: [{ name: "test", command: "echo", args: [], env: [] }],
       },
       {
         startServer,
-        createClient: (h: any) => new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout }),
+        createClient: (h: StdioAcpHandle): StdioAcpClient =>
+          new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout }),
       },
     );
 
@@ -1141,18 +1169,18 @@ describe("StdioAcpAdapter", () => {
       signal: new AbortController().signal,
     });
 
-    await new Promise((r) => setTimeout(r, 10));
-    mockStdout.write(
+    await sleep(10);
+    handle.stdout.write(
       JSON.stringify({ jsonrpc: "2.0", result: { protocolVersion: 1 }, id: 1 }) + "\n",
     );
 
-    await new Promise((r) => setTimeout(r, 10));
-    mockStdout.write(
+    await sleep(10);
+    handle.stdout.write(
       JSON.stringify({ jsonrpc: "2.0", result: { sessionId: "session-123" }, id: 2 }) + "\n",
     );
 
-    await new Promise((r) => setTimeout(r, 10));
-    mockStdout.write(
+    await sleep(10);
+    handle.stdout.write(
       JSON.stringify({
         jsonrpc: "2.0",
         method: "session/update",
@@ -1167,36 +1195,32 @@ describe("StdioAcpAdapter", () => {
       }) + "\n",
     );
 
-    expect(mockKill).not.toHaveBeenCalled();
+    expect(handle.kill).not.toHaveBeenCalled();
 
-    await new Promise((r) => setTimeout(r, 10));
-    mockStdout.write(
+    await sleep(10);
+    handle.stdout.write(
       JSON.stringify({ jsonrpc: "2.0", result: { stopReason: "end_turn" }, id: 3 }) + "\n",
     );
 
-    await expect(dispatchPromise).resolves.toMatchObject({ text: "" });
-    expect(mockKill).toHaveBeenCalledTimes(1);
+    const settled = await dispatchPromise;
+    expect(settled).toMatchObject({ text: "" });
+    expect(handle.kill).toHaveBeenCalledTimes(1);
   });
 
   it("forwards session/update.usage_update to the capture port", async () => {
-    const captureEmitSpy = vi.fn();
-    const fakeCapturePort = { emit: captureEmitSpy } as any;
+    const captureEmitSpy = vi.fn<CapturePort["emit"]>();
+    const fakeCapturePort = makeMockCapturePort({ emit: captureEmitSpy });
 
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const startServer = vi.fn().mockResolvedValue({
-      stdin: mockStdin,
-      stdout: mockStdout,
-      kill: mockKill,
-      exited: Promise.resolve(0),
-    });
+    const handle = makeMockAcpHandle();
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
 
     const adapter = new StdioAcpAdapter(
       { binary: "fake", capturePort: fakeCapturePort },
       {
         startServer,
-        createClient: (h) => new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout }),
+        createClient: (h: StdioAcpHandle): StdioAcpClient =>
+          new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout }),
       },
     );
 
@@ -1205,20 +1229,20 @@ describe("StdioAcpAdapter", () => {
       conversation: { id: "c-1", project_id: null },
       config: {},
       signal: new AbortController().signal,
-    } as any);
+    });
 
     // Fake the initialize -> newSession -> session/prompt sequence enough to receive a session/update
-    await new Promise((r) => setTimeout(r, 5));
-    mockStdout.write(
+    await sleep(5);
+    handle.stdout.write(
       JSON.stringify({ jsonrpc: "2.0", result: { protocolVersion: 1, authMethods: [] }, id: 1 }) +
         "\n",
     );
-    await new Promise((r) => setTimeout(r, 5));
-    mockStdout.write(
+    await sleep(5);
+    handle.stdout.write(
       JSON.stringify({ jsonrpc: "2.0", result: { sessionId: "session-1" }, id: 2 }) + "\n",
     );
-    await new Promise((r) => setTimeout(r, 5));
-    mockStdout.write(
+    await sleep(5);
+    handle.stdout.write(
       JSON.stringify({
         jsonrpc: "2.0",
         method: "session/update",
@@ -1233,7 +1257,7 @@ describe("StdioAcpAdapter", () => {
         },
       }) + "\n",
     );
-    await new Promise((r) => setTimeout(r, 10));
+    await sleep(10);
 
     expect(captureEmitSpy).toHaveBeenCalledWith({
       kind: "usage_update",
@@ -1243,39 +1267,31 @@ describe("StdioAcpAdapter", () => {
     });
 
     // Cleanup: complete the prompt so dispatch resolves
-    mockStdout.write(
+    handle.stdout.write(
       JSON.stringify({ jsonrpc: "2.0", result: { stopReason: "end_turn" }, id: 3 }) + "\n",
     );
-    await dispatchPromise.catch(() => {}); // tolerate reject; we're only asserting the emit
+    await dispatchPromise.catch((): void => {
+      // tolerate reject; we're only asserting the emit
+    });
   });
 
   it("rejects when session/prompt hangs past requestTimeoutMs and kills the server", async () => {
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
+    const handle = makeMockAcpHandle();
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
 
-    const startServer = vi.fn().mockResolvedValue({
-      stdin: mockStdin,
-      stdout: mockStdout,
-      kill: mockKill,
-      exited: mockExited,
-    });
-
-    const mockClientRequest = vi.fn().mockImplementation(async (method: string) => {
-      if (method === "initialize") return { protocolVersion: 1 };
-      if (method === "session/new") return { sessionId: "session-123" };
-      if (method === "session/prompt") {
-        await new Promise(() => {});
-      }
-      return {};
+    const mockClientRequest = makeStandardClientRequest({
+      onSessionPrompt: (): Promise<unknown> =>
+        new Promise<unknown>(() => {
+          /* hang forever */
+        }),
     });
 
     const adapter = new StdioAcpAdapter(
       { binary: "mock-acp", requestTimeoutMs: 200 },
       {
         startServer,
-        createClient: (h: any) => {
+        createClient: (h: StdioAcpHandle): StdioAcpClient => {
           const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
           client.request = mockClientRequest;
           return client;
@@ -1288,29 +1304,19 @@ describe("StdioAcpAdapter", () => {
       signal: new AbortController().signal,
     });
 
-    await expect(dispatchPromise).rejects.toThrow(/no wire activity .* for 200ms/);
-    expect(mockKill).toHaveBeenCalled();
+    await expectRejection(dispatchPromise, /no wire activity .* for 200ms/);
+    expect(handle.kill).toHaveBeenCalled();
   });
 
   it("keeps session/prompt alive when ACP session/update progress arrives", async () => {
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
+    const handle = makeMockAcpHandle();
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
 
-    const startServer = vi.fn().mockResolvedValue({
-      stdin: mockStdin,
-      stdout: mockStdout,
-      kill: mockKill,
-      exited: mockExited,
-    });
-
-    const mockClientRequest = vi.fn().mockImplementation(async (method: string) => {
-      if (method === "initialize") return { protocolVersion: 1 };
-      if (method === "session/new") return { sessionId: "session-123" };
-      if (method === "session/prompt") {
+    const mockClientRequest = makeStandardClientRequest({
+      onSessionPrompt: async (): Promise<unknown> => {
         setTimeout(() => {
-          mockStdout.write(
+          handle.stdout.write(
             JSON.stringify({
               jsonrpc: "2.0",
               method: "session/update",
@@ -1324,17 +1330,16 @@ describe("StdioAcpAdapter", () => {
             }) + "\n",
           );
         }, 150);
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        await sleep(300);
         return { stopReason: "end_turn" };
-      }
-      return {};
+      },
     });
 
     const adapter = new StdioAcpAdapter(
       { binary: "mock-acp", requestTimeoutMs: 200 },
       {
         startServer,
-        createClient: (h: any) => {
+        createClient: (h: StdioAcpHandle): StdioAcpClient => {
           const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
           client.request = mockClientRequest;
           return client;
@@ -1342,42 +1347,24 @@ describe("StdioAcpAdapter", () => {
       },
     );
 
-    await expect(
-      dispatch(adapter, {
-        prompt: "hello",
-        signal: new AbortController().signal,
-      }),
-    ).resolves.toMatchObject({ text: "still working" });
-    expect(mockKill).toHaveBeenCalledTimes(1);
+    const settled = await dispatch(adapter, {
+      prompt: "hello",
+      signal: new AbortController().signal,
+    });
+    expect(settled).toMatchObject({ text: "still working" });
+    expect(handle.kill).toHaveBeenCalledTimes(1);
   });
 
   it("merges env and drops unsetEnv keys, affecting auth method fallback", async () => {
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
+    const handle = makeMockAcpHandle();
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
 
-    const startServer = vi.fn().mockResolvedValue({
-      stdin: mockStdin,
-      stdout: mockStdout,
-      kill: mockKill,
-      exited: mockExited,
-    });
-
-    const mockClientRequest = vi.fn();
-    mockClientRequest.mockImplementation((method, _params) => {
-      if (method === "initialize") {
-        return Promise.resolve({
-          protocolVersion: 1,
-          authMethods: [
-            { id: "openai-api-key", type: "env_var", vars: [{ name: "OPENAI_API_KEY" }] },
-            { id: "chatgpt", type: "oauth" },
-          ],
-        });
-      }
-      if (method === "session/new") return Promise.resolve({ sessionId: "session-123" });
-      if (method === "session/prompt") return Promise.resolve({ stopReason: "end_turn" });
-      return Promise.resolve({});
+    const mockClientRequest = makeStandardClientRequest({
+      authMethods: [
+        { id: "openai-api-key", type: "env_var", vars: [{ name: "OPENAI_API_KEY" }] },
+        { id: "chatgpt", type: "oauth" },
+      ],
     });
 
     const adapter = new StdioAcpAdapter(
@@ -1388,7 +1375,7 @@ describe("StdioAcpAdapter", () => {
       },
       {
         startServer,
-        createClient: (h: any) => {
+        createClient: (h: StdioAcpHandle): StdioAcpClient => {
           const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
           client.request = mockClientRequest;
           return client;
@@ -1403,55 +1390,31 @@ describe("StdioAcpAdapter", () => {
 
     const firstCall = startServer.mock.calls[0];
     if (!firstCall) throw new Error("expected startServer to be called");
-    const passedEnv = firstCall[0].env;
+    const passedEnv = firstCall[0].env ?? {};
     expect(passedEnv.FOO).toBe("bar");
     expect(passedEnv.OPENAI_API_KEY).toBeUndefined();
 
     expect(mockClientRequest).toHaveBeenCalledWith("authenticate", { methodId: "chatgpt" });
-    expect(mockKill).toHaveBeenCalled();
+    expect(handle.kill).toHaveBeenCalled();
   });
 
   it("claude-agent-acp binary strips host env", async () => {
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
-    let capturedEnv: Record<string, string> | undefined;
-
-    const startServer = vi.fn().mockImplementation(async (opts) => {
-      capturedEnv = opts.env;
-      return {
-        stdin: mockStdin,
-        stdout: mockStdout,
-        kill: mockKill,
-        exited: mockExited,
-      };
-    });
+    const handle = makeMockAcpHandle();
+    const { startServer, getEnv } = envCapturingStartServer(handle);
 
     const adapter = new StdioAcpAdapter(
       { binary: "claude-agent-acp", sanitizeClaudeHostEnv: true },
-      {
-        startServer,
-        createClient: (h: any) => {
-          const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
-          client.request = vi.fn().mockImplementation(async (method: string) => {
-            if (method === "initialize") return { protocolVersion: 1 };
-            if (method === "session/new") return { sessionId: "session-123" };
-            if (method === "session/prompt") return { stopReason: "end_turn" };
-            return {};
-          });
-          return client;
-        },
-      },
+      { startServer, createClient: makeCreateClientWithStandardRequest() },
     );
 
-    await withClaudeCodeHostEnv(async () => {
+    await withClaudeCodeHostEnv(async (): Promise<void> => {
       await dispatch(adapter, {
         prompt: "hello",
         signal: new AbortController().signal,
       });
     });
 
+    const capturedEnv = getEnv();
     expect(capturedEnv).toBeDefined();
     for (const key of [
       "CLAUDECODE",
@@ -1464,118 +1427,57 @@ describe("StdioAcpAdapter", () => {
     ]) {
       expect(capturedEnv).not.toHaveProperty(key);
     }
-    expect(mockKill).toHaveBeenCalled();
+    expect(handle.kill).toHaveBeenCalled();
   });
 
   it("non-claude binary does not strip host env", async () => {
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
-    let capturedEnv: Record<string, string> | undefined;
-
-    const startServer = vi.fn().mockImplementation(async (opts) => {
-      capturedEnv = opts.env;
-      return {
-        stdin: mockStdin,
-        stdout: mockStdout,
-        kill: mockKill,
-        exited: mockExited,
-      };
-    });
+    const handle = makeMockAcpHandle();
+    const { startServer, getEnv } = envCapturingStartServer(handle);
 
     const adapter = new StdioAcpAdapter(
       { binary: "opencode-acp" },
-      {
-        startServer,
-        createClient: (h: any) => {
-          const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
-          client.request = vi.fn().mockImplementation(async (method: string) => {
-            if (method === "initialize") return { protocolVersion: 1 };
-            if (method === "session/new") return { sessionId: "session-123" };
-            if (method === "session/prompt") return { stopReason: "end_turn" };
-            return {};
-          });
-          return client;
-        },
-      },
+      { startServer, createClient: makeCreateClientWithStandardRequest() },
     );
 
-    await withClaudeCodeHostEnv(async () => {
+    await withClaudeCodeHostEnv(async (): Promise<void> => {
       await dispatch(adapter, {
         prompt: "hello",
         signal: new AbortController().signal,
       });
     });
 
+    const capturedEnv = getEnv();
     expect(capturedEnv).toBeDefined();
     expect(capturedEnv).toHaveProperty("CLAUDECODE", "1");
     expect(capturedEnv).toHaveProperty("CLAUDE_CODE_EXECPATH", "test-claude_code_execpath");
-    expect(mockKill).toHaveBeenCalled();
+    expect(handle.kill).toHaveBeenCalled();
   });
 
   it("sanitize flag plus opts.env override survives", async () => {
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
-    let capturedEnv: Record<string, string> | undefined;
-
-    const startServer = vi.fn().mockImplementation(async (opts) => {
-      capturedEnv = opts.env;
-      return {
-        stdin: mockStdin,
-        stdout: mockStdout,
-        kill: mockKill,
-        exited: mockExited,
-      };
-    });
+    const handle = makeMockAcpHandle();
+    const { startServer, getEnv } = envCapturingStartServer(handle);
 
     const adapter = new StdioAcpAdapter(
       { binary: "claude-agent-acp", sanitizeClaudeHostEnv: true, env: { CLAUDE_EFFORT: "low" } },
-      {
-        startServer,
-        createClient: (h: any) => {
-          const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
-          client.request = vi.fn().mockImplementation(async (method: string) => {
-            if (method === "initialize") return { protocolVersion: 1 };
-            if (method === "session/new") return { sessionId: "session-123" };
-            if (method === "session/prompt") return { stopReason: "end_turn" };
-            return {};
-          });
-          return client;
-        },
-      },
+      { startServer, createClient: makeCreateClientWithStandardRequest() },
     );
 
-    await withClaudeCodeHostEnv(async () => {
+    await withClaudeCodeHostEnv(async (): Promise<void> => {
       await dispatch(adapter, {
         prompt: "hello",
         signal: new AbortController().signal,
       });
     });
 
+    const capturedEnv = getEnv();
     expect(capturedEnv).toBeDefined();
     expect(capturedEnv).toHaveProperty("CLAUDE_EFFORT", "low");
-    expect(mockKill).toHaveBeenCalled();
+    expect(handle.kill).toHaveBeenCalled();
   });
 
   it("sanitize flag plus unsetEnv removes opts.env entry", async () => {
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
-    let capturedEnv: Record<string, string> | undefined;
-
-    const startServer = vi.fn().mockImplementation(async (opts) => {
-      capturedEnv = opts.env;
-      return {
-        stdin: mockStdin,
-        stdout: mockStdout,
-        kill: mockKill,
-        exited: mockExited,
-      };
-    });
+    const handle = makeMockAcpHandle();
+    const { startServer, getEnv } = envCapturingStartServer(handle);
 
     const adapter = new StdioAcpAdapter(
       {
@@ -1584,65 +1486,29 @@ describe("StdioAcpAdapter", () => {
         env: { CLAUDE_EFFORT: "low" },
         unsetEnv: ["CLAUDE_EFFORT"],
       },
-      {
-        startServer,
-        createClient: (h: any) => {
-          const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
-          client.request = vi.fn().mockImplementation(async (method: string) => {
-            if (method === "initialize") return { protocolVersion: 1 };
-            if (method === "session/new") return { sessionId: "session-123" };
-            if (method === "session/prompt") return { stopReason: "end_turn" };
-            return {};
-          });
-          return client;
-        },
-      },
+      { startServer, createClient: makeCreateClientWithStandardRequest() },
     );
 
-    await withClaudeCodeHostEnv(async () => {
+    await withClaudeCodeHostEnv(async (): Promise<void> => {
       await dispatch(adapter, {
         prompt: "hello",
         signal: new AbortController().signal,
       });
     });
 
+    const capturedEnv = getEnv();
     expect(capturedEnv).toBeDefined();
     expect(capturedEnv).not.toHaveProperty("CLAUDE_EFFORT");
-    expect(mockKill).toHaveBeenCalled();
+    expect(handle.kill).toHaveBeenCalled();
   });
 
   it("prefix match strips arbitrary CLAUDE_CODE_* key", async () => {
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
-    let capturedEnv: Record<string, string> | undefined;
-
-    const startServer = vi.fn().mockImplementation(async (opts) => {
-      capturedEnv = opts.env;
-      return {
-        stdin: mockStdin,
-        stdout: mockStdout,
-        kill: mockKill,
-        exited: mockExited,
-      };
-    });
+    const handle = makeMockAcpHandle();
+    const { startServer, getEnv } = envCapturingStartServer(handle);
 
     const adapter = new StdioAcpAdapter(
       { binary: "claude-agent-acp", sanitizeClaudeHostEnv: true },
-      {
-        startServer,
-        createClient: (h: any) => {
-          const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
-          client.request = vi.fn().mockImplementation(async (method: string) => {
-            if (method === "initialize") return { protocolVersion: 1 };
-            if (method === "session/new") return { sessionId: "session-123" };
-            if (method === "session/prompt") return { stopReason: "end_turn" };
-            return {};
-          });
-          return client;
-        },
-      },
+      { startServer, createClient: makeCreateClientWithStandardRequest() },
     );
 
     const previous = process.env.CLAUDE_CODE_FUTURE_FLAG;
@@ -1660,38 +1526,22 @@ describe("StdioAcpAdapter", () => {
       }
     }
 
+    const capturedEnv = getEnv();
     expect(capturedEnv).toBeDefined();
     expect(capturedEnv).not.toHaveProperty("CLAUDE_CODE_FUTURE_FLAG");
-    expect(mockKill).toHaveBeenCalled();
+    expect(handle.kill).toHaveBeenCalled();
   });
 
   it("respects authMethodId manual override", async () => {
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
+    const handle = makeMockAcpHandle();
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
 
-    const startServer = vi.fn().mockResolvedValue({
-      stdin: mockStdin,
-      stdout: mockStdout,
-      kill: mockKill,
-      exited: mockExited,
-    });
-
-    const mockClientRequest = vi.fn();
-    mockClientRequest.mockImplementation((method, _params) => {
-      if (method === "initialize") {
-        return Promise.resolve({
-          protocolVersion: 1,
-          authMethods: [
-            { id: "openai-api-key", type: "env_var", vars: [{ name: "OPENAI_API_KEY" }] },
-            { id: "custom-auth", type: "custom" },
-          ],
-        });
-      }
-      if (method === "session/new") return Promise.resolve({ sessionId: "session-123" });
-      if (method === "session/prompt") return Promise.resolve({ stopReason: "end_turn" });
-      return Promise.resolve({});
+    const mockClientRequest = makeStandardClientRequest({
+      authMethods: [
+        { id: "openai-api-key", type: "env_var", vars: [{ name: "OPENAI_API_KEY" }] },
+        { id: "custom-auth", type: "custom" },
+      ],
     });
 
     const adapter = new StdioAcpAdapter(
@@ -1702,7 +1552,7 @@ describe("StdioAcpAdapter", () => {
       },
       {
         startServer,
-        createClient: (h: any) => {
+        createClient: (h: StdioAcpHandle): StdioAcpClient => {
           const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
           client.request = mockClientRequest;
           return client;
@@ -1719,31 +1569,17 @@ describe("StdioAcpAdapter", () => {
   });
 
   it("sends prompt as ContentBlock array per ACP spec", async () => {
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
+    const handle = makeMockAcpHandle();
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
 
-    const startServer = vi.fn().mockResolvedValue({
-      stdin: mockStdin,
-      stdout: mockStdout,
-      kill: mockKill,
-      exited: mockExited,
-    });
-
-    const mockClientRequest = vi.fn();
-    mockClientRequest.mockImplementation((method, _params) => {
-      if (method === "initialize") return Promise.resolve({ protocolVersion: 1 });
-      if (method === "session/new") return Promise.resolve({ sessionId: "session-123" });
-      if (method === "session/prompt") return Promise.resolve({ stopReason: "end_turn" });
-      return Promise.resolve({});
-    });
+    const mockClientRequest = makeStandardClientRequest();
 
     const adapter = new StdioAcpAdapter(
       { binary: "mock-acp" },
       {
         startServer,
-        createClient: (h: any) => {
+        createClient: (h: StdioAcpHandle): StdioAcpClient => {
           const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
           client.request = mockClientRequest;
           return client;
@@ -1756,9 +1592,9 @@ describe("StdioAcpAdapter", () => {
       signal: new AbortController().signal,
     });
 
-    const promptCall = mockClientRequest.mock.calls.find((c: any[]) => c[0] === "session/prompt");
+    const promptCall = mockClientRequest.mock.calls.find((c) => c[0] === "session/prompt");
     expect(promptCall).toBeDefined();
-    expect(promptCall![1]).toEqual({
+    expect(promptCall?.[1]).toEqual({
       sessionId: "session-123",
       prompt: [{ type: "text", text: "hello world" }],
     });
@@ -1767,27 +1603,18 @@ describe("StdioAcpAdapter", () => {
   it("passes mcpServers from options into session/new params", async () => {
     const originalStorageRoot = process.env.PENUMBRA_STORAGE_ROOT;
     delete process.env.PENUMBRA_STORAGE_ROOT;
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
+    const handle = makeMockAcpHandle();
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
 
-    const startServer = vi.fn().mockResolvedValue({
-      stdin: mockStdin,
-      stdout: mockStdout,
-      kill: mockKill,
-      exited: mockExited,
+    const capturedRef = mutableRef<CapturedSessionParams | null>(null);
+    const mockClientRequest = makeStandardClientRequest({
+      onSessionNew: (params: unknown): void => {
+        capturedRef.value = asCapturedSessionParams(params);
+      },
     });
 
-    const mockClientRequest = vi.fn();
-    mockClientRequest.mockImplementation((method: string, _params: unknown) => {
-      if (method === "initialize") return Promise.resolve({ protocolVersion: 1 });
-      if (method === "session/new") return Promise.resolve({ sessionId: "session-123" });
-      if (method === "session/prompt") return Promise.resolve({ stopReason: "end_turn" });
-      return Promise.resolve({});
-    });
-
-    const mcpServers = [
+    const mcpServers: McpServerStdio[] = [
       {
         name: "penumbra",
         command: "bun",
@@ -1800,7 +1627,7 @@ describe("StdioAcpAdapter", () => {
       { binary: "mock-acp", mcpServers },
       {
         startServer,
-        createClient: (h: any) => {
+        createClient: (h: StdioAcpHandle): StdioAcpClient => {
           const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
           client.request = mockClientRequest;
           return client;
@@ -1821,35 +1648,23 @@ describe("StdioAcpAdapter", () => {
       }
     }
 
-    const sessionNewCall = mockClientRequest.mock.calls.find((c: any[]) => c[0] === "session/new");
-    expect(sessionNewCall).toBeDefined();
-    expect(sessionNewCall![1].mcpServers).toEqual(mcpServers);
+    const captured = capturedRef.value;
+    expect(captured).not.toBeNull();
+    expect(captured?.mcpServers).toEqual(mcpServers);
   });
 
   it("injects PENUMBRA_HANDOFF_ID only for penumbra-mcp stdio servers, even when env is omitted", async () => {
     const originalStorageRoot = process.env.PENUMBRA_STORAGE_ROOT;
     process.env.PENUMBRA_STORAGE_ROOT = "/tmp/penumbra-test-storage";
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
+    const handle = makeMockAcpHandle();
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
 
-    const startServer = vi.fn().mockResolvedValue({
-      stdin: mockStdin,
-      stdout: mockStdout,
-      kill: mockKill,
-      exited: mockExited,
-    });
-
-    let capturedSessionParams: any = null;
-    const mockClientRequest = vi.fn().mockImplementation(async (method: string, params: any) => {
-      if (method === "initialize") return { protocolVersion: 1 };
-      if (method === "session/new") {
-        capturedSessionParams = params;
-        return { sessionId: "session-123" };
-      }
-      if (method === "session/prompt") return { stopReason: "end_turn" };
-      return {};
+    const capturedRef = mutableRef<CapturedSessionParams | null>(null);
+    const mockClientRequest = makeStandardClientRequest({
+      onSessionNew: (params: unknown): void => {
+        capturedRef.value = asCapturedSessionParams(params);
+      },
     });
 
     const adapter = new StdioAcpAdapter(
@@ -1860,18 +1675,19 @@ describe("StdioAcpAdapter", () => {
             name: "penumbra-mcp",
             command: "/bin/penumbra-mcp",
             args: [],
-          } as any,
+            env: [],
+          },
           {
             name: "github-mcp",
             command: "/bin/github-mcp",
             args: [],
             env: [{ name: "TOKEN", value: "abc123" }],
-          } as any,
+          },
         ],
       },
       {
         startServer,
-        createClient: (h: any) => {
+        createClient: (h: StdioAcpHandle): StdioAcpClient => {
           const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
           client.request = mockClientRequest;
           return client;
@@ -1895,37 +1711,26 @@ describe("StdioAcpAdapter", () => {
       }
     }
 
-    expect(capturedSessionParams.mcpServers).toBeDefined();
-    expect(capturedSessionParams.mcpServers[0].env).toEqual([
+    const captured = capturedRef.value;
+    expect(captured?.mcpServers).toBeDefined();
+    expect(captured?.mcpServers?.[0]?.env).toEqual([
       { name: "PENUMBRA_HANDOFF_ID", value: "HANDOFF_ABC" },
       { name: "PENUMBRA_MCP_ORIGIN", value: "fleet-worker" },
       { name: "PENUMBRA_STORAGE_ROOT", value: "/tmp/penumbra-test-storage" },
     ]);
-    expect(capturedSessionParams.mcpServers[1].env).toEqual([{ name: "TOKEN", value: "abc123" }]);
+    expect(captured?.mcpServers?.[1]?.env).toEqual([{ name: "TOKEN", value: "abc123" }]);
   });
 
   it("injects long-lived identity + allowlist env for long_lived_tick dispatches", async () => {
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
+    const handle = makeMockAcpHandle();
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
 
-    const startServer = vi.fn().mockResolvedValue({
-      stdin: mockStdin,
-      stdout: mockStdout,
-      kill: mockKill,
-      exited: mockExited,
-    });
-
-    let capturedSessionParams: any = null;
-    const mockClientRequest = vi.fn().mockImplementation(async (method: string, params: any) => {
-      if (method === "initialize") return { protocolVersion: 1 };
-      if (method === "session/new") {
-        capturedSessionParams = params;
-        return { sessionId: "session-123" };
-      }
-      if (method === "session/prompt") return { stopReason: "end_turn" };
-      return {};
+    const capturedRef = mutableRef<CapturedSessionParams | null>(null);
+    const mockClientRequest = makeStandardClientRequest({
+      onSessionNew: (params: unknown): void => {
+        capturedRef.value = asCapturedSessionParams(params);
+      },
     });
 
     const adapter = new StdioAcpAdapter(
@@ -1937,18 +1742,18 @@ describe("StdioAcpAdapter", () => {
             command: "/bin/penumbra-mcp",
             args: [],
             env: [{ name: "TOKEN", value: "abc123" }],
-          } as any,
+          },
           {
             name: "github-mcp",
             command: "/bin/github-mcp",
             args: [],
             env: [{ name: "GITHUB_TOKEN", value: "xyz" }],
-          } as any,
+          },
         ],
       },
       {
         startServer,
-        createClient: (h: any) => {
+        createClient: (h: StdioAcpHandle): StdioAcpClient => {
           const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
           client.request = mockClientRequest;
           return client;
@@ -1974,8 +1779,9 @@ describe("StdioAcpAdapter", () => {
       },
     });
 
-    expect(capturedSessionParams.mcpServers).toBeDefined();
-    const env = capturedSessionParams.mcpServers[0].env as Array<{ name: string; value: string }>;
+    const captured = capturedRef.value;
+    expect(captured?.mcpServers).toBeDefined();
+    const env = captured?.mcpServers?.[0]?.env ?? [];
     expect(env).toContainEqual({ name: "TOKEN", value: "abc123" });
     expect(env).toContainEqual({ name: "PENUMBRA_HANDOFF_ID", value: "HANDOFF_ABC" });
     expect(env).toContainEqual({ name: "PENUMBRA_MCP_ORIGIN", value: "fleet-worker" });
@@ -1990,33 +1796,19 @@ describe("StdioAcpAdapter", () => {
     expect(allowlistNames.has("long_lived_self_state_get")).toBe(true);
     expect(allowlistNames.has("long_lived_self_state_set")).toBe(true);
     expect(allowlistNames.has("long_lived_self_pending_actions")).toBe(true);
-    expect(capturedSessionParams.mcpServers[1].env).toEqual([
-      { name: "GITHUB_TOKEN", value: "xyz" },
-    ]);
+    expect(captured?.mcpServers?.[1]?.env).toEqual([{ name: "GITHUB_TOKEN", value: "xyz" }]);
   });
 
   it("injects long-lived env through proxy-wrapped penumbra MCP servers", async () => {
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const mockExited = Promise.resolve(0);
+    const handle = makeMockAcpHandle();
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
 
-    const startServer = vi.fn().mockResolvedValue({
-      stdin: mockStdin,
-      stdout: mockStdout,
-      kill: mockKill,
-      exited: mockExited,
-    });
-
-    let capturedSessionParams: any = null;
-    const mockClientRequest = vi.fn().mockImplementation(async (method: string, params: any) => {
-      if (method === "initialize") return { protocolVersion: 1 };
-      if (method === "session/new") {
-        capturedSessionParams = params;
-        return { sessionId: "session-123" };
-      }
-      if (method === "session/prompt") return { stopReason: "end_turn" };
-      return {};
+    const capturedRef = mutableRef<CapturedSessionParams | null>(null);
+    const mockClientRequest = makeStandardClientRequest({
+      onSessionNew: (params: unknown): void => {
+        capturedRef.value = asCapturedSessionParams(params);
+      },
     });
 
     const adapter = new StdioAcpAdapter(
@@ -2031,18 +1823,18 @@ describe("StdioAcpAdapter", () => {
               { name: "MCP_PROXY_UPSTREAM", value: "bun /tmp/penumbra-mcp.ts" },
               { name: "TOKEN", value: "abc123" },
             ],
-          } as any,
+          },
           {
             name: "ha",
             command: "bun",
             args: ["mcp-allowlist-proxy.ts"],
             env: [{ name: "MCP_PROXY_UPSTREAM", value: "bun /tmp/ha-mcp.ts" }],
-          } as any,
+          },
         ],
       },
       {
         startServer,
-        createClient: (h: any) => {
+        createClient: (h: StdioAcpHandle): StdioAcpClient => {
           const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
           client.request = mockClientRequest;
           return client;
@@ -2063,16 +1855,14 @@ describe("StdioAcpAdapter", () => {
       },
     });
 
-    expect(capturedSessionParams.mcpServers).toBeDefined();
-    const penumbraEnv = capturedSessionParams.mcpServers[0].env as Array<{
-      name: string;
-      value: string;
-    }>;
+    const captured = capturedRef.value;
+    expect(captured?.mcpServers).toBeDefined();
+    const penumbraEnv = captured?.mcpServers?.[0]?.env ?? [];
     expect(penumbraEnv).toContainEqual({ name: "TOKEN", value: "abc123" });
     expect(penumbraEnv).toContainEqual({ name: "PENUMBRA_MCP_ORIGIN", value: "fleet-worker" });
     expect(penumbraEnv).toContainEqual({ name: "PENUMBRA_LONG_LIVED_AGENT_ID", value: "agent-1" });
     expect(penumbraEnv).toContainEqual({ name: "PENUMBRA_LONG_LIVED_TICK_ID", value: "tick-1" });
-    expect(capturedSessionParams.mcpServers[1].env).toEqual([
+    expect(captured?.mcpServers?.[1]?.env).toEqual([
       { name: "MCP_PROXY_UPSTREAM", value: "bun /tmp/ha-mcp.ts" },
     ]);
   });
@@ -2080,30 +1870,31 @@ describe("StdioAcpAdapter", () => {
   it("emits agent.heartbeat when subprocess is alive and no session/update for >=45s", async () => {
     vi.useFakeTimers();
     try {
-      const events: any[] = [];
+      const events: DispatchEventInput[] = [];
       let resolvePrompt!: (value: { stopReason: string }) => void;
       const promptHang = new Promise<{ stopReason: string }>((resolve) => {
         resolvePrompt = resolve;
       });
 
+      const handle = makeMockAcpHandle({
+        exited: new Promise<number | null>(() => {
+          /* never resolves */
+        }),
+      });
+      const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+      startServer.mockResolvedValue(handle);
+
       const adapter = new StdioAcpAdapter(
         { binary: "mock-acp" },
         {
-          startServer: vi.fn().mockResolvedValue({
-            stdin: new PassThrough(),
-            stdout: new PassThrough(),
-            kill: vi.fn(),
-            exited: new Promise<number | null>(() => {}),
-          }),
-          createClient: () =>
-            mockClient({
-              onRequest: vi.fn(),
-              on: vi.fn(),
-              request: vi.fn().mockImplementation(async (method: string) => {
-                if (method === "initialize") return { protocolVersion: 1 };
-                if (method === "session/new") return { sessionId: "hb-session" };
-                if (method === "session/prompt") return promptHang;
-                return {};
+          startServer,
+          createClient: (): StdioAcpClient =>
+            makeMockAcpClient({
+              onRequest: vi.fn<StdioAcpClient["onRequest"]>(),
+              on: vi.fn<StdioAcpClient["on"]>(),
+              request: makeStandardClientRequest({
+                sessionId: "hb-session",
+                onSessionPrompt: (): Promise<unknown> => promptHang,
               }),
             }),
         },
@@ -2113,11 +1904,13 @@ describe("StdioAcpAdapter", () => {
         prompt: "heartbeat test",
         signal: new AbortController().signal,
         eventContext: { handoffId: "h-hb", workerId: "w-hb" },
-        onEvent: (e: any) => events.push(e),
+        onEvent: (e: DispatchEventInput): void => {
+          events.push(e);
+        },
       });
 
       // Flush microtasks to let initialize → session/new → session/prompt execute
-      for (let i = 0; i < 10; i++) await Promise.resolve();
+      await flushMicrotasks();
       // Advance 60s — no session/update has arrived, server is alive
       vi.advanceTimersByTime(60_000);
 
@@ -2127,7 +1920,7 @@ describe("StdioAcpAdapter", () => {
         handoff_id: "h-hb",
         meta: { adapter: "stdio-acp", session_id: "hb-session" },
       });
-      expect(heartbeats[0].meta.idle_ms).toBeGreaterThanOrEqual(45_000);
+      expect(heartbeats[0]?.meta?.idle_ms).toBeGreaterThanOrEqual(45_000);
 
       resolvePrompt({ stopReason: "end_turn" });
       await dispatchPromise;
@@ -2139,30 +1932,27 @@ describe("StdioAcpAdapter", () => {
   it("suppresses agent.heartbeat when subprocess has already exited", async () => {
     vi.useFakeTimers();
     try {
-      const events: any[] = [];
+      const events: DispatchEventInput[] = [];
       let resolvePrompt!: (value: { stopReason: string }) => void;
       const promptHang = new Promise<{ stopReason: string }>((resolve) => {
         resolvePrompt = resolve;
       });
 
+      const handle = makeMockAcpHandle({ exited: Promise.resolve<number | null>(1) });
+      const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+      startServer.mockResolvedValue(handle);
+
       const adapter = new StdioAcpAdapter(
         { binary: "mock-acp" },
         {
-          startServer: vi.fn().mockResolvedValue({
-            stdin: new PassThrough(),
-            stdout: new PassThrough(),
-            kill: vi.fn(),
-            exited: Promise.resolve(1), // subprocess already dead
-          }),
-          createClient: () =>
-            mockClient({
-              onRequest: vi.fn(),
-              on: vi.fn(),
-              request: vi.fn().mockImplementation(async (method: string) => {
-                if (method === "initialize") return { protocolVersion: 1 };
-                if (method === "session/new") return { sessionId: "hb-session-dead" };
-                if (method === "session/prompt") return promptHang;
-                return {};
+          startServer,
+          createClient: (): StdioAcpClient =>
+            makeMockAcpClient({
+              onRequest: vi.fn<StdioAcpClient["onRequest"]>(),
+              on: vi.fn<StdioAcpClient["on"]>(),
+              request: makeStandardClientRequest({
+                sessionId: "hb-session-dead",
+                onSessionPrompt: (): Promise<unknown> => promptHang,
               }),
             }),
         },
@@ -2172,11 +1962,13 @@ describe("StdioAcpAdapter", () => {
         prompt: "heartbeat test",
         signal: new AbortController().signal,
         eventContext: { handoffId: "h-hb-dead", workerId: "w-hb" },
-        onEvent: (e: any) => events.push(e),
+        onEvent: (e: DispatchEventInput): void => {
+          events.push(e);
+        },
       });
 
       // Flush microtasks — serverAlive becomes false via exited.then() during flush
-      for (let i = 0; i < 10; i++) await Promise.resolve();
+      await flushMicrotasks();
       vi.advanceTimersByTime(60_000);
 
       expect(events.filter((e) => e.kind === "agent.heartbeat")).toHaveLength(0);
@@ -2191,33 +1983,34 @@ describe("StdioAcpAdapter", () => {
   it("suppresses agent.heartbeat when session/update arrived within 45s", async () => {
     vi.useFakeTimers();
     try {
-      const events: any[] = [];
-      let sessionUpdateHandler: ((params: any) => void) | null = null;
+      const events: DispatchEventInput[] = [];
+      const updateHandlerRef = mutableRef<((params: unknown) => void) | null>(null);
       let resolvePrompt!: (value: { stopReason: string }) => void;
       const promptHang = new Promise<{ stopReason: string }>((resolve) => {
         resolvePrompt = resolve;
       });
 
+      const handle = makeMockAcpHandle({
+        exited: new Promise<number | null>(() => {
+          /* never resolves */
+        }),
+      });
+      const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+      startServer.mockResolvedValue(handle);
+
       const adapter = new StdioAcpAdapter(
         { binary: "mock-acp" },
         {
-          startServer: vi.fn().mockResolvedValue({
-            stdin: new PassThrough(),
-            stdout: new PassThrough(),
-            kill: vi.fn(),
-            exited: new Promise<number | null>(() => {}),
-          }),
-          createClient: () =>
-            mockClient({
-              onRequest: vi.fn(),
-              on: (method: string, handler: any) => {
-                if (method === "session/update") sessionUpdateHandler = handler;
+          startServer,
+          createClient: (): StdioAcpClient =>
+            makeMockAcpClient({
+              onRequest: vi.fn<StdioAcpClient["onRequest"]>(),
+              on: (method: string, handler: (params: unknown) => void): void => {
+                if (method === "session/update") updateHandlerRef.value = handler;
               },
-              request: vi.fn().mockImplementation(async (method: string) => {
-                if (method === "initialize") return { protocolVersion: 1 };
-                if (method === "session/new") return { sessionId: "hb-session-active" };
-                if (method === "session/prompt") return promptHang;
-                return {};
+              request: makeStandardClientRequest({
+                sessionId: "hb-session-active",
+                onSessionPrompt: (): Promise<unknown> => promptHang,
               }),
             }),
         },
@@ -2227,14 +2020,16 @@ describe("StdioAcpAdapter", () => {
         prompt: "heartbeat test",
         signal: new AbortController().signal,
         eventContext: { handoffId: "h-hb-active", workerId: "w-hb" },
-        onEvent: (e: any) => events.push(e),
+        onEvent: (e: DispatchEventInput): void => {
+          events.push(e);
+        },
       });
 
-      for (let i = 0; i < 10; i++) await Promise.resolve();
+      await flushMicrotasks();
 
       // Simulate a session/update at 30s — refreshes lastSessionUpdateTs
       vi.advanceTimersByTime(30_000);
-      (sessionUpdateHandler as ((params: any) => void) | null)?.({
+      updateHandlerRef.value?.({
         update: {
           sessionUpdate: "agent_message_chunk",
           content: { type: "text", text: "still working" },
@@ -2256,31 +2051,32 @@ describe("StdioAcpAdapter", () => {
   it("emits no agent.heartbeat after session/end clears the timer", async () => {
     vi.useFakeTimers();
     try {
-      const events: any[] = [];
+      const events: DispatchEventInput[] = [];
+
+      const handle = makeMockAcpHandle({
+        exited: new Promise<number | null>(() => {
+          /* never resolves */
+        }),
+      });
+      const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+      startServer.mockResolvedValue(handle);
 
       const adapter = new StdioAcpAdapter(
         { binary: "mock-acp" },
         {
-          startServer: vi.fn().mockResolvedValue({
-            stdin: new PassThrough(),
-            stdout: new PassThrough(),
-            kill: vi.fn(),
-            exited: new Promise<number | null>(() => {}),
-          }),
-          createClient: () =>
-            mockClient({
-              onRequest: vi.fn(),
-              on: vi.fn(),
-              request: vi.fn().mockImplementation((method: string) => {
-                if (method === "initialize") return Promise.resolve({ protocolVersion: 1 });
-                if (method === "session/new")
-                  return Promise.resolve({ sessionId: "hb-session-end" });
-                if (method === "session/prompt") {
-                  return new Promise<{ stopReason: string }>((resolve) =>
-                    setTimeout(() => resolve({ stopReason: "end_turn" }), 5_000),
-                  );
-                }
-                return Promise.resolve({});
+          startServer,
+          createClient: (): StdioAcpClient =>
+            makeMockAcpClient({
+              onRequest: vi.fn<StdioAcpClient["onRequest"]>(),
+              on: vi.fn<StdioAcpClient["on"]>(),
+              request: makeStandardClientRequest({
+                sessionId: "hb-session-end",
+                onSessionPrompt: (): Promise<unknown> =>
+                  new Promise<{ stopReason: string }>((resolve) => {
+                    setTimeout(() => {
+                      resolve({ stopReason: "end_turn" });
+                    }, 5_000);
+                  }),
               }),
             }),
         },
@@ -2290,14 +2086,16 @@ describe("StdioAcpAdapter", () => {
         prompt: "heartbeat test",
         signal: new AbortController().signal,
         eventContext: { handoffId: "h-hb-end", workerId: "w-hb" },
-        onEvent: (e: any) => events.push(e),
+        onEvent: (e: DispatchEventInput): void => {
+          events.push(e);
+        },
       });
 
-      for (let i = 0; i < 10; i++) await Promise.resolve();
+      await flushMicrotasks();
       vi.advanceTimersByTime(5_000); // session/prompt resolves via its setTimeout
 
       // Flush microtasks so the Promise.race settles and the finally block clears heartbeatTimer
-      for (let i = 0; i < 10; i++) await Promise.resolve();
+      await flushMicrotasks();
       await dispatchPromise;
 
       // Advance well past one full heartbeat interval — timer was cleared, no heartbeats
