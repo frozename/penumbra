@@ -1,46 +1,48 @@
-import { describe, expect, test } from "bun:test";
+import { type TextContentEnvelope } from "@nova/mcp-shared";
 import {
   CancelTaskInputSchema,
   CompleteTaskInputSchema,
   FailTaskInputSchema,
+  FileTaskInputSchema,
   HeartbeatTaskInputSchema,
   TaskKindSchema,
   TaskRecordSchema,
   TaskStatusSchema,
-  FileTaskInputSchema,
 } from "@penumbra/core";
+import { describe, expect, test } from "bun:test";
 import { z } from "zod";
-import { taskFileHandler } from "../../src/tools/task-file.js";
-import { taskListHandler } from "../../src/tools/task-list.js";
-import { taskGetHandler } from "../../src/tools/task-get.js";
-import { taskNextHandler } from "../../src/tools/task-next.js";
-import { taskHeartbeatHandler } from "../../src/tools/task-heartbeat.js";
+
+import { taskCancelHandler } from "../../src/tools/task-cancel.js";
+import { taskCommentGhHandler } from "../../src/tools/task-comment-gh.js";
 import { taskCompleteHandler } from "../../src/tools/task-complete.js";
 import { taskFailHandler } from "../../src/tools/task-fail.js";
-import { taskCancelHandler } from "../../src/tools/task-cancel.js";
+import { taskFileHandler } from "../../src/tools/task-file.js";
+import { taskGetHandler } from "../../src/tools/task-get.js";
+import { taskHeartbeatHandler } from "../../src/tools/task-heartbeat.js";
 import { taskLinkGhHandler } from "../../src/tools/task-link-gh.js";
-import { taskCommentGhHandler } from "../../src/tools/task-comment-gh.js";
-import { taskUnlinkGhHandler } from "../../src/tools/task-unlink-gh.js";
+import { taskListHandler } from "../../src/tools/task-list.js";
+import { taskNextHandler } from "../../src/tools/task-next.js";
 import { taskSyncGhNowHandler } from "../../src/tools/task-sync-gh-now.js";
+import { taskUnlinkGhHandler } from "../../src/tools/task-unlink-gh.js";
 
-function parseToolResult(out: unknown): unknown {
-  return JSON.parse((out as { content: Array<{ text: string }> }).content[0]!.text);
+function parseToolResult(out: TextContentEnvelope): unknown {
+  return JSON.parse(out.content[0]!.text);
 }
 
-function sampleTask(taskId: string) {
+function sampleTask(taskId: string): z.infer<typeof TaskRecordSchema> {
   return {
     id: taskId,
     created_at: 1_746_000_000_000,
     updated_at: 1_746_000_000_123,
-    created_by_kind: "human" as const,
+    created_by_kind: "human",
     created_by_id: "cli",
     project_id: "proj_1",
     parent_task_id: null,
-    kind: "work" as const,
-    priority: "normal" as const,
+    kind: "work",
+    priority: "normal",
     prompt: "implement task board MCP wiring",
     acceptance_criteria: "green tests",
-    expected_artifacts: [{ type: "commit" as const, ref: "abc123" }],
+    expected_artifacts: [{ type: "commit", ref: "abc123" }],
     eligibility: {
       required_tags: ["typescript"],
       min_tier: "standard",
@@ -53,7 +55,7 @@ function sampleTask(taskId: string) {
     },
     review_eligibility: null,
     requires_review: false,
-    status: "pending" as const,
+    status: "pending",
     result_summary: null,
     result_artifacts: null,
     failure_reason: null,
@@ -64,13 +66,13 @@ function sampleTask(taskId: string) {
 
 describe("task.* handlers", () => {
   test("task.file forwards FileTaskInput and origin, returns {task_id}", async () => {
-    const calls: unknown[] = [];
+    const calls: { input: unknown; opts: { origin?: string } }[] = [];
     const handler = taskFileHandler({
-      taskFile: async (input: unknown, opts?: { origin?: string }) => {
+      taskFile: (input, opts) => {
         calls.push({ input, opts });
-        return { task_id: "task_1" };
+        return Promise.resolve({ task_id: "task_1" });
       },
-    } as any);
+    });
 
     const input = {
       prompt: "wire mcp tool",
@@ -94,22 +96,22 @@ describe("task.* handlers", () => {
       created_by_id: "codex",
     };
 
-    const out = await handler(input, { _meta: { origin: "mcp-origin" } } as any);
+    const out = await handler(input, { _meta: { origin: "mcp-origin" } });
 
-    expect(FileTaskInputSchema.parse((calls[0] as any).input)).toEqual(input);
-    expect((calls[0] as any).opts).toEqual({ origin: "mcp-origin" });
+    expect(FileTaskInputSchema.parse(calls[0]?.input)).toEqual(input);
+    expect(calls[0]?.opts).toEqual({ origin: "mcp-origin" });
     const parsed = z.object({ task_id: z.string().min(1) }).parse(parseToolResult(out));
     expect(parsed.task_id).toBe("task_1");
   });
 
   test("task.list forwards filters and returns {tasks: TaskRecord[]}", async () => {
-    const calls: unknown[] = [];
+    const calls: { filters: unknown }[] = [];
     const handler = taskListHandler({
-      taskList: async (input: unknown) => {
-        calls.push(input);
-        return { tasks: [sampleTask("task_2")] };
+      taskList: (filters) => {
+        calls.push({ filters });
+        return Promise.resolve({ tasks: [sampleTask("task_2")] });
       },
-    } as any);
+    });
 
     const input = {
       status: "pending" as z.infer<typeof TaskStatusSchema>,
@@ -123,17 +125,20 @@ describe("task.* handlers", () => {
 
     const out = await handler(input);
 
-    expect(calls[0]).toEqual(input);
+    expect(calls[0]?.filters).toEqual(input);
     const parsed = z.object({ tasks: z.array(TaskRecordSchema) }).parse(parseToolResult(out));
     expect(parsed.tasks).toHaveLength(1);
   });
 
   test("task.get forwards task_id/include and returns task payload", async () => {
-    const calls: unknown[] = [];
+    const calls: {
+      taskId: string;
+      opts: { include?: ("lease" | "events" | "descendants")[] };
+    }[] = [];
     const handler = taskGetHandler({
-      taskGet: async (taskId: string, include?: Array<"lease" | "events" | "descendants">) => {
-        calls.push({ taskId, include });
-        return {
+      taskGet: (taskId, opts) => {
+        calls.push({ taskId, opts });
+        return Promise.resolve({
           ...sampleTask(taskId),
           lease: {
             id: "lease_3",
@@ -160,15 +165,15 @@ describe("task.* handlers", () => {
             depth: 0,
             ids: [],
           },
-        };
+        });
       },
-    } as any);
+    });
 
     const out = await handler({ task_id: "task_3", include: ["lease", "events", "descendants"] });
 
     expect(calls[0]).toEqual({
       taskId: "task_3",
-      include: { include: ["lease", "events", "descendants"] },
+      opts: { include: ["lease", "events", "descendants"] },
     });
     const parsed = z
       .object({
@@ -223,13 +228,13 @@ describe("task.* handlers", () => {
   });
 
   test("task.next forwards lease request and maps no-task to null", async () => {
-    const calls: unknown[] = [];
+    const calls: { input: unknown }[] = [];
     const handler = taskNextHandler({
-      taskNext: async (input: unknown) => {
-        calls.push(input);
-        return null;
+      taskNext: (input) => {
+        calls.push({ input });
+        return Promise.resolve(null);
       },
-    } as any);
+    });
 
     const input = {
       agent_id: "codex",
@@ -239,38 +244,45 @@ describe("task.* handlers", () => {
 
     const out = await handler(input);
 
-    expect(calls[0]).toEqual(input);
+    expect(calls[0]?.input).toEqual(input);
     expect(parseToolResult(out)).toBeNull();
   });
 
   test("task.heartbeat forwards body and returns {expires_at}", async () => {
-    const calls: unknown[] = [];
+    const calls: { taskId: string; body: { lease_id: string } }[] = [];
     const handler = taskHeartbeatHandler({
-      taskHeartbeat: async (taskId: string, body: unknown) => {
+      taskHeartbeat: (taskId, body) => {
         calls.push({ taskId, body });
-        return { expires_at: 1_746_000_090_000 };
+        return Promise.resolve({ expires_at: 1_746_000_090_000 });
       },
-    } as any);
+    });
 
     const input = { task_id: "task_5", lease_id: "lease_5" };
     const out = await handler(input);
 
     expect(calls[0]).toEqual({ taskId: "task_5", body: { lease_id: "lease_5" } });
-    expect(
-      HeartbeatTaskInputSchema.parse({ task_id: "task_5", ...(calls[0] as any).body }),
-    ).toEqual(input);
+    expect(HeartbeatTaskInputSchema.parse({ task_id: "task_5", ...calls[0]?.body })).toEqual(input);
     const parsed = z.object({ expires_at: z.number().int() }).parse(parseToolResult(out));
     expect(parsed.expires_at).toBe(1_746_000_090_000);
   });
 
   test("task.complete forwards CompleteTaskInput and returns {status}", async () => {
-    const calls: unknown[] = [];
+    const calls: {
+      taskId: string;
+      body: {
+        lease_id?: string;
+        result_summary: string;
+        result_artifacts?: unknown[];
+        chain_id?: string;
+        review_verdict?: unknown;
+      };
+    }[] = [];
     const handler = taskCompleteHandler({
-      taskComplete: async (taskId: string, body: unknown) => {
+      taskComplete: (taskId, body) => {
         calls.push({ taskId, body });
-        return { status: "done" };
+        return Promise.resolve({ status: "done" });
       },
-    } as any);
+    });
 
     const input = {
       task_id: "task_6",
@@ -292,21 +304,26 @@ describe("task.* handlers", () => {
         review_verdict: { passed: true, notes: "checked" },
       },
     });
-    expect(CompleteTaskInputSchema.parse({ task_id: "task_6", ...(calls[0] as any).body })).toEqual(
-      input,
-    );
+    expect(CompleteTaskInputSchema.parse({ task_id: "task_6", ...calls[0]?.body })).toEqual(input);
     const parsed = z.object({ status: z.string().min(1) }).parse(parseToolResult(out));
     expect(parsed.status).toBe("done");
   });
 
   test("task.complete forwards an omitted lease_id as a lease-less completion", async () => {
-    const calls: Array<{ taskId: string; body: Record<string, unknown> }> = [];
+    const calls: {
+      taskId: string;
+      body: {
+        lease_id?: string;
+        result_summary: string;
+        result_artifacts?: unknown[];
+      };
+    }[] = [];
     const handler = taskCompleteHandler({
-      taskComplete: async (taskId: string, body: Record<string, unknown>) => {
+      taskComplete: (taskId, body) => {
         calls.push({ taskId, body });
-        return { status: "done" };
+        return Promise.resolve({ status: "done" });
       },
-    } as any);
+    });
 
     const input = {
       task_id: "task_6b",
@@ -324,13 +341,13 @@ describe("task.* handlers", () => {
   });
 
   test("task.fail forwards FailTaskInput and returns {status}", async () => {
-    const calls: unknown[] = [];
+    const calls: { taskId: string; body: { lease_id: string; reason: string } }[] = [];
     const handler = taskFailHandler({
-      taskFail: async (taskId: string, body: unknown) => {
+      taskFail: (taskId, body) => {
         calls.push({ taskId, body });
-        return { status: "failed" };
+        return Promise.resolve({ status: "failed" });
       },
-    } as any);
+    });
 
     const input = { task_id: "task_7", lease_id: "lease_7", reason: "tool crashed" };
     const out = await handler(input);
@@ -339,47 +356,43 @@ describe("task.* handlers", () => {
       taskId: "task_7",
       body: { lease_id: "lease_7", reason: "tool crashed" },
     });
-    expect(FailTaskInputSchema.parse({ task_id: "task_7", ...(calls[0] as any).body })).toEqual(
-      input,
-    );
+    expect(FailTaskInputSchema.parse({ task_id: "task_7", ...calls[0]?.body })).toEqual(input);
     const parsed = z.object({ status: z.string().min(1) }).parse(parseToolResult(out));
     expect(parsed.status).toBe("failed");
   });
 
   test("task.cancel forwards CancelTaskInput and returns {status}", async () => {
-    const calls: unknown[] = [];
+    const calls: { taskId: string; body: { reason?: string } }[] = [];
     const handler = taskCancelHandler({
-      taskCancel: async (taskId: string, body: unknown) => {
+      taskCancel: (taskId, body) => {
         calls.push({ taskId, body });
-        return { status: "cancelled" };
+        return Promise.resolve({ status: "cancelled" });
       },
-    } as any);
+    });
 
     const input = { task_id: "task_8", reason: "obsolete" };
     const out = await handler(input);
 
     expect(calls[0]).toEqual({ taskId: "task_8", body: { reason: "obsolete" } });
-    expect(CancelTaskInputSchema.parse({ task_id: "task_8", ...(calls[0] as any).body })).toEqual(
-      input,
-    );
+    expect(CancelTaskInputSchema.parse({ task_id: "task_8", ...calls[0]?.body })).toEqual(input);
     const parsed = z.object({ status: z.string().min(1) }).parse(parseToolResult(out));
     expect(parsed.status).toBe("cancelled");
   });
 
   test("task.link_gh forwards link input and returns sync payload", async () => {
-    const calls: unknown[] = [];
+    const calls: { taskId: string; body: { repo: string; issue_number: number } }[] = [];
     const handler = taskLinkGhHandler({
-      taskLinkGh: async (taskId: string, body: unknown) => {
+      taskLinkGh: (taskId, body) => {
         calls.push({ taskId, body });
-        return {
+        return Promise.resolve({
           task_id: taskId,
           gh_issue_url: "https://github.com/acordeiro/penumbra/issues/1",
           gh_state: "queued",
           last_sync_ts: null,
           gh_sync_status: "queued",
-        };
+        });
       },
-    } as any);
+    });
 
     const out = await handler({ task_id: "task_9", repo: "acordeiro/penumbra", issue_number: 1 });
 
@@ -400,15 +413,15 @@ describe("task.* handlers", () => {
   });
 
   test("task.comment_gh forwards manual comment input and returns comment_url", async () => {
-    const calls: unknown[] = [];
+    const calls: { taskId: string; body: { body: string } }[] = [];
     const handler = taskCommentGhHandler({
-      taskCommentGh: async (taskId: string, body: unknown) => {
+      taskCommentGh: (taskId, body) => {
         calls.push({ taskId, body });
-        return {
+        return Promise.resolve({
           comment_url: "https://github.com/acordeiro/penumbra/issues/1#issuecomment-222",
-        };
+        });
       },
-    } as any);
+    });
 
     const out = await handler({ task_id: "task_9", body: "please investigate this edge case" });
 
@@ -418,46 +431,46 @@ describe("task.* handlers", () => {
     });
     const parsed = z
       .object({
-        comment_url: z.string().url(),
+        comment_url: z.url(),
       })
       .parse(parseToolResult(out));
     expect(parsed.comment_url).toContain("issuecomment");
   });
 
   test("task.unlink_gh forwards task_id and returns {ok}", async () => {
-    const calls: unknown[] = [];
+    const calls: { taskId: string }[] = [];
     const handler = taskUnlinkGhHandler({
-      taskUnlinkGh: async (taskId: string) => {
-        calls.push(taskId);
-        return { ok: true };
+      taskUnlinkGh: (taskId) => {
+        calls.push({ taskId });
+        return Promise.resolve({ ok: true });
       },
-    } as any);
+    });
 
     const out = await handler({ task_id: "task_10" });
 
-    expect(calls[0]).toBe("task_10");
+    expect(calls[0]?.taskId).toBe("task_10");
     const parsed = z.object({ ok: z.boolean() }).parse(parseToolResult(out));
     expect(parsed.ok).toBe(true);
   });
 
   test("task.sync_gh_now forwards optional task_id and returns summary", async () => {
-    const calls: unknown[] = [];
+    const calls: { input: { task_id?: string } }[] = [];
     const handler = taskSyncGhNowHandler({
-      taskSyncGhNow: async (input: unknown) => {
-        calls.push(input);
-        return {
+      taskSyncGhNow: (input) => {
+        calls.push({ input });
+        return Promise.resolve({
           linked: 1,
           pushed: 0,
           pulled: 1,
           errored: 0,
           skipped: false,
           results: [{ task_id: "task_11" }],
-        };
+        });
       },
-    } as any);
+    });
 
     const out = await handler({ task_id: "task_11" });
-    expect(calls[0]).toEqual({ task_id: "task_11" });
+    expect(calls[0]?.input).toEqual({ task_id: "task_11" });
 
     const parsed = z
       .object({

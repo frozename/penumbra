@@ -1,13 +1,18 @@
-import { beforeAll, expect, it } from "bun:test";
+import { type TextContentEnvelope } from "@nova/mcp-shared";
+import { applySchema, loadSqliteVec } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec, applySchema } from "@penumbra/core";
+import { beforeAll, expect, it } from "bun:test";
+
+import type { DaemonClient } from "../../src/daemon-client.js";
+
+import { listPendingDreamActionsQuery } from "../../../daemon/src/dreaming/digest.js";
 import {
-  queryCuratorPatterns,
-  insertCuratorPattern,
   approveCuratorPattern,
   disableCuratorPattern,
+  insertCuratorPattern,
+  queryCuratorPatterns,
 } from "../../../daemon/src/routes/curator.js";
-import { listPendingDreamActionsQuery } from "../../../daemon/src/dreaming/digest.js";
+import { TOOL_REGISTRY } from "../../src/tools/registry.js";
 
 try {
   if (process.platform === "darwin") {
@@ -66,55 +71,86 @@ function seedDreamAction(db: Database, opts: { action_type: string; status: stri
   ).run(crypto.randomUUID(), cycleId, opts.action_type, opts.status);
 }
 
-async function callTool(toolName: string, args: unknown, db: Database): Promise<any> {
-  const { TOOL_REGISTRY } = await import("../../src/tools/registry");
-  const fakeDaemon = {
-    getCuratorPatterns: async (req: any) => queryCuratorPatterns(db, req),
-    postCuratorPatterns: async (req: any) => insertCuratorPattern(db, req),
-    postCuratorPatternApprove: async (req: any) => {
+type CuratorFakeDaemon = Pick<
+  DaemonClient,
+  | "getCuratorPatterns"
+  | "postCuratorPatterns"
+  | "postCuratorPatternApprove"
+  | "postCuratorPatternDisable"
+  | "listPendingDreamActions"
+>;
+
+async function callTool(toolName: string, args: unknown, db: Database): Promise<unknown> {
+  const fakeDaemon: CuratorFakeDaemon = {
+    getCuratorPatterns: (req) => Promise.resolve(queryCuratorPatterns(db, req)),
+    postCuratorPatterns: (req) => Promise.resolve(insertCuratorPattern(db, req)),
+    postCuratorPatternApprove: (req) => {
       const result = approveCuratorPattern(db, req.pattern_id);
       if (!result) throw new Error("not_found");
-      return result;
+      return Promise.resolve(result);
     },
-    postCuratorPatternDisable: async (req: any) => {
+    postCuratorPatternDisable: (req) => {
       const result = disableCuratorPattern(db, req.pattern_id);
       if (!result) throw new Error("not_found");
-      return result;
+      return Promise.resolve(result);
     },
-    listPendingDreamActions: async (req: any) => listPendingDreamActionsQuery(db, req),
-  } as any;
-  const handler = TOOL_REGISTRY[toolName].makeHandler(fakeDaemon);
-  const result = (await handler(args)) as any;
-  return JSON.parse(result.content[0].text);
+    listPendingDreamActions: (req) => Promise.resolve(listPendingDreamActionsQuery(db, req)),
+  };
+  const tool = TOOL_REGISTRY[toolName];
+  if (!tool) throw new Error(`unknown tool: ${toolName}`);
+  const handler = tool.makeHandler(fakeDaemon as DaemonClient);
+  const result = (await handler(args)) as TextContentEnvelope;
+  return JSON.parse(result.content[0]!.text);
+}
+
+interface PatternsListResult {
+  patterns: { pattern: string }[];
+}
+
+interface AddPatternResult {
+  pattern_id: string;
+}
+
+interface PendingDreamActionsResult {
+  actions: { action_type: string }[];
+}
+
+interface PatternRow {
+  status: string;
+  enabled: number;
 }
 
 it("memory_curator_patterns_list returns approved patterns", async () => {
   const db = openTestDb();
   seedPattern(db, { pattern: "URL: %", status: "approved", enabled: 1 });
   seedPattern(db, { pattern: "Other: %", status: "queued" });
-  const result = await callTool("memory_curator_patterns_list", {}, db);
+  const result = (await callTool("memory_curator_patterns_list", {}, db)) as PatternsListResult;
   expect(result.patterns).toHaveLength(1);
-  expect(result.patterns[0].pattern).toBe("URL: %");
+  expect(result.patterns[0]?.pattern).toBe("URL: %");
 });
 
 it("memory_curator_patterns_list status=all returns every row", async () => {
   const db = openTestDb();
   seedPattern(db, { pattern: "A", status: "approved", enabled: 1 });
   seedPattern(db, { pattern: "B", status: "queued" });
-  const result = await callTool("memory_curator_patterns_list", { status: "all" }, db);
+  const result = (await callTool(
+    "memory_curator_patterns_list",
+    { status: "all" },
+    db,
+  )) as PatternsListResult;
   expect(result.patterns).toHaveLength(2);
 });
 
 it("memory_curator_patterns_add inserts queued pattern", async () => {
   const db = openTestDb();
-  const r = await callTool(
+  const r = (await callTool(
     "memory_curator_patterns_add",
     { pattern: "Recall context: %", reason: "recall preamble" },
     db,
-  );
+  )) as AddPatternResult;
   const row = db
     .prepare(`SELECT status, enabled FROM curator_ephemera_patterns WHERE pattern_id=?`)
-    .get(r.pattern_id) as any;
+    .get(r.pattern_id) as PatternRow;
   expect(row.status).toBe("queued");
   expect(row.enabled).toBe(0);
 });
@@ -125,7 +161,7 @@ it("memory_curator_patterns_approve flips status + enabled", async () => {
   await callTool("memory_curator_patterns_approve", { pattern_id: "p1" }, db);
   const row = db
     .prepare(`SELECT status, enabled FROM curator_ephemera_patterns WHERE pattern_id='p1'`)
-    .get() as any;
+    .get() as PatternRow;
   expect(row.status).toBe("approved");
   expect(row.enabled).toBe(1);
 });
@@ -136,7 +172,7 @@ it("memory_curator_patterns_disable sets enabled=0 without changing status", asy
   await callTool("memory_curator_patterns_disable", { pattern_id: "p1" }, db);
   const row = db
     .prepare(`SELECT status, enabled FROM curator_ephemera_patterns WHERE pattern_id='p1'`)
-    .get() as any;
+    .get() as PatternRow;
   expect(row.status).toBe("approved");
   expect(row.enabled).toBe(0);
 });
@@ -145,8 +181,12 @@ it("memory_list_pending_dream_actions includes ephemera_retire + cluster_retire"
   const db = openTestDb();
   seedDreamAction(db, { action_type: "ephemera_retire", status: "queued" });
   seedDreamAction(db, { action_type: "cluster_retire", status: "queued" });
-  const result = await callTool("memory_list_pending_dream_actions", {}, db);
-  const types = result.actions.map((a: any) => a.action_type);
+  const result = (await callTool(
+    "memory_list_pending_dream_actions",
+    {},
+    db,
+  )) as PendingDreamActionsResult;
+  const types = result.actions.map((a) => a.action_type);
   expect(types).toContain("ephemera_retire");
   expect(types).toContain("cluster_retire");
 });
