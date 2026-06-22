@@ -1,13 +1,16 @@
-import { afterAll, expect, it, beforeAll } from "bun:test";
+import type { Logger } from "@penumbra/core";
+
+import { applySchema, buildT2EmbedText, loadSqliteVec } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec, applySchema, buildT2EmbedText } from "@penumbra/core";
+import { afterAll, beforeAll, expect, it } from "bun:test";
+
+import type { DreamConfig } from "../../src/dreaming/config.js";
+
 import { P1_CLAIM_TTL_MS, runDreamCycle } from "../../src/dreaming/cycle.js";
 import { makeFakeJudgePool } from "../../src/dreaming/judge-pool.js";
-import { hashQuery } from "../../src/dreaming/research.js";
-import { sanitizeTitleForQuery } from "../../src/dreaming/query-sanitize.js";
-import { hashTitle } from "../../src/dreaming/query-rewriting.js";
 import { setRewriteForMemory } from "../../src/dreaming/query-rewriter-cache.js";
-import type { DreamConfig } from "../../src/dreaming/config.js";
+import { sanitizeTitleForQuery } from "../../src/dreaming/query-sanitize.js";
+import { hashQuery } from "../../src/dreaming/research.js";
 
 try {
   if (process.platform === "darwin") {
@@ -46,6 +49,10 @@ afterAll(() => {
   else process.env.PENUMBRA_DREAMING_REWRITER_ENABLED = previousDreamingRewriterEnabled;
 });
 
+function makeLogSpy(spy: (fields: Record<string, unknown>, msg: string) => void): Logger {
+  return { info: spy } as unknown as Logger;
+}
+
 function openTestDb(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
@@ -82,12 +89,12 @@ function seedTodaySpend(
 
 function seedUnpromotedRollups(db: Database, n: number): void {
   for (let i = 0; i < n; i++) {
-    const rollupId = `R${i + 1}`;
-    const sessionId = `session-${i + 1}`;
+    const rollupId = `R${String(i + 1)}`;
+    const sessionId = `session-${String(i + 1)}`;
     db.prepare(
       `INSERT INTO t1_rollups(rollup_id, user_id, session_id, started_at, n_events, first_prompt_excerpt)
        VALUES(?, 'test-user', ?, '2026-01-01T00:00:00Z', 1, ?)`,
-    ).run(rollupId, sessionId, `rollup-${i + 1}`);
+    ).run(rollupId, sessionId, `rollup-${String(i + 1)}`);
   }
 }
 
@@ -123,7 +130,7 @@ function getCycleBailReason(db: Database, cycleId: string): string {
 function getClaimedRollups(db: Database, cycleId: string): string[] {
   const rows = db
     .prepare(`SELECT rollup_id FROM t1_rollups WHERE claimed_by_cycle = ?`)
-    .all(cycleId) as Array<{ rollup_id: string }>;
+    .all(cycleId) as { rollup_id: string }[];
   return rows.map((r) => r.rollup_id);
 }
 
@@ -156,7 +163,9 @@ it("P0 bails when per-cycle LLM cap exceeded", async () => {
 
 it("P0 bails when pressure guard sees throttled provider", async () => {
   const db = openTestDb();
-  const pressureStub = { check: async () => ({ anyThrottled: true }) };
+  const pressureStub = {
+    check: (): Promise<{ anyThrottled: boolean }> => Promise.resolve({ anyThrottled: true }),
+  };
   const cycleId = await runDreamCycle(db, testConfig(), { pressureGuard: pressureStub });
   expect(getCycleOutcome(db, cycleId)).toBe("bailed");
   expect(getCycleBailReason(db, cycleId)).toMatch(/pressure/i);
@@ -170,21 +179,19 @@ it("P0 duration includes pre-flight pressure guard work", async () => {
     value: () => nowMs,
     writable: true,
   });
-  const phaseEnds: Array<Record<string, any>> = [];
-  const log = {
-    info: (fields: Record<string, any>, msg: string) => {
-      if (msg === "dream-cycle phase end") phaseEnds.push(fields);
-    },
-  };
+  const phaseEnds: Record<string, unknown>[] = [];
+  const log = makeLogSpy((fields, msg) => {
+    if (msg === "dream-cycle phase end") phaseEnds.push(fields);
+  });
   const pressureStub = {
-    check: async () => {
+    check: (): Promise<{ anyThrottled: boolean }> => {
       nowMs += 42;
-      return { anyThrottled: false };
+      return Promise.resolve({ anyThrottled: false });
     },
   };
 
   try {
-    await runDreamCycle(db, testConfig(), { pressureGuard: pressureStub, log: log as any });
+    await runDreamCycle(db, testConfig(), { pressureGuard: pressureStub, log });
   } finally {
     Object.defineProperty(Date, "now", {
       value: originalDateNow,
@@ -200,7 +207,8 @@ it("P0 pressure guard: flap mid-cycle bails before next phase", async () => {
   const db = openTestDb();
   let callCount = 0;
   const pressureStub = {
-    check: async () => ({ anyThrottled: callCount++ > 1 }), // flips throttled after 2nd call
+    check: (): Promise<{ anyThrottled: boolean }> =>
+      Promise.resolve({ anyThrottled: callCount++ > 1 }), // flips throttled after 2nd call
   };
   const cycleId = await runDreamCycle(db, testConfig(), { pressureGuard: pressureStub });
   const row = db.prepare(`SELECT phases_run FROM dream_cycles WHERE cycle_id=?`).get(cycleId) as {
@@ -426,8 +434,8 @@ function seedUnpromotedRollup(
   return rollupId;
 }
 
-async function testP1Embed(): Promise<Float32Array> {
-  return new Float32Array([0.1, 0.2, 0.3]);
+function testP1Embed(): Promise<Float32Array> {
+  return Promise.resolve(new Float32Array([0.1, 0.2, 0.3]));
 }
 
 function seedNegativeResearchCache(
@@ -467,11 +475,11 @@ function seedP4QueueAtMax(db: Database, max: number): void {
     `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
      VALUES(?, 'seed-cycle', 'P4', 'resolve_contradiction', 0.5, 'queued', ?, '{}')`,
   );
-  db.exec("BEGIN");
+  db.run("BEGIN");
   for (let i = 0; i < max; i++) {
-    stmt.run(crypto.randomUUID(), JSON.stringify([`mem-seed-${i}`]));
+    stmt.run(crypto.randomUUID(), JSON.stringify([`mem-seed-${String(i)}`]));
   }
-  db.exec("COMMIT");
+  db.run("COMMIT");
 }
 
 function seedExpiredP4Action(db: Database, opts: { expires_at: number }): void {
@@ -511,13 +519,13 @@ it("P1 auto-promote inserts t2 memory + vector and uses buildT2EmbedText input",
   const prevModelVersion = process.env.PENUMBRA_EMBEDDING_MODEL_VERSION;
   process.env.PENUMBRA_T2_EMBED_RECIPE = "body_v1";
   process.env.PENUMBRA_EMBEDDING_MODEL_VERSION = "embed-model-v2";
-  const seen: Array<{ memory_id: string; text: string }> = [];
+  const seen: { memory_id: string; text: string }[] = [];
   const promotedCountDuringEmbed: number[] = [];
 
   try {
     await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), {
       judgePool: pool,
-      onReembed: async (memory_id, text) => {
+      onReembed: (memory_id, text) => {
         const promotedCount = (
           db.prepare(`SELECT COUNT(*) AS c FROM t2_memories WHERE kind='promoted'`).get() as {
             c: number;
@@ -525,7 +533,7 @@ it("P1 auto-promote inserts t2 memory + vector and uses buildT2EmbedText input",
         ).c;
         promotedCountDuringEmbed.push(promotedCount);
         seen.push({ memory_id, text });
-        return new Float32Array([0.25, 0.5, 0.75]);
+        return Promise.resolve(new Float32Array([0.25, 0.5, 0.75]));
       },
     });
   } finally {
@@ -582,14 +590,14 @@ it("P1 embed failure rolls back candidate promotion and continues to next rollup
   try {
     await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), {
       judgePool: pool,
-      onReembed: async (_memory_id, text) => {
+      onReembed: (_memory_id, text) => {
         embedCalls += 1;
         if (
           text === buildT2EmbedText(`P1 auto-promote: ${failingBody.slice(0, 80)}`, failingBody)
         ) {
-          throw new Error("embed exploded");
+          return Promise.reject(new Error("embed exploded"));
         }
-        return new Float32Array([1, 2, 3]);
+        return Promise.resolve(new Float32Array([1, 2, 3]));
       },
     });
   } finally {
@@ -951,7 +959,7 @@ it("P1 matches NULL project_id rows only against NULL rows", async () => {
   const nonNullProjectMemoryId = db.prepare(
     `INSERT INTO t2_memories(memory_id, user_id, project_id, kind, window_start, window_end, title, body, created_at, updated_at)
      VALUES(?, 'test-user', 'proj_a', 'feedback', ?, ?, ?, ?, ?, ?)`,
-  ) as unknown as void;
+  );
   const memoryId2 = crypto.randomUUID();
   const now = new Date().toISOString();
   const stmt = db.prepare(
@@ -1010,11 +1018,12 @@ it("P3 rewrite: never auto-applied, always queued regardless of confidence", asy
   const db = openTestDb();
   seedMemory(db, { body: "vague memory that needs rewriting" });
   const scorer = {
-    score: async () => ({
-      verdict: "rewrite" as const,
-      composite: 0.95,
-      should_auto_retire: false,
-    }),
+    score: (): Promise<{
+      verdict: "retire" | "rewrite" | "keep";
+      composite: number;
+      should_auto_retire: boolean;
+    }> =>
+      Promise.resolve({ verdict: "rewrite" as const, composite: 0.95, should_auto_retire: false }),
   };
   await runDreamCycle(db, testConfig(), { scorer });
   const action = db
@@ -1031,11 +1040,12 @@ it("P3 auto-retire skips direct-origin memories but retires non-direct memories"
 
   await runDreamCycle(db, testConfig(), {
     scorer: {
-      score: async ({ memory_id }: { memory_id: string }) => ({
-        verdict: memory_id === directId ? "keep" : "retire",
-        composite: 0.99,
-        should_auto_retire: true,
-      }),
+      score: ({ memory_id }: { memory_id: string }) =>
+        Promise.resolve({
+          verdict: memory_id === directId ? ("keep" as const) : ("retire" as const),
+          composite: 0.99,
+          should_auto_retire: true,
+        }),
     },
   });
 
@@ -1113,12 +1123,17 @@ function getT2UpdatedAtMs(db: Database, memoryId: string): number {
   return row ? Date.parse(row.updated_at) : NaN;
 }
 
-function makeProjectRegistry(
-  projects: Array<{ project_id: string; dreaming?: { research_provider?: string } }>,
-) {
+type TestProject = {
+  project_id: string;
+  dreaming?: { research_provider?: string; allowed_domains?: string[] };
+};
+function makeProjectRegistry(projects: TestProject[]): {
+  get: (id: string) => TestProject | null;
+  list: () => TestProject[];
+} {
   return {
-    get: (id: string) => projects.find((p) => p.project_id === id) ?? null,
-    list: () => projects,
+    get: (id: string): TestProject | null => projects.find((p) => p.project_id === id) ?? null,
+    list: (): TestProject[] => projects,
   };
 }
 
@@ -1141,12 +1156,12 @@ it("P4 seeds research_query actions for projects with research_provider != off",
     .prepare(
       `SELECT target_ids, payload_json FROM dream_actions WHERE phase='P4' AND action_type='research_query'`,
     )
-    .all() as Array<{ target_ids: string; payload_json: string }>;
+    .all() as { target_ids: string; payload_json: string }[];
   expect(actions.length).toBeGreaterThanOrEqual(1);
   expect(actions.length).toBeLessThanOrEqual(2);
   for (const a of actions) {
     expect(JSON.parse(a.target_ids)).toEqual([projectId]);
-    expect(JSON.parse(a.payload_json).query).toBeTruthy();
+    expect((JSON.parse(a.payload_json) as { query: string }).query).toBeTruthy();
   }
 });
 
@@ -1296,9 +1311,9 @@ it("P4 query gate allows valid memory titles and mints research_query", async ()
     .prepare(
       `SELECT payload_json FROM dream_actions WHERE phase='P4' AND action_type='research_query'`,
     )
-    .all() as Array<{ payload_json: string }>;
+    .all() as { payload_json: string }[];
   expect(actions.length).toBe(1);
-  expect(JSON.parse(actions[0]!.payload_json).query).toBe(title);
+  expect((JSON.parse(actions[0]!.payload_json) as { query: string }).query).toBe(title);
 });
 
 it("P4 query gate can be disabled via env var for backward compatibility", async () => {
@@ -1342,7 +1357,7 @@ it("P4 query gate logs structured rejection with title_hash", async () => {
     project_id: projectId,
     title: gateTitle,
   });
-  const events: Array<{ kind: string; meta: unknown }> = [];
+  const events: { kind: string; meta: unknown }[] = [];
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
   ]);
@@ -1378,19 +1393,19 @@ it("P4 uses cached rewriter skip verdict and does not call llmInvoke", async () 
   });
 
   const llmCalls: number[] = [];
-  const events: Array<{ kind: string; meta: unknown }> = [];
+  const events: { kind: string; meta: unknown }[] = [];
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
   ]);
   await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
     projectRegistry,
-    llmInvoke: async () => {
+    llmInvoke: () => {
       llmCalls.push(1);
-      return {
+      return Promise.resolve({
         ok: false as const,
         reason: "http_error",
         failureMessage: "should not happen",
-      };
+      });
     },
     dispatchEventLog: {
       record(event) {
@@ -1440,13 +1455,13 @@ it("P4 uses cached rewriter query verdict when available", async () => {
   ]);
   await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
     projectRegistry,
-    llmInvoke: async () => {
+    llmInvoke: () => {
       llmCalls.push(1);
-      return {
+      return Promise.resolve({
         ok: true as const,
         value: { kind: "query", query: "should-not-be-used" },
         raw: '{"kind":"query","query":"should-not-be-used"}',
-      };
+      });
     },
   });
 
@@ -1457,7 +1472,9 @@ it("P4 uses cached rewriter query verdict when available", async () => {
     )
     .get() as { payload_json: string } | null;
   expect(action).not.toBeNull();
-  expect(JSON.parse(action!.payload_json).query).toBe("searchable rewritten stability query");
+  expect((JSON.parse(action!.payload_json) as { query: string }).query).toBe(
+    "searchable rewritten stability query",
+  );
 });
 
 it("P4 writes cache on rewriter fresh skip and skips action minting", async () => {
@@ -1468,7 +1485,7 @@ it("P4 writes cache on rewriter fresh skip and skips action minting", async () =
     title: "A stable architecture question with human language",
   });
   const memoryUpdatedAtMs = getT2UpdatedAtMs(db, memoryId);
-  const events: Array<{ kind: string; meta: unknown }> = [];
+  const events: { kind: string; meta: unknown }[] = [];
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
   ]);
@@ -1479,11 +1496,12 @@ it("P4 writes cache on rewriter fresh skip and skips action minting", async () =
         events.push(event);
       },
     },
-    llmInvoke: async () => ({
-      ok: true as const,
-      value: { kind: "skip", reason: "too-internal" },
-      raw: '{"kind":"skip","reason":"too-internal"}',
-    }),
+    llmInvoke: () =>
+      Promise.resolve({
+        ok: true as const,
+        value: { kind: "skip", reason: "too-internal" },
+        raw: '{"kind":"skip","reason":"too-internal"}',
+      }),
   });
 
   const actionCount = (
@@ -1518,7 +1536,7 @@ it("P4 writes cache on rewriter fresh query and mints action with rewritten quer
     project_id: projectId,
     title: "A stable architecture question with human language",
   });
-  const events: Array<{ kind: string; meta: unknown }> = [];
+  const events: { kind: string; meta: unknown }[] = [];
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
   ]);
@@ -1529,11 +1547,12 @@ it("P4 writes cache on rewriter fresh query and mints action with rewritten quer
         events.push(event);
       },
     },
-    llmInvoke: async () => ({
-      ok: true as const,
-      value: { kind: "query", query: "something searchable and useful query terms" },
-      raw: '{"kind":"query","query":"something searchable and useful query terms"}',
-    }),
+    llmInvoke: () =>
+      Promise.resolve({
+        ok: true as const,
+        value: { kind: "query", query: "something searchable and useful query terms" },
+        raw: '{"kind":"query","query":"something searchable and useful query terms"}',
+      }),
   });
 
   const action = db
@@ -1542,7 +1561,7 @@ it("P4 writes cache on rewriter fresh query and mints action with rewritten quer
     )
     .get() as { payload_json: string } | null;
   expect(action).not.toBeNull();
-  expect(JSON.parse(action!.payload_json).query).toBe(
+  expect((JSON.parse(action!.payload_json) as { query: string }).query).toBe(
     "something searchable and useful query terms",
   );
 
@@ -1571,7 +1590,7 @@ it("P4 falls back to title when rewriter fails and does not cache on failure", a
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
   ]);
-  const events: Array<{ kind: string; meta: unknown }> = [];
+  const events: { kind: string; meta: unknown }[] = [];
   await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
     projectRegistry,
     dispatchEventLog: {
@@ -1579,11 +1598,12 @@ it("P4 falls back to title when rewriter fails and does not cache on failure", a
         events.push(event);
       },
     },
-    llmInvoke: async () => ({
-      ok: false as const,
-      reason: "http_error",
-      failureMessage: "provider unavailable",
-    }),
+    llmInvoke: () =>
+      Promise.resolve({
+        ok: false as const,
+        reason: "http_error",
+        failureMessage: "provider unavailable",
+      }),
   });
 
   const action = db
@@ -1592,7 +1612,7 @@ it("P4 falls back to title when rewriter fails and does not cache on failure", a
     )
     .get() as { payload_json: string } | null;
   expect(action).not.toBeNull();
-  expect(JSON.parse(action!.payload_json).query).toBe(
+  expect((JSON.parse(action!.payload_json) as { query: string }).query).toBe(
     "TypeScript strict null checks in async systems",
   );
 
@@ -1613,7 +1633,7 @@ it("P4 rewritten query rejected by guard falls back to memory title and does not
     project_id: projectId,
     title: "TypeScript strict null checks in async systems",
   });
-  const events: Array<{ kind: string; meta: unknown }> = [];
+  const events: { kind: string; meta: unknown }[] = [];
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
   ]);
@@ -1624,11 +1644,12 @@ it("P4 rewritten query rejected by guard falls back to memory title and does not
         events.push(event);
       },
     },
-    llmInvoke: async () => ({
-      ok: true as const,
-      value: { kind: "query", query: "feat(daemon-workers): phase 5 supervisor" },
-      raw: '{"kind":"query","query":"feat(daemon-workers): phase 5 supervisor"}',
-    }),
+    llmInvoke: () =>
+      Promise.resolve({
+        ok: true as const,
+        value: { kind: "query", query: "feat(daemon-workers): phase 5 supervisor" },
+        raw: '{"kind":"query","query":"feat(daemon-workers): phase 5 supervisor"}',
+      }),
   });
 
   const action = db
@@ -1637,7 +1658,7 @@ it("P4 rewritten query rejected by guard falls back to memory title and does not
     )
     .get() as { payload_json: string } | null;
   expect(action).not.toBeNull();
-  expect(JSON.parse(action!.payload_json).query).toBe(
+  expect((JSON.parse(action!.payload_json) as { query: string }).query).toBe(
     "TypeScript strict null checks in async systems",
   );
 
@@ -1679,9 +1700,13 @@ it("P6 skips brief generation when last brief is within refresh window", async (
   const projectId = "proj-fresh";
   seedProjectBrief(db, { project_id: projectId, generated_at: Date.now() - 60 * 60 * 1000 }); // 1h ago
   const observeCalls: string[] = [];
-  const memoryObserve = async (_brief: string, pid: string, _cid: string) => {
+  const memoryObserve = (
+    _brief: string,
+    pid: string,
+    _cid: string,
+  ): Promise<{ memory_id: string }> => {
     observeCalls.push(pid);
-    return { memory_id: crypto.randomUUID() };
+    return Promise.resolve({ memory_id: crypto.randomUUID() });
   };
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: "off" } },
@@ -1699,15 +1724,17 @@ it("P6 skips brief generation when last brief is within refresh window", async (
   expect(observeCalls).not.toContain(projectId);
 });
 
-function makeMemoryObserve(db: Database) {
-  return async (brief: string, pid: string, _cid: string) => {
+function makeMemoryObserve(
+  db: Database,
+): (brief: string, pid: string, _cid: string) => Promise<{ memory_id: string }> {
+  return (brief: string, pid: string, _cid: string): Promise<{ memory_id: string }> => {
     const memId = crypto.randomUUID();
     const now = new Date().toISOString();
     db.prepare(
       `INSERT INTO t2_memories(memory_id, user_id, kind, window_start, window_end, title, body, created_at, updated_at, project_id)
        VALUES(?, 'system', 'brief', ?, ?, ?, ?, ?, ?, ?)`,
     ).run(memId, now, now, `Brief: ${pid}`, brief, now, now, pid);
-    return { memory_id: memId };
+    return Promise.resolve({ memory_id: memId });
   };
 }
 
@@ -1720,7 +1747,8 @@ it("P6 uses briefSynthesizer when provided and stores its output", async () => {
     { project_id: projectId, dreaming: { research_provider: "off" } },
   ]);
   const briefSynthesizer = {
-    synthesize: async () => ({ markdown: "real brief content", source_memory_ids: ["mA"] }),
+    synthesize: (): Promise<{ markdown: string; source_memory_ids: string[] }> =>
+      Promise.resolve({ markdown: "real brief content", source_memory_ids: ["mA"] }),
   };
   await runDreamCycle(db, testConfig(), { projectRegistry, memoryObserve, briefSynthesizer });
   const row = db
@@ -1753,7 +1781,11 @@ it("P6 generates brief when last is older than refresh window", async () => {
   const twentyFiveHoursAgo = Date.now() - 25 * 60 * 60 * 1000;
   seedProjectBrief(db, { project_id: projectId, generated_at: twentyFiveHoursAgo });
   const observeCalls: string[] = [];
-  const memoryObserve = async (_brief: string, pid: string, _cid: string) => {
+  const memoryObserve = (
+    _brief: string,
+    pid: string,
+    _cid: string,
+  ): Promise<{ memory_id: string }> => {
     const memId = crypto.randomUUID();
     const now = new Date().toISOString();
     db.prepare(
@@ -1761,7 +1793,7 @@ it("P6 generates brief when last is older than refresh window", async () => {
        VALUES(?, 'test-user', 'feedback', ?, ?, 'brief', 'brief body', ?, ?)`,
     ).run(memId, now, now, now, now);
     observeCalls.push(pid);
-    return { memory_id: memId };
+    return Promise.resolve({ memory_id: memId });
   };
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: "off" } },
@@ -1781,7 +1813,11 @@ it("P6 generates brief when project_briefs has no row for project", async () => 
   const db = openTestDb();
   const projectId = "proj-new";
   const observeCalls: string[] = [];
-  const memoryObserve = async (_brief: string, pid: string, _cid: string) => {
+  const memoryObserve = (
+    _brief: string,
+    pid: string,
+    _cid: string,
+  ): Promise<{ memory_id: string }> => {
     const memId = crypto.randomUUID();
     const now = new Date().toISOString();
     db.prepare(
@@ -1789,7 +1825,7 @@ it("P6 generates brief when project_briefs has no row for project", async () => 
        VALUES(?, 'test-user', 'feedback', ?, ?, 'brief', 'brief body', ?, ?)`,
     ).run(memId, now, now, now, now);
     observeCalls.push(pid);
-    return { memory_id: memId };
+    return Promise.resolve({ memory_id: memId });
   };
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: "off" } },
