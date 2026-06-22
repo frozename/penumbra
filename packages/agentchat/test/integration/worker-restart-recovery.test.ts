@@ -1,5 +1,6 @@
-import { test, expect, afterEach } from "bun:test";
-import { startInProcessDaemon, type InProcessDaemonHarness } from "../helpers/in-process-daemon.js";
+import { afterEach, expect, test } from "bun:test";
+
+import { type InProcessDaemonHarness, startInProcessDaemon } from "../helpers/in-process-daemon.js";
 
 let harness: InProcessDaemonHarness | undefined;
 
@@ -14,7 +15,7 @@ function insertHandoff(
   maxAttempts: number,
   workerId: string,
   workflowRunId: string | null = null,
-) {
+): void {
   const stmt = harness.services.db.prepare(`
     INSERT INTO handoffs (
       handoff_id, status, worker_id, dispatch_attempts, max_dispatch_attempts, workflow_run_id, 
@@ -149,7 +150,7 @@ test("Orphan recovery skips post-start handoffs when the worker is only briefly 
     getStaleWorkers(ms: number): string[];
   };
   const original = watchdog.getStaleWorkers.bind(watchdog);
-  watchdog.getStaleWorkers = (ms: number) => (ms <= 1 ? ["paused-worker"] : []);
+  watchdog.getStaleWorkers = (ms: number): string[] => (ms <= 1 ? ["paused-worker"] : []);
   try {
     const rec = harness.triggerOrphanRecovery();
     expect(rec.requeued).toBe(0);

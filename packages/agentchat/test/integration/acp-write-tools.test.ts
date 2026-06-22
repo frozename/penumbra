@@ -1,3 +1,5 @@
+import type { Logger } from "@penumbra/core";
+
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
@@ -5,13 +7,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { PassThrough } from "node:stream";
-import { StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
+
+import type { StdioAcpHandle } from "../../src/adapters/stdio-acp-server.js";
+import type { DispatchInput, PermissionDecision } from "../../src/sdk/adapter.js";
+
 import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
-import type { DispatchInput } from "../../src/sdk/adapter.js";
+import { StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
 import { DEFAULT_SANDBOX_CONFIG, type SandboxConfig } from "../../src/worker/sandbox-config.js";
 import { WriteToolsExecutor } from "../../src/worker/write-tools-executor.js";
-
-type PermissionDecision = "approve" | "reject";
 
 interface CapturedEvent {
   type: string;
@@ -25,15 +28,57 @@ interface HarnessOptions {
   sandboxConfigOverrides?: Partial<SandboxConfig>;
 }
 
+interface JsonRpcError {
+  code: number;
+  message: string;
+}
+
+interface JsonRpcResponseEnvelope<T = unknown> {
+  jsonrpc?: string;
+  id?: number | string;
+  result?: T;
+  error?: JsonRpcError;
+}
+
+interface JsonRpcWireMessage {
+  jsonrpc?: string;
+  id?: number | string;
+  method?: string;
+  params?: unknown;
+  result?: unknown;
+  error?: JsonRpcError;
+}
+
+interface TerminalCreateResult {
+  terminal_id: string;
+}
+
+interface TerminalExitStatus {
+  exitCode: number;
+  signal: string | null;
+}
+
+interface TerminalWaitResult {
+  exit_status: TerminalExitStatus;
+}
+
+interface TerminalOutputResult {
+  output: string;
+  truncated: boolean;
+  exit_status?: TerminalExitStatus;
+}
+
 interface MockAcpServer {
-  sendRequest: (
+  sendRequest: <T = unknown>(
     method: string,
     params?: unknown,
-  ) => Promise<{ result?: unknown; error?: { code: number; message: string } }>;
+  ) => Promise<JsonRpcResponseEnvelope<T>>;
   initializeParams: unknown;
   sessionParams: unknown;
   promptParams: unknown;
 }
+
+type PromptHandler = (server: MockAcpServer, params: unknown) => Promise<unknown>;
 
 interface IntegrationHarness {
   adapter: StdioAcpAdapter;
@@ -41,9 +86,92 @@ interface IntegrationHarness {
   worktreeRoot: string;
   events: CapturedEvent[];
   server: MockAcpServer;
-  setPromptHandler: (handler: (server: MockAcpServer, params: unknown) => Promise<unknown>) => void;
+  setPromptHandler: (handler: PromptHandler) => void;
   runDispatch: () => Promise<void>;
   cleanup: () => Promise<void>;
+}
+
+const silentLog = (): void => {
+  /* test logger no-op */
+};
+
+const testLogger: Pick<Logger, "warn" | "info" | "debug" | "error"> = {
+  warn: silentLog,
+  info: silentLog,
+  debug: silentLog,
+  error: silentLog,
+};
+
+function requireResult<T>(envelope: JsonRpcResponseEnvelope<T>): T {
+  if (envelope.result === undefined) {
+    const detail = envelope.error ? envelope.error.message : "<none>";
+    throw new Error(`expected JSON-RPC result, got error: ${detail}`);
+  }
+  return envelope.result;
+}
+
+function payloadHasReason(payload: unknown, reason: string): boolean {
+  if (typeof payload !== "object" || payload === null) return false;
+  const value = (payload as { reason?: unknown }).reason;
+  return value === reason;
+}
+
+interface ServerSideHandlers {
+  onInitialize: (params: unknown) => void;
+  onSessionNew: (params: unknown) => void;
+  onSessionPrompt: (params: unknown) => Promise<unknown>;
+}
+
+async function handleSessionPrompt(
+  message: JsonRpcWireMessage & { id: number | string },
+  handler: (params: unknown) => Promise<unknown>,
+  sendLine: (msg: unknown) => void,
+): Promise<void> {
+  try {
+    const result = await handler(message.params);
+    sendLine({ jsonrpc: "2.0", id: message.id, result });
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    const maybeCode = (err as Error & { code?: number }).code;
+    const code = typeof maybeCode === "number" ? maybeCode : -32000;
+    sendLine({
+      jsonrpc: "2.0",
+      id: message.id,
+      error: { code, message: err.message },
+    });
+  }
+}
+
+async function handleRequestFrame(
+  message: JsonRpcWireMessage & { method: string; id: number | string },
+  handlers: ServerSideHandlers,
+  sendLine: (msg: unknown) => void,
+): Promise<void> {
+  if (message.method === "initialize") {
+    handlers.onInitialize(message.params);
+    sendLine({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1 } });
+    return;
+  }
+  if (message.method === "authenticate") {
+    sendLine({ jsonrpc: "2.0", id: message.id, result: {} });
+    return;
+  }
+  if (message.method === "session/new") {
+    handlers.onSessionNew(message.params);
+    sendLine({ jsonrpc: "2.0", id: message.id, result: { sessionId: "session-123" } });
+    return;
+  }
+  if (message.method === "session/prompt") {
+    await handleSessionPrompt(message, handlers.onSessionPrompt, sendLine);
+    return;
+  }
+  sendLine({ jsonrpc: "2.0", id: message.id, result: {} });
+}
+
+function isRequestFrame(
+  msg: JsonRpcWireMessage,
+): msg is JsonRpcWireMessage & { method: string; id: number | string } {
+  return typeof msg.method === "string" && msg.id !== undefined;
 }
 
 async function createIntegrationHarness(opts: HarnessOptions = {}): Promise<IntegrationHarness> {
@@ -51,20 +179,19 @@ async function createIntegrationHarness(opts: HarnessOptions = {}): Promise<Inte
   const events: CapturedEvent[] = [];
   const serverToAdapter = new PassThrough();
   const adapterToServer = new PassThrough();
-  const pendingRequests = new Map<
-    number,
-    (response: { result?: unknown; error?: { code: number; message: string } }) => void
-  >();
+  const pendingRequests = new Map<number, (response: JsonRpcResponseEnvelope) => void>();
   const executor = new WriteToolsExecutor({
     worktreeRoot,
-    permissionCallback: async () => opts.permissionDecision ?? "approve",
+    permissionCallback: (): Promise<PermissionDecision> =>
+      Promise.resolve(opts.permissionDecision ?? "approve"),
     auditEmitter: {
-      emit: async (type, payload) => {
+      emit: (type, payload): Promise<void> => {
         events.push({ type, payload });
+        return Promise.resolve();
       },
     },
     sandboxConfig: { ...DEFAULT_SANDBOX_CONFIG, ...(opts.sandboxConfigOverrides ?? {}) },
-    logger: { warn: () => {}, info: () => {}, debug: () => {}, error: () => {} },
+    logger: testLogger,
     handoffId: "h-int",
     dispatchId: "d-int",
   });
@@ -73,75 +200,56 @@ async function createIntegrationHarness(opts: HarnessOptions = {}): Promise<Inte
   let initializeParams: unknown = null;
   let sessionParams: unknown = null;
   let promptParams: unknown = null;
-  let promptHandler: ((server: MockAcpServer, params: unknown) => Promise<unknown>) | null = null;
+  let promptHandler: PromptHandler | null = null;
 
-  const sendLine = (message: unknown) => {
+  const sendLine = (message: unknown): void => {
     serverToAdapter.write(`${JSON.stringify(message)}\n`);
   };
 
   const server: MockAcpServer = {
-    async sendRequest(method: string, params?: unknown) {
+    sendRequest<T = unknown>(
+      method: string,
+      params?: unknown,
+    ): Promise<JsonRpcResponseEnvelope<T>> {
       const id = nextRequestId++;
-      const responsePromise = new Promise<{
-        result?: unknown;
-        error?: { code: number; message: string };
-      }>((resolve) => {
+      const responsePromise = new Promise<JsonRpcResponseEnvelope>((resolve) => {
         pendingRequests.set(id, resolve);
       });
       sendLine({ jsonrpc: "2.0", method, params, id });
-      return responsePromise;
+      return responsePromise as Promise<JsonRpcResponseEnvelope<T>>;
     },
     initializeParams,
     sessionParams,
     promptParams,
   };
 
+  const handlers: ServerSideHandlers = {
+    onInitialize: (params): void => {
+      initializeParams = params;
+      server.initializeParams = initializeParams;
+    },
+    onSessionNew: (params): void => {
+      sessionParams = params;
+      server.sessionParams = sessionParams;
+    },
+    onSessionPrompt: async (params): Promise<unknown> => {
+      promptParams = params;
+      server.promptParams = promptParams;
+      if (promptHandler) {
+        return await promptHandler(server, params);
+      }
+      return { stopReason: "end_turn" };
+    },
+  };
+
   const stdinReader = createInterface({ input: adapterToServer, terminal: false });
   stdinReader.on("line", (line) => {
-    void (async () => {
+    void (async (): Promise<void> => {
       if (!line.trim()) return;
-      const message = JSON.parse(line) as any;
+      const message = JSON.parse(line) as JsonRpcWireMessage;
 
-      if (message.method !== undefined && message.id !== undefined) {
-        if (message.method === "initialize") {
-          initializeParams = message.params;
-          server.initializeParams = initializeParams;
-          sendLine({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1 } });
-          return;
-        }
-
-        if (message.method === "authenticate") {
-          sendLine({ jsonrpc: "2.0", id: message.id, result: {} });
-          return;
-        }
-
-        if (message.method === "session/new") {
-          sessionParams = message.params;
-          server.sessionParams = sessionParams;
-          sendLine({ jsonrpc: "2.0", id: message.id, result: { sessionId: "session-123" } });
-          return;
-        }
-
-        if (message.method === "session/prompt") {
-          promptParams = message.params;
-          server.promptParams = promptParams;
-          try {
-            const result = promptHandler
-              ? await promptHandler(server, message.params)
-              : { stopReason: "end_turn" };
-            sendLine({ jsonrpc: "2.0", id: message.id, result });
-          } catch (error) {
-            const err = error as Error & { code?: number };
-            sendLine({
-              jsonrpc: "2.0",
-              id: message.id,
-              error: { code: err.code ?? -32000, message: err.message ?? String(error) },
-            });
-          }
-          return;
-        }
-
-        sendLine({ jsonrpc: "2.0", id: message.id, result: {} });
+      if (isRequestFrame(message)) {
+        await handleRequestFrame(message, handlers, sendLine);
         return;
       }
 
@@ -152,7 +260,7 @@ async function createIntegrationHarness(opts: HarnessOptions = {}): Promise<Inte
           pending(message);
         }
       }
-    })().catch(() => {});
+    })().catch(() => undefined);
   });
 
   const adapter = new StdioAcpAdapter(
@@ -163,18 +271,19 @@ async function createIntegrationHarness(opts: HarnessOptions = {}): Promise<Inte
       terminal: !!opts.terminal,
     },
     {
-      startServer: async () => ({
-        stdin: adapterToServer,
-        stdout: serverToAdapter,
-        kill: () => {
-          serverToAdapter.destroy();
-          adapterToServer.destroy();
-          stdinReader.close();
-        },
-        getStderrTail: () => "",
-        exited: Promise.resolve(0),
-      }),
-      createClient: (handle) =>
+      startServer: (): Promise<StdioAcpHandle> =>
+        Promise.resolve({
+          stdin: adapterToServer,
+          stdout: serverToAdapter,
+          kill: (): void => {
+            serverToAdapter.destroy();
+            adapterToServer.destroy();
+            stdinReader.close();
+          },
+          getStderrTail: (): string => "",
+          exited: Promise.resolve(0),
+        }),
+      createClient: (handle): StdioAcpClient =>
         new StdioAcpClient({
           stdin: handle.stdin,
           stdout: handle.stdout,
@@ -197,13 +306,13 @@ async function createIntegrationHarness(opts: HarnessOptions = {}): Promise<Inte
     worktreeRoot,
     events,
     server,
-    setPromptHandler: (handler) => {
+    setPromptHandler: (handler: PromptHandler): void => {
       promptHandler = handler;
     },
-    runDispatch: async () => {
+    runDispatch: async (): Promise<void> => {
       await adapter.dispatch(dispatchInput);
     },
-    cleanup: async () => {
+    cleanup: async (): Promise<void> => {
       await executor.dispose();
       stdinReader.close();
       serverToAdapter.destroy();
@@ -217,18 +326,12 @@ describe("ACP write-tools integration", () => {
   test("fsWriteTextFile advertises clientCapabilities.fs.writeTextFile during initialize", async () => {
     const harness = await createIntegrationHarness({ fsWriteTextFile: true });
     try {
-      harness.setPromptHandler(async () => ({ stopReason: "end_turn" }));
+      harness.setPromptHandler(() => Promise.resolve({ stopReason: "end_turn" }));
       await harness.runDispatch();
 
-      expect(harness.server.initializeParams).toEqual(
-        expect.objectContaining({
-          clientCapabilities: expect.objectContaining({
-            fs: expect.objectContaining({
-              writeTextFile: true,
-            }),
-          }),
-        }),
-      );
+      expect(harness.server.initializeParams).toMatchObject({
+        clientCapabilities: { fs: { writeTextFile: true } },
+      });
     } finally {
       await harness.cleanup();
     }
@@ -242,7 +345,7 @@ describe("ACP write-tools integration", () => {
           path: "notes-obj.txt",
           content: { type: "text", text: "hello world" },
         });
-        expect(response as Record<string, unknown>).toEqual({ jsonrpc: "2.0", id: 1, result: {} });
+        expect(response).toEqual({ jsonrpc: "2.0", id: 1, result: {} });
         return { stopReason: "end_turn" };
       });
 
@@ -266,7 +369,7 @@ describe("ACP write-tools integration", () => {
             { type: "text", text: "b" },
           ],
         });
-        expect(response as Record<string, unknown>).toEqual({ jsonrpc: "2.0", id: 1, result: {} });
+        expect(response).toEqual({ jsonrpc: "2.0", id: 1, result: {} });
         return { stopReason: "end_turn" };
       });
 
@@ -287,8 +390,8 @@ describe("ACP write-tools integration", () => {
           path: "notes-bad-obj.txt",
           content: { foo: 1 },
         });
-        expect((response as any).error).toBeDefined();
-        expect((response as any).error.message).toContain("invalid content type: object");
+        expect(response.error).toBeDefined();
+        expect(response.error?.message).toContain("invalid content type: object");
         return { stopReason: "end_turn" };
       });
 
@@ -296,8 +399,10 @@ describe("ACP write-tools integration", () => {
       let exists = true;
       try {
         await readFile(join(harness.worktreeRoot, "notes-bad-obj.txt"), "utf8");
-      } catch (err: any) {
-        if (err.code === "ENOENT") exists = false;
+      } catch (err) {
+        if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT") {
+          exists = false;
+        }
       }
       expect(exists).toBe(false);
     } finally {
@@ -313,8 +418,8 @@ describe("ACP write-tools integration", () => {
           path: "notes-prim.txt",
           content: null,
         });
-        expect((response as any).error).toBeDefined();
-        expect((response as any).error.message).toContain("invalid content type: object");
+        expect(response.error).toBeDefined();
+        expect(response.error?.message).toContain("invalid content type: object");
         return { stopReason: "end_turn" };
       });
 
@@ -332,36 +437,25 @@ describe("ACP write-tools integration", () => {
           path: "notes.txt",
           content: "hello world",
         });
-        expect(response as Record<string, unknown>).toEqual({ jsonrpc: "2.0", id: 1, result: {} });
+        expect(response).toEqual({ jsonrpc: "2.0", id: 1, result: {} });
         return { stopReason: "end_turn" };
       });
 
       await harness.runDispatch();
 
-      expect(harness.server.initializeParams).toEqual(
-        expect.objectContaining({
-          clientCapabilities: {
-            fs: {
-              writeTextFile: true,
-            },
-          },
-        }),
-      );
+      expect(harness.server.initializeParams).toMatchObject({
+        clientCapabilities: { fs: { writeTextFile: true } },
+      });
       expect(await readFile(join(harness.worktreeRoot, "notes.txt"), "utf8")).toBe("hello world");
-      expect(harness.events).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            type: "fs.write_applied",
-            payload: expect.objectContaining({
-              path: "notes.txt",
-              bytes: 11,
-              sha256: createHash("sha256").update("hello world").digest("hex"),
-              prev_sha256: null,
-              handoff_id: "h-int",
-            }),
-          }),
-        ]),
-      );
+      const writeEvent = harness.events.find((entry) => entry.type === "fs.write_applied");
+      expect(writeEvent).toBeDefined();
+      expect(writeEvent?.payload).toMatchObject({
+        path: "notes.txt",
+        bytes: 11,
+        sha256: createHash("sha256").update("hello world").digest("hex"),
+        prev_sha256: null,
+        handoff_id: "h-int",
+      });
     } finally {
       await harness.cleanup();
     }
@@ -382,13 +476,11 @@ describe("ACP write-tools integration", () => {
 
       const event = harness.events.find((entry) => entry.type === "fs.write_applied");
       expect(event).toBeDefined();
-      expect(event?.payload).toEqual(
-        expect.objectContaining({
-          path: "audit.txt",
-          bytes: 6,
-          sha256: createHash("sha256").update("abc123").digest("hex"),
-        }),
-      );
+      expect(event?.payload).toMatchObject({
+        path: "audit.txt",
+        bytes: 6,
+        sha256: createHash("sha256").update("abc123").digest("hex"),
+      });
     } finally {
       await harness.cleanup();
     }
@@ -437,16 +529,12 @@ describe("ACP write-tools integration", () => {
   test("terminal advertises clientCapabilities.terminal during initialize", async () => {
     const harness = await createIntegrationHarness({ terminal: true });
     try {
-      harness.setPromptHandler(async () => ({ stopReason: "end_turn" }));
+      harness.setPromptHandler(() => Promise.resolve({ stopReason: "end_turn" }));
       await harness.runDispatch();
 
-      expect(harness.server.initializeParams).toEqual(
-        expect.objectContaining({
-          clientCapabilities: expect.objectContaining({
-            terminal: true,
-          }),
-        }),
-      );
+      expect(harness.server.initializeParams).toMatchObject({
+        clientCapabilities: { terminal: true },
+      });
     } finally {
       await harness.cleanup();
     }
@@ -456,23 +544,23 @@ describe("ACP write-tools integration", () => {
     const harness = await createIntegrationHarness({ terminal: true });
     try {
       harness.setPromptHandler(async (server) => {
-        const created = await server.sendRequest("terminal/create", {
+        const created = await server.sendRequest<TerminalCreateResult>("terminal/create", {
           command: "echo hi",
         });
         expect(created.error).toBeUndefined();
-        const terminalId = (created.result as any).terminal_id;
+        const { terminal_id: terminalId } = requireResult(created);
 
-        const waited = await server.sendRequest("terminal/wait_for_exit", {
+        const waited = await server.sendRequest<TerminalWaitResult>("terminal/wait_for_exit", {
           terminal_id: terminalId,
         });
         expect(waited.error).toBeUndefined();
-        expect((waited.result as any).exit_status.exitCode).toBe(0);
+        expect(requireResult(waited).exit_status.exitCode).toBe(0);
 
-        const output = await server.sendRequest("terminal/output", {
+        const output = await server.sendRequest<TerminalOutputResult>("terminal/output", {
           terminal_id: terminalId,
         });
         expect(output.error).toBeUndefined();
-        expect(((output.result as any).output as string).trim()).toBe("hi");
+        expect(requireResult(output).output.trim()).toBe("hi");
         return { stopReason: "end_turn" };
       });
 
@@ -486,17 +574,17 @@ describe("ACP write-tools integration", () => {
     const harness = await createIntegrationHarness({ terminal: true });
     try {
       harness.setPromptHandler(async (server) => {
-        const created = await server.sendRequest("terminal/create", {
+        const created = await server.sendRequest<TerminalCreateResult>("terminal/create", {
           command: "echo output",
         });
-        const terminalId = (created.result as any).terminal_id;
+        const { terminal_id: terminalId } = requireResult(created);
         await server.sendRequest("terminal/wait_for_exit", {
           terminal_id: terminalId,
         });
-        const output = await server.sendRequest("terminal/output", {
+        const output = await server.sendRequest<TerminalOutputResult>("terminal/output", {
           terminal_id: terminalId,
         });
-        expect((output.result as any).output.trim()).toBe("output");
+        expect(requireResult(output).output.trim()).toBe("output");
         return { stopReason: "end_turn" };
       });
 
@@ -510,10 +598,10 @@ describe("ACP write-tools integration", () => {
     const harness = await createIntegrationHarness({ terminal: true });
     try {
       harness.setPromptHandler(async (server) => {
-        const created = await server.sendRequest("terminal/create", {
+        const created = await server.sendRequest<TerminalCreateResult>("terminal/create", {
           command: "sleep 5",
         });
-        const terminalId = (created.result as any).terminal_id;
+        const { terminal_id: terminalId } = requireResult(created);
 
         const released = await server.sendRequest("terminal/release", {
           terminal_id: terminalId,
@@ -537,17 +625,17 @@ describe("ACP write-tools integration", () => {
     const harness = await createIntegrationHarness({ terminal: true });
     try {
       harness.setPromptHandler(async (server) => {
-        const created = await server.sendRequest("terminal/create", {
+        const created = await server.sendRequest<TerminalCreateResult>("terminal/create", {
           args: ["echo", "X"],
         });
-        const terminalId = (created.result as any).terminal_id;
+        const { terminal_id: terminalId } = requireResult(created);
         await server.sendRequest("terminal/wait_for_exit", {
           terminal_id: terminalId,
         });
-        const output = await server.sendRequest("terminal/output", {
+        const output = await server.sendRequest<TerminalOutputResult>("terminal/output", {
           terminal_id: terminalId,
         });
-        expect((output.result as any).output.trim()).toBe("X");
+        expect(requireResult(output).output.trim()).toBe("X");
         return { stopReason: "end_turn" };
       });
 
@@ -561,17 +649,17 @@ describe("ACP write-tools integration", () => {
     const harness = await createIntegrationHarness({ terminal: true });
     try {
       harness.setPromptHandler(async (server) => {
-        const created = await server.sendRequest("terminal/create", {
+        const created = await server.sendRequest<TerminalCreateResult>("terminal/create", {
           command: "echo Y",
         });
-        const terminalId = (created.result as any).terminal_id;
+        const { terminal_id: terminalId } = requireResult(created);
         await server.sendRequest("terminal/wait_for_exit", {
           terminal_id: terminalId,
         });
-        const output = await server.sendRequest("terminal/output", {
+        const output = await server.sendRequest<TerminalOutputResult>("terminal/output", {
           terminal_id: terminalId,
         });
-        expect((output.result as any).output.trim()).toBe("Y");
+        expect(requireResult(output).output.trim()).toBe("Y");
         return { stopReason: "end_turn" };
       });
 
@@ -585,18 +673,18 @@ describe("ACP write-tools integration", () => {
     const harness = await createIntegrationHarness({ terminal: true });
     try {
       harness.setPromptHandler(async (server) => {
-        const created = await server.sendRequest("terminal/create", {
+        const created = await server.sendRequest<TerminalCreateResult>("terminal/create", {
           args: ["echo", "preferred"],
           command: "echo ignored",
         });
-        const terminalId = (created.result as any).terminal_id;
+        const { terminal_id: terminalId } = requireResult(created);
         await server.sendRequest("terminal/wait_for_exit", {
           terminal_id: terminalId,
         });
-        const output = await server.sendRequest("terminal/output", {
+        const output = await server.sendRequest<TerminalOutputResult>("terminal/output", {
           terminal_id: terminalId,
         });
-        expect((output.result as any).output.trim()).toBe("preferred");
+        expect(requireResult(output).output.trim()).toBe("preferred");
         return { stopReason: "end_turn" };
       });
 
@@ -634,10 +722,10 @@ describe("ACP write-tools integration", () => {
     const harness = await createIntegrationHarness({ terminal: true });
     try {
       harness.setPromptHandler(async (server) => {
-        const created = await server.sendRequest("terminal/create", {
+        const created = await server.sendRequest<TerminalCreateResult>("terminal/create", {
           args: ["sleep", "10"],
         });
-        const terminalId = (created.result as any).terminal_id;
+        const { terminal_id: terminalId } = requireResult(created);
 
         const killed = await server.sendRequest("terminal/kill", {
           terminal_id: terminalId,
@@ -647,7 +735,7 @@ describe("ACP write-tools integration", () => {
         expect(
           harness.events.some(
             (entry) =>
-              entry.type === "terminal.killed" && (entry.payload as any).reason === "operator",
+              entry.type === "terminal.killed" && payloadHasReason(entry.payload, "operator"),
           ),
         ).toBe(true);
         return { stopReason: "end_turn" };
@@ -663,19 +751,19 @@ describe("ACP write-tools integration", () => {
     const harness = await createIntegrationHarness({ terminal: true });
     try {
       harness.setPromptHandler(async (server) => {
-        const created = await server.sendRequest("terminal/create", {
+        const created = await server.sendRequest<TerminalCreateResult>("terminal/create", {
           args: ["sleep", "10"],
         });
-        const terminalId = (created.result as any).terminal_id;
+        const { terminal_id: terminalId } = requireResult(created);
 
         await server.sendRequest("terminal/kill", {
           terminal_id: terminalId,
         });
-        const waited = await server.sendRequest("terminal/wait_for_exit", {
+        const waited = await server.sendRequest<TerminalWaitResult>("terminal/wait_for_exit", {
           terminal_id: terminalId,
         });
 
-        const signal = (waited.result as any).exit_status.signal;
+        const signal = requireResult(waited).exit_status.signal;
         expect(signal === "SIGTERM" || signal === "SIGKILL").toBe(true);
         return { stopReason: "end_turn" };
       });
@@ -799,18 +887,18 @@ describe("ACP write-tools integration", () => {
     const harness = await createIntegrationHarness({ terminal: true });
     try {
       harness.setPromptHandler(async (server) => {
-        const created = await server.sendRequest("terminal/create", {
+        const created = await server.sendRequest<TerminalCreateResult>("terminal/create", {
           command: "yes",
           output_byte_limit: 4096,
         });
-        const terminalId = (created.result as any).terminal_id;
+        const { terminal_id: terminalId } = requireResult(created);
         await server.sendRequest("terminal/wait_for_exit", {
           terminal_id: terminalId,
         });
-        const output = await server.sendRequest("terminal/output", {
+        const output = await server.sendRequest<TerminalOutputResult>("terminal/output", {
           terminal_id: terminalId,
         });
-        expect((output.result as any).truncated).toBe(true);
+        expect(requireResult(output).truncated).toBe(true);
         return { stopReason: "end_turn" };
       });
 
@@ -829,10 +917,10 @@ describe("ACP write-tools integration", () => {
     });
     try {
       harness.setPromptHandler(async (server) => {
-        const created = await server.sendRequest("terminal/create", {
+        const created = await server.sendRequest<TerminalCreateResult>("terminal/create", {
           args: ["sleep", "5"],
         });
-        const terminalId = (created.result as any).terminal_id;
+        const { terminal_id: terminalId } = requireResult(created);
         await server.sendRequest("terminal/wait_for_exit", {
           terminal_id: terminalId,
         });
@@ -840,7 +928,7 @@ describe("ACP write-tools integration", () => {
         expect(
           harness.events.some(
             (entry) =>
-              entry.type === "terminal.killed" && (entry.payload as any).reason === "timeout",
+              entry.type === "terminal.killed" && payloadHasReason(entry.payload, "timeout"),
           ),
         ).toBe(true);
         return { stopReason: "end_turn" };
@@ -864,7 +952,7 @@ describe("ACP write-tools integration", () => {
         expect(
           harness.events.some(
             (entry) =>
-              entry.type === "terminal.killed" && (entry.payload as any).reason === "dispatch_end",
+              entry.type === "terminal.killed" && payloadHasReason(entry.payload, "dispatch_end"),
           ),
         ).toBe(true);
         return { stopReason: "end_turn" };

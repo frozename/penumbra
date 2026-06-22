@@ -1,8 +1,9 @@
 import { describe, expect, it, mock } from "bun:test";
-import { startInProcessDaemon } from "../helpers/in-process-daemon.js";
-import { ThoughtCapture } from "../../src/worker/thought-capture.js";
+
 import { runThoughtAnalyzer } from "../../src/worker/thought-analyzer.js";
+import { ThoughtCapture } from "../../src/worker/thought-capture.js";
 import { loadThoughtsConfig } from "../../src/worker/thought-config.js";
+import { startInProcessDaemon } from "../helpers/in-process-daemon.js";
 
 describe("thoughts e2e", () => {
   it("captures live thoughts, persists them, runs analyzer at merge time, and surfaces digest + signal events", async () => {
@@ -44,7 +45,7 @@ describe("thoughts e2e", () => {
 
       const capture = new ThoughtCapture({
         config,
-        enqueue: (event) => {
+        enqueue: (event): void => {
           pendingDispatchWrites.push(
             harness.postDispatchEvent({ ...event, handoff_id: handoffId }),
           );
@@ -70,21 +71,32 @@ describe("thoughts e2e", () => {
       const thoughtEvents = eventsAfterCapture.filter((event) => event.kind === "agent.thought");
       expect(thoughtEvents).toHaveLength(2);
 
-      const chainStart = mock(async (input: { message: string }) => {
-        const responseText = input.message.includes("Summarize")
-          ? "Agent reasoned through two steps and committed."
-          : "agent expressed doubt about test X";
-        const conversationId = `conv-${responseByConversationId.size + 1}`;
-        responseByConversationId.set(conversationId, responseText);
-        return {
-          conversation_id: conversationId,
-          handoff_id: `h-sub-${responseByConversationId.size}`,
-        };
-      });
-      const chainWait = mock(async () => ({ status: "completed" as const }));
-      const chainResponse = mock(async ({ conversation_id }: { conversation_id: string }) => ({
-        responses: [{ text: responseByConversationId.get(conversation_id) ?? "no match" }],
-      }));
+      const chainStart = mock(
+        (input: { message: string }): Promise<{ conversation_id: string; handoff_id: string }> => {
+          const responseText = input.message.includes("Summarize")
+            ? "Agent reasoned through two steps and committed."
+            : "agent expressed doubt about test X";
+          const conversationId = `conv-${String(responseByConversationId.size + 1)}`;
+          responseByConversationId.set(conversationId, responseText);
+          return Promise.resolve({
+            conversation_id: conversationId,
+            handoff_id: `h-sub-${String(responseByConversationId.size)}`,
+          });
+        },
+      );
+      const chainWait = mock(
+        (): Promise<{ status: "completed" }> => Promise.resolve({ status: "completed" as const }),
+      );
+      const chainResponse = mock(
+        ({
+          conversation_id,
+        }: {
+          conversation_id: string;
+        }): Promise<{ responses: { text: string }[] }> =>
+          Promise.resolve({
+            responses: [{ text: responseByConversationId.get(conversation_id) ?? "no match" }],
+          }),
+      );
 
       await runThoughtAnalyzer({
         handoffId,
