@@ -1,19 +1,23 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import {
   loadSqliteVec,
   MaestroSessionWriter,
   migrate,
+  type TaskEvent,
   TaskEventBus,
   TaskWriter,
 } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { runOrchestrateDeferralSweep } from "../../src/sweepers/orchestrate-deferral.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  // Optional Homebrew SQLite is unavailable on non-local runners.
+}
 
 function setupDb(): Database {
   const db = new Database(":memory:");
@@ -35,9 +39,11 @@ function insertDeferredEvent(db: Database, taskId: string, at: number, resumeAtM
 
 function insertTask(db: Database, bus: TaskEventBus): string {
   const writer = new TaskWriter(db, {
-    now: () => 100,
+    now: (): number => 100,
     bus,
-    resolveAgent: (name) =>
+    resolveAgent: (
+      name,
+    ): { maestro_capable: boolean; name: string; tags: never[]; tier: "premium" } | undefined =>
       name === "claude"
         ? {
             name: "claude",
@@ -67,12 +73,16 @@ test("due deferred event publishes filed and writes orchestrate_resumed", async 
   const result = runOrchestrateDeferralSweep({ db, bus, now: () => 5_000 });
 
   expect(result.resumed).toEqual([taskId]);
-  const published = await Promise.race([
+  const timeoutResult: IteratorResult<TaskEvent> = { done: true, value: undefined as never };
+  const published = await Promise.race<IteratorResult<TaskEvent>>([
     events.next(),
-    Bun.sleep(50).then(() => ({ done: true, value: undefined })),
+    Bun.sleep(50).then(() => timeoutResult),
   ]);
   expect(published.done).toBe(false);
-  expect(published.value?.task_id).toBe(taskId);
+  if (published.done) {
+    throw new Error("expected filed event before timeout");
+  }
+  expect(published.value.task_id).toBe(taskId);
 
   const resumedCount = db
     .query<
@@ -127,7 +137,7 @@ test("terminated maestro session blocks resuming", () => {
   const nowMs = 5_000;
   const taskId = insertTask(db, bus);
   insertDeferredEvent(db, taskId, 1_000, 4_000);
-  const sessions = new MaestroSessionWriter({ db, now: () => nowMs });
+  const sessions = new MaestroSessionWriter({ db, now: (): number => nowMs });
   sessions.start({
     task_id: taskId,
     chain_handoff_id: "h-4",

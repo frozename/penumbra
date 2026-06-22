@@ -1,15 +1,26 @@
-import { expect, test } from "bun:test";
+import {
+  applySchema,
+  claimNextJob,
+  enqueueMemoryEfficacyJob,
+  getJobStatus,
+  loadSqliteVec,
+  type Services,
+} from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec } from "@penumbra/core";
-import { applySchema, enqueueMemoryEfficacyJob, claimNextJob, getJobStatus } from "@penumbra/core";
-import { runEfficacyJobReclaimSweep } from "../../src/sweepers/efficacy-job-reclaim.js";
-import { startEfficacyJobReclaimSweeper } from "../../src/sweepers/efficacy-job-reclaim.js";
+import { expect, test } from "bun:test";
+
+import {
+  runEfficacyJobReclaimSweep,
+  startEfficacyJobReclaimSweeper,
+} from "../../src/sweepers/efficacy-job-reclaim.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  // Optional Homebrew SQLite is unavailable on non-local runners.
+}
 
 function setupDb(): Database {
   const db = new Database(":memory:");
@@ -18,9 +29,18 @@ function setupDb(): Database {
   return db;
 }
 
+function makeServices(db: Database): Services {
+  // This sweeper only reads services.db; the full daemon service graph is unnecessary here.
+  return { db } as unknown as Services;
+}
+
+function noopLog(): undefined {
+  return undefined;
+}
+
 test("efficacy job reclaim sweeper returns expired running jobs to queued", () => {
   const db = setupDb();
-  const services = { db } as any;
+  const services = makeServices(db);
 
   const enqueued = enqueueMemoryEfficacyJob(db, { reviewsDir: "/tmp/reviews" });
   const claimed = claimNextJob(db, "2026-05-01T13:00:00.000Z", {
@@ -44,31 +64,33 @@ test("efficacy job reclaim sweeper survives a tick failure and unrefs its timer"
   const originalClearInterval = globalThis.clearInterval;
   const timer = {
     unrefCalled: false,
-    unref() {
+    unref(): void {
       this.unrefCalled = true;
     },
   };
-  const intervals: Array<() => void> = [];
+  const intervals: (() => void)[] = [];
 
-  globalThis.setInterval = ((fn: () => void) => {
+  globalThis.setInterval = ((fn: () => void): ReturnType<typeof setInterval> => {
     intervals.push(fn);
-    return timer as any;
+    return timer as unknown as ReturnType<typeof setInterval>;
   }) as typeof setInterval;
-  globalThis.clearInterval = ((handle: any) => {
+  globalThis.clearInterval = ((handle: Parameters<typeof clearInterval>[0]): void => {
     expect(handle).toBe(timer);
   }) as typeof clearInterval;
 
   try {
     const stop = startEfficacyJobReclaimSweeper({
-      services: { db: setupDb() } as any,
-      log: { info: () => {}, error: () => {} },
+      services: makeServices(setupDb()),
+      log: { info: noopLog, error: noopLog },
       runSweep: () => {
         throw new Error("boom");
       },
     });
 
     expect(timer.unrefCalled).toBeTrue();
-    expect(() => intervals[0]()).not.toThrow();
+    expect(() => {
+      intervals[0]?.();
+    }).not.toThrow();
     stop();
   } finally {
     globalThis.setInterval = originalSetInterval;

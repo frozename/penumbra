@@ -1,22 +1,78 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import {
+  type FileTaskInput,
   loadSqliteVec,
   migrate,
-  PlanWriter,
-  TaskWriter,
-  TaskEventBus,
   OrchestrateAgentNotMaestroCapable,
+  PlanWriter,
+  TaskEventBus,
+  TaskWriter,
+  type WorktreeManager,
 } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { createPlanRuntimeSweeper } from "../../src/sweepers/plan-runtime.js";
 
 try {
   if (process.platform === "darwin")
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-} catch {}
+} catch {
+  // Optional Homebrew SQLite is unavailable on non-local runners.
+}
+
+interface ParsedPlanHeader {
+  home_project: string;
+  plan_defaults?: {
+    bounds?: {
+      cost_cents: number;
+      max_sub_dispatches: number;
+      wall_clock_ms: number;
+    };
+  };
+  plan_id: string;
+}
+
+interface ParsedPlanTask {
+  body?: string;
+  depends_on: string[];
+  fallback_agent?: string;
+  file_scope: string;
+  files: string[];
+  heading?: string;
+  id: string;
+  preferred_agent: string;
+  project?: string;
+  risk_class: string;
+  task_size: string;
+}
+
+interface ParsedPlan {
+  errors: string[];
+  header: ParsedPlanHeader;
+  tasks: ParsedPlanTask[];
+}
+
+interface LogEntry {
+  meta?: unknown;
+  msg: string;
+}
+
+interface StageCall {
+  ancestorRefs: string[];
+  handoffId: string;
+  opts?: { project_id?: string };
+}
+
+interface StageMergedBaseMock {
+  stageMergedBase(
+    handoffId: string,
+    ancestorRefs: string[],
+    opts?: { project_id?: string },
+  ): Promise<string>;
+}
 
 function makeDb(): Database {
   const db = new Database(":memory:");
@@ -32,8 +88,8 @@ function makePlanFile(name: string): string {
   return path;
 }
 
-function fakeParser(header: any, tasks: any[]) {
-  return async (_path: string) => ({ header, tasks, errors: [] });
+function fakeParser(header: ParsedPlanHeader, tasks: ParsedPlanTask[]): () => Promise<ParsedPlan> {
+  return () => Promise.resolve({ header, tasks, errors: [] });
 }
 
 function makeTaskWriter(db: Database): TaskWriter {
@@ -43,15 +99,25 @@ function makeTaskWriter(db: Database): TaskWriter {
   });
 }
 
-function makeCapturingTaskWriter(db: Database, capture: Array<any>): TaskWriter {
-  const writer = makeTaskWriter(db);
-  return {
-    ...writer,
-    file: (input: any) => {
-      capture.push(input);
-      return writer.file(input);
-    },
-  } as TaskWriter;
+class CapturingTaskWriter extends TaskWriter {
+  constructor(
+    db: Database,
+    private readonly capture: FileTaskInput[],
+  ) {
+    super(db, {
+      bus: new TaskEventBus(),
+      resolveAgent: (name: string) => ({ name, maestro_capable: true }),
+    });
+  }
+
+  override file(input: FileTaskInput): { task_id: string } {
+    this.capture.push(input);
+    return super.file(input);
+  }
+}
+
+function makeCapturingTaskWriter(db: Database, capture: FileTaskInput[]): TaskWriter {
+  return new CapturingTaskWriter(db, capture);
 }
 
 function seedMaestroSession(db: Database, taskId: string, handoffId: string): void {
@@ -64,33 +130,78 @@ function seedMaestroSession(db: Database, taskId: string, handoffId: string): vo
   );
 }
 
-function makeThrowingTaskWriter(db: Database, error: Error): TaskWriter {
-  const writer = makeTaskWriter(db);
-  return {
-    ...writer,
-    file: () => {
-      throw error;
-    },
-  } as TaskWriter;
+class ThrowingTaskWriter extends TaskWriter {
+  constructor(
+    db: Database,
+    private readonly error: Error,
+  ) {
+    super(db, {
+      bus: new TaskEventBus(),
+      resolveAgent: (name: string) => ({ name, maestro_capable: true }),
+    });
+  }
+
+  override file(_input: FileTaskInput): { task_id: string } {
+    throw this.error;
+  }
 }
 
-function makeWorktreeManagerMock() {
-  const calls: Array<{
-    handoffId: string;
-    ancestorRefs: string[];
-    opts?: { project_id?: string };
-  }> = [];
-  const mock = {
-    stageMergedBase: async (
+class FlakyTaskWriter extends TaskWriter {
+  callCount = 0;
+
+  constructor(db: Database) {
+    super(db, {
+      bus: new TaskEventBus(),
+      resolveAgent: (name: string) => ({ name, maestro_capable: true }),
+    });
+  }
+
+  override file(input: FileTaskInput): { task_id: string } {
+    this.callCount += 1;
+    if (this.callCount === 1) throw new Error("transient");
+    return super.file(input);
+  }
+}
+
+class PromptCapturingTaskWriter extends TaskWriter {
+  constructor(
+    db: Database,
+    private readonly prompts: string[],
+  ) {
+    super(db, {
+      bus: new TaskEventBus(),
+      resolveAgent: (name: string) => ({ name, maestro_capable: true }),
+    });
+  }
+
+  override file(input: FileTaskInput): { task_id: string } {
+    this.prompts.push(input.prompt);
+    return super.file(input);
+  }
+}
+
+function makeThrowingTaskWriter(db: Database, error: Error): TaskWriter {
+  return new ThrowingTaskWriter(db, error);
+}
+
+function asWorktreeManager(mock: StageMergedBaseMock): WorktreeManager {
+  // createPlanRuntimeSweeper only calls stageMergedBase; the concrete class has unrelated state.
+  return mock as unknown as WorktreeManager;
+}
+
+function makeWorktreeManagerMock(): { calls: StageCall[]; mock: WorktreeManager } {
+  const calls: StageCall[] = [];
+  const mock: StageMergedBaseMock = {
+    stageMergedBase: (
       handoffId: string,
       ancestorRefs: string[],
       opts?: { project_id?: string },
-    ) => {
+    ): Promise<string> => {
       calls.push({ handoffId, ancestorRefs: [...ancestorRefs], opts });
-      return `stage/${handoffId}`;
+      return Promise.resolve(`stage/${handoffId}`);
     },
   };
-  return { mock, calls };
+  return { mock: asWorktreeManager(mock), calls };
 }
 
 const baseTask = {
@@ -101,13 +212,13 @@ const baseTask = {
   fallback_agent: "claude-acp-sonnet",
   task_size: "small",
   risk_class: "paste-ready",
-};
+} satisfies Omit<ParsedPlanTask, "depends_on" | "id">;
 
 test("single root fires once + idempotent across ticks", async () => {
   const db = makeDb();
   const plans = new PlanWriter(db);
   const taskWriter = makeTaskWriter(db);
-  const logs: Array<{ msg: string; meta?: any }> = [];
+  const logs: LogEntry[] = [];
   plans.register({
     plan_id: "p1",
     file_path: makePlanFile("p1.md"),
@@ -119,7 +230,7 @@ test("single root fires once + idempotent across ticks", async () => {
     db,
     plans,
     taskWriter,
-    log: { warn: (msg: string, meta?: any) => logs.push({ msg, meta }) },
+    log: { warn: (msg: string, meta?: unknown) => logs.push({ msg, meta }) },
     planParser: fakeParser({ plan_id: "p1", home_project: "penumbra" }, [
       { ...baseTask, id: "1.1", depends_on: [] },
     ]),
@@ -194,7 +305,7 @@ test("cross-project deps", async () => {
 test("single same-project dep threads branch_base to the filed orchestrate task", async () => {
   const db = makeDb();
   const plans = new PlanWriter(db);
-  const calls: any[] = [];
+  const calls: FileTaskInput[] = [];
   const taskWriter = makeCapturingTaskWriter(db, calls);
   plans.register({
     plan_id: "p1",
@@ -228,7 +339,7 @@ test("single same-project dep threads branch_base to the filed orchestrate task"
 test("cross-project direct dep can branch off a transitive same-project ancestor", async () => {
   const db = makeDb();
   const plans = new PlanWriter(db);
-  const calls: any[] = [];
+  const calls: FileTaskInput[] = [];
   const taskWriter = makeCapturingTaskWriter(db, calls);
   plans.register({
     plan_id: "p1",
@@ -267,8 +378,8 @@ test("cross-project direct dep can branch off a transitive same-project ancestor
 test("transitive same-project ancestors warn and choose the latest completed ancestor", async () => {
   const db = makeDb();
   const plans = new PlanWriter(db);
-  const calls: any[] = [];
-  const logs: Array<{ msg: string; meta?: any }> = [];
+  const calls: FileTaskInput[] = [];
+  const logs: LogEntry[] = [];
   const taskWriter = makeCapturingTaskWriter(db, calls);
   plans.register({
     plan_id: "p1",
@@ -285,7 +396,7 @@ test("transitive same-project ancestors warn and choose the latest completed anc
     db,
     plans,
     taskWriter,
-    log: { warn: (msg: string, meta?: any) => logs.push({ msg, meta }) },
+    log: { warn: (msg: string, meta?: unknown) => logs.push({ msg, meta }) },
     planParser: fakeParser({ plan_id: "p1", home_project: "penumbra" }, [
       { ...baseTask, id: "1.1", depends_on: [] },
       { ...baseTask, id: "1.2", depends_on: ["penumbra/1.1"], project: "sirius" },
@@ -308,15 +419,13 @@ test("transitive same-project ancestors warn and choose the latest completed anc
   plans.markTaskStatus("p1", "1.2", "completed");
   await sweeper.tick();
   expect(calls[3]?.branch_base).toBe("agent/h-root-3");
-  expect(logs.some((entry) => String(entry.msg).includes("multiple same-project ancestors"))).toBe(
-    true,
-  );
+  expect(logs.some((entry) => entry.msg.includes("multiple same-project ancestors"))).toBe(true);
 });
 
 test("incomplete same-project ancestor does not become branch_base", async () => {
   const db = makeDb();
   const plans = new PlanWriter(db);
-  const calls: any[] = [];
+  const calls: FileTaskInput[] = [];
   const taskWriter = makeCapturingTaskWriter(db, calls);
   plans.register({
     plan_id: "p1",
@@ -353,8 +462,8 @@ test("incomplete same-project ancestor does not become branch_base", async () =>
 test("multi same-project deps warn and choose the latest completed ancestor", async () => {
   const db = makeDb();
   const plans = new PlanWriter(db);
-  const calls: any[] = [];
-  const logs: Array<{ msg: string; meta?: any }> = [];
+  const calls: FileTaskInput[] = [];
+  const logs: LogEntry[] = [];
   const taskWriter = makeCapturingTaskWriter(db, calls);
   plans.register({
     plan_id: "p1",
@@ -371,7 +480,7 @@ test("multi same-project deps warn and choose the latest completed ancestor", as
     db,
     plans,
     taskWriter,
-    log: { warn: (msg: string, meta?: any) => logs.push({ msg, meta }) },
+    log: { warn: (msg: string, meta?: unknown) => logs.push({ msg, meta }) },
     planParser: fakeParser({ plan_id: "p1", home_project: "penumbra" }, [
       { ...baseTask, id: "1.1", depends_on: [] },
       { ...baseTask, id: "1.2", depends_on: ["penumbra/1.1"], project: "sirius" },
@@ -395,16 +504,14 @@ test("multi same-project deps warn and choose the latest completed ancestor", as
   plans.markTaskStatus("p1", "1.2", "completed");
   await sweeper.tick();
   expect(calls[3]?.branch_base).toBe("agent/h-3");
-  expect(logs.some((entry) => String(entry.msg).includes("multiple same-project ancestors"))).toBe(
-    true,
-  );
+  expect(logs.some((entry) => entry.msg.includes("multiple same-project ancestors"))).toBe(true);
 });
 
 test("multi same-project fan-in stages a merged base and uses the returned ref", async () => {
   const db = makeDb();
   const plans = new PlanWriter(db);
-  const calls: any[] = [];
-  const logs: Array<{ msg: string; meta?: any }> = [];
+  const calls: FileTaskInput[] = [];
+  const logs: LogEntry[] = [];
   const taskWriter = makeCapturingTaskWriter(db, calls);
   const { mock: worktreeManager, calls: stageCalls } = makeWorktreeManagerMock();
   plans.register({
@@ -422,8 +529,8 @@ test("multi same-project fan-in stages a merged base and uses the returned ref",
     db,
     plans,
     taskWriter,
-    log: { warn: (msg: string, meta?: any) => logs.push({ msg, meta }) },
-    worktreeManager: worktreeManager as any,
+    log: { warn: (msg: string, meta?: unknown) => logs.push({ msg, meta }) },
+    worktreeManager,
     planParser: fakeParser({ plan_id: "p1", home_project: "penumbra" }, [
       { ...baseTask, id: "1.1", depends_on: [] },
       { ...baseTask, id: "1.2", depends_on: ["penumbra/1.1"], project: "sirius" },
@@ -450,22 +557,18 @@ test("multi same-project fan-in stages a merged base and uses the returned ref",
   expect(stageCalls[0]?.ancestorRefs).toEqual(["agent/h-root-3", "agent/h-root-1"]);
   expect(stageCalls[0]?.opts).toEqual({ project_id: "penumbra" });
   expect(calls[3]?.branch_base).toBe("stage/p1__1.4");
-  expect(logs.some((entry) => String(entry.msg).includes("multiple same-project ancestors"))).toBe(
-    true,
-  );
+  expect(logs.some((entry) => entry.msg.includes("multiple same-project ancestors"))).toBe(true);
 });
 
 test("multi same-project fan-in falls back when merge staging fails", async () => {
   const db = makeDb();
   const plans = new PlanWriter(db);
-  const calls: any[] = [];
-  const logs: Array<{ msg: string; meta?: any }> = [];
+  const calls: FileTaskInput[] = [];
+  const logs: LogEntry[] = [];
   const taskWriter = makeCapturingTaskWriter(db, calls);
-  const worktreeManager = {
-    stageMergedBase: async () => {
-      throw new Error("merge conflict");
-    },
-  };
+  const worktreeManager = asWorktreeManager({
+    stageMergedBase: (): Promise<string> => Promise.reject(new Error("merge conflict")),
+  });
   plans.register({
     plan_id: "p1",
     file_path: makePlanFile("p1.md"),
@@ -481,8 +584,8 @@ test("multi same-project fan-in falls back when merge staging fails", async () =
     db,
     plans,
     taskWriter,
-    log: { warn: (msg: string, meta?: any) => logs.push({ msg, meta }) },
-    worktreeManager: worktreeManager as any,
+    log: { warn: (msg: string, meta?: unknown) => logs.push({ msg, meta }) },
+    worktreeManager,
     planParser: fakeParser({ plan_id: "p1", home_project: "penumbra" }, [
       { ...baseTask, id: "1.1", depends_on: [] },
       { ...baseTask, id: "1.2", depends_on: ["penumbra/1.1"], project: "sirius" },
@@ -506,7 +609,7 @@ test("multi same-project fan-in falls back when merge staging fails", async () =
   await sweeper.tick();
 
   expect(calls[3]?.branch_base).toBe("agent/h-root-3");
-  expect(logs.some((entry) => String(entry.msg).includes("merge conflict"))).toBe(true);
+  expect(logs.some((entry) => entry.msg.includes("merge conflict"))).toBe(true);
 });
 
 test("failure flips plan to failed and stops firing pending", async () => {
@@ -589,16 +692,7 @@ test("completion flips plan to completed", async () => {
 test("transient taskWriter.file failure → row fails and does not retry", async () => {
   const db = makeDb();
   const plans = new PlanWriter(db);
-  const realTaskWriter = makeTaskWriter(db);
-  let callCount = 0;
-  const flakyTaskWriter = {
-    ...realTaskWriter,
-    file: (input: any) => {
-      callCount += 1;
-      if (callCount === 1) throw new Error("transient");
-      return realTaskWriter.file(input);
-    },
-  };
+  const flakyTaskWriter = new FlakyTaskWriter(db);
   plans.register({
     plan_id: "p1",
     file_path: makePlanFile("p1.md"),
@@ -608,7 +702,7 @@ test("transient taskWriter.file failure → row fails and does not retry", async
   const sweeper = createPlanRuntimeSweeper({
     db,
     plans,
-    taskWriter: flakyTaskWriter as any,
+    taskWriter: flakyTaskWriter,
     planParser: fakeParser({ plan_id: "p1", home_project: "penumbra" }, [
       { ...baseTask, id: "1.1", depends_on: [] },
     ]),
@@ -623,7 +717,7 @@ test("transient taskWriter.file failure → row fails and does not retry", async
 test("unknown agent failure marks task failed and logs not found", async () => {
   const db = makeDb();
   const plans = new PlanWriter(db);
-  const logs: Array<{ msg: string; meta?: any }> = [];
+  const logs: LogEntry[] = [];
   const taskWriter = makeThrowingTaskWriter(
     db,
     new OrchestrateAgentNotMaestroCapable("ghost-agent", "unknown"),
@@ -638,7 +732,7 @@ test("unknown agent failure marks task failed and logs not found", async () => {
     db,
     plans,
     taskWriter,
-    log: { warn: (msg: string, meta?: any) => logs.push({ msg, meta }) },
+    log: { warn: (msg: string, meta?: unknown) => logs.push({ msg, meta }) },
     planParser: fakeParser({ plan_id: "p1", home_project: "penumbra" }, [
       {
         ...baseTask,
@@ -658,7 +752,7 @@ test("unknown agent failure marks task failed and logs not found", async () => {
 test("not maestro-capable failure marks task failed and logs guidance", async () => {
   const db = makeDb();
   const plans = new PlanWriter(db);
-  const logs: Array<{ msg: string; meta?: any }> = [];
+  const logs: LogEntry[] = [];
   const taskWriter = makeThrowingTaskWriter(
     db,
     new OrchestrateAgentNotMaestroCapable("codex-acp-fast", "not_maestro_capable"),
@@ -673,7 +767,7 @@ test("not maestro-capable failure marks task failed and logs guidance", async ()
     db,
     plans,
     taskWriter,
-    log: { warn: (msg: string, meta?: any) => logs.push({ msg, meta }) },
+    log: { warn: (msg: string, meta?: unknown) => logs.push({ msg, meta }) },
     planParser: fakeParser({ plan_id: "p1", home_project: "penumbra" }, [
       {
         ...baseTask,
@@ -728,12 +822,7 @@ test("inlines task body into the dispatched prompt", async () => {
   const db = makeDb();
   const plans = new PlanWriter(db);
   const prompts: string[] = [];
-  const taskWriter = {
-    file: (input: any) => {
-      prompts.push(input.prompt);
-      return makeTaskWriter(db).file(input);
-    },
-  } as TaskWriter;
+  const taskWriter = new PromptCapturingTaskWriter(db, prompts);
   plans.register({
     plan_id: "p1",
     file_path: makePlanFile("p1.md"),
@@ -764,12 +853,7 @@ test("omits undefined body text from the dispatched prompt", async () => {
   const db = makeDb();
   const plans = new PlanWriter(db);
   const prompts: string[] = [];
-  const taskWriter = {
-    file: (input: any) => {
-      prompts.push(input.prompt);
-      return makeTaskWriter(db).file(input);
-    },
-  } as TaskWriter;
+  const taskWriter = new PromptCapturingTaskWriter(db, prompts);
   plans.register({
     plan_id: "p1",
     file_path: makePlanFile("p1.md"),

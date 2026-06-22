@@ -1,12 +1,12 @@
-import { describe, it, expect, beforeEach } from "bun:test";
-import { Database } from "bun:sqlite";
 import { loadSqliteVec, NotificationOutboxWriter } from "@penumbra/core";
 import { applySchema } from "@penumbra/core/db/schema";
 import {
-  runNotificationDiscovery,
   runNotificationDelivery,
+  runNotificationDiscovery,
   runNotificationSweep,
 } from "@penumbra/daemon/sweepers/notification-sweeper";
+import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, it } from "bun:test";
 
 function setup(): Database {
   const db = new Database(":memory:");
@@ -24,7 +24,7 @@ function writeDraftEvent(
     payload_json?: string;
     ts?: string;
   },
-) {
+): void {
   const ts = opts.ts ?? new Date(Date.now() - 10_000).toISOString();
   db.prepare(
     `INSERT INTO t0_events (event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id, session_id, event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms, request_id, payload_json, payload_summary, origin)
@@ -39,14 +39,14 @@ function writeDraftEvent(
   );
 }
 
-function insertAgent(db: Database, agentId: string, projectId: string | null = null) {
+function insertAgent(db: Database, agentId: string, projectId: string | null = null): void {
   db.prepare(
     `INSERT INTO long_lived_agents (id, display_name, project_id, schedule_cron, standing_brief, mcp_allowlist_json, working_memory_json, created_at, updated_at)
      VALUES (?, ?, ?, '*/15 * * * *', 'test', '[]', '{}', ?, ?)`,
   ).run(agentId, agentId, projectId, Date.now(), Date.now());
 }
 
-function insertTick(db: Database, agentId: string, tickId: string) {
+function insertTick(db: Database, agentId: string, tickId: string): void {
   db.prepare(
     `INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES (?, ?, 'manual', ?)`,
   ).run(tickId, agentId, Date.now());
@@ -64,7 +64,7 @@ function insertPendingAction(
     project_id?: string | null;
     created_at?: number;
   },
-) {
+): void {
   const createdAt = opts.created_at ?? Date.now() - 10_000;
   db.prepare(
     `INSERT INTO long_lived_pending_actions (id, agent_id, tick_id, action_kind, action_target, payload_json, status, expires_at, created_at)
@@ -201,7 +201,7 @@ describe("notification-sweeper: discovery", () => {
     const start = now - 30 * 60 * 1000;
     for (let i = 0; i < 201; i++) {
       writeDraftEvent(db, {
-        event_id: `evt-batch-${i}`,
+        event_id: `evt-batch-${String(i)}`,
         project_id: "test-project",
         ts: new Date(start + i).toISOString(),
       });
@@ -220,7 +220,7 @@ describe("notification-sweeper: discovery", () => {
     const ts = new Date(now - 30 * 60 * 1000).toISOString();
     for (let i = 0; i < 201; i++) {
       writeDraftEvent(db, {
-        event_id: `evt-tie-${i}`,
+        event_id: `evt-tie-${String(i)}`,
         project_id: "test-project",
         ts,
       });
@@ -368,7 +368,8 @@ describe("notification-sweeper: delivery", () => {
     });
 
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () => new Response("ok", { status: 204 });
+    globalThis.fetch = (): Promise<Response> =>
+      Promise.resolve(new Response("ok", { status: 204 }));
     let result: Awaited<ReturnType<typeof runNotificationDelivery>>;
     try {
       result = await runNotificationDelivery({
@@ -399,7 +400,8 @@ describe("notification-sweeper: delivery", () => {
     });
 
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () => new Response("bad gateway", { status: 502 });
+    globalThis.fetch = (): Promise<Response> =>
+      Promise.resolve(new Response("bad gateway", { status: 502 }));
     try {
       const result = await runNotificationDelivery({
         db,
@@ -447,7 +449,8 @@ describe("notification-sweeper: delivery", () => {
     });
 
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () => new Response("bad gateway", { status: 502 });
+    globalThis.fetch = (): Promise<Response> =>
+      Promise.resolve(new Response("bad gateway", { status: 502 }));
     try {
       const result = await runNotificationDelivery({
         db,
@@ -489,7 +492,8 @@ describe("notification-sweeper: delivery", () => {
     });
 
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () => new Response("invalid webhook", { status: 400 });
+    globalThis.fetch = (): Promise<Response> =>
+      Promise.resolve(new Response("invalid webhook", { status: 400 }));
     try {
       const result = await runNotificationDelivery({
         db,
@@ -530,7 +534,8 @@ describe("notification-sweeper: delivery", () => {
     expect(outbox.markProcessing(id, now - 10 * 60 * 1000)).toBe(true);
 
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () => new Response("ok", { status: 204 });
+    globalThis.fetch = (): Promise<Response> =>
+      Promise.resolve(new Response("ok", { status: 204 }));
     try {
       const result = await runNotificationDelivery({
         db,
@@ -571,14 +576,15 @@ describe("notification-sweeper: delivery", () => {
       outbox.enqueue({
         project_id: "aa-newer",
         kind: "task_draft",
-        reference_id: `evt-newer-${i}`,
+        reference_id: `evt-newer-${String(i)}`,
         summary: "newer",
         created_at: created + 1 + i,
       });
     }
 
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () => new Response("ok", { status: 204 });
+    globalThis.fetch = (): Promise<Response> =>
+      Promise.resolve(new Response("ok", { status: 204 }));
     try {
       await runNotificationDelivery({
         db,
@@ -641,7 +647,8 @@ describe("notification-sweeper: round-trip", () => {
     expect(outboxRows.length).toBe(2);
 
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () => new Response("ok", { status: 204 });
+    globalThis.fetch = (): Promise<Response> =>
+      Promise.resolve(new Response("ok", { status: 204 }));
     try {
       const deliveredResult = await runNotificationDelivery({
         db,

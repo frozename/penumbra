@@ -1,34 +1,40 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import {
-  type Services,
-  migrate,
+  type EmittedPermissionEvent,
   loadSqliteVec,
-  PermissionWriter,
-  PermissionReader,
+  migrate,
   PermissionEventBus,
+  PermissionReader,
+  PermissionWriter,
+  type Services,
 } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { runPermissionTtlSweep } from "../../src/sweepers/permission-ttl.js";
 
 try {
   if (process.platform === "darwin")
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-} catch {}
+} catch {
+  // Optional Homebrew SQLite is unavailable on non-local runners.
+}
+
+function noop(): undefined {
+  return undefined;
+}
 
 function makeServices(db: Database, now: Date): Services {
+  let n = 0;
   return {
     db,
     permissionWriter: new PermissionWriter({ db }),
     permissionReader: new PermissionReader({ db }),
     permissionEvents: new PermissionEventBus(),
     machineId: { get: () => "machine-test" },
-    uuid: (() => {
-      let n = 0;
-      return () => `evt-${++n}`;
-    })(),
+    uuid: () => `evt-${String(++n)}`,
     clock: () => now,
-    t0Writer: { write: () => {} },
-    log: { info: () => {}, warn: () => {} },
+    t0Writer: { write: noop },
+    log: { info: noop, warn: noop },
   } as unknown as Services;
 }
 
@@ -59,8 +65,10 @@ test("runPermissionTtlSweep transitions stale rows to expired and emits events",
     ttl_seconds: 600,
     now: baseTs,
   });
-  const seen: any[] = [];
-  services.permissionEvents.subscribe((e) => seen.push(e));
+  const seen: EmittedPermissionEvent[] = [];
+  services.permissionEvents.subscribe((event) => {
+    seen.push(event);
+  });
 
   const n = runPermissionTtlSweep(services);
   expect(n).toBe(1);
