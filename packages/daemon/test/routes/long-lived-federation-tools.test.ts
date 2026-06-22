@@ -1,48 +1,63 @@
-import { expect, mock, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { createLogger, loadSqliteVec, type Logger, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, mock, spyOn, test } from "bun:test";
+
 import { longLivedFederationToolsRoute } from "../../src/routes/long-lived-federation-tools.js";
 
+type McpPool = NonNullable<Services["mcpPool"]>;
+type ListTools = McpPool["listTools"];
+type ListToolsResult = Awaited<ReturnType<ListTools>>;
+type StateFn = (
+  server: string,
+) => { initialized?: boolean; initPromise?: Promise<void> } | undefined;
+
+interface McpPoolStub extends McpPool {
+  _state?: StateFn;
+  _readyWaitMs?: number;
+}
+
+function makeSilentLog(): Logger {
+  // Fresh per-test logger so spyOn(log, "warn") call counts don't leak across tests.
+  return createLogger({ component: "test", level: "silent" });
+}
+
 function makeServices(db: Database): Services {
-  return {
+  // federation-tools route exercises only `db`, `log`, and (per-test) `mcpPool`.
+  // Stub everything else through a file-local laundering since Services has
+  // ~40 nominal slots none of these tests reach.
+  const stub = {
     db,
-    settings: {},
     storageRoot: "/tmp/penumbra-test",
-    dbMeta: {} as any,
-    machineId: { get: () => "machine-test" } as any,
-    projectCache: {} as any,
-    redactor: {} as any,
-    t0Writer: {} as any,
-    handoffWriter: {} as any,
-    recallReader: {} as any,
-    handoffReader: {} as any,
-    chainReader: {} as any,
-    handoffEvents: {} as any,
-    permissionWriter: {} as any,
-    permissionReader: {} as any,
-    permissionEvents: {} as any,
-    dispatchEventLog: {} as any,
-    dispatchEvents: {} as any,
-    conversationStream: {} as any,
-    workerControl: {} as any,
-    worktreeManager: {} as any,
-    watchdog: {} as any,
-    supervisor: {} as any,
-    pidRegistry: {} as any,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-05-11T00:00:00.000Z"),
-    uuid: (() => {
+    clock: (): Date => new Date("2026-05-11T00:00:00.000Z"),
+    uuid: ((): (() => string) => {
       let n = 0;
-      return () => `evt-${++n}`;
+      return () => `evt-${String(++n)}`;
     })(),
-    log: { info: () => {}, warn: mock(() => {}), error: () => {} } as any,
+    log: makeSilentLog(),
     agentRegistry: null,
     agentRouting: null,
     providerQuotas: [],
-    subscriptionPressureCache: {} as any,
-    planWriter: {} as any,
-  } as Services;
+  };
+  return stub as unknown as Services;
+}
+
+interface McpPoolStubInput {
+  listTools?: ListTools;
+  _state?: StateFn;
+  _readyWaitMs?: number;
+}
+
+function makeMcpPoolStub(input: McpPoolStubInput): McpPoolStub {
+  return {
+    callTool: () => Promise.resolve(undefined),
+    listTools: input.listTools ?? ((): Promise<ListToolsResult> => Promise.resolve([])),
+    getFederationHealth: () => ({ registered: [], skipped: [] }),
+    shutdown: () => Promise.resolve(),
+    _state: input._state,
+    _readyWaitMs: input._readyWaitMs,
+  };
 }
 
 function seedAgent(db: Database, allowlist: string[]): void {
@@ -115,13 +130,15 @@ test("GET /long-lived/agents/:id/federation-tools filters a single server", asyn
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   seedAgent(db, ["ha:state_get", "ha:state_set"]);
-  const listTools = mock(async () => [
-    { name: "state_get", description: "get state" },
-    { name: "state_set", description: "set state" },
-    { name: "ignored", description: "nope" },
-  ]);
+  const listTools = mock<ListTools>(() =>
+    Promise.resolve([
+      { name: "state_get", description: "get state" },
+      { name: "state_set", description: "set state" },
+      { name: "ignored", description: "nope" },
+    ]),
+  );
   const services = makeServices(db);
-  services.mcpPool = { listTools } as any;
+  services.mcpPool = makeMcpPoolStub({ listTools });
   const res = await longLivedFederationToolsRoute(
     new Request("http://x/long-lived/agents/agent-1/federation-tools"),
     services,
@@ -141,12 +158,12 @@ test("GET /long-lived/agents/:id/federation-tools skips builtin penumbra allowli
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   seedAgent(db, ["penumbra:chain_start", "ha:ha_pulse"]);
-  const listTools = mock(async (server: string) => {
-    if (server === "ha") return [{ name: "ha_pulse", description: "pulse" }];
-    throw new Error(`unexpected listTools call for ${server}`);
+  const listTools = mock<ListTools>((server) => {
+    if (server === "ha") return Promise.resolve([{ name: "ha_pulse", description: "pulse" }]);
+    return Promise.reject(new Error(`unexpected listTools call for ${server}`));
   });
   const services = makeServices(db);
-  services.mcpPool = { listTools } as any;
+  services.mcpPool = makeMcpPoolStub({ listTools });
   const res = await longLivedFederationToolsRoute(
     new Request("http://x/long-lived/agents/agent-1/federation-tools"),
     services,
@@ -165,12 +182,14 @@ test("GET /long-lived/agents/:id/federation-tools matches glob allowlist entries
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   seedAgent(db, ["ha:ha_*"]);
-  const listTools = mock(async () => [
-    { name: "ha_get_state", description: "get state" },
-    { name: "ha_call_service", description: "call service" },
-  ]);
+  const listTools = mock<ListTools>(() =>
+    Promise.resolve([
+      { name: "ha_get_state", description: "get state" },
+      { name: "ha_call_service", description: "call service" },
+    ]),
+  );
   const services = makeServices(db);
-  services.mcpPool = { listTools } as any;
+  services.mcpPool = makeMcpPoolStub({ listTools });
   const res = await longLivedFederationToolsRoute(
     new Request("http://x/long-lived/agents/agent-1/federation-tools"),
     services,
@@ -190,12 +209,14 @@ test("GET /long-lived/agents/:id/federation-tools accepts mixed legacy and canon
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   seedAgent(db, ["ha:state_get", "ha.state_set"]);
-  const listTools = mock(async () => [
-    { name: "state_get", description: "get state" },
-    { name: "state_set", description: "set state" },
-  ]);
+  const listTools = mock<ListTools>(() =>
+    Promise.resolve([
+      { name: "state_get", description: "get state" },
+      { name: "state_set", description: "set state" },
+    ]),
+  );
   const services = makeServices(db);
-  services.mcpPool = { listTools } as any;
+  services.mcpPool = makeMcpPoolStub({ listTools });
   const res = await longLivedFederationToolsRoute(
     new Request("http://x/long-lived/agents/agent-1/federation-tools"),
     services,
@@ -215,11 +236,10 @@ test("GET /long-lived/agents/:id/federation-tools warns and skips malformed allo
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   seedAgent(db, ["invalid-no-colon", "ha:state_get"]);
-  const warn = mock(() => {});
-  const listTools = mock(async () => [{ name: "state_get" }]);
   const services = makeServices(db);
-  services.log = { info: () => {}, warn, error: () => {} } as any;
-  services.mcpPool = { listTools } as any;
+  const warnSpy = spyOn(services.log, "warn");
+  const listTools = mock<ListTools>(() => Promise.resolve([{ name: "state_get" }]));
+  services.mcpPool = makeMcpPoolStub({ listTools });
   const res = await longLivedFederationToolsRoute(
     new Request("http://x/long-lived/agents/agent-1/federation-tools"),
     services,
@@ -229,7 +249,7 @@ test("GET /long-lived/agents/:id/federation-tools warns and skips malformed allo
   expect(await res.json()).toEqual({
     tools: [{ name: "ha.state_get", description: undefined, inputSchema: undefined }],
   });
-  expect(warn).toHaveBeenCalled();
+  expect(warnSpy).toHaveBeenCalled();
 });
 
 test("GET /long-lived/agents/:id/federation-tools returns empty tools for malformed json", async () => {
@@ -269,14 +289,10 @@ test("GET /long-lived/agents/:id/federation-tools returns empty tools for malfor
     1,
     1,
   );
-  const warn = mock(() => {});
   const services = makeServices(db);
-  services.log = { info: () => {}, warn, error: () => {} } as any;
-  services.mcpPool = {
-    listTools: mock(async () => {
-      throw new Error("should not call");
-    }),
-  } as any;
+  const warnSpy = spyOn(services.log, "warn");
+  const listTools = mock<ListTools>(() => Promise.reject(new Error("should not call")));
+  services.mcpPool = makeMcpPoolStub({ listTools });
   const res = await longLivedFederationToolsRoute(
     new Request("http://x/long-lived/agents/agent-1/federation-tools"),
     services,
@@ -284,7 +300,7 @@ test("GET /long-lived/agents/:id/federation-tools returns empty tools for malfor
   );
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({ tools: [] });
-  expect(warn).toHaveBeenCalled();
+  expect(warnSpy).toHaveBeenCalled();
 });
 
 test("GET /long-lived/agents/:id/federation-tools merges multiple servers and skips list failures", async () => {
@@ -292,15 +308,14 @@ test("GET /long-lived/agents/:id/federation-tools merges multiple servers and sk
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   seedAgent(db, ["ha:state_get", "x:do_it", "y:run"]);
-  const warn = mock(() => {});
-  const listTools = mock(async (server: string) => {
-    if (server === "ha") return [{ name: "state_get" }, { name: "state_set" }];
-    if (server === "x") throw new Error("boom");
-    return [{ name: "run" }];
-  });
   const services = makeServices(db);
-  services.log = { info: () => {}, warn, error: () => {} } as any;
-  services.mcpPool = { listTools } as any;
+  const warnSpy = spyOn(services.log, "warn");
+  const listTools = mock<ListTools>((server): Promise<ListToolsResult> => {
+    if (server === "ha") return Promise.resolve([{ name: "state_get" }, { name: "state_set" }]);
+    if (server === "x") return Promise.reject(new Error("boom"));
+    return Promise.resolve([{ name: "run" }]);
+  });
+  services.mcpPool = makeMcpPoolStub({ listTools });
   const res = await longLivedFederationToolsRoute(
     new Request("http://x/long-lived/agents/agent-1/federation-tools"),
     services,
@@ -313,7 +328,7 @@ test("GET /long-lived/agents/:id/federation-tools merges multiple servers and sk
       { name: "y.run", description: undefined, inputSchema: undefined },
     ],
   });
-  expect(warn).toHaveBeenCalled();
+  expect(warnSpy).toHaveBeenCalled();
 });
 
 test("GET /long-lived/agents/:id/federation-tools waits for a cold-start federation init before listing tools", async () => {
@@ -326,15 +341,16 @@ test("GET /long-lived/agents/:id/federation-tools waits for a cold-start federat
   const initPromise = new Promise<void>((resolve) => {
     initResolve = resolve;
   });
-  const listTools = mock(async () => [{ name: "state_get", description: "get state" }]);
-  const warn = mock(() => {});
+  const listTools = mock<ListTools>(() =>
+    Promise.resolve([{ name: "state_get", description: "get state" }]),
+  );
   const services = makeServices(db);
-  services.log = { info: () => {}, warn, error: () => {} } as any;
-  services.mcpPool = {
+  const warnSpy = spyOn(services.log, "warn");
+  services.mcpPool = makeMcpPoolStub({
+    listTools,
     _state: () => ({ initialized: false, initPromise }),
     _readyWaitMs: 50,
-    listTools,
-  } as any;
+  });
 
   const startedAt = Date.now();
   const resPromise = longLivedFederationToolsRoute(
@@ -352,7 +368,7 @@ test("GET /long-lived/agents/:id/federation-tools waits for a cold-start federat
     tools: [{ name: "ha.state_get", description: "get state", inputSchema: undefined }],
   });
   expect(listTools).toHaveBeenCalledTimes(1);
-  expect(warn).not.toHaveBeenCalled();
+  expect(warnSpy).not.toHaveBeenCalled();
   expect(elapsedMs).toBeGreaterThanOrEqual(50);
 });
 
@@ -362,17 +378,14 @@ test("GET /long-lived/agents/:id/federation-tools emits the warn after bounded w
   migrate(db, { embeddingDim: 384 });
   seedAgent(db, ["ha:state_get"]);
 
-  const listTools = mock(async () => {
-    throw new Error("mcp_unavailable");
-  });
-  const warn = mock(() => {});
+  const listTools = mock<ListTools>(() => Promise.reject(new Error("mcp_unavailable")));
   const services = makeServices(db);
-  services.log = { info: () => {}, warn, error: () => {} } as any;
-  services.mcpPool = {
-    _state: () => ({ initialized: false, initPromise: new Promise<void>(() => {}) }),
-    _readyWaitMs: 50,
+  const warnSpy = spyOn(services.log, "warn");
+  services.mcpPool = makeMcpPoolStub({
     listTools,
-  } as any;
+    _state: () => ({ initialized: false, initPromise: new Promise<void>(() => undefined) }),
+    _readyWaitMs: 50,
+  });
 
   const startedAt = Date.now();
   const res = await longLivedFederationToolsRoute(
@@ -385,7 +398,7 @@ test("GET /long-lived/agents/:id/federation-tools emits the warn after bounded w
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({ tools: [] });
   expect(listTools).toHaveBeenCalledTimes(1);
-  expect(warn).toHaveBeenCalled();
+  expect(warnSpy).toHaveBeenCalled();
   expect(elapsedMs).toBeGreaterThanOrEqual(50);
   expect(elapsedMs).toBeLessThan(500);
 });
