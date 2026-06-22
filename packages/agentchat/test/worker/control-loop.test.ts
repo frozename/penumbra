@@ -1,95 +1,150 @@
-import { expect, test, mock } from "bun:test";
-import { createWorkerDispatcher } from "../../src/worker/dispatcher.js";
+import type { Logger } from "@penumbra/core";
+
+import { expect, mock, test } from "bun:test";
+
+import type { DispatchHandoffResult } from "../../src/cli/dispatch-handoff.js";
+
+import { createWorkerDispatcher, type WorkerDispatcherDeps } from "../../src/worker/dispatcher.js";
+
+// pino's Logger has heavily-overloaded info/warn/debug signatures the bun mock
+// can't structurally satisfy. Single laundering helper produces a Logger-typed
+// stub from a plain {info,warn,debug} shape.
+function asLogger(stub: { info: unknown; warn: unknown; debug: unknown }): Logger {
+  return stub as unknown as Logger;
+}
+
+interface TestHandoff {
+  handoff_id: string;
+  conversation_id: string;
+  to_agent: string;
+}
+
+// Boxed state so a callback assigning to `.signal` / `.started` is not
+// narrowed by TS control-flow to the initial literal type. Direct `let`
+// bindings trip @typescript-eslint/no-unnecessary-condition on later
+// truthy checks because the linter cannot see the mutation through the
+// dispatch callback.
+interface DispatchProbe {
+  signal: AbortSignal | null;
+  started: boolean;
+}
+
+function makeAbortableDispatch(
+  capture: (signal: AbortSignal) => void,
+): WorkerDispatcherDeps["dispatch"] {
+  return mock((_h: unknown, _onChunk: (delta: string) => void, signal: AbortSignal) => {
+    capture(signal);
+    return new Promise<DispatchHandoffResult>((resolve) => {
+      const onAbort = (): void => {
+        signal.removeEventListener("abort", onAbort);
+        resolve({
+          next: null,
+          terminatedReason: "untrusted",
+          text: "aborted",
+          agent: "x",
+        });
+      };
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      signal.addEventListener("abort", onAbort);
+    });
+  });
+}
+
+function makeDeps(over: Partial<WorkerDispatcherDeps> = {}): WorkerDispatcherDeps {
+  return {
+    claim: mock(() => Promise.resolve({ status: "dispatched" })),
+    dispatch: mock(() =>
+      Promise.resolve({
+        next: null,
+        terminatedReason: "no_mention" as const,
+        text: "result",
+        agent: "x",
+      }),
+    ),
+    postProgress: mock(() => Promise.resolve()),
+    complete: mock(() => Promise.resolve()),
+    log: asLogger({ info: mock(), warn: mock(), debug: mock() }),
+    concurrency: 4,
+    ...over,
+  };
+}
+
+function waitForStarted(probe: DispatchProbe): Promise<void> {
+  return new Promise((resolve) => {
+    const tick = (): void => {
+      if (probe.started) {
+        resolve();
+        return;
+      }
+      setTimeout(tick, 5);
+    };
+    tick();
+  });
+}
+
+function expectAborted(signal: AbortSignal | null, value: boolean): void {
+  if (signal === null) {
+    throw new Error("expected signal to be captured");
+  }
+  expect(signal.aborted).toBe(value);
+}
 
 test("dispatcher.cancel(cid) triggers abort on active dispatch", async () => {
-  let signalSent: AbortSignal | null = null;
-  let dispatchStarted = false;
+  const probe: DispatchProbe = { signal: null, started: false };
 
-  const deps: any = {
-    claim: mock().mockResolvedValue({ status: "dispatched" }),
-    dispatch: mock().mockImplementation(async (_h, _oc, signal) => {
-      signalSent = signal;
-      dispatchStarted = true;
-      // Wait for signal or timeout
-      return new Promise((resolve) => {
-        const onAbort = () => {
-          signal.removeEventListener("abort", onAbort);
-          resolve({ next: null, text: "aborted", agent: "x" });
-        };
-        signal.addEventListener("abort", onAbort);
-      });
+  const deps = makeDeps({
+    dispatch: makeAbortableDispatch((signal) => {
+      probe.signal = signal;
+      probe.started = true;
     }),
-    postProgress: mock().mockResolvedValue(undefined),
-    log: { info: () => {}, warn: () => {}, debug: () => {} },
-    concurrency: 4,
-  };
+  });
 
   const dispatcher = createWorkerDispatcher(deps);
-  const handoff = { handoff_id: "h1", conversation_id: "c1", to_agent: "a1" };
+  const handoff: TestHandoff = { handoff_id: "h1", conversation_id: "c1", to_agent: "a1" };
 
-  // Start dispatch
   void dispatcher.handle(handoff);
+  await waitForStarted(probe);
+  expectAborted(probe.signal, false);
 
-  // Wait for it to start
-  while (!dispatchStarted) {
-    await new Promise((r) => setTimeout(r, 5));
-  }
-
-  expect(signalSent!.aborted).toBe(false);
-
-  // Trigger cancel
   dispatcher.cancel("c1");
 
   await dispatcher.idle();
-  expect(signalSent!.aborted).toBe(true);
+  expectAborted(probe.signal, true);
 });
 
 test("dispatcher.stop() aborts all active dispatches", async () => {
-  let signal1: AbortSignal | null = null;
-  let signal2: AbortSignal | null = null;
-  let started1 = false;
-  let started2 = false;
+  const probeA: DispatchProbe = { signal: null, started: false };
+  const probeB: DispatchProbe = { signal: null, started: false };
 
-  const deps: any = {
-    claim: mock().mockResolvedValue({ status: "dispatched" }),
-    dispatch: mock().mockImplementation(async (_h, _oc, signal) => {
-      if (!signal1) signal1 = signal;
-      else signal2 = signal;
-
-      if (!started1) started1 = true;
-      else started2 = true;
-
-      return new Promise((resolve) => {
-        signal.addEventListener(
-          "abort",
-          () => {
-            resolve({ next: null, text: "aborted", agent: "x" });
-          },
-          { once: true },
-        );
-      });
+  const deps = makeDeps({
+    dispatch: makeAbortableDispatch((signal) => {
+      if (probeA.signal === null) {
+        probeA.signal = signal;
+        probeA.started = true;
+      } else {
+        probeB.signal = signal;
+        probeB.started = true;
+      }
     }),
-    postProgress: mock().mockResolvedValue(undefined),
-    complete: mock().mockResolvedValue(undefined),
-    log: { info: () => {}, warn: () => {}, debug: () => {} },
-    concurrency: 4,
-  };
+  });
 
   const dispatcher = createWorkerDispatcher(deps);
   void dispatcher.handle({ handoff_id: "h1", conversation_id: "c1", to_agent: "a1" });
   void dispatcher.handle({ handoff_id: "h2", conversation_id: "c2", to_agent: "a2" });
 
-  while (!started1 || !started2) {
-    await new Promise((r) => setTimeout(r, 5));
-  }
+  await waitForStarted(probeA);
+  await waitForStarted(probeB);
 
-  expect(signal1!.aborted).toBe(false);
-  expect(signal2!.aborted).toBe(false);
+  expectAborted(probeA.signal, false);
+  expectAborted(probeB.signal, false);
 
   dispatcher.stop();
 
-  expect(signal1!.aborted).toBe(true);
-  expect(signal2!.aborted).toBe(true);
+  expectAborted(probeA.signal, true);
+  expectAborted(probeB.signal, true);
 });
 
 test("dispatcher.cancel(cid, hid) does NOT abort when hid is for a different (stale) handoff in same conv", async () => {
@@ -98,33 +153,20 @@ test("dispatcher.cancel(cid, hid) does NOT abort when hid is for a different (st
   // previously-cancelled handoff's row is still in the replay set when
   // a NEW dispatch for the same conversation is in flight, the stale
   // cancel must not kill the fresh work.
-  let signalSent: AbortSignal | null = null;
-  let dispatchStarted = false;
+  const probe: DispatchProbe = { signal: null, started: false };
 
-  const deps: any = {
-    claim: mock().mockResolvedValue({ status: "dispatched" }),
-    dispatch: mock().mockImplementation(async (_h, _oc, signal) => {
-      signalSent = signal;
-      dispatchStarted = true;
-      return new Promise((resolve) => {
-        const onAbort = () => {
-          signal.removeEventListener("abort", onAbort);
-          resolve({ next: null, text: "aborted", agent: "x" });
-        };
-        signal.addEventListener("abort", onAbort);
-      });
+  const deps = makeDeps({
+    dispatch: makeAbortableDispatch((signal) => {
+      probe.signal = signal;
+      probe.started = true;
     }),
-    postProgress: mock().mockResolvedValue(undefined),
-    complete: mock().mockResolvedValue(undefined),
-    log: { info: () => {}, warn: () => {}, debug: () => {} },
-    concurrency: 4,
-  };
+  });
 
   const dispatcher = createWorkerDispatcher(deps);
 
   // Active dispatch is handoff h-current
   void dispatcher.handle({ handoff_id: "h-current", conversation_id: "c1", to_agent: "a1" });
-  while (!dispatchStarted) await new Promise((r) => setTimeout(r, 5));
+  await waitForStarted(probe);
 
   // Replayed cancel targets stale handoff h-stale in the same conversation
   dispatcher.cancel("c1", "h-stale");
@@ -132,36 +174,25 @@ test("dispatcher.cancel(cid, hid) does NOT abort when hid is for a different (st
   // Give the abort a tick to (incorrectly) fire if the bug is present
   await new Promise((r) => setTimeout(r, 20));
 
-  expect(signalSent!.aborted).toBe(false);
+  expectAborted(probe.signal, false);
 
   // Cleanup: now actually cancel the current handoff
   dispatcher.cancel("c1", "h-current");
   await dispatcher.idle();
-  expect(signalSent!.aborted).toBe(true);
+  expectAborted(probe.signal, true);
 });
 
 test("dispatcher.cancel(cid, hid) for stale hid does NOT pre-abort a fresh handoff in same conv", async () => {
   // Same bug, but cancel arrives BEFORE the fresh dispatch starts (e.g.
   // via durable replay just as a new handoff is being claimed).
-  let signalSent: AbortSignal | null = null;
+  const probe: DispatchProbe = { signal: null, started: false };
 
-  const deps: any = {
-    claim: mock().mockResolvedValue({ status: "dispatched" }),
-    dispatch: mock().mockImplementation(async (_h, _oc, signal) => {
-      signalSent = signal;
-      return new Promise((resolve) => {
-        const onAbort = () => {
-          resolve({ next: null, text: "aborted", agent: "x" });
-        };
-        if (signal.aborted) onAbort();
-        else signal.addEventListener("abort", onAbort, { once: true });
-      });
+  const deps = makeDeps({
+    dispatch: makeAbortableDispatch((signal) => {
+      probe.signal = signal;
+      probe.started = true;
     }),
-    postProgress: mock().mockResolvedValue(undefined),
-    complete: mock().mockResolvedValue(undefined),
-    log: { info: () => {}, warn: () => {}, debug: () => {} },
-    concurrency: 4,
-  };
+  });
 
   const dispatcher = createWorkerDispatcher(deps);
 
@@ -174,41 +205,26 @@ test("dispatcher.cancel(cid, hid) for stale hid does NOT pre-abort a fresh hando
 
   // Let it run briefly.
   await new Promise((r) => setTimeout(r, 20));
-  expect(signalSent).not.toBeNull();
-  expect(signalSent!.aborted).toBe(false);
+  expectAborted(probe.signal, false);
 
   // Cleanup.
   dispatcher.cancel("c1", "h-fresh");
   await dispatcher.idle();
-  expect(signalSent!.aborted).toBe(true);
+  expectAborted(probe.signal, true);
 });
 
 test("dispatcher.cancel(cid) before handle() starts dispatch should still abort", async () => {
-  let signalSent: AbortSignal | null = null;
+  const probe: DispatchProbe = { signal: null, started: false };
 
-  const deps: any = {
-    claim: mock().mockResolvedValue({ status: "dispatched" }),
-    dispatch: mock().mockImplementation(async (_h, _oc, signal) => {
-      signalSent = signal;
-      return new Promise((resolve) => {
-        const onAbort = () => {
-          resolve({ next: null, text: "aborted", agent: "x" });
-        };
-        if (signal.aborted) {
-          onAbort();
-        } else {
-          signal.addEventListener("abort", onAbort, { once: true });
-        }
-      });
+  const deps = makeDeps({
+    dispatch: makeAbortableDispatch((signal) => {
+      probe.signal = signal;
+      probe.started = true;
     }),
-    postProgress: mock().mockResolvedValue(undefined),
-    complete: mock().mockResolvedValue(undefined),
-    log: { info: () => {}, warn: () => {}, debug: () => {} },
-    concurrency: 4,
-  };
+  });
 
   const dispatcher = createWorkerDispatcher(deps);
-  const handoff = { handoff_id: "h1", conversation_id: "c1", to_agent: "a1" };
+  const handoff: TestHandoff = { handoff_id: "h1", conversation_id: "c1", to_agent: "a1" };
 
   // Trigger cancel BEFORE handle
   dispatcher.cancel("c1");
@@ -219,5 +235,5 @@ test("dispatcher.cancel(cid) before handle() starts dispatch should still abort"
   await dispatcher.idle();
 
   expect(deps.dispatch).toHaveBeenCalled();
-  expect(signalSent!.aborted).toBe(true);
+  expectAborted(probe.signal, true);
 });

@@ -1,20 +1,68 @@
+import type { DispatchEventInput } from "@penumbra/core";
+
 import { expect, test } from "bun:test";
-import { handleControlEvent, runWorkerControlListener } from "../../src/worker/control-listener.js";
+
+import {
+  type ControlListenerClient,
+  type ControlListenerDispatcher,
+  type ControlListenerLogger,
+  handleControlEvent,
+  runWorkerControlListener,
+  type WorkerControlEvent,
+} from "../../src/worker/control-listener.js";
+
+// Async generator factory satisfies the ControlListenerClient contract:
+// when called with an empty events array it yields nothing but still
+// references `yield`/`await` syntactically so eslint's require-yield /
+// require-await rules are satisfied without a disable comment.
+async function* yieldControlEvents(
+  events: WorkerControlEvent[],
+): AsyncGenerator<WorkerControlEvent, void, undefined> {
+  for (const ev of events) {
+    await Promise.resolve();
+    yield ev;
+  }
+}
+
+const emptyControlStream = (): AsyncIterable<WorkerControlEvent> => yieldControlEvents([]);
+
+interface LogEntry {
+  obj: Record<string, unknown>;
+  msg: string;
+}
+
+interface CancelCall {
+  conversation_id: string;
+  handoff_id: string;
+}
+
+function makeLogger(sink: { warns: LogEntry[] }): ControlListenerLogger {
+  return {
+    warn: (obj: Record<string, unknown>, msg: string): void => {
+      sink.warns.push({ obj, msg });
+    },
+    error: (): void => undefined,
+    info: (): void => undefined,
+  };
+}
 
 test("handleControlEvent emits cancel.received before dispatching cancel", () => {
-  const events: any[] = [];
-  const cancels: Array<{ conversation_id: string; handoff_id: string }> = [];
+  const events: DispatchEventInput[] = [];
+  const cancels: CancelCall[] = [];
+
+  const client: ControlListenerClient = {
+    sendProbeAck: () => Promise.resolve(),
+    subscribeWorkerControl: emptyControlStream,
+  };
+  const dispatcher: ControlListenerDispatcher = {
+    cancel: (conversation_id, handoff_id) => cancels.push({ conversation_id, handoff_id }),
+  };
 
   handleControlEvent(
     { type: "cancel", conversation_id: "c1", handoff_id: "h1" },
     {
-      client: {
-        sendProbeAck: async () => {},
-        subscribeWorkerControl: async function* () {},
-      },
-      dispatcher: {
-        cancel: (conversation_id, handoff_id) => cancels.push({ conversation_id, handoff_id }),
-      },
+      client,
+      dispatcher,
       workerId: "w1",
       onEvent: (event) => events.push(event),
     },
@@ -32,18 +80,22 @@ test("handleControlEvent emits cancel.received before dispatching cancel", () =>
 });
 
 test("handleControlEvent sends ping ACK only for matching worker", () => {
-  const acks: Array<[string, string]> = [];
+  const acks: [string, string][] = [];
+
+  const client: ControlListenerClient = {
+    sendProbeAck: (worker_id, probe_id) => {
+      acks.push([worker_id, probe_id]);
+      return Promise.resolve();
+    },
+    subscribeWorkerControl: emptyControlStream,
+  };
+  const dispatcher: ControlListenerDispatcher = { cancel: () => undefined };
 
   handleControlEvent(
     { type: "ping", worker_id: "w1", probe_id: "p1" },
     {
-      client: {
-        sendProbeAck: async (worker_id, probe_id) => {
-          acks.push([worker_id, probe_id]);
-        },
-        subscribeWorkerControl: async function* () {},
-      },
-      dispatcher: { cancel: () => {} },
+      client,
+      dispatcher,
       workerId: "w1",
     },
   );
@@ -52,34 +104,31 @@ test("handleControlEvent sends ping ACK only for matching worker", () => {
 });
 
 test("handleControlEvent logs probe-ack failures without throwing", async () => {
-  const warns: any[] = [];
+  const sink = { warns: [] as LogEntry[] };
 
-  expect(() =>
+  const client: ControlListenerClient = {
+    sendProbeAck: () => {
+      return Promise.reject(new Error("probe ack failed"));
+    },
+    subscribeWorkerControl: emptyControlStream,
+  };
+  const dispatcher: ControlListenerDispatcher = { cancel: () => undefined };
+
+  expect(() => {
     handleControlEvent(
       { type: "ping", worker_id: "w1", probe_id: "p1" },
       {
-        client: {
-          sendProbeAck: async () => {
-            throw new Error("probe ack failed");
-          },
-          subscribeWorkerControl: async function* () {},
-        },
-        dispatcher: { cancel: () => {} },
+        client,
+        dispatcher,
         workerId: "w1",
-        log: {
-          warn: (obj: Record<string, unknown>, msg: string) => {
-            warns.push({ obj, msg });
-          },
-          error: () => {},
-          info: () => {},
-        },
+        log: makeLogger(sink),
       },
-    ),
-  ).not.toThrow();
+    );
+  }).not.toThrow();
 
   await Promise.resolve();
 
-  expect(warns).toEqual([
+  expect(sink.warns).toEqual([
     {
       obj: {
         worker_id: "w1",
@@ -92,34 +141,31 @@ test("handleControlEvent logs probe-ack failures without throwing", async () => 
 });
 
 test("handleControlEvent logs malformed cancel event and does not call cancel", () => {
-  const cancels: Array<{ conversation_id: string; handoff_id: string }> = [];
-  const warns: any[] = [];
+  const cancels: CancelCall[] = [];
+  const sink = { warns: [] as LogEntry[] };
+
+  const client: ControlListenerClient = {
+    sendProbeAck: () => Promise.resolve(),
+    subscribeWorkerControl: emptyControlStream,
+  };
+  const dispatcher: ControlListenerDispatcher = {
+    cancel: (conversation_id, handoff_id) => cancels.push({ conversation_id, handoff_id }),
+  };
 
   handleControlEvent(
     { type: "cancel", conversation_id: "c1" },
     {
-      client: {
-        sendProbeAck: async () => {},
-        subscribeWorkerControl: async function* () {},
-      },
-      dispatcher: {
-        cancel: (conversation_id, handoff_id) => cancels.push({ conversation_id, handoff_id }),
-      },
+      client,
+      dispatcher,
       workerId: "w1",
-      onEvent: () => {},
-      log: {
-        warn: (obj: Record<string, unknown>, msg: string) => {
-          warns.push({ obj, msg });
-        },
-        error: () => {},
-        info: () => {},
-      },
+      onEvent: () => undefined,
+      log: makeLogger(sink),
     },
   );
 
   expect(cancels).toHaveLength(0);
-  expect(warns).toHaveLength(1);
-  expect(warns[0]).toEqual({
+  expect(sink.warns).toHaveLength(1);
+  expect(sink.warns[0]).toEqual({
     obj: {
       event: "control_event_malformed",
       type: "cancel",
@@ -130,18 +176,22 @@ test("handleControlEvent logs malformed cancel event and does not call cancel", 
 });
 
 test("handleControlEvent ignores ping not addressed to this worker", () => {
-  const acks: Array<[string, string]> = [];
+  const acks: [string, string][] = [];
+
+  const client: ControlListenerClient = {
+    sendProbeAck: (worker_id, probe_id) => {
+      acks.push([worker_id, probe_id]);
+      return Promise.resolve();
+    },
+    subscribeWorkerControl: emptyControlStream,
+  };
+  const dispatcher: ControlListenerDispatcher = { cancel: () => undefined };
 
   handleControlEvent(
     { type: "ping", worker_id: "w2", probe_id: "p1" },
     {
-      client: {
-        sendProbeAck: async (worker_id, probe_id) => {
-          acks.push([worker_id, probe_id]);
-        },
-        subscribeWorkerControl: async function* () {},
-      },
-      dispatcher: { cancel: () => {} },
+      client,
+      dispatcher,
       workerId: "w1",
     },
   );
@@ -150,19 +200,22 @@ test("handleControlEvent ignores ping not addressed to this worker", () => {
 });
 
 test("reconnects when control stream ends cleanly", async () => {
-  const cancels: Array<{ conversation_id: string; handoff_id: string }> = [];
+  const cancels: CancelCall[] = [];
   const abort = new AbortController();
   let subscribeCalls = 0;
 
-  const client = {
-    sendProbeAck: async () => {},
-    subscribeWorkerControl: async function* () {
-      subscribeCalls++;
-      if (subscribeCalls === 2) {
-        yield { type: "cancel", conversation_id: "c1", handoff_id: "h1" };
-        abort.abort();
-      }
-    },
+  async function* subscribeWorkerControl(): AsyncGenerator<WorkerControlEvent, void, undefined> {
+    subscribeCalls++;
+    if (subscribeCalls === 2) {
+      yield { type: "cancel", conversation_id: "c1", handoff_id: "h1" };
+      abort.abort();
+    }
+    await Promise.resolve();
+  }
+
+  const client: ControlListenerClient = {
+    sendProbeAck: () => Promise.resolve(),
+    subscribeWorkerControl,
   };
 
   await runWorkerControlListener({
@@ -171,8 +224,8 @@ test("reconnects when control stream ends cleanly", async () => {
       cancel: (conversation_id, handoff_id) => cancels.push({ conversation_id, handoff_id }),
     },
     signal: abort.signal,
-    log: { warn: () => {}, error: () => {}, info: () => {} },
-    sleep: async () => {},
+    log: { warn: () => undefined, error: () => undefined, info: () => undefined },
+    sleep: () => Promise.resolve(),
   });
 
   expect(subscribeCalls).toBe(2);
@@ -180,78 +233,79 @@ test("reconnects when control stream ends cleanly", async () => {
 });
 
 test("throttles control-listener reconnect log to once per window and reports suppressedCount", async () => {
-  const warns: any[] = [];
-  const log = {
-    warn: (obj: Record<string, unknown>, msg: string) => {
-      warns.push({ obj, msg });
-    },
-    error: () => {},
-    info: () => {},
-  };
+  const sink = { warns: [] as LogEntry[] };
 
   let subscribeCalls = 0;
-  const client = {
-    sendProbeAck: async () => {},
-    subscribeWorkerControl: async function* () {
-      subscribeCalls++;
-      throw new Error(`boom-${subscribeCalls}`);
-    },
+  // Async generator that throws on entry. References `yield`/`await`
+  // syntactically (in unreachable but valid code paths) so eslint's
+  // require-yield / require-await pass without a disable comment.
+  async function* subscribeWorkerControl(): AsyncGenerator<WorkerControlEvent, void, undefined> {
+    subscribeCalls++;
+    if (subscribeCalls > 0) {
+      throw new Error(`boom-${String(subscribeCalls)}`);
+    }
+    await Promise.resolve();
+    yield { type: "noop" };
+  }
+
+  const client: ControlListenerClient = {
+    sendProbeAck: () => Promise.resolve(),
+    subscribeWorkerControl,
   };
 
-  const dispatcher = { cancel: () => {} };
+  const dispatcher: ControlListenerDispatcher = { cancel: () => undefined };
   const abort = new AbortController();
 
   let nowMs = 0;
   let warnsAfterFive = 0;
-  const sleep = async () => {
+  const sleep = (): Promise<void> => {
     if (subscribeCalls === 5) {
-      warnsAfterFive = warns.length;
+      warnsAfterFive = sink.warns.length;
       nowMs = 60_001; // advance past 60s window for the next error
     }
     if (subscribeCalls >= 6) abort.abort();
+    return Promise.resolve();
   };
 
   await runWorkerControlListener({
     client,
     dispatcher,
     signal: abort.signal,
-    log,
+    log: makeLogger(sink),
     sleep,
     now: () => nowMs,
     streamErrorLogThrottleMs: 60_000,
   });
 
   expect(warnsAfterFive).toBe(1);
-  expect(warns.length).toBe(2);
-  expect(warns[0].msg).toBe("control listener stream error; reconnecting in 5s");
-  expect(warns[1].obj.suppressedCount).toBe(4);
+  expect(sink.warns.length).toBe(2);
+  expect(sink.warns[0]?.msg).toBe("control listener stream error; reconnecting in 5s");
+  expect(sink.warns[1]?.obj.suppressedCount).toBe(4);
 });
 
 test("handleControlEvent triggers onConfigReload on agentchat_reload", () => {
   let reloads = 0;
-  const warns: any[] = [];
+  const sink = { warns: [] as LogEntry[] };
+
+  const client: ControlListenerClient = {
+    sendProbeAck: () => Promise.resolve(),
+    subscribeWorkerControl: emptyControlStream,
+  };
+  const dispatcher: ControlListenerDispatcher = { cancel: () => undefined };
+
   handleControlEvent(
     { type: "agentchat_reload" },
     {
-      client: {
-        sendProbeAck: async () => {},
-        subscribeWorkerControl: async function* () {},
-      },
-      dispatcher: { cancel: () => {} },
+      client,
+      dispatcher,
       workerId: "w1",
       onConfigReload: () => {
         reloads++;
       },
-      log: {
-        warn: (obj: Record<string, unknown>, msg: string) => {
-          warns.push({ obj, msg });
-        },
-        error: () => {},
-        info: () => {},
-      },
+      log: makeLogger(sink),
     },
   );
 
   expect(reloads).toBe(1);
-  expect(warns).toHaveLength(0);
+  expect(sink.warns).toHaveLength(0);
 });

@@ -1,5 +1,7 @@
-import { describe, expect, mock, test } from "bun:test";
 import type { DispatchEventInput } from "@penumbra/core";
+
+import { describe, expect, mock, test } from "bun:test";
+
 import { DispatchEventQueue } from "../../src/worker/event-queue.js";
 
 const sample: DispatchEventInput = {
@@ -11,7 +13,9 @@ const sample: DispatchEventInput = {
 
 describe("DispatchEventQueue", () => {
   test("flush drains queued events in batches", async () => {
-    const send = mock(async (_events: DispatchEventInput[], _signal: AbortSignal) => {});
+    const send = mock(
+      (_events: DispatchEventInput[], _signal: AbortSignal): Promise<void> => Promise.resolve(),
+    );
     const queue = new DispatchEventQueue({
       send,
       flushIntervalMs: 1000,
@@ -24,13 +28,13 @@ describe("DispatchEventQueue", () => {
 
     await queue.flush();
     expect(send).toHaveBeenCalledTimes(2);
-    expect(send.mock.calls[0]![0]).toHaveLength(2);
-    expect(send.mock.calls[1]![0]).toHaveLength(1);
+    expect(send.mock.calls[0]?.[0]).toHaveLength(2);
+    expect(send.mock.calls[1]?.[0]).toHaveLength(1);
     await queue.stop();
   });
 
   test("drops oldest events beyond maxQueue", async () => {
-    const send = mock(async () => {});
+    const send = mock((): Promise<void> => Promise.resolve());
     const queue = new DispatchEventQueue({
       send,
       flushIntervalMs: 1000,
@@ -46,7 +50,7 @@ describe("DispatchEventQueue", () => {
   });
 
   test("stop flushes and clears the interval", async () => {
-    const send = mock(async () => {});
+    const send = mock((): Promise<void> => Promise.resolve());
     const queue = new DispatchEventQueue({
       send,
       flushIntervalMs: 1000,
@@ -60,11 +64,11 @@ describe("DispatchEventQueue", () => {
   });
 
   test("stop waits for an in-flight flush and drains events enqueued during it", async () => {
-    const firstSendStarted = Promise.withResolvers<void>();
-    const releaseFirstSend = Promise.withResolvers<void>();
+    const firstSendStarted = Promise.withResolvers<undefined>();
+    const releaseFirstSend = Promise.withResolvers<undefined>();
     const send = mock(async (_events: DispatchEventInput[], _signal: AbortSignal) => {
       if (send.mock.calls.length === 1) {
-        firstSendStarted.resolve();
+        firstSendStarted.resolve(undefined);
         await releaseFirstSend.promise;
       }
     });
@@ -84,7 +88,7 @@ describe("DispatchEventQueue", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(send).toHaveBeenCalledTimes(1);
 
-    releaseFirstSend.resolve();
+    releaseFirstSend.resolve(undefined);
     await stopPromise;
 
     expect(send).toHaveBeenCalledTimes(2);
@@ -94,7 +98,7 @@ describe("DispatchEventQueue", () => {
   test("failed flush re-enqueues the batch so the next tick retries it", async () => {
     let unblock!: () => void;
     let attempt = 0;
-    const send = mock((_events: DispatchEventInput[], _signal: AbortSignal) => {
+    const send = mock((_events: DispatchEventInput[], _signal: AbortSignal): Promise<void> => {
       attempt++;
       if (attempt === 1) {
         return new Promise<void>((resolve) => {
@@ -135,7 +139,7 @@ describe("DispatchEventQueue", () => {
     let capturedSignal: AbortSignal | undefined;
     let unblock!: () => void;
     let hangCount = 0;
-    const send = mock((_events: DispatchEventInput[], signal: AbortSignal) => {
+    const send = mock((_events: DispatchEventInput[], signal: AbortSignal): Promise<void> => {
       hangCount++;
       if (hangCount === 1) {
         capturedSignal = signal;
