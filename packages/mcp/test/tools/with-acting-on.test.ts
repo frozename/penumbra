@@ -1,9 +1,10 @@
 import { describe, expect, it } from "bun:test";
+
 import { DEFAULT_ID_KIND_MAP, withActingOnEnvelope } from "../../src/tools/with-acting-on.js";
 
 describe("withActingOnEnvelope", () => {
   it("adds acting_on for handoff_id and places it first", async () => {
-    const handler = withActingOnEnvelope(async () => ({ ok: true }));
+    const handler = withActingOnEnvelope(() => Promise.resolve({ ok: true }));
     const result = await handler({ handoff_id: "h-1" });
     expect(result).toEqual({
       acting_on: { kind: "handoff", id: "h-1" },
@@ -13,7 +14,7 @@ describe("withActingOnEnvelope", () => {
   });
 
   it("maps conversation_id to conversation", async () => {
-    const handler = withActingOnEnvelope(async () => ({ ok: true }));
+    const handler = withActingOnEnvelope(() => Promise.resolve({ ok: true }));
     const result = await handler({ conversation_id: "c-1" });
     expect(result).toEqual({
       acting_on: { kind: "conversation", id: "c-1" },
@@ -22,7 +23,7 @@ describe("withActingOnEnvelope", () => {
   });
 
   it("maps task_id to task", async () => {
-    const handler = withActingOnEnvelope(async () => ({ ok: true }));
+    const handler = withActingOnEnvelope(() => Promise.resolve({ ok: true }));
     const result = await handler({ task_id: "t-1" });
     expect(result).toEqual({
       acting_on: { kind: "task", id: "t-1" },
@@ -31,7 +32,7 @@ describe("withActingOnEnvelope", () => {
   });
 
   it("maps plan_id to plan", async () => {
-    const handler = withActingOnEnvelope(async () => ({ ok: true }));
+    const handler = withActingOnEnvelope(() => Promise.resolve({ ok: true }));
     const result = await handler({ plan_id: "p-1" });
     expect(result).toEqual({
       acting_on: { kind: "plan", id: "p-1" },
@@ -41,13 +42,13 @@ describe("withActingOnEnvelope", () => {
 
   it("returns unchanged result when no recognized id field exists", async () => {
     const payload = { ok: true };
-    const handler = withActingOnEnvelope(async () => payload);
+    const handler = withActingOnEnvelope(() => Promise.resolve(payload));
     const result = await handler({ foo: "bar" });
     expect(result).toBe(payload);
   });
 
   it("uses the first matching key from DEFAULT_ID_KIND_MAP", async () => {
-    const handler = withActingOnEnvelope(async () => ({ ok: true }));
+    const handler = withActingOnEnvelope(() => Promise.resolve({ ok: true }));
     const result = await handler({ handoff_id: "h-1", conversation_id: "c-1" });
     expect(result).toEqual({
       acting_on: { kind: "handoff", id: "h-1" },
@@ -57,14 +58,14 @@ describe("withActingOnEnvelope", () => {
   });
 
   it("passes through string results unchanged", async () => {
-    const handler = withActingOnEnvelope(async () => "ok");
+    const handler = withActingOnEnvelope(() => Promise.resolve("ok"));
     const result = await handler({ handoff_id: "h-1" });
     expect(result).toBe("ok");
   });
 
   it("passes through array results unchanged", async () => {
     const payload = ["ok"];
-    const handler = withActingOnEnvelope(async () => payload);
+    const handler = withActingOnEnvelope(() => Promise.resolve(payload));
     const result = await handler({ handoff_id: "h-1" });
     expect(result).toBe(payload);
   });
@@ -74,17 +75,23 @@ describe("withActingOnEnvelope", () => {
       acting_on: { kind: "handoff", id: "existing" },
       ok: true,
     };
-    const handler = withActingOnEnvelope(async () => payload);
+    const handler = withActingOnEnvelope(() => Promise.resolve(payload));
     const result = await handler({ handoff_id: "h-1" });
     expect(result).toBe(payload);
   });
 
   it("rethrows handler errors", async () => {
     const err = new Error("boom");
-    const handler = withActingOnEnvelope(async () => {
+    const handler = withActingOnEnvelope(() => {
       throw err;
     });
-    await expect(handler({ handoff_id: "h-1" })).rejects.toBe(err);
+    let caught: unknown;
+    try {
+      await handler({ handoff_id: "h-1" });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBe(err);
   });
 
   it("skips Date, URL, and class instance results", async () => {
@@ -95,9 +102,13 @@ describe("withActingOnEnvelope", () => {
     }
     const instance = new Custom("x");
 
-    const dateResult = await withActingOnEnvelope(async () => date)({ handoff_id: "h-1" });
-    const urlResult = await withActingOnEnvelope(async () => url)({ handoff_id: "h-1" });
-    const classResult = await withActingOnEnvelope(async () => instance)({ handoff_id: "h-1" });
+    const dateResult = await withActingOnEnvelope(() => Promise.resolve(date))({
+      handoff_id: "h-1",
+    });
+    const urlResult = await withActingOnEnvelope(() => Promise.resolve(url))({ handoff_id: "h-1" });
+    const classResult = await withActingOnEnvelope(() => Promise.resolve(instance))({
+      handoff_id: "h-1",
+    });
 
     expect(dateResult).toBe(date);
     expect(urlResult).toBe(url);

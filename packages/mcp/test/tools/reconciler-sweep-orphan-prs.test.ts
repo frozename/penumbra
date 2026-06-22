@@ -1,22 +1,30 @@
-import { expect, test, mock } from "bun:test";
+import { expect, mock, test } from "bun:test";
+
+import type { DaemonClient } from "../../src/daemon-client.js";
+
 import { reconcilerSweepOrphanPrsHandler } from "../../src/tools/reconciler-sweep-orphan-prs.js";
+import { fakeDaemon } from "../helpers.js";
+
+type ReconcilerSweepOrphanPrsFn = DaemonClient["reconcilerSweepOrphanPrs"];
 
 test("reconciler.sweep_orphan_prs handler proxies to daemon and returns JSON text", async () => {
-  const daemon: any = {
-    reconcilerSweepOrphanPrs: mock(async () => ({
+  const reconcilerSweepOrphanPrs: ReconcilerSweepOrphanPrsFn = mock(() =>
+    Promise.resolve({
       scanned: 42,
       superseded: 20,
       stale: 22,
       errored: 0,
       actions: [],
-    })),
-  };
+    }),
+  );
 
-  const handler = reconcilerSweepOrphanPrsHandler(daemon);
-  const res = await (handler as any)({ dry_run: true, max_close: 10 });
+  const handler = reconcilerSweepOrphanPrsHandler(fakeDaemon({ reconcilerSweepOrphanPrs }));
+  const res = await handler({ dry_run: true, max_close: 10 });
 
-  expect(daemon.reconcilerSweepOrphanPrs).toHaveBeenCalledWith({ dry_run: true, max_close: 10 });
-  expect(JSON.parse(res.content[0].text)).toEqual({
+  expect(reconcilerSweepOrphanPrs).toHaveBeenCalledWith({ dry_run: true, max_close: 10 });
+  const block = res.content[0];
+  if (block === undefined) throw new Error("expected content[0]");
+  expect(JSON.parse(block.text)).toEqual({
     scanned: 42,
     superseded: 20,
     stale: 22,

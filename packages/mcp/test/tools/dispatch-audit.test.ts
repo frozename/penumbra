@@ -1,8 +1,13 @@
 import { expect, mock, test } from "bun:test";
 import { z } from "zod";
-import { DaemonClient } from "../../src/daemon-client.js";
-import { DispatchAuditInputShape, dispatchAuditHandler } from "../../src/tools/dispatch-audit.js";
-import { connectInMemory } from "../helpers.js";
+
+import type { DaemonClient } from "../../src/daemon-client.js";
+
+import { DaemonClient as DaemonClientCtor } from "../../src/daemon-client.js";
+import { dispatchAuditHandler, DispatchAuditInputShape } from "../../src/tools/dispatch-audit.js";
+import { connectInMemory, fakeDaemon } from "../helpers.js";
+
+type DispatchAuditFn = DaemonClient["dispatchAudit"];
 
 test("DispatchAuditInputShape requires a handoff_id string", () => {
   const schema = z.object(DispatchAuditInputShape);
@@ -33,19 +38,21 @@ test("dispatchAuditHandler delegates to the daemon and returns JSON text content
       recommended_action: "accept",
     },
   };
-  const daemon = {
-    dispatchAudit: mock(async (handoff_id: string) => ({
+  const dispatchAudit: DispatchAuditFn = mock((handoff_id: string) =>
+    Promise.resolve({
       ...audit,
       report: { ...audit.report, handoff_id },
-    })),
-  } as any;
+    }),
+  );
 
-  const result = await dispatchAuditHandler(daemon)({ handoff_id: "h-1" });
+  const result = await dispatchAuditHandler(fakeDaemon({ dispatchAudit }))({ handoff_id: "h-1" });
 
-  expect(daemon.dispatchAudit).toHaveBeenCalledWith("h-1");
-  expect(result.content[0].type).toBe("text");
-  expect(JSON.parse(result.content[0].text)).toEqual(audit);
-  expect(result.content[0].text).toContain('\n  "report"');
+  expect(dispatchAudit).toHaveBeenCalledWith("h-1");
+  const block = result.content[0];
+  if (block === undefined) throw new Error("expected content[0]");
+  expect(block.type).toBe("text");
+  expect(JSON.parse(block.text)).toEqual(audit);
+  expect(block.text).toContain('\n  "report"');
 });
 
 test("dispatch.audit is registered and forwards through DaemonClient to GET /dispatch/audit", async () => {
@@ -86,20 +93,25 @@ test("dispatch.audit is registered and forwards through DaemonClient to GET /dis
   let client: Awaited<ReturnType<typeof connectInMemory>> | undefined;
 
   try {
-    const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: "t" });
+    const daemon = new DaemonClientCtor({
+      baseUrl: `http://localhost:${String(srv.port)}`,
+      token: "t",
+    });
     client = await connectInMemory(daemon);
     const out = await client.callTool({
       name: "dispatch_audit",
       arguments: { handoff_id: "h space" },
     });
     const content = (out as unknown as { content: { type: string; text: string }[] }).content;
+    const firstBlock = content[0];
+    if (firstBlock === undefined) throw new Error("expected content[0]");
 
-    expect(JSON.parse(content[0]!.text)).toEqual(audit);
+    expect(JSON.parse(firstBlock.text)).toEqual(audit);
     expect(receivedMethod).toBe("GET");
     expect(receivedPath).toBe("/dispatch/audit");
     expect(receivedHandoffId).toBe("h space");
   } finally {
     await client?.close();
-    srv.stop(true);
+    await srv.stop(true);
   }
 });

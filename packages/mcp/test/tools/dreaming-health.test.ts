@@ -1,40 +1,53 @@
-import { describe, it, expect } from "bun:test";
+import type { Database } from "bun:sqlite";
+
+import { describe, expect, it } from "bun:test";
+
 import { getDreamingHealthAlerts } from "../../src/tools/dreaming-health.js";
 
+interface PreparedStub {
+  get: () => { c: number };
+}
+
+function makeDb(prepareImpl: (sql: string) => PreparedStub): Database {
+  // Test boundary: the production code only exercises .prepare().get() against
+  // these queries, so a minimal structural double is safe across the cast.
+  return { prepare: prepareImpl } as unknown as Database;
+}
+
 describe("dreaming-health", () => {
-  it("reports current running cycle and no alerts", () => {
-    const mockDb = {
-      prepare: () => ({
-        get: () => ({ c: 1 }),
+  it("reports current running cycle and no alerts", (): void => {
+    const mockDb = makeDb(
+      (): PreparedStub => ({
+        get: (): { c: number } => ({ c: 1 }),
       }),
-    };
+    );
     const res = getDreamingHealthAlerts(mockDb, { daemonUptimeMs: 1000 });
     expect(res.alerts).toEqual([]);
     expect(res.cycles_in_last_24h).toBe(1);
   });
 
-  it("dream.health.no_cycles_24h alert when uptime > 24h, zero cycles", () => {
-    const mockDb = {
-      prepare: (sql: string) => ({
-        get: () => {
+  it("dream.health.no_cycles_24h alert when uptime > 24h, zero cycles", (): void => {
+    const mockDb = makeDb(
+      (sql): PreparedStub => ({
+        get: (): { c: number } => {
           if (sql.includes('outcome = "crashed"')) return { c: 0 };
           return { c: 0 };
         },
       }),
-    };
+    );
     const res = getDreamingHealthAlerts(mockDb, { daemonUptimeMs: 25 * 60 * 60 * 1000 });
     expect(res.alerts).toContain("dream.health.no_cycles_24h");
   });
 
-  it("dream.health.crashed_high alert when crashed_24h >= 3", () => {
-    const mockDb = {
-      prepare: (sql: string) => ({
-        get: () => {
+  it("dream.health.crashed_high alert when crashed_24h >= 3", (): void => {
+    const mockDb = makeDb(
+      (sql): PreparedStub => ({
+        get: (): { c: number } => {
           if (sql.includes('outcome = "crashed"')) return { c: 3 };
           return { c: 1 };
         },
       }),
-    };
+    );
     const res = getDreamingHealthAlerts(mockDb, { daemonUptimeMs: 1000 });
     expect(res.alerts).toContain("dream.health.crashed_high");
   });

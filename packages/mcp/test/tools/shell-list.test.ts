@@ -1,5 +1,11 @@
 import { describe, expect, it, mock } from "bun:test";
+
+import type { DaemonClient } from "../../src/daemon-client.js";
+
 import { shellListHandler } from "../../src/tools/shell-list.js";
+import { fakeDaemon } from "../helpers.js";
+
+type ShellListFn = DaemonClient["shellList"];
 
 describe("shellListHandler", () => {
   it("calls daemon.shellList with handoff_id and wraps the response", async () => {
@@ -12,10 +18,13 @@ describe("shellListHandler", () => {
         pty: false,
       },
     ];
-    const daemon = { shellList: mock(async () => ({ sessions })) };
-    const handler = shellListHandler(daemon as any);
+    const shellList: ShellListFn = mock(() => Promise.resolve({ sessions }));
+    const handler = shellListHandler(fakeDaemon({ shellList }));
     const result = await handler({ handoff_id: "h-1" });
-    expect(daemon.shellList).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(result.content[0].text).sessions).toHaveLength(1);
+    expect(shellList).toHaveBeenCalledTimes(1);
+    const block = result.content[0];
+    if (block === undefined) throw new Error("expected content[0]");
+    const parsed = JSON.parse(block.text) as { sessions: unknown[] };
+    expect(parsed.sessions).toHaveLength(1);
   });
 });

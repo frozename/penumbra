@@ -1,17 +1,28 @@
 import { describe, expect, it } from "bun:test";
+
+import type { DaemonClient } from "../../src/daemon-client.js";
+
 import { TOOL_REGISTRY } from "../../src/tools/registry.js";
 import {
-  RoutingBiasListInputSchema,
+  routingBiasClearHandler,
+  RoutingBiasClearInputSchema,
+} from "../../src/tools/routing-bias-clear.js";
+import {
   routingBiasListHandler,
+  RoutingBiasListInputSchema,
 } from "../../src/tools/routing-bias-list.js";
 import {
-  RoutingBiasSetInputSchema,
   routingBiasSetHandler,
+  RoutingBiasSetInputSchema,
 } from "../../src/tools/routing-bias-set.js";
-import {
-  RoutingBiasClearInputSchema,
-  routingBiasClearHandler,
-} from "../../src/tools/routing-bias-clear.js";
+import { fakeDaemon } from "../helpers.js";
+
+type RoutingBiasListFn = DaemonClient["routingBiasList"];
+type RoutingBiasListReq = Parameters<RoutingBiasListFn>[0];
+type RoutingBiasSetFn = DaemonClient["routingBiasSet"];
+type RoutingBiasSetReq = Parameters<RoutingBiasSetFn>[0];
+type RoutingBiasClearFn = DaemonClient["routingBiasClear"];
+type RoutingBiasClearReq = Parameters<RoutingBiasClearFn>[0];
 
 describe("routing_bias_list input schema", () => {
   it("accepts no arguments", () => {
@@ -182,55 +193,57 @@ describe("routing_bias_clear input schema", () => {
 
 describe("routing_bias_list handler", () => {
   it("forwards input and returns JSON text with time_remaining", async () => {
-    const calls: Array<{ scope?: string; value?: string }> = [];
-    const handler = routingBiasListHandler({
-      routingBiasList: async (input: { scope?: string; value?: string }) => {
-        calls.push(input);
-        return {
-          biases: [
-            {
-              bias_id: "b1",
-              scope: "agent",
-              value: "alpha",
-              mode: "boost",
-              weight: 1.5,
-              reason: "test",
-              created_at: "2026-05-01T12:00:00Z",
-              expires_at: "2026-05-01T13:00:00Z",
-              time_remaining: "59m 59s",
-            },
-          ],
-        };
-      },
-    } as any);
+    const calls: RoutingBiasListReq[] = [];
+    const routingBiasList: RoutingBiasListFn = (input) => {
+      calls.push(input);
+      return Promise.resolve({
+        biases: [
+          {
+            bias_id: "b1",
+            scope: "agent",
+            value: "alpha",
+            mode: "boost",
+            weight: 1.5,
+            reason: "test",
+            created_at: "2026-05-01T12:00:00Z",
+            expires_at: "2026-05-01T13:00:00Z",
+            time_remaining: "59m 59s",
+          },
+        ],
+      });
+    };
+    const handler = routingBiasListHandler(fakeDaemon({ routingBiasList }));
 
     const out = await handler({ scope: "agent" });
     expect(calls).toEqual([{ scope: "agent" }]);
-    expect(out.content[0].type).toBe("text");
-    const parsed = JSON.parse(out.content[0].text);
+    const block = out.content[0];
+    if (block === undefined) throw new Error("expected content[0]");
+    expect(block.type).toBe("text");
+    const parsed = JSON.parse(block.text) as {
+      biases: { time_remaining: string }[];
+    };
     expect(parsed.biases).toHaveLength(1);
-    expect(parsed.biases[0].time_remaining).toBe("59m 59s");
+    expect(parsed.biases[0]?.time_remaining).toBe("59m 59s");
   });
 });
 
 describe("routing_bias_set handler", () => {
   it("forwards input and returns JSON text", async () => {
-    const calls: Array<unknown> = [];
-    const handler = routingBiasSetHandler({
-      routingBiasSet: async (input: unknown) => {
-        calls.push(input);
-        return {
-          bias_id: "b1",
-          scope: "agent",
-          value: "alpha",
-          mode: "boost",
-          weight: 1.5,
-          reason: "test",
-          created_at: "2026-05-01T12:00:00Z",
-          expires_at: "2026-05-01T13:00:00Z",
-        };
-      },
-    } as any);
+    const calls: RoutingBiasSetReq[] = [];
+    const routingBiasSet: RoutingBiasSetFn = (input) => {
+      calls.push(input);
+      return Promise.resolve({
+        bias_id: "b1",
+        scope: "agent",
+        value: "alpha",
+        mode: "boost",
+        weight: 1.5,
+        reason: "test",
+        created_at: "2026-05-01T12:00:00Z",
+        expires_at: "2026-05-01T13:00:00Z",
+      });
+    };
+    const handler = routingBiasSetHandler(fakeDaemon({ routingBiasSet }));
 
     const out = await handler({
       scope: "agent",
@@ -250,25 +263,30 @@ describe("routing_bias_set handler", () => {
         reason: "test",
       },
     ]);
-    expect(out.content[0].type).toBe("text");
-    expect(JSON.parse(out.content[0].text).bias_id).toBe("b1");
+    const block = out.content[0];
+    if (block === undefined) throw new Error("expected content[0]");
+    expect(block.type).toBe("text");
+    const parsed = JSON.parse(block.text) as { bias_id: string };
+    expect(parsed.bias_id).toBe("b1");
   });
 });
 
 describe("routing_bias_clear handler", () => {
   it("forwards input and returns JSON text", async () => {
-    const calls: Array<unknown> = [];
-    const handler = routingBiasClearHandler({
-      routingBiasClear: async (input: unknown) => {
-        calls.push(input);
-        return { cleared_count: 3 };
-      },
-    } as any);
+    const calls: RoutingBiasClearReq[] = [];
+    const routingBiasClear: RoutingBiasClearFn = (input) => {
+      calls.push(input);
+      return Promise.resolve({ cleared_count: 3 });
+    };
+    const handler = routingBiasClearHandler(fakeDaemon({ routingBiasClear }));
 
     const out = await handler({ all: true, confirm: true });
     expect(calls).toEqual([{ all: true, confirm: true }]);
-    expect(out.content[0].type).toBe("text");
-    expect(JSON.parse(out.content[0].text).cleared_count).toBe(3);
+    const block = out.content[0];
+    if (block === undefined) throw new Error("expected content[0]");
+    expect(block.type).toBe("text");
+    const parsed = JSON.parse(block.text) as { cleared_count: number };
+    expect(parsed.cleared_count).toBe(3);
   });
 });
 
@@ -276,19 +294,19 @@ describe("tool registry entries", () => {
   it("registers routing_bias_list as read only", () => {
     const entry = TOOL_REGISTRY["routing_bias_list"];
     expect(entry).toBeDefined();
-    expect(entry.readOnly).toBe(true);
+    expect(entry?.readOnly).toBe(true);
   });
 
   it("registers routing_bias_set as write", () => {
     const entry = TOOL_REGISTRY["routing_bias_set"];
     expect(entry).toBeDefined();
-    expect(entry.readOnly).toBe(false);
+    expect(entry?.readOnly).toBe(false);
   });
 
   it("registers routing_bias_clear as write", () => {
     const entry = TOOL_REGISTRY["routing_bias_clear"];
     expect(entry).toBeDefined();
-    expect(entry.readOnly).toBe(false);
+    expect(entry?.readOnly).toBe(false);
   });
 });
 

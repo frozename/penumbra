@@ -1,8 +1,14 @@
-import { beforeEach, describe, expect, it } from "bun:test";
-import { Database } from "bun:sqlite";
 import { loadSqliteVec, migrate, type Services } from "@penumbra/core";
-import { agentRecommendHandler } from "../../src/tools/agent-recommend.js";
+import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, it } from "bun:test";
+
+import type { DaemonClient } from "../../src/daemon-client.js";
+
 import { agentsRecommendRoute } from "../../../daemon/src/routes/agents.js";
+import { agentRecommendHandler } from "../../src/tools/agent-recommend.js";
+import { fakeDaemon } from "../helpers.js";
+
+type AgentRecommendFn = DaemonClient["agentRecommend"];
 
 try {
   if (process.platform === "darwin") {
@@ -16,7 +22,7 @@ function makeServices(db: Database): Services {
   let n = 0;
   return {
     db,
-    uuid: () => `perf-${++n}`,
+    uuid: () => `perf-${String(++n)}`,
     clock: () => new Date("2026-05-26T12:00:00Z"),
     machineId: { get: () => "test-machine" },
     agentchatConfig: {
@@ -81,34 +87,27 @@ function insertPerformanceRow(
   );
 }
 
-function makeBridgeHandler(services: Services) {
-  return agentRecommendHandler({
-    agentRecommend: async (input: {
-      task_type?: string;
-      workload?: string;
-      risk_class?: string;
-      window_days?: number;
-      agent_kind?: "coding" | "long_lived";
-    }) => {
-      const params = new URLSearchParams();
-      if (input.task_type !== undefined) params.set("task_type", input.task_type);
-      if (input.workload !== undefined) params.set("workload", input.workload);
-      if (input.risk_class !== undefined) params.set("risk_class", input.risk_class);
-      if (input.window_days !== undefined) params.set("window_days", String(input.window_days));
-      if (input.agent_kind !== undefined) params.set("agent_kind", input.agent_kind);
-      const res = await agentsRecommendRoute(
-        new Request(`http://x/agents/recommend?${params.toString()}`),
-        services,
-      );
-      if (res.status !== 200) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(
-          (body as any)?.error?.message ?? `agentsRecommendRoute failed: ${res.status}`,
-        );
-      }
-      return await res.json();
-    },
-  } as any);
+function makeBridgeHandler(services: Services): ReturnType<typeof agentRecommendHandler> {
+  const agentRecommend: AgentRecommendFn = async (input) => {
+    const params = new URLSearchParams();
+    if (input.task_type !== undefined) params.set("task_type", input.task_type);
+    if (input.workload !== undefined) params.set("workload", input.workload);
+    if (input.risk_class !== undefined) params.set("risk_class", input.risk_class);
+    if (input.window_days !== undefined) params.set("window_days", String(input.window_days));
+    if (input.agent_kind !== undefined) params.set("agent_kind", input.agent_kind);
+    const res = await agentsRecommendRoute(
+      new Request(`http://x/agents/recommend?${params.toString()}`),
+      services,
+    );
+    if (res.status !== 200) {
+      const body = (await res.json().catch(() => ({}))) as
+        | { error?: { message?: string } }
+        | undefined;
+      throw new Error(body?.error?.message ?? `agentsRecommendRoute failed: ${String(res.status)}`);
+    }
+    return await res.json();
+  };
+  return agentRecommendHandler(fakeDaemon({ agentRecommend }));
 }
 
 describe("agent_recommend workload routing", () => {
@@ -169,10 +168,16 @@ describe("agent_recommend workload routing", () => {
     });
   });
 
+  function firstBlockText(envelope: { content: { text: string }[] }): string {
+    const block = envelope.content[0];
+    if (block === undefined) throw new Error("expected content[0]");
+    return block.text;
+  }
+
   it("filters implement_substantial candidates to workload-eligible agents and preserves ledger order", async () => {
     const handler = makeBridgeHandler(services);
     const out = await handler({ workload: "implement_substantial" });
-    const rows = JSON.parse(out.content[0]!.text) as Array<{ agent_name: string }>;
+    const rows = JSON.parse(firstBlockText(out)) as { agent_name: string }[];
     expect(rows.map((row) => row.agent_name)).toEqual(["codex-acp-spark", "gemini-acp-pro"]);
   });
 
@@ -180,21 +185,26 @@ describe("agent_recommend workload routing", () => {
     const handler = makeBridgeHandler(services);
     const viaWorkload = await handler({ workload: "implement_substantial" });
     const viaTaskType = await handler({ task_type: "implement_substantial" });
-    expect(viaWorkload.content[0]!.text).toBe(viaTaskType.content[0]!.text);
+    expect(firstBlockText(viaWorkload)).toBe(firstBlockText(viaTaskType));
   });
 
   it("falls back to existing behavior when workload config is absent", async () => {
     const handler = makeBridgeHandler(services);
     const out = await handler({ workload: "docs_mechanical" });
-    const rows = JSON.parse(out.content[0]!.text) as Array<{ agent_name: string }>;
+    const rows = JSON.parse(firstBlockText(out)) as { agent_name: string }[];
     expect(rows.map((row) => row.agent_name)).toEqual(["claude-acp-sonnet", "codex-acp-spark"]);
   });
 
   it("rejects conflicting workload and task_type with chain_start conflict format", async () => {
     const handler = makeBridgeHandler(services);
-    await expect(
-      handler({ workload: "implement_substantial", task_type: "review_adversarial" }),
-    ).rejects.toThrow(
+    let caught: unknown;
+    try {
+      await handler({ workload: "implement_substantial", task_type: "review_adversarial" });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toBe(
       "agent_recommend: workload='implement_substantial' conflicts with task_type='review_adversarial'; pass only one or matching values",
     );
   });

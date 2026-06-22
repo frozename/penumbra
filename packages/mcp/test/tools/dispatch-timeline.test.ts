@@ -1,11 +1,16 @@
 import { expect, mock, test } from "bun:test";
 import { z } from "zod";
-import { DaemonClient } from "../../src/daemon-client.js";
+
+import type { DaemonClient } from "../../src/daemon-client.js";
+
+import { DaemonClient as DaemonClientCtor } from "../../src/daemon-client.js";
 import {
-  DispatchTimelineInputShape,
   dispatchTimelineHandler,
+  DispatchTimelineInputShape,
 } from "../../src/tools/dispatch-timeline.js";
-import { connectInMemory } from "../helpers.js";
+import { connectInMemory, fakeDaemon } from "../helpers.js";
+
+type GetDispatchTimelineFn = DaemonClient["getDispatchTimeline"];
 
 test("DispatchTimelineInputShape requires a handoff_id string", () => {
   const schema = z.object(DispatchTimelineInputShape);
@@ -23,17 +28,21 @@ test("dispatchTimelineHandler delegates to the daemon and returns JSON text cont
     worker_id: "worker-1",
     meta: null,
   };
-  const daemon = {
-    getDispatchTimeline: mock(async (handoff_id: string) => ({
+  const getDispatchTimeline: GetDispatchTimelineFn = mock((handoff_id: string) =>
+    Promise.resolve({
       events: [{ ...event, handoff_id }],
-    })),
-  } as any;
+    }),
+  );
 
-  const result = await dispatchTimelineHandler(daemon)({ handoff_id: "h-1" });
+  const result = await dispatchTimelineHandler(fakeDaemon({ getDispatchTimeline }))({
+    handoff_id: "h-1",
+  });
 
-  expect(daemon.getDispatchTimeline).toHaveBeenCalledWith("h-1");
-  expect(result.content[0].type).toBe("text");
-  expect(JSON.parse(result.content[0].text)).toEqual({
+  expect(getDispatchTimeline).toHaveBeenCalledWith("h-1");
+  const block = result.content[0];
+  if (block === undefined) throw new Error("expected content[0]");
+  expect(block.type).toBe("text");
+  expect(JSON.parse(block.text)).toEqual({
     events: [event],
   });
 });
@@ -67,20 +76,25 @@ test("dispatch.timeline is registered and forwards through DaemonClient to GET /
   let client: Awaited<ReturnType<typeof connectInMemory>> | undefined;
 
   try {
-    const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: "t" });
+    const daemon = new DaemonClientCtor({
+      baseUrl: `http://localhost:${String(srv.port)}`,
+      token: "t",
+    });
     client = await connectInMemory(daemon);
     const out = await client.callTool({
       name: "dispatch_timeline",
       arguments: { handoff_id: "h space" },
     });
     const content = (out as unknown as { content: { type: string; text: string }[] }).content;
+    const firstBlock = content[0];
+    if (firstBlock === undefined) throw new Error("expected content[0]");
 
-    expect(JSON.parse(content[0]!.text)).toEqual(timeline);
+    expect(JSON.parse(firstBlock.text)).toEqual(timeline);
     expect(receivedMethod).toBe("GET");
     expect(receivedPath).toBe("/dispatch/events");
     expect(receivedHandoffId).toBe("h space");
   } finally {
     await client?.close();
-    srv.stop(true);
+    await srv.stop(true);
   }
 });

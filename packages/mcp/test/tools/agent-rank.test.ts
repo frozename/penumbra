@@ -1,5 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { AgentRankInputSchema, agentRankHandler } from "../../src/tools/agent-rank.js";
+
+import type { DaemonClient } from "../../src/daemon-client.js";
+
+import { agentRankHandler, AgentRankInputSchema } from "../../src/tools/agent-rank.js";
+import { fakeDaemon } from "../helpers.js";
+
+type AgentRankFn = DaemonClient["agentRank"];
+type AgentRankReq = Parameters<AgentRankFn>[0];
 
 describe("agent.rank input schema", () => {
   it("requires valid task_type", () => {
@@ -12,17 +19,16 @@ describe("agent.rank input schema", () => {
 
 describe("agent.rank handler", () => {
   it("forwards input and returns JSON text", async () => {
-    const calls: unknown[] = [];
-    const handler = agentRankHandler({
-      agentRank: async (input: unknown) => {
-        calls.push(input);
-        return {
-          task_type: "implement_substantial",
-          window: { from: "a", to: "b" },
-          candidates: [],
-        };
-      },
-    } as any);
+    const calls: AgentRankReq[] = [];
+    const agentRank: AgentRankFn = (input) => {
+      calls.push(input);
+      return Promise.resolve({
+        task_type: "implement_substantial",
+        window: { from: "a", to: "b" },
+        candidates: [],
+      });
+    };
+    const handler = agentRankHandler(fakeDaemon({ agentRank }));
 
     const out = await handler({
       task_type: "implement_substantial",
@@ -40,7 +46,9 @@ describe("agent.rank handler", () => {
         include_cost: true,
       },
     ]);
-    expect(JSON.parse(out.content[0]!.text)).toEqual({
+    const block = out.content[0];
+    if (block === undefined) throw new Error("expected content[0]");
+    expect(JSON.parse(block.text)).toEqual({
       task_type: "implement_substantial",
       window: { from: "a", to: "b" },
       candidates: [],
@@ -48,17 +56,16 @@ describe("agent.rank handler", () => {
   });
 
   it("forwards agent_kind when provided", async () => {
-    const calls: unknown[] = [];
-    const handler = agentRankHandler({
-      agentRank: async (input: unknown) => {
-        calls.push(input);
-        return {
-          task_type: "implement_substantial",
-          window: { from: "a", to: "b" },
-          candidates: [],
-        };
-      },
-    } as any);
+    const calls: AgentRankReq[] = [];
+    const agentRank: AgentRankFn = (input) => {
+      calls.push(input);
+      return Promise.resolve({
+        task_type: "implement_substantial",
+        window: { from: "a", to: "b" },
+        candidates: [],
+      });
+    };
+    const handler = agentRankHandler(fakeDaemon({ agentRank }));
 
     await handler({ task_type: "implement_substantial", agent_kind: "long_lived" });
     expect(calls).toEqual([

@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
-import { DispatchLandInputShape, dispatchLandHandler } from "../../src/tools/dispatch-land.js";
+
+import type { DaemonClient } from "../../src/daemon-client.js";
+
+import { dispatchLandHandler, DispatchLandInputShape } from "../../src/tools/dispatch-land.js";
 import { TOOL_REGISTRY } from "../../src/tools/registry.js";
+import { fakeDaemon } from "../helpers.js";
+
+type DispatchLandFn = DaemonClient["dispatchLand"];
+type DispatchLandReq = Parameters<DispatchLandFn>[0];
 
 describe("dispatch.land tool", () => {
   test("DispatchLandInputShape requires handoff_id + commit_message", () => {
@@ -12,19 +19,18 @@ describe("dispatch.land tool", () => {
   });
 
   test("dispatchLandHandler delegates to daemon and returns JSON text", async () => {
-    const calls: any[] = [];
-    const handler = dispatchLandHandler({
-      dispatchLand: async (input: any) => {
-        calls.push(input);
-        return {
-          ok: true,
-          commit_sha: "abc123",
-          message_subject: "feat: msg",
-          branch_deleted: true,
-          pr_closed: false,
-        };
-      },
-    } as any);
+    const calls: DispatchLandReq[] = [];
+    const dispatchLand: DispatchLandFn = (input) => {
+      calls.push(input);
+      return Promise.resolve({
+        ok: true,
+        commit_sha: "abc123",
+        message_subject: "feat: msg",
+        branch_deleted: true,
+        pr_closed: false,
+      });
+    };
+    const handler = dispatchLandHandler(fakeDaemon({ dispatchLand }));
 
     const res = await handler({
       handoff_id: "h-1",
@@ -43,15 +49,16 @@ describe("dispatch.land tool", () => {
         force: false,
       },
     ]);
-    const content = (res as any).content;
-    expect(Array.isArray(content)).toBe(true);
-    expect(content[0].type).toBe("text");
-    expect(content[0].text).toContain('"ok": true');
-    expect(content[0].text).toContain('"commit_sha": "abc123"');
+    expect(Array.isArray(res.content)).toBe(true);
+    const block = res.content[0];
+    if (block === undefined) throw new Error("expected content[0]");
+    expect(block.type).toBe("text");
+    expect(block.text).toContain('"ok": true');
+    expect(block.text).toContain('"commit_sha": "abc123"');
   });
 
   test("registry exposes dispatch.land as mutating", () => {
     expect(TOOL_REGISTRY["dispatch_land"]).toBeDefined();
-    expect(TOOL_REGISTRY["dispatch_land"].readOnly).toBe(false);
+    expect(TOOL_REGISTRY["dispatch_land"]?.readOnly).toBe(false);
   });
 });
