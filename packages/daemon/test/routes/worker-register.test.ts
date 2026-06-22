@@ -1,15 +1,10 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import {
-  buildServices,
-  loadSqliteVec,
-  migrate,
-  type Services,
-  WorkerTokenStore,
-} from "@penumbra/core";
+import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { createDaemonFetchHandler } from "../../src/serve.js";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+
+import { createDaemonFetchHandler } from "../../src/serve.js";
 
 try {
   if (process.platform === "darwin") {
@@ -17,6 +12,52 @@ try {
   }
 } catch {
   /* already loaded */
+}
+
+interface RegisterSuccessBody {
+  worker_id: string;
+  worker_token: string;
+}
+interface RegisterErrorBody {
+  error: { code: string };
+}
+interface WorkerTokenRow {
+  worker_id: string;
+  metadata_json: string | null;
+  token_hash: string;
+}
+interface CountRow {
+  n: number;
+}
+
+async function readSuccess(res: Response): Promise<RegisterSuccessBody> {
+  return (await res.json()) as RegisterSuccessBody;
+}
+async function readError(res: Response): Promise<RegisterErrorBody> {
+  return (await res.json()) as RegisterErrorBody;
+}
+
+function selectWorkerTokenRow(services: Services, tokenHash: string): WorkerTokenRow | null {
+  return (
+    services.db
+      .query<
+        WorkerTokenRow,
+        [string]
+      >("SELECT worker_id, metadata_json, token_hash FROM worker_tokens WHERE token_hash = ?")
+      .get(tokenHash) ?? null
+  );
+}
+
+function countWorkerTokens(services: Services, workerId: string): number {
+  const row = services.db
+    .query<CountRow, [string]>("SELECT COUNT(*) as n FROM worker_tokens WHERE worker_id = ?")
+    .get(workerId);
+  return row?.n ?? 0;
+}
+
+function totalWorkerTokens(services: Services): number {
+  const row = services.db.query<CountRow, []>("SELECT COUNT(*) as n FROM worker_tokens").get();
+  return row?.n ?? 0;
 }
 
 function tempServices(): Services {
@@ -32,7 +73,7 @@ function tempServices(): Services {
     clock: () => new Date("2026-05-20T10:00:00Z"),
     uuid: (() => {
       let n = 0;
-      return () => `e-${++n}`;
+      return (): string => `e-${String(++n)}`;
     })(),
   });
 }
@@ -55,21 +96,16 @@ test("POST /worker/register with shared bearer returns 200 + worker_token", asyn
   );
 
   expect(res.status).toBe(200);
-  const body = (await res.json()) as any;
+  const body = await readSuccess(res);
   expect(body.worker_id).toBe("W-A");
   expect(typeof body.worker_token).toBe("string");
   expect(body.worker_token.length).toBeGreaterThan(10);
 
-  // Verify DB
-
   const hash = createHash("sha256").update(body.worker_token).digest("hex");
-
-  const row = services.db
-    .query("SELECT * FROM worker_tokens WHERE token_hash = ?")
-    .get(hash) as any;
-  expect(row).toBeDefined();
-  expect(row.worker_id).toBe("W-A");
-  expect(row.metadata_json).toBe(JSON.stringify({ host: "mac-mini" }));
+  const row = selectWorkerTokenRow(services, hash);
+  expect(row).not.toBeNull();
+  expect(row?.worker_id).toBe("W-A");
+  expect(row?.metadata_json).toBe(JSON.stringify({ host: "mac-mini" }));
 });
 
 test("POST /worker/register without metadata persists metadata_json NULL", async () => {
@@ -88,14 +124,12 @@ test("POST /worker/register without metadata persists metadata_json NULL", async
   );
 
   expect(res.status).toBe(200);
-  const body = (await res.json()) as any;
+  const body = await readSuccess(res);
 
   const hash = createHash("sha256").update(body.worker_token).digest("hex");
-
-  const row = services.db
-    .query("SELECT * FROM worker_tokens WHERE token_hash = ?")
-    .get(hash) as any;
-  expect(row.metadata_json).toBe(null);
+  const row = selectWorkerTokenRow(services, hash);
+  expect(row).not.toBeNull();
+  expect(row?.metadata_json).toBe(null);
 });
 
 test("POST /worker/register without Authorization returns 401", async () => {
@@ -129,16 +163,13 @@ test("POST /worker/register with unknown bearer returns 401", async () => {
   );
 
   expect(res.status).toBe(401);
-
-  const count = services.db.query("SELECT COUNT(*) as n FROM worker_tokens").get() as any;
-  expect(count.n).toBe(0);
+  expect(totalWorkerTokens(services)).toBe(0);
 });
 
 test("POST /worker/register with a worker token returns 403 shared_bearer_required_for_registration", async () => {
   const services = tempServices();
   const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
 
-  // 1. Register W-A
   const res1 = await fetchHandler(
     new Request("http://x/worker/register", {
       method: "POST",
@@ -149,10 +180,9 @@ test("POST /worker/register with a worker token returns 403 shared_bearer_requir
       body: JSON.stringify({ worker_id: "W-A" }),
     }),
   );
-  const body1 = (await res1.json()) as any;
+  const body1 = await readSuccess(res1);
   const workerToken = body1.worker_token;
 
-  // 2. Try to register W-B using W-A's token
   const res2 = await fetchHandler(
     new Request("http://x/worker/register", {
       method: "POST",
@@ -165,7 +195,7 @@ test("POST /worker/register with a worker token returns 403 shared_bearer_requir
   );
 
   expect(res2.status).toBe(403);
-  const body2 = (await res2.json()) as any;
+  const body2 = await readError(res2);
   expect(body2.error.code).toBe("shared_bearer_required_for_registration");
 });
 
@@ -173,7 +203,7 @@ test("Two register calls for the same worker_id produce distinct tokens; both ro
   const services = tempServices();
   const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
 
-  const req = (id: string) =>
+  const req = (id: string): Request =>
     new Request("http://x/worker/register", {
       method: "POST",
       headers: {
@@ -184,17 +214,13 @@ test("Two register calls for the same worker_id produce distinct tokens; both ro
     });
 
   const res1 = await fetchHandler(req("W-A"));
-  const body1 = (await res1.json()) as any;
+  const body1 = await readSuccess(res1);
 
   const res2 = await fetchHandler(req("W-A"));
-  const body2 = (await res2.json()) as any;
+  const body2 = await readSuccess(res2);
 
   expect(body1.worker_token).not.toBe(body2.worker_token);
-
-  const count = services.db
-    .query("SELECT COUNT(*) as n FROM worker_tokens WHERE worker_id = 'W-A'")
-    .get() as any;
-  expect(count.n).toBe(2);
+  expect(countWorkerTokens(services, "W-A")).toBe(2);
 });
 
 test("POST /worker/register with malformed JSON returns 400 invalid_json", async () => {
@@ -213,7 +239,7 @@ test("POST /worker/register with malformed JSON returns 400 invalid_json", async
   );
 
   expect(res.status).toBe(400);
-  const body = (await res.json()) as any;
+  const body = await readError(res);
   expect(body.error.code).toBe("invalid_json");
 });
 
@@ -233,7 +259,7 @@ test("POST /worker/register with missing worker_id returns 400 validation_error"
   );
 
   expect(res.status).toBe(400);
-  const body = (await res.json()) as any;
+  const body = await readError(res);
   expect(body.error.code).toBe("validation_error");
 });
 
@@ -254,13 +280,9 @@ test("POST /worker/register with metadata > 4 KiB returns 400 metadata_too_large
   );
 
   expect(res.status).toBe(400);
-  const body = (await res.json()) as any;
+  const body = await readError(res);
   expect(body.error.code).toBe("metadata_too_large");
-
-  const count = services.db
-    .query("SELECT COUNT(*) as n FROM worker_tokens WHERE worker_id = 'W-A'")
-    .get() as any;
-  expect(count.n).toBe(0);
+  expect(countWorkerTokens(services, "W-A")).toBe(0);
 });
 
 test("metadata at exactly 4096 UTF-8 bytes succeeds", async () => {
@@ -280,7 +302,7 @@ test("metadata at exactly 4096 UTF-8 bytes succeeds", async () => {
   );
 
   expect(res.status).toBe(200);
-  const body = (await res.json()) as any;
+  const body = await readSuccess(res);
   expect(body.worker_id).toBe("W-boundary-ok");
 });
 
@@ -301,7 +323,7 @@ test("metadata at 4097 UTF-8 bytes returns 400 metadata_too_large", async () => 
   );
 
   expect(res.status).toBe(400);
-  const body = (await res.json()) as any;
+  const body = await readError(res);
   expect(body.error.code).toBe("metadata_too_large");
 });
 
@@ -325,7 +347,7 @@ test("metadata with multibyte characters is sized by UTF-8 bytes, not char count
   );
 
   expect(res.status).toBe(400);
-  const body = (await res.json()) as any;
+  const body = await readError(res);
   expect(body.error.code).toBe("metadata_too_large");
 });
 
@@ -346,7 +368,7 @@ test("metadata of multibyte characters under the byte cap succeeds", async () =>
   );
 
   expect(res.status).toBe(200);
-  const body = (await res.json()) as any;
+  const body = await readSuccess(res);
   expect(body.worker_id).toBe("W-multibyte-ok");
 });
 
@@ -370,7 +392,7 @@ test("POST /worker/register with metadata at the 4 KiB boundary succeeds", async
   );
 
   expect(res.status).toBe(200);
-  const body = (await res.json()) as any;
+  const body = await readSuccess(res);
   expect(body.worker_id).toBe("W-B");
   expect(typeof body.worker_token).toBe("string");
 });
