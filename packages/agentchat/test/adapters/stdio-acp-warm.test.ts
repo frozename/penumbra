@@ -1,9 +1,16 @@
+import type { DispatchEventInput } from "@penumbra/core";
+
 import { describe, expect, test, vi } from "bun:test";
 import { PassThrough } from "node:stream";
-import { StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
-import { createAcpWarmPool } from "../../src/adapters/acp-warm-pool.js";
 
-function deferred<T>() {
+import type { AcpWarmPoolEntry } from "../../src/adapters/acp-warm-pool.js";
+import type { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
+import type { StdioAcpHandle } from "../../src/adapters/stdio-acp-server.js";
+
+import { createAcpWarmPool } from "../../src/adapters/acp-warm-pool.js";
+import { StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((r) => {
     resolve = r;
@@ -11,47 +18,82 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function createHandle() {
+interface TestHandle extends StdioAcpHandle {
+  resolveExit: (value: number | null) => void;
+  exitCode: number | null;
+  kill: () => void;
+}
+
+function createHandle(): TestHandle {
   const exited = deferred<number | null>();
-  return {
+  const handle: TestHandle = {
     stdin: new PassThrough(),
     stdout: new PassThrough(),
     pid: Math.floor(Math.random() * 10_000),
-    kill: vi.fn(() => exited.resolve(0)),
+    kill: vi.fn(() => {
+      exited.resolve(0);
+    }),
     exited: exited.promise,
-    resolveExit: exited.resolve,
+    exitCode: null,
     getStderrTail: () => "",
+    resolveExit: exited.resolve,
   };
+  return handle;
 }
 
-function createClient(opts: { hangFirstPrompt?: boolean } = {}) {
-  const calls: Array<{ method: string; params: any }> = [];
-  let updateHandler: ((params: any) => void) | undefined;
+interface RecordedCall {
+  method: string;
+  params: unknown;
+}
+
+interface ClientStub {
+  onRequest: ReturnType<typeof vi.fn>;
+  on: ReturnType<typeof vi.fn>;
+  request: ReturnType<typeof vi.fn>;
+}
+
+interface ClientFixture {
+  calls: RecordedCall[];
+  client: ClientStub;
+}
+
+// Single documented launder: StdioAcpClient is a nominal class with private
+// fields, so structurally-mocked test doubles need one `as unknown as` to be
+// accepted by the adapter's deps slot.
+const asAcpClient = (stub: ClientStub): StdioAcpClient => stub as unknown as StdioAcpClient;
+
+function createClient(opts: { hangFirstPrompt?: boolean } = {}): ClientFixture {
+  const calls: RecordedCall[] = [];
+  let updateHandler: ((params: unknown) => void) | undefined;
   let promptCount = 0;
-  const firstPrompt = deferred<any>();
+  const firstPrompt = deferred<unknown>();
   return {
     calls,
     client: {
       onRequest: vi.fn(),
-      on: vi.fn((method: string, handler: (params: any) => void) => {
+      on: vi.fn((method: string, handler: (params: unknown) => void) => {
         if (method === "session/update") updateHandler = handler;
       }),
-      request: vi.fn().mockImplementation(async (method: string, params: any) => {
+      request: vi.fn().mockImplementation((method: string, params: unknown): Promise<unknown> => {
         calls.push({ method, params });
-        if (method === "initialize") return { protocolVersion: 1, authMethods: [] };
-        if (method === "session/new") return { sessionId: "session-123" };
+        if (method === "initialize") {
+          return Promise.resolve({ protocolVersion: 1, authMethods: [] });
+        }
+        if (method === "session/new") {
+          return Promise.resolve({ sessionId: "session-123" });
+        }
         if (method === "session/prompt") {
           promptCount++;
           if (opts.hangFirstPrompt && promptCount === 1) return firstPrompt.promise;
           updateHandler?.({
             update: {
               sessionUpdate: "agent_message_chunk",
-              content: { type: "text", text: `ok-${promptCount}` },
+              content: { type: "text", text: `ok-${String(promptCount)}` },
             },
           });
-          return { stopReason: "end_turn" };
+          return Promise.resolve({ stopReason: "end_turn" });
         }
-        return {};
+        return Promise.resolve({});
       }),
     },
   };
@@ -59,7 +101,7 @@ function createClient(opts: { hangFirstPrompt?: boolean } = {}) {
 
 describe("StdioAcpAdapter warm pool reuse", () => {
   test("reuses a warm connection for sequential dispatches and issues a fresh session per dispatch", async () => {
-    const lifecycle: any[] = [];
+    const lifecycle: DispatchEventInput[] = [];
     const pool = createAcpWarmPool();
     const handle = createHandle();
     const client = createClient();
@@ -68,7 +110,7 @@ describe("StdioAcpAdapter warm pool reuse", () => {
       { binary: "mock-acp", cwd: "/repo", model: "codex-acp-fast", warmPool: true },
       {
         startServer,
-        createClient: () => client.client as any,
+        createClient: (): StdioAcpClient => asAcpClient(client.client),
         pool,
       },
     );
@@ -78,7 +120,9 @@ describe("StdioAcpAdapter warm pool reuse", () => {
       config: {},
       signal: new AbortController().signal,
       eventContext: { handoffId: "h1", workerId: "w1" },
-      onEvent: (event: any) => lifecycle.push(event),
+      onEvent: (event: DispatchEventInput): void => {
+        lifecycle.push(event);
+      },
     };
 
     const first = await adapter.dispatch({ ...baseInput, handoff_id: "h1" });
@@ -99,18 +143,24 @@ describe("StdioAcpAdapter warm pool reuse", () => {
     expect(lifecycle.filter((event) => event.kind === "acp.server.start")).toHaveLength(1);
     expect(lifecycle.filter((event) => event.kind === "acp.session.reuse")).toHaveLength(1);
     const promptCalls = client.calls.filter((call) => call.method === "session/prompt");
-    expect(promptCalls[0]?.params?._meta?.penumbraHandoffId).toBe("h1");
-    expect(promptCalls[1]?.params?._meta?.penumbraHandoffId).toBe("h2");
+    const firstParams = promptCalls[0]?.params as
+      | { _meta?: { penumbraHandoffId?: string } }
+      | undefined;
+    const secondParams = promptCalls[1]?.params as
+      | { _meta?: { penumbraHandoffId?: string } }
+      | undefined;
+    expect(firstParams?._meta?.penumbraHandoffId).toBe("h1");
+    expect(secondParams?._meta?.penumbraHandoffId).toBe("h2");
     expect(handle.kill).not.toHaveBeenCalled();
   });
 
   test("evicts a dead warm entry and cold-starts a replacement", async () => {
     const pool = createAcpWarmPool();
     const deadHandle = createHandle();
-    (deadHandle as any).exitCode = 1;
+    deadHandle.exitCode = 1;
     pool.deposit("codex-acp-fast\0/repo", {
-      handle: deadHandle as any,
-      client: createClient().client as any,
+      handle: deadHandle,
+      client: asAcpClient(createClient().client),
       sessionId: "dead-session",
       specHash: JSON.stringify({ binary: "mock-acp", args: [], model: "codex-acp-fast" }),
     });
@@ -119,7 +169,11 @@ describe("StdioAcpAdapter warm pool reuse", () => {
     const startServer = vi.fn().mockResolvedValue(freshHandle);
     const adapter = new StdioAcpAdapter(
       { binary: "mock-acp", cwd: "/repo", model: "codex-acp-fast", warmPool: true },
-      { startServer, createClient: () => freshClient.client as any, pool },
+      {
+        startServer,
+        createClient: (): StdioAcpClient => asAcpClient(freshClient.client),
+        pool,
+      },
     );
 
     const result = await adapter.dispatch({
@@ -140,9 +194,9 @@ describe("StdioAcpAdapter warm pool reuse", () => {
     const pool = createAcpWarmPool();
     const warmHandle = createHandle();
     const warmClient = createClient({ hangFirstPrompt: true });
-    const warmEntry = pool.deposit("codex-acp-fast\0/repo", {
-      handle: warmHandle as any,
-      client: warmClient.client as any,
+    const warmEntry: AcpWarmPoolEntry | null = pool.deposit("codex-acp-fast\0/repo", {
+      handle: warmHandle,
+      client: asAcpClient(warmClient.client),
       sessionId: "warm-session",
       specHash: JSON.stringify({ binary: "mock-acp", args: [], model: "codex-acp-fast" }),
     });
@@ -152,7 +206,11 @@ describe("StdioAcpAdapter warm pool reuse", () => {
     const startServer = vi.fn().mockResolvedValue(coldHandle);
     const adapter = new StdioAcpAdapter(
       { binary: "mock-acp", cwd: "/repo", model: "codex-acp-fast", warmPool: true },
-      { startServer, createClient: () => coldClient.client as any, pool },
+      {
+        startServer,
+        createClient: (): StdioAcpClient => asAcpClient(coldClient.client),
+        pool,
+      },
     );
 
     const dispatch = adapter.dispatch({

@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, test, vi } from "bun:test";
-import { createStdioAcpAdapter } from "../../src/adapters/registry.js";
+
+import type { Adapter } from "../../src/sdk/adapter.js";
+
 import { resetAcpWarmPoolRegistryForTest } from "../../src/adapters/acp-warm-pool-registry.js";
+import { createStdioAcpAdapter } from "../../src/adapters/registry.js";
 
 afterEach(() => {
   resetAcpWarmPoolRegistryForTest();
@@ -17,35 +20,44 @@ afterEach(() => {
  * createStdioAcpAdapter(opts, { thoughtCapture? }), which MUST wire the warm
  * pool AND thoughtCapture together. These tests pin that contract.
  */
+
+interface AdapterDepsView {
+  pool?: unknown;
+  thoughtCapture?: unknown;
+}
+
+// Single documented test-only escape hatch: the adapter's private `deps` field
+// is the HIGH-1 regression's contract surface and StdioAcpAdapterDeps is not
+// exported, so one launder via `as unknown as` is the only way to inspect it.
+const depsOf = (a: Adapter): AdapterDepsView => (a as unknown as { deps: AdapterDepsView }).deps;
+
 describe("createStdioAcpAdapter shared factory", () => {
   const baseOpts = { binary: "mock-acp", model: "codex-acp-fast", agentName: "codex-acp-fast" };
 
   test("wires a warm pool when warmPool is true", () => {
     const adapter = createStdioAcpAdapter({ ...baseOpts, warmPool: true });
-    expect((adapter as any).deps.pool).toBeDefined();
+    expect(depsOf(adapter).pool).toBeDefined();
   });
 
   test("leaves pool undefined when warmPool is false or absent", () => {
-    expect(
-      (createStdioAcpAdapter({ ...baseOpts, warmPool: false }) as any).deps.pool,
-    ).toBeUndefined();
-    expect((createStdioAcpAdapter({ ...baseOpts }) as any).deps.pool).toBeUndefined();
+    expect(depsOf(createStdioAcpAdapter({ ...baseOpts, warmPool: false })).pool).toBeUndefined();
+    expect(depsOf(createStdioAcpAdapter({ ...baseOpts })).pool).toBeUndefined();
   });
 
   test("wires thoughtCapture AND the pool together (the worker-path contract)", () => {
     const thoughtCapture = { recordThought: vi.fn() };
     const adapter = createStdioAcpAdapter({ ...baseOpts, warmPool: true }, { thoughtCapture });
-    expect((adapter as any).deps.pool).toBeDefined();
-    expect((adapter as any).deps.thoughtCapture).toBe(thoughtCapture);
+    expect(depsOf(adapter).pool).toBeDefined();
+    expect(depsOf(adapter).thoughtCapture).toBe(thoughtCapture);
   });
 
   test("same agent shares one pool instance (registry singleton)", () => {
     const a = createStdioAcpAdapter({ ...baseOpts, warmPool: true });
     const b = createStdioAcpAdapter({ ...baseOpts, warmPool: true });
-    expect((a as any).deps.pool).toBe((b as any).deps.pool);
+    expect(depsOf(a).pool).toBe(depsOf(b).pool);
   });
 
   test("requires a binary", () => {
-    expect(() => createStdioAcpAdapter({ model: "x" } as any)).toThrow(/binary is required/);
+    expect(() => createStdioAcpAdapter({ model: "x" })).toThrow(/binary is required/);
   });
 });
