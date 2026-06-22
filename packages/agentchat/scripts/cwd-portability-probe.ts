@@ -16,13 +16,14 @@
  *
  * Run: cd packages/agentchat && bun run scripts/cwd-portability-probe.ts
  */
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startStdioAcpServer } from "../src/adapters/stdio-acp-server.js";
-import { StdioAcpClient } from "../src/adapters/stdio-acp-client.js";
 
-const UNSET_ENV = [
+import { StdioAcpClient } from "../src/adapters/stdio-acp-client.js";
+import { startStdioAcpServer } from "../src/adapters/stdio-acp-server.js";
+
+const UNSET_ENV = new Set<string>([
   "OPENAI_API_KEY",
   "OPENAI_BASE_URL",
   "LOCAL_AI_PROVIDER_URL",
@@ -33,7 +34,7 @@ const UNSET_ENV = [
   "PENUMBRA_JUDGE_MODEL",
   "SIRIUS_URL",
   "PENUMBRA_T2_PROMOTION_DELAY_HOURS",
-];
+]);
 
 const CODEX_ARGS = [
   "-c",
@@ -44,11 +45,101 @@ const CODEX_ARGS = [
   "features.in_app_browser=false",
 ];
 
-function log(...a: unknown[]) {
-  console.log("[probe]", ...a);
+interface PermissionOption {
+  optionId?: string;
+  kind?: string;
+  name?: string;
 }
 
-async function main() {
+interface PermissionRequest {
+  options?: PermissionOption[];
+}
+
+interface SessionUpdate {
+  sessionUpdate?: string;
+  kind?: string;
+  content?: { text?: string } | string;
+}
+
+interface SessionUpdateParams {
+  update?: SessionUpdate;
+  sessionUpdate?: string;
+  kind?: string;
+  content?: { text?: string } | string;
+}
+
+interface AuthVar {
+  name: string;
+}
+
+interface AuthMethod {
+  id: string;
+  type: string;
+  vars?: AuthVar[];
+}
+
+interface InitializeResponse {
+  authMethods?: AuthMethod[];
+}
+
+interface NewSessionResponse {
+  sessionId?: string;
+}
+
+// StdioAcpClient.request returns Promise<any>; the JSON-RPC payload shape is
+// method-specific and lives outside our type system. This single typed
+// factory bridges that SDK gap so per-call type assertions are not needed.
+async function rpc<T>(client: StdioAcpClient, method: string, params?: unknown): Promise<T> {
+  const pending = client.request(method, params) as unknown as Promise<unknown>;
+  const result = await pending;
+  return result as T;
+}
+
+function log(...a: unknown[]): void {
+  const parts = a.map((v) => (typeof v === "string" ? v : JSON.stringify(v)));
+  process.stdout.write("[probe] " + parts.join(" ") + "\n");
+}
+
+function extractUpdateText(content: { text?: string } | string | undefined): string | undefined {
+  if (typeof content === "string") {
+    return content;
+  }
+  return content?.text;
+}
+
+function pickAuthMethodId(authMethods: AuthMethod[], env: Record<string, string>): string {
+  const envVar = authMethods.find(
+    (m) => m.type === "env_var" && (m.vars ?? []).every((v) => env[v.name] !== undefined),
+  );
+  const notEnv = authMethods.find((m) => m.type !== "env_var");
+  const first = authMethods[0];
+  if (envVar) {
+    return envVar.id;
+  }
+  if (notEnv) {
+    return notEnv.id;
+  }
+  if (first) {
+    return first.id;
+  }
+  throw new Error("no auth methods available");
+}
+
+function buildChildEnv(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v === undefined) {
+      continue;
+    }
+    if (UNSET_ENV.has(k)) {
+      continue;
+    }
+    out[k] = v;
+  }
+  return out;
+}
+
+async function main(): Promise<void> {
   const dirA = mkdtempSync(join(tmpdir(), "cwdprobe-A-"));
   const dirB = mkdtempSync(join(tmpdir(), "cwdprobe-B-"));
   writeFileSync(join(dirA, "WHICH_DIR.txt"), "PROCESS_DIR_A");
@@ -56,8 +147,7 @@ async function main() {
   log("process cwd (A):", dirA);
   log("session cwd (B):", dirB);
 
-  const env: Record<string, string> = { ...process.env } as Record<string, string>;
-  for (const k of UNSET_ENV) delete env[k];
+  const env = buildChildEnv();
 
   const server = await startStdioAcpServer({
     binary: "codex-acp",
@@ -75,7 +165,7 @@ async function main() {
 
   const fsReadPaths: string[] = [];
   client.onRequest("fs/read_text_file", (params: { path?: string }) => {
-    const p = params?.path ?? "";
+    const p = params.path ?? "";
     fsReadPaths.push(p);
     log("fs/read_text_file requested path:", p);
     try {
@@ -85,48 +175,50 @@ async function main() {
     }
   });
   client.onRequest("fs/write_text_file", () => ({}));
-  client.onRequest("session/request_permission", (params: any) => {
-    const opts = params?.options ?? [];
-    const allow =
-      opts.find((o: any) => /allow/i.test(o.optionId ?? o.kind ?? o.name ?? "")) ?? opts[0];
+  client.onRequest("session/request_permission", (params: PermissionRequest) => {
+    const opts = params.options ?? [];
+    const allow = opts.find((o) => /allow/i.test(o.optionId ?? o.kind ?? o.name ?? "")) ?? opts[0];
     log("permission requested -> approving", allow?.optionId ?? allow?.kind);
     return { outcome: { outcome: "selected", optionId: allow?.optionId ?? "allow" } };
   });
 
   const agentText: string[] = [];
-  client.on("session/update", (params: any) => {
-    const u = params?.update ?? params;
-    const kind = u?.sessionUpdate ?? u?.kind;
-    const content = u?.content;
-    const text = typeof content === "string" ? content : content?.text;
-    if (text) agentText.push(text);
-    if (kind) log("session/update:", kind, text ? JSON.stringify(text).slice(0, 80) : "");
+  client.on("session/update", (params: SessionUpdateParams) => {
+    const u: SessionUpdate = params.update ?? params;
+    const kind = u.sessionUpdate ?? u.kind;
+    const text = extractUpdateText(u.content);
+    if (text !== undefined && text.length > 0) {
+      agentText.push(text);
+    }
+    if (kind !== undefined) {
+      const preview = text !== undefined ? JSON.stringify(text).slice(0, 80) : "";
+      log("session/update:", kind, preview);
+    }
   });
 
-  const initResp = await client.request("initialize", {
+  const initResp = await rpc<InitializeResponse>(client, "initialize", {
     protocolVersion: 1,
     clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } },
     clientInfo: { name: "cwd-probe", version: "1.0.0" },
   });
-  log("initialize ok; authMethods:", JSON.stringify(initResp?.authMethods ?? []));
+  log("initialize ok; authMethods:", JSON.stringify(initResp.authMethods ?? []));
 
-  const authMethods = initResp?.authMethods ?? [];
+  const authMethods = initResp.authMethods ?? [];
   if (authMethods.length > 0) {
-    const envVar = authMethods.find(
-      (m: any) => m.type === "env_var" && (m.vars ?? []).every((v: any) => !!env[v.name]),
-    );
-    const chosen =
-      envVar?.id ?? authMethods.find((m: any) => m.type !== "env_var")?.id ?? authMethods[0].id;
+    const chosen = pickAuthMethodId(authMethods, env);
     log("authenticate with", chosen);
-    await client.request("authenticate", { methodId: chosen });
+    await rpc<unknown>(client, "authenticate", { methodId: chosen });
   }
 
-  const session = await client.request("session/new", { cwd: dirB, mcpServers: [] });
-  const sessionId = session?.sessionId;
+  const session = await rpc<NewSessionResponse>(client, "session/new", {
+    cwd: dirB,
+    mcpServers: [],
+  });
+  const sessionId = session.sessionId;
   log("session/new -> sessionId", sessionId, "(requested cwd = B)");
 
   log("sending prompt...");
-  const promptResult = await client.request("session/prompt", {
+  const promptResult = await rpc<unknown>(client, "session/prompt", {
     sessionId,
     prompt: [
       {
@@ -144,8 +236,8 @@ async function main() {
   log("fs read paths:", JSON.stringify(fsReadPaths));
   const pathUnderB = fsReadPaths.some((p) => p.startsWith(dirB));
   const pathUnderA = fsReadPaths.some((p) => p.startsWith(dirA));
-  const saysB = /SESSION_DIR_B/.test(joined);
-  const saysA = /PROCESS_DIR_A/.test(joined);
+  const saysB = joined.includes("SESSION_DIR_B");
+  const saysA = joined.includes("PROCESS_DIR_A");
   log("agent final text mentions B:", saysB, "| mentions A:", saysA);
   log("fs path resolved under B:", pathUnderB, "| under A:", pathUnderA);
   if (saysB || (pathUnderB && !pathUnderA)) {
@@ -157,10 +249,12 @@ async function main() {
   }
 
   server.kill();
-  setTimeout(() => process.exit(0), 500);
+  setTimeout(() => {
+    process.exit(0);
+  }, 500);
 }
 
-main().catch((e) => {
+main().catch((e: unknown) => {
   console.error("[probe] FAILED:", e);
   process.exit(1);
 });

@@ -18,7 +18,7 @@ export interface BenchTask {
   maxTokens: number;
   groundTruth: string;
   schema?: "T2MemoryExtraction[]";
-  expected_extractions?: Array<{ title_substr: string; body_substr: string; kind: string }>;
+  expected_extractions?: { title_substr: string; body_substr: string; kind: string }[];
 }
 
 const FROM_SCRIPTS_TO_REPO = "../../..";

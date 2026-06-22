@@ -1,19 +1,42 @@
 import { expect, test } from "bun:test";
-import { runBench, type BenchResult } from "./bench.js";
+
+import type { BenchResult } from "./bench.js";
+
+import { runBench } from "./bench.js";
+
+interface OpenAiRequestBody {
+  model: string;
+  temperature: number;
+  max_tokens: number;
+  google?: { thinking_config?: { thinking_budget?: number } };
+}
+
+type FetchInput = Parameters<typeof fetch>[0];
+type FetchInit = Parameters<typeof fetch>[1];
+type FetchImpl = (input: FetchInput, init?: FetchInit) => Promise<Response>;
+
+// Bun's `typeof fetch` includes a `preconnect` method that test mocks have no
+// reason to stub. This single typed factory bridges that SDK gap so each test
+// can declare a lightweight call signature without per-mock casting.
+function makeFetchMock(impl: FetchImpl): typeof fetch {
+  return impl as unknown as typeof fetch;
+}
 
 test("runBench: returns one result per task in BENCH_TASKS, all stub-served", async () => {
   let calls = 0;
-  const fetchImpl: typeof fetch = (async () => {
+  const fetchImpl = makeFetchMock(() => {
     calls++;
-    return new Response(
-      JSON.stringify({
-        choices: [{ message: { content: "STUB_REPLY" } }],
-        model: "stub-model",
-        usage: { prompt_tokens: 1, completion_tokens: 1 },
-      }),
-      { headers: { "content-type": "application/json" } },
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "STUB_REPLY" } }],
+          model: "stub-model",
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        }),
+        { headers: { "content-type": "application/json" } },
+      ),
     );
-  }) as any;
+  });
 
   const url = `http://stub/v1`;
   const results: BenchResult[] = await runBench({
@@ -35,13 +58,16 @@ test("runBench: returns one result per task in BENCH_TASKS, all stub-served", as
 });
 
 test("runBench: missing fixture file is captured per-task without aborting the run", async () => {
-  const fetchImpl: typeof fetch = (async () =>
-    new Response(
-      JSON.stringify({
-        choices: [{ message: { content: "OK" } }],
-      }),
-      { headers: { "content-type": "application/json" } },
-    )) as any;
+  const fetchImpl = makeFetchMock(() =>
+    Promise.resolve(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "OK" } }],
+        }),
+        { headers: { "content-type": "application/json" } },
+      ),
+    ),
+  );
 
   const url = `http://stub/v1`;
   const results = await runBench({
@@ -59,8 +85,9 @@ test("runBench: missing fixture file is captured per-task without aborting the r
 });
 
 test("runBench: stub returning empty body is captured as an error, not a crash", async () => {
-  const fetchImpl: typeof fetch = (async () =>
-    new Response("", { headers: { "content-type": "application/json" } })) as any;
+  const fetchImpl = makeFetchMock(() =>
+    Promise.resolve(new Response("", { headers: { "content-type": "application/json" } })),
+  );
 
   const url = `http://stub/v1`;
   const results = await runBench({ label: "empty-test", url, model: "stub", fetch: fetchImpl });
@@ -72,17 +99,17 @@ test("runBench: stub returning empty body is captured as an error, not a crash",
 });
 
 test("runBench: extraBody lands in the POST body", async () => {
-  let requestBody: any;
-  const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+  let requestBody: OpenAiRequestBody | undefined;
+  const fetchImpl = makeFetchMock(async (input, init) => {
     const req = input instanceof Request ? input : new Request(String(input), init);
-    requestBody = await req.json();
+    requestBody = (await req.json()) as OpenAiRequestBody;
     return new Response(
       JSON.stringify({
         choices: [{ message: { content: "OK" } }],
       }),
       { headers: { "content-type": "application/json" } },
     );
-  }) as any;
+  });
 
   const url = `http://stub/v1`;
   await runBench({
@@ -92,24 +119,24 @@ test("runBench: extraBody lands in the POST body", async () => {
     extraBody: { google: { thinking_config: { thinking_budget: 0 } } },
     fetch: fetchImpl,
   });
-  expect(requestBody.google.thinking_config.thinking_budget).toBe(0);
+  expect(requestBody?.google?.thinking_config?.thinking_budget).toBe(0);
   // Ensure base fields are still there
-  expect(requestBody.model).toBe("stub");
-  expect(requestBody.temperature).toBe(0);
+  expect(requestBody?.model).toBe("stub");
+  expect(requestBody?.temperature).toBe(0);
 });
 
 test("runBench: maxTokensMultiplier scales max_tokens in the POST body", async () => {
-  let requestBody: any;
-  const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+  let requestBody: OpenAiRequestBody | undefined;
+  const fetchImpl = makeFetchMock(async (input, init) => {
     const req = input instanceof Request ? input : new Request(String(input), init);
-    requestBody = await req.json();
+    requestBody = (await req.json()) as OpenAiRequestBody;
     return new Response(
       JSON.stringify({
         choices: [{ message: { content: "OK" } }],
       }),
       { headers: { "content-type": "application/json" } },
     );
-  }) as any;
+  });
 
   await runBench({
     label: "multiplier-test",
@@ -118,5 +145,5 @@ test("runBench: maxTokensMultiplier scales max_tokens in the POST body", async (
     maxTokensMultiplier: 2,
     fetch: fetchImpl,
   });
-  expect(requestBody.max_tokens).toBe(800);
+  expect(requestBody?.max_tokens).toBe(800);
 });

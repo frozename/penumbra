@@ -1,7 +1,48 @@
-import { expect, test, describe } from "bun:test";
-import { runFleetBench } from "./bench-fleet.js";
+import { describe, expect, test } from "bun:test";
+
 import type { AgentChatConfig } from "../src/config/types.js";
+import type { GradeResult, GradeResultsOpts } from "./bench-grade.js";
 import type { BenchTask } from "./bench-prompts.js";
+import type { BenchResult, RunBenchOpts } from "./bench.js";
+
+import { runFleetBench } from "./bench-fleet.js";
+import { gradeResults } from "./bench-grade.js";
+import { runBench } from "./bench.js";
+
+type RunBenchFn = typeof runBench;
+type GradeResultsFn = typeof gradeResults;
+type StdoutWriteFn = typeof process.stdout.write;
+
+// GradeResultsOpts.results is `any[]` in bench-grade.ts; tests inject BenchResult
+// shapes. This single, file-local cast bridges the gap exactly once.
+function asBenchResults(value: unknown): BenchResult[] {
+  return value as BenchResult[];
+}
+
+function captureStdout(): { logs: string[]; restore: () => void } {
+  const logs: string[] = [];
+  const original = process.stdout.write.bind(process.stdout);
+  const fake: StdoutWriteFn = (chunk: unknown) => {
+    if (typeof chunk === "string") {
+      logs.push(chunk);
+    } else if (chunk instanceof Uint8Array) {
+      logs.push(new TextDecoder().decode(chunk));
+    }
+    return true;
+  };
+  process.stdout.write = fake;
+  const restore = (): void => {
+    process.stdout.write = original;
+  };
+  return { logs, restore };
+}
+
+function tableLinesOf(logs: string[]): string[] {
+  return logs
+    .join("")
+    .split("\n")
+    .filter((l) => l.startsWith("|"));
+}
 
 const config: AgentChatConfig = {
   agents: [
@@ -20,13 +61,59 @@ const config: AgentChatConfig = {
   default_roles: {},
 };
 
+const TASK_IDS: BenchTask["id"][] = ["T4", "T5", "T6", "T7", "T8", "T9", "T10", "T11", "T12"];
+
+function makeBenchResult(
+  opts: RunBenchOpts,
+  task: BenchTask["id"],
+  latencyMs: number,
+): BenchResult {
+  return {
+    task,
+    latencyMs,
+    label: opts.label,
+    model: opts.model,
+    description: task,
+    groundTruth: task,
+  };
+}
+
 test("runFleetBench: enumerates only HTTP agents and aggregates results", async () => {
   let runBenchCalls = 0;
   let gradeResultsCalls = 0;
 
-  const logs: string[] = [];
-  const originalLog = console.log;
-  console.log = (...args) => logs.push(args.join(" "));
+  const { logs, restore } = captureStdout();
+
+  const fakeRunBench: RunBenchFn = (opts) => {
+    runBenchCalls++;
+    const results: BenchResult[] = (
+      [
+        ["T4", 100],
+        ["T5", 200],
+        ["T6", 300],
+        ["T7", 400],
+        ["T8", 500],
+        ["T9", 600],
+        ["T10", 700],
+        ["T11", 800],
+        ["T12", 900],
+      ] satisfies [BenchTask["id"], number][]
+    ).map(([task, latencyMs]) => makeBenchResult(opts, task, latencyMs));
+    return Promise.resolve(results);
+  };
+
+  const fakeGradeResults: GradeResultsFn = (opts: GradeResultsOpts) => {
+    gradeResultsCalls++;
+    const passing = new Set<string>(["T4", "T9", "T10", "T11", "T12"]);
+    const results = asBenchResults(opts.results);
+    const grades: GradeResult[] = results.map((r) => ({
+      task: r.task,
+      verdict: passing.has(r.task) ? "PASS" : "FAIL",
+      model: r.model,
+      label: r.label,
+    }));
+    return Promise.resolve(grades);
+  };
 
   try {
     await runFleetBench({
@@ -34,73 +121,39 @@ test("runFleetBench: enumerates only HTTP agents and aggregates results", async 
       skipGrade: false,
       deps: {
         resolveAdapterApiKey: () => "mock-api-key",
-        runBench: async (opts: any) => {
-          runBenchCalls++;
-          return (
-            [
-              ["T4", 100],
-              ["T5", 200],
-              ["T6", 300],
-              ["T7", 400],
-              ["T8", 500],
-              ["T9", 600],
-              ["T10", 700],
-              ["T11", 800],
-              ["T12", 900],
-            ] satisfies Array<[BenchTask["id"], number]>
-          ).map(([task, latencyMs]) => ({
-            task,
-            latencyMs,
-            label: opts.label,
-            model: opts.model,
-            description: task,
-            groundTruth: task,
-          }));
-        },
-        gradeResults: async (opts: any) => {
-          gradeResultsCalls++;
-          return opts.results.map((r: any) => ({
-            task: r.task,
-            verdict:
-              r.task === "T4" ||
-              r.task === "T9" ||
-              r.task === "T10" ||
-              r.task === "T11" ||
-              r.task === "T12"
-                ? "PASS"
-                : "FAIL",
-            model: r.model,
-            label: r.label,
-          }));
-        },
+        runBench: fakeRunBench,
+        gradeResults: fakeGradeResults,
       },
     });
 
     expect(runBenchCalls).toBe(2);
     expect(gradeResultsCalls).toBe(2);
 
-    const tableRows = logs.filter((l) => l.startsWith("|"));
-    expect(tableRows.length).toBeGreaterThanOrEqual(4); // header, separator, agent rows
-    expect(tableRows[0]).toContain(
+    const tableLines = tableLinesOf(logs);
+    expect(tableLines.length).toBeGreaterThanOrEqual(4); // header, separator, agent rows
+    expect(tableLines[0]).toContain(
       "| Agent | T4 | T5 | T6 | T7 | T8 | T9 | T10 | T11 | T12 | Net | Latency p50 |",
     );
 
-    const cloud1Row = tableRows.find((r) => r.includes("cloud-1"))!;
+    const cloud1Row = tableLines.find((r) => r.includes("cloud-1"))!;
     expect(cloud1Row).toContain("✅"); // T4 passed
     expect(cloud1Row).toContain("🛑"); // others failed
     expect(cloud1Row).toContain("5/9"); // net score
     expect(cloud1Row).toContain("500ms"); // p50 of [100,200,300,400,500,600,700,800,900]
   } finally {
-    console.log = originalLog;
+    restore();
   }
 });
 
 test("runFleetBench: honors include/exclude filters", async () => {
   let runBenchCalls = 0;
 
-  const logs: string[] = [];
-  const originalLog = console.log;
-  console.log = (...args) => logs.push(args.join(" "));
+  const { restore } = captureStdout();
+
+  const fakeRunBench: RunBenchFn = () => {
+    runBenchCalls++;
+    return Promise.resolve([]);
+  };
 
   try {
     await runFleetBench({
@@ -109,10 +162,7 @@ test("runFleetBench: honors include/exclude filters", async () => {
       skipGrade: true,
       deps: {
         resolveAdapterApiKey: () => "mock-api-key",
-        runBench: async () => {
-          runBenchCalls++;
-          return [];
-        },
+        runBench: fakeRunBench,
       },
     });
     expect(runBenchCalls).toBe(1);
@@ -124,15 +174,12 @@ test("runFleetBench: honors include/exclude filters", async () => {
       skipGrade: true,
       deps: {
         resolveAdapterApiKey: () => "mock-api-key",
-        runBench: async () => {
-          runBenchCalls++;
-          return [];
-        },
+        runBench: fakeRunBench,
       },
     });
     expect(runBenchCalls).toBe(1);
   } finally {
-    console.log = originalLog;
+    restore();
   }
 });
 
@@ -149,9 +196,26 @@ test("runFleetBench: defaults judge token from executor config", async () => {
     default_roles: {},
   };
 
-  const logs: string[] = [];
-  const originalLog = console.log;
-  console.log = (...args) => logs.push(args.join(" "));
+  const { logs, restore } = captureStdout();
+
+  const fakeRunBench: RunBenchFn = (opts) => {
+    const results: BenchResult[] = TASK_IDS.map((task, i) =>
+      makeBenchResult(opts, task, (i + 1) * 100),
+    );
+    return Promise.resolve(results);
+  };
+
+  const fakeGradeResults: GradeResultsFn = (opts: GradeResultsOpts) => {
+    const ok = opts.authToken === "judge-key";
+    const results = asBenchResults(opts.results);
+    const grades: GradeResult[] = results.map((r) => ({
+      task: r.task,
+      verdict: ok ? "PASS" : "ERROR: HTTP 401",
+      model: r.model,
+      label: r.label,
+    }));
+    return Promise.resolve(grades);
+  };
 
   try {
     await runFleetBench({
@@ -159,45 +223,45 @@ test("runFleetBench: defaults judge token from executor config", async () => {
       include: /cloud-1/,
       skipGrade: false,
       deps: {
-        resolveAdapterApiKey: (opts: any) => (opts.apiKey ? String(opts.apiKey) : "bench-key"),
-        runBench: async (opts: any) =>
-          [
-            { task: "T4", latencyMs: 100, label: opts.label, model: opts.model },
-            { task: "T5", latencyMs: 200, label: opts.label, model: opts.model },
-            { task: "T6", latencyMs: 300, label: opts.label, model: opts.model },
-            { task: "T7", latencyMs: 400, label: opts.label, model: opts.model },
-            { task: "T8", latencyMs: 500, label: opts.label, model: opts.model },
-            { task: "T9", latencyMs: 600, label: opts.label, model: opts.model },
-            { task: "T10", latencyMs: 700, label: opts.label, model: opts.model },
-            { task: "T11", latencyMs: 800, label: opts.label, model: opts.model },
-            { task: "T12", latencyMs: 900, label: opts.label, model: opts.model },
-          ] as any,
-        gradeResults: async (opts: any) => {
-          const ok = opts.authToken === "judge-key";
-          return opts.results.map((r: any) => ({
-            task: r.task,
-            verdict: ok ? "PASS" : "ERROR: HTTP 401",
-            model: r.model,
-            label: r.label,
-          }));
-        },
+        resolveAdapterApiKey: (apiKeyOpts) =>
+          apiKeyOpts.apiKey !== undefined && apiKeyOpts.apiKey !== ""
+            ? apiKeyOpts.apiKey
+            : "bench-key",
+        runBench: fakeRunBench,
+        gradeResults: fakeGradeResults,
       },
     });
 
-    const cloud1Row = logs.find((r) => r.includes("| cloud-1 |"))!;
+    const tableLines = tableLinesOf(logs);
+    const cloud1Row = tableLines.find((r) => r.includes("| cloud-1 |"))!;
     expect(cloud1Row).toContain("✅");
     expect(cloud1Row).toContain("9/9");
   } finally {
-    console.log = originalLog;
+    restore();
   }
 });
 
 test("runFleetBench: respects skipGrade flag", async () => {
   let gradeResultsCalls = 0;
 
-  const logs: string[] = [];
-  const originalLog = console.log;
-  console.log = (...args) => logs.push(args.join(" "));
+  const { logs, restore } = captureStdout();
+
+  const fakeRunBench: RunBenchFn = () => {
+    const results: BenchResult[] = TASK_IDS.map((task, i) => ({
+      task,
+      latencyMs: (i + 1) * 100,
+      label: "cloud-1",
+      model: "m",
+      description: task,
+      groundTruth: task,
+    }));
+    return Promise.resolve(results);
+  };
+
+  const fakeGradeResults: GradeResultsFn = () => {
+    gradeResultsCalls++;
+    return Promise.resolve([]);
+  };
 
   try {
     await runFleetBench({
@@ -205,31 +269,18 @@ test("runFleetBench: respects skipGrade flag", async () => {
       skipGrade: true,
       deps: {
         resolveAdapterApiKey: () => "mock-api-key",
-        runBench: async () =>
-          [
-            { task: "T4", latencyMs: 100, label: "cloud-1", model: "m" },
-            { task: "T5", latencyMs: 200, label: "cloud-1", model: "m" },
-            { task: "T6", latencyMs: 300, label: "cloud-1", model: "m" },
-            { task: "T7", latencyMs: 400, label: "cloud-1", model: "m" },
-            { task: "T8", latencyMs: 500, label: "cloud-1", model: "m" },
-            { task: "T9", latencyMs: 600, label: "cloud-1", model: "m" },
-            { task: "T10", latencyMs: 700, label: "cloud-1", model: "m" },
-            { task: "T11", latencyMs: 800, label: "cloud-1", model: "m" },
-            { task: "T12", latencyMs: 900, label: "cloud-1", model: "m" },
-          ] as any,
-        gradeResults: async () => {
-          gradeResultsCalls++;
-          return [];
-        },
+        runBench: fakeRunBench,
+        gradeResults: fakeGradeResults,
       },
     });
     expect(gradeResultsCalls).toBe(0);
 
-    const cloud1Row = logs.find((r) => r.includes("cloud-1"))!;
+    const tableLines = tableLinesOf(logs);
+    const cloud1Row = tableLines.find((r) => r.includes("cloud-1"))!;
     expect(cloud1Row).toContain("- | - | - | - | - | - | - | - | -"); // no emojis
     expect(cloud1Row).toContain("N/A");
   } finally {
-    console.log = originalLog;
+    restore();
   }
 });
 
@@ -242,9 +293,18 @@ test("runFleetBench: handles timeouts per agent", async () => {
     default_roles: {},
   };
 
-  const logs: string[] = [];
-  const originalLog = console.log;
-  console.log = (...args) => logs.push(args.join(" "));
+  const { logs, restore } = captureStdout();
+
+  const fakeRunBench: RunBenchFn = async (opts) => {
+    if (opts.label === "slow-agent") {
+      await new Promise<void>((resolve) => {
+        setTimeout(() => {
+          resolve();
+        }, 200);
+      });
+    }
+    return [];
+  };
 
   try {
     await runFleetBench({
@@ -253,21 +313,17 @@ test("runFleetBench: handles timeouts per agent", async () => {
       perAgentTimeoutMs: 50,
       deps: {
         resolveAdapterApiKey: () => "k",
-        runBench: async (opts) => {
-          if (opts.label === "slow-agent") {
-            await new Promise((resolve) => setTimeout(resolve, 200));
-          }
-          return [];
-        },
+        runBench: fakeRunBench,
       },
     });
 
-    const slowRow = logs.find((r) => r.includes("slow-agent"))!;
+    const tableLines = tableLinesOf(logs);
+    const slowRow = tableLines.find((r) => r.includes("slow-agent"))!;
     expect(slowRow).toContain("TIMEOUT");
-    const fastRow = logs.find((r) => r.includes("fast-agent"))!;
+    const fastRow = tableLines.find((r) => r.includes("fast-agent"))!;
     expect(fastRow).not.toContain("TIMEOUT");
   } finally {
-    console.log = originalLog;
+    restore();
   }
 });
 
@@ -280,9 +336,14 @@ test("runFleetBench: handles agent errors", async () => {
     default_roles: {},
   };
 
-  const logs: string[] = [];
-  const originalLog = console.log;
-  console.log = (...args) => logs.push(args.join(" "));
+  const { logs, restore } = captureStdout();
+
+  const fakeRunBench: RunBenchFn = (opts) => {
+    if (opts.label === "bad-agent") {
+      return Promise.reject(new Error("HTTP 500"));
+    }
+    return Promise.resolve([]);
+  };
 
   try {
     await runFleetBench({
@@ -290,21 +351,17 @@ test("runFleetBench: handles agent errors", async () => {
       skipGrade: true,
       deps: {
         resolveAdapterApiKey: () => "k",
-        runBench: async (opts) => {
-          if (opts.label === "bad-agent") {
-            throw new Error("HTTP 500");
-          }
-          return [];
-        },
+        runBench: fakeRunBench,
       },
     });
 
-    const badRow = logs.find((r) => r.includes("bad-agent"))!;
+    const tableLines = tableLinesOf(logs);
+    const badRow = tableLines.find((r) => r.includes("bad-agent"))!;
     expect(badRow).toContain("ERROR: HTTP 500");
-    const goodRow = logs.find((r) => r.includes("good-agent"))!;
+    const goodRow = tableLines.find((r) => r.includes("good-agent"))!;
     expect(goodRow).not.toContain("ERROR");
   } finally {
-    console.log = originalLog;
+    restore();
   }
 });
 
@@ -333,9 +390,9 @@ test("runFleetBench: skips agents by tags", async () => {
     default_roles: {},
   };
 
-  const logs: string[] = [];
-  const originalLog = console.log;
-  console.log = (...args) => logs.push(args.join(" "));
+  const { logs, restore } = captureStdout();
+
+  const fakeRunBench: RunBenchFn = () => Promise.resolve([]);
 
   try {
     await runFleetBench({
@@ -343,20 +400,21 @@ test("runFleetBench: skips agents by tags", async () => {
       skipGrade: true,
       deps: {
         resolveAdapterApiKey: () => "k",
-        runBench: async () => [],
+        runBench: fakeRunBench,
       },
     });
 
-    const keepRow = logs.find((r) => r.includes("keep-me"))!;
+    const tableLines = tableLinesOf(logs);
+    const keepRow = tableLines.find((r) => r.includes("keep-me"))!;
     expect(keepRow).toBeDefined();
 
-    const freeRow = logs.find((r) => r.includes("skip-me-free"))!;
+    const freeRow = tableLines.find((r) => r.includes("skip-me-free"))!;
     expect(freeRow).toContain("SKIPPED");
 
-    const swapRow = logs.find((r) => r.includes("skip-me-swap"))!;
+    const swapRow = tableLines.find((r) => r.includes("skip-me-swap"))!;
     expect(swapRow).toContain("SKIPPED");
   } finally {
-    console.log = originalLog;
+    restore();
   }
 });
 
@@ -381,9 +439,9 @@ describe("bench-fleet bugs", () => {
       default_roles: {},
     };
 
-    const logs: string[] = [];
-    const originalLog = console.log;
-    console.log = (...args) => logs.push(args.join(" "));
+    const { logs, restore } = captureStdout();
+
+    const fakeRunBench: RunBenchFn = () => Promise.resolve([]);
 
     try {
       await runFleetBench({
@@ -392,46 +450,53 @@ describe("bench-fleet bugs", () => {
         skipGrade: true,
         deps: {
           resolveAdapterApiKey: () => "k",
-          runBench: async () => [],
+          runBench: fakeRunBench,
         },
       });
 
-      const rowA = logs.find((r) => r.includes("tag-a"))!;
+      const tableLines = tableLinesOf(logs);
+      const rowA = tableLines.find((r) => r.includes("tag-a"))!;
       expect(rowA).not.toContain("SKIPPED");
 
-      const rowB = logs.find((r) => r.includes("tag-b"))!;
+      const rowB = tableLines.find((r) => r.includes("tag-b"))!;
       expect(rowB).toContain("SKIPPED");
 
-      const rowNone = logs.find((r) => r.includes("no-tag"))!;
+      const rowNone = tableLines.find((r) => r.includes("no-tag"))!;
       expect(rowNone).toContain("SKIPPED");
     } finally {
-      console.log = originalLog;
+      restore();
     }
   });
 
   test("FIX #3: helper bugs should re-throw (fail-loud)", async () => {
-    const config: AgentChatConfig = {
+    const configLocal: AgentChatConfig = {
       agents: [
         { name: "agent-1", adapter: "openai-compat-http", options: { baseUrl: "h", model: "m" } },
       ],
       default_roles: {},
     };
 
-    const deps = {
+    const deps: { resolveAdapterApiKey: () => string; runBench: RunBenchFn } = {
       resolveAdapterApiKey: () => "k",
-      runBench: async () => {
-        throw new TypeError("Helper bug");
-      },
+      runBench: () => Promise.reject(new TypeError("Helper bug")),
     };
 
-    // Should NOT catch TypeError
-    await expect(
-      runFleetBench({
-        config,
+    // Should NOT catch TypeError. bun:test's `.rejects.toThrow(...)` is typed
+    // as returning void even though it awaits the underlying promise, so we
+    // hand-roll the rejection assertion to keep the file lint-clean.
+    let caught: unknown;
+    try {
+      await runFleetBench({
+        config: configLocal,
         skipGrade: true,
         deps,
-      }),
-    ).rejects.toThrow("Helper bug");
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    const message = caught instanceof Error ? caught.message : String(caught);
+    expect(message).toContain("Helper bug");
   });
 
   test("FIX #4: forwards caPath to runBench", async () => {
@@ -452,17 +517,25 @@ describe("bench-fleet bugs", () => {
 
     let capturedCaPath: string | undefined;
 
-    await runFleetBench({
-      config: configWithCa,
-      skipGrade: true,
-      deps: {
-        resolveAdapterApiKey: () => "k",
-        runBench: async (opts) => {
-          capturedCaPath = opts.caPath;
-          return [];
+    const fakeRunBench: RunBenchFn = (opts) => {
+      capturedCaPath = opts.caPath;
+      return Promise.resolve([]);
+    };
+
+    const { restore } = captureStdout();
+
+    try {
+      await runFleetBench({
+        config: configWithCa,
+        skipGrade: true,
+        deps: {
+          resolveAdapterApiKey: () => "k",
+          runBench: fakeRunBench,
         },
-      },
-    });
+      });
+    } finally {
+      restore();
+    }
 
     expect(capturedCaPath).toBe("/path/to/cert.pem");
   });

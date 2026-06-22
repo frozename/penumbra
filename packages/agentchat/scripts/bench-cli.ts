@@ -23,11 +23,12 @@
  *     --model "opencode-go/glm-5.2" --pre-args run --extra-args "" \
  *     --label opencode-glm-52 > results.jsonl
  */
-import { readFileSync, existsSync } from "node:fs";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { BENCH_TASKS, BENCH_SYSTEM_PROMPT } from "./bench-prompts.js";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { BENCH_SYSTEM_PROMPT, BENCH_TASKS } from "./bench-prompts.js";
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -54,9 +55,12 @@ if (!command || !model) {
   process.exit(1);
 }
 
+const cmd: string = command;
+const mdl: string = model;
+
 function runOnce(prompt: string): Promise<{ out: string; err?: string }> {
   return new Promise((res) => {
-    const child = spawn(command!, [...preArgs, "--model", model!, ...extraArgs, prompt], {
+    const child = spawn(cmd, [...preArgs, "--model", mdl, ...extraArgs, prompt], {
       stdio: ["ignore", "pipe", "pipe"],
     });
     let out = "";
@@ -69,11 +73,18 @@ function runOnce(prompt: string): Promise<{ out: string; err?: string }> {
       }
       res({ out: out.trim(), err: "timeout" });
     }, timeoutMs);
-    child.stdout.on("data", (d) => (out += d));
-    child.stderr.on("data", (d) => (err += d));
+    child.stdout.on("data", (d: Buffer) => {
+      out += d.toString();
+    });
+    child.stderr.on("data", (d: Buffer) => {
+      err += d.toString();
+    });
     child.on("close", (code) => {
       clearTimeout(t);
-      res({ out: out.trim(), err: code === 0 ? undefined : err.trim() || `exit ${code}` });
+      res({
+        out: out.trim(),
+        err: code === 0 ? undefined : err.trim() || `exit ${String(code)}`,
+      });
     });
     child.on("error", (e) => {
       clearTimeout(t);
@@ -89,16 +100,16 @@ for (const task of BENCH_TASKS.slice(0, limit)) {
   const prompt = `${BENCH_SYSTEM_PROMPT}\n\n${userContent}`;
   const start = Date.now();
   const { out, err } = await runOnce(prompt);
-  console.log(
+  process.stdout.write(
     JSON.stringify({
       label,
-      model,
+      model: mdl,
       task: task.id,
       description: task.description,
       answer: out,
       groundTruth: task.groundTruth,
       latencyMs: Date.now() - start,
       ...(err ? { error: err } : {}),
-    }),
+    }) + "\n",
   );
 }
