@@ -1,10 +1,12 @@
-import { describe, it, expect } from "bun:test";
-import { Database } from "bun:sqlite";
+import type { AgentConfig } from "@penumbra/agentchat/config/types";
+
+import { DispatchEventKindSchema } from "@penumbra/api-contract";
 import { loadSqliteVec, NotificationOutboxWriter } from "@penumbra/core";
 import { applySchema } from "@penumbra/core/db/schema";
-import { DispatchEventKindSchema } from "@penumbra/api-contract";
-import { reconcileLongLivedAgents } from "@penumbra/daemon/long-lived/reconciler";
 import { runPendingExpiry } from "@penumbra/daemon/long-lived/pending-expiry";
+import { reconcileLongLivedAgents } from "@penumbra/daemon/long-lived/reconciler";
+import { Database } from "bun:sqlite";
+import { describe, expect, it } from "bun:test";
 
 function setup(): Database {
   const db = new Database(":memory:");
@@ -24,7 +26,7 @@ function setup(): Database {
           circuit_breaker_threshold: 3,
           standing_brief: "x",
         },
-      } as any,
+      } as AgentConfig,
     ],
     { now: 100 },
   );
@@ -62,21 +64,36 @@ describe("runPendingExpiry", () => {
     expect(result.expired).toBe(1);
 
     const expired = db
-      .query("SELECT status, decided_by FROM long_lived_pending_actions WHERE id='pa-expired'")
-      .get() as any;
-    expect(expired.status).toBe("expired");
-    expect(expired.decided_by).toBe("auto-expired");
+      .query<
+        { status: string; decided_by: string | null },
+        []
+      >("SELECT status, decided_by FROM long_lived_pending_actions WHERE id='pa-expired'")
+      .get();
+    expect(expired).not.toBeNull();
+    expect(expired!.status).toBe("expired");
+    expect(expired!.decided_by).toBe("auto-expired");
 
     const future = db
-      .query("SELECT status, decided_by FROM long_lived_pending_actions WHERE id='pa-future'")
-      .get() as any;
-    expect(future.status).toBe("pending");
-    expect(future.decided_by).toBeNull();
+      .query<
+        { status: string; decided_by: string | null },
+        []
+      >("SELECT status, decided_by FROM long_lived_pending_actions WHERE id='pa-future'")
+      .get();
+    expect(future).not.toBeNull();
+    expect(future!.status).toBe("pending");
+    expect(future!.decided_by).toBeNull();
 
     const wm = db
-      .query("SELECT working_memory_json FROM long_lived_agents WHERE id='home'")
-      .get() as any;
-    const parsed = JSON.parse(wm.working_memory_json);
+      .query<
+        { working_memory_json: string },
+        []
+      >("SELECT working_memory_json FROM long_lived_agents WHERE id='home'")
+      .get();
+    expect(wm).not.toBeNull();
+    const parsed = JSON.parse(wm!.working_memory_json) as {
+      recent_decisions: unknown[];
+      updated_at: number;
+    };
     expect(parsed.recent_decisions).toEqual([
       { pending_action_id: "pa-expired", decision: "expired", decided_at: 100 },
     ]);
@@ -114,16 +131,16 @@ describe("runPendingExpiry", () => {
       `INSERT INTO long_lived_pending_actions (id, agent_id, tick_id, action_kind, action_target, payload_json, status, expires_at, created_at) VALUES ('pa-dispatch', 'home', 'tick-1', 'ha:light.turn_on', 'light.kitchen', '{}', 'pending', 50, 100)`,
     ).run();
 
-    const dispatchEvents: Array<{
+    const dispatchEvents: {
       handoff_id: string;
       worker_id: string | null;
       source: string;
       kind: string;
       ts: string;
       meta: Record<string, unknown>;
-    }> = [];
+    }[] = [];
     const dispatchEventLog = {
-      record(event: (typeof dispatchEvents)[0]) {
+      record(event: (typeof dispatchEvents)[0]): void {
         dispatchEvents.push(event);
       },
     };

@@ -1,5 +1,5 @@
-import { describe, it, expect } from "bun:test";
 import { createCronScheduler } from "@penumbra/daemon/long-lived/cron-scheduler";
+import { describe, expect, it } from "bun:test";
 
 describe("cron scheduler", () => {
   it("testFire executes callback and preserves schedule metadata", () => {
@@ -38,14 +38,16 @@ describe("cron scheduler", () => {
 
   it("stops firing testFire after cancel", () => {
     const scheduler = createCronScheduler();
-    const id = scheduler.register("*/1 * * * * *", () => {});
+    const id = scheduler.register("*/1 * * * * *", () => undefined);
     expect(scheduler.cancel(id)).toBe(true);
-    expect(() => scheduler.testFire(id)).toThrow(/Unknown cron job/);
+    expect(() => {
+      scheduler.testFire(id);
+    }).toThrow(/Unknown cron job/);
     expect(scheduler.cancel(id)).toBe(false);
   });
 
   it("throws on invalid cron expressions", () => {
     const scheduler = createCronScheduler();
-    expect(() => scheduler.register("not a cron", () => {})).toThrow();
+    expect(() => scheduler.register("not a cron", () => undefined)).toThrow();
   });
 });
