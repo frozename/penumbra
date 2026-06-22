@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { reconcileLongLivedAgents } from "../../src/long-lived/reconciler.js";
 import {
   longLivedApproveActionRoute,
@@ -15,12 +16,42 @@ import {
   longLivedRejectActionRoute,
   longLivedResumeRoute,
   longLivedRetireRoute,
-  longLivedTickRoute,
   longLivedStateGetRoute,
   longLivedStateSetRoute,
+  longLivedTickRoute,
   longLivedTicksRoute,
 } from "../../src/routes/long-lived.js";
 import { createDaemonFetchHandler } from "../../src/serve.js";
+
+type ReactorStub = NonNullable<Services["longLivedReactor"]>;
+type ManualTick = ReactorStub["manualTick"];
+type ManualTickResult = ReturnType<ManualTick>;
+
+interface SeedAgentInput {
+  name: string;
+  display_name: string;
+  long_lived: true;
+  long_lived_config: {
+    schedule_cron?: string;
+    subscriptions: { server: string; event: string }[];
+    mcp_allowlist: string[];
+    bounds: { wall_clock_ms: number; cost_cents: number; max_sub_dispatches: number };
+    circuit_breaker_threshold: number;
+    standing_brief: string;
+  };
+}
+
+function makeReactor(overrides: Partial<ReactorStub> = {}): ReactorStub {
+  return {
+    manualTick: (agentId: string): ManualTickResult => ({
+      outcome: `manual:${agentId}`,
+      tick_id: "tick-1",
+    }),
+    reload: () => Promise.resolve(),
+    shutdown: () => Promise.resolve(),
+    ...overrides,
+  };
+}
 
 function tempServices(): Services {
   const db = new Database(":memory:");
@@ -33,31 +64,34 @@ function tempServices(): Services {
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date("2026-05-10T00:00:00.000Z"),
-    uuid: (() => {
+    uuid: ((): (() => string) => {
       let n = 0;
-      return () => `id-${++n}`;
+      return () => `id-${String(++n)}`;
     })(),
   });
 }
 
 function seedAgent(services: Services): void {
+  const input: SeedAgentInput = {
+    name: "home-mgmt",
+    display_name: "Home Mgmt",
+    long_lived: true,
+    long_lived_config: {
+      schedule_cron: "*/15 * * * *",
+      subscriptions: [{ server: "ha", event: "state_changed" }],
+      mcp_allowlist: ["ha:state.*"],
+      bounds: { wall_clock_ms: 180000, cost_cents: 50, max_sub_dispatches: 1 },
+      circuit_breaker_threshold: 3,
+      standing_brief: "watch home state",
+    },
+  };
+  // reconcileLongLivedAgents expects the full AgentConfig (with adapter/options
+  // and other defaulted fields). The reconciler only reads the fields covered
+  // by SeedAgentInput, so this seed launders the partial fixture through
+  // unknown once instead of fabricating an entire AgentConfig literal.
   reconcileLongLivedAgents(
     services.db,
-    [
-      {
-        name: "home-mgmt",
-        display_name: "Home Mgmt",
-        long_lived: true,
-        long_lived_config: {
-          schedule_cron: "*/15 * * * *",
-          subscriptions: [{ server: "ha", event: "state_changed" }],
-          mcp_allowlist: ["ha:state.*"],
-          bounds: { wall_clock_ms: 180000, cost_cents: 50, max_sub_dispatches: 1 },
-          circuit_breaker_threshold: 3,
-          standing_brief: "watch home state",
-        },
-      } as any,
-    ],
+    [input as unknown as Parameters<typeof reconcileLongLivedAgents>[1][number]],
     { now: Date.parse("2026-05-10T00:00:00.000Z") },
   );
 }
@@ -69,7 +103,7 @@ test("GET /long-lived lists reconciled agents", async () => {
   const res = await longLivedListRoute(new Request("http://x/long-lived"), services);
   expect(res.status).toBe(200);
   const body = (await res.json()) as {
-    agents: Array<{ id: string; display_name: string; status: string }>;
+    agents: { id: string; display_name: string; status: string }[];
   };
   expect(body.agents).toHaveLength(1);
   expect(body.agents[0]).toMatchObject({
@@ -166,9 +200,9 @@ test("GET /long-lived/:id returns agent detail with related rows", async () => {
   expect(res.status).toBe(200);
   const body = (await res.json()) as {
     agent: { id: string; display_name: string; working_memory: { version: number } };
-    recent_ticks: Array<{ id: string; trigger_payload: { scheduled: boolean } }>;
-    pending_actions: Array<{ id: string; payload: { message: string } }>;
-    recent_audit: Array<{ pending_action_id: string | null; decision: string }>;
+    recent_ticks: { id: string; trigger_payload: { scheduled: boolean } }[];
+    pending_actions: { id: string; payload: { message: string } }[];
+    recent_audit: { pending_action_id: string | null; decision: string }[];
   };
   expect(body.agent.id).toBe("home-mgmt");
   expect(body.agent.display_name).toBe("Home Mgmt");
@@ -213,7 +247,7 @@ test("POST /long-lived/reconcile-orphans reconciles orphaned ticks", async () =>
 test("POST /long-lived/reconcile-orphans uses the injected clock", async () => {
   const fixedNow = Date.parse("2026-05-10T12:34:56.000Z");
   const services = tempServices();
-  services.clock = () => new Date(fixedNow);
+  services.clock = (): Date => new Date(fixedNow);
   seedAgent(services);
   services.db
     .query(
@@ -358,8 +392,7 @@ test("operator long-lived routes are reachable and respond", async () => {
   );
   expect(pendingActionsRes.status).toBe(200);
   expect(
-    ((await pendingActionsRes.json()) as { pending_actions: Array<{ id: string }> })
-      .pending_actions,
+    ((await pendingActionsRes.json()) as { pending_actions: { id: string }[] }).pending_actions,
   ).toHaveLength(1);
 
   const approveRes = await longLivedApproveActionRoute(
@@ -501,9 +534,9 @@ test("operator long-lived routes are reachable and respond", async () => {
     services,
   );
   expect(auditRes.status).toBe(200);
-  expect(
-    ((await auditRes.json()) as { audit: Array<{ agent_id: string }> }).audit[0].agent_id,
-  ).toBe("home-mgmt");
+  expect(((await auditRes.json()) as { audit: { agent_id: string }[] }).audit[0].agent_id).toBe(
+    "home-mgmt",
+  );
 
   const ticksRes = await longLivedTicksRoute(
     new Request("http://x/long-lived/home-mgmt/ticks"),
@@ -511,9 +544,9 @@ test("operator long-lived routes are reachable and respond", async () => {
     services,
   );
   expect(ticksRes.status).toBe(200);
-  expect(
-    ((await ticksRes.json()) as { ticks: Array<{ agent_id: string }> }).ticks[0].agent_id,
-  ).toBe("home-mgmt");
+  expect(((await ticksRes.json()) as { ticks: { agent_id: string }[] }).ticks[0].agent_id).toBe(
+    "home-mgmt",
+  );
 });
 
 test("serve.ts wires long-lived operator routes", async () => {
@@ -535,11 +568,7 @@ test("serve.ts wires long-lived operator routes", async () => {
   for (const [method, path, status] of routes) {
     const services = tempServices();
     seedAgent(services);
-    services.longLivedReactor = {
-      manualTick: (agentId: string) => ({ outcome: `manual:${agentId}`, tick_id: "tick-1" }),
-      reload: async () => {},
-      shutdown: () => {},
-    };
+    services.longLivedReactor = makeReactor();
     services.db
       .query(
         `INSERT INTO long_lived_ticks (
@@ -628,11 +657,7 @@ test("serve.ts wires long-lived operator routes", async () => {
 test("POST /long-lived/:id/tick triggers a manual reactor tick", async () => {
   const services = tempServices();
   seedAgent(services);
-  services.longLivedReactor = {
-    manualTick: (agentId: string) => ({ outcome: `manual:${agentId}`, tick_id: "tick-1" }),
-    reload: async () => {},
-    shutdown: () => {},
-  };
+  services.longLivedReactor = makeReactor();
 
   const res = await longLivedTickRoute(
     new Request("http://x/long-lived/home-mgmt/tick", {
@@ -648,11 +673,9 @@ test("POST /long-lived/:id/tick triggers a manual reactor tick", async () => {
 
 test("POST /long-lived/:id/tick returns not_found and not_active correctly", async () => {
   const services = tempServices();
-  services.longLivedReactor = {
-    manualTick: () => ({ outcome: "should-not-run" }),
-    reload: async () => {},
-    shutdown: () => {},
-  };
+  services.longLivedReactor = makeReactor({
+    manualTick: (): ManualTickResult => ({ outcome: "should-not-run" }),
+  });
 
   const missingRes = await longLivedTickRoute(
     new Request("http://x/long-lived/missing/tick", {
@@ -681,11 +704,7 @@ test("POST /long-lived/:id/tick returns not_found and not_active correctly", asy
 test("POST /long-lived/:id/tick rate-limits consecutive manual ticks", async () => {
   const services = tempServices();
   seedAgent(services);
-  services.longLivedReactor = {
-    manualTick: (agentId: string) => ({ outcome: `manual:${agentId}`, tick_id: "tick-1" }),
-    reload: async () => {},
-    shutdown: () => {},
-  };
+  services.longLivedReactor = makeReactor();
 
   const first = await longLivedTickRoute(
     new Request("http://x/long-lived/home-mgmt/tick", {
@@ -717,8 +736,8 @@ test("POST /long-lived/:id/inject-goal fires an injected_goal tick for cron-less
 
   const ticks: string[] = [];
   const now = services.clock().getTime();
-  services.longLivedReactor = {
-    injectedGoalTick: (agentId: string) => {
+  services.longLivedReactor = makeReactor({
+    injectedGoalTick: (agentId: string): ManualTickResult => {
       ticks.push(agentId);
       services.db
         .query(
@@ -727,9 +746,7 @@ test("POST /long-lived/:id/inject-goal fires an injected_goal tick for cron-less
         .run(`tick-injected-${agentId}`, agentId, "injected_goal", now);
       return { outcome: `injected:${agentId}`, tick_id: "tick-injected" };
     },
-    reload: async () => {},
-    shutdown: () => {},
-  };
+  });
 
   const injectGoalRes = await longLivedInjectGoalRoute(
     new Request("http://x/long-lived/home-mgmt/inject-goal", {
@@ -992,11 +1009,11 @@ test("POST /long-lived/pending-actions/:id/approve publishes decision event and 
       1500,
     );
 
-  const decidedEvents: Array<{
+  const decidedEvents: {
     event: string;
     agent_id: string;
     payload: { action_id: string; decision: string };
-  }> = [];
+  }[] = [];
   const unsubscribe = services.handoffEvents.subscribe((evt) => {
     if ((evt as { event?: string }).event === "long_lived_action_decided") {
       decidedEvents.push(
@@ -1007,8 +1024,8 @@ test("POST /long-lived/pending-actions/:id/approve publishes decision event and 
 
   const fired: string[] = [];
   const now = services.clock().getTime();
-  services.longLivedReactor = {
-    injectedGoalTick: (agentId: string) => {
+  services.longLivedReactor = makeReactor({
+    injectedGoalTick: (agentId: string): ManualTickResult => {
       fired.push(agentId);
       services.db
         .query(
@@ -1017,9 +1034,7 @@ test("POST /long-lived/pending-actions/:id/approve publishes decision event and 
         .run(`tick-injected-${agentId}-approve`, agentId, "injected_goal", now);
       return { outcome: `injected:${agentId}`, tick_id: "tick-injected-2" };
     },
-    reload: async () => {},
-    shutdown: () => {},
-  };
+  });
 
   const approveRes = await longLivedApproveActionRoute(
     new Request("http://x/long-lived/pending-actions/approve-action/approve", {

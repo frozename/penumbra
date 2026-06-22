@@ -1,60 +1,60 @@
-import { expect, test, mock } from "bun:test";
-import { Database } from "bun:sqlite";
-import { loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { createLogger, loadSqliteVec, type Logger, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, mock, test } from "bun:test";
+
 import { longLivedMcpCallRoute } from "../../src/routes/long-lived-mcp.js";
 
+type ActionGate = NonNullable<Services["actionGate"]>;
+type HandleCall = ActionGate["handleCall"];
+type HandleCallResult = Awaited<ReturnType<HandleCall>>;
+
+const silentLog: Logger = createLogger({ component: "test", level: "silent" });
+
 function makeServices(db: Database): Services {
-  return {
+  // long-lived-mcp routes exercise only `db`, `clock`, `uuid`, `log`, and the
+  // `actionGate` slot (assigned per-test). Every other Services slot is never
+  // invoked here, so the bulk of the object is stubbed and laundered through
+  // unknown once instead of casting each slot.
+  const stub = {
     db,
-    settings: {},
     storageRoot: "/tmp/penumbra-test",
-    dbMeta: {} as any,
-    machineId: { get: () => "machine-test" } as any,
-    projectCache: {} as any,
-    redactor: {} as any,
-    t0Writer: {} as any,
-    handoffWriter: {} as any,
-    recallReader: {} as any,
-    handoffReader: {} as any,
-    chainReader: {} as any,
-    handoffEvents: {} as any,
-    permissionWriter: {} as any,
-    permissionReader: {} as any,
-    permissionEvents: {} as any,
-    dispatchEventLog: {} as any,
-    dispatchEvents: {} as any,
-    conversationStream: {} as any,
-    workerControl: {} as any,
-    worktreeManager: {} as any,
-    watchdog: {} as any,
-    supervisor: {} as any,
-    pidRegistry: {} as any,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-05-11T00:00:00.000Z"),
-    uuid: (() => {
+    clock: (): Date => new Date("2026-05-11T00:00:00.000Z"),
+    uuid: ((): (() => string) => {
       let n = 0;
-      return () => `evt-${++n}`;
+      return () => `evt-${String(++n)}`;
     })(),
-    log: { info: () => {}, warn: () => {}, error: () => {} } as any,
+    log: silentLog,
     agentRegistry: null,
     agentRouting: null,
     providerQuotas: [],
-    subscriptionPressureCache: {} as any,
-    planWriter: {} as any,
-  } as Services;
+  };
+  return stub as unknown as Services;
+}
+
+function executed(result: unknown, tier: 1 | 2 | 3 = 1): HandleCallResult {
+  return { kind: "executed", result, tier };
+}
+
+function queued(pending_action_id: string): HandleCallResult {
+  return { kind: "queued", pending_action_id };
+}
+
+function rejected(error: string, details?: unknown): HandleCallResult {
+  return details === undefined ? { kind: "rejected", error } : { kind: "rejected", error, details };
 }
 
 function withToken<T>(token: string, fn: () => Promise<T>): Promise<T> {
-  const prev = process.env.PENUMBRA_TOKEN;
-  process.env.PENUMBRA_TOKEN = token;
+  const prev = process.env["PENUMBRA_TOKEN"];
+  process.env["PENUMBRA_TOKEN"] = token;
   return fn().finally(() => {
-    if (prev === undefined) delete process.env.PENUMBRA_TOKEN;
-    else process.env.PENUMBRA_TOKEN = prev;
+    if (prev === undefined) delete process.env["PENUMBRA_TOKEN"];
+    else process.env["PENUMBRA_TOKEN"] = prev;
   });
 }
 
-function authHeaders(token = "tok"): HeadersInit {
+function authHeaders(token = "tok"): Record<string, string> {
   return { authorization: `Bearer ${token}` };
 }
 
@@ -124,9 +124,9 @@ test("POST /long-lived/mcp/call accepts dotted tool ids like ha:light.toggle", a
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     seedRunningIdentity(db);
-    const handleCall = mock(async () => ({ kind: "executed", result: "ok", tier: 1 as const }));
+    const handleCall = mock<HandleCall>(() => Promise.resolve(executed("ok")));
     const services = makeServices(db);
-    services.actionGate = { handleCall } as any;
+    services.actionGate = { handleCall };
 
     const res = await longLivedMcpCallRoute(
       new Request("http://x/long-lived/mcp/call", {
@@ -147,13 +147,9 @@ test("POST /long-lived/mcp/call normalizes dot and colon tool ids before action 
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     seedRunningIdentity(db);
-    const handleCall = mock(async (req: any) => ({
-      kind: "executed",
-      result: req.tool,
-      tier: 1 as const,
-    }));
+    const handleCall = mock<HandleCall>((req) => Promise.resolve(executed(req.tool)));
     const services = makeServices(db);
-    services.actionGate = { handleCall } as any;
+    services.actionGate = { handleCall };
 
     const dotRes = await longLivedMcpCallRoute(
       new Request("http://x/long-lived/mcp/call", {
@@ -190,13 +186,9 @@ test("POST /long-lived/mcp/call accepts _meta and forwards it to action gate", a
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     seedRunningIdentity(db);
-    const handleCall = mock(async (req: any) => ({
-      kind: "executed",
-      result: req._meta,
-      tier: 1 as const,
-    }));
+    const handleCall = mock<HandleCall>((req) => Promise.resolve(executed(req._meta)));
     const services = makeServices(db);
-    services.actionGate = { handleCall } as any;
+    services.actionGate = { handleCall };
 
     const res = await longLivedMcpCallRoute(
       new Request("http://x/long-lived/mcp/call", {
@@ -233,9 +225,9 @@ test("POST /long-lived/mcp/call rejects invalid _meta payloads", async () => {
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     seedRunningIdentity(db);
-    const handleCall = mock(async () => ({ kind: "executed", result: "ok", tier: 1 as const }));
+    const handleCall = mock<HandleCall>(() => Promise.resolve(executed("ok")));
     const services = makeServices(db);
-    services.actionGate = { handleCall } as any;
+    services.actionGate = { handleCall };
 
     const invalidBodies = [{ _meta: "bad" }, { _meta: 42 }, { _meta: ["bad"] }];
 
@@ -266,9 +258,9 @@ test("route rejects _meta > 2048 UTF-8 bytes with 400 meta_too_large", async () 
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     seedRunningIdentity(db);
-    const handleCall = mock(async () => ({ kind: "executed", result: "ok", tier: 1 as const }));
+    const handleCall = mock<HandleCall>(() => Promise.resolve(executed("ok")));
     const services = makeServices(db);
-    services.actionGate = { handleCall } as any;
+    services.actionGate = { handleCall };
 
     const res = await longLivedMcpCallRoute(
       new Request("http://x/long-lived/mcp/call", {
@@ -296,9 +288,9 @@ test("POST /long-lived/mcp/call forwards _meta as undefined when omitted", async
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     seedRunningIdentity(db);
-    const handleCall = mock(async () => ({ kind: "executed", result: "ok", tier: 1 as const }));
+    const handleCall = mock<HandleCall>(() => Promise.resolve(executed("ok")));
     const services = makeServices(db);
-    services.actionGate = { handleCall } as any;
+    services.actionGate = { handleCall };
 
     const res = await longLivedMcpCallRoute(
       new Request("http://x/long-lived/mcp/call", {
@@ -386,9 +378,9 @@ test("POST /long-lived/mcp/call normalizes executed gate results", async () => {
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     seedRunningIdentity(db);
-    const handleCall = mock(async () => ({ kind: "executed", result: { x: 1 }, tier: 1 as const }));
+    const handleCall = mock<HandleCall>(() => Promise.resolve(executed({ x: 1 })));
     const services = makeServices(db);
-    services.actionGate = { handleCall } as any;
+    services.actionGate = { handleCall };
 
     const res = await longLivedMcpCallRoute(
       new Request("http://x/long-lived/mcp/call", {
@@ -409,9 +401,9 @@ test("POST /long-lived/mcp/call normalizes queued gate results", async () => {
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     seedRunningIdentity(db);
-    const handleCall = mock(async () => ({ kind: "queued", pending_action_id: "abc" }));
+    const handleCall = mock<HandleCall>(() => Promise.resolve(queued("abc")));
     const services = makeServices(db);
-    services.actionGate = { handleCall } as any;
+    services.actionGate = { handleCall };
 
     const res = await longLivedMcpCallRoute(
       new Request("http://x/long-lived/mcp/call", {
@@ -437,9 +429,9 @@ test("POST /long-lived/mcp/call normalizes rejected gate results without details
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     seedRunningIdentity(db);
-    const handleCall = mock(async () => ({ kind: "rejected", error: "not_in_allowlist" }));
+    const handleCall = mock<HandleCall>(() => Promise.resolve(rejected("not_in_allowlist")));
     const services = makeServices(db);
-    services.actionGate = { handleCall } as any;
+    services.actionGate = { handleCall };
 
     const res = await longLivedMcpCallRoute(
       new Request("http://x/long-lived/mcp/call", {
@@ -460,13 +452,11 @@ test("POST /long-lived/mcp/call normalizes rejected gate results with details", 
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     seedRunningIdentity(db);
-    const handleCall = mock(async () => ({
-      kind: "rejected",
-      error: "mcp_call_timeout",
-      details: { timeout_ms: 30000 },
-    }));
+    const handleCall = mock<HandleCall>(() =>
+      Promise.resolve(rejected("mcp_call_timeout", { timeout_ms: 30000 })),
+    );
     const services = makeServices(db);
-    services.actionGate = { handleCall } as any;
+    services.actionGate = { handleCall };
 
     const res = await longLivedMcpCallRoute(
       new Request("http://x/long-lived/mcp/call", {
@@ -491,13 +481,9 @@ test("POST /long-lived/mcp/call accepts a verified running identity", async () =
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     seedRunningIdentity(db);
-    const handleCall = mock(async () => ({
-      kind: "executed",
-      result: { ok: true },
-      tier: 1 as const,
-    }));
+    const handleCall = mock<HandleCall>(() => Promise.resolve(executed({ ok: true })));
     const services = makeServices(db);
-    services.actionGate = { handleCall } as any;
+    services.actionGate = { handleCall };
 
     const res = await longLivedMcpCallRoute(
       new Request("http://x/long-lived/mcp/call", {
