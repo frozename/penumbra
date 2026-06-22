@@ -1,18 +1,41 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import type { Services } from "@penumbra/core";
+
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+
 import { worktreesEditRoute } from "../src/routes/fs.js";
 
-function fakeServices(worktrees: Record<string, string>): any {
-  return {
+interface RouteErrorBody {
+  error: {
+    code: string;
+    message?: string;
+  };
+}
+
+interface EditBody {
+  path: string;
+  replacements: number;
+}
+
+async function jsonBody<T>(res: Response): Promise<T> {
+  const body: unknown = await res.json();
+  return body as T;
+}
+
+function fakeServices(worktrees: Record<string, string>): Services {
+  const services = {
     worktreeManager: {
-      getWorktree: (id: string) => (worktrees[id] ? { handoffId: id, path: worktrees[id] } : null),
+      getWorktree: (id: string): { handoffId: string; path: string } | null =>
+        worktrees[id] ? { handoffId: id, path: worktrees[id] } : null,
     },
     handoffReader: {
-      get: () => null,
+      get: (): null => null,
     },
   };
+  // The route under test reads only these daemon service fields.
+  return services as unknown as Services;
 }
 
 describe("worktrees edit route", () => {
@@ -35,7 +58,7 @@ describe("worktrees edit route", () => {
     });
     const res = await worktreesEditRoute(req, "H1", services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await jsonBody<EditBody>(res);
     expect(body.path).toBe("file.txt");
     expect(body.replacements).toBe(1);
     expect(fs.readFileSync(path.join(tmp, "file.txt"), "utf8")).toBe("goodbye world\n");
@@ -55,7 +78,7 @@ describe("worktrees edit route", () => {
     });
     const res = await worktreesEditRoute(req, "H1", services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await jsonBody<EditBody>(res);
     expect(body.replacements).toBe(3);
     expect(fs.readFileSync(path.join(tmp, "file.txt"), "utf8")).toBe("b b b");
   });
@@ -69,7 +92,7 @@ describe("worktrees edit route", () => {
     });
     const res = await worktreesEditRoute(req, "H1", services);
     expect(res.status).toBe(422);
-    const body = await res.json();
+    const body = await jsonBody<RouteErrorBody>(res);
     expect(body.error.code).toBe("string_not_found");
   });
 
@@ -82,7 +105,7 @@ describe("worktrees edit route", () => {
     });
     const res = await worktreesEditRoute(req, "H1", services);
     expect(res.status).toBe(422);
-    const body = await res.json();
+    const body = await jsonBody<RouteErrorBody>(res);
     expect(body.error.code).toBe("string_not_unique");
     expect(body.error.message).toContain("3");
   });
@@ -96,7 +119,7 @@ describe("worktrees edit route", () => {
     });
     const res = await worktreesEditRoute(req, "H1", services);
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await jsonBody<RouteErrorBody>(res);
     expect(body.error.code).toBe("no_op");
   });
 
@@ -109,7 +132,7 @@ describe("worktrees edit route", () => {
     });
     const res = await worktreesEditRoute(req, "H1", services);
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await jsonBody<RouteErrorBody>(res);
     expect(body.error.code).toBe("outside_worktree");
   });
 
@@ -121,7 +144,7 @@ describe("worktrees edit route", () => {
     });
     const res = await worktreesEditRoute(req, "H1", services);
     expect(res.status).toBe(404);
-    const body = await res.json();
+    const body = await jsonBody<RouteErrorBody>(res);
     expect(body.error.code).toBe("not_found");
   });
 
@@ -133,7 +156,7 @@ describe("worktrees edit route", () => {
     });
     const res = await worktreesEditRoute(req, "UNKNOWN", services);
     expect(res.status).toBe(404);
-    const body = await res.json();
+    const body = await jsonBody<RouteErrorBody>(res);
     expect(body.error.code).toBe("not_found");
   });
 
@@ -145,7 +168,7 @@ describe("worktrees edit route", () => {
     });
     const res = await worktreesEditRoute(req, "H1", services);
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await jsonBody<RouteErrorBody>(res);
     expect(body.error.code).toBe("invalid_args");
   });
 
@@ -157,7 +180,7 @@ describe("worktrees edit route", () => {
     });
     const res = await worktreesEditRoute(req, "H1", services);
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await jsonBody<RouteErrorBody>(res);
     expect(body.error.code).toBe("invalid_args");
   });
 
@@ -169,7 +192,7 @@ describe("worktrees edit route", () => {
     });
     const res = await worktreesEditRoute(req, "H1", services);
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await jsonBody<RouteErrorBody>(res);
     expect(body.error.code).toBe("invalid_args");
   });
 
@@ -182,7 +205,7 @@ describe("worktrees edit route", () => {
     });
     const res = await worktreesEditRoute(req, "H1", services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await jsonBody<EditBody>(res);
     expect(body.replacements).toBe(1);
     expect(fs.readFileSync(path.join(tmp, "file.txt"), "utf8")).toBe("world\n");
   });

@@ -1,27 +1,70 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import type { Services } from "@penumbra/core";
+
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+
 import { worktreesExecRoute } from "../src/routes/fs.js";
+
+interface ExecBody {
+  exit_code: number | null;
+  stdout: string;
+  timed_out: boolean;
+}
+
+interface RouteErrorBody {
+  error: {
+    code: string;
+    message?: string;
+  };
+}
+
+interface DangerousCommandBody {
+  error: {
+    code: string;
+    matched: string[];
+  };
+}
+
+async function jsonBody<T>(res: Response): Promise<T> {
+  const body: unknown = await res.json();
+  return body as T;
+}
 
 function fakeServices(
   worktrees: Record<string, string>,
   opts: {
     handoffs?: Record<string, { to_agent?: string }>;
     dangerousPatterns?: Record<string, string[]>;
+    omitShellConfig?: boolean;
+    shellConfig?: unknown;
   } = {},
-): any {
-  return {
+): Services {
+  const services: {
+    handoffReader: { get: (id: string) => { to_agent?: string } | null };
+    shellConfig?: unknown;
+    worktreeManager: {
+      getWorktree: (id: string) => { handoffId: string; path: string } | null;
+    };
+  } = {
     worktreeManager: {
       getWorktree: (id: string) => (worktrees[id] ? { handoffId: id, path: worktrees[id] } : null),
     },
     handoffReader: {
       get: (id: string) => opts.handoffs?.[id] ?? null,
     },
-    shellConfig: {
-      dangerousCommandsForAgent: (agentName: string) => opts.dangerousPatterns?.[agentName] ?? [],
-    },
   };
+  if ("shellConfig" in opts) {
+    services.shellConfig = opts.shellConfig;
+  } else if (opts.omitShellConfig !== true) {
+    services.shellConfig = {
+      dangerousCommandsForAgent: (agentName: string | null): string[] =>
+        agentName === null ? [] : (opts.dangerousPatterns?.[agentName] ?? []),
+    };
+  }
+  // The route under test reads only these daemon service fields.
+  return services as unknown as Services;
 }
 
 describe("worktrees exec route", () => {
@@ -43,7 +86,7 @@ describe("worktrees exec route", () => {
     });
     const res = await worktreesExecRoute(req, "H1", services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await jsonBody<ExecBody>(res);
     expect(body.stdout).toContain("hello");
     expect(body.exit_code).toBe(0);
     expect(body.timed_out).toBe(false);
@@ -57,7 +100,7 @@ describe("worktrees exec route", () => {
     });
     const res = await worktreesExecRoute(req, "H1", services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await jsonBody<ExecBody>(res);
     // realpath to handle macOS /private/var vs /var symlink
     const realTmp = fs.realpathSync(tmp);
     expect(body.stdout.trim()).toBe(realTmp);
@@ -72,13 +115,13 @@ describe("worktrees exec route", () => {
     });
     const res = await worktreesExecRoute(req, "H1", services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await jsonBody<ExecBody>(res);
     expect(body.exit_code).toBe(3);
     expect(body.timed_out).toBe(false);
   });
 
   it("returns 403 dangerous_command for matched pattern WITHOUT running", async () => {
-    let commandRan = false;
+    const commandRan = false;
     const services = fakeServices(
       { H1: tmp },
       {
@@ -93,7 +136,7 @@ describe("worktrees exec route", () => {
     });
     const res = await worktreesExecRoute(req, "H1", services);
     expect(res.status).toBe(403);
-    const body = await res.json();
+    const body = await jsonBody<DangerousCommandBody>(res);
     expect(body.error.code).toBe("dangerous_command");
     expect(Array.isArray(body.error.matched)).toBe(true);
     expect(body.error.matched.length).toBeGreaterThan(0);
@@ -101,7 +144,7 @@ describe("worktrees exec route", () => {
   });
 
   it("returns 403 dangerous_command (fail closed) for malformed regex pattern", async () => {
-    let commandRan = false;
+    const commandRan = false;
     const services = fakeServices(
       { H1: tmp },
       {
@@ -116,7 +159,7 @@ describe("worktrees exec route", () => {
     });
     const res = await worktreesExecRoute(req, "H1", services);
     expect(res.status).toBe(403);
-    const body = await res.json();
+    const body = await jsonBody<DangerousCommandBody>(res);
     expect(body.error.code).toBe("dangerous_command");
     expect(Array.isArray(body.error.matched)).toBe(true);
     expect(body.error.matched).toContain("[");
@@ -136,7 +179,7 @@ describe("worktrees exec route", () => {
     });
     const res = await worktreesExecRoute(req, "H1", services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await jsonBody<ExecBody>(res);
     expect(body.exit_code).toBe(0);
     expect(body.stdout).toContain("safe");
   });
@@ -149,7 +192,7 @@ describe("worktrees exec route", () => {
     });
     const res = await worktreesExecRoute(req, "H1", services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await jsonBody<ExecBody>(res);
     expect(body.timed_out).toBe(true);
     expect(body.exit_code).toBeNull();
   });
@@ -162,7 +205,7 @@ describe("worktrees exec route", () => {
     });
     const res = await worktreesExecRoute(req, "UNKNOWN", services);
     expect(res.status).toBe(404);
-    const body = await res.json();
+    const body = await jsonBody<RouteErrorBody>(res);
     expect(body.error.code).toBe("not_found");
   });
 
@@ -174,22 +217,12 @@ describe("worktrees exec route", () => {
     });
     const res = await worktreesExecRoute(req, "H1", services);
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await jsonBody<RouteErrorBody>(res);
     expect(body.error.code).toBe("invalid_args");
   });
 
   it("returns 503 shell_config_unavailable when shellConfig is undefined, even for a benign command", async () => {
-    // Simulate a daemon that booted with a broken agentchat config:
-    // shellConfig is undefined on the services object.
-    const services: any = {
-      worktreeManager: {
-        getWorktree: (id: string) => (id === "H1" ? { handoffId: "H1", path: tmp } : null),
-      },
-      handoffReader: {
-        get: (_id: string) => null,
-      },
-      // shellConfig deliberately absent -- mirrors a failed config load
-    };
+    const services = fakeServices({ H1: tmp }, { omitShellConfig: true });
 
     const req = new Request("http://x/worktrees/H1/exec", {
       method: "POST",
@@ -197,22 +230,13 @@ describe("worktrees exec route", () => {
     });
     const res = await worktreesExecRoute(req, "H1", services);
     expect(res.status).toBe(503);
-    const body = await res.json();
+    const body = await jsonBody<RouteErrorBody>(res);
     expect(body.error.code).toBe("shell_config_unavailable");
     expect(body.error.message).toBe("service temporarily unavailable");
   });
 
   it("returns 503 shell_config_unavailable when shellConfig is truthy but malformed", async () => {
-    const services: any = {
-      worktreeManager: {
-        getWorktree: (id: string) => (id === "H1" ? { handoffId: "H1", path: tmp } : null),
-      },
-      handoffReader: {
-        get: (_id: string) => null,
-      },
-      // truthy but malformed shellConfig missing dangerousCommandsForAgent
-      shellConfig: {},
-    };
+    const services = fakeServices({ H1: tmp }, { shellConfig: {} });
 
     const req = new Request("http://x/worktrees/H1/exec", {
       method: "POST",
@@ -220,7 +244,7 @@ describe("worktrees exec route", () => {
     });
     const res = await worktreesExecRoute(req, "H1", services);
     expect(res.status).toBe(503);
-    const body = await res.json();
+    const body = await jsonBody<RouteErrorBody>(res);
     expect(body.error.code).toBe("shell_config_unavailable");
     expect(body.error.message).toBe("service temporarily unavailable");
   });

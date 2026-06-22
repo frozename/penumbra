@@ -1,14 +1,41 @@
 import { expect } from "bun:test";
-import { serviceTest } from "./helpers/service-gates.js";
-import { makeTempDaemon } from "./helpers.js";
-import { createHandoffSweeperWorker } from "../src/workers/handoff-sweeper.js";
 
-function insertHandoff(d: any, id: string, status: string, ts: string, error?: string) {
+import { createHandoffSweeperWorker } from "../src/workers/handoff-sweeper.js";
+import { makeTempDaemon, type TempDaemon } from "./helpers.js";
+import { serviceTest } from "./helpers/service-gates.js";
+
+interface HandoffRow {
+  error_message: string | null;
+  resolved_at: string | null;
+  resolution_reason: string | null;
+  status: string;
+}
+
+function insertHandoff(
+  d: TempDaemon,
+  id: string,
+  status: string,
+  ts: string,
+  error?: string,
+): void {
   d.services.db.run(
     `INSERT INTO handoffs(handoff_id, ts, conversation_id, from_agent, to_agent, message, status, error_message)
      VALUES(?, ?, 'c1', 'a', 'b', 'msg', ?, ?)`,
     [id, ts, status, error ?? null],
   );
+}
+
+function getHandoff(d: TempDaemon, id: string): HandoffRow {
+  const row = d.services.db
+    .query<
+      HandoffRow,
+      [string]
+    >("SELECT status, resolution_reason, resolved_at, error_message FROM handoffs WHERE handoff_id=?")
+    .get(id);
+  if (row === null) {
+    throw new Error(`missing handoff row ${id}`);
+  }
+  return row;
 }
 
 serviceTest("handoff sweeper marks stale pending handoffs as expired", async () => {
@@ -26,8 +53,8 @@ serviceTest("handoff sweeper marks stale pending handoffs as expired", async () 
     const worker = createHandoffSweeperWorker({ services: d.services });
     await worker.tick();
 
-    const h1: any = d.services.db.query('SELECT * FROM handoffs WHERE handoff_id="h1"').get();
-    const h2: any = d.services.db.query('SELECT * FROM handoffs WHERE handoff_id="h2"').get();
+    const h1 = getHandoff(d, "h1");
+    const h2 = getHandoff(d, "h2");
 
     expect(h1.status).toBe("expired");
     expect(h1.resolution_reason).toContain("expired by sweeper after 3600000ms in pending");
@@ -56,8 +83,8 @@ serviceTest(
       const worker = createHandoffSweeperWorker({ services: d.services });
       await worker.tick();
 
-      const h3: any = d.services.db.query('SELECT * FROM handoffs WHERE handoff_id="h3"').get();
-      const h4: any = d.services.db.query('SELECT * FROM handoffs WHERE handoff_id="h4"').get();
+      const h3 = getHandoff(d, "h3");
+      const h4 = getHandoff(d, "h4");
 
       expect(h3.status).toBe("expired");
       expect(h3.resolution_reason).toContain("expired by sweeper after 1800000ms in dispatched");
@@ -82,8 +109,8 @@ serviceTest("handoff sweeper ignores completed or failed handoffs", async () => 
     const worker = createHandoffSweeperWorker({ services: d.services });
     await worker.tick();
 
-    const h5: any = d.services.db.query('SELECT status FROM handoffs WHERE handoff_id="h5"').get();
-    const h6: any = d.services.db.query('SELECT status FROM handoffs WHERE handoff_id="h6"').get();
+    const h5 = getHandoff(d, "h5");
+    const h6 = getHandoff(d, "h6");
 
     expect(h5.status).toBe("completed");
     expect(h6.status).toBe("failed");

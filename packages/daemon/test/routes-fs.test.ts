@@ -1,18 +1,43 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import type { Services } from "@penumbra/core";
+
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+
 import { worktreesGlobRoute, worktreesGrepRoute } from "../src/routes/fs.js";
 
-function fakeServices(worktrees: Record<string, string>): any {
-  return {
+interface RouteErrorBody {
+  error: {
+    code: string;
+  };
+}
+
+interface GlobBody {
+  results: string[];
+}
+
+interface GrepBody {
+  results: { text: string }[];
+}
+
+async function jsonBody<T>(res: Response): Promise<T> {
+  const body: unknown = await res.json();
+  return body as T;
+}
+
+function fakeServices(worktrees: Record<string, string>): Services {
+  const services = {
     worktreeManager: {
-      getWorktree: (id: string) => (worktrees[id] ? { handoffId: id, path: worktrees[id] } : null),
+      getWorktree: (id: string): { handoffId: string; path: string } | null =>
+        worktrees[id] ? { handoffId: id, path: worktrees[id] } : null,
     },
     handoffReader: {
-      get: () => null,
+      get: (): null => null,
     },
   };
+  // The route under test reads only these daemon service fields.
+  return services as unknown as Services;
 }
 
 describe("worktrees fs routes", () => {
@@ -35,7 +60,7 @@ describe("worktrees fs routes", () => {
     });
     const res = await worktreesGlobRoute(req, "UNKNOWN", services);
     expect(res.status).toBe(404);
-    const body = await res.json();
+    const body = await jsonBody<RouteErrorBody>(res);
     expect(body.error.code).toBe("not_found");
   });
 
@@ -47,7 +72,7 @@ describe("worktrees fs routes", () => {
     });
     const res = await worktreesGlobRoute(req, "H1", services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await jsonBody<GlobBody>(res);
     expect(body.results).toEqual(["a.ts"]);
   });
 
@@ -59,7 +84,7 @@ describe("worktrees fs routes", () => {
     });
     const res = await worktreesGlobRoute(req, "H1", services);
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await jsonBody<RouteErrorBody>(res);
     expect(body.error.code).toBe("outside_worktree");
   });
 
@@ -86,7 +111,7 @@ describe("worktrees fs routes", () => {
 
       expect(relativeRes.status).toBe(200);
       expect(absoluteRes.status).toBe(200);
-      expect(await relativeRes.json()).toEqual(await absoluteRes.json());
+      expect(await jsonBody<GlobBody>(relativeRes)).toEqual(await jsonBody<GlobBody>(absoluteRes));
     } finally {
       fs.rmSync(realRoot, { recursive: true, force: true });
     }
@@ -100,7 +125,7 @@ describe("worktrees fs routes", () => {
     });
     const res = await worktreesGrepRoute(req, "H1", services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await jsonBody<GrepBody>(res);
     expect(body.results.length).toBe(1);
     expect(body.results[0].text).toBe("TODO");
   });

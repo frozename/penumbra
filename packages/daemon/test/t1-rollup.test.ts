@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
-import { serviceTest } from "./helpers/service-gates.js";
-import { makeTempDaemon } from "./helpers.js";
+
 import { createRollupWorker } from "../src/workers/t1-rollup.js";
+import { makeTempDaemon } from "./helpers.js";
+import { serviceTest } from "./helpers/service-gates.js";
 
 serviceTest("rollup worker rolls idle sessions and rewrites the context file", async () => {
   const d = makeTempDaemon();

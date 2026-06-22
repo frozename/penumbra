@@ -1,5 +1,3 @@
-import { describe, expect, it } from "bun:test";
-import { Database } from "bun:sqlite";
 import {
   buildServices,
   loadSqliteVec,
@@ -8,6 +6,9 @@ import {
   type Services,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { describe, expect, it } from "bun:test";
+
 import { isAnyProviderOverPressure } from "../src/pressure.js";
 
 try {
@@ -43,7 +44,7 @@ function insertSnapshotRow(
     resets_at: number | null;
     source_kind: string;
   },
-) {
+): void {
   db.prepare(
     `
     INSERT INTO t0_events (
