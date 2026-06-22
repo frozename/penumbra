@@ -1,25 +1,44 @@
 #!/usr/bin/env bun
+import { resolveDaemonStorageRoot } from "@penumbra/core";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
-import { loadConfig } from "../src/config/load.js";
-import { PenumbraClient } from "../src/penumbra-client.js";
-import { runChatTurn } from "../src/cli/loop.js";
+
+import { buildAttachmentPreamble, parseAttachFlags } from "../src/cli/attachments.js";
+import { runAutoChain } from "../src/cli/auto-loop.js";
 import { parseApprovalKey } from "../src/cli/inline-approval.js";
 import { parseInputStream } from "../src/cli/input.js";
+import { runChatTurn } from "../src/cli/loop.js";
 import { resolveInitialAgent } from "../src/cli/route-input.js";
-import { runAutoChain } from "../src/cli/auto-loop.js";
-import { parseAttachFlags, buildAttachmentPreamble } from "../src/cli/attachments.js";
+import { loadConfig } from "../src/config/load.js";
+import { PenumbraClient } from "../src/penumbra-client.js";
 
-import { resolveDaemonStorageRoot } from "@penumbra/core";
+interface ConversationStreamEvent {
+  type: string;
+  agent_name?: string;
+  delta?: string;
+  error?: string | null;
+  next_handoff_id?: string | null;
+  reason?: string;
+}
 
-const cmd = process.argv[2];
+interface NodeJsErrnoLike {
+  code?: string;
+}
+
+const stdoutWriteln = (text: string): void => {
+  process.stdout.write(`${text}\n`);
+};
+
+const argAt = (idx: number): string | undefined => process.argv[idx];
+
+const cmd = argAt(2);
 const configPath =
   process.env.AGENTCHAT_CONFIG ?? join(homedir(), ".config/agentchat/agentchat.yaml");
 
 if (cmd === "help" || cmd === "--help" || cmd === undefined) {
-  console.log("usage: agentchat <new|resume|queue|discord|approve|reject> [args]");
+  stdoutWriteln("usage: agentchat <new|resume|queue|discord|approve|reject> [args]");
   process.exit(0);
 }
 
@@ -34,7 +53,7 @@ try {
 if (cmd === "new") {
   const project =
     process.argv.find(
-      (a) => !a.startsWith("-") && a !== "new" && a !== process.argv[1] && a !== process.argv[0],
+      (a) => !a.startsWith("-") && a !== "new" && a !== argAt(1) && a !== argAt(0),
     ) ?? null;
   const isAuto = process.argv.includes("--auto");
   const isTrust = process.argv.includes("--trust");
@@ -43,24 +62,26 @@ if (cmd === "new") {
   const trustMode: "all" | "config" = isAuto ? "all" : "config";
 
   const maxHopsIdx = process.argv.indexOf("--max-hops");
-  const maxHops = maxHopsIdx >= 0 ? parseInt(process.argv[maxHopsIdx + 1]!, 10) : 5;
-  if (useChain && maxHops <= 0) {
+  const maxHops = maxHopsIdx >= 0 ? parseInt(argAt(maxHopsIdx + 1) ?? "", 10) : 5;
+  if (useChain && (!Number.isFinite(maxHops) || maxHops <= 0)) {
     console.error("--max-hops must be greater than 0");
     process.exit(1);
   }
 
   const budgetIdx = process.argv.indexOf("--transcript-budget");
-  const transcriptBudget = budgetIdx >= 0 ? parseInt(process.argv[budgetIdx + 1]!, 10) : 8192;
+  const transcriptBudget = budgetIdx >= 0 ? parseInt(argAt(budgetIdx + 1) ?? "", 10) : 8192;
 
   const initialAgentIdx = process.argv.indexOf("--initial-agent");
-  const initialAgentOverride = initialAgentIdx >= 0 ? process.argv[initialAgentIdx + 1] : undefined;
+  const initialAgentOverride = initialAgentIdx >= 0 ? argAt(initialAgentIdx + 1) : undefined;
 
   const config = loadConfig(configPath);
-  const conv = { id: `conv-${Date.now()}`, project_id: project };
+  const conv = { id: `conv-${String(Date.now())}`, project_id: project };
   const penumbra = new PenumbraClient({ storageRoot });
 
-  const projectContext = (() => {
-    if (!project) return undefined;
+  const projectContext = ((): string | undefined => {
+    if (!project) {
+      return undefined;
+    }
     const path = join(storageRoot, "context", project, "latest.md");
     return existsSync(path) ? readFileSync(path, "utf8") : undefined;
   })();
@@ -74,13 +95,17 @@ if (cmd === "new") {
   }
 
   const stdinMode: "split" | "whole" = process.stdin.isTTY ? "split" : "whole";
-  if (stdinMode === "split") process.stdout.write(`> `);
+  if (stdinMode === "split") {
+    process.stdout.write(`> `);
+  }
   const rl = createInterface({ input: process.stdin });
   const events = parseInputStream(rl[Symbol.asyncIterator](), { mode: stdinMode });
 
   let firstMessage = true;
   for await (const event of events) {
-    if (event.kind === "done") break;
+    if (event.kind === "done") {
+      break;
+    }
     // Attachments only fire on the first user message — subsequent turns reuse
     // the conversation transcript. The preamble matches the llama-server webui's
     // `--- File: <name> ---` header convention so any model trained on that
@@ -117,29 +142,30 @@ if (cmd === "new") {
 
       let lastHandoffId: string | null = null;
       try {
-        for await (const event of penumbra.subscribeConversation(conv.id)) {
-          if (event.type === "hop-start") {
-            process.stdout.write(`\\n[${event.agent_name}]\\n`);
-          } else if (event.type === "token") {
-            process.stdout.write(event.delta);
-          } else if (event.type === "hop-end") {
+        for await (const rawEvent of penumbra.subscribeConversation(conv.id)) {
+          const streamEvent = rawEvent as ConversationStreamEvent;
+          if (streamEvent.type === "hop-start") {
+            process.stdout.write(`\\n[${streamEvent.agent_name ?? ""}]\\n`);
+          } else if (streamEvent.type === "token") {
+            process.stdout.write(streamEvent.delta ?? "");
+          } else if (streamEvent.type === "hop-end") {
             process.stdout.write("\\n\\n");
-            if (event.error) {
-              console.error(`[error: ${event.error}]`);
-            } else if (event.next_handoff_id) {
-              lastHandoffId = event.next_handoff_id;
-              console.log(`[auto-approved → next step]`);
+            if (streamEvent.error) {
+              console.error(`[error: ${streamEvent.error}]`);
+            } else if (streamEvent.next_handoff_id) {
+              lastHandoffId = streamEvent.next_handoff_id;
+              stdoutWriteln(`[auto-approved → next step]`);
             }
-          } else if (event.type === "chain-end") {
-            if (event.reason === "max_hops" && lastHandoffId) {
-              console.log(
-                `[max-hops ${maxHops} reached, handoff ${lastHandoffId.slice(0, 8)}… queued — resume with 'agentchat approve ${lastHandoffId.slice(0, 8)}']`,
+          } else if (streamEvent.type === "chain-end") {
+            if (streamEvent.reason === "max_hops" && lastHandoffId) {
+              stdoutWriteln(
+                `[max-hops ${String(maxHops)} reached, handoff ${lastHandoffId.slice(0, 8)}… queued — resume with 'agentchat approve ${lastHandoffId.slice(0, 8)}']`,
               );
-            } else if (event.reason === "cancelled" && lastHandoffId) {
-              console.log(
+            } else if (streamEvent.reason === "cancelled" && lastHandoffId) {
+              stdoutWriteln(
                 `[chain stopped at untrusted edge, handoff ${lastHandoffId.slice(0, 8)}… queued — resume with 'agentchat approve ${lastHandoffId.slice(0, 8)}']`,
               );
-            } else if (event.reason === "error") {
+            } else if (streamEvent.reason === "error") {
               console.error(`[chain ended with error]`);
             }
             break;
@@ -156,21 +182,23 @@ if (cmd === "new") {
         conversation: conv,
         maxHops,
         transcriptBudget,
-        observe: (e) => penumbra.observe(e),
-        createHandoff: (body) => penumbra.createHandoff(body),
-        approve: (id, body) => penumbra.approve(id, body),
-        markFailed: (id, reason) => penumbra.markFailed(id, reason),
+        observe: (e: Record<string, unknown>) => penumbra.observe(e),
+        createHandoff: (body: Parameters<typeof penumbra.createHandoff>[0]) =>
+          penumbra.createHandoff(body),
+        approve: (id: string, body: Parameters<typeof penumbra.approve>[1]) =>
+          penumbra.approve(id, body),
+        markFailed: (id: string, reason: string) => penumbra.markFailed(id, reason),
         trustMode,
         projectContext,
-        onChunk: (s) => process.stdout.write(s),
+        onChunk: (s: string) => process.stdout.write(s),
       });
 
       if (res.terminatedReason === "max_hops" && res.cappedHandoffId) {
-        console.log(
-          `[max-hops ${maxHops} reached, handoff ${res.cappedHandoffId.slice(0, 8)}… queued — resume with 'agentchat approve ${res.cappedHandoffId.slice(0, 8)}']`,
+        stdoutWriteln(
+          `[max-hops ${String(maxHops)} reached, handoff ${res.cappedHandoffId.slice(0, 8)}… queued — resume with 'agentchat approve ${res.cappedHandoffId.slice(0, 8)}']`,
         );
       } else if (res.terminatedReason === "untrusted" && res.cappedHandoffId) {
-        console.log(
+        stdoutWriteln(
           `[chain stopped at untrusted edge, handoff ${res.cappedHandoffId.slice(0, 8)}… queued — resume with 'agentchat approve ${res.cappedHandoffId.slice(0, 8)}']`,
         );
       }
@@ -181,8 +209,8 @@ if (cmd === "new") {
         initialAgent,
         userMessage,
         conversation: conv,
-        observe: (e) => penumbra.observe(e),
-        onChunk: (s) => process.stdout.write(s),
+        observe: (e: Record<string, unknown>) => penumbra.observe(e),
+        onChunk: (s: string) => process.stdout.write(s),
       });
       process.stdout.write("\n\n");
       if (turn.error) {
@@ -192,16 +220,11 @@ if (cmd === "new") {
       }
 
       if (turn.next_mention) {
+        const { resolution, target } = turn.next_mention;
         const handoff = await penumbra.createHandoff({
           from: initialAgent,
-          to:
-            turn.next_mention.resolution.kind === "unknown"
-              ? turn.next_mention.target
-              : (turn.next_mention.resolution as any).agent_name,
-          to_role:
-            turn.next_mention.resolution.kind === "role"
-              ? (turn.next_mention.resolution as any).role
-              : null,
+          to: resolution.kind === "unknown" ? target : resolution.agent_name,
+          to_role: resolution.kind === "role" ? resolution.role : null,
           message: turn.text,
           conversation_id: conv.id,
           project_id: conv.project_id,
@@ -210,11 +233,11 @@ if (cmd === "new") {
         let reply = "";
         try {
           reply = await rl.question(
-            `[handoff ${handoff.handoff_id.slice(0, 8)}…] @${turn.next_mention.target}\napprove? [y/n/r <name>/s] › `,
+            `[handoff ${handoff.handoff_id.slice(0, 8)}…] @${target}\napprove? [y/n/r <name>/s] › `,
           );
-        } catch (err: any) {
-          if (err.code === "ERR_USE_AFTER_CLOSE") {
-            console.log("\n[stdin closed, ending]");
+        } catch (err) {
+          if ((err as NodeJsErrnoLike).code === "ERR_USE_AFTER_CLOSE") {
+            stdoutWriteln("\n[stdin closed, ending]");
             break;
           }
           throw err;
@@ -222,13 +245,13 @@ if (cmd === "new") {
         const choice = parseApprovalKey(reply);
         if (choice?.kind === "yes") {
           await penumbra.approve(handoff.handoff_id);
-          console.log(`approved.`);
+          stdoutWriteln(`approved.`);
         } else if (choice?.kind === "redirect") {
           await penumbra.approve(handoff.handoff_id, { redirect_to: choice.target });
-          console.log(`redirected → ${choice.target}.`);
+          stdoutWriteln(`redirected → ${choice.target}.`);
         } else if (choice?.kind === "no") {
           await penumbra.approve(handoff.handoff_id, { reject: true });
-          console.log(`rejected.`);
+          stdoutWriteln(`rejected.`);
         }
       }
     }
@@ -239,15 +262,15 @@ if (cmd === "new") {
 }
 
 if (cmd === "queue") {
-  if (process.argv[3] === "--help") {
-    console.log("usage: agentchat queue");
+  if (argAt(3) === "--help") {
+    stdoutWriteln("usage: agentchat queue");
     process.exit(0);
   }
   const { runQueue } = await import("../src/cli/queue.js");
   const rows = await runQueue({ storageRoot });
-  console.log(`HANDOFF_ID\tTS\t\t\tFROM\t\tTO\t\tSTATUS\t\tMESSAGE`);
+  stdoutWriteln(`HANDOFF_ID\tTS\t\t\tFROM\t\tTO\t\tSTATUS\t\tMESSAGE`);
   for (const r of rows) {
-    console.log(
+    stdoutWriteln(
       `${r.handoff_id.slice(0, 8)}\t${r.ts}\t${r.from_agent.padEnd(8)}\t${r.to_agent.padEnd(8)}\t${r.status.padEnd(8)}\t${r.message.slice(0, 60)}`,
     );
   }
@@ -260,15 +283,15 @@ if (cmd === "discord") {
 }
 
 if (cmd === "approve" || cmd === "reject") {
-  const id = process.argv[3];
+  const id = argAt(3);
   if (!id) {
     console.error(`usage: agentchat ${cmd} <handoff_id> [--redirect <name>] [--reason <text>]`);
     process.exit(1);
   }
   const redirectIdx = process.argv.indexOf("--redirect");
-  const redirectTo = redirectIdx >= 0 ? (process.argv[redirectIdx + 1] ?? undefined) : undefined;
+  const redirectTo = redirectIdx >= 0 ? (argAt(redirectIdx + 1) ?? undefined) : undefined;
   const reasonIdx = process.argv.indexOf("--reason");
-  const reason = reasonIdx >= 0 ? (process.argv[reasonIdx + 1] ?? undefined) : undefined;
+  const reason = reasonIdx >= 0 ? (argAt(reasonIdx + 1) ?? undefined) : undefined;
   const { runApprove } = await import("../src/cli/approve.js");
   const r = await runApprove({
     storageRoot,
@@ -277,7 +300,7 @@ if (cmd === "approve" || cmd === "reject") {
     reason,
     reject: cmd === "reject",
   });
-  console.log(`${r.handoff_id} ${r.status}.`);
+  stdoutWriteln(`${r.handoff_id} ${r.status}.`);
   process.exit(0);
 }
 

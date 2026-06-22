@@ -1,114 +1,121 @@
 #!/usr/bin/env bun
-import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
-import type { CapturePort } from "../src/worker/capture-port.js";
+import type { AgentOptions, AgentPool } from "@penumbra/config";
+
 import { defaultProjectRegistryPath, loadProjectRegistry, SettingsDefaults } from "@penumbra/core";
-import { meaningfulOutput } from "../../core/src/services/agent-performance-capture.js";
-import type { AgentChatConfig } from "../src/config/types.js";
-import type { AgentPool } from "@penumbra/config";
-import { PermissionDaemonClient } from "../src/worker/permission-daemon-client.js";
-import { loadConfigPathOrDir } from "../src/config/load.js";
-import { PenumbraClient } from "../src/penumbra-client.js";
-import { dispatchHandoff } from "../src/cli/dispatch-handoff.js";
-import type { McpServer } from "../src/adapters/acp-types.js";
-import {
-  spawnCliAdapter,
-  spawnCliAdapterStream,
-  type CapacityError,
-  type SpawnOpts,
-} from "../src/adapters/cli-spawn.js";
-import { prepareOpencodeMcpConfigDir } from "../src/adapters/opencode-mcp-config.js";
-import { registerAdapter, createStdioAcpAdapter, buildAdapter } from "../src/adapters/registry.js";
-import { resolveAdapterApiKey } from "../src/adapters/secret.js";
-import {
-  drainAgent,
-  shutdownAllAcpWarmPools,
-  totalAcpWarmPoolEntryCount,
-  acpWarmPoolLiveEntryCount,
-} from "../src/adapters/acp-warm-pool-registry.js";
-import { poolKeyFor } from "../src/adapters/acp-warm-pool.js";
-import { normalizeAdapterOptions } from "../src/cli/adapter-options.js";
-import {
-  withOrchestrateTools,
-  applyOrchestrateToolsToConfig,
-} from "../src/worker/orchestrate-tools.js";
-import { computePrewarmTargets, type PrewarmTarget } from "../src/worker/prewarm-targets.js";
-import { createPrewarmLoop, type PrewarmLoop } from "../src/worker/prewarm-loop.js";
-import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../src/sdk/adapter.js";
-import { startEventSource } from "../src/worker/event-source.js";
-import { createWorkerDispatcher } from "../src/worker/dispatcher.js";
-import {
-  computeClaimGraceMs,
-  DEFAULT_CLAIM_AFFINITY_GRACE_MS,
-} from "../src/worker/claim-affinity.js";
-import { autocommitOnChainEnd } from "../src/worker/autocommit-on-chain-end.js";
-import { DispatchEventQueue } from "../src/worker/event-queue.js";
-import { emitHeartbeat } from "../src/worker/heartbeat-emit.js";
-import { startHeartbeatLoop } from "../src/worker/heartbeat-loop.js";
-import { createWorkerShutdown } from "../src/worker/shutdown.js";
-import { createPermissionCallback } from "../src/worker/permission-callback.js";
-import { createDiscordRateLimiter } from "../src/worker/discord-rate-limit.js";
-import { runWorkerControlListener } from "../src/worker/control-listener.js";
-import { installGlobalCrashHandlers } from "../src/worker/crash-guard.js";
-import { registerExecutor, unregisterExecutor } from "../src/worker/executor-registry.js";
-import { resolveSandboxConfig } from "../src/worker/sandbox-config.js";
-import { WriteToolsExecutor } from "../src/worker/write-tools-executor.js";
-import { runWorkerBoot } from "../src/worker-boot.js";
-import {
-  applyWorktreeOverride,
-  rewriteWorktreeHandoffMessage,
-} from "../src/worker/worktree-integration.js";
-import { createMergeReconciler, type MergeResult } from "../src/worker/merge-reconciler.js";
-import { postToDiscord } from "../src/worker/discord-notifier.js";
-import { renderDiscordEvent, type DiscordNotificationEvent } from "../src/worker/discord-events.js";
-import { loadNotificationConfig } from "../src/worker/notification-config.js";
-import { resolveNotificationRoute } from "../src/worker/notification-router.js";
-import { createNotificationScheduler } from "../src/worker/notification-scheduler.js";
-import { resolveWorkerId } from "../src/worker-id.js";
-import { runThoughtAnalyzer, type ThoughtAnalyzerDeps } from "../src/worker/thought-analyzer.js";
-import { ThoughtCapture } from "../src/worker/thought-capture.js";
-import { loadThoughtsConfig } from "../src/worker/thought-config.js";
-import { RecallEnricher } from "../src/worker/recall-enricher.js";
-import { workerInjectRoute } from "../src/worker/inject-route.js";
-import {
-  buildRetryPayloadOrNull,
-  SILENT_RETRY_PREFIX,
-  shouldRetryHandoffForSilentFailure,
-  selectRetryAgent,
-  resolveAgentProvider,
-  type RoutingBiasLike,
-} from "../src/worker/silent-failure-retry.js";
-import { resolveUsageCursorPath, startUsagePoller } from "../src/usage-readers/poller.js";
-import {
-  acquireOrRefreshUsagePollLock,
-  readUsagePollLock,
-} from "../src/usage-readers/poll-lock.js";
-import { CodexRolloutReader } from "../src/usage-readers/codex-rollout-reader.js";
-import { OpenCodeConsoleReader } from "../src/usage-readers/opencode-console-reader.js";
-import { loadOpencodeConsoleConfig } from "../src/usage-readers/opencode-console-config.js";
-import type { UsageReader } from "../src/usage-readers/index.js";
-import { OpenCodeDbReader } from "../src/usage-readers/opencode-db-reader.js";
-import { ClaudeJsonlReader } from "../src/usage-readers/claude-jsonl-reader.js";
-import { ClaudeStatusLineBridge } from "../src/usage-readers/claude-statusline-bridge.js";
-import { GoogleOtlpSynth } from "../src/usage-readers/google-otlp-synth.js";
 import {
   createLogger,
   type DispatchEventInput,
   type HandoffRow,
-  waitForDaemonStorageRoot,
   systemUuid,
+  waitForDaemonStorageRoot,
 } from "@penumbra/core";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+import type { McpServer } from "../src/adapters/acp-types.js";
+import type { AgentChatConfig } from "../src/config/types.js";
+import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../src/sdk/adapter.js";
+import type { UsageReader } from "../src/usage-readers/index.js";
+import type { CapturePort } from "../src/worker/capture-port.js";
+
+import { meaningfulOutput } from "../../core/src/services/agent-performance-capture.js";
+import {
+  acpWarmPoolLiveEntryCount,
+  drainAgent,
+  shutdownAllAcpWarmPools,
+  totalAcpWarmPoolEntryCount,
+} from "../src/adapters/acp-warm-pool-registry.js";
+import { poolKeyFor } from "../src/adapters/acp-warm-pool.js";
+import {
+  type CapacityError,
+  spawnCliAdapter,
+  spawnCliAdapterStream,
+  type SpawnOpts,
+} from "../src/adapters/cli-spawn.js";
+import { prepareOpencodeMcpConfigDir } from "../src/adapters/opencode-mcp-config.js";
+import { buildAdapter, createStdioAcpAdapter, registerAdapter } from "../src/adapters/registry.js";
+import { resolveAdapterApiKey } from "../src/adapters/secret.js";
+import { normalizeAdapterOptions } from "../src/cli/adapter-options.js";
+import { dispatchHandoff } from "../src/cli/dispatch-handoff.js";
+import { loadConfigPathOrDir } from "../src/config/load.js";
+import { PenumbraClient } from "../src/penumbra-client.js";
+import { ClaudeJsonlReader } from "../src/usage-readers/claude-jsonl-reader.js";
+import { ClaudeStatusLineBridge } from "../src/usage-readers/claude-statusline-bridge.js";
+import { CodexRolloutReader } from "../src/usage-readers/codex-rollout-reader.js";
+import { GoogleOtlpSynth } from "../src/usage-readers/google-otlp-synth.js";
+import { loadOpencodeConsoleConfig } from "../src/usage-readers/opencode-console-config.js";
+import { OpenCodeConsoleReader } from "../src/usage-readers/opencode-console-reader.js";
+import { OpenCodeDbReader } from "../src/usage-readers/opencode-db-reader.js";
+import {
+  acquireOrRefreshUsagePollLock,
+  readUsagePollLock,
+} from "../src/usage-readers/poll-lock.js";
+import { resolveUsageCursorPath, startUsagePoller } from "../src/usage-readers/poller.js";
+import { runWorkerBoot } from "../src/worker-boot.js";
+import { resolveWorkerId } from "../src/worker-id.js";
+import { autocommitOnChainEnd } from "../src/worker/autocommit-on-chain-end.js";
+import {
+  computeClaimGraceMs,
+  DEFAULT_CLAIM_AFFINITY_GRACE_MS,
+} from "../src/worker/claim-affinity.js";
+import { runWorkerControlListener } from "../src/worker/control-listener.js";
+import { installGlobalCrashHandlers } from "../src/worker/crash-guard.js";
+import { type DiscordNotificationEvent, renderDiscordEvent } from "../src/worker/discord-events.js";
+import { postToDiscord } from "../src/worker/discord-notifier.js";
+import { createDiscordRateLimiter } from "../src/worker/discord-rate-limit.js";
+import { createWorkerDispatcher } from "../src/worker/dispatcher.js";
+import { DispatchEventQueue } from "../src/worker/event-queue.js";
+import { startEventSource } from "../src/worker/event-source.js";
+import { registerExecutor, unregisterExecutor } from "../src/worker/executor-registry.js";
+import { emitHeartbeat } from "../src/worker/heartbeat-emit.js";
+import { startHeartbeatLoop } from "../src/worker/heartbeat-loop.js";
+import { workerInjectRoute } from "../src/worker/inject-route.js";
+import { createMergeReconciler, type MergeResult } from "../src/worker/merge-reconciler.js";
+import { loadNotificationConfig } from "../src/worker/notification-config.js";
+import { resolveNotificationRoute } from "../src/worker/notification-router.js";
+import { createNotificationScheduler } from "../src/worker/notification-scheduler.js";
+import {
+  applyOrchestrateToolsToConfig,
+  withOrchestrateTools,
+} from "../src/worker/orchestrate-tools.js";
+import { createPermissionCallback } from "../src/worker/permission-callback.js";
+import { PermissionDaemonClient } from "../src/worker/permission-daemon-client.js";
+import { createPrewarmLoop, type PrewarmLoop } from "../src/worker/prewarm-loop.js";
+import { computePrewarmTargets, type PrewarmTarget } from "../src/worker/prewarm-targets.js";
 import { resolveDispatchCwd } from "../src/worker/project-cwd.js";
+import { RecallEnricher } from "../src/worker/recall-enricher.js";
+import { resolveSandboxConfig } from "../src/worker/sandbox-config.js";
+import { createWorkerShutdown } from "../src/worker/shutdown.js";
+import {
+  buildRetryPayloadOrNull,
+  resolveAgentProvider,
+  type RoutingBiasLike,
+  selectRetryAgent,
+  shouldRetryHandoffForSilentFailure,
+  SILENT_RETRY_PREFIX,
+} from "../src/worker/silent-failure-retry.js";
+import { runThoughtAnalyzer, type ThoughtAnalyzerDeps } from "../src/worker/thought-analyzer.js";
+import { ThoughtCapture } from "../src/worker/thought-capture.js";
+import { loadThoughtsConfig } from "../src/worker/thought-config.js";
+import {
+  applyWorktreeOverride,
+  rewriteWorktreeHandoffMessage,
+} from "../src/worker/worktree-integration.js";
 import { createWorkerWorktreeManager } from "../src/worker/worktree-manager.js";
 import { buildWorktreeReadyEvent } from "../src/worker/worktree-ready-event.js";
+import { WriteToolsExecutor } from "../src/worker/write-tools-executor.js";
 
 function flag(name: string, fallback?: string): string | undefined {
   const long = `--${name}`;
   for (let i = 0; i < process.argv.length; i++) {
     const arg = process.argv[i];
-    if (arg === long) return process.argv[i + 1];
-    if (arg && arg.startsWith(`${long}=`)) return arg.slice(long.length + 1);
+    if (arg === long) {
+      return process.argv[i + 1] ?? fallback;
+    }
+    if (arg?.startsWith(`${long}=`)) {
+      return arg.slice(long.length + 1);
+    }
   }
   return fallback;
 }
@@ -132,7 +139,7 @@ interface OpencodeCliAdapterOptions extends CliSpawnAdapterOptions {
 
 function cleanGeminiCliOutput(text: string): string {
   return text
-    .replace(/MCP issues detected\. Run \/mcp list for status\./g, "")
+    .replaceAll("MCP issues detected. Run /mcp list for status.", "")
     .split("\n")
     .filter(
       (line) =>
@@ -152,145 +159,192 @@ function emitCapacityError(capturePort: CapturePort | undefined, err: CapacityEr
   });
 }
 
+type CliKind = "claude-cli" | "gemini-cli" | "agy-cli" | "codex-cli";
+
+function buildCliSpawnOpts(
+  kind: CliKind,
+  opts: CliSpawnAdapterOptions,
+  defaultArgs: string[],
+  command: string,
+  thoughtCapture: ThoughtCapture | null,
+  input: DispatchInput,
+): SpawnOpts {
+  void kind;
+  return {
+    command,
+    args: opts.args ?? defaultArgs,
+    prompt: input.prompt,
+    signal: input.signal,
+    cwd: opts.cwd,
+    pass_via: opts.pass_via,
+    env: opts.env,
+    unset_env: opts.unset_env,
+    strip_patterns: opts.strip_patterns,
+    emit_stdout_thoughts: opts.emit_stdout_thoughts,
+    thoughtCapture: thoughtCapture ?? undefined,
+    onCapacityError: (err): void => {
+      emitCapacityError(opts.capturePort, err);
+    },
+    eventContext: input.eventContext as SpawnOpts["eventContext"],
+    onEvent: input.onEvent,
+  };
+}
+
+function makeCliSpawnAdapter(
+  kind: CliKind,
+  opts: CliSpawnAdapterOptions,
+  defaultArgs: string[],
+  transformText: (text: string) => string,
+  thoughtCapture: ThoughtCapture | null,
+): Adapter {
+  const command = opts.command;
+  if (!command) {
+    throw new Error(`${kind}: command is required`);
+  }
+  const spawnOptsFor = (input: DispatchInput): SpawnOpts =>
+    buildCliSpawnOpts(kind, opts, defaultArgs, command, thoughtCapture, input);
+  return {
+    kind,
+    async dispatch(input: DispatchInput): Promise<DispatchOutput> {
+      const { text } = await spawnCliAdapter(spawnOptsFor(input));
+      return { text: transformText(text) };
+    },
+    async *dispatchStream(input: DispatchInput): AsyncGenerator<DispatchEvent> {
+      for await (const event of spawnCliAdapterStream(spawnOptsFor(input))) {
+        if (event.type === "done") {
+          yield {
+            ...event,
+            result: {
+              ...event.result,
+              text: transformText(event.result.text),
+            },
+          };
+          continue;
+        }
+        yield event;
+      }
+    },
+  };
+}
+
+async function buildOpencodeCliSpawnOpts(
+  opts: OpencodeCliAdapterOptions,
+  command: string,
+  baseArgs: string[],
+  thoughtCapture: ThoughtCapture | null,
+  input: DispatchInput,
+): Promise<SpawnOpts & { cleanup?: () => Promise<void> }> {
+  let apiKey = "";
+  try {
+    apiKey = resolveAdapterApiKey({ apiKeyKeychain: "llamactl/opencode" });
+  } catch {
+    // Graceful degradation: let the CLI handle missing credentials.
+  }
+
+  const env: Record<string, string> = { ...opts.env, OPENCODE_API_KEY: apiKey };
+  let cleanup: (() => Promise<void>) | undefined;
+  if (opts.mcpServers && opts.mcpServers.length > 0) {
+    const prepared = await prepareOpencodeMcpConfigDir(opts.mcpServers);
+    env.XDG_CONFIG_HOME = prepared.xdgConfigHome;
+    cleanup = prepared.cleanup;
+  }
+
+  return {
+    command,
+    args: baseArgs,
+    prompt: input.prompt,
+    signal: input.signal,
+    cwd: opts.cwd,
+    pass_via: opts.pass_via ?? "argv",
+    env,
+    unset_env: opts.unset_env,
+    strip_patterns: opts.strip_patterns,
+    emit_stdout_thoughts: opts.emit_stdout_thoughts,
+    thoughtCapture: thoughtCapture ?? undefined,
+    onCapacityError: (err): void => {
+      emitCapacityError(opts.capturePort, err);
+    },
+    eventContext: input.eventContext as SpawnOpts["eventContext"],
+    onEvent: input.onEvent,
+    cleanup,
+  };
+}
+
+function makeOpencodeCliAdapter(
+  rawOptions: unknown,
+  thoughtCapture: ThoughtCapture | null,
+): Adapter {
+  const opts = rawOptions as OpencodeCliAdapterOptions;
+  if (!opts.model) {
+    throw new Error("opencode-cli: model is required");
+  }
+
+  const model = opts.model.includes("/") ? opts.model : `opencode/${opts.model}`;
+  const command = opts.command ?? "~/.opencode/bin/opencode".replace(/^~/, process.env.HOME ?? "");
+  const baseArgs = opts.args ?? ["run", "--model", model];
+
+  const spawnOptsFor = (
+    input: DispatchInput,
+  ): Promise<SpawnOpts & { cleanup?: () => Promise<void> }> =>
+    buildOpencodeCliSpawnOpts(opts, command, baseArgs, thoughtCapture, input);
+
+  return {
+    kind: "opencode-cli",
+    async dispatch(input: DispatchInput): Promise<DispatchOutput> {
+      const spawnOpts = await spawnOptsFor(input);
+      try {
+        const { text, stderr } = await spawnCliAdapter(spawnOpts);
+        if (!text.trim()) {
+          const markers = [
+            "ProviderModelNotFoundError",
+            "Error: Model not found",
+            "AuthenticationError",
+            "Error: API key",
+          ];
+          const matched = markers.find((marker) => stderr.includes(marker));
+          if (matched || stderr.trim()) {
+            const msg = stderr.trim().slice(0, 500);
+            throw new Error(`opencode-cli error: ${msg || "empty output"}`);
+          }
+        }
+        return { text };
+      } finally {
+        await spawnOpts.cleanup?.();
+      }
+    },
+    async *dispatchStream(input: DispatchInput): AsyncGenerator<DispatchEvent> {
+      const spawnOpts = await spawnOptsFor(input);
+      try {
+        yield* spawnCliAdapterStream(spawnOpts);
+      } finally {
+        await spawnOpts.cleanup?.();
+      }
+    },
+  };
+}
+
 function registerThoughtAwareAdapters(thoughtCapture: ThoughtCapture | null): void {
-  const createCliSpawnAdapter = (
-    kind: "claude-cli" | "gemini-cli" | "agy-cli" | "codex-cli",
+  const registerCli = (
+    kind: CliKind,
     defaultArgs: string[],
     transformText: (text: string) => string = (text) => text,
-  ) => {
-    registerAdapter(kind, (rawOptions) => {
-      const opts = rawOptions as CliSpawnAdapterOptions;
-      if (!opts.command) throw new Error(`${kind}: command is required`);
-
-      const spawnOptsFor = (input: DispatchInput): SpawnOpts => ({
-        command: opts.command!,
-        args: opts.args ?? defaultArgs,
-        prompt: input.prompt,
-        signal: input.signal,
-        cwd: opts.cwd,
-        pass_via: opts.pass_via,
-        env: opts.env,
-        unset_env: opts.unset_env,
-        strip_patterns: opts.strip_patterns,
-        emit_stdout_thoughts: opts.emit_stdout_thoughts,
-        thoughtCapture: thoughtCapture ?? undefined,
-        onCapacityError: (err) => emitCapacityError(opts.capturePort, err),
-        eventContext: input.eventContext as SpawnOpts["eventContext"],
-        onEvent: input.onEvent,
-      });
-
-      const adapter: Adapter = {
-        kind,
-        async dispatch(input: DispatchInput): Promise<DispatchOutput> {
-          const { text } = await spawnCliAdapter(spawnOptsFor(input));
-          return { text: transformText(text) };
-        },
-        async *dispatchStream(input: DispatchInput): AsyncGenerator<DispatchEvent> {
-          for await (const event of spawnCliAdapterStream(spawnOptsFor(input))) {
-            if (event.type === "done") {
-              yield {
-                ...event,
-                result: {
-                  ...event.result,
-                  text: transformText(event.result.text),
-                },
-              };
-              continue;
-            }
-            yield event;
-          }
-        },
-      };
-      return adapter;
-    });
+  ): void => {
+    registerAdapter(
+      kind,
+      (rawOptions): Adapter =>
+        makeCliSpawnAdapter(kind, rawOptions, defaultArgs, transformText, thoughtCapture),
+    );
   };
 
-  createCliSpawnAdapter("claude-cli", ["code", "--no-tty"]);
-  createCliSpawnAdapter("gemini-cli", [], cleanGeminiCliOutput);
-  createCliSpawnAdapter("agy-cli", [], (text) => text);
-  createCliSpawnAdapter("codex-cli", []);
+  registerCli("claude-cli", ["code", "--no-tty"]);
+  registerCli("gemini-cli", [], cleanGeminiCliOutput);
+  registerCli("agy-cli", [], (text) => text);
+  registerCli("codex-cli", []);
 
-  registerAdapter("opencode-cli", (rawOptions) => {
-    const opts = rawOptions as OpencodeCliAdapterOptions;
-    if (!opts.model) throw new Error("opencode-cli: model is required");
-
-    const model = opts.model.includes("/") ? opts.model : `opencode/${opts.model}`;
-    const command =
-      opts.command ?? "~/.opencode/bin/opencode".replace(/^~/, process.env.HOME ?? "");
-    const baseArgs = opts.args ?? ["run", "--model", model];
-
-    const spawnOptsFor = async (
-      input: DispatchInput,
-    ): Promise<SpawnOpts & { cleanup?: () => Promise<void> }> => {
-      let apiKey = "";
-      try {
-        apiKey = resolveAdapterApiKey({ apiKeyKeychain: "llamactl/opencode" });
-      } catch {
-        // Graceful degradation: let the CLI handle missing credentials.
-      }
-
-      const env: Record<string, string> = { ...opts.env, OPENCODE_API_KEY: apiKey };
-      let cleanup: (() => Promise<void>) | undefined;
-      if (opts.mcpServers && opts.mcpServers.length > 0) {
-        const prepared = await prepareOpencodeMcpConfigDir(opts.mcpServers);
-        env.XDG_CONFIG_HOME = prepared.xdgConfigHome;
-        cleanup = prepared.cleanup;
-      }
-
-      return {
-        command,
-        args: baseArgs,
-        prompt: input.prompt,
-        signal: input.signal,
-        cwd: opts.cwd,
-        pass_via: opts.pass_via ?? "argv",
-        env,
-        unset_env: opts.unset_env,
-        strip_patterns: opts.strip_patterns,
-        emit_stdout_thoughts: opts.emit_stdout_thoughts,
-        thoughtCapture: thoughtCapture ?? undefined,
-        onCapacityError: (err) => emitCapacityError(opts.capturePort, err),
-        eventContext: input.eventContext as SpawnOpts["eventContext"],
-        onEvent: input.onEvent,
-        cleanup,
-      };
-    };
-
-    const adapter: Adapter = {
-      kind: "opencode-cli",
-      async dispatch(input: DispatchInput): Promise<DispatchOutput> {
-        const spawnOpts = await spawnOptsFor(input);
-        try {
-          const { text, stderr } = await spawnCliAdapter(spawnOpts);
-          if (!text.trim()) {
-            const markers = [
-              "ProviderModelNotFoundError",
-              "Error: Model not found",
-              "AuthenticationError",
-              "Error: API key",
-            ];
-            const matched = markers.find((marker) => stderr.includes(marker));
-            if (matched || stderr.trim()) {
-              const msg = stderr.trim().slice(0, 500);
-              throw new Error(`opencode-cli error: ${msg || "empty output"}`);
-            }
-          }
-          return { text };
-        } finally {
-          await spawnOpts.cleanup?.();
-        }
-      },
-      async *dispatchStream(input: DispatchInput): AsyncGenerator<DispatchEvent> {
-        const spawnOpts = await spawnOptsFor(input);
-        try {
-          yield* spawnCliAdapterStream(spawnOpts);
-        } finally {
-          await spawnOpts.cleanup?.();
-        }
-      },
-    };
-    return adapter;
-  });
+  registerAdapter(
+    "opencode-cli",
+    (rawOptions): Adapter => makeOpencodeCliAdapter(rawOptions, thoughtCapture),
+  );
 
   // HIGH-1: route the worker's thought-aware stdio-acp registration through the
   // SAME factory as the registry builtin. The previous hand-rolled construction
@@ -335,7 +389,12 @@ const defaultTrust = flag("trust", "all") as "all" | "config";
 const transcriptBudget = Number(flag("transcript-budget", "8192"));
 
 const log = createLogger({ component: "agentchat-worker" });
-installGlobalCrashHandlers({ log, flush: () => log.flush() });
+installGlobalCrashHandlers({
+  log,
+  flush: () => {
+    log.flush();
+  },
+});
 const workerId = resolveWorkerId({
   flag: flag("worker-id"),
   envValue: process.env.PENUMBRA_WORKER_ID,
@@ -343,9 +402,11 @@ const workerId = resolveWorkerId({
 });
 const workerToken = process.env.PENUMBRA_TOKEN ?? "";
 const workerProjectId = (process.env.PENUMBRA_WORKER_PROJECT_ID ?? "").trim() || undefined;
-const workerIsolation = (() => {
+const workerIsolation = ((): "hard" | "sticky" | "shared" => {
   const raw = (process.env.PENUMBRA_WORKER_ISOLATION ?? "").trim().toLowerCase();
-  if (raw === "hard" || raw === "sticky" || raw === "shared") return raw;
+  if (raw === "hard" || raw === "sticky" || raw === "shared") {
+    return raw;
+  }
   if (raw !== "") {
     log.warn(
       { worker_id: workerId, isolation: raw },
@@ -359,7 +420,7 @@ const client = new PenumbraClient({ storageRoot, logger: log });
 await runWorkerBoot({ client, log, workerId });
 const recallEnricher = new RecallEnricher({ client, log });
 const eventQueue = new DispatchEventQueue({
-  send: (events, signal) => client.postDispatchEvents(events, signal),
+  send: (events, signal): Promise<void> => client.postDispatchEvents(events, signal),
 });
 let config = loadConfigPathOrDir(configPath);
 const settings = SettingsDefaults.build({ env: process.env, input: {} });
@@ -371,7 +432,9 @@ const thoughtsConfig = loadThoughtsConfig({ agentchat: config });
 const thoughtCapture = thoughtsConfig.enabled
   ? new ThoughtCapture({
       config: thoughtsConfig,
-      enqueue: (event) => eventQueue.enqueue(event),
+      enqueue: (event): void => {
+        eventQueue.enqueue(event);
+      },
       workerId,
     })
   : null;
@@ -380,8 +443,10 @@ const discordRateLimiter = createDiscordRateLimiter({
   now: () => Date.now(),
   windowMs: 30_000,
 });
-const onEvent = (event: DispatchEventInput) => {
-  if (event.kind === "dispatch.start") return;
+const onEvent = (event: DispatchEventInput): void => {
+  if (event.kind === "dispatch.start") {
+    return;
+  }
   eventQueue.enqueue(event);
 };
 
@@ -425,7 +490,7 @@ function applyAgentCwdOverride(
       return {
         ...agent,
         options: {
-          ...((agent.options as Record<string, unknown>) ?? {}),
+          ...(agent.options ?? {}),
           cwd,
         },
       };
@@ -434,21 +499,49 @@ function applyAgentCwdOverride(
 }
 
 function coalesceKeyForDiscordEvent(event: DiscordNotificationEvent): string | undefined {
-  switch (event.kind) {
-    case "claim_retry":
-      return `claim_retry:${event.handoff_id}`;
-    case "permission_decided":
-      return `permission_decided:${event.permission_id}`;
-    case "cost_quota_summary":
-      return `cost_quota_summary:${event.period ?? "default"}`;
-    default:
-      return undefined;
+  if (event.kind === "claim_retry") {
+    return `claim_retry:${event.handoff_id ?? ""}`;
   }
+  if (event.kind === "permission_decided") {
+    return `permission_decided:${event.permission_id}`;
+  }
+  if (event.kind === "cost_quota_summary") {
+    return `cost_quota_summary:${event.period ?? "default"}`;
+  }
+  return undefined;
+}
+
+type DiscordRoute = ReturnType<typeof resolveNotificationRoute>;
+
+function isRateLimitSuppressed(
+  event: DiscordNotificationEvent,
+  route: NonNullable<DiscordRoute>,
+): boolean {
+  const coalesceKey = coalesceKeyForDiscordEvent(event);
+  return (
+    !!coalesceKey && !discordRateLimiter.shouldSend({ webhookKey: route.routeKey, coalesceKey })
+  );
+}
+
+function discordEventLogContext(
+  event: DiscordNotificationEvent,
+  route: NonNullable<DiscordRoute>,
+): Record<string, unknown> {
+  return {
+    kind: event.kind,
+    handoff_id: event.handoff_id,
+    conversation_id: event.conversation_id,
+    project_id: event.project_id,
+    agent: event.agent,
+    route_key: route.routeKey,
+    channel: route.channelName,
+  };
 }
 
 async function postDiscordEvent(event: DiscordNotificationEvent): Promise<boolean> {
-  if (!notificationConfig.enabled) return true;
-  if (!notificationConfig.events[event.kind]) return true;
+  if (!notificationConfig.enabled || !notificationConfig.events[event.kind]) {
+    return true;
+  }
 
   const route = resolveNotificationRoute({
     config: notificationConfig,
@@ -456,44 +549,22 @@ async function postDiscordEvent(event: DiscordNotificationEvent): Promise<boolea
     projectId: event.project_id,
     agentKey: event.agent,
   });
-  if (!route) return true;
+  if (!route) {
+    return true;
+  }
 
   try {
-    const coalesceKey = coalesceKeyForDiscordEvent(event);
-    if (
-      coalesceKey &&
-      !discordRateLimiter.shouldSend({ webhookKey: route.routeKey ?? "default", coalesceKey })
-    ) {
+    if (isRateLimitSuppressed(event, route)) {
       log.debug(
-        {
-          kind: event.kind,
-          handoff_id: event.handoff_id,
-          conversation_id: event.conversation_id,
-          project_id: event.project_id,
-          agent: event.agent,
-          route_key: route.routeKey ?? "default",
-          channel: route.channelName,
-        },
+        discordEventLogContext(event, route),
         "discord notification suppressed by rate limiter",
       );
       return true;
     }
-
     const payload = renderDiscordEvent(event, { promptPolicy: route.promptPolicy });
     const ok = await postToDiscord(route.webhookUrl, payload, fetch, undefined, route.identity);
     if (!ok) {
-      log.warn(
-        {
-          kind: event.kind,
-          handoff_id: event.handoff_id,
-          conversation_id: event.conversation_id,
-          project_id: event.project_id,
-          agent: event.agent,
-          route_key: route.routeKey,
-          channel: route.channelName,
-        },
-        "discord notification delivery failed",
-      );
+      log.warn(discordEventLogContext(event, route), "discord notification delivery failed");
     }
     return ok;
   } catch (err) {
@@ -518,7 +589,8 @@ async function maybePostDiscordChainEnd(handoff: HandoffRow, reason: string): Pr
   let resolvedHandoff = handoff;
   try {
     const res = await client.getHandoff(handoff.handoff_id);
-    resolvedHandoff = (res.handoff as HandoffRow) ?? handoff;
+    const fetched = res.handoff as HandoffRow | null;
+    resolvedHandoff = fetched ?? handoff;
   } catch {
     resolvedHandoff = handoff;
   }
@@ -545,13 +617,38 @@ async function maybePostDiscordChainEnd(handoff: HandoffRow, reason: string): Pr
   }
 }
 
+const MERGE_STATUS_MAP = {
+  verified: "verified",
+  pr_opened: "pr_opened",
+  pr_creation_failed: "pr_creation_failed",
+  typecheck_failed: "typecheck_failed",
+} as const;
+
+function mergeResultDiscordStatus(
+  status: MergeResult["status"],
+): "verified" | "pr_opened" | "pr_creation_failed" | "typecheck_failed" | "test_failed" {
+  return (
+    (
+      MERGE_STATUS_MAP as Record<
+        string,
+        "verified" | "pr_opened" | "pr_creation_failed" | "typecheck_failed"
+      >
+    )[status] ?? "test_failed"
+  );
+}
+
 async function maybePostDiscordMergeResult(handoffId: string, result: MergeResult): Promise<void> {
-  if (!notificationConfig.enabled || !notificationConfig.events.merge_result) return;
-  if (result.status === "no_changes") return;
+  if (!notificationConfig.enabled || !notificationConfig.events.merge_result) {
+    return;
+  }
+  if (result.status === "no_changes") {
+    return;
+  }
 
   let handoff: HandoffRow | null = null;
   try {
-    ({ handoff } = await client.getHandoff(handoffId));
+    const res = await client.getHandoff(handoffId);
+    handoff = (res.handoff as HandoffRow | null) ?? null;
   } catch {
     handoff = null;
   }
@@ -563,16 +660,7 @@ async function maybePostDiscordMergeResult(handoffId: string, result: MergeResul
     project_id: handoff?.project_id ?? undefined,
     agent: handoff?.to_agent ?? "<unknown>",
     worker_id: handoff?.worker_id ?? workerId,
-    status:
-      result.status === "verified"
-        ? "verified"
-        : result.status === "pr_opened"
-          ? "pr_opened"
-          : result.status === "pr_creation_failed"
-            ? "pr_creation_failed"
-            : result.status === "typecheck_failed"
-              ? "typecheck_failed"
-              : "test_failed",
+    status: mergeResultDiscordStatus(result.status),
     regression_summary: result.regression_summary,
     prompt: handoff?.message,
     pr_url: result.pr_url,
@@ -593,7 +681,8 @@ async function maybePostDiscordPermissionEvent(event: DiscordNotificationEvent):
   let handoff: HandoffRow | null = null;
   if (event.handoff_id) {
     try {
-      ({ handoff } = await client.getHandoff(event.handoff_id));
+      const res = await client.getHandoff(event.handoff_id);
+      handoff = (res.handoff as HandoffRow | null) ?? null;
     } catch {
       handoff = null;
     }
@@ -661,7 +750,7 @@ async function maybeCaptureDispatchOutcome(
   //      dispatch.end terminal event).
   // Bounded to a single retry per chain via SILENT_RETRY_PREFIX in the
   // recovery handoff message; further captures on retry handoffs are skipped.
-  if (perf && shouldRetryHandoffForSilentFailure(handoff, perf)) {
+  if (shouldRetryHandoffForSilentFailure(handoff, perf)) {
     if (handoff.message.startsWith(SILENT_RETRY_PREFIX)) {
       log.warn(
         {
@@ -774,42 +863,105 @@ function loadProjectContext(project_id: string | null): string | undefined {
   return existsSync(path) ? readFileSync(path, "utf8") : undefined;
 }
 
-function createPermissionEventSource(url: string, token: string) {
+type PermissionEventSourceListener = (evt: { data: string; lastEventId?: string }) => void;
+
+interface PermissionEventSource {
+  addEventListener: (name: string, fn: PermissionEventSourceListener) => void;
+  onReconnect: (fn: () => void) => () => void;
+  close: () => void;
+}
+
+interface ParsedSseFrame {
+  eventName: string;
+  lastEventId: string | undefined;
+  data: string;
+}
+
+function parseSseFrame(frame: string): ParsedSseFrame | null {
+  let eventName = "";
+  let lastEventId: string | undefined;
+  const dataLines: string[] = [];
+  for (const line of frame.split("\n")) {
+    if (line.startsWith("event:")) {
+      eventName = line.slice(6).trim();
+    } else if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).replace(/^ /, ""));
+    } else if (line.startsWith("id:")) {
+      lastEventId = line.slice(3).trim();
+    }
+  }
+  if (!eventName || dataLines.length === 0) {
+    return null;
+  }
+  return { eventName, lastEventId, data: dataLines.join("\n") };
+}
+
+function createPermissionEventSource(url: string, token: string): PermissionEventSource {
   // Native EventSource (browser API) doesn't support custom headers — bun's
   // global EventSource (when available) inherits that limitation, so we
   // can't use it here: the daemon's bearer auth would never be sent. The
   // fallback below is the authoritative path until we adopt a polyfill that
   // supports authenticated reconnect.
-  const listeners = new Map<string, Set<(evt: { data: string; lastEventId?: string }) => void>>();
+  const listeners = new Map<string, Set<PermissionEventSourceListener>>();
   const reconnectListeners = new Set<() => void>();
   const controller = new AbortController();
   let closed = false;
   let backoffMs = 200;
 
-  const fireReconnectListeners = () => {
-    for (const fn of reconnectListeners) fn();
+  const fireReconnectListeners = (): void => {
+    for (const fn of reconnectListeners) {
+      fn();
+    }
   };
 
-  const emit = (name: string, data: string, lastEventId?: string) => {
+  const emit = (name: string, data: string, lastEventId?: string): void => {
     for (const fn of listeners.get(name) ?? []) {
       fn({ data, lastEventId });
     }
   };
 
-  const parseFrame = (frame: string) => {
-    let eventName = "";
-    let lastEventId: string | undefined;
-    const dataLines: string[] = [];
-    for (const line of frame.split("\n")) {
-      if (line.startsWith("event:")) eventName = line.slice(6).trim();
-      else if (line.startsWith("data:")) dataLines.push(line.slice(5).replace(/^ /, ""));
-      else if (line.startsWith("id:")) lastEventId = line.slice(3).trim();
+  const handleFrame = (frame: string): void => {
+    const parsed = parseSseFrame(frame);
+    if (parsed) {
+      emit(parsed.eventName, parsed.data, parsed.lastEventId);
     }
-    if (eventName && dataLines.length) emit(eventName, dataLines.join("\n"), lastEventId);
   };
 
-  const pump = async () => {
-    while (!closed && !controller.signal.aborted) {
+  const isStreamStopped = (): boolean => closed || controller.signal.aborted;
+
+  const consumeBody = async (body: ReadableStream<Uint8Array>): Promise<void> => {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    fireReconnectListeners();
+    try {
+      while (!isStreamStopped()) {
+        const { value, done } = await reader.read();
+        if (done) {
+          break;
+        }
+        backoffMs = 200;
+        buf += decoder.decode(value, { stream: true });
+        const frames = buf.split("\n\n");
+        buf = frames.pop() ?? "";
+        for (const frame of frames) {
+          handleFrame(frame);
+        }
+      }
+    } finally {
+      reader.releaseLock();
+      try {
+        await body.cancel();
+      } catch {
+        /* noop */
+      }
+    }
+  };
+
+  const isStopped = (): boolean => closed || controller.signal.aborted;
+
+  const pump = async (): Promise<void> => {
+    while (!isStopped()) {
       try {
         const res = await fetch(url, {
           headers: {
@@ -818,31 +970,14 @@ function createPermissionEventSource(url: string, token: string) {
           },
           signal: controller.signal,
         });
-        if (!res.ok || !res.body) throw new Error(`permissions SSE HTTP ${res.status}`);
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = "";
-        fireReconnectListeners();
-        try {
-          while (!closed && !controller.signal.aborted) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            backoffMs = 200;
-            buf += decoder.decode(value, { stream: true });
-            const frames = buf.split("\n\n");
-            buf = frames.pop() ?? "";
-            for (const frame of frames) parseFrame(frame);
-          }
-        } finally {
-          reader.releaseLock();
-          try {
-            await res.body.cancel();
-          } catch {
-            /* noop */
-          }
+        if (!res.ok || !res.body) {
+          throw new Error(`permissions SSE HTTP ${String(res.status)}`);
         }
+        await consumeBody(res.body);
       } catch {
-        if (closed || controller.signal.aborted) return;
+        if (isStopped()) {
+          return;
+        }
         await new Promise((resolve) => setTimeout(resolve, backoffMs));
         backoffMs = Math.min(backoffMs * 2, 30000);
       }
@@ -851,17 +986,21 @@ function createPermissionEventSource(url: string, token: string) {
   void pump();
 
   return {
-    addEventListener(name: string, fn: (evt: { data: string; lastEventId?: string }) => void) {
-      if (!listeners.has(name)) listeners.set(name, new Set());
-      listeners.get(name)!.add(fn);
+    addEventListener(name: string, fn: PermissionEventSourceListener): void {
+      let bucket = listeners.get(name);
+      if (!bucket) {
+        bucket = new Set();
+        listeners.set(name, bucket);
+      }
+      bucket.add(fn);
     },
-    onReconnect(fn: () => void) {
+    onReconnect(fn: () => void): () => void {
       reconnectListeners.add(fn);
-      return () => {
+      return (): void => {
         reconnectListeners.delete(fn);
       };
     },
-    close() {
+    close(): void {
       closed = true;
       controller.abort();
       reconnectListeners.clear();
@@ -881,11 +1020,12 @@ async function loadConversationTranscript(
     statuses: ["completed", "dispatched", "approved", "redirected"],
     conversation_id,
   });
-  const sorted = [...handoffs].sort((a, b) => a.ts.localeCompare(b.ts));
+  const rows = handoffs as HandoffRow[];
+  const sorted = [...rows].sort((a, b) => a.ts.localeCompare(b.ts));
   return sorted.map((h) => ({
-    handoff_id: h.handoff_id as string,
-    agent: h.from_agent === "user" ? "user" : (h.from_agent as string),
-    text: h.message as string,
+    handoff_id: h.handoff_id,
+    agent: h.from_agent === "user" ? "user" : h.from_agent,
+    text: h.message,
   }));
 }
 
@@ -963,13 +1103,17 @@ const prewarmOne = async (target: PrewarmTarget): Promise<void> => {
   // the spawned child (startServer wires signal→kill), so a hung handshake can
   // never (a) wedge the loop's single-flight or (b) orphan a process at exit.
   const ac = new AbortController();
-  const onShutdown = () => ac.abort(new Error("prewarm aborted: worker shutdown"));
-  if (prewarmAbort.signal.aborted) onShutdown();
-  else prewarmAbort.signal.addEventListener("abort", onShutdown, { once: true });
-  const timer = setTimeout(
-    () => ac.abort(new Error(`prewarm timeout ${PREWARM_DISPATCH_TIMEOUT_MS}ms`)),
-    PREWARM_DISPATCH_TIMEOUT_MS,
-  );
+  const onShutdown = (): void => {
+    ac.abort(new Error("prewarm aborted: worker shutdown"));
+  };
+  if (prewarmAbort.signal.aborted) {
+    onShutdown();
+  } else {
+    prewarmAbort.signal.addEventListener("abort", onShutdown, { once: true });
+  }
+  const timer = setTimeout(() => {
+    ac.abort(new Error(`prewarm timeout ${String(PREWARM_DISPATCH_TIMEOUT_MS)}ms`));
+  }, PREWARM_DISPATCH_TIMEOUT_MS);
   (timer as { unref?: () => void }).unref?.();
   try {
     const result = await adapter.prewarm(ac.signal);
@@ -1000,7 +1144,7 @@ const refreshPrewarmLoop = (): void => {
   const eligibleMaxAges = config.agents
     .filter((a) => {
       const o = a.options as Record<string, unknown> | undefined;
-      return o?.warm_pool === true && o?.warm_pool_prewarm === true;
+      return o?.warm_pool === true && o.warm_pool_prewarm === true;
     })
     .map((a) =>
       Number(
@@ -1024,14 +1168,18 @@ const refreshPrewarmLoop = (): void => {
     clock: {
       now: () => Date.now(),
       setInterval: (fn, ms) => setInterval(fn, ms),
-      clearInterval: (h) => clearInterval(h as ReturnType<typeof setInterval>),
+      clearInterval: (h) => {
+        clearInterval(h as ReturnType<typeof setInterval>);
+      },
     },
     cap: PREWARM_GLOBAL_CAP,
     refreshIntervalMs,
     // Wake at most once a minute so a crashed pre-warm self-heals promptly,
     // while the expensive proactive replace only runs at refreshIntervalMs.
     tickIntervalMs: Math.min(60_000, refreshIntervalMs),
-    log: (level, obj, msg) => log[level](obj, msg),
+    log: (level, obj, msg) => {
+      log[level](obj, msg);
+    },
   });
   log.info(
     {
@@ -1056,7 +1204,7 @@ let daemonToken: string;
 try {
   const portStr = readFileSync(join(storageRoot, "port"), "utf8").trim();
   daemonToken = readFileSync(join(storageRoot, "token"), "utf8").trim();
-  baseDaemonUrl = `http://127.0.0.1:${Number(portStr)}`;
+  baseDaemonUrl = `http://127.0.0.1:${String(Number(portStr))}`;
 } catch (err) {
   console.error(
     `penumbra not running at ${storageRoot} (missing port/token); start the daemon first`,
@@ -1066,18 +1214,20 @@ try {
 
 const permissionDaemonClient = new PermissionDaemonClient({
   penumbraClient: client,
-  makeEventSource: () =>
+  makeEventSource: (): PermissionEventSource =>
     createPermissionEventSource(`${baseDaemonUrl}/permissions/events`, daemonToken),
   uuid: systemUuid,
   log,
-  onPermissionEvent: (event) => {
+  onPermissionEvent: (event): void => {
     void maybePostDiscordPermissionEvent(event);
   },
 });
 await permissionDaemonClient.start();
 
 function agentNamesForPool(pool: AgentPool | null): string[] {
-  if (pool == null) return [];
+  if (pool === null) {
+    return [];
+  }
   if (typeof pool === "string") return [pool];
   if (Array.isArray(pool)) return pool;
   return pool.members.map((member) => member.agent);
@@ -1108,8 +1258,10 @@ function openAiCompatSeat(
   agentName: string,
 ): { baseUrl: string; model: string; options: Record<string, unknown> } | null {
   const seat = config.agents.find((agent) => agent.name === agentName);
-  if (!seat || seat.adapter !== "openai-compat-http") return null;
-  const options = (seat.options ?? {}) as Record<string, unknown>;
+  if (seat?.adapter !== "openai-compat-http") {
+    return null;
+  }
+  const options = seat.options as Record<string, unknown>;
   const baseUrl = typeof options.baseUrl === "string" ? options.baseUrl : null;
   const model = typeof options.model === "string" ? options.model : null;
   if (!baseUrl || !model) return null;
@@ -1156,7 +1308,7 @@ async function probeLocalAnalyzerSeat(agentName: string): Promise<boolean> {
       signal: AbortSignal.timeout(5_000),
     });
     if (!res.ok) return false;
-    const body = (await res.json()) as { data?: Array<{ id?: unknown }> };
+    const body = (await res.json()) as { data?: { id?: unknown }[] };
     return (body.data ?? []).some((model) => model.id === seat.model);
   } catch {
     return false;
@@ -1184,13 +1336,16 @@ const thoughtAnalyzerDeps: ThoughtAnalyzerDeps = {
   chainStart: (input) => client.chainStart(input),
   chainWait: (input) => client.chainWait(input),
   chainResponse: (input) => client.chainResponse(input),
-  recordEvent: (event) => Promise.resolve(eventQueue.enqueue(event)),
+  recordEvent: (event) => {
+    eventQueue.enqueue(event);
+    return Promise.resolve();
+  },
   log,
   workerId,
   getHandoff: async (id) => {
     try {
-      const { handoff } = await client.getHandoff(id);
-      return handoff;
+      const res = await client.getHandoff(id);
+      return res.handoff as HandoffRow | null;
     } catch {
       return null;
     }
@@ -1249,28 +1404,266 @@ const reconcileWorktree = createMergeReconciler({
     const { events } = await client.getDispatchEvents({ handoff_id: handoffId });
     return events
       .filter((event) => event.kind === "agent.thought")
-      .map((event) => ({
-        sequence_n: (event.meta?.sequence_n as number) ?? 0,
-        adapter: (event.meta?.adapter as string) ?? "",
-        agent_name: (event.meta?.agent_name as string) ?? "",
-        text: (event.meta?.text as string) ?? "",
-        token_count: event.meta?.token_count as number | undefined,
-      }))
+      .map((event) => {
+        const meta = event.meta ?? {};
+        return {
+          sequence_n: typeof meta.sequence_n === "number" ? meta.sequence_n : 0,
+          adapter: typeof meta.adapter === "string" ? meta.adapter : "",
+          agent_name: typeof meta.agent_name === "string" ? meta.agent_name : "",
+          text: typeof meta.text === "string" ? meta.text : "",
+          token_count: typeof meta.token_count === "number" ? meta.token_count : undefined,
+        };
+      })
       .sort((a, b) => a.sequence_n - b.sequence_n);
   },
   getParentHandoffId: async (handoffId) => {
-    const { handoff } = await client.getHandoff(handoffId);
+    const res = await client.getHandoff(handoffId);
+    const handoff = res.handoff as HandoffRow | null;
     return handoff?.parent_handoff_id ?? null;
   },
   getHandoff: async (id) => {
     try {
-      const { handoff } = await client.getHandoff(id);
-      return handoff;
+      const res = await client.getHandoff(id);
+      return res.handoff as HandoffRow | null;
     } catch {
       return null;
     }
   },
 });
+
+function summarizeAuditPayload(eventType: string, payload: unknown): string {
+  const typed = payload as Record<string, unknown> | null;
+  if (!typed || typeof typed !== "object") {
+    return eventType;
+  }
+  const path = typeof typed.path === "string" ? typed.path : null;
+  const terminalId = typeof typed.terminal_id === "string" ? typed.terminal_id : null;
+  const reason = typeof typed.reason === "string" ? typed.reason : null;
+  const detail = path ?? terminalId ?? reason;
+  return detail ? `${eventType}: ${detail}` : eventType;
+}
+
+function buildDispatchExecutor(
+  handoff: HandoffRow,
+  agentOptions: AgentOptions,
+  worktreeRoot: string,
+  requestPermission: ReturnType<typeof createPermissionCallback>,
+): WriteToolsExecutor {
+  const sandboxConfig = resolveSandboxConfig(agentOptions);
+  return new WriteToolsExecutor({
+    worktreeRoot,
+    permissionCallback: requestPermission,
+    auditEmitter: {
+      emit: async (eventType, payload): Promise<void> => {
+        await client.observe({
+          ts: new Date().toISOString(),
+          source: "agentchat",
+          event_type: eventType,
+          lane: "cli-subscription",
+          project_id: handoff.project_id ?? null,
+          user_id: handoff.to_agent,
+          machine_id: "local",
+          session_id: handoff.conversation_id,
+          payload_json: payload,
+          payload_summary: summarizeAuditPayload(eventType, payload).slice(0, 240),
+        });
+      },
+    },
+    sandboxConfig,
+    logger: log,
+    handoffId: handoff.handoff_id,
+    dispatchId: handoff.handoff_id,
+  });
+}
+
+async function maybeApplyRecallEnrichment(
+  agentCfg: AgentChatConfig["agents"][number] | undefined,
+  handoff: HandoffRow,
+  dispatchedHandoff: HandoffRow,
+): Promise<HandoffRow> {
+  if (!agentCfg?.recall_context?.enabled) {
+    return dispatchedHandoff;
+  }
+  const recallConfig = agentCfg.recall_context as Parameters<
+    typeof recallEnricher.enrich
+  >[0]["config"];
+  const enrichedMessage = await recallEnricher.enrich({
+    message: dispatchedHandoff.message,
+    config: recallConfig,
+    projectId: handoff.project_id ?? null,
+  });
+  if (enrichedMessage === dispatchedHandoff.message) {
+    return dispatchedHandoff;
+  }
+  return { ...dispatchedHandoff, message: enrichedMessage };
+}
+
+async function setUpDispatchWorktree(
+  handoff: HandoffRow,
+  scopedConfig: AgentChatConfig,
+  agentOptions: AgentOptions,
+  requestPermission: ReturnType<typeof createPermissionCallback>,
+  signal: AbortSignal,
+): Promise<{
+  overrideConfig: AgentChatConfig;
+  dispatchedHandoff: HandoffRow;
+  executor: WriteToolsExecutor;
+}> {
+  const worktreeSetupStart = Date.now();
+  const result = await applyWorktreeOverride(
+    handoff,
+    scopedConfig,
+    storageRoot,
+    worktreeManager,
+    process.cwd(),
+    { signal },
+  );
+  if (result.handle) {
+    onEvent(
+      buildWorktreeReadyEvent({
+        handoffId: handoff.handoff_id,
+        workerId,
+        worktreeMode: result.handle.worktreeMode,
+        durationMs: Date.now() - worktreeSetupStart,
+      }),
+    );
+  }
+  const overrideConfig = applyOrchestrateToolsToConfig(
+    result.overrideConfig,
+    handoff.to_agent,
+    handoff.dispatch_kind ?? null,
+  );
+  const dispatchedHandoff: HandoffRow = result.worktreePromptRewrite
+    ? {
+        ...handoff,
+        message: rewriteWorktreeHandoffMessage(handoff.message, result.worktreePromptRewrite),
+      }
+    : handoff;
+  const executor = buildDispatchExecutor(
+    handoff,
+    agentOptions,
+    result.handle?.path ?? process.cwd(),
+    requestPermission,
+  );
+  registerExecutor(handoff.handoff_id, executor);
+  return { overrideConfig, dispatchedHandoff, executor };
+}
+
+async function runDispatch(
+  handoff: HandoffRow & { hop_idx?: number },
+  onChunk: (delta: string) => void,
+  signal: AbortSignal,
+): Promise<import("../src/cli/dispatch-handoff.js").DispatchHandoffResult> {
+  // The handoff is already in 'dispatched' state at this point (the dispatcher
+  // claimed it before calling). Whatever happens inside this function — clean
+  // termination OR an unhandled throw from anything in the chain — we MUST
+  // ensure the row leaves 'dispatched' (completed on success, or failed on
+  // exhausted adapter retries) so it doesn't get stuck until manual recovery.
+  const dispatchCwd = resolveDispatchCwd({
+    project_id: handoff.project_id ?? undefined,
+    defaultCwd: process.cwd(),
+    projectRegistry,
+  });
+  const scopedConfig = applyAgentCwdOverride(config, handoff.to_agent, dispatchCwd);
+  const transcript = await loadConversationTranscript(handoff.conversation_id);
+  // Drop the current handoff's row by handoff_id — dispatchHandoff re-adds it via the wrapper.
+  const transcriptForBuild = transcript
+    .filter((t) => t.handoff_id !== handoff.handoff_id)
+    .map((t) => ({ agent: t.agent, text: t.text }));
+  // Count prior hops: non-user entries in the full transcript (each represents one completed
+  // hop's output; the current handoff's row counts because it carries the previous hop's reply).
+  const hopsSoFar = transcript.filter((t) => t.agent !== "user").length;
+  // Enrich handoff for dispatcher progress reporting
+  handoff.hop_idx = hopsSoFar;
+
+  const projectContext = loadProjectContext(handoff.project_id);
+  const trustMode = handoff.chain_trust_mode ?? defaultTrust;
+  const maxHops = handoff.chain_max_hops ?? defaultMaxHops;
+  const agentCfg = config.agents.find((a) => a.name === handoff.to_agent);
+  const agentOptions = agentCfg?.options ?? {};
+  // Orchestrate-maestro dispatches get the task-board resolution tools
+  // (task.get/complete/fail) injected so the worker can self-complete its
+  // task; no-op for every other dispatch kind. Mirrored into overrideConfig
+  // below so the adapter tool SURFACE (not just permission auto-approve) is
+  // augmented too.
+  const allowedTools = withOrchestrateTools(
+    agentOptions.allowed_tools ?? [],
+    handoff.dispatch_kind ?? null,
+  );
+  const ttlSeconds =
+    agentOptions.permission_ttl_s ?? Number(process.env.PENUMBRA_PERMISSION_TTL_S ?? 300);
+  const perDispatchAllowlist = new Set<string>();
+  const requestPermission = createPermissionCallback({
+    trustMode,
+    allowedTools,
+    handoffId: handoff.handoff_id,
+    conversationId: handoff.conversation_id,
+    agentName: handoff.to_agent,
+    ttlSeconds,
+    daemonClient: permissionDaemonClient,
+    perDispatchAllowlist,
+    log,
+  });
+
+  let setup: {
+    overrideConfig: AgentChatConfig;
+    dispatchedHandoff: HandoffRow;
+    executor: WriteToolsExecutor;
+  };
+  try {
+    setup = await setUpDispatchWorktree(
+      handoff,
+      scopedConfig,
+      agentOptions,
+      requestPermission,
+      signal,
+    );
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    await client.markFailed(handoff.handoff_id, reason, workerId);
+    throw err;
+  }
+
+  const dispatchedHandoff = await maybeApplyRecallEnrichment(
+    agentCfg,
+    handoff,
+    setup.dispatchedHandoff,
+  );
+
+  try {
+    return await dispatchHandoff({
+      handoff: dispatchedHandoff,
+      config: setup.overrideConfig,
+      conversation: { id: handoff.conversation_id, project_id: handoff.project_id ?? null },
+      transcript: transcriptForBuild,
+      transcriptBudget,
+      hopsSoFar,
+      maxHops,
+      trustMode,
+      requestPermission,
+      projectContext,
+      executor: setup.executor,
+      observe: (e: Record<string, unknown>) => client.observe(e),
+      createHandoff: (body: Parameters<typeof client.createHandoff>[0]) =>
+        client.createHandoff(body),
+      approve: (id: string, body: Parameters<typeof client.approve>[1]) => client.approve(id, body),
+      markFailed: (id: string, reason: string) => client.markFailed(id, reason, workerId),
+      onChunk,
+      eventContext: {
+        handoffId: handoff.handoff_id,
+        workerId,
+        agentName: handoff.to_agent,
+      } as SpawnOpts["eventContext"],
+      onEvent,
+      signal,
+    });
+  } finally {
+    await setup.executor.dispose().catch((err: unknown) => {
+      log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, "executor dispose failed");
+    });
+    unregisterExecutor(handoff.handoff_id);
+  }
+}
 
 const dispatcher = createWorkerDispatcher({
   log,
@@ -1314,8 +1707,9 @@ const dispatcher = createWorkerDispatcher({
   claim: (id) => client.claimHandoff(id, workerId),
   // Cross-project claim affinity. `config` is read lazily (each handoff) so the
   // warm_pool flag survives hot-reload, mirroring computePrewarmTargetsNow.
-  claimGraceMs: (handoff) =>
-    computeClaimGraceMs({
+  claimGraceMs: (rawHandoff): number => {
+    const handoff = rawHandoff as HandoffRow;
+    return computeClaimGraceMs({
       toAgent: handoff.to_agent,
       handoffProjectId: handoff.project_id ?? null,
       agents: config.agents.map((a) => ({
@@ -1326,14 +1720,18 @@ const dispatcher = createWorkerDispatcher({
       resolveProjectRoot: prewarmResolveProjectRoot,
       mainRepoPath: process.cwd(),
       graceMs: CLAIM_AFFINITY_GRACE_MS,
-    }),
+    });
+  },
   postProgress: (id, payload) => client.postProgress(id, payload),
-  complete: async (id) => {
+  complete: async (id): Promise<void> => {
     await client.completeHandoff(id, workerId);
   },
-  autocommitOnChainEnd: async (handoff) => {
+  autocommitOnChainEnd: async (rawHandoff): Promise<void> => {
+    const handoff = rawHandoff as HandoffRow;
     const wt = worktreeManager.getWorktree(handoff.handoff_id);
-    if (!wt) return;
+    if (!wt) {
+      return;
+    }
     await autocommitOnChainEnd(handoff, wt, { log });
   },
   onChainEnd: (
@@ -1358,7 +1756,7 @@ const dispatcher = createWorkerDispatcher({
     );
     if (reason === "completed") {
       // Trigger the merge reconciler asynchronously without blocking completion
-      void reconcileWorktree(typedHandoff.handoff_id).catch((err) => {
+      void reconcileWorktree(typedHandoff.handoff_id).catch((err: unknown) => {
         log.error(
           { handoff_id: typedHandoff.handoff_id, err: String(err) },
           "worktree reconciliation failed",
@@ -1367,182 +1765,9 @@ const dispatcher = createWorkerDispatcher({
     }
   },
   onClaimRetryable: (id) => eventSourceRef?.forget(id),
-  dispatch: async (handoff, onChunk, signal) => {
-    // The handoff is already in 'dispatched' state at this point (the dispatcher
-    // claimed it before calling). Whatever happens inside this function — clean
-    // termination OR an unhandled throw from anything in the chain — we MUST
-    // ensure the row leaves 'dispatched' (completed on success, or failed on
-    // exhausted adapter retries) so it doesn't get stuck until manual recovery.
-    const dispatchCwd = resolveDispatchCwd({
-      project_id: handoff.project_id ?? undefined,
-      defaultCwd: process.cwd(),
-      projectRegistry,
-    });
-    const scopedConfig = applyAgentCwdOverride(config, handoff.to_agent, dispatchCwd);
-    const transcript = await loadConversationTranscript(handoff.conversation_id);
-    // Drop the current handoff's row by handoff_id — dispatchHandoff re-adds it via the wrapper.
-    const transcriptForBuild = transcript
-      .filter((t) => t.handoff_id !== handoff.handoff_id)
-      .map((t) => ({ agent: t.agent, text: t.text }));
-    // Count prior hops: non-user entries in the full transcript (each represents one completed
-    // hop's output; the current handoff's row counts because it carries the previous hop's reply).
-    const hopsSoFar = transcript.filter((t) => t.agent !== "user").length;
-
-    // Enrich handoff for dispatcher progress reporting
-    handoff.hop_idx = hopsSoFar;
-
-    const projectContext = loadProjectContext(handoff.project_id);
-    const trustMode = (handoff.chain_trust_mode ?? defaultTrust) as "all" | "config";
-    const maxHops = handoff.chain_max_hops ?? defaultMaxHops;
-    const agentCfg = config.agents.find((a) => a.name === handoff.to_agent);
-    // Orchestrate-maestro dispatches get the task-board resolution tools
-    // (task.get/complete/fail) injected so the worker can self-complete its
-    // task; no-op for every other dispatch kind. Mirrored into overrideConfig
-    // below so the adapter tool SURFACE (not just permission auto-approve) is
-    // augmented too.
-    const allowedTools = withOrchestrateTools(
-      (agentCfg?.options as any)?.allowed_tools ?? [],
-      handoff.dispatch_kind,
-    );
-    const ttlSeconds =
-      (agentCfg?.options as any)?.permission_ttl_s ??
-      Number(process.env.PENUMBRA_PERMISSION_TTL_S ?? 300);
-    const perDispatchAllowlist = new Set<string>();
-    const requestPermission = createPermissionCallback({
-      trustMode,
-      allowedTools,
-      handoffId: handoff.handoff_id as string,
-      conversationId: handoff.conversation_id,
-      agentName: handoff.to_agent,
-      ttlSeconds,
-      daemonClient: permissionDaemonClient,
-      perDispatchAllowlist,
-      log,
-    });
-
-    let overrideConfig = scopedConfig;
-    let executor: WriteToolsExecutor | null = null;
-    let dispatchedHandoff = handoff;
-    try {
-      const worktreeSetupStart = Date.now();
-      const result = await applyWorktreeOverride(
-        handoff,
-        scopedConfig,
-        storageRoot,
-        worktreeManager,
-        process.cwd(),
-        { signal },
-      );
-      if (result.handle) {
-        onEvent(
-          buildWorktreeReadyEvent({
-            handoffId: String(handoff.handoff_id),
-            workerId,
-            worktreeMode: result.handle.worktreeMode,
-            durationMs: Date.now() - worktreeSetupStart,
-          }),
-        );
-      }
-      overrideConfig = applyOrchestrateToolsToConfig(
-        result.overrideConfig,
-        handoff.to_agent,
-        handoff.dispatch_kind,
-      );
-      dispatchedHandoff = result.worktreePromptRewrite
-        ? {
-            ...handoff,
-            message: rewriteWorktreeHandoffMessage(handoff.message, result.worktreePromptRewrite),
-          }
-        : handoff;
-      const sandboxConfig = resolveSandboxConfig((agentCfg?.options as any) ?? {});
-      executor = new WriteToolsExecutor({
-        worktreeRoot: result.handle?.path ?? process.cwd(),
-        permissionCallback: requestPermission,
-        auditEmitter: {
-          emit: async (eventType, payload) => {
-            const payloadSummary = (() => {
-              const typed = payload as Record<string, unknown> | null;
-              if (!typed || typeof typed !== "object") return eventType;
-              const path = typeof typed.path === "string" ? typed.path : null;
-              const terminalId = typeof typed.terminal_id === "string" ? typed.terminal_id : null;
-              const reason = typeof typed.reason === "string" ? typed.reason : null;
-              const detail = path ?? terminalId ?? reason;
-              return detail ? `${eventType}: ${detail}` : eventType;
-            })();
-            await client.observe({
-              ts: new Date().toISOString(),
-              source: "agentchat",
-              event_type: eventType,
-              lane: "cli-subscription",
-              project_id: handoff.project_id ?? null,
-              user_id: handoff.to_agent,
-              machine_id: "local",
-              session_id: handoff.conversation_id,
-              payload_json: payload as Record<string, unknown>,
-              payload_summary: payloadSummary.slice(0, 240),
-            });
-          },
-        },
-        sandboxConfig,
-        logger: log,
-        handoffId: handoff.handoff_id as string,
-        dispatchId: handoff.handoff_id as string,
-      });
-      registerExecutor(handoff.handoff_id as string, executor);
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      await client.markFailed(handoff.handoff_id as string, reason, workerId);
-      throw err;
-    }
-
-    // Per-agent recall enrichment. Off unless agentchat.yaml opts in via
-    // recall_context.enabled. Soft-fail by design — RecallEnricher returns the
-    // unmodified message on any error so a memory outage never blocks dispatch.
-    if (agentCfg?.recall_context?.enabled) {
-      const enrichedMessage = await recallEnricher.enrich({
-        message: dispatchedHandoff.message,
-        config: agentCfg.recall_context,
-        projectId: handoff.project_id ?? null,
-      });
-      if (enrichedMessage !== dispatchedHandoff.message) {
-        dispatchedHandoff = { ...dispatchedHandoff, message: enrichedMessage };
-      }
-    }
-
-    try {
-      return await dispatchHandoff({
-        handoff: dispatchedHandoff,
-        config: overrideConfig,
-        conversation: { id: handoff.conversation_id, project_id: handoff.project_id ?? null },
-        transcript: transcriptForBuild,
-        transcriptBudget,
-        hopsSoFar,
-        maxHops,
-        trustMode,
-        requestPermission,
-        projectContext,
-        executor: executor ?? undefined,
-        observe: (e) => client.observe(e),
-        createHandoff: (body) => client.createHandoff(body),
-        approve: (id, body) => client.approve(id, body),
-        markFailed: (id, reason) => client.markFailed(id, reason, workerId),
-        onChunk,
-        eventContext: {
-          handoffId: handoff.handoff_id as string,
-          workerId,
-          agentName: handoff.to_agent,
-        } as SpawnOpts["eventContext"],
-        onEvent,
-        signal,
-      });
-    } finally {
-      if (executor) {
-        await executor.dispose().catch((err) => {
-          log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, "executor dispose failed");
-        });
-        unregisterExecutor(handoff.handoff_id as string);
-      }
-    }
+  dispatch: async (rawHandoff, onChunk, signal) => {
+    const handoff = rawHandoff as HandoffRow & { hop_idx?: number };
+    return await runDispatch(handoff, onChunk, signal);
   },
 });
 
@@ -1552,15 +1777,19 @@ const workerServer = Bun.serve({
   port: 0,
   fetch: async (req) => {
     const url = new URL(req.url);
-    const match = url.pathname.match(/^\/sessions\/([^/]+)\/inject$/);
-    if (req.method === "POST" && match) {
-      return workerInjectRoute(req, decodeURIComponent(match[1]!), { token: workerToken });
+    const match = /^\/sessions\/([^/]+)\/inject$/.exec(url.pathname);
+    const sessionId = match?.[1];
+    if (req.method === "POST" && sessionId) {
+      return await workerInjectRoute(req, decodeURIComponent(sessionId), { token: workerToken });
     }
     return new Response("not found", { status: 404 });
   },
 });
-writeFileSync(join(homedir(), ".penumbra", "worker-port"), `${workerServer.port}\n`);
-writeFileSync(join(homedir(), ".penumbra", "worker-bind"), `127.0.0.1:${workerServer.port}\n`);
+writeFileSync(join(homedir(), ".penumbra", "worker-port"), `${String(workerServer.port)}\n`);
+writeFileSync(
+  join(homedir(), ".penumbra", "worker-bind"),
+  `127.0.0.1:${String(workerServer.port)}\n`,
+);
 
 const eventSource = startEventSource({
   client: {
@@ -1621,7 +1850,7 @@ if (process.env.PENUMBRA_USAGE_POLL_DISABLED !== "1") {
     readers: usageReaders,
     intervalMs: usagePollIntervalMs,
     cursorPath: usageCursorPath,
-    emit: (e) => client.observe(e),
+    emit: (e: Record<string, unknown>) => client.observe(e),
     log,
     ...(singletonGate
       ? {
@@ -1686,11 +1915,15 @@ const heartbeatLoop = startHeartbeatLoop({
   emitHeartbeat: (signal) => emitHeartbeat({ client, workerId, signal, onEvent }),
   reregisterWorker: () => client.reregisterWorker(),
   exit: (code) => process.exit(code),
-  schedule: (run, delayMs) => {
+  schedule: (run, delayMs): { cancel: () => void } => {
     const timer = setTimeout(() => {
       void run();
     }, delayMs);
-    return { cancel: () => clearTimeout(timer) };
+    return {
+      cancel: (): void => {
+        clearTimeout(timer);
+      },
+    };
   },
   log,
   workerId,
@@ -1751,13 +1984,13 @@ const shutdown = createWorkerShutdown({
   exit: (code) => process.exit(code),
 });
 process.on("SIGINT", () => {
-  void shutdown("SIGINT").catch((err) => {
+  void shutdown("SIGINT").catch((err: unknown) => {
     log.error({ err: err instanceof Error ? err.message : String(err) }, "worker shutdown failed");
     process.exit(1);
   });
 });
 process.on("SIGTERM", () => {
-  void shutdown("SIGTERM").catch((err) => {
+  void shutdown("SIGTERM").catch((err: unknown) => {
     log.error({ err: err instanceof Error ? err.message : String(err) }, "worker shutdown failed");
     process.exit(1);
   });
