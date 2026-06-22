@@ -1,7 +1,8 @@
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../sdk/adapter.js";
-import { spawnCliAdapter, spawnCliAdapterStream } from "./cli-spawn.js";
-import type { CapacityError } from "./cli-spawn.js";
 import type { CapturePort } from "../worker/capture-port.js";
+import type { CapacityError } from "./cli-spawn.js";
+
+import { spawnCliAdapter, spawnCliAdapterStream } from "./cli-spawn.js";
 
 export interface CodexCliOptions {
   command: string;
@@ -38,7 +39,9 @@ export class CodexCliAdapter implements Adapter {
       env: this.opts.env,
       unset_env: this.opts.unset_env,
       strip_patterns: this.opts.strip_patterns,
-      onCapacityError: (err) => this.onCapacityError(err),
+      onCapacityError: (err) => {
+        this.onCapacityError(err);
+      },
       eventContext: input.eventContext,
       onEvent: input.onEvent,
     });
@@ -56,7 +59,9 @@ export class CodexCliAdapter implements Adapter {
       env: this.opts.env,
       unset_env: this.opts.unset_env,
       strip_patterns: this.opts.strip_patterns,
-      onCapacityError: (err) => this.onCapacityError(err),
+      onCapacityError: (err) => {
+        this.onCapacityError(err);
+      },
       eventContext: input.eventContext,
       onEvent: input.onEvent,
     });

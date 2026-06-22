@@ -1,10 +1,11 @@
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../sdk/adapter.js";
-import { spawnCliAdapter, spawnCliAdapterStream } from "./cli-spawn.js";
-import type { CapacityError } from "./cli-spawn.js";
+import type { CapturePort } from "../worker/capture-port.js";
 import type { McpServer } from "./acp-types.js";
+import type { CapacityError } from "./cli-spawn.js";
+
+import { spawnCliAdapter, spawnCliAdapterStream } from "./cli-spawn.js";
 import { prepareOpencodeMcpConfigDir } from "./opencode-mcp-config.js";
 import { resolveAdapterApiKey } from "./secret.js";
-import type { CapturePort } from "../worker/capture-port.js";
 
 export interface OpencodeCliOptions {
   model: string;
@@ -65,7 +66,9 @@ export class OpencodeCliAdapter implements Adapter {
         env: baseEnv,
         unset_env: this.opts.unset_env,
         strip_patterns: this.opts.strip_patterns,
-        onCapacityError: (err) => this.onCapacityError(err),
+        onCapacityError: (err) => {
+          this.onCapacityError(err);
+        },
         eventContext: input.eventContext,
         onEvent: input.onEvent,
       });
@@ -124,7 +127,9 @@ export class OpencodeCliAdapter implements Adapter {
         env: baseEnv,
         unset_env: this.opts.unset_env,
         strip_patterns: this.opts.strip_patterns,
-        onCapacityError: (err) => this.onCapacityError(err),
+        onCapacityError: (err) => {
+          this.onCapacityError(err);
+        },
         eventContext: input.eventContext,
         onEvent: input.onEvent,
       });

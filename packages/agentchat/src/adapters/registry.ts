@@ -1,16 +1,17 @@
 import type { Adapter } from "../sdk/adapter.js";
-import { OpenAiCompatHttpAdapter, type OpenAiCompatHttpOptions } from "./openai-compat-http.js";
+import type { CapturePort } from "../worker/capture-port.js";
+
+import { getOrCreateAcpWarmPool } from "./acp-warm-pool-registry.js";
 import { AgyCliAdapter } from "./agy-cli.js";
 import { ClaudeCliAdapter } from "./claude-cli.js";
-import { GeminiCliAdapter } from "./gemini-cli.js";
 import { CodexCliAdapter } from "./codex-cli.js";
+import { GeminiCliAdapter } from "./gemini-cli.js";
+import { OpenAiCompatHttpAdapter, type OpenAiCompatHttpOptions } from "./openai-compat-http.js";
 import { OpencodeAcpAdapter, type OpencodeAcpOptions } from "./opencode-acp.js";
 import { OpencodeCliAdapter, type OpencodeCliOptions } from "./opencode-cli.js";
-import { StdioAcpAdapter, type StdioAcpOptions, type StdioAcpThoughtCapture } from "./stdio-acp.js";
 import { StdioAcpClient } from "./stdio-acp-client.js";
 import { startStdioAcpServer } from "./stdio-acp-server.js";
-import type { CapturePort } from "../worker/capture-port.js";
-import { getOrCreateAcpWarmPool } from "./acp-warm-pool-registry.js";
+import { StdioAcpAdapter, type StdioAcpOptions, type StdioAcpThoughtCapture } from "./stdio-acp.js";
 
 export type AdapterFactory = (options: Record<string, unknown>) => Adapter;
 
@@ -25,7 +26,9 @@ export const BUILT_IN_ADAPTER_KINDS = [
   "stdio-acp",
 ] as const;
 
-const builtIns: Record<string, AdapterFactory> = {
+const builtIns = new Map<string, AdapterFactory>();
+
+const BUILT_IN_FACTORIES: Record<string, AdapterFactory> = {
   "stdio-acp": (o) => createStdioAcpAdapter(o),
   "openai-compat-http": (o) => {
     // Legacy alias: `api_key_env` (snake_case) is treated as `apiKeyEnv`.
@@ -250,20 +253,26 @@ export function createStdioAcpAdapter(
   );
 }
 
+for (const [kind, factory] of Object.entries(BUILT_IN_FACTORIES)) {
+  builtIns.set(kind, factory);
+}
+
+const BUILT_IN_KIND_SET = new Set<string>(BUILT_IN_ADAPTER_KINDS);
+
 export function buildAdapter(kind: string, options: Record<string, unknown>): Adapter {
-  const factory = builtIns[kind];
+  const factory = builtIns.get(kind);
   if (!factory) throw new Error(`unknown adapter kind: ${kind}`);
   return factory(options);
 }
 
 export function registerAdapter(kind: string, factory: AdapterFactory): void {
-  builtIns[kind] = factory;
+  builtIns.set(kind, factory);
 }
 
 export function clearCustomAdapters(): void {
-  for (const key of Object.keys(builtIns)) {
-    if (!(BUILT_IN_ADAPTER_KINDS as readonly string[]).includes(key)) {
-      delete builtIns[key];
+  for (const key of [...builtIns.keys()]) {
+    if (!BUILT_IN_KIND_SET.has(key)) {
+      builtIns.delete(key);
     }
   }
 }

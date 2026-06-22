@@ -1,7 +1,8 @@
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../sdk/adapter.js";
-import { spawnCliAdapter, spawnCliAdapterStream } from "./cli-spawn.js";
-import type { CapacityError } from "./cli-spawn.js";
 import type { CapturePort } from "../worker/capture-port.js";
+import type { CapacityError } from "./cli-spawn.js";
+
+import { spawnCliAdapter, spawnCliAdapterStream } from "./cli-spawn.js";
 
 export interface GeminiCliOptions {
   command: string;
@@ -16,7 +17,7 @@ export interface GeminiCliOptions {
 
 function cleanGeminiCliOutput(text: string): string {
   return text
-    .replace(/MCP issues detected\. Run \/mcp list for status\./g, "")
+    .replaceAll("MCP issues detected. Run /mcp list for status.", "")
     .split("\n")
     .filter(
       (line) =>
@@ -51,7 +52,9 @@ export class GeminiCliAdapter implements Adapter {
       env: this.opts.env,
       unset_env: this.opts.unset_env,
       strip_patterns: this.opts.strip_patterns,
-      onCapacityError: (err) => this.onCapacityError(err),
+      onCapacityError: (err) => {
+        this.onCapacityError(err);
+      },
       eventContext: input.eventContext,
       onEvent: input.onEvent,
     });
@@ -69,7 +72,9 @@ export class GeminiCliAdapter implements Adapter {
       env: this.opts.env,
       unset_env: this.opts.unset_env,
       strip_patterns: this.opts.strip_patterns,
-      onCapacityError: (err) => this.onCapacityError(err),
+      onCapacityError: (err) => {
+        this.onCapacityError(err);
+      },
       eventContext: input.eventContext,
       onEvent: input.onEvent,
     })) {

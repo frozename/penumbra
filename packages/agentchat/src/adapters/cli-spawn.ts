@@ -1,5 +1,7 @@
-import { spawn, type ChildProcess } from "node:child_process";
 import type { DispatchEventInput } from "@penumbra/core";
+
+import { type ChildProcess, spawn } from "node:child_process";
+
 import type { DispatchEvent } from "../sdk/adapter.js";
 import type { ThoughtCapture } from "../worker/thought-capture.js";
 
@@ -24,8 +26,8 @@ export interface SpawnOpts {
   log?: { debug?: (fields: Record<string, unknown>, message: string) => void };
 }
 
-const CAPACITY_PATTERNS: Array<{ provider: string; re: RegExp }> = [
-  { provider: "google", re: /No capacity available for model ([\w.\-]+)/ },
+const CAPACITY_PATTERNS: { provider: string; re: RegExp }[] = [
+  { provider: "google", re: /No capacity available for model ([\w.-]+)/ },
 ];
 
 export interface CapacityError {
@@ -37,7 +39,7 @@ export interface CapacityError {
 export function detectCapacityError(stderr: string): CapacityError | null {
   if (!stderr) return null;
   for (const p of CAPACITY_PATTERNS) {
-    const m = stderr.match(p.re);
+    const m = p.re.exec(stderr);
     if (m) {
       return { provider: p.provider, model: m[1] ?? null, raw: m[0] };
     }
@@ -57,14 +59,14 @@ function applyStripPatterns(text: string, patterns: string[] | undefined): strin
 }
 
 function readCancelGraceMs(raw?: string): number {
-  if (raw == null || raw.trim() === "") return DEFAULT_CANCEL_GRACE_S * 1000;
+  if (raw === undefined || raw.trim() === "") return DEFAULT_CANCEL_GRACE_S * 1000;
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_CANCEL_GRACE_S * 1000;
   return parsed * 1000;
 }
 
 function readDispatchTimeoutMs(raw?: string): number {
-  if (raw == null || raw.trim() === "") return DEFAULT_DISPATCH_TIMEOUT_S * 1000;
+  if (raw === undefined || raw.trim() === "") return DEFAULT_DISPATCH_TIMEOUT_S * 1000;
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_DISPATCH_TIMEOUT_S * 1000;
   return parsed * 1000;
@@ -144,14 +146,16 @@ async function readStreamText(stream: NodeJS.ReadableStream | null | undefined):
 function waitForProcessExit(proc: ChildProcess): Promise<ProcessExit> {
   return new Promise((resolve, reject) => {
     proc.once("error", reject);
-    proc.once("exit", (code, signal) => resolve({ code, signal }));
+    proc.once("exit", (code, signal) => {
+      resolve({ code, signal });
+    });
   });
 }
 
 function settleProcessExit(proc: ChildProcess): Promise<SettledProcessExit> {
   return waitForProcessExit(proc)
     .then((exit) => ({ ok: true, exit }) as const)
-    .catch((error) => ({ ok: false, error }) as const);
+    .catch((error: unknown) => ({ ok: false, error }) as const);
 }
 
 function emit(
@@ -188,25 +192,55 @@ function captureStdoutThoughts(opts: SpawnOpts, text: string): void {
   }
 }
 
-export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<DispatchEvent> {
+function buildMergedEnv(opts: SpawnOpts): Record<string, string> {
+  const unsetKeys = new Set(opts.unset_env ?? []);
+  const merged: Record<string, string> = {};
+  const baseEntries: { key: string; value: string | undefined }[] = [];
+  for (const [k, v] of Object.entries(process.env)) {
+    baseEntries.push({ key: k, value: v });
+  }
+  for (const [k, v] of Object.entries(opts.env ?? {})) {
+    baseEntries.push({ key: k, value: v });
+  }
+  for (const { key, value } of baseEntries) {
+    if (unsetKeys.has(key) || value === undefined) continue;
+    merged[key] = value;
+  }
+  return merged;
+}
+
+function notifyCapacity(opts: SpawnOpts, stderr: string): void {
+  if (!opts.onCapacityError) return;
+  const capErr = detectCapacityError(stderr);
+  if (!capErr) return;
+  try {
+    opts.onCapacityError(capErr);
+  } catch {
+    /* Callback failures must not break the spawn return path. */
+  }
+}
+
+interface AbortController2 {
+  cancelTimer: ReturnType<typeof setTimeout> | null;
+  watchdogTimer: ReturnType<typeof setTimeout> | null;
+  timedOut: boolean;
+}
+
+interface SpawnContext {
+  proc: ChildProcess;
+  exitPromise: Promise<SettledProcessExit>;
+  spawnTs: number;
+  ctrl: AbortController2;
+  onAbort: () => void;
+}
+
+function startSpawn(opts: SpawnOpts): SpawnContext {
   const isArgv = opts.pass_via === "argv";
   const finalArgs = isArgv ? [...opts.args, opts.prompt] : opts.args;
-
-  const mergedEnv: Record<string, string> = { ...process.env, ...(opts.env ?? {}) } as Record<
-    string,
-    string
-  >;
-  for (const key of opts.unset_env ?? []) delete mergedEnv[key];
-
-  if (opts.signal.aborted) {
-    throw new Error(`${opts.command}: signal aborted before spawn`);
-  }
+  const mergedEnv = buildMergedEnv(opts);
 
   const cancelGraceMs = readCancelGraceMs(
     opts.env?.PENUMBRA_CANCEL_GRACE_S ?? process.env.PENUMBRA_CANCEL_GRACE_S,
-  );
-  const dispatchTimeoutMs = readDispatchTimeoutMs(
-    opts.env?.PENUMBRA_DISPATCH_TIMEOUT_S ?? process.env.PENUMBRA_DISPATCH_TIMEOUT_S,
   );
 
   const proc = spawnProcess({
@@ -217,195 +251,248 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
     stdinMode: isArgv ? "ignore" : "pipe",
   });
   const spawnTs = Date.now();
-  const processExitPromise = settleProcessExit(proc);
+  const exitPromise = settleProcessExit(proc);
   emit(opts, "proc.spawn", { argv0: opts.command, pid: proc.pid, has_signal: true });
 
-  let cancelTimer: ReturnType<typeof setTimeout> | null = null;
-  let timedOut = false;
-
-  const onAbort = () => {
+  const ctrl: AbortController2 = { cancelTimer: null, watchdogTimer: null, timedOut: false };
+  const onAbort = (): void => {
     emit(opts, "proc.kill.sent", { pid: proc.pid, signal: "SIGTERM", reason: "abort" });
     killProcessTree(proc, "SIGTERM");
-    cancelTimer = setTimeout(() => {
+    ctrl.cancelTimer = setTimeout(() => {
       emit(opts, "proc.kill.sent", { pid: proc.pid, signal: "SIGKILL", reason: "grace_expired" });
       killProcessTree(proc, "SIGKILL");
     }, cancelGraceMs);
   };
-
   opts.signal.addEventListener("abort", onAbort, { once: true });
+  return { proc, exitPromise, spawnTs, ctrl, onAbort };
+}
 
-  if (!isArgv) {
+function teardownSpawn(opts: SpawnOpts, ctx: SpawnContext): void {
+  if (ctx.ctrl.watchdogTimer !== null) clearTimeout(ctx.ctrl.watchdogTimer);
+  if (ctx.ctrl.cancelTimer !== null) clearTimeout(ctx.ctrl.cancelTimer);
+  opts.signal.removeEventListener("abort", ctx.onAbort);
+}
+
+async function awaitExitOrThrow(ctx: SpawnContext): Promise<ProcessExit> {
+  const exitResult = await ctx.exitPromise;
+  if (!exitResult.ok) throw exitResult.error;
+  return exitResult.exit;
+}
+
+function checkAborted(opts: SpawnOpts): boolean {
+  return opts.signal.aborted;
+}
+
+function decodeStreamChunk(decoder: TextDecoder, chunk: unknown): string {
+  if (typeof chunk === "string") return chunk;
+  return decoder.decode(chunk as Uint8Array, { stream: true });
+}
+
+async function* streamStdoutDeltas(
+  proc: ChildProcess,
+  opts: SpawnOpts,
+  ctrl: AbortController2,
+): AsyncGenerator<{ chunk: string }> {
+  // Stateful decoder handles multi-byte chars split across chunk boundaries.
+  const decoder = new TextDecoder("utf-8", { fatal: false });
+  for await (const chunk of proc.stdout ?? []) {
+    const text = decodeStreamChunk(decoder, chunk);
+    if (text) yield { chunk: text };
+    if (checkAborted(opts) || ctrl.timedOut) return;
+  }
+  const tail = decoder.decode();
+  if (tail) yield { chunk: tail };
+}
+
+async function handleStreamLoopError(
+  loopErr: unknown,
+  ctx: SpawnContext,
+  opts: SpawnOpts,
+  stderrPromise: Promise<string>,
+): Promise<never> {
+  if (ctx.proc.exitCode === null && ctx.proc.signalCode === null) {
+    ctx.proc.kill("SIGKILL");
+  }
+  const exitResult = await ctx.exitPromise;
+  const stderr = await stderrPromise;
+  if (!exitResult.ok) {
+    opts.log?.debug?.({ loopErr }, "stdout loop error masked by process error");
+    throw exitResult.error;
+  }
+  if (stderr) notifyCapacity(opts, stderr);
+  throw loopErr;
+}
+
+function emitExitResolved(
+  opts: SpawnOpts,
+  ctx: SpawnContext,
+  exit: ProcessExit,
+  reason?: string,
+): void {
+  emit(opts, "proc.exited.resolved", {
+    pid: ctx.proc.pid,
+    code: exit.code,
+    signal: exit.signal,
+    wall_ms_since_spawn: Date.now() - ctx.spawnTs,
+    ...(reason ? { reason } : {}),
+  });
+}
+
+async function handleWatchdogExit(
+  ctx: SpawnContext,
+  opts: SpawnOpts,
+  dispatchTimeoutMs: number,
+): Promise<never> {
+  await awaitExitOrThrow(ctx);
+  emit(opts, "proc.exited.resolved", {
+    pid: ctx.proc.pid,
+    code: null,
+    signal: "SIGKILL",
+    wall_ms_since_spawn: Date.now() - ctx.spawnTs,
+    reason: "watchdog",
+  });
+  throw new Error(
+    `${opts.command}: dispatch exceeded ${dispatchTimeoutMs.toString()}ms (watchdog)`,
+  );
+}
+
+async function* finalizeStreamExit(
+  ctx: SpawnContext,
+  opts: SpawnOpts,
+  stderrPromise: Promise<string>,
+  collected: string,
+): AsyncGenerator<DispatchEvent> {
+  const [stderr, exit] = await Promise.all([stderrPromise, awaitExitOrThrow(ctx)]);
+  emitExitResolved(opts, ctx, exit);
+  notifyCapacity(opts, stderr);
+
+  const finalText = applyStripPatterns(collected, opts.strip_patterns);
+  validateExitSuccess(opts, exit, stderr, finalText);
+  yield { type: "done", result: { text: finalText } };
+  ensureExitCodeOk(opts, exit, stderr);
+}
+
+function validateExitSuccess(
+  opts: SpawnOpts,
+  exit: ProcessExit,
+  stderr: string,
+  finalText: string,
+): void {
+  if (exit.signal) {
+    throw new Error(`${opts.command}: signal ${exit.signal}${stderr ? ` — ${stderr}` : ""}`);
+  }
+  if (exit.code === 0 && !finalText.trim() && stderr.trim()) {
+    throw new Error(`${opts.command}: empty output — ${stderr.trim().slice(0, 500)}`);
+  }
+}
+
+function ensureExitCodeOk(opts: SpawnOpts, exit: ProcessExit, stderr: string): void {
+  if (exit.code === 0) return;
+  const codeText = exit.code === null ? "null" : exit.code.toString();
+  throw new Error(`${opts.command}: exit code ${codeText}${stderr ? ` — ${stderr}` : ""}`);
+}
+
+async function* runStreamStdout(
+  ctx: SpawnContext,
+  opts: SpawnOpts,
+  stderrPromise: Promise<string>,
+): AsyncGenerator<{ delta: string }> {
+  try {
+    for await (const delta of streamStdoutDeltas(ctx.proc, opts, ctx.ctrl)) {
+      yield { delta: delta.chunk };
+    }
+  } catch (loopErr) {
+    await handleStreamLoopError(loopErr, ctx, opts, stderrPromise);
+  }
+}
+
+export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<DispatchEvent> {
+  if (opts.signal.aborted) {
+    throw new Error(`${opts.command}: signal aborted before spawn`);
+  }
+  const dispatchTimeoutMs = readDispatchTimeoutMs(
+    opts.env?.PENUMBRA_DISPATCH_TIMEOUT_S ?? process.env.PENUMBRA_DISPATCH_TIMEOUT_S,
+  );
+
+  const ctx = startSpawn(opts);
+  const { proc, ctrl } = ctx;
+
+  if (opts.pass_via !== "argv") {
     await writePrompt(proc.stdin, opts.prompt);
   }
 
-  const dispatchTimer = setTimeout(() => {
-    timedOut = true;
+  ctrl.watchdogTimer = setTimeout(() => {
+    ctrl.timedOut = true;
     killProcessTree(proc, "SIGKILL");
   }, dispatchTimeoutMs);
 
   // Start collecting stderr in parallel so it doesn't block stdout consumption.
   const stderrPromise = readStreamText(proc.stderr);
-  stderrPromise.catch(() => {});
+  stderrPromise.catch(() => {
+    /* stderr drain errors are surfaced via the exit handling path */
+  });
 
   let collected = "";
-  // Stateful decoder handles multi-byte chars split across chunk boundaries.
-  const decoder = new TextDecoder("utf-8", { fatal: false });
 
   try {
-    try {
-      for await (const chunk of proc.stdout ?? []) {
-        const text = decoder.decode(chunk, { stream: true });
-        if (text) {
-          collected += text;
-          yield { type: "delta", text };
-        }
-        if (opts.signal.aborted || timedOut) break;
-      }
-    } catch (loopErr) {
-      if (proc.exitCode === null && proc.signalCode === null) {
-        proc.kill("SIGKILL");
-      }
-      const exitResult = await processExitPromise;
-      const stderr = await stderrPromise;
-      if (!exitResult.ok) {
-        if (opts.log?.debug) {
-          opts.log.debug({ loopErr }, "stdout loop error masked by process error");
-        }
-        throw exitResult.error;
-      }
-      if (stderr && opts.onCapacityError) {
-        const capErr = detectCapacityError(stderr);
-        if (capErr) {
-          try {
-            opts.onCapacityError(capErr);
-          } catch {
-            /* Callback failures must not break the spawn return path. */
-          }
-        }
-      }
-      throw loopErr;
+    for await (const out of runStreamStdout(ctx, opts, stderrPromise)) {
+      collected += out.delta;
+      yield { type: "delta", text: out.delta };
     }
 
-    // Flush any remaining bytes held by the stateful decoder.
-    const tail = decoder.decode();
-    if (tail) {
-      collected += tail;
-      yield { type: "delta", text: tail };
+    if (ctrl.timedOut) {
+      await handleWatchdogExit(ctx, opts, dispatchTimeoutMs);
     }
 
-    if (timedOut) {
-      const exitResult = await processExitPromise;
-      if (!exitResult.ok) throw exitResult.error;
-      const exit = exitResult.exit;
-      emit(opts, "proc.exited.resolved", {
-        pid: proc.pid,
-        code: null,
-        signal: "SIGKILL",
-        wall_ms_since_spawn: Date.now() - spawnTs,
-        reason: "watchdog",
-      });
-      throw new Error(`${opts.command}: dispatch exceeded ${dispatchTimeoutMs}ms (watchdog)`);
-    }
-
-    if (opts.signal.aborted) {
-      const exitResult = await processExitPromise;
-      if (!exitResult.ok) throw exitResult.error;
-      const exit = exitResult.exit;
-      emit(opts, "proc.exited.resolved", {
-        pid: proc.pid,
-        code: exit.code,
-        signal: exit.signal,
-        wall_ms_since_spawn: Date.now() - spawnTs,
-      });
+    if (checkAborted(opts)) {
+      const exit = await awaitExitOrThrow(ctx);
+      emitExitResolved(opts, ctx, exit);
       yield { type: "done", result: { text: applyStripPatterns(collected, opts.strip_patterns) } };
       return;
     }
 
-    const [stderr, exitResult] = await Promise.all([stderrPromise, processExitPromise]);
-    if (!exitResult.ok) throw exitResult.error;
-    const exit = exitResult.exit;
-    emit(opts, "proc.exited.resolved", {
-      pid: proc.pid,
-      code: exit.code,
-      signal: exit.signal,
-      wall_ms_since_spawn: Date.now() - spawnTs,
-    });
-
-    const capErr = detectCapacityError(stderr);
-    if (capErr && opts.onCapacityError) {
-      try {
-        opts.onCapacityError(capErr);
-      } catch {
-        /* Callback failures must not break the spawn return path. */
-      }
-    }
-
-    const finalText = applyStripPatterns(collected, opts.strip_patterns);
-
-    if (exit.signal) {
-      throw new Error(`${opts.command}: signal ${exit.signal}${stderr ? ` — ${stderr}` : ""}`);
-    }
-
-    if (exit.code === 0 && !finalText.trim() && stderr.trim()) {
-      throw new Error(`${opts.command}: empty output — ${stderr.trim().slice(0, 500)}`);
-    }
-
-    yield { type: "done", result: { text: finalText } };
-
-    if (exit.code !== 0) {
-      throw new Error(`${opts.command}: exit code ${exit.code}${stderr ? ` — ${stderr}` : ""}`);
-    }
+    yield* finalizeStreamExit(ctx, opts, stderrPromise, collected);
   } finally {
-    clearTimeout(dispatchTimer);
-    if (cancelTimer !== null) clearTimeout(cancelTimer);
-    opts.signal.removeEventListener("abort", onAbort);
+    teardownSpawn(opts, ctx);
   }
 }
 
+interface NonStreamResult {
+  rawText: string;
+  stderr: string;
+  exit: ProcessExit;
+}
+
+async function readChildOutputs(ctx: SpawnContext, opts: SpawnOpts): Promise<NonStreamResult> {
+  const [rawText, stderr, exit] = await Promise.all([
+    readStreamText(ctx.proc.stdout),
+    readStreamText(ctx.proc.stderr),
+    awaitExitOrThrow(ctx),
+  ]);
+  emitExitResolved(opts, ctx, exit);
+  notifyCapacity(opts, stderr);
+  return { rawText, stderr, exit };
+}
+
+function buildSpawnError(opts: SpawnOpts, exit: ProcessExit, stderr: string): Error {
+  if (exit.signal) {
+    return new Error(`${opts.command}: signal ${exit.signal}${stderr ? ` — ${stderr}` : ""}`);
+  }
+  const codeText = exit.code === null ? "null" : exit.code.toString();
+  return new Error(`${opts.command}: exit code ${codeText}${stderr ? ` — ${stderr}` : ""}`);
+}
+
 export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; stderr: string }> {
-  const isArgv = opts.pass_via === "argv";
-  const finalArgs = isArgv ? [...opts.args, opts.prompt] : opts.args;
-
-  const mergedEnv: Record<string, string> = { ...process.env, ...(opts.env ?? {}) } as Record<
-    string,
-    string
-  >;
-  for (const key of opts.unset_env ?? []) delete mergedEnv[key];
-
   if (opts.signal.aborted) {
     throw new Error(`${opts.command}: signal aborted before spawn`);
   }
-
-  const cancelGraceMs = readCancelGraceMs(
-    opts.env?.PENUMBRA_CANCEL_GRACE_S ?? process.env.PENUMBRA_CANCEL_GRACE_S,
-  );
   const dispatchTimeoutMs = readDispatchTimeoutMs(
     opts.env?.PENUMBRA_DISPATCH_TIMEOUT_S ?? process.env.PENUMBRA_DISPATCH_TIMEOUT_S,
   );
-  const proc = spawnProcess({
-    command: opts.command,
-    args: finalArgs,
-    env: mergedEnv,
-    cwd: opts.cwd,
-    stdinMode: isArgv ? "ignore" : "pipe",
-  });
-  const spawnTs = Date.now();
-  const processExitPromise = settleProcessExit(proc);
-  emit(opts, "proc.spawn", { argv0: opts.command, pid: proc.pid, has_signal: true });
+  const ctx = startSpawn(opts);
+  const { proc, ctrl } = ctx;
 
-  let cancelTimer: ReturnType<typeof setTimeout> | null = null;
-  const onAbort = () => {
-    emit(opts, "proc.kill.sent", { pid: proc.pid, signal: "SIGTERM", reason: "abort" });
-    killProcessTree(proc, "SIGTERM");
-    cancelTimer = setTimeout(() => {
-      emit(opts, "proc.kill.sent", { pid: proc.pid, signal: "SIGKILL", reason: "grace_expired" });
-      killProcessTree(proc, "SIGKILL");
-    }, cancelGraceMs);
-  };
-
-  opts.signal.addEventListener("abort", onAbort, { once: true });
-
-  if (!isArgv) {
+  if (opts.pass_via !== "argv") {
     await writePrompt(proc.stdin, opts.prompt);
   }
 
@@ -413,76 +500,39 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; 
   // and proc.exited never resolves (observed under Bun 1.3.13 when a child
   // tree dies in some races). On timeout, SIGKILL the proc and reject so
   // the worker frees up instead of waiting forever.
-  let dispatchTimer: ReturnType<typeof setTimeout> | null = null;
-  let watchdogTriggered = false;
   const watchdog = new Promise<never>((_, reject) => {
-    dispatchTimer = setTimeout(() => {
-      watchdogTriggered = true;
+    ctrl.watchdogTimer = setTimeout(() => {
+      ctrl.timedOut = true;
       killProcessTree(proc, "SIGKILL");
       emit(opts, "proc.exited.resolved", {
         pid: proc.pid,
         code: null,
         signal: "SIGKILL",
-        wall_ms_since_spawn: Date.now() - spawnTs,
+        wall_ms_since_spawn: Date.now() - ctx.spawnTs,
         reason: "watchdog",
       });
-      reject(new Error(`${opts.command}: dispatch exceeded ${dispatchTimeoutMs}ms (watchdog)`));
+      reject(
+        new Error(
+          `${opts.command}: dispatch exceeded ${dispatchTimeoutMs.toString()}ms (watchdog)`,
+        ),
+      );
     }, dispatchTimeoutMs);
   });
 
   try {
-    const result = await Promise.race([
-      (async () => {
-        const [rawText, stderr, code] = await Promise.all([
-          readStreamText(proc.stdout),
-          readStreamText(proc.stderr),
-          processExitPromise.then((exit) => {
-            if (!exit.ok) throw exit.error;
-            return exit.exit;
-          }),
-        ]);
-        if (watchdogTriggered) {
-          return { rawText, stderr, exit: code };
-        }
-        emit(opts, "proc.exited.resolved", {
-          pid: proc.pid,
-          code: code.code,
-          signal: code.signal,
-          wall_ms_since_spawn: Date.now() - spawnTs,
-        });
-        const capErr = detectCapacityError(stderr);
-        if (capErr && opts.onCapacityError) {
-          try {
-            opts.onCapacityError(capErr);
-          } catch {
-            // Callback failures must not break the spawn return path.
-          }
-        }
-        return { rawText, stderr, exit: code };
-      })(),
-      watchdog,
-    ]);
-    if (opts.signal.aborted) {
+    const result = await Promise.race([readChildOutputs(ctx, opts), watchdog]);
+    if (checkAborted(opts)) {
       throw new Error(`${opts.command}: aborted`);
     }
     captureStdoutThoughts(opts, result.rawText);
-    if (result.exit.signal) {
-      throw new Error(
-        `${opts.command}: signal ${result.exit.signal}${result.stderr ? ` — ${result.stderr}` : ""}`,
-      );
-    }
-    if (result.exit.code !== 0) {
-      throw new Error(
-        `${opts.command}: exit code ${result.exit.code}${result.stderr ? ` — ${result.stderr}` : ""}`,
-      );
+    if (result.exit.signal || result.exit.code !== 0) {
+      throw buildSpawnError(opts, result.exit, result.stderr);
     }
     return {
       text: applyStripPatterns(result.rawText, opts.strip_patterns),
       stderr: result.stderr,
     };
   } finally {
-    if (dispatchTimer) clearTimeout(dispatchTimer);
-    if (cancelTimer) clearTimeout(cancelTimer);
-    opts.signal.removeEventListener("abort", onAbort);
+    teardownSpawn(opts, ctx);
   }
 }

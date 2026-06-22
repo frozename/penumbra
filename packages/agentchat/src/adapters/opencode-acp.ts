@@ -1,8 +1,11 @@
-import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../sdk/adapter.js";
 import type { DispatchEventInput } from "@penumbra/core";
-import { AcpClient, type AcpClientOptions } from "./acp-client.js";
-import { startAcpServer, type AcpServerHandle, type StartAcpServerOptions } from "./acp-server.js";
+
+import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../sdk/adapter.js";
+import type { AcpServerHandle, StartAcpServerOptions } from "./acp-server.js";
 import type { AcpCreateSessionRequest, AcpEvent, McpServer, McpServerStdio } from "./acp-types.js";
+
+import { AcpClient, type AcpClientOptions } from "./acp-client.js";
+import { startAcpServer } from "./acp-server.js";
 import { prepareOpencodeMcpConfigDir } from "./opencode-mcp-config.js";
 
 // Adapter lifecycle events for opencode-acp. Without these, the dispatch
@@ -39,16 +42,17 @@ const PENUMBRA_MCP_INJECTED_ENV_KEYS = new Set([
   "PENUMBRA_MCP_TOOL_ALLOWLIST",
 ]);
 const PENUMBRA_MCP_ORIGIN_FLEET_WORKER = "fleet-worker";
+const PENUMBRA_MCP_PATH_RE = /penumbra-mcp(?:\.[jt]s)?(?:$|[\s/])/;
 
 function isPenumbraMcp(server: McpServer): server is McpServerStdio {
   if ("type" in server) return false;
-  const haystack = [server.name ?? "", server.command, ...(server.args ?? [])].join(" ");
-  return /penumbra-mcp(\.ts|\.js)?($|[\s/])/.test(haystack);
+  const haystack = [server.name, server.command, ...server.args].join(" ");
+  return PENUMBRA_MCP_PATH_RE.test(haystack);
 }
 
-function buildLongLivedMcpEnv(input: DispatchInput): Array<{ name: string; value: string }> {
+function buildLongLivedMcpEnv(input: DispatchInput): { name: string; value: string }[] {
   const session = input.long_lived_session;
-  if (!session || session.dispatch_kind !== "long_lived_tick") return [];
+  if (session?.dispatch_kind !== "long_lived_tick") return [];
 
   const allowlist = new Set(
     (session.mcp_tool_allowlist ?? []).map((name) => name.trim()).filter((name) => name.length > 0),
@@ -57,7 +61,7 @@ function buildLongLivedMcpEnv(input: DispatchInput): Array<{ name: string; value
     allowlist.add(toolName);
   }
 
-  const envEntries: Array<{ name: string; value: string }> = [
+  const envEntries: { name: string; value: string }[] = [
     { name: "PENUMBRA_MCP_TOOL_ALLOWLIST", value: [...allowlist].join(",") },
   ];
   if (session.agent_id && session.agent_id.length > 0) {
@@ -76,9 +80,7 @@ function injectPenumbraMcpEnv(servers: McpServer[], input: DispatchInput): McpSe
 
   return servers.map((server) => {
     if (!isPenumbraMcp(server)) return server;
-    const keptEnv = (server.env ?? []).filter(
-      (entry) => !PENUMBRA_MCP_INJECTED_ENV_KEYS.has(entry.name),
-    );
+    const keptEnv = server.env.filter((entry) => !PENUMBRA_MCP_INJECTED_ENV_KEYS.has(entry.name));
     return {
       ...server,
       env: [
@@ -107,16 +109,22 @@ interface OpencodeAcpDeps {
   createClient: (opts: AcpClientOptions) => AcpClientLike;
 }
 
-function createDispatchAbortSignal(parent: AbortSignal, timeoutMs: number) {
+interface DispatchAbortHandle {
+  signal: AbortSignal;
+  readonly timeoutError: Error | null;
+  cleanup: () => void;
+}
+
+function createDispatchAbortSignal(parent: AbortSignal, timeoutMs: number): DispatchAbortHandle {
   const controller = new AbortController();
-  let timeoutError: Error | null = null;
+  const state: { timeoutError: Error | null } = { timeoutError: null };
   let timer: ReturnType<typeof setTimeout> | undefined;
 
-  const abortWith = (reason?: unknown) => {
+  const abortWith = (reason?: unknown): void => {
     if (!controller.signal.aborted) controller.abort(reason);
   };
 
-  const onParentAbort = () => {
+  const onParentAbort = (): void => {
     abortWith(parent.reason);
   };
 
@@ -128,22 +136,73 @@ function createDispatchAbortSignal(parent: AbortSignal, timeoutMs: number) {
 
   if (timeoutMs > 0) {
     timer = setTimeout(() => {
-      timeoutError = new Error(`opencode-acp request timed out after ${timeoutMs}ms`);
-      timeoutError.name = "AbortError";
-      abortWith(timeoutError);
+      const err = new Error(`opencode-acp request timed out after ${timeoutMs.toString()}ms`);
+      err.name = "AbortError";
+      state.timeoutError = err;
+      abortWith(err);
     }, timeoutMs);
   }
 
   return {
     signal: controller.signal,
-    get timeoutError() {
-      return timeoutError;
+    get timeoutError(): Error | null {
+      return state.timeoutError;
     },
-    cleanup() {
+    cleanup(): void {
       if (timer) clearTimeout(timer);
       parent.removeEventListener("abort", onParentAbort);
     },
   };
+}
+
+interface OpencodeWireEvent {
+  type?: unknown;
+  properties?: OpencodeWireEventProps;
+}
+
+interface OpencodeWireEventProps {
+  part?: { id?: unknown; type?: unknown };
+  field?: unknown;
+  partID?: unknown;
+  delta?: unknown;
+  error?: { data?: { message?: unknown }; name?: unknown };
+}
+
+function asWireEvent(evt: unknown): OpencodeWireEvent {
+  if (evt === null || typeof evt !== "object") return {};
+  return evt;
+}
+
+function readPartUpdate(props: OpencodeWireEventProps | undefined): {
+  id: string;
+  type: string;
+} | null {
+  const partId = props?.part?.id;
+  const partType = props?.part?.type;
+  if (typeof partId === "string" && typeof partType === "string") {
+    return { id: partId, type: partType };
+  }
+  return null;
+}
+
+function readPartDelta(
+  props: OpencodeWireEventProps | undefined,
+  partTypeById: Map<string, string>,
+): string | null {
+  if (props?.field !== "text") return null;
+  const partId = props.partID;
+  const partType = typeof partId === "string" ? (partTypeById.get(partId) ?? "text") : "text";
+  if (partType !== "text") return null;
+  const delta = typeof props.delta === "string" ? props.delta : "";
+  return delta || null;
+}
+
+function readSessionErrorMessage(props: OpencodeWireEventProps | undefined): string {
+  const fromData = props?.error?.data?.message;
+  if (typeof fromData === "string") return fromData;
+  const fromName = props?.error?.name;
+  if (typeof fromName === "string") return fromName;
+  return "unknown";
 }
 
 export class OpencodeAcpAdapter implements Adapter {
@@ -153,7 +212,7 @@ export class OpencodeAcpAdapter implements Adapter {
     private readonly opts: OpencodeAcpOptions,
     private readonly deps: OpencodeAcpDeps = {
       startServer: startAcpServer,
-      createClient: (clientOpts) => new AcpClient(clientOpts),
+      createClient: (clientOpts): AcpClient => new AcpClient(clientOpts),
     },
   ) {}
 
@@ -177,103 +236,22 @@ export class OpencodeAcpAdapter implements Adapter {
     const cwd = this.opts.cwd ?? process.cwd();
     const requestTimeoutMs = this.opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     const requestAbort = createDispatchAbortSignal(input.signal, requestTimeoutMs);
-    let server: AcpServerHandle | null = null;
-    let xdgCleanup: (() => Promise<void>) | null = null;
+    const lifecycle: { server: AcpServerHandle | null; xdgCleanup: (() => Promise<void>) | null } =
+      {
+        server: null,
+        xdgCleanup: null,
+      };
     let extraEnv: Record<string, string> | undefined;
 
     const mcpServersWithEnv = injectPenumbraMcpEnv(this.opts.mcpServers ?? [], input);
     if (mcpServersWithEnv.length > 0) {
       const { xdgConfigHome, cleanup } = await prepareOpencodeMcpConfigDir(mcpServersWithEnv);
       extraEnv = { XDG_CONFIG_HOME: xdgConfigHome };
-      xdgCleanup = cleanup;
+      lifecycle.xdgCleanup = cleanup;
     }
 
     try {
-      server = await this.deps.startServer({
-        cwd,
-        pure: true,
-        signal: requestAbort.signal,
-        opencodeBinary: this.opts.opencodeBinary ?? "opencode",
-        bootTimeoutMs: this.opts.bootTimeoutMs,
-        ...(extraEnv ? { env: extraEnv } : {}),
-      });
-      emitLifecycle(input, "http.server.start", {
-        adapter: this.kind,
-        binary: this.opts.opencodeBinary ?? "opencode",
-        base_url: server.baseUrl,
-      });
-
-      const client = this.deps.createClient({
-        baseUrl: server.baseUrl,
-        signal: requestAbort.signal,
-      });
-      const sessionReq: AcpCreateSessionRequest = { cwd };
-      const { sessionId, workspaceId } = await client.openSession(sessionReq);
-      emitLifecycle(input, "http.session.start", {
-        adapter: this.kind,
-        session_id: sessionId,
-        workspace_id: workspaceId,
-      });
-
-      // OpenCode emits SSE events as { type, properties: {...} }. The "text"
-      // we want is delivered via message.part.delta with properties.field === 'text'
-      // — but the model also streams reasoning content as a separate part of type
-      // 'reasoning'. We track partID → part type from message.part.updated events
-      // and only accumulate deltas for parts whose type is 'text'.
-      // Stream ends on session.idle (turn complete) or session.error.
-      const partTypeById = new Map<string, string>();
-      let text = "";
-      streamLoop: for await (const evtRaw of client.sendMessage(sessionId, input.prompt, {
-        model: this.opts.model,
-        tools: [],
-        directory: cwd,
-        workspace: workspaceId,
-      })) {
-        const evt = evtRaw as any;
-        const props = evt?.properties;
-        switch (evt?.type) {
-          case "message.part.updated": {
-            const partId = props?.part?.id;
-            const partType = props?.part?.type;
-            if (typeof partId === "string" && typeof partType === "string") {
-              partTypeById.set(partId, partType);
-            }
-            break;
-          }
-          case "message.part.delta": {
-            if (props?.field !== "text") break;
-            const partId = props?.partID;
-            // First delta on a part may arrive before the part.updated event
-            // for it; default-treat unknown parts as 'text' (the common case).
-            const partType = partId ? (partTypeById.get(partId) ?? "text") : "text";
-            if (partType !== "text") break;
-            const delta = typeof props?.delta === "string" ? props.delta : "";
-            if (!delta) break;
-            text += delta;
-            yield { type: "delta", text: delta };
-            break;
-          }
-          case "session.error": {
-            const message = props?.error?.data?.message ?? props?.error?.name ?? "unknown";
-            throw new Error(`opencode-acp: session.error — ${message}`);
-          }
-          case "session.idle":
-            // Turn finished cleanly. Stop consuming the stream.
-            // usage updates are not emitted on this OpenCode ACP SSE wire; cost capture falls back to opencode-db-reader.
-            emitLifecycle(input, "http.session.end", {
-              adapter: this.kind,
-              session_id: sessionId,
-              stop_reason: "idle",
-            });
-            break streamLoop;
-          default:
-            // Other events (server.connected, session.status, session.diff,
-            // server.heartbeat, etc.) are ignored.
-            break;
-        }
-      }
-
-      yield { type: "done", result: { text } };
+      yield* this.runSession(input, cwd, extraEnv, requestAbort, lifecycle);
     } catch (err) {
       if (
         requestAbort.timeoutError &&
@@ -286,13 +264,110 @@ export class OpencodeAcpAdapter implements Adapter {
       throw err;
     } finally {
       requestAbort.cleanup();
-      if (server) {
-        await server.kill().catch(() => {});
+      if (lifecycle.server) {
+        await lifecycle.server.kill().catch(() => {
+          /* ignore kill errors during teardown */
+        });
       }
-      if (xdgCleanup) {
-        await xdgCleanup();
+      if (lifecycle.xdgCleanup) {
+        await lifecycle.xdgCleanup();
       }
     }
+  }
+
+  private async *runSession(
+    input: DispatchInput,
+    cwd: string,
+    extraEnv: Record<string, string> | undefined,
+    requestAbort: DispatchAbortHandle,
+    lifecycle: { server: AcpServerHandle | null; xdgCleanup: (() => Promise<void>) | null },
+  ): AsyncIterable<DispatchEvent> {
+    lifecycle.server = await this.deps.startServer({
+      cwd,
+      pure: true,
+      signal: requestAbort.signal,
+      opencodeBinary: this.opts.opencodeBinary ?? "opencode",
+      bootTimeoutMs: this.opts.bootTimeoutMs,
+      ...(extraEnv ? { env: extraEnv } : {}),
+    });
+    emitLifecycle(input, "http.server.start", {
+      adapter: this.kind,
+      binary: this.opts.opencodeBinary ?? "opencode",
+      base_url: lifecycle.server.baseUrl,
+    });
+
+    const client = this.deps.createClient({
+      baseUrl: lifecycle.server.baseUrl,
+      signal: requestAbort.signal,
+    });
+    const sessionReq: AcpCreateSessionRequest = { cwd };
+    const { sessionId, workspaceId } = await client.openSession(sessionReq);
+    emitLifecycle(input, "http.session.start", {
+      adapter: this.kind,
+      session_id: sessionId,
+      workspace_id: workspaceId,
+    });
+
+    yield* this.consumeMessageStream(input, client, sessionId, workspaceId, cwd);
+  }
+
+  private async *consumeMessageStream(
+    input: DispatchInput,
+    client: AcpClientLike,
+    sessionId: string,
+    workspaceId: string | undefined,
+    cwd: string,
+  ): AsyncIterable<DispatchEvent> {
+    // OpenCode emits SSE events as { type, properties: {...} }. The "text"
+    // we want is delivered via message.part.delta with properties.field === 'text'
+    // — but the model also streams reasoning content as a separate part of type
+    // 'reasoning'. We track partID → part type from message.part.updated events
+    // and only accumulate deltas for parts whose type is 'text'.
+    // Stream ends on session.idle (turn complete) or session.error.
+    const partTypeById = new Map<string, string>();
+    let text = "";
+    const messageStream = client.sendMessage(sessionId, input.prompt, {
+      model: this.opts.model,
+      tools: [],
+      directory: cwd,
+      workspace: workspaceId,
+    });
+    streamLoop: for await (const evtRaw of messageStream) {
+      const evt = asWireEvent(evtRaw);
+      const props = evt.properties;
+      switch (evt.type) {
+        case "message.part.updated": {
+          const update = readPartUpdate(props);
+          if (update) partTypeById.set(update.id, update.type);
+          break;
+        }
+        case "message.part.delta": {
+          const delta = readPartDelta(props, partTypeById);
+          if (!delta) break;
+          text += delta;
+          yield { type: "delta", text: delta };
+          break;
+        }
+        case "session.error": {
+          throw new Error(`opencode-acp: session.error — ${readSessionErrorMessage(props)}`);
+        }
+        case "session.idle":
+          // Turn finished cleanly. Stop consuming the stream.
+          // usage updates are not emitted on this OpenCode ACP SSE wire; cost capture falls back to opencode-db-reader.
+          emitLifecycle(input, "http.session.end", {
+            adapter: this.kind,
+            session_id: sessionId,
+            stop_reason: "idle",
+          });
+          break streamLoop;
+        default:
+          // Other events (server.connected, session.status, session.diff,
+          // server.heartbeat, etc.) are ignored.
+          break;
+      }
+    }
+
+    yield { type: "done", result: { text } };
   }
 }
 
