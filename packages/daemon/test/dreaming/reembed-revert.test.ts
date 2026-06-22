@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach } from "bun:test";
+import { applySchema, loadSqliteVec } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { applySchema } from "@penumbra/core";
-import { loadSqliteVec } from "@penumbra/core";
+import { beforeEach, describe, expect, it } from "bun:test";
+
 import { revertDreamAction } from "../../src/dreaming/reembed.js";
 
 function getTestDb(): Database {
@@ -157,9 +157,9 @@ describe("revertDreamAction — per-phase compensation", () => {
       target_ids: ["some-rollup"],
       payload: { votes: [] },
     });
-    expect(() => revertDreamAction(db, "p1-action-missing", "none")).toThrow(
-      "p1_revert_missing_t2_memory_id",
-    );
+    expect(() => {
+      revertDreamAction(db, "p1-action-missing", "none");
+    }).toThrow("p1_revert_missing_t2_memory_id");
   });
 
   // ── P2 ──────────────────────────────────────────────────────────────────
@@ -313,7 +313,7 @@ describe("revertDreamAction — per-phase compensation", () => {
     // It should NOT delete the T2 brief
     brief = db
       .prepare("SELECT generated_at FROM project_briefs WHERE project_id = ?")
-      .get(projectId) as any;
+      .get(projectId);
     expect(brief.generated_at).toBe(t2);
 
     const action = db

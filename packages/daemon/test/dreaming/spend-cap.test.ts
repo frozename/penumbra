@@ -1,8 +1,10 @@
-import { beforeAll, expect, it } from "bun:test";
-import { Database } from "bun:sqlite";
 import { applySchema, loadSqliteVec } from "@penumbra/core";
-import { isDreamSpendAffordable, runDreamCycle } from "../../src/dreaming/cycle.js";
+import { Database } from "bun:sqlite";
+import { beforeAll, expect, it } from "bun:test";
+
 import type { DreamConfig } from "../../src/dreaming/config.js";
+
+import { isDreamSpendAffordable, runDreamCycle } from "../../src/dreaming/cycle.js";
 
 try {
   if (process.platform === "darwin") {
@@ -150,7 +152,7 @@ it("records llm spend on dream_cycles and trips daily cap on the next cycle", as
     }),
   };
 
-  const firstCycleId = await runDreamCycle(db, testConfig({ dailyUsd: 1 }), { scorer } as any);
+  const firstCycleId = await runDreamCycle(db, testConfig({ dailyUsd: 1 }), { scorer });
   const firstCycle = db
     .prepare(`SELECT llm_spent_usd FROM dream_cycles WHERE cycle_id=?`)
     .get(firstCycleId) as { llm_spent_usd: number };
@@ -161,7 +163,7 @@ it("records llm spend on dream_cycles and trips daily cap on the next cycle", as
     testConfig({ dailyUsd: firstCycle.llm_spent_usd }),
     {
       scorer,
-    } as any,
+    },
   );
   const secondCycle = db
     .prepare(`SELECT outcome, bail_reason FROM dream_cycles WHERE cycle_id=?`)
@@ -193,7 +195,7 @@ it("defers a phase when its per-phase budget would be exceeded and still complet
         phaseBudgetFractions: { llm: 0.1, embedding: 0.45, research: 0.45 },
       } as any),
     }),
-    { scorer } as any,
+    { scorer },
   );
 
   const cycle = db

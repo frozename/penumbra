@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { Database } from "bun:sqlite";
 import { getConfig, resetConfigForTest } from "@penumbra/config";
-import { handleIdleSignal } from "../../src/dreaming/event-trigger.js";
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+
 import { buildDreamingConfig } from "../../src/dreaming/config.js";
-import * as cycle from "../../src/dreaming/cycle.js";
+import { handleIdleSignal } from "../../src/dreaming/event-trigger.js";
 
 describe("dreaming/event-trigger", () => {
   let db: Database;

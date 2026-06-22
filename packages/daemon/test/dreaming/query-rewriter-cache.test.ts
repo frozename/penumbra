@@ -1,11 +1,12 @@
-import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
+import { describe, expect, it } from "bun:test";
+
 import { applySchema } from "../../../core/src/db/schema.js";
 import { loadSqliteVec } from "../../../core/src/db/sqlite-vec.js";
 import {
   getRewriteForMemory,
-  setRewriteForMemory,
   type RewriteVerdict,
+  setRewriteForMemory,
 } from "../../src/dreaming/query-rewriter-cache.js";
 
 try {

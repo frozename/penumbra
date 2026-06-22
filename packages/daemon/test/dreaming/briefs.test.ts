@@ -1,6 +1,7 @@
-import { describe, test, expect, mock } from "bun:test";
-import { Database } from "bun:sqlite";
 import { applySchema, loadSqliteVec } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { describe, expect, mock, test } from "bun:test";
+
 import { runDreamCycle } from "../../src/dreaming/cycle.js";
 
 describe("P6: Brief Refresh", () => {
