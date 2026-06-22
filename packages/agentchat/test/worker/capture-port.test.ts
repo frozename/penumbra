@@ -1,38 +1,110 @@
-import { expect, test, spyOn, describe, it } from "bun:test";
+import { describe, expect, it, spyOn, test } from "bun:test";
+
 import { CapturePort, type NotificationEvent } from "../../src/worker/capture-port.js";
 import { MaestroOutputRedactor } from "../../src/worker/maestro-output-redactor.js";
 
-type Recorded = {
-  args: any;
+interface ObservedHit {
+  rule_id: string;
+}
+
+interface ObservedPayload {
+  handoff_id?: string;
+  tool_call_id?: string;
+  text?: string;
+  input?: Record<string, unknown> | null;
+  output?: Record<string, unknown> | null;
+  status?: string;
+  lifecycle?: string;
+  truncated?: boolean;
+  bytes_total?: number;
+  used?: number;
+  size?: number;
+  currency?: string | null;
+  source_kind?: string;
+  raw_cost?: unknown;
+  hits?: ObservedHit[];
+  decision?: string;
+  redacted_message?: string;
+  rule_id?: string;
+  provider?: string;
+  model?: string | null;
+  raw?: string;
+}
+
+interface ObservedEvent {
+  ts?: string;
+  source?: string;
+  source_detail?: string;
+  project_id?: string | null;
+  session_id?: string;
+  event_type?: string;
+  lane?: string;
+  provider?: string | null;
+  model?: string | null;
+  latency_ms?: number;
+  cost_usd?: number | null;
+  payload_json?: ObservedPayload;
+  payload_summary?: string;
+  triggered_by_event_id?: string;
+}
+
+interface Recorded {
+  args: ObservedEvent;
   resolve: (v: { event_id: string }) => void;
   reject: (e: Error) => void;
-};
+}
 
-function makeFakeObserve() {
-  const calls: any[] = [];
+interface FakeObserve {
+  observe: (event: ObservedEvent) => Promise<{ event_id: string }>;
+  calls: ObservedEvent[];
+  resolveAll: () => void;
+  rejectNext: (err: Error) => void;
+}
+
+function makeFakeObserve(): FakeObserve {
+  const calls: ObservedEvent[] = [];
   let pending: Recorded[] = [];
-  const observe = (event: any): Promise<{ event_id: string }> => {
+  const observe = (event: ObservedEvent): Promise<{ event_id: string }> => {
     calls.push(event);
     return new Promise<{ event_id: string }>((resolve, reject) => {
       pending.push({ args: event, resolve, reject });
     });
   };
-  const resolveAll = () => {
+  const resolveAll = (): void => {
     const p = pending;
     pending = [];
-    for (const c of p) c.resolve({ event_id: `ev-${Math.random().toString(36).slice(2, 8)}` });
+    for (const c of p) {
+      c.resolve({ event_id: `ev-${Math.random().toString(36).slice(2, 8)}` });
+    }
   };
-  const rejectNext = (err: Error) => {
+  const rejectNext = (err: Error): void => {
     const c = pending.shift();
     if (c) c.reject(err);
   };
   return { observe, calls, resolveAll, rejectNext };
 }
 
-function observed(calls: any[], index: number): any {
+function observed(calls: ObservedEvent[], index: number): ObservedEvent {
   const call = calls[index];
-  if (call === undefined) throw new Error(`expected observe call at index ${index}`);
+  if (call === undefined) throw new Error(`expected observe call at index ${String(index)}`);
   return call;
+}
+
+// Test-only typed factory: emits intentionally malformed NotificationEvent
+// payloads (non-numeric `used`) to exercise the runtime guard in
+// handleUsageUpdate. The public type declares `used: number`; the single
+// documented `as unknown as` here is the established escape hatch for
+// negative-path fixtures.
+function makeMalformedUsageEvent(used: unknown): NotificationEvent {
+  return { kind: "usage_update", used, size: 100000 } as unknown as NotificationEvent;
+}
+
+class ObserveError extends Error {
+  readonly body: unknown;
+  constructor(message: string, body: unknown) {
+    super(message);
+    this.body = body;
+  }
 }
 
 const baseOpts = {
@@ -55,7 +127,7 @@ test("1. single thought chunk → close → one observe call (agent-thought)", a
   expect(f.calls).toHaveLength(1);
   const call = observed(f.calls, 0);
   expect(call.event_type).toBe("agent-thought");
-  expect(call.payload_json.text).toBe("hello");
+  expect(call.payload_json?.text).toBe("hello");
   expect(call.session_id).toBe("c-abc");
 });
 
@@ -67,7 +139,7 @@ test("2. N thought chunks → one coalesced observe call", async () => {
   f.resolveAll();
   await closing;
   expect(f.calls).toHaveLength(1);
-  expect(observed(f.calls, 0).payload_json.text).toBe("abcd");
+  expect(observed(f.calls, 0).payload_json?.text).toBe("abcd");
 });
 
 test("3. thought chunks then a tool_call → flush boundaries respected", async () => {
@@ -104,11 +176,11 @@ test("4. tool_call start + terminal update → merged row with latency_ms", asyn
   f.resolveAll();
   await closing;
   expect(f.calls).toHaveLength(1);
-  const r = f.calls[0];
+  const r = observed(f.calls, 0);
   expect(r.event_type).toBe("agent-tool-use");
-  expect(r.payload_json.input).toEqual({ path: "a.ts" });
-  expect(r.payload_json.output).toEqual({ ok: true });
-  expect(r.payload_json.status).toBe("completed");
+  expect(r.payload_json?.input).toEqual({ path: "a.ts" });
+  expect(r.payload_json?.output).toEqual({ ok: true });
+  expect(r.payload_json?.status).toBe("completed");
   expect(typeof r.latency_ms).toBe("number");
   expect(r.latency_ms).toBeGreaterThan(0);
 });
@@ -121,11 +193,11 @@ test("5. tool_call start with no terminal → orphan row on close", async () => 
   f.resolveAll();
   await closing;
   expect(f.calls).toHaveLength(1);
-  const r = f.calls[0];
+  const r = observed(f.calls, 0);
   expect(r.event_type).toBe("agent-tool-use");
-  expect(r.payload_json.status).toBe("canceled");
-  expect(r.payload_json.lifecycle).toBe("orphaned");
-  expect(r.payload_json.output).toBeNull();
+  expect(r.payload_json?.status).toBe("canceled");
+  expect(r.payload_json?.lifecycle).toBe("orphaned");
+  expect(r.payload_json?.output).toBeNull();
 });
 
 test("6. >8 KB input/output → truncated with bytes_total", async () => {
@@ -142,10 +214,10 @@ test("6. >8 KB input/output → truncated with bytes_total", async () => {
   const closing = port.close();
   f.resolveAll();
   await closing;
-  const r = f.calls[0];
-  expect(r.payload_json.truncated).toBe(true);
-  expect(r.payload_json.bytes_total).toBeGreaterThan(8 * 1024);
-  expect(JSON.stringify(r.payload_json.input).length).toBeLessThanOrEqual(8 * 1024 + 256);
+  const r = observed(f.calls, 0);
+  expect(r.payload_json?.truncated).toBe(true);
+  expect(r.payload_json?.bytes_total).toBeGreaterThan(8 * 1024);
+  expect(JSON.stringify(r.payload_json?.input).length).toBeLessThanOrEqual(8 * 1024 + 256);
 });
 
 test("7. chainId=null → session_id falls back to handoffId", async () => {
@@ -155,7 +227,7 @@ test("7. chainId=null → session_id falls back to handoffId", async () => {
   const closing = port.close();
   f.resolveAll();
   await closing;
-  expect(f.calls[0].session_id).toBe("h-xyz");
+  expect(observed(f.calls, 0).session_id).toBe("h-xyz");
 });
 
 test("8. observe rejection on one event → port records failure, does not throw", async () => {
@@ -193,7 +265,7 @@ test("11. close() resolves within 300ms when in-flight requests stall", async ()
   const port = new CapturePort({
     ...baseOpts,
     closeTimeoutMs: 200,
-    observe: async () => new Promise<{ event_id: string }>(() => {}),
+    observe: (): Promise<{ event_id: string }> => new Promise(() => undefined),
   });
   port.emit({ kind: "agent_thought_chunk", content: "stalled" });
   const startedAt = Date.now();
@@ -202,20 +274,15 @@ test("11. close() resolves within 300ms when in-flight requests stall", async ()
 });
 
 test("10. observe rejection logs serialized body payload", async () => {
-  const error = {
-    message: "penumbra /observations: HTTP 400",
-    body: {
-      error: {
-        field_errors: [{ path: ["payload_json"], message: "expected record" }],
-      },
+  const error = new ObserveError("penumbra /observations: HTTP 400", {
+    error: {
+      field_errors: [{ path: ["payload_json"], message: "expected record" }],
     },
-  };
-  const consoleError = spyOn(console, "error").mockImplementation(() => {});
+  });
+  const consoleError = spyOn(console, "error").mockImplementation(() => undefined);
   const port = new CapturePort({
     ...baseOpts,
-    observe: async () => {
-      throw error;
-    },
+    observe: (): Promise<{ event_id: string }> => Promise.reject(error),
   });
 
   port.emit({ kind: "agent_message_chunk", content: "hi" });
@@ -231,11 +298,11 @@ test("10. observe rejection logs serialized body payload", async () => {
 
 describe("CapturePort — capacity_error", () => {
   it("emits provider-capacity-error with provider/model/raw payload", async () => {
-    const observed: any[] = [];
+    const observed: ObservedEvent[] = [];
     const port = new CapturePort({
-      observe: async (e) => {
+      observe: (e: ObservedEvent): Promise<{ event_id: string }> => {
         observed.push(e);
-        return { event_id: "eid" };
+        return Promise.resolve({ event_id: "eid" });
       },
       chainId: "conv-capacity",
       handoffId: "h-capacity",
@@ -256,31 +323,32 @@ describe("CapturePort — capacity_error", () => {
     await port.flush();
 
     expect(observed).toHaveLength(1);
-    expect(observed[0].event_type).toBe("provider-capacity-error");
-    expect(observed[0].source).toBe("agentchat");
-    expect(observed[0].source_detail).toBe("gemini");
-    expect(observed[0].provider).toBe("google");
-    expect(observed[0].model).toBe("gemini-3.1-pro-preview");
-    expect(observed[0].session_id).toBe("conv-capacity");
-    expect(observed[0].payload_json).toEqual({
+    const event = observed[0]!;
+    expect(event.event_type).toBe("provider-capacity-error");
+    expect(event.source).toBe("agentchat");
+    expect(event.source_detail).toBe("gemini");
+    expect(event.provider).toBe("google");
+    expect(event.model).toBe("gemini-3.1-pro-preview");
+    expect(event.session_id).toBe("conv-capacity");
+    expect(event.payload_json).toEqual({
       handoff_id: "h-capacity",
       provider: "google",
       model: "gemini-3.1-pro-preview",
       raw: "No capacity available for model gemini-3.1-pro-preview",
       source_kind: "cli-spawn-stderr",
     });
-    expect(observed[0].payload_summary).toBe("google/gemini-3.1-pro-preview capacity error");
-    expect(observed[0].triggered_by_event_id).toBe("prompt-event-1");
+    expect(event.payload_summary).toBe("google/gemini-3.1-pro-preview capacity error");
+    expect(event.triggered_by_event_id).toBe("prompt-event-1");
   });
 });
 
 describe("CapturePort — usage_update", () => {
   it("emits a usage-update row when usage_update arrives with USD cost", async () => {
-    const observed: any[] = [];
+    const observed: ObservedEvent[] = [];
     const port = new CapturePort({
-      observe: async (e) => {
+      observe: (e: ObservedEvent): Promise<{ event_id: string }> => {
         observed.push(e);
-        return { event_id: "eid" };
+        return Promise.resolve({ event_id: "eid" });
       },
       chainId: "conv-1",
       handoffId: "h-1",
@@ -298,26 +366,27 @@ describe("CapturePort — usage_update", () => {
     });
     await port.flush();
     expect(observed).toHaveLength(1);
-    expect(observed[0].event_type).toBe("usage-update");
-    expect(observed[0].cost_usd).toBe(0.42);
-    expect(observed[0].payload_json.used).toBe(5000);
-    expect(observed[0].payload_json.size).toBe(200000);
-    expect(observed[0].payload_json.currency).toBe("USD");
-    expect(observed[0].payload_json.source_kind).toBe("acp-wire");
+    const event = observed[0]!;
+    expect(event.event_type).toBe("usage-update");
+    expect(event.cost_usd).toBe(0.42);
+    expect(event.payload_json?.used).toBe(5000);
+    expect(event.payload_json?.size).toBe(200000);
+    expect(event.payload_json?.currency).toBe("USD");
+    expect(event.payload_json?.source_kind).toBe("acp-wire");
   });
 
   it("emits a usage-update row with cost_usd=null when currency is not USD", async () => {
-    const observed: any[] = [];
+    const observed: ObservedEvent[] = [];
     const errors: string[] = [];
     const origErr = console.error;
-    console.error = (...args) => {
+    console.error = (...args: unknown[]): void => {
       errors.push(args.join(" "));
     };
     try {
       const port = new CapturePort({
-        observe: async (e) => {
+        observe: (e: ObservedEvent): Promise<{ event_id: string }> => {
           observed.push(e);
-          return { event_id: "eid" };
+          return Promise.resolve({ event_id: "eid" });
         },
         chainId: null,
         handoffId: "h",
@@ -335,8 +404,9 @@ describe("CapturePort — usage_update", () => {
       });
       await port.flush();
       expect(observed).toHaveLength(1);
-      expect(observed[0].cost_usd).toBeNull();
-      expect(observed[0].payload_json.raw_cost).toEqual({ amount: 0.5, currency: "EUR" });
+      const event = observed[0]!;
+      expect(event.cost_usd).toBeNull();
+      expect(event.payload_json?.raw_cost).toEqual({ amount: 0.5, currency: "EUR" });
       expect(errors.some((e) => e.includes("EUR not converted"))).toBe(true);
     } finally {
       console.error = origErr;
@@ -344,11 +414,11 @@ describe("CapturePort — usage_update", () => {
   });
 
   it("drops usage_update when used is missing or non-numeric", async () => {
-    const observed: any[] = [];
+    const observed: ObservedEvent[] = [];
     const port = new CapturePort({
-      observe: async (e) => {
+      observe: (e: ObservedEvent): Promise<{ event_id: string }> => {
         observed.push(e);
-        return { event_id: "eid" };
+        return Promise.resolve({ event_id: "eid" });
       },
       chainId: null,
       handoffId: "h",
@@ -358,8 +428,8 @@ describe("CapturePort — usage_update", () => {
       model: null,
       lane: "cli-subscription",
     });
-    port.emit({ kind: "usage_update", used: NaN as any, size: 100000 });
-    port.emit({ kind: "usage_update", used: "oops" as any, size: 100000 });
+    port.emit({ kind: "usage_update", used: NaN, size: 100000 });
+    port.emit(makeMalformedUsageEvent("oops"));
     await port.flush();
     expect(observed).toHaveLength(0);
   });
@@ -382,10 +452,10 @@ test("maestro redactor — rewrites agent-response on soft rule", async () => {
   await closing;
   const hit = f.calls.find((c) => c.event_type === "agent-response-redaction-hit");
   expect(hit).toBeDefined();
-  expect(hit!.payload_json.hits[0].rule_id).toBe("soft_banana");
+  expect(hit!.payload_json?.hits?.[0]?.rule_id).toBe("soft_banana");
   const resp = f.calls.find((c) => c.event_type === "agent-response");
   expect(resp).toBeDefined();
-  expect(resp!.payload_json.text).toBe("I like [REDACTED:banana]");
+  expect(resp!.payload_json?.text).toBe("I like [REDACTED:banana]");
 });
 
 test("maestro redactor — blocks agent-response on fail-closed rule", async () => {
@@ -404,9 +474,9 @@ test("maestro redactor — blocks agent-response on fail-closed rule", async () 
   await closing;
   const blocked = f.calls.find((c) => c.event_type === "agent-response-blocked");
   expect(blocked).toBeDefined();
-  expect(blocked!.payload_json.hits[0].rule_id).toBe("destructive_shell_rmrf");
-  expect(blocked!.payload_json.decision).toBe("blocked");
-  expect(blocked!.payload_json.redacted_message).toBe(
+  expect(blocked!.payload_json?.hits?.[0]?.rule_id).toBe("destructive_shell_rmrf");
+  expect(blocked!.payload_json?.decision).toBe("blocked");
+  expect(blocked!.payload_json?.redacted_message).toBe(
     "[maestro response withheld by output policy]",
   );
   expect(f.calls.find((c) => c.event_type === "agent-response")).toBeUndefined();
@@ -428,10 +498,10 @@ test("maestro redactor — bypass surfaces a bypass note and the original text",
   await closing;
   const bypass = f.calls.find((c) => c.event_type === "agent-response-redaction-bypassed");
   expect(bypass).toBeDefined();
-  expect(bypass!.payload_json.hits[0].rule_id).toBe("destructive_shell_rmrf");
+  expect(bypass!.payload_json?.hits?.[0]?.rule_id).toBe("destructive_shell_rmrf");
   const resp = f.calls.find((c) => c.event_type === "agent-response");
   expect(resp).toBeDefined();
-  expect(resp!.payload_json.text).toBe("rm -rf /Volumes/WorkSSD");
+  expect(resp!.payload_json?.text).toBe("rm -rf /Volumes/WorkSSD");
 });
 
 test("maestro redactor — no redactor option preserves prior behavior (back-compat)", async () => {
@@ -443,8 +513,8 @@ test("maestro redactor — no redactor option preserves prior behavior (back-com
   await closing;
   const resp = f.calls.find((c) => c.event_type === "agent-response");
   expect(resp).toBeDefined();
-  expect(resp!.payload_json.text).toBe("rm -rf /Volumes/WorkSSD");
-  expect(f.calls.find((c) => c.event_type.startsWith("agent-response-"))).toBeUndefined();
+  expect(resp!.payload_json?.text).toBe("rm -rf /Volumes/WorkSSD");
+  expect(f.calls.find((c) => (c.event_type ?? "").startsWith("agent-response-"))).toBeUndefined();
 });
 
 test("maestro redactor — agent-thought is NEVER redacted", async () => {
@@ -463,8 +533,8 @@ test("maestro redactor — agent-thought is NEVER redacted", async () => {
   await closing;
   const thought = f.calls.find((c) => c.event_type === "agent-thought");
   expect(thought).toBeDefined();
-  expect(thought!.payload_json.text).toBe("rm -rf /Volumes/WorkSSD");
-  expect(f.calls.find((c) => c.event_type.startsWith("agent-response-"))).toBeUndefined();
+  expect(thought!.payload_json?.text).toBe("rm -rf /Volumes/WorkSSD");
+  expect(f.calls.find((c) => (c.event_type ?? "").startsWith("agent-response-"))).toBeUndefined();
 });
 
 test("maestro redactor — blocks agent-tool-use on fail-closed rule in tool input", async () => {
@@ -494,9 +564,9 @@ test("maestro redactor — blocks agent-tool-use on fail-closed rule in tool inp
   await closing;
   const blocked = f.calls.find((c) => c.event_type === "agent-tool-use-blocked");
   expect(blocked).toBeDefined();
-  expect(blocked!.payload_json.hits[0].rule_id).toBe("destructive_shell_rmrf");
-  expect(blocked!.payload_json.decision).toBe("blocked");
-  expect(blocked!.payload_json.redacted_message).toBe(
+  expect(blocked!.payload_json?.hits?.[0]?.rule_id).toBe("destructive_shell_rmrf");
+  expect(blocked!.payload_json?.decision).toBe("blocked");
+  expect(blocked!.payload_json?.redacted_message).toBe(
     "[maestro tool-use withheld by output policy]",
   );
   expect(f.calls.find((c) => c.event_type === "agent-tool-use")).toBeUndefined();
@@ -529,8 +599,8 @@ test("maestro redactor — preserves tool input when redaction is clean", async 
   await closing;
   const ok = f.calls.find((c) => c.event_type === "agent-tool-use");
   expect(ok).toBeDefined();
-  expect(ok!.payload_json.input.query).toBe("mtp memory allocation");
-  expect(f.calls.find((c) => c.event_type.startsWith("agent-tool-use-"))).toBeUndefined();
+  expect(ok!.payload_json?.input?.query).toBe("mtp memory allocation");
+  expect(f.calls.find((c) => (c.event_type ?? "").startsWith("agent-tool-use-"))).toBeUndefined();
 });
 
 test("maestro redactor — rewrites tool input on soft rule", async () => {
@@ -561,10 +631,10 @@ test("maestro redactor — rewrites tool input on soft rule", async () => {
   await closing;
   const hit = f.calls.find((c) => c.event_type === "agent-tool-use-redaction-hit");
   expect(hit).toBeDefined();
-  expect(hit!.payload_json.hits[0].rule_id).toBe("soft_banana");
+  expect(hit!.payload_json?.hits?.[0]?.rule_id).toBe("soft_banana");
   const ok = f.calls.find((c) => c.event_type === "agent-tool-use");
   expect(ok).toBeDefined();
-  expect(ok!.payload_json.input.query).toBe("find [REDACTED:banana] split recipes");
+  expect(ok!.payload_json?.input?.query).toBe("find [REDACTED:banana] split recipes");
 });
 
 test("maestro redactor — bypass surfaces a note and the original tool input", async () => {
@@ -594,10 +664,10 @@ test("maestro redactor — bypass surfaces a note and the original tool input", 
   await closing;
   const note = f.calls.find((c) => c.event_type === "agent-tool-use-redaction-bypassed");
   expect(note).toBeDefined();
-  expect(note!.payload_json.hits[0].rule_id).toBe("destructive_shell_rmrf");
+  expect(note!.payload_json?.hits?.[0]?.rule_id).toBe("destructive_shell_rmrf");
   const ok = f.calls.find((c) => c.event_type === "agent-tool-use");
   expect(ok).toBeDefined();
-  expect(ok!.payload_json.input.cmd).toBe("rm -rf /Volumes/WorkSSD");
+  expect(ok!.payload_json?.input?.cmd).toBe("rm -rf /Volumes/WorkSSD");
 });
 
 test("maestro redactor — tool result clean keeps output unchanged and emits no tool-result redaction event", async () => {
@@ -628,9 +698,9 @@ test("maestro redactor — tool result clean keeps output unchanged and emits no
 
   const row = f.calls.find((c) => c.event_type === "agent-tool-use");
   expect(row).toBeDefined();
-  expect(row!.payload_json.output).toEqual({ result: { nested: "all good" } });
+  expect(row!.payload_json?.output).toEqual({ result: { nested: "all good" } });
   expect(
-    f.calls.find((c) => String(c.event_type).startsWith("agent-tool-result-")),
+    f.calls.find((c) => (c.event_type ?? "").startsWith("agent-tool-result-")),
   ).toBeUndefined();
 });
 
@@ -663,12 +733,12 @@ test("maestro redactor — tool result rewrite emits redaction-hit and stores re
 
   const hit = f.calls.find((c) => c.event_type === "agent-tool-result-redaction-hit");
   expect(hit).toBeDefined();
-  expect(hit!.payload_json.hits[0].rule_id).toBe("soft_banana");
+  expect(hit!.payload_json?.hits?.[0]?.rule_id).toBe("soft_banana");
   expect(f.calls.find((c) => c.event_type === "agent-tool-result-blocked")).toBeUndefined();
 
   const row = f.calls.find((c) => c.event_type === "agent-tool-use");
   expect(row).toBeDefined();
-  expect(row!.payload_json.output).toEqual({ text: "[REDACTED:banana] split" });
+  expect(row!.payload_json?.output).toEqual({ text: "[REDACTED:banana] split" });
 });
 
 test("maestro redactor — tool result blocked emits blocked event and replaces payload with sentinel", async () => {
@@ -699,15 +769,15 @@ test("maestro redactor — tool result blocked emits blocked event and replaces 
 
   const blocked = f.calls.find((c) => c.event_type === "agent-tool-result-blocked");
   expect(blocked).toBeDefined();
-  expect(blocked!.payload_json.hits[0].rule_id).toBe("ssh_private_key_path");
-  expect(blocked!.payload_json.decision).toBe("blocked");
-  expect(blocked!.payload_json.redacted_message).toBe(
+  expect(blocked!.payload_json?.hits?.[0]?.rule_id).toBe("ssh_private_key_path");
+  expect(blocked!.payload_json?.decision).toBe("blocked");
+  expect(blocked!.payload_json?.redacted_message).toBe(
     "[maestro tool-result withheld by output policy]",
   );
 
   const row = f.calls.find((c) => c.event_type === "agent-tool-use");
   expect(row).toBeDefined();
-  expect(row!.payload_json.output).toEqual({
+  expect(row!.payload_json?.output).toEqual({
     redacted_message: "[maestro tool-result withheld by output policy]",
     rule_id: "ssh_private_key_path",
   });
@@ -742,9 +812,9 @@ test("maestro redactor — tool result bypass emits bypassed event and preserves
 
   const bypass = f.calls.find((c) => c.event_type === "agent-tool-result-redaction-bypassed");
   expect(bypass).toBeDefined();
-  expect(bypass!.payload_json.hits[0].rule_id).toBe("ssh_private_key_path");
+  expect(bypass!.payload_json?.hits?.[0]?.rule_id).toBe("ssh_private_key_path");
 
   const row = f.calls.find((c) => c.event_type === "agent-tool-use");
   expect(row).toBeDefined();
-  expect(row!.payload_json.output).toEqual(output);
+  expect(row!.payload_json?.output).toEqual(output);
 });

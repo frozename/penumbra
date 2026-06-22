@@ -1,6 +1,10 @@
+import type { DispatchEventInput } from "@penumbra/core";
+
 import { describe, expect, it } from "bun:test";
-import { ThoughtCapture } from "../../src/worker/thought-capture.js";
+
 import type { RuntimeThoughtsConfig } from "../../src/worker/thought-config.js";
+
+import { ThoughtCapture } from "../../src/worker/thought-capture.js";
 
 function makeConfig(overrides: Partial<RuntimeThoughtsConfig> = {}): RuntimeThoughtsConfig {
   return {
@@ -28,10 +32,19 @@ function makeConfig(overrides: Partial<RuntimeThoughtsConfig> = {}): RuntimeThou
   };
 }
 
+function metaOf(event: DispatchEventInput): Record<string, unknown> {
+  return event.meta ?? {};
+}
+
 describe("ThoughtCapture.recordThought", () => {
   it("emits a canonical agent.thought event and increments sequence_n", () => {
-    const enqueued: any[] = [];
-    const cap = new ThoughtCapture({ config: makeConfig(), enqueue: (e) => enqueued.push(e) });
+    const enqueued: DispatchEventInput[] = [];
+    const cap = new ThoughtCapture({
+      config: makeConfig(),
+      enqueue: (e: DispatchEventInput): void => {
+        enqueued.push(e);
+      },
+    });
     cap.recordThought({
       handoffId: "h-1",
       adapter: "stdio-acp",
@@ -57,24 +70,36 @@ describe("ThoughtCapture.recordThought", () => {
         token_count: 4,
       },
     });
-    expect(enqueued[1].meta.sequence_n).toBe(1);
+    expect(metaOf(enqueued[1]!).sequence_n).toBe(1);
   });
 
   it("truncates text to maxTextBytes and emits a paired overflow event", () => {
-    const enqueued: any[] = [];
-    const cap = new ThoughtCapture({ config: makeConfig(), enqueue: (e) => enqueued.push(e) });
+    const enqueued: DispatchEventInput[] = [];
+    const cap = new ThoughtCapture({
+      config: makeConfig(),
+      enqueue: (e: DispatchEventInput): void => {
+        enqueued.push(e);
+      },
+    });
     const long = "x".repeat(150);
     cap.recordThought({ handoffId: "h-1", adapter: "stdio-acp", agentName: "a", text: long });
     expect(enqueued).toHaveLength(2);
-    expect(enqueued[0].kind).toBe("agent.thought");
-    expect((enqueued[0].meta.text as string).length).toBe(100);
-    expect(enqueued[1].kind).toBe("agent.thought.overflow");
-    expect(enqueued[1].meta).toMatchObject({ sequence_n: 0, bytes_dropped: 50 });
+    expect(enqueued[0]!.kind).toBe("agent.thought");
+    const text0 = metaOf(enqueued[0]!).text;
+    expect(typeof text0).toBe("string");
+    expect(typeof text0 === "string" ? text0.length : 0).toBe(100);
+    expect(enqueued[1]!.kind).toBe("agent.thought.overflow");
+    expect(metaOf(enqueued[1]!)).toMatchObject({ sequence_n: 0, bytes_dropped: 50 });
   });
 
   it("redacts api keys, github tokens, discord webhooks, and bearer tokens", () => {
-    const enqueued: any[] = [];
-    const cap = new ThoughtCapture({ config: makeConfig(), enqueue: (e) => enqueued.push(e) });
+    const enqueued: DispatchEventInput[] = [];
+    const cap = new ThoughtCapture({
+      config: makeConfig(),
+      enqueue: (e: DispatchEventInput): void => {
+        enqueued.push(e);
+      },
+    });
     cap.recordThought({
       handoffId: "h-1",
       adapter: "stdio-acp",
@@ -82,7 +107,8 @@ describe("ThoughtCapture.recordThought", () => {
       text: "tried sk-test123ABCDEF1234567890 and ghp_abcdef1234567890XYZA and https://discord.com/api/webhooks/12345/abcdef_-XYZ and Authorization: Bearer xyz.abc-123",
     });
     expect(enqueued).toHaveLength(1);
-    const text = enqueued[0].meta.text as string;
+    const text = metaOf(enqueued[0]!).text;
+    if (typeof text !== "string") throw new Error("expected meta.text to be a string");
     expect(text).not.toContain("sk-test123");
     expect(text).not.toContain("ghp_abcdef");
     expect(text).not.toContain("discord.com/api/webhooks/12345");
@@ -91,7 +117,7 @@ describe("ThoughtCapture.recordThought", () => {
   });
 
   it("honors per-stream byte cap and stops emitting after the cap is hit", () => {
-    const enqueued: any[] = [];
+    const enqueued: DispatchEventInput[] = [];
     const cap = new ThoughtCapture({
       config: makeConfig({
         capture: {
@@ -101,7 +127,9 @@ describe("ThoughtCapture.recordThought", () => {
           perAgentOverrides: {},
         },
       }),
-      enqueue: (e) => enqueued.push(e),
+      enqueue: (e: DispatchEventInput): void => {
+        enqueued.push(e);
+      },
     });
     for (let i = 0; i < 6; i++) {
       cap.recordThought({
@@ -114,13 +142,14 @@ describe("ThoughtCapture.recordThought", () => {
     const thoughtRows = enqueued.filter((e) => e.kind === "agent.thought");
     const overflowRows = enqueued.filter((e) => e.kind === "agent.thought.overflow");
     expect(thoughtRows.length).toBeLessThanOrEqual(3);
-    const streamOverflow = overflowRows.find((e) => e.meta.sequence_n === -1);
+    const streamOverflow = overflowRows.find((e) => metaOf(e).sequence_n === -1);
     expect(streamOverflow).toBeDefined();
-    expect(streamOverflow!.meta.bytes_dropped).toBeGreaterThan(0);
+    const dropped = metaOf(streamOverflow!).bytes_dropped;
+    expect(typeof dropped === "number" ? dropped : 0).toBeGreaterThan(0);
   });
 
   it("skips emission when adapter is disabled", () => {
-    const enqueued: any[] = [];
+    const enqueued: DispatchEventInput[] = [];
     const cap = new ThoughtCapture({
       config: makeConfig({
         capture: {
@@ -130,22 +159,26 @@ describe("ThoughtCapture.recordThought", () => {
           perAgentOverrides: {},
         },
       }),
-      enqueue: (e) => enqueued.push(e),
+      enqueue: (e: DispatchEventInput): void => {
+        enqueued.push(e);
+      },
     });
     cap.recordThought({ handoffId: "h-1", adapter: "stdio-acp", agentName: "a", text: "x" });
     expect(enqueued).toHaveLength(0);
   });
 
   it("keeps perDispatch bounded under LRU eviction across many handoffs", () => {
-    const enqueued: any[] = [];
+    const enqueued: DispatchEventInput[] = [];
     const cap = new ThoughtCapture({
       config: makeConfig(),
-      enqueue: (e) => enqueued.push(e),
+      enqueue: (e: DispatchEventInput): void => {
+        enqueued.push(e);
+      },
       perDispatchCapacity: 8,
     });
     for (let i = 0; i < 100; i++) {
       cap.recordThought({
-        handoffId: `h-${i}`,
+        handoffId: `h-${String(i)}`,
         adapter: "stdio-acp",
         agentName: "a",
         text: "thought",
@@ -156,10 +189,12 @@ describe("ThoughtCapture.recordThought", () => {
   });
 
   it("evicts oldest dispatch entries when capacity is exceeded, preserves hot ids", () => {
-    const enqueued: any[] = [];
+    const enqueued: DispatchEventInput[] = [];
     const cap = new ThoughtCapture({
       config: makeConfig(),
-      enqueue: (e) => enqueued.push(e),
+      enqueue: (e: DispatchEventInput): void => {
+        enqueued.push(e);
+      },
       perDispatchCapacity: 3,
     });
     cap.recordThought({ handoffId: "a", adapter: "stdio-acp", agentName: "x", text: "a1" });
@@ -170,26 +205,31 @@ describe("ThoughtCapture.recordThought", () => {
     expect(cap._perDispatchSize()).toBe(3);
     cap.recordThought({ handoffId: "a", adapter: "stdio-acp", agentName: "x", text: "a3" });
     const aRows = enqueued.filter((e) => e.handoff_id === "a" && e.kind === "agent.thought");
-    expect(aRows.map((r) => r.meta.sequence_n)).toEqual([0, 1, 2]);
+    expect(aRows.map((r) => metaOf(r).sequence_n)).toEqual([0, 1, 2]);
     cap.recordThought({ handoffId: "b", adapter: "stdio-acp", agentName: "x", text: "b2" });
     const bRows = enqueued.filter((e) => e.handoff_id === "b" && e.kind === "agent.thought");
-    expect(bRows.map((r) => r.meta.sequence_n)).toEqual([0, 0]);
+    expect(bRows.map((r) => metaOf(r).sequence_n)).toEqual([0, 0]);
   });
 
   it("resetDispatch removes per-dispatch state", () => {
-    const enqueued: any[] = [];
-    const cap = new ThoughtCapture({ config: makeConfig(), enqueue: (e) => enqueued.push(e) });
+    const enqueued: DispatchEventInput[] = [];
+    const cap = new ThoughtCapture({
+      config: makeConfig(),
+      enqueue: (e: DispatchEventInput): void => {
+        enqueued.push(e);
+      },
+    });
     cap.recordThought({ handoffId: "h-1", adapter: "stdio-acp", agentName: "a", text: "first" });
     expect(cap._perDispatchSize()).toBe(1);
     cap.resetDispatch("h-1");
     expect(cap._perDispatchSize()).toBe(0);
     cap.recordThought({ handoffId: "h-1", adapter: "stdio-acp", agentName: "a", text: "again" });
     const rows = enqueued.filter((e) => e.handoff_id === "h-1" && e.kind === "agent.thought");
-    expect(rows.map((r) => r.meta.sequence_n)).toEqual([0, 0]);
+    expect(rows.map((r) => metaOf(r).sequence_n)).toEqual([0, 0]);
   });
 
   it("honors per-agent override over adapter default", () => {
-    const enqueued: any[] = [];
+    const enqueued: DispatchEventInput[] = [];
     const cap = new ThoughtCapture({
       config: makeConfig({
         capture: {
@@ -199,7 +239,9 @@ describe("ThoughtCapture.recordThought", () => {
           perAgentOverrides: { "gemini-acp-pro": false },
         },
       }),
-      enqueue: (e) => enqueued.push(e),
+      enqueue: (e: DispatchEventInput): void => {
+        enqueued.push(e);
+      },
     });
     cap.recordThought({
       handoffId: "h-1",
@@ -214,6 +256,6 @@ describe("ThoughtCapture.recordThought", () => {
       text: "y",
     });
     expect(enqueued).toHaveLength(1);
-    expect(enqueued[0].meta.agent_name).toBe("claude-acp-sonnet");
+    expect(metaOf(enqueued[0]!).agent_name).toBe("claude-acp-sonnet");
   });
 });
