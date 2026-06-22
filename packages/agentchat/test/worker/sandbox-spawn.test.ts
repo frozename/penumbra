@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSandboxed } from "../../src/worker/sandbox-spawn.js";
+
+import { spawnSandboxed, type SpawnSandboxedOpts } from "../../src/worker/sandbox-spawn.js";
 
 let cwd: string;
 
@@ -14,15 +15,25 @@ afterAll(async () => {
   await rm(cwd, { recursive: true, force: true });
 });
 
-async function withEnv(key: string, value: string | undefined, fn: () => Promise<void>) {
-  const prev = process.env[key];
-  if (value === undefined) delete process.env[key];
+// `delete process.env[key]` with a computed key trips no-dynamic-delete; use
+// Reflect.deleteProperty for genuine deletion (assigning undefined coerces to
+// the literal string "undefined" via ProcessEnv setters).
+function setEnv(key: string, value: string | undefined): void {
+  if (value === undefined) Reflect.deleteProperty(process.env, key);
   else process.env[key] = value;
+}
+
+async function withEnv(
+  key: string,
+  value: string | undefined,
+  fn: () => Promise<void>,
+): Promise<void> {
+  const prev = process.env[key];
+  setEnv(key, value);
   try {
     await fn();
   } finally {
-    if (prev === undefined) delete process.env[key];
-    else process.env[key] = prev;
+    setEnv(key, prev);
   }
 }
 
@@ -177,7 +188,9 @@ describe("spawnSandboxed", () => {
       outputMaxBytes: 1024,
       signal: controller.signal,
     });
-    setTimeout(() => controller.abort(), 100);
+    setTimeout(() => {
+      controller.abort();
+    }, 100);
     const r = await promise;
     expect(r.killReason).toBe("cancelled");
     expect(r.durationMs).toBeLessThan(3000);
@@ -216,8 +229,22 @@ describe("spawnSandboxed", () => {
   });
 
   test("throws when neither argv nor cmd are provided", async () => {
-    await expect(
-      spawnSandboxed({ cwd, timeoutMs: 1000, outputMaxBytes: 1024 } as any),
-    ).rejects.toThrow("spawnSandboxed: argv or cmd required");
+    // Test fabricates the missing-argv/cmd case to exercise the runtime guard;
+    // SpawnSandboxedOpts requires one of argv|cmd at the type level.
+    const optsMissingArgvAndCmd = {
+      cwd,
+      timeoutMs: 1000,
+      outputMaxBytes: 1024,
+    } as unknown as SpawnSandboxedOpts;
+    let caught: unknown;
+    try {
+      await spawnSandboxed(optsMissingArgvAndCmd);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught instanceof Error ? caught.message : String(caught)).toBe(
+      "spawnSandboxed: argv or cmd required",
+    );
   });
 });

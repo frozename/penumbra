@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+
 import { createWorkerWorktreeManager } from "../../src/worker/worktree-manager.js";
 
 describe("createWorkerWorktreeManager", () => {
@@ -50,7 +51,9 @@ describe("createWorkerWorktreeManager", () => {
 
   it("falls back to the default root when the registry path is invalid", () => {
     process.env.PENUMBRA_PROJECTS_YAML = path.join(registryRoot, "missing.yaml");
-    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const warn = spyOn(console, "warn").mockImplementation(() => {
+      /* silence warn */
+    });
 
     const manager = createWorkerWorktreeManager({ rootDir: tempRoot, mainRepoDir: process.cwd() });
 

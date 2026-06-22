@@ -1,13 +1,15 @@
 import { expect, test } from "bun:test";
+
 import { workerInjectRoute } from "../../src/worker/inject-route.js";
 import { registerSession, unregisterSession } from "../../src/worker/session-registry.js";
 
 test("POST /sessions/:handoff_id/inject accepts a supported session and forwards the prompt", async () => {
-  const injected: any[] = [];
+  const injected: { role: "user"; text: string }[] = [];
   registerSession("h-1", {
     adapter: "stdio-acp",
-    inject: async (message: any) => {
+    inject: (message) => {
       injected.push(message);
+      return Promise.resolve();
     },
   });
   try {
@@ -56,7 +58,10 @@ test("POST /sessions/:handoff_id/inject returns 404 for an unknown handoff", asy
 test("POST /sessions/:handoff_id/inject returns 504 when session.inject hangs past timeout", async () => {
   registerSession("h-hang", {
     adapter: "stdio-acp",
-    inject: () => new Promise<void>(() => {}),
+    inject: () =>
+      new Promise<void>(() => {
+        /* never resolves; tests timeout path */
+      }),
   });
   try {
     const res = await workerInjectRoute(

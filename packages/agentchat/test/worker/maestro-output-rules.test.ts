@@ -1,9 +1,10 @@
-import { expect, test } from "bun:test";
 import { ValuePatternRedactor } from "@penumbra/core";
+import { expect, test } from "bun:test";
+
 import {
-  MAESTRO_STATIC_RULES,
-  isFailClosed,
   buildUnknownAgentRule,
+  isFailClosed,
+  MAESTRO_STATIC_RULES,
 } from "../../src/worker/maestro-output-rules.js";
 
 const R = new ValuePatternRedactor(MAESTRO_STATIC_RULES);

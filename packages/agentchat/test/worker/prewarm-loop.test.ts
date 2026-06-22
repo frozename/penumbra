@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { createPrewarmLoop, type PrewarmLoopClock } from "../../src/worker/prewarm-loop.js";
+
 import type { PrewarmTarget } from "../../src/worker/prewarm-targets.js";
+
+import { createPrewarmLoop, type PrewarmLoopClock } from "../../src/worker/prewarm-loop.js";
 
 /**
  * Phase 3 — worker-local pre-warm loop. Pure + fully injected: a fake clock
@@ -8,25 +10,41 @@ import type { PrewarmTarget } from "../../src/worker/prewarm-targets.js";
  * counter stands in for the registry entry count.
  */
 
-function fakeClock(start = 0) {
+interface IntervalHandle {
+  fn: () => void;
+  ms: number;
+  unref: () => void;
+}
+
+function fakeClock(start = 0): {
+  clock: PrewarmLoopClock;
+  intervals: IntervalHandle[];
+  advance: (ms: number) => void;
+} {
   let now = start;
-  const intervals: Array<{ fn: () => void; ms: number }> = [];
+  const intervals: IntervalHandle[] = [];
   const clock: PrewarmLoopClock = {
     now: () => now,
-    setInterval: (fn, ms) => {
-      const handle = { fn, ms, unref: () => {} };
+    setInterval: (fn, ms): IntervalHandle => {
+      const handle: IntervalHandle = {
+        fn,
+        ms,
+        unref: () => {
+          /* fake clock has nothing to unref */
+        },
+      };
       intervals.push(handle);
       return handle;
     },
-    clearInterval: (handle) => {
-      const i = intervals.indexOf(handle as { fn: () => void; ms: number });
+    clearInterval: (handle): void => {
+      const i = intervals.indexOf(handle as IntervalHandle);
       if (i >= 0) intervals.splice(i, 1);
     },
   };
   return {
     clock,
     intervals,
-    advance: (ms: number) => {
+    advance: (ms: number): void => {
       now += ms;
     },
   };
@@ -44,8 +62,9 @@ describe("createPrewarmLoop (Phase 3)", () => {
     const warmed: string[] = [];
     const loop = createPrewarmLoop({
       computeTargets: () => [target("codex-acp-fast"), target("claude-acp-sonnet")],
-      prewarmOne: async (t) => {
+      prewarmOne: (t) => {
         warmed.push(t.agent);
+        return Promise.resolve();
       },
       countEntries: () => warmed.length,
       clock: fc.clock,
@@ -63,9 +82,10 @@ describe("createPrewarmLoop (Phase 3)", () => {
     const attempts: string[] = [];
     const loop = createPrewarmLoop({
       computeTargets: () => [target("flaky"), target("ok")],
-      prewarmOne: async (t) => {
+      prewarmOne: (t) => {
         attempts.push(t.agent);
-        if (t.agent === "flaky") throw new Error("spawn failed");
+        if (t.agent === "flaky") return Promise.reject(new Error("spawn failed"));
+        return Promise.resolve();
       },
       countEntries: () => 0,
       clock: fc.clock,
@@ -92,8 +112,9 @@ describe("createPrewarmLoop (Phase 3)", () => {
     const warmedAt: number[] = [];
     const loop = createPrewarmLoop({
       computeTargets: () => [target("codex-acp-fast")],
-      prewarmOne: async () => {
+      prewarmOne: () => {
         warmedAt.push(fc.clock.now());
+        return Promise.resolve();
       },
       countEntries: () => warmedAt.length,
       clock: fc.clock,
@@ -118,8 +139,9 @@ describe("createPrewarmLoop (Phase 3)", () => {
     const warmed: string[] = [];
     const loop = createPrewarmLoop({
       computeTargets: () => [],
-      prewarmOne: async (t) => {
+      prewarmOne: (t) => {
         warmed.push(t.agent);
+        return Promise.resolve();
       },
       countEntries: () => 0,
       clock: fc.clock,
@@ -139,8 +161,9 @@ describe("createPrewarmLoop (Phase 3)", () => {
     let targets = [target("codex-acp-fast")];
     const loop = createPrewarmLoop({
       computeTargets: () => targets,
-      prewarmOne: async (t) => {
+      prewarmOne: (t) => {
         warmed.push(t.agent);
+        return Promise.resolve();
       },
       countEntries: () => 0,
       clock: fc.clock,
@@ -167,7 +190,7 @@ describe("createPrewarmLoop (Phase 3)", () => {
     const fc = fakeClock();
     const loop = createPrewarmLoop({
       computeTargets: () => [],
-      prewarmOne: async () => {},
+      prewarmOne: () => Promise.resolve(),
       countEntries: () => 0,
       clock: fc.clock,
       cap: 10,
@@ -183,7 +206,9 @@ describe("createPrewarmLoop (Phase 3)", () => {
 
   test("a slow pass is single-flight: overlapping ticks do not double-warm", async () => {
     const fc = fakeClock();
-    let resolveOne: () => void = () => {};
+    let resolveOne: () => void = () => {
+      /* set by first prewarmOne call */
+    };
     const warmed: string[] = [];
     const loop = createPrewarmLoop({
       computeTargets: () => [target("codex-acp-fast")],
@@ -202,7 +227,7 @@ describe("createPrewarmLoop (Phase 3)", () => {
     const first = loop.tick(); // starts, blocks inside prewarmOne
     await loop.tick(); // re-entrant: must no-op while first is running
     expect(warmed).toEqual(["codex-acp-fast"]);
-    resolveOne?.();
+    resolveOne();
     await first;
     expect(warmed).toEqual(["codex-acp-fast"]);
   });
@@ -213,9 +238,10 @@ describe("createPrewarmLoop (Phase 3)", () => {
     let alive = false;
     const loop = createPrewarmLoop({
       computeTargets: () => [target("codex-acp-fast")],
-      prewarmOne: async () => {
+      prewarmOne: () => {
         warmedAt.push(fc.clock.now());
         alive = true;
+        return Promise.resolve();
       },
       countEntries: () => (alive ? 1 : 0),
       hasLiveEntry: () => alive,

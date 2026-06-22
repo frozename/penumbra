@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+
 import { renderDiscordEvent } from "../../src/worker/discord-events.js";
 
 describe("renderDiscordEvent", () => {

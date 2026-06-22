@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
+
 import { spawnWorkerCrashGuardSubprocess } from "../helpers/spawn-worker-subprocess.js";
 
 function hasFatalLine(stderr: string): boolean {
-  return /worker_fatal/.test(stderr) || /worker[._]unhandled_rejection/.test(stderr);
+  return stderr.includes("worker_fatal") || /worker[._]unhandled_rejection/.test(stderr);
 }
 
 describe("agentchat worker crash guard", () => {

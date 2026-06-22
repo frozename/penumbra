@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+
 import { AgentChatConfigSchema } from "../../src/config/types.js";
 import { loadNotificationConfig } from "../../src/worker/notification-config.js";
 
@@ -33,7 +34,7 @@ describe("notifications config schema", () => {
         },
       },
     });
-    expect(parsed.notifications?.routes?.projects?.penumbra?.channel).toBe("discord");
+    expect(parsed.notifications?.routes.projects.penumbra?.channel).toBe("discord");
   });
 });
 

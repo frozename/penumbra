@@ -1,58 +1,87 @@
-import { describe, expect, test, mock } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { createWorkerShutdown } from "../../src/worker/shutdown.js";
+
+import { createWorkerShutdown, type WorkerShutdownDeps } from "../../src/worker/shutdown.js";
+
+const noop = (): void => {
+  /* test mock placeholder */
+};
+const noopAsync = (): Promise<void> => Promise.resolve();
 
 describe("createWorkerShutdown", () => {
   test("runs shutdown path, stops heartbeat loop, and exits without throwing", async () => {
     const calls: string[] = [];
     const shutdown = createWorkerShutdown({
       log: {
-        info(meta, msg) {
-          calls.push(`log:${msg}:${meta.sig}`);
+        info(meta, msg): void {
+          calls.push(`log:${msg}:${String(meta.sig)}`);
         },
       },
       controlAbort: {
-        abort: mock(() => calls.push("controlAbort")),
+        abort: mock((): void => {
+          calls.push("controlAbort");
+        }),
       },
       heartbeatLoop: {
-        stop: mock(() => calls.push("heartbeatLoop.stop")),
+        stop: mock((): void => {
+          calls.push("heartbeatLoop.stop");
+        }),
       },
       prewarmAbort: {
-        abort: mock(() => calls.push("prewarmAbort")),
+        abort: mock((): void => {
+          calls.push("prewarmAbort");
+        }),
       },
       prewarmLoop: {
-        stop: mock(() => calls.push("prewarmLoop.stop")),
+        stop: mock((): void => {
+          calls.push("prewarmLoop.stop");
+        }),
       },
       usagePoller: {
-        stop: mock(() => calls.push("usagePoller.stop")),
+        stop: mock((): void => {
+          calls.push("usagePoller.stop");
+        }),
       },
       notificationScheduler: {
-        stop: mock(() => calls.push("notificationScheduler.stop")),
+        stop: mock((): void => {
+          calls.push("notificationScheduler.stop");
+        }),
       },
-      shutdownAllAcpWarmPools: mock(() => calls.push("shutdownAllAcpWarmPools")),
+      shutdownAllAcpWarmPools: mock((): void => {
+        calls.push("shutdownAllAcpWarmPools");
+      }),
       eventSource: {
-        stop: mock(async () => {
+        stop: mock((): Promise<void> => {
           calls.push("eventSource.stop");
+          return Promise.resolve();
         }),
       },
       permissionDaemonClient: {
-        stop: mock(() => calls.push("permissionDaemonClient.stop")),
+        stop: mock((): void => {
+          calls.push("permissionDaemonClient.stop");
+        }),
       },
       dispatcher: {
-        stop: mock(() => calls.push("dispatcher.stop")),
-        idle: mock(async () => {
+        stop: mock((): void => {
+          calls.push("dispatcher.stop");
+        }),
+        idle: mock((): Promise<void> => {
           calls.push("dispatcher.idle");
+          return Promise.resolve();
         }),
       },
       eventQueue: {
-        stop: mock(async () => {
+        stop: mock((): Promise<void> => {
           calls.push("eventQueue.stop");
+          return Promise.resolve();
         }),
       },
-      exit: mock((code) => calls.push(`exit:${code}`)),
+      exit: mock((code: number): void => {
+        calls.push(`exit:${String(code)}`);
+      }),
     });
 
-    await expect(shutdown("SIGTERM")).resolves.toBeUndefined();
+    await shutdown("SIGTERM");
 
     expect(calls).toEqual([
       "log:shutting down:SIGTERM",
@@ -74,22 +103,31 @@ describe("createWorkerShutdown", () => {
 
   test("stops the current prewarm loop from a dynamic getter", async () => {
     const calls: string[] = [];
-    const staleLoop = { stop: mock(() => calls.push("stale.stop")) };
-    const currentLoop = { stop: mock(() => calls.push("current.stop")) };
-    const shutdown = createWorkerShutdown({
-      log: { info: mock(() => {}) },
-      controlAbort: { abort: mock(() => {}) },
-      heartbeatLoop: { stop: mock(() => {}) },
-      prewarmAbort: { abort: mock(() => {}) },
+    const staleLoop = {
+      stop: mock((): void => {
+        calls.push("stale.stop");
+      }),
+    };
+    const currentLoop = {
+      stop: mock((): void => {
+        calls.push("current.stop");
+      }),
+    };
+    const deps: WorkerShutdownDeps = {
+      log: { info: mock(noop) },
+      controlAbort: { abort: mock(noop) },
+      heartbeatLoop: { stop: mock(noop) },
+      prewarmAbort: { abort: mock(noop) },
       prewarmLoop: staleLoop,
       getPrewarmLoop: () => currentLoop,
-      shutdownAllAcpWarmPools: mock(() => {}),
-      eventSource: { stop: mock(async () => {}) },
-      permissionDaemonClient: { stop: mock(() => {}) },
-      dispatcher: { stop: mock(() => {}), idle: mock(async () => {}) },
-      eventQueue: { stop: mock(async () => {}) },
-      exit: mock(() => {}),
-    });
+      shutdownAllAcpWarmPools: mock(noop),
+      eventSource: { stop: mock(noopAsync) },
+      permissionDaemonClient: { stop: mock(noop) },
+      dispatcher: { stop: mock(noop), idle: mock(noopAsync) },
+      eventQueue: { stop: mock(noopAsync) },
+      exit: mock(noop),
+    };
+    const shutdown = createWorkerShutdown(deps);
 
     await shutdown("SIGTERM");
 
@@ -98,25 +136,39 @@ describe("createWorkerShutdown", () => {
 
   test("forces exit(1) when shutdown exceeds the hard timeout", async () => {
     const calls: string[] = [];
-    const shutdown = createWorkerShutdown({
+    const deps: WorkerShutdownDeps = {
       log: {
-        info: mock(() => {}),
-        error: mock((meta, msg) => calls.push(`error:${msg}:${meta.sig}`)),
+        info: mock(noop),
+        error: mock((meta: Record<string, unknown>, msg: string): void => {
+          calls.push(`error:${msg}:${String(meta.sig)}`);
+        }),
       },
-      controlAbort: { abort: mock(() => {}) },
-      heartbeatLoop: { stop: mock(() => calls.push("heartbeatLoop.stop")) },
-      prewarmAbort: { abort: mock(() => {}) },
-      shutdownAllAcpWarmPools: mock(() => {}),
-      eventSource: { stop: mock(async () => {}) },
-      permissionDaemonClient: { stop: mock(() => {}) },
+      controlAbort: { abort: mock(noop) },
+      heartbeatLoop: {
+        stop: mock((): void => {
+          calls.push("heartbeatLoop.stop");
+        }),
+      },
+      prewarmAbort: { abort: mock(noop) },
+      shutdownAllAcpWarmPools: mock(noop),
+      eventSource: { stop: mock(noopAsync) },
+      permissionDaemonClient: { stop: mock(noop) },
       dispatcher: {
-        stop: mock(() => {}),
-        idle: mock(() => new Promise<void>(() => {})),
+        stop: mock(noop),
+        idle: mock(
+          () =>
+            new Promise<void>(() => {
+              /* never resolves to trigger timeout */
+            }),
+        ),
       },
-      eventQueue: { stop: mock(async () => {}) },
-      exit: mock((code) => calls.push(`exit:${code}`)),
+      eventQueue: { stop: mock(noopAsync) },
+      exit: mock((code: number): void => {
+        calls.push(`exit:${String(code)}`);
+      }),
       shutdownTimeoutMs: 5,
-    });
+    };
+    const shutdown = createWorkerShutdown(deps);
 
     await shutdown("SIGTERM");
 

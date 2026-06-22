@@ -1,20 +1,50 @@
+import { type WorktreeHandle, WorktreeManager } from "@penumbra/core";
 import { expect, test } from "bun:test";
+import { exec as execCb } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { exec as execCb } from "node:child_process";
 import { promisify } from "node:util";
+
+import type { AgentChatConfig } from "../../src/config/types.js";
+
 import {
   applyWorktreeOverride,
   rewriteWorktreeHandoffMessage,
 } from "../../src/worker/worktree-integration.js";
-import type { AgentChatConfig } from "../../src/config/types.js";
-import { WorktreeManager, type WorktreeHandle } from "@penumbra/core";
 
 const diskFullError = new Error("disk full");
 const exec = promisify(execCb);
 
-const baseConfig = {
+// AgentChatConfig fixtures are partial — the test only inspects shape under
+// `agents[].options`. Single laundering helper keeps the rest of the file
+// free of inline casts.
+function asConfig(value: unknown): AgentChatConfig {
+  return value as AgentChatConfig;
+}
+
+// applyWorktreeOverride only depends on createWorktree off the manager type.
+// A typed factory lets each test build the spy without spreading a class
+// instance (which trips no-misused-spread).
+type CreateWorktreeFn = WorktreeManager["createWorktree"];
+function asWorktreeManager(impl: {
+  createWorktree: CreateWorktreeFn;
+  getWorktree?: WorktreeManager["getWorktree"];
+}): WorktreeManager {
+  return impl as unknown as WorktreeManager;
+}
+
+// gemini-cli options carry cwd/env at runtime; AgentOptions is a wider union
+// in the schema. One typed reader avoids inline `as` per access.
+interface CliOptions {
+  cwd?: string;
+  env?: Record<string, string>;
+}
+function cliOptions(agent: { options?: unknown } | undefined): CliOptions {
+  return agent?.options ?? {};
+}
+
+const baseConfig = asConfig({
   agents: [
     {
       name: "gemini",
@@ -34,45 +64,47 @@ const baseConfig = {
     },
   ],
   default_roles: {},
-} as unknown as AgentChatConfig;
+});
 
 const mainRepoPath = process.cwd();
+
+// Typed factory: prefer-promise-reject-errors requires Error-shaped reasons,
+// but the wrap-as-cause test fabricates a non-Error rejection to verify the
+// integration wraps it. One documented unknown-as-Error cast inside the
+// factory satisfies the rule without weakening the test surface.
+function rejectAsNonError(payload: unknown): Promise<never> {
+  const reason = payload as Error;
+  return Promise.reject(reason);
+}
 
 function makeMockWorktreeManager(): WorktreeManager {
   const handles = new Map<string, WorktreeHandle>();
 
-  return {
-    async createWorktree(
-      id: string,
-      opts?: {
-        baseRef?: string;
-        project_id?: string;
-        isolated_install?: boolean;
-        signal?: AbortSignal;
-      },
-    ) {
-      if (id === "fail") throw diskFullError;
-      if (id === "string-fail") throw "disk full";
+  const createWorktree: CreateWorktreeFn = (id, opts) => {
+    if (id === "fail") return Promise.reject(diskFullError);
+    if (id === "string-fail") return rejectAsNonError("disk full");
 
-      const handle: WorktreeHandle = {
-        handoffId: id,
-        branchName: `agent/${id}`,
-        createdAt: "",
-        status: "created",
-        path: `/fake/worktree/${id}`,
-        storageRoot: `/fake/worktree/${id}/.test-storage`,
-        worktreeMode: opts?.isolated_install ? "isolated_install" : "symlink_mirror",
-      };
-      handles.set(id, handle);
-      if (opts?.baseRef) {
-        (handle as any).baseRef = opts.baseRef;
-      }
-      return handle;
-    },
-    getWorktree(id: string) {
-      return handles.get(id) ?? null;
-    },
-  } as unknown as WorktreeManager;
+    const handle: WorktreeHandle = {
+      handoffId: id,
+      branchName: `agent/${id}`,
+      createdAt: "",
+      status: "created",
+      path: `/fake/worktree/${id}`,
+      storageRoot: `/fake/worktree/${id}/.test-storage`,
+      worktreeMode: opts?.isolated_install ? "isolated_install" : "symlink_mirror",
+    };
+    handles.set(id, handle);
+    return Promise.resolve(handle);
+  };
+
+  return asWorktreeManager({
+    createWorktree,
+    getWorktree: (id: string) => handles.get(id) ?? null,
+  });
+}
+
+function errorCause(err: unknown): unknown {
+  return err instanceof Error ? err.cause : undefined;
 }
 
 test("Dispatch with adapter kind gemini-cli -> worktree created, cwd/env injected", async () => {
@@ -98,8 +130,9 @@ test("Dispatch with adapter kind gemini-cli -> worktree created, cwd/env injecte
   expect(handle).not.toBeNull();
   expect(handle?.path).toBe("/fake/worktree/h1");
   const agent = overrideConfig.agents.find((a) => a.name === "gemini");
-  expect((agent?.options as any).cwd).toBe("/fake/worktree/h1");
-  expect((agent?.options as any).env.PENUMBRA_STORAGE_ROOT).toBe("/fake/worktree/h1/.test-storage");
+  const opts = cliOptions(agent);
+  expect(opts.cwd).toBe("/fake/worktree/h1");
+  expect(opts.env?.PENUMBRA_STORAGE_ROOT).toBe("/fake/worktree/h1/.test-storage");
 });
 
 test("Dispatch with adapter kind openai-compat-http -> NO worktree created", async () => {
@@ -130,10 +163,14 @@ test("Dispatch with use_worktree: false -> NO worktree", async () => {
 });
 
 test("Dispatch with use_worktree: false and project_id -> agent cwd points at project root", async () => {
-  const wtm = {
-    ...makeMockWorktreeManager(),
-    projectRootFor: (id?: string) => (id === "llamactl" ? "/repos/llamactl" : undefined),
-  } as unknown as WorktreeManager;
+  const mock = makeMockWorktreeManager();
+  const wtm = asWorktreeManager({
+    createWorktree: mock.createWorktree.bind(mock),
+    getWorktree: mock.getWorktree.bind(mock),
+  });
+  (wtm as unknown as { projectRootFor: (id?: string) => string | undefined }).projectRootFor = (
+    id,
+  ): string | undefined => (id === "llamactl" ? "/repos/llamactl" : undefined);
   const { overrideConfig, handle } = await applyWorktreeOverride(
     { handoff_id: "h3-root", to_agent: "gemini", use_worktree: false, project_id: "llamactl" },
     baseConfig,
@@ -142,16 +179,20 @@ test("Dispatch with use_worktree: false and project_id -> agent cwd points at pr
     mainRepoPath,
   );
   expect(handle).toBeNull();
-  expect((overrideConfig.agents.find((a) => a.name === "gemini") as any).options.cwd).toBe(
+  expect(cliOptions(overrideConfig.agents.find((a) => a.name === "gemini")).cwd).toBe(
     "/repos/llamactl",
   );
 });
 
 test("Dispatch with use_worktree: true on non-worktree-capable adapter and project_id -> agent cwd points at project root", async () => {
-  const wtm = {
-    ...makeMockWorktreeManager(),
-    projectRootFor: (id?: string) => (id === "llamactl" ? "/repos/llamactl" : undefined),
-  } as unknown as WorktreeManager;
+  const mock = makeMockWorktreeManager();
+  const wtm = asWorktreeManager({
+    createWorktree: mock.createWorktree.bind(mock),
+    getWorktree: mock.getWorktree.bind(mock),
+  });
+  (wtm as unknown as { projectRootFor: (id?: string) => string | undefined }).projectRootFor = (
+    id,
+  ): string | undefined => (id === "llamactl" ? "/repos/llamactl" : undefined);
   const { overrideConfig, handle } = await applyWorktreeOverride(
     { handoff_id: "h3-root-nonwt", to_agent: "http", use_worktree: true, project_id: "llamactl" },
     baseConfig,
@@ -160,13 +201,14 @@ test("Dispatch with use_worktree: true on non-worktree-capable adapter and proje
     mainRepoPath,
   );
   expect(handle).toBeNull();
-  expect((overrideConfig.agents.find((a) => a.name === "http") as any).options.cwd).toBe(
+  expect(cliOptions(overrideConfig.agents.find((a) => a.name === "http")).cwd).toBe(
     "/repos/llamactl",
   );
 });
 
 test("Worktree creation throws -> propagates error", async () => {
   const wtm = makeMockWorktreeManager();
+  let caught: unknown;
   try {
     await applyWorktreeOverride(
       { handoff_id: "fail", to_agent: "gemini", use_worktree: true },
@@ -175,16 +217,17 @@ test("Worktree creation throws -> propagates error", async () => {
       wtm,
       mainRepoPath,
     );
-    throw new Error("expected worktree creation to fail");
   } catch (err) {
-    expect(err).toBeInstanceOf(Error);
-    expect((err as Error).message).toBe("worktree creation failed for fail: disk full");
-    expect((err as any).cause).toBe(diskFullError);
+    caught = err;
   }
+  expect(caught).toBeInstanceOf(Error);
+  expect((caught as Error).message).toBe("worktree creation failed for fail: disk full");
+  expect(errorCause(caught)).toBe(diskFullError);
 });
 
 test("Non-Error worktree failure is wrapped as an Error cause", async () => {
   const wtm = makeMockWorktreeManager();
+  let caught: unknown;
   try {
     await applyWorktreeOverride(
       { handoff_id: "string-fail", to_agent: "gemini", use_worktree: true },
@@ -193,13 +236,14 @@ test("Non-Error worktree failure is wrapped as an Error cause", async () => {
       wtm,
       mainRepoPath,
     );
-    throw new Error("expected worktree creation to fail");
   } catch (err) {
-    expect(err).toBeInstanceOf(Error);
-    expect((err as Error).message).toBe("worktree creation failed for string-fail: disk full");
-    expect((err as any).cause).toBeInstanceOf(Error);
-    expect((err as any).cause.message).toBe("disk full");
+    caught = err;
   }
+  expect(caught).toBeInstanceOf(Error);
+  expect((caught as Error).message).toBe("worktree creation failed for string-fail: disk full");
+  const cause = errorCause(caught);
+  expect(cause).toBeInstanceOf(Error);
+  expect((cause as Error).message).toBe("disk full");
 });
 
 test("applyWorktreeOverride creates the worktree on the passed manager instance", async () => {
@@ -211,7 +255,7 @@ test("applyWorktreeOverride creates the worktree on the passed manager instance"
   fs.writeFileSync(path.join(repoDir, "README.md"), "# one\n");
   await exec('git add README.md && git commit -m "one"', { cwd: repoDir });
   const manager = new WorktreeManager({ rootDir, mainRepoDir: repoDir });
-  const handoffId = `singleton-${Date.now()}`;
+  const handoffId = `singleton-${String(Date.now())}`;
 
   try {
     const { handle } = await applyWorktreeOverride(
@@ -225,7 +269,9 @@ test("applyWorktreeOverride creates the worktree on the passed manager instance"
     expect(handle).not.toBeNull();
     expect(manager.getWorktree(handoffId)).toEqual(handle);
   } finally {
-    await manager.teardownWorktree(handoffId, true).catch(() => {});
+    await manager.teardownWorktree(handoffId, true).catch(() => {
+      /* best-effort teardown */
+    });
     fs.rmSync(rootDir, { recursive: true, force: true });
     fs.rmSync(repoDir, { recursive: true, force: true });
   }
@@ -242,17 +288,16 @@ test("applyWorktreeOverride forwards branch_base to createWorktree", async () =>
   fs.writeFileSync(path.join(repoDir, "README.md"), "# two\n");
   await exec('git add README.md && git commit -m "two"', { cwd: repoDir });
   const manager = new WorktreeManager({ rootDir, mainRepoDir: repoDir });
-  const handoffId = `singleton-${Date.now()}-branch`;
+  const handoffId = `singleton-${String(Date.now())}-branch`;
 
   try {
-    const spyManager = {
-      ...manager,
-      createWorktree: async (id: string, opts?: { baseRef?: string; project_id?: string }) => {
+    const spyManager = asWorktreeManager({
+      createWorktree: (id, opts) => {
         expect(id).toBe(handoffId);
         expect(opts?.baseRef).toBe("agent/dep-tip");
         return manager.createWorktree(id, { ...opts, baseRef: "HEAD~1" });
       },
-    } as unknown as WorktreeManager;
+    });
     const { handle } = await applyWorktreeOverride(
       {
         handoff_id: handoffId,
@@ -268,7 +313,9 @@ test("applyWorktreeOverride forwards branch_base to createWorktree", async () =>
 
     expect(handle).not.toBeNull();
   } finally {
-    await manager.teardownWorktree(handoffId, true).catch(() => {});
+    await manager.teardownWorktree(handoffId, true).catch(() => {
+      /* best-effort teardown */
+    });
     fs.rmSync(rootDir, { recursive: true, force: true });
     fs.rmSync(repoDir, { recursive: true, force: true });
   }
@@ -296,22 +343,13 @@ test("applyWorktreeOverride forwards isolated_install to createWorktree", async 
 test("applyWorktreeOverride forwards abort signal to worktree creation", async () => {
   const abort = new AbortController();
   let observedSignal: AbortSignal | undefined;
-  const manager = makeMockWorktreeManager();
-  const spyManager = {
-    ...manager,
-    createWorktree: async (
-      id: string,
-      opts?: {
-        baseRef?: string;
-        project_id?: string;
-        isolated_install?: boolean;
-        signal?: AbortSignal;
-      },
-    ) => {
+  const inner = makeMockWorktreeManager();
+  const spyManager = asWorktreeManager({
+    createWorktree: (id, opts) => {
       observedSignal = opts?.signal;
-      return manager.createWorktree(id, opts);
+      return inner.createWorktree(id, opts);
     },
-  } as unknown as WorktreeManager;
+  });
 
   await applyWorktreeOverride(
     {

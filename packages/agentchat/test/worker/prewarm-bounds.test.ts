@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { createPrewarmLoop, type PrewarmLoopClock } from "../../src/worker/prewarm-loop.js";
+
 import type { PrewarmTarget } from "../../src/worker/prewarm-targets.js";
+
+import { createPrewarmLoop, type PrewarmLoopClock } from "../../src/worker/prewarm-loop.js";
 
 /**
  * Phase 4 — bounded-process invariant + crash-rate guard. The loop must never
@@ -9,16 +11,30 @@ import type { PrewarmTarget } from "../../src/worker/prewarm-targets.js";
  * flaky binary cannot become a tight respawn loop.
  */
 
-function fakeClock(start = 0) {
+interface IntervalHandle {
+  fn: () => void;
+  ms: number;
+  unref: () => void;
+}
+
+function fakeClock(start = 0): { clock: PrewarmLoopClock; advance: (ms: number) => void } {
   let now = start;
   const clock: PrewarmLoopClock = {
     now: () => now,
-    setInterval: (fn, ms) => ({ fn, ms, unref: () => {} }),
-    clearInterval: () => {},
+    setInterval: (fn, ms): IntervalHandle => ({
+      fn,
+      ms,
+      unref: (): void => {
+        /* fake clock has nothing to unref */
+      },
+    }),
+    clearInterval: (): void => {
+      /* no-op for fake clock */
+    },
   };
   return {
     clock,
-    advance: (ms: number) => {
+    advance: (ms: number): void => {
       now += ms;
     },
   };
@@ -29,14 +45,15 @@ describe("prewarm loop bounds (Phase 4)", () => {
     const fc = fakeClock();
     const warmed: string[] = [];
     const targets: PrewarmTarget[] = Array.from({ length: 10 }, (_, i) => ({
-      agent: `a${i}`,
+      agent: `a${String(i)}`,
       repoRoot: "/repos/penumbra",
       slot: 0,
     }));
     const loop = createPrewarmLoop({
       computeTargets: () => targets,
-      prewarmOne: async (t) => {
+      prewarmOne: (t) => {
         warmed.push(t.agent);
+        return Promise.resolve();
       },
       countEntries: () => warmed.length, // each successful warm = one live process
       clock: fc.clock,
@@ -59,8 +76,9 @@ describe("prewarm loop bounds (Phase 4)", () => {
         { agent: "a0", repoRoot: "/r", slot: 0 },
         { agent: "a1", repoRoot: "/r", slot: 0 },
       ],
-      prewarmOne: async (t) => {
+      prewarmOne: (t) => {
         prewarmed.push(t.agent);
+        return Promise.resolve();
       },
       countEntries: () => coldEntries + prewarmed.length,
       clock: fc.clock,
@@ -81,9 +99,9 @@ describe("prewarm loop bounds (Phase 4)", () => {
     const attempts: number[] = [];
     const loop = createPrewarmLoop({
       computeTargets: () => [{ agent: "x", repoRoot: "/r", slot: 0 }],
-      prewarmOne: async () => {
+      prewarmOne: () => {
         attempts.push(fcNow());
-        throw new Error("boom");
+        return Promise.reject(new Error("boom"));
       },
       countEntries: () => 0,
       clock: fc.clock,
@@ -92,7 +110,7 @@ describe("prewarm loop bounds (Phase 4)", () => {
       backoffBaseMs: 1_000,
       backoffMaxMs: 60_000,
     });
-    function fcNow() {
+    function fcNow(): number {
       return fc.clock.now();
     }
 
@@ -119,9 +137,9 @@ describe("prewarm loop bounds (Phase 4)", () => {
     let attempts = 0;
     const loop = createPrewarmLoop({
       computeTargets: () => [{ agent: "x", repoRoot: "/r", slot: 0 }],
-      prewarmOne: async () => {
+      prewarmOne: () => {
         attempts += 1;
-        throw new Error("boom");
+        return Promise.reject(new Error("boom"));
       },
       countEntries: () => 0,
       clock: fc.clock,

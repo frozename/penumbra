@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { computePrewarmTargets } from "../../src/worker/prewarm-targets.js";
 
 /**
@@ -15,7 +16,10 @@ const resolveProjectRoot = (projectId?: string): string | undefined => {
 };
 const mainRepoPath = "/repos/penumbra";
 
-const agent = (name: string, options: Record<string, unknown>) => ({ name, options });
+const agent = (
+  name: string,
+  options: Record<string, unknown>,
+): { name: string; options: Record<string, unknown> } => ({ name, options });
 
 describe("computePrewarmTargets", () => {
   test("(a) includes only agents opted into BOTH warm_pool and warm_pool_prewarm", () => {
