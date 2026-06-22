@@ -1,13 +1,13 @@
 // packages/agentchat/src/config/types.ts
-import { z } from "zod";
 import {
+  type AgentOptions,
   AgentOptionsSchema,
   AgentPinSchema,
   AgentPoolSchema,
   CANONICAL_PROVIDER_VALUE_RE,
   refineAgentConfigAdapterOptions,
-  type AgentOptions,
 } from "@penumbra/config";
+import { z } from "zod";
 
 export { AgentOptionsSchema };
 export { AgentPinSchema, AgentPoolSchema };
@@ -183,14 +183,14 @@ export const AgentConfigSchema = z
     refineAgentConfigAdapterOptions(data, ctx);
     if (data.pricing_mode === "subscription" && !data.subscription_provider) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         path: ["subscription_provider"],
         message: 'subscription_provider is required when pricing_mode is "subscription"',
       });
     }
     if (data.long_lived === true && data.long_lived_config === undefined) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         path: ["long_lived_config"],
         message: "long_lived: true requires long_lived_config",
       });
@@ -213,7 +213,7 @@ const PressureCapWindowSchema = z.union([
     .superRefine((data, ctx) => {
       if (data.warn !== null && data.warn !== undefined && data.warn >= data.refuse) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: "custom",
           path: ["warn"],
           message: "warn must be < refuse",
         });
@@ -279,7 +279,7 @@ export type NotificationProjectRoute = z.infer<typeof NotificationProjectRouteSc
 
 export const NotificationIdentitySchema = z.object({
   display_name: z.string().min(1).optional(),
-  avatar_url: z.string().url().optional(),
+  avatar_url: z.url().optional(),
   avatar_url_env: z.string().min(1).optional(),
 });
 export type NotificationIdentity = z.infer<typeof NotificationIdentitySchema>;

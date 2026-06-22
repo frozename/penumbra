@@ -648,7 +648,7 @@ async function maybePostDiscordMergeResult(handoffId: string, result: MergeResul
   let handoff: HandoffRow | null = null;
   try {
     const res = await client.getHandoff(handoffId);
-    handoff = (res.handoff as HandoffRow | null) ?? null;
+    handoff = res.handoff;
   } catch {
     handoff = null;
   }
@@ -682,7 +682,7 @@ async function maybePostDiscordPermissionEvent(event: DiscordNotificationEvent):
   if (event.handoff_id) {
     try {
       const res = await client.getHandoff(event.handoff_id);
-      handoff = (res.handoff as HandoffRow | null) ?? null;
+      handoff = res.handoff;
     } catch {
       handoff = null;
     }
@@ -1020,8 +1020,7 @@ async function loadConversationTranscript(
     statuses: ["completed", "dispatched", "approved", "redirected"],
     conversation_id,
   });
-  const rows = handoffs as HandoffRow[];
-  const sorted = [...rows].sort((a, b) => a.ts.localeCompare(b.ts));
+  const sorted = [...handoffs].sort((a, b) => a.ts.localeCompare(b.ts));
   return sorted.map((h) => ({
     handoff_id: h.handoff_id,
     agent: h.from_agent === "user" ? "user" : h.from_agent,
@@ -1345,7 +1344,7 @@ const thoughtAnalyzerDeps: ThoughtAnalyzerDeps = {
   getHandoff: async (id) => {
     try {
       const res = await client.getHandoff(id);
-      return res.handoff as HandoffRow | null;
+      return res.handoff;
     } catch {
       return null;
     }
@@ -1366,7 +1365,8 @@ const thoughtAnalyzerDeps: ThoughtAnalyzerDeps = {
 
 const reconcileWorktree = createMergeReconciler({
   worktreeManager,
-  postProgress: (id, payload) => client.postProgress(id, payload),
+  postProgress: (id: string, payload: Record<string, unknown>): Promise<void> =>
+    client.postProgress(id, payload),
   captureResult: (id, result) =>
     client.captureAgentPerformanceFromReconciler({ handoff_id: id, result: { ...result } }),
   reconcilerAutoRebase: config.reconcilerAutoRebase,
@@ -1418,13 +1418,12 @@ const reconcileWorktree = createMergeReconciler({
   },
   getParentHandoffId: async (handoffId) => {
     const res = await client.getHandoff(handoffId);
-    const handoff = res.handoff as HandoffRow | null;
-    return handoff?.parent_handoff_id ?? null;
+    return res.handoff.parent_handoff_id ?? null;
   },
   getHandoff: async (id) => {
     try {
       const res = await client.getHandoff(id);
-      return res.handoff as HandoffRow | null;
+      return res.handoff;
     } catch {
       return null;
     }
@@ -1722,7 +1721,8 @@ const dispatcher = createWorkerDispatcher({
       graceMs: CLAIM_AFFINITY_GRACE_MS,
     });
   },
-  postProgress: (id, payload) => client.postProgress(id, payload),
+  postProgress: (id: string, payload: Record<string, unknown>): Promise<void> =>
+    client.postProgress(id, payload),
   complete: async (id): Promise<void> => {
     await client.completeHandoff(id, workerId);
   },

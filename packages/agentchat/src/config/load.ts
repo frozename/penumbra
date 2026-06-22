@@ -1,13 +1,14 @@
 // packages/agentchat/src/config/load.ts
+import { load as parseYaml } from "js-yaml";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { load as parseYaml } from "js-yaml";
+
+import { colonFormToSdkPattern } from "../worker/mcp-tool-name.js";
 import {
   AgentChatConfigSchema,
   type LongLivedConfigWithPrecomputedAllowlist,
   type ParsedAgentChatConfig,
 } from "./types.js";
-import { colonFormToSdkPattern } from "../worker/mcp-tool-name.js";
 
 export function loadConfig(path: string): ParsedAgentChatConfig {
   const raw = readFileSync(path, "utf8");

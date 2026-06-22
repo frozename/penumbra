@@ -1,12 +1,13 @@
+import type { DispatchEventInput } from "@penumbra/core";
+
+import type { WriteToolsExecutor } from "../worker/write-tools-executor.js";
+
 export interface ToolCallContext {
   toolName: string;
   rawInput: unknown;
   /** Phase 1d — dispatch identity for executor scoping (one-shot terminal registry, audit emit) */
   dispatchId: string;
 }
-
-import type { WriteToolsExecutor } from "../worker/write-tools-executor.js";
-import type { DispatchEventInput } from "@penumbra/core";
 
 export type PermissionDecision = "approve" | "reject";
 
