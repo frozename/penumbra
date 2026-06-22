@@ -1,8 +1,9 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+
 import { loadConfig } from "../config/load.js";
-import { renderDiscordEvent, type DiscordNotificationEvent } from "../worker/discord-events.js";
-import { postToDiscord, type DiscordFetch } from "../worker/discord-notifier.js";
+import { type DiscordNotificationEvent, renderDiscordEvent } from "../worker/discord-events.js";
+import { type DiscordFetch, postToDiscord } from "../worker/discord-notifier.js";
 import { loadNotificationConfig } from "../worker/notification-config.js";
 import { resolveNotificationRoute } from "../worker/notification-router.js";
 
@@ -140,35 +141,41 @@ function buildSampleEvent(input: {
       };
     default: {
       const exhaustive: never = input.kind;
-      throw new Error(`unsupported sample event kind: ${exhaustive}`);
+      throw new Error(`unsupported sample event kind: ${String(exhaustive)}`);
     }
   }
 }
 
-function validateCommand(env: Record<string, string | undefined>): number {
-  const config = loadConfig(getConfigPath(env));
-  const notifications = loadNotificationConfig({ agentchat: config, env });
-  const referencedEnvNames = new Set<string>();
-
+function collectReferencedEnvNames(
+  notifications: ReturnType<typeof loadNotificationConfig>,
+): Set<string> {
+  const names = new Set<string>();
   for (const channel of Object.values(notifications.channels)) {
-    if (channel?.defaultWebhookUrlEnv) referencedEnvNames.add(channel.defaultWebhookUrlEnv);
+    if (channel?.defaultWebhookUrlEnv) names.add(channel.defaultWebhookUrlEnv);
   }
   for (const route of Object.values(notifications.routes.projects)) {
-    if (route.webhookUrlEnv) referencedEnvNames.add(route.webhookUrlEnv);
+    if (route.webhookUrlEnv) names.add(route.webhookUrlEnv);
   }
+  return names;
+}
 
+function printRouteStatus(
+  notifications: ReturnType<typeof loadNotificationConfig>,
+  env: Record<string, string | undefined>,
+): void {
   const defaultRoute = resolveNotificationRoute({ config: notifications, env });
   process.stdout.write(`default: ${defaultRoute ? "configured" : "missing"}\n`);
 
   for (const projectId of Object.keys(notifications.routes.projects).sort()) {
-    const route = resolveNotificationRoute({
-      config: notifications,
-      env,
-      projectId,
-    });
+    const route = resolveNotificationRoute({ config: notifications, env, projectId });
     process.stdout.write(`project ${projectId}: ${route ? "configured" : "missing"}\n`);
   }
+}
 
+function reportEnvStatus(
+  referencedEnvNames: ReadonlySet<string>,
+  env: Record<string, string | undefined>,
+): boolean {
   let hasMissingEnv = false;
   for (const name of [...referencedEnvNames].sort()) {
     const value = env[name];
@@ -180,11 +187,21 @@ function validateCommand(env: Record<string, string | undefined>): number {
       process.stdout.write(`env ${name}: invalid\n`);
     }
   }
+  return hasMissingEnv;
+}
+
+function validateCommand(env: Record<string, string | undefined>): number {
+  const config = loadConfig(getConfigPath(env));
+  const notifications = loadNotificationConfig({ agentchat: config, env });
+  const referencedEnvNames = collectReferencedEnvNames(notifications);
+
+  printRouteStatus(notifications, env);
+  const hasMissingEnv = reportEnvStatus(referencedEnvNames, env);
 
   return hasMissingEnv ? 1 : 0;
 }
 
-async function renderCommand(args: string[], deps: DiscordCliDeps): Promise<number> {
+function renderCommand(args: string[], deps: DiscordCliDeps): number {
   const kind = readFlag(args, "--event") as DiscordNotificationEvent["kind"] | undefined;
   const projectId = readFlag(args, "--project-id");
   const agent = readFlag(args, "--agent");
@@ -243,7 +260,7 @@ export async function runDiscordCli(args: string[], deps: DiscordCliDeps): Promi
     const cmd = args[0];
     if (cmd === "validate") return validateCommand(deps.env);
     if (cmd === "render") return renderCommand(args.slice(1), deps);
-    if (cmd === "test") return testCommand(args.slice(1), deps);
+    if (cmd === "test") return await testCommand(args.slice(1), deps);
     console.error("usage: agentchat discord <validate|render|test> [args]");
     return 1;
   } catch (err) {

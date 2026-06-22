@@ -1,26 +1,39 @@
 import type { AgentConfig } from "../config/types.js";
+
 import { colonFormToSdkPattern } from "../worker/mcp-tool-name.js";
 
 export type AdapterOptions = Record<string, unknown>;
 
+interface McpServerSpec {
+  name: string;
+  command: string;
+  args?: readonly string[];
+  env?: readonly { name: string; value: string }[];
+}
+
+function isMcpServerSpec(value: unknown): value is McpServerSpec {
+  return (
+    typeof value === "object" && value !== null && "name" in value && typeof value.name === "string"
+  );
+}
+
+function readMcpServers(options: AdapterOptions): McpServerSpec[] {
+  const raw = options.mcpServers;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(isMcpServerSpec);
+}
+
 export function normalizeAdapterOptions(
   cfg: { options?: AgentConfig["options"] },
-  hostedSpecs: readonly {
-    name: string;
-    command: string;
-    args?: readonly string[];
-    env?: readonly { name: string; value: string }[];
-  }[],
+  hostedSpecs: readonly McpServerSpec[],
   allowlist: readonly string[],
 ): AdapterOptions {
-  let adapterOptions = (cfg.options ?? {}) as AdapterOptions;
+  let adapterOptions: AdapterOptions = cfg.options ?? {};
   adapterOptions = normalizeWarmPoolOptions(adapterOptions);
 
   if (hostedSpecs.length > 0) {
-    const yamlMcpServers: any[] = Array.isArray(adapterOptions.mcpServers)
-      ? (adapterOptions.mcpServers as any[])
-      : [];
-    const yamlNames = new Set(yamlMcpServers.map((s: any) => s.name));
+    const yamlMcpServers = readMcpServers(adapterOptions);
+    const yamlNames = new Set(yamlMcpServers.map((s) => s.name));
     const injected = hostedSpecs
       .filter((s) => !yamlNames.has(s.name))
       .map((s) => ({
@@ -54,7 +67,7 @@ export function normalizeAdapterOptions(
 
 function normalizeWarmPoolOptions(options: AdapterOptions): AdapterOptions {
   const mapped: AdapterOptions = { ...options };
-  const mapping: Array<[string, string]> = [
+  const mapping: [string, string][] = [
     ["warm_pool", "warmPool"],
     ["warm_pool_idle_grace_ms", "warmPoolIdleGraceMs"],
     ["warm_pool_max_age_ms", "warmPoolMaxAgeMs"],

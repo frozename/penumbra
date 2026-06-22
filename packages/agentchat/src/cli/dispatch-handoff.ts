@@ -1,10 +1,43 @@
 import type { AgentChatConfig } from "../config/types.js";
+import type { WriteToolsExecutor } from "../worker/write-tools-executor.js";
 import type { ChatTurnInput, ChatTurnResult } from "./loop.js";
+
+import { classifierDeclineMetaFromUnknown } from "../classifier-decline.js";
 import { runChatTurn as realRunChatTurn } from "./loop.js";
 import { buildNextPrompt } from "./transcript.js";
 import { isAutoApproved } from "./trust.js";
-import type { WriteToolsExecutor } from "../worker/write-tools-executor.js";
-import { classifierDeclineMetaFromUnknown } from "../classifier-decline.js";
+
+interface CreateHandoffBody {
+  from: string;
+  to: string;
+  to_role?: string | null;
+  message: string;
+  conversation_id: string;
+  project_id?: string | null;
+  triggered_by_event_id: string;
+  use_worktree?: boolean | number | null;
+  chain_task_type?: string | null;
+}
+
+interface CreateHandoffResult {
+  handoff_id: string;
+  status: string;
+  routed_agent?: string;
+  routed_role?: string;
+  routing_task_type?: string;
+}
+
+interface ApproveBody {
+  resolved_by?: string;
+  redirect_to?: string;
+  reject?: boolean;
+  reason?: string;
+}
+
+interface ApproveResult {
+  handoff_id: string;
+  status: string;
+}
 
 export interface DispatchHandoffOpts {
   handoff: {
@@ -28,15 +61,9 @@ export interface DispatchHandoffOpts {
   trustMode: "all" | "config";
   projectContext?: string;
   executor?: WriteToolsExecutor;
-  observe: (event: any) => Promise<{ event_id: string }>;
-  createHandoff: (body: any) => Promise<{
-    handoff_id: string;
-    status: string;
-    routed_agent?: string;
-    routed_role?: string;
-    routing_task_type?: string;
-  }>;
-  approve: (id: string, body: any) => Promise<{ handoff_id: string; status: string }>;
+  observe: (event: Record<string, unknown>) => Promise<{ event_id: string }>;
+  createHandoff: (body: CreateHandoffBody) => Promise<CreateHandoffResult>;
+  approve: (id: string, body: ApproveBody) => Promise<ApproveResult>;
   markFailed?: (
     handoff_id: string,
     reason: string,
@@ -72,144 +99,172 @@ export interface DispatchHandoffResult {
 }
 
 const RETRY_BACKOFF_MS = [200, 400, 800] as const;
+
 async function defaultDelay(ms: number): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
+
 function extractTurnErrorMessage(turn: ChatTurnResult): string | null {
-  const err: any = (turn as any).error;
-  if (!err) return null;
-  if (typeof err === "string") return err;
-  if (typeof err === "object" && typeof err.message === "string") return err.message;
-  return String(err);
+  return turn.error ? turn.error.message : null;
+}
+
+interface TurnAttempt {
+  turn: ChatTurnResult | null;
+  errMsg: string | null;
+  errMeta?: ChatTurnResult["meta"];
+}
+
+async function runTurnOnce(
+  opts: DispatchHandoffOpts,
+  targetAgent: string,
+  promptText: string | undefined,
+): Promise<TurnAttempt> {
+  const turnRunner = opts.runChatTurn ?? realRunChatTurn;
+  try {
+    const turn = await turnRunner({
+      config: opts.config,
+      initialAgent: targetAgent,
+      userMessage: opts.handoff.message,
+      conversation: opts.conversation,
+      prompt: promptText,
+      handoff_id: opts.handoff.handoff_id,
+      observe: opts.observe,
+      onChunk: opts.onChunk,
+      requestPermission: opts.requestPermission,
+      executor: opts.executor,
+      eventContext: opts.eventContext,
+      onEvent: opts.onEvent,
+      signal: opts.signal,
+      long_lived_identity: {
+        dispatch_kind: opts.handoff.dispatch_kind,
+        long_lived_agent_id: opts.handoff.long_lived_agent_id,
+        long_lived_tick_id: opts.handoff.long_lived_tick_id,
+      },
+    });
+    const errMsg = extractTurnErrorMessage(turn);
+    const errMeta = turn.meta?.classifier_declined ? turn.meta : undefined;
+    return { turn, errMsg, ...(errMeta ? { errMeta } : {}) };
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const classifierDecline = classifierDeclineMetaFromUnknown(err);
+    return { turn: null, errMsg, ...(classifierDecline ? { errMeta: classifierDecline } : {}) };
+  }
+}
+
+async function handleRetryExhaustion(
+  opts: DispatchHandoffOpts,
+  targetAgent: string,
+  errMsg: string,
+  errMeta: ChatTurnResult["meta"] | undefined,
+): Promise<DispatchHandoffResult | null> {
+  const handoffId = opts.handoff.handoff_id;
+  if (!opts.markFailed || !handoffId) return null;
+  try {
+    await opts.markFailed(handoffId, errMsg);
+    return {
+      next: null,
+      terminatedReason: "error",
+      cappedHandoffId: handoffId,
+      text: "",
+      agent: targetAgent,
+      ...(errMeta ? { meta: errMeta } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function runTurnWithRetry(
+  opts: DispatchHandoffOpts,
+  targetAgent: string,
+  promptText: string | undefined,
+): Promise<{ ok: true; turn: ChatTurnResult } | { ok: false; result: DispatchHandoffResult }> {
+  const delay = opts.delay ?? defaultDelay;
+  let lastErrMsg = "adapter dispatch failed";
+  let lastErrMeta: ChatTurnResult["meta"] | undefined;
+
+  for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt++) {
+    const result = await runTurnOnce(opts, targetAgent, promptText);
+    if (result.errMeta) lastErrMeta = result.errMeta;
+    if (result.turn && !result.errMsg) return { ok: true, turn: result.turn };
+    lastErrMsg = result.errMsg ?? lastErrMsg;
+    const backoff = RETRY_BACKOFF_MS[attempt];
+    if (backoff === undefined) break;
+    await delay(backoff);
+  }
+
+  const failed = await handleRetryExhaustion(opts, targetAgent, lastErrMsg, lastErrMeta);
+  if (failed) return { ok: false, result: failed };
+  throw new Error(lastErrMsg);
+}
+
+function resolveNextHop(turn: ChatTurnResult): { nextTo: string; nextRole: string | null } | null {
+  if (!turn.next_mention) return null;
+  const resolution = turn.next_mention.resolution;
+  const nextTo = resolution.kind === "unknown" ? turn.next_mention.target : resolution.agent_name;
+  const nextRole = resolution.kind === "role" ? resolution.role : null;
+  return { nextTo, nextRole };
+}
+
+function metaSpread(turn: ChatTurnResult): { meta?: ChatTurnResult["meta"] } {
+  return turn.meta ? { meta: turn.meta } : {};
+}
+
+function buildPromptText(opts: DispatchHandoffOpts): string | undefined {
+  if (opts.handoff.from_agent === "user") return undefined;
+  return buildNextPrompt(opts.transcript, opts.handoff.from_agent, opts.handoff.message, {
+    maxTokens: opts.transcriptBudget,
+    projectContext: opts.projectContext,
+  });
+}
+
+function terminalResult(
+  reason: "no_mention" | "max_hops" | "untrusted",
+  turn: ChatTurnResult,
+  targetAgent: string,
+  cappedHandoffId?: string,
+): DispatchHandoffResult {
+  return {
+    next: null,
+    terminatedReason: reason,
+    ...(cappedHandoffId ? { cappedHandoffId } : {}),
+    text: turn.text,
+    agent: targetAgent,
+    ...metaSpread(turn),
+  };
 }
 
 export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<DispatchHandoffResult> {
-  const turnRunner = opts.runChatTurn ?? realRunChatTurn;
   const targetAgent = opts.handoff.to_agent;
+  const promptText = buildPromptText(opts);
 
-  const isChainStart = opts.handoff.from_agent === "user";
-  const promptText = isChainStart
-    ? undefined
-    : buildNextPrompt(opts.transcript, opts.handoff.from_agent, opts.handoff.message, {
-        maxTokens: opts.transcriptBudget,
-        projectContext: opts.projectContext,
-      });
+  const attempt = await runTurnWithRetry(opts, targetAgent, promptText);
+  if (!attempt.ok) return attempt.result;
+  const turn = attempt.turn;
 
-  const delay = opts.delay ?? defaultDelay;
-  let lastErrMsg: string | null = null;
-  let lastErrMeta: ChatTurnResult["meta"] | undefined;
-  let turn: ChatTurnResult | null = null;
-  for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt++) {
-    try {
-      turn = await turnRunner({
-        config: opts.config,
-        initialAgent: targetAgent,
-        userMessage: opts.handoff.message,
-        conversation: opts.conversation,
-        prompt: promptText,
-        handoff_id: opts.handoff.handoff_id,
-        observe: opts.observe,
-        onChunk: opts.onChunk,
-        requestPermission: opts.requestPermission,
-        executor: opts.executor,
-        eventContext: opts.eventContext,
-        onEvent: opts.onEvent,
-        signal: opts.signal,
-        long_lived_identity: {
-          dispatch_kind: opts.handoff.dispatch_kind,
-          long_lived_agent_id: opts.handoff.long_lived_agent_id,
-          long_lived_tick_id: opts.handoff.long_lived_tick_id,
-        },
-      });
-      lastErrMsg = extractTurnErrorMessage(turn);
-      if (turn.meta?.classifier_declined) lastErrMeta = turn.meta;
-      if (!lastErrMsg) break;
-    } catch (err) {
-      lastErrMsg = err instanceof Error ? err.message : String(err);
-      const classifierDecline = classifierDeclineMetaFromUnknown(err);
-      if (classifierDecline) lastErrMeta = classifierDecline;
-    }
-
-    // Exhausted retries: mark failed (best-effort). If we have a persisted handoff
-    // row and a markFailed hook, treat this as a terminal hop rather than a crash.
-    if (attempt === RETRY_BACKOFF_MS.length) {
-      if (opts.markFailed && opts.handoff.handoff_id) {
-        const reason = lastErrMsg ?? "adapter dispatch failed";
-        try {
-          await opts.markFailed(opts.handoff.handoff_id, reason);
-          return {
-            next: null,
-            terminatedReason: "error",
-            cappedHandoffId: opts.handoff.handoff_id,
-            text: "",
-            agent: targetAgent,
-            ...(lastErrMeta ? { meta: lastErrMeta } : {}),
-          };
-        } catch {
-          // Fall through: surface the error if we couldn't mark the row failed.
-        }
-      }
-      throw new Error(lastErrMsg ?? "adapter dispatch failed");
-    }
-
-    await delay(RETRY_BACKOFF_MS[attempt]!);
-  }
-
-  // Should be impossible: loop always assigns `turn` before breaking.
-  if (!turn) throw new Error(lastErrMsg ?? "adapter dispatch failed");
-  if (!turn.next_mention) {
-    return {
-      next: null,
-      terminatedReason: "no_mention",
-      text: turn.text,
-      agent: targetAgent,
-      ...(turn.meta ? { meta: turn.meta } : {}),
-    };
-  }
-
-  const nextTo =
-    turn.next_mention.resolution.kind === "unknown"
-      ? turn.next_mention.target
-      : (turn.next_mention.resolution as any).agent_name;
-  const nextRole =
-    turn.next_mention.resolution.kind === "role"
-      ? (turn.next_mention.resolution as any).role
-      : null;
+  const nextHop = resolveNextHop(turn);
+  if (!nextHop) return terminalResult("no_mention", turn, targetAgent);
 
   const created = await opts.createHandoff({
     from: targetAgent,
-    to: nextTo,
-    to_role: nextRole,
+    to: nextHop.nextTo,
+    to_role: nextHop.nextRole,
     message: turn.text,
     conversation_id: opts.conversation.id,
     project_id: opts.conversation.project_id,
     triggered_by_event_id: turn.response_event_id,
-    use_worktree: opts.handoff.use_worktree ?? undefined,
-    chain_task_type: opts.handoff.chain_task_type ?? undefined,
+    use_worktree: opts.handoff.use_worktree,
+    chain_task_type: opts.handoff.chain_task_type,
   });
-  const routedNextTo = created.routed_agent ?? nextTo;
+  const routedNextTo = created.routed_agent ?? nextHop.nextTo;
 
   // hop cap is checked against hopsSoFar+1 (this hop completed; the next would be hopsSoFar+1)
   if (opts.hopsSoFar + 1 >= opts.maxHops) {
-    return {
-      next: null,
-      terminatedReason: "max_hops",
-      cappedHandoffId: created.handoff_id,
-      text: turn.text,
-      agent: targetAgent,
-      ...(turn.meta ? { meta: turn.meta } : {}),
-    };
+    return terminalResult("max_hops", turn, targetAgent, created.handoff_id);
   }
 
   if (opts.trustMode === "config" && !isAutoApproved(opts.config, targetAgent, routedNextTo)) {
-    return {
-      next: null,
-      terminatedReason: "untrusted",
-      cappedHandoffId: created.handoff_id,
-      text: turn.text,
-      agent: targetAgent,
-      ...(turn.meta ? { meta: turn.meta } : {}),
-    };
+    return terminalResult("untrusted", turn, targetAgent, created.handoff_id);
   }
 
   await opts.approve(created.handoff_id, { resolved_by: "auto" });
@@ -224,6 +279,6 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
     },
     text: turn.text,
     agent: targetAgent,
-    ...(turn.meta ? { meta: turn.meta } : {}),
+    ...metaSpread(turn),
   };
 }

@@ -10,24 +10,29 @@ export function parseAttachFlags(argv: string[]): string[] {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === undefined) continue;
-    if (arg === "--attach") {
-      const next = argv[i + 1];
-      // Values starting with '-' are usually flags. To avoid accidental
-      // consumption (e.g. `--attach --auto`), the space-form only accepts
-      // non-hyphenated values. Use `--attach=<path>` for hyphenated filenames.
-      if (next !== undefined && !next.startsWith("-")) {
-        out.push(next);
-        i++;
-      }
-      continue;
-    }
-
-    if (arg.startsWith("--attach=")) {
-      const value = arg.slice("--attach=".length);
-      if (value.length > 0) out.push(value);
-    }
+    const consumed = consumeAttach(arg, argv, i, out);
+    if (consumed > 0) i += consumed;
   }
   return out;
+}
+
+function consumeAttach(arg: string, argv: string[], index: number, out: string[]): number {
+  if (arg === "--attach") {
+    const next = argv[index + 1];
+    // Values starting with '-' are usually flags. To avoid accidental
+    // consumption (e.g. `--attach --auto`), the space-form only accepts
+    // non-hyphenated values. Use `--attach=<path>` for hyphenated filenames.
+    if (next !== undefined && !next.startsWith("-")) {
+      out.push(next);
+      return 1;
+    }
+    return 0;
+  }
+  if (arg.startsWith("--attach=")) {
+    const value = arg.slice("--attach=".length);
+    if (value.length > 0) out.push(value);
+  }
+  return 0;
 }
 
 /**

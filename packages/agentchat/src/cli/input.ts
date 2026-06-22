@@ -9,29 +9,39 @@ export interface ParseInputOpts {
   mode?: "split" | "whole";
 }
 
+type StringIter = AsyncIterator<string, unknown, undefined>;
+
+function toAsyncIterable(iterator: StringIter): AsyncIterable<string> {
+  return {
+    [Symbol.asyncIterator]: (): AsyncIterator<string, unknown, undefined> => iterator,
+  };
+}
+
 export async function* parseInputStream(
-  iterator: AsyncIterator<string>,
+  iterator: StringIter,
   opts: ParseInputOpts = {},
 ): AsyncIterable<InputEvent> {
   if (opts.mode === "whole") {
-    const lines: string[] = [];
-    while (true) {
-      const { value, done } = await iterator.next();
-      if (done) break;
-      lines.push((value as string).replace(/\r?\n$/, ""));
-    }
-    if (lines.length > 0) {
-      yield { kind: "message", text: lines.join("\n") };
-    }
-    yield { kind: "done" };
+    yield* parseWholeMode(toAsyncIterable(iterator));
     return;
   }
+  yield* parseSplitMode(toAsyncIterable(iterator));
+}
 
+async function* parseWholeMode(source: AsyncIterable<string>): AsyncIterable<InputEvent> {
+  const lines: string[] = [];
+  for await (const raw of source) {
+    lines.push(raw.replace(/\r?\n$/, ""));
+  }
+  if (lines.length > 0) {
+    yield { kind: "message", text: lines.join("\n") };
+  }
+  yield { kind: "done" };
+}
+
+async function* parseSplitMode(source: AsyncIterable<string>): AsyncIterable<InputEvent> {
   let buffer: string[] = [];
-  while (true) {
-    const { value, done } = await iterator.next();
-    if (done) break;
-    const raw = value as string;
+  for await (const raw of source) {
     const line = raw.trim();
     if (line === "done" && buffer.length === 0) {
       yield { kind: "done" };
