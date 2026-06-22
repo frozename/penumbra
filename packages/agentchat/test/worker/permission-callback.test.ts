@@ -1,5 +1,20 @@
 import { describe, expect, it } from "bun:test";
+
+import type { PermissionCallbackV2Opts } from "../../src/worker/permission-callback.js";
+import type {
+  PermissionDecisionResult,
+  RequestPermissionInput,
+} from "../../src/worker/permission-daemon-client.js";
+
 import { createPermissionCallback } from "../../src/worker/permission-callback.js";
+
+type DaemonClientStub = PermissionCallbackV2Opts["daemonClient"];
+
+function makeDaemon(
+  fn: (input: RequestPermissionInput) => Promise<PermissionDecisionResult>,
+): DaemonClientStub {
+  return { requestPermission: fn };
+}
 
 describe("createPermissionCallback", () => {
   it("returns 'approve' for trust_mode='all'", async () => {
@@ -29,10 +44,10 @@ describe("createPermissionCallback (v2 form, with allowlist + daemon)", () => {
   function makeFakeDaemon(
     decision: "approve" | "reject",
     remember: "this_call" | "this_dispatch" | null = null,
-  ) {
-    return {
-      requestPermission: async () => ({ decision, remember, reason: null }),
-    } as any;
+  ): DaemonClientStub {
+    return makeDaemon((): Promise<PermissionDecisionResult> => {
+      return Promise.resolve({ decision, remember, reason: null });
+    });
   }
 
   it("v2: trustMode='all' short-circuits to approve without daemon round-trip", async () => {
@@ -44,12 +59,10 @@ describe("createPermissionCallback (v2 form, with allowlist + daemon)", () => {
       conversationId: "c-1",
       agentName: "claude-acp-sonnet",
       ttlSeconds: 300,
-      daemonClient: {
-        requestPermission: async () => {
-          calls.push("called");
-          return { decision: "reject", remember: null, reason: null };
-        },
-      } as any,
+      daemonClient: makeDaemon((): Promise<PermissionDecisionResult> => {
+        calls.push("called");
+        return Promise.resolve({ decision: "reject", remember: null, reason: null });
+      }),
       perDispatchAllowlist: new Set<string>(),
     });
     expect(await cb({ toolName: "fs.readTextFile", rawInput: {}, dispatchId: "test" })).toBe(
@@ -67,12 +80,10 @@ describe("createPermissionCallback (v2 form, with allowlist + daemon)", () => {
       conversationId: "c",
       agentName: "a",
       ttlSeconds: 300,
-      daemonClient: {
-        requestPermission: async () => {
-          calls.push("called");
-          return { decision: "reject", remember: null, reason: null };
-        },
-      } as any,
+      daemonClient: makeDaemon((): Promise<PermissionDecisionResult> => {
+        calls.push("called");
+        return Promise.resolve({ decision: "reject", remember: null, reason: null });
+      }),
       perDispatchAllowlist: new Set<string>(),
     });
     expect(
@@ -107,12 +118,16 @@ describe("createPermissionCallback (v2 form, with allowlist + daemon)", () => {
       conversationId: "c",
       agentName: "a",
       ttlSeconds: 300,
-      daemonClient: {
-        requestPermission: async (input: any) => {
+      daemonClient: makeDaemon(
+        (input: RequestPermissionInput): Promise<PermissionDecisionResult> => {
           calls.push(input.tool_name);
-          return { decision: "approve", remember: "this_dispatch", reason: null };
+          return Promise.resolve({
+            decision: "approve",
+            remember: "this_dispatch",
+            reason: null,
+          });
         },
-      } as any,
+      ),
       perDispatchAllowlist: perDispatch,
     });
     expect(await cb({ toolName: "fs.readTextFile", rawInput: {}, dispatchId: "test" })).toBe(
@@ -135,11 +150,9 @@ describe("createPermissionCallback (v2 form, with allowlist + daemon)", () => {
       conversationId: "c",
       agentName: "a",
       ttlSeconds: 300,
-      daemonClient: {
-        requestPermission: async () => {
-          throw new Error("expired");
-        },
-      } as any,
+      daemonClient: makeDaemon((): Promise<PermissionDecisionResult> => {
+        return Promise.reject(new Error("expired"));
+      }),
       perDispatchAllowlist: new Set<string>(),
     });
     expect(await cb({ toolName: "fs.readTextFile", rawInput: {}, dispatchId: "test" })).toBe(
@@ -157,12 +170,12 @@ describe("createPermissionCallback (v2 form, with allowlist + daemon)", () => {
       conversationId: "c",
       agentName: "a",
       ttlSeconds: 300,
-      daemonClient: {
-        requestPermission: async (input: any) => {
+      daemonClient: makeDaemon(
+        (input: RequestPermissionInput): Promise<PermissionDecisionResult> => {
           calls.push(input.tool_name);
-          return { decision: "approve", remember: "this_call", reason: null };
+          return Promise.resolve({ decision: "approve", remember: "this_call", reason: null });
         },
-      } as any,
+      ),
       perDispatchAllowlist: perDispatch,
     });
     expect(await cb({ toolName: "fs.readTextFile", rawInput: {}, dispatchId: "test" })).toBe(
@@ -184,13 +197,13 @@ describe("createPermissionCallback (v2 form, with allowlist + daemon)", () => {
       conversationId: "c",
       agentName: "a",
       ttlSeconds: 300,
-      daemonClient: {
-        requestPermission: async () => ({
+      daemonClient: makeDaemon((): Promise<PermissionDecisionResult> => {
+        return Promise.resolve({
           decision: "reject",
           remember: null,
           reason: "operator denied",
-        }),
-      } as any,
+        });
+      }),
       perDispatchAllowlist: new Set<string>(),
     });
     expect(await cb({ toolName: "mcp__sirius__chat", rawInput: {}, dispatchId: "test" })).toBe(
