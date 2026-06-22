@@ -1,14 +1,27 @@
 import { expect, test } from "bun:test";
+
+import type { DaemonClient } from "../../src/daemon-client.js";
+
 import { memoryWriteT2Handler } from "../../src/tools/memory-write-t2.js";
+import { fakeDaemon } from "../helpers.js";
+
+type MemoryWriteT2Fn = DaemonClient["memoryWriteT2"];
+
+function firstText(content: { type: string; text?: string }[]): string {
+  const block = content[0];
+  if (block === undefined || typeof block.text !== "string") {
+    throw new Error("expected content[0].text");
+  }
+  return block.text;
+}
 
 test("memory_write_t2 forwards why/source_quote/obs_type when provided", async () => {
   const calls: unknown[] = [];
-  const handler = memoryWriteT2Handler({
-    memoryWriteT2: async (req: unknown) => {
-      calls.push(req);
-      return { memory_id: "m1", created: true };
-    },
-  } as any);
+  const memoryWriteT2: MemoryWriteT2Fn = (req) => {
+    calls.push(req);
+    return Promise.resolve({ memory_id: "m1", created: true });
+  };
+  const handler = memoryWriteT2Handler(fakeDaemon({ memoryWriteT2 }));
 
   const out = await handler({
     title: "Direct memory",
@@ -30,17 +43,16 @@ test("memory_write_t2 forwards why/source_quote/obs_type when provided", async (
     durability: "volatile",
     is_episodic: true,
   });
-  expect(out.content[0].text).toContain('"memory_id": "m1"');
+  expect(firstText(out.content)).toContain('"memory_id": "m1"');
 });
 
 test("memory_write_t2 still forwards writes when why/source_quote/obs_type are omitted", async () => {
   const calls: unknown[] = [];
-  const handler = memoryWriteT2Handler({
-    memoryWriteT2: async (req: unknown) => {
-      calls.push(req);
-      return { memory_id: "m2", created: true };
-    },
-  } as any);
+  const memoryWriteT2: MemoryWriteT2Fn = (req) => {
+    calls.push(req);
+    return Promise.resolve({ memory_id: "m2", created: true });
+  };
+  const handler = memoryWriteT2Handler(fakeDaemon({ memoryWriteT2 }));
 
   const out = await handler({
     title: "Direct memory baseline",
@@ -52,5 +64,5 @@ test("memory_write_t2 still forwards writes when why/source_quote/obs_type are o
     title: "Direct memory baseline",
     body: "Body",
   });
-  expect(out.content[0].text).toContain('"memory_id": "m2"');
+  expect(firstText(out.content)).toContain('"memory_id": "m2"');
 });

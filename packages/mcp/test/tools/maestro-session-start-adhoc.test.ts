@@ -1,29 +1,38 @@
 import { expect, test } from "bun:test";
+
+import type { DaemonClient } from "../../src/daemon-client.js";
+
 import {
   maestroSessionStartAdhocHandler,
   MaestroSessionStartAdhocInputShape,
 } from "../../src/tools/maestro-session-start-adhoc.js";
+import { fakeDaemon } from "../helpers.js";
+
+type MaestroSessionStartAdhocFn = DaemonClient["maestroSessionStartAdhoc"];
+type MaestroSessionStartAdhocInput = Parameters<MaestroSessionStartAdhocFn>[0];
+type MaestroSessionStartAdhocResult = Awaited<ReturnType<MaestroSessionStartAdhocFn>>;
+
+function firstText(content: { type: string; text?: string }[]): string {
+  const block = content[0];
+  if (block === undefined || typeof block.text !== "string") {
+    throw new Error("expected content[0].text");
+  }
+  return block.text;
+}
 
 test("MaestroSessionStartAdhocInputShape validates required fields", () => {
-  expect((MaestroSessionStartAdhocInputShape as any).message.parse("run one shot")).toBe(
-    "run one shot",
-  );
-  expect(() => (MaestroSessionStartAdhocInputShape as any).message.parse("")).toThrow();
-  expect(() => (MaestroSessionStartAdhocInputShape as any).wall_clock_budget_ms.parse(0)).toThrow();
-  expect(() => (MaestroSessionStartAdhocInputShape as any).cost_budget_cents.parse(-1)).toThrow();
-  expect(() => (MaestroSessionStartAdhocInputShape as any).sub_dispatch_budget.parse(0)).toThrow();
+  expect(MaestroSessionStartAdhocInputShape.message.parse("run one shot")).toBe("run one shot");
+  expect(() => MaestroSessionStartAdhocInputShape.message.parse("")).toThrow();
+  expect(() => MaestroSessionStartAdhocInputShape.wall_clock_budget_ms.parse(0)).toThrow();
+  expect(() => MaestroSessionStartAdhocInputShape.cost_budget_cents.parse(-1)).toThrow();
+  expect(() => MaestroSessionStartAdhocInputShape.sub_dispatch_budget.parse(0)).toThrow();
 });
 
 test("maestro_session_start_adhoc calls daemon and returns dispatched session payload", async () => {
-  const daemon = {
-    maestroSessionStartAdhoc: async (input: {
-      message: string;
-      agent_id: string;
-      wall_clock_budget_ms: number;
-      cost_budget_cents: number;
-      sub_dispatch_budget: number;
-      project_id?: string | null;
-    }) => ({
+  const maestroSessionStartAdhoc: MaestroSessionStartAdhocFn = (
+    input: MaestroSessionStartAdhocInput,
+  ): Promise<MaestroSessionStartAdhocResult> =>
+    Promise.resolve({
       status: "dispatched",
       agent_name: input.agent_id,
       chain_handoff_id: "handoff-1",
@@ -42,9 +51,8 @@ test("maestro_session_start_adhoc calls daemon and returns dispatched session pa
         terminated_at: null,
         termination_reason: null,
       },
-    }),
-  } as any;
-  const handler = maestroSessionStartAdhocHandler(daemon);
+    });
+  const handler = maestroSessionStartAdhocHandler(fakeDaemon({ maestroSessionStartAdhoc }));
   const out = await handler({
     message: "summarize release notes",
     agent_id: "local-gemma4-26b-a4b-mtp",
@@ -53,7 +61,7 @@ test("maestro_session_start_adhoc calls daemon and returns dispatched session pa
     sub_dispatch_budget: 5,
     project_id: "proj-alpha",
   });
-  const payload = JSON.parse((out.content[0] as any).text);
+  const payload = JSON.parse(firstText(out.content)) as MaestroSessionStartAdhocResult;
   expect(payload.status).toBe("dispatched");
   expect(payload.agent_name).toBe("local-gemma4-26b-a4b-mtp");
   expect(payload.chain_handoff_id).toBe("handoff-1");

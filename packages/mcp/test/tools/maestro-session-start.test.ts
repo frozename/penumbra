@@ -1,34 +1,44 @@
+import type { MaestroSessionRecord } from "@penumbra/core";
+
 import { expect, test } from "bun:test";
+
+import type { DaemonClient } from "../../src/daemon-client.js";
+
 import {
   maestroSessionStartHandler,
   MaestroSessionStartInputShape,
 } from "../../src/tools/maestro-session-start.js";
+import { fakeDaemon } from "../helpers.js";
+
+type MaestroSessionStartFn = DaemonClient["maestroSessionStart"];
+type MaestroSessionStartInput = Parameters<MaestroSessionStartFn>[0];
+
+function firstText(content: { type: string; text?: string }[]): string {
+  const block = content[0];
+  if (block === undefined || typeof block.text !== "string") {
+    throw new Error("expected content[0].text");
+  }
+  return block.text;
+}
 
 test("MaestroSessionStartInputShape validates required fields", () => {
-  expect((MaestroSessionStartInputShape as any).task_id.parse("task-1")).toBe("task-1");
-  expect(() => (MaestroSessionStartInputShape as any).task_id.parse("")).toThrow();
-  expect(() => (MaestroSessionStartInputShape as any).cost_budget_cents.parse(0)).toThrow();
-  expect(() => (MaestroSessionStartInputShape as any).sub_dispatch_budget.parse(-1)).toThrow();
+  expect(MaestroSessionStartInputShape.task_id.parse("task-1")).toBe("task-1");
+  expect(() => MaestroSessionStartInputShape.task_id.parse("")).toThrow();
+  expect(() => MaestroSessionStartInputShape.cost_budget_cents.parse(0)).toThrow();
+  expect(() => MaestroSessionStartInputShape.sub_dispatch_budget.parse(-1)).toThrow();
 });
 
 test("MaestroSessionStartInputShape allows omitted chain_handoff_id", () => {
-  expect(() =>
-    (MaestroSessionStartInputShape as any).chain_handoff_id.parse(undefined),
-  ).not.toThrow();
+  expect(() => MaestroSessionStartInputShape.chain_handoff_id.parse(undefined)).not.toThrow();
 });
 
 test("maestro_session_start calls daemon and returns created session record", async () => {
-  const daemon = {
-    maestroSessionStart: async (input: {
-      task_id: string;
-      chain_handoff_id?: string;
-      agent_id: string;
-      wall_clock_budget_ms: number;
-      cost_budget_cents: number;
-      sub_dispatch_budget: number;
-    }) => ({
+  const maestroSessionStart: MaestroSessionStartFn = (
+    input: MaestroSessionStartInput,
+  ): Promise<MaestroSessionRecord> =>
+    Promise.resolve({
       task_id: input.task_id,
-      chain_handoff_id: input.chain_handoff_id,
+      chain_handoff_id: input.chain_handoff_id ?? null,
       agent_id: input.agent_id,
       started_at: 1_746_000_000_000,
       wall_clock_budget_ms: input.wall_clock_budget_ms,
@@ -39,9 +49,8 @@ test("maestro_session_start calls daemon and returns created session record", as
       soft_warned_at: null,
       terminated_at: null,
       termination_reason: null,
-    }),
-  } as any;
-  const handler = maestroSessionStartHandler(daemon);
+    });
+  const handler = maestroSessionStartHandler(fakeDaemon({ maestroSessionStart }));
   const out = await handler({
     task_id: "task-1",
     chain_handoff_id: "handoff-1",
@@ -50,7 +59,7 @@ test("maestro_session_start calls daemon and returns created session record", as
     cost_budget_cents: 100,
     sub_dispatch_budget: 3,
   });
-  const payload = JSON.parse((out.content[0] as any).text);
+  const payload = JSON.parse(firstText(out.content)) as MaestroSessionRecord;
   expect(payload).toEqual({
     task_id: "task-1",
     chain_handoff_id: "handoff-1",
