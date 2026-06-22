@@ -1,10 +1,17 @@
-import { expect, test, vi } from "bun:test";
-import { Database } from "bun:sqlite";
-import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import {
+  buildServices,
+  type DispatchEventInput,
+  loadSqliteVec,
+  migrate,
+  type Services,
+} from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
+import { handoffsApproveRoute, handoffsCreateRoute } from "../../src/routes/handoffs.js";
 import { OrphanHandoffRecoveryService } from "../../src/services/orphan-handoff-recovery.js";
 import { WatchdogService } from "../../src/services/watchdog.js";
-import { handoffsCreateRoute, handoffsApproveRoute } from "../../src/routes/handoffs.js";
 
 try {
   if (process.platform === "darwin") {
@@ -12,6 +19,37 @@ try {
   }
 } catch {
   // ignore
+}
+
+interface CreatedHandoff {
+  handoff_id: string;
+  status: "pending";
+}
+
+interface CreatePendingHandoffInput {
+  conversation_id?: string;
+  max_dispatch_attempts?: number;
+  message?: string;
+  triggered_by_event_id?: string;
+}
+
+function parseCreatedHandoff(value: unknown): CreatedHandoff {
+  if (typeof value !== "object" || value === null) {
+    throw new Error("expected handoff create response object");
+  }
+  if (!("handoff_id" in value) || typeof value.handoff_id !== "string") {
+    throw new Error("expected handoff_id in create response");
+  }
+  if (!("status" in value) || value.status !== "pending") {
+    throw new Error("expected pending status in create response");
+  }
+  return { handoff_id: value.handoff_id, status: value.status };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function tempServices(): Services {
@@ -27,51 +65,74 @@ function tempServices(): Services {
     clock: () => new Date("2026-05-20T00:00:00Z"),
     uuid: (() => {
       let n = 0;
-      return () => `e-${++n}`;
+      return (): string => `e-${String(++n)}`;
     })(),
   });
   const watchdog = new WatchdogService(services);
-  (services as any).watchdog = watchdog;
+  services.watchdog = watchdog;
   return services;
 }
 
-async function createDispatchedHandoff(services: Services, workerId: string) {
-  const created = await (
-    await handoffsCreateRoute(
-      new Request("http://x", {
-        method: "POST",
-        body: JSON.stringify({
-          from: "a",
-          to: "b",
-          message: "m",
-          conversation_id: "c",
-          triggered_by_event_id: "e",
-          max_dispatch_attempts: 3,
-        }),
+async function createPendingHandoff(
+  services: Services,
+  input: CreatePendingHandoffInput = {},
+): Promise<CreatedHandoff> {
+  const response = await handoffsCreateRoute(
+    new Request("http://x", {
+      method: "POST",
+      body: JSON.stringify({
+        from: "a",
+        to: "b",
+        message: input.message ?? "m",
+        conversation_id: input.conversation_id ?? "c",
+        triggered_by_event_id: input.triggered_by_event_id ?? "e",
+        ...(input.max_dispatch_attempts === undefined
+          ? {}
+          : { max_dispatch_attempts: input.max_dispatch_attempts }),
       }),
-      services,
-    )
-  ).json();
-
-  await handoffsApproveRoute(
-    new Request("http://x", { method: "POST", body: "{}" }),
-    created.handoff_id,
+    }),
     services,
   );
-  services.handoffWriter.claimDispatch(created.handoff_id, workerId);
-  return created.handoff_id as string;
+  return parseCreatedHandoff(await response.json());
 }
 
-function setLastDispatchStartedAt(services: Services, handoffId: string, ts: string) {
+async function approveAndClaim(
+  services: Services,
+  handoffId: string,
+  workerId: string,
+): Promise<void> {
+  await handoffsApproveRoute(
+    new Request("http://x", { method: "POST", body: "{}" }),
+    handoffId,
+    services,
+  );
+  services.handoffWriter.claimDispatch(handoffId, workerId);
+}
+
+async function createDispatchedHandoff(services: Services, workerId: string): Promise<string> {
+  const created = await createPendingHandoff(services, { max_dispatch_attempts: 3 });
+  await approveAndClaim(services, created.handoff_id, workerId);
+  return created.handoff_id;
+}
+
+function setLastDispatchStartedAt(services: Services, handoffId: string, ts: string): void {
   services.db
-    .query("UPDATE handoffs SET last_dispatch_started_at=? WHERE handoff_id=?")
+    .query<
+      never,
+      [string, string]
+    >("UPDATE handoffs SET last_dispatch_started_at=? WHERE handoff_id=?")
     .run(ts, handoffId);
 }
 
-function recordDispatchStart(services: Services, handoffId: string, workerId: string, ts: string) {
+function recordDispatchStart(
+  services: Services,
+  handoffId: string,
+  workerId: string,
+  ts: string,
+): void {
   services.dispatchEventLog.record({
     handoff_id: handoffId,
-    source: "agent",
+    source: "worker",
     kind: "dispatch.start",
     ts,
     worker_id: workerId,
@@ -139,32 +200,11 @@ test("OrphanHandoffRecoveryService requeues when attempts < max", async () => {
 
   const w1 = "dead-worker-1";
 
-  const c1 = await (
-    await handoffsCreateRoute(
-      new Request("http://x", {
-        method: "POST",
-        body: JSON.stringify({
-          from: "a",
-          to: "b",
-          message: "m",
-          conversation_id: "c",
-          triggered_by_event_id: "e",
-          max_dispatch_attempts: 3,
-        }),
-      }),
-      services,
-    )
-  ).json();
-
-  await handoffsApproveRoute(
-    new Request("http://x", { method: "POST", body: "{}" }),
-    c1.handoff_id,
-    services,
-  );
-  services.handoffWriter.claimDispatch(c1.handoff_id, w1);
+  const c1 = await createPendingHandoff(services, { max_dispatch_attempts: 3 });
+  await approveAndClaim(services, c1.handoff_id, w1);
 
   services.watchdog.recordHeartbeat(w1);
-  await new Promise((r) => setTimeout(r, 1)); // Ensure Date.now() is slightly later
+  await delay(1); // Ensure Date.now() is slightly later
 
   const result = recovery.runOnce();
   expect(result).toMatchObject({ requeued: 1, exhausted: 0 });
@@ -183,34 +223,17 @@ test("recoverAll runs at most once for concurrent callers", async () => {
   const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0 });
 
   const w1 = "dead-worker-1";
-  const c1 = await (
-    await handoffsCreateRoute(
-      new Request("http://x", {
-        method: "POST",
-        body: JSON.stringify({
-          from: "a",
-          to: "b",
-          message: "m",
-          conversation_id: "c",
-          triggered_by_event_id: "e",
-        }),
-      }),
-      services,
-    )
-  ).json();
-  await handoffsApproveRoute(
-    new Request("http://x", { method: "POST", body: "{}" }),
-    c1.handoff_id,
-    services,
-  );
-  services.handoffWriter.claimDispatch(c1.handoff_id, w1);
+  const c1 = await createPendingHandoff(services);
+  await approveAndClaim(services, c1.handoff_id, w1);
   services.watchdog.recordHeartbeat(w1);
-  await new Promise((r) => setTimeout(r, 1));
+  await delay(1);
 
-  const recoverAllInner = vi.spyOn(recovery as any, "recoverAllInner");
   await Promise.all([recovery.recoverAll(), recovery.recoverAll(), recovery.recoverAll()]);
 
-  expect(recoverAllInner).toHaveBeenCalledTimes(1);
+  const row = services.handoffReader.get(c1.handoff_id);
+  expect(row?.status).toBe("approved");
+  const events = services.dispatchEventLog.listByHandoff(c1.handoff_id);
+  expect(events.filter((event) => event.kind === "worker.recovery.requeued")).toHaveLength(1);
 });
 
 test("OrphanHandoffRecoveryService fails when attempts == max", async () => {
@@ -219,34 +242,15 @@ test("OrphanHandoffRecoveryService fails when attempts == max", async () => {
 
   const w1 = "dead-worker-1";
 
-  const c1 = await (
-    await handoffsCreateRoute(
-      new Request("http://x", {
-        method: "POST",
-        body: JSON.stringify({
-          from: "a",
-          to: "b",
-          message: "m",
-          conversation_id: "c",
-          triggered_by_event_id: "e",
-        }),
-      }),
-      services,
-    )
-  ).json();
+  const c1 = await createPendingHandoff(services);
   services.db
-    .query("UPDATE handoffs SET max_dispatch_attempts=1 WHERE handoff_id=?")
+    .query<never, [string]>("UPDATE handoffs SET max_dispatch_attempts=1 WHERE handoff_id=?")
     .run(c1.handoff_id);
 
-  await handoffsApproveRoute(
-    new Request("http://x", { method: "POST", body: "{}" }),
-    c1.handoff_id,
-    services,
-  );
-  services.handoffWriter.claimDispatch(c1.handoff_id, w1);
+  await approveAndClaim(services, c1.handoff_id, w1);
 
   services.watchdog.recordHeartbeat(w1);
-  await new Promise((r) => setTimeout(r, 1));
+  await delay(1);
 
   const result = recovery.runOnce();
   expect(result).toMatchObject({ requeued: 0, exhausted: 1 });
@@ -264,31 +268,11 @@ test("OrphanHandoffRecoveryService CAS race avoids double action", async () => {
   const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0 });
 
   const w1 = "dead-worker-1";
-  const c1 = await (
-    await handoffsCreateRoute(
-      new Request("http://x", {
-        method: "POST",
-        body: JSON.stringify({
-          from: "a",
-          to: "b",
-          message: "m",
-          conversation_id: "c",
-          triggered_by_event_id: "e",
-        }),
-      }),
-      services,
-    )
-  ).json();
-
-  await handoffsApproveRoute(
-    new Request("http://x", { method: "POST", body: "{}" }),
-    c1.handoff_id,
-    services,
-  );
-  services.handoffWriter.claimDispatch(c1.handoff_id, w1);
+  const c1 = await createPendingHandoff(services);
+  await approveAndClaim(services, c1.handoff_id, w1);
 
   services.watchdog.recordHeartbeat(w1);
-  await new Promise((r) => setTimeout(r, 1));
+  await delay(1);
 
   const orphans = services.handoffReader.listOrphanedDispatches([w1]);
   services.handoffWriter.requeueOrphanedDispatch(c1.handoff_id, w1);
@@ -307,28 +291,8 @@ test("OrphanHandoffRecoveryService ignores fresh workers", async () => {
   const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 90000 });
 
   const w1 = "fresh-worker-1";
-  const c1 = await (
-    await handoffsCreateRoute(
-      new Request("http://x", {
-        method: "POST",
-        body: JSON.stringify({
-          from: "a",
-          to: "b",
-          message: "m",
-          conversation_id: "c",
-          triggered_by_event_id: "e",
-        }),
-      }),
-      services,
-    )
-  ).json();
-
-  await handoffsApproveRoute(
-    new Request("http://x", { method: "POST", body: "{}" }),
-    c1.handoff_id,
-    services,
-  );
-  services.handoffWriter.claimDispatch(c1.handoff_id, w1);
+  const c1 = await createPendingHandoff(services);
+  await approveAndClaim(services, c1.handoff_id, w1);
 
   services.watchdog.recordHeartbeat(w1);
 
@@ -346,54 +310,23 @@ test("OrphanHandoffRecoveryService runOnce(workerId) only touches specified work
   const w1 = "dead-worker-A";
   const w2 = "dead-worker-B";
 
-  const c1 = await (
-    await handoffsCreateRoute(
-      new Request("http://x", {
-        method: "POST",
-        body: JSON.stringify({
-          from: "a",
-          to: "b",
-          message: "m1",
-          conversation_id: "c1",
-          triggered_by_event_id: "e1",
-        }),
-      }),
-      services,
-    )
-  ).json();
-  const c2 = await (
-    await handoffsCreateRoute(
-      new Request("http://x", {
-        method: "POST",
-        body: JSON.stringify({
-          from: "a",
-          to: "b",
-          message: "m2",
-          conversation_id: "c2",
-          triggered_by_event_id: "e2",
-        }),
-      }),
-      services,
-    )
-  ).json();
+  const c1 = await createPendingHandoff(services, {
+    conversation_id: "c1",
+    message: "m1",
+    triggered_by_event_id: "e1",
+  });
+  const c2 = await createPendingHandoff(services, {
+    conversation_id: "c2",
+    message: "m2",
+    triggered_by_event_id: "e2",
+  });
 
-  await handoffsApproveRoute(
-    new Request("http://x", { method: "POST", body: "{}" }),
-    c1.handoff_id,
-    services,
-  );
-  services.handoffWriter.claimDispatch(c1.handoff_id, w1);
-
-  await handoffsApproveRoute(
-    new Request("http://x", { method: "POST", body: "{}" }),
-    c2.handoff_id,
-    services,
-  );
-  services.handoffWriter.claimDispatch(c2.handoff_id, w2);
+  await approveAndClaim(services, c1.handoff_id, w1);
+  await approveAndClaim(services, c2.handoff_id, w2);
 
   services.watchdog.recordHeartbeat(w1);
   services.watchdog.recordHeartbeat(w2);
-  await new Promise((r) => setTimeout(r, 1));
+  await delay(1);
 
   const result = recovery.runOnce(w1);
   expect(result).toMatchObject({ requeued: 1, exhausted: 0 });
@@ -411,28 +344,8 @@ test("OrphanHandoffRecoveryService runOnce(workerId) bypasses watchdog stale che
 
   const w1 = "dead-worker-A";
 
-  const c1 = await (
-    await handoffsCreateRoute(
-      new Request("http://x", {
-        method: "POST",
-        body: JSON.stringify({
-          from: "a",
-          to: "b",
-          message: "m",
-          conversation_id: "c",
-          triggered_by_event_id: "e",
-        }),
-      }),
-      services,
-    )
-  ).json();
-
-  await handoffsApproveRoute(
-    new Request("http://x", { method: "POST", body: "{}" }),
-    c1.handoff_id,
-    services,
-  );
-  services.handoffWriter.claimDispatch(c1.handoff_id, w1);
+  const c1 = await createPendingHandoff(services);
+  await approveAndClaim(services, c1.handoff_id, w1);
 
   services.watchdog.recordHeartbeat(w1); // fresh
 
@@ -443,18 +356,16 @@ test("OrphanHandoffRecoveryService runOnce(workerId) bypasses watchdog stale che
   expect(row?.status).toBe("approved"); // requeued
 });
 
-test("OrphanHandoffRecoveryService caps stale workers per call", async () => {
+test("OrphanHandoffRecoveryService caps stale workers per call", () => {
   const services = tempServices();
   const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0 });
 
-  // Mock watchdog to return 100 stale workers
-  const manyWorkers = Array.from({ length: 100 }, (_, i) => "worker-" + i);
-  (services.watchdog as any).getStaleWorkers = () => manyWorkers;
+  const manyWorkers = Array.from({ length: 100 }, (_, i): string => `worker-${String(i)}`);
+  services.watchdog.getStaleWorkers = (): string[] => manyWorkers;
 
-  // Mock handoffReader to track calls
   let listOrphanedCalls = 0;
   let capturedStaleWorkerIds: string[] = [];
-  services.handoffReader.listOrphanedDispatches = (ids, limit) => {
+  services.handoffReader.listOrphanedDispatches = (ids: string[]): [] => {
     listOrphanedCalls++;
     capturedStaleWorkerIds = ids;
     return [];
@@ -472,7 +383,7 @@ test("OrphanHandoffRecoveryService interval survives runOnce errors", async () =
   const recovery = new OrphanHandoffRecoveryService(services, { intervalMs: 1 });
 
   let callCount = 0;
-  recovery.runOnce = () => {
+  recovery.runOnce = (): ReturnType<OrphanHandoffRecoveryService["runOnce"]> => {
     callCount++;
     if (callCount === 1) throw new Error("Transient failure");
     return {
@@ -488,7 +399,7 @@ test("OrphanHandoffRecoveryService interval survives runOnce errors", async () =
   const { stop } = recovery.start();
 
   // Wait for at least 2 ticks
-  await new Promise((r) => setTimeout(r, 50));
+  await delay(50);
   stop();
 
   expect(callCount).toBeGreaterThan(1);
@@ -499,41 +410,20 @@ test("OrphanHandoffRecoveryService transaction atomicity rolls back on event rec
   const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0 });
 
   const w1 = "dead-worker-1";
-  const c1 = await (
-    await handoffsCreateRoute(
-      new Request("http://x", {
-        method: "POST",
-        body: JSON.stringify({
-          from: "a",
-          to: "b",
-          message: "m",
-          conversation_id: "c",
-          triggered_by_event_id: "e",
-        }),
-      }),
-      services,
-    )
-  ).json();
-
-  await handoffsApproveRoute(
-    new Request("http://x", { method: "POST", body: "{}" }),
-    c1.handoff_id,
-    services,
-  );
-  services.handoffWriter.claimDispatch(c1.handoff_id, w1);
+  const c1 = await createPendingHandoff(services);
+  await approveAndClaim(services, c1.handoff_id, w1);
 
   services.watchdog.recordHeartbeat(w1);
-  await new Promise((r) => setTimeout(r, 1));
+  await delay(1);
 
-  // Mock record to throw on first call
   const originalRecord = services.dispatchEventLog.record.bind(services.dispatchEventLog);
   let calls = 0;
-  services.dispatchEventLog.record = (event: any) => {
+  services.dispatchEventLog.record = (event: DispatchEventInput): void => {
     calls++;
     if (calls === 1) {
       throw new Error("Simulated event record failure");
     }
-    return originalRecord(event);
+    originalRecord(event);
   };
 
   // Run recovery - should fail and rollback because of the throw
@@ -557,32 +447,15 @@ test("OrphanHandoffRecoveryService failFastMode always exhausts orphans", async 
   const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0, failFastMode: true });
 
   const w1 = "dead-worker-fast";
-  const c1 = await (
-    await handoffsCreateRoute(
-      new Request("http://x", {
-        method: "POST",
-        body: JSON.stringify({
-          from: "a",
-          to: "b",
-          message: "m",
-          conversation_id: "c-fast",
-          triggered_by_event_id: "e-fast",
-          max_dispatch_attempts: 9,
-        }),
-      }),
-      services,
-    )
-  ).json();
-
-  await handoffsApproveRoute(
-    new Request("http://x", { method: "POST", body: "{}" }),
-    c1.handoff_id,
-    services,
-  );
-  services.handoffWriter.claimDispatch(c1.handoff_id, w1);
+  const c1 = await createPendingHandoff(services, {
+    conversation_id: "c-fast",
+    max_dispatch_attempts: 9,
+    triggered_by_event_id: "e-fast",
+  });
+  await approveAndClaim(services, c1.handoff_id, w1);
 
   services.watchdog.recordHeartbeat(w1);
-  await new Promise((r) => setTimeout(r, 1));
+  await delay(1);
 
   const result = recovery.runOnce();
   expect(result).toMatchObject({ requeued: 0, exhausted: 1 });
@@ -595,84 +468,36 @@ test("OrphanHandoffRecoveryService lists orphans ordered by ts ASC", async () =>
   const services = tempServices();
   const w1 = "dead-worker-1";
 
-  // Create 3 orphans
-  const c1 = await (
-    await handoffsCreateRoute(
-      new Request("http://x", {
-        method: "POST",
-        body: JSON.stringify({
-          from: "a",
-          to: "b",
-          message: "m1",
-          conversation_id: "c1",
-          triggered_by_event_id: "e1",
-        }),
-      }),
-      services,
-    )
-  ).json();
-  const c2 = await (
-    await handoffsCreateRoute(
-      new Request("http://x", {
-        method: "POST",
-        body: JSON.stringify({
-          from: "a",
-          to: "b",
-          message: "m2",
-          conversation_id: "c2",
-          triggered_by_event_id: "e2",
-        }),
-      }),
-      services,
-    )
-  ).json();
-  const c3 = await (
-    await handoffsCreateRoute(
-      new Request("http://x", {
-        method: "POST",
-        body: JSON.stringify({
-          from: "a",
-          to: "b",
-          message: "m3",
-          conversation_id: "c3",
-          triggered_by_event_id: "e3",
-        }),
-      }),
-      services,
-    )
-  ).json();
+  const c1 = await createPendingHandoff(services, {
+    conversation_id: "c1",
+    message: "m1",
+    triggered_by_event_id: "e1",
+  });
+  const c2 = await createPendingHandoff(services, {
+    conversation_id: "c2",
+    message: "m2",
+    triggered_by_event_id: "e2",
+  });
+  const c3 = await createPendingHandoff(services, {
+    conversation_id: "c3",
+    message: "m3",
+    triggered_by_event_id: "e3",
+  });
 
-  await handoffsApproveRoute(
-    new Request("http://x", { method: "POST", body: "{}" }),
-    c1.handoff_id,
-    services,
-  );
-  services.handoffWriter.claimDispatch(c1.handoff_id, w1);
-
-  await handoffsApproveRoute(
-    new Request("http://x", { method: "POST", body: "{}" }),
-    c2.handoff_id,
-    services,
-  );
-  services.handoffWriter.claimDispatch(c2.handoff_id, w1);
-
-  await handoffsApproveRoute(
-    new Request("http://x", { method: "POST", body: "{}" }),
-    c3.handoff_id,
-    services,
-  );
-  services.handoffWriter.claimDispatch(c3.handoff_id, w1);
+  await approveAndClaim(services, c1.handoff_id, w1);
+  await approveAndClaim(services, c2.handoff_id, w1);
+  await approveAndClaim(services, c3.handoff_id, w1);
 
   // Force timestamps so c2 is first, c3 is second, c1 is third (out of insertion order)
   services.db
-    .query(`UPDATE handoffs SET ts = '2026-05-20T00:00:03Z' WHERE handoff_id = ?`)
-    .run(c1.handoff_id);
+    .query<never, [string, string]>("UPDATE handoffs SET ts = ? WHERE handoff_id = ?")
+    .run("2026-05-20T00:00:03Z", c1.handoff_id);
   services.db
-    .query(`UPDATE handoffs SET ts = '2026-05-20T00:00:01Z' WHERE handoff_id = ?`)
-    .run(c2.handoff_id);
+    .query<never, [string, string]>("UPDATE handoffs SET ts = ? WHERE handoff_id = ?")
+    .run("2026-05-20T00:00:01Z", c2.handoff_id);
   services.db
-    .query(`UPDATE handoffs SET ts = '2026-05-20T00:00:02Z' WHERE handoff_id = ?`)
-    .run(c3.handoff_id);
+    .query<never, [string, string]>("UPDATE handoffs SET ts = ? WHERE handoff_id = ?")
+    .run("2026-05-20T00:00:02Z", c3.handoff_id);
 
   const orphans = services.handoffReader.listOrphanedDispatches([w1]);
 

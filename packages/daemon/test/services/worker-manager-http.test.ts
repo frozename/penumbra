@@ -1,42 +1,81 @@
-import { expect, test, mock } from "bun:test";
+import { expect, test } from "bun:test";
+
 import { createHttpWorkerManager } from "../../src/maestro/worker-manager-http.js";
 
-test("HTTP worker manager relays injects to the worker route", async () => {
-  const fetchMock = mock(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
-  const manager = createHttpWorkerManager({
-    workerUrl: "http://worker.local",
-    token: "secret",
-    fetch: fetchMock as unknown as typeof fetch,
-  });
+type FetchInput = Request | URL | string;
+type FetchCall = [input: unknown, init?: unknown];
 
-  const session = await manager.lookupSession("h-1");
-  await session!.inject!({ role: "user", text: "hello" });
+async function expectRejectsWithMessage(
+  promise: Promise<unknown>,
+  expectedMessage: string,
+): Promise<void> {
+  let caught: unknown;
+  try {
+    await promise;
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  if (!(caught instanceof Error)) throw new Error("expected promise to reject with Error");
+  expect(caught.message).toContain(expectedMessage);
+}
 
-  expect(fetchMock).toHaveBeenCalledTimes(1);
-  const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-  expect(url).toBe("http://worker.local/sessions/h-1/inject");
-  expect(init.method).toBe("POST");
-  expect(init.headers).toMatchObject({
+function createFetchStub(response: Response): { calls: FetchCall[]; fetch: typeof fetch } {
+  const calls: FetchCall[] = [];
+  return {
+    calls,
+    fetch: (input: FetchInput, init?: unknown): Promise<Response> => {
+      calls.push([input, init]);
+      return Promise.resolve(response);
+    },
+  };
+}
+
+function expectInjectRequestInit(init: unknown): void {
+  if (typeof init !== "object" || init === null) {
+    throw new Error("expected fetch init object");
+  }
+  expect("method" in init ? init.method : undefined).toBe("POST");
+  expect("headers" in init ? init.headers : undefined).toMatchObject({
     authorization: "Bearer secret",
     "content-type": "application/json",
   });
-  expect(init.body).toBe(JSON.stringify({ content: "hello" }));
+  expect("body" in init ? init.body : undefined).toBe(JSON.stringify({ content: "hello" }));
+}
+
+test("HTTP worker manager relays injects to the worker route", async () => {
+  const fetchStub = createFetchStub(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  const manager = createHttpWorkerManager({
+    workerUrl: "http://worker.local",
+    token: "secret",
+    fetch: fetchStub.fetch,
+  });
+
+  const session = await manager.lookupSession("h-1");
+  if (!session?.inject) throw new Error("expected injectable session");
+  await Promise.resolve(session.inject({ role: "user", text: "hello" }));
+
+  expect(fetchStub.calls).toHaveLength(1);
+  const [url, init] = fetchStub.calls[0];
+  expect(url).toBe("http://worker.local/sessions/h-1/inject");
+  expectInjectRequestInit(init);
 });
 
 test("HTTP worker manager prefers PENUMBRA_WORKER_URL over the port file", async () => {
   const previous = process.env.PENUMBRA_WORKER_URL;
   process.env.PENUMBRA_WORKER_URL = "http://worker.local";
-  const fetchMock = mock(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  const fetchStub = createFetchStub(new Response(JSON.stringify({ ok: true }), { status: 200 }));
   try {
     const manager = createHttpWorkerManager({
       token: "secret",
-      fetch: fetchMock as unknown as typeof fetch,
+      fetch: fetchStub.fetch,
     });
 
     const session = await manager.lookupSession("h-2");
-    await session!.inject!({ role: "user", text: "ping" });
+    if (!session?.inject) throw new Error("expected injectable session");
+    await Promise.resolve(session.inject({ role: "user", text: "ping" }));
 
-    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [url] = fetchStub.calls[0];
     expect(url).toBe("http://worker.local/sessions/h-2/inject");
   } finally {
     if (previous === undefined) {
@@ -48,15 +87,17 @@ test("HTTP worker manager prefers PENUMBRA_WORKER_URL over the port file", async
 });
 
 test("HTTP worker manager throws when the worker returns a non-2xx response", async () => {
-  const fetchMock = mock(async () => new Response("nope", { status: 404 }));
+  const fetchStub = createFetchStub(new Response("nope", { status: 404 }));
   const manager = createHttpWorkerManager({
     workerUrl: "http://worker.local",
     token: "secret",
-    fetch: fetchMock as unknown as typeof fetch,
+    fetch: fetchStub.fetch,
   });
 
   const session = await manager.lookupSession("h-1");
-  await expect(session!.inject!({ role: "user", text: "hello" })).rejects.toThrow(
+  if (!session?.inject) throw new Error("expected injectable session");
+  await expectRejectsWithMessage(
+    Promise.resolve(session.inject({ role: "user", text: "hello" })),
     "worker inject 404: nope",
   );
 });
@@ -68,7 +109,7 @@ test("HTTP worker manager returns null and warns once when no worker URL is conf
     logWarn: (message) => warns.push(message),
   });
 
-  await expect(manager.lookupSession("h-1")).resolves.toBeNull();
-  await expect(manager.lookupSession("h-2")).resolves.toBeNull();
+  expect(await Promise.resolve(manager.lookupSession("h-1"))).toBeNull();
+  expect(await Promise.resolve(manager.lookupSession("h-2"))).toBeNull();
   expect(warns).toEqual(["[serve] worker URL unavailable; ACP soft warnings will no-op"]);
 });

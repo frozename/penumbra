@@ -2,7 +2,23 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { createGhCliClient, type GhExec } from "../../src/services/gh-client.js";
+
+async function expectRejectsWithMessage(
+  promise: Promise<unknown>,
+  expectedMessage: string,
+): Promise<void> {
+  let caught: unknown;
+  try {
+    await promise;
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  if (!(caught instanceof Error)) throw new Error("expected promise to reject with Error");
+  expect(caught.message).toContain(expectedMessage);
+}
 
 describe("createGhCliClient", () => {
   test("default gh exec times out slow subprocesses", async () => {
@@ -14,7 +30,8 @@ describe("createGhCliClient", () => {
     process.env.PATH = `${binDir}:${originalPath ?? ""}`;
     try {
       const client = createGhCliClient({ repoDir: binDir, execTimeoutMs: 20 });
-      await expect(client.getAuthenticatedLogin?.()).rejects.toThrow("timed out after 20ms");
+      if (!client.getAuthenticatedLogin) throw new Error("missing getAuthenticatedLogin");
+      await expectRejectsWithMessage(client.getAuthenticatedLogin(), "timed out after 20ms");
     } finally {
       process.env.PATH = originalPath;
       rmSync(binDir, { recursive: true, force: true });
@@ -23,13 +40,13 @@ describe("createGhCliClient", () => {
 
   test("createIssue returns number/url from gh issue create stdout URL", async () => {
     const calls: string[][] = [];
-    const exec: GhExec = async (args) => {
+    const exec: GhExec = (args) => {
       calls.push(args);
-      return {
+      return Promise.resolve({
         stdout: "https://github.com/acordeiro/penumbra/issues/42\n",
         stderr: "",
         exitCode: 0,
-      };
+      });
     };
     const client = createGhCliClient({ exec });
 
@@ -66,19 +83,21 @@ describe("createGhCliClient", () => {
   });
 
   test("createIssue throws if gh output has no issue URL", async () => {
-    const exec: GhExec = async () => ({
-      stdout: "created\n",
-      stderr: "",
-      exitCode: 0,
-    });
+    const exec: GhExec = () =>
+      Promise.resolve({
+        stdout: "created\n",
+        stderr: "",
+        exitCode: 0,
+      });
     const client = createGhCliClient({ exec });
 
-    await expect(
+    await expectRejectsWithMessage(
       client.createIssue({
         repo: "acordeiro/penumbra",
         title: "Task title",
       }),
-    ).rejects.toThrow("did not print an issue URL");
+      "did not print an issue URL",
+    );
   });
 
   test("createIssue retries once after dropping unknown labels", async () => {
@@ -88,20 +107,20 @@ describe("createGhCliClient", () => {
       warnings.push(message);
     });
     try {
-      const exec: GhExec = async (args) => {
+      const exec: GhExec = (args) => {
         calls.push(args);
         if (calls.length === 1) {
-          return {
+          return Promise.resolve({
             stdout: "",
             stderr: "could not add label: 'task-draft' not found",
             exitCode: 1,
-          };
+          });
         }
-        return {
+        return Promise.resolve({
           stdout: "https://github.com/acordeiro/penumbra/issues/43\n",
           stderr: "",
           exitCode: 0,
-        };
+        });
       };
       const client = createGhCliClient({ exec });
 
@@ -158,20 +177,20 @@ describe("createGhCliClient", () => {
       warnings.push(message);
     });
     try {
-      const exec: GhExec = async (args) => {
+      const exec: GhExec = (args) => {
         calls.push(args);
         if (calls.length === 1) {
-          return {
+          return Promise.resolve({
             stdout: "",
             stderr: "could not add label: 'a' not found; could not add label: 'b' not found",
             exitCode: 1,
-          };
+          });
         }
-        return {
+        return Promise.resolve({
           stdout: "https://github.com/acordeiro/penumbra/issues/44\n",
           stderr: "",
           exitCode: 0,
-        };
+        });
       };
       const client = createGhCliClient({ exec });
 
@@ -221,23 +240,22 @@ describe("createGhCliClient", () => {
 
   test("createIssue propagates non-label errors without retry", async () => {
     const calls: string[][] = [];
-    const exec: GhExec = async (args) => {
+    const exec: GhExec = (args) => {
       calls.push(args);
-      return {
+      return Promise.resolve({
         stdout: "",
         stderr: "GraphQL: Something else went wrong",
         exitCode: 1,
-      };
+      });
     };
     const client = createGhCliClient({ exec });
 
-    await expect(
+    await expectRejectsWithMessage(
       client.createIssue({
         repo: "acordeiro/penumbra",
         title: "Task title",
         labels: ["keep"],
       }),
-    ).rejects.toThrow(
       "gh issue create --repo acordeiro/penumbra --title Task title --label keep failed: GraphQL: Something else went wrong",
     );
 
@@ -246,13 +264,13 @@ describe("createGhCliClient", () => {
 
   test("createIssue succeeds with valid labels without retry", async () => {
     const calls: string[][] = [];
-    const exec: GhExec = async (args) => {
+    const exec: GhExec = (args) => {
       calls.push(args);
-      return {
+      return Promise.resolve({
         stdout: "https://github.com/acordeiro/penumbra/issues/45\n",
         stderr: "",
         exitCode: 0,
-      };
+      });
     };
     const client = createGhCliClient({ exec });
 
@@ -271,13 +289,13 @@ describe("createGhCliClient", () => {
 
   test("commentIssue invokes gh issue comment and returns parsed URL from stdout", async () => {
     const calls: string[][] = [];
-    const exec: GhExec = async (args) => {
+    const exec: GhExec = (args) => {
       calls.push(args);
-      return {
+      return Promise.resolve({
         stdout: "https://github.com/acordeiro/penumbra/issues/1#issuecomment-123456789\n",
         stderr: "",
         exitCode: 0,
-      };
+      });
     };
     const client = createGhCliClient({ exec });
     const out = await client.commentIssue("acordeiro/penumbra", 1, "hello");
@@ -298,9 +316,9 @@ describe("createGhCliClient", () => {
 
   test("listComments invokes gh api with since filter and maps comments from raw paginated output", async () => {
     const calls: string[][] = [];
-    const exec: GhExec = async (args) => {
+    const exec: GhExec = (args) => {
       calls.push(args);
-      return {
+      return Promise.resolve({
         stdout: JSON.stringify([
           [
             {
@@ -323,7 +341,7 @@ describe("createGhCliClient", () => {
         ]),
         stderr: "",
         exitCode: 0,
-      };
+      });
     };
     const client = createGhCliClient({ exec });
     const out = await client.listComments("acordeiro/penumbra", 1, {
@@ -356,16 +374,17 @@ describe("createGhCliClient", () => {
 
   test("getAuthenticatedLogin reads login via gh api user", async () => {
     const calls: string[][] = [];
-    const exec: GhExec = async (args) => {
+    const exec: GhExec = (args) => {
       calls.push(args);
-      return {
+      return Promise.resolve({
         stdout: "penumbra-bot\n",
         stderr: "",
         exitCode: 0,
-      };
+      });
     };
     const client = createGhCliClient({ exec });
-    const login = await client.getAuthenticatedLogin?.();
+    if (!client.getAuthenticatedLogin) throw new Error("missing getAuthenticatedLogin");
+    const login = await client.getAuthenticatedLogin();
 
     expect(calls[0]).toEqual(["api", "user", "--jq", ".login"]);
     expect(login).toBe("penumbra-bot");

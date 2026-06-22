@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
+
 import type { GhClient as CanonicalGhClient } from "../../src/services/gh-client.js";
 import type { GhClient as PrOrphanGhClient } from "../../src/sweepers/pr-orphan-sweeper.js";
 
-type Equal<A, B> =
-  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Equal<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 
 type CanonicalPrSubset = Required<
   Pick<CanonicalGhClient, "listOpenPullRequests" | "closePullRequest">
