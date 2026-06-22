@@ -48,7 +48,12 @@ export function detectCapacityError(stderr: string): CapacityError | null {
 }
 
 const DEFAULT_CANCEL_GRACE_S = 10;
-const DEFAULT_DISPATCH_TIMEOUT_S = 900;
+// CLI-adapter watchdog: SIGKILLs the spawned CLI if a single dispatch runs past
+// this. 900s (15m) was too tight for substantial work — CLI agents (gemini/agy,
+// opencode-cli) doing real lint/implement units were killed mid-task with the
+// job unfinished. Bumped to 1800s (30m) to match the orchestrator's default
+// per-dispatch timeout_ms budget. Override per-deploy with PENUMBRA_DISPATCH_TIMEOUT_S.
+const DEFAULT_DISPATCH_TIMEOUT_S = 1800;
 
 function applyStripPatterns(text: string, patterns: string[] | undefined): string {
   if (!patterns || patterns.length === 0) return text;
