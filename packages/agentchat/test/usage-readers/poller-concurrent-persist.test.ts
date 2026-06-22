@@ -2,12 +2,21 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import type { UsageReader, UsageReaderResult } from "../../src/usage-readers/index.js";
+
 import {
   resolveUsageCursorPath,
   startUsagePoller,
   usageCursorTempPath,
 } from "../../src/usage-readers/poller.js";
-import type { UsageReader, UsageReaderResult } from "../../src/usage-readers/index.js";
+
+interface PollerEvent {
+  event_id: string;
+}
+
+const noop = (): void => undefined;
+const noopLog = { info: noop, error: noop };
 
 class StubReader implements UsageReader {
   readonly id: string;
@@ -19,9 +28,9 @@ class StubReader implements UsageReader {
     this.id = id;
   }
 
-  async read(_prev: unknown | null) {
+  read(_prev: unknown): Promise<UsageReaderResult> {
     this.reads++;
-    return this.next;
+    return Promise.resolve(this.next);
   }
 }
 
@@ -51,7 +60,9 @@ describe("usage poller concurrent persistence", () => {
     writeFileSync(sharedTmp, '{"writer":"b"}\n');
     renameSync(sharedTmp, cursorPath);
 
-    expect(() => renameSync(sharedTmp, cursorPath)).toThrow(/ENOENT/);
+    expect(() => {
+      renameSync(sharedTmp, cursorPath);
+    }).toThrow(/ENOENT/);
   });
 
   it("uses process-unique temp paths so interleaved renames do not consume each other", () => {
@@ -67,7 +78,9 @@ describe("usage poller concurrent persistence", () => {
     writeFileSync(tmpB, '{"writer":"b"}\n');
     renameSync(tmpA, cursorPath);
 
-    expect(() => renameSync(tmpB, cursorPath)).not.toThrow();
+    expect(() => {
+      renameSync(tmpB, cursorPath);
+    }).not.toThrow();
   });
 
   it("uses per-worker cursor files by default and preserves the legacy path when disabled", () => {
@@ -92,29 +105,29 @@ describe("usage poller concurrent persistence", () => {
   it("gives identical upstream usage windows a stable event id for downstream dedup", async () => {
     const dir = mkdtempSync(join(tmpdir(), "poller-dedup-"));
     const seen = new Set<string>();
-    const accepted: any[] = [];
-    const emit = async (event: any) => {
+    const accepted: PollerEvent[] = [];
+    const emit = (event: PollerEvent): Promise<{ event_id: string }> => {
       expect(event.event_id).toMatch(/^usage-poller-/);
       if (seen.has(event.event_id)) {
         throw new Error(`duplicate event ${event.event_id}`);
       }
       seen.add(event.event_id);
       accepted.push(event);
-      return { event_id: event.event_id };
+      return Promise.resolve({ event_id: event.event_id });
     };
     const pollerA = startUsagePoller({
       readers: [new StubReader("codex", usageWindow)],
       intervalMs: 30_000,
       cursorPath: join(dir, "local-state-cursors.worker-a.json"),
       emit,
-      log: { info: () => {}, error: () => {} },
+      log: noopLog,
     });
     const pollerB = startUsagePoller({
       readers: [new StubReader("codex", usageWindow)],
       intervalMs: 30_000,
       cursorPath: join(dir, "local-state-cursors.worker-b.json"),
       emit,
-      log: { info: () => {}, error: () => {} },
+      log: noopLog,
     });
 
     await pollerA.runOnce();

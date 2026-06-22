@@ -1,14 +1,15 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import {
-  mkdtempSync,
-  writeFileSync,
-  mkdirSync,
-  utimesSync,
   appendFileSync,
+  mkdirSync,
+  mkdtempSync,
   statSync,
+  utimesSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { CodexRolloutReader } from "../../src/usage-readers/codex-rollout-reader.js";
 
 function writeRollout(dir: string, name: string, lines: object[]): string {
@@ -22,7 +23,7 @@ const tokenCountLine = (
   used_pct_secondary: number,
   resets_p = 1777364441,
   resets_s = 1777545224,
-) => ({
+): Record<string, unknown> => ({
   type: "event_msg",
   timestamp: "2026-04-28T12:00:00Z",
   payload: {
@@ -83,7 +84,11 @@ describe("CodexRolloutReader", () => {
     utimesSync(oldPath, oldEpochSec, oldEpochSec);
     utimesSync(newPath, newEpochSec, newEpochSec);
 
-    const reader = new CodexRolloutReader({ rootDir: root, lookbackHours: 24, now: () => fakeNow });
+    const reader = new CodexRolloutReader({
+      rootDir: root,
+      lookbackHours: 24,
+      now: (): number => fakeNow,
+    });
     const r = await reader.read(null);
     expect(r.rate_limit_snapshots).toHaveLength(2);
     const primary = r.rate_limit_snapshots.find((s) => s.window_label === "primary");

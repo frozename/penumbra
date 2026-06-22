@@ -1,8 +1,8 @@
-import { describe, it, expect, spyOn } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import {
   appendFileSync,
-  mkdtempSync,
   mkdirSync,
+  mkdtempSync,
   statSync,
   utimesSync,
   writeFileSync,
@@ -10,6 +10,7 @@ import {
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { ClaudeJsonlReader } from "../../src/usage-readers/claude-jsonl-reader.js";
 
 function setupProjectsDir(): { rootDir: string } {
@@ -204,14 +205,15 @@ describe("ClaudeJsonlReader", () => {
     const reader = new ClaudeJsonlReader({
       rootDir,
       lookbackHours: 24,
-      now: () => fakeNow,
+      now: (): number => fakeNow,
     });
 
     // Seed cursor with entries for BOTH files. The fresh cursor sits between
     // the first and second assistant row so we can verify tail-reading from it.
     const freshSize = statSync(freshPath).size;
     const lines = fs.readFileSync(freshPath, "utf8").split("\n");
-    const firstLineBytes = Buffer.byteLength(lines[0] + "\n", "utf8");
+    const firstLine = lines[0] ?? "";
+    const firstLineBytes = Buffer.byteLength(`${firstLine}\n`, "utf8");
     expect(firstLineBytes).toBeLessThan(freshSize);
     const seededCursor = {
       files: {
@@ -259,7 +261,7 @@ describe("ClaudeJsonlReader", () => {
     const reader = new ClaudeJsonlReader({
       rootDir,
       lookbackHours: 24,
-      now: () => fakeNow,
+      now: (): number => fakeNow,
     });
     const r = await reader.read(seededCursor);
 

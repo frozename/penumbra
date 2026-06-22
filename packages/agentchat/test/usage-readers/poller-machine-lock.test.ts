@@ -2,8 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startUsagePoller } from "../../src/usage-readers/poller.js";
+
 import type { UsageReader } from "../../src/usage-readers/index.js";
+
+import { startUsagePoller } from "../../src/usage-readers/poller.js";
+
+const noop = (): void => undefined;
+const noopLog = { info: noop, error: noop };
 
 function counterReader(
   id: string,
@@ -13,9 +18,9 @@ function counterReader(
   const reader: UsageReader = {
     id,
     machineGlobal,
-    read: async () => {
+    read: () => {
       calls += 1;
-      return { cursor: {}, usage_deltas: [], rate_limit_snapshots: [] };
+      return Promise.resolve({ cursor: {}, usage_deltas: [], rate_limit_snapshots: [] });
     },
   };
   return { reader, calls: () => calls };
@@ -29,15 +34,13 @@ function recordingReader(
   const reader: UsageReader = {
     id,
     machineGlobal,
-    read: async (prev) => {
+    read: (prev) => {
       lastPrev = prev;
-      return { cursor: prev ?? {}, usage_deltas: [], rate_limit_snapshots: [] };
+      return Promise.resolve({ cursor: prev ?? {}, usage_deltas: [], rate_limit_snapshots: [] });
     },
   };
   return { reader, lastPrev: () => lastPrev };
 }
-
-const noopLog = { info: () => {}, error: () => {} };
 
 describe("usage poller machine-lock gating", () => {
   let dir: string;
@@ -54,7 +57,7 @@ describe("usage poller machine-lock gating", () => {
     const poller = startUsagePoller({
       readers: [mg.reader, pw.reader],
       cursorPath: join(dir, "cursors.json"),
-      emit: async () => ({ event_id: "x" }),
+      emit: () => Promise.resolve({ event_id: "x" }),
       log: noopLog,
       acquireMachineLock: () => false,
     });
@@ -70,7 +73,7 @@ describe("usage poller machine-lock gating", () => {
     const poller = startUsagePoller({
       readers: [mg.reader, pw.reader],
       cursorPath: join(dir, "cursors.json"),
-      emit: async () => ({ event_id: "x" }),
+      emit: () => Promise.resolve({ event_id: "x" }),
       log: noopLog,
       acquireMachineLock: () => true,
     });
@@ -85,7 +88,7 @@ describe("usage poller machine-lock gating", () => {
     const poller = startUsagePoller({
       readers: [mg.reader],
       cursorPath: join(dir, "cursors.json"),
-      emit: async () => ({ event_id: "x" }),
+      emit: () => Promise.resolve({ event_id: "x" }),
       log: noopLog,
     });
     await poller.runOnce();
@@ -101,7 +104,7 @@ describe("usage poller machine-lock gating", () => {
     const poller = startUsagePoller({
       readers: [mg.reader],
       cursorPath,
-      emit: async () => ({ event_id: "x" }),
+      emit: () => Promise.resolve({ event_id: "x" }),
       log: noopLog,
       acquireMachineLock: () => holds,
     });

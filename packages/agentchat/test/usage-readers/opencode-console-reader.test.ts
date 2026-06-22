@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+
+import type { RateLimitDelta } from "../../src/usage-readers/index.js";
+
 import {
   OpenCodeConsoleReader,
   parseUsageSnapshots,
@@ -12,6 +15,15 @@ const CONFIG = {
   cookie_file: "/tmp/oc.cookie",
 };
 
+interface FetchInit {
+  headers?: Record<string, string>;
+}
+
+interface FetchCall {
+  url: string;
+  init: FetchInit;
+}
+
 function fixture(o: {
   rolling: string;
   weekly: string;
@@ -20,7 +32,7 @@ function fixture(o: {
   weeklyReset?: string;
   monthlyReset?: string;
 }): string {
-  const item = (label: string, value: string, reset: string) =>
+  const item = (label: string, value: string, reset: string): string =>
     `<div data-slot="usage-item"><div data-slot="usage-header">` +
     `<span data-slot="usage-label">${label}</span>` +
     `<span data-slot="usage-value"><!--$-->${value}<!--/-->%</span></div>` +
@@ -42,20 +54,21 @@ function mkReader(o: {
   redirected?: boolean;
   url?: string;
   cookie?: string | null;
-}) {
-  const calls: { url: string; init: { headers?: Record<string, string> } }[] = [];
+}): { reader: OpenCodeConsoleReader; calls: FetchCall[] } {
+  const calls: FetchCall[] = [];
   const reader = new OpenCodeConsoleReader(CONFIG, {
-    now: () => NOW_MS,
-    readCookieFile: async () => (o.cookie === undefined ? "session=abc" : o.cookie),
-    fetch: (async (url: string, init: { headers?: Record<string, string> }) => {
+    now: (): number => NOW_MS,
+    readCookieFile: (): Promise<string | null> =>
+      Promise.resolve(o.cookie === undefined ? "session=abc" : o.cookie),
+    fetch: ((url: string, init: FetchInit) => {
       calls.push({ url, init });
-      return {
+      return Promise.resolve({
         ok: o.ok ?? true,
         status: o.status ?? 200,
         redirected: o.redirected ?? false,
         url: o.url ?? "https://opencode.ai/workspace/ws-1/go",
-        text: async () => o.html ?? "",
-      };
+        text: (): Promise<string> => Promise.resolve(o.html ?? ""),
+      });
     }) as unknown as typeof fetch,
   });
   return { reader, calls };
@@ -68,9 +81,9 @@ describe("OpenCodeConsoleReader", () => {
     });
     const res = await reader.read(null);
     expect(calls[0]?.url).toBe("https://opencode.ai/workspace/ws-1/go");
-    expect(calls[0]?.init?.headers?.cookie).toBe("session=abc");
+    expect(calls[0]?.init.headers?.cookie).toBe("session=abc");
     expect(res.rate_limit_snapshots).toHaveLength(3);
-    const pick = (label: string) => {
+    const pick = (label: string): RateLimitDelta => {
       const s = res.rate_limit_snapshots.find((x) => x.window_label === label);
       if (!s) throw new Error(`missing window ${label}`);
       return s;

@@ -1,7 +1,8 @@
-import { describe, it, expect } from "bun:test";
-import { writeFileSync, mkdtempSync } from "node:fs";
+import { describe, expect, it } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { ClaudeStatusLineBridge } from "../../src/usage-readers/claude-statusline-bridge.js";
 
 function tmpCache(): string {

@@ -1,9 +1,21 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startUsagePoller } from "../../src/usage-readers/poller.js";
+
 import type { UsageReader, UsageReaderResult } from "../../src/usage-readers/index.js";
+
+import { startUsagePoller } from "../../src/usage-readers/poller.js";
+
+interface PollerEvent {
+  event_id: string;
+  event_type: string;
+  model?: string | null;
+  payload_json: { source_kind?: string; model?: string | null };
+}
+
+const noop = (): void => undefined;
+const noopLog = { info: noop, error: noop };
 
 class StubReader implements UsageReader {
   readonly id: string;
@@ -13,16 +25,16 @@ class StubReader implements UsageReader {
     this.id = id;
     this.next = next;
   }
-  async read(_prev: unknown | null) {
+  read(_prev: unknown): Promise<UsageReaderResult> {
     this.reads++;
-    return this.next;
+    return Promise.resolve(this.next);
   }
 }
 
 class ThrowingReader implements UsageReader {
   readonly id = "throws";
   reads = 0;
-  async read(): Promise<UsageReaderResult> {
+  read(): Promise<UsageReaderResult> {
     this.reads++;
     throw new Error("boom");
   }
@@ -47,27 +59,27 @@ describe("startUsagePoller", () => {
       ],
       rate_limit_snapshots: [],
     });
-    const observed: any[] = [];
+    const observed: PollerEvent[] = [];
     const poller = startUsagePoller({
       readers: [reader],
       intervalMs: 30_000,
       cursorPath,
-      emit: async (e) => {
+      emit: (e: PollerEvent) => {
         observed.push(e);
-        return { event_id: e.event_id };
+        return Promise.resolve({ event_id: e.event_id });
       },
-      log: { info: () => {}, error: () => {} },
+      log: noopLog,
     });
 
-    await (poller as any).runOnce();
-    await (poller as any).runOnce();
+    await poller.runOnce();
+    await poller.runOnce();
     poller.stop();
 
     expect(observed).toHaveLength(1);
-    expect(observed[0].event_id).toMatch(/^usage-poller-/);
+    expect(observed[0]?.event_id).toMatch(/^usage-poller-/);
     expect(new Set(observed.map((event) => event.event_id)).size).toBe(1);
 
-    const persisted = JSON.parse(readFileSync(cursorPath, "utf8"));
+    const persisted = JSON.parse(readFileSync(cursorPath, "utf8")) as Record<string, unknown>;
     expect(persisted.a).toEqual({ position: 1 });
     expect(reader.reads).toBe(2);
   });
@@ -90,24 +102,24 @@ describe("startUsagePoller", () => {
       ],
       rate_limit_snapshots: [],
     });
-    const observed: any[] = [];
+    const observed: PollerEvent[] = [];
     const poller = startUsagePoller({
       readers: [reader],
       intervalMs: 30_000,
       cursorPath,
-      emit: async (e) => {
+      emit: (e: PollerEvent) => {
         observed.push(e);
-        return { event_id: "x" };
+        return Promise.resolve({ event_id: "x" });
       },
-      log: { info: () => {}, error: () => {} },
+      log: noopLog,
     });
-    await (poller as any).runOnce();
+    await poller.runOnce();
     poller.stop();
     expect(reader.reads).toBe(1);
     expect(observed).toHaveLength(1);
-    expect(observed[0].event_type).toBe("usage-update");
-    expect(observed[0].payload_json.source_kind).toBe("local-state-a");
-    const persisted = JSON.parse(readFileSync(cursorPath, "utf8"));
+    expect(observed[0]?.event_type).toBe("usage-update");
+    expect(observed[0]?.payload_json.source_kind).toBe("local-state-a");
+    const persisted = JSON.parse(readFileSync(cursorPath, "utf8")) as Record<string, unknown>;
     expect(persisted.a).toEqual({ x: 42 });
   });
 
@@ -124,14 +136,14 @@ describe("startUsagePoller", () => {
       readers: [bad, ok],
       intervalMs: 30_000,
       cursorPath,
-      emit: async () => ({ event_id: "x" }),
-      log: { info: () => {}, error: () => {} },
+      emit: () => Promise.resolve({ event_id: "x" }),
+      log: noopLog,
     });
-    await (poller as any).runOnce();
+    await poller.runOnce();
     poller.stop();
     expect(bad.reads).toBe(1);
     expect(ok.reads).toBe(1);
-    const persisted = JSON.parse(readFileSync(cursorPath, "utf8"));
+    const persisted = JSON.parse(readFileSync(cursorPath, "utf8")) as Record<string, unknown>;
     expect(persisted.ok).toEqual({ y: 1 });
     expect(persisted.throws).toBeUndefined();
   });
@@ -152,23 +164,23 @@ describe("startUsagePoller", () => {
         },
       ],
     });
-    const observed: any[] = [];
+    const observed: PollerEvent[] = [];
     const poller = startUsagePoller({
       readers: [reader],
       intervalMs: 30_000,
       cursorPath,
-      emit: async (e) => {
+      emit: (e: PollerEvent) => {
         observed.push(e);
-        return { event_id: "x" };
+        return Promise.resolve({ event_id: "x" });
       },
-      log: { info: () => {}, error: () => {} },
+      log: noopLog,
     });
-    await (poller as any).runOnce();
+    await poller.runOnce();
     poller.stop();
 
     expect(observed).toHaveLength(1);
-    expect(observed[0].event_type).toBe("rate-limit-snapshot");
-    expect(observed[0].model).toBe("gemini-3.1-pro-preview");
-    expect(observed[0].payload_json.model).toBe("gemini-3.1-pro-preview");
+    expect(observed[0]?.event_type).toBe("rate-limit-snapshot");
+    expect(observed[0]?.model).toBe("gemini-3.1-pro-preview");
+    expect(observed[0]?.payload_json.model).toBe("gemini-3.1-pro-preview");
   });
 });

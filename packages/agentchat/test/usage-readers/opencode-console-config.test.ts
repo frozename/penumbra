@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { loadOpencodeConsoleConfig } from "../../src/usage-readers/opencode-console-config.js";
 
 function makeQuotasDir(yaml: string): string {

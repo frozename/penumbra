@@ -1,6 +1,13 @@
 import { describe, expect, it } from "bun:test";
-import { GoogleOtlpSynth } from "../../src/usage-readers/google-otlp-synth.js";
+
 import type { QuotaStatusResponse } from "../../src/penumbra-client.js";
+
+import { GoogleOtlpSynth } from "../../src/usage-readers/google-otlp-synth.js";
+
+interface FetchQuotaArgs {
+  since?: string;
+  window?: "24h" | "5h";
+}
 
 function makeResponse(rows: QuotaStatusResponse["providers"]): QuotaStatusResponse {
   return {
@@ -30,57 +37,56 @@ function googleQuotaRow(args: {
 
 describe("GoogleOtlpSynth", () => {
   it("emits model-aware snapshots for daily and five_hour windows", async () => {
-    const calls: Array<{ since?: string; window?: "24h" | "5h" }> = [];
+    const calls: FetchQuotaArgs[] = [];
     const client = {
-      async fetchQuotaStatus(args?: {
-        since?: string;
-        window?: "24h" | "5h";
-      }): Promise<QuotaStatusResponse> {
+      fetchQuotaStatus(args?: FetchQuotaArgs): Promise<QuotaStatusResponse> {
         calls.push(args ?? {});
-        return makeResponse([
-          {
-            provider: "google",
-            model: "gemini-3.1-pro-preview",
-            used_usd: null,
-            quota_usd: null,
-            remaining_usd: null,
-            remaining_pct_usd: null,
-            used_tokens: 40,
-            quota_tokens: 100,
-            remaining_tokens: 60,
-            remaining_pct_tokens: 60,
-          },
-          {
-            provider: "google",
-            model: "gemini-3-flash-preview",
-            used_usd: null,
-            quota_usd: null,
-            remaining_usd: null,
-            remaining_pct_usd: null,
-            used_tokens: 50,
-            quota_tokens: 200,
-            remaining_tokens: 150,
-            remaining_pct_tokens: 75,
-          },
-          {
-            provider: "openai",
-            model: "gpt-5",
-            used_usd: null,
-            quota_usd: null,
-            remaining_usd: null,
-            remaining_pct_usd: null,
-            used_tokens: 999,
-            quota_tokens: 1000,
-            remaining_tokens: 1,
-            remaining_pct_tokens: 0.1,
-          },
-        ]);
+        return Promise.resolve(
+          makeResponse([
+            {
+              provider: "google",
+              model: "gemini-3.1-pro-preview",
+              used_usd: null,
+              quota_usd: null,
+              remaining_usd: null,
+              remaining_pct_usd: null,
+              used_tokens: 40,
+              quota_tokens: 100,
+              remaining_tokens: 60,
+              remaining_pct_tokens: 60,
+            },
+            {
+              provider: "google",
+              model: "gemini-3-flash-preview",
+              used_usd: null,
+              quota_usd: null,
+              remaining_usd: null,
+              remaining_pct_usd: null,
+              used_tokens: 50,
+              quota_tokens: 200,
+              remaining_tokens: 150,
+              remaining_pct_tokens: 75,
+            },
+            {
+              provider: "openai",
+              model: "gpt-5",
+              used_usd: null,
+              quota_usd: null,
+              remaining_usd: null,
+              remaining_pct_usd: null,
+              used_tokens: 999,
+              quota_tokens: 1000,
+              remaining_tokens: 1,
+              remaining_pct_tokens: 0.1,
+            },
+          ]),
+        );
       },
     };
 
     const reader = new GoogleOtlpSynth({
       client,
-      now: () => new Date("2026-05-08T12:34:30Z"),
+      now: (): Date => new Date("2026-05-08T12:34:30Z"),
     });
 
     const out = await reader.read(null);
@@ -109,12 +115,27 @@ describe("GoogleOtlpSynth", () => {
     const minuteBucket = Math.floor(now.getTime() / (60 * 1000));
     const reader = new GoogleOtlpSynth({
       client: {
-        async fetchQuotaStatus(args?: {
-          since?: string;
-          window?: "24h" | "5h";
-        }): Promise<QuotaStatusResponse> {
+        fetchQuotaStatus(args?: FetchQuotaArgs): Promise<QuotaStatusResponse> {
           if (args?.window === "24h") {
-            return makeResponse([
+            return Promise.resolve(
+              makeResponse([
+                {
+                  provider: "google",
+                  model: "gemini-3.1-pro-preview",
+                  used_usd: null,
+                  quota_usd: null,
+                  remaining_usd: null,
+                  remaining_pct_usd: null,
+                  used_tokens: 3,
+                  quota_tokens: 100,
+                  remaining_tokens: 97,
+                  remaining_pct_tokens: 97,
+                },
+              ]),
+            );
+          }
+          return Promise.resolve(
+            makeResponse([
               {
                 provider: "google",
                 model: "gemini-3.1-pro-preview",
@@ -122,30 +143,16 @@ describe("GoogleOtlpSynth", () => {
                 quota_usd: null,
                 remaining_usd: null,
                 remaining_pct_usd: null,
-                used_tokens: 3,
+                used_tokens: 8,
                 quota_tokens: 100,
-                remaining_tokens: 97,
-                remaining_pct_tokens: 97,
+                remaining_tokens: 92,
+                remaining_pct_tokens: 92,
               },
-            ]);
-          }
-          return makeResponse([
-            {
-              provider: "google",
-              model: "gemini-3.1-pro-preview",
-              used_usd: null,
-              quota_usd: null,
-              remaining_usd: null,
-              remaining_pct_usd: null,
-              used_tokens: 8,
-              quota_tokens: 100,
-              remaining_tokens: 92,
-              remaining_pct_tokens: 92,
-            },
-          ]);
+            ]),
+          );
         },
       },
-      now: () => now,
+      now: (): Date => now,
       min_emit_pct: 5,
     });
 
@@ -167,24 +174,26 @@ describe("GoogleOtlpSynth", () => {
   it("emits 0%-usage rows by default when min_emit_pct is omitted", async () => {
     const reader = new GoogleOtlpSynth({
       client: {
-        async fetchQuotaStatus(): Promise<QuotaStatusResponse> {
-          return makeResponse([
-            {
-              provider: "google",
-              model: "gemini-3.1-pro-preview",
-              used_usd: null,
-              quota_usd: null,
-              remaining_usd: null,
-              remaining_pct_usd: null,
-              used_tokens: 0,
-              quota_tokens: 100,
-              remaining_tokens: 100,
-              remaining_pct_tokens: 100,
-            },
-          ]);
+        fetchQuotaStatus(): Promise<QuotaStatusResponse> {
+          return Promise.resolve(
+            makeResponse([
+              {
+                provider: "google",
+                model: "gemini-3.1-pro-preview",
+                used_usd: null,
+                quota_usd: null,
+                remaining_usd: null,
+                remaining_pct_usd: null,
+                used_tokens: 0,
+                quota_tokens: 100,
+                remaining_tokens: 100,
+                remaining_pct_tokens: 100,
+              },
+            ]),
+          );
         },
       },
-      now: () => new Date("2026-05-08T12:34:10Z"),
+      now: (): Date => new Date("2026-05-08T12:34:10Z"),
     });
 
     const out = await reader.read(null);
@@ -194,27 +203,29 @@ describe("GoogleOtlpSynth", () => {
 
   it("dedupes emission within the same minute via cursor", async () => {
     const client = {
-      async fetchQuotaStatus(): Promise<QuotaStatusResponse> {
-        return makeResponse([
-          {
-            provider: "google",
-            model: "gemini-3.1-pro-preview",
-            used_usd: null,
-            quota_usd: null,
-            remaining_usd: null,
-            remaining_pct_usd: null,
-            used_tokens: 40,
-            quota_tokens: 100,
-            remaining_tokens: 60,
-            remaining_pct_tokens: 60,
-          },
-        ]);
+      fetchQuotaStatus(): Promise<QuotaStatusResponse> {
+        return Promise.resolve(
+          makeResponse([
+            {
+              provider: "google",
+              model: "gemini-3.1-pro-preview",
+              used_usd: null,
+              quota_usd: null,
+              remaining_usd: null,
+              remaining_pct_usd: null,
+              used_tokens: 40,
+              quota_tokens: 100,
+              remaining_tokens: 60,
+              remaining_pct_tokens: 60,
+            },
+          ]),
+        );
       },
     };
 
     const reader = new GoogleOtlpSynth({
       client,
-      now: () => new Date("2026-05-08T12:34:10Z"),
+      now: (): Date => new Date("2026-05-08T12:34:10Z"),
     });
 
     const first = await reader.read(null);
@@ -227,14 +238,15 @@ describe("GoogleOtlpSynth", () => {
   it("returns empty deltas when quota-status fetch fails", async () => {
     const reader = new GoogleOtlpSynth({
       client: {
-        async fetchQuotaStatus(): Promise<QuotaStatusResponse> {
-          throw new Error("network down");
+        fetchQuotaStatus(): Promise<QuotaStatusResponse> {
+          return Promise.reject(new Error("network down"));
         },
       },
-      now: () => new Date("2026-05-08T12:34:10Z"),
+      now: (): Date => new Date("2026-05-08T12:34:10Z"),
     });
 
-    await expect(reader.read(null)).resolves.toEqual({
+    const r = await reader.read(null);
+    expect(r).toEqual({
       cursor: { last_emitted_minute: {} },
       usage_deltas: [],
       rate_limit_snapshots: [],
@@ -244,48 +256,50 @@ describe("GoogleOtlpSynth", () => {
   it("filters out non-google rows and rows without quota_tokens/model", async () => {
     const reader = new GoogleOtlpSynth({
       client: {
-        async fetchQuotaStatus(): Promise<QuotaStatusResponse> {
-          return makeResponse([
-            {
-              provider: "google",
-              model: undefined,
-              used_usd: null,
-              quota_usd: null,
-              remaining_usd: null,
-              remaining_pct_usd: null,
-              used_tokens: 40,
-              quota_tokens: 100,
-              remaining_tokens: 60,
-              remaining_pct_tokens: 60,
-            },
-            {
-              provider: "google",
-              model: "gemini-3.1-pro-preview",
-              used_usd: null,
-              quota_usd: null,
-              remaining_usd: null,
-              remaining_pct_usd: null,
-              used_tokens: 40,
-              quota_tokens: null,
-              remaining_tokens: null,
-              remaining_pct_tokens: null,
-            },
-            {
-              provider: "openai",
-              model: "gpt-5",
-              used_usd: null,
-              quota_usd: null,
-              remaining_usd: null,
-              remaining_pct_usd: null,
-              used_tokens: 40,
-              quota_tokens: 100,
-              remaining_tokens: 60,
-              remaining_pct_tokens: 60,
-            },
-          ]);
+        fetchQuotaStatus(): Promise<QuotaStatusResponse> {
+          return Promise.resolve(
+            makeResponse([
+              {
+                provider: "google",
+                model: undefined,
+                used_usd: null,
+                quota_usd: null,
+                remaining_usd: null,
+                remaining_pct_usd: null,
+                used_tokens: 40,
+                quota_tokens: 100,
+                remaining_tokens: 60,
+                remaining_pct_tokens: 60,
+              },
+              {
+                provider: "google",
+                model: "gemini-3.1-pro-preview",
+                used_usd: null,
+                quota_usd: null,
+                remaining_usd: null,
+                remaining_pct_usd: null,
+                used_tokens: 40,
+                quota_tokens: null,
+                remaining_tokens: null,
+                remaining_pct_tokens: null,
+              },
+              {
+                provider: "openai",
+                model: "gpt-5",
+                used_usd: null,
+                quota_usd: null,
+                remaining_usd: null,
+                remaining_pct_usd: null,
+                used_tokens: 40,
+                quota_tokens: 100,
+                remaining_tokens: 60,
+                remaining_pct_tokens: 60,
+              },
+            ]),
+          );
         },
       },
-      now: () => new Date("2026-05-08T12:34:10Z"),
+      now: (): Date => new Date("2026-05-08T12:34:10Z"),
     });
 
     const out = await reader.read(null);
@@ -293,20 +307,22 @@ describe("GoogleOtlpSynth", () => {
   });
 
   it("skips implausibly high usage ratios instead of emitting clamped snapshots", async () => {
-    const warnings: Array<{ meta: Record<string, unknown>; msg: string }> = [];
+    const warnings: { meta: Record<string, unknown>; msg: string }[] = [];
     const reader = new GoogleOtlpSynth({
       client: {
-        async fetchQuotaStatus(): Promise<QuotaStatusResponse> {
-          return makeResponse([
-            googleQuotaRow({
-              used_tokens: 10_000_000,
-              quota_tokens: 250_000,
-            }),
-          ]);
+        fetchQuotaStatus(): Promise<QuotaStatusResponse> {
+          return Promise.resolve(
+            makeResponse([
+              googleQuotaRow({
+                used_tokens: 10_000_000,
+                quota_tokens: 250_000,
+              }),
+            ]),
+          );
         },
       },
-      now: () => new Date("2026-05-08T12:34:10Z"),
-      warn: (meta, msg) => warnings.push({ meta, msg }),
+      now: (): Date => new Date("2026-05-08T12:34:10Z"),
+      warn: (meta, msg): number => warnings.push({ meta, msg }),
     });
 
     const out = await reader.read(null);
@@ -320,17 +336,19 @@ describe("GoogleOtlpSynth", () => {
   it("emits normal usage ratios without changing the percentage", async () => {
     const reader = new GoogleOtlpSynth({
       client: {
-        async fetchQuotaStatus(): Promise<QuotaStatusResponse> {
-          return makeResponse([
-            googleQuotaRow({
-              used_tokens: 18_000_000,
-              quota_tokens: 450_000_000,
-            }),
-          ]);
+        fetchQuotaStatus(): Promise<QuotaStatusResponse> {
+          return Promise.resolve(
+            makeResponse([
+              googleQuotaRow({
+                used_tokens: 18_000_000,
+                quota_tokens: 450_000_000,
+              }),
+            ]),
+          );
         },
       },
-      now: () => new Date("2026-05-08T12:34:10Z"),
-      warn: () => {
+      now: (): Date => new Date("2026-05-08T12:34:10Z"),
+      warn: (): void => {
         throw new Error("unexpected warning");
       },
     });
@@ -344,17 +362,19 @@ describe("GoogleOtlpSynth", () => {
   it("keeps genuinely maxed but plausible quotas refuse-capable", async () => {
     const reader = new GoogleOtlpSynth({
       client: {
-        async fetchQuotaStatus(): Promise<QuotaStatusResponse> {
-          return makeResponse([
-            googleQuotaRow({
-              used_tokens: 450_000_000,
-              quota_tokens: 450_000_000,
-            }),
-          ]);
+        fetchQuotaStatus(): Promise<QuotaStatusResponse> {
+          return Promise.resolve(
+            makeResponse([
+              googleQuotaRow({
+                used_tokens: 450_000_000,
+                quota_tokens: 450_000_000,
+              }),
+            ]),
+          );
         },
       },
-      now: () => new Date("2026-05-08T12:34:10Z"),
-      warn: () => {
+      now: (): Date => new Date("2026-05-08T12:34:10Z"),
+      warn: (): void => {
         throw new Error("unexpected warning");
       },
     });
@@ -368,18 +388,20 @@ describe("GoogleOtlpSynth", () => {
   it("emits ratios exactly at the configured plausibility threshold", async () => {
     const reader = new GoogleOtlpSynth({
       client: {
-        async fetchQuotaStatus(): Promise<QuotaStatusResponse> {
-          return makeResponse([
-            googleQuotaRow({
-              used_tokens: 750_000,
-              quota_tokens: 250_000,
-            }),
-          ]);
+        fetchQuotaStatus(): Promise<QuotaStatusResponse> {
+          return Promise.resolve(
+            makeResponse([
+              googleQuotaRow({
+                used_tokens: 750_000,
+                quota_tokens: 250_000,
+              }),
+            ]),
+          );
         },
       },
-      now: () => new Date("2026-05-08T12:34:10Z"),
+      now: (): Date => new Date("2026-05-08T12:34:10Z"),
       max_plausible_pct: 300,
-      warn: () => {
+      warn: (): void => {
         throw new Error("unexpected warning");
       },
     });
@@ -393,18 +415,20 @@ describe("GoogleOtlpSynth", () => {
   it("uses PENUMBRA_GOOGLE_SYNTH_MAX_PLAUSIBLE_PCT when no threshold is injected", async () => {
     const reader = new GoogleOtlpSynth({
       client: {
-        async fetchQuotaStatus(): Promise<QuotaStatusResponse> {
-          return makeResponse([
-            googleQuotaRow({
-              used_tokens: 1_000_000,
-              quota_tokens: 250_000,
-            }),
-          ]);
+        fetchQuotaStatus(): Promise<QuotaStatusResponse> {
+          return Promise.resolve(
+            makeResponse([
+              googleQuotaRow({
+                used_tokens: 1_000_000,
+                quota_tokens: 250_000,
+              }),
+            ]),
+          );
         },
       },
-      now: () => new Date("2026-05-08T12:34:10Z"),
+      now: (): Date => new Date("2026-05-08T12:34:10Z"),
       env: { PENUMBRA_GOOGLE_SYNTH_MAX_PLAUSIBLE_PCT: "500" },
-      warn: () => {
+      warn: (): void => {
         throw new Error("unexpected warning");
       },
     });

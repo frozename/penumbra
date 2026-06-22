@@ -1,21 +1,27 @@
-import { describe, it, expect } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { describe, expect, it } from "bun:test";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { OpenCodeDbReader } from "../../src/usage-readers/opencode-db-reader.js";
 
 function makeOpencodeDb(): { db: Database; path: string } {
   const dir = mkdtempSync(join(tmpdir(), "opencode-db-"));
   const path = join(dir, "opencode.db");
   const db = new Database(path);
-  db.exec(
+  db.run(
     "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT NOT NULL);",
   );
   return { db, path };
 }
 
-function insertAssistant(db: Database, id: string, time_created: number, body: any) {
+function insertAssistant(
+  db: Database,
+  id: string,
+  time_created: number,
+  body: Record<string, unknown>,
+): void {
   db.prepare('INSERT INTO message VALUES (?, "sess-1", ?, ?, ?)').run(
     id,
     time_created,
@@ -128,7 +134,7 @@ describe("OpenCodeDbReader", () => {
     db.close();
 
     const locker = new Database(path);
-    locker.exec("BEGIN EXCLUSIVE");
+    locker.run("BEGIN EXCLUSIVE");
 
     const reader = new OpenCodeDbReader({ dbPath: path });
     const r = await reader.read(null);
@@ -137,7 +143,7 @@ describe("OpenCodeDbReader", () => {
     expect(r.rate_limit_snapshots).toHaveLength(0);
     expect(r.cursor).toEqual({ last_seen_time_created: 0 });
 
-    locker.exec("ROLLBACK");
+    locker.run("ROLLBACK");
     locker.close();
   });
 
