@@ -1,22 +1,24 @@
-import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../sdk/adapter.js";
 import type { DispatchEventInput } from "@penumbra/core";
+
+import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../sdk/adapter.js";
+import type { CapturePort } from "../worker/capture-port.js";
 import type { McpServer } from "./acp-types.js";
+
+import { type ClassifierDeclineMeta, detectClassifierDecline } from "../classifier-decline.js";
+import { registerSession, unregisterSession } from "../worker/session-registry.js";
 import { executeReadTextFile, ReadTextFileError } from "./acp-fs.js";
+import {
+  acpSpecHash,
+  type AcpWarmPool,
+  type AcpWarmPoolEntry,
+  poolKeyFor,
+} from "./acp-warm-pool.js";
 import { StdioAcpClient } from "./stdio-acp-client.js";
 import {
   startStdioAcpServer,
-  type StdioAcpHandle,
   type StartStdioAcpServerOptions,
+  type StdioAcpHandle,
 } from "./stdio-acp-server.js";
-import {
-  acpSpecHash,
-  poolKeyFor,
-  type AcpWarmPool,
-  type AcpWarmPoolEntry,
-} from "./acp-warm-pool.js";
-import type { CapturePort } from "../worker/capture-port.js";
-import { registerSession, unregisterSession } from "../worker/session-registry.js";
-import { detectClassifierDecline, type ClassifierDeclineMeta } from "../classifier-decline.js";
 
 export function detectStdioAcpClassifierDecline(input: {
   finalText: string | null | undefined;
@@ -36,12 +38,23 @@ const ERROR_CODE_MAP: Record<string, number> = {
   edit_ambiguous: -32011,
 };
 
+interface ErrorWithCode extends Error {
+  code?: unknown;
+}
+
+interface MappedError extends Error {
+  code?: number;
+}
+
 function mapWriteToolsError(err: unknown): Error {
-  if (err instanceof Error && "code" in err && typeof (err as any).code === "string") {
-    const code = ERROR_CODE_MAP[(err as any).code] ?? -32099;
-    const mapped = new Error(err.message);
-    (mapped as any).code = code;
-    return mapped;
+  if (err instanceof Error && "code" in err) {
+    const errCode = (err as ErrorWithCode).code;
+    if (typeof errCode === "string") {
+      const code = ERROR_CODE_MAP[errCode] ?? -32099;
+      const mapped: MappedError = new Error(err.message);
+      mapped.code = code;
+      return mapped;
+    }
   }
   return err instanceof Error ? err : new Error(String(err));
 }
@@ -82,10 +95,10 @@ export function isClaudeHostEnvKey(key: string): boolean {
 }
 
 export function resolveHostEnvPolicy(
-  opts: Pick<StdioAcpOptions, "hostEnvPolicy" | "sanitizeClaudeHostEnv">,
+  opts: Pick<StdioAcpOptions, "hostEnvPolicy"> & { sanitizeClaudeHostEnv?: boolean },
 ): HostEnvPolicy {
   const policy: HostEnvPolicy = { ...(opts.hostEnvPolicy ?? {}) };
-  if (opts.sanitizeClaudeHostEnv && policy.claude === undefined) {
+  if (opts.sanitizeClaudeHostEnv === true && policy.claude === undefined) {
     policy.claude = true;
   }
   for (const [key, enabled] of Object.entries(policy)) {
@@ -102,8 +115,8 @@ export function resolveHostEnvPolicy(
 export function shouldScrubHostEnvKey(key: string, policy: HostEnvPolicy): boolean {
   for (const provider of Object.keys(policy) as HostEnvProvider[]) {
     if (!policy[provider]) continue;
-    const predicate = HOST_ENV_PREDICATES[provider];
-    if (predicate?.(key)) return true;
+    const predicate = HOST_ENV_PREDICATES[provider] as HostEnvPredicate | undefined;
+    if (predicate?.(key) === true) return true;
   }
   return false;
 }
@@ -137,11 +150,16 @@ export class AcpSessionEvictedError extends Error {
   }
 }
 
-function buildLongLivedMcpEnv(input: DispatchInput): Array<{ name: string; value: string }> {
-  const session = input.long_lived_session;
-  if (!session || session.dispatch_kind !== "long_lived_tick") return [];
+interface EnvEntry {
+  name: string;
+  value: string;
+}
 
-  const stripPenumbraPrefix = (name: string) =>
+function buildLongLivedMcpEnv(input: DispatchInput): EnvEntry[] {
+  const session = input.long_lived_session;
+  if (session?.dispatch_kind !== "long_lived_tick") return [];
+
+  const stripPenumbraPrefix = (name: string): string =>
     name.startsWith("penumbra:") ? name.slice("penumbra:".length) : name;
   const allowlist = new Set(
     (session.mcp_tool_allowlist ?? [])
@@ -153,13 +171,13 @@ function buildLongLivedMcpEnv(input: DispatchInput): Array<{ name: string; value
     allowlist.add(toolName);
   }
 
-  const envEntries: Array<{ name: string; value: string }> = [
+  const envEntries: EnvEntry[] = [
     { name: "PENUMBRA_MCP_TOOL_ALLOWLIST", value: [...allowlist].join(",") },
   ];
-  if (session.agent_id && session.agent_id.length > 0) {
+  if (session.agent_id !== null && session.agent_id !== undefined && session.agent_id.length > 0) {
     envEntries.push({ name: "PENUMBRA_LONG_LIVED_AGENT_ID", value: session.agent_id });
   }
-  if (session.tick_id && session.tick_id.length > 0) {
+  if (session.tick_id !== null && session.tick_id !== undefined && session.tick_id.length > 0) {
     envEntries.push({ name: "PENUMBRA_LONG_LIVED_TICK_ID", value: session.tick_id });
   }
   return envEntries;
@@ -185,9 +203,9 @@ function supportsClientCapability(
   opts: Pick<StdioAcpOptions, "fsReadTextFile" | "fsWriteTextFile" | "terminal" | "mcpServers">,
 ): boolean {
   return (
-    !!opts.fsReadTextFile ||
-    !!opts.fsWriteTextFile ||
-    !!opts.terminal ||
+    opts.fsReadTextFile === true ||
+    opts.fsWriteTextFile === true ||
+    opts.terminal === true ||
     (opts.mcpServers !== undefined && opts.mcpServers.length > 0)
   );
 }
@@ -272,8 +290,8 @@ export interface StdioAcpOptions {
    */
   hostEnvPolicy?: HostEnvPolicy;
   /**
-   * @deprecated Use `hostEnvPolicy: { claude: true }`. Preserved as a one-tick
-   * alias for yaml backwards-compat; resolved into hostEnvPolicy when
+   * Deprecated: prefer `hostEnvPolicy: { claude: true }`. Preserved as a
+   * one-tick alias for yaml backwards-compat; resolved into hostEnvPolicy when
    * hostEnvPolicy is unset.
    */
   sanitizeClaudeHostEnv?: boolean;
@@ -321,6 +339,609 @@ interface StdioAcpBootDeadline {
   timeoutMs: number;
 }
 
+// ACP wire-protocol shapes the adapter touches. These mirror the
+// @agentclientprotocol/sdk schema; we re-declare here rather than depend on the
+// SDK's runtime types so the StdioAcpClient `any`-typed boundary can be
+// narrowed at the adapter surface without inline `as` casts at each access.
+interface AcpClientFsCapability {
+  readTextFile?: boolean;
+  writeTextFile?: boolean;
+}
+
+interface AcpClientCapabilities {
+  fs?: AcpClientFsCapability;
+  terminal?: boolean;
+}
+
+interface AcpAuthMethodVar {
+  name: string;
+}
+
+interface AcpAuthMethod {
+  id: string;
+  type?: string;
+  vars?: AcpAuthMethodVar[];
+}
+
+interface AcpInitializeResponse {
+  authMethods?: AcpAuthMethod[];
+}
+
+interface AcpSessionNewResponse {
+  sessionId: string;
+}
+
+interface AcpPromptResponse {
+  stopReason?: string | null;
+}
+
+interface AcpReadTextFileParams {
+  path?: string;
+  line?: number;
+  limit?: number;
+}
+
+interface AcpWriteTextFileParams {
+  path?: string;
+  content?: string;
+}
+
+interface AcpTerminalCreateParams {
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  output_byte_limit?: number;
+}
+
+interface AcpTerminalIdParams {
+  terminal_id?: string;
+}
+
+interface AcpPermissionOption {
+  optionId?: string;
+  kind?: string;
+}
+
+interface AcpPermissionToolCall {
+  title?: string;
+  name?: string;
+  rawInput?: unknown;
+}
+
+interface AcpRequestPermissionParams {
+  options?: AcpPermissionOption[];
+  toolCall?: AcpPermissionToolCall;
+}
+
+interface AcpTextContent {
+  type?: string;
+  text?: string;
+}
+
+interface AcpSessionUpdate {
+  sessionUpdate: string;
+  content?: AcpTextContent;
+  toolCallId?: string;
+  title?: string;
+  kind?: string;
+  status?: string;
+  input?: unknown;
+  output?: unknown;
+  used?: number;
+  size?: number;
+  cost?: unknown;
+  token_count?: number;
+}
+
+interface AcpSessionUpdateParams {
+  update?: AcpSessionUpdate;
+}
+
+interface ClaudeCodeOptions {
+  settingSources?: ("user" | "project" | "local")[];
+  strictMcpConfig?: boolean;
+  allowedTools?: string[];
+  tools?: string[];
+  disallowedTools?: string[];
+}
+
+interface ClaudeCodeMeta {
+  options?: ClaudeCodeOptions;
+}
+
+interface SessionParamsMeta {
+  claudeCode?: ClaudeCodeMeta;
+}
+
+interface SessionNewParams {
+  cwd: string;
+  mcpServers: McpServer[];
+  model?: string;
+  _meta?: SessionParamsMeta;
+}
+
+interface SessionPromptMetaPenumbra {
+  handoff_id?: string;
+}
+
+interface SessionPromptMeta {
+  penumbraHandoffId?: string;
+  penumbra?: SessionPromptMetaPenumbra;
+}
+
+interface SessionPromptParams {
+  sessionId: string;
+  prompt: { type: "text"; text: string }[];
+  _meta?: SessionPromptMeta;
+}
+
+interface McpServerEnvEntry {
+  name?: unknown;
+  value?: unknown;
+}
+
+interface McpServerWithEnv {
+  command?: string;
+  name?: string;
+  args?: string[];
+  env?: McpServerEnvEntry[];
+}
+
+function isPenumbraMcp(server: McpServer): boolean {
+  const candidate = server as McpServerWithEnv;
+  if (candidate.command === undefined) return false;
+  const argsArr: string[] = Array.isArray(candidate.args) ? candidate.args : [];
+  const direct = /penumbra-mcp(?:\.ts|\.js)?(?:$|[\s/])/.test(
+    [candidate.name ?? "", candidate.command, ...argsArr].join(" "),
+  );
+  if (direct) return true;
+  const envEntries: McpServerEnvEntry[] = Array.isArray(candidate.env) ? candidate.env : [];
+  const upstream = envEntries.find((entry) => String(entry.name) === "MCP_PROXY_UPSTREAM");
+  return (
+    typeof upstream?.value === "string" &&
+    /penumbra-mcp(?:\.ts|\.js)?(?:$|[\s/])/.test(upstream.value)
+  );
+}
+
+function buildMcpServersWithEnv(
+  mcpServers: McpServer[],
+  input: DispatchInput,
+  mergedEnv: Record<string, string>,
+): McpServer[] {
+  const longLivedEnv = buildLongLivedMcpEnv(input);
+  const storageRootEnv: EnvEntry[] =
+    mergedEnv.PENUMBRA_STORAGE_ROOT !== undefined
+      ? [{ name: "PENUMBRA_STORAGE_ROOT", value: mergedEnv.PENUMBRA_STORAGE_ROOT }]
+      : [];
+  const shouldInjectDispatchEnv =
+    input.handoff_id !== undefined || longLivedEnv.length > 0 || storageRootEnv.length > 0;
+  if (!shouldInjectDispatchEnv) return mcpServers;
+
+  return mcpServers.map((server): McpServer => {
+    if (!isPenumbraMcp(server)) return server;
+    const candidate = server as McpServerWithEnv;
+    const existingEnv = candidate.env ?? [];
+    const filtered = existingEnv.filter(
+      (entry) => !PENUMBRA_MCP_INJECTED_ENV_KEYS.has(String(entry.name)),
+    );
+    const handoffEnv: EnvEntry[] =
+      input.handoff_id !== undefined
+        ? [{ name: "PENUMBRA_HANDOFF_ID", value: input.handoff_id }]
+        : [];
+    const nextEnv: McpServerEnvEntry[] = [
+      ...filtered,
+      ...handoffEnv,
+      { name: "PENUMBRA_MCP_ORIGIN", value: PENUMBRA_MCP_ORIGIN_FLEET_WORKER },
+      ...storageRootEnv,
+      ...longLivedEnv,
+    ];
+    return { ...server, env: nextEnv } as McpServer;
+  });
+}
+
+function buildClaudeCodeMeta(opts: StdioAcpOptions): SessionParamsMeta | undefined {
+  const has =
+    opts.claudeCodeSettingSources !== undefined ||
+    opts.claudeCodeStrictMcpConfig !== undefined ||
+    opts.claudeCodeAllowedTools !== undefined ||
+    opts.claudeCodeTools !== undefined ||
+    opts.claudeCodeDisallowedTools !== undefined;
+  if (!has) return undefined;
+  const options: ClaudeCodeOptions = {};
+  if (opts.claudeCodeSettingSources !== undefined) {
+    options.settingSources = opts.claudeCodeSettingSources;
+  }
+  if (opts.claudeCodeStrictMcpConfig !== undefined) {
+    options.strictMcpConfig = opts.claudeCodeStrictMcpConfig;
+  }
+  if (opts.claudeCodeAllowedTools !== undefined) {
+    options.allowedTools = opts.claudeCodeAllowedTools;
+  }
+  if (opts.claudeCodeTools !== undefined) {
+    options.tools = opts.claudeCodeTools;
+  }
+  if (opts.claudeCodeDisallowedTools !== undefined) {
+    options.disallowedTools = opts.claudeCodeDisallowedTools;
+  }
+  return { claudeCode: { options } };
+}
+
+function selectAuthMethodId(
+  authMethods: AcpAuthMethod[],
+  configured: string | undefined,
+  mergedEnv: Record<string, string>,
+): string {
+  if (configured !== undefined) return configured;
+  const satisfiedEnvVar = authMethods.find(
+    (m) => m.type === "env_var" && (m.vars ?? []).every((v) => mergedEnv[v.name] !== undefined),
+  );
+  if (satisfiedEnvVar) return satisfiedEnvVar.id;
+  const nonEnvVar = authMethods.find((m) => m.type !== "env_var");
+  const fallback = nonEnvVar ?? authMethods[0];
+  if (!fallback) throw new Error("stdio-acp: selectAuthMethodId called with no methods");
+  return fallback.id;
+}
+
+interface DispatchTurnContext {
+  cwd: string;
+  client: StdioAcpClient;
+  input: DispatchInput;
+  getServer: () => StdioAcpHandle | null;
+  toolUseRejectorRef: { current: ((err: Error) => void) | null };
+  capability: boolean;
+  thoughtCapture?: StdioAcpThoughtCapture;
+  capturePort?: CapturePort;
+  modelLabel: string;
+  arm: () => void;
+  markUpdate: () => void;
+  accumulate: (text: string) => void;
+  toolNames: Map<string, string>;
+}
+
+function registerFsHandlers(ctx: DispatchTurnContext, opts: StdioAcpOptions): void {
+  if (opts.fsReadTextFile === true) {
+    ctx.client.onRequest("fs/read_text_file", async (params: AcpReadTextFileParams) => {
+      ctx.arm();
+      if (typeof params.path !== "string") throw new Error("fs/read_text_file: missing path");
+      try {
+        return await executeReadTextFile(
+          { path: params.path, line: params.line, limit: params.limit },
+          ctx.cwd,
+        );
+      } catch (err) {
+        if (err instanceof ReadTextFileError) {
+          // Format the error message so client-side string-matchers
+          // recognise file-not-found correctly. Gemini-cli's
+          // AcpFileSystemService.normalizeFileSystemError checks for
+          // 'ENOENT' / 'No such file' / 'Resource not found' / 'does not exist'.
+          if (err.code === "not_found") {
+            throw new Error(`ENOENT: No such file or directory: ${err.message}`);
+          }
+          throw new Error(`fs/read_text_file ${err.code}: ${err.message}`);
+        }
+        throw err;
+      } finally {
+        ctx.arm();
+      }
+    });
+  }
+  if (opts.fsWriteTextFile === true) {
+    ctx.client.onRequest("fs/write_text_file", async (params: AcpWriteTextFileParams) => {
+      ctx.arm();
+      if (!ctx.input.executor) throw new Error("fs/write_text_file: no executor in dispatch input");
+      if (typeof params.path !== "string") throw new Error("fs/write_text_file: missing path");
+      try {
+        await ctx.input.executor.writeTextFile(
+          { path: params.path, content: params.content },
+          {
+            toolName: "fs.write_text_file",
+            rawInput: {
+              path: params.path,
+              content_bytes:
+                typeof params.content === "string" ? Buffer.byteLength(params.content, "utf8") : 0,
+            },
+            dispatchId: ctx.input.handoff_id ?? "unknown",
+          },
+        );
+        return {};
+      } catch (err) {
+        throw mapWriteToolsError(err);
+      } finally {
+        ctx.arm();
+      }
+    });
+  }
+}
+
+function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOptions): void {
+  if (opts.terminal !== true) return;
+  const { client, input, arm } = ctx;
+  client.onRequest("terminal/create", async (params: AcpTerminalCreateParams) => {
+    arm();
+    if (!input.executor) throw new Error("terminal/create: no executor");
+    try {
+      return await input.executor.terminalCreate(
+        {
+          command: params.command,
+          argv: params.args,
+          cwd: params.cwd,
+          output_byte_limit: params.output_byte_limit,
+        },
+        {
+          toolName: "terminal.create",
+          rawInput: {
+            argv: params.args ?? null,
+            cmd: params.command ?? null,
+            cwd: params.cwd ?? ".",
+          },
+          dispatchId: input.handoff_id ?? "unknown",
+        },
+      );
+    } catch (err) {
+      throw mapWriteToolsError(err);
+    } finally {
+      arm();
+    }
+  });
+  type TerminalExecutor = NonNullable<DispatchInput["executor"]>;
+  const wrapTerminalCommand = (
+    method: string,
+    fn: (executor: TerminalExecutor, terminalId: string) => Promise<unknown>,
+  ): void => {
+    client.onRequest(method, async (params: AcpTerminalIdParams) => {
+      arm();
+      const executor = input.executor;
+      if (!executor) throw new Error(`${method}: no executor`);
+      try {
+        return await fn(executor, params.terminal_id ?? "");
+      } catch (err) {
+        throw mapWriteToolsError(err);
+      } finally {
+        arm();
+      }
+    });
+  };
+  wrapTerminalCommand(
+    "terminal/output",
+    async (executor, terminalId) => await executor.terminalOutput({ terminal_id: terminalId }),
+  );
+  wrapTerminalCommand(
+    "terminal/wait_for_exit",
+    async (executor, terminalId) => await executor.terminalWaitForExit({ terminal_id: terminalId }),
+  );
+  wrapTerminalCommand("terminal/release", async (executor, terminalId) => {
+    await executor.terminalRelease({ terminal_id: terminalId });
+    return {};
+  });
+  wrapTerminalCommand("terminal/kill", async (executor, terminalId) => {
+    await executor.terminalKill({ terminal_id: terminalId });
+    return {};
+  });
+}
+
+type PermissionOptionPredicate = (o: AcpPermissionOption) => boolean;
+
+function pickPermissionOption(
+  options: AcpPermissionOption[],
+  predicates: PermissionOptionPredicate[],
+): AcpPermissionOption | undefined {
+  for (const predicate of predicates) {
+    const found = options.find((o) => predicate(o));
+    if (found) return found;
+  }
+  return undefined;
+}
+
+interface PermissionResultCancelled {
+  outcome: { outcome: "cancelled" };
+}
+interface PermissionResultSelected {
+  outcome: { outcome: "selected"; optionId: string };
+}
+type PermissionResult = PermissionResultCancelled | PermissionResultSelected;
+
+function cancelledOutcome(): PermissionResultCancelled {
+  return { outcome: { outcome: "cancelled" } };
+}
+
+async function handlePermissionRequest(
+  ctx: DispatchTurnContext,
+  params: AcpRequestPermissionParams,
+): Promise<PermissionResult> {
+  const options = Array.isArray(params.options) ? params.options : [];
+  if (!ctx.input.requestPermission) {
+    const chosen = pickPermissionOption(options, [
+      (o: AcpPermissionOption): boolean => o.kind === "allow_always",
+      (o: AcpPermissionOption): boolean => o.kind === "allow_once",
+      (): boolean => true,
+    ]);
+    if (chosen?.optionId === undefined) return cancelledOutcome();
+    return { outcome: { outcome: "selected", optionId: chosen.optionId } };
+  }
+  const allowOption = pickPermissionOption(options, [
+    (o: AcpPermissionOption): boolean => o.kind === "allow_always",
+    (o: AcpPermissionOption): boolean => o.kind === "allow_once",
+    (o: AcpPermissionOption): boolean => o.optionId !== undefined,
+  ]);
+  const rejectOption = pickPermissionOption(options, [
+    (o: AcpPermissionOption): boolean => o.kind === "reject_always",
+    (o: AcpPermissionOption): boolean => o.kind === "reject_once",
+  ]);
+  const toolName: string | null =
+    (typeof params.toolCall?.title === "string" && params.toolCall.title) ||
+    (typeof params.toolCall?.name === "string" && params.toolCall.name) ||
+    null;
+  if (toolName === null) return cancelledOutcome();
+  let decision: "approve" | "reject" = "approve";
+  try {
+    decision = await ctx.input.requestPermission({
+      toolName,
+      rawInput: params.toolCall?.rawInput ?? params.toolCall ?? null,
+      dispatchId: ctx.input.handoff_id ?? ctx.input.conversation.id,
+    });
+  } catch {
+    decision = "reject";
+  }
+  if (decision === "approve" && allowOption?.optionId !== undefined) {
+    return { outcome: { outcome: "selected", optionId: allowOption.optionId } };
+  }
+  if (decision === "reject" && rejectOption?.optionId !== undefined) {
+    return { outcome: { outcome: "selected", optionId: rejectOption.optionId } };
+  }
+  return cancelledOutcome();
+}
+
+function registerPermissionHandler(ctx: DispatchTurnContext, opts: StdioAcpOptions): void {
+  if (!supportsClientCapability(opts)) return;
+  ctx.client.onRequest("session/request_permission", async (params: AcpRequestPermissionParams) => {
+    ctx.arm();
+    try {
+      return await handlePermissionRequest(ctx, params);
+    } finally {
+      ctx.arm();
+    }
+  });
+}
+
+function resolveToolName(update: AcpSessionUpdate, toolNames: Map<string, string>): string | null {
+  if (typeof update.title === "string" && update.title.length > 0) return update.title;
+  if (typeof update.kind === "string" && update.kind.length > 0) return update.kind;
+  if (typeof update.toolCallId === "string") {
+    return toolNames.get(update.toolCallId) ?? null;
+  }
+  return null;
+}
+
+function handleAgentMessageChunk(ctx: DispatchTurnContext, update: AcpSessionUpdate): void {
+  const content = update.content;
+  if (content?.type !== "text" || typeof content.text !== "string") return;
+  ctx.accumulate(content.text);
+  ctx.capturePort?.emit({ kind: "agent_message_chunk", content: content.text });
+}
+
+function handleAgentThoughtChunk(ctx: DispatchTurnContext, update: AcpSessionUpdate): void {
+  const content = update.content;
+  if (content?.type !== "text" || typeof content.text !== "string") return;
+  ctx.capturePort?.emit({ kind: "agent_thought_chunk", content: content.text });
+  if (ctx.input.handoff_id === undefined) return;
+  try {
+    ctx.thoughtCapture?.recordThought({
+      handoffId: ctx.input.handoff_id,
+      adapter: "stdio-acp",
+      agentName: ctx.modelLabel,
+      text: content.text,
+      tokenCount: typeof update.token_count === "number" ? update.token_count : undefined,
+    });
+  } catch (err) {
+    console.warn("stdio-acp: failed to capture agent_thought_chunk", err);
+  }
+}
+
+function killOnToolCallWhenNoCapability(ctx: DispatchTurnContext): void {
+  if (ctx.capability) return;
+  ctx.getServer()?.kill();
+  ctx.toolUseRejectorRef.current?.(
+    new Error("stdio-acp: tool use not yet supported in this adapter phase"),
+  );
+}
+
+type ToolCallStatus = "pending" | "in_progress" | "completed" | "failed" | "canceled";
+const TOOL_CALL_STATUSES: readonly ToolCallStatus[] = [
+  "pending",
+  "in_progress",
+  "completed",
+  "failed",
+  "canceled",
+];
+
+function narrowToolCallStatus(status: unknown): ToolCallStatus | undefined {
+  if (typeof status !== "string") return undefined;
+  return TOOL_CALL_STATUSES.find((s) => s === status);
+}
+
+function handleToolCall(ctx: DispatchTurnContext, update: AcpSessionUpdate): void {
+  if (typeof update.toolCallId === "string" && update.toolCallId.length > 0) {
+    const toolName =
+      (typeof update.title === "string" && update.title) ||
+      (typeof update.kind === "string" && update.kind) ||
+      null;
+    if (toolName !== null) ctx.toolNames.set(update.toolCallId, toolName);
+  }
+  ctx.capturePort?.emit({
+    kind: "tool_call",
+    toolCallId: update.toolCallId,
+    status: narrowToolCallStatus(update.status),
+    input: update.input,
+  });
+  killOnToolCallWhenNoCapability(ctx);
+}
+
+function handleToolCallUpdate(ctx: DispatchTurnContext, update: AcpSessionUpdate): void {
+  ctx.capturePort?.emit({
+    kind: "tool_call_update",
+    toolCallId: update.toolCallId,
+    status: narrowToolCallStatus(update.status),
+    output: update.output,
+  });
+  if (update.status === "failed") {
+    emitLifecycle(ctx.input, "agent.tool_call.failed", {
+      adapter: "stdio-acp",
+      tool_call_id: update.toolCallId,
+      tool_name: resolveToolName(update, ctx.toolNames),
+      output: update.output ?? null,
+    });
+  }
+  killOnToolCallWhenNoCapability(ctx);
+}
+
+function narrowUsageCost(cost: unknown): { amount: number; currency: string } | undefined {
+  if (!cost || typeof cost !== "object") return undefined;
+  const obj = cost as { amount?: unknown; currency?: unknown };
+  if (typeof obj.amount !== "number" || typeof obj.currency !== "string") return undefined;
+  return { amount: obj.amount, currency: obj.currency };
+}
+
+function handleUsageUpdate(ctx: DispatchTurnContext, update: AcpSessionUpdate): void {
+  const used = typeof update.used === "number" ? update.used : Number.NaN;
+  const size = typeof update.size === "number" ? update.size : Number.NaN;
+  if (!Number.isFinite(used) || !Number.isFinite(size)) return;
+  ctx.capturePort?.emit({
+    kind: "usage_update",
+    used,
+    size,
+    cost: narrowUsageCost(update.cost),
+  });
+}
+
+function dispatchSessionUpdate(ctx: DispatchTurnContext, update: AcpSessionUpdate): void {
+  switch (update.sessionUpdate) {
+    case "agent_message_chunk":
+      handleAgentMessageChunk(ctx, update);
+      break;
+    case "agent_thought_chunk":
+      handleAgentThoughtChunk(ctx, update);
+      break;
+    case "tool_call":
+      handleToolCall(ctx, update);
+      break;
+    case "tool_call_update":
+      handleToolCallUpdate(ctx, update);
+      break;
+    case "usage_update":
+      handleUsageUpdate(ctx, update);
+      break;
+    default:
+      break;
+  }
+}
+
+interface AcquireOrSpawnResult {
+  server: StdioAcpHandle;
+  client: StdioAcpClient;
+  pooledEntry: AcpWarmPoolEntry | null;
+  reusedSession: boolean;
+}
+
 export class StdioAcpAdapter implements Adapter {
   readonly kind = "stdio-acp";
 
@@ -328,7 +949,7 @@ export class StdioAcpAdapter implements Adapter {
     private readonly opts: StdioAcpOptions,
     private readonly deps: StdioAcpAdapterDeps = {
       startServer: startStdioAcpServer,
-      createClient: (h: StdioAcpHandle) =>
+      createClient: (h: StdioAcpHandle): StdioAcpClient =>
         new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout, framing: opts.framing }),
     },
   ) {}
@@ -346,26 +967,31 @@ export class StdioAcpAdapter implements Adapter {
 
   /**
    * Build the dispatch-time process env: inherited env (host-scrubbed) merged
-   * with opts.env, minus unsetEnv. Shared by the cold dispatch path and prewarm
-   * so a pooled connection's env is identical regardless of which path spawned it.
+   * with opts.env, minus unsetEnv.
    */
   private buildMergedEnv(): Record<string, string> {
-    const inheritedEnv: Record<string, string> = { ...process.env } as Record<string, string>;
     const hostEnvPolicy = resolveHostEnvPolicy(this.opts);
-    if (Object.values(hostEnvPolicy).some(Boolean)) {
-      for (const key of Object.keys(inheritedEnv)) {
-        if (shouldScrubHostEnvKey(key, hostEnvPolicy)) delete inheritedEnv[key];
-      }
+    const hasScrubPolicy = Object.values(hostEnvPolicy).some(Boolean);
+    const inheritedEnv: Record<string, string> = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value === undefined) continue;
+      if (hasScrubPolicy && shouldScrubHostEnvKey(key, hostEnvPolicy)) continue;
+      inheritedEnv[key] = value;
     }
-    const mergedEnv: Record<string, string> = { ...inheritedEnv, ...(this.opts.env ?? {}) };
-    for (const key of this.opts.unsetEnv ?? []) delete mergedEnv[key];
+    const unsetEnv = new Set(this.opts.unsetEnv ?? []);
+    const overlay = this.opts.env ?? {};
+    const mergedEnv: Record<string, string> = {};
+    for (const [key, value] of Object.entries(inheritedEnv)) {
+      if (unsetEnv.has(key)) continue;
+      mergedEnv[key] = value;
+    }
+    for (const [key, value] of Object.entries(overlay)) {
+      if (unsetEnv.has(key)) continue;
+      mergedEnv[key] = value;
+    }
     return mergedEnv;
   }
 
-  /**
-   * Spawn the ACP server process + client. Connection-level only — no session,
-   * no per-dispatch handlers (those are registered by the caller).
-   */
   private async spawnAcpServer(
     cwd: string,
     mergedEnv: Record<string, string>,
@@ -405,12 +1031,12 @@ export class StdioAcpAdapter implements Adapter {
       );
     }
 
-    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const timeoutHolder: { ref: ReturnType<typeof setTimeout> | null } = { ref: null };
     try {
       return await Promise.race([
         client.request(method, params) as Promise<T>,
         new Promise<never>((_, reject) => {
-          timeout = setTimeout(() => {
+          timeoutHolder.ref = setTimeout(() => {
             server.kill();
             reject(
               new Error(
@@ -421,16 +1047,42 @@ export class StdioAcpAdapter implements Adapter {
         }),
       ]);
     } finally {
-      if (timeout !== null) clearTimeout(timeout);
+      if (timeoutHolder.ref !== null) clearTimeout(timeoutHolder.ref);
     }
+  }
+
+  private buildClientCapabilities(): AcpClientCapabilities {
+    const capabilities: AcpClientCapabilities = {};
+    const fs: AcpClientFsCapability = {};
+    if (this.opts.fsReadTextFile === true) fs.readTextFile = true;
+    if (this.opts.fsWriteTextFile === true) fs.writeTextFile = true;
+    if (fs.readTextFile === true || fs.writeTextFile === true) capabilities.fs = fs;
+    if (this.opts.terminal === true) capabilities.terminal = true;
+    return capabilities;
+  }
+
+  private maybeDepositWarm(args: {
+    server: StdioAcpHandle;
+    client: StdioAcpClient;
+    warmPoolEnabled: boolean;
+    poolKey: string;
+    specHash: string;
+  }): AcpWarmPoolEntry | null {
+    if (!args.warmPoolEnabled || !this.deps.pool) return null;
+    return (
+      this.deps.pool.deposit(args.poolKey, {
+        handle: args.server,
+        client: args.client,
+        specHash: args.specHash,
+      }) ?? null
+    );
   }
 
   /**
    * Initialize + authenticate the connection, then deposit the warm connection
-   * into the pool (when enabled). Returns the deposited (idle, ref-less) entry,
-   * or null when the pool is disabled. Issues NO session/new. Shared by the cold
-   * dispatch path and prewarm so both produce a byte-identical warm connection
-   * (same client capabilities, same auth-method selection, same specHash).
+   * into the pool (when enabled). Returns the deposited entry, or null when the
+   * pool is disabled. Issues NO session/new. Shared by the cold dispatch path
+   * and prewarm so both produce a byte-identical warm connection.
    */
   private async handshakeAndDeposit(
     server: StdioAcpHandle,
@@ -440,62 +1092,32 @@ export class StdioAcpAdapter implements Adapter {
       specHash: string;
       poolKey: string;
       warmPoolEnabled: boolean;
-      /** Mark the deposited entry as a kept-warm pre-warm (exempt from the
-       *  idle-grace sweep). Only prewarm() sets this; cold dispatch leaves it off. */
       pinned?: boolean;
       bootDeadline?: StdioAcpBootDeadline;
     },
   ): Promise<AcpWarmPoolEntry | null> {
     const bootDeadline = args.bootDeadline ?? this.createBootDeadline();
-    // 1. Initialize
-    const clientCapabilities: any = {};
-    if (this.opts.fsReadTextFile || this.opts.fsWriteTextFile) {
-      clientCapabilities.fs = {
-        ...(this.opts.fsReadTextFile ? { readTextFile: true } : {}),
-        ...(this.opts.fsWriteTextFile ? { writeTextFile: true } : {}),
-      };
-    }
-    if (this.opts.terminal) {
-      clientCapabilities.terminal = true;
-    }
-    const initResponse = await this.requestWithBootDeadline<any>(
+    const initResponse = await this.requestWithBootDeadline<AcpInitializeResponse>(
       server,
       client,
       bootDeadline,
       "initialize",
       {
         protocolVersion: 1,
-        clientCapabilities,
+        clientCapabilities: this.buildClientCapabilities(),
         clientInfo: { name: "penumbra", version: "1.0.0" },
       },
     );
-
-    // 1.5 Authenticate
     const authMethods = initResponse.authMethods ?? [];
     if (authMethods.length > 0) {
-      let chosenAuthId = this.opts.authMethodId;
-      if (!chosenAuthId) {
-        const satisfiedEnvVar = authMethods.find(
-          (m: any) => m.type === "env_var" && m.vars?.every((v: any) => !!args.mergedEnv[v.name]),
-        );
-        if (satisfiedEnvVar) {
-          chosenAuthId = satisfiedEnvVar.id;
-        } else {
-          const nonEnvVar = authMethods.find((m: any) => m.type !== "env_var");
-          chosenAuthId = nonEnvVar ? nonEnvVar.id : authMethods[0].id;
-        }
-      }
+      const chosenAuthId = selectAuthMethodId(authMethods, this.opts.authMethodId, args.mergedEnv);
       await this.requestWithBootDeadline(server, client, bootDeadline, "authenticate", {
         methodId: chosenAuthId,
       });
     }
-
-    if (!args.warmPoolEnabled) return null;
-    // Deposit the warm CONNECTION (process + initialized/authenticated client).
-    // The returned entry is idle (no holder ref) — the caller decides whether to
-    // claim a ref (a cold dispatch does; prewarm leaves it acquirable).
+    if (!args.warmPoolEnabled || !this.deps.pool) return null;
     return (
-      this.deps.pool!.deposit(args.poolKey, {
+      this.deps.pool.deposit(args.poolKey, {
         handle: server,
         client,
         specHash: args.specHash,
@@ -509,11 +1131,6 @@ export class StdioAcpAdapter implements Adapter {
    * Handshake-only: no session/new, no session/prompt, no per-dispatch handlers,
    * no holder ref — the deposited entry is left idle so the next matching dispatch
    * acquires it as a reuse hit (this is what defeats first-poll-wins worker spread).
-   * No-op when the warm pool is disabled for this agent.
-   *
-   * `signal` aborts the spawn/handshake (the child is killed via startServer's
-   * abort handler) so the pre-warm loop can enforce a timeout and the worker can
-   * tear down in-flight pre-warms on shutdown without orphaning a codex-acp child.
    */
   async prewarm(signal?: AbortSignal): Promise<{ deposited: boolean; poolKey: string }> {
     const cwd = this.opts.cwd ?? process.cwd();
@@ -524,7 +1141,8 @@ export class StdioAcpAdapter implements Adapter {
     });
     const warmPoolEnabled = this.opts.warmPool === true && this.deps.pool !== undefined;
     if (!warmPoolEnabled) return { deposited: false, poolKey };
-    if (signal?.aborted) throw signal.reason ?? new Error("prewarm aborted");
+    if (signal?.aborted === true)
+      throw (signal.reason as Error | undefined) ?? new Error("prewarm aborted");
 
     const specHash = acpSpecHash({
       binary: this.opts.binary,
@@ -550,812 +1168,725 @@ export class StdioAcpAdapter implements Adapter {
     }
   }
 
-  async *dispatchStream(input: DispatchInput): AsyncIterable<DispatchEvent> {
-    const dispatchStartTs = Date.now();
-    let frameworkOverheadMs: number | null = null;
-    const cwd = this.opts.cwd ?? process.cwd();
-    const requestTimeoutMs = this.opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-    const warmPoolEnabled = this.opts.warmPool === true && this.deps.pool !== undefined;
-    // Pool scope = repoRoot when set (so worktree-isolated dispatches of the
-    // same repo share one warm process), else cwd (non-worktree dispatches).
-    const poolScope = this.opts.repoRoot ?? cwd;
-    const poolKey = poolKeyFor({
-      agent: this.opts.agentName ?? this.opts.model ?? this.opts.binary,
-      cwd: poolScope,
-    });
-    const specHash = acpSpecHash({
-      binary: this.opts.binary,
-      args: this.opts.args,
-      model: this.opts.model,
-    });
-    const holderId =
-      input.handoff_id ?? input.conversation?.id ?? `stdio-acp:${Date.now()}:${Math.random()}`;
-    let server: StdioAcpHandle | null = null;
-    let pooledEntry: AcpWarmPoolEntry | null = null;
-    let errorThrown = false;
-    // A warmup-prompt TIMEOUT (vs a clean reject) abandons the underlying
-    // session/prompt in the client's pendingRequests map. Such a connection is
-    // unsafe to reuse, so it is evicted (not released) at end-of-dispatch rather
-    // than returned to the warm pool. Only the timeout poisons; a normal warmup
-    // error resolves the request and leaves the connection clean.
-    let warmupTimedOut = false;
-    let retriedCold = false;
-    let accumulatedText = "";
+  private acquireWarm(
+    poolKey: string,
+    specHash: string,
+    holderId: string,
+  ): { entry: AcpWarmPoolEntry | null; missReason?: string; poolKeys?: string[] } {
+    if (this.opts.warmPool !== true || !this.deps.pool) return { entry: null };
+    const missReason = this.deps.pool.peekMissReason?.(poolKey, specHash);
+    const poolKeys = this.deps.pool.debugKeys?.();
+    const entry = this.deps.pool.acquire(holderId, poolKey, specHash);
+    return { entry, missReason, poolKeys };
+  }
 
+  private async acquireOrSpawn(args: {
+    poolKey: string;
+    specHash: string;
+    holderId: string;
+    cwd: string;
+    mergedEnv: Record<string, string>;
+    input: DispatchInput;
+    dispatchStartTs: number;
+  }): Promise<AcquireOrSpawnResult> {
+    const { entry, missReason, poolKeys } = this.acquireWarm(
+      args.poolKey,
+      args.specHash,
+      args.holderId,
+    );
+    if (entry) {
+      emitLifecycle(args.input, "acp.session.reuse", {
+        adapter: this.kind,
+        pool_key: args.poolKey,
+        framework_overhead_ms: Date.now() - args.dispatchStartTs,
+      });
+      return {
+        server: entry.handle,
+        client: entry.client,
+        pooledEntry: entry,
+        reusedSession: true,
+      };
+    }
+    const spawned = await this.spawnAcpServer(args.cwd, args.mergedEnv, args.input.signal);
+    const warmPoolEnabled = this.opts.warmPool === true && this.deps.pool !== undefined;
+    emitLifecycle(args.input, "acp.server.start", {
+      adapter: this.kind,
+      binary: this.opts.binary,
+      pid: spawned.server.pid,
+      ...(warmPoolEnabled
+        ? {
+            pool_key: args.poolKey,
+            warm_miss: missReason ?? "unknown",
+            pool_keys: poolKeys ?? [],
+          }
+        : {}),
+    });
+    return {
+      server: spawned.server,
+      client: spawned.client,
+      pooledEntry: null,
+      reusedSession: false,
+    };
+  }
+
+  private async createSession(
+    server: StdioAcpHandle,
+    client: StdioAcpClient,
+    bootDeadline: StdioAcpBootDeadline,
+    cwd: string,
+    input: DispatchInput,
+    mergedEnv: Record<string, string>,
+  ): Promise<string> {
+    const mcpServers = this.opts.mcpServers ?? [];
+    // Scope dispatch identity env injection to the penumbra-mcp server only —
+    // never leak handoff/tick identifiers to third-party stdio MCPs.
+    const mcpServersWithEnv = buildMcpServersWithEnv(mcpServers, input, mergedEnv);
+    const sessionParams: SessionNewParams = {
+      cwd,
+      mcpServers: mcpServersWithEnv,
+    };
+    if (this.opts.model !== undefined) sessionParams.model = this.opts.model;
+    const claudeMeta = buildClaudeCodeMeta(this.opts);
+    if (claudeMeta) sessionParams._meta = claudeMeta;
+    const session = await this.requestWithBootDeadline<AcpSessionNewResponse>(
+      server,
+      client,
+      bootDeadline,
+      "session/new",
+      sessionParams,
+    );
+    return session.sessionId;
+  }
+
+  private async runModelWarmup(
+    client: StdioAcpClient,
+    sessionId: string,
+    input: DispatchInput,
+    state: { warmupTimedOutRef: { current: boolean } },
+  ): Promise<void> {
+    const prompt = this.opts.modelWarmupPrompt;
+    if (typeof prompt !== "string" || prompt.length === 0) return;
+    const warmupStart = Date.now();
+    const warmupTimer: { ref: ReturnType<typeof setTimeout> | null } = { ref: null };
+    try {
+      await Promise.race([
+        client.request("session/prompt", {
+          sessionId,
+          prompt: [{ type: "text", text: prompt }],
+        }),
+        new Promise<never>((_, reject) => {
+          warmupTimer.ref = setTimeout(() => {
+            state.warmupTimedOutRef.current = true;
+            reject(new Error("model warmup timeout"));
+          }, MODEL_WARMUP_TIMEOUT_MS);
+        }),
+      ]);
+      emitLifecycle(input, "acp.model_warmup", {
+        adapter: this.kind,
+        session_id: sessionId,
+        duration_ms: Date.now() - warmupStart,
+      });
+    } catch (err) {
+      emitLifecycle(input, "acp.model_warmup.failed", {
+        adapter: this.kind,
+        session_id: sessionId,
+        error: String(err),
+      });
+    } finally {
+      if (warmupTimer.ref !== null) clearTimeout(warmupTimer.ref);
+    }
+  }
+
+  private buildPromptParams(sessionId: string, input: DispatchInput): SessionPromptParams {
+    const params: SessionPromptParams = {
+      sessionId,
+      prompt: [{ type: "text", text: input.prompt }],
+    };
+    if (input.handoff_id !== undefined) {
+      params._meta = {
+        penumbraHandoffId: input.handoff_id,
+        penumbra: { handoff_id: input.handoff_id },
+      };
+    }
+    return params;
+  }
+
+  private cleanupConnection(args: {
+    server: StdioAcpHandle | null;
+    pooledEntry: AcpWarmPoolEntry | null;
+    poolKey: string;
+    holderId: string;
+    warmPoolEnabled: boolean;
+    errorThrown: boolean;
+    warmupTimedOut: boolean;
+  }): void {
+    if (
+      args.warmPoolEnabled &&
+      args.pooledEntry &&
+      !args.errorThrown &&
+      !args.warmupTimedOut &&
+      this.deps.pool
+    ) {
+      this.deps.pool.release(args.holderId, args.poolKey);
+      return;
+    }
+    if (args.warmPoolEnabled && args.pooledEntry && this.deps.pool) {
+      this.deps.pool.evict(args.poolKey, args.pooledEntry);
+    }
+    if (args.server && args.pooledEntry?.tornDown !== true) {
+      args.server.kill();
+    }
+  }
+
+  private prepareColdRetry(
+    err: unknown,
+    state: DispatchState,
+    warmPoolEnabled: boolean,
+    poolKey: string,
+  ): StdioAcpAdapter | null {
+    const retryEntry = state.pooledEntry;
+    if (!retryEntry || !shouldRetryColdDispatch(err, warmPoolEnabled, retryEntry)) {
+      return null;
+    }
+    this.deps.pool?.evict(poolKey, retryEntry);
+    state.pooledEntry = null;
+    state.server = null;
+    return new StdioAcpAdapter(
+      { ...this.opts, warmPool: false },
+      {
+        startServer: this.deps.startServer,
+        createClient: this.deps.createClient,
+        thoughtCapture: this.deps.thoughtCapture,
+      },
+    );
+  }
+
+  private async runPromptInteraction(args: {
+    client: StdioAcpClient;
+    sessionId: string;
+    input: DispatchInput;
+    state: DispatchState;
+    armPromptTimeout: () => void;
+    lifecycleHandles: ServerLifecycleHandles;
+    adapterKind: string;
+  }): Promise<AcpPromptResponse | null> {
+    const promptPromise = args.client.request(
+      "session/prompt",
+      this.buildPromptParams(args.sessionId, args.input),
+    );
+    const promptTimeoutPromise = new Promise<never>((_, reject) => {
+      args.state.promptTimeoutRejector = reject;
+      args.armPromptTimeout();
+    });
+    const heartbeatTimer = createHeartbeatTimer(
+      args.input,
+      args.state,
+      args.lifecycleHandles.serverAliveRef,
+      args.sessionId,
+      args.adapterKind,
+    );
+    try {
+      const response = (await Promise.race([
+        promptPromise,
+        args.lifecycleHandles.toolUseRejection.promise,
+        promptTimeoutPromise,
+        args.lifecycleHandles.sessionExitRejection.promise,
+      ])) as AcpPromptResponse | null;
+      emitLifecycle(args.input, "acp.session.end", {
+        adapter: args.adapterKind,
+        session_id: args.sessionId,
+        stop_reason: response?.stopReason ?? null,
+      });
+      return response;
+    } finally {
+      args.state.promptTimeoutRejector = null;
+      clearPromptTimer(args.state);
+      clearInterval(heartbeatTimer);
+    }
+  }
+
+  private async *handleDispatchCatch(
+    err: unknown,
+    state: DispatchState,
+    warmPoolEnabled: boolean,
+    poolKey: string,
+    input: DispatchInput,
+  ): AsyncIterable<DispatchEvent> {
+    const coldAdapter = this.prepareColdRetry(err, state, warmPoolEnabled, poolKey);
+    if (coldAdapter) {
+      for await (const event of coldAdapter.dispatchStream(input)) {
+        yield event;
+      }
+      return;
+    }
+    augmentDispatchError(err, state.server, state.accumulatedText);
+    state.errorThrown = true;
+    throw err;
+  }
+
+  async *dispatchStream(input: DispatchInput): AsyncIterable<DispatchEvent> {
+    const setup = computeDispatchConstants(this.opts, this.deps.pool, input);
+    const { dispatchStartTs, cwd, requestTimeoutMs, warmPoolEnabled, poolKey, specHash, holderId } =
+      setup;
+    const state = createDispatchState();
     try {
       const mergedEnv = this.buildMergedEnv();
-
-      let client: StdioAcpClient;
-      let sessionId = "";
-      let reusedSession = false;
       const bootDeadline = this.createBootDeadline();
-      // Diagnostic snapshot of the pool's match decision BEFORE acquire() (which
-      // tears down stale candidates), so a cold start records exactly why warm
-      // reuse missed — no_entry / not_running / aged / spec_mismatch / in_use, or
-      // would_hit (a real acquire bug). pool_keys surfaces key drift.
-      let warmMissReason: string | undefined;
-      let warmPoolKeys: string[] | undefined;
-      if (warmPoolEnabled) {
-        // Optional: these are diagnostics-only and must never alter dispatch
-        // behaviour, so tolerate a pool implementation (e.g. a test double) that
-        // doesn't provide them.
-        warmMissReason = this.deps.pool!.peekMissReason?.(poolKey, specHash);
-        warmPoolKeys = this.deps.pool!.debugKeys?.();
-        pooledEntry = this.deps.pool!.acquire(holderId, poolKey, specHash);
-      }
-      if (pooledEntry) {
-        server = pooledEntry.handle;
-        client = pooledEntry.client;
-        reusedSession = true;
-        // Connection reused (warm process + initialized/authenticated client).
-        // The session is created fresh below at THIS dispatch's cwd + identity
-        // env, so session_id is not known yet — this event signals the
-        // connection-level reuse (the part that skips the cold-start floor).
-        emitLifecycle(input, "acp.session.reuse", {
-          adapter: this.kind,
-          pool_key: poolKey,
-          framework_overhead_ms: Date.now() - dispatchStartTs,
-        });
-      } else {
-        const spawned = await this.spawnAcpServer(cwd, mergedEnv, input.signal);
-        server = spawned.server;
-        client = spawned.client;
-        emitLifecycle(input, "acp.server.start", {
-          adapter: this.kind,
-          binary: this.opts.binary,
-          pid: server.pid,
-          ...(warmPoolEnabled
-            ? {
-                pool_key: poolKey,
-                warm_miss: warmMissReason ?? "unknown",
-                pool_keys: warmPoolKeys ?? [],
-              }
-            : {}),
-        });
-      }
 
-      let serverAlive = true;
-      server.exited.then(() => {
-        serverAlive = false;
+      const warm = this.acquireWarm(poolKey, specHash, holderId);
+      const acquired: AcquireOrSpawnResult = warm.entry
+        ? acquireReuseResult(warm.entry, input, this.kind, poolKey, dispatchStartTs)
+        : buildSpawnResult({
+            spawned: await this.spawnAcpServer(cwd, mergedEnv, input.signal),
+            input,
+            adapterKind: this.kind,
+            binary: this.opts.binary,
+            warmPoolEnabled,
+            poolKey,
+            missReason: warm.missReason,
+            poolKeys: warm.poolKeys,
+          });
+      const { client, server } = { client: acquired.client, server: acquired.server };
+      state.server = server;
+      state.pooledEntry = acquired.pooledEntry;
+
+      const armPromptTimeout = (): void => {
+        armPromptTimeoutImpl(state, server, requestTimeoutMs);
+      };
+      const turnCtx: DispatchTurnContext = buildInlineTurnContext({
+        cwd,
+        client,
+        input,
+        state,
+        opts: this.opts,
+        thoughtCapture: this.deps.thoughtCapture,
+        armPromptTimeout,
       });
-      let lastSessionUpdateTs = Date.now();
+      registerFsHandlers(turnCtx, this.opts);
+      registerTerminalHandlers(turnCtx, this.opts);
+      registerPermissionHandler(turnCtx, this.opts);
 
-      // Idle-watchdog state. Hoisted above the onRequest registrations so
-      // every incoming JSON-RPC request can re-arm liveness — not just
-      // session/update notifications. Pre-prompt arming is a no-op because
-      // armPromptTimeout early-returns when promptTimeoutRejector is null.
-      let promptTimeout: ReturnType<typeof setTimeout> | null = null;
-      let promptTimeoutRejector: ((err: Error) => void) | null = null;
-      const clearPromptTimeout = () => {
-        if (promptTimeout) {
-          clearTimeout(promptTimeout);
-          promptTimeout = null;
-        }
-      };
-      const armPromptTimeout = () => {
-        if (!promptTimeoutRejector) return;
-        clearPromptTimeout();
-        promptTimeout = setTimeout(() => {
-          const tail = server?.getStderrTail?.() ?? "";
-          const tailHint = tail ? `\n[child stderr tail]\n${tail}` : "";
-          promptTimeoutRejector?.(
-            new Error(
-              `stdio-acp: no wire activity (session/update or onRequest) for ${requestTimeoutMs}ms — agent stalled mid-turn${tailHint}`,
-            ),
-          );
-        }, requestTimeoutMs);
-      };
-
-      if (this.opts.fsReadTextFile) {
-        client.onRequest("fs/read_text_file", async (params: any) => {
-          armPromptTimeout();
-          try {
-            return await executeReadTextFile(
-              { path: params?.path, line: params?.line, limit: params?.limit },
-              cwd,
-            );
-          } catch (err) {
-            if (err instanceof ReadTextFileError) {
-              // Format the error message so client-side string-matchers
-              // recognise file-not-found correctly. Gemini-cli's
-              // AcpFileSystemService.normalizeFileSystemError checks for
-              // 'ENOENT' / 'No such file' / 'Resource not found' / 'does not exist'
-              // — without one of these substrings it treats our error as a
-              // generic write-blocking failure rather than "file does not
-              // exist", which silently breaks every gemini-acp write tool
-              // (the write-file tool calls readTextFile to check existence
-              // before writing, and a non-ENOENT-shaped error returns early
-              // with `error` set, never attempting the write).
-              if (err.code === "not_found") {
-                throw new Error(`ENOENT: No such file or directory: ${err.message}`);
-              }
-              throw new Error(`fs/read_text_file ${err.code}: ${err.message}`);
-            }
-            throw err;
-          } finally {
-            armPromptTimeout();
-          }
-        });
-      }
-      if (this.opts.fsWriteTextFile) {
-        client.onRequest("fs/write_text_file", async (params: any) => {
-          armPromptTimeout();
-          if (!input.executor) throw new Error("fs/write_text_file: no executor in dispatch input");
-          try {
-            await input.executor.writeTextFile(
-              { path: params?.path, content: params?.content },
-              {
-                toolName: "fs.write_text_file",
-                rawInput: {
-                  path: params?.path,
-                  content_bytes:
-                    typeof params?.content === "string"
-                      ? Buffer.byteLength(params.content, "utf8")
-                      : 0,
-                },
-                dispatchId: (input as any).dispatchId ?? (input as any).handoff_id ?? "unknown",
-              },
-            );
-            return {};
-          } catch (err) {
-            throw mapWriteToolsError(err);
-          } finally {
-            armPromptTimeout();
-          }
-        });
-      }
-      if (this.opts.terminal) {
-        client.onRequest("terminal/create", async (params: any) => {
-          armPromptTimeout();
-          if (!input.executor) throw new Error("terminal/create: no executor");
-          try {
-            return await input.executor.terminalCreate(
-              {
-                command: params?.command,
-                argv: params?.args,
-                cwd: params?.cwd,
-                output_byte_limit: params?.output_byte_limit,
-              },
-              {
-                toolName: "terminal.create",
-                rawInput: {
-                  argv: params?.args ?? null,
-                  cmd: params?.command ?? null,
-                  cwd: params?.cwd ?? ".",
-                },
-                dispatchId: (input as any).dispatchId ?? (input as any).handoff_id ?? "unknown",
-              },
-            );
-          } catch (err) {
-            throw mapWriteToolsError(err);
-          } finally {
-            armPromptTimeout();
-          }
-        });
-        client.onRequest("terminal/output", async (params: any) => {
-          armPromptTimeout();
-          if (!input.executor) throw new Error("terminal/output: no executor");
-          try {
-            return await input.executor.terminalOutput({ terminal_id: params?.terminal_id });
-          } catch (err) {
-            throw mapWriteToolsError(err);
-          } finally {
-            armPromptTimeout();
-          }
-        });
-        client.onRequest("terminal/wait_for_exit", async (params: any) => {
-          armPromptTimeout();
-          if (!input.executor) throw new Error("terminal/wait_for_exit: no executor");
-          try {
-            return await input.executor.terminalWaitForExit({ terminal_id: params?.terminal_id });
-          } catch (err) {
-            throw mapWriteToolsError(err);
-          } finally {
-            armPromptTimeout();
-          }
-        });
-        client.onRequest("terminal/release", async (params: any) => {
-          armPromptTimeout();
-          if (!input.executor) throw new Error("terminal/release: no executor");
-          try {
-            await input.executor.terminalRelease({ terminal_id: params?.terminal_id });
-            return {};
-          } catch (err) {
-            throw mapWriteToolsError(err);
-          } finally {
-            armPromptTimeout();
-          }
-        });
-        client.onRequest("terminal/kill", async (params: any) => {
-          armPromptTimeout();
-          if (!input.executor) throw new Error("terminal/kill: no executor");
-          try {
-            await input.executor.terminalKill({ terminal_id: params?.terminal_id });
-            return {};
-          } catch (err) {
-            throw mapWriteToolsError(err);
-          } finally {
-            armPromptTimeout();
-          }
-        });
-      }
-
-      // Phase 1a/1b.1 stub: auto-allow permission requests when ANY client
-      // capability is advertised. The agent calls session/request_permission
-      // before invoking sensitive tools (its own internal Read/Bash, MCP tool
-      // calls, etc.). Without a handler, the JSON-RPC -32601 reply makes the
-      // agent abort its turn.
-      //
-      // Phase 1c will replace this with the canonical handoff.approve flow
-      // (operator pause + redirect/reject via existing MCP tools). For now,
-      // since the dispatch is already gated by chain_trust_mode='all' at the
-      // daemon level, auto-selecting allow_always is the operator's intent.
-      const hasClientCapability =
-        this.opts.fsReadTextFile ||
-        this.opts.fsWriteTextFile ||
-        this.opts.terminal ||
-        (this.opts.mcpServers !== undefined && this.opts.mcpServers.length > 0);
-      if (hasClientCapability) {
-        client.onRequest("session/request_permission", async (params: any) => {
-          armPromptTimeout();
-          try {
-            const options = Array.isArray(params?.options) ? params.options : [];
-
-            if (!input.requestPermission) {
-              const chosen =
-                options.find((o: any) => o?.kind === "allow_always") ??
-                options.find((o: any) => o?.kind === "allow_once") ??
-                options[0];
-              if (!chosen?.optionId) {
-                return { outcome: { outcome: "cancelled" } };
-              }
-              return { outcome: { outcome: "selected", optionId: chosen.optionId } };
-            }
-
-            const allowOption =
-              options.find((o: any) => o?.kind === "allow_always") ??
-              options.find((o: any) => o?.kind === "allow_once") ??
-              options.find((o: any) => o?.optionId);
-            const rejectOption =
-              options.find((o: any) => o?.kind === "reject_always") ??
-              options.find((o: any) => o?.kind === "reject_once");
-
-            const toolName: string | null =
-              (typeof params?.toolCall?.title === "string" && params.toolCall.title) ||
-              (typeof params?.toolCall?.name === "string" && params.toolCall.name) ||
-              null;
-            if (!toolName) {
-              return { outcome: { outcome: "cancelled" } };
-            }
-            let decision: "approve" | "reject" = "approve";
-            try {
-              decision = await input.requestPermission({
-                toolName,
-                rawInput: params?.toolCall?.rawInput ?? params?.toolCall ?? null,
-                dispatchId: input.handoff_id ?? input.conversation?.id ?? "unknown",
-              });
-            } catch {
-              decision = "reject";
-            }
-
-            if (decision === "approve" && allowOption?.optionId) {
-              return { outcome: { outcome: "selected", optionId: allowOption.optionId } };
-            }
-            if (decision === "reject" && rejectOption?.optionId) {
-              return { outcome: { outcome: "selected", optionId: rejectOption.optionId } };
-            }
-            return { outcome: { outcome: "cancelled" } };
-          } finally {
-            armPromptTimeout();
-          }
-        });
-      }
-
-      if (!reusedSession) {
-        // Initialize + authenticate + deposit the warm CONNECTION (process +
-        // initialized/authenticated client) so the next dispatch for this
-        // (agent, repoRoot) skips startServer + initialize + authenticate. Shared
-        // with prewarm via handshakeAndDeposit so both paths produce a
-        // byte-identical connection. The session is created fresh per dispatch
-        // below, so a reused connection always gets the current dispatch's cwd
-        // and injected identity env (PENUMBRA_HANDOFF_ID, tick allowlist).
-        pooledEntry = await this.handshakeAndDeposit(server, client as StdioAcpClient, {
-          mergedEnv,
-          specHash,
-          poolKey,
-          warmPoolEnabled,
-          bootDeadline,
-        });
-        pooledEntry?.refs.add(holderId);
-      }
-
-      // 2. New Session — runs on EVERY dispatch (cold start OR warm-connection
-      // reuse), always at this dispatch's cwd with this dispatch's identity env.
-      {
-        const mcpServers = this.opts.mcpServers ?? [];
-        // Scope dispatch identity env injection to the penumbra-mcp server only —
-        // never leak handoff/tick identifiers to third-party stdio MCPs. We
-        // identify it by command/arg path (binary file ending in penumbra-mcp.ts
-        // or penumbra-mcp), which is yaml-independent. The agentchat.yaml
-        // convention names this server simply `penumbra`, so a name-only check
-        // would silently miss it. Some deployments wrap the server in
-        // mcp-allowlist-proxy.ts and carry the real upstream command in
-        // MCP_PROXY_UPSTREAM; those wrappers should also receive the injected
-        // env because the proxy forwards process.env to the upstream child.
-        const isPenumbraMcp = (s: any): boolean => {
-          if (s.command === undefined) return false;
-          const argsArr: string[] = Array.isArray(s.args) ? s.args : [];
-          const direct = /penumbra-mcp(\.ts|\.js)?($|[\s/])/.test(
-            [s.name ?? "", s.command, ...argsArr].join(" "),
-          );
-          if (direct) return true;
-          const envEntries: Array<{ name?: unknown; value?: unknown }> = Array.isArray(s.env)
-            ? s.env
-            : [];
-          const upstream = envEntries.find((entry) => String(entry?.name) === "MCP_PROXY_UPSTREAM");
-          return (
-            typeof upstream?.value === "string" &&
-            /penumbra-mcp(\.ts|\.js)?($|[\s/])/.test(upstream.value)
-          );
-        };
-        const longLivedEnv = buildLongLivedMcpEnv(input);
-        // Re-inject the CURRENT dispatch's per-worktree storage root so a warm
-        // reused process (whose process env is frozen at the first dispatch's
-        // worktree) doesn't point the MCP child at the wrong worktree's DB.
-        // mergedEnv carries the per-dispatch value (set into opts.env by the
-        // worktree override).
-        const storageRootEnv = mergedEnv.PENUMBRA_STORAGE_ROOT
-          ? [{ name: "PENUMBRA_STORAGE_ROOT", value: mergedEnv.PENUMBRA_STORAGE_ROOT }]
-          : [];
-        const shouldInjectDispatchEnv =
-          Boolean(input.handoff_id) || longLivedEnv.length > 0 || storageRootEnv.length > 0;
-        const mcpServersWithEnv = shouldInjectDispatchEnv
-          ? mcpServers.map((s: any) =>
-              isPenumbraMcp(s)
-                ? {
-                    ...s,
-                    env: [
-                      ...((s.env ?? []) as any[]).filter(
-                        (e: any) => !PENUMBRA_MCP_INJECTED_ENV_KEYS.has(String(e?.name)),
-                      ),
-                      ...(input.handoff_id
-                        ? [{ name: "PENUMBRA_HANDOFF_ID", value: input.handoff_id }]
-                        : []),
-                      { name: "PENUMBRA_MCP_ORIGIN", value: PENUMBRA_MCP_ORIGIN_FLEET_WORKER },
-                      ...storageRootEnv,
-                      ...longLivedEnv,
-                    ],
-                  }
-                : s,
-            )
-          : mcpServers;
-
-        const sessionParams: any = {
-          cwd,
-          mcpServers: mcpServersWithEnv,
-        };
-        if (this.opts.model) {
-          sessionParams.model = this.opts.model;
-        }
-        if (
-          this.opts.claudeCodeSettingSources !== undefined ||
-          this.opts.claudeCodeStrictMcpConfig !== undefined ||
-          this.opts.claudeCodeAllowedTools !== undefined ||
-          this.opts.claudeCodeTools !== undefined ||
-          this.opts.claudeCodeDisallowedTools !== undefined
-        ) {
-          sessionParams._meta = {
-            ...(sessionParams._meta ?? {}),
-            claudeCode: {
-              ...(sessionParams._meta?.claudeCode ?? {}),
-              options: {
-                ...(sessionParams._meta?.claudeCode?.options ?? {}),
-                ...(this.opts.claudeCodeSettingSources !== undefined
-                  ? { settingSources: this.opts.claudeCodeSettingSources }
-                  : {}),
-                ...(this.opts.claudeCodeStrictMcpConfig !== undefined
-                  ? { strictMcpConfig: this.opts.claudeCodeStrictMcpConfig }
-                  : {}),
-                ...(this.opts.claudeCodeAllowedTools !== undefined
-                  ? { allowedTools: this.opts.claudeCodeAllowedTools }
-                  : {}),
-                ...(this.opts.claudeCodeTools !== undefined
-                  ? { tools: this.opts.claudeCodeTools }
-                  : {}),
-                ...(this.opts.claudeCodeDisallowedTools !== undefined
-                  ? { disallowedTools: this.opts.claudeCodeDisallowedTools }
-                  : {}),
-              },
-            },
-          };
-        }
-        const session = await this.requestWithBootDeadline<any>(
+      if (!acquired.reusedSession) {
+        const initResponse = await this.requestWithBootDeadline<AcpInitializeResponse>(
           server,
           client,
           bootDeadline,
-          "session/new",
-          sessionParams,
-        );
-        sessionId = session.sessionId;
-        emitLifecycle(input, "acp.session.start", {
-          adapter: this.kind,
-          session_id: sessionId,
-          framework_overhead_ms: (frameworkOverheadMs = Date.now() - dispatchStartTs),
-        });
-      }
-      if (input.handoff_id) {
-        registerSession(input.handoff_id, {
-          adapter: this.kind,
-          inject: async (message) => {
-            await client.request("session/prompt", {
-              sessionId,
-              prompt: [{ type: "text", text: message.text }],
-              _meta: {
-                penumbraHandoffId: input.handoff_id,
-                penumbra: { handoff_id: input.handoff_id },
-              },
-            });
+          "initialize",
+          {
+            protocolVersion: 1,
+            clientCapabilities: this.buildClientCapabilities(),
+            clientInfo: { name: "penumbra", version: "1.0.0" },
           },
+        );
+        const authMethods = initResponse.authMethods ?? [];
+        if (authMethods.length > 0) {
+          const chosenAuthId = selectAuthMethodId(authMethods, this.opts.authMethodId, mergedEnv);
+          await this.requestWithBootDeadline(server, client, bootDeadline, "authenticate", {
+            methodId: chosenAuthId,
+          });
+        }
+        state.pooledEntry = this.maybeDepositWarm({
+          server,
+          client,
+          warmPoolEnabled,
+          poolKey,
+          specHash,
         });
+        state.pooledEntry?.refs.add(holderId);
       }
 
-      // 3. Prompt — ACP is streaming-first per @agentclientprotocol/sdk:
-      //    - prompt: PromptRequest carries `prompt: Array<ContentBlock>`, not a string
-      //    - response: PromptResponse only carries `stopReason` — text is delivered via
-      //      `session/update` notifications during the turn (each is a SessionUpdate
-      //      whose `sessionUpdate === "agent_message_chunk"` carries a ContentChunk
-      //      with `content: TextContent`). Accumulate those.
-      const toolNameById = new Map<string, string>();
-      let toolUseRejector: ((err: Error) => void) | null = null;
-      const toolUseRejection = new Promise<never>((_, reject) => {
-        toolUseRejector = reject;
-      });
-      let sessionExitRejector: ((err: Error) => void) | null = null;
-      const sessionExitRejection = new Promise<never>((_, reject) => {
-        sessionExitRejector = reject;
-      });
-      server.exited.then((code) => {
-        if (pooledEntry && sessionExitRejector && code !== 0) {
-          sessionExitRejector(new AcpSessionEvictedError());
-        }
-      });
-      client.on("session/update", (params: any) => {
-        const update = params?.update;
-        if (!update || typeof update !== "object") return;
-        armPromptTimeout();
-        lastSessionUpdateTs = Date.now();
-        switch (update.sessionUpdate) {
-          case "agent_message_chunk": {
-            const content = update.content;
-            if (content?.type === "text" && typeof content.text === "string") {
-              accumulatedText += content.text;
-              this.opts.capturePort?.emit({ kind: "agent_message_chunk", content: content.text });
-            }
-            break;
-          }
-          case "agent_thought_chunk": {
-            const content = update.content;
-            if (content?.type === "text" && typeof content.text === "string") {
-              this.opts.capturePort?.emit({ kind: "agent_thought_chunk", content: content.text });
-              if (input.handoff_id) {
-                try {
-                  this.deps.thoughtCapture?.recordThought({
-                    handoffId: input.handoff_id,
-                    adapter: "stdio-acp",
-                    agentName: this.opts.model ?? this.opts.binary,
-                    text: content.text,
-                    tokenCount:
-                      typeof update.token_count === "number" ? update.token_count : undefined,
-                  });
-                } catch (err) {
-                  console.warn("stdio-acp: failed to capture agent_thought_chunk", err);
-                }
-              }
-            }
-            break;
-          }
-          case "tool_call": {
-            if (typeof update.toolCallId === "string" && update.toolCallId.length > 0) {
-              const toolName =
-                (typeof update.title === "string" && update.title) ||
-                (typeof update.kind === "string" && update.kind) ||
-                null;
-              if (toolName) toolNameById.set(update.toolCallId, toolName);
-            }
-            this.opts.capturePort?.emit({
-              kind: "tool_call",
-              toolCallId: update.toolCallId,
-              status: update.status,
-              input: update.input,
-            });
-            // tool_call SessionUpdates are agent-side observability for the
-            // agent's own internal tools (its built-in Read/Bash/etc.). They
-            // are NOT requests for the client to execute work — those go via
-            // JSON-RPC requests like fs/read_text_file (handled by onRequest).
-            //
-            // When the adapter advertises a client capability
-            // (fsReadTextFile, fsWriteTextFile, terminal, or mcpServers), we
-            // must let the turn continue so the agent can actually USE the
-            // capability via its RPC path. mcpServers in particular is the
-            // typical surface for long-lived agents that operate entirely
-            // through MCP tools (e.g., home-mgmt against ha-mcp).
-            // Killing here aborts the dispatch before the agent gets that
-            // chance.
-            //
-            // When no client capability is advertised, the adapter is in
-            // single-turn echo mode — preserve the original kill-on-tool-call
-            // behavior to surface the limitation clearly rather than letting
-            // the agent run a multi-turn tool loop with no client support.
-            const clientCapability = supportsClientCapability(this.opts);
-            if (!clientCapability) {
-              server?.kill();
-              toolUseRejector?.(
-                new Error("stdio-acp: tool use not yet supported in this adapter phase"),
-              );
-            }
-            break;
-          }
-          case "tool_call_update": {
-            this.opts.capturePort?.emit({
-              kind: "tool_call_update",
-              toolCallId: update.toolCallId,
-              status: update.status,
-              output: update.output,
-            });
-            // Recovery is judged by the classifier (dispatch-reliability.ts) using dispatchEndCommitted; do not suppress at emit.
-            if (update.status === "failed") {
-              emitLifecycle(input, "agent.tool_call.failed", {
-                adapter: this.kind,
-                tool_call_id: update.toolCallId,
-                tool_name:
-                  (typeof update.title === "string" && update.title) ||
-                  (typeof update.kind === "string" && update.kind) ||
-                  (typeof update.toolCallId === "string"
-                    ? toolNameById.get(update.toolCallId)
-                    : undefined) ||
-                  null,
-                output: update.output ?? null,
-              });
-            }
-            // tool_call SessionUpdates are agent-side observability for the
-            // agent's own internal tools (its built-in Read/Bash/etc.). They
-            // are NOT requests for the client to execute work — those go via
-            // JSON-RPC requests like fs/read_text_file (handled by onRequest).
-            //
-            // When the adapter advertises a client capability
-            // (fsReadTextFile, fsWriteTextFile, terminal, or mcpServers), we
-            // must let the turn continue so the agent can actually USE the
-            // capability via its RPC path. mcpServers in particular is the
-            // typical surface for long-lived agents that operate entirely
-            // through MCP tools (e.g., home-mgmt against ha-mcp).
-            // Killing here aborts the dispatch before the agent gets that
-            // chance.
-            //
-            // When no client capability is advertised, the adapter is in
-            // single-turn echo mode — preserve the original kill-on-tool-call
-            // behavior to surface the limitation clearly rather than letting
-            // the agent run a multi-turn tool loop with no client support.
-            const clientCapability = supportsClientCapability(this.opts);
-            if (!clientCapability) {
-              server?.kill();
-              toolUseRejector?.(
-                new Error("stdio-acp: tool use not yet supported in this adapter phase"),
-              );
-            }
-            break;
-          }
-          case "usage_update": {
-            const used = typeof update.used === "number" ? update.used : NaN;
-            const size = typeof update.size === "number" ? update.size : NaN;
-            if (!Number.isFinite(used) || !Number.isFinite(size)) break;
-            this.opts.capturePort?.emit({
-              kind: "usage_update",
-              used,
-              size,
-              cost: update.cost,
-            });
-            break;
-          }
-          // ignore: agent_thought_chunk, plan, available_commands_update, etc.
-        }
+      const session = await this.requestWithBootDeadline<AcpSessionNewResponse>(
+        server,
+        client,
+        bootDeadline,
+        "session/new",
+        buildSessionNewParams(this.opts, cwd, input, mergedEnv),
+      );
+      const sessionId = handleSessionCreated({
+        session,
+        adapterKind: this.kind,
+        input,
+        client,
+        state,
+        dispatchStartTs,
       });
 
-      // Absorb the per-process `/model` handshake before the real task. See the
-      // `modelWarmupPrompt` option docs: on a fresh claude-agent-acp process the
-      // first prompt is consumed by the `/model <ANTHROPIC_MODEL>` injection
-      // (responds, then `end_turn`, having run nothing). A throwaway warmup
-      // prompt takes that hit so the task prompt below runs on a model-settled
-      // session. Only fresh connections need it — a warm-reused process already
-      // absorbed `/model` on its first dispatch — and it is best-effort: a stall
-      // or error falls through to the real prompt rather than wedging.
-      if (
-        !reusedSession &&
-        typeof this.opts.modelWarmupPrompt === "string" &&
-        this.opts.modelWarmupPrompt.length > 0
-      ) {
-        const warmupStart = Date.now();
-        let warmupTimer: ReturnType<typeof setTimeout> | null = null;
-        try {
-          await Promise.race([
-            client.request("session/prompt", {
-              sessionId,
-              prompt: [{ type: "text", text: this.opts.modelWarmupPrompt }],
-            }),
-            new Promise<never>((_, reject) => {
-              warmupTimer = setTimeout(() => {
-                // Mark the connection poisoned: the session/prompt above is now
-                // abandoned-but-pending, so this connection must not be pooled.
-                warmupTimedOut = true;
-                reject(new Error("model warmup timeout"));
-              }, MODEL_WARMUP_TIMEOUT_MS);
-            }),
-          ]);
-          emitLifecycle(input, "acp.model_warmup", {
-            adapter: this.kind,
-            session_id: sessionId,
-            duration_ms: Date.now() - warmupStart,
-          });
-        } catch (err) {
-          emitLifecycle(input, "acp.model_warmup.failed", {
-            adapter: this.kind,
-            session_id: sessionId,
-            error: String(err),
-          });
-        } finally {
-          if (warmupTimer !== null) clearTimeout(warmupTimer);
-        }
+      const lifecycleHandles = setupServerLifecycleHandles(server, state, turnCtx);
+      client.on("session/update", buildSessionUpdateHandler(turnCtx, state, armPromptTimeout));
+
+      if (!acquired.reusedSession && this.opts.modelWarmupPrompt !== undefined) {
+        const warmupResult = { warmupTimedOutRef: { current: false } };
+        await this.runModelWarmup(client, sessionId, input, warmupResult);
+        state.warmupTimedOut = warmupResult.warmupTimedOutRef.current;
         // Drop whatever the warmup turn accumulated (the `/model` ack) so the
         // task response below starts from a clean buffer.
-        accumulatedText = "";
-        lastSessionUpdateTs = Date.now();
+        state.accumulatedText = "";
+        state.lastSessionUpdateTs = Date.now();
       }
 
-      const promptParams: any = {
+      const promptResponse = await this.runPromptInteraction({
+        client,
         sessionId,
-        prompt: [{ type: "text", text: input.prompt }],
-      };
-      if (input.handoff_id) {
-        promptParams._meta = {
-          ...(promptParams._meta ?? {}),
-          penumbraHandoffId: input.handoff_id,
-          penumbra: {
-            ...(promptParams._meta?.penumbra ?? {}),
-            handoff_id: input.handoff_id,
-          },
-        };
-      }
-      const promptPromise = client.request("session/prompt", promptParams);
-
-      const promptTimeoutPromise = new Promise<never>((_, reject) => {
-        promptTimeoutRejector = reject;
-        armPromptTimeout();
+        input,
+        state,
+        armPromptTimeout,
+        lifecycleHandles,
+        adapterKind: this.kind,
       });
-
-      let heartbeatTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
-        if (serverAlive && Date.now() - lastSessionUpdateTs >= 45_000) {
-          emitLifecycle(input, "agent.heartbeat", {
-            adapter: this.kind,
-            idle_ms: Date.now() - lastSessionUpdateTs,
-            session_id: sessionId,
-          });
-        }
-      }, 60_000);
-
-      let promptResponse: unknown = null;
-      try {
-        // PromptResponse carries stopReason; the actual text lives in accumulatedText.
-        promptResponse = await Promise.race([
-          promptPromise,
-          toolUseRejection,
-          promptTimeoutPromise,
-          sessionExitRejection,
-        ]);
-        emitLifecycle(input, "acp.session.end", {
-          adapter: this.kind,
-          session_id: sessionId,
-          stop_reason: (promptResponse as any)?.stopReason ?? null,
-        });
-      } finally {
-        sessionExitRejector = null;
-        promptTimeoutRejector = null;
-        clearPromptTimeout();
-        if (heartbeatTimer !== null) {
-          clearInterval(heartbeatTimer);
-          heartbeatTimer = null;
-        }
-      }
-
-      const classifierDecline = detectStdioAcpClassifierDecline({
-        finalText: accumulatedText,
-        errorText:
-          accumulatedText.trim().length === 0 ? JSON.stringify(promptResponse ?? null) : null,
-      });
-
-      yield {
-        type: "done",
-        result: {
-          text: accumulatedText,
-          meta: {
-            framework_overhead_ms: frameworkOverheadMs,
-            ...(classifierDecline ?? {}),
-          },
-        },
-      };
+      yield buildDispatchDoneEvent(state, promptResponse);
     } catch (err) {
-      if (err instanceof AcpSessionEvictedError && warmPoolEnabled && pooledEntry && !retriedCold) {
-        retriedCold = true;
-        this.deps.pool!.evict(poolKey, pooledEntry);
-        pooledEntry = null;
-        server = null;
-        const coldAdapter = new StdioAcpAdapter(
-          { ...this.opts, warmPool: false },
-          {
-            startServer: this.deps.startServer,
-            createClient: this.deps.createClient,
-            thoughtCapture: this.deps.thoughtCapture,
-          },
-        );
-        for await (const event of coldAdapter.dispatchStream(input)) {
-          yield event;
-        }
-        return;
-      }
-      // Augment any failure thrown from the dispatch turn with the captured
-      // child stderr tail. This covers session/new failures, capability
-      // negotiation hangs, and abnormal exits — all paths where the upstream
-      // CLI's diagnostic output (auth errors, plan limits, missing env vars)
-      // is the most useful evidence and would otherwise be lost in the
-      // shared worker stderr log.
-      if (server && err instanceof Error && !err.message.includes("[child stderr tail]")) {
-        const tail = server.getStderrTail?.() ?? "";
-        if (tail) err.message = `${err.message}\n[child stderr tail]\n${tail}`;
-      }
-      if (err instanceof Error) {
-        const classifierDecline = detectStdioAcpClassifierDecline({
-          finalText: accumulatedText,
-          errorText: err.message,
-        });
-        if (classifierDecline) Object.assign(err, classifierDecline);
-      }
-      errorThrown = true;
-      throw err;
+      yield* this.handleDispatchCatch(err, state, warmPoolEnabled, poolKey, input);
     } finally {
-      if (input.handoff_id) {
-        unregisterSession(input.handoff_id);
-      }
-      if (warmPoolEnabled && pooledEntry && !errorThrown && !warmupTimedOut) {
-        this.deps.pool!.release(holderId, poolKey);
-      } else {
-        // errorThrown OR warmupTimedOut: tear the connection down instead of
-        // returning it to the pool. A warmup timeout leaves an abandoned pending
-        // request on this client, so reusing it could leak/confuse a later turn.
-        if (warmPoolEnabled && pooledEntry) {
-          this.deps.pool!.evict(poolKey, pooledEntry);
-        }
-        if (server && !(pooledEntry as any)?.tornDown) {
-          server.kill();
-        }
-      }
+      if (input.handoff_id !== undefined) unregisterSession(input.handoff_id);
+      this.cleanupConnection({
+        server: state.server,
+        pooledEntry: state.pooledEntry,
+        poolKey,
+        holderId,
+        warmPoolEnabled,
+        errorThrown: state.errorThrown,
+        warmupTimedOut: state.warmupTimedOut,
+      });
     }
+  }
+}
+
+interface DispatchState {
+  server: StdioAcpHandle | null;
+  pooledEntry: AcpWarmPoolEntry | null;
+  accumulatedText: string;
+  frameworkOverheadMs: number | undefined;
+  errorThrown: boolean;
+  warmupTimedOut: boolean;
+  promptTimer: ReturnType<typeof setTimeout> | null;
+  promptTimeoutRejector: ((err: Error) => void) | null;
+  lastSessionUpdateTs: number;
+}
+
+interface InlineTurnContextArgs {
+  cwd: string;
+  client: StdioAcpClient;
+  input: DispatchInput;
+  state: DispatchState;
+  opts: StdioAcpOptions;
+  thoughtCapture?: StdioAcpThoughtCapture;
+  armPromptTimeout: () => void;
+}
+
+function buildInlineTurnContext(args: InlineTurnContextArgs): DispatchTurnContext {
+  const { cwd, client, input, state, opts, thoughtCapture, armPromptTimeout } = args;
+  return {
+    cwd,
+    client,
+    input,
+    getServer: (): StdioAcpHandle | null => state.server,
+    toolUseRejectorRef: { current: null },
+    capability: supportsClientCapability(opts),
+    thoughtCapture,
+    capturePort: opts.capturePort,
+    modelLabel: opts.model ?? opts.binary,
+    arm: armPromptTimeout,
+    markUpdate: (): void => {
+      state.lastSessionUpdateTs = Date.now();
+    },
+    accumulate: (text: string): void => {
+      state.accumulatedText += text;
+    },
+    toolNames: new Map<string, string>(),
+  };
+}
+
+function clearPromptTimer(state: DispatchState): void {
+  if (state.promptTimer !== null) {
+    clearTimeout(state.promptTimer);
+    state.promptTimer = null;
+  }
+}
+
+function armPromptTimeoutImpl(
+  state: DispatchState,
+  server: StdioAcpHandle,
+  requestTimeoutMs: number,
+): void {
+  if (!state.promptTimeoutRejector) return;
+  clearPromptTimer(state);
+  state.promptTimer = setTimeout(() => {
+    const tail = server.getStderrTail();
+    const tailHint = tail.length > 0 ? `\n[child stderr tail]\n${tail}` : "";
+    state.promptTimeoutRejector?.(
+      new Error(
+        `stdio-acp: no wire activity (session/update or onRequest) for ${String(requestTimeoutMs)}ms — agent stalled mid-turn${tailHint}`,
+      ),
+    );
+  }, requestTimeoutMs);
+}
+
+function createRejectablePromise<T>(): {
+  promise: Promise<T>;
+  reject: (err: Error) => void;
+} {
+  let rejectFn: (err: Error) => void = () => {
+    /* noop */
+  };
+  const promise = new Promise<T>((_, reject) => {
+    rejectFn = reject;
+  });
+  return { promise, reject: rejectFn };
+}
+
+function registerHandoffInjector(
+  input: DispatchInput,
+  client: StdioAcpClient,
+  sessionId: string,
+): void {
+  if (input.handoff_id === undefined) return;
+  const handoffId = input.handoff_id;
+  registerSession(handoffId, {
+    adapter: "stdio-acp",
+    inject: async (message) => {
+      await client.request("session/prompt", {
+        sessionId,
+        prompt: [{ type: "text", text: message.text }],
+        _meta: {
+          penumbraHandoffId: handoffId,
+          penumbra: { handoff_id: handoffId },
+        },
+      });
+    },
+  });
+}
+
+function shouldRetryColdDispatch(
+  err: unknown,
+  warmPoolEnabled: boolean,
+  pooledEntry: AcpWarmPoolEntry | null,
+): boolean {
+  return err instanceof AcpSessionEvictedError && warmPoolEnabled && pooledEntry !== null;
+}
+
+interface DispatchConstants {
+  dispatchStartTs: number;
+  cwd: string;
+  requestTimeoutMs: number;
+  warmPoolEnabled: boolean;
+  poolKey: string;
+  specHash: string;
+  holderId: string;
+}
+
+function computeDispatchConstants(
+  opts: StdioAcpOptions,
+  pool: AcpWarmPool | undefined,
+  input: DispatchInput,
+): DispatchConstants {
+  const cwd = opts.cwd ?? process.cwd();
+  const poolScope = opts.repoRoot ?? cwd;
+  return {
+    dispatchStartTs: Date.now(),
+    cwd,
+    requestTimeoutMs: opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+    warmPoolEnabled: opts.warmPool === true && pool !== undefined,
+    poolKey: poolKeyFor({
+      agent: opts.agentName ?? opts.model ?? opts.binary,
+      cwd: poolScope,
+    }),
+    specHash: acpSpecHash({
+      binary: opts.binary,
+      args: opts.args,
+      model: opts.model,
+    }),
+    holderId: input.handoff_id ?? input.conversation.id,
+  };
+}
+
+function createDispatchState(): DispatchState {
+  return {
+    server: null,
+    pooledEntry: null,
+    accumulatedText: "",
+    frameworkOverheadMs: undefined,
+    errorThrown: false,
+    warmupTimedOut: false,
+    promptTimer: null,
+    promptTimeoutRejector: null,
+    lastSessionUpdateTs: Date.now(),
+  };
+}
+
+function buildSpawnResult(args: {
+  spawned: { server: StdioAcpHandle; client: StdioAcpClient };
+  input: DispatchInput;
+  adapterKind: string;
+  binary: string;
+  warmPoolEnabled: boolean;
+  poolKey: string;
+  missReason: string | undefined;
+  poolKeys: string[] | undefined;
+}): AcquireOrSpawnResult {
+  emitLifecycle(args.input, "acp.server.start", {
+    adapter: args.adapterKind,
+    binary: args.binary,
+    pid: args.spawned.server.pid,
+    ...(args.warmPoolEnabled
+      ? {
+          pool_key: args.poolKey,
+          warm_miss: args.missReason ?? "unknown",
+          pool_keys: args.poolKeys ?? [],
+        }
+      : {}),
+  });
+  return {
+    server: args.spawned.server,
+    client: args.spawned.client,
+    pooledEntry: null,
+    reusedSession: false,
+  };
+}
+
+function buildSessionNewParams(
+  opts: StdioAcpOptions,
+  cwd: string,
+  input: DispatchInput,
+  mergedEnv: Record<string, string>,
+): SessionNewParams {
+  const mcpServersWithEnv = buildMcpServersWithEnv(opts.mcpServers ?? [], input, mergedEnv);
+  const params: SessionNewParams = { cwd, mcpServers: mcpServersWithEnv };
+  if (opts.model !== undefined) params.model = opts.model;
+  const claudeMeta = buildClaudeCodeMeta(opts);
+  if (claudeMeta) params._meta = claudeMeta;
+  return params;
+}
+
+interface ServerLifecycleHandles {
+  serverAliveRef: { current: boolean };
+  toolUseRejection: { promise: Promise<never>; reject: (err: Error) => void };
+  sessionExitRejection: { promise: Promise<never>; reject: (err: Error) => void };
+}
+
+function setupServerLifecycleHandles(
+  server: StdioAcpHandle,
+  state: DispatchState,
+  turnCtx: DispatchTurnContext,
+): ServerLifecycleHandles {
+  const serverAliveRef: { current: boolean } = { current: true };
+  void server.exited.then(() => {
+    serverAliveRef.current = false;
+  });
+  const toolUseRejection = createRejectablePromise<never>();
+  turnCtx.toolUseRejectorRef.current = toolUseRejection.reject;
+  const sessionExitRejection = createRejectablePromise<never>();
+  void server.exited.then((code) => {
+    if (state.pooledEntry && code !== 0) {
+      sessionExitRejection.reject(new AcpSessionEvictedError());
+    }
+  });
+  return { serverAliveRef, toolUseRejection, sessionExitRejection };
+}
+
+function buildSessionUpdateHandler(
+  turnCtx: DispatchTurnContext,
+  state: DispatchState,
+  armPromptTimeout: () => void,
+): (params: AcpSessionUpdateParams) => void {
+  return (params) => {
+    const update = params.update;
+    if (!update || typeof update !== "object") return;
+    armPromptTimeout();
+    state.lastSessionUpdateTs = Date.now();
+    dispatchSessionUpdate(turnCtx, update);
+  };
+}
+
+function createHeartbeatTimer(
+  input: DispatchInput,
+  state: DispatchState,
+  serverAliveRef: { current: boolean },
+  sessionId: string,
+  adapterKind: string,
+): ReturnType<typeof setInterval> {
+  return setInterval(() => {
+    if (!serverAliveRef.current) return;
+    if (Date.now() - state.lastSessionUpdateTs < 45_000) return;
+    emitLifecycle(input, "agent.heartbeat", {
+      adapter: adapterKind,
+      idle_ms: Date.now() - state.lastSessionUpdateTs,
+      session_id: sessionId,
+    });
+  }, 60_000);
+}
+
+function handleSessionCreated(args: {
+  session: AcpSessionNewResponse;
+  adapterKind: string;
+  input: DispatchInput;
+  client: StdioAcpClient;
+  state: DispatchState;
+  dispatchStartTs: number;
+}): string {
+  args.state.frameworkOverheadMs = Date.now() - args.dispatchStartTs;
+  emitLifecycle(args.input, "acp.session.start", {
+    adapter: args.adapterKind,
+    session_id: args.session.sessionId,
+    framework_overhead_ms: args.state.frameworkOverheadMs,
+  });
+  registerHandoffInjector(args.input, args.client, args.session.sessionId);
+  return args.session.sessionId;
+}
+
+function buildDispatchDoneEvent(
+  state: DispatchState,
+  promptResponse: AcpPromptResponse | null,
+): DispatchEvent {
+  const classifierDecline = detectStdioAcpClassifierDecline({
+    finalText: state.accumulatedText,
+    errorText: state.accumulatedText.trim().length === 0 ? JSON.stringify(promptResponse) : null,
+  });
+  return {
+    type: "done",
+    result: {
+      text: state.accumulatedText,
+      meta: {
+        framework_overhead_ms: state.frameworkOverheadMs,
+        ...(classifierDecline ?? {}),
+      },
+    },
+  };
+}
+
+function acquireReuseResult(
+  entry: AcpWarmPoolEntry,
+  input: DispatchInput,
+  adapterKind: string,
+  poolKey: string,
+  dispatchStartTs: number,
+): AcquireOrSpawnResult {
+  emitLifecycle(input, "acp.session.reuse", {
+    adapter: adapterKind,
+    pool_key: poolKey,
+    framework_overhead_ms: Date.now() - dispatchStartTs,
+  });
+  return {
+    server: entry.handle,
+    client: entry.client,
+    pooledEntry: entry,
+    reusedSession: true,
+  };
+}
+
+function augmentDispatchError(
+  err: unknown,
+  server: StdioAcpHandle | null,
+  accumulatedText: string,
+): void {
+  if (server && err instanceof Error && !err.message.includes("[child stderr tail]")) {
+    const tail = server.getStderrTail();
+    if (tail.length > 0) err.message = `${err.message}\n[child stderr tail]\n${tail}`;
+  }
+  if (err instanceof Error) {
+    const classifierDecline = detectStdioAcpClassifierDecline({
+      finalText: accumulatedText,
+      errorText: err.message,
+    });
+    if (classifierDecline) Object.assign(err, classifierDecline);
   }
 }
