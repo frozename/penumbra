@@ -1,5 +1,6 @@
-import { PenumbraHttpError } from "../penumbra-client.js";
 import type { DispatchEventInput } from "@penumbra/core";
+
+import { PenumbraHttpError } from "../penumbra-client.js";
 
 export interface ControlListenerLogger {
   info(obj: Record<string, unknown>, msg: string): void;
@@ -46,6 +47,12 @@ export interface ControlListenerOpts {
 const CONTROL_LISTENER_RECONNECT_DELAY_MS = 5000;
 const CONTROL_LISTENER_STREAM_ERR_THROTTLE_MS = 60_000;
 
+// Function indirection prevents TS/eslint from narrowing the AbortSignal's
+// boolean `aborted` getter to always-false across mid-loop checks.
+function isAborted(signal: AbortSignal): boolean {
+  return signal.aborted;
+}
+
 export function handleControlEvent(
   event: WorkerControlEvent,
   opts: Pick<
@@ -88,7 +95,7 @@ export function handleControlEvent(
   if (event.type === "ping") {
     if (event.worker_id !== opts.workerId) return;
     if (!event.worker_id || !event.probe_id) return;
-    void opts.client.sendProbeAck(event.worker_id, event.probe_id).catch((err) => {
+    void opts.client.sendProbeAck(event.worker_id, event.probe_id).catch((err: unknown) => {
       opts.log?.warn(
         {
           worker_id: event.worker_id,
@@ -101,50 +108,80 @@ export function handleControlEvent(
   }
 }
 
-export async function runWorkerControlListener(opts: ControlListenerOpts): Promise<void> {
-  const sleep = opts.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms)));
-  const now = opts.now ?? Date.now;
-  const throttleMs = opts.streamErrorLogThrottleMs ?? CONTROL_LISTENER_STREAM_ERR_THROTTLE_MS;
+interface StreamErrorLoggerState {
+  lastLoggedAtMs: number;
+  suppressedCount: number;
+}
 
-  let lastLoggedAtMs = Number.NEGATIVE_INFINITY;
-  let suppressedCount = 0;
-
-  const logStreamError = (err: unknown) => {
+function makeStreamErrorLogger(
+  opts: ControlListenerOpts,
+  throttleMs: number,
+  now: () => number,
+): (err: unknown) => void {
+  const state: StreamErrorLoggerState = {
+    lastLoggedAtMs: Number.NEGATIVE_INFINITY,
+    suppressedCount: 0,
+  };
+  return (err: unknown): void => {
     const ts = now();
-    if (ts - lastLoggedAtMs < throttleMs) {
-      suppressedCount++;
+    if (ts - state.lastLoggedAtMs < throttleMs) {
+      state.suppressedCount++;
       return;
     }
-
-    const obj: Record<string, unknown> = { err: String(err) };
-    if (suppressedCount > 0) obj.suppressedCount = suppressedCount;
-    suppressedCount = 0;
-    lastLoggedAtMs = ts;
-    opts.log.warn(obj, "control listener stream error; reconnecting in 5s");
+    const meta: Record<string, unknown> = { err: String(err) };
+    if (state.suppressedCount > 0) meta.suppressedCount = state.suppressedCount;
+    state.suppressedCount = 0;
+    state.lastLoggedAtMs = ts;
+    opts.log.warn(meta, "control listener stream error; reconnecting in 5s");
   };
+}
 
-  while (!opts.signal.aborted) {
-    try {
-      for await (const event of opts.client.subscribeWorkerControl({ signal: opts.signal })) {
-        if (opts.signal.aborted) return;
-        handleControlEvent(event, opts);
-      }
-      if (opts.signal.aborted) return;
-      await sleep(CONTROL_LISTENER_RECONNECT_DELAY_MS);
-    } catch (err) {
-      if (opts.signal.aborted) return;
+function isPermanentStreamFailure(err: unknown): number | null {
+  if (!(err instanceof PenumbraHttpError)) return null;
+  if (err.status === 401 || err.status === 403 || err.status === 404) return err.status;
+  return null;
+}
 
-      const status = err instanceof PenumbraHttpError ? err.status : null;
-      if (status === 401 || status === 403 || status === 404) {
-        opts.log.error(
-          { status, err: String(err) },
-          "control listener permanent failure; giving up",
-        );
-        return;
-      }
+type ControlLoopOutcome = "abort" | "permanent_failure" | "continue";
 
-      logStreamError(err);
-      await sleep(CONTROL_LISTENER_RECONNECT_DELAY_MS);
+async function runControlListenerIteration(
+  opts: ControlListenerOpts,
+  sleep: (ms: number) => Promise<void>,
+  logStreamError: (err: unknown) => void,
+): Promise<ControlLoopOutcome> {
+  try {
+    for await (const event of opts.client.subscribeWorkerControl({ signal: opts.signal })) {
+      if (isAborted(opts.signal)) return "abort";
+      handleControlEvent(event, opts);
     }
+    if (isAborted(opts.signal)) return "abort";
+    await sleep(CONTROL_LISTENER_RECONNECT_DELAY_MS);
+    return "continue";
+  } catch (err) {
+    if (isAborted(opts.signal)) return "abort";
+    const permanentStatus = isPermanentStreamFailure(err);
+    if (permanentStatus !== null) {
+      opts.log.error(
+        { status: permanentStatus, err: String(err) },
+        "control listener permanent failure; giving up",
+      );
+      return "permanent_failure";
+    }
+    logStreamError(err);
+    await sleep(CONTROL_LISTENER_RECONNECT_DELAY_MS);
+    return "continue";
+  }
+}
+
+export async function runWorkerControlListener(opts: ControlListenerOpts): Promise<void> {
+  const sleep =
+    opts.sleep ?? ((ms: number): Promise<void> => new Promise<void>((r) => setTimeout(r, ms)));
+  const now = opts.now ?? Date.now;
+  const throttleMs = opts.streamErrorLogThrottleMs ?? CONTROL_LISTENER_STREAM_ERR_THROTTLE_MS;
+  const logStreamError = makeStreamErrorLogger(opts, throttleMs, now);
+
+  while (!isAborted(opts.signal)) {
+    const outcome = await runControlListenerIteration(opts, sleep, logStreamError);
+    if (outcome !== "continue") return;
   }
 }

@@ -43,17 +43,24 @@ export function withOrchestrateTools(
  * nothing to do, otherwise a shallow-cloned config with one rewritten agent.
  */
 export function applyOrchestrateToolsToConfig<
-  C extends { agents: Array<{ name: string; options?: Record<string, unknown> }> },
+  C extends { agents: { name: string; options?: Record<string, unknown> }[] },
 >(config: C, agentName: string, dispatchKind: string | null | undefined): C {
   if (dispatchKind !== "orchestrate") return config;
-  let changed = false;
+  const state = { changed: false };
   const agents = config.agents.map((agent) => {
     if (agent.name !== agentName) return agent;
     const current = (agent.options?.allowed_tools as string[] | undefined) ?? [];
-    const augmented = withOrchestrateTools(current, dispatchKind);
-    if (augmented.length === current.length) return agent;
-    changed = true;
-    return { ...agent, options: { ...(agent.options ?? {}), allowed_tools: augmented } };
+    const seen = new Set(current);
+    const missing: string[] = [];
+    for (const tool of ORCHESTRATE_MAESTRO_TOOLS) {
+      if (!seen.has(tool)) missing.push(tool);
+    }
+    if (missing.length === 0) return agent;
+    state.changed = true;
+    return {
+      ...agent,
+      options: { ...(agent.options ?? {}), allowed_tools: [...current, ...missing] },
+    };
   });
-  return changed ? { ...config, agents } : config;
+  return state.changed ? { ...config, agents } : config;
 }

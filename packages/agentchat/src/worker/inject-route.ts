@@ -5,7 +5,7 @@ export interface InjectRouteDeps {
   injectTimeoutMs?: number;
 }
 
-const DEFAULT_INJECT_TIMEOUT_MS = (() => {
+const DEFAULT_INJECT_TIMEOUT_MS = ((): number => {
   const raw = process.env.PENUMBRA_INJECT_TIMEOUT_MS;
   if (raw) {
     const parsed = Number(raw);
@@ -35,7 +35,6 @@ export async function workerInjectRoute(
   if (
     raw === null ||
     typeof raw !== "object" ||
-    raw === null ||
     typeof (raw as Record<string, unknown>).content !== "string"
   ) {
     return json({ error: "invalid_json" }, 400);
@@ -56,7 +55,9 @@ export async function workerInjectRoute(
   const timeoutMs = deps.injectTimeoutMs ?? DEFAULT_INJECT_TIMEOUT_MS;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<"__inject_timeout__">((resolve) => {
-    timer = setTimeout(() => resolve("__inject_timeout__"), timeoutMs);
+    timer = setTimeout(() => {
+      resolve("__inject_timeout__");
+    }, timeoutMs);
   });
   try {
     const injectPromise = Promise.resolve(session.inject({ role: "user", text: content })).then(
@@ -72,7 +73,7 @@ export async function workerInjectRoute(
   }
 }
 
-async function safeJson(req: Request): Promise<unknown | null> {
+async function safeJson(req: Request): Promise<unknown> {
   try {
     return await req.json();
   } catch {

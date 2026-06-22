@@ -91,7 +91,11 @@ export function createPrewarmLoop(deps: PrewarmLoopDeps): PrewarmLoop {
   const backoffBaseMs = deps.backoffBaseMs ?? 5_000;
   const backoffMaxMs = deps.backoffMaxMs ?? 300_000;
   const breakerThreshold = deps.breakerThreshold ?? 5;
-  const log = deps.log ?? (() => {});
+  const log =
+    deps.log ??
+    ((): void => {
+      /* no-op default logger */
+    });
   const state = new Map<string, TargetState>();
   let timer: { unref?: () => void } | null = null;
   let running = false;
@@ -103,6 +107,61 @@ export function createPrewarmLoop(deps: PrewarmLoopDeps): PrewarmLoop {
       state.set(key, st);
     }
     return st;
+  }
+
+  function shouldSkip(target: PrewarmTarget, st: TargetState, now: number): boolean {
+    if (st.breakerTripped) return true;
+    const aged = st.lastSuccessAt === undefined || now - st.lastSuccessAt >= deps.refreshIntervalMs;
+    const hasLive = deps.hasLiveEntry ? deps.hasLiveEntry(target) : true;
+    if (hasLive && !aged) return true; // a fresh warm connection already exists
+    if (now < st.nextEligibleAt) return true; // backing off after a failure
+    if (st.lastSuccessAt === undefined && deps.countEntries() >= deps.cap) {
+      log("warn", { agent: target.agent, cap: deps.cap }, "prewarm-cap-reached");
+      return true;
+    }
+    return false;
+  }
+
+  function recordFailure(target: PrewarmTarget, st: TargetState, err: unknown): void {
+    st.failures += 1;
+    const backoff = Math.min(backoffBaseMs * 2 ** (st.failures - 1), backoffMaxMs);
+    st.nextEligibleAt = deps.clock.now() + backoff;
+    if (st.failures >= breakerThreshold) {
+      st.breakerTripped = true;
+      log(
+        "error",
+        { agent: target.agent, repoRoot: target.repoRoot, failures: st.failures },
+        "prewarm-breaker-tripped",
+      );
+      return;
+    }
+    log(
+      "warn",
+      {
+        agent: target.agent,
+        repoRoot: target.repoRoot,
+        failures: st.failures,
+        backoff_ms: backoff,
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "prewarm-failed",
+    );
+  }
+
+  async function processTarget(target: PrewarmTarget): Promise<void> {
+    const key = keyOf(target);
+    const st = getState(key);
+    const now = deps.clock.now();
+    if (shouldSkip(target, st, now)) return;
+
+    try {
+      await deps.prewarmOne(target);
+      st.failures = 0;
+      st.nextEligibleAt = 0;
+      st.lastSuccessAt = deps.clock.now();
+    } catch (err) {
+      recordFailure(target, st, err);
+    }
   }
 
   async function runPass(): Promise<void> {
@@ -118,56 +177,7 @@ export function createPrewarmLoop(deps: PrewarmLoopDeps): PrewarmLoop {
       for (const k of [...state.keys()]) if (!liveKeys.has(k)) state.delete(k);
 
       for (const target of targets) {
-        const key = keyOf(target);
-        const st = getState(key);
-        if (st.breakerTripped) continue;
-
-        const now = deps.clock.now();
-        const aged =
-          st.lastSuccessAt === undefined || now - st.lastSuccessAt >= deps.refreshIntervalMs;
-        // Re-warm when the connection has aged out OR has gone missing (a crashed
-        // pre-warm self-heals without waiting for the next refresh interval).
-        const hasLive = deps.hasLiveEntry ? deps.hasLiveEntry(target) : true;
-        if (hasLive && !aged) continue; // a fresh warm connection already exists
-        if (now < st.nextEligibleAt) continue; // backing off after a failure
-
-        // Cost ceiling. A first-warm needs headroom; a refresh replaces an
-        // existing entry in place, so it is allowed even at the cap.
-        if (st.lastSuccessAt === undefined && deps.countEntries() >= deps.cap) {
-          log("warn", { agent: target.agent, cap: deps.cap }, "prewarm-cap-reached");
-          continue;
-        }
-
-        try {
-          await deps.prewarmOne(target);
-          st.failures = 0;
-          st.nextEligibleAt = 0;
-          st.lastSuccessAt = deps.clock.now();
-        } catch (err) {
-          st.failures += 1;
-          const backoff = Math.min(backoffBaseMs * 2 ** (st.failures - 1), backoffMaxMs);
-          st.nextEligibleAt = deps.clock.now() + backoff;
-          if (st.failures >= breakerThreshold) {
-            st.breakerTripped = true;
-            log(
-              "error",
-              { agent: target.agent, repoRoot: target.repoRoot, failures: st.failures },
-              "prewarm-breaker-tripped",
-            );
-          } else {
-            log(
-              "warn",
-              {
-                agent: target.agent,
-                repoRoot: target.repoRoot,
-                failures: st.failures,
-                backoff_ms: backoff,
-                err: err instanceof Error ? err.message : String(err),
-              },
-              "prewarm-failed",
-            );
-          }
-        }
+        await processTarget(target);
       }
     } finally {
       running = false;

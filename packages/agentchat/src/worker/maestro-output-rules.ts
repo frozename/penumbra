@@ -50,7 +50,7 @@ export function buildUnknownAgentRule(knownAgents: Set<string>): ValuePatternRul
     id: "unknown_initial_agent",
     // Matches `"initial_agent":"<value>"` inside a JSON-encoded arg blob.
     pattern: /"initial_agent"\s*:\s*"([^"\\]+)"/g,
-    replacement: (match: string, name: string) => {
+    replacement: (match: string, name: string): string => {
       if (knownAgents.has(name)) return match;
       return `"initial_agent":"[REDACTED:unknown-agent:${name}]"`;
     },

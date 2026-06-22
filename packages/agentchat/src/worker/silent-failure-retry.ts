@@ -97,7 +97,7 @@ function isBiasExcluded(
     if (bias.mode !== "exclude") continue;
     const matches =
       (bias.scope === "agent" && bias.value === agentName) ||
-      (bias.scope === "provider" && provider != null && bias.value === provider);
+      (bias.scope === "provider" && provider !== null && bias.value === provider);
     if (matches) return true;
   }
   return false;
@@ -159,10 +159,10 @@ export function shouldRetryHandoffForSilentFailure(
 }
 
 export function buildRetryPayloadOrNull(input: SilentRetryPayloadInput): SilentRetryPayload | null {
-  if (input.project_id === null || input.project_id === undefined) {
+  if (input.project_id === null) {
     return null;
   }
-  return buildSilentRetryPayload(input as SilentRetryPayloadInput);
+  return buildSilentRetryPayload(input);
 }
 
 export function buildSilentRetryPayload(input: SilentRetryPayloadInput): SilentRetryPayload {

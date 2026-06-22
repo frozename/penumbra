@@ -25,7 +25,7 @@ export function createWorkerShutdown(deps: WorkerShutdownDeps): (sig: string) =>
   return async (sig: string) => {
     let timedOut = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const shutdown = async () => {
+    const shutdown = async (): Promise<void> => {
       deps.log.info({ sig }, "shutting down");
       deps.controlAbort.abort();
       deps.prewarmAbort.abort(new Error("worker shutdown"));

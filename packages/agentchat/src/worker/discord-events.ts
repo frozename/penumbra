@@ -145,11 +145,11 @@ function colorForEvent(event: DiscordNotificationEvent): number {
     case "permission_requested":
     case "permission_expired":
     case "cost_quota_summary":
+    case "autocommit_on_chain_end":
       return COLOR_YELLOW;
     case "permission_decided":
       return event.decision === "approve" ? COLOR_GREEN : COLOR_RED;
     case "dispatch_start":
-    default:
       return COLOR_BLUE;
   }
 }
@@ -196,41 +196,41 @@ function baseFields(event: DiscordNotificationEvent): DiscordField[] {
   return fields;
 }
 
-export function renderDiscordEvent(
-  event: DiscordNotificationEvent,
-  options: RenderDiscordEventOptions,
-): DiscordEmbedsPayload {
-  const fields = baseFields(event);
+function attemptString(attempt: number, maxAttempts: number | undefined): string {
+  const denom = maxAttempts === undefined ? "?" : String(maxAttempts);
+  return `${String(attempt)}/${denom}`;
+}
 
+function appendKindFields(event: DiscordNotificationEvent, fields: DiscordField[]): void {
   switch (event.kind) {
     case "dispatch_start":
       maybePush(fields, "status", event.status ?? "started", true);
-      break;
+      return;
     case "dispatch_end":
       maybePush(fields, "status", event.status, true);
       maybePush(
         fields,
         "latency",
-        event.latency_seconds === undefined ? undefined : `${event.latency_seconds}s`,
+        event.latency_seconds === undefined ? undefined : `${String(event.latency_seconds)}s`,
         true,
       );
       maybePush(fields, "error", event.error_summary);
-      break;
+      return;
     case "dispatch_failure":
     case "watchdog_failure":
       maybePush(fields, "status", "failed", true);
       maybePush(fields, "error", event.error_summary);
-      break;
+      return;
     case "claim_retry":
       maybePush(fields, "status", "retrying", true);
       maybePush(
         fields,
         "attempt",
-        event.attempt === undefined ? undefined : `${event.attempt}/${event.max_attempts ?? "?"}`,
+        event.attempt === undefined ? undefined : attemptString(event.attempt, event.max_attempts),
         true,
       );
       maybePush(fields, "error", event.error_summary);
-      break;
+      return;
     case "adapter_retry_exhausted":
       maybePush(fields, "status", "exhausted", true);
       maybePush(
@@ -238,41 +238,53 @@ export function renderDiscordEvent(
         "attempt",
         event.attempt === undefined
           ? undefined
-          : `${event.attempt}/${event.max_attempts ?? event.attempt}`,
+          : attemptString(event.attempt, event.max_attempts ?? event.attempt),
         true,
       );
       maybePush(fields, "error", event.error_summary);
-      break;
+      return;
+    case "autocommit_on_chain_end":
+      maybePush(fields, "status", "autocommit", true);
+      maybePush(fields, "error", event.error_summary);
+      return;
     case "permission_requested":
       maybePush(fields, "status", "requested", true);
       maybePush(fields, "permission", event.permission_id);
       maybePush(fields, "tool", event.tool_name);
       maybePush(fields, "expires", event.ttl_at);
-      break;
+      return;
     case "permission_decided":
       maybePush(fields, "status", event.decision, true);
       maybePush(fields, "permission", event.permission_id);
       maybePush(fields, "tool", event.tool_name);
       maybePush(fields, "decided_by", event.decided_by);
-      break;
+      return;
     case "permission_expired":
       maybePush(fields, "status", "expired", true);
       maybePush(fields, "permission", event.permission_id);
       maybePush(fields, "tool", event.tool_name);
       maybePush(fields, "expires", event.ttl_at);
-      break;
+      return;
     case "merge_result":
       maybePush(fields, "status", event.status, true);
       maybePush(fields, "error", event.regression_summary);
-      break;
+      return;
     case "cost_quota_summary":
       maybePush(fields, "status", event.status ?? "summary", true);
       maybePush(fields, "period", event.period);
       maybePush(fields, "cost_usd", event.total_cost_usd);
       maybePush(fields, "budget_usd", event.budget_usd);
       maybePush(fields, "summary", event.usage_summary);
-      break;
+      return;
   }
+}
+
+export function renderDiscordEvent(
+  event: DiscordNotificationEvent,
+  options: RenderDiscordEventOptions,
+): DiscordEmbedsPayload {
+  const fields = baseFields(event);
+  appendKindFields(event, fields);
 
   const prompt = event.prompt ? renderPrompt(event.prompt, options.promptPolicy) : undefined;
   if (prompt) {

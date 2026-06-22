@@ -29,9 +29,10 @@ function formatUsageSummary(rows: NotificationSchedulerProviderRow[]): string {
   return rows
     .map((row) => {
       const label = row.model ? `${row.provider}/${row.model}` : row.provider;
-      const quota = row.quota_tokens ?? "n/a";
-      const remaining = row.remaining_pct_tokens ?? "n/a";
-      return `${label}: ${row.used_tokens}/${quota} tokens (${remaining}% remaining)`;
+      const quota = row.quota_tokens === null ? "n/a" : String(row.quota_tokens);
+      const remaining =
+        row.remaining_pct_tokens === null ? "n/a" : String(row.remaining_pct_tokens);
+      return `${label}: ${String(row.used_tokens)}/${quota} tokens (${remaining}% remaining)`;
     })
     .join("\n");
 }

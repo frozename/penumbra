@@ -70,7 +70,7 @@ export function formatHandoffEmbed(
   const fields: DiscordField[] = [
     { name: "agent", value: ctx.agent, inline: true },
     { name: "status", value: ctx.status, inline: true },
-    { name: "latency", value: `${ctx.latency_seconds}s`, inline: true },
+    { name: "latency", value: `${String(ctx.latency_seconds)}s`, inline: true },
     { name: "handoff", value: ctx.handoff_id },
     { name: "conversation", value: ctx.conversation_id },
   ];
@@ -129,8 +129,8 @@ export async function postToDiscord(
     ...(identity?.avatar_url ? { avatar_url: identity.avatar_url } : {}),
   };
 
-  const post = async () => {
-    return fetchFn(webhookUrl, {
+  const post = async (): Promise<Response> => {
+    return await fetchFn(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),

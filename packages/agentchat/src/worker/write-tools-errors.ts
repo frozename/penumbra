@@ -60,7 +60,7 @@ export class TerminalNotFoundError extends CodedError {
 export class TerminalCapExceededError extends CodedError {
   readonly code = "terminal_cap_exceeded" as const;
   constructor(public readonly max: number) {
-    super(`terminal cap exceeded (max=${max})`);
+    super(`terminal cap exceeded (max=${String(max)})`);
     this.name = "TerminalCapExceededError";
   }
 }

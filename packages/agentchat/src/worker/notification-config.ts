@@ -1,4 +1,5 @@
 import { getConfig } from "@penumbra/config";
+
 import type { AgentChatConfig, NotificationConfig } from "../config/types.js";
 
 export type PromptPolicy = "never" | "summary" | "always";
@@ -98,9 +99,7 @@ function normalizeChannels(
 ): RuntimeNotificationChannelConfig {
   const configuredChannels = cfg?.channels ?? {};
   const entries = Object.entries(configuredChannels);
-  const sourceEntries: Array<
-    [string, { kind: "discord_webhook"; default_webhook_url_env?: string }]
-  > =
+  const sourceEntries: [string, { kind: "discord_webhook"; default_webhook_url_env?: string }][] =
     entries.length > 0
       ? entries
       : [
@@ -115,7 +114,6 @@ function normalizeChannels(
 
   const channels: RuntimeNotificationChannelConfig = {};
   for (const [name, channel] of sourceEntries) {
-    if (channel.kind !== "discord_webhook") continue;
     const defaultWebhookUrlEnv = channel.default_webhook_url_env ?? "PENUMBRA_DISCORD_WEBHOOK_URL";
     channels[name] = {
       kind: "discord_webhook",
@@ -167,7 +165,7 @@ export function loadNotificationConfig(
   const routes = normalizeRoutes(cfg, input.env);
 
   const enabledByConfig = cfg?.enabled ?? true;
-  const enabled = Boolean(!quiet && enabledByConfig && hasAnyWebhook({ channels, routes }));
+  const enabled = !quiet && enabledByConfig && hasAnyWebhook({ channels, routes });
 
   const events: RuntimeNotificationEventConfig = {
     ...DEFAULT_NOTIFICATION_EVENTS,

@@ -18,7 +18,7 @@ export function createDiscordRateLimiter(options: DiscordRateLimiterOptions): Di
   const keyFor = (webhookKey: string, coalesceKey: string): string =>
     `${webhookKey}\u0000${coalesceKey}`;
 
-  const sweepExpired = (now: number) => {
+  const sweepExpired = (now: number): void => {
     if (options.windowMs <= 0) {
       lastSentAt.clear();
       return;
@@ -32,7 +32,7 @@ export function createDiscordRateLimiter(options: DiscordRateLimiterOptions): Di
   };
 
   return {
-    shouldSend({ webhookKey, coalesceKey }) {
+    shouldSend({ webhookKey, coalesceKey }): boolean {
       if (!coalesceKey) return true;
 
       const now = options.now();

@@ -33,7 +33,7 @@ export interface ClaimAffinityInput {
   /** The handoff's project scope (`handoff.project_id`); null/undefined = global. */
   handoffProjectId?: string | null;
   /** Configured agents (to read the target's `warm_pool` flag). */
-  agents: ReadonlyArray<ClaimAffinityAgent>;
+  agents: readonly ClaimAffinityAgent[];
   /** This worker's configured project_id (undefined for `shared`). */
   workerProjectId?: string;
   /** Resolve a project_id to its repo root — the SAME resolver prewarm uses

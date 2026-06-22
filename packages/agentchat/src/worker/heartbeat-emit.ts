@@ -22,5 +22,8 @@ export async function emitHeartbeat(opts: EmitHeartbeatOpts): Promise<void> {
       ts: new Date().toISOString(),
     });
   }
-  if (err) throw err;
+  if (err !== null) {
+    if (err instanceof Error) throw err;
+    throw new Error(typeof err === "string" ? err : JSON.stringify(err));
+  }
 }

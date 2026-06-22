@@ -1,8 +1,9 @@
+import type { Logger } from "@penumbra/core";
+
 import { spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { Logger } from "@penumbra/core";
 
 export interface CreatePRArgs {
   branch: string;
@@ -34,11 +35,11 @@ export const defaultSpawnRunner: SpawnRunner = {
       let stdout = "";
       let stderr = "";
 
-      proc.stdout?.on("data", (d) => {
-        stdout += d.toString();
+      proc.stdout.on("data", (d: Buffer | string) => {
+        stdout += typeof d === "string" ? d : d.toString();
       });
-      proc.stderr?.on("data", (d) => {
-        stderr += d.toString();
+      proc.stderr.on("data", (d: Buffer | string) => {
+        stderr += typeof d === "string" ? d : d.toString();
       });
       proc.on("error", reject);
       proc.on("close", (code) => {
@@ -70,7 +71,7 @@ export function renderDispatchPRBody(input: DispatchPRBodyInput): string {
     `- **conversation:** ${input.conversationId ?? "<unknown>"}`,
     "",
     "## Prompt",
-    `<details><summary>Click to expand (${promptLineCount} lines)</summary>`,
+    `<details><summary>Click to expand (${String(promptLineCount)} lines)</summary>`,
     "",
     prompt || "<empty>",
     "</details>",
@@ -95,7 +96,7 @@ export async function createDispatchPR(
 ): Promise<CreatePRResult> {
   const bodyFile = path.join(
     os.tmpdir(),
-    `penumbra-pr-body-${Date.now()}-${Math.random().toString(36).slice(2)}.md`,
+    `penumbra-pr-body-${String(Date.now())}-${Math.random().toString(36).slice(2)}.md`,
   );
 
   try {
@@ -119,11 +120,13 @@ export async function createDispatchPR(
 
     const create = await runner.run("gh", ghArgs, { cwd: args.cwd });
     if (create.code !== 0) {
-      throw new Error(`gh pr create failed (${create.code}): ${create.stderr.slice(0, 500)}`);
+      throw new Error(
+        `gh pr create failed (${String(create.code)}): ${create.stderr.slice(0, 500)}`,
+      );
     }
 
     const url = create.stdout.trim();
-    const numberMatch = url.match(/\/pull\/(\d+)/);
+    const numberMatch = /\/pull\/(\d+)/.exec(url);
     if (!numberMatch) {
       log.error({ url, stderr: create.stderr }, "failed to parse PR number from gh output");
       throw new Error(`gh pr create returned unparseable output: ${url}`);
@@ -131,6 +134,8 @@ export async function createDispatchPR(
 
     return { url, number: Number(numberMatch[1]) };
   } finally {
-    await fs.rm(bodyFile, { force: true }).catch(() => {});
+    await fs.rm(bodyFile, { force: true }).catch((): void => {
+      /* best-effort cleanup */
+    });
   }
 }

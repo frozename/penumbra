@@ -3,10 +3,11 @@ import {
   type ValuePatternRule,
   type ValueRedactionHit,
 } from "@penumbra/core";
+
 import {
-  MAESTRO_STATIC_RULES,
   buildUnknownAgentRule,
   isFailClosed,
+  MAESTRO_STATIC_RULES,
 } from "./maestro-output-rules.js";
 
 export type MaestroRedactionDecision = "clean" | "rewritten" | "blocked" | "bypassed";
@@ -68,20 +69,17 @@ export class MaestroOutputRedactor {
     };
   }
 
-  checkValue<T>(value: T): MaestroRedactionResultObject {
+  checkValue(value: unknown): MaestroRedactionResultObject {
     return this.checkAnyValue(value, {
       maxDepth: Number.MAX_SAFE_INTEGER,
       maxStringBytes: Number.MAX_SAFE_INTEGER,
     });
   }
 
-  checkAnyValue<T>(value: T, limits?: ValueWalkLimits): MaestroRedactionResultObject {
-    const result = (this.redactor as any).redactValue(value, limits) as {
-      redacted: T;
-      hits: ValueRedactionHit[];
-      rewritten?: boolean;
-    };
-    const { redacted, hits, rewritten } = result;
+  checkAnyValue(value: unknown, limits?: ValueWalkLimits): MaestroRedactionResultObject {
+    const result = this.redactor.redactValue(value, limits);
+    const { redacted, hits } = result;
+    const rewritten = (result as { rewritten?: boolean }).rewritten;
     const effectiveRewritten = rewritten ?? !Object.is(redacted, value);
     if (this.bypass) {
       return { decision: "bypassed", value, hits, bypassed: true };

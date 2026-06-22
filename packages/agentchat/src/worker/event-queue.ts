@@ -50,11 +50,12 @@ export class DispatchEventQueue {
     if (this.flushing) {
       await this.flushPromise;
       if (this.buffer.length === 0) return;
-      return this.flush();
+      await this.flush();
+      return;
     }
     if (this.buffer.length === 0) return;
     this.flushing = true;
-    this.flushPromise = (async () => {
+    this.flushPromise = (async (): Promise<void> => {
       try {
         while (this.buffer.length > 0) {
           const batch = this.buffer.splice(0, this.maxBatch);
@@ -66,7 +67,7 @@ export class DispatchEventQueue {
                 this.send(batch, controller.signal),
                 new Promise<void>((_, reject) => {
                   timeoutId = setTimeout(() => {
-                    reject(new Error(`event_queue_send_timeout_${this.sendTimeoutMs}ms`));
+                    reject(new Error(`event_queue_send_timeout_${String(this.sendTimeoutMs)}ms`));
                   }, this.sendTimeoutMs);
                 }),
               ]);
@@ -76,7 +77,7 @@ export class DispatchEventQueue {
               }
             }
           } catch {
-            controller.abort(new Error(`event_queue_send_timeout_${this.sendTimeoutMs}ms`));
+            controller.abort(new Error(`event_queue_send_timeout_${String(this.sendTimeoutMs)}ms`));
             this.sendFailures++;
             this.buffer.unshift(...batch);
             while (this.buffer.length > this.maxQueue) {

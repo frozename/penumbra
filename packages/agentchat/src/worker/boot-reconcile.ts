@@ -17,9 +17,10 @@ export interface BootReconcileDeps {
 
 export async function reconcileOrphansAtWorkerBoot(deps: BootReconcileDeps): Promise<void> {
   const sleep =
-    deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    deps.sleep ??
+    ((ms: number): Promise<void> => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
-  const heartbeat = async () => {
+  const heartbeat = async (): Promise<void> => {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         await deps.client.postHeartbeat(deps.workerId);
@@ -35,11 +36,11 @@ export async function reconcileOrphansAtWorkerBoot(deps: BootReconcileDeps): Pro
     }
   };
 
-  const reconcileLongLived = async () => {
+  const reconcileLongLived = async (): Promise<void> => {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const resp = await deps.client.reconcileLongLivedOrphans();
-        if (typeof resp?.reconciled === "number" && resp.reconciled > 0) {
+        if (resp.reconciled > 0) {
           deps.log.info(
             { reconciled: resp.reconciled },
             "long-lived orphan ticks reconciled at worker boot",
@@ -60,11 +61,11 @@ export async function reconcileOrphansAtWorkerBoot(deps: BootReconcileDeps): Pro
     }
   };
 
-  const reconcileDispatchOrphans = async () => {
+  const reconcileDispatchOrphans = async (): Promise<void> => {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const resp = await deps.client.reconcileDispatchOrphans(deps.workerId);
-        if (typeof resp?.requeued === "number" && (resp.requeued > 0 || resp.exhausted > 0)) {
+        if (resp.requeued > 0 || resp.exhausted > 0) {
           deps.log.info(
             { requeued: resp.requeued, exhausted: resp.exhausted },
             "dispatch orphans reconciled at worker boot",

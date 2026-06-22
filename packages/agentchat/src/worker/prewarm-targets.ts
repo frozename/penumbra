@@ -31,7 +31,7 @@ export interface PrewarmAgent {
 
 export interface ComputePrewarmTargetsInput {
   /** Configured agents, in config order (output order is stable to this). */
-  agents: ReadonlyArray<PrewarmAgent>;
+  agents: readonly PrewarmAgent[];
   /** This worker's isolation mode (kept for explicitness + the isolation matrix
    *  property test; the home-bounding rule is uniform across modes by design). */
   isolation: PrewarmIsolation;
@@ -54,23 +54,31 @@ export function computePrewarmTargets(input: ComputePrewarmTargetsInput): Prewar
   const seen = new Set<string>();
 
   for (const agent of agents) {
-    const options = agent.options ?? {};
-    if (options.warm_pool !== true || options.warm_pool_prewarm !== true) continue;
-
-    const key = JSON.stringify([agent.name, homeRepoRoot]);
-    if (seen.has(key)) continue;
-    seen.add(key);
-
-    const slots =
-      Number.isInteger(options.warm_pool_size) && options.warm_pool_size! > 0
-        ? options.warm_pool_size!
-        : 1;
-    for (let slot = 0; slot < slots; slot += 1) {
-      targets.push({ agent: agent.name, repoRoot: homeRepoRoot, slot });
-      if (targets.length >= cap) break;
-    }
-    if (targets.length >= cap) break;
+    if (addAgentTargets(agent, homeRepoRoot, targets, seen, cap)) break;
   }
 
   return targets;
+}
+
+function addAgentTargets(
+  agent: PrewarmAgent,
+  homeRepoRoot: string,
+  targets: PrewarmTarget[],
+  seen: Set<string>,
+  cap: number,
+): boolean {
+  const options = agent.options ?? {};
+  if (options.warm_pool !== true || options.warm_pool_prewarm !== true) return false;
+
+  const key = JSON.stringify([agent.name, homeRepoRoot]);
+  if (seen.has(key)) return false;
+  seen.add(key);
+
+  const sizeRaw = options.warm_pool_size;
+  const slots = Number.isInteger(sizeRaw) && sizeRaw !== undefined && sizeRaw > 0 ? sizeRaw : 1;
+  for (let slot = 0; slot < slots; slot += 1) {
+    targets.push({ agent: agent.name, repoRoot: homeRepoRoot, slot });
+    if (targets.length >= cap) return true;
+  }
+  return targets.length >= cap;
 }

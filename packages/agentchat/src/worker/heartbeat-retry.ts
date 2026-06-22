@@ -1,10 +1,10 @@
 export const MAX_HEARTBEAT_ATTEMPTS = 25;
 
-export function nextHeartbeatRetry(attempt: number): {
-  shouldRetry: boolean;
-  delayMs?: number;
-  nextAttempt?: number;
-} {
+export type HeartbeatRetryDecision =
+  | { shouldRetry: false }
+  | { shouldRetry: true; delayMs: number; nextAttempt: number };
+
+export function nextHeartbeatRetry(attempt: number): HeartbeatRetryDecision {
   if (attempt >= MAX_HEARTBEAT_ATTEMPTS) {
     return { shouldRetry: false };
   }
