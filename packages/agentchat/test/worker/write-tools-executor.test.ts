@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { DEFAULT_SANDBOX_CONFIG, type SandboxConfig } from "../../src/worker/sandbox-config.js";
-import { WriteToolsExecutor } from "../../src/worker/write-tools-executor.js";
-import { withSandboxedExecutor } from "../helpers/sandbox-fixtures.js";
 import {
   EditAmbiguousError,
   EditMissError,
@@ -15,28 +15,103 @@ import {
   TerminalCapExceededError,
   TerminalNotFoundError,
 } from "../../src/worker/write-tools-errors.js";
-import { readFile, mkdir, writeFile, symlink } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { WriteToolsExecutor } from "../../src/worker/write-tools-executor.js";
+import { withSandboxedExecutor } from "../helpers/sandbox-fixtures.js";
+
+interface CapturedEvent {
+  type: string;
+  payload: unknown;
+}
+
+interface FsWriteAppliedPayload {
+  path: string;
+  bytes: number;
+  sha256: string;
+  prev_sha256: string | null;
+  handoff_id: string;
+}
+
+interface FsEditAppliedPayload {
+  path: string;
+  bytes_added: number;
+  bytes_removed: number;
+  sha256: string;
+  prev_sha256: string;
+  handoff_id: string;
+}
+
+interface TerminalKilledPayload {
+  terminal_id: string;
+  reason: string;
+  handoff_id: string;
+}
+
+function asWritePayload(p: unknown): FsWriteAppliedPayload {
+  return p as FsWriteAppliedPayload;
+}
+
+function asEditPayload(p: unknown): FsEditAppliedPayload {
+  return p as FsEditAppliedPayload;
+}
+
+function asKilledPayload(p: unknown): TerminalKilledPayload {
+  return p as TerminalKilledPayload;
+}
+
+const noop = (): void => {
+  // intentionally empty: silent logger for executor tests
+};
+
+async function expectRejection(
+  promise: Promise<unknown>,
+  Cls: new (...args: never[]) => Error,
+): Promise<void> {
+  let caught: unknown;
+  try {
+    await promise;
+  } catch (err) {
+    caught = err;
+  }
+  expect(caught).toBeInstanceOf(Cls);
+}
+
+async function expectAnyRejection(promise: Promise<unknown>): Promise<void> {
+  let caught: unknown;
+  try {
+    await promise;
+  } catch (err) {
+    caught = err;
+  }
+  expect(caught).toBeInstanceOf(Error);
+}
+
+async function captureRejection(promise: Promise<unknown>): Promise<unknown> {
+  let caught: unknown;
+  try {
+    await promise;
+  } catch (err) {
+    caught = err;
+  }
+  return caught;
+}
 
 async function withCustomSandboxedExecutor(
-  fn: (ctx: {
-    executor: WriteToolsExecutor;
-    events: { type: string; payload: unknown }[];
-  }) => Promise<void>,
+  fn: (ctx: { executor: WriteToolsExecutor; events: CapturedEvent[] }) => Promise<void>,
   sandboxConfigOverrides: Partial<SandboxConfig>,
 ): Promise<void> {
   const worktreeRoot = await mkdtemp(join(tmpdir(), "phase1d-terminal-"));
-  const events: { type: string; payload: unknown }[] = [];
+  const events: CapturedEvent[] = [];
   const executor = new WriteToolsExecutor({
     worktreeRoot,
-    permissionCallback: async () => "approve",
+    permissionCallback: (): Promise<"approve"> => Promise.resolve("approve"),
     auditEmitter: {
-      emit: async (type, payload) => {
+      emit: (type, payload): Promise<void> => {
         events.push({ type, payload });
+        return Promise.resolve();
       },
     },
     sandboxConfig: { ...DEFAULT_SANDBOX_CONFIG, ...sandboxConfigOverrides },
-    logger: { warn: () => {}, info: () => {}, debug: () => {}, error: () => {} },
+    logger: { warn: noop, info: noop, debug: noop, error: noop },
     handoffId: "h-test",
     dispatchId: "d-test",
   });
@@ -57,7 +132,7 @@ describe("WriteToolsExecutor — scaffolding", () => {
     });
   });
 
-  test("gate path: reject decision throws OperationRejectedError without reaching impl", async () => {
+  test("gate path: reject decision throws OperationRejectedError without reaching impl", () => {
     expect(new OperationRejectedError("x").code).toBe("operation_rejected");
   });
 });
@@ -83,7 +158,7 @@ describe("WriteToolsExecutor.writeTextFile", () => {
   test("permission denial throws OperationRejectedError without writing or emitting", async () => {
     await withSandboxedExecutor(async ({ executor, worktreeRoot, events, pushDecision }) => {
       pushDecision("reject");
-      await expect(
+      await expectRejection(
         executor.writeTextFile(
           { path: "denied.txt", content: "x" },
           {
@@ -92,16 +167,17 @@ describe("WriteToolsExecutor.writeTextFile", () => {
             dispatchId: "d-test",
           },
         ),
-      ).rejects.toThrow(OperationRejectedError);
+        OperationRejectedError,
+      );
       // file must not exist
-      await expect(readFile(join(worktreeRoot, "denied.txt"), "utf8")).rejects.toThrow();
+      await expectAnyRejection(readFile(join(worktreeRoot, "denied.txt"), "utf8"));
       expect(events.some((e) => e.type === "fs.write_applied")).toBe(false);
     });
   });
 
   test("outside-worktree absolute path throws OutsideWorktreeError", async () => {
     await withSandboxedExecutor(async ({ executor, events }) => {
-      await expect(
+      await expectRejection(
         executor.writeTextFile(
           { path: "/etc/passwd", content: "pwned" },
           {
@@ -110,7 +186,8 @@ describe("WriteToolsExecutor.writeTextFile", () => {
             dispatchId: "d-test",
           },
         ),
-      ).rejects.toThrow(OutsideWorktreeError);
+        OutsideWorktreeError,
+      );
       expect(events.some((e) => e.type === "fs.write_applied")).toBe(false);
     });
   });
@@ -118,7 +195,7 @@ describe("WriteToolsExecutor.writeTextFile", () => {
   test("symlink-to-outside throws OutsideWorktreeError", async () => {
     await withSandboxedExecutor(async ({ executor, worktreeRoot }) => {
       await symlink("/etc", join(worktreeRoot, "escape"));
-      await expect(
+      await expectRejection(
         executor.writeTextFile(
           { path: "escape/passwd", content: "x" },
           {
@@ -127,7 +204,8 @@ describe("WriteToolsExecutor.writeTextFile", () => {
             dispatchId: "d-test",
           },
         ),
-      ).rejects.toThrow(OutsideWorktreeError);
+        OutsideWorktreeError,
+      );
     });
   });
 
@@ -151,7 +229,7 @@ describe("WriteToolsExecutor.writeTextFile", () => {
       );
       const writeEvents = events.filter((e) => e.type === "fs.write_applied");
       expect(writeEvents.length).toBe(2);
-      expect((writeEvents.at(1)?.payload as any).prev_sha256).toBe(
+      expect(asWritePayload(writeEvents.at(1)?.payload).prev_sha256).toBe(
         createHash("sha256").update("a").digest("hex"),
       );
     });
@@ -167,14 +245,14 @@ describe("WriteToolsExecutor.writeTextFile", () => {
           dispatchId: "d-test",
         },
       );
-      expect((events.at(0)?.payload as any).prev_sha256).toBeNull();
+      expect(asWritePayload(events.at(0)?.payload).prev_sha256).toBeNull();
     });
   });
 
   test("path-is-directory throws NotAFileError", async () => {
     await withSandboxedExecutor(async ({ executor, worktreeRoot }) => {
       await mkdir(join(worktreeRoot, "mydir"), { recursive: true });
-      await expect(
+      await expectRejection(
         executor.writeTextFile(
           { path: "mydir", content: "x" },
           {
@@ -183,7 +261,8 @@ describe("WriteToolsExecutor.writeTextFile", () => {
             dispatchId: "d-test",
           },
         ),
-      ).rejects.toThrow(NotAFileError);
+        NotAFileError,
+      );
     });
   });
 
@@ -204,7 +283,7 @@ describe("WriteToolsExecutor.writeTextFile", () => {
 
   test("parent auto-create beyond depth throws IoError", async () => {
     await withSandboxedExecutor(async ({ executor }) => {
-      await expect(
+      await expectRejection(
         executor.writeTextFile(
           { path: "a/b/c/d/e.txt", content: "x" },
           {
@@ -213,7 +292,8 @@ describe("WriteToolsExecutor.writeTextFile", () => {
             dispatchId: "d-test",
           },
         ),
-      ).rejects.toThrow(IoError);
+        IoError,
+      );
     });
   });
 
@@ -239,7 +319,7 @@ describe("WriteToolsExecutor.writeTextFile", () => {
 
   test("absolute path auto-create beyond relative worktree depth throws IoError", async () => {
     await withSandboxedExecutor(async ({ executor, worktreeRoot }) => {
-      await expect(
+      await expectRejection(
         executor.writeTextFile(
           { path: join(worktreeRoot, "a/b/c/d/e.txt"), content: "x" },
           {
@@ -248,7 +328,8 @@ describe("WriteToolsExecutor.writeTextFile", () => {
             dispatchId: "d-test",
           },
         ),
-      ).rejects.toThrow(IoError);
+        IoError,
+      );
     });
   });
 
@@ -263,10 +344,11 @@ describe("WriteToolsExecutor.writeTextFile", () => {
           dispatchId: "d-test",
         },
       );
-      const event = events.find((e) => e.type === "fs.write_applied")!;
+      const event = events.find((e) => e.type === "fs.write_applied");
+      expect(event).toBeDefined();
       // bytes is the captured size, but the full content never appears in payload_json
-      expect((event.payload as any).bytes).toBe(100_000);
-      const payloadStr = JSON.stringify(event.payload);
+      expect(asWritePayload(event?.payload).bytes).toBe(100_000);
+      const payloadStr = JSON.stringify(event?.payload);
       expect(payloadStr.includes(big)).toBe(false);
     });
   });
@@ -375,7 +457,8 @@ describe("WriteToolsExecutor.terminal* (one-shot)", () => {
 
   test("terminalOutput on unknown id throws TerminalNotFoundError", async () => {
     await withSandboxedExecutor(async ({ executor }) => {
-      await expect(executor.terminalOutput({ terminal_id: "nonexistent" })).rejects.toThrow(
+      await expectRejection(
+        executor.terminalOutput({ terminal_id: "nonexistent" }),
         TerminalNotFoundError,
       );
     });
@@ -383,7 +466,8 @@ describe("WriteToolsExecutor.terminal* (one-shot)", () => {
 
   test("terminalWaitForExit on unknown id throws TerminalNotFoundError", async () => {
     await withSandboxedExecutor(async ({ executor }) => {
-      await expect(executor.terminalWaitForExit({ terminal_id: "nonexistent" })).rejects.toThrow(
+      await expectRejection(
+        executor.terminalWaitForExit({ terminal_id: "nonexistent" }),
         TerminalNotFoundError,
       );
     });
@@ -391,9 +475,13 @@ describe("WriteToolsExecutor.terminal* (one-shot)", () => {
 
   test("terminalRelease on unknown id is silent no-op", async () => {
     await withSandboxedExecutor(async ({ executor }) => {
-      await expect(
-        executor.terminalRelease({ terminal_id: "nonexistent" }),
-      ).resolves.toBeUndefined();
+      let caught: unknown;
+      try {
+        await executor.terminalRelease({ terminal_id: "nonexistent" });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeUndefined();
     });
   });
 
@@ -410,7 +498,7 @@ describe("WriteToolsExecutor.terminal* (one-shot)", () => {
       await executor.terminalKill({ terminal_id });
       expect(
         events.some(
-          (e) => e.type === "terminal.killed" && (e.payload as any).reason === "operator",
+          (e) => e.type === "terminal.killed" && asKilledPayload(e.payload).reason === "operator",
         ),
       ).toBe(true);
     });
@@ -419,7 +507,7 @@ describe("WriteToolsExecutor.terminal* (one-shot)", () => {
   test("permission denial throws and emits no terminal.spawned", async () => {
     await withSandboxedExecutor(async ({ executor, events, pushDecision }) => {
       pushDecision("reject");
-      await expect(
+      await expectAnyRejection(
         executor.terminalCreate(
           { argv: ["echo", "no"] },
           {
@@ -428,14 +516,14 @@ describe("WriteToolsExecutor.terminal* (one-shot)", () => {
             dispatchId: "d-test",
           },
         ),
-      ).rejects.toThrow();
+      );
       expect(events.some((e) => e.type === "terminal.spawned")).toBe(false);
     });
   });
 
   test("cwd outside worktree throws OutsideWorktreeError before spawn", async () => {
     await withSandboxedExecutor(async ({ executor, events }) => {
-      await expect(
+      await expectRejection(
         executor.terminalCreate(
           { argv: ["echo", "x"], cwd: "/etc" },
           {
@@ -444,7 +532,8 @@ describe("WriteToolsExecutor.terminal* (one-shot)", () => {
             dispatchId: "d-test",
           },
         ),
-      ).rejects.toBeInstanceOf(OutsideWorktreeError);
+        OutsideWorktreeError,
+      );
       expect(events.some((e) => e.type === "terminal.spawned")).toBe(false);
     });
   });
@@ -460,12 +549,12 @@ describe("WriteToolsExecutor.terminal* (one-shot)", () => {
         },
       );
       await executor.terminalRelease({ terminal_id });
-      await expect(executor.terminalOutput({ terminal_id })).rejects.toThrow(TerminalNotFoundError);
+      await expectRejection(executor.terminalOutput({ terminal_id }), TerminalNotFoundError);
     });
   });
 
   test("dispose during running terminal aborts and emits dispatch_end killed event", async () => {
-    let capturedEvents: { type: string; payload: unknown }[] = [];
+    let capturedEvents: CapturedEvent[] = [];
     await withSandboxedExecutor(async ({ executor, events }) => {
       capturedEvents = events;
       await executor.terminalCreate(
@@ -479,7 +568,7 @@ describe("WriteToolsExecutor.terminal* (one-shot)", () => {
     });
     expect(
       capturedEvents.some(
-        (e) => e.type === "terminal.killed" && (e.payload as any).reason === "dispatch_end",
+        (e) => e.type === "terminal.killed" && asKilledPayload(e.payload).reason === "dispatch_end",
       ),
     ).toBe(true);
   });
@@ -495,7 +584,7 @@ describe("WriteToolsExecutor.terminal* (one-shot)", () => {
             dispatchId: "d-test",
           },
         );
-        await expect(
+        await expectRejection(
           executor.terminalCreate(
             { argv: ["echo", "blocked"] },
             {
@@ -504,7 +593,8 @@ describe("WriteToolsExecutor.terminal* (one-shot)", () => {
               dispatchId: "d-test",
             },
           ),
-        ).rejects.toBeInstanceOf(TerminalCapExceededError);
+          TerminalCapExceededError,
+        );
       },
       { maxConcurrent: 1 },
     );
@@ -512,7 +602,7 @@ describe("WriteToolsExecutor.terminal* (one-shot)", () => {
 
   test("timeout emits terminal.killed reason=timeout", async () => {
     await withCustomSandboxedExecutor(
-      async ({ executor, events }) => {
+      async ({ executor }) => {
         const { terminal_id } = await executor.terminalCreate(
           { argv: ["sleep", "5"] },
           {
@@ -565,25 +655,25 @@ describe("WriteToolsExecutor.editTextFile", () => {
           dispatchId: "d-test",
         },
       );
-      try {
-        await executor.editTextFile(
+      const caught = await captureRejection(
+        executor.editTextFile(
           { path: "m.txt", old_string: "aa", new_string: "bb" },
           {
             toolName: "fs.edit",
             rawInput: {},
             dispatchId: "d-test",
           },
-        );
-        throw new Error("expected throw");
-      } catch (err: any) {
-        expect(err.code).toBe("edit_ambiguous");
-        expect(err.occurrences).toBe(2);
-      }
+        ),
+      );
+      expect(caught).toBeInstanceOf(EditAmbiguousError);
+      const e = caught as EditAmbiguousError;
+      expect(e.code).toBe("edit_ambiguous");
+      expect(e.occurrences).toBe(2);
     });
   });
 
   test("multi-match with replace_all=true replaces all", async () => {
-    await withSandboxedExecutor(async ({ executor, worktreeRoot, events }) => {
+    await withSandboxedExecutor(async ({ executor, worktreeRoot }) => {
       await executor.writeTextFile(
         { path: "m.txt", content: "aa\naa\n" },
         {
@@ -616,20 +706,20 @@ describe("WriteToolsExecutor.editTextFile", () => {
           dispatchId: "d-test",
         },
       );
-      try {
-        await executor.editTextFile(
+      const caught = await captureRejection(
+        executor.editTextFile(
           { path: "h.txt", old_string: "world", new_string: "x" },
           {
             toolName: "fs.edit",
             rawInput: {},
             dispatchId: "d-test",
           },
-        );
-        throw new Error("expected throw");
-      } catch (err: any) {
-        expect(err.code).toBe("edit_miss");
-        expect(err.bytes).toBe(6); // 'hello\n' is 6 bytes
-      }
+        ),
+      );
+      expect(caught).toBeInstanceOf(EditMissError);
+      const e = caught as EditMissError;
+      expect(e.code).toBe("edit_miss");
+      expect(e.bytes).toBe(6); // 'hello\n' is 6 bytes
     });
   });
 
@@ -668,7 +758,7 @@ describe("WriteToolsExecutor.editTextFile", () => {
           dispatchId: "d-test",
         },
       );
-      await expect(
+      await expectRejection(
         executor.editTextFile(
           { path: "e.txt", old_string: "", new_string: "y" },
           {
@@ -677,32 +767,32 @@ describe("WriteToolsExecutor.editTextFile", () => {
             dispatchId: "d-test",
           },
         ),
-      ).rejects.toThrow(EditAmbiguousError);
+        EditAmbiguousError,
+      );
     });
   });
 
   test("file missing throws EditMissError", async () => {
     await withSandboxedExecutor(async ({ executor }) => {
-      try {
-        await executor.editTextFile(
+      const caught = await captureRejection(
+        executor.editTextFile(
           { path: "missing.txt", old_string: "x", new_string: "y" },
           {
             toolName: "fs.edit",
             rawInput: {},
             dispatchId: "d-test",
           },
-        );
-        throw new Error("expected throw");
-      } catch (err: any) {
-        expect(err.code).toBe("edit_miss");
-      }
+        ),
+      );
+      expect(caught).toBeInstanceOf(EditMissError);
+      expect((caught as EditMissError).code).toBe("edit_miss");
     });
   });
 
   test("permission denial throws OperationRejectedError", async () => {
     await withSandboxedExecutor(async ({ executor, pushDecision }) => {
       pushDecision("reject");
-      await expect(
+      await expectRejection(
         executor.editTextFile(
           { path: "p.txt", old_string: "a", new_string: "b" },
           {
@@ -711,13 +801,14 @@ describe("WriteToolsExecutor.editTextFile", () => {
             dispatchId: "d-test",
           },
         ),
-      ).rejects.toThrow(OperationRejectedError);
+        OperationRejectedError,
+      );
     });
   });
 
   test("outside-worktree path throws OutsideWorktreeError", async () => {
     await withSandboxedExecutor(async ({ executor }) => {
-      await expect(
+      await expectRejection(
         executor.editTextFile(
           { path: "/etc/passwd", old_string: "x", new_string: "y" },
           {
@@ -726,7 +817,8 @@ describe("WriteToolsExecutor.editTextFile", () => {
             dispatchId: "d-test",
           },
         ),
-      ).rejects.toThrow(OutsideWorktreeError);
+        OutsideWorktreeError,
+      );
     });
   });
 
@@ -748,8 +840,9 @@ describe("WriteToolsExecutor.editTextFile", () => {
           dispatchId: "d-test",
         },
       );
-      const editEvent = events.find((e) => e.type === "fs.edit_applied")!;
-      expect((editEvent.payload as any).prev_sha256).toBe(
+      const editEvent = events.find((e) => e.type === "fs.edit_applied");
+      expect(editEvent).toBeDefined();
+      expect(asEditPayload(editEvent?.payload).prev_sha256).toBe(
         createHash("sha256").update("before").digest("hex"),
       );
     });

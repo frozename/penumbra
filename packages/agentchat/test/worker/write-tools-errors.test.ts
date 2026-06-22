@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
+
 import {
+  EditAmbiguousError,
+  EditMissError,
+  IoError,
+  NotAFileError,
   OperationRejectedError,
   OutsideWorktreeError,
-  NotAFileError,
-  IoError,
-  EditMissError,
-  EditAmbiguousError,
-  TerminalNotFoundError,
   TerminalCapExceededError,
+  TerminalNotFoundError,
 } from "../../src/worker/write-tools-errors.js";
 
 describe("write-tools-errors", () => {

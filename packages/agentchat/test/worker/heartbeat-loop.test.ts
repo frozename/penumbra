@@ -1,20 +1,32 @@
 import { describe, expect, test } from "bun:test";
-import { PenumbraHttpError } from "../../src/penumbra-client.js";
-import { MAX_HEARTBEAT_ATTEMPTS } from "../../src/worker/heartbeat-retry.js";
-import { startHeartbeatLoop } from "../../src/worker/heartbeat-loop.js";
 
-type ScheduledTask = {
+import { PenumbraHttpError } from "../../src/penumbra-client.js";
+import { startHeartbeatLoop } from "../../src/worker/heartbeat-loop.js";
+import { MAX_HEARTBEAT_ATTEMPTS } from "../../src/worker/heartbeat-retry.js";
+
+interface ScheduledTask {
   delayMs: number;
   run: () => Promise<void> | void;
+}
+
+interface ManualScheduler {
+  tasks: ScheduledTask[];
+  schedule: (run: () => Promise<void> | void, delayMs: number) => { cancel: () => void };
+}
+
+const noop = (): void => {
+  // intentionally empty: silent logger/cancel for heartbeat tests
 };
 
-function createManualScheduler() {
+const silentLog = { debug: noop, error: noop, info: noop, warn: noop };
+
+function createManualScheduler(): ManualScheduler {
   const tasks: ScheduledTask[] = [];
   return {
     tasks,
-    schedule(run: () => Promise<void> | void, delayMs: number) {
+    schedule(run, delayMs): { cancel: () => void } {
       tasks.push({ delayMs, run });
-      return { cancel: () => {} };
+      return { cancel: noop };
     },
   };
 }
@@ -32,19 +44,17 @@ describe("startHeartbeatLoop", () => {
     let emitCount = 0;
     const exitCalls: number[] = [];
     const loop = startHeartbeatLoop({
-      emitHeartbeat: async () => {
+      emitHeartbeat: (): Promise<void> => {
         emitCount++;
-        throw new Error(`retryable-${emitCount}`);
+        return Promise.reject(new Error(`retryable-${String(emitCount)}`));
       },
-      reregisterWorker: async () => {
-        throw new Error("unexpected re-register");
-      },
+      reregisterWorker: (): Promise<void> => Promise.reject(new Error("unexpected re-register")),
       exit: (code) => {
         exitCalls.push(code);
       },
       schedule: scheduler.schedule,
       timeoutMs: 1,
-      log: { debug() {}, error() {}, info() {}, warn() {} },
+      log: silentLog,
       workerId: "W-A",
     });
 
@@ -64,18 +74,20 @@ describe("startHeartbeatLoop", () => {
 
   test("terminal 4xx re-registers once, resets backoff on success, and exits when re-register fails", async () => {
     const scheduler = createManualScheduler();
-    const emitPlan: Array<"terminal" | "retryable" | "ok"> = ["terminal", "retryable", "ok"];
+    const emitPlan: ("terminal" | "retryable" | "ok")[] = ["terminal", "retryable", "ok"];
     const emitDelays: number[] = [];
     const reregisterCalls: number[] = [];
     const exitCalls: number[] = [];
     const loop = startHeartbeatLoop({
-      emitHeartbeat: async () => {
+      emitHeartbeat: (): Promise<void> => {
         const step = emitPlan.shift();
-        if (step === "terminal") throw new PenumbraHttpError("HTTP 403", 403);
-        if (step === "retryable") throw new Error("retryable-after-reregister");
+        if (step === "terminal") return Promise.reject(new PenumbraHttpError("HTTP 403", 403));
+        if (step === "retryable") return Promise.reject(new Error("retryable-after-reregister"));
+        return Promise.resolve();
       },
-      reregisterWorker: async () => {
+      reregisterWorker: (): Promise<void> => {
         reregisterCalls.push(reregisterCalls.length + 1);
+        return Promise.resolve();
       },
       exit: (code) => {
         exitCalls.push(code);
@@ -85,7 +97,7 @@ describe("startHeartbeatLoop", () => {
         return scheduler.schedule(run, delayMs);
       },
       timeoutMs: 1,
-      log: { debug() {}, error() {}, info() {}, warn() {} },
+      log: silentLog,
       workerId: "W-A",
     });
 
@@ -117,21 +129,19 @@ describe("startHeartbeatLoop", () => {
     const exitCalls: number[] = [];
     const emitSignals: AbortSignal[] = [];
     const loop = startHeartbeatLoop({
-      emitHeartbeat: async (signal?: AbortSignal) => {
+      emitHeartbeat: async (signal?: AbortSignal): Promise<void> => {
         if (signal) emitSignals.push(signal);
         await new Promise<void>((resolve) => {
           resolveHeartbeat = resolve;
         });
       },
-      reregisterWorker: async () => {
-        throw new Error("unexpected re-register");
-      },
+      reregisterWorker: (): Promise<void> => Promise.reject(new Error("unexpected re-register")),
       exit: (code) => {
         exitCalls.push(code);
       },
       schedule: scheduler.schedule,
       timeoutMs: 1,
-      log: { debug() {}, error() {}, info() {}, warn() {} },
+      log: silentLog,
       workerId: "W-A",
     });
 
@@ -151,23 +161,25 @@ describe("startHeartbeatLoop", () => {
 
   test("exits without re-registering when the recovery cap of 3 is hit with no intervening healthy heartbeat", async () => {
     const scheduler = createManualScheduler();
-    const emitPlan: Array<"terminal"> = ["terminal", "terminal", "terminal", "terminal"];
+    const emitPlan: "terminal"[] = ["terminal", "terminal", "terminal", "terminal"];
     const reregisterCalls: number[] = [];
     const exitCalls: number[] = [];
     const loop = startHeartbeatLoop({
-      emitHeartbeat: async () => {
+      emitHeartbeat: (): Promise<void> => {
         const step = emitPlan.shift();
-        if (step === "terminal") throw new PenumbraHttpError("HTTP 403", 403);
+        if (step === "terminal") return Promise.reject(new PenumbraHttpError("HTTP 403", 403));
+        return Promise.resolve();
       },
-      reregisterWorker: async () => {
+      reregisterWorker: (): Promise<void> => {
         reregisterCalls.push(reregisterCalls.length + 1);
+        return Promise.resolve();
       },
       exit: (code) => {
         exitCalls.push(code);
       },
       schedule: scheduler.schedule,
       timeoutMs: 1,
-      log: { debug() {}, error() {}, info() {}, warn() {} },
+      log: silentLog,
       workerId: "W-A",
     });
 
@@ -184,7 +196,7 @@ describe("startHeartbeatLoop", () => {
 
   test("healthy heartbeat resets the recovery counter so isolated terminal events never exhaust the cap", async () => {
     const scheduler = createManualScheduler();
-    const emitPlan: Array<"terminal" | "ok"> = [
+    const emitPlan: ("terminal" | "ok")[] = [
       "terminal",
       "ok",
       "terminal",
@@ -197,19 +209,21 @@ describe("startHeartbeatLoop", () => {
     const reregisterCalls: number[] = [];
     const exitCalls: number[] = [];
     const loop = startHeartbeatLoop({
-      emitHeartbeat: async () => {
+      emitHeartbeat: (): Promise<void> => {
         const step = emitPlan.shift();
-        if (step === "terminal") throw new PenumbraHttpError("HTTP 403", 403);
+        if (step === "terminal") return Promise.reject(new PenumbraHttpError("HTTP 403", 403));
+        return Promise.resolve();
       },
-      reregisterWorker: async () => {
+      reregisterWorker: (): Promise<void> => {
         reregisterCalls.push(reregisterCalls.length + 1);
+        return Promise.resolve();
       },
       exit: (code) => {
         exitCalls.push(code);
       },
       schedule: scheduler.schedule,
       timeoutMs: 1,
-      log: { debug() {}, error() {}, info() {}, warn() {} },
+      log: silentLog,
       workerId: "W-A",
     });
 
@@ -228,10 +242,8 @@ describe("startHeartbeatLoop", () => {
     const scheduler = createManualScheduler();
     const exitCalls: number[] = [];
     const loop = startHeartbeatLoop({
-      emitHeartbeat: async () => {
-        throw new PenumbraHttpError("HTTP 409", 409);
-      },
-      reregisterWorker: async () =>
+      emitHeartbeat: (): Promise<void> => Promise.reject(new PenumbraHttpError("HTTP 409", 409)),
+      reregisterWorker: () =>
         new Promise<void>(() => {
           /* hang */
         }),
@@ -240,7 +252,7 @@ describe("startHeartbeatLoop", () => {
       },
       schedule: scheduler.schedule,
       timeoutMs: 1,
-      log: { debug() {}, error() {}, info() {}, warn() {} },
+      log: silentLog,
       workerId: "W-A",
     });
 
@@ -256,18 +268,14 @@ describe("startHeartbeatLoop", () => {
     const scheduler = createManualScheduler();
     const exitCalls: number[] = [];
     const loop = startHeartbeatLoop({
-      emitHeartbeat: async () => {
-        throw new PenumbraHttpError("HTTP 409", 409);
-      },
-      reregisterWorker: async () => {
-        throw new Error("re-register failed");
-      },
+      emitHeartbeat: (): Promise<void> => Promise.reject(new PenumbraHttpError("HTTP 409", 409)),
+      reregisterWorker: (): Promise<void> => Promise.reject(new Error("re-register failed")),
       exit: (code) => {
         exitCalls.push(code);
       },
       schedule: scheduler.schedule,
       timeoutMs: 1,
-      log: { debug() {}, error() {}, info() {}, warn() {} },
+      log: silentLog,
       workerId: "W-A",
     });
 

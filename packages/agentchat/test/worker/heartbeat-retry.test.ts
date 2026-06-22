@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { MAX_HEARTBEAT_ATTEMPTS, nextHeartbeatRetry } from "../../src/worker/heartbeat-retry.js";
 
 test("nextHeartbeatRetry stops after MAX_HEARTBEAT_ATTEMPTS", () => {

@@ -1,10 +1,13 @@
+import type { DispatchEventInput } from "@penumbra/core";
+
 import { describe, expect, mock, test } from "bun:test";
+
 import { emitHeartbeat } from "../../src/worker/heartbeat-emit.js";
 
 describe("emitHeartbeat", () => {
   test("records heartbeat.sent after a successful POST", async () => {
-    const events: any[] = [];
-    const client = { postHeartbeat: mock(async () => {}) };
+    const events: DispatchEventInput[] = [];
+    const client = { postHeartbeat: mock(() => Promise.resolve()) };
 
     await emitHeartbeat({ client, workerId: "w-1", onEvent: (event) => events.push(event) });
 
@@ -13,11 +16,12 @@ describe("emitHeartbeat", () => {
   });
 
   test("passes an abort signal through to postHeartbeat when provided", async () => {
-    const events: any[] = [];
+    const events: DispatchEventInput[] = [];
     const signals: AbortSignal[] = [];
     const client = {
-      postHeartbeat: mock(async (_workerId: string, signal?: AbortSignal) => {
+      postHeartbeat: mock((_workerId: string, signal?: AbortSignal): Promise<void> => {
         if (signal) signals.push(signal);
+        return Promise.resolve();
       }),
     };
     const controller = new AbortController();
@@ -35,16 +39,19 @@ describe("emitHeartbeat", () => {
   });
 
   test("records heartbeat.sent and preserves failure when POST fails", async () => {
-    const events: any[] = [];
+    const events: DispatchEventInput[] = [];
     const client = {
-      postHeartbeat: mock(async () => {
-        throw new Error("boom");
-      }),
+      postHeartbeat: mock((): Promise<void> => Promise.reject(new Error("boom"))),
     };
 
-    await expect(
-      emitHeartbeat({ client, workerId: "w-1", onEvent: (event) => events.push(event) }),
-    ).rejects.toThrow("boom");
+    let caught: unknown;
+    try {
+      await emitHeartbeat({ client, workerId: "w-1", onEvent: (event) => events.push(event) });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toBe("boom");
     expect(events.some((event) => event.kind === "heartbeat.sent")).toBe(true);
   });
 });
