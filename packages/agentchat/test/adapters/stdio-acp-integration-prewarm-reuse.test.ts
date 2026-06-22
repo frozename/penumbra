@@ -1,15 +1,63 @@
+import type { DispatchEventInput } from "@penumbra/core";
+
 import { describe, expect, test, vi } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
-import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
-import { startStdioAcpServer } from "../../src/adapters/stdio-acp-server.js";
-import { createAcpWarmPool } from "../../src/adapters/acp-warm-pool.js";
+
 import type { DispatchInput } from "../../src/sdk/adapter.js";
 
+import { createAcpWarmPool } from "../../src/adapters/acp-warm-pool.js";
+import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
+import {
+  startStdioAcpServer,
+  type StartStdioAcpServerOptions,
+  type StdioAcpHandle,
+} from "../../src/adapters/stdio-acp-server.js";
+import { StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
+
 const testDir = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Records emitted by the acp-recorder fixture, one per session/new.
+ * The fields tests assert against are stamped in
+ * packages/agentchat/test/fixtures/acp-recorder.ts.
+ */
+interface SessionNewRecord {
+  cwd: string;
+  sessionId: string;
+  storageRoot: string;
+  processStorageRoot: string;
+}
+
+function parseRecordsFromFile(filePath: string): SessionNewRecord[] {
+  return readFileSync(filePath, "utf8")
+    .trim()
+    .split("\n")
+    .map((line, index) => {
+      const raw: unknown = JSON.parse(line);
+      if (typeof raw !== "object" || raw === null) {
+        throw new Error(`record ${String(index)}: expected a JSON object`);
+      }
+      const get = (key: keyof SessionNewRecord): string => {
+        if (!(key in raw)) {
+          throw new Error(`record ${String(index)}: missing field ${key}`);
+        }
+        const value = (raw as Record<string, unknown>)[key];
+        if (typeof value !== "string") {
+          throw new Error(`record ${String(index)}: field ${key} is not a string`);
+        }
+        return value;
+      };
+      return {
+        cwd: get("cwd"),
+        sessionId: get("sessionId"),
+        storageRoot: get("storageRoot"),
+        processStorageRoot: get("processStorageRoot"),
+      };
+    });
+}
 
 /**
  * Phase 5 hardening — the prewarm()→dispatch reuse seam end-to-end through a
@@ -48,10 +96,10 @@ describe("stdio-acp warm pool real subprocess prewarm→dispatch reuse (Phase 5)
     // adapter: the dispatch must NOT spawn a 2nd process — it reuses the pinned
     // pre-warmed connection.
     const pool = createAcpWarmPool({ graceMs: 60_000 });
-    const startServer = vi.fn((opts: Parameters<typeof startStdioAcpServer>[0]) =>
-      startStdioAcpServer(opts),
+    const startServer = vi.fn(
+      (opts: StartStdioAcpServerOptions): Promise<StdioAcpHandle> => startStdioAcpServer(opts),
     );
-    const createClient = (handle: any) =>
+    const createClient = (handle: StdioAcpHandle): StdioAcpClient =>
       new StdioAcpClient({ stdin: handle.stdin, stdout: handle.stdout });
 
     // Prewarm adapter: handshake-only, keyed on repoRoot, NO mcpServers — exactly
@@ -67,8 +115,8 @@ describe("stdio-acp warm pool real subprocess prewarm→dispatch reuse (Phase 5)
         warmPool: true,
         repoRoot,
         env: { PENUMBRA_STORAGE_ROOT: prewarmStorage, ACP_RECORD_FILE: recordFile },
-      } as any,
-      { startServer, createClient, pool } as any,
+      },
+      { startServer, createClient, pool },
     );
 
     // Dispatch adapter: same agent + binary + repoRoot (so it acquires the
@@ -84,11 +132,16 @@ describe("stdio-acp warm pool real subprocess prewarm→dispatch reuse (Phase 5)
         warmPool: true,
         repoRoot,
         mcpServers: [
-          { name: "penumbra", command: "bun", args: [join(repoRoot, "penumbra-mcp.ts")] },
+          {
+            name: "penumbra",
+            command: "bun",
+            args: [join(repoRoot, "penumbra-mcp.ts")],
+            env: [],
+          },
         ],
         env: { PENUMBRA_STORAGE_ROOT: dispatchStorage, ACP_RECORD_FILE: recordFile },
-      } as any,
-      { startServer, createClient, pool } as any,
+      },
+      { startServer, createClient, pool },
     );
 
     // 1. Pre-warm: ONE real process, handshake-only.
@@ -100,7 +153,7 @@ describe("stdio-acp warm pool real subprocess prewarm→dispatch reuse (Phase 5)
     expect(existsSync(recordFile)).toBe(false);
 
     // 2. Dispatch at the worktree reuses the pre-warmed process.
-    const events: any[] = [];
+    const events: DispatchEventInput[] = [];
     const dispatchInput: DispatchInput = {
       prompt: "hello",
       conversation: { id: "hA", project_id: null },
@@ -108,8 +161,10 @@ describe("stdio-acp warm pool real subprocess prewarm→dispatch reuse (Phase 5)
       signal: new AbortController().signal,
       handoff_id: "hA",
       eventContext: { handoffId: "hA", workerId: "w1" },
-      onEvent: (e: any) => events.push(e),
-    } as any;
+      onEvent: (event): void => {
+        events.push(event);
+      },
+    };
     const out = await dispatchAdapter.dispatch(dispatchInput);
 
     // ONE real process served both prewarm + dispatch (no 2nd startServer).
@@ -122,20 +177,17 @@ describe("stdio-acp warm pool real subprocess prewarm→dispatch reuse (Phase 5)
     // 3 + 4. Exactly one fresh session/new ran — on the DISPATCH, at the worktree
     // cwd, and it is the FIRST session the process ever minted (proving prewarm
     // consumed none).
-    const records = readFileSync(recordFile, "utf8")
-      .trim()
-      .split("\n")
-      .map((l) => JSON.parse(l));
+    const records = parseRecordsFromFile(recordFile);
     expect(records).toHaveLength(1);
-    expect(records[0].cwd).toBe(worktree);
-    expect(records[0].sessionId).toBe("recorder-session-1");
+    expect(records[0]?.cwd).toBe(worktree);
+    expect(records[0]?.sessionId).toBe("recorder-session-1");
     // Re-injection guard (eba1d3d9) across the prewarm seam: the reused process's
     // FROZEN env still holds prewarmStorage, but session/new carried the
     // dispatch's own dispatchStorage — proving per-dispatch re-injection, not a
     // leak of the pre-warm process env.
     expect(prewarmStorage).not.toBe(dispatchStorage);
-    expect(records[0].processStorageRoot).toBe(prewarmStorage);
-    expect(records[0].storageRoot).toBe(dispatchStorage);
+    expect(records[0]?.processStorageRoot).toBe(prewarmStorage);
+    expect(records[0]?.storageRoot).toBe(dispatchStorage);
 
     pool.shutdown();
   }, 15_000);

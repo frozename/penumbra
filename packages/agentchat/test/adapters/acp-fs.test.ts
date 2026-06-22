@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+
 import { executeReadTextFile, ReadTextFileError } from "../../src/adapters/acp-fs.js";
+import { expectRejection } from "../helpers/cli-spawn-fixtures.js";
 
 describe("executeReadTextFile", () => {
   let tmp: string;
@@ -22,35 +24,33 @@ describe("executeReadTextFile", () => {
   });
 
   it("rejects an absolute path outside the worktree", async () => {
-    await expect(executeReadTextFile({ path: "/etc/passwd" }, tmp)).rejects.toThrow(
-      ReadTextFileError,
-    );
-    await expect(executeReadTextFile({ path: "/etc/passwd" }, tmp)).rejects.toThrow(
-      /outside worktree/i,
-    );
+    const err = await expectRejection(executeReadTextFile({ path: "/etc/passwd" }, tmp));
+    expect(err).toBeInstanceOf(ReadTextFileError);
+    expect(err.message).toMatch(/outside worktree/i);
   });
 
   it("rejects a relative path with .. that resolves outside the worktree", async () => {
     const escape = path.join(tmp, "..", "something.txt");
-    await expect(executeReadTextFile({ path: escape }, tmp)).rejects.toThrow(/outside worktree/i);
+    await expectRejection(executeReadTextFile({ path: escape }, tmp), /outside worktree/i);
   });
 
   it("rejects a symlink whose realpath is outside the worktree", async () => {
     fs.writeFileSync("/tmp/acp-fs-target.txt", "secret");
     fs.symlinkSync("/tmp/acp-fs-target.txt", path.join(tmp, "link"));
-    await expect(executeReadTextFile({ path: path.join(tmp, "link") }, tmp)).rejects.toThrow(
+    await expectRejection(
+      executeReadTextFile({ path: path.join(tmp, "link") }, tmp),
       /outside worktree/i,
     );
     fs.unlinkSync("/tmp/acp-fs-target.txt");
   });
 
   it('throws ReadTextFileError with code "not_found" for missing file', async () => {
-    try {
-      await executeReadTextFile({ path: path.join(tmp, "missing.txt") }, tmp);
-      throw new Error("should have thrown");
-    } catch (err) {
-      expect(err).toBeInstanceOf(ReadTextFileError);
-      expect((err as ReadTextFileError).code).toBe("not_found");
+    const err = await expectRejection(
+      executeReadTextFile({ path: path.join(tmp, "missing.txt") }, tmp),
+    );
+    expect(err).toBeInstanceOf(ReadTextFileError);
+    if (err instanceof ReadTextFileError) {
+      expect(err.code).toBe("not_found");
     }
   });
 

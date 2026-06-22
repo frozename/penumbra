@@ -1,15 +1,63 @@
+import type { DispatchEventInput } from "@penumbra/core";
+
 import { describe, expect, test, vi } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
-import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
-import { startStdioAcpServer } from "../../src/adapters/stdio-acp-server.js";
-import { createAcpWarmPool } from "../../src/adapters/acp-warm-pool.js";
+
 import type { DispatchInput } from "../../src/sdk/adapter.js";
 
+import { createAcpWarmPool } from "../../src/adapters/acp-warm-pool.js";
+import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
+import {
+  startStdioAcpServer,
+  type StartStdioAcpServerOptions,
+  type StdioAcpHandle,
+} from "../../src/adapters/stdio-acp-server.js";
+import { StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
+
 const testDir = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Records emitted by the acp-recorder fixture, one per session/new.
+ * The fields tests assert against are stamped in
+ * packages/agentchat/test/fixtures/acp-recorder.ts.
+ */
+interface SessionNewRecord {
+  cwd: string;
+  sessionId: string;
+  storageRoot: string;
+  processStorageRoot: string;
+}
+
+function parseRecordsFromFile(filePath: string): SessionNewRecord[] {
+  return readFileSync(filePath, "utf8")
+    .trim()
+    .split("\n")
+    .map((line, index) => {
+      const raw: unknown = JSON.parse(line);
+      if (typeof raw !== "object" || raw === null) {
+        throw new Error(`record ${String(index)}: expected a JSON object`);
+      }
+      const get = (key: keyof SessionNewRecord): string => {
+        if (!(key in raw)) {
+          throw new Error(`record ${String(index)}: missing field ${key}`);
+        }
+        const value = (raw as Record<string, unknown>)[key];
+        if (typeof value !== "string") {
+          throw new Error(`record ${String(index)}: field ${key} is not a string`);
+        }
+        return value;
+      };
+      return {
+        cwd: get("cwd"),
+        sessionId: get("sessionId"),
+        storageRoot: get("storageRoot"),
+        processStorageRoot: get("processStorageRoot"),
+      };
+    });
+}
 
 /**
  * Phase 5 hardening: the Option-B warm-connection reuse is proven against MOCK
@@ -38,13 +86,13 @@ describe("stdio-acp warm pool real subprocess reuse (Phase 5)", () => {
     // Shared pool + startServer spy across both adapter instances: a warm hit on
     // the 2nd dispatch must skip startServer entirely (process reuse).
     const pool = createAcpWarmPool({ graceMs: 60_000 });
-    const startServer = vi.fn((opts: Parameters<typeof startStdioAcpServer>[0]) =>
-      startStdioAcpServer(opts),
+    const startServer = vi.fn(
+      (opts: StartStdioAcpServerOptions): Promise<StdioAcpHandle> => startStdioAcpServer(opts),
     );
-    const createClient = (handle: any) =>
+    const createClient = (handle: StdioAcpHandle): StdioAcpClient =>
       new StdioAcpClient({ stdin: handle.stdin, stdout: handle.stdout });
 
-    const mk = (cwd: string, storageRoot: string) =>
+    const mk = (cwd: string, storageRoot: string): StdioAcpAdapter =>
       new StdioAcpAdapter(
         {
           binary: "bun",
@@ -55,14 +103,19 @@ describe("stdio-acp warm pool real subprocess reuse (Phase 5)", () => {
           warmPool: true,
           repoRoot,
           mcpServers: [
-            { name: "penumbra", command: "bun", args: [join(repoRoot, "penumbra-mcp.ts")] },
+            {
+              name: "penumbra",
+              command: "bun",
+              args: [join(repoRoot, "penumbra-mcp.ts")],
+              env: [],
+            },
           ],
           env: { PENUMBRA_STORAGE_ROOT: storageRoot, ACP_RECORD_FILE: recordFile },
-        } as any,
-        { startServer, createClient, pool } as any,
+        },
+        { startServer, createClient, pool },
       );
 
-    const events: any[] = [];
+    const events: DispatchEventInput[] = [];
     const dispatchInput = (handoffId: string): DispatchInput => ({
       prompt: "hello",
       conversation: { id: handoffId, project_id: null },
@@ -70,7 +123,9 @@ describe("stdio-acp warm pool real subprocess reuse (Phase 5)", () => {
       signal: new AbortController().signal,
       handoff_id: handoffId,
       eventContext: { handoffId, workerId: "w1" },
-      onEvent: (e) => events.push(e),
+      onEvent: (event): void => {
+        events.push(event);
+      },
     });
 
     const first = await mk(wtA, storageA).dispatch(dispatchInput("hA"));
@@ -87,22 +142,19 @@ describe("stdio-acp warm pool real subprocess reuse (Phase 5)", () => {
     expect(events.filter((e) => e.kind === "acp.server.start")).toHaveLength(1);
 
     // 3. Each dispatch ran a FRESH session/new at ITS OWN cwd.
-    const records = readFileSync(recordFile, "utf8")
-      .trim()
-      .split("\n")
-      .map((l) => JSON.parse(l));
+    const records = parseRecordsFromFile(recordFile);
     expect(records).toHaveLength(2);
     expect(records.map((r) => r.cwd)).toEqual([wtA, wtB]);
-    expect(records[0].sessionId).not.toBe(records[1].sessionId); // distinct fresh sessions
+    expect(records[0]?.sessionId).not.toBe(records[1]?.sessionId); // distinct fresh sessions
 
     // 4. Re-injection guard (eba1d3d9): the reused process's FROZEN process env
     //    still holds A's storage root on the 2nd dispatch, but session/new
     //    carried B's — proving the adapter re-injects the per-dispatch value
     //    rather than letting the stale process env leak through.
     expect(records.map((r) => r.storageRoot)).toEqual([storageA, storageB]);
-    expect(records[0].processStorageRoot).toBe(storageA);
-    expect(records[1].processStorageRoot).toBe(storageA); // frozen on the reused process
-    expect(records[1].storageRoot).toBe(storageB); // but session/new is per-dispatch correct
+    expect(records[0]?.processStorageRoot).toBe(storageA);
+    expect(records[1]?.processStorageRoot).toBe(storageA); // frozen on the reused process
+    expect(records[1]?.storageRoot).toBe(storageB); // but session/new is per-dispatch correct
 
     pool.shutdown();
   }, 15_000);

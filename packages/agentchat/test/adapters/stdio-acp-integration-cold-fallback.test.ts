@@ -1,12 +1,30 @@
 import { describe, expect, test, vi } from "bun:test";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
-import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
-import { startStdioAcpServer } from "../../src/adapters/stdio-acp-server.js";
+
 import { acpSpecHash, createAcpWarmPool } from "../../src/adapters/acp-warm-pool.js";
+import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
+import {
+  startStdioAcpServer,
+  type StartStdioAcpServerOptions,
+  type StdioAcpHandle,
+} from "../../src/adapters/stdio-acp-server.js";
+import { StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Narrow the unknown `session/new` response into the single field tests need.
+ * The real ACP client declares `request()` as `Promise<any>`, so callers must
+ * launder the result through unknown before extracting `sessionId`.
+ */
+function getSessionId(result: unknown): string {
+  if (typeof result === "object" && result !== null && "sessionId" in result) {
+    const id = result.sessionId;
+    if (typeof id === "string") return id;
+  }
+  throw new Error("expected session/new result with a string sessionId");
+}
 
 describe("stdio-acp warm pool real subprocess cold fallback", () => {
   test("evicts a killed idle real handle and cold-starts a replacement", async () => {
@@ -27,22 +45,27 @@ describe("stdio-acp warm pool real subprocess cold fallback", () => {
       clientCapabilities: {},
       clientInfo: { name: "test", version: "1" },
     });
-    const session = await staleClient.request("session/new", { cwd, mcpServers: [] });
+    const sessionResult = (await staleClient.request("session/new", {
+      cwd,
+      mcpServers: [],
+    })) as unknown;
     pool.deposit(key, {
       handle: staleHandle,
       client: staleClient,
-      sessionId: session.sessionId,
+      sessionId: getSessionId(sessionResult),
       specHash,
     });
     staleHandle.kill();
     await staleHandle.exited;
 
-    const startServer = vi.fn((opts) => startStdioAcpServer(opts));
+    const startServer = vi.fn(
+      (opts: StartStdioAcpServerOptions): Promise<StdioAcpHandle> => startStdioAcpServer(opts),
+    );
     const adapter = new StdioAcpAdapter(
       { binary: "bun", args, cwd, model: "codex-acp-fast", warmPool: true },
       {
         startServer,
-        createClient: (handle) =>
+        createClient: (handle: StdioAcpHandle): StdioAcpClient =>
           new StdioAcpClient({ stdin: handle.stdin, stdout: handle.stdout }),
         pool,
       },
