@@ -1,17 +1,18 @@
-import { describe, expect, test } from "bun:test";
-import { withSandboxedExecutor } from "../helpers/sandbox-fixtures.js";
 import {
-  FsWriteAppliedPayload,
   FsEditAppliedPayload,
-  TerminalSpawnedPayload,
+  FsWriteAppliedPayload,
   TerminalExitedPayload,
   TerminalKilledPayload,
+  TerminalSpawnedPayload,
 } from "@penumbra/core";
+import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+
+import { withSandboxedExecutor } from "../helpers/sandbox-fixtures.js";
 
 function at<T>(items: T[], index: number): T {
   const item = items[index];
-  if (item === undefined) throw new Error(`expected item at index ${index}`);
+  if (item === undefined) throw new Error(`expected item at index ${String(index)}`);
   return item;
 }
 
@@ -54,10 +55,9 @@ describe("Phase 1d audit events end-to-end", () => {
       );
       const event = events.find((e) => e.type === "fs.edit_applied")!;
       expect(event).toBeDefined();
-      expect(() => FsEditAppliedPayload.parse(event.payload)).not.toThrow();
-      const p = event.payload as any;
-      expect(p.bytes_added).toBe(3);
-      expect(p.bytes_removed).toBe(3);
+      const parsed = FsEditAppliedPayload.parse(event.payload);
+      expect(parsed.bytes_added).toBe(3);
+      expect(parsed.bytes_removed).toBe(3);
     });
   });
 
@@ -75,11 +75,10 @@ describe("Phase 1d audit events end-to-end", () => {
       await executor.terminalWaitForExit({ terminal_id });
       const event = events.find((e) => e.type === "terminal.spawned")!;
       expect(event).toBeDefined();
-      expect(() => TerminalSpawnedPayload.parse(event.payload)).not.toThrow();
-      const p = event.payload as any;
-      expect(p.argv).toEqual(["echo", "x"]);
-      expect(Array.isArray(p.env_keys)).toBe(true);
-      expect(p.env_keys.includes("PATH")).toBe(true);
+      const parsed = TerminalSpawnedPayload.parse(event.payload);
+      expect(parsed.argv).toEqual(["echo", "x"]);
+      expect(Array.isArray(parsed.env_keys)).toBe(true);
+      expect(parsed.env_keys.includes("PATH")).toBe(true);
     });
   });
 
@@ -97,11 +96,10 @@ describe("Phase 1d audit events end-to-end", () => {
       await executor.terminalWaitForExit({ terminal_id });
       const event = events.find((e) => e.type === "terminal.exited")!;
       expect(event).toBeDefined();
-      expect(() => TerminalExitedPayload.parse(event.payload)).not.toThrow();
-      const p = event.payload as any;
-      expect(p.exit_code).toBe(0);
-      expect(p.duration_ms).toBeGreaterThanOrEqual(0);
-      expect(p.duration_ms).toBeLessThan(5000);
+      const parsed = TerminalExitedPayload.parse(event.payload);
+      expect(parsed.exit_code).toBe(0);
+      expect(parsed.duration_ms).toBeGreaterThanOrEqual(0);
+      expect(parsed.duration_ms).toBeLessThan(5000);
     });
   });
 
@@ -117,9 +115,11 @@ describe("Phase 1d audit events end-to-end", () => {
         },
       );
       await executor.terminalKill({ terminal_id });
-      const event = events.find(
-        (e) => e.type === "terminal.killed" && (e.payload as any).reason === "operator",
-      )!;
+      const event = events.find((e) => {
+        if (e.type !== "terminal.killed") return false;
+        const result = TerminalKilledPayload.safeParse(e.payload);
+        return result.success && result.data.reason === "operator";
+      })!;
       expect(event).toBeDefined();
       expect(() => TerminalKilledPayload.parse(event.payload)).not.toThrow();
     });
@@ -146,8 +146,8 @@ describe("Phase 1d audit events end-to-end", () => {
       );
       const writes = events.filter((e) => e.type === "fs.write_applied");
       expect(writes.length).toBe(2);
-      const sha1 = (at(writes, 0).payload as any).sha256;
-      const sha2 = (at(writes, 1).payload as any).sha256;
+      const sha1 = FsWriteAppliedPayload.parse(at(writes, 0).payload).sha256;
+      const sha2 = FsWriteAppliedPayload.parse(at(writes, 1).payload).sha256;
       expect(sha1).toBe(sha2);
       expect(sha1).toBe(createHash("sha256").update("stable").digest("hex"));
     });
@@ -165,8 +165,9 @@ describe("Phase 1d audit events end-to-end", () => {
         },
       );
       const event = events.find((e) => e.type === "fs.write_applied")!;
-      expect((event.payload as any).path).toBe("sub/dir/file.txt");
-      expect((event.payload as any).path).not.toMatch(/^\/(tmp|var|private)/);
+      const parsed = FsWriteAppliedPayload.parse(event.payload);
+      expect(parsed.path).toBe("sub/dir/file.txt");
+      expect(parsed.path).not.toMatch(/^\/(tmp|var|private)/);
     });
   });
 
@@ -183,7 +184,8 @@ describe("Phase 1d audit events end-to-end", () => {
       );
       await executor.terminalWaitForExit({ terminal_id });
       const event = events.find((e) => e.type === "terminal.spawned")!;
-      const envKeys = (event.payload as any).env_keys;
+      const parsed = TerminalSpawnedPayload.parse(event.payload);
+      const envKeys = parsed.env_keys;
       // env_keys should be like ['PATH', 'HOME', 'CI', 'TERM'] — string names
       for (const key of envKeys) {
         expect(typeof key).toBe("string");
@@ -226,7 +228,12 @@ describe("Phase 1d audit events end-to-end", () => {
       );
       expect(phase1dEvents.length).toBeGreaterThan(0);
       for (const e of phase1dEvents) {
-        expect((e.payload as any).handoff_id).toBe("h-test");
+        const payload = e.payload;
+        if (typeof payload !== "object" || payload === null) {
+          throw new Error("event.payload must be an object");
+        }
+        const handoffId = (payload as { handoff_id?: unknown }).handoff_id;
+        expect(handoffId).toBe("h-test");
       }
     });
   });
@@ -304,7 +311,8 @@ describe("Phase 1d audit events end-to-end", () => {
       await executor.terminalWaitForExit({ terminal_id });
       const wallEnd = Date.now();
       const event = events.find((e) => e.type === "terminal.exited")!;
-      const durationMs = (event.payload as any).duration_ms;
+      const parsed = TerminalExitedPayload.parse(event.payload);
+      const durationMs = parsed.duration_ms;
       // sleep 0.3 ≈ 300ms, allow [200, 800] window for sandbox overhead
       expect(durationMs).toBeGreaterThanOrEqual(200);
       expect(durationMs).toBeLessThanOrEqual(wallEnd - wallStart + 100);
@@ -324,7 +332,8 @@ describe("Phase 1d audit events end-to-end", () => {
         },
       );
       const event = events.find((e) => e.type === "fs.write_applied")!;
-      expect((event.payload as any).bytes).toBe(10_000);
+      const parsed = FsWriteAppliedPayload.parse(event.payload);
+      expect(parsed.bytes).toBe(10_000);
       const payloadStr = JSON.stringify(event.payload);
       expect(payloadStr.length).toBeLessThan(500); // sha256 + path + bytes + handoff_id, no content
       expect(payloadStr.includes(big)).toBe(false);
@@ -352,8 +361,8 @@ describe("Phase 1d audit events end-to-end", () => {
       );
       const writes = events.filter((e) => e.type === "fs.write_applied");
       expect(writes.length).toBe(2);
-      expect((at(writes, 0).payload as any).path).toBe("a.txt");
-      expect((at(writes, 1).payload as any).path).toBe("b.txt");
+      expect(FsWriteAppliedPayload.parse(at(writes, 0).payload).path).toBe("a.txt");
+      expect(FsWriteAppliedPayload.parse(at(writes, 1).payload).path).toBe("b.txt");
     });
   });
 });

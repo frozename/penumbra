@@ -1,17 +1,28 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { buildServices, loadSqliteVec, migrate, createLogger, type Services } from "@penumbra/core";
+import {
+  buildServices,
+  createLogger,
+  type HandoffRow,
+  loadSqliteVec,
+  migrate,
+  type Services,
+} from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { serve } from "@penumbra/daemon/test-utils";
-import { PenumbraClient } from "../../src/penumbra-client.js";
+import { Database } from "bun:sqlite";
+import { expect } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import type { DispatchHandoffResult } from "../../src/cli/dispatch-handoff.js";
+import type { AgentChatConfig } from "../../src/config/types.js";
+import type { Adapter } from "../../src/sdk/adapter.js";
+
+import { clearCustomAdapters, registerAdapter } from "../../src/adapters/registry.js";
 import { dispatchHandoff } from "../../src/cli/dispatch-handoff.js";
+import { PenumbraClient } from "../../src/penumbra-client.js";
 import { createWorkerDispatcher } from "../../src/worker/dispatcher.js";
 import { startEventSource } from "../../src/worker/event-source.js";
-import { registerAdapter, clearCustomAdapters } from "../../src/adapters/registry.js";
-import type { AgentChatConfig } from "../../src/config/types.js";
 import { serviceTest } from "../helpers/service-gates.js";
 
 try {
@@ -20,6 +31,11 @@ try {
   }
 } catch {
   /* already loaded */
+}
+
+interface WorkerHandle {
+  dispatcher: ReturnType<typeof createWorkerDispatcher>;
+  es: ReturnType<typeof startEventSource>;
 }
 
 serviceTest(
@@ -38,23 +54,26 @@ serviceTest(
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       clock: () => new Date("2026-04-26T00:00:00Z"),
-      uuid: () => `id-${++n}`,
+      uuid: () => `id-${String(++n)}`,
     });
     services.agentRegistry = ["planner", "executor", "a", "b", "claude-mem"];
-    services.watchdog.hasActiveWorker = () => true;
+    services.watchdog.hasActiveWorker = (): boolean => true;
     const handle = serve({ services, token: "tok", port: 0 });
     services.watchdog.recordHeartbeat("test-worker");
     writeFileSync(join(dir, "port"), String(handle.port));
     writeFileSync(join(dir, "token"), "tok");
 
     let dispatchCount = 0;
-    registerAdapter("mock-race", () => ({
-      kind: "mock-race",
-      async dispatch() {
-        dispatchCount++;
-        return { text: "ok" };
-      },
-    }));
+    registerAdapter(
+      "mock-race",
+      (): Adapter => ({
+        kind: "mock-race",
+        dispatch: (): Promise<{ text: string }> => {
+          dispatchCount++;
+          return Promise.resolve({ text: "ok" });
+        },
+      }),
+    );
 
     const config: AgentChatConfig = {
       agents: [{ name: "a", adapter: "mock-race", options: {}, roles: ["a"], auto_approve_to: [] }],
@@ -63,18 +82,19 @@ serviceTest(
 
     const client = new PenumbraClient({ storageRoot: dir });
 
-    const makeWorker = async (id: string) => {
+    const makeWorker = async (id: string): Promise<WorkerHandle> => {
       const workerClient = new PenumbraClient({ storageRoot: dir });
       await workerClient.registerWorker({ worker_id: id });
       const dispatcher = createWorkerDispatcher({
         log: createLogger({ component: id }),
         concurrency: 1,
         claim: (hid) => workerClient.claimHandoff(hid, id),
-        postProgress: (hid, payload) => workerClient.postProgress(hid, payload),
-        complete: async (id) => {
-          await workerClient.completeHandoff(id);
+        postProgress: (hid: string, payload: Record<string, unknown>) =>
+          workerClient.postProgress(hid, payload),
+        complete: async (cid) => {
+          await workerClient.completeHandoff(cid);
         },
-        dispatch: async (h) => {
+        dispatch: async (h: HandoffRow): Promise<DispatchHandoffResult> => {
           const result = await dispatchHandoff({
             handoff: h,
             config,
@@ -84,9 +104,11 @@ serviceTest(
             hopsSoFar: 0,
             maxHops: 5,
             trustMode: "all",
-            observe: (e) => workerClient.observe(e),
-            createHandoff: (body) => workerClient.createHandoff(body),
-            approve: (hid2, body) => workerClient.approve(hid2, body),
+            observe: (e: Record<string, unknown>) => workerClient.observe(e),
+            createHandoff: (body: Parameters<typeof workerClient.createHandoff>[0]) =>
+              workerClient.createHandoff(body),
+            approve: (hid2: string, body: Parameters<typeof workerClient.approve>[1]) =>
+              workerClient.approve(hid2, body),
           });
           return result;
         },
@@ -127,7 +149,7 @@ serviceTest(
       await w2.es.stop();
       await w1.dispatcher.idle();
       await w2.dispatcher.idle();
-      handle.stop();
+      await handle.stop();
       db.close();
       rmSync(dir, { recursive: true, force: true });
       clearCustomAdapters();

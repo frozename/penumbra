@@ -1,12 +1,51 @@
-import { expect, test } from "bun:test";
-import { createLogger } from "@penumbra/core";
-import { dispatchHandoff } from "../../src/cli/dispatch-handoff.js";
-import { startEventSource } from "../../src/worker/event-source.js";
-import { createWorkerDispatcher } from "../../src/worker/dispatcher.js";
-import { registerAdapter, clearCustomAdapters } from "../../src/adapters/registry.js";
+import { createLogger, type HandoffRow } from "@penumbra/core";
+import { expect } from "bun:test";
+
+import type { DispatchHandoffResult } from "../../src/cli/dispatch-handoff.js";
 import type { AgentChatConfig } from "../../src/config/types.js";
-import { withDaemon } from "../helpers/with-daemon.js";
+import type { Adapter } from "../../src/sdk/adapter.js";
+
+import { clearCustomAdapters, registerAdapter } from "../../src/adapters/registry.js";
+import { dispatchHandoff } from "../../src/cli/dispatch-handoff.js";
+import { createWorkerDispatcher } from "../../src/worker/dispatcher.js";
+import { startEventSource } from "../../src/worker/event-source.js";
 import { serviceTest } from "../helpers/service-gates.js";
+import { withDaemon } from "../helpers/with-daemon.js";
+
+interface ChainStreamSummary {
+  tokens: string;
+  ended: boolean;
+  maxHopsReached: boolean;
+  hops: number;
+}
+
+type StreamEvent = { type?: string; delta?: string; reason?: string; next_handoff_id?: string };
+
+function isStreamTerminal(event: StreamEvent): boolean {
+  if (event.type === "chain-end") return true;
+  if (event.type === "hop-end" && !event.next_handoff_id) return true;
+  return false;
+}
+
+async function streamConversation(
+  client: ReturnType<typeof withDaemon>["client"],
+  conversationId: string,
+): Promise<ChainStreamSummary> {
+  let tokens = "";
+  let ended = false;
+  let maxHopsReached = false;
+  let hops = 0;
+  for await (const event of client.subscribeConversation(conversationId)) {
+    if (event.type === "hop-start") hops++;
+    if (event.type === "token" && typeof event.delta === "string") tokens += event.delta;
+    if (event.type === "chain-end" && event.reason === "max_hops") maxHopsReached = true;
+    if (isStreamTerminal(event)) {
+      ended = true;
+      break;
+    }
+  }
+  return { tokens, ended, maxHopsReached, hops };
+}
 
 serviceTest(
   "--thin path integration: startChain + subscribeConversation",
@@ -14,15 +53,18 @@ serviceTest(
     clearCustomAdapters();
     const { client, stop } = withDaemon();
 
-    registerAdapter("thin-test", () => ({
-      kind: "thin-test",
-      async dispatch({ prompt }) {
-        if (prompt.includes("From @planner") || prompt.includes("From planner")) {
-          return { text: "executor done" };
-        }
-        return { text: "plan: @executor go" };
-      },
-    }));
+    registerAdapter(
+      "thin-test",
+      (): Adapter => ({
+        kind: "thin-test",
+        dispatch: ({ prompt }): Promise<{ text: string }> => {
+          if (prompt.includes("From @planner") || prompt.includes("From planner")) {
+            return Promise.resolve({ text: "executor done" });
+          }
+          return Promise.resolve({ text: "plan: @executor go" });
+        },
+      }),
+    );
 
     const config: AgentChatConfig = {
       agents: [
@@ -50,11 +92,12 @@ serviceTest(
       log: createLogger({ component: "thin-test-worker" }),
       concurrency: 1,
       claim: (id) => client.claimHandoff(id, "thin-worker"),
-      postProgress: (id, payload) => client.postProgress(id, payload),
+      postProgress: (id: string, payload: Record<string, unknown>) =>
+        client.postProgress(id, payload),
       complete: async (id) => {
         await client.completeHandoff(id);
       },
-      dispatch: async (h, onChunk, signal) => {
+      dispatch: async (h: HandoffRow, onChunk, signal): Promise<DispatchHandoffResult> => {
         const transcript: { agent: string; text: string }[] = [];
         const { handoffs } = await client.listHandoffs({
           statuses: ["completed", "dispatched", "approved", "redirected"],
@@ -76,10 +119,12 @@ serviceTest(
           transcriptBudget: 4096,
           hopsSoFar,
           maxHops: 5,
-          trustMode: (h.chain_trust_mode ?? "all") as "all" | "config",
-          observe: (e) => client.observe(e),
-          createHandoff: (body) => client.createHandoff(body),
-          approve: (id, body) => client.approve(id, body),
+          trustMode: h.chain_trust_mode ?? "all",
+          observe: (e: Record<string, unknown>) => client.observe(e),
+          createHandoff: (body: Parameters<typeof client.createHandoff>[0]) =>
+            client.createHandoff(body),
+          approve: (id: string, body: Parameters<typeof client.approve>[1]) =>
+            client.approve(id, body),
           onChunk,
           signal,
         });
@@ -107,29 +152,12 @@ serviceTest(
         trust_mode: "all",
       });
 
-      let tokens = "";
-      let ended = false;
-      let maxHopsReached = false;
-      let hops = 0;
+      const summary = await streamConversation(client, res.conversation_id);
 
-      for await (const event of client.subscribeConversation(res.conversation_id)) {
-        if (event.type === "hop-start") hops++;
-        if (event.type === "token") tokens += event.delta;
-        if (event.type === "chain-end") {
-          ended = true;
-          if (event.reason === "max_hops") maxHopsReached = true;
-          break; // emulate the CLI breaking out of the loop
-        } else if (event.type === "hop-end") {
-          if (!event.next_handoff_id) {
-            ended = true;
-            break;
-          }
-        }
-      }
-
-      expect(ended).toBe(true);
-      expect(hops).toBeGreaterThan(0);
-      expect(tokens).toContain("executor done");
+      expect(summary.ended).toBe(true);
+      expect(summary.hops).toBeGreaterThan(0);
+      expect(summary.tokens).toContain("executor done");
+      expect(summary.maxHopsReached).toBe(false);
     } finally {
       await workerEvents.stop();
       await dispatcher.idle();

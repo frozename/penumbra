@@ -1,23 +1,37 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { buildServices, loadSqliteVec, migrate, createLogger, type Services } from "@penumbra/core";
+import {
+  buildServices,
+  createLogger,
+  type HandoffRow,
+  loadSqliteVec,
+  migrate,
+  type Services,
+} from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { createDaemonFetchHandler } from "@penumbra/daemon/test-utils";
-import { PenumbraClient, PenumbraHttpError } from "../../src/penumbra-client.js";
-import { dispatchHandoff } from "../../src/cli/dispatch-handoff.js";
-import { startEventSource } from "../../src/worker/event-source.js";
-import { createWorkerDispatcher } from "../../src/worker/dispatcher.js";
-import { registerAdapter } from "../../src/adapters/registry.js";
+import { Database } from "bun:sqlite";
+import { expect } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import type { DispatchHandoffResult } from "../../src/cli/dispatch-handoff.js";
 import type { AgentChatConfig } from "../../src/config/types.js";
+import type { Adapter } from "../../src/sdk/adapter.js";
+
+import { registerAdapter } from "../../src/adapters/registry.js";
+import { dispatchHandoff } from "../../src/cli/dispatch-handoff.js";
+import { PenumbraClient } from "../../src/penumbra-client.js";
+import { createWorkerDispatcher } from "../../src/worker/dispatcher.js";
+import { startEventSource } from "../../src/worker/event-source.js";
 import { serviceTest } from "../helpers/service-gates.js";
 
 try {
-  if (process.platform === "darwin")
+  if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-} catch {}
+  }
+} catch {
+  /* best-effort: custom SQLite path may not exist on every dev machine */
+}
 
 serviceTest(
   "headless POST /chains/start → worker dispatches a 2-hop chain → t0 trail matches a bin-driven chain",
@@ -34,33 +48,39 @@ serviceTest(
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       clock: () => new Date("2026-04-26T00:00:00Z"),
-      uuid: () => `id-${++n}`,
+      uuid: () => `id-${String(++n)}`,
     });
     services.agentRegistry = ["planner", "executor", "a", "b", "claude-mem"];
-    services.watchdog.hasActiveWorker = () => true;
+    services.watchdog.hasActiveWorker = (): boolean => true;
     const token = "tok";
     const handler = createDaemonFetchHandler({ services, token });
-    const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+    const fetchImpl = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
       const req = input instanceof Request ? input : new Request(String(input), init);
-      return handler(req);
-    }) as any;
+      return await handler(req);
+    }) as typeof fetch;
     writeFileSync(join(dir, "port"), "1");
     writeFileSync(join(dir, "token"), token);
 
     // Stub adapter: planner mentions @executor; executor replies plain.
     let plannerCalls = 0;
     let executorCalls = 0;
-    registerAdapter("mock-int", () => ({
-      kind: "mock-int",
-      async dispatch({ prompt }) {
-        if (prompt.includes("From @planner")) {
-          executorCalls++;
-          return { text: "executor done" };
-        }
-        plannerCalls++;
-        return { text: "plan: @executor go" };
-      },
-    }));
+    registerAdapter(
+      "mock-int",
+      (): Adapter => ({
+        kind: "mock-int",
+        dispatch: ({ prompt }): Promise<{ text: string }> => {
+          if (prompt.includes("From @planner")) {
+            executorCalls++;
+            return Promise.resolve({ text: "executor done" });
+          }
+          plannerCalls++;
+          return Promise.resolve({ text: "plan: @executor go" });
+        },
+      }),
+    );
     const config: AgentChatConfig = {
       agents: [
         {
@@ -89,11 +109,12 @@ serviceTest(
       log,
       concurrency: 1,
       claim: (id) => client.claimHandoff(id, "test-worker"),
-      postProgress: (id, payload) => client.postProgress(id, payload),
+      postProgress: (id: string, payload: Record<string, unknown>) =>
+        client.postProgress(id, payload),
       complete: async (id) => {
         await client.completeHandoff(id);
       },
-      dispatch: async (h) => {
+      dispatch: async (h: HandoffRow): Promise<DispatchHandoffResult> => {
         const transcript: { agent: string; text: string }[] = [];
         const { handoffs } = await client.listHandoffs({
           statuses: ["completed", "dispatched", "approved", "redirected"],
@@ -115,15 +136,17 @@ serviceTest(
           transcriptBudget: 4096,
           hopsSoFar,
           maxHops: 5,
-          trustMode: (h.chain_trust_mode ?? "all") as "all" | "config",
-          observe: (e) => client.observe(e),
-          createHandoff: (body) => client.createHandoff(body),
-          approve: (id, body) => client.approve(id, body),
+          trustMode: h.chain_trust_mode ?? "all",
+          observe: (e: Record<string, unknown>) => client.observe(e),
+          createHandoff: (body: Parameters<typeof client.createHandoff>[0]) =>
+            client.createHandoff(body),
+          approve: (id: string, body: Parameters<typeof client.approve>[1]) =>
+            client.approve(id, body),
         });
         return result;
       },
     });
-    const { stop } = startEventSource({
+    const handle = startEventSource({
       client: {
         listHandoffs: (o) => client.listHandoffs(o),
         subscribeHandoffEvents: (o) => client.subscribeHandoffEvents(o),
@@ -178,7 +201,7 @@ serviceTest(
         .all(res.conversation_id);
       expect(hand.every((h) => h.status === "completed")).toBe(true);
     } finally {
-      await stop();
+      await handle.stop();
       await dispatcher.idle();
       db.close();
       rmSync(dir, { recursive: true, force: true });

@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
-import { runChatTurn } from "../../src/cli/loop.js";
+
 import type { AgentChatConfig } from "../../src/config/types.js";
+import type { Adapter } from "../../src/sdk/adapter.js";
+
+import { runChatTurn } from "../../src/cli/loop.js";
 import { createPermissionCallback } from "../../src/worker/permission-callback.js";
 
 function makeHomeMgmtConfig(): AgentChatConfig {
@@ -31,14 +34,18 @@ function makeHomeMgmtConfig(): AgentChatConfig {
   };
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null) {
+    throw new Error("expected object record");
+  }
+  return value as Record<string, unknown>;
+}
+
 test("loop wiring: hosted_mcp_servers arrive as mcpServers in adapter options", async () => {
   let capturedOpts: Record<string, unknown> | null = null;
-  const fakeAdapter = {
+  const fakeAdapter: Adapter = {
     kind: "mock-hosted",
-    dispatch: async () => ({ text: "ok" }),
-    dispatchStream: async function* () {
-      yield { type: "done" as const, result: { text: "ok" } };
-    },
+    dispatch: () => Promise.resolve({ text: "ok" }),
   };
 
   await runChatTurn({
@@ -46,17 +53,20 @@ test("loop wiring: hosted_mcp_servers arrive as mcpServers in adapter options", 
     initialAgent: "home-mgmt",
     userMessage: "tick",
     conversation: { id: "c1", project_id: null },
-    observe: async () => ({ event_id: "e1" }),
+    observe: () => Promise.resolve({ event_id: "e1" }),
     buildAdapterOverride: (_kind, opts) => {
       capturedOpts = opts;
-      return fakeAdapter as any;
+      return fakeAdapter;
     },
   });
 
-  const opts = capturedOpts as unknown as Record<string, unknown>;
-  const servers = opts.mcpServers as any[];
-  expect(servers.find((s: any) => s.name === "ha")).toBeDefined();
-  expect(servers.find((s: any) => s.name === "ha")?.command).toBe("uvx");
+  expect(capturedOpts).not.toBeNull();
+  const opts: Record<string, unknown> = capturedOpts!;
+  const serversValue = opts.mcpServers;
+  if (!Array.isArray(serversValue)) throw new Error("mcpServers must be an array");
+  const haServer = serversValue.map(asRecord).find((s) => s.name === "ha");
+  expect(haServer).toBeDefined();
+  expect(haServer?.command).toBe("uvx");
   expect(opts.claudeCodeAllowedTools).toEqual([
     "mcp__ha__ha_pulse",
     "mcp__ha__ha_get_state",
@@ -73,9 +83,7 @@ test("allowlist gate approves mcp__ha__ha_pulse when allowlist has ha:ha_pulse",
     agentName: "home-mgmt",
     ttlSeconds: 60,
     daemonClient: {
-      requestPermission: async () => {
-        throw new Error("should not reach daemon");
-      },
+      requestPermission: () => Promise.reject(new Error("should not reach daemon")),
     },
     perDispatchAllowlist: new Set<string>(),
   });
@@ -97,9 +105,7 @@ test("allowlist gate rejects unlisted ha tool", async () => {
     agentName: "home-mgmt",
     ttlSeconds: 60,
     daemonClient: {
-      requestPermission: async () => {
-        throw new Error("network");
-      },
+      requestPermission: () => Promise.reject(new Error("network")),
     },
     perDispatchAllowlist: new Set<string>(),
   });
