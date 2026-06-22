@@ -1,36 +1,69 @@
+import {
+  buildServices,
+  type ExtractStumblesInput,
+  ProjectRegistry,
+  type Services,
+  TaskDraftPayloadSchema,
+} from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
+import { composeRecall } from "@penumbra/workflows";
+import { Database } from "bun:sqlite";
 import { expect, spyOn, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, copyFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
-import { Database } from "bun:sqlite";
+
+import { buildRegistry, type Registry } from "../../../workflows/src/registry.js";
 import {
+  fileSessionSummarizeStumbles,
+  MAX_DRAFTS_PER_SESSION,
+  workflowsHistoryRoute,
   workflowsListRoute,
   workflowsRunRoute,
   workflowsStatusRoute,
-  workflowsWaitRoute,
-  workflowsTriggerRoute,
-  workflowsHistoryRoute,
   workflowsSuggestRoute,
-  fileSessionSummarizeStumbles,
-  MAX_DRAFTS_PER_SESSION,
+  workflowsTriggerRoute,
+  workflowsWaitRoute,
 } from "../../src/routes/workflows.js";
-import { buildRegistry } from "../../../workflows/src/registry.js";
-import { composeRecall } from "@penumbra/workflows";
-import { ProjectRegistry, buildServices, TaskDraftPayloadSchema } from "@penumbra/core";
-import type { Services } from "@penumbra/core";
-import { TestEmbedder } from "@penumbra/core/testing";
 import { createWorkflowRunsRegistry } from "../../src/services/workflow-runs-registry.js";
 
 if (process.platform === "darwin") {
   try {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-  } catch {}
+  } catch {
+    // sqlite override unavailable; fall back to bundled
+  }
 }
 
-function freshDb() {
+function mockServices(partial: Record<string, unknown>): Services {
+  // Tests stub only the Services properties each route reads. A fully typed
+  // mock would require constructing every runtime singleton (writers, registry,
+  // embedder, ...); centralize the type gap here so callers stay readable.
+  return partial as unknown as Services;
+}
+
+function mockRegistry(partial: Record<string, unknown>): Registry {
+  const opaque: unknown = partial;
+  return opaque as Registry;
+}
+
+function execMulti(db: Database, sql: string): void {
+  // Database.exec is deprecated; split multi-statement SQL into per-statement
+  // db.run calls so each statement is prepared via the supported API.
+  for (const stmt of sql
+    .split(";")
+    .map((stmt) => stmt.trim())
+    .filter(Boolean)) {
+    db.run(stmt);
+  }
+}
+
+function freshDb(): Database {
   const db = new Database(":memory:");
-  db.exec(`
+  execMulti(
+    db,
+    `
     CREATE TABLE IF NOT EXISTS t0_events (
       event_id TEXT PRIMARY KEY,
       ts TEXT NOT NULL,
@@ -154,15 +187,16 @@ function freshDb() {
       error TEXT,
       UNIQUE(kind, reference_id)
     );
-  `);
+  `,
+  );
   return db;
 }
 
-function markTrustedRoot(root: string) {
+function markTrustedRoot(root: string): void {
   writeFileSync(join(root, ".penumbra-project"), "test-project\n");
 }
 
-async function setupReg() {
+async function setupReg(): Promise<{ reg: Registry; root: string }> {
   const root = mkdtempSync(join(tmpdir(), "wfd-"));
   markTrustedRoot(root);
   mkdirSync(join(root, "playbooks/x"), { recursive: true });
@@ -181,11 +215,11 @@ async function setupReg() {
 test("GET /workflows/list returns registry list", async () => {
   const { reg, root } = await setupReg();
   try {
-    const services = { workflowRegistry: reg } as any;
+    const services = mockServices({ workflowRegistry: reg });
     const req = new Request("http://localhost/workflows/list");
     const res = await workflowsListRoute(req, services);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { workflows: Array<{ name: string; description: string }> };
+    const body = (await res.json()) as { workflows: { name: string; description: string }[] };
     expect(body.workflows.map((w) => w.name)).toEqual(["x"]);
     expect(body.workflows[0].description).toBe("D");
   } finally {
@@ -203,13 +237,13 @@ test("POST /workflows/run executes a registered workflow", async () => {
       db,
       storageRoot: root,
     });
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg,
       workflowRuns,
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as unknown as Services;
+    });
     const req = new Request("http://localhost/workflows/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -257,13 +291,13 @@ export const fn: WorkflowFn = async () => ({ outcome: 'sync', nested: { ok: true
       db,
       storageRoot: root,
     });
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg,
       workflowRuns,
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as unknown as Services;
+    });
     const req = new Request("http://localhost/workflows/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -317,13 +351,13 @@ export const fn: WorkflowFn = async () => {
       db,
       storageRoot: root,
     });
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg,
       workflowRuns,
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as unknown as Services;
+    });
     const req = new Request("http://localhost/workflows/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -333,7 +367,7 @@ export const fn: WorkflowFn = async () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       workflow_run_id: "wfrun-1",
-      started_at: expect.any(Number),
+      started_at: expect.any(Number) as unknown,
     });
     let statusBody: { status: string } | null = null;
     for (let i = 0; i < 20; i += 1) {
@@ -392,14 +426,14 @@ export const fn: WorkflowFn = async () => ({ ok: true });
       debug: () => undefined,
     } as const;
     const errorSpy = spyOn(log, "error");
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg,
       workflowRuns,
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
       log,
-    } as unknown as Services;
+    });
     const recordSpy = spyOn(workflowRuns, "recordResult").mockRejectedValueOnce(
       new Error("persist failed"),
     );
@@ -450,13 +484,13 @@ export const fn: WorkflowFn = async () => ({ ok: true });
       db,
       storageRoot: root,
     });
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg,
       workflowRuns,
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as unknown as Services;
+    });
     const recordSpy = spyOn(workflowRuns, "recordResult").mockRejectedValueOnce(
       new Error("persist failed"),
     );
@@ -525,14 +559,18 @@ export const fn: WorkflowFn = async () => ({ ok: true });
       storageRoot: root,
     });
     const errorSpy = spyOn(console, "error").mockImplementation(() => undefined);
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg,
       workflowRuns,
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-      log: { error: (...args: any[]) => console.error(...args) },
-    } as unknown as Services;
+      log: {
+        error: (...args: unknown[]) => {
+          console.error(args.map(String).join(" "));
+        },
+      },
+    });
     spyOn(workflowRuns, "recordResult").mockRejectedValueOnce(new Error("persist failed"));
     const runReq = new Request("http://localhost/workflows/run", {
       method: "POST",
@@ -563,7 +601,7 @@ test("POST /workflows/wait blocks until terminal state and times out", async () 
     });
     const id = workflowRuns.register("wf", "proj");
     expect(id).toBe("wfrun-1");
-    const services = {
+    const services = mockServices({
       workflowRuns,
       projectRegistry: new ProjectRegistry(
         new Map([["proj", { project_id: "proj", root_path: root }]]),
@@ -571,7 +609,7 @@ test("POST /workflows/wait blocks until terminal state and times out", async () 
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
     await workflowRuns.recordResult("wfrun-1", { ok: true });
     const successReq = new Request("http://localhost/workflows/wait", {
       method: "POST",
@@ -581,10 +619,10 @@ test("POST /workflows/wait blocks until terminal state and times out", async () 
     const successRes = await workflowsWaitRoute(successReq, services);
     expect(await successRes.json()).toMatchObject({
       status: "completed",
-      started_at: expect.any(Number),
-      finished_at: expect.any(Number),
+      started_at: expect.any(Number) as unknown,
+      finished_at: expect.any(Number) as unknown,
       result: { ok: true },
-      result_bytes: expect.any(Number),
+      result_bytes: expect.any(Number) as unknown,
       error_bytes: 0,
     });
 
@@ -601,7 +639,7 @@ test("POST /workflows/wait blocks until terminal state and times out", async () 
       storageRoot: root,
     });
     expect(timeoutRuns.register("wf-timeout", "proj")).toBe("wfrun-2");
-    const timeoutServices = {
+    const timeoutServices = mockServices({
       workflowRuns: timeoutRuns,
       projectRegistry: new ProjectRegistry(
         new Map([["proj", { project_id: "proj", root_path: root }]]),
@@ -609,7 +647,7 @@ test("POST /workflows/wait blocks until terminal state and times out", async () 
       db: timeoutDb,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
     const timeoutRes = await workflowsWaitRoute(timeoutReq, timeoutServices);
     expect(await timeoutRes.json()).toEqual({ status: "timeout" });
   } finally {
@@ -630,7 +668,7 @@ test("POST /workflows/wait accepts timeout_ms up to 1.8M and rejects beyond", as
     });
     workflowRuns.register("wf", "proj");
     await workflowRuns.recordResult("wfrun-cap", { ok: true });
-    const services = {
+    const services = mockServices({
       workflowRuns,
       projectRegistry: new ProjectRegistry(
         new Map([["proj", { project_id: "proj", root_path: root }]]),
@@ -638,7 +676,7 @@ test("POST /workflows/wait accepts timeout_ms up to 1.8M and rejects beyond", as
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
 
     const okReq = new Request("http://localhost/workflows/wait", {
       method: "POST",
@@ -668,7 +706,7 @@ test("POST /workflows/wait returns not_found for unknown ids", async () => {
   try {
     markTrustedRoot(root);
     const db = freshDb();
-    const services = {
+    const services = mockServices({
       workflowRuns: createWorkflowRunsRegistry({
         uuid: () => "wfrun-1",
         clock: () => new Date("2026-04-26T00:00:00Z"),
@@ -681,7 +719,7 @@ test("POST /workflows/wait returns not_found for unknown ids", async () => {
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
     const req = new Request("http://localhost/workflows/wait", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -712,7 +750,7 @@ test("POST /workflows/status rejects cross-project access with not_found shape",
     });
     const id = workflowRuns.register("wf", "proj-a");
     expect(id).toBe("wfrun-1");
-    const services = {
+    const services = mockServices({
       workflowRuns,
       projectRegistry: new ProjectRegistry(
         new Map([
@@ -723,7 +761,7 @@ test("POST /workflows/status rejects cross-project access with not_found shape",
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root1 },
-    } as any;
+    });
 
     const forbiddenReq = new Request("http://localhost/workflows/status", {
       method: "POST",
@@ -763,7 +801,7 @@ test("POST /workflows/status omits result and error fields", async () => {
     expect(workflowRuns.register("wf", "proj-a")).toBe("wfrun-1");
     const largeResult = { data: "x".repeat(100_000) };
     await workflowRuns.recordResult("wfrun-1", largeResult);
-    const services = {
+    const services = mockServices({
       workflowRuns,
       projectRegistry: new ProjectRegistry(
         new Map([["proj-a", { project_id: "proj-a", root_path: root }]]),
@@ -771,7 +809,7 @@ test("POST /workflows/status omits result and error fields", async () => {
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
 
     const req = new Request("http://localhost/workflows/status", {
       method: "POST",
@@ -804,7 +842,7 @@ test("POST /workflows/status body is < 2 KB regardless of result size", async ()
     });
     expect(workflowRuns.register("wf", "proj-a")).toBe("wfrun-1");
     await workflowRuns.recordResult("wfrun-1", { data: "x".repeat(100_000) });
-    const services = {
+    const services = mockServices({
       workflowRuns,
       projectRegistry: new ProjectRegistry(
         new Map([["proj-a", { project_id: "proj-a", root_path: root }]]),
@@ -812,7 +850,7 @@ test("POST /workflows/status body is < 2 KB regardless of result size", async ()
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
 
     const req = new Request("http://localhost/workflows/status", {
       method: "POST",
@@ -842,7 +880,7 @@ test("POST /workflows/status uses getStatusLight, not getStatus", async () => {
     expect(workflowRuns.register("wf", "proj-a")).toBe("wfrun-1");
     const getStatusLightSpy = spyOn(workflowRuns, "getStatusLight");
     const getStatusSpy = spyOn(workflowRuns, "getStatus");
-    const services = {
+    const services = mockServices({
       workflowRuns,
       projectRegistry: new ProjectRegistry(
         new Map([["proj-a", { project_id: "proj-a", root_path: root }]]),
@@ -850,7 +888,7 @@ test("POST /workflows/status uses getStatusLight, not getStatus", async () => {
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
 
     const req = new Request("http://localhost/workflows/status", {
       method: "POST",
@@ -878,7 +916,7 @@ test("POST /workflows/status returns 200 (not 400 untrusted_cwd) for a same-proj
       storageRoot: root,
     });
     expect(workflowRuns.register("wf", "proj-a")).toBe("wfrun-1");
-    const services = {
+    const services = mockServices({
       workflowRuns,
       projectRegistry: new ProjectRegistry(
         new Map([["proj-a", { project_id: "proj-a", root_path: root }]]),
@@ -886,7 +924,7 @@ test("POST /workflows/status returns 200 (not 400 untrusted_cwd) for a same-proj
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
 
     const req = new Request("http://localhost/workflows/status", {
       method: "POST",
@@ -894,12 +932,12 @@ test("POST /workflows/status returns 200 (not 400 untrusted_cwd) for a same-proj
       body: JSON.stringify({ workflow_run_id: "wfrun-1", cwd: root }),
     });
     const res = await workflowsStatusRoute(req, services);
-    const body = await res.json();
+    const body = (await res.json()) as { error?: { code?: string } };
     expect(res.status).toBe(200);
-    expect(body?.error?.code).not.toBe("untrusted_cwd");
+    expect(body.error?.code).not.toBe("untrusted_cwd");
     expect(body).toMatchObject({
       status: "running",
-      started_at: expect.any(Number),
+      started_at: expect.any(Number) as unknown,
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -920,7 +958,7 @@ test("POST /workflows/status returns the same not_found response for unknown and
       storageRoot: root1,
     });
     workflowRuns.register("wf", "proj-a");
-    const services = {
+    const services = mockServices({
       workflowRuns,
       projectRegistry: new ProjectRegistry(
         new Map([
@@ -931,7 +969,7 @@ test("POST /workflows/status returns the same not_found response for unknown and
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root1 },
-    } as any;
+    });
 
     const foreignReq = new Request("http://localhost/workflows/status", {
       method: "POST",
@@ -961,7 +999,7 @@ test("POST /workflows/status returns explicit not_found for unknown ids", async 
   try {
     markTrustedRoot(root);
     const db = freshDb();
-    const services = {
+    const services = mockServices({
       workflowRuns: createWorkflowRunsRegistry({
         uuid: () => "wfrun-1",
         clock: () => new Date("2026-04-26T00:00:00Z"),
@@ -974,7 +1012,7 @@ test("POST /workflows/status returns explicit not_found for unknown ids", async 
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
     const req = new Request("http://localhost/workflows/status", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1003,7 +1041,7 @@ test("POST /workflows/wait returns 200 (not 400 untrusted_cwd) for a same-projec
     });
     expect(workflowRuns.register("wf", "proj-a")).toBe("wfrun-1");
     await workflowRuns.recordResult("wfrun-1", { ok: true });
-    const services = {
+    const services = mockServices({
       workflowRuns,
       projectRegistry: new ProjectRegistry(
         new Map([["proj-a", { project_id: "proj-a", root_path: root }]]),
@@ -1011,7 +1049,7 @@ test("POST /workflows/wait returns 200 (not 400 untrusted_cwd) for a same-projec
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
 
     const req = new Request("http://localhost/workflows/wait", {
       method: "POST",
@@ -1019,13 +1057,13 @@ test("POST /workflows/wait returns 200 (not 400 untrusted_cwd) for a same-projec
       body: JSON.stringify({ workflow_run_id: "wfrun-1", cwd: root, timeout_ms: 10 }),
     });
     const res = await workflowsWaitRoute(req, services);
-    const body = await res.json();
+    const body = (await res.json()) as { error?: { code?: string } };
     expect(res.status).toBe(200);
-    expect(body?.error?.code).not.toBe("untrusted_cwd");
+    expect(body.error?.code).not.toBe("untrusted_cwd");
     expect(body).toMatchObject({
       status: "completed",
-      started_at: expect.any(Number),
-      finished_at: expect.any(Number),
+      started_at: expect.any(Number) as unknown,
+      finished_at: expect.any(Number) as unknown,
       result: { ok: true },
     });
   } finally {
@@ -1047,7 +1085,7 @@ test("POST /workflows/wait rejects the 17th concurrent waiter", async () => {
     });
     const id = workflowRuns.register("wf", "proj-a");
     expect(id).toBe("wfrun-1");
-    const services = {
+    const services = mockServices({
       workflowRuns,
       projectRegistry: new ProjectRegistry(
         new Map([["proj-a", { project_id: "proj-a", root_path: root }]]),
@@ -1055,7 +1093,7 @@ test("POST /workflows/wait rejects the 17th concurrent waiter", async () => {
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
     const requests = Array.from(
       { length: 16 },
       () =>
@@ -1108,12 +1146,12 @@ export default spec;
       workflowsDir: join(root, "workflows"),
     });
     const db = freshDb();
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg,
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
     const req = new Request("http://localhost/workflows/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1161,7 +1199,7 @@ export const fn: WorkflowFn = async (ctx) => ({ project: ctx.project, cwd: ctx.c
       workflowsDir: join(root, "workflows"),
     });
     const db = freshDb();
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg,
       projectRegistry: new ProjectRegistry(
         new Map([["fake-proj", { project_id: "fake-proj", root_path: gitRoot }]]),
@@ -1169,7 +1207,7 @@ export const fn: WorkflowFn = async (ctx) => ({ project: ctx.project, cwd: ctx.c
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
     const req = new Request("http://localhost/workflows/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1210,7 +1248,7 @@ export default spec;
     });
     const db = freshDb();
     let registerCalls = 0;
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg,
       workflowRuns: {
         register: () => {
@@ -1222,7 +1260,7 @@ export default spec;
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
     const req = new Request("http://localhost/workflows/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1240,7 +1278,7 @@ test("workflow run returns 503 when registry.list() throws", async () => {
   const { reg, root } = await setupReg();
   try {
     const db = freshDb();
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg,
       projectRegistry: {
         list: () => {
@@ -1250,7 +1288,7 @@ test("workflow run returns 503 when registry.list() throws", async () => {
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
     const req = new Request("http://localhost/workflows/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1273,12 +1311,12 @@ test("POST /workflows/run rejects untrusted cwd", async () => {
   const untrusted = mkdtempSync(join(tmpdir(), "wf-untrusted-run-"));
   try {
     const db = freshDb();
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg,
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
     const req = new Request("http://localhost/workflows/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1320,12 +1358,12 @@ export const fn: WorkflowFn = async (ctx) => ({ args: ctx.args });
       workflowsDir: join(root, "workflows"),
     });
     const db = freshDb();
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg,
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
     const req = new Request("http://localhost/workflows/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1402,12 +1440,12 @@ export const fn: WorkflowFn = async (ctx) => ({ args: ctx.args });
       workflowsDir: join(root, "workflows"),
     });
     const db = freshDb();
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg,
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
     const req = new Request("http://localhost/workflows/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1480,12 +1518,12 @@ export const fn: WorkflowFn = async (ctx) => ({ args: ctx.args });
       workflowsDir: join(root, "workflows"),
     });
     const db = freshDb();
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg,
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
     const req = new Request("http://localhost/workflows/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1501,7 +1539,7 @@ export const fn: WorkflowFn = async (ctx) => ({ args: ctx.args });
       error?: {
         code?: string;
         message?: string;
-        issues?: Array<{ path: Array<string | number>; message: string; expected?: unknown }>;
+        issues?: { path: (string | number)[]; message: string; expected?: unknown }[];
       };
     };
     expect(body.error?.code).toBe("invalid_args");
@@ -1537,7 +1575,7 @@ test("composeRecall resolves {{today}} when templateCtx is provided", async () =
   expect(bundle.warnings.find((w) => w.includes("{{today}}"))).toBeUndefined();
 });
 
-function makeRecallPlaybookFs(root: string, playbookName: string) {
+function makeRecallPlaybookFs(root: string, playbookName: string): void {
   markTrustedRoot(root);
   mkdirSync(join(root, `playbooks/${playbookName}`), { recursive: true });
   mkdirSync(join(root, "workflows"), { recursive: true });
@@ -1553,7 +1591,7 @@ function seedMemory(
   body: string,
   createdAt: string,
   projectId: string | null = "unknown",
-) {
+): void {
   db.prepare(
     `INSERT INTO t2_memories (
        memory_id, project_id, user_id, kind, source_session_ids,
@@ -1594,12 +1632,12 @@ test("POST /workflows/run resolves sessionStart from claude_code_sessions when s
     ).run("sess-A", "2026-05-05T03:00:00Z", "2026-05-05T05:00:00Z", "demo");
     seedMemory(db, "m-old", "hello world before", "2026-05-05T02:00:00Z", "test-project");
     seedMemory(db, "m-new", "hello world after", "2026-05-05T04:30:00Z", "test-project");
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg,
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
     const req = new Request("http://localhost/workflows/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1642,12 +1680,12 @@ test("POST /workflows/run falls back to now-8h when session_id is missing", asyn
     const outside = new Date(now - 12 * 60 * 60 * 1000).toISOString(); // 12h ago
     seedMemory(db, "m-within", "hello recent", within, "test-project");
     seedMemory(db, "m-outside", "hello old", outside, "test-project");
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg,
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
     const req = new Request("http://localhost/workflows/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1670,23 +1708,21 @@ test("POST /workflows/run falls back to now-8h when session_id is missing", asyn
 });
 
 test("fileSessionSummarizeStumbles forwards the active project to the extractor", async () => {
-  const services = {
-    log: { error: () => {} },
+  const services = mockServices({
+    log: { error: () => undefined },
     machineId: { get: () => "machine-1" },
-    t0Writer: { write: () => {} },
-  } as any;
-  let seenInput:
-    | Parameters<NonNullable<typeof fileSessionSummarizeStumbles>["0"]["extractor"]>[0]
-    | undefined;
+    t0Writer: { write: () => undefined },
+  });
+  let seenInput: ExtractStumblesInput | undefined;
   await fileSessionSummarizeStumbles({
     services,
     sessionId: "sess-1",
     project: "project-x",
-    extractor: async (input) => {
+    extractor: (input) => {
       seenInput = input;
-      return [];
+      return Promise.resolve([]);
     },
-    filer: async () => {},
+    filer: () => Promise.resolve(),
   });
   expect(seenInput?.default_project).toBe("project-x");
 });
@@ -1694,12 +1730,12 @@ test("fileSessionSummarizeStumbles forwards the active project to the extractor"
 test("POST /workflows/run unknown name → 404", async () => {
   const { reg, root } = await setupReg();
   try {
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg,
       db: freshDb(),
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
     const req = new Request("http://localhost/workflows/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1726,11 +1762,14 @@ test("POST /workflows/trigger includes memory-digest markdown on session-start",
       workflowsDir: join(root, "workflows"),
     });
     const db = freshDb();
-    db.exec(`
+    execMulti(
+      db,
+      `
       ALTER TABLE t2_memories ADD COLUMN slug TEXT;
       ALTER TABLE t2_memories ADD COLUMN hook TEXT;
       ALTER TABLE t2_memories ADD COLUMN retired_at TEXT;
-    `);
+    `,
+    );
     db.prepare(
       `
       INSERT INTO t2_memories (
@@ -1790,12 +1829,12 @@ test("POST /workflows/trigger includes memory-digest markdown on session-start",
       )
     `,
     ).run();
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg,
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
     const req = new Request("http://localhost/workflows/trigger", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1830,12 +1869,12 @@ test("POST /workflows/trigger runs session-reminder sinks inline and returns add
       workflowsDir: join(root, "workflows"),
     });
     const db = freshDb();
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg,
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
     const req = new Request("http://localhost/workflows/trigger", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1867,12 +1906,12 @@ test("POST /workflows/trigger rejects untrusted cwd", async () => {
       workflowsDir: join(root, "workflows"),
     });
     const db = freshDb();
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg,
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
     const req = new Request("http://localhost/workflows/trigger", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1904,12 +1943,12 @@ test("POST /workflows/trigger without session-reminder sinks returns null additi
       workflowsDir: join(root, "workflows"),
     });
     const db = freshDb();
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg2,
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
     const req = new Request("http://localhost/workflows/trigger", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1940,12 +1979,12 @@ test("POST /workflows/trigger fires lifecycle event and returns matched names", 
       workflowsDir: join(root, "workflows"),
     });
     const db = freshDb();
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg,
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
     const req = new Request("http://localhost/workflows/trigger", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1983,18 +2022,18 @@ test("POST /workflows/trigger filters lifecycle matches by hookContext.tool_name
     output: [{ kind: "clipboard" }],
     run: { kind: "markdown-template", template: "B" },
   };
-  const reg = {
+  const reg = mockRegistry({
     findByTrigger: () => [workflowA, workflowB],
     getEntry: () => undefined,
-  } as any;
-  const services = {
+  });
+  const services = mockServices({
     workflowRegistry: reg,
     db: freshDb(),
     embedder: new TestEmbedder({ dim: 384 }),
     settings: { storageRoot: "/tmp" },
-  } as any;
+  });
 
-  const makeRequest = (toolName?: string | null) =>
+  const makeRequest = (toolName?: string | null): Request =>
     new Request("http://localhost/workflows/trigger", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -2005,7 +2044,7 @@ test("POST /workflows/trigger filters lifecycle matches by hookContext.tool_name
       }),
     });
 
-  const readMatched = async (req: Request) => {
+  const readMatched = async (req: Request): Promise<string[]> => {
     const res = await workflowsTriggerRoute(req, services);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { matched: string[] };
@@ -2065,12 +2104,12 @@ export const fn: WorkflowFn = async () => ({ ok: true });
       workflowsDir: join(root, "workflows"),
     });
     const db = freshDb();
-    const services = {
+    const services = mockServices({
       workflowRegistry: reg,
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
-    } as any;
+    });
     const req = new Request("http://localhost/workflows/trigger", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -2083,7 +2122,7 @@ export const fn: WorkflowFn = async () => ({ ok: true });
     const res = await workflowsTriggerRoute(req, services);
     expect(res.status).toBe(400);
     const body = (await res.json()) as {
-      error?: { code?: string; issues?: Array<{ path: Array<string | number> }> };
+      error?: { code?: string; issues?: { path: (string | number)[] }[] };
     };
     expect(body.error?.code).toBe("invalid_args");
     expect(body.error?.issues?.some((issue) => issue.path.join(".") === "timeout_ms")).toBe(true);
@@ -2094,24 +2133,27 @@ export const fn: WorkflowFn = async () => ({ ok: true });
 
 test("GET /workflows/history returns workflow_stats row", async () => {
   const db = freshDb();
-  db.exec(`
+  execMulti(
+    db,
+    `
     INSERT INTO workflow_stats (workflow_name, samples, successes, failures, avg_latency_ms, last_run_at, consecutive_failures, quarantined)
     VALUES ('demo', 5, 4, 1, 200, '2026-05-04T15:00:00Z', 0, 0);
-  `);
-  const services = { db } as any;
+  `,
+  );
+  const services = mockServices({ db });
   const req = new Request("http://localhost/workflows/history?name=demo");
   const res = await workflowsHistoryRoute(req, services);
   expect(res.status).toBe(200);
-  const body = (await res.json()) as { stats: any; recent: any[] };
+  const body = (await res.json()) as { stats: { samples: number }; recent: unknown[] };
   expect(body.stats.samples).toBe(5);
 });
 
 test("session-summarize stop hook calls the stumble extractor and files returned drafts", async () => {
   const root = mkdtempSync(join(tmpdir(), "wf-session-summarize-"));
   try {
-    const serviceCalls: Array<{ sessionId: string; prompt: string }> = [];
-    const services = {
-      log: { error: () => {} },
+    const serviceCalls: { sessionId: string; prompt: string }[] = [];
+    const services = mockServices({
+      log: { error: () => undefined },
       uuid: () => "123e4567-e89b-12d3-a456-426614174000",
       machineId: { get: () => "machine-1" },
       clock: () => new Date("2026-05-01T00:00:00.000Z"),
@@ -2125,18 +2167,19 @@ test("session-summarize stop hook calls the stumble extractor and files returned
           expect(Object.keys(event.payload_json).sort()).toEqual(Object.keys(payload).sort());
         },
       },
-    } as any;
+    });
     await fileSessionSummarizeStumbles({
       services,
       sessionId: "sess-1",
       project: "test-project",
-      extractor: async () => [
-        {
-          prompt: "TODO: audit X before shipping",
-          affects_projects: ["penumbra"],
-          evidence: { conv_ids: [], commits: [], files: [], session_id: "sess-1" },
-        },
-      ],
+      extractor: () =>
+        Promise.resolve([
+          {
+            prompt: "TODO: audit X before shipping",
+            affects_projects: ["penumbra"],
+            evidence: { conv_ids: [], commits: [], files: [], session_id: "sess-1" },
+          },
+        ]),
     });
     expect(serviceCalls).toHaveLength(1);
     expect(serviceCalls[0]?.prompt).toBe("TODO: audit X before shipping");
@@ -2148,9 +2191,9 @@ test("session-summarize stop hook calls the stumble extractor and files returned
 test("session-summarize stop hook falls back to transcript-only mode when db access is unavailable", async () => {
   const root = mkdtempSync(join(tmpdir(), "wf-session-summarize-dbless-"));
   try {
-    const serviceCalls: Array<{ prompt: string }> = [];
-    const services = {
-      log: { error: () => {} },
+    const serviceCalls: { prompt: string }[] = [];
+    const services = mockServices({
+      log: { error: () => undefined },
       uuid: () => "123e4567-e89b-12d3-a456-426614174000",
       machineId: { get: () => "machine-1" },
       clock: () => new Date("2026-05-01T00:00:00.000Z"),
@@ -2161,25 +2204,23 @@ test("session-summarize stop hook falls back to transcript-only mode when db acc
           serviceCalls.push({ prompt: payload.prompt });
         },
       },
-    } as any;
+    });
 
-    await expect(
-      fileSessionSummarizeStumbles({
-        services,
-        sessionId: "sess-1",
-        project: "test-project",
-        extractor: async (input) => {
-          expect(input.dispatch_events_query).toBeUndefined();
-          return [
-            {
-              prompt: "TODO: audit X before shipping",
-              affects_projects: ["penumbra"],
-              evidence: { conv_ids: [], commits: [], files: [], session_id: "sess-1" },
-            },
-          ];
-        },
-      }),
-    ).resolves.toBeUndefined();
+    await fileSessionSummarizeStumbles({
+      services,
+      sessionId: "sess-1",
+      project: "test-project",
+      extractor: (input) => {
+        expect(input.dispatch_events_query).toBeUndefined();
+        return Promise.resolve([
+          {
+            prompt: "TODO: audit X before shipping",
+            affects_projects: ["penumbra"],
+            evidence: { conv_ids: [], commits: [], files: [], session_id: "sess-1" },
+          },
+        ]);
+      },
+    });
     expect(serviceCalls).toHaveLength(1);
     expect(serviceCalls[0]?.prompt).toBe("TODO: audit X before shipping");
   } finally {
@@ -2190,13 +2231,13 @@ test("session-summarize stop hook falls back to transcript-only mode when db acc
 test("session-summarize caps filed drafts at MAX_DRAFTS_PER_SESSION", async () => {
   const root = mkdtempSync(join(tmpdir(), "wf-session-summarize-cap-"));
   try {
-    const serviceCalls: Array<{ prompt: string }> = [];
-    const warnCalls: Array<{ session_id: string; total: number; cap: number }> = [];
-    const services = {
+    const serviceCalls: { prompt: string }[] = [];
+    const warnCalls: { session_id: string; total: number; cap: number }[] = [];
+    const services = mockServices({
       log: {
-        error: () => {},
+        error: () => undefined,
         warn: (meta: Record<string, unknown>) => {
-          warnCalls.push(meta as any);
+          warnCalls.push(meta as { session_id: string; total: number; cap: number });
         },
       },
       uuid: () => "123e4567-e89b-12d3-a456-426614174000",
@@ -2209,11 +2250,11 @@ test("session-summarize caps filed drafts at MAX_DRAFTS_PER_SESSION", async () =
           serviceCalls.push({ prompt: payload.prompt });
         },
       },
-    } as any;
+    });
 
     const overCap = MAX_DRAFTS_PER_SESSION + 5;
     const candidates = Array.from({ length: overCap }, (_, i) => ({
-      prompt: `TODO: audit item ${i}`,
+      prompt: `TODO: audit item ${String(i)}`,
       affects_projects: ["penumbra"],
       evidence: { conv_ids: [], commits: [], files: [], session_id: "sess-1" },
     }));
@@ -2222,7 +2263,7 @@ test("session-summarize caps filed drafts at MAX_DRAFTS_PER_SESSION", async () =
       services,
       sessionId: "sess-1",
       project: "test-project",
-      extractor: async () => candidates,
+      extractor: () => Promise.resolve(candidates),
     });
     expect(serviceCalls).toHaveLength(MAX_DRAFTS_PER_SESSION);
     const warn = warnCalls.find((w) => w.session_id === "sess-1");
@@ -2237,9 +2278,9 @@ test("session-summarize caps filed drafts at MAX_DRAFTS_PER_SESSION", async () =
 test("session-summarize filed drafts include provenance metadata", async () => {
   const root = mkdtempSync(join(tmpdir(), "wf-session-summarize-prov-"));
   try {
-    const writtenEvents: Array<Record<string, unknown>> = [];
-    const services = {
-      log: { error: () => {}, warn: () => {} },
+    const writtenEvents: Record<string, unknown>[] = [];
+    const services = mockServices({
+      log: { error: () => undefined, warn: () => undefined },
       uuid: () => "123e4567-e89b-12d3-a456-426614174000",
       machineId: { get: () => "machine-1" },
       clock: () => new Date("2026-05-01T00:00:00.000Z"),
@@ -2247,22 +2288,23 @@ test("session-summarize filed drafts include provenance metadata", async () => {
       t0Writer: {
         write: (event: { event_type: string; payload_json: Record<string, unknown> }) => {
           const payload = TaskDraftPayloadSchema.parse(event.payload_json);
-          writtenEvents.push(payload as Record<string, unknown>);
+          writtenEvents.push(payload);
         },
       },
-    } as any;
+    });
 
     await fileSessionSummarizeStumbles({
       services,
       sessionId: "sess-prov",
       project: "test-project",
-      extractor: async () => [
-        {
-          prompt: "TODO: audit X before shipping",
-          affects_projects: ["penumbra"],
-          evidence: { conv_ids: [], commits: [], files: [], session_id: "sess-prov" },
-        },
-      ],
+      extractor: () =>
+        Promise.resolve([
+          {
+            prompt: "TODO: audit X before shipping",
+            affects_projects: ["penumbra"],
+            evidence: { conv_ids: [], commits: [], files: [], session_id: "sess-prov" },
+          },
+        ]),
     });
     expect(writtenEvents).toHaveLength(1);
     const prov = writtenEvents[0]?.provenance as Record<string, unknown> | undefined;
@@ -2288,7 +2330,7 @@ test("session-summarize stop hook ignores workflow-generated observations in the
       embedder: new TestEmbedder({ dim: 384 }),
       clock: () => new Date("2026-05-01T00:00:00.000Z"),
       uuid: () => "123e4567-e89b-12d3-a456-426614174000",
-    }) as any;
+    });
     const sessionId = "sess-filter";
     db.run(
       `INSERT INTO t0_events (
@@ -2352,7 +2394,7 @@ test("POST /workflows/suggest returns workflows matching state thresholds", asyn
       workflowsDir: join(root, "workflows"),
     });
     const db = freshDb();
-    const services = { workflowRegistry: reg, db } as any;
+    const services = mockServices({ workflowRegistry: reg, db });
     const req = new Request("http://localhost/workflows/suggest", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -2361,7 +2403,7 @@ test("POST /workflows/suggest returns workflows matching state thresholds", asyn
     const res = await workflowsSuggestRoute(req, services);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      suggestions: Array<{ name: string }>;
+      suggestions: { name: string }[];
       metrics: Record<string, number>;
     };
     expect(Array.isArray(body.suggestions)).toBe(true);
