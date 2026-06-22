@@ -1,8 +1,8 @@
-import { describe, it, expect } from "bun:test";
 import {
   extractActionTarget,
   registerTargetExtractor,
 } from "@penumbra/daemon/long-lived/target-extractors";
+import { describe, expect, it } from "bun:test";
 
 describe("target extractors", () => {
   it("returns empty string for unknown tools", () => {
@@ -26,7 +26,10 @@ describe("target extractors", () => {
   });
 
   it("honors a custom registration", () => {
-    registerTargetExtractor("custom:tool", (a) => String((a as any).id ?? ""));
+    registerTargetExtractor("custom:tool", (a) => {
+      const id = (a as Record<string, unknown>)["id"];
+      return typeof id === "string" || typeof id === "number" ? String(id) : "";
+    });
     expect(extractActionTarget("custom:tool", { id: 42 })).toBe("42");
   });
 });

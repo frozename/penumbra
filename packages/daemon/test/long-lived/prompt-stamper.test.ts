@@ -1,8 +1,9 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
+
 import {
-  stampPrompt,
   type StampInputAgent,
   type StampInputTick,
+  stampPrompt,
 } from "../../src/long-lived/prompt-stamper.js";
 
 const baseTick: StampInputTick = {
@@ -15,7 +16,14 @@ const baseAgent: StampInputAgent = {
   id: "home-mgmt",
   display_name: "Home Mgmt",
   standing_brief: "test",
-  working_memory: { pending_goals: [], open_threads: [], observations: [], watches: [] } as any,
+  working_memory: {
+    version: 1,
+    updated_at: 0,
+    pending_goals: [],
+    open_threads: [],
+    watches: [],
+    recent_decisions: [],
+  },
   mcp_allowlist: ["ha:ha_pulse"],
   bounds: { wall_clock_ms: 360000, cost_cents: 50, max_sub_dispatches: 3 },
 };
@@ -31,11 +39,13 @@ describe("stampPrompt", () => {
     const agent: StampInputAgent = {
       ...baseAgent,
       working_memory: {
+        version: 1,
+        updated_at: 0,
         pending_goals: [{ kind: "user_goal", text: "check the dryer" }],
         open_threads: [],
-        observations: [],
         watches: [],
-      } as any,
+        recent_decisions: [],
+      },
     };
     const out = stampPrompt({ agent, tick: baseTick });
     expect(out).toContain("check the dryer");

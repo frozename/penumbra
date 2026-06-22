@@ -1,10 +1,29 @@
-import { describe, it, expect } from "bun:test";
-import { Database } from "bun:sqlite";
+import type { AgentConfig } from "@penumbra/agentchat/config/types";
+
 import { loadSqliteVec } from "@penumbra/core";
 import { applySchema } from "@penumbra/core/db/schema";
 import { reconcileLongLivedAgents } from "@penumbra/daemon/long-lived/reconciler";
-import type { AgentConfig } from "@penumbra/agentchat/config";
+import { Database } from "bun:sqlite";
+import { describe, expect, it } from "bun:test";
 
+interface AgentRow {
+  status: string;
+  created_at: number;
+  consecutive_failures: number;
+  degraded_reason: string | null;
+  retired_at: number | null;
+  schedule_cron: string | null;
+  working_memory_json: string;
+  mcp_allowlist_json: string;
+}
+
+interface WmSnapshot {
+  version: number;
+  pending_goals: unknown[];
+  open_threads: unknown[];
+}
+
+// AgentConfig requires many Zod-default fields the test seed doesn't supply; one factory cast per gap.
 function mkAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
   return {
     name: "home-mgmt",
@@ -18,10 +37,10 @@ function mkAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
       standing_brief: "be helpful",
     },
     ...overrides,
-  } as AgentConfig;
+  } as unknown as AgentConfig;
 }
 
-function setup() {
+function setup(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   applySchema(db, { embeddingDim: 384 });
@@ -36,10 +55,10 @@ describe("reconcileLongLivedAgents", () => {
     expect(result.updated).toEqual([]);
     expect(result.retired).toEqual([]);
 
-    const row = db.query("SELECT * FROM long_lived_agents WHERE id='home-mgmt'").get() as any;
+    const row = db.query<AgentRow>("SELECT * FROM long_lived_agents WHERE id='home-mgmt'").get()!;
     expect(row.status).toBe("active");
     expect(row.created_at).toBe(1000);
-    const wm = JSON.parse(row.working_memory_json);
+    const wm = JSON.parse(row.working_memory_json) as WmSnapshot;
     expect(wm.version).toBe(1);
     expect(wm.pending_goals).toEqual([]);
     expect(wm.open_threads).toEqual([]);
@@ -49,8 +68,8 @@ describe("reconcileLongLivedAgents", () => {
     const db = setup();
     reconcileLongLivedAgents(db, [mkAgent()], { now: 1000 });
     const row = db
-      .query("SELECT mcp_allowlist_json FROM long_lived_agents WHERE id='home-mgmt'")
-      .get() as any;
+      .query<AgentRow>("SELECT mcp_allowlist_json FROM long_lived_agents WHERE id='home-mgmt'")
+      .get()!;
     const al = JSON.parse(row.mcp_allowlist_json) as string[];
     expect(al).toContain("penumbra:long_lived_self_state_get");
     expect(al).toContain("penumbra:long_lived_self_state_set");
@@ -78,11 +97,11 @@ describe("reconcileLongLivedAgents", () => {
       long_lived_config: { ...mkAgent().long_lived_config!, schedule_cron: "*/30 * * * *" },
     });
     reconcileLongLivedAgents(db, [newer], { now: 3000 });
-    const row = db.query("SELECT * FROM long_lived_agents WHERE id='home-mgmt'").get() as any;
+    const row = db.query<AgentRow>("SELECT * FROM long_lived_agents WHERE id='home-mgmt'").get()!;
     expect(row.status).toBe("degraded");
     expect(row.consecutive_failures).toBe(3);
     expect(row.schedule_cron).toBe("*/30 * * * *");
-    const wm = JSON.parse(row.working_memory_json);
+    const wm = JSON.parse(row.working_memory_json) as WmSnapshot;
     expect(wm.open_threads).toHaveLength(1);
   });
 
@@ -97,10 +116,10 @@ describe("reconcileLongLivedAgents", () => {
     expect(result.updated).toEqual(["home-mgmt"]);
 
     const row = db
-      .query(
+      .query<AgentRow>(
         "SELECT status, consecutive_failures, degraded_reason, retired_at FROM long_lived_agents WHERE id='home-mgmt'",
       )
-      .get() as any;
+      .get()!;
     expect(row).toEqual({
       status: "active",
       consecutive_failures: 0,
@@ -118,10 +137,10 @@ describe("reconcileLongLivedAgents", () => {
 
     reconcileLongLivedAgents(db, [mkAgent()], { now: 2000 });
     let row = db
-      .query(
+      .query<AgentRow>(
         "SELECT status, consecutive_failures, degraded_reason, retired_at FROM long_lived_agents WHERE id='home-mgmt'",
       )
-      .get() as any;
+      .get()!;
     expect(row).toEqual({
       status: "degraded",
       consecutive_failures: 5,
@@ -134,10 +153,10 @@ describe("reconcileLongLivedAgents", () => {
     ).run();
     reconcileLongLivedAgents(db, [mkAgent()], { now: 3000 });
     row = db
-      .query(
+      .query<AgentRow>(
         "SELECT status, consecutive_failures, degraded_reason, retired_at FROM long_lived_agents WHERE id='home-mgmt'",
       )
-      .get() as any;
+      .get()!;
     expect(row).toEqual({
       status: "paused",
       consecutive_failures: 5,
@@ -152,19 +171,17 @@ describe("reconcileLongLivedAgents", () => {
     const result = reconcileLongLivedAgents(db, [], { now: 2000 });
     expect(result.retired).toEqual(["home-mgmt"]);
     const row = db
-      .query("SELECT status, retired_at FROM long_lived_agents WHERE id='home-mgmt'")
-      .get() as any;
+      .query<AgentRow>("SELECT status, retired_at FROM long_lived_agents WHERE id='home-mgmt'")
+      .get()!;
     expect(row.status).toBe("retired");
     expect(row.retired_at).toBe(2000);
   });
 
   it("ignores agents without long_lived: true", () => {
     const db = setup();
-    const result = reconcileLongLivedAgents(
-      db,
-      [{ name: "coder", long_lived: false } as AgentConfig],
-      { now: 1000 },
-    );
+    const result = reconcileLongLivedAgents(db, [mkAgent({ name: "coder", long_lived: false })], {
+      now: 1000,
+    });
     expect(result.inserted).toEqual([]);
   });
 });

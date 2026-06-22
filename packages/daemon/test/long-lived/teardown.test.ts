@@ -1,31 +1,50 @@
-import { describe, expect, it } from "bun:test";
+import type { AgentConfig } from "@penumbra/agentchat/config/types";
+
+import { applySchema, loadSqliteVec } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec, applySchema } from "@penumbra/core";
+import { describe, expect, it } from "bun:test";
+
 import { reconcileLongLivedAgents } from "../../src/long-lived/reconciler.js";
 import { handleTickTeardown } from "../../src/long-lived/teardown.js";
+
+interface TickRow {
+  outcome: string | null;
+  cost_cents: number | null;
+  completed_at: number | null;
+}
+
+interface AgentRow {
+  consecutive_failures: number;
+  last_tick_outcome: string | null;
+  status: string;
+  degraded_reason: string | null;
+}
+
+interface PerfRow {
+  count: number;
+}
+
+// AgentConfig requires many Zod-default fields the test seed doesn't supply; one factory cast per gap.
+function makeTestAgent(): AgentConfig {
+  return {
+    name: "a",
+    long_lived: true,
+    long_lived_config: {
+      schedule_cron: "*/15 * * * *",
+      subscriptions: [],
+      mcp_allowlist: [],
+      bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
+      circuit_breaker_threshold: 3,
+      standing_brief: "x",
+    },
+  } as unknown as AgentConfig;
+}
 
 function seed(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   applySchema(db, { embeddingDim: 384 });
-  reconcileLongLivedAgents(
-    db,
-    [
-      {
-        name: "a",
-        long_lived: true,
-        long_lived_config: {
-          schedule_cron: "*/15 * * * *",
-          subscriptions: [],
-          mcp_allowlist: [],
-          bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
-          circuit_breaker_threshold: 3,
-          standing_brief: "x",
-        },
-      } as any,
-    ],
-    { now: 1 },
-  );
+  reconcileLongLivedAgents(db, [makeTestAgent()], { now: 1 });
   db.query(
     "INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES ('t1', 'a', 'cron', 1)",
   ).run();
@@ -46,15 +65,19 @@ describe("handleTickTeardown", () => {
     });
 
     const tick = db
-      .query("SELECT outcome, cost_cents, completed_at FROM long_lived_ticks WHERE id='t1'")
-      .get() as any;
+      .query<TickRow>(
+        "SELECT outcome, cost_cents, completed_at FROM long_lived_ticks WHERE id='t1'",
+      )
+      .get()!;
     expect(tick.outcome).toBe("success");
     expect(tick.cost_cents).toBe(7);
     expect(tick.completed_at).toBe(100);
 
     const agent = db
-      .query("SELECT consecutive_failures, last_tick_outcome FROM long_lived_agents WHERE id='a'")
-      .get() as any;
+      .query<AgentRow>(
+        "SELECT consecutive_failures, last_tick_outcome FROM long_lived_agents WHERE id='a'",
+      )
+      .get()!;
     expect(agent.consecutive_failures).toBe(0);
     expect(agent.last_tick_outcome).toBe("success");
   });
@@ -71,8 +94,8 @@ describe("handleTickTeardown", () => {
     });
 
     const agent = db
-      .query("SELECT consecutive_failures, status FROM long_lived_agents WHERE id='a'")
-      .get() as any;
+      .query<AgentRow>("SELECT consecutive_failures, status FROM long_lived_agents WHERE id='a'")
+      .get()!;
     expect(agent.consecutive_failures).toBe(1);
     expect(agent.status).toBe("active");
   });
@@ -90,10 +113,10 @@ describe("handleTickTeardown", () => {
     });
 
     const agent = db
-      .query(
+      .query<AgentRow>(
         "SELECT consecutive_failures, status, degraded_reason FROM long_lived_agents WHERE id='a'",
       )
-      .get() as any;
+      .get()!;
     expect(agent.consecutive_failures).toBe(1);
     expect(agent.status).toBe("active");
     expect(agent.degraded_reason).toBeNull();
@@ -114,8 +137,8 @@ describe("handleTickTeardown", () => {
     });
 
     const agent = db
-      .query("SELECT status, degraded_reason FROM long_lived_agents WHERE id='a'")
-      .get() as any;
+      .query<AgentRow>("SELECT status, degraded_reason FROM long_lived_agents WHERE id='a'")
+      .get()!;
     expect(agent.status).toBe("degraded");
     expect(agent.degraded_reason).toContain("boom");
   });
@@ -126,8 +149,8 @@ describe("handleTickTeardown", () => {
     handleTickTeardown(db, { tick_id: "t1", agent_id: "a", outcome: "bound_exceeded", now: 100 });
 
     const agent = db
-      .query("SELECT consecutive_failures FROM long_lived_agents WHERE id='a'")
-      .get() as any;
+      .query<AgentRow>("SELECT consecutive_failures FROM long_lived_agents WHERE id='a'")
+      .get()!;
     expect(agent.consecutive_failures).toBe(1);
   });
 
@@ -144,32 +167,34 @@ describe("handleTickTeardown", () => {
         }
       })) as typeof db.transaction;
 
-    expect(() =>
+    expect(() => {
       handleTickTeardown(db, {
         tick_id: "t1",
         agent_id: "a",
         outcome: "failed",
         error: "boom",
         now: 100,
-      }),
-    ).toThrow("boom");
+      });
+    }).toThrow("boom");
 
     const tick = db
-      .query("SELECT outcome, cost_cents, completed_at FROM long_lived_ticks WHERE id='t1'")
-      .get() as any;
+      .query<TickRow>(
+        "SELECT outcome, cost_cents, completed_at FROM long_lived_ticks WHERE id='t1'",
+      )
+      .get()!;
     expect(tick.outcome).toBeNull();
     expect(tick.cost_cents).toBeNull();
     expect(tick.completed_at).toBeNull();
 
     const agent = db
-      .query("SELECT consecutive_failures, status FROM long_lived_agents WHERE id='a'")
-      .get() as any;
+      .query<AgentRow>("SELECT consecutive_failures, status FROM long_lived_agents WHERE id='a'")
+      .get()!;
     expect(agent.consecutive_failures).toBe(0);
     expect(agent.status).toBe("active");
 
     const perf = db
-      .query("SELECT COUNT(*) AS count FROM agent_performance WHERE handoff_id='t1'")
-      .get() as any;
+      .query<PerfRow>("SELECT COUNT(*) AS count FROM agent_performance WHERE handoff_id='t1'")
+      .get()!;
     expect(perf.count).toBe(0);
   });
 });
