@@ -1,17 +1,26 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { createDaemonFetchHandler } from "../../src/serve.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* already loaded */
+}
+
+interface VerifyBody {
+  memory_id: string;
+  last_verified_reason: string | null;
+  last_verified_session_id: string | null;
+}
 
 function startTestDaemon(): {
   fetch: (path: string, init?: RequestInit) => Promise<Response>;
@@ -36,16 +45,21 @@ function startTestDaemon(): {
   const handler = createDaemonFetchHandler({ services, token });
 
   return {
-    fetch: (path, init) => handler(new Request(`http://x${path}`, init)),
+    fetch: (path: string, init?: RequestInit): Promise<Response> =>
+      handler(new Request(`http://x${path}`, init)),
     services,
     token,
-    stop: () => {
+    stop: (): void => {
       try {
         services.supervisor.stopAll();
-      } catch {}
+      } catch {
+        /* already stopped */
+      }
       try {
         db.close();
-      } catch {}
+      } catch {
+        /* already closed */
+      }
       rmSync(root, { recursive: true, force: true });
     },
   };
@@ -152,11 +166,7 @@ test("POST /memory/verify accepts valid basis and stamps verification", async ()
     });
     expect(res.status).toBe(200);
 
-    const body = (await res.json()) as {
-      memory_id: string;
-      last_verified_reason: string | null;
-      last_verified_session_id: string | null;
-    };
+    const body = (await res.json()) as VerifyBody;
     expect(body).toMatchObject({
       memory_id: "memory-backdoor-2",
       last_verified_reason: "manual spot check",

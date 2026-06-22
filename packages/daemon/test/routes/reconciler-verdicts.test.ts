@@ -1,9 +1,28 @@
-import { describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { createDaemonFetchHandler } from "../../src/serve.js";
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
+
 import { reconcilerVerdictsRoute } from "../../src/routes/reconciler.js";
+import { createDaemonFetchHandler } from "../../src/serve.js";
+
+interface VerdictRow {
+  event_id: string;
+  handoff_id: string;
+  conversation_id: string;
+  to_agent: string;
+  chain_task_type: string;
+  verdict: {
+    branch: string;
+    typecheck: string;
+    tests: string;
+    pr_url: string | null;
+    summary: string;
+  };
+}
+interface VerdictsBody {
+  verdicts: VerdictRow[];
+}
 
 function services(): Services {
   const db = new Database(":memory:");
@@ -17,7 +36,7 @@ function services(): Services {
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date("2026-05-08T00:00:00.000Z"),
-    uuid: () => `id-${++n}`,
+    uuid: () => `id-${String(++n)}`,
   });
 }
 
@@ -58,7 +77,7 @@ function writeVerdictEvent(
     conversation_id: string;
     pr_url: string | null;
   },
-) {
+): void {
   svc.t0Writer.write({
     event_id: input.event_id,
     ts: input.ts,
@@ -117,7 +136,7 @@ describe("reconcilerVerdictsRoute", () => {
       svc,
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { verdicts: Array<any> };
+    const body = (await res.json()) as VerdictsBody;
     expect(body.verdicts).toHaveLength(1);
     expect(body.verdicts[0]).toMatchObject({
       event_id: "v-1",
@@ -160,7 +179,7 @@ describe("reconcilerVerdictsRoute", () => {
     );
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { verdicts: Array<any> };
+    const body = (await res.json()) as VerdictsBody;
     expect(body.verdicts.map((v) => v.handoff_id)).toEqual(["h-1"]);
   });
 
@@ -183,7 +202,7 @@ describe("reconcilerVerdictsRoute", () => {
     );
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { verdicts: Array<any> };
+    const body = (await res.json()) as VerdictsBody;
     expect(body.verdicts[0]?.handoff_id).toBe("h-serve");
   });
 
@@ -212,7 +231,7 @@ describe("reconcilerVerdictsRoute", () => {
     );
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { verdicts: Array<any> };
+    const body = (await res.json()) as VerdictsBody;
     expect(body.verdicts.map((v) => v.handoff_id)).toEqual(["h-tz-2"]);
   });
 });

@@ -1,17 +1,40 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { memoryVerifyRoute, memoryVerificationEventsRoute } from "../../src/routes/memory.js";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { memoryVerificationEventsRoute, memoryVerifyRoute } from "../../src/routes/memory.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* already loaded */
+}
+
+interface VerifyBody {
+  memory_id?: string;
+  last_verified_by?: string | null;
+  last_verified_actor?: string | null;
+  verifier_actor?: string;
+  claimed_by?: string | null;
+  event_id?: string;
+}
+
+interface VerificationEvent {
+  verifier_actor: string;
+  claimed_by: string | null;
+  reason: string | null;
+  session_id: string | null;
+}
+
+interface VerificationEventsBody {
+  events: VerificationEvent[];
+}
 
 function startTestDaemon(): {
   services: Services;
@@ -24,13 +47,18 @@ function startTestDaemon(): {
   const baseMs = new Date("2026-05-12T12:00:00.000Z").getTime();
   let clockCounter = 0;
   const OriginalDate = Date;
+  // Advancing wall-clock Date that returns strictly increasing instants for
+  // bare `new Date()` and `Date.now()` while leaving parameterised calls intact.
+  // Routes use it as the source of monotonic event ts; do NOT remove the
+  // increment side-effect.
   class AdvancingDate extends OriginalDate {
-    constructor(...args: ConstructorParameters<typeof Date>) {
+    constructor(...args: unknown[]) {
       if (args.length === 0) {
         super(baseMs + clockCounter++);
         return;
       }
-      super(...args);
+      // Forward all other constructor signatures to the original Date impl.
+      super(...(args as ConstructorParameters<typeof Date>));
     }
 
     static override now(): number {
@@ -49,13 +77,17 @@ function startTestDaemon(): {
 
   return {
     services,
-    stop: () => {
+    stop: (): void => {
       try {
         services.supervisor.stopAll();
-      } catch {}
+      } catch {
+        /* already stopped */
+      }
       try {
         db.close();
-      } catch {}
+      } catch {
+        /* already closed */
+      }
       globalThis.Date = OriginalDate;
       rmSync(root, { recursive: true, force: true });
     },
@@ -117,14 +149,7 @@ test("POST /memory/verify appends audit events and server-derives verifier_actor
       daemon.services,
     );
     expect(first.status).toBe(200);
-    const firstBody = (await first.json()) as {
-      memory_id: string;
-      last_verified_by: string | null;
-      last_verified_actor?: string | null;
-      verifier_actor?: string;
-      claimed_by?: string | null;
-      event_id?: string;
-    };
+    const firstBody = (await first.json()) as VerifyBody;
     expect(firstBody).toMatchObject({
       memory_id: "memory-audit-1",
       verifier_actor: daemon.services.machineId.get(),
@@ -148,11 +173,7 @@ test("POST /memory/verify appends audit events and server-derives verifier_actor
       daemon.services,
     );
     expect(second.status).toBe(200);
-    const secondBody = (await second.json()) as {
-      verifier_actor?: string;
-      claimed_by?: string | null;
-      event_id?: string;
-    };
+    const secondBody = (await second.json()) as VerifyBody;
     expect(secondBody.verifier_actor).toBe(daemon.services.machineId.get());
     expect(secondBody.claimed_by).toBe("attacker-2");
     expect(secondBody.event_id).toBeTruthy();
@@ -256,14 +277,7 @@ test("GET /memory/:memory_id/verification_events returns the verification audit 
       daemon.services,
     );
     expect(routeRes.status).toBe(200);
-    const body = (await routeRes.json()) as {
-      events: Array<{
-        verifier_actor: string;
-        claimed_by: string | null;
-        reason: string | null;
-        session_id: string | null;
-      }>;
-    };
+    const body = (await routeRes.json()) as VerificationEventsBody;
     expect(body.events).toHaveLength(2);
     expect(body.events.map((event) => event.claimed_by).sort()).toEqual(["attacker", "attacker-2"]);
   } finally {

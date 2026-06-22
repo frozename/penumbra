@@ -1,7 +1,15 @@
-import { beforeAll, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { ProjectRegistry, buildServices, loadSqliteVec, migrate } from "@penumbra/core";
+import {
+  buildServices,
+  loadSqliteVec,
+  migrate,
+  ProjectRegistry,
+  type Services,
+  type Watchdog,
+} from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { beforeAll, expect, test } from "bun:test";
+
 import { chainsStartRoute } from "../../src/routes/chains.js";
 
 // Real-reader regression test: verify non-stubbed recallReader + seeded t2 memory reaches recalled_memory_ids.
@@ -9,13 +17,23 @@ try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* already loaded */
+}
 
 beforeAll(() => {
   delete process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
 });
 
-function tempServices(withProjectRegistry = false) {
+const STUB_WATCHDOG: Watchdog = {
+  recordHeartbeat: (): void => undefined,
+  hasActiveWorker: (): boolean => true,
+  getStaleWorkers: (): string[] => [],
+  getStaleHeartbeatAges: (): { worker_id: string; last_seen_age_ms: number }[] => [],
+  tick: (): Promise<void> => Promise.resolve(),
+};
+
+function tempServices(withProjectRegistry = false): { db: Database; services: Services } {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
@@ -28,7 +46,7 @@ function tempServices(withProjectRegistry = false) {
     clock: () => new Date("2026-04-26T00:00:00Z"),
     uuid: (() => {
       let n = 0;
-      return () => `id-${++n}`;
+      return (): string => `id-${String(++n)}`;
     })(),
     ...(withProjectRegistry
       ? {
@@ -38,11 +56,7 @@ function tempServices(withProjectRegistry = false) {
         }
       : {}),
   });
-  services.watchdog = {
-    recordHeartbeat: () => {},
-    hasActiveWorker: () => true,
-    tick: async () => {},
-  };
+  services.watchdog = STUB_WATCHDOG;
   return { db, services };
 }
 
@@ -66,6 +80,18 @@ async function seedT2Memory(
   db.run("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)", [rowid, vec]);
 }
 
+interface RecalledMemory {
+  id: string;
+  title: string;
+  obs_type: string;
+  snippet_head?: string;
+}
+interface ChainsStartBody {
+  lane_id: string;
+  recalled_memory_ids: string[];
+  recalled_memories: RecalledMemory[];
+}
+
 test("POST /chains/start reaches recalled_memory_ids with real recallReader and seeded t2_memories", async () => {
   const { db, services } = tempServices(true);
   const recallText = "A deterministic memory for real-reader auto-recall regression testing";
@@ -85,16 +111,7 @@ test("POST /chains/start reaches recalled_memory_ids with real recallReader and 
   );
 
   expect(res.status).toBe(200);
-  const body = (await res.json()) as {
-    lane_id: string;
-    recalled_memory_ids: string[];
-    recalled_memories: Array<{
-      id: string;
-      title: string;
-      obs_type: string;
-      snippet_head?: string;
-    }>;
-  };
+  const body = (await res.json()) as ChainsStartBody;
   expect(body.recalled_memory_ids).toEqual(["m-real-1"]);
   expect(body.recalled_memories).toEqual([
     {

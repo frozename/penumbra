@@ -1,17 +1,21 @@
-import { describe, it, expect, beforeEach } from "bun:test";
+import { type Services } from "@penumbra/core";
 import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, it } from "bun:test";
+
 import {
-  usageRecentRoute,
   usageQuotaStatusRoute,
+  usageRecentRoute,
   usageSubscriptionPressureRoute,
 } from "../../src/routes/usage.js";
 
-function makeServices(db: Database, providerQuotas: any[] = []): any {
+type ProviderQuota = Services["providerQuotas"][number];
+
+function makeServices(db: Database, providerQuotas: ProviderQuota[] = []): Services {
   return {
     db,
     clock: () => new Date("2026-04-28T13:00:00Z"),
     providerQuotas,
-  };
+  } as unknown as Services;
 }
 
 function makeDb(): Database {
@@ -54,7 +58,7 @@ function insertUsageRow(
     handoff_id: string | null;
     lane?: string;
   },
-) {
+): void {
   db.prepare(
     `
     INSERT INTO t0_events (event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, provider, cost_usd, payload_json)
@@ -82,7 +86,7 @@ function insertSnapshotRow(
     resets_at: number | null;
     source_kind: string;
   },
-) {
+): void {
   db.prepare(
     `
     INSERT INTO t0_events (
@@ -104,6 +108,39 @@ function insertSnapshotRow(
   );
 }
 
+interface ProviderRow {
+  remaining_usd: number;
+  used_usd: number;
+}
+interface RecentBody {
+  total_cost_usd: number;
+  by_provider: unknown[];
+}
+interface QuotaBody {
+  providers: ProviderRow[];
+}
+interface SnapshotRow {
+  provider: string;
+  model: string | null;
+  window_label: string;
+  used_pct: number;
+  resets_at: number | null;
+  observed_at: string;
+  source_kind: string;
+}
+interface WarningRow {
+  code: string;
+  provider: string;
+  window_label: string;
+}
+interface PressureBody {
+  snapshots: SnapshotRow[];
+  warnings: WarningRow[];
+}
+interface ErrorBody {
+  error: { code: string };
+}
+
 describe("GET /usage/recent", () => {
   let db: Database;
   beforeEach(() => {
@@ -123,7 +160,7 @@ describe("GET /usage/recent", () => {
     const req = new Request("http://x/usage/recent?since=2026-04-28T00:00:00Z");
     const res = await usageRecentRoute(req, services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as RecentBody;
     expect(body.total_cost_usd).toBe(0.5);
     expect(body.by_provider).toHaveLength(1);
   });
@@ -133,7 +170,7 @@ describe("GET /usage/recent", () => {
     const req = new Request("http://x/usage/recent?since=not-a-date");
     const res = await usageRecentRoute(req, services);
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = (await res.json()) as ErrorBody;
     expect(body.error.code).toBe("invalid_params");
   });
 });
@@ -158,7 +195,7 @@ describe("GET /usage/quota_status", () => {
     const req = new Request("http://x/usage/quota_status?since=2026-04-28T00:00:00Z");
     const res = await usageQuotaStatusRoute(req, services);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as QuotaBody;
     expect(body.providers).toHaveLength(1);
     expect(body.providers[0].remaining_usd).toBe(37.6);
     expect(body.providers[0].used_usd).toBe(12.4);
@@ -216,7 +253,7 @@ describe("GET /usage/subscription_pressure", () => {
     const res = await usageSubscriptionPressureRoute(req, services);
 
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as PressureBody;
     expect(body.snapshots).toEqual([
       {
         provider: "anthropic-claude",
@@ -241,7 +278,7 @@ describe("GET /usage/subscription_pressure", () => {
     const req = new Request("http://x/usage/subscription_pressure?stale_after_seconds=0");
     const res = await usageSubscriptionPressureRoute(req, services);
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = (await res.json()) as ErrorBody;
     expect(body.error.code).toBe("invalid_params");
   });
 
@@ -270,7 +307,7 @@ describe("GET /usage/subscription_pressure", () => {
     const res = await usageSubscriptionPressureRoute(req, services);
 
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as PressureBody;
     expect(body.snapshots).toHaveLength(1);
     expect(body.snapshots[0].provider).toBe("anthropic-claude");
   });

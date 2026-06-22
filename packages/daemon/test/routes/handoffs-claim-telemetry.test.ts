@@ -1,13 +1,14 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import {
   buildServices,
+  HandoffWriter,
   loadSqliteVec,
   migrate,
-  HandoffWriter,
   type Services,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { createDaemonFetchHandler } from "../../src/serve.js";
 import { registerWorkerForTest } from "../../test-utils.js";
 
@@ -15,9 +16,16 @@ try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* already loaded */
+}
 
 const SHARED_TOKEN = "test-token";
+
+interface ClaimMeta {
+  root_handoff_id: string;
+  per_root_top3: { root_handoff_id: string; in_flight_count: number }[];
+}
 
 function makeDb(): Database {
   const db = new Database(":memory:");
@@ -36,7 +44,7 @@ function makeServices(db: Database): Services {
     clock: () => new Date("2026-04-25T20:00:00.000Z"),
     uuid: (() => {
       let n = 0;
-      return () => `evt-${++n}`;
+      return (): string => `evt-${String(++n)}`;
     })(),
   });
 }
@@ -115,10 +123,7 @@ test("single-chain claim emits event with one root in per_root_top3", async () =
     .all("h-single");
   expect(rows).toHaveLength(1);
   expect(rows[0]?.kind).toBe("claim");
-  const meta = JSON.parse(rows[0]?.meta_json ?? "null") as {
-    root_handoff_id: string;
-    per_root_top3: Array<{ root_handoff_id: string; in_flight_count: number }>;
-  };
+  const meta = JSON.parse(rows[0]?.meta_json ?? "null") as ClaimMeta;
   expect(meta.root_handoff_id).toBe("h-single");
   expect(meta.per_root_top3).toEqual([{ root_handoff_id: "h-single", in_flight_count: 1 }]);
 });
@@ -190,10 +195,7 @@ test("two-chain claim emits event with both roots in per_root_top3", async () =>
       []
     >("SELECT meta_json FROM dispatch_events WHERE handoff_id = ? ORDER BY id ASC")
     .all("root-b");
-  const meta = JSON.parse(rows[0]?.meta_json ?? "null") as {
-    root_handoff_id: string;
-    per_root_top3: Array<{ root_handoff_id: string; in_flight_count: number }>;
-  };
+  const meta = JSON.parse(rows[0]?.meta_json ?? "null") as ClaimMeta;
   expect(meta.root_handoff_id).toBe("root-b");
   expect(meta.per_root_top3).toEqual([
     { root_handoff_id: "root-a", in_flight_count: 1 },

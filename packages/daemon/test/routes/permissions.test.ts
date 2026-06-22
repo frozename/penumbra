@@ -1,13 +1,15 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import {
-  type Services,
-  migrate,
+  type EmittedPermissionEvent,
   loadSqliteVec,
-  PermissionWriter,
-  PermissionReader,
+  migrate,
   PermissionEventBus,
+  PermissionReader,
+  PermissionWriter,
+  type Services,
 } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { permissionsCreateRoute, permissionsDecideRoute } from "../../src/routes/permissions.js";
 import { runPermissionTtlSweep } from "../../src/sweepers/permission-ttl.js";
 
@@ -15,9 +17,15 @@ try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* already loaded */
+}
 
-function makeServices(db: Database, now: Date): Services {
+interface MutableClockServices extends Services {
+  clock: () => Date;
+}
+
+function makeServices(db: Database, now: Date): MutableClockServices {
   return {
     db,
     permissionWriter: new PermissionWriter({ db }),
@@ -26,13 +34,13 @@ function makeServices(db: Database, now: Date): Services {
     machineId: { get: () => "machine-test" },
     uuid: () => "evt-1",
     clock: () => now,
-    t0Writer: { write: () => {} },
+    t0Writer: { write: () => undefined },
     settings: { permission_ttl_seconds: 300 },
-    log: { info: () => {}, warn: () => {} },
-  } as unknown as Services;
+    log: { info: () => undefined, warn: () => undefined },
+  } as unknown as MutableClockServices;
 }
 
-async function createPending(services: Services, now: Date) {
+async function createPending(services: Services, now: Date): Promise<void> {
   await permissionsCreateRoute(
     new Request("http://x/permissions", {
       method: "POST",
@@ -57,22 +65,20 @@ test("permission.created payload includes routing fields", async () => {
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db, now);
-  const seen: any[] = [];
+  const seen: EmittedPermissionEvent[] = [];
   services.permissionEvents.subscribe((event) => seen.push(event));
 
   await createPending(services, now);
 
   expect(seen).toHaveLength(1);
   expect(seen[0].kind).toBe("permission.created");
-  expect(seen[0].payload).toEqual(
-    expect.objectContaining({
-      permission_id: "p-1",
-      parent_handoff_id: "h-1",
-      conversation_id: "c-1",
-      agent_name: "codex",
-      tool_name: "terminal.create",
-    }),
-  );
+  expect(seen[0].payload).toMatchObject({
+    permission_id: "p-1",
+    parent_handoff_id: "h-1",
+    conversation_id: "c-1",
+    agent_name: "codex",
+    tool_name: "terminal.create",
+  });
 });
 
 test("permission.decided payload includes routing fields", async () => {
@@ -82,7 +88,7 @@ test("permission.decided payload includes routing fields", async () => {
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db, now);
   await createPending(services, now);
-  const seen: any[] = [];
+  const seen: EmittedPermissionEvent[] = [];
   services.permissionEvents.subscribe((event) => seen.push(event));
 
   await permissionsDecideRoute(
@@ -96,15 +102,13 @@ test("permission.decided payload includes routing fields", async () => {
 
   expect(seen).toHaveLength(1);
   expect(seen[0].kind).toBe("permission.decided");
-  expect(seen[0].payload).toEqual(
-    expect.objectContaining({
-      permission_id: "p-1",
-      parent_handoff_id: "h-1",
-      conversation_id: "c-1",
-      agent_name: "codex",
-      tool_name: "terminal.create",
-    }),
-  );
+  expect(seen[0].payload).toMatchObject({
+    permission_id: "p-1",
+    parent_handoff_id: "h-1",
+    conversation_id: "c-1",
+    agent_name: "codex",
+    tool_name: "terminal.create",
+  });
 });
 
 test("permission.expired payload includes routing fields", async () => {
@@ -115,8 +119,8 @@ test("permission.expired payload includes routing fields", async () => {
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db, createdAt);
   await createPending(services, createdAt);
-  (services as any).clock = () => sweepAt;
-  const seen: any[] = [];
+  services.clock = (): Date => sweepAt;
+  const seen: EmittedPermissionEvent[] = [];
   services.permissionEvents.subscribe((event) => seen.push(event));
 
   const transitioned = runPermissionTtlSweep(services);
@@ -124,13 +128,11 @@ test("permission.expired payload includes routing fields", async () => {
   expect(transitioned).toBe(1);
   expect(seen).toHaveLength(1);
   expect(seen[0].kind).toBe("permission.expired");
-  expect(seen[0].payload).toEqual(
-    expect.objectContaining({
-      permission_id: "p-1",
-      parent_handoff_id: "h-1",
-      conversation_id: "c-1",
-      agent_name: "codex",
-      tool_name: "terminal.create",
-    }),
-  );
+  expect(seen[0].payload).toMatchObject({
+    permission_id: "p-1",
+    parent_handoff_id: "h-1",
+    conversation_id: "c-1",
+    agent_name: "codex",
+    tool_name: "terminal.create",
+  });
 });

@@ -1,17 +1,33 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { createDaemonFetchHandler } from "../../src/serve.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* already loaded */
+}
+
+interface ChainSummary {
+  conversation_id: string;
+  latest_status: string;
+}
+interface ChainsListBody {
+  chains: ChainSummary[];
+  limit: number;
+  offset: number;
+}
+interface ErrorBody {
+  error: { code: string };
+}
 
 function startTestDaemon(): {
   fetch: (path: string, init?: RequestInit) => Promise<Response>;
@@ -37,22 +53,27 @@ function startTestDaemon(): {
   const handler = createDaemonFetchHandler({ services, token });
 
   return {
-    fetch: (path, init) => handler(new Request(`http://x${path}`, init)),
+    fetch: (path: string, init?: RequestInit): Promise<Response> =>
+      handler(new Request(`http://x${path}`, init)),
     services,
     token,
-    stop: () => {
+    stop: (): void => {
       try {
         services.supervisor.stopAll();
-      } catch {}
+      } catch {
+        /* already stopped */
+      }
       try {
         db.close();
-      } catch {}
+      } catch {
+        /* already closed */
+      }
       rmSync(root, { recursive: true, force: true });
     },
   };
 }
 
-function authHeaders(token: string): HeadersInit {
+function authHeaders(token: string): Record<string, string> {
   return { authorization: `Bearer ${token}` };
 }
 
@@ -106,7 +127,7 @@ test("GET /chains returns empty array when no chains exist", async () => {
   try {
     const res = await daemon.fetch("/chains", { headers: authHeaders(daemon.token) });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { chains: unknown[]; limit: number; offset: number };
+    const body = (await res.json()) as ChainsListBody;
     expect(body.chains).toEqual([]);
     expect(body.limit).toBe(100);
     expect(body.offset).toBe(0);
@@ -130,9 +151,7 @@ test("GET /chains returns one summary per conversation_id, latest first", async 
     });
 
     const res = await daemon.fetch("/chains", { headers: authHeaders(daemon.token) });
-    const body = (await res.json()) as {
-      chains: Array<{ conversation_id: string; latest_status: string }>;
-    };
+    const body = (await res.json()) as ChainsListBody;
     expect(body.chains.map((c) => c.conversation_id)).toEqual(["c-new", "c-old"]);
     expect(body.chains[0]?.latest_status).toBe("approved");
     expect(body.chains[1]?.latest_status).toBe("completed");
@@ -158,9 +177,7 @@ test("?status filters by latest_status", async () => {
     const res = await daemon.fetch("/chains?status=completed", {
       headers: authHeaders(daemon.token),
     });
-    const body = (await res.json()) as {
-      chains: Array<{ conversation_id: string; latest_status: string }>;
-    };
+    const body = (await res.json()) as ChainsListBody;
     expect(body.chains).toHaveLength(1);
     expect(body.chains[0]?.conversation_id).toBe("c-1");
   } finally {
@@ -173,17 +190,23 @@ test("?limit and ?offset paginate results", async () => {
   try {
     for (let i = 0; i < 5; i++) {
       const ts = new Date(Date.UTC(2026, 3, 22, 10 + i, 0, 0)).toISOString();
-      seedConversation(daemon.services, { conversation_id: `c-${i}`, ts, status: "completed" });
+      seedConversation(daemon.services, {
+        conversation_id: `c-${String(i)}`,
+        ts,
+        status: "completed",
+      });
     }
-    const page1 = (await (
-      await daemon.fetch("/chains?limit=2", { headers: authHeaders(daemon.token) })
-    ).json()) as { chains: Array<{ conversation_id: string }>; limit: number; offset: number };
+    const page1Res = await daemon.fetch("/chains?limit=2", {
+      headers: authHeaders(daemon.token),
+    });
+    const page1 = (await page1Res.json()) as ChainsListBody;
     expect(page1.limit).toBe(2);
     expect(page1.chains.map((c) => c.conversation_id)).toEqual(["c-4", "c-3"]);
 
-    const page2 = (await (
-      await daemon.fetch("/chains?limit=2&offset=2", { headers: authHeaders(daemon.token) })
-    ).json()) as { chains: Array<{ conversation_id: string }>; offset: number };
+    const page2Res = await daemon.fetch("/chains?limit=2&offset=2", {
+      headers: authHeaders(daemon.token),
+    });
+    const page2 = (await page2Res.json()) as ChainsListBody;
     expect(page2.offset).toBe(2);
     expect(page2.chains.map((c) => c.conversation_id)).toEqual(["c-2", "c-1"]);
   } finally {
@@ -196,7 +219,7 @@ test("limit > 500 rejected with 400", async () => {
   try {
     const res = await daemon.fetch("/chains?limit=999", { headers: authHeaders(daemon.token) });
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: { code: string } };
+    const body = (await res.json()) as ErrorBody;
     expect(body.error.code).toBe("invalid_input");
   } finally {
     daemon.stop();

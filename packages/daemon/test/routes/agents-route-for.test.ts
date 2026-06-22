@@ -1,13 +1,21 @@
-import { beforeEach, describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { loadSqliteVec, migrate } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, test } from "bun:test";
+
 import { computeRouteForRole } from "../../src/routes/agents.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* already loaded */
+}
+
+interface RouteRejection {
+  agent: string;
+  reason: string;
+}
 
 describe("computeRouteForRole", () => {
   let db: Database;
@@ -17,7 +25,12 @@ describe("computeRouteForRole", () => {
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
 
-    const makeRows = (agentName: string, tsBase: string, samples: number, successes: number) => {
+    const makeRows = (
+      agentName: string,
+      tsBase: string,
+      samples: number,
+      successes: number,
+    ): void => {
       for (let n = 0; n < samples; n += 1) {
         db.prepare(
           `
@@ -28,9 +41,9 @@ describe("computeRouteForRole", () => {
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         ).run(
-          `${agentName}-${n}`,
+          `${agentName}-${String(n)}`,
           tsBase,
-          `${agentName}-handoff-${n}`,
+          `${agentName}-handoff-${String(n)}`,
           null,
           null,
           agentName,
@@ -63,7 +76,7 @@ describe("computeRouteForRole", () => {
     // The calls below use a wider window because these fixed pre-cutover rows
     // cannot also stay "recent" forever as the wall clock advances.
     const tsBase = "2026-06-05T00:00:00.000Z";
-    const preCutover = (hourOffset: number) =>
+    const preCutover = (hourOffset: number): string =>
       new Date(Date.parse(tsBase) + hourOffset * 3600000).toISOString();
     makeRows("high-perf", preCutover(1), 10, 9);
     makeRows("mid", preCutover(2), 5, 3);
@@ -115,14 +128,12 @@ describe("computeRouteForRole", () => {
       samples: 5,
       roles: ["reviewer"],
     });
-    expect(out.rejected).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ agent: "high-perf", reason: "under_pressure" }),
-        expect.objectContaining({ agent: "tiny", reason: "below_min_samples" }),
-        expect.objectContaining({ agent: "low", reason: "lower_success_rate" }),
-        expect.objectContaining({ agent: "outsider", reason: "no_role_match" }),
-      ]),
-    );
+    const rejected = out.rejected as RouteRejection[];
+    const byAgent = new Map(rejected.map((r) => [r.agent, r.reason]));
+    expect(byAgent.get("high-perf")).toBe("under_pressure");
+    expect(byAgent.get("tiny")).toBe("below_min_samples");
+    expect(byAgent.get("low")).toBe("lower_success_rate");
+    expect(byAgent.get("outsider")).toBe("no_role_match");
 
     const noMatch = computeRouteForRole({
       db,
@@ -139,8 +150,12 @@ describe("computeRouteForRole", () => {
   });
 
   test("routes to the best eligible agent for planner role", () => {
-    // Add plan_refine performance rows
-    const makePlannerRows = (agentName, tsBase, samples, successes) => {
+    const makePlannerRows = (
+      agentName: string,
+      tsBase: string,
+      samples: number,
+      successes: number,
+    ): void => {
       for (let n = 0; n < samples; n += 1) {
         db.prepare(
           `INSERT INTO agent_performance (
@@ -148,9 +163,9 @@ describe("computeRouteForRole", () => {
             rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, tokens_used, latency_ms, source, agent_kind, metadata_json
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
-          `${agentName}-plan-${n}`,
+          `${agentName}-plan-${String(n)}`,
           tsBase,
-          `${agentName}-handoff-${n}`,
+          `${agentName}-handoff-${String(n)}`,
           agentName,
           "plan_refine",
           n < successes ? "merged" : "failed",

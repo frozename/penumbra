@@ -1,19 +1,30 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import {
-  type Services,
-  migrate,
+  type EmittedPermissionEvent,
   loadSqliteVec,
-  PermissionWriter,
-  PermissionReader,
+  migrate,
   PermissionEventBus,
+  PermissionReader,
+  PermissionWriter,
+  type Services,
 } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { permissionsCreateRoute, permissionsDecideRoute } from "../../src/routes/permissions.js";
 
 try {
   if (process.platform === "darwin")
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-} catch {}
+} catch {
+  /* already loaded */
+}
+
+interface DecideBody {
+  status: string;
+}
+interface ConflictBody {
+  current_status: string;
+}
 
 function makeServices(db: Database): Services {
   return {
@@ -24,13 +35,13 @@ function makeServices(db: Database): Services {
     machineId: { get: () => "machine-test" },
     uuid: () => "evt-1",
     clock: () => new Date("2026-04-28T12:01:00.000Z"),
-    t0Writer: { write: () => {} },
+    t0Writer: { write: () => undefined },
     settings: { permission_ttl_seconds: 300 },
-    log: { info: () => {}, warn: () => {} },
+    log: { info: () => undefined, warn: () => undefined },
   } as unknown as Services;
 }
 
-async function seedPending(services: Services, id = "perm-1") {
+async function seedPending(services: Services, id = "perm-1"): Promise<void> {
   await permissionsCreateRoute(
     new Request("http://x/permissions", {
       method: "POST",
@@ -64,7 +75,7 @@ test("POST /permissions/:id/decide approves a pending row", async () => {
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = (await res.json()) as DecideBody;
   expect(body.status).toBe("approved");
   expect(services.permissionReader.get("perm-1")?.remember_scope).toBe("this_dispatch");
 });
@@ -75,7 +86,7 @@ test("POST /permissions/:id/decide emits permission.decided", async () => {
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
   await seedPending(services);
-  const seen: any[] = [];
+  const seen: EmittedPermissionEvent[] = [];
   services.permissionEvents.subscribe((e) => seen.push(e));
 
   await permissionsDecideRoute(
@@ -116,7 +127,7 @@ test("POST /permissions/:id/decide returns 409 if already terminal", async () =>
     services,
   );
   expect(res.status).toBe(409);
-  const body = await res.json();
+  const body = (await res.json()) as ConflictBody;
   expect(body.current_status).toBe("approved");
 });
 
