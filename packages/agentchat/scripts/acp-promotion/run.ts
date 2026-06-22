@@ -1,18 +1,52 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { loadConfig } from "../../src/config/load.js";
-import { PenumbraClient } from "../../src/penumbra-client.js";
-import { evaluatePromotionEvidence } from "./evaluate.js";
-import { renderPromotionJsonl, renderPromotionMarkdown } from "./report.js";
-import { PROMOTION_SCENARIOS, validatePromotionScenarios } from "./scenarios.js";
+
 import type {
   AcpPromotionRunResult,
   AcpPromotionScenario,
   AcpPromotionScenarioId,
 } from "./types.js";
 
+import { loadConfig } from "../../src/config/load.js";
+import { PenumbraClient } from "../../src/penumbra-client.js";
+import { evaluatePromotionEvidence } from "./evaluate.js";
+import { renderPromotionJsonl, renderPromotionMarkdown } from "./report.js";
+import { PROMOTION_SCENARIOS, validatePromotionScenarios } from "./scenarios.js";
+
 const DISPATCH_EVENT_FLUSH_GRACE_MS = 5_000;
+
+interface PromotionHandoffStatus {
+  handoff_id: string;
+  status: string;
+  error_summary: string | null;
+  worker_id: string | null;
+  started_at: string | null;
+  resolved_at: string | null;
+  latency_seconds: number | null;
+  reliability: {
+    status: string;
+    trustworthy: boolean;
+    recommended_action: string;
+    summary: string;
+  };
+}
+
+interface PromotionAuditReport {
+  status?: string;
+  trustworthy?: boolean;
+  recommended_action?: string;
+}
+
+interface PromotionWorktreeInfo {
+  worktree: unknown;
+  diff_against_main: string;
+  branch_log: string;
+}
+
+interface PromotionGrepResult {
+  text?: unknown;
+}
 
 export interface PromotionClient {
   startChain(body: {
@@ -24,30 +58,14 @@ export interface PromotionClient {
     use_worktree: boolean;
     task_type: string;
   }): Promise<{ handoff_id: string; conversation_id: string }>;
-  getHandoffStatus(handoff_id: string): Promise<{
-    handoff_id: string;
-    status: string;
-    error_summary: string | null;
-    worker_id: string | null;
-    started_at: string | null;
-    resolved_at: string | null;
-    latency_seconds: number | null;
-    reliability: {
-      status: string;
-      trustworthy: boolean;
-      recommended_action: string;
-      summary: string;
-    };
-  }>;
+  getHandoffStatus(handoff_id: string): Promise<PromotionHandoffStatus>;
   getChainResponses(
     conversation_id: string,
     which: "final" | "all",
   ): Promise<{ responses: { text: string; agent: string; ts: string }[] }>;
   getDispatchTimeline(handoff_id: string): Promise<{ events: unknown[] }>;
-  dispatchAudit(handoff_id: string): Promise<{ report: any }>;
-  inspectWorktree(
-    handoff_id: string,
-  ): Promise<{ worktree: any; diff_against_main: string; branch_log: string }>;
+  dispatchAudit(handoff_id: string): Promise<{ report: PromotionAuditReport }>;
+  inspectWorktree(handoff_id: string): Promise<PromotionWorktreeInfo>;
   grepInWorktree?(
     handoff_id: string,
     args: {
@@ -56,7 +74,7 @@ export interface PromotionClient {
       output_mode?: "content" | "files_with_matches";
       max_results?: number;
     },
-  ): Promise<{ results: any[]; truncated: boolean }>;
+  ): Promise<{ results: PromotionGrepResult[]; truncated: boolean }>;
 }
 
 export interface RunAcpPromotionOptions {
@@ -76,7 +94,7 @@ export async function runAcpPromotion(
   opts: RunAcpPromotionOptions,
 ): Promise<{ rows: AcpPromotionRunResult[]; jsonl: string; markdown: string }> {
   validatePromotionScenarios(PROMOTION_SCENARIOS);
-  const now = opts.now ?? (() => new Date().toISOString());
+  const now = opts.now ?? ((): string => new Date().toISOString());
   const configPath =
     opts.configPath ??
     process.env.AGENTCHAT_CONFIG ??
@@ -188,11 +206,14 @@ async function verifyArtifact(
       actual: null,
     };
   }
-  const first = Array.isArray(grep.results) ? (grep.results[0] as any) : null;
+  const first: PromotionGrepResult | null = Array.isArray(grep.results)
+    ? (grep.results[0] ?? null)
+    : null;
+  const actual = typeof first?.text === "string" ? first.text : null;
   return {
     path: scenario.expectedArtifact.path,
     expected: scenario.expectedArtifact.content,
-    actual: typeof first?.text === "string" ? first.text : null,
+    actual,
   };
 }
 
@@ -201,9 +222,9 @@ async function waitForTerminalStatus(
   handoffId: string,
   timeoutMs: number,
   pollIntervalMs: number,
-): Promise<Awaited<ReturnType<PromotionClient["getHandoffStatus"]>>> {
+): Promise<PromotionHandoffStatus> {
   const deadline = Date.now() + timeoutMs;
-  let last: Awaited<ReturnType<PromotionClient["getHandoffStatus"]>> | null = null;
+  let last: PromotionHandoffStatus | null = null;
   while (Date.now() <= deadline) {
     last = await client.getHandoffStatus(handoffId);
     if (!["pending", "approved", "redirected", "dispatched"].includes(last.status)) {
@@ -218,9 +239,9 @@ async function waitForTerminalStatus(
 async function waitForDispatchEndFlush(
   client: PromotionClient,
   handoffId: string,
-  initial: Awaited<ReturnType<PromotionClient["getHandoffStatus"]>>,
+  initial: PromotionHandoffStatus,
   pollIntervalMs: number,
-): Promise<Awaited<ReturnType<PromotionClient["getHandoffStatus"]>>> {
+): Promise<PromotionHandoffStatus> {
   const deadline = Date.now() + DISPATCH_EVENT_FLUSH_GRACE_MS;
   let last = initial;
   while (Date.now() <= deadline) {

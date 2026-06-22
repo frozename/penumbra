@@ -19,7 +19,7 @@ export function renderPromotionMarkdown(
   lines.push("|---|---|---|---|---|---|---|---|");
   for (const row of rows) {
     lines.push(
-      `| ${row.agent} | ${row.scenario} | ${row.status} | ${row.reliability_status ?? ""} | ${row.trustworthy ?? ""} | ${row.recommended_action ?? ""} | ${row.handoff_id ?? ""} | ${row.failure_reason ?? ""} |`,
+      `| ${row.agent} | ${row.scenario} | ${row.status} | ${row.reliability_status ?? ""} | ${row.trustworthy === null ? "" : String(row.trustworthy)} | ${row.recommended_action ?? ""} | ${row.handoff_id ?? ""} | ${row.failure_reason ?? ""} |`,
     );
   }
   lines.push("");

@@ -1,15 +1,18 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { applySchema, HandoffWriter, HandoffReader, loadSqliteVec, migrate } from "@penumbra/core";
-import { T0Writer } from "@penumbra/core";
+import { buildServices, loadSqliteVec, migrate } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { createDaemonFetchHandler } from "@penumbra/daemon/test-utils";
-import { runChatTurn } from "../../src/cli/loop.js";
-import { registerAdapter } from "../../src/adapters/registry.js";
-import { PenumbraClient } from "../../src/penumbra-client.js";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import type { AgentChatConfig } from "../../src/config/types.js";
+import type { DispatchOutput } from "../../src/sdk/adapter.js";
+
+import { registerAdapter } from "../../src/adapters/registry.js";
+import { runChatTurn } from "../../src/cli/loop.js";
+import { PenumbraClient } from "../../src/penumbra-client.js";
 
 try {
   if (process.platform === "darwin") {
@@ -24,30 +27,24 @@ test("user → planner → @executor → approve → executor responds", async (
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
-  const writer = new HandoffWriter({ db });
-  const reader = new HandoffReader({ db });
-  const t0Writer = new T0Writer(db);
 
-  const services = {
+  const services = buildServices({
+    env: {},
+    input: {},
+    storageRoot: mkdtempSync(join(tmpdir(), "ac-e2e-services-")),
     db,
-    handoffWriter: writer,
-    handoffReader: reader,
-    machineId: { get: () => "test" },
-    uuid: () => crypto.randomUUID(),
-    clock: () => new Date(),
-    t0Writer,
-    redactor: { redact: (s: any) => s },
-    log: { info: () => {}, warn: () => {} },
-    supervisor: { register: () => {}, startAll: () => {}, stopAll: () => {} },
-    settings: { t1SessionIdleMinutes: 5, t1RollupIntervalSec: 60 },
-  } as any;
+    embedder: new TestEmbedder({ dim: 384 }),
+  });
 
   const token = "test-token";
   const handler = createDaemonFetchHandler({ services, token });
-  const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
-    const req = input instanceof Request ? input : new Request(String(input), init);
-    return handler(req);
-  }) as any;
+  const fetchImpl: typeof fetch = Object.assign(
+    (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]): Promise<Response> => {
+      const req = input instanceof Request ? input : new Request(String(input), init);
+      return handler(req);
+    },
+    { preconnect: fetch.preconnect.bind(fetch) },
+  );
 
   const root = mkdtempSync(join(tmpdir(), "ac-e2e-"));
   writeFileSync(join(root, "port"), `1\n`);
@@ -58,15 +55,12 @@ test("user → planner → @executor → approve → executor responds", async (
   // Register two fake adapters
   registerAdapter("plan-bot", () => ({
     kind: "plan-bot",
-    async dispatch() {
-      return { text: "Plan: 1) do X. @executor please run." };
-    },
+    dispatch: (): Promise<DispatchOutput> =>
+      Promise.resolve({ text: "Plan: 1) do X. @executor please run." }),
   }));
   registerAdapter("exec-bot", () => ({
     kind: "exec-bot",
-    async dispatch({ prompt }) {
-      return { text: `done: ${prompt}` };
-    },
+    dispatch: ({ prompt }): Promise<DispatchOutput> => Promise.resolve({ text: `done: ${prompt}` }),
   }));
 
   const config: AgentChatConfig = {
@@ -77,13 +71,16 @@ test("user → planner → @executor → approve → executor responds", async (
     default_roles: { planner: "planner", executor: "gemini" },
   };
 
+  const observe = (event: Record<string, unknown>): Promise<{ event_id: string }> =>
+    client.observe(event);
+
   // 1) Planner runs
   const planTurn = await runChatTurn({
     config,
     initialAgent: "planner",
     userMessage: "add rate limiting",
     conversation: { id: "c-e2e", project_id: "auth" },
-    observe: (e) => client.observe(e),
+    observe,
   });
   expect(planTurn.next_mention?.target).toBe("executor");
   expect(planTurn.next_mention?.resolution.kind).toBe("role");
@@ -114,7 +111,7 @@ test("user → planner → @executor → approve → executor responds", async (
     initialAgent: "gemini",
     userMessage: planTurn.text,
     conversation: { id: "c-e2e", project_id: "auth" },
-    observe: (e) => client.observe(e),
+    observe,
   });
   expect(execTurn.text).toContain("done:");
 

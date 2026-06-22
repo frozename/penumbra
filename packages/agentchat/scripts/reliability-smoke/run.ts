@@ -29,12 +29,12 @@ const EXPECTED: Record<ReliabilitySmokeScenario, DispatchReliabilityStatus> = {
   watchdog_missing_end: "watchdog_only",
 };
 
-export async function runReliabilitySmokeScenario(
+export function runReliabilitySmokeScenario(
   scenario: ReliabilitySmokeScenario,
   opts: { dryRun?: boolean } = {},
 ): Promise<ReliabilitySmokeResult> {
   if (opts.dryRun) {
-    return { scenario, expectedStatus: EXPECTED[scenario], actualStatus: null };
+    return Promise.resolve({ scenario, expectedStatus: EXPECTED[scenario], actualStatus: null });
   }
 
   throw new Error("live reliability smoke execution is implemented in the next task");
@@ -44,6 +44,6 @@ if (import.meta.main) {
   const scenarios = Object.keys(EXPECTED) as ReliabilitySmokeScenario[];
   for (const scenario of scenarios) {
     const result = await runReliabilitySmokeScenario(scenario, { dryRun: true });
-    console.log(`${result.scenario}\t${result.expectedStatus}`);
+    process.stdout.write(`${result.scenario}\t${result.expectedStatus}\n`);
   }
 }

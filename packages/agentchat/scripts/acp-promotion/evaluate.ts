@@ -1,4 +1,4 @@
-import type { AcpPromotionRunResult, AcpPromotionScenario } from "./types.js";
+import type { AcpPromotionRunResult, AcpPromotionScenario, ExpectedResponse } from "./types.js";
 
 interface EvidenceInput {
   agent: string;
@@ -17,7 +17,7 @@ interface EvidenceInput {
   } | null;
   responses: { text: string }[];
   audit: { report: { status?: string; trustworthy?: boolean; recommended_action?: string } } | null;
-  timeline: { events: any[] } | null;
+  timeline: { events: unknown[] } | null;
   worktree: { diff_against_main: string } | null;
   artifact: { path: string; expected: string; actual: string | null } | null;
   now: string;
@@ -96,23 +96,23 @@ export function evaluatePromotionEvidence(input: EvidenceInput): AcpPromotionRun
 
 function matchResponse(scenario: AcpPromotionScenario, text: string | null): string | null {
   const trimmed = (text ?? "").trim();
-  if (scenario.expectedResponse.kind === "exact") {
-    return trimmed === scenario.expectedResponse.value
-      ? null
-      : `expected response ${scenario.expectedResponse.value}, got ${JSON.stringify(trimmed)}`;
+  const expected: ExpectedResponse = scenario.expectedResponse;
+  switch (expected.kind) {
+    case "exact": {
+      const value = expected.value ?? "";
+      return trimmed === value
+        ? null
+        : `expected response ${JSON.stringify(value)}, got ${JSON.stringify(trimmed)}`;
+    }
+    case "package_name":
+      return trimmed === "penumbra"
+        ? null
+        : `expected package name penumbra, got ${JSON.stringify(trimmed)}`;
+    case "non_empty_or_no_findings":
+      return trimmed.length > 0 ? null : "expected non-empty review response";
+    case "denial_or_failure":
+      return /denied|outside|forbidden|not allowed|permission|cannot/i.test(trimmed)
+        ? null
+        : `expected denial/failure explanation, got ${JSON.stringify(trimmed)}`;
   }
-  if (scenario.expectedResponse.kind === "package_name") {
-    return trimmed === "penumbra"
-      ? null
-      : `expected package name penumbra, got ${JSON.stringify(trimmed)}`;
-  }
-  if (scenario.expectedResponse.kind === "non_empty_or_no_findings") {
-    return trimmed.length > 0 ? null : "expected non-empty review response";
-  }
-  if (scenario.expectedResponse.kind === "denial_or_failure") {
-    return /denied|outside|forbidden|not allowed|permission|cannot/i.test(trimmed)
-      ? null
-      : `expected denial/failure explanation, got ${JSON.stringify(trimmed)}`;
-  }
-  return `unknown response matcher: ${(scenario.expectedResponse as any).kind}`;
 }
