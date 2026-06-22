@@ -1,17 +1,46 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { buildServices, loadSqliteVec, migrate, TaskEventBus, type Services } from "@penumbra/core";
+import { buildServices, loadSqliteVec, migrate, type Services, TaskEventBus } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { createDaemonFetchHandler } from "../../src/serve.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* ignored: best-effort darwin sqlite hint */
+}
+
+const noop = (): void => undefined;
+
+interface TestAgentchatAgent {
+  name: string;
+  tags?: string[];
+  tier?: string;
+  cost_cents_per_run?: number;
+}
+interface TestAgentchatConfig {
+  agents: TestAgentchatAgent[];
+}
+function setAgentchatConfig(services: Services, config: TestAgentchatConfig): void {
+  // Test fixtures inject agent shapes (tags, tier) outside the strict daemon
+  // agentchatConfig schema. Object.assign widens at runtime without changing
+  // the static Services type at call sites.
+  Object.assign(services, { agentchatConfig: config });
+}
+
+interface SseEvent {
+  task_id: string;
+  kind: string;
+  actor: string | null;
+  at: number;
+  payload?: { test?: boolean } & Record<string, unknown>;
+}
 
 function startTestDaemon(): {
   fetch: (path: string, init?: RequestInit) => Promise<Response>;
@@ -41,37 +70,44 @@ function startTestDaemon(): {
     mainRepoDir,
   });
   services.watchdog = {
-    recordHeartbeat: () => {},
-    hasActiveWorker: () => true,
-    tick: async () => {},
+    recordHeartbeat: noop,
+    hasActiveWorker: (): boolean => true,
+    getStaleWorkers: (): string[] => [],
+    getStaleHeartbeatAges: (): { worker_id: string; last_seen_age_ms: number }[] => [],
+    tick: (): Promise<void> => Promise.resolve(),
   };
 
-  (services as Services & { agentchatConfig?: any }).agentchatConfig = {
+  setAgentchatConfig(services, {
     agents: [{ name: "codex", tags: ["typescript"], tier: "oc", cost_cents_per_run: 15 }],
-  };
+  });
 
   const token = "tok";
   const taskEvents = new TaskEventBus();
   const handler = createDaemonFetchHandler({ services, token, taskEvents });
 
   return {
-    fetch: (path, init) => handler(new Request(`http://x${path}`, init)),
+    fetch: (path: string, init?: RequestInit): Promise<Response> =>
+      handler(new Request(`http://x${path}`, init)),
     services,
     token,
     taskEvents,
-    stop: () => {
+    stop: (): void => {
       try {
         services.supervisor.stopAll();
-      } catch {}
+      } catch {
+        /* ignored: best-effort teardown */
+      }
       try {
         db.close();
-      } catch {}
+      } catch {
+        /* ignored: best-effort teardown */
+      }
       rmSync(root, { recursive: true, force: true });
     },
   };
 }
 
-function authHeaders(token: string, headers: HeadersInit = {}): HeadersInit {
+function authHeaders(token: string, headers: Record<string, string> = {}): Record<string, string> {
   return {
     authorization: `Bearer ${token}`,
     ...headers,
@@ -82,9 +118,9 @@ async function postJson(
   daemon: ReturnType<typeof startTestDaemon>,
   path: string,
   body: unknown,
-  headers: HeadersInit = {},
+  headers: Record<string, string> = {},
 ): Promise<Response> {
-  return daemon.fetch(path, {
+  return await daemon.fetch(path, {
     method: "POST",
     headers: authHeaders(daemon.token, {
       "content-type": "application/json",
@@ -113,30 +149,31 @@ async function readSseEvents(
   stream: ReadableStream<Uint8Array>,
   n: number,
   timeoutMs = 1000,
-): Promise<any[]> {
+): Promise<SseEvent[]> {
   const reader = stream.getReader();
-  const events: any[] = [];
+  const events: SseEvent[] = [];
   const decoder = new TextDecoder();
   let buf = "";
   const deadline = Date.now() + timeoutMs;
   while (events.length < n && Date.now() < deadline) {
     const { value, done } = await Promise.race([
       reader.read(),
-      new Promise<{ value: undefined; done: true }>((resolve) =>
+      new Promise<{ value: undefined; done: true }>((resolve) => {
         setTimeout(
-          () => resolve({ value: undefined, done: true }),
+          () => {
+            resolve({ value: undefined, done: true });
+          },
           Math.max(1, deadline - Date.now()),
-        ),
-      ),
+        );
+      }),
     ]);
     if (done) break;
-    if (!value) continue;
     buf += decoder.decode(value, { stream: true });
     const frames = buf.split("\n\n");
     buf = frames.pop() ?? "";
     for (const frame of frames) {
       const dataLine = frame.split("\n").find((line) => line.startsWith("data: "));
-      if (dataLine) events.push(JSON.parse(dataLine.slice(6)));
+      if (dataLine) events.push(JSON.parse(dataLine.slice(6)) as SseEvent);
     }
   }
   reader.releaseLock();
@@ -153,14 +190,15 @@ test("GET /tasks/events streams live filed events", async () => {
     expect(res.headers.get("content-type")).toContain("text/event-stream");
 
     const taskId = await fileTask(daemon);
-    const events = await readSseEvents(res.body!, 1, 1000);
+    if (res.body === null) throw new Error("missing response body");
+    const events = await readSseEvents(res.body, 1, 1000);
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
       task_id: taskId,
       kind: "filed",
       actor: "cli",
     });
-    expect(typeof events[0].at).toBe("number");
+    expect(typeof events[0]?.at).toBe("number");
   } finally {
     daemon.stop();
   }
@@ -178,14 +216,16 @@ test("GET /tasks/events replays rows from since", async () => {
       .get(taskId);
     expect(row).toBeTruthy();
 
-    const res = await daemon.fetch(`/tasks/events?since=${(row?.at ?? 0) - 1}`, {
+    const sinceCursor = (row?.at ?? 0) - 1;
+    const res = await daemon.fetch(`/tasks/events?since=${String(sinceCursor)}`, {
       headers: authHeaders(daemon.token),
     });
     expect(res.status).toBe(200);
-    const events = await readSseEvents(res.body!, 1, 1000);
+    if (res.body === null) throw new Error("missing response body");
+    const events = await readSseEvents(res.body, 1, 1000);
     expect(events).toHaveLength(1);
-    expect(events[0].task_id).toBe(taskId);
-    expect(events[0].kind).toBe("filed");
+    expect(events[0]?.task_id).toBe(taskId);
+    expect(events[0]?.kind).toBe("filed");
   } finally {
     daemon.stop();
   }
@@ -203,11 +243,12 @@ test("GET /tasks/events?kind=leased filters out non-leased events", async () => 
     const lease = await postJson(daemon, "/tasks/lease", { agent_id: "codex" });
     expect(lease.status).toBe(200);
 
-    const events = await readSseEvents(res.body!, 1, 1000);
+    if (res.body === null) throw new Error("missing response body");
+    const events = await readSseEvents(res.body, 1, 1000);
     expect(events).toHaveLength(1);
-    expect(events[0].task_id).toBe(taskId);
-    expect(events[0].kind).toBe("leased");
-    expect(events[0].actor).toBe("codex");
+    expect(events[0]?.task_id).toBe(taskId);
+    expect(events[0]?.kind).toBe("leased");
+    expect(events[0]?.actor).toBe("codex");
   } finally {
     daemon.stop();
   }
@@ -224,14 +265,15 @@ test("GET /tasks/events fans out the same event to multiple subscribers", async 
     });
 
     const taskId = await fileTask(daemon);
+    if (r1.body === null || r2.body === null) throw new Error("missing response body");
     const [a, b] = await Promise.all([
-      readSseEvents(r1.body!, 1, 1000),
-      readSseEvents(r2.body!, 1, 1000),
+      readSseEvents(r1.body, 1, 1000),
+      readSseEvents(r2.body, 1, 1000),
     ]);
     expect(a).toHaveLength(1);
     expect(b).toHaveLength(1);
-    expect(a[0].task_id).toBe(taskId);
-    expect(b[0].task_id).toBe(taskId);
+    expect(a[0]?.task_id).toBe(taskId);
+    expect(b[0]?.task_id).toBe(taskId);
   } finally {
     daemon.stop();
   }
@@ -260,7 +302,8 @@ test("GET /tasks/events?kind=orchestrate_spawned,orchestrate_warning,orchestrate
     daemon.taskEvents.publish({ ...baseEvent, kind: "orchestrate_terminated" });
     daemon.taskEvents.publish({ ...baseEvent, kind: "filed" as const });
 
-    const events = await readSseEvents(res.body!, 3, 1000);
+    if (res.body === null) throw new Error("missing response body");
+    const events = await readSseEvents(res.body, 3, 1000);
     expect(events).toHaveLength(3);
     expect(events.map((event) => event.kind)).toEqual([
       "orchestrate_spawned",

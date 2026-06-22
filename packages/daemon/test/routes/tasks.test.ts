@@ -1,27 +1,57 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import {
   buildServices,
+  loadProjectRegistry,
   loadSqliteVec,
   migrate,
   type Services,
-  loadProjectRegistry,
   WorkerTokenStore,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { createDaemonFetchHandler } from "../../src/serve.js";
-import type { GhTaskSyncService } from "../../src/sweepers/gh-task-sync.js";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import type { GhClient } from "../../src/services/gh-client.js";
+import type { GhTaskSyncService } from "../../src/sweepers/gh-task-sync.js";
+
 import { conciseTitle } from "../../src/routes/tasks.js";
+import { createDaemonFetchHandler } from "../../src/serve.js";
+
+const noop = (): void => undefined;
+
+// File-local widening: tests stub the GhTaskSyncService / GhClient / Watchdog
+// interfaces partially because routes only invoke a handful of methods. A
+// single documented widening at the test seam keeps the call sites typed.
+function partialAs<T>(value: Partial<T>): T {
+  return value as unknown as T;
+}
+
+interface TestAgentchatAgent {
+  name: string;
+  tags?: string[];
+  tier?: string;
+  cost_cents_per_run?: number;
+  maestro_capable?: boolean;
+}
+interface TestAgentchatConfig {
+  agents: TestAgentchatAgent[];
+}
+function setAgentchatConfig(services: Services, config: TestAgentchatConfig): void {
+  // Test fixtures inject agent shapes (tags, tier, maestro_capable) outside
+  // the strict daemon agentchatConfig schema. Object.assign widens the
+  // runtime value without changing the static Services type at call sites.
+  Object.assign(services, { agentchatConfig: config });
+}
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* ignored: best-effort darwin sqlite hint */
+}
 
 function startTestDaemon(
   opts: { ghClient?: GhClient; ghTaskSyncService?: GhTaskSyncService; workerToken?: boolean } = {},
@@ -53,12 +83,14 @@ function startTestDaemon(
     mainRepoDir,
   });
   services.watchdog = {
-    recordHeartbeat: () => {},
-    hasActiveWorker: () => true,
-    tick: async () => {},
+    recordHeartbeat: noop,
+    hasActiveWorker: (): boolean => true,
+    getStaleWorkers: (): string[] => [],
+    getStaleHeartbeatAges: (): { worker_id: string; last_seen_age_ms: number }[] => [],
+    tick: (): Promise<void> => Promise.resolve(),
   };
 
-  (services as Services & { agentchatConfig?: any }).agentchatConfig = {
+  setAgentchatConfig(services, {
     agents: [
       { name: "codex", tags: ["typescript"], tier: "oc", cost_cents_per_run: 15 },
       {
@@ -90,7 +122,7 @@ function startTestDaemon(
         maestro_capable: true,
       },
     ],
-  };
+  });
 
   const token = "tok";
   let workerToken: string | undefined;
@@ -100,35 +132,40 @@ function startTestDaemon(
   const handler = createDaemonFetchHandler({
     services,
     token,
-    ghClient: opts.ghClient,
-    ghTaskSyncService: opts.ghTaskSyncService,
+    ...(opts.ghClient && { ghClient: opts.ghClient }),
+    ...(opts.ghTaskSyncService && { ghTaskSyncService: opts.ghTaskSyncService }),
   });
 
   return {
-    fetch: (path, init) => handler(new Request(`http://x${path}`, init)),
+    fetch: (path: string, init?: RequestInit): Promise<Response> =>
+      handler(new Request(`http://x${path}`, init)),
     services,
     token,
-    workerToken,
-    stop: () => {
+    ...(workerToken !== undefined && { workerToken }),
+    stop: (): void => {
       try {
         services.supervisor.stopAll();
-      } catch {}
+      } catch {
+        /* ignored: best-effort teardown */
+      }
       try {
         db.close();
-      } catch {}
+      } catch {
+        /* ignored: best-effort teardown */
+      }
       rmSync(root, { recursive: true, force: true });
     },
   };
 }
 
 function makeProjectRegistry(
-  entries: Array<{
+  entries: {
     project_id: string;
     root_path: string;
     gh_repo?: string;
     remote?: { kind: "github"; repo: string };
-  }>,
-) {
+  }[],
+): ReturnType<typeof loadProjectRegistry> {
   const dir = mkdtempSync(join(tmpdir(), "tasks-route-registry-"));
   const yaml = ["projects:"];
   for (const entry of entries) {
@@ -157,7 +194,7 @@ function insertTaskDraftEvent(
     draft_id: string;
     payload: unknown;
   },
-) {
+): void {
   db.run(
     `INSERT INTO t0_events(event_id, ts, ingest_ts, source, project_id, user_id, machine_id, event_type, lane, payload_json)
      VALUES (?, ?, ?, 'mcp', ?, 'u', 'm', ?, 'unknown', ?)`,
@@ -174,29 +211,20 @@ function insertTaskDraftEvent(
 
 test("POST /tasks with gh_create queues github issue creation and returns queued status", async () => {
   const daemon = startTestDaemon({
-    ghTaskSyncService: {
-      enqueueTaskGhCreate: () => {},
-      enqueueSyncLinkedTask: () => {},
-      queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 42,
-        gh_state: "OPEN",
-        action: "noop",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      pushStatusNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 42,
-        gh_state: "OPEN",
-        action: "pushed",
-        direction: "push",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      syncAllLinkedTasks: async () => [],
-    },
+    ghTaskSyncService: partialAs<GhTaskSyncService>({
+      enqueueTaskGhCreate: noop,
+      enqueueSyncLinkedTask: noop,
+      pushStatusNow: () =>
+        Promise.resolve({
+          task_id: "task-1",
+          repo: "acordeiro/penumbra",
+          issue_number: 42,
+          gh_state: "OPEN",
+          action: "pushed",
+          direction: "push",
+          last_sync_ts: "2026-04-23T12:00:00.000Z",
+        }),
+    }),
   });
   try {
     const create = await postJson(daemon, "/tasks", {
@@ -228,39 +256,30 @@ test("POST /tasks with gh_create queues github issue creation and returns queued
 });
 
 test("POST /tasks with gh_create resolves repo from project registry when omitted", async () => {
-  const createCalls: Array<{
+  const createCalls: {
     repo: string;
     title: string;
     body?: string;
     labels?: string[];
     assignees?: string[];
-  }> = [];
+  }[] = [];
   const daemon = startTestDaemon({
-    ghTaskSyncService: {
+    ghTaskSyncService: partialAs<GhTaskSyncService>({
       enqueueTaskGhCreate: (_task_id, input) => {
         createCalls.push(input);
       },
-      enqueueSyncLinkedTask: () => {},
-      queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 43,
-        gh_state: "OPEN",
-        action: "noop",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      pushStatusNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 43,
-        gh_state: "OPEN",
-        action: "pushed",
-        direction: "push",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      syncAllLinkedTasks: async () => [],
-    },
+      enqueueSyncLinkedTask: noop,
+      pushStatusNow: () =>
+        Promise.resolve({
+          task_id: "task-1",
+          repo: "acordeiro/penumbra",
+          issue_number: 43,
+          gh_state: "OPEN",
+          action: "pushed",
+          direction: "push",
+          last_sync_ts: "2026-04-23T12:00:00.000Z",
+        }),
+    }),
   });
   daemon.services.projectRegistry = makeProjectRegistry([
     { project_id: "penumbra", root_path: "/tmp/penumbra", gh_repo: "acordeiro/penumbra" },
@@ -308,7 +327,6 @@ test("POST /tasks with gh_create resolves repo from project registry when omitte
         title: "build task board route",
         body: "build task board route",
         labels: ["tasks"],
-        assignees: undefined,
       },
     ]);
   } finally {
@@ -317,39 +335,30 @@ test("POST /tasks with gh_create resolves repo from project registry when omitte
 });
 
 test("POST /tasks resolves repo from remote github project registry entries", async () => {
-  const createCalls: Array<{
+  const createCalls: {
     repo: string;
     title: string;
     body?: string;
     labels?: string[];
     assignees?: string[];
-  }> = [];
+  }[] = [];
   const daemon = startTestDaemon({
-    ghTaskSyncService: {
+    ghTaskSyncService: partialAs<GhTaskSyncService>({
       enqueueTaskGhCreate: (_task_id, input) => {
         createCalls.push(input);
       },
-      enqueueSyncLinkedTask: () => {},
-      queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 44,
-        gh_state: "OPEN",
-        action: "noop",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      pushStatusNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 44,
-        gh_state: "OPEN",
-        action: "pushed",
-        direction: "push",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      syncAllLinkedTasks: async () => [],
-    },
+      enqueueSyncLinkedTask: noop,
+      pushStatusNow: () =>
+        Promise.resolve({
+          task_id: "task-1",
+          repo: "acordeiro/penumbra",
+          issue_number: 44,
+          gh_state: "OPEN",
+          action: "pushed",
+          direction: "push",
+          last_sync_ts: "2026-04-23T12:00:00.000Z",
+        }),
+    }),
   });
   daemon.services.projectRegistry = makeProjectRegistry([
     {
@@ -382,7 +391,6 @@ test("POST /tasks resolves repo from remote github project registry entries", as
         title: "build task board route",
         body: "build task board route",
         labels: ["tasks"],
-        assignees: undefined,
       },
     ]);
   } finally {
@@ -391,39 +399,30 @@ test("POST /tasks resolves repo from remote github project registry entries", as
 });
 
 test("POST /tasks with refiner-origin draft defaults gh_create labels and resolves repo", async () => {
-  const createCalls: Array<{
+  const createCalls: {
     repo: string;
     title: string;
     body?: string;
     labels?: string[];
     assignees?: string[];
-  }> = [];
+  }[] = [];
   const daemon = startTestDaemon({
-    ghTaskSyncService: {
+    ghTaskSyncService: partialAs<GhTaskSyncService>({
       enqueueTaskGhCreate: (_task_id, input) => {
         createCalls.push(input);
       },
-      enqueueSyncLinkedTask: () => {},
-      queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 45,
-        gh_state: "OPEN",
-        action: "noop",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      pushStatusNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 45,
-        gh_state: "OPEN",
-        action: "pushed",
-        direction: "push",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      syncAllLinkedTasks: async () => [],
-    },
+      enqueueSyncLinkedTask: noop,
+      pushStatusNow: () =>
+        Promise.resolve({
+          task_id: "task-1",
+          repo: "acordeiro/penumbra",
+          issue_number: 45,
+          gh_state: "OPEN",
+          action: "pushed",
+          direction: "push",
+          last_sync_ts: "2026-04-23T12:00:00.000Z",
+        }),
+    }),
   });
   daemon.services.projectRegistry = makeProjectRegistry([
     { project_id: "penumbra", root_path: "/tmp/penumbra", gh_repo: "acordeiro/penumbra" },
@@ -468,7 +467,6 @@ test("POST /tasks with refiner-origin draft defaults gh_create labels and resolv
         title: "refiner task file",
         body: "refiner task file",
         labels: ["task-draft", "refiner-promoted"],
-        assignees: undefined,
       },
     ]);
   } finally {
@@ -491,29 +489,20 @@ test("conciseTitle trims long prompts, preserves short sentences, and never retu
 
 test("POST /tasks with refiner-origin draft emits task_draft_promoted t0 event", async () => {
   const daemon = startTestDaemon({
-    ghTaskSyncService: {
-      enqueueTaskGhCreate: () => {},
-      enqueueSyncLinkedTask: () => {},
-      queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 46,
-        gh_state: "OPEN",
-        action: "noop",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      pushStatusNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 46,
-        gh_state: "OPEN",
-        action: "pushed",
-        direction: "push",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      syncAllLinkedTasks: async () => [],
-    },
+    ghTaskSyncService: partialAs<GhTaskSyncService>({
+      enqueueTaskGhCreate: noop,
+      enqueueSyncLinkedTask: noop,
+      pushStatusNow: () =>
+        Promise.resolve({
+          task_id: "task-1",
+          repo: "acordeiro/penumbra",
+          issue_number: 46,
+          gh_state: "OPEN",
+          action: "pushed",
+          direction: "push",
+          last_sync_ts: "2026-04-23T12:00:00.000Z",
+        }),
+    }),
   });
   insertTaskDraftEvent(daemon.services.db, {
     event_id: "draft-created",
@@ -552,7 +541,7 @@ test("POST /tasks with refiner-origin draft emits task_draft_promoted t0 event",
        ORDER BY ts DESC, event_id DESC
     `,
       )
-      .all() as Array<{ event_type: string; payload_json: string }>;
+      .all() as { event_type: string; payload_json: string }[];
     expect(rows).toHaveLength(1);
     expect(rows[0]?.event_type).toBe("task_draft_promoted");
     expect(JSON.parse(rows[0]?.payload_json ?? "{}")).toEqual({
@@ -566,29 +555,20 @@ test("POST /tasks with refiner-origin draft emits task_draft_promoted t0 event",
 
 test("POST /tasks with refiner-origin draft rejects missing drafts and already promoted drafts", async () => {
   const daemon = startTestDaemon({
-    ghTaskSyncService: {
-      enqueueTaskGhCreate: () => {},
-      enqueueSyncLinkedTask: () => {},
-      queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 47,
-        gh_state: "OPEN",
-        action: "noop",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      pushStatusNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 47,
-        gh_state: "OPEN",
-        action: "pushed",
-        direction: "push",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      syncAllLinkedTasks: async () => [],
-    },
+    ghTaskSyncService: partialAs<GhTaskSyncService>({
+      enqueueTaskGhCreate: noop,
+      enqueueSyncLinkedTask: noop,
+      pushStatusNow: () =>
+        Promise.resolve({
+          task_id: "task-1",
+          repo: "acordeiro/penumbra",
+          issue_number: 47,
+          gh_state: "OPEN",
+          action: "pushed",
+          direction: "push",
+          last_sync_ts: "2026-04-23T12:00:00.000Z",
+        }),
+    }),
   });
   try {
     const missing = await postJson(daemon, "/tasks", {
@@ -651,29 +631,20 @@ test("POST /tasks with refiner-origin draft rejects missing drafts and already p
 
 test("POST /tasks upgrades trusted auto-approved refiner promotions to orchestrate", async () => {
   const daemon = startTestDaemon({
-    ghTaskSyncService: {
-      enqueueTaskGhCreate: () => {},
-      enqueueSyncLinkedTask: () => {},
-      queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 52,
-        gh_state: "OPEN",
-        action: "noop",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      pushStatusNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 52,
-        gh_state: "OPEN",
-        action: "pushed",
-        direction: "push",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      syncAllLinkedTasks: async () => [],
-    },
+    ghTaskSyncService: partialAs<GhTaskSyncService>({
+      enqueueTaskGhCreate: noop,
+      enqueueSyncLinkedTask: noop,
+      pushStatusNow: () =>
+        Promise.resolve({
+          task_id: "task-1",
+          repo: "acordeiro/penumbra",
+          issue_number: 52,
+          gh_state: "OPEN",
+          action: "pushed",
+          direction: "push",
+          last_sync_ts: "2026-04-23T12:00:00.000Z",
+        }),
+    }),
   });
   insertTaskDraftEvent(daemon.services.db, {
     event_id: "draft-created",
@@ -724,29 +695,20 @@ test("POST /tasks upgrades trusted auto-approved refiner promotions to orchestra
 
 test("POST /tasks returns 4xx for explicit non-maestro-capable allow_agents during trusted auto-promote", async () => {
   const daemon = startTestDaemon({
-    ghTaskSyncService: {
-      enqueueTaskGhCreate: () => {},
-      enqueueSyncLinkedTask: () => {},
-      queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 53,
-        gh_state: "OPEN",
-        action: "noop",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      pushStatusNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 53,
-        gh_state: "OPEN",
-        action: "pushed",
-        direction: "push",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      syncAllLinkedTasks: async () => [],
-    },
+    ghTaskSyncService: partialAs<GhTaskSyncService>({
+      enqueueTaskGhCreate: noop,
+      enqueueSyncLinkedTask: noop,
+      pushStatusNow: () =>
+        Promise.resolve({
+          task_id: "task-1",
+          repo: "acordeiro/penumbra",
+          issue_number: 53,
+          gh_state: "OPEN",
+          action: "pushed",
+          direction: "push",
+          last_sync_ts: "2026-04-23T12:00:00.000Z",
+        }),
+    }),
   });
   insertTaskDraftEvent(daemon.services.db, {
     event_id: "draft-created-explicit-non-capable",
@@ -793,37 +755,28 @@ test("POST /tasks returns 4xx for explicit non-maestro-capable allow_agents duri
 
 test("POST /tasks fails closed when no default auto-promote agents are maestro capable", async () => {
   const daemon = startTestDaemon({
-    ghTaskSyncService: {
-      enqueueTaskGhCreate: () => {},
-      enqueueSyncLinkedTask: () => {},
-      queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 54,
-        gh_state: "OPEN",
-        action: "noop",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      pushStatusNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 54,
-        gh_state: "OPEN",
-        action: "pushed",
-        direction: "push",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      syncAllLinkedTasks: async () => [],
-    },
+    ghTaskSyncService: partialAs<GhTaskSyncService>({
+      enqueueTaskGhCreate: noop,
+      enqueueSyncLinkedTask: noop,
+      pushStatusNow: () =>
+        Promise.resolve({
+          task_id: "task-1",
+          repo: "acordeiro/penumbra",
+          issue_number: 54,
+          gh_state: "OPEN",
+          action: "pushed",
+          direction: "push",
+          last_sync_ts: "2026-04-23T12:00:00.000Z",
+        }),
+    }),
   });
-  (daemon.services as Services & { agentchatConfig?: any }).agentchatConfig = {
+  setAgentchatConfig(daemon.services, {
     agents: [
       { name: "openai-codex-deep-acp", maestro_capable: false },
       { name: "anthropic-claude-sonnet-acp", maestro_capable: false },
       { name: "google-gemini-cli", maestro_capable: false },
     ],
-  };
+  });
   insertTaskDraftEvent(daemon.services.db, {
     event_id: "draft-created-no-defaults",
     ts: "2026-04-23T11:59:00.000Z",
@@ -864,29 +817,20 @@ test("POST /tasks fails closed when no default auto-promote agents are maestro c
 
 test("POST /tasks preserves explicit allow_agents during trusted auto-approved refiner promotions", async () => {
   const daemon = startTestDaemon({
-    ghTaskSyncService: {
-      enqueueTaskGhCreate: () => {},
-      enqueueSyncLinkedTask: () => {},
-      queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 53,
-        gh_state: "OPEN",
-        action: "noop",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      pushStatusNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 53,
-        gh_state: "OPEN",
-        action: "pushed",
-        direction: "push",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      syncAllLinkedTasks: async () => [],
-    },
+    ghTaskSyncService: partialAs<GhTaskSyncService>({
+      enqueueTaskGhCreate: noop,
+      enqueueSyncLinkedTask: noop,
+      pushStatusNow: () =>
+        Promise.resolve({
+          task_id: "task-1",
+          repo: "acordeiro/penumbra",
+          issue_number: 53,
+          gh_state: "OPEN",
+          action: "pushed",
+          direction: "push",
+          last_sync_ts: "2026-04-23T12:00:00.000Z",
+        }),
+    }),
   });
   insertTaskDraftEvent(daemon.services.db, {
     event_id: "draft-created",
@@ -936,29 +880,20 @@ test("POST /tasks preserves explicit allow_agents during trusted auto-approved r
 
 test("POST /tasks keeps untrusted or non-auto-approved refiner promotions as work", async () => {
   const daemon = startTestDaemon({
-    ghTaskSyncService: {
-      enqueueTaskGhCreate: () => {},
-      enqueueSyncLinkedTask: () => {},
-      queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 53,
-        gh_state: "OPEN",
-        action: "noop",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      pushStatusNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 53,
-        gh_state: "OPEN",
-        action: "pushed",
-        direction: "push",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      syncAllLinkedTasks: async () => [],
-    },
+    ghTaskSyncService: partialAs<GhTaskSyncService>({
+      enqueueTaskGhCreate: noop,
+      enqueueSyncLinkedTask: noop,
+      pushStatusNow: () =>
+        Promise.resolve({
+          task_id: "task-1",
+          repo: "acordeiro/penumbra",
+          issue_number: 53,
+          gh_state: "OPEN",
+          action: "pushed",
+          direction: "push",
+          last_sync_ts: "2026-04-23T12:00:00.000Z",
+        }),
+    }),
   });
   const trustedFalseDraftId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
   const untrustedDraftId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
@@ -1007,7 +942,7 @@ test("POST /tasks keeps untrusted or non-auto-approved refiner promotions as wor
       origin: `draft:${trustedFalseDraftId}`,
     });
     expect(trustedFalse.status).toBe(201);
-    const trustedFalseTaskId = (await trustedFalse.json()).task_id as string;
+    const trustedFalseTaskId = ((await trustedFalse.json()) as { task_id: string }).task_id;
     const trustedFalseTask = daemon.services.db
       .query(`SELECT kind FROM tasks WHERE id = ?`)
       .get(trustedFalseTaskId) as { kind: string };
@@ -1021,7 +956,7 @@ test("POST /tasks keeps untrusted or non-auto-approved refiner promotions as wor
       origin: `draft:${untrustedDraftId}`,
     });
     expect(untrusted.status).toBe(201);
-    const untrustedTaskId = (await untrusted.json()).task_id as string;
+    const untrustedTaskId = ((await untrusted.json()) as { task_id: string }).task_id;
     const untrustedTask = daemon.services.db
       .query(`SELECT kind FROM tasks WHERE id = ?`)
       .get(untrustedTaskId) as { kind: string };
@@ -1034,29 +969,20 @@ test("POST /tasks keeps untrusted or non-auto-approved refiner promotions as wor
 test("POST /tasks rejects forged draft origins before refiner promotion side effects", async () => {
   const events: unknown[] = [];
   const daemon = startTestDaemon({
-    ghTaskSyncService: {
-      enqueueTaskGhCreate: () => {},
-      enqueueSyncLinkedTask: () => {},
-      queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 49,
-        gh_state: "OPEN",
-        action: "noop",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      pushStatusNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 49,
-        gh_state: "OPEN",
-        action: "pushed",
-        direction: "push",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      syncAllLinkedTasks: async () => [],
-    },
+    ghTaskSyncService: partialAs<GhTaskSyncService>({
+      enqueueTaskGhCreate: noop,
+      enqueueSyncLinkedTask: noop,
+      pushStatusNow: () =>
+        Promise.resolve({
+          task_id: "task-1",
+          repo: "acordeiro/penumbra",
+          issue_number: 49,
+          gh_state: "OPEN",
+          action: "pushed",
+          direction: "push",
+          last_sync_ts: "2026-04-23T12:00:00.000Z",
+        }),
+    }),
   });
   insertTaskDraftEvent(daemon.services.db, {
     event_id: "draft-created",
@@ -1095,10 +1021,10 @@ test("POST /tasks rejects forged draft origins before refiner promotion side eff
       parent_draft_id: null,
     },
   });
-  daemon.services.t0Writer.write = ((event) => {
+  daemon.services.t0Writer.write = (event): string => {
     events.push(event);
     return originalWrite(event);
-  }) as typeof daemon.services.t0Writer.write;
+  };
   try {
     const create = await postJson(daemon, "/tasks", {
       prompt: "refiner task file",
@@ -1109,7 +1035,7 @@ test("POST /tasks rejects forged draft origins before refiner promotion side eff
     expect(create.status).toBe(400);
     const body = (await create.json()) as {
       error: string;
-      details: Array<{ message: string; path: string[] }>;
+      details: { message: string; path: string[] }[];
     };
     expect(body.error).toBe("invalid_input");
     expect(body.details).toEqual([
@@ -1137,29 +1063,20 @@ test("POST /tasks rejects forged draft origins before refiner promotion side eff
 test("POST /tasks rejects dash-only draft origins before promotion side effects", async () => {
   const events: unknown[] = [];
   const daemon = startTestDaemon({
-    ghTaskSyncService: {
-      enqueueTaskGhCreate: () => {},
-      enqueueSyncLinkedTask: () => {},
-      queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 49,
-        gh_state: "OPEN",
-        action: "noop",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      pushStatusNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 49,
-        gh_state: "OPEN",
-        action: "pushed",
-        direction: "push",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      syncAllLinkedTasks: async () => [],
-    },
+    ghTaskSyncService: partialAs<GhTaskSyncService>({
+      enqueueTaskGhCreate: noop,
+      enqueueSyncLinkedTask: noop,
+      pushStatusNow: () =>
+        Promise.resolve({
+          task_id: "task-1",
+          repo: "acordeiro/penumbra",
+          issue_number: 49,
+          gh_state: "OPEN",
+          action: "pushed",
+          direction: "push",
+          last_sync_ts: "2026-04-23T12:00:00.000Z",
+        }),
+    }),
   });
   insertTaskDraftEvent(daemon.services.db, {
     event_id: "draft-created",
@@ -1180,10 +1097,10 @@ test("POST /tasks rejects dash-only draft origins before promotion side effects"
     },
   });
   const originalWrite = daemon.services.t0Writer.write.bind(daemon.services.t0Writer);
-  daemon.services.t0Writer.write = ((event) => {
+  daemon.services.t0Writer.write = (event): string => {
     events.push(event);
     return originalWrite(event);
-  }) as typeof daemon.services.t0Writer.write;
+  };
   try {
     const create = await postJson(daemon, "/tasks", {
       prompt: "refiner task file",
@@ -1211,35 +1128,26 @@ test("POST /tasks rejects dash-only draft origins before promotion side effects"
 test("POST /tasks rejects draft origins with non-hex suffixes before promotion side effects", async () => {
   const events: unknown[] = [];
   const daemon = startTestDaemon({
-    ghTaskSyncService: {
-      enqueueTaskGhCreate: () => {},
-      enqueueSyncLinkedTask: () => {},
-      queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 49,
-        gh_state: "OPEN",
-        action: "noop",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      pushStatusNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 49,
-        gh_state: "OPEN",
-        action: "pushed",
-        direction: "push",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      syncAllLinkedTasks: async () => [],
-    },
+    ghTaskSyncService: partialAs<GhTaskSyncService>({
+      enqueueTaskGhCreate: noop,
+      enqueueSyncLinkedTask: noop,
+      pushStatusNow: () =>
+        Promise.resolve({
+          task_id: "task-1",
+          repo: "acordeiro/penumbra",
+          issue_number: 49,
+          gh_state: "OPEN",
+          action: "pushed",
+          direction: "push",
+          last_sync_ts: "2026-04-23T12:00:00.000Z",
+        }),
+    }),
   });
   const originalWrite = daemon.services.t0Writer.write.bind(daemon.services.t0Writer);
-  daemon.services.t0Writer.write = ((event) => {
+  daemon.services.t0Writer.write = (event): string => {
     events.push(event);
     return originalWrite(event);
-  }) as typeof daemon.services.t0Writer.write;
+  };
   try {
     const create = await postJson(daemon, "/tasks", {
       prompt: "refiner task file",
@@ -1257,35 +1165,26 @@ test("POST /tasks rejects draft origins with non-hex suffixes before promotion s
 test("POST /tasks accepts uppercase draft UUIDs and normalizes emitted draft_id", async () => {
   const events: unknown[] = [];
   const daemon = startTestDaemon({
-    ghTaskSyncService: {
-      enqueueTaskGhCreate: () => {},
-      enqueueSyncLinkedTask: () => {},
-      queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 50,
-        gh_state: "OPEN",
-        action: "noop",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      pushStatusNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 50,
-        gh_state: "OPEN",
-        action: "pushed",
-        direction: "push",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      syncAllLinkedTasks: async () => [],
-    },
+    ghTaskSyncService: partialAs<GhTaskSyncService>({
+      enqueueTaskGhCreate: noop,
+      enqueueSyncLinkedTask: noop,
+      pushStatusNow: () =>
+        Promise.resolve({
+          task_id: "task-1",
+          repo: "acordeiro/penumbra",
+          issue_number: 50,
+          gh_state: "OPEN",
+          action: "pushed",
+          direction: "push",
+          last_sync_ts: "2026-04-23T12:00:00.000Z",
+        }),
+    }),
   });
   const originalWrite = daemon.services.t0Writer.write.bind(daemon.services.t0Writer);
-  daemon.services.t0Writer.write = ((event) => {
+  daemon.services.t0Writer.write = (event): string => {
     events.push(event);
     return originalWrite(event);
-  }) as typeof daemon.services.t0Writer.write;
+  };
   insertTaskDraftEvent(daemon.services.db, {
     event_id: "uc-draft-created",
     ts: "2026-04-23T11:59:00.000Z",
@@ -1322,7 +1221,7 @@ test("POST /tasks accepts uppercase draft UUIDs and normalizes emitted draft_id"
        ORDER BY ts DESC, event_id DESC
     `,
       )
-      .all() as Array<{ event_type: string; payload_json: string }>;
+      .all() as { event_type: string; payload_json: string }[];
     expect(rows).toHaveLength(1);
     expect(JSON.parse(rows[0]?.payload_json ?? "{}")).toEqual({
       draft_id: "11111111-1111-4111-8111-1111111111aa",
@@ -1337,29 +1236,20 @@ test("POST /tasks accepts uppercase draft UUIDs and normalizes emitted draft_id"
 test("POST /tasks keeps refiner promotion behavior for UUID-shaped draft origins", async () => {
   const events: unknown[] = [];
   const daemon = startTestDaemon({
-    ghTaskSyncService: {
-      enqueueTaskGhCreate: () => {},
-      enqueueSyncLinkedTask: () => {},
-      queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 50,
-        gh_state: "OPEN",
-        action: "noop",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      pushStatusNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 50,
-        gh_state: "OPEN",
-        action: "pushed",
-        direction: "push",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      syncAllLinkedTasks: async () => [],
-    },
+    ghTaskSyncService: partialAs<GhTaskSyncService>({
+      enqueueTaskGhCreate: noop,
+      enqueueSyncLinkedTask: noop,
+      pushStatusNow: () =>
+        Promise.resolve({
+          task_id: "task-1",
+          repo: "acordeiro/penumbra",
+          issue_number: 50,
+          gh_state: "OPEN",
+          action: "pushed",
+          direction: "push",
+          last_sync_ts: "2026-04-23T12:00:00.000Z",
+        }),
+    }),
   });
   daemon.services.projectRegistry = makeProjectRegistry([
     { project_id: "penumbra", root_path: "/tmp/penumbra", gh_repo: "acordeiro/penumbra" },
@@ -1383,10 +1273,10 @@ test("POST /tasks keeps refiner promotion behavior for UUID-shaped draft origins
     },
   });
   const originalWrite = daemon.services.t0Writer.write.bind(daemon.services.t0Writer);
-  daemon.services.t0Writer.write = ((event) => {
+  daemon.services.t0Writer.write = (event): string => {
     events.push(event);
     return originalWrite(event);
-  }) as typeof daemon.services.t0Writer.write;
+  };
   try {
     const create = await postJson(daemon, "/tasks", {
       prompt: "refiner task file",
@@ -1408,7 +1298,7 @@ test("POST /tasks keeps refiner promotion behavior for UUID-shaped draft origins
        ORDER BY ts DESC, event_id DESC
     `,
       )
-      .all() as Array<{ event_type: string; payload_json: string }>;
+      .all() as { event_type: string; payload_json: string }[];
     expect(rows).toHaveLength(1);
     expect(JSON.parse(rows[0]?.payload_json ?? "{}")).toEqual({
       draft_id: "11111111-1111-4111-8111-111111111111",
@@ -1421,39 +1311,30 @@ test("POST /tasks keeps refiner promotion behavior for UUID-shaped draft origins
 });
 
 test("POST /tasks with human origin or no origin stays unchanged", async () => {
-  const createCalls: Array<{
+  const createCalls: {
     repo: string;
     title: string;
     body?: string;
     labels?: string[];
     assignees?: string[];
-  }> = [];
+  }[] = [];
   const daemon = startTestDaemon({
-    ghTaskSyncService: {
+    ghTaskSyncService: partialAs<GhTaskSyncService>({
       enqueueTaskGhCreate: (_task_id, input) => {
         createCalls.push(input);
       },
-      enqueueSyncLinkedTask: () => {},
-      queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 47,
-        gh_state: "OPEN",
-        action: "noop",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      pushStatusNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 47,
-        gh_state: "OPEN",
-        action: "pushed",
-        direction: "push",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      syncAllLinkedTasks: async () => [],
-    },
+      enqueueSyncLinkedTask: noop,
+      pushStatusNow: () =>
+        Promise.resolve({
+          task_id: "task-1",
+          repo: "acordeiro/penumbra",
+          issue_number: 47,
+          gh_state: "OPEN",
+          action: "pushed",
+          direction: "push",
+          last_sync_ts: "2026-04-23T12:00:00.000Z",
+        }),
+    }),
   });
   daemon.services.projectRegistry = makeProjectRegistry([
     { project_id: "penumbra", root_path: "/tmp/penumbra", gh_repo: "acordeiro/penumbra" },
@@ -1488,7 +1369,6 @@ test("POST /tasks with human origin or no origin stays unchanged", async () => {
         title: "human task file",
         body: "human task file",
         labels: ["tasks"],
-        assignees: undefined,
       },
     ]);
 
@@ -1508,39 +1388,30 @@ test("POST /tasks with human origin or no origin stays unchanged", async () => {
 });
 
 test("POST /tasks with explicit gh_create keeps caller supplied config for refiner-origin drafts", async () => {
-  const createCalls: Array<{
+  const createCalls: {
     repo: string;
     title: string;
     body?: string;
     labels?: string[];
     assignees?: string[];
-  }> = [];
+  }[] = [];
   const daemon = startTestDaemon({
-    ghTaskSyncService: {
+    ghTaskSyncService: partialAs<GhTaskSyncService>({
       enqueueTaskGhCreate: (_task_id, input) => {
         createCalls.push(input);
       },
-      enqueueSyncLinkedTask: () => {},
-      queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 48,
-        gh_state: "OPEN",
-        action: "noop",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      pushStatusNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 48,
-        gh_state: "OPEN",
-        action: "pushed",
-        direction: "push",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      syncAllLinkedTasks: async () => [],
-    },
+      enqueueSyncLinkedTask: noop,
+      pushStatusNow: () =>
+        Promise.resolve({
+          task_id: "task-1",
+          repo: "acordeiro/penumbra",
+          issue_number: 48,
+          gh_state: "OPEN",
+          action: "pushed",
+          direction: "push",
+          last_sync_ts: "2026-04-23T12:00:00.000Z",
+        }),
+    }),
   });
   insertTaskDraftEvent(daemon.services.db, {
     event_id: "draft-created",
@@ -1580,7 +1451,6 @@ test("POST /tasks with explicit gh_create keeps caller supplied config for refin
         title: "refiner task file explicit gh",
         body: "refiner task file explicit gh",
         labels: ["custom"],
-        assignees: undefined,
       },
     ]);
   } finally {
@@ -1589,39 +1459,30 @@ test("POST /tasks with explicit gh_create keeps caller supplied config for refin
 });
 
 test("POST /tasks with gh_create and missing repo fails when project registry has no gh_repo", async () => {
-  const createCalls: Array<{
+  const createCalls: {
     repo: string;
     title: string;
     body?: string;
     labels?: string[];
     assignees?: string[];
-  }> = [];
+  }[] = [];
   const daemon = startTestDaemon({
-    ghTaskSyncService: {
+    ghTaskSyncService: partialAs<GhTaskSyncService>({
       enqueueTaskGhCreate: (_task_id, input) => {
         createCalls.push(input);
       },
-      enqueueSyncLinkedTask: () => {},
-      queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 44,
-        gh_state: "OPEN",
-        action: "noop",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      pushStatusNow: async () => ({
-        task_id: "task-1",
-        repo: "acordeiro/penumbra",
-        issue_number: 44,
-        gh_state: "OPEN",
-        action: "pushed",
-        direction: "push",
-        last_sync_ts: "2026-04-23T12:00:00.000Z",
-      }),
-      syncAllLinkedTasks: async () => [],
-    },
+      enqueueSyncLinkedTask: noop,
+      pushStatusNow: () =>
+        Promise.resolve({
+          task_id: "task-1",
+          repo: "acordeiro/penumbra",
+          issue_number: 44,
+          gh_state: "OPEN",
+          action: "pushed",
+          direction: "push",
+          last_sync_ts: "2026-04-23T12:00:00.000Z",
+        }),
+    }),
   });
   daemon.services.projectRegistry = makeProjectRegistry([
     { project_id: "penumbra", root_path: "/tmp/penumbra" },
@@ -1652,24 +1513,24 @@ test("POST /tasks with gh_create and missing repo fails when project registry ha
 
 test("POST /tasks with gh_create remains success even when GH would fail later", async () => {
   const daemon = startTestDaemon({
-    ghClient: {
-      viewIssue: async () => {
+    ghClient: partialAs<GhClient>({
+      viewIssue: () => {
         throw new Error("not used");
       },
-      closeIssue: async () => {
+      closeIssue: () => {
         throw new Error("not used");
       },
-      reopenIssue: async () => {
+      reopenIssue: () => {
         throw new Error("not used");
       },
-      commentIssue: async () => {
+      commentIssue: () => {
         throw new Error("not used");
       },
-      listComments: async () => [],
-      createIssue: async () => {
+      listComments: () => Promise.resolve([]),
+      createIssue: () => {
         throw new Error("gh create failed");
       },
-    },
+    }),
   });
   try {
     const create = await postJson(daemon, "/tasks", {
@@ -1718,28 +1579,32 @@ test("POST /tasks with gh_create remains success even when GH would fail later",
 test("POST /tasks/:id/comment-gh posts manual comment for linked task", async () => {
   const comments: string[] = [];
   const daemon = startTestDaemon({
-    ghClient: {
-      createIssue: async () => ({
-        number: 99,
-        url: "https://github.com/acordeiro/penumbra/issues/99",
-      }),
-      viewIssue: async () => ({
-        number: 99,
-        state: "OPEN",
-        stateReason: null,
-        updatedAt: "2026-05-08T00:00:00.000Z",
-        title: "Issue 99",
-        url: "https://github.com/acordeiro/penumbra/issues/99",
-      }),
-      closeIssue: async () => {},
-      reopenIssue: async () => {},
-      commentIssue: async (_repo, _issue, body) => {
+    ghClient: partialAs<GhClient>({
+      createIssue: () =>
+        Promise.resolve({
+          number: 99,
+          url: "https://github.com/acordeiro/penumbra/issues/99",
+        }),
+      viewIssue: () =>
+        Promise.resolve({
+          number: 99,
+          state: "OPEN",
+          stateReason: null,
+          updatedAt: "2026-05-08T00:00:00.000Z",
+          title: "Issue 99",
+          url: "https://github.com/acordeiro/penumbra/issues/99",
+        }),
+      closeIssue: () => Promise.resolve(),
+      reopenIssue: () => Promise.resolve(),
+      commentIssue: (_repo, _issue, body) => {
         comments.push(body);
-        return { comment_url: "https://github.com/acordeiro/penumbra/issues/99#issuecomment-999" };
+        return Promise.resolve({
+          comment_url: "https://github.com/acordeiro/penumbra/issues/99#issuecomment-999",
+        });
       },
-      listComments: async () => [],
-      getAuthenticatedLogin: async () => "penumbra-bot",
-    },
+      listComments: () => Promise.resolve([]),
+      getAuthenticatedLogin: () => Promise.resolve("penumbra-bot"),
+    }),
   });
 
   try {
@@ -1771,27 +1636,29 @@ test("POST /tasks/:id/comment-gh posts manual comment for linked task", async ()
 
 test("POST /tasks/:id/comment-gh returns 503 when github client is unavailable", async () => {
   const daemon = startTestDaemon({
-    ghClient: {
-      createIssue: async () => ({
-        number: 101,
-        url: "https://github.com/acordeiro/penumbra/issues/101",
-      }),
-      viewIssue: async () => ({
-        number: 101,
-        state: "OPEN",
-        stateReason: null,
-        updatedAt: "2026-05-08T00:00:00.000Z",
-        title: "Issue 101",
-        url: "https://github.com/acordeiro/penumbra/issues/101",
-      }),
-      closeIssue: async () => {},
-      reopenIssue: async () => {},
-      commentIssue: async () => {
+    ghClient: partialAs<GhClient>({
+      createIssue: () =>
+        Promise.resolve({
+          number: 101,
+          url: "https://github.com/acordeiro/penumbra/issues/101",
+        }),
+      viewIssue: () =>
+        Promise.resolve({
+          number: 101,
+          state: "OPEN",
+          stateReason: null,
+          updatedAt: "2026-05-08T00:00:00.000Z",
+          title: "Issue 101",
+          url: "https://github.com/acordeiro/penumbra/issues/101",
+        }),
+      closeIssue: () => Promise.resolve(),
+      reopenIssue: () => Promise.resolve(),
+      commentIssue: () => {
         throw new Error("github client unavailable");
       },
-      listComments: async () => [],
-      getAuthenticatedLogin: async () => null,
-    },
+      listComments: () => Promise.resolve([]),
+      getAuthenticatedLogin: () => Promise.resolve(null),
+    }),
   });
 
   try {
@@ -1819,7 +1686,7 @@ test("POST /tasks/:id/comment-gh returns 503 when github client is unavailable",
   }
 });
 
-function authHeaders(token: string, headers: HeadersInit = {}): HeadersInit {
+function authHeaders(token: string, headers: Record<string, string> = {}): Record<string, string> {
   return {
     authorization: `Bearer ${token}`,
     ...headers,
@@ -1830,9 +1697,9 @@ async function postJson(
   daemon: ReturnType<typeof startTestDaemon>,
   path: string,
   body: unknown,
-  headers: HeadersInit = {},
+  headers: Record<string, string> = {},
 ): Promise<Response> {
-  return daemon.fetch(path, {
+  return await daemon.fetch(path, {
     method: "POST",
     headers: authHeaders(daemon.token, {
       "content-type": "application/json",
@@ -1894,7 +1761,7 @@ test("GET /tasks?status=pending lists the filed task", async () => {
       headers: authHeaders(daemon.token),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { tasks: Array<{ id: string; status: string }> };
+    const body = (await res.json()) as { tasks: { id: string; status: string }[] };
     expect(body.tasks.some((task) => task.id === taskId && task.status === "pending")).toBe(true);
   } finally {
     daemon.stop();
@@ -1934,7 +1801,7 @@ test("POST /tasks/:id/heartbeat bumps expires_at", async () => {
     expect(lease.status).toBe(200);
     const leased = (await lease.json()) as { lease_id: string; expires_at: number };
 
-    daemon.services.clock = () => new Date("2026-04-23T12:00:10.000Z");
+    daemon.services.clock = (): Date => new Date("2026-04-23T12:00:10.000Z");
 
     const hb = await postJson(daemon, `/tasks/${taskId}/heartbeat`, {
       lease_id: leased.lease_id,
@@ -1997,7 +1864,7 @@ test("POST /tasks/:id/complete allows shared principal without lease_id but reje
       {
         result_summary: "should not land",
       },
-      { authorization: `Bearer ${daemon.workerToken}` },
+      { authorization: `Bearer ${daemon.workerToken ?? ""}` },
     );
     expect(workerComplete.status).toBe(403);
   } finally {
@@ -2030,7 +1897,7 @@ test("POST /tasks/:id/complete shared without lease_id uses writer side effects 
     const task = (await get.json()) as {
       status: string;
       descendants?: { count: number; ids: string[] };
-      events?: Array<{ kind: string; actor: string | null; payload: unknown }>;
+      events?: { kind: string; actor: string | null; payload: unknown }[];
     };
     expect(task.status).toBe("done_pending_review");
     expect(task.descendants?.count).toBe(1);
@@ -2095,6 +1962,7 @@ test("POST /tasks/:id/complete shared without lease_id records the shared princi
     ).json()) as { descendants?: { ids: string[] } };
     const childId = reviewTaskId.descendants?.ids[0];
     expect(childId).toBeString();
+    if (childId === undefined) throw new Error("childId missing");
     const child = (await (
       await daemon.fetch(`/tasks/${childId}`, {
         headers: authHeaders(daemon.token),
