@@ -1,13 +1,14 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
+
 import { parseShellArgs, pendingMethodCap } from "../src/mcp-allowlist-proxy.js";
 
 const PROXY = new URL("../src/mcp-allowlist-proxy.ts", import.meta.url).pathname;
 
-const FIXTURE_PATH = join(tmpdir(), `mcp-fixture-${Date.now()}.ts`);
+const FIXTURE_PATH = join(tmpdir(), `mcp-fixture-${String(Date.now())}.ts`);
 
 // Minimal MCP server: exposes 5 tools, logs tool/call names to CALL_LOG env if set.
 const FIXTURE_CODE = `
@@ -65,7 +66,7 @@ afterAll(() => {
 interface Proxy {
   write: (msg: object) => void;
   readNext: (timeoutMs?: number) => Promise<Record<string, unknown>>;
-  readBatch: (timeoutMs?: number) => Promise<Array<Record<string, unknown>>>;
+  readBatch: (timeoutMs?: number) => Promise<Record<string, unknown>[]>;
   kill: () => void;
 }
 
@@ -82,9 +83,9 @@ function spawnProxy(allowlist: string, extraEnv: Record<string, string> = {}): P
 
   let buf = "";
   const lines: string[] = [];
-  const waiters: Array<(l: string) => void> = [];
+  const waiters: ((l: string) => void)[] = [];
 
-  proc.stdout!.on("data", (chunk: Buffer) => {
+  proc.stdout.on("data", (chunk: Buffer) => {
     buf += chunk.toString();
     const parts = buf.split("\n");
     buf = parts.pop()!;
@@ -96,11 +97,13 @@ function spawnProxy(allowlist: string, extraEnv: Record<string, string> = {}): P
     }
   });
 
-  const write = (msg: object) => proc.stdin!.write(JSON.stringify(msg) + "\n");
+  const write = (msg: object): boolean => proc.stdin.write(JSON.stringify(msg) + "\n");
 
   const readNext = (timeoutMs = 4000): Promise<Record<string, unknown>> =>
     new Promise((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error("readNext timed out")), timeoutMs);
+      const t = setTimeout(() => {
+        reject(new Error("readNext timed out"));
+      }, timeoutMs);
       const next = lines.shift();
       if (next !== undefined) {
         clearTimeout(t);
@@ -113,13 +116,13 @@ function spawnProxy(allowlist: string, extraEnv: Record<string, string> = {}): P
       });
     });
 
-  const readBatch = async (timeoutMs = 4000): Promise<Array<Record<string, unknown>>> => {
+  const readBatch = async (timeoutMs = 4000): Promise<Record<string, unknown>[]> => {
     const msg = await readNext(timeoutMs);
     expect(Array.isArray(msg)).toBe(true);
-    return msg as unknown as Array<Record<string, unknown>>;
+    return msg as unknown as Record<string, unknown>[];
   };
 
-  const kill = () => {
+  const kill = (): void => {
     try {
       proc.kill("SIGTERM");
     } catch {
@@ -128,6 +131,66 @@ function spawnProxy(allowlist: string, extraEnv: Record<string, string> = {}): P
   };
 
   return { write, readNext, readBatch, kill };
+}
+
+function rmQuiet(path: string): void {
+  try {
+    rmSync(path);
+  } catch {
+    /* ignore */
+  }
+}
+
+async function pollForPid(file: string, maxAttempts: number): Promise<number> {
+  let pid = 0;
+  for (let i = 0; i < maxAttempts && !pid; i++) {
+    if (existsSync(file)) {
+      const v = parseInt(readFileSync(file, "utf8").trim(), 10);
+      if (Number.isInteger(v) && v > 0) pid = v;
+    }
+    if (!pid) await new Promise((r) => setTimeout(r, 100));
+  }
+  return pid;
+}
+
+async function waitForExitOrTimeout(
+  proc: ChildProcess,
+  timeoutMs: number,
+): Promise<"exited" | "timeout"> {
+  const exited = new Promise<number | null>((resolve) =>
+    proc.on("exit", (code) => {
+      resolve(code);
+    }),
+  );
+  const outcome = await Promise.race([
+    exited.then(() => "exited" as const),
+    new Promise<"timeout">((r) =>
+      setTimeout(() => {
+        r("timeout");
+      }, timeoutMs),
+    ),
+  ]);
+  if (outcome === "timeout") {
+    try {
+      proc.kill("SIGKILL");
+    } catch {
+      /* ignore */
+    }
+  }
+  return outcome;
+}
+
+async function waitUntilPidDead(pid: number, maxAttempts: number): Promise<boolean> {
+  let alive = true;
+  for (let i = 0; i < maxAttempts && alive; i++) {
+    try {
+      process.kill(pid, 0);
+      await new Promise((r) => setTimeout(r, 100));
+    } catch {
+      alive = false;
+    }
+  }
+  return !alive;
 }
 
 // ── Proxy behavior tests ──────────────────────────────────────────────────────
@@ -139,7 +202,7 @@ test("tools/list filtered: upstream returns 5 tools; allowlist 2; client sees 2"
     const resp = await p.readNext();
     expect(resp["id"]).toBe(1);
     const result = resp["result"] as Record<string, unknown>;
-    const tools = result["tools"] as Array<Record<string, unknown>>;
+    const tools = result["tools"] as Record<string, unknown>[];
     expect(tools).toHaveLength(2);
     expect(tools.map((t) => t["name"])).toEqual(["alpha", "beta"]);
   } finally {
@@ -159,7 +222,7 @@ test("tools/call allowed: call passes through; response returns to client", asyn
     const resp = await p.readNext();
     expect(resp["id"]).toBe(2);
     const result = resp["result"] as Record<string, unknown>;
-    const content = result["content"] as Array<Record<string, unknown>>;
+    const content = result["content"] as Record<string, unknown>[];
     expect(content.at(0)?.["text"]).toBe("called:alpha");
   } finally {
     p.kill();
@@ -167,7 +230,7 @@ test("tools/call allowed: call passes through; response returns to client", asyn
 });
 
 test("tools/call rejected: non-allowlisted tool gets -32601; upstream never receives it", async () => {
-  const callLog = join(tmpdir(), `call-log-${Date.now()}.txt`);
+  const callLog = join(tmpdir(), `call-log-${String(Date.now())}.txt`);
   const p = spawnProxy("alpha,beta", { CALL_LOG: callLog });
   try {
     p.write({
@@ -186,16 +249,12 @@ test("tools/call rejected: non-allowlisted tool gets -32601; upstream never rece
     expect(logged).toBe("");
   } finally {
     p.kill();
-    try {
-      rmSync(callLog);
-    } catch {
-      /* ignore */
-    }
+    rmQuiet(callLog);
   }
 });
 
 test("batch tools/call mixed allowlist: rejects forbidden call and forwards allowed calls", async () => {
-  const callLog = join(tmpdir(), `call-log-${Date.now()}.txt`);
+  const callLog = join(tmpdir(), `call-log-${String(Date.now())}.txt`);
   const p = spawnProxy("alpha,beta", { CALL_LOG: callLog });
   try {
     p.write([
@@ -213,16 +272,12 @@ test("batch tools/call mixed allowlist: rejects forbidden call and forwards allo
     expect(logged).toBe("");
   } finally {
     p.kill();
-    try {
-      rmSync(callLog);
-    } catch {
-      /* ignore */
-    }
+    rmQuiet(callLog);
   }
 });
 
 test("batch tools/call all forbidden: rejects whole batch and never forwards upstream", async () => {
-  const callLog = join(tmpdir(), `call-log-${Date.now()}.txt`);
+  const callLog = join(tmpdir(), `call-log-${String(Date.now())}.txt`);
   const p = spawnProxy("alpha,beta", { CALL_LOG: callLog });
   try {
     p.write([
@@ -231,8 +286,8 @@ test("batch tools/call all forbidden: rejects whole batch and never forwards ups
       { jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "epsilon", arguments: {} } },
     ]);
     const resp = await p.readBatch();
-    expect(resp.map((r) => (r as Record<string, unknown>)["id"]).sort()).toEqual([7, 8, 9]);
-    for (const item of resp as Array<Record<string, unknown>>) {
+    expect(resp.map((r) => r["id"]).sort()).toEqual([7, 8, 9]);
+    for (const item of resp) {
       expect((item["error"] as Record<string, unknown>)["code"]).toBe(-32601);
     }
     await new Promise((r) => setTimeout(r, 150));
@@ -240,11 +295,7 @@ test("batch tools/call all forbidden: rejects whole batch and never forwards ups
     expect(logged).toBe("");
   } finally {
     p.kill();
-    try {
-      rmSync(callLog);
-    } catch {
-      /* ignore */
-    }
+    rmQuiet(callLog);
   }
 });
 
@@ -258,7 +309,7 @@ test("batch tools/call all allowed: batch passthrough and batch responses", asyn
     ]);
     const resp = await p.readNext();
     expect(Array.isArray(resp)).toBe(true);
-    const batch = resp as unknown as Array<Record<string, unknown>>;
+    const batch = resp as unknown as Record<string, unknown>[];
     expect(batch.map((r) => r["id"]).sort()).toEqual([10, 11, 12]);
   } finally {
     p.kill();
@@ -281,7 +332,7 @@ test("duplicate id rejection: second in-flight request with same id gets -32600"
   }
 });
 
-test("pendingMethod cap evicts oldest entries after 256 in-flight requests", async () => {
+test("pendingMethod cap evicts oldest entries after 256 in-flight requests", () => {
   expect(pendingMethodCap()).toBe(256);
 });
 
@@ -355,17 +406,16 @@ test("exits when its stdin closes (parent ACP seat died) — prevents orphaned p
       MCP_PROXY_ALLOWLIST: "alpha",
     },
   });
-  const exited = new Promise<number | null>((resolve) => proc.on("exit", (code) => resolve(code)));
 
   // Confirm the proxy + its upstream child are live (round-trip a tools/list).
   let buf = "";
   const gotResponse = new Promise<void>((resolve) => {
-    proc.stdout!.on("data", (chunk: Buffer) => {
+    proc.stdout.on("data", (chunk: Buffer) => {
       buf += chunk.toString();
       if (buf.includes('"result"')) resolve();
     });
   });
-  proc.stdin!.write(
+  proc.stdin.write(
     JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) + "\n",
   );
   await Promise.race([gotResponse, new Promise((r) => setTimeout(r, 4000))]);
@@ -373,25 +423,14 @@ test("exits when its stdin closes (parent ACP seat died) — prevents orphaned p
   // Simulate the parent ACP seat dying: its end of the stdio pipe closes, so the
   // proxy's process.stdin reaches EOF. The proxy must then tear down (kill its
   // upstream child) and exit, rather than orphaning to ppid=1 and running forever.
-  proc.stdin!.end();
-
-  const outcome = await Promise.race([
-    exited.then(() => "exited" as const),
-    new Promise<"timeout">((r) => setTimeout(() => r("timeout"), 5000)),
-  ]);
-  if (outcome === "timeout") {
-    try {
-      proc.kill("SIGKILL");
-    } catch {
-      /* ignore */
-    }
-  }
+  proc.stdin.end();
+  const outcome = await waitForExitOrTimeout(proc, 5000);
   expect(outcome).toBe("exited");
 }, 15000);
 
 test("force-kills a SIGTERM-ignoring upstream child on parent death (no re-orphan)", async () => {
-  const trapPath = join(tmpdir(), `trap-fixture-${Date.now()}.ts`);
-  const pidFile = join(tmpdir(), `trap-pid-${Date.now()}.txt`);
+  const trapPath = join(tmpdir(), `trap-fixture-${String(Date.now())}.ts`);
+  const pidFile = join(tmpdir(), `trap-pid-${String(Date.now())}.txt`);
   // Upstream that TRAPS SIGTERM (ignores it) and stays alive — models a
   // third-party uvx/python MCP. Without SIGKILL escalation it would re-orphan.
   writeFileSync(
@@ -414,72 +453,35 @@ setInterval(() => {}, 60000);
         TRAP_PID_FILE: pidFile,
       },
     });
-    const exited = new Promise<number | null>((resolve) =>
-      proc.on("exit", (code) => resolve(code)),
-    );
 
-    // Wait until the upstream child has spawned and recorded its pid.
-    let childPid = 0;
-    for (let i = 0; i < 50 && !childPid; i++) {
-      if (existsSync(pidFile)) {
-        const v = parseInt(readFileSync(pidFile, "utf8").trim(), 10);
-        if (Number.isInteger(v) && v > 0) childPid = v;
-      }
-      if (!childPid) await new Promise((r) => setTimeout(r, 100));
-    }
+    const childPid = await pollForPid(pidFile, 50);
     expect(childPid).toBeGreaterThan(0);
 
     // Parent dies → proxy stdin EOF. SIGTERM is trapped, so the proxy must
     // escalate to SIGKILL and only then exit — leaving no orphaned child.
-    proc.stdin!.end();
-    const outcome = await Promise.race([
-      exited.then(() => "exited" as const),
-      new Promise<"timeout">((r) => setTimeout(() => r("timeout"), 8000)),
-    ]);
-    if (outcome === "timeout") {
-      try {
-        proc.kill("SIGKILL");
-      } catch {
-        /* ignore */
-      }
-    }
+    proc.stdin.end();
+    const outcome = await waitForExitOrTimeout(proc, 8000);
     expect(outcome).toBe("exited");
 
     // The trapping child must have been reaped (SIGKILL), not left orphaned.
-    let alive = true;
-    for (let i = 0; i < 30 && alive; i++) {
-      try {
-        process.kill(childPid, 0);
-        await new Promise((r) => setTimeout(r, 100));
-      } catch {
-        alive = false;
-      }
-    }
-    if (alive) {
+    const dead = await waitUntilPidDead(childPid, 30);
+    if (!dead) {
       try {
         process.kill(childPid, "SIGKILL");
       } catch {
         /* ignore */
       }
     }
-    expect(alive).toBe(false);
+    expect(dead).toBe(true);
   } finally {
-    try {
-      rmSync(trapPath);
-    } catch {
-      /* ignore */
-    }
-    try {
-      rmSync(pidFile);
-    } catch {
-      /* ignore */
-    }
+    rmQuiet(trapPath);
+    rmQuiet(pidFile);
   }
 }, 20000);
 
 test("group-kills upstream grandchildren on parent death (uvx-style wrapper, no orphan)", async () => {
-  const wrapperPath = join(tmpdir(), `gc-wrapper-${Date.now()}.ts`);
-  const gcPidFile = join(tmpdir(), `gc-pid-${Date.now()}.txt`);
+  const wrapperPath = join(tmpdir(), `gc-wrapper-${String(Date.now())}.ts`);
+  const gcPidFile = join(tmpdir(), `gc-pid-${String(Date.now())}.txt`);
   // Upstream WRAPPER that spawns a long-lived GRANDCHILD, modelling uvx -> python:
   // the proxy's DIRECT child is the wrapper; the real MCP is the grandchild.
   // Killing only the direct child reparents the grandchild to pid 1 — the orphan
@@ -505,50 +507,21 @@ setInterval(() => {}, 60000);
         GC_PID_FILE: gcPidFile,
       },
     });
-    const exited = new Promise<number | null>((resolve) =>
-      proc.on("exit", (code) => resolve(code)),
-    );
 
-    // Wait until the grandchild has spawned and recorded its pid.
-    let gcPid = 0;
-    for (let i = 0; i < 50 && !gcPid; i++) {
-      if (existsSync(gcPidFile)) {
-        const v = parseInt(readFileSync(gcPidFile, "utf8").trim(), 10);
-        if (Number.isInteger(v) && v > 0) gcPid = v;
-      }
-      if (!gcPid) await new Promise((r) => setTimeout(r, 100));
-    }
+    const gcPid = await pollForPid(gcPidFile, 50);
     expect(gcPid).toBeGreaterThan(0);
     // The grandchild is alive right now.
     expect(() => process.kill(gcPid, 0)).not.toThrow();
 
     // Parent ACP seat dies → proxy stdin EOF → the proxy must group-kill the
     // whole upstream tree (wrapper + grandchild) and exit, leaving no orphan.
-    proc.stdin!.end();
-    const outcome = await Promise.race([
-      exited.then(() => "exited" as const),
-      new Promise<"timeout">((r) => setTimeout(() => r("timeout"), 8000)),
-    ]);
-    if (outcome === "timeout") {
-      try {
-        proc.kill("SIGKILL");
-      } catch {
-        /* ignore */
-      }
-    }
+    proc.stdin.end();
+    const outcome = await waitForExitOrTimeout(proc, 8000);
     expect(outcome).toBe("exited");
 
     // The grandchild must have been reaped, not left orphaned to pid 1.
-    let alive = true;
-    for (let i = 0; i < 30 && alive; i++) {
-      try {
-        process.kill(gcPid, 0);
-        await new Promise((r) => setTimeout(r, 100));
-      } catch {
-        alive = false;
-      }
-    }
-    if (alive) {
+    const dead = await waitUntilPidDead(gcPid, 30);
+    if (!dead) {
       // Clean up the leaked grandchild so a RED run does not leave a stray sleep.
       try {
         process.kill(gcPid, "SIGKILL");
@@ -556,17 +529,9 @@ setInterval(() => {}, 60000);
         /* ignore */
       }
     }
-    expect(alive).toBe(false);
+    expect(dead).toBe(true);
   } finally {
-    try {
-      rmSync(wrapperPath);
-    } catch {
-      /* ignore */
-    }
-    try {
-      rmSync(gcPidFile);
-    } catch {
-      /* ignore */
-    }
+    rmQuiet(wrapperPath);
+    rmQuiet(gcPidFile);
   }
 }, 20000);

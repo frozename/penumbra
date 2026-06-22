@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { resolveWorkerId } from "../src/worker-id.js";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
+import * as path from "node:path";
+
+import { resolveWorkerId } from "../src/worker-id.js";
 
 describe("resolveWorkerId", () => {
   it("flag wins over everything", () => {
@@ -54,7 +55,7 @@ describe("resolveWorkerId", () => {
 
     let warned = false;
     const mockLog = {
-      warn: () => {
+      warn: (): void => {
         warned = true;
       },
     };

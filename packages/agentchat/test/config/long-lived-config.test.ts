@@ -1,7 +1,8 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { loadConfig } from "../../src/config/load.js";
 
 const yamlSample = `
@@ -36,7 +37,7 @@ agents:
     adapter: claude-cli
 `;
 
-function loadYaml(yaml: string) {
+function loadYaml(yaml: string): ReturnType<typeof loadConfig> {
   const dir = mkdtempSync(join(tmpdir(), "agentchat-long-lived-"));
   const file = join(dir, "agentchat.yaml");
   writeFileSync(file, yaml);
@@ -56,7 +57,7 @@ describe("agentchat.yaml long-lived extension", () => {
     expect(home.long_lived_config!.action_tiers!.approval_required_globs).toContain(
       "ha:integration.*",
     );
-    expect(home.long_lived_config!.action_tiers!.cooldown_overrides!["ha:dashboard.*"]).toBe(60000);
+    expect(home.long_lived_config!.action_tiers!.cooldown_overrides["ha:dashboard.*"]).toBe(60000);
     expect(home.long_lived_config!.hosted_mcp_servers).toEqual([
       {
         name: "local-mcp",
@@ -180,7 +181,7 @@ agents:
       standing_brief: "x"
 `;
     const parsed = loadYaml(yaml);
-    const agent = parsed.agents.find((a: any) => a.name === "no-mcp")!;
+    const agent = parsed.agents.find((a) => a.name === "no-mcp")!;
     expect(agent.long_lived_config!.hosted_mcp_servers).toEqual([]);
   });
 
@@ -222,7 +223,7 @@ agents:
       standing_brief: "x"
 `;
     const parsed = loadYaml(ok);
-    const agent = parsed.agents.find((a: any) => a.name === "ok-snap")!;
+    const agent = parsed.agents.find((a) => a.name === "ok-snap")!;
     expect(agent.long_lived_config!.snapshot_tool).toBe("ha:ha_backup_create");
     expect(agent.long_lived_config!.require_snapshot).toBe(true);
   });

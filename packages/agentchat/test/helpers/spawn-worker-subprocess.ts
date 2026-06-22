@@ -60,7 +60,9 @@ export async function spawnWorkerCrashGuardSubprocess(opts: {
   const outcome = await Promise.race([
     proc.exited.then((exitCode) => ({ exitCode, stillAliveAfterGrace: false })),
     new Promise<{ exitCode: number | null; stillAliveAfterGrace: true }>((resolve) =>
-      setTimeout(() => resolve({ exitCode: null, stillAliveAfterGrace: true }), graceMs),
+      setTimeout(() => {
+        resolve({ exitCode: null, stillAliveAfterGrace: true });
+      }, graceMs),
     ),
   ]);
 
@@ -69,7 +71,7 @@ export async function spawnWorkerCrashGuardSubprocess(opts: {
     await proc.exited;
   }
 
-  const stderr = proc.stderr ? await new Response(proc.stderr).text() : "";
+  const stderr = await new Response(proc.stderr).text();
   return {
     exitCode: outcome.exitCode,
     signal: proc.signalCode,

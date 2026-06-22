@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { appendFileSync } from "node:fs";
 /**
  * Recording ACP fixture for the Phase 5 real-subprocess warm-reuse test.
  *
@@ -17,7 +18,24 @@
  * even though one process served both dispatches.
  */
 import { createInterface } from "node:readline";
-import { appendFileSync } from "node:fs";
+
+interface AcpEnvEntry {
+  name?: unknown;
+  value?: unknown;
+}
+interface AcpMcpServer {
+  env?: unknown;
+}
+interface AcpRequestParams {
+  sessionId?: unknown;
+  cwd?: unknown;
+  mcpServers?: unknown;
+}
+interface JsonRpcRequest {
+  method?: unknown;
+  id?: unknown;
+  params?: AcpRequestParams;
+}
 
 const recordFile = process.env.ACP_RECORD_FILE;
 const rl = createInterface({ input: process.stdin, terminal: false });
@@ -31,48 +49,61 @@ function record(entry: unknown): void {
   if (recordFile) appendFileSync(recordFile, `${JSON.stringify(entry)}\n`);
 }
 
+function extractStorageRoot(params: AcpRequestParams | undefined): unknown {
+  const servers = Array.isArray(params?.mcpServers) ? (params.mcpServers as AcpMcpServer[]) : [];
+  for (const s of servers) {
+    const env = Array.isArray(s.env) ? (s.env as AcpEnvEntry[]) : [];
+    const found = env.find((e) => e.name === "PENUMBRA_STORAGE_ROOT");
+    if (found) return found.value;
+  }
+  return undefined;
+}
+
+function handleInitialize(request: JsonRpcRequest): void {
+  send({ jsonrpc: "2.0", id: request.id, result: { protocolVersion: 1, authMethods: [] } });
+}
+
+function handleSessionNew(request: JsonRpcRequest): void {
+  sessionCounter += 1;
+  const sessionId = `recorder-session-${String(sessionCounter)}`;
+  const storageRoot = extractStorageRoot(request.params);
+  record({
+    cwd: request.params?.cwd,
+    storageRoot,
+    processStorageRoot: process.env.PENUMBRA_STORAGE_ROOT,
+    sessionId,
+  });
+  send({ jsonrpc: "2.0", id: request.id, result: { sessionId } });
+}
+
+function handleSessionPrompt(request: JsonRpcRequest): void {
+  send({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: {
+      sessionId: request.params?.sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "ok" },
+      },
+    },
+  });
+  send({ jsonrpc: "2.0", id: request.id, result: { stopReason: "end_turn" } });
+}
+
 rl.on("line", (line) => {
   if (!line.trim()) return;
-  const request = JSON.parse(line);
+  const request = JSON.parse(line) as JsonRpcRequest;
   if (request.method === "initialize") {
-    send({ jsonrpc: "2.0", id: request.id, result: { protocolVersion: 1, authMethods: [] } });
+    handleInitialize(request);
     return;
   }
   if (request.method === "session/new") {
-    sessionCounter += 1;
-    const sessionId = `recorder-session-${sessionCounter}`;
-    const servers = Array.isArray(request.params?.mcpServers) ? request.params.mcpServers : [];
-    let storageRoot: unknown;
-    for (const s of servers) {
-      const env = Array.isArray(s?.env) ? s.env : [];
-      const found = env.find((e: any) => e?.name === "PENUMBRA_STORAGE_ROOT");
-      if (found) {
-        storageRoot = found.value;
-        break;
-      }
-    }
-    record({
-      cwd: request.params?.cwd,
-      storageRoot,
-      processStorageRoot: process.env.PENUMBRA_STORAGE_ROOT,
-      sessionId,
-    });
-    send({ jsonrpc: "2.0", id: request.id, result: { sessionId } });
+    handleSessionNew(request);
     return;
   }
   if (request.method === "session/prompt") {
-    send({
-      jsonrpc: "2.0",
-      method: "session/update",
-      params: {
-        sessionId: request.params?.sessionId,
-        update: {
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: "ok" },
-        },
-      },
-    });
-    send({ jsonrpc: "2.0", id: request.id, result: { stopReason: "end_turn" } });
+    handleSessionPrompt(request);
     return;
   }
   send({ jsonrpc: "2.0", id: request.id, result: {} });

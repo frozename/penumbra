@@ -1,6 +1,12 @@
 #!/usr/bin/env bun
 import { createInterface } from "node:readline";
 
+interface JsonRpcRequest {
+  method?: unknown;
+  id?: unknown;
+  params?: { sessionId?: unknown } | undefined;
+}
+
 const rl = createInterface({ input: process.stdin, terminal: false });
 
 function send(message: unknown): void {
@@ -9,7 +15,7 @@ function send(message: unknown): void {
 
 rl.on("line", (line) => {
   if (!line.trim()) return;
-  const request = JSON.parse(line);
+  const request = JSON.parse(line) as JsonRpcRequest;
   if (request.method === "initialize") {
     send({ jsonrpc: "2.0", id: request.id, result: { protocolVersion: 1, authMethods: [] } });
     return;

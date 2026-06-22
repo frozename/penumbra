@@ -1,9 +1,11 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { WriteToolsExecutor } from "../../src/worker/write-tools-executor.js";
-import { DEFAULT_SANDBOX_CONFIG } from "../../src/worker/sandbox-config.js";
+
 import type { PermissionDecision } from "../../src/sdk/adapter.js";
+
+import { DEFAULT_SANDBOX_CONFIG } from "../../src/worker/sandbox-config.js";
+import { WriteToolsExecutor } from "../../src/worker/write-tools-executor.js";
 
 export interface CapturedEvent {
   type: string;
@@ -24,25 +26,29 @@ export async function withSandboxedExecutor(
   const events: CapturedEvent[] = [];
   const decisions: PermissionDecision[] = [];
   let pendingDecision: PermissionDecision | null = null;
-  const pushDecision = (d: PermissionDecision) => {
+  const pushDecision = (d: PermissionDecision): void => {
     pendingDecision = d;
   };
 
+  const noop = (): void => {
+    // intentionally empty: silent logger for sandbox tests
+  };
   const executor = new WriteToolsExecutor({
     worktreeRoot,
-    permissionCallback: async () => {
+    permissionCallback: (): Promise<PermissionDecision> => {
       const d = pendingDecision ?? opts?.permissionDefault ?? "approve";
       decisions.push(d);
       pendingDecision = null;
-      return d;
+      return Promise.resolve(d);
     },
     auditEmitter: {
-      emit: async (type, payload) => {
+      emit: (type, payload): Promise<void> => {
         events.push({ type, payload });
+        return Promise.resolve();
       },
     },
     sandboxConfig: { ...DEFAULT_SANDBOX_CONFIG },
-    logger: { warn: () => {}, info: () => {}, debug: () => {}, error: () => {} },
+    logger: { warn: noop, info: noop, debug: noop, error: noop },
     handoffId: "h-test",
     dispatchId: "d-test",
   });

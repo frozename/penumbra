@@ -1,8 +1,9 @@
 // packages/agentchat/test/config/load.test.ts
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { loadConfig, loadConfigFromDir, loadConfigPathOrDir } from "../../src/config/load.js";
 
 test("loadConfig parses a valid YAML config", () => {
@@ -191,9 +192,9 @@ agents:
 `,
   );
   const cfg = loadConfig(path);
-  const a = cfg.agents.find((x: any) => x.name === "claude-acp-sonnet");
-  expect(a?.options?.allowed_tools).toEqual(["mcp__penumbra__*", "fs.readTextFile"]);
-  expect(a?.options?.permission_ttl_s).toBe(600);
+  const a = cfg.agents.find((x) => x.name === "claude-acp-sonnet");
+  expect(a?.options.allowed_tools).toEqual(["mcp__penumbra__*", "fs.readTextFile"]);
+  expect(a?.options.permission_ttl_s).toBe(600);
 });
 
 test("omitted allowed_tools defaults to undefined (worker treats as [])", () => {
@@ -210,8 +211,8 @@ agents:
 `,
   );
   const cfg = loadConfig(path);
-  const a = cfg.agents.find((x: any) => x.name === "claude-acp-sonnet");
-  expect(a?.options?.allowed_tools).toBeUndefined();
+  const a = cfg.agents.find((x) => x.name === "claude-acp-sonnet");
+  expect(a?.options.allowed_tools).toBeUndefined();
 });
 
 describe("ProviderQuotaConfig per-model", () => {
@@ -422,8 +423,11 @@ providers:
   test("stamps mcp_allowlist_sdk_patterns for long-lived agents (same as loadConfig)", () => {
     const cfg = loadConfigFromDir(writeSplitDir());
     const home = cfg.agents.find((a) => a.name === "home");
-    expect((home?.long_lived_config as any)?.mcp_allowlist_sdk_patterns).toBeDefined();
-    expect(Array.isArray((home?.long_lived_config as any)?.mcp_allowlist_sdk_patterns)).toBe(true);
+    const llConfig = home?.long_lived_config as
+      | { mcp_allowlist_sdk_patterns?: string[] }
+      | undefined;
+    expect(llConfig?.mcp_allowlist_sdk_patterns).toBeDefined();
+    expect(Array.isArray(llConfig?.mcp_allowlist_sdk_patterns)).toBe(true);
   });
 
   test("throws a dir-scoped error on invalid merged shape", () => {

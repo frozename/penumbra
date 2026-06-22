@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { PROMOTION_SCENARIOS } from "../../../scripts/acp-promotion/scenarios.js";
+
 import { evaluatePromotionEvidence } from "../../../scripts/acp-promotion/evaluate.js";
+import { PROMOTION_SCENARIOS } from "../../../scripts/acp-promotion/scenarios.js";
 
 const ping = PROMOTION_SCENARIOS.find((s) => s.id === "ping_exact")!;
 const write = PROMOTION_SCENARIOS.find((s) => s.id === "write_worktree_file")!;

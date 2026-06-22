@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { buildPrompt } from "../src/transcript-slice.js";
 
 test("buildPrompt concatenates project context, handoff message, and recent responses", () => {

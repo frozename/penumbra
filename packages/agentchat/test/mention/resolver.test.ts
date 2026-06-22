@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
-import { resolveMention } from "../../src/mention/resolver.js";
+
 import type { AgentChatConfig } from "../../src/config/types.js";
+
+import { resolveMention } from "../../src/mention/resolver.js";
 
 const cfg: AgentChatConfig = {
   agents: [

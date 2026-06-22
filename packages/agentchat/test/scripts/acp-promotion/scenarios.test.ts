@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+
+import type { AcpPromotionScenario } from "../../../scripts/acp-promotion/types.js";
+
 import {
   PROMOTION_SCENARIOS,
   validatePromotionScenarios,
@@ -17,10 +20,10 @@ describe("ACP promotion scenarios", () => {
   });
 
   test("manifest validation rejects duplicate ids", () => {
-    const duplicate = [PROMOTION_SCENARIOS[0], PROMOTION_SCENARIOS[0]];
-    expect(() => validatePromotionScenarios(duplicate as any)).toThrow(
-      /duplicate scenario id: ping_exact/,
-    );
+    const duplicate = [PROMOTION_SCENARIOS[0], PROMOTION_SCENARIOS[0]] as AcpPromotionScenario[];
+    expect(() => {
+      validatePromotionScenarios(duplicate);
+    }).toThrow(/duplicate scenario id: ping_exact/);
   });
 
   test("required scenarios all have bounded timeout and pass criteria", () => {

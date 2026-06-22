@@ -1,15 +1,16 @@
-import { describe, expect, test } from "bun:test";
 import {
   ADAPTER_SPECIFIC_OPTION_KEYS,
   AgentOptionsSchema as ConfigAgentOptionsSchema,
 } from "@penumbra/config";
+import { describe, expect, test } from "bun:test";
+
 import { BUILT_IN_ADAPTER_KINDS } from "../../src/adapters/registry.js";
 import {
   AgentChatConfigSchema,
   AgentConfigSchema,
   AgentOptionsSchema,
-  PlanSynthesizerSchema,
   PlannerPersonaSchema,
+  PlanSynthesizerSchema,
   ReviewPersonaSchema,
   ReviewSynthesizerSchema,
 } from "../../src/config/types.js";

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { parseMentions } from "../../src/mention/parser.js";
 
 test("extracts a single @mention at the end of a message", () => {
@@ -13,7 +14,7 @@ test("extracts multiple @mentions", () => {
 
 test("ignores @ inside an email or URL", () => {
   expect(parseMentions("contact alice@example.com or @bob")).toEqual([
-    { target: "bob", span: expect.any(Object) },
+    { target: "bob", span: expect.any(Object) as { start: number; end: number } },
   ]);
 });
 

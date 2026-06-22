@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { AgentOptionsSchema } from "../../src/config/types.js";
 
 describe("AgentOptionsSchema warm_pool options", () => {

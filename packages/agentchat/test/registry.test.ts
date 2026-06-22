@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { getAgentDescriptor } from "../src/registry.js";
+
 import type { AgentChatConfig } from "../src/config/types.js";
+
+import { getAgentDescriptor } from "../src/registry.js";
 
 const cfg: AgentChatConfig = {
   agents: [

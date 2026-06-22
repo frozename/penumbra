@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { HostedMcpServerSchema } from "../../src/config/types.js";
 
 describe("HostedMcpServerSchema", () => {

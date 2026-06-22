@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
+
+import type { AcpPromotionRunResult } from "../../../scripts/acp-promotion/types.js";
+
 import {
   renderPromotionJsonl,
   renderPromotionMarkdown,
 } from "../../../scripts/acp-promotion/report.js";
-import type { AcpPromotionRunResult } from "../../../scripts/acp-promotion/types.js";
 
 const rows: AcpPromotionRunResult[] = [
   {
@@ -46,7 +48,8 @@ describe("ACP promotion reports", () => {
   test("renders one JSON object per line", () => {
     const jsonl = renderPromotionJsonl(rows);
     expect(jsonl.trim().split("\n")).toHaveLength(2);
-    expect(JSON.parse(jsonl.trim().split("\n")[0]!).agent).toBe("gemini-acp-pro");
+    const firstRow = JSON.parse(jsonl.trim().split("\n")[0]!) as AcpPromotionRunResult;
+    expect(firstRow.agent).toBe("gemini-acp-pro");
   });
 
   test("renders Markdown grouped by agent and scenario", () => {

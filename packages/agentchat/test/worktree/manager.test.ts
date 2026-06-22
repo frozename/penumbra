@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
-import { promisify } from "node:util";
-import { exec as execCb } from "node:child_process";
 import { WorktreeManager } from "@penumbra/core";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { exec as execCb } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { promisify } from "node:util";
+
 import { RUN_AGENTCHAT_SERVICE_TESTS } from "../helpers/service-gates.js";
 
 const exec = promisify(execCb);
@@ -47,13 +48,15 @@ describe.skipIf(!RUN_AGENTCHAT_SERVICE_TESTS)("WorktreeManager", () => {
     // Teardown any remaining worktrees
     const wts = manager.listWorktrees();
     for (const wt of wts) {
-      await manager.teardownWorktree(wt.handoffId, true).catch(() => {});
+      await manager.teardownWorktree(wt.handoffId, true).catch((): void => {
+        // best-effort teardown during cleanup
+      });
     }
     fs.rmSync(rootDir, { recursive: true, force: true });
   });
 
-  function getNextHandoffId() {
-    return `test-handoff-${Date.now()}-${++handoffCounter}`;
+  function getNextHandoffId(): string {
+    return `test-handoff-${String(Date.now())}-${String(++handoffCounter)}`;
   }
 
   it("creates worktree successfully", async () => {
@@ -138,8 +141,9 @@ describe.skipIf(!RUN_AGENTCHAT_SERVICE_TESTS)("WorktreeManager", () => {
     try {
       await exec(`git show-ref --verify refs/heads/${handle.branchName}`);
       throw new Error("Branch should have been deleted");
-    } catch (e: any) {
-      expect(e.message).not.toMatch(/Branch should have been deleted/);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      expect(message).not.toMatch(/Branch should have been deleted/);
     }
   });
 
