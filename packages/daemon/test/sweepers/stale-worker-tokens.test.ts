@@ -1,18 +1,21 @@
-import { expect, test, mock } from "bun:test";
+import { loadSqliteVec, migrate, WorkerTokenStore } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { migrate, loadSqliteVec, WorkerTokenStore } from "@penumbra/core";
+import { expect, mock, test } from "bun:test";
+
 import {
+  DEFAULT_INTERVAL_MS,
+  DEFAULT_STALE_WINDOW_MS,
   runStaleWorkerTokensSweep,
   startStaleWorkerTokensSweeper,
-  DEFAULT_STALE_WINDOW_MS,
-  DEFAULT_INTERVAL_MS,
 } from "../../src/sweepers/stale-worker-tokens.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  void 0;
+}
 
 function setupDb(): Database {
   const db = new Database(":memory:");
@@ -152,33 +155,37 @@ test("runStaleWorkerTokensSweep: revocation is consistent across mixed states", 
 
 test("startStaleWorkerTokensSweeper returns a stop function that clears the interval", () => {
   const db = setupDb();
-  const logWarn = mock(() => {});
+  const logWarn = mock(() => undefined);
 
   const originalSetInterval = global.setInterval;
   const originalClearInterval = global.clearInterval;
 
-  let registeredCb: Function | null = null;
-  let timerId: any = null;
+  let registeredCb: (() => void) | null = null;
+  let timerId: { unref: () => void } | null = null;
 
-  global.setInterval = ((cb: Function, ms: number) => {
+  global.setInterval = ((cb: () => void, ms: number) => {
     registeredCb = cb;
-    timerId = { unref: mock(() => {}) };
+    timerId = { unref: mock(() => undefined) };
     return timerId;
-  }) as any;
+  }) as unknown as typeof global.setInterval;
 
-  global.clearInterval = mock((id: any) => {
+  global.clearInterval = mock((id: { unref: () => void }) => {
     expect(id).toBe(timerId);
-  }) as any;
+  }) as unknown as typeof global.clearInterval;
 
   try {
     const stop = startStaleWorkerTokensSweeper(
-      { db, log: { warn: logWarn } as any, staleWindowMs: DEFAULT_STALE_WINDOW_MS },
+      {
+        db,
+        log: { warn: logWarn } as { warn: (..._: unknown[]) => void },
+        staleWindowMs: DEFAULT_STALE_WINDOW_MS,
+      },
       DEFAULT_INTERVAL_MS,
       () => new Date(),
     );
 
     expect(registeredCb).not.toBeNull();
-    expect(timerId.unref).toHaveBeenCalled();
+    expect(timerId!.unref).toHaveBeenCalled();
 
     stop();
 
@@ -200,14 +207,14 @@ test("startStaleWorkerTokensSweeper reads PENUMBRA_WORKER_TOKEN_STALE_MS from en
       ["hash-env", "W-env", t, t],
     );
     const stop = startStaleWorkerTokensSweeper(
-      { db, log: { warn: () => {} } as any },
+      { db, log: { warn: (..._: unknown[]) => undefined } },
       50_000_000, // very large interval, sweeper won't tick
     );
     try {
       const result = runStaleWorkerTokensSweep(
         {
           db,
-          log: { warn: () => {} } as any,
+          log: { warn: (..._: unknown[]) => undefined },
           staleWindowMs: Number(process.env.PENUMBRA_WORKER_TOKEN_STALE_MS),
         },
         () => new Date(),
@@ -230,7 +237,10 @@ test("startStaleWorkerTokensSweeper reads PENUMBRA_WORKER_TOKEN_SWEEP_INTERVAL_M
   process.env.PENUMBRA_WORKER_TOKEN_SWEEP_INTERVAL_MS = "99";
   try {
     const db = setupDb();
-    const stop = startStaleWorkerTokensSweeper({ db, log: { warn: () => {} } as any });
+    const stop = startStaleWorkerTokensSweeper({
+      db,
+      log: { warn: (..._: unknown[]) => undefined },
+    });
     expect(typeof stop).toBe("function");
     stop();
   } finally {

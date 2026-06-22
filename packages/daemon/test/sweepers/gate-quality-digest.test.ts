@@ -1,17 +1,20 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
-import { TestEmbedder } from "@penumbra/core/testing";
+
 import type { AgentGateRateTrend } from "../../src/sweepers/gate-quality-digest.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  void 0;
+}
 
 const NOW = new Date("2026-06-13T03:00:00.000Z");
 
@@ -31,10 +34,10 @@ describe("gate-quality-digest sweeper", () => {
       storageRoot: dir,
       db,
       embedder: new TestEmbedder({ dim: 384 }),
-      clock: () => NOW,
+      clock: (): Date => NOW,
       uuid: (() => {
         let n = 0;
-        return () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`;
+        return (): string => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`;
       })(),
     });
   });
@@ -88,18 +91,26 @@ describe("gate-quality-digest sweeper", () => {
     seedRecurringLanes(25, "dispatch-event-stream-gap");
 
     const { runGateQualityDigestSweep } = await import("../../src/sweepers/gate-quality-digest.js");
-    const env = (key: string) => (key === "PENUMBRA_GATE_QUALITY_T2_WRITES" ? "true" : undefined);
+    const env = (key: string): string | undefined =>
+      key === "PENUMBRA_GATE_QUALITY_T2_WRITES" ? "true" : undefined;
     let laneReads = 0;
-    const originalQuery = (db as any).query.bind(db);
-    (db as any).query = (...args: any[]) => {
+    type StmtShape = {
+      all: (...args: unknown[]) => unknown;
+      get: (...args: unknown[]) => unknown;
+      [k: string]: unknown;
+    };
+    type DbQueryWrap = { query: (...args: unknown[]) => StmtShape };
+    const dbWrap = db as unknown as DbQueryWrap;
+    const originalQuery = dbWrap.query.bind(db);
+    dbWrap.query = (...args: unknown[]): StmtShape => {
       const statement = originalQuery(...args);
       const sql = String(args[0]);
       if (sql.includes("FROM lane_ledger")) {
         return {
           ...statement,
-          all: (...allArgs: any[]) => {
+          all: (...allArgs: unknown[]): unknown => {
             laneReads += 1;
-            return (statement as any).all(...allArgs);
+            return statement.all(...allArgs);
           },
         };
       }
@@ -134,7 +145,7 @@ describe("gate-quality-digest sweeper", () => {
       expect(laneReads).toBe(1);
       expect(countGateQualityDigestMemories()).toBe(firstMemoryCount);
     } finally {
-      (db as any).query = originalQuery;
+      dbWrap.query = originalQuery;
     }
   });
 
@@ -143,7 +154,7 @@ describe("gate-quality-digest sweeper", () => {
     // counted: the digest derives status counts from the same ts_closed-bounded
     // rows used for failure analysis, not an opened-lane snapshot. The old path
     // keyed off ts_opened and would have reported this lane as zero.
-    db.exec(`
+    db.run(`
       INSERT INTO lane_ledger (
         lane_id, ts_opened, ts_closed, task_class, implementer_handoff, reviewer_handoff,
         gate_status, metadata_json
@@ -168,7 +179,8 @@ describe("gate-quality-digest sweeper", () => {
     );
 
     const { runGateQualityDigestSweep } = await import("../../src/sweepers/gate-quality-digest.js");
-    const env = (key: string) => (key === "PENUMBRA_GATE_QUALITY_T2_WRITES" ? "true" : undefined);
+    const env = (key: string): string | undefined =>
+      key === "PENUMBRA_GATE_QUALITY_T2_WRITES" ? "true" : undefined;
 
     const first = await runGateQualityDigestSweep({
       services,
@@ -211,7 +223,7 @@ describe("gate-quality-digest sweeper", () => {
 
   it("warns and caps the windowed lane read when the sweep reaches the row limit", async () => {
     seedMassiveLanes(5_001);
-    const warnings: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+    const warnings: { obj: Record<string, unknown>; msg: string }[] = [];
 
     const { runGateQualityDigestSweep } = await import("../../src/sweepers/gate-quality-digest.js");
 
@@ -266,7 +278,7 @@ describe("gate-quality-digest sweeper", () => {
   });
 
   function seedLanes(): void {
-    db.exec(`
+    db.run(`
       INSERT INTO lane_ledger (
         lane_id, ts_opened, ts_closed, task_class, implementer_handoff, reviewer_handoff,
         gate_status, metadata_json
@@ -302,7 +314,7 @@ describe("gate-quality-digest sweeper", () => {
   }
 
   function seedAgentPerformance(): void {
-    db.exec(`
+    db.run(`
       INSERT INTO agent_performance (
         performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type,
         outcome, gate_outcome, rounds, smoke_pass, reviewer_findings, maestro_score,
@@ -371,7 +383,11 @@ describe("gate-quality-digest sweeper", () => {
       )`,
     );
     for (let idx = 0; idx < count; idx++) {
-      stmt.run(`lane-bulk-${idx}`, `handoff-bulk-${idx}`, `reviewer-bulk-${idx}`);
+      stmt.run(
+        `lane-bulk-${String(idx)}`,
+        `handoff-bulk-${String(idx)}`,
+        `reviewer-bulk-${String(idx)}`,
+      );
     }
   }
 

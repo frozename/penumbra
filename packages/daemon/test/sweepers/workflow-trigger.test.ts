@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import {
   runWorkflowTriggerSweep,
   type WorkflowTriggerSweeperOpts,
@@ -16,7 +17,17 @@ type Trigger = {
   value: number;
 };
 
-function spec(name: string, trigger: Trigger) {
+function spec(
+  name: string,
+  trigger: Trigger,
+): {
+  name: string;
+  description: string;
+  triggers: Trigger[];
+  recall: never[];
+  output: never[];
+  run: { kind: string; template: string };
+} {
   return {
     name,
     description: "",
@@ -27,7 +38,12 @@ function spec(name: string, trigger: Trigger) {
   };
 }
 
-function fakeRegistry(specs: any[]) {
+function fakeRegistry(specs: { name: string; triggers: Trigger[] }[]): {
+  list: () => { name: string; triggers: Trigger[] }[];
+  findByTrigger: () => never[];
+  getEntry: () => undefined;
+  errors: readonly unknown[];
+} {
   return {
     list: () => specs,
     findByTrigger: () => [],
@@ -46,17 +62,18 @@ const ZERO_METRICS = {
 
 function makeOpts(
   overrides: Partial<WorkflowTriggerSweeperOpts> & {
-    specs: any[];
+    specs: { name: string; triggers: Trigger[] }[];
     metrics?: typeof ZERO_METRICS;
-    warns?: any[];
+    warns?: unknown[];
   },
 ): WorkflowTriggerSweeperOpts {
   const calls: string[] = [];
   const opts: WorkflowTriggerSweeperOpts = {
     registry: fakeRegistry(overrides.specs),
     computeMetrics: () => overrides.metrics ?? ZERO_METRICS,
-    runWorkflow: async (name: string) => {
+    runWorkflow: (name: string): Promise<void> => {
       calls.push(name);
+      return Promise.resolve();
     },
     log: {
       warn: (obj: unknown) => {
@@ -65,7 +82,7 @@ function makeOpts(
     },
     ...overrides,
   };
-  (opts as any).__calls = calls;
+  (opts as unknown as { __calls: string[] }).__calls = calls;
   return opts;
 }
 
@@ -76,8 +93,9 @@ test("no matches → fired and matched empty, runWorkflow not called", async () 
       spec("idle", { kind: "state-threshold", metric: "queue-idle-min", op: ">", value: 30 }),
     ]),
     computeMetrics: () => ZERO_METRICS,
-    runWorkflow: async (name) => {
+    runWorkflow: (name: string): Promise<void> => {
       calls.push(name);
+      return Promise.resolve();
     },
   };
   const state = { lastFired: new Map<string, number>() };
@@ -94,8 +112,9 @@ test("one match, no prior fire → fires once", async () => {
       spec("always", { kind: "state-threshold", metric: "pending-handoffs", op: ">", value: -1 }),
     ]),
     computeMetrics: () => ZERO_METRICS,
-    runWorkflow: async (name) => {
+    runWorkflow: (name: string): Promise<void> => {
       calls.push(name);
+      return Promise.resolve();
     },
   };
   const state = { lastFired: new Map<string, number>() };
@@ -112,12 +131,13 @@ test("cooldown holds → second call matches but does not fire", async () => {
       spec("always", { kind: "state-threshold", metric: "pending-handoffs", op: ">", value: -1 }),
     ]),
     computeMetrics: () => ZERO_METRICS,
-    runWorkflow: async (name) => {
+    runWorkflow: (name: string): Promise<void> => {
       calls.push(name);
+      return Promise.resolve();
     },
   };
   const state = { lastFired: new Map<string, number>() };
-  const now = () => new Date("2026-05-04T12:00:00Z");
+  const now = (): Date => new Date("2026-05-04T12:00:00Z");
 
   const first = await runWorkflowTriggerSweep(opts, state, now);
   expect(first.fired).toEqual(["always"]);
@@ -134,8 +154,9 @@ test("cooldown elapses → fires again", async () => {
       spec("always", { kind: "state-threshold", metric: "pending-handoffs", op: ">", value: -1 }),
     ]),
     computeMetrics: () => ZERO_METRICS,
-    runWorkflow: async (name) => {
+    runWorkflow: (name: string): Promise<void> => {
       calls.push(name);
+      return Promise.resolve();
     },
   };
   const state = { lastFired: new Map<string, number>() };
@@ -151,7 +172,7 @@ test("stale lastFired entries are evicted on a sweep tick", async () => {
   const opts: WorkflowTriggerSweeperOpts = {
     registry: fakeRegistry([]),
     computeMetrics: () => ZERO_METRICS,
-    runWorkflow: async () => {},
+    runWorkflow: (): Promise<void> => Promise.resolve(),
   };
   const state = {
     lastFired: new Map<string, number>([
@@ -174,7 +195,7 @@ test("runWorkflow throws → sweep continues, fired counts the attempt, warn emi
       spec("boom", { kind: "state-threshold", metric: "pending-handoffs", op: ">", value: -1 }),
     ]),
     computeMetrics: () => ZERO_METRICS,
-    runWorkflow: async () => {
+    runWorkflow: (): Promise<void> => {
       throw new Error("kaboom");
     },
     log: {
@@ -201,12 +222,13 @@ test("pending-review-lanes fires once and respects cooldown", async () => {
       }),
     ]),
     computeMetrics: () => ({ ...ZERO_METRICS, "pending-review-lanes": 2 }),
-    runWorkflow: async (name) => {
+    runWorkflow: (name: string): Promise<void> => {
       calls.push(name);
+      return Promise.resolve();
     },
   };
   const state = { lastFired: new Map<string, number>() };
-  const now = () => new Date("2026-05-04T12:00:00Z");
+  const now = (): Date => new Date("2026-05-04T12:00:00Z");
 
   const first = await runWorkflowTriggerSweep(opts, state, now);
   expect(first.matched).toEqual(["review-backlog"]);

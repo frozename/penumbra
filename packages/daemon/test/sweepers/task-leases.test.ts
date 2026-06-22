@@ -1,14 +1,16 @@
-import { expect, test } from "bun:test";
+import { loadSqliteVec, migrate, TaskCooldowns, TaskWriter } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { TaskWriter, loadSqliteVec, migrate } from "@penumbra/core";
-import { TaskCooldowns } from "@penumbra/core";
+import { expect, test } from "bun:test";
+
 import { createTaskLeaseSweeper } from "../../src/sweepers/task-leases.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  void 0;
+}
 
 function setupDb(): Database {
   const db = new Database(":memory:");
@@ -65,7 +67,8 @@ test("expiry path: expired lease is released and task returns to pending", () =>
     )
     .get(task_id);
   expect(released?.kind).toBe("released");
-  expect(JSON.parse(released?.payload_json ?? "{}").reason).toBe("expired");
+  const releasedPayload = JSON.parse(released?.payload_json ?? "{}") as { reason: string };
+  expect(releasedPayload.reason).toBe("expired");
 });
 
 test("cooldown population and prune", () => {

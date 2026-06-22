@@ -1,14 +1,17 @@
-import { describe, expect, test, mock } from "bun:test";
+import { loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { migrate, loadSqliteVec, type Services } from "@penumbra/core";
-import { runReconcilerSweepTick } from "../../src/sweepers/reconciler-sweep.js";
+import { describe, expect, mock, test } from "bun:test";
+
 import { installPrOrphanSweeper, runPrOrphanSweep } from "../../src/sweepers/pr-orphan-sweeper.js";
+import { runReconcilerSweepTick } from "../../src/sweepers/reconciler-sweep.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  void 0;
+}
 
 function setupDb(): Database {
   const db = new Database(":memory:");
@@ -20,14 +23,14 @@ function setupDb(): Database {
 function makeServices(db: Database, settings?: Record<string, unknown>): Services {
   return {
     db,
-    log: { warn: () => {} },
+    log: { warn: (..._: unknown[]) => undefined },
     settings,
   } as unknown as Services;
 }
 
 function makeSweepResult(
   overrides?: Partial<{ scanned: number; superseded: number; stale: number; errored: number }>,
-) {
+): { scanned: number; superseded: number; stale: number; errored: number; actions: never[] } {
   return { scanned: 0, superseded: 0, stale: 0, errored: 0, actions: [], ...overrides };
 }
 
@@ -35,7 +38,7 @@ describe("runReconcilerSweepTick", () => {
   test("uses opts.dryRun and the configured maxClose", async () => {
     const db = setupDb();
     const svc = makeServices(db);
-    const sweepFn = mock(async () => makeSweepResult());
+    const sweepFn = mock(() => makeSweepResult());
 
     await runReconcilerSweepTick({
       services: svc,
@@ -53,8 +56,8 @@ describe("runReconcilerSweepTick", () => {
   test("reads dry-run from settings and never closes PRs when enabled", async () => {
     const db = setupDb();
     const svc = makeServices(db, { prOrphanSweeperDryRun: true });
-    const closePullRequest = mock(async () => {});
-    const sweepFn = mock(async ({ dryRun }: { dryRun: boolean }) => {
+    const closePullRequest = mock(() => Promise.resolve());
+    const sweepFn = mock(({ dryRun }: { dryRun: boolean }) => {
       if (!dryRun) {
         await closePullRequest({ number: 10, comment: "", deleteBranch: true });
       }
@@ -94,26 +97,29 @@ describe("runReconcilerSweepTick", () => {
           },
         ];
       }),
-      closePullRequest: mock(async (input: { number: number }) => {
+      closePullRequest: mock((input: { number: number }): void => {
         closedPrs.push(input.number);
       }),
     };
     const gitClient = {
-      resolveMainSha: async () => "main-sha",
-      isAncestorOfMain: async () => true,
-      isObjectReachable: async () => true,
-      fetchHeadRef: async () => {},
-      isThreeDotDiffEmptyVsMain: async () => false,
+      resolveMainSha: (): string => "main-sha",
+      isAncestorOfMain: (): boolean => true,
+      isObjectReachable: (): boolean => true,
+      fetchHeadRef: (): void => undefined,
+      isThreeDotDiffEmptyVsMain: (): boolean => false,
     };
     const sharedDeps = {
-      t0Writer: { write: () => {} },
-      uuid: () => "evt-1",
-      clock: () => new Date("2026-06-14T12:00:00.000Z"),
-      machineId: { get: () => "machine-test" },
-      log: { info: () => {}, warn: () => {} },
+      t0Writer: { write: (..._: unknown[]): void => undefined },
+      uuid: (): string => "evt-1",
+      clock: (): Date => new Date("2026-06-14T12:00:00.000Z"),
+      machineId: { get: (): string => "machine-test" },
+      log: {
+        info: (..._: unknown[]): void => undefined,
+        warn: (..._: unknown[]): void => undefined,
+      },
     };
     const handle = installPrOrphanSweeper({
-      db: db as any,
+      db: db,
       intervalMs: 1,
       dryRun: false,
       applyDefault: true,
@@ -121,8 +127,8 @@ describe("runReconcilerSweepTick", () => {
       uuid: sharedDeps.uuid,
       clock: sharedDeps.clock,
       machineId: sharedDeps.machineId,
-      ghClient: ghClient as any,
-      gitClient: gitClient as any,
+      ghClient: ghClient,
+      gitClient: gitClient,
       log: sharedDeps.log,
     });
 
@@ -136,11 +142,11 @@ describe("runReconcilerSweepTick", () => {
 
       const reconcilerSweep = runReconcilerSweepTick({
         services: svc,
-        runSweep: async ({ maxClose, services, dryRun }) =>
+        runSweep: ({ maxClose, services, dryRun }) =>
           runPrOrphanSweep({
             ...sharedDeps,
-            ghClient: ghClient as any,
-            gitClient: gitClient as any,
+            ghClient: ghClient,
+            gitClient: gitClient,
             dryRun,
             maxClose,
           }),
@@ -160,7 +166,7 @@ describe("runReconcilerSweepTick", () => {
     const db = setupDb();
     const svc = makeServices(db);
     // superseded=1 + stale=2 = closed=3; errored=1
-    const sweepFn = mock(async () =>
+    const sweepFn = mock(() =>
       makeSweepResult({ scanned: 5, superseded: 1, stale: 2, errored: 1 }),
     );
 
@@ -185,9 +191,9 @@ describe("runReconcilerSweepTick", () => {
   test("sweep error is caught and logged; tick does NOT throw", async () => {
     const db = setupDb();
     const warnArgs: unknown[] = [];
-    const log = { warn: (obj: unknown) => warnArgs.push(obj) };
+    const log = { warn: (obj: unknown): number => warnArgs.push(obj) };
     const svc = makeServices(db);
-    const sweepFn = mock(async () => {
+    const sweepFn = mock((): never => {
       throw new Error("github down");
     });
 
@@ -216,7 +222,7 @@ describe("runReconcilerSweepTick", () => {
     try {
       const db = setupDb();
       const svc = makeServices(db);
-      const sweepFn = mock(async () => makeSweepResult());
+      const sweepFn = mock(() => makeSweepResult());
 
       // No explicit maxClose — should pick up env var
       await runReconcilerSweepTick({ services: svc, runSweep: sweepFn });

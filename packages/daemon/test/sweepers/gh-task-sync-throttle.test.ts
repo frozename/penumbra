@@ -1,7 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { loadSqliteVec, migrate, T0Writer, TaskWriter } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec, migrate, TaskWriter, T0Writer } from "@penumbra/core";
+import { describe, expect, test } from "bun:test";
+
 import type { GhClient } from "../../src/services/gh-client.js";
+
 import {
   createGhTaskSyncService,
   createGhTaskSyncSweeper,
@@ -13,19 +15,17 @@ try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  void 0;
+}
 
 const noopGhClient: GhClient = {
-  createIssue: async () => {
-    throw new Error("unused");
-  },
-  viewIssue: async () => {
-    throw new Error("unused");
-  },
-  closeIssue: async () => {},
-  reopenIssue: async () => {},
-  commentIssue: async () => ({ comment_url: "x" }),
-  listComments: async () => [],
+  createIssue: () => Promise.reject(new Error("unused")),
+  viewIssue: () => Promise.reject(new Error("unused")),
+  closeIssue: () => Promise.resolve(),
+  reopenIssue: () => Promise.resolve(),
+  commentIssue: () => Promise.resolve({ comment_url: "x" }),
+  listComments: () => Promise.resolve([]),
 };
 
 function freshDb(): Database {
@@ -55,7 +55,7 @@ describe("gh-task-sync full-reconcile throttle (Phase 3.1)", () => {
 
     let listCalls = 0;
     const origList = writer.listLinkedTasks.bind(writer);
-    (writer as unknown as { listLinkedTasks: () => unknown }).listLinkedTasks = () => {
+    (writer as unknown as { listLinkedTasks: () => unknown }).listLinkedTasks = (): unknown => {
       listCalls++;
       return origList();
     };
@@ -73,9 +73,16 @@ describe("gh-task-sync full-reconcile throttle (Phase 3.1)", () => {
     let nowMs = Date.parse("2026-06-08T00:00:00.000Z");
     const fullFlags: boolean[] = [];
     const fakeService = {
-      syncAllLinkedTasks: async (o?: { fullReconcile?: boolean }): Promise<GhTaskSyncSummary> => {
+      syncAllLinkedTasks: (o?: { fullReconcile?: boolean }): Promise<GhTaskSyncSummary> => {
         fullFlags.push(o?.fullReconcile !== false);
-        return { linked: 0, pushed: 0, pulled: 0, errored: 0, skipped: false, results: [] };
+        return Promise.resolve({
+          linked: 0,
+          pushed: 0,
+          pulled: 0,
+          errored: 0,
+          skipped: false,
+          results: [],
+        });
       },
     } as unknown as GhTaskSyncService;
 
