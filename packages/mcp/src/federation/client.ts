@@ -1,7 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+
 import type { DaemonClient } from "../daemon-client.js";
 import type { HandleStore } from "../handle-store.js";
+
 import { instrumentHandler } from "../instrumentation.js";
 import { getLongLivedRuntimeContext } from "../long-lived-context.js";
 
@@ -54,17 +56,22 @@ export const MAX_META_BYTES = 2048;
 let oversizedDropCount = 0;
 
 function asMetaRecord(value: unknown): Record<string, unknown> | undefined {
-  if (typeof value !== "object" || value == null || Array.isArray(value)) return undefined;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   // asMetaRecord validates the TOP-LEVEL prototype only. Nested values may
   // still carry unusual prototypes; safety relies on JSON round-trip when
   // the payload reaches the wire. Consumers that observe `_meta` without
   // re-serialising MUST re-validate nested values.
-  const proto = Object.getPrototypeOf(value);
+  const proto: unknown = Object.getPrototypeOf(value);
   if (proto !== Object.prototype && proto !== null) return undefined;
   return value as Record<string, unknown>;
 }
 
-function envelope(body: object, isError = false) {
+interface EnvelopeBlock {
+  content: { type: "text"; text: string }[];
+  isError?: true;
+}
+
+function envelope(body: object, isError = false): EnvelopeBlock {
   return {
     content: [
       {
@@ -72,7 +79,7 @@ function envelope(body: object, isError = false) {
         text: JSON.stringify(body),
       },
     ],
-    ...(isError ? { isError: true } : {}),
+    ...(isError ? { isError: true as const } : {}),
   };
 }
 
@@ -87,16 +94,15 @@ export async function registerFederatedTools(
   let federationResponse: { tools: VirtualToolDef[] };
   try {
     federationResponse = await opts.daemon.getFederationTools(agentId);
-  } catch (err) {
-    console.warn(
-      "[federation] failed to fetch federation tools:",
-      String((err as Error)?.message ?? err),
-    );
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn("[federation] failed to fetch federation tools:", message);
     return { registered: [], skipped: [] };
   }
 
-  const tools = opts.envAllowlist
-    ? federationResponse.tools.filter((tool) => opts.envAllowlist!.has(tool.name))
+  const allow = opts.envAllowlist;
+  const tools = allow
+    ? federationResponse.tools.filter((tool) => allow.has(tool.name))
     : federationResponse.tools;
 
   const registered: VirtualToolDef[] = [];
@@ -110,7 +116,7 @@ export async function registerFederatedTools(
           if (_meta) {
             let metaBytes = 0;
             try {
-              metaBytes = Buffer.byteLength(JSON.stringify(_meta) ?? "", "utf8");
+              metaBytes = Buffer.byteLength(JSON.stringify(_meta), "utf8");
             } catch {
               metaBytes = MAX_META_BYTES + 1;
             }
@@ -156,18 +162,19 @@ export async function registerFederatedTools(
             },
             true,
           );
-        } catch (err) {
+        } catch (err: unknown) {
+          const detail = err instanceof Error ? err.message : String(err);
           return envelope(
             {
               action_status: "rejected",
               error: "mcp_unavailable",
-              details: String((err as Error)?.message ?? err),
+              details: detail,
             },
             true,
           );
         }
       };
-      const instrumented = instrumentHandler(tool.name, proxyHandler as any, {
+      const instrumented = instrumentHandler(tool.name, proxyHandler, {
         enabled: opts.invocationLogEnabled,
         responseBudgetTokens: opts.responseBudgetTokens,
         handleStore: opts.handleStore,
@@ -177,15 +184,15 @@ export async function registerFederatedTools(
         {
           description: tool.description ?? `(federated via daemon) ${tool.name}`,
           inputSchema: PASSTHROUGH_INPUT_SCHEMA,
-        } as any,
+        } as Parameters<typeof opts.server.registerTool>[1],
         instrumented as Parameters<typeof opts.server.registerTool>[2],
       );
       registered.push(tool);
-    } catch (err) {
+    } catch (err: unknown) {
       // One bad federated tool must not crash the whole MCP server boot.
       // Surface the skip both in logs and in the return shape so callers
       // can report degraded-federation startup state.
-      const reason = String((err as Error)?.message ?? err);
+      const reason = err instanceof Error ? err.message : String(err);
       skipped.push({ name: tool.name, reason });
       console.warn(`[federation] failed to register tool name=${tool.name} reason=${reason}`);
     }

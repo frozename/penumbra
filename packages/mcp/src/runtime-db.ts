@@ -1,5 +1,6 @@
-import { Database } from "bun:sqlite";
 import { applyRuntimePragmas, loadSqliteVec, resolveDaemonStorageRoot } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+
 import { resolveStorageDbPath } from "../../core/src/db/storage-db-path.js";
 
 export async function withDaemonDb<T>(fn: (db: Database) => Promise<T> | T): Promise<T> {

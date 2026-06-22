@@ -50,9 +50,7 @@ export function summarize(rows: InvocationSummaryInputRow[]): Map<string, Summar
     current.origins.add(row.origin);
     if (!row.ok) {
       current.errors += 1;
-      if (current.first_error === null) {
-        current.first_error = row.error_kind;
-      }
+      current.first_error ??= row.error_kind;
     }
     out.set(row.tool, current);
 

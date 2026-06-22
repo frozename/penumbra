@@ -1,7 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getMcpResponseBudgetTokens, isMcpInvocationLogEnabled } from "@penumbra/config";
+
 import type { DaemonClient } from "./daemon-client.js";
+
 import { registerFederatedTools } from "./federation/client.js";
+import { HandleStore } from "./handle-store.js";
 import { instrumentHandler } from "./instrumentation.js";
 import {
   closeSink,
@@ -9,11 +12,10 @@ import {
   resolveDefaultInvocationLogPath,
 } from "./invocation-sink-registry.js";
 import { setLongLivedRuntimeContextFromEnv } from "./long-lived-context.js";
-import { HandleStore } from "./handle-store.js";
 import {
   READ_HANDLE_DESCRIPTION,
-  ReadHandleInputShape,
   readHandleHandler,
+  ReadHandleInputShape,
 } from "./tools/read-handle.js";
 import { TOOL_REGISTRY } from "./tools/registry.js";
 
@@ -88,122 +90,185 @@ export async function buildServer(opts: {
   // would still wrap large results with handle_ids the client cannot resolve.
   // Disable budgeting entirely in that case so results pass through untruncated.
   const responseBudgetTokens = readHandleExcluded ? null : envResponseBudgetTokens;
-  if (readHandleExcluded && allowlist !== null) {
-    const handleProducingAllowlisted = [...HANDLE_PRODUCING_TOOLS].filter((tool) =>
-      allowlist.has(tool),
-    );
-    const centralBudgetDisabled = envResponseBudgetTokens !== null;
-    if (handleProducingAllowlisted.length > 0 || centralBudgetDisabled) {
-      console.error(
-        JSON.stringify({
-          event: "mcp_allowlist_read_handle_missing",
-          warning:
-            "read_handle is excluded from the tool allowlist; central response budgeting has been disabled, and any allowlisted handle-producing tools (workflow_wait/_status, fs_* envelope outputs) may still emit handle_ids the client cannot resolve.",
-          allowlisted_tools: [...allowlist].sort(),
-          handle_producing_allowlisted: handleProducingAllowlisted.sort(),
-          central_budget_disabled: centralBudgetDisabled,
-        }),
-      );
-    }
+  if (readHandleExcluded) {
+    warnReadHandleMissing(allowlist, envResponseBudgetTokens);
   }
   // Read the flag ONCE per server build. Pass it explicitly into instrumentHandler so
   // the registration and runtime sides can't disagree if env mutates mid-process.
   const invocationLogEnabled = isMcpInvocationLogEnabled();
 
   if (invocationLogEnabled) {
-    // closeSink before initSink so a second buildServer call in the same process
-    // (tests, embedded usage) doesn't trip the "already initialized" guard.
-    await closeSink();
-    try {
-      await initSink(resolveDefaultInvocationLogPath());
-    } catch (err) {
-      console.error(
-        JSON.stringify({
-          event: "mcp_invocation_sink_init_failed",
-          path: resolveDefaultInvocationLogPath(),
-          reason: err instanceof Error ? err.message : String(err),
-        }),
-      );
-      throw err;
-    }
+    await openInvocationSink();
   }
 
   try {
-    const server = new McpServer({ name: "penumbra", version: "0.0.0" });
-    const handleStore = new HandleStore();
-    const serverCtx: ToolBuildContext = { handleStore };
-    for (const [rawName, def] of Object.entries(TOOL_REGISTRY)) {
-      const name = canonicalToolId(rawName);
-      if (!name) continue;
-      if (allowlist && !allowlist.has(name)) continue;
-      const handler = instrumentHandler(name, def.makeHandler(opts.daemon, serverCtx) as any, {
-        enabled: invocationLogEnabled,
-        responseBudgetTokens,
-        handleStore,
-      });
-      server.registerTool(
-        name,
-        def.descriptor as Parameters<typeof server.registerTool>[1],
-        handler as unknown as Parameters<typeof server.registerTool>[2],
-      );
-    }
-    // read_handle is registered OUTSIDE the TOOL_REGISTRY loop on purpose: it
-    // needs the HandleStore, not the daemon, so it can't go through
-    // def.makeHandler(opts.daemon). Never add "read_handle" to TOOL_REGISTRY — it
-    // would register twice (the loop above + this block). server.test.ts locks the
-    // full registered set to [...TOOL_REGISTRY, "read_handle"] to catch that. The
-    // shared HandleStore is populated by workflow_wait truncation spill and read via
-    // read_handle; lifecycle is owned by this server build and closed on server.close().
-    if (!allowlist || allowlist.has("read_handle")) {
-      const readHandle = instrumentHandler("read_handle", readHandleHandler(handleStore) as any, {
-        enabled: invocationLogEnabled,
-        responseBudgetTokens,
-        handleStore,
-      });
-      server.registerTool(
-        "read_handle",
-        {
-          description: READ_HANDLE_DESCRIPTION,
-          inputSchema: ReadHandleInputShape,
-        } as Parameters<typeof server.registerTool>[1],
-        readHandle as unknown as Parameters<typeof server.registerTool>[2],
-      );
-    }
-    let handleStoreClosed = false;
-    const closeHandleStore = () => {
-      if (handleStoreClosed) return;
-      handleStoreClosed = true;
-      handleStore.close();
-    };
-    const priorClose = server.close.bind(server);
-    // Keep teardown on the public close() surface and avoid coupling to SDK internals.
-    (server as unknown as { close: () => Promise<void> }).close = async () => {
-      try {
-        await priorClose();
-      } finally {
-        closeHandleStore();
-      }
-    };
-    const result = await registerFederatedTools({
-      server,
+    return await assembleServer({
       daemon: opts.daemon,
-      envAllowlist: allowlist ?? undefined,
+      allowlist,
       invocationLogEnabled,
       responseBudgetTokens,
-      handleStore,
     });
-    console.error(
-      JSON.stringify({
-        event: "federation.registered",
-        registered_count: result.registered.length,
-        skipped_count: result.skipped.length,
-        skipped: result.skipped,
-      }),
-    );
-    return server;
   } catch (err) {
-    // Don't leak the open sink fd if anything downstream of initSink throws.
     if (invocationLogEnabled) await closeSink();
     throw err;
   }
+}
+
+function warnReadHandleMissing(
+  allowlist: Set<string> | null,
+  envResponseBudgetTokens: number | null,
+): void {
+  if (allowlist === null) return;
+  const handleProducingAllowlisted = [...HANDLE_PRODUCING_TOOLS].filter((tool) =>
+    allowlist.has(tool),
+  );
+  const centralBudgetDisabled = envResponseBudgetTokens !== null;
+  if (handleProducingAllowlisted.length === 0 && !centralBudgetDisabled) return;
+  console.error(
+    JSON.stringify({
+      event: "mcp_allowlist_read_handle_missing",
+      warning:
+        "read_handle is excluded from the tool allowlist; central response budgeting has been disabled, and any allowlisted handle-producing tools (workflow_wait/_status, fs_* envelope outputs) may still emit handle_ids the client cannot resolve.",
+      allowlisted_tools: [...allowlist].sort(),
+      handle_producing_allowlisted: handleProducingAllowlisted.sort(),
+      central_budget_disabled: centralBudgetDisabled,
+    }),
+  );
+}
+
+async function openInvocationSink(): Promise<void> {
+  // closeSink before initSink so a second buildServer call in the same process
+  // (tests, embedded usage) doesn't trip the "already initialized" guard.
+  await closeSink();
+  try {
+    await initSink(resolveDefaultInvocationLogPath());
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        event: "mcp_invocation_sink_init_failed",
+        path: resolveDefaultInvocationLogPath(),
+        reason: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    throw err;
+  }
+}
+
+interface AssembleOptions {
+  daemon: DaemonClient;
+  allowlist: Set<string> | null;
+  invocationLogEnabled: boolean;
+  responseBudgetTokens: number | null;
+}
+
+async function assembleServer(opts: AssembleOptions): Promise<McpServer> {
+  const { daemon, allowlist, invocationLogEnabled, responseBudgetTokens } = opts;
+  const server = new McpServer({ name: "penumbra", version: "0.0.0" });
+  const handleStore = new HandleStore();
+  const serverCtx: ToolBuildContext = { handleStore };
+  registerRegistryTools({
+    server,
+    daemon,
+    serverCtx,
+    handleStore,
+    allowlist,
+    invocationLogEnabled,
+    responseBudgetTokens,
+  });
+  if (!allowlist || allowlist.has("read_handle")) {
+    registerReadHandleTool({ server, handleStore, invocationLogEnabled, responseBudgetTokens });
+  }
+  installHandleStoreTeardown(server, handleStore);
+  const result = await registerFederatedTools({
+    server,
+    daemon,
+    envAllowlist: allowlist ?? undefined,
+    invocationLogEnabled,
+    responseBudgetTokens,
+    handleStore,
+  });
+  console.error(
+    JSON.stringify({
+      event: "federation.registered",
+      registered_count: result.registered.length,
+      skipped_count: result.skipped.length,
+      skipped: result.skipped,
+    }),
+  );
+  return server;
+}
+
+interface RegistryRegistrationOpts {
+  server: McpServer;
+  daemon: DaemonClient;
+  serverCtx: ToolBuildContext;
+  handleStore: HandleStore;
+  allowlist: Set<string> | null;
+  invocationLogEnabled: boolean;
+  responseBudgetTokens: number | null;
+}
+
+function registerRegistryTools(opts: RegistryRegistrationOpts): void {
+  const { server, daemon, serverCtx, handleStore, allowlist } = opts;
+  for (const [rawName, def] of Object.entries(TOOL_REGISTRY)) {
+    const name = canonicalToolId(rawName);
+    if (!name) continue;
+    if (allowlist && !allowlist.has(name)) continue;
+    const handler = instrumentHandler(name, def.makeHandler(daemon, serverCtx), {
+      enabled: opts.invocationLogEnabled,
+      responseBudgetTokens: opts.responseBudgetTokens,
+      handleStore,
+    });
+    server.registerTool(
+      name,
+      def.descriptor as Parameters<typeof server.registerTool>[1],
+      handler as unknown as Parameters<typeof server.registerTool>[2],
+    );
+  }
+}
+
+interface ReadHandleRegistrationOpts {
+  server: McpServer;
+  handleStore: HandleStore;
+  invocationLogEnabled: boolean;
+  responseBudgetTokens: number | null;
+}
+
+function registerReadHandleTool(opts: ReadHandleRegistrationOpts): void {
+  // read_handle is registered OUTSIDE the TOOL_REGISTRY loop on purpose: it
+  // needs the HandleStore, not the daemon, so it can't go through
+  // def.makeHandler(opts.daemon). Never add "read_handle" to TOOL_REGISTRY — it
+  // would register twice. server.test.ts locks the full registered set to
+  // [...TOOL_REGISTRY, "read_handle"] to catch that.
+  const readHandle = instrumentHandler("read_handle", readHandleHandler(opts.handleStore), {
+    enabled: opts.invocationLogEnabled,
+    responseBudgetTokens: opts.responseBudgetTokens,
+    handleStore: opts.handleStore,
+  });
+  opts.server.registerTool(
+    "read_handle",
+    {
+      description: READ_HANDLE_DESCRIPTION,
+      inputSchema: ReadHandleInputShape,
+    } as Parameters<typeof opts.server.registerTool>[1],
+    readHandle as unknown as Parameters<typeof opts.server.registerTool>[2],
+  );
+}
+
+function installHandleStoreTeardown(server: McpServer, handleStore: HandleStore): void {
+  let handleStoreClosed = false;
+  const closeHandleStore = (): void => {
+    if (handleStoreClosed) return;
+    handleStoreClosed = true;
+    handleStore.close();
+  };
+  const priorClose = server.close.bind(server);
+  // Keep teardown on the public close() surface and avoid coupling to SDK internals.
+  (server as unknown as { close: () => Promise<void> }).close = async (): Promise<void> => {
+    try {
+      await priorClose();
+    } finally {
+      closeHandleStore();
+    }
+  };
 }

@@ -27,10 +27,7 @@ export interface EnvelopeInput {
   handleId?: string;
 }
 
-export function makeEnvelopeResult(
-  content: ContentBlock[],
-  input: EnvelopeInput
-): EnvelopeResult {
+export function makeEnvelopeResult(content: ContentBlock[], input: EnvelopeInput): EnvelopeResult {
   return {
     content,
     _meta: {
@@ -51,6 +48,6 @@ export function isEnvelopeResult(v: unknown): v is EnvelopeResult {
     typeof v === "object" &&
     v !== null &&
     !Array.isArray(v) &&
-    (v as EnvelopeResult).isEnvelope === true
+    (v as { isEnvelope?: unknown }).isEnvelope === true
   );
 }

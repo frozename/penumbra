@@ -20,7 +20,7 @@ function deriveBasename(livePath: string): string {
 }
 
 export function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function rotationNameRe(basenameValue: string): RegExp {
@@ -83,7 +83,7 @@ export function pruneOldRotations(dir: string, retainDays: number, basenameValue
     const match = nameRe.exec(name);
     if (!match) continue;
 
-    const rotatedDayMs = Date.parse(`${match[1]}T00:00:00.000Z`);
+    const rotatedDayMs = Date.parse(`${match[1] ?? ""}T00:00:00.000Z`);
     if (!Number.isFinite(rotatedDayMs)) continue;
     if (rotatedDayMs < cutoffUtcDayMs) {
       try {

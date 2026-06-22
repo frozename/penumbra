@@ -1,10 +1,11 @@
 #!/usr/bin/env bun
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import { buildServer } from "../src/server.js";
-import { DaemonClient } from "../src/daemon-client.js";
 import { resolveDaemonStorageRoot } from "@penumbra/core";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { DaemonClient } from "../src/daemon-client.js";
+import { buildServer } from "../src/server.js";
 
 let root: string;
 try {
@@ -31,7 +32,7 @@ if (!existsSync(tokenPath) || !existsSync(portPath)) {
 // port each invocation, so a long-lived MCP process must re-read these files
 // to survive a daemon restart instead of caching a stale port.
 const daemon = new DaemonClient({
-  resolve: () => {
+  resolve: (): { baseUrl: string; token: string } => {
     const token = readFileSync(tokenPath, "utf8").trim();
     const port = readFileSync(portPath, "utf8").trim();
     if (!token) throw new Error(`penumbra-mcp: token file ${tokenPath} is empty.`);
@@ -41,7 +42,7 @@ const daemon = new DaemonClient({
         `penumbra-mcp: port file ${portPath} does not contain a valid port (got: '${port}').`,
       );
     }
-    return { baseUrl: `http://127.0.0.1:${portNum}`, token };
+    return { baseUrl: `http://127.0.0.1:${String(portNum)}`, token };
   },
 });
 
@@ -71,13 +72,23 @@ const shutdown = (reason: string): void => {
   }
   const hardExit = setTimeout(() => process.exit(0), 2000);
   void Promise.resolve(server.close())
-    .catch(() => {})
+    .catch(() => {
+      // best-effort flush; ignore errors during shutdown
+    })
     .finally(() => {
       clearTimeout(hardExit);
       process.exit(0);
     });
 };
-process.stdin.on("end", () => shutdown("stdin-eof"));
-process.stdin.on("close", () => shutdown("stdin-eof"));
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
+process.stdin.on("end", () => {
+  shutdown("stdin-eof");
+});
+process.stdin.on("close", () => {
+  shutdown("stdin-eof");
+});
+process.on("SIGTERM", () => {
+  shutdown("SIGTERM");
+});
+process.on("SIGINT", () => {
+  shutdown("SIGINT");
+});

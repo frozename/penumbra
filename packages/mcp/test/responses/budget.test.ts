@@ -1,9 +1,10 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
+
 import {
-  estimateTokens,
-  withinBudget,
-  truncateToTokens,
   DEFAULT_BUDGET,
+  estimateTokens,
+  truncateToTokens,
+  withinBudget,
 } from "../../src/responses/budget.js";
 
 describe("estimateTokens", () => {
@@ -46,5 +47,7 @@ describe("truncateToTokens", () => {
 });
 
 describe("DEFAULT_BUDGET", () => {
-  it("is 8000", () => { expect(DEFAULT_BUDGET).toBe(8_000); });
+  it("is 8000", () => {
+    expect(DEFAULT_BUDGET).toBe(8_000);
+  });
 });

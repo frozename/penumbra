@@ -25,7 +25,7 @@ test("session.end forwards to daemon", async () => {
       name: "session_end",
       arguments: { session_id: "sX" },
     });
-    const payload = firstJson<{ rollup_id: string }>(out);
+    const payload = firstJson(out) as { rollup_id: string };
     expect(payload.rollup_id).toBe("r1");
     expect(body).toEqual({ session_id: "sX" });
     expect(receivedMethod).toBe("POST");

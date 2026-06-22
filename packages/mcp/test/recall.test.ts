@@ -48,7 +48,7 @@ test("memory.recall forwards to daemon and returns results", async () => {
       name: "memory_recall",
       arguments: { query: "anything", project_id: null, limit: 5 },
     });
-    const payload = firstJson<RecallResponse>(out);
+    const payload = firstJson(out) as RecallResponse;
     expect(payload.results[0]?.id).toBe("r1");
     expect(receivedRequest?.query).toBe("anything");
   } finally {
@@ -93,14 +93,14 @@ test("memory.recall caps each body by default but honors explicit body_max_chars
       name: "memory_recall",
       arguments: { query: "anything", project_id: null, limit: 5 },
     });
-    const payload = firstJson<RecallResponse>(out);
+    const payload = firstJson(out) as RecallResponse;
     expect(payload.results[0]?.body).toHaveLength(600);
 
     const uncapped = await client.callTool({
       name: "memory_recall",
       arguments: { query: "anything", project_id: null, limit: 5, body_max_chars: 900 },
     });
-    const uncappedPayload = firstJson<RecallResponse>(uncapped);
+    const uncappedPayload = firstJson(uncapped) as RecallResponse;
     expect(uncappedPayload.results[0]?.body).toHaveLength(900);
   } finally {
     await client.close();
@@ -121,7 +121,7 @@ test("memory.recall body cap never splits a surrogate pair (emoji straddling the
       name: "memory_recall",
       arguments: { query: "anything", project_id: null, limit: 5 },
     });
-    const payload = firstJson<RecallResponse>(out);
+    const payload = firstJson(out) as RecallResponse;
     const capped = payload.results[0]?.body ?? "";
     // Backed off one unit instead of keeping the lone high surrogate.
     expect(capped).toHaveLength(599);

@@ -75,8 +75,8 @@ export function firstText(result: CallToolResult): string {
   return block.text;
 }
 
-export function firstJson<T = unknown>(result: CallToolResult): T {
-  return JSON.parse(firstText(result)) as T;
+export function firstJson(result: CallToolResult): unknown {
+  return JSON.parse(firstText(result));
 }
 
 export type FetchImpl = typeof fetch;

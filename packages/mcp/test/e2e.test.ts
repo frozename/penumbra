@@ -86,7 +86,7 @@ test("observe → session.end → recall returns the session content", async () 
         limit: 5,
       },
     });
-    const payload = firstJson<RecallPayload>(recall);
+    const payload = firstJson(recall) as RecallPayload;
     expect(payload.results.length).toBe(1);
     expect(payload.results[0]?.tier).toBe("t1");
     expect(payload.results[0]?.body).toContain("refactor");

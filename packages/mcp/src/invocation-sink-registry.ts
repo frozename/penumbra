@@ -1,23 +1,25 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+
 import {
-  openInvocationSink,
   type InvocationSink,
   type InvocationSinkOptions,
+  openInvocationSink,
 } from "./invocation-sink.js";
 
 const DEFAULT_OPTIONS: Readonly<InvocationSinkOptions> = Object.freeze({});
 
 /**
- * Resolves the XDG state-dir path for the invocation log. `||` (not `??`) so
- * `XDG_STATE_HOME=""` falls back per the XDG spec; `path.resolve` so a relative
- * value never lets writes land in the process CWD.
+ * Resolves the XDG state-dir path for the invocation log. Treats `XDG_STATE_HOME=""`
+ * as unset per the XDG spec; `path.resolve` so a relative value never lets writes
+ * land in the process CWD.
  */
 export function resolveDefaultInvocationLogPath(
   env: NodeJS.ProcessEnv = process.env,
   home: string = homedir(),
 ): string {
-  const stateHome = env.XDG_STATE_HOME || join(home, ".local", "state");
+  const xdg = env.XDG_STATE_HOME;
+  const stateHome = xdg !== undefined && xdg !== "" ? xdg : join(home, ".local", "state");
   return resolve(stateHome, "penumbra", "mcp-invocations.jsonl");
 }
 

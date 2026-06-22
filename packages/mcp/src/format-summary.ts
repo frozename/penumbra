@@ -12,20 +12,20 @@ export function truncateId(id: string, length: number): string {
 }
 
 export function formatElapsed(ms: number): string {
-  if (ms < 60_000) return `${Math.floor(ms / 1000)}s`;
+  if (ms < 60_000) return `${String(Math.floor(ms / 1000))}s`;
   if (ms < 3_600_000) {
     const m = Math.floor(ms / 60_000);
     const s = Math.floor((ms % 60_000) / 1000);
-    return s > 0 ? `${m}m${s.toString().padStart(2, "0")}s` : `${m}m`;
+    return s > 0 ? `${String(m)}m${s.toString().padStart(2, "0")}s` : `${String(m)}m`;
   }
   if (ms < 86_400_000) {
     const h = Math.floor(ms / 3_600_000);
     const m = Math.floor((ms % 3_600_000) / 60_000);
-    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+    return m > 0 ? `${String(h)}h ${String(m)}m` : `${String(h)}h`;
   }
   const d = Math.floor(ms / 86_400_000);
   const h = Math.round((ms % 86_400_000) / 3_600_000);
-  return h > 0 ? `${d}d ${h}h` : `${d}d`;
+  return h > 0 ? `${String(d)}d ${String(h)}h` : `${String(d)}d`;
 }
 
 const GLYPH_MAP: Record<string, string> = {
@@ -60,12 +60,12 @@ export interface ChainStartResult {
   task_class?: string;
   lane_id?: string | null;
   recalled_memory_ids?: string[];
-  recalled_memories?: Array<{
+  recalled_memories?: {
     id: string;
     title: string;
     obs_type: string;
     snippet_head?: string;
-  }>;
+  }[];
   routed_agent?: string;
   routed_role?: string | null;
   routing_task_type?: string | null;
@@ -82,7 +82,7 @@ export interface ChainStartResult {
   };
 }
 export function formatChainStart(r: ChainStartResult): string {
-  const id = dimColor(`h-${truncateId(r.handoff_id.replace(/-/g, ""), 7)}`);
+  const id = dimColor(`h-${truncateId(r.handoff_id.replaceAll("-", ""), 7)}`);
   const agent = r.agent ?? "unknown-agent";
   const trust = r.trust_mode ?? "all";
   return `◌ chain_start  ${agent}  ${id}  trust=${trust}`;
@@ -97,7 +97,7 @@ export interface ChainStatusResult {
   error_summary: string | null;
 }
 export function formatChainStatus(r: ChainStatusResult): string {
-  const id = dimColor(`h-${truncateId(r.handoff_id.replace(/-/g, ""), 7)}`);
+  const id = dimColor(`h-${truncateId(r.handoff_id.replaceAll("-", ""), 7)}`);
   const worker = r.worker_id ? dimColor(r.worker_id) : "unassigned";
   const elapsed = r.started_at
     ? formatElapsed(Date.now() - new Date(r.started_at).getTime())
@@ -111,20 +111,20 @@ export interface ChainWaitResult {
   last_handoff_id: string;
 }
 // elapsedMsHint optional — caller can pass a measured elapsed; else 0
-export function formatChainWait(r: ChainWaitResult, elapsedMsHint: number = 0): string {
-  const id = dimColor(`h-${truncateId(r.last_handoff_id.replace(/-/g, ""), 7)}`);
+export function formatChainWait(r: ChainWaitResult, elapsedMsHint = 0): string {
+  const id = dimColor(`h-${truncateId(r.last_handoff_id.replaceAll("-", ""), 7)}`);
   const elapsed = formatElapsed(elapsedMsHint);
   return `${glyphFor(r.status)} chain_wait  ${id}  ${r.status} in ${elapsed}`;
 }
 
 export interface ChainGetResponseResult {
-  responses: Array<{ ts: string; agent: string; text: string }>;
+  responses: { ts: string; agent: string; text: string }[];
 }
 export function formatChainGetResponse(r: ChainGetResponseResult): string {
   const n = r.responses.length;
-  const agent = n > 0 ? r.responses[n - 1]!.agent : "no-agent";
+  const agent = n > 0 ? (r.responses[n - 1]?.agent ?? "no-agent") : "no-agent";
   const noun = n === 1 ? "response" : "responses";
-  return `● chain_get_response  ${agent}  ${n} ${noun}`;
+  return `● chain_get_response  ${agent}  ${String(n)} ${noun}`;
 }
 
 export interface HandoffGetResult {
@@ -136,12 +136,12 @@ export interface HandoffGetResult {
 }
 export function formatHandoffGet(r: HandoffGetResult): string {
   const h = r.handoff;
-  const id = dimColor(`h-${truncateId(h.handoff_id.replace(/-/g, ""), 7)}`);
+  const id = dimColor(`h-${truncateId(h.handoff_id.replaceAll("-", ""), 7)}`);
   return `${glyphFor(h.status)} handoff  ${id}  ${h.agent_name}  ${h.status}`;
 }
 
 export interface HandoffListPendingResult {
-  handoffs: Array<{ handoff_id: string; worker_id: string | null; status: string }>;
+  handoffs: { handoff_id: string; worker_id: string | null; status: string }[];
 }
 export function formatHandoffListPending(r: HandoffListPendingResult): string {
   const hs = r.handoffs;
@@ -152,13 +152,13 @@ export function formatHandoffListPending(r: HandoffListPendingResult): string {
     byWorker.set(w, (byWorker.get(w) ?? 0) + 1);
   }
   const summary = Array.from(byWorker.entries())
-    .map(([w, c]) => `${dimColor(w)}:${c}`)
+    .map(([w, c]) => `${dimColor(w)}:${String(c)}`)
     .join(", ");
-  return `◌ handoff_list_pending  ${hs.length} entries  ${summary}`;
+  return `◌ handoff_list_pending  ${String(hs.length)} entries  ${summary}`;
 }
 
 export interface PermissionListPendingResult {
-  permissions: Array<{ permission_id: string; requested_at: string }>;
+  permissions: { permission_id: string; requested_at: string }[];
 }
 export function formatPermissionListPending(r: PermissionListPendingResult): string {
   const ps = r.permissions;
@@ -168,7 +168,7 @@ export function formatPermissionListPending(r: PermissionListPendingResult): str
     Infinity,
   );
   const oldestAge = formatElapsed(Date.now() - oldestAt);
-  return `◐ permission_list_pending  ${ps.length} pending  oldest ${oldestAge}`;
+  return `◐ permission_list_pending  ${String(ps.length)} pending  oldest ${oldestAge}`;
 }
 
 export interface PermissionApproveResult {
@@ -178,7 +178,7 @@ export interface PermissionApproveResult {
   remember?: string;
 }
 export function formatPermissionApprove(r: PermissionApproveResult): string {
-  const id = dimColor(truncateId(r.permission_id.replace(/-/g, ""), 6));
+  const id = dimColor(truncateId(r.permission_id.replaceAll("-", ""), 6));
   const remember = r.remember ?? "this_call";
   return `${glyphFor(r.status)} permission  ${id}  ${r.decision}  remember=${remember}`;
 }

@@ -1,7 +1,9 @@
 import { isMcpInvocationLogEnabled } from "@penumbra/config";
+
 import type { InvocationRow } from "./invocation-sink.js";
-import { getSink } from "./invocation-sink-registry.js";
+
 import { HandleStore } from "./handle-store.js";
+import { getSink } from "./invocation-sink-registry.js";
 import { estimateTokens, sliceSurrogateSafe, truncateToTokens } from "./responses/budget.js";
 import { isEnvelopeResult, makeEnvelopeResult } from "./responses/envelope.js";
 import { resolveToolOrigin } from "./tool-origin.js";
@@ -51,7 +53,7 @@ function errorClassName(error: unknown): string {
   // fall back to the constructor name (which survives undefined .name but
   // gets mangled to a single letter under identifier minification).
   const explicit = error.name && error.name !== "Error" ? error.name : undefined;
-  const ctorName = typeof error.constructor?.name === "string" ? error.constructor.name : undefined;
+  const ctorName = typeof error.constructor.name === "string" ? error.constructor.name : undefined;
   const chosen = explicit ?? ctorName ?? "Error";
   return chosen.slice(0, ERROR_KIND_MAX_CHARS);
 }
@@ -86,7 +88,7 @@ function safeWrite(row: InvocationRow): void {
 }
 
 function buildRecoveryMarker(handleId: string, usedTokens: number, limitTokens: number): string {
-  return `\n[truncated: ${usedTokens} tokens > ${limitTokens} token budget — full payload: read_handle ${handleId}]`;
+  return `\n[truncated: ${String(usedTokens)} tokens > ${String(limitTokens)} token budget — full payload: read_handle ${handleId}]`;
 }
 
 function applyBudgetRecoveryMarker(
@@ -135,46 +137,10 @@ export function instrumentHandler(
 
     try {
       const result = await handler(args, extra);
-      let wrappedResult = result;
-      let budgetSerialized: string | undefined;
-      if (
-        budget !== null &&
-        name !== "read_handle" &&
-        !isEnvelopeResult(result) &&
-        !isMcpErrorEnvelope(result)
-      ) {
-        // Serializing an arbitrary tool result can throw (BigInt, circular
-        // references, a throwing toJSON). Budgeting must never break tool
-        // execution — on failure skip budgeting and pass the result through.
-        try {
-          budgetSerialized = JSON.stringify(result);
-        } catch {
-          budgetSerialized = undefined;
-        }
-        if (budgetSerialized !== undefined) {
-          const usedTokens = estimateTokens(budgetSerialized);
-          if (usedTokens > budget.limitTokens) {
-            const handleId = budget.store.put(budgetSerialized);
-            const { text, truncated } = truncateToTokens(budgetSerialized, budget.limitTokens);
-            const textWithMarker = truncated
-              ? applyBudgetRecoveryMarker(text, handleId, usedTokens, budget.limitTokens)
-              : text;
-            const envelope = makeEnvelopeResult([{ type: "text", text: textWithMarker }], {
-              usedTokens,
-              limitTokens: budget.limitTokens,
-              truncated,
-              resultBytes: Buffer.byteLength(budgetSerialized, "utf8"),
-              handleId,
-            });
-            wrappedResult = envelope;
-          }
-        }
-      }
+      const { wrappedResult, budgetSerialized } = applyBudgetEnvelope(name, result, budget);
       const durationMs = Math.round(performance.now() - startedAt);
       if (enabled) {
         const isErrorEnvelope = isMcpErrorEnvelope(wrappedResult);
-        // Reuse the budget-check serialization when the result was passed
-        // through unwrapped, so logging + budget don't serialize it twice.
         const resultBytes =
           wrappedResult === result && budgetSerialized !== undefined
             ? boundedByteLength(budgetSerialized)
@@ -192,7 +158,7 @@ export function instrumentHandler(
         });
       }
       return wrappedResult;
-    } catch (error) {
+    } catch (error: unknown) {
       const durationMs = Math.round(performance.now() - startedAt);
       if (enabled) {
         safeWrite({
@@ -210,6 +176,52 @@ export function instrumentHandler(
       throw error;
     }
   };
+}
+
+interface BudgetState {
+  limitTokens: number;
+  store: HandleStore;
+}
+
+function applyBudgetEnvelope(
+  name: string,
+  result: unknown,
+  budget: BudgetState | null,
+): { wrappedResult: unknown; budgetSerialized: string | undefined } {
+  if (
+    budget === null ||
+    name === "read_handle" ||
+    isEnvelopeResult(result) ||
+    isMcpErrorEnvelope(result)
+  ) {
+    return { wrappedResult: result, budgetSerialized: undefined };
+  }
+  let budgetSerialized: string | undefined;
+  try {
+    budgetSerialized = JSON.stringify(result);
+  } catch {
+    budgetSerialized = undefined;
+  }
+  if (budgetSerialized === undefined) {
+    return { wrappedResult: result, budgetSerialized: undefined };
+  }
+  const usedTokens = estimateTokens(budgetSerialized);
+  if (usedTokens <= budget.limitTokens) {
+    return { wrappedResult: result, budgetSerialized };
+  }
+  const handleId = budget.store.put(budgetSerialized);
+  const { text, truncated } = truncateToTokens(budgetSerialized, budget.limitTokens);
+  const textWithMarker = truncated
+    ? applyBudgetRecoveryMarker(text, handleId, usedTokens, budget.limitTokens)
+    : text;
+  const envelope = makeEnvelopeResult([{ type: "text", text: textWithMarker }], {
+    usedTokens,
+    limitTokens: budget.limitTokens,
+    truncated,
+    resultBytes: Buffer.byteLength(budgetSerialized, "utf8"),
+    handleId,
+  });
+  return { wrappedResult: envelope, budgetSerialized };
 }
 
 /** Test-only reset so the one-shot warning fires fresh in unrelated tests. */

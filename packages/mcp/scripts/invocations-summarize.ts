@@ -4,13 +4,14 @@ import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
 import { createGunzip } from "node:zlib";
+
+import { resolveDefaultInvocationLogPath } from "../src/invocation-sink-registry.js";
 import {
+  type InvocationSummaryInputRow,
   parseLines,
   summarize,
-  type InvocationSummaryInputRow,
   type SummaryRow,
 } from "../src/invocation-summary.js";
-import { resolveDefaultInvocationLogPath } from "../src/invocation-sink-registry.js";
 
 function parseSinceDuration(value: string): number {
   const match = /^(\d+)([dh])$/i.exec(value);
@@ -18,7 +19,7 @@ function parseSinceDuration(value: string): number {
     throw new Error(`invalid --since value '${value}'. Expected Nd or Nh (examples: 7d, 12h).`);
   }
   const amount = Number(match[1]);
-  const unit = match[2]!.toLowerCase();
+  const unit = (match[2] ?? "").toLowerCase();
   if (!Number.isFinite(amount)) {
     throw new Error(`invalid --since value '${value}'.`);
   }
@@ -31,7 +32,7 @@ function resolveInputFiles(logPath: string): string[] {
 
   const liveBase = basename(logPath).replace(/\.jsonl$/, "");
   const rotationNameRe = new RegExp(
-    `^${liveBase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.\\d{4}-\\d{2}-\\d{2}\\.jsonl\\.gz$`,
+    `^${liveBase.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.\\d{4}-\\d{2}-\\d{2}\\.jsonl\\.gz$`,
   );
 
   const rotated = readdirSync(dir)
@@ -68,10 +69,23 @@ function formatMarkdownTable(summary: Map<string, SummaryRow>): string {
   ];
   for (const [tool, row] of rows) {
     lines.push(
-      `| ${tool} | ${row.calls} | ${row.errors} | ${row.total_bytes_in} | ${row.total_bytes_out} | ${row.p50_bytes_out} | ${row.p95_bytes_out} | ${row.first_error ?? ""} | ${[...row.origins].sort().join(",")} |`,
+      `| ${tool} | ${String(row.calls)} | ${String(row.errors)} | ${String(row.total_bytes_in)} | ${String(row.total_bytes_out)} | ${String(row.p50_bytes_out)} | ${String(row.p95_bytes_out)} | ${row.first_error ?? ""} | ${[...row.origins].sort().join(",")} |`,
     );
   }
   return lines.join("\n");
+}
+
+function tryParseInvocationRow(
+  line: string,
+  cutoffMs: number,
+): InvocationSummaryInputRow | undefined {
+  const parsed = parseLines([line]);
+  if (parsed.length !== 1) return undefined;
+  const row = parsed[0];
+  if (!isInvocationRow(row)) return undefined;
+  const rowTs = Date.parse(row.ts);
+  if (!Number.isFinite(rowTs) || rowTs < cutoffMs) return undefined;
+  return row;
 }
 
 async function collectRows(
@@ -85,20 +99,15 @@ async function collectRows(
       : createReadStream(filePath);
     const reader = createInterface({ input, crlfDelay: Infinity });
     for await (const line of reader) {
-      const parsed = parseLines([line]);
-      if (parsed.length !== 1) continue;
-      const row = parsed[0];
-      if (!isInvocationRow(row)) continue;
-      const rowTs = Date.parse(row.ts);
-      if (!Number.isFinite(rowTs) || rowTs < cutoffMs) continue;
-      rows.push(row);
+      const row = tryParseInvocationRow(line, cutoffMs);
+      if (row) rows.push(row);
     }
   }
   return rows;
 }
 
 async function main(): Promise<void> {
-  const { values, positionals } = parseArgs({
+  const { values } = parseArgs({
     args: process.argv.slice(2),
     options: {
       since: { type: "string" },
@@ -107,9 +116,6 @@ async function main(): Promise<void> {
     allowPositionals: false,
     strict: true,
   });
-  if (positionals.length > 0) {
-    throw new Error(`unexpected positional argument(s): ${positionals.join(" ")}`);
-  }
 
   const logPath = values.path ?? resolveDefaultInvocationLogPath();
   const sinceRaw = values.since;
@@ -121,21 +127,21 @@ async function main(): Promise<void> {
 
   const files = resolveInputFiles(logPath);
   if (files.length === 0) {
-    console.log(`no invocations recorded since ${cutoffLabel}`);
+    process.stdout.write(`no invocations recorded since ${cutoffLabel}\n`);
     return;
   }
 
   const rows = await collectRows(files, cutoffMs);
   if (rows.length === 0) {
-    console.log(`no invocations recorded since ${cutoffLabel}`);
+    process.stdout.write(`no invocations recorded since ${cutoffLabel}\n`);
     return;
   }
 
   const summary = summarize(rows);
-  console.log(formatMarkdownTable(summary));
+  process.stdout.write(`${formatMarkdownTable(summary)}\n`);
 }
 
-await main().catch((error) => {
+await main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
   console.error(message);
   process.exit(1);
