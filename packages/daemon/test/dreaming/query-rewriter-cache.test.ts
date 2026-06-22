@@ -13,7 +13,9 @@ try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* fall back to bundled sqlite */
+}
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_TTL_MS = 30 * DAY_MS;

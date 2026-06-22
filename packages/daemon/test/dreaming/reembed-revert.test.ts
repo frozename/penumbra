@@ -4,13 +4,45 @@ import { beforeEach, describe, expect, it } from "bun:test";
 
 import { revertDreamAction } from "../../src/dreaming/reembed.js";
 
+interface RollupPromotedRow {
+  t2_promoted_at: string | null;
+}
+
+interface MemoryRetiredRow {
+  retired_at: number | null;
+}
+
+interface ActionRevertedRow {
+  reverted_by: string | null;
+}
+
+interface LinkRetiredRow {
+  retired_at: number | null;
+}
+
+interface ProjectBriefGeneratedAtRow {
+  generated_at: number;
+}
+
+interface RowidRow {
+  rowid: number;
+}
+
+interface VectorRow {
+  embedding: Uint8Array;
+}
+
+interface EmbeddingVersionRow {
+  embedding_model_version: string;
+}
+
 function getTestDb(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   applySchema(db);
   // Ensure dreaming runtime columns exist (mirrors cycle.ts P0 migration)
   try {
-    db.exec("ALTER TABLE t2_memories ADD COLUMN retired_at INTEGER");
+    db.run("ALTER TABLE t2_memories ADD COLUMN retired_at INTEGER");
   } catch {
     /* already present */
   }
@@ -64,6 +96,18 @@ function seedMemory(
   }
 }
 
+function getRetired(db: Database, memId: string): MemoryRetiredRow {
+  return db
+    .prepare("SELECT retired_at FROM t2_memories WHERE memory_id = ?")
+    .get(memId) as MemoryRetiredRow;
+}
+
+function getRevertedBy(db: Database, actionId: string): ActionRevertedRow {
+  return db
+    .prepare("SELECT reverted_by FROM dream_actions WHERE action_id = ?")
+    .get(actionId) as ActionRevertedRow;
+}
+
 describe("revertDreamAction — per-phase compensation", () => {
   let db: Database;
 
@@ -98,17 +142,13 @@ describe("revertDreamAction — per-phase compensation", () => {
 
     const rollup = db
       .prepare("SELECT t2_promoted_at FROM t1_rollups WHERE rollup_id = ?")
-      .get(rollupId) as any;
+      .get(rollupId) as RollupPromotedRow;
     expect(rollup.t2_promoted_at).toBeNull();
 
-    const mem = db
-      .prepare("SELECT retired_at FROM t2_memories WHERE memory_id = ?")
-      .get(t2MemoryId) as any;
+    const mem = getRetired(db, t2MemoryId);
     expect(mem.retired_at).not.toBeNull();
 
-    const action = db
-      .prepare("SELECT reverted_by FROM dream_actions WHERE action_id = ?")
-      .get("p1-action") as any;
+    const action = getRevertedBy(db, "p1-action");
     expect(action.reverted_by).toBe("user");
   });
 
@@ -137,14 +177,10 @@ describe("revertDreamAction — per-phase compensation", () => {
 
     revertDreamAction(db, "p1-action-exact", "none");
 
-    const targetMem = db
-      .prepare("SELECT retired_at FROM t2_memories WHERE memory_id = ?")
-      .get(targetMemId) as any;
+    const targetMem = getRetired(db, targetMemId);
     expect(targetMem.retired_at).not.toBeNull();
 
-    const decoyMem = db
-      .prepare("SELECT retired_at FROM t2_memories WHERE memory_id = ?")
-      .get(decoyMemId) as any;
+    const decoyMem = getRetired(db, decoyMemId);
     expect(decoyMem.retired_at).toBeNull();
   });
 
@@ -189,12 +225,10 @@ describe("revertDreamAction — per-phase compensation", () => {
 
     const link = db
       .prepare("SELECT retired_at FROM memory_links WHERE src_id = ? AND dst_id = ?")
-      .get(srcId, dstId) as any;
+      .get(srcId, dstId) as LinkRetiredRow;
     expect(link.retired_at).not.toBeNull();
 
-    const action = db
-      .prepare("SELECT reverted_by FROM dream_actions WHERE action_id = ?")
-      .get("p2-action") as any;
+    const action = getRevertedBy(db, "p2-action");
     expect(action.reverted_by).toBe("user");
   });
 
@@ -204,9 +238,7 @@ describe("revertDreamAction — per-phase compensation", () => {
     const memId = crypto.randomUUID();
     seedMemory(db, { memory_id: memId, retired_at: Date.now() - 1000 });
 
-    const mem0 = db
-      .prepare("SELECT retired_at FROM t2_memories WHERE memory_id = ?")
-      .get(memId) as any;
+    const mem0 = getRetired(db, memId);
     expect(mem0.retired_at).not.toBeNull();
 
     seedAction(db, {
@@ -220,14 +252,10 @@ describe("revertDreamAction — per-phase compensation", () => {
 
     revertDreamAction(db, "p3-retire-action", "none");
 
-    const mem = db
-      .prepare("SELECT retired_at FROM t2_memories WHERE memory_id = ?")
-      .get(memId) as any;
+    const mem = getRetired(db, memId);
     expect(mem.retired_at).toBeNull();
 
-    const action = db
-      .prepare("SELECT reverted_by FROM dream_actions WHERE action_id = ?")
-      .get("p3-retire-action") as any;
+    const action = getRevertedBy(db, "p3-retire-action");
     expect(action.reverted_by).toBe("user");
   });
 
@@ -251,21 +279,15 @@ describe("revertDreamAction — per-phase compensation", () => {
       "p3-retire-idempotent",
     );
 
-    const retiredBefore = db
-      .prepare("SELECT retired_at FROM t2_memories WHERE memory_id = ?")
-      .get(memId) as any;
+    const retiredBefore = getRetired(db, memId);
     expect(retiredBefore.retired_at).not.toBeNull();
 
     revertDreamAction(db, "p3-retire-idempotent", "none");
 
-    const retiredAfter = db
-      .prepare("SELECT retired_at FROM t2_memories WHERE memory_id = ?")
-      .get(memId) as any;
+    const retiredAfter = getRetired(db, memId);
     expect(retiredAfter.retired_at).toBe(retiredBefore.retired_at);
 
-    const action = db
-      .prepare("SELECT reverted_by FROM dream_actions WHERE action_id = ?")
-      .get("p3-retire-idempotent") as any;
+    const action = getRevertedBy(db, "p3-retire-idempotent");
     expect(action.reverted_by).toBe("user");
   });
 
@@ -297,8 +319,10 @@ describe("revertDreamAction — per-phase compensation", () => {
 
     // P6 revert should delete the brief since t0 <= t1
     revertDreamAction(db, "p6-action", "none");
-    let brief = db.prepare("SELECT 1 FROM project_briefs WHERE project_id = ?").get(projectId);
-    expect(brief).toBeNull();
+    const briefMissing = db
+      .prepare("SELECT 1 FROM project_briefs WHERE project_id = ?")
+      .get(projectId);
+    expect(briefMissing).toBeNull();
 
     // Now insert a newer brief at T2
     db.prepare(
@@ -311,14 +335,12 @@ describe("revertDreamAction — per-phase compensation", () => {
     revertDreamAction(db, "p6-action", "none");
 
     // It should NOT delete the T2 brief
-    brief = db
+    const briefAfter = db
       .prepare("SELECT generated_at FROM project_briefs WHERE project_id = ?")
-      .get(projectId);
-    expect(brief.generated_at).toBe(t2);
+      .get(projectId) as ProjectBriefGeneratedAtRow;
+    expect(briefAfter.generated_at).toBe(t2);
 
-    const action = db
-      .prepare("SELECT reverted_by FROM dream_actions WHERE action_id = ?")
-      .get("p6-action") as any;
+    const action = getRevertedBy(db, "p6-action");
     expect(action.reverted_by).toBe("user");
   });
 
@@ -349,12 +371,10 @@ describe("revertDreamAction — per-phase compensation", () => {
 
     const rollup = db
       .prepare("SELECT t2_promoted_at FROM t1_rollups WHERE rollup_id = ?")
-      .get(rollupId) as any;
+      .get(rollupId) as RollupPromotedRow;
     expect(rollup.t2_promoted_at).not.toBeNull(); // didn't clear it
 
-    const action = db
-      .prepare("SELECT reverted_by FROM dream_actions WHERE action_id = ?")
-      .get("p1-action-queued") as any;
+    const action = getRevertedBy(db, "p1-action-queued");
     expect(action.reverted_by).toBe("user");
   });
 
@@ -370,9 +390,7 @@ describe("revertDreamAction — per-phase compensation", () => {
 
     revertDreamAction(db, "p5-action", "none");
 
-    const action = db
-      .prepare("SELECT reverted_by FROM dream_actions WHERE action_id = ?")
-      .get("p5-action") as any;
+    const action = getRevertedBy(db, "p5-action");
     expect(action.reverted_by).toBe("user");
   });
 
@@ -390,9 +408,7 @@ describe("revertDreamAction — per-phase compensation", () => {
 
     revertDreamAction(db, "unknown-action", "none");
 
-    const action = db
-      .prepare("SELECT reverted_by FROM dream_actions WHERE action_id = ?")
-      .get("unknown-action") as any;
+    const action = getRevertedBy(db, "unknown-action");
     expect(action.reverted_by).toBe("user");
   });
 
@@ -408,7 +424,7 @@ describe("revertDreamAction — per-phase compensation", () => {
 
     const rowRow = db
       .prepare("SELECT rowid FROM t2_memories WHERE memory_id = ?")
-      .get(memId) as any;
+      .get(memId) as RowidRow;
     const newVec = Buffer.from(new Float32Array(new Array(384).fill(0.2)).buffer);
     db.prepare("INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)").run(rowRow.rowid, newVec);
 
@@ -432,14 +448,14 @@ describe("revertDreamAction — per-phase compensation", () => {
 
     const mem = db
       .prepare("SELECT embedding_model_version FROM t2_memories WHERE memory_id = ?")
-      .get(memId) as any;
+      .get(memId) as EmbeddingVersionRow;
     expect(mem.embedding_model_version).toBe("v1");
 
     const vec = db
       .prepare(
         "SELECT embedding FROM t2_vec WHERE rowid = (SELECT rowid FROM t2_memories WHERE memory_id = ?)",
       )
-      .get(memId) as any;
+      .get(memId) as VectorRow;
     const arr = new Float32Array(
       vec.embedding.buffer,
       vec.embedding.byteOffset,

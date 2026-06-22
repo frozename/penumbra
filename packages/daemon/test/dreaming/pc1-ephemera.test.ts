@@ -28,12 +28,31 @@ afterEach(() => {
   delete process.env.PENUMBRA_PC1_AUTORETIRE;
 });
 
+interface DreamActionRow {
+  action_id: string;
+  status: string;
+  target_ids: string;
+  action_type: string;
+}
+
+interface MemoryRetiredRow {
+  retired_at: number | null;
+}
+
+interface CountRow {
+  n: number;
+}
+
+interface CursorRow {
+  value: string;
+}
+
 function openTestDb(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   applySchema(db, { embeddingDim: 3 });
   try {
-    db.exec("ALTER TABLE t2_memories ADD COLUMN retired_at INTEGER");
+    db.run("ALTER TABLE t2_memories ADD COLUMN retired_at INTEGER");
   } catch {
     /* already present */
   }
@@ -60,7 +79,7 @@ function testConfig(overrides?: Partial<DreamConfig>): DreamConfig {
     briefRefreshHours: 24,
     curatorEnabled: false,
     ...overrides,
-  };
+  } as DreamConfig;
 }
 
 function seedCycle(db: Database, cycleId: string): void {
@@ -80,7 +99,7 @@ function seedMemory(
     `INSERT INTO t2_memories(memory_id, user_id, kind, window_start, window_end, title, body, created_at, updated_at)
      VALUES(?, 'system', ?, ?, ?, ?, ?, ?, ?)`,
   ).run(memoryId, opts.kind ?? "promoted", now, now, opts.title ?? "title", opts.body, now, now);
-  if (opts.retired_at != null) {
+  if (opts.retired_at !== null && opts.retired_at !== undefined) {
     db.prepare("UPDATE t2_memories SET retired_at = ? WHERE memory_id = ?").run(
       opts.retired_at,
       memoryId,
@@ -167,10 +186,12 @@ it("runPC1Phase queues ephemera_retire by default without retiring memory", asyn
   await runPC1Phase(db, "cycle-1", testConfig(), {});
   const action = db
     .prepare(`SELECT * FROM dream_actions WHERE action_type='ephemera_retire'`)
-    .get() as any;
+    .get() as DreamActionRow | undefined;
   expect(action).toBeDefined();
-  expect(action.status).toBe("queued");
-  const mem = db.prepare(`SELECT retired_at FROM t2_memories WHERE memory_id=?`).get(memId) as any;
+  expect(action!.status).toBe("queued");
+  const mem = db
+    .prepare(`SELECT retired_at FROM t2_memories WHERE memory_id=?`)
+    .get(memId) as MemoryRetiredRow;
   expect(mem.retired_at).toBeNull();
 });
 
@@ -182,10 +203,12 @@ it("runPC1Phase auto-applies retire when PENUMBRA_PC1_AUTORETIRE is enabled", as
   await runPC1Phase(db, "cycle-1", testConfig(), {});
   const action = db
     .prepare(`SELECT * FROM dream_actions WHERE action_type='ephemera_retire'`)
-    .get() as any;
+    .get() as DreamActionRow | undefined;
   expect(action).toBeDefined();
-  expect(action.status).toBe("auto_applied");
-  const mem = db.prepare(`SELECT retired_at FROM t2_memories WHERE memory_id=?`).get(memId) as any;
+  expect(action!.status).toBe("auto_applied");
+  const mem = db
+    .prepare(`SELECT retired_at FROM t2_memories WHERE memory_id=?`)
+    .get(memId) as MemoryRetiredRow;
   expect(mem.retired_at).toBeTruthy();
 });
 
@@ -197,7 +220,7 @@ it("runPC1Phase skips already-retired memories", async () => {
   const count = (
     db
       .prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE action_type='ephemera_retire'`)
-      .get() as any
+      .get() as CountRow
   ).n;
   expect(count).toBe(0);
 });
@@ -214,7 +237,7 @@ it("runPC1Phase dedup: second cycle does not queue duplicate ephemera_retire for
       .prepare(
         `SELECT COUNT(*) as n FROM dream_actions WHERE action_type='ephemera_retire' AND target_ids LIKE ?`,
       )
-      .get(`%${memId}%`) as any
+      .get(`%${memId}%`) as CountRow
   ).n;
   expect(count).toBe(1);
 });
@@ -238,21 +261,21 @@ it("runPC1Phase advances cursor across non-multiple batches and wraps on the fin
   // Cycle 1: cursor starts at '' → scans mem-0001..mem-0100
   await runPC1Phase(db, "cycle-cursor", cfg, {});
   const after1 = (
-    db.prepare(`SELECT value FROM curator_cursors WHERE name='pc1_memory_id'`).get() as any
+    db.prepare(`SELECT value FROM curator_cursors WHERE name='pc1_memory_id'`).get() as CursorRow
   ).value;
   expect(after1).toBe("mem-0100");
 
   // Cycle 2: cursor at mem-0100 → scans mem-0101..mem-0200
   await runPC1Phase(db, "cycle-cursor", cfg, {});
   const after2 = (
-    db.prepare(`SELECT value FROM curator_cursors WHERE name='pc1_memory_id'`).get() as any
+    db.prepare(`SELECT value FROM curator_cursors WHERE name='pc1_memory_id'`).get() as CursorRow
   ).value;
   expect(after2).toBe("mem-0200");
 
   // Cycle 3: cursor at mem-0200 → scans mem-0201..mem-0250 (50 < 100) → wraps to ''
   await runPC1Phase(db, "cycle-cursor", cfg, {});
   const after3 = (
-    db.prepare(`SELECT value FROM curator_cursors WHERE name='pc1_memory_id'`).get() as any
+    db.prepare(`SELECT value FROM curator_cursors WHERE name='pc1_memory_id'`).get() as CursorRow
   ).value;
   expect(after3).toBe("");
 });
@@ -274,13 +297,13 @@ it("runPC1Phase wraps cursor after exact multiple of batch size", async () => {
 
   await runPC1Phase(db, "cycle-cursor-exact", cfg, {});
   const after1 = (
-    db.prepare(`SELECT value FROM curator_cursors WHERE name='pc1_memory_id'`).get() as any
+    db.prepare(`SELECT value FROM curator_cursors WHERE name='pc1_memory_id'`).get() as CursorRow
   ).value;
   expect(after1).toBe("mem-0100");
 
   await runPC1Phase(db, "cycle-cursor-exact", cfg, {});
   const after2 = (
-    db.prepare(`SELECT value FROM curator_cursors WHERE name='pc1_memory_id'`).get() as any
+    db.prepare(`SELECT value FROM curator_cursors WHERE name='pc1_memory_id'`).get() as CursorRow
   ).value;
   expect(after2).toBe("");
 });
@@ -292,8 +315,10 @@ it("revertDreamAction un-retires t2 memory on ephemera_retire revert", async () 
   await runPC1Phase(db, "cycle-1", testConfig(), {});
   const action = db
     .prepare(`SELECT action_id FROM dream_actions WHERE action_type='ephemera_retire'`)
-    .get() as any;
+    .get() as DreamActionRow;
   revertDreamAction(db, action.action_id, "none");
-  const mem = db.prepare(`SELECT retired_at FROM t2_memories WHERE memory_id=?`).get(memId) as any;
+  const mem = db
+    .prepare(`SELECT retired_at FROM t2_memories WHERE memory_id=?`)
+    .get(memId) as MemoryRetiredRow;
   expect(mem.retired_at).toBeNull();
 });

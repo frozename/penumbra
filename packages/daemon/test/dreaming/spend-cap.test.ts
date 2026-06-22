@@ -144,12 +144,18 @@ it("records llm spend on dream_cycles and trips daily cap on the next cycle", as
   seedMemory(db, "quality scoring candidate");
 
   const scorer = {
-    score: async () => ({
-      verdict: "keep" as const,
-      composite: 0.4,
-      should_auto_retire: false,
-      estimated_cost_usd: 0.04,
-    }),
+    score: (): Promise<{
+      verdict: "keep";
+      composite: number;
+      should_auto_retire: boolean;
+      estimated_cost_usd: number;
+    }> =>
+      Promise.resolve({
+        verdict: "keep" as const,
+        composite: 0.4,
+        should_auto_retire: false,
+        estimated_cost_usd: 0.04,
+      }),
   };
 
   const firstCycleId = await runDreamCycle(db, testConfig({ dailyUsd: 1 }), { scorer });
@@ -177,13 +183,19 @@ it("defers a phase when its per-phase budget would be exceeded and still complet
   seedMemory(db, "another quality scoring candidate");
 
   const scorer = {
-    estimateCostUsd: () => 0.1,
-    score: async () => ({
-      verdict: "rewrite" as const,
-      composite: 0.91,
-      should_auto_retire: false,
-      estimated_cost_usd: 0.1,
-    }),
+    estimateCostUsd: (): number => 0.1,
+    score: (): Promise<{
+      verdict: "rewrite";
+      composite: number;
+      should_auto_retire: boolean;
+      estimated_cost_usd: number;
+    }> =>
+      Promise.resolve({
+        verdict: "rewrite" as const,
+        composite: 0.91,
+        should_auto_retire: false,
+        estimated_cost_usd: 0.1,
+      }),
   };
 
   const cycleId = await runDreamCycle(
@@ -191,9 +203,7 @@ it("defers a phase when its per-phase budget would be exceeded and still complet
     testConfig({
       perCycleUsd: 0.2,
       dailyUsd: 5,
-      ...({
-        phaseBudgetFractions: { llm: 0.1, embedding: 0.45, research: 0.45 },
-      } as any),
+      phaseBudgetFractions: { llm: 0.1, embedding: 0.45, research: 0.45 },
     }),
     { scorer },
   );
