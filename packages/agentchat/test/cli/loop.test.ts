@@ -1,8 +1,50 @@
 import { expect, test } from "bun:test";
-import { resolveCaptureAttribution, runChatTurn } from "../../src/cli/loop.js";
+
 import type { AgentChatConfig } from "../../src/config/types.js";
-import { registerAdapter } from "../../src/adapters/registry.js";
+import type { Adapter, DispatchEvent, DispatchInput } from "../../src/sdk/adapter.js";
 import type { WriteToolsExecutor } from "../../src/worker/write-tools-executor.js";
+
+import { registerAdapter } from "../../src/adapters/registry.js";
+import { resolveCaptureAttribution, runChatTurn } from "../../src/cli/loop.js";
+
+interface ObservedEvent {
+  event_type?: string;
+  provider?: string | null;
+  model?: string | null;
+  session_id?: string;
+  triggered_by_event_id?: string;
+  payload_json?: {
+    prompt?: string;
+    response?: string;
+    error?: string;
+    handoff_id?: string | null;
+    provider?: string;
+    model?: string;
+    source_kind?: string;
+  };
+}
+
+interface AdapterOptions {
+  mcpServers?: { name: string; command: string; args?: string[]; env?: unknown[] }[];
+  claudeCodeAllowedTools?: string[];
+  [key: string]: unknown;
+}
+
+function asyncIterableOf<T>(items: T[]): AsyncIterable<T> {
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<T> {
+      let i = 0;
+      return {
+        next(): Promise<IteratorResult<T, undefined>> {
+          if (i < items.length) {
+            return Promise.resolve({ value: items[i++]!, done: false });
+          }
+          return Promise.resolve({ value: undefined, done: true });
+        },
+      };
+    },
+  };
+}
 
 const cfg: AgentChatConfig = {
   agents: [{ name: "echo", adapter: "mock-echo", options: {}, roles: ["planner", "executor"] }],
@@ -10,23 +52,23 @@ const cfg: AgentChatConfig = {
 };
 
 let eventCounter = 0;
-const fakeObserve = async (event: any) => {
+const fakeObserve = (_event: unknown): Promise<{ event_id: string }> => {
   eventCounter++;
-  return { event_id: `evt-${eventCounter}` };
+  return Promise.resolve({ event_id: `evt-${String(eventCounter)}` });
 };
 
 test("runChatTurn dispatches the planner, observes prompt/response, and returns text + event_ids", async () => {
   registerAdapter("mock-echo", () => ({
     kind: "mock-echo",
-    async dispatch({ prompt }) {
-      return { text: `echo: ${prompt}` };
+    dispatch({ prompt }): Promise<{ text: string }> {
+      return Promise.resolve({ text: `echo: ${prompt}` });
     },
   }));
 
-  const observed: any[] = [];
-  const trackingObserve = async (event: any) => {
-    observed.push(event);
-    return { event_id: `e-${observed.length}` };
+  const observed: ObservedEvent[] = [];
+  const trackingObserve = (event: unknown): Promise<{ event_id: string }> => {
+    observed.push(event as ObservedEvent);
+    return Promise.resolve({ event_id: `e-${String(observed.length)}` });
   };
 
   const result = await runChatTurn({
@@ -43,25 +85,25 @@ test("runChatTurn dispatches the planner, observes prompt/response, and returns 
   expect(result.response_event_id).toBe("e-2");
 
   expect(observed.length).toBe(2);
-  expect(observed[0].event_type).toBe("agent-prompt");
-  expect(observed[0].payload_json.prompt).toBe("hello world");
-  expect(observed[1].event_type).toBe("agent-response");
-  expect(observed[1].payload_json.response).toBe("echo: hello world");
-  expect(observed[1].triggered_by_event_id).toBe("e-1");
+  expect(observed[0]!.event_type).toBe("agent-prompt");
+  expect(observed[0]!.payload_json?.prompt).toBe("hello world");
+  expect(observed[1]!.event_type).toBe("agent-response");
+  expect(observed[1]!.payload_json?.response).toBe("echo: hello world");
+  expect(observed[1]!.triggered_by_event_id).toBe("e-1");
 });
 
 test("runChatTurn captures an adapter throw as an agent-response error event and returns a turn with .error set", async () => {
   registerAdapter("mock-echo", () => ({
     kind: "mock-echo",
-    async dispatch() {
+    dispatch(): Promise<{ text: string }> {
       throw new Error("adapter blew up");
     },
   }));
 
-  const observed: any[] = [];
-  const trackingObserve = async (event: any) => {
-    observed.push(event);
-    return { event_id: `e-${observed.length}` };
+  const observed: ObservedEvent[] = [];
+  const trackingObserve = (event: unknown): Promise<{ event_id: string }> => {
+    observed.push(event as ObservedEvent);
+    return Promise.resolve({ event_id: `e-${String(observed.length)}` });
   };
 
   const result = await runChatTurn({
@@ -72,24 +114,22 @@ test("runChatTurn captures an adapter throw as an agent-response error event and
     observe: trackingObserve,
   });
 
-  // No throw — the error is conveyed via the result.
   expect(result.error?.message).toMatch(/adapter blew up/);
   expect(result.next_mention).toBeNull();
 
-  // Both events still observed: prompt (success) + response (error payload).
   expect(observed.length).toBe(2);
-  expect(observed[0].event_type).toBe("agent-prompt");
-  expect(observed[1].event_type).toBe("agent-response");
-  expect(observed[1].payload_json.error).toMatch(/adapter blew up/);
-  expect(observed[1].triggered_by_event_id).toBe("e-1");
+  expect(observed[0]!.event_type).toBe("agent-prompt");
+  expect(observed[1]!.event_type).toBe("agent-response");
+  expect(observed[1]!.payload_json?.error).toMatch(/adapter blew up/);
+  expect(observed[1]!.triggered_by_event_id).toBe("e-1");
   expect(result.response_event_id).toBe("e-2");
 });
 
 test("runChatTurn extracts the first @mention from the response", async () => {
   registerAdapter("mock-echo", () => ({
     kind: "mock-echo",
-    async dispatch() {
-      return { text: "Plan ready. @executor please run it." };
+    dispatch(): Promise<{ text: string }> {
+      return Promise.resolve({ text: "Plan ready. @executor please run it." });
     },
   }));
 
@@ -103,19 +143,22 @@ test("runChatTurn extracts the first @mention from the response", async () => {
   expect(result.next_mention?.target).toBe("executor");
 });
 test("runChatTurn streams text deltas to onChunk and accumulates the final text", async () => {
+  const streamEvents: DispatchEvent[] = [
+    { type: "delta", text: "hel" },
+    { type: "delta", text: "lo " },
+    { type: "delta", text: "world" },
+    {
+      type: "done",
+      result: { text: "hello world", meta: { model: "m1", tokens_in: 1, tokens_out: 3 } },
+    },
+  ];
   registerAdapter("mock-echo", () => ({
     kind: "mock-echo",
-    async dispatch() {
-      return { text: "should-not-be-called" };
+    dispatch(): Promise<{ text: string }> {
+      return Promise.resolve({ text: "should-not-be-called" });
     },
-    async *dispatchStream() {
-      yield { type: "delta", text: "hel" };
-      yield { type: "delta", text: "lo " };
-      yield { type: "delta", text: "world" };
-      yield {
-        type: "done",
-        result: { text: "hello world", meta: { model: "m1", tokens_in: 1, tokens_out: 3 } },
-      };
+    dispatchStream(): AsyncIterable<DispatchEvent> {
+      return asyncIterableOf(streamEvents);
     },
   }));
 
@@ -136,8 +179,8 @@ test("runChatTurn streams text deltas to onChunk and accumulates the final text"
 test("runChatTurn falls back to dispatch() and emits a single chunk for non-streaming adapters", async () => {
   registerAdapter("mock-echo", () => ({
     kind: "mock-echo",
-    async dispatch({ prompt }) {
-      return { text: `oneshot: ${prompt}` };
+    dispatch({ prompt }): Promise<{ text: string }> {
+      return Promise.resolve({ text: `oneshot: ${prompt}` });
     },
   }));
 
@@ -157,13 +200,13 @@ test("runChatTurn falls back to dispatch() and emits a single chunk for non-stre
 
 test("runChatTurn threads executor through to adapter.dispatch input", async () => {
   const executor = { id: "exec-stub" } as unknown as WriteToolsExecutor;
-  let seenInput: any = null;
+  let seenInput: DispatchInput | null = null;
 
   registerAdapter("mock-executor", () => ({
     kind: "mock-executor",
-    async dispatch(input) {
+    dispatch(input): Promise<{ text: string }> {
       seenInput = input;
-      return { text: "ok" };
+      return Promise.resolve({ text: "ok" });
     },
   }));
 
@@ -181,18 +224,18 @@ test("runChatTurn threads executor through to adapter.dispatch input", async () 
     executor,
   });
 
-  expect(seenInput.executor).toBe(executor);
+  expect(seenInput!.executor).toBe(executor);
 });
 
 test("runChatTurn threads signal through to adapter.dispatch input", async () => {
   const controller = new AbortController();
-  let seenInput: any = null;
+  let seenInput: DispatchInput | null = null;
 
   registerAdapter("mock-signal", () => ({
     kind: "mock-signal",
-    async dispatch(input) {
+    dispatch(input): Promise<{ text: string }> {
       seenInput = input;
-      return { text: "ok" };
+      return Promise.resolve({ text: "ok" });
     },
   }));
 
@@ -210,11 +253,25 @@ test("runChatTurn threads signal through to adapter.dispatch input", async () =>
     signal: controller.signal,
   });
 
-  expect(seenInput.signal).toBe(controller.signal);
+  expect(seenInput!.signal).toBe(controller.signal);
 });
 
+function makeOptionsCaptureAdapter(
+  observedOptions: AdapterOptions[],
+): (kind: string, opts: Record<string, unknown>) => Adapter {
+  return (_kind, opts): Adapter => {
+    observedOptions.push(opts);
+    return {
+      kind: "mock-hosted",
+      dispatch(): Promise<{ text: string }> {
+        return Promise.resolve({ text: "ok" });
+      },
+    };
+  };
+}
+
 test("runChatTurn passes hosted_mcp_servers as mcpServers to buildAdapter", async () => {
-  const observedOptions: any[] = [];
+  const observedOptions: AdapterOptions[] = [];
   const cfgWithHosted: AgentChatConfig = {
     agents: [
       {
@@ -247,18 +304,10 @@ test("runChatTurn passes hosted_mcp_servers as mcpServers to buildAdapter", asyn
     userMessage: "hello",
     conversation: { id: "c-hosted", project_id: null },
     observe: fakeObserve,
-    buildAdapterOverride: (_kind, opts) => {
-      observedOptions.push(opts);
-      return {
-        kind: "mock-hosted",
-        async dispatch() {
-          return { text: "ok" };
-        },
-      };
-    },
+    buildAdapterOverride: makeOptionsCaptureAdapter(observedOptions),
   });
 
-  expect(observedOptions[0].mcpServers).toEqual([
+  expect(observedOptions[0]!.mcpServers).toEqual([
     {
       name: "ha",
       command: "uvx",
@@ -269,7 +318,7 @@ test("runChatTurn passes hosted_mcp_servers as mcpServers to buildAdapter", asyn
 });
 
 test("runChatTurn: yaml options.mcpServers take precedence on name conflict", async () => {
-  const observedOptions: any[] = [];
+  const observedOptions: AdapterOptions[] = [];
   const cfgWithConflict: AgentChatConfig = {
     agents: [
       {
@@ -304,22 +353,14 @@ test("runChatTurn: yaml options.mcpServers take precedence on name conflict", as
     userMessage: "hello",
     conversation: { id: "c-conflict", project_id: null },
     observe: fakeObserve,
-    buildAdapterOverride: (_kind, opts) => {
-      observedOptions.push(opts);
-      return {
-        kind: "mock-hosted",
-        async dispatch() {
-          return { text: "ok" };
-        },
-      };
-    },
+    buildAdapterOverride: makeOptionsCaptureAdapter(observedOptions),
   });
 
-  expect(observedOptions[0].mcpServers).toEqual([{ name: "ha", command: "custom-binary" }]);
+  expect(observedOptions[0]!.mcpServers).toEqual([{ name: "ha", command: "custom-binary" }]);
 });
 
 test("runChatTurn: no hosted_mcp_servers leaves mcpServers from options only", async () => {
-  const observedOptions: any[] = [];
+  const observedOptions: AdapterOptions[] = [];
   const cfgNoHosted: AgentChatConfig = {
     agents: [
       {
@@ -347,22 +388,14 @@ test("runChatTurn: no hosted_mcp_servers leaves mcpServers from options only", a
     userMessage: "hello",
     conversation: { id: "c-no-hosted", project_id: null },
     observe: fakeObserve,
-    buildAdapterOverride: (_kind, opts) => {
-      observedOptions.push(opts);
-      return {
-        kind: "mock-hosted",
-        async dispatch() {
-          return { text: "ok" };
-        },
-      };
-    },
+    buildAdapterOverride: makeOptionsCaptureAdapter(observedOptions),
   });
 
-  expect(observedOptions[0].mcpServers).toEqual([{ name: "penumbra", command: "custom-binary" }]);
+  expect(observedOptions[0]!.mcpServers).toEqual([{ name: "penumbra", command: "custom-binary" }]);
 });
 
 test("auto-derives claudeCodeAllowedTools from mcp_allowlist when not already set", async () => {
-  const observedOptions: any[] = [];
+  const observedOptions: AdapterOptions[] = [];
   const cfgWithHosted: AgentChatConfig = {
     agents: [
       {
@@ -395,18 +428,10 @@ test("auto-derives claudeCodeAllowedTools from mcp_allowlist when not already se
     userMessage: "hello",
     conversation: { id: "c-derive-tools", project_id: null },
     observe: fakeObserve,
-    buildAdapterOverride: (_kind, opts) => {
-      observedOptions.push(opts);
-      return {
-        kind: "mock-hosted",
-        async dispatch() {
-          return { text: "ok" };
-        },
-      };
-    },
+    buildAdapterOverride: makeOptionsCaptureAdapter(observedOptions),
   });
 
-  expect(observedOptions[0].claudeCodeAllowedTools).toEqual([
+  expect(observedOptions[0]!.claudeCodeAllowedTools).toEqual([
     "mcp__ha__ha_pulse",
     "mcp__ha__ha_get_state",
     "mcp__ha__ha_call_service",
@@ -414,7 +439,7 @@ test("auto-derives claudeCodeAllowedTools from mcp_allowlist when not already se
 });
 
 test("does NOT override claudeCodeAllowedTools when already set in options", async () => {
-  const observedOptions: any[] = [];
+  const observedOptions: AdapterOptions[] = [];
   const cfgWithHosted: AgentChatConfig = {
     agents: [
       {
@@ -449,22 +474,14 @@ test("does NOT override claudeCodeAllowedTools when already set in options", asy
     userMessage: "hello",
     conversation: { id: "c-no-override", project_id: null },
     observe: fakeObserve,
-    buildAdapterOverride: (_kind, opts) => {
-      observedOptions.push(opts);
-      return {
-        kind: "mock-hosted",
-        async dispatch() {
-          return { text: "ok" };
-        },
-      };
-    },
+    buildAdapterOverride: makeOptionsCaptureAdapter(observedOptions),
   });
 
-  expect(observedOptions[0].claudeCodeAllowedTools).toEqual(["mcp__ha__ha_pulse"]);
+  expect(observedOptions[0]!.claudeCodeAllowedTools).toEqual(["mcp__ha__ha_pulse"]);
 });
 
 test("empty mcp_allowlist leaves claudeCodeAllowedTools unset", async () => {
-  const observedOptions: any[] = [];
+  const observedOptions: AdapterOptions[] = [];
   const cfgWithHosted: AgentChatConfig = {
     agents: [
       {
@@ -497,22 +514,14 @@ test("empty mcp_allowlist leaves claudeCodeAllowedTools unset", async () => {
     userMessage: "hello",
     conversation: { id: "c-empty-allowlist", project_id: null },
     observe: fakeObserve,
-    buildAdapterOverride: (_kind, opts) => {
-      observedOptions.push(opts);
-      return {
-        kind: "mock-hosted",
-        async dispatch() {
-          return { text: "ok" };
-        },
-      };
-    },
+    buildAdapterOverride: makeOptionsCaptureAdapter(observedOptions),
   });
 
-  expect(observedOptions[0].claudeCodeAllowedTools).toBeUndefined();
+  expect(observedOptions[0]!.claudeCodeAllowedTools).toBeUndefined();
 });
 
 test("runChatTurn: agent without long_lived_config does not inject mcpServers", async () => {
-  const observedOptions: any[] = [];
+  const observedOptions: AdapterOptions[] = [];
   const cfgStandard: AgentChatConfig = {
     agents: [
       {
@@ -531,18 +540,10 @@ test("runChatTurn: agent without long_lived_config does not inject mcpServers", 
     userMessage: "hello",
     conversation: { id: "c-standard", project_id: null },
     observe: fakeObserve,
-    buildAdapterOverride: (_kind, opts) => {
-      observedOptions.push(opts);
-      return {
-        kind: "mock-hosted",
-        async dispatch() {
-          return { text: "ok" };
-        },
-      };
-    },
+    buildAdapterOverride: makeOptionsCaptureAdapter(observedOptions),
   });
 
-  expect(observedOptions[0].mcpServers).toBeUndefined();
+  expect(observedOptions[0]!.mcpServers).toBeUndefined();
 });
 
 test("runChatTurn observes provider-capacity-error emitted by cli-spawn adapters", async () => {
@@ -567,15 +568,15 @@ test("runChatTurn observes provider-capacity-error emitted by cli-spawn adapters
     default_roles: { planner: "gemini-capacity" },
   };
 
-  const observed: any[] = [];
+  const observed: ObservedEvent[] = [];
   const result = await runChatTurn({
     config: capacityCfg,
     initialAgent: "gemini-capacity",
     userMessage: "go",
     conversation: { id: "conv-capacity", project_id: "project-1" },
-    observe: async (event) => {
-      observed.push(event);
-      return { event_id: `event-${observed.length}` };
+    observe: (event: unknown): Promise<{ event_id: string }> => {
+      observed.push(event as ObservedEvent);
+      return Promise.resolve({ event_id: `event-${String(observed.length)}` });
     },
     handoff_id: "h-capacity",
   });
@@ -583,10 +584,10 @@ test("runChatTurn observes provider-capacity-error emitted by cli-spawn adapters
   expect(result.text.trim()).toBe("OK");
   const capacityEvent = observed.find((event) => event.event_type === "provider-capacity-error");
   expect(capacityEvent).toBeDefined();
-  expect(capacityEvent.provider).toBe("google");
-  expect(capacityEvent.model).toBe("gemini-3.1-pro-preview");
-  expect(capacityEvent.session_id).toBe("conv-capacity");
-  expect(capacityEvent.payload_json).toMatchObject({
+  expect(capacityEvent!.provider).toBe("google");
+  expect(capacityEvent!.model).toBe("gemini-3.1-pro-preview");
+  expect(capacityEvent!.session_id).toBe("conv-capacity");
+  expect(capacityEvent!.payload_json).toMatchObject({
     handoff_id: "h-capacity",
     provider: "google",
     model: "gemini-3.1-pro-preview",

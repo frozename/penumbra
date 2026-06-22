@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { parseApprovalKey } from "../../src/cli/inline-approval.js";
 
 test("y/yes/n/no/s/skip parse correctly", () => {

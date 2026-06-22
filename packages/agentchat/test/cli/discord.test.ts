@@ -1,7 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, mock } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { runDiscordCli } from "../../src/cli/discord.js";
 
 function writeConfigFile(yaml: string): string {
@@ -15,10 +16,10 @@ async function captureStdout(fn: () => Promise<number>): Promise<{ code: number;
   const originalWrite = process.stdout.write.bind(process.stdout);
   let output = "";
 
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = (chunk: string | Uint8Array): boolean => {
     output += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
     return true;
-  }) as typeof process.stdout.write;
+  };
 
   try {
     return { code: await fn(), output };
@@ -61,7 +62,7 @@ notifications:
           PENUMBRA_DISCORD_WEBHOOK_URL: "https://discord.test/api/webhooks/default/token",
           PENUMBRA_DISCORD_PROJECT_WEBHOOK_URL: "https://discord.test/api/webhooks/project/token",
         },
-        fetch: mock(async () => new Response(null, { status: 204 })),
+        fetch: mock(() => Promise.resolve(new Response(null, { status: 204 }))),
       }),
     );
 
@@ -95,7 +96,7 @@ notifications:
           AGENTCHAT_CONFIG: configPath,
           PENUMBRA_DISCORD_WEBHOOK_URL: "https://discord.test/api/webhooks/default/token",
         },
-        fetch: mock(async () => new Response(null, { status: 204 })),
+        fetch: mock(() => Promise.resolve(new Response(null, { status: 204 }))),
       }),
     );
 
@@ -125,15 +126,19 @@ notifications:
             AGENTCHAT_CONFIG: configPath,
             PENUMBRA_DISCORD_WEBHOOK_URL: "https://discord.test/api/webhooks/default/token",
           },
-          fetch: mock(async () => new Response(null, { status: 204 })),
+          fetch: mock(() => Promise.resolve(new Response(null, { status: 204 }))),
         },
       ),
     );
 
     const rendered = output.trim();
     expect(code).toBe(0);
-    expect(JSON.parse(rendered).route_key).toBe("default");
-    expect(JSON.parse(rendered).payload.embeds[0].title).toContain("dispatch");
+    const parsed = JSON.parse(rendered) as {
+      route_key: string;
+      payload: { embeds: { title: string }[] };
+    };
+    expect(parsed.route_key).toBe("default");
+    expect(parsed.payload.embeds[0]!.title).toContain("dispatch");
   });
 
   it("test posts once to the resolved webhook using injected fetch", async () => {
@@ -148,7 +153,7 @@ notifications:
       default_webhook_url_env: PENUMBRA_DISCORD_WEBHOOK_URL
 `);
 
-    const fetchMock = mock(async () => new Response(null, { status: 204 }));
+    const fetchMock = mock(() => Promise.resolve(new Response(null, { status: 204 })));
     const { code } = await captureStdout(() =>
       runDiscordCli(["test", "--project-id", "penumbra", "--agent", "codex"], {
         env: {

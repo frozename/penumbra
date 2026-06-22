@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { buildAttachmentPreamble, parseAttachFlags } from "../../src/cli/attachments.js";
 
 function tmp(): string {

@@ -1,7 +1,14 @@
-import { expect, test, mock } from "bun:test";
-import { dispatchHandoff } from "../../src/cli/dispatch-handoff.js";
-import type { ChatTurnResult } from "../../src/cli/loop.js";
+import { expect, mock, test } from "bun:test";
+
+import type { ChatTurnInput, ChatTurnResult } from "../../src/cli/loop.js";
 import type { WriteToolsExecutor } from "../../src/worker/write-tools-executor.js";
+
+import { dispatchHandoff } from "../../src/cli/dispatch-handoff.js";
+
+type ChatTurnMockFn = (input: ChatTurnInput) => Promise<ChatTurnResult>;
+type DelayMockFn = (ms: number) => Promise<void>;
+type ObserveResult = { event_id: string };
+const observeStub = (): Promise<ObserveResult> => Promise.resolve({ event_id: "e" });
 
 const mockConv = { id: "c1", project_id: null };
 const cfg = {
@@ -38,13 +45,13 @@ const baseHandoff = {
 const stubExecutor = { id: "exec-stub" } as unknown as WriteToolsExecutor;
 
 test("chain-start handoff (from=user) sends raw message, no transcript wrap", async () => {
-  const runChatTurn = mock().mockResolvedValue({
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
     text: "done",
     prompt_event_id: "p",
     response_event_id: "r",
     next_mention: null,
     mentions: [],
-  } as ChatTurnResult);
+  });
 
   const res = await dispatchHandoff({
     handoff: baseHandoff,
@@ -55,7 +62,7 @@ test("chain-start handoff (from=user) sends raw message, no transcript wrap", as
     hopsSoFar: 0,
     maxHops: 5,
     trustMode: "all",
-    observe: async () => ({ event_id: "e" }),
+    observe: observeStub,
     createHandoff: mock(),
     approve: mock(),
     runChatTurn,
@@ -70,13 +77,13 @@ test("chain-start handoff (from=user) sends raw message, no transcript wrap", as
 });
 
 test("continuation handoff wraps transcript via buildNextPrompt", async () => {
-  const runChatTurn = mock().mockResolvedValue({
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
     text: "ok",
     prompt_event_id: "p",
     response_event_id: "r",
     next_mention: null,
     mentions: [],
-  } as ChatTurnResult);
+  });
 
   const continuation = {
     ...baseHandoff,
@@ -97,7 +104,7 @@ test("continuation handoff wraps transcript via buildNextPrompt", async () => {
     hopsSoFar: 1,
     maxHops: 5,
     trustMode: "all",
-    observe: async () => ({ event_id: "e" }),
+    observe: observeStub,
     createHandoff: mock(),
     approve: mock(),
     runChatTurn,
@@ -109,13 +116,13 @@ test("continuation handoff wraps transcript via buildNextPrompt", async () => {
 });
 
 test("mention triggers handoff create + approve when trustMode=all", async () => {
-  const runChatTurn = mock().mockResolvedValue({
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
     text: "ping @executor",
     prompt_event_id: "p",
     response_event_id: "r1",
     next_mention: { target: "executor", resolution: { kind: "name", agent_name: "executor" } },
     mentions: [],
-  } as ChatTurnResult);
+  });
   const createHandoff = mock().mockResolvedValue({ handoff_id: "h-next", status: "pending" });
   const approve = mock();
 
@@ -128,7 +135,7 @@ test("mention triggers handoff create + approve when trustMode=all", async () =>
     hopsSoFar: 0,
     maxHops: 5,
     trustMode: "all",
-    observe: async () => ({ event_id: "e" }),
+    observe: observeStub,
     createHandoff,
     approve,
     runChatTurn,
@@ -142,7 +149,7 @@ test("mention triggers handoff create + approve when trustMode=all", async () =>
 });
 
 test("role mention continues to the routed agent returned by createHandoff", async () => {
-  const runChatTurn = mock().mockResolvedValue({
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
     text: "ping @executor",
     prompt_event_id: "p",
     response_event_id: "r1",
@@ -151,7 +158,7 @@ test("role mention continues to the routed agent returned by createHandoff", asy
       resolution: { kind: "role", agent_name: "executor", role: "executor" },
     },
     mentions: [],
-  } as ChatTurnResult);
+  });
   const createHandoff = mock().mockResolvedValue({
     handoff_id: "h-routed",
     status: "pending",
@@ -170,7 +177,7 @@ test("role mention continues to the routed agent returned by createHandoff", asy
     hopsSoFar: 0,
     maxHops: 5,
     trustMode: "all",
-    observe: async () => ({ event_id: "e" }),
+    observe: observeStub,
     createHandoff,
     approve,
     runChatTurn,
@@ -187,7 +194,7 @@ test("role mention continues to the routed agent returned by createHandoff", asy
 });
 
 test("continuation role mention forwards the existing chain task type", async () => {
-  const runChatTurn = mock().mockResolvedValue({
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
     text: "ping @executor",
     prompt_event_id: "p",
     response_event_id: "r1",
@@ -196,14 +203,14 @@ test("continuation role mention forwards the existing chain task type", async ()
       resolution: { kind: "role", agent_name: "executor", role: "executor" },
     },
     mentions: [],
-  } as ChatTurnResult);
+  });
   const createHandoff = mock().mockResolvedValue({
     handoff_id: "h-routed",
     status: "pending",
   });
 
   await dispatchHandoff({
-    handoff: { ...baseHandoff, chain_task_type: "implement_small" } as any,
+    handoff: { ...baseHandoff, chain_task_type: "implement_small" },
     config: cfg,
     conversation: mockConv,
     transcript: [],
@@ -211,7 +218,7 @@ test("continuation role mention forwards the existing chain task type", async ()
     hopsSoFar: 0,
     maxHops: 5,
     trustMode: "all",
-    observe: async () => ({ event_id: "e" }),
+    observe: observeStub,
     createHandoff,
     approve: mock(),
     runChatTurn,
@@ -223,13 +230,13 @@ test("continuation role mention forwards the existing chain task type", async ()
 });
 
 test("mention with trustMode=config + edge in auto_approve_to → approves", async () => {
-  const runChatTurn = mock().mockResolvedValue({
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
     text: "ping @executor",
     prompt_event_id: "p",
     response_event_id: "r1",
     next_mention: { target: "executor", resolution: { kind: "name", agent_name: "executor" } },
     mentions: [],
-  } as ChatTurnResult);
+  });
   const createHandoff = mock().mockResolvedValue({ handoff_id: "h2", status: "pending" });
   const approve = mock();
 
@@ -242,7 +249,7 @@ test("mention with trustMode=config + edge in auto_approve_to → approves", asy
     hopsSoFar: 0,
     maxHops: 5,
     trustMode: "config",
-    observe: async () => ({ event_id: "e" }),
+    observe: observeStub,
     createHandoff,
     approve,
     runChatTurn,
@@ -260,13 +267,13 @@ test("mention with trustMode=config + edge NOT in auto_approve_to → leaves pen
     ],
     default_roles: {},
   };
-  const runChatTurn = mock().mockResolvedValue({
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
     text: "ping @executor",
     prompt_event_id: "p",
     response_event_id: "r1",
     next_mention: { target: "executor", resolution: { kind: "name", agent_name: "executor" } },
     mentions: [],
-  } as ChatTurnResult);
+  });
   const createHandoff = mock().mockResolvedValue({ handoff_id: "h-untrusted", status: "pending" });
   const approve = mock();
 
@@ -279,7 +286,7 @@ test("mention with trustMode=config + edge NOT in auto_approve_to → leaves pen
     hopsSoFar: 0,
     maxHops: 5,
     trustMode: "config",
-    observe: async () => ({ event_id: "e" }),
+    observe: observeStub,
     createHandoff,
     approve,
     runChatTurn,
@@ -293,13 +300,13 @@ test("mention with trustMode=config + edge NOT in auto_approve_to → leaves pen
 });
 
 test("hopsSoFar+1 >= maxHops → creates handoff but does not approve, returns max_hops", async () => {
-  const runChatTurn = mock().mockResolvedValue({
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
     text: "go @executor",
     prompt_event_id: "p",
     response_event_id: "r1",
     next_mention: { target: "executor", resolution: { kind: "name", agent_name: "executor" } },
     mentions: [],
-  } as ChatTurnResult);
+  });
   const createHandoff = mock().mockResolvedValue({ handoff_id: "h-cap", status: "pending" });
   const approve = mock();
 
@@ -312,7 +319,7 @@ test("hopsSoFar+1 >= maxHops → creates handoff but does not approve, returns m
     hopsSoFar: 4,
     maxHops: 5,
     trustMode: "all",
-    observe: async () => ({ event_id: "e" }),
+    observe: observeStub,
     createHandoff,
     approve,
     runChatTurn,
@@ -325,7 +332,7 @@ test("hopsSoFar+1 >= maxHops → creates handoff but does not approve, returns m
 });
 
 test("runChatTurn error retries and eventually succeeds (no markFailed)", async () => {
-  const runChatTurn = mock()
+  const runChatTurn = mock<ChatTurnMockFn>()
     .mockResolvedValueOnce({
       text: "",
       prompt_event_id: "p1",
@@ -333,7 +340,7 @@ test("runChatTurn error retries and eventually succeeds (no markFailed)", async 
       next_mention: null,
       mentions: [],
       error: { message: "adapter blew up" },
-    } as ChatTurnResult)
+    })
     .mockResolvedValueOnce({
       text: "",
       prompt_event_id: "p2",
@@ -341,18 +348,18 @@ test("runChatTurn error retries and eventually succeeds (no markFailed)", async 
       next_mention: null,
       mentions: [],
       error: { message: "adapter blew up again" },
-    } as ChatTurnResult)
+    })
     .mockResolvedValueOnce({
       text: "done",
       prompt_event_id: "p3",
       response_event_id: "r3",
       next_mention: null,
       mentions: [],
-    } as ChatTurnResult);
+    });
 
   const createHandoff = mock();
   const markFailed = mock();
-  const delay = mock().mockResolvedValue(undefined);
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
 
   const res = await dispatchHandoff({
     handoff: baseHandoff,
@@ -363,7 +370,7 @@ test("runChatTurn error retries and eventually succeeds (no markFailed)", async 
     hopsSoFar: 0,
     maxHops: 5,
     trustMode: "all",
-    observe: async () => ({ event_id: "e" }),
+    observe: observeStub,
     createHandoff,
     approve: mock(),
     runChatTurn,
@@ -376,21 +383,21 @@ test("runChatTurn error retries and eventually succeeds (no markFailed)", async 
   expect(createHandoff).not.toHaveBeenCalled();
   expect(markFailed).not.toHaveBeenCalled();
   expect(runChatTurn).toHaveBeenCalledTimes(3);
-  expect(delay.mock.calls.map((c: any) => c[0])).toEqual([200, 400]);
+  expect(delay.mock.calls.map((c) => c[0])).toEqual([200, 400]);
 });
 
 test("runChatTurn error exhausts retries → markFailed then throws", async () => {
-  const runChatTurn = mock().mockResolvedValue({
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
     text: "",
     prompt_event_id: "p",
     response_event_id: "r",
     next_mention: null,
     mentions: [],
     error: { message: "adapter blew up" },
-  } as ChatTurnResult);
+  });
   const createHandoff = mock();
   const markFailed = mock().mockResolvedValue({ handoff_id: "h0", status: "failed" });
-  const delay = mock().mockResolvedValue(undefined);
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
 
   const res = await dispatchHandoff({
     handoff: baseHandoff,
@@ -401,7 +408,7 @@ test("runChatTurn error exhausts retries → markFailed then throws", async () =
     hopsSoFar: 0,
     maxHops: 5,
     trustMode: "all",
-    observe: async () => ({ event_id: "e" }),
+    observe: observeStub,
     createHandoff,
     approve: mock(),
     runChatTurn,
@@ -414,19 +421,19 @@ test("runChatTurn error exhausts retries → markFailed then throws", async () =
   expect(res.cappedHandoffId).toBe("h0");
   expect(createHandoff).not.toHaveBeenCalled();
   expect(runChatTurn).toHaveBeenCalledTimes(4);
-  expect(delay.mock.calls.map((c: any) => c[0])).toEqual([200, 400, 800]);
+  expect(delay.mock.calls.map((c) => c[0])).toEqual([200, 400, 800]);
   expect(markFailed).toHaveBeenCalledTimes(1);
   expect(markFailed).toHaveBeenCalledWith("h0", "adapter blew up");
 });
 
 test("projectContext is threaded through to buildNextPrompt for continuation hops", async () => {
-  const runChatTurn = mock().mockResolvedValue({
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
     text: "ok",
     prompt_event_id: "p",
     response_event_id: "r",
     next_mention: null,
     mentions: [],
-  } as ChatTurnResult);
+  });
 
   const continuation = {
     ...baseHandoff,
@@ -445,7 +452,7 @@ test("projectContext is threaded through to buildNextPrompt for continuation hop
     maxHops: 5,
     trustMode: "all",
     projectContext: "PROJECT-CTX-MARKER",
-    observe: async () => ({ event_id: "e" }),
+    observe: observeStub,
     createHandoff: mock(),
     approve: mock(),
     runChatTurn,
@@ -454,13 +461,13 @@ test("projectContext is threaded through to buildNextPrompt for continuation hop
 });
 
 test("executor opt is forwarded to runChatTurn", async () => {
-  const runChatTurn = mock().mockResolvedValue({
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
     text: "done",
     prompt_event_id: "p",
     response_event_id: "r",
     next_mention: null,
     mentions: [],
-  } as ChatTurnResult);
+  });
 
   await dispatchHandoff({
     handoff: baseHandoff,
@@ -472,7 +479,7 @@ test("executor opt is forwarded to runChatTurn", async () => {
     maxHops: 5,
     trustMode: "all",
     executor: stubExecutor,
-    observe: async () => ({ event_id: "e" }),
+    observe: observeStub,
     createHandoff: mock(),
     approve: mock(),
     runChatTurn,
@@ -483,13 +490,13 @@ test("executor opt is forwarded to runChatTurn", async () => {
 
 test("abort signal is forwarded to runChatTurn", async () => {
   const controller = new AbortController();
-  const runChatTurn = mock().mockResolvedValue({
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
     text: "done",
     prompt_event_id: "p",
     response_event_id: "r",
     next_mention: null,
     mentions: [],
-  } as ChatTurnResult);
+  });
 
   await dispatchHandoff({
     handoff: baseHandoff,
@@ -501,7 +508,7 @@ test("abort signal is forwarded to runChatTurn", async () => {
     maxHops: 5,
     trustMode: "all",
     signal: controller.signal,
-    observe: async () => ({ event_id: "e" }),
+    observe: observeStub,
     createHandoff: mock(),
     approve: mock(),
     runChatTurn,

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { buildNextPrompt } from "../../src/cli/transcript.js";
 
 test("empty transcript + wrapper only returns just the wrapper", () => {
