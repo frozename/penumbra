@@ -1,7 +1,8 @@
-import { expect, test, describe } from "bun:test";
-import { Database } from "bun:sqlite";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
+
 import { createDaemonFetchHandler } from "../../src/serve.js";
 import { registerWorkerForTest } from "../../test-utils.js";
 
@@ -11,6 +12,12 @@ try {
   }
 } catch {
   /* already loaded */
+}
+
+interface ErrorResponse {
+  error: {
+    code: string;
+  };
 }
 
 const SHARED_TOKEN = "shared-sec";
@@ -28,7 +35,7 @@ function tempServices(): Services {
     clock: () => new Date("2026-05-21T10:00:00Z"),
     uuid: (() => {
       let n = 0;
-      return () => `e-${++n}`;
+      return () => `e-${String(++n)}`;
     })(),
   });
 }
@@ -139,8 +146,8 @@ describe("/handoffs/:id/complete terminal CAS", () => {
       }),
     );
     expect(res.status).toBe(403);
-    const body = await res.json();
-    expect((body as any).error.code).toBe("worker_id_mismatch");
+    const body = (await res.json()) as ErrorResponse;
+    expect(body.error.code).toBe("worker_id_mismatch");
 
     const row = services.db
       .query<{ status: string }, [string]>("SELECT status FROM handoffs WHERE handoff_id = ?")
@@ -310,8 +317,8 @@ describe("/handoffs/:id/fail terminal CAS", () => {
       }),
     );
     expect(res.status).toBe(403);
-    const body = await res.json();
-    expect((body as any).error.code).toBe("worker_id_mismatch");
+    const body = (await res.json()) as ErrorResponse;
+    expect(body.error.code).toBe("worker_id_mismatch");
 
     const row = services.db
       .query<{ status: string }, [string]>("SELECT status FROM handoffs WHERE handoff_id = ?")

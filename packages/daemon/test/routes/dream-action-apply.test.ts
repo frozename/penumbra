@@ -1,10 +1,11 @@
-import { describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { createDaemonFetchHandler } from "../../src/serve.js";
 
 function createTestServices(): { services: Services; cleanup: () => void } {
@@ -22,13 +23,17 @@ function createTestServices(): { services: Services; cleanup: () => void } {
 
   return {
     services,
-    cleanup: () => {
+    cleanup: (): void => {
       try {
         services.supervisor.stopAll();
-      } catch {}
+      } catch {
+        /* ignore shutdown errors in cleanup */
+      }
       try {
         db.close();
-      } catch {}
+      } catch {
+        /* ignore cleanup errors */
+      }
       rmSync(root, { recursive: true, force: true });
     },
   };

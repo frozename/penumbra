@@ -1,14 +1,28 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { handoffsStatusRoute } from "../../src/routes/handoffs.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* already loaded */
+}
+
+interface HandoffStatusResponse {
+  message?: string;
+  error_summary?: string | null;
+  reliability?: {
+    status: string;
+    trustworthy: boolean;
+    recommended_action: string;
+    summary: string;
+  };
+}
 
 function tempServices(): Services {
   const db = new Database(":memory:");
@@ -22,7 +36,7 @@ function tempServices(): Services {
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date("2026-04-28T00:00:00Z"),
-    uuid: () => `id-${++n}`,
+    uuid: () => `id-${String(++n)}`,
   });
 }
 
@@ -37,7 +51,7 @@ function insertHandoff(
     resolution_reason?: string;
     message?: string;
   },
-) {
+): void {
   services.db
     .prepare(
       `
@@ -72,7 +86,7 @@ test("handoffsStatusRoute returns lean shape for completed handoff", async () =>
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = (await res.json()) as HandoffStatusResponse;
   expect(body).toEqual({
     handoff_id: "h-1",
     status: "completed",
@@ -88,7 +102,7 @@ test("handoffsStatusRoute returns lean shape for completed handoff", async () =>
       summary: "dispatch.start event is missing",
     },
   });
-  expect((body as any).message).toBeUndefined();
+  expect(body.message).toBeUndefined();
 });
 
 test("handoffsStatusRoute includes reliability recommendation without handoff message", async () => {
@@ -119,7 +133,7 @@ test("handoffsStatusRoute includes reliability recommendation without handoff me
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = (await res.json()) as HandoffStatusResponse;
   expect(body.reliability).toEqual({
     status: "missing_dispatch_start",
     trustworthy: false,
@@ -143,7 +157,7 @@ test("handoffsStatusRoute extracts first-line error_summary for failed handoff",
     services,
   );
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = (await res.json()) as HandoffStatusResponse;
   expect(body.status).toBe("failed");
   expect(body.error_summary).toBe("codex: exit code 1");
 });
@@ -160,8 +174,10 @@ test("handoffsStatusRoute caps error_summary at 200 chars", async () => {
     "h-3",
     services,
   );
-  const body = await res.json();
-  expect(body.error_summary?.length).toBeLessThanOrEqual(200);
+  const body = (await res.json()) as HandoffStatusResponse;
+  expect(
+    body.error_summary === null || body.error_summary === undefined ? 0 : body.error_summary.length,
+  ).toBeLessThanOrEqual(200);
 });
 
 test("handoffsStatusRoute returns null latency when not yet resolved", async () => {
@@ -176,7 +192,7 @@ test("handoffsStatusRoute returns null latency when not yet resolved", async () 
     "h-4",
     services,
   );
-  const body = await res.json();
+  const body = (await res.json()) as HandoffStatusResponse;
   expect(body.status).toBe("dispatched");
   expect(body.resolved_at).toBeNull();
   expect(body.latency_seconds).toBeNull();
@@ -194,7 +210,7 @@ test("handoffsStatusRoute ignores approval timestamps for active handoffs", asyn
     "h-approval-ts",
     services,
   );
-  const body = await res.json();
+  const body = (await res.json()) as HandoffStatusResponse;
   expect(body.status).toBe("dispatched");
   expect(body.resolved_at).toBeNull();
   expect(body.latency_seconds).toBeNull();

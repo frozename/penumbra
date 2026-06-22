@@ -1,7 +1,9 @@
-import { expect, test } from "bun:test";
+import { loadSqliteVec, migrate, T0Writer, TaskWriter } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { loadSqliteVec, migrate, TaskWriter, T0Writer } from "@penumbra/core";
+import { expect, test } from "bun:test";
+
 import type { GhClient } from "../../src/services/gh-client.js";
+
 import { tasksCancelRoute } from "../../src/routes/tasks.js";
 import { createGhTaskSyncService } from "../../src/sweepers/gh-task-sync.js";
 
@@ -9,13 +11,60 @@ try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* already loaded */
+}
+
+function createGhClientMock(commentBodies: string[]): GhClient {
+  let viewCalls = 0;
+  return {
+    viewIssue(): Promise<{
+      number: number;
+      state: "OPEN" | "CLOSED";
+      stateReason: null;
+      updatedAt: string;
+      title: string;
+      url: string;
+    }> {
+      viewCalls += 1;
+      return Promise.resolve({
+        number: 91,
+        state: viewCalls === 1 ? "OPEN" : "CLOSED",
+        stateReason: null,
+        updatedAt: "2026-05-08T18:00:00.000Z",
+        title: "Issue 91",
+        url: "https://github.com/acordeiro/penumbra/issues/91",
+      });
+    },
+    closeIssue(): Promise<void> {
+      return Promise.resolve();
+    },
+    reopenIssue(): Promise<void> {
+      return Promise.resolve();
+    },
+    commentIssue(
+      _repo: string,
+      _issueNumber: number,
+      body: string,
+    ): Promise<{ comment_url: string }> {
+      commentBodies.push(body);
+      return Promise.resolve({
+        comment_url: "https://github.com/acordeiro/penumbra/issues/91#issuecomment-777",
+      });
+    },
+    listComments(): Promise<[]> {
+      return Promise.resolve([]);
+    },
+  };
+}
 
 test("canceling a linked task posts a status_change comment to GitHub", async () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
-  const writer = new TaskWriter(db, { now: () => Date.parse("2026-05-08T19:00:00.000Z") });
+  const writer = new TaskWriter(db, {
+    now: (): number => Date.parse("2026-05-08T19:00:00.000Z"),
+  });
   const { task_id } = writer.file({
     prompt: "cancel this task",
     created_by_kind: "human",
@@ -24,27 +73,7 @@ test("canceling a linked task posts a status_change comment to GitHub", async ()
   writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 91 });
 
   const commentBodies: string[] = [];
-  let viewCalls = 0;
-  const ghClient: GhClient = {
-    viewIssue: async () => {
-      viewCalls += 1;
-      return {
-        number: 91,
-        state: viewCalls === 1 ? "OPEN" : "CLOSED",
-        stateReason: null,
-        updatedAt: "2026-05-08T18:00:00.000Z",
-        title: "Issue 91",
-        url: "https://github.com/acordeiro/penumbra/issues/91",
-      };
-    },
-    closeIssue: async () => {},
-    reopenIssue: async () => {},
-    commentIssue: async (_repo, _issueNumber, body) => {
-      commentBodies.push(body);
-      return { comment_url: "https://github.com/acordeiro/penumbra/issues/91#issuecomment-777" };
-    },
-    listComments: async () => [],
-  };
+  const ghClient = createGhClientMock(commentBodies);
 
   const ghSync = createGhTaskSyncService({
     taskWriter: writer,

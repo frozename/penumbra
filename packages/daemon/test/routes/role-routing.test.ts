@@ -1,19 +1,22 @@
-import { describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import {
   AgentPerformanceWriter,
+  type AgentRoutingConfig,
   loadSqliteVec,
   migrate,
-  setRoutingBias,
-  type AgentRoutingConfig,
   type Services,
+  setRoutingBias,
 } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
+
 import { resolveSingleRoute } from "../../src/routes/role-routing.js";
 
 if (process.platform === "darwin") {
   try {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-  } catch {}
+  } catch {
+    /* already loaded */
+  }
 }
 
 const NOW = "2026-05-01T12:00:00Z";
@@ -151,7 +154,7 @@ describe("resolveSingleRoute", () => {
   test("pressure read failures degrade to normal routing", () => {
     const db = freshDb();
     writePerf(db, "alpha");
-    db.exec("DROP TABLE t0_events");
+    db.run("DROP TABLE t0_events");
 
     expect(
       resolveSingleRoute(services(db), "reviewer", "review this", "review_adversarial"),
@@ -213,7 +216,7 @@ describe("resolveSingleRoute", () => {
   test("bias read failures degrade to normal routing", () => {
     const db = freshDb();
     writePerf(db, "alpha");
-    db.exec("DROP TABLE routing_bias");
+    db.run("DROP TABLE routing_bias");
 
     expect(
       resolveSingleRoute(services(db), "reviewer", "review this", "review_adversarial"),
