@@ -1,5 +1,5 @@
-import type { Logger } from "@penumbra/core";
-import type { PermissionRequestRow } from "@penumbra/core";
+import type { Logger, PermissionRequestRow } from "@penumbra/core";
+
 import type { PenumbraClient } from "../penumbra-client.js";
 import type { DiscordNotificationEvent } from "./discord-events.js";
 
@@ -38,6 +38,94 @@ export interface PermissionDaemonClientOpts {
   onPermissionEvent?: (event: DiscordNotificationEvent) => void;
 }
 
+interface DecidedPayload {
+  permission_id: string;
+  parent_handoff_id?: string;
+  conversation_id?: string;
+  agent_name?: string;
+  tool_name?: string;
+  decision: "approve" | "reject";
+  decided_by?: string;
+  remember?: "this_call" | "this_dispatch" | null;
+  reason?: string | null;
+}
+
+interface ExpiredPayload {
+  permission_id: string;
+  parent_handoff_id?: string;
+  conversation_id?: string;
+  agent_name?: string;
+  tool_name?: string;
+  ttl_at?: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function safeJsonParse(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function parseRememberScope(value: unknown): "this_call" | "this_dispatch" | null | undefined {
+  if (value === "this_call" || value === "this_dispatch" || value === null) return value;
+  return undefined;
+}
+
+function parseReason(value: unknown): string | null | undefined {
+  if (typeof value === "string") return value;
+  if (value === null) return null;
+  return undefined;
+}
+
+function parseDecidedPayload(raw: string): DecidedPayload | null {
+  const parsed = safeJsonParse(raw);
+  if (!isRecord(parsed)) return null;
+  const permission_id = parsed.permission_id;
+  const decision = parsed.decision;
+  if (typeof permission_id !== "string") return null;
+  if (decision !== "approve" && decision !== "reject") return null;
+  return {
+    permission_id,
+    decision,
+    parent_handoff_id: optionalString(parsed.parent_handoff_id),
+    conversation_id: optionalString(parsed.conversation_id),
+    agent_name: optionalString(parsed.agent_name),
+    tool_name: optionalString(parsed.tool_name),
+    decided_by: optionalString(parsed.decided_by),
+    remember: parseRememberScope(parsed.remember),
+    reason: parseReason(parsed.reason),
+  };
+}
+
+function parseExpiredPayload(raw: string): ExpiredPayload | null {
+  const parsed = safeJsonParse(raw);
+  if (!isRecord(parsed)) return null;
+  const permission_id = parsed.permission_id;
+  if (typeof permission_id !== "string") return null;
+  return {
+    permission_id,
+    parent_handoff_id: optionalString(parsed.parent_handoff_id),
+    conversation_id: optionalString(parsed.conversation_id),
+    agent_name: optionalString(parsed.agent_name),
+    tool_name: optionalString(parsed.tool_name),
+    ttl_at: optionalString(parsed.ttl_at),
+  };
+}
+
+function extractStatus(err: unknown): number | null {
+  if (isRecord(err) && typeof err.status === "number") return err.status;
+  return null;
+}
+
 export class PermissionDaemonClient {
   private waiters = new Map<string, Waiter>();
   private es: EventSourceLike | null = null;
@@ -45,19 +133,15 @@ export class PermissionDaemonClient {
 
   constructor(private readonly opts: PermissionDaemonClientOpts) {}
 
-  async start(): Promise<void> {
-    if (this.es) return;
+  start(): Promise<void> {
+    if (this.es) return Promise.resolve();
     this.es = this.opts.makeEventSource();
     // Native EventSource replays Last-Event-ID on reconnect, but this SSE route
     // currently keys ids as `permission_id:seq` while the parser accepts only `seq:<n>`.
     // We accept that limitation here; cold-reconnect convergence comes from the GET fallback.
     this.es.addEventListener("permission.decided", (evt) => {
-      let payload: any;
-      try {
-        payload = JSON.parse(evt.data);
-      } catch {
-        return;
-      }
+      const payload = parseDecidedPayload(evt.data);
+      if (!payload) return;
       this.emitPermissionEvent({
         kind: "permission_decided",
         permission_id: payload.permission_id,
@@ -78,12 +162,8 @@ export class PermissionDaemonClient {
       });
     });
     this.es.addEventListener("permission.expired", (evt) => {
-      let payload: any;
-      try {
-        payload = JSON.parse(evt.data);
-      } catch {
-        return;
-      }
+      const payload = parseExpiredPayload(evt.data);
+      if (!payload) return;
       this.emitPermissionEvent({
         kind: "permission_expired",
         permission_id: payload.permission_id,
@@ -100,9 +180,10 @@ export class PermissionDaemonClient {
     });
     if (this.es.onReconnect) {
       this.unsubscribeReconnect = this.es.onReconnect(() => {
-        void this.convergeWaiters().catch(() => {});
+        void this.convergeWaiters();
       });
     }
+    return Promise.resolve();
   }
 
   stop(): void {
@@ -146,7 +227,7 @@ export class PermissionDaemonClient {
       this.waiters.delete(permission_id);
       throw err;
     }
-    return promise;
+    return await promise;
   }
 
   private async convergeWaiters(): Promise<void> {
@@ -155,9 +236,9 @@ export class PermissionDaemonClient {
       permissionIds.map(async (permission_id) => {
         try {
           const { permission } = await this.opts.penumbraClient.getPermission(permission_id);
-          await this.convergeWaiter(permission_id, permission);
-        } catch (err: any) {
-          const status = typeof err?.status === "number" ? err.status : null;
+          this.convergeWaiter(permission_id, permission);
+        } catch (err: unknown) {
+          const status = extractStatus(err);
           const waiter = this.waiters.get(permission_id);
           if (!waiter) return;
           this.waiters.delete(permission_id);
@@ -171,10 +252,7 @@ export class PermissionDaemonClient {
     );
   }
 
-  private async convergeWaiter(
-    permission_id: string,
-    permission: PermissionRequestRow,
-  ): Promise<void> {
+  private convergeWaiter(permission_id: string, permission: PermissionRequestRow): void {
     const waiter = this.waiters.get(permission_id);
     if (!waiter) return;
     if (permission.status === "pending") return;

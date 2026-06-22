@@ -1,7 +1,15 @@
 import type { Logger } from "@penumbra/core";
-import { resolveInsideWorktree, FsPathError } from "@penumbra/core";
-import type { PermissionCallback } from "./permission-callback.js";
+
+import { FsPathError, resolveInsideWorktree } from "@penumbra/core";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
+import path, { dirname, isAbsolute, relative, resolve } from "node:path";
+
 import type { ToolCallContext } from "../sdk/adapter.js";
+import type { PermissionCallback } from "./permission-callback.js";
+import type { SandboxConfig } from "./sandbox-config.js";
+
+import { spawnSandboxed, type SpawnSandboxedResult } from "./sandbox-spawn.js";
 import {
   EditAmbiguousError,
   EditMissError,
@@ -12,11 +20,6 @@ import {
   TerminalCapExceededError,
   TerminalNotFoundError,
 } from "./write-tools-errors.js";
-import { spawnSandboxed, type SpawnSandboxedResult } from "./sandbox-spawn.js";
-import type { SandboxConfig } from "./sandbox-config.js";
-import { createHash, randomUUID } from "node:crypto";
-import { writeFile, readFile, rename, stat, mkdir, realpath } from "node:fs/promises";
-import path, { dirname, resolve, isAbsolute, relative } from "node:path";
 
 export interface AuditEmitter {
   emit(eventType: string, payload: unknown): Promise<void>;
@@ -38,6 +41,18 @@ export interface ExitStatus {
   signal: string | null;
 }
 
+function errorCode(err: unknown): string | undefined {
+  if (typeof err !== "object" || err === null) return undefined;
+  const code = (err as { code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
+}
+
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  return String(err);
+}
+
 interface TerminalHandle {
   terminal_id: string;
   argv: string[];
@@ -50,40 +65,44 @@ interface TerminalHandle {
   startedAt: number;
 }
 
+function extractText(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  if (!("text" in value)) return undefined;
+  const text = value.text;
+  return typeof text === "string" ? text : undefined;
+}
+
+function previewContent(content: unknown): string {
+  return JSON.stringify(content).slice(0, 200);
+}
+
+function normalizeContentArray(content: readonly unknown[]): string {
+  let result = "";
+  for (const item of content) {
+    if (typeof item === "string") {
+      result += item;
+      continue;
+    }
+    const text = extractText(item);
+    if (text !== undefined) {
+      result += text;
+      continue;
+    }
+    throw new IoError(
+      `invalid array element in content: ${typeof item}. content preview: ${previewContent(content)}`,
+    );
+  }
+  return result;
+}
+
 export function normalizeWriteTextContent(content: unknown): string {
   if (typeof content === "string") return content;
-
-  if (Array.isArray(content)) {
-    let result = "";
-    for (const item of content) {
-      if (typeof item === "string") {
-        result += item;
-      } else if (
-        item &&
-        typeof item === "object" &&
-        "text" in item &&
-        typeof (item as any).text === "string"
-      ) {
-        result += (item as any).text;
-      } else {
-        const preview = JSON.stringify(content).slice(0, 200);
-        throw new IoError(
-          `invalid array element in content: ${typeof item}. content preview: ${preview}`,
-        );
-      }
-    }
-    return result;
-  }
-
-  if (content && typeof content === "object") {
-    const obj = content as any;
-    if ("text" in obj && typeof obj.text === "string") {
-      return obj.text;
-    }
-  }
-
-  const preview = JSON.stringify(content)?.slice(0, 200) ?? "undefined";
-  throw new IoError(`invalid content type: ${typeof content}. content preview: ${preview}`);
+  if (Array.isArray(content)) return normalizeContentArray(content);
+  const text = extractText(content);
+  if (text !== undefined) return text;
+  throw new IoError(
+    `invalid content type: ${typeof content}. content preview: ${previewContent(content)}`,
+  );
 }
 
 export class WriteToolsExecutor {
@@ -105,10 +124,10 @@ export class WriteToolsExecutor {
       if (st.isDirectory()) throw new NotAFileError(`path is a directory: ${args.path}`);
       const existing = await readFile(real);
       prev_sha256 = createHash("sha256").update(existing).digest("hex");
-    } catch (err: any) {
+    } catch (err) {
       if (err instanceof NotAFileError) throw err;
-      if (err?.code !== "ENOENT")
-        throw new IoError(`failed to stat ${args.path}: ${err?.message ?? err}`);
+      if (errorCode(err) !== "ENOENT")
+        throw new IoError(`failed to stat ${args.path}: ${errorMessage(err)}`);
     }
 
     await this.ensureParentDir(args.path, real);
@@ -117,8 +136,8 @@ export class WriteToolsExecutor {
     try {
       await writeFile(tmp, normalizedContent, "utf8");
       await rename(tmp, real);
-    } catch (err: any) {
-      throw new IoError(`failed to write ${args.path}: ${err?.message ?? err}`);
+    } catch (err) {
+      throw new IoError(`failed to write ${args.path}: ${errorMessage(err)}`);
     }
 
     const sha256 = createHash("sha256").update(normalizedContent, "utf8").digest("hex");
@@ -137,36 +156,37 @@ export class WriteToolsExecutor {
   protected async resolvePath(p: string): Promise<string> {
     try {
       return await resolveInsideWorktree(p, this.opts.worktreeRoot);
-    } catch (err: any) {
-      if (err instanceof FsPathError) {
-        if (err.code === "outside_worktree") throw new OutsideWorktreeError(err.message);
-        if (err.code === "not_found") {
-          const worktreeReal = await realpath(resolve(this.opts.worktreeRoot));
-          const candidate = isAbsolute(p) ? resolve(p) : resolve(worktreeReal, p);
-
-          let current = candidate;
-          let existingReal: string | null = null;
-          while (current !== dirname(current)) {
-            try {
-              existingReal = await realpath(current);
-              break;
-            } catch {
-              current = dirname(current);
-            }
-          }
-
-          if (existingReal) {
-            const rel = relative(worktreeReal, existingReal);
-            if (rel.startsWith("..") || isAbsolute(rel)) {
-              throw new OutsideWorktreeError(`path "${p}" resolves outside worktree`);
-            }
-          }
-          return candidate;
-        }
-        throw new IoError(err.message);
-      }
-      throw err;
+    } catch (err) {
+      if (!(err instanceof FsPathError)) throw err;
+      if (err.code === "outside_worktree") throw new OutsideWorktreeError(err.message);
+      if (err.code === "not_found") return await this.resolveMissingPath(p);
+      throw new IoError(err.message);
     }
+  }
+
+  private async resolveMissingPath(p: string): Promise<string> {
+    const worktreeReal = await realpath(resolve(this.opts.worktreeRoot));
+    const candidate = isAbsolute(p) ? resolve(p) : resolve(worktreeReal, p);
+    const existingReal = await this.findExistingAncestor(candidate);
+    if (existingReal) {
+      const rel = relative(worktreeReal, existingReal);
+      if (rel.startsWith("..") || isAbsolute(rel)) {
+        throw new OutsideWorktreeError(`path "${p}" resolves outside worktree`);
+      }
+    }
+    return candidate;
+  }
+
+  private async findExistingAncestor(start: string): Promise<string | null> {
+    let current = start;
+    while (current !== dirname(current)) {
+      try {
+        return await realpath(current);
+      } catch {
+        current = dirname(current);
+      }
+    }
+    return null;
   }
 
   protected async ensureParentDir(userPath: string, resolvedReal: string): Promise<void> {
@@ -175,10 +195,10 @@ export class WriteToolsExecutor {
       const parentStat = await stat(parentDir);
       if (parentStat.isDirectory()) return;
       throw new IoError(`parent path is not a directory: ${userPath}`);
-    } catch (err: any) {
+    } catch (err) {
       if (err instanceof IoError) throw err;
-      if (err?.code !== "ENOENT")
-        throw new IoError(`failed to stat parent ${userPath}: ${err?.message ?? err}`);
+      if (errorCode(err) !== "ENOENT")
+        throw new IoError(`failed to stat parent ${userPath}: ${errorMessage(err)}`);
     }
 
     const worktreeReal = await realpath(resolve(this.opts.worktreeRoot));
@@ -198,9 +218,9 @@ export class WriteToolsExecutor {
     let existing: string;
     try {
       existing = await readFile(real, "utf8");
-    } catch (err: any) {
-      if (err?.code === "ENOENT") throw new EditMissError(`file not found: ${args.path}`, 0);
-      throw new IoError(`failed to read ${args.path}: ${err?.message ?? err}`);
+    } catch (err) {
+      if (errorCode(err) === "ENOENT") throw new EditMissError(`file not found: ${args.path}`, 0);
+      throw new IoError(`failed to read ${args.path}: ${errorMessage(err)}`);
     }
     const prev_sha256 = createHash("sha256").update(existing, "utf8").digest("hex");
     const oldBytes = Buffer.byteLength(args.old_string, "utf8");
@@ -218,7 +238,7 @@ export class WriteToolsExecutor {
         Buffer.byteLength(existing, "utf8"),
       );
     if (occurrences > 1 && !args.replace_all)
-      throw new EditAmbiguousError(`old_string matches ${occurrences} times`, occurrences);
+      throw new EditAmbiguousError(`old_string matches ${String(occurrences)} times`, occurrences);
 
     const next = args.replace_all
       ? existing.split(args.old_string).join(args.new_string)
@@ -303,10 +323,8 @@ export class WriteToolsExecutor {
           });
         }
       })
-      .catch((err) => {
-        this.opts.logger.error(
-          `terminal tracking failed: ${String((err as Error)?.message ?? err)}`,
-        );
+      .catch((err: unknown) => {
+        this.opts.logger.error(`terminal tracking failed: ${errorMessage(err)}`);
       });
 
     await this.opts.auditEmitter.emit("terminal.spawned", {
@@ -320,12 +338,16 @@ export class WriteToolsExecutor {
     return { terminal_id };
   }
 
-  async terminalOutput(args: {
+  terminalOutput(args: {
     terminal_id: string;
   }): Promise<{ output: string; truncated: boolean; exit_status?: ExitStatus }> {
     const h = this.oneShots.get(args.terminal_id);
-    if (!h) throw new TerminalNotFoundError(args.terminal_id);
-    return { output: h.output, truncated: h.truncated, exit_status: h.exitStatus };
+    if (!h) return Promise.reject(new TerminalNotFoundError(args.terminal_id));
+    return Promise.resolve({
+      output: h.output,
+      truncated: h.truncated,
+      exit_status: h.exitStatus,
+    });
   }
 
   async terminalWaitForExit(args: { terminal_id: string }): Promise<{ exit_status: ExitStatus }> {
@@ -401,7 +423,7 @@ export class WriteToolsExecutor {
         if (err.code === "outside_worktree") throw new OutsideWorktreeError(err.message);
         throw new IoError(err.message);
       }
-      throw new IoError(`bad cwd: ${String((err as Error)?.message ?? err)}`);
+      throw new IoError(`bad cwd: ${errorMessage(err)}`);
     }
   }
 }

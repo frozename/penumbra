@@ -1,6 +1,8 @@
 import type { Logger } from "@penumbra/core";
+
 import type { PermissionDecision, ToolCallContext } from "../sdk/adapter.js";
 import type { PermissionDaemonClient } from "./permission-daemon-client.js";
+
 import { matchAllowlist } from "./allowlist-matcher.js";
 
 export interface PermissionCallbackV2Opts {
@@ -31,9 +33,8 @@ export function createPermissionCallback(
 ): PermissionCallback {
   if (arg === undefined || typeof arg === "string") {
     const trustMode = arg ?? "all";
-    return async (_toolCall: ToolCallContext): Promise<PermissionDecision> => {
-      return trustMode === "all" ? "approve" : "reject";
-    };
+    return (_toolCall: ToolCallContext): Promise<PermissionDecision> =>
+      Promise.resolve(trustMode === "all" ? "approve" : "reject");
   }
 
   const opts = arg;
@@ -55,7 +56,7 @@ export function createPermissionCallback(
       }
       return result.decision;
     } catch (err) {
-      opts.log?.warn?.(
+      opts.log?.warn(
         { handoffId: opts.handoffId, toolName: toolCall.toolName, err: String(err) },
         "permission round-trip failed; failing closed",
       );
