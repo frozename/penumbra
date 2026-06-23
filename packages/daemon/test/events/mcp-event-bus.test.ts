@@ -1,13 +1,13 @@
-import { describe, it, expect } from "bun:test";
 import { createMcpEventBus } from "@penumbra/daemon/events/mcp-event-bus";
+import { describe, expect, it } from "bun:test";
 
 describe("mcp-event-bus", () => {
   it("delivers a published event to matching subscribers", () => {
     const bus = createMcpEventBus();
-    const received: Array<{ server: string; event: string }> = [];
-    bus.subscribe({ server: "ha", event: "state_changed" }, (e) =>
-      received.push({ server: e.server, event: e.event }),
-    );
+    const received: { server: string; event: string }[] = [];
+    bus.subscribe({ server: "ha", event: "state_changed" }, (e) => {
+      received.push({ server: e.server, event: e.event });
+    });
 
     bus.publish({
       server: "ha",

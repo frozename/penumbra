@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { createBearerAuth, getPrincipal } from "../../src/auth.js";
 
 interface WorkerTokenStoreLike {
@@ -8,9 +9,10 @@ interface WorkerTokenStoreLike {
 
 function makeFakeStore(seeds: Record<string, string>): WorkerTokenStoreLike {
   return {
-    lookup(plaintext) {
-      if (!(plaintext in seeds)) return null;
-      return { token_hash: "hash-of-" + plaintext, worker_id: seeds[plaintext] };
+    lookup(plaintext): { token_hash: string; worker_id: string } | null {
+      const value = seeds[plaintext];
+      if (value === undefined) return null;
+      return { token_hash: "hash-of-" + plaintext, worker_id: value };
     },
   };
 }
@@ -64,7 +66,8 @@ test("auth layer does not parse the request body", async () => {
   });
   expect(auth(req)).toBeNull();
   expect(getPrincipal(req)?.kind).toBe("worker");
-  await expect(req.text()).resolves.toBe("{{{ not json");
+  const body = await req.text();
+  expect(body).toBe("{{{ not json");
 });
 
 test("createBearerAuth without workerTokenStore preserves current behaviour: only shared bearer accepted", () => {

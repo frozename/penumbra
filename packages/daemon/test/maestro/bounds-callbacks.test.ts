@@ -1,6 +1,5 @@
-import { afterEach, expect, mock, spyOn, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import type { AgentDescriptor } from "@penumbra/core";
+
 import {
   loadSqliteVec,
   MaestroSessionWriter,
@@ -8,13 +7,18 @@ import {
   TaskEventBus,
   TaskWriter,
 } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { afterEach, expect, mock, spyOn, test } from "bun:test";
+
 import { createBoundsCallbacks } from "../../src/maestro/bounds-callbacks.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  // Optional Homebrew SQLite is unavailable on non-local runners.
+}
 
 const MAESTRO_AGENT: AgentDescriptor = {
   name: "claude-acp-sonnet",
@@ -30,29 +34,32 @@ function setupDb(): Database {
   return db;
 }
 
-function createTaskHarness(nowMs = 1_000): {
+interface TaskHarness {
   db: Database;
   bus: TaskEventBus;
   taskWriter: TaskWriter;
   sessions: MaestroSessionWriter;
   setNowMs: (value: number) => void;
-} {
+}
+
+function createTaskHarness(nowMs = 1_000): TaskHarness {
   const db = setupDb();
   const bus = new TaskEventBus();
   let currentNow = nowMs;
   const taskWriter = new TaskWriter(db, {
-    now: () => currentNow,
+    now: (): number => currentNow,
     bus,
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: (name): AgentDescriptor | undefined =>
+      name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined,
   });
-  const sessions = new MaestroSessionWriter({ db, now: () => currentNow });
+  const sessions = new MaestroSessionWriter({ db, now: (): number => currentNow });
 
   return {
     db,
     bus,
     taskWriter,
     sessions,
-    setNowMs: (value) => {
+    setNowMs: (value): void => {
       currentNow = value;
     },
   };
@@ -106,6 +113,11 @@ function seedSession(
   );
 }
 
+type InjectFn = (chainHandoffId: string, message: { role: "user"; text: string }) => Promise<void>;
+type ChainCancelFn = (chainHandoffId: string) => Promise<void>;
+
+const noopInject: InjectFn = () => Promise.resolve();
+
 afterEach(() => {
   mock.restore();
 });
@@ -125,10 +137,8 @@ test("soft warn happy path: injects warning and appends orchestrate_warning even
       sub_dispatches_consumed: 2,
     });
 
-    const inject = mock(
-      async (_chainHandoffId: string, _msg: { role: "user"; text: string }) => {},
-    );
-    const chainCancel = mock(async (_chainHandoffId: string) => {});
+    const inject = mock<InjectFn>(() => Promise.resolve());
+    const chainCancel = mock<ChainCancelFn>(() => Promise.resolve());
 
     const callbacks = createBoundsCallbacks({
       db: harness.db,
@@ -142,12 +152,13 @@ test("soft warn happy path: injects warning and appends orchestrate_warning even
 
     const session = harness.sessions.get(taskId);
     expect(session).toBeTruthy();
-    callbacks.onSoftWarn(session!);
+    if (!session) throw new Error("session missing");
+    callbacks.onSoftWarn(session);
     await Bun.sleep(0);
 
     expect(inject).toHaveBeenCalledTimes(1);
     expect(inject.mock.calls[0]?.[0]).toBe("h-soft-1");
-    const message = inject.mock.calls[0]?.[1] as { role: "user"; text: string } | undefined;
+    const message = inject.mock.calls[0]?.[1];
     expect(message?.role).toBe("user");
     expect(message?.text).toContain("BUDGET WARNING");
 
@@ -176,6 +187,7 @@ test("soft warn happy path: injects warning and appends orchestrate_warning even
       subscription_pressure: 0,
     });
     expect(payload.soft_warned_at).toBe(8_500);
+    expect(chainCancel).not.toHaveBeenCalled();
   } finally {
     harness.db.close();
   }
@@ -197,10 +209,8 @@ test("hard kill with open lease: terminates session, fails task, appends event, 
       sub_dispatches_consumed: 3,
     });
 
-    const inject = mock(
-      async (_chainHandoffId: string, _msg: { role: "user"; text: string }) => {},
-    );
-    const chainCancel = mock(async (_chainHandoffId: string) => {});
+    const inject = mock<InjectFn>(() => Promise.resolve());
+    const chainCancel = mock<ChainCancelFn>(() => Promise.resolve());
 
     const callbacks = createBoundsCallbacks({
       db: harness.db,
@@ -214,7 +224,8 @@ test("hard kill with open lease: terminates session, fails task, appends event, 
 
     const session = harness.sessions.get(taskId);
     expect(session).toBeTruthy();
-    callbacks.onHardKill(session!, "wall_clock");
+    if (!session) throw new Error("session missing");
+    callbacks.onHardKill(session, "wall_clock");
     await Bun.sleep(0);
 
     const updatedSession = harness.sessions.get(taskId);
@@ -247,12 +258,13 @@ test("hard kill with open lease: terminates session, fails task, appends event, 
     expect(payload.consumed?.pct_consumed).toBeCloseTo(1, 4);
     expect(chainCancel).toHaveBeenCalledTimes(1);
     expect(chainCancel).toHaveBeenCalledWith("h-hard-1");
+    expect(inject).not.toHaveBeenCalled();
   } finally {
     harness.db.close();
   }
 });
 
-test("hard kill race: task already done records completed termination and does not cancel", async () => {
+test("hard kill race: task already done records completed termination and does not cancel", () => {
   const harness = createTaskHarness(1_000);
   try {
     const taskId = fileOrchestrateTask(harness.taskWriter);
@@ -269,12 +281,12 @@ test("hard kill race: task already done records completed termination and does n
       result_summary: "done now",
     });
 
-    const chainCancel = mock(async (_chainHandoffId: string) => {});
+    const chainCancel = mock<ChainCancelFn>(() => Promise.resolve());
     const callbacks = createBoundsCallbacks({
       db: harness.db,
       taskWriter: harness.taskWriter,
       sessions: harness.sessions,
-      injector: { inject: async () => {} },
+      injector: { inject: noopInject },
       bus: harness.bus,
       chainCancel,
       now: () => 12_000,
@@ -283,7 +295,8 @@ test("hard kill race: task already done records completed termination and does n
     harness.setNowMs(12_000);
     const session = harness.sessions.get(taskId);
     expect(session).toBeTruthy();
-    callbacks.onHardKill(session!, "wall_clock");
+    if (!session) throw new Error("session missing");
+    callbacks.onHardKill(session, "wall_clock");
 
     const updatedSession = harness.sessions.get(taskId);
     expect(updatedSession?.termination_reason).toBe("completed");
@@ -295,7 +308,7 @@ test("hard kill race: task already done records completed termination and does n
   }
 });
 
-test("hard kill race: task already done_pending_review records completed termination and does not cancel", async () => {
+test("hard kill race: task already done_pending_review records completed termination and does not cancel", () => {
   const harness = createTaskHarness(1_000);
   try {
     const taskId = fileOrchestrateTask(harness.taskWriter, { requires_review: true });
@@ -312,12 +325,12 @@ test("hard kill race: task already done_pending_review records completed termina
       result_summary: "ready for review",
     });
 
-    const chainCancel = mock(async (_chainHandoffId: string) => {});
+    const chainCancel = mock<ChainCancelFn>(() => Promise.resolve());
     const callbacks = createBoundsCallbacks({
       db: harness.db,
       taskWriter: harness.taskWriter,
       sessions: harness.sessions,
-      injector: { inject: async () => {} },
+      injector: { inject: noopInject },
       bus: harness.bus,
       chainCancel,
       now: () => 12_500,
@@ -326,7 +339,8 @@ test("hard kill race: task already done_pending_review records completed termina
     harness.setNowMs(12_500);
     const session = harness.sessions.get(taskId);
     expect(session).toBeTruthy();
-    callbacks.onHardKill(session!, "wall_clock");
+    if (!session) throw new Error("session missing");
+    callbacks.onHardKill(session, "wall_clock");
 
     const updatedSession = harness.sessions.get(taskId);
     expect(updatedSession?.termination_reason).toBe("completed");
@@ -350,15 +364,13 @@ test("hard kill: chainCancel rejection is swallowed and logged", async () => {
     });
 
     const errorSpy = spyOn(console, "error").mockImplementation(() => undefined);
-    const chainCancel = mock(async (_chainHandoffId: string) => {
-      throw new Error("cancel failed");
-    });
+    const chainCancel = mock<ChainCancelFn>(() => Promise.reject(new Error("cancel failed")));
 
     const callbacks = createBoundsCallbacks({
       db: harness.db,
       taskWriter: harness.taskWriter,
       sessions: harness.sessions,
-      injector: { inject: async () => {} },
+      injector: { inject: noopInject },
       bus: harness.bus,
       chainCancel,
       now: () => 14_000,
@@ -366,8 +378,11 @@ test("hard kill: chainCancel rejection is swallowed and logged", async () => {
 
     const session = harness.sessions.get(taskId);
     expect(session).toBeTruthy();
+    if (!session) throw new Error("session missing");
 
-    expect(() => callbacks.onHardKill(session!, "wall_clock")).not.toThrow();
+    expect(() => {
+      callbacks.onHardKill(session, "wall_clock");
+    }).not.toThrow();
     await Bun.sleep(0);
 
     expect(harness.taskWriter.get(taskId).status).toBe("failed");

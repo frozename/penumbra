@@ -1,6 +1,5 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import type { AgentDescriptor, MaestroSessionRecord } from "@penumbra/core";
+
 import {
   loadSqliteVec,
   MaestroSessionWriter,
@@ -8,13 +7,18 @@ import {
   TaskEventBus,
   TaskWriter,
 } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { runRestartResume } from "../../src/maestro/restart-resume.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  // Optional Homebrew SQLite is unavailable on non-local runners.
+}
 
 const MAESTRO_AGENT: AgentDescriptor = {
   name: "claude-acp-sonnet",
@@ -30,32 +34,37 @@ function setupDb(): Database {
   return db;
 }
 
-function createHarness(nowMs = 1_000): {
+interface Harness {
   db: Database;
   bus: TaskEventBus;
   sessions: MaestroSessionWriter;
   taskWriter: TaskWriter;
   setNow: (value: number) => void;
   close: () => void;
-} {
+}
+
+function createHarness(nowMs = 1_000): Harness {
   const db = setupDb();
   const bus = new TaskEventBus();
   let currentNow = nowMs;
-  const sessions = new MaestroSessionWriter({ db, now: () => currentNow });
+  const sessions = new MaestroSessionWriter({ db, now: (): number => currentNow });
   const taskWriter = new TaskWriter(db, {
-    now: () => currentNow,
+    now: (): number => currentNow,
     bus,
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: (name): AgentDescriptor | undefined =>
+      name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined,
   });
   return {
     db,
     bus,
     sessions,
     taskWriter,
-    setNow: (value: number) => {
+    setNow: (value: number): void => {
       currentNow = value;
     },
-    close: () => db.close(),
+    close: (): void => {
+      db.close();
+    },
   };
 }
 
@@ -93,6 +102,10 @@ function seedSession(
   );
 }
 
+function noopAttach(): void {
+  // Tracker attach hook is asserted via call counts elsewhere.
+}
+
 test("no live sessions: returns zero counts", async () => {
   const harness = createHarness();
   try {
@@ -101,7 +114,7 @@ test("no live sessions: returns zero counts", async () => {
       sessions: harness.sessions,
       taskWriter: harness.taskWriter,
       isChainAlive: () => false,
-      attachToTracker: () => {},
+      attachToTracker: noopAttach,
       bus: harness.bus,
       now: () => 1_234,
     });
@@ -271,7 +284,7 @@ test("dead chain with no open lease: marks task failed via best-effort update", 
       sessions: harness.sessions,
       taskWriter: harness.taskWriter,
       isChainAlive: () => false,
-      attachToTracker: () => {},
+      attachToTracker: noopAttach,
       bus: harness.bus,
       now: () => 8_000,
     });
@@ -301,7 +314,7 @@ test("idempotent rerun: second run has nothing left to clean", async () => {
       sessions: harness.sessions,
       taskWriter: harness.taskWriter,
       isChainAlive: () => false,
-      attachToTracker: () => {},
+      attachToTracker: noopAttach,
       bus: harness.bus,
       now: () => 10_000,
     });
@@ -310,7 +323,7 @@ test("idempotent rerun: second run has nothing left to clean", async () => {
       sessions: harness.sessions,
       taskWriter: harness.taskWriter,
       isChainAlive: () => false,
-      attachToTracker: () => {},
+      attachToTracker: noopAttach,
       bus: harness.bus,
       now: () => 11_000,
     });

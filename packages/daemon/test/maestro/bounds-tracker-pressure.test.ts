@@ -1,32 +1,43 @@
-import { beforeEach, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import {
-  buildServices,
-  loadSqliteVec,
-  migrate,
-  MaestroSessionWriter,
-  type Services,
-} from "@penumbra/core";
+import type { ProviderQuota, Services } from "@penumbra/core";
+
+import { buildServices, loadSqliteVec, MaestroSessionWriter, migrate } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { createBoundsCallbacks } from "../../src/maestro/bounds-callbacks.js";
 import { createBoundsTracker } from "../../src/maestro/bounds-tracker.js";
 
 if (process.platform === "darwin") {
   try {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-  } catch {}
+  } catch {
+    // Optional Homebrew SQLite is unavailable on non-local runners.
+  }
 }
 
-type AgentConfig = {
+interface AgentConfig {
   name: string;
   pricing_mode?: "api" | "subscription";
   subscription_provider?: string;
-};
+}
 
-type ProviderQuotaWithPressureCaps = {
+interface ProviderQuotaWithPressureCaps {
   provider: string;
   pressure_caps?: Record<string, { warn: number | null; refuse: number }>;
-};
+}
+
+function noopVoid(): void {
+  // Intentionally empty; supplied as a callback stub in test fixtures.
+}
+
+function trueProbe(): boolean {
+  return true;
+}
+
+function noopPromise(): Promise<void> {
+  return Promise.resolve();
+}
 
 function makeServices(opts: {
   agents: AgentConfig[];
@@ -35,26 +46,32 @@ function makeServices(opts: {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
+  const providerQuotas: ProviderQuota[] = opts.providerQuotas;
   const services = buildServices({
     env: {},
     input: {},
     storageRoot: "/tmp/penumbra-bounds-tracker-pressure-test",
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    providerQuotas: opts.providerQuotas as any,
+    providerQuotas,
     worktreeRootDir: "/tmp/penumbra-bounds-tracker-pressure-test/worktrees",
     mainRepoDir: "/tmp/penumbra-bounds-tracker-pressure-test/repo",
   });
-  (services as Services & { agentchatConfig?: any }).agentchatConfig = {
-    agents: opts.agents,
-    default_roles: {},
-    providers: opts.providerQuotas,
+  services.agentchatConfig = {
+    agents: opts.agents.map((agent) => ({
+      name: agent.name,
+      roles: [],
+      pricing_mode: agent.pricing_mode,
+      subscription_provider: agent.subscription_provider,
+    })),
   };
-  services.providerQuotas = opts.providerQuotas as any;
+  services.providerQuotas = providerQuotas;
   services.watchdog = {
-    recordHeartbeat: () => {},
-    hasActiveWorker: () => true,
-    tick: async () => {},
+    recordHeartbeat: noopVoid,
+    hasActiveWorker: trueProbe,
+    getStaleWorkers: (): string[] => [],
+    getStaleHeartbeatAges: (): { worker_id: string; last_seen_age_ms: number }[] => [],
+    tick: noopPromise,
   };
   return services;
 }
@@ -103,7 +120,7 @@ function seedTask(db: Database, taskId: string): void {
     1,
     "workflow",
     "test-suite",
-    0,
+    null,
     "orchestrate",
     "normal",
     "coordinate the run",
@@ -185,7 +202,7 @@ function seedPressureSnapshot(
 
 function seedSnapshots(
   services: Services,
-  snapshots: Array<Parameters<typeof seedPressureSnapshot>[1]>,
+  snapshots: Parameters<typeof seedPressureSnapshot>[1][],
 ): void {
   for (const snapshot of snapshots) {
     seedPressureSnapshot(services, snapshot);
@@ -193,37 +210,39 @@ function seedSnapshots(
   services.subscriptionPressureCache.refresh();
 }
 
+interface TrackerBundle {
+  tracker: ReturnType<typeof createBoundsTracker>;
+  hardKills: { axis: string }[];
+  softWarns: { task_id: string; outcome: unknown }[];
+  budgetSoftWarns: string[];
+}
+
 function makeTracker(
   services: Services,
   sessions: MaestroSessionWriter,
   now: () => number,
-): {
-  tracker: ReturnType<typeof createBoundsTracker>;
-  hardKills: Array<{ axis: string }>;
-  softWarns: Array<{ task_id: string; outcome: unknown }>;
-  budgetSoftWarns: string[];
-} {
-  const hardKills: Array<{ axis: string }> = [];
-  const softWarns: Array<{ task_id: string; outcome: unknown }> = [];
+): TrackerBundle {
+  const hardKills: { axis: string }[] = [];
+  const softWarns: { task_id: string; outcome: unknown }[] = [];
   const budgetSoftWarns: string[] = [];
   const callbacks = createBoundsCallbacks({
     db: services.db,
     services,
     taskWriter: {
-      fail: () => {},
+      fail: noopVoid,
     },
     sessions: {
-      terminate: (taskId, reason) => {
+      terminate: (taskId, reason): void => {
         sessions.terminate(taskId, reason);
       },
     },
     injector: {
-      inject: async () => {},
+      inject: noopPromise,
     },
     bus: {
-      publish: () => {},
+      publish: noopVoid,
     },
-    chainCancel: async () => {},
+    chainCancel: noopPromise,
     now,
   });
   return {
@@ -234,14 +253,14 @@ function makeTracker(
       db: services.db,
       sessions,
       now,
-      onSoftWarn: (session) => {
+      onSoftWarn: (session): void => {
         budgetSoftWarns.push(session.task_id);
       },
-      onHardKill: (session, axis) => {
+      onHardKill: (session, axis): void => {
         hardKills.push({ axis });
         callbacks.onHardKill(session, axis);
       },
-      onPressureSoftWarn: (session, outcome) => {
+      onPressureSoftWarn: (session, outcome): void => {
         softWarns.push({ task_id: session.task_id, outcome });
         callbacks.onPressureSoftWarn(session, outcome);
       },
@@ -259,7 +278,7 @@ test("subscription maestro at 96% on seven_day trips pressure_capped:over_thresh
       { provider: "anthropic", pressure_caps: { seven_day: { warn: null, refuse: 95 } } },
     ],
   });
-  const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
+  const sessions = new MaestroSessionWriter({ db: services.db, now: (): number => nowMs });
   seedTask(services.db, "task-1");
   startSession(sessions, {
     taskId: "task-1",
@@ -292,7 +311,7 @@ test("subscription maestro under cap does not pressure-trip and still obeys wall
       { provider: "anthropic", pressure_caps: { seven_day: { warn: null, refuse: 95 } } },
     ],
   });
-  const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
+  const sessions = new MaestroSessionWriter({ db: services.db, now: (): number => nowMs });
   seedTask(services.db, "task-2");
   startSession(sessions, {
     taskId: "task-2",
@@ -327,7 +346,7 @@ test("pricing_mode api skips pressure check and wall-clock still trips", () => {
       { provider: "anthropic", pressure_caps: { seven_day: { warn: null, refuse: 95 } } },
     ],
   });
-  const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
+  const sessions = new MaestroSessionWriter({ db: services.db, now: (): number => nowMs });
   seedTask(services.db, "task-3");
   startSession(sessions, {
     taskId: "task-3",
@@ -360,7 +379,7 @@ test("stale_warm pressure trips terminate with pressure_capped:stale_warm", () =
       { provider: "anthropic", pressure_caps: { seven_day: { warn: null, refuse: 95 } } },
     ],
   });
-  const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
+  const sessions = new MaestroSessionWriter({ db: services.db, now: (): number => nowMs });
   seedTask(services.db, "task-4");
   startSession(sessions, {
     taskId: "task-4",
@@ -393,7 +412,7 @@ test("pressure trip writes t0 event with tracker_tick trigger", () => {
       { provider: "anthropic", pressure_caps: { seven_day: { warn: null, refuse: 95 } } },
     ],
   });
-  const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
+  const sessions = new MaestroSessionWriter({ db: services.db, now: (): number => nowMs });
   seedTask(services.db, "task-5");
   startSession(sessions, {
     taskId: "task-5",
@@ -449,7 +468,7 @@ test("pressure trip preempts wall-clock termination", () => {
       { provider: "anthropic", pressure_caps: { seven_day: { warn: null, refuse: 95 } } },
     ],
   });
-  const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
+  const sessions = new MaestroSessionWriter({ db: services.db, now: (): number => nowMs });
   seedTask(services.db, "task-6");
   startSession(sessions, {
     taskId: "task-6",
@@ -482,7 +501,7 @@ test("pressure trip fires every tick even when wall-clock/cost/sub_dispatches ar
       { provider: "anthropic", pressure_caps: { seven_day: { warn: null, refuse: 95 } } },
     ],
   });
-  const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
+  const sessions = new MaestroSessionWriter({ db: services.db, now: (): number => nowMs });
   seedTask(services.db, "task-7");
   // generous wall-clock budget so it cannot trip on its own
   startSession(sessions, {
@@ -518,7 +537,7 @@ test("pressure warn soft-injects once and skips the budget warn path", () => {
       { provider: "anthropic", pressure_caps: { seven_day: { warn: 70, refuse: 95 } } },
     ],
   });
-  const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
+  const sessions = new MaestroSessionWriter({ db: services.db, now: (): number => nowMs });
   seedTask(services.db, "task-8");
   startSession(sessions, {
     taskId: "task-8",
@@ -555,7 +574,7 @@ test("pressure warn does not re-fire once soft_warned_at is already set", () => 
       { provider: "anthropic", pressure_caps: { seven_day: { warn: 70, refuse: 95 } } },
     ],
   });
-  const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
+  const sessions = new MaestroSessionWriter({ db: services.db, now: (): number => nowMs });
   seedTask(services.db, "task-9");
   startSession(sessions, {
     taskId: "task-9",
@@ -591,7 +610,7 @@ test("pressure refuse still hard-kills after a previous warn", () => {
       { provider: "anthropic", pressure_caps: { seven_day: { warn: 70, refuse: 95 } } },
     ],
   });
-  const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
+  const sessions = new MaestroSessionWriter({ db: services.db, now: (): number => nowMs });
   seedTask(services.db, "task-10");
   startSession(sessions, {
     taskId: "task-10",
