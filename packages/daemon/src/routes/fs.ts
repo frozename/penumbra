@@ -1,26 +1,226 @@
-import type { Services } from "@penumbra/core";
-import type { DaemonServices } from "../serve.js";
-import { resolveInsideWorktree, FsPathError } from "@penumbra/core";
-import { executeGlob, executeGrep, GrepError } from "../fs-search.js";
+import type { HandoffRow, Services } from "@penumbra/core";
+
+import { FsPathError, resolveInsideWorktree } from "@penumbra/core";
+import { spawn } from "node:child_process";
 import * as fsNode from "node:fs";
 import * as path from "node:path";
-import { spawn } from "node:child_process";
 
-import { json } from "./_helpers.js";
-import { resolveWorktreeForHandoff } from "./worktree-resolve.js";
+import type { DaemonServices } from "../serve.js";
+
 import { getPrincipal } from "../auth.js";
+import { executeGlob, executeGrep, GrepError, type GrepOutputMode } from "../fs-search.js";
+import { bodyJson, json } from "./_helpers.js";
+import { resolveWorktreeForHandoff } from "./worktree-resolve.js";
 
 const FS_READ_MAX_BYTES = 1024 * 1024; // 1 MiB
+
+type RouteWorktree = NonNullable<ReturnType<typeof resolveWorktreeForHandoff>>;
+
+interface RouteContext {
+  handoff: HandoffRow | null;
+  services: DaemonServices;
+  wt: RouteWorktree;
+}
+
+interface OutputBuffer {
+  chunks: Buffer[];
+  bytes: number;
+  truncated: boolean;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function requestBody(req: Request): Promise<Record<string, unknown>> {
+  const raw = await bodyJson(req);
+  return isRecord(raw) ? raw : {};
+}
+
+function invalidArgs(message: string): Response {
+  return json({ error: { code: "invalid_args", message } }, 400);
+}
+
+function requiredNonEmptyString(body: Record<string, unknown>, key: string): string | null {
+  const value = body[key];
+  return typeof value === "string" && value !== "" ? value : null;
+}
+
+function optionalString(body: Record<string, unknown>, key: string): string | null {
+  const value = body[key];
+  return typeof value === "string" ? value : null;
+}
+
+function optionalNumber(body: Record<string, unknown>, key: string): number | null {
+  const value = body[key];
+  return typeof value === "number" ? value : null;
+}
+
+function optionalBooleanTrue(body: Record<string, unknown>, key: string): boolean {
+  return body[key] === true;
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function internalErrorResponse(err: unknown): Response {
+  return json({ error: { code: "internal_error", message: errorMessage(err) } }, 500);
+}
+
+function fsPathErrorResponse(err: FsPathError): Response {
+  return json(
+    { error: { code: err.code, message: err.message } },
+    err.code === "outside_worktree" ? 400 : 404,
+  );
+}
+
+function getRouteContext(
+  req: Request,
+  handoffId: string,
+  _services: Services,
+): RouteContext | Response {
+  const services = _services as DaemonServices;
+  const wt = resolveWorktreeForHandoff(services, handoffId);
+  if (!wt) {
+    return json(
+      { error: { code: "not_found", message: `worktree for handoff ${handoffId} not found` } },
+      404,
+    );
+  }
+
+  const handoff = services.handoffReader.get(handoffId);
+  const ownershipDenied = checkWorkerOwnership(req, handoff?.worker_id);
+  if (ownershipDenied !== null) return ownershipDenied;
+
+  return { handoff, services, wt };
+}
+
+async function resolvePathOrResponse(
+  inputPath: string,
+  worktreePath: string,
+): Promise<string | Response> {
+  try {
+    return await resolveInsideWorktree(inputPath, worktreePath);
+  } catch (err) {
+    if (err instanceof FsPathError) {
+      return fsPathErrorResponse(err);
+    }
+    throw err;
+  }
+}
+
+function isInside(parent: string, candidate: string): boolean {
+  const relative = path.relative(parent, candidate);
+  return !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function realpathOrSelf(inputPath: string): string {
+  try {
+    return fsNode.realpathSync(inputPath);
+  } catch {
+    return inputPath;
+  }
+}
+
+function cleanupTempFile(tmpFile: string): void {
+  try {
+    fsNode.unlinkSync(tmpFile);
+  } catch {
+    // Best-effort cleanup only.
+  }
+}
+
+function tempFilePath(dir: string, prefix: string): string {
+  return path.join(dir, `.${prefix}-${process.pid.toString()}-${Date.now().toString()}.tmp`);
+}
+
+function atomicWrite(targetPath: string, content: string, prefix: string): void {
+  const dir = path.dirname(targetPath);
+  const tmpFile = tempFilePath(dir, prefix);
+  try {
+    fsNode.writeFileSync(tmpFile, content, "utf8");
+    fsNode.renameSync(tmpFile, targetPath);
+  } catch (err) {
+    cleanupTempFile(tmpFile);
+    throw err;
+  }
+}
+
+function resolveWriteTarget(bodyPath: string, worktreePath: string): string | Response {
+  const worktreeAbs = path.resolve(worktreePath);
+  const candidate = path.isAbsolute(bodyPath)
+    ? path.resolve(bodyPath)
+    : path.resolve(worktreeAbs, bodyPath);
+
+  if (!isInside(worktreeAbs, candidate)) {
+    return json(
+      {
+        error: {
+          code: "outside_worktree",
+          message: `path "${bodyPath}" resolves outside worktree`,
+        },
+      },
+      400,
+    );
+  }
+
+  const dir = path.dirname(candidate);
+  fsNode.mkdirSync(dir, { recursive: true });
+
+  const realDir = realpathOrSelf(dir);
+  const worktreeReal = realpathOrSelf(worktreeAbs);
+  if (!isInside(worktreeReal, realDir)) {
+    return json(
+      {
+        error: {
+          code: "outside_worktree",
+          message: `parent directory of "${bodyPath}" resolves outside worktree via symlink`,
+        },
+      },
+      400,
+    );
+  }
+
+  return path.join(realDir, path.basename(candidate));
+}
+
+function outputMode(value: unknown): GrepOutputMode | null {
+  return value === "files_with_matches" || value === "content" ? value : null;
+}
+
+function appendOutputChunk(buffer: OutputBuffer, chunk: Buffer): void {
+  if (buffer.bytes >= EXEC_OUTPUT_MAX_BYTES) return;
+
+  const remaining = EXEC_OUTPUT_MAX_BYTES - buffer.bytes;
+  if (chunk.length > remaining) {
+    buffer.chunks.push(chunk.subarray(0, remaining));
+    buffer.bytes += remaining;
+    buffer.truncated = true;
+    return;
+  }
+
+  buffer.chunks.push(chunk);
+  buffer.bytes += chunk.length;
+}
+
+function outputBufferToString(buffer: OutputBuffer): string {
+  return Buffer.concat(buffer.chunks).toString("utf8");
+}
 
 export function checkWorkerOwnership(
   req: Request,
   handoffWorkerId: string | null | undefined,
 ): Response | null {
   const principal = getPrincipal(req);
-  if (principal === null || principal.kind !== "worker") {
+  if (principal?.kind !== "worker") {
     return null;
   }
-  if (handoffWorkerId == null || principal.worker_id !== handoffWorkerId) {
+  if (
+    handoffWorkerId === null ||
+    handoffWorkerId === undefined ||
+    principal.worker_id !== handoffWorkerId
+  ) {
     return Response.json(
       {
         error: {
@@ -39,43 +239,15 @@ export async function worktreesReadRoute(
   handoff_id: string,
   _services: Services,
 ): Promise<Response> {
-  const services = _services as DaemonServices;
-  const wt = resolveWorktreeForHandoff(services, handoff_id);
-  if (!wt) {
-    return json(
-      { error: { code: "not_found", message: `worktree for handoff ${handoff_id} not found` } },
-      404,
-    );
-  }
-  const ownershipDenied = checkWorkerOwnership(
-    req,
-    services.handoffReader.get(handoff_id)?.worker_id,
-  );
-  if (ownershipDenied !== null) return ownershipDenied;
+  const context = getRouteContext(req, handoff_id, _services);
+  if (context instanceof Response) return context;
 
-  let body: any;
-  try {
-    body = await req.json();
-  } catch {
-    body = {};
-  }
+  const body = await requestBody(req);
+  const bodyPath = requiredNonEmptyString(body, "path");
+  if (bodyPath === null) return invalidArgs("path (string) required");
 
-  if (!body?.path || typeof body.path !== "string") {
-    return json({ error: { code: "invalid_args", message: "path (string) required" } }, 400);
-  }
-
-  let resolvedPath: string;
-  try {
-    resolvedPath = await resolveInsideWorktree(body.path, wt.path);
-  } catch (err) {
-    if (err instanceof FsPathError) {
-      return json(
-        { error: { code: err.code, message: err.message } },
-        err.code === "outside_worktree" ? 400 : 404,
-      );
-    }
-    throw err;
-  }
+  const resolvedPath = await resolvePathOrResponse(bodyPath, context.wt.path);
+  if (resolvedPath instanceof Response) return resolvedPath;
 
   try {
     const stat = fsNode.statSync(resolvedPath);
@@ -91,15 +263,14 @@ export async function worktreesReadRoute(
       fsNode.closeSync(fd);
     }
 
-    const relativePath = body.path;
     return json({
       content: buf.toString("utf8"),
-      path: relativePath,
+      path: bodyPath,
       bytes: totalBytes,
       truncated,
     });
-  } catch (err: any) {
-    return json({ error: { code: "internal_error", message: err?.message ?? String(err) } }, 500);
+  } catch (err) {
+    return internalErrorResponse(err);
   }
 }
 export async function worktreesWriteRoute(
@@ -107,104 +278,27 @@ export async function worktreesWriteRoute(
   handoff_id: string,
   _services: Services,
 ): Promise<Response> {
-  const services = _services as DaemonServices;
-  const wt = resolveWorktreeForHandoff(services, handoff_id);
-  if (!wt) {
-    return json(
-      { error: { code: "not_found", message: `worktree for handoff ${handoff_id} not found` } },
-      404,
-    );
-  }
-  const ownershipDenied = checkWorkerOwnership(
-    req,
-    services.handoffReader.get(handoff_id)?.worker_id,
-  );
-  if (ownershipDenied !== null) return ownershipDenied;
+  const context = getRouteContext(req, handoff_id, _services);
+  if (context instanceof Response) return context;
 
-  let body: any;
-  try {
-    body = await req.json();
-  } catch {
-    body = {};
-  }
+  const body = await requestBody(req);
+  const bodyPath = requiredNonEmptyString(body, "path");
+  if (bodyPath === null) return invalidArgs("path (string) required");
 
-  if (!body?.path || typeof body.path !== "string") {
-    return json({ error: { code: "invalid_args", message: "path (string) required" } }, 400);
-  }
-  if (body.content === undefined || body.content === null || typeof body.content !== "string") {
-    return json({ error: { code: "invalid_args", message: "content (string) required" } }, 400);
-  }
-
-  // resolveInsideWorktree always throws not_found for non-existent targets (correct for reads,
-  // wrong for writes). We need our own validation that handles files that don't yet exist.
-  const worktreeAbs = path.resolve(wt.path);
-  const candidate = path.isAbsolute(body.path)
-    ? path.resolve(body.path)
-    : path.resolve(worktreeAbs, body.path);
-
-  // Literal path escape check (catches ../). Require candidate is strictly inside worktree.
-  const rel = path.relative(worktreeAbs, candidate);
-  if (rel.startsWith("..") || path.isAbsolute(rel)) {
-    return json(
-      {
-        error: {
-          code: "outside_worktree",
-          message: `path "${body.path}" resolves outside worktree`,
-        },
-      },
-      400,
-    );
-  }
+  const content = optionalString(body, "content");
+  if (content === null) return invalidArgs("content (string) required");
 
   try {
-    const existed = fsNode.existsSync(candidate);
-    const dir = path.dirname(candidate);
-    fsNode.mkdirSync(dir, { recursive: true });
+    const resolvedPath = resolveWriteTarget(bodyPath, context.wt.path);
+    if (resolvedPath instanceof Response) return resolvedPath;
 
-    // Symlink-escape check on the now-existing parent.
-    let realDir: string;
-    try {
-      realDir = fsNode.realpathSync(dir);
-    } catch {
-      realDir = dir;
-    }
-    const worktreeReal = (() => {
-      try {
-        return fsNode.realpathSync(worktreeAbs);
-      } catch {
-        return worktreeAbs;
-      }
-    })();
-    const relDir = path.relative(worktreeReal, realDir);
-    if (relDir.startsWith("..") || path.isAbsolute(relDir)) {
-      return json(
-        {
-          error: {
-            code: "outside_worktree",
-            message: `parent directory of "${body.path}" resolves outside worktree via symlink`,
-          },
-        },
-        400,
-      );
-    }
+    const existed = fsNode.existsSync(resolvedPath);
+    atomicWrite(resolvedPath, content, "penumbra-write");
 
-    // Atomic write: write to a temp file then rename so partial content is never visible.
-    const resolvedPath = path.join(realDir, path.basename(candidate));
-    const tmpFile = path.join(realDir, `.penumbra-write-${process.pid}-${Date.now()}.tmp`);
-    try {
-      fsNode.writeFileSync(tmpFile, body.content, "utf8");
-      fsNode.renameSync(tmpFile, resolvedPath);
-    } catch (err) {
-      try {
-        fsNode.unlinkSync(tmpFile);
-      } catch {}
-      throw err;
-    }
-
-    const bytes_written = Buffer.byteLength(body.content, "utf8");
-    return json({ path: body.path, bytes_written, created: !existed });
-  } catch (err: any) {
-    return json({ error: { code: "internal_error", message: err?.message ?? String(err) } }, 500);
+    const bytes_written = Buffer.byteLength(content, "utf8");
+    return json({ path: bodyPath, bytes_written, created: !existed });
+  } catch (err) {
+    return internalErrorResponse(err);
   }
 }
 
@@ -213,66 +307,38 @@ export async function worktreesEditRoute(
   handoff_id: string,
   _services: Services,
 ): Promise<Response> {
-  const services = _services as DaemonServices;
-  const wt = resolveWorktreeForHandoff(services, handoff_id);
-  if (!wt) {
-    return json(
-      { error: { code: "not_found", message: `worktree for handoff ${handoff_id} not found` } },
-      404,
-    );
-  }
-  const ownershipDenied = checkWorkerOwnership(
-    req,
-    services.handoffReader.get(handoff_id)?.worker_id,
-  );
-  if (ownershipDenied !== null) return ownershipDenied;
+  const context = getRouteContext(req, handoff_id, _services);
+  if (context instanceof Response) return context;
 
-  let body: any;
-  try {
-    body = await req.json();
-  } catch {
-    body = {};
-  }
+  const body = await requestBody(req);
+  const bodyPath = requiredNonEmptyString(body, "path");
+  if (bodyPath === null) return invalidArgs("path (string) required");
 
-  if (!body?.path || typeof body.path !== "string") {
-    return json({ error: { code: "invalid_args", message: "path (string) required" } }, 400);
-  }
-  if (typeof body.old_string !== "string") {
-    return json({ error: { code: "invalid_args", message: "old_string (string) required" } }, 400);
-  }
-  if (typeof body.new_string !== "string") {
-    return json({ error: { code: "invalid_args", message: "new_string (string) required" } }, 400);
-  }
-  if (body.old_string === body.new_string) {
+  const oldString = optionalString(body, "old_string");
+  if (oldString === null) return invalidArgs("old_string (string) required");
+
+  const newString = optionalString(body, "new_string");
+  if (newString === null) return invalidArgs("new_string (string) required");
+
+  if (oldString === newString) {
     return json(
       { error: { code: "no_op", message: "old_string and new_string are identical" } },
       400,
     );
   }
 
-  const replace_all = body.replace_all === true;
-
-  let resolvedPath: string;
-  try {
-    resolvedPath = await resolveInsideWorktree(body.path, wt.path);
-  } catch (err) {
-    if (err instanceof FsPathError) {
-      return json(
-        { error: { code: err.code, message: err.message } },
-        err.code === "outside_worktree" ? 400 : 404,
-      );
-    }
-    throw err;
-  }
+  const replace_all = optionalBooleanTrue(body, "replace_all");
+  const resolvedPath = await resolvePathOrResponse(bodyPath, context.wt.path);
+  if (resolvedPath instanceof Response) return resolvedPath;
 
   try {
     const content = fsNode.readFileSync(resolvedPath, "utf8");
 
     let count = 0;
     let idx = 0;
-    while ((idx = content.indexOf(body.old_string, idx)) !== -1) {
+    while ((idx = content.indexOf(oldString, idx)) !== -1) {
       count++;
-      idx += body.old_string.length;
+      idx += oldString.length;
     }
 
     if (count === 0) {
@@ -286,7 +352,7 @@ export async function worktreesEditRoute(
         {
           error: {
             code: "string_not_unique",
-            message: `old_string appears ${count} times; pass replace_all:true to replace all`,
+            message: `old_string appears ${count.toString()} times; pass replace_all:true to replace all`,
           },
         },
         422,
@@ -294,24 +360,14 @@ export async function worktreesEditRoute(
     }
 
     const updated = replace_all
-      ? content.split(body.old_string).join(body.new_string)
-      : content.replace(body.old_string, body.new_string);
+      ? content.split(oldString).join(newString)
+      : content.replace(oldString, newString);
 
-    const dir = path.dirname(resolvedPath);
-    const tmpFile = path.join(dir, `.penumbra-edit-${process.pid}-${Date.now()}.tmp`);
-    try {
-      fsNode.writeFileSync(tmpFile, updated, "utf8");
-      fsNode.renameSync(tmpFile, resolvedPath);
-    } catch (err) {
-      try {
-        fsNode.unlinkSync(tmpFile);
-      } catch {}
-      throw err;
-    }
+    atomicWrite(resolvedPath, updated, "penumbra-edit");
 
-    return json({ path: body.path, replacements: count });
-  } catch (err: any) {
-    return json({ error: { code: "internal_error", message: err?.message ?? String(err) } }, 500);
+    return json({ path: bodyPath, replacements: count });
+  } catch (err) {
+    return internalErrorResponse(err);
   }
 }
 
@@ -320,59 +376,35 @@ export async function worktreesGlobRoute(
   handoff_id: string,
   _services: Services,
 ): Promise<Response> {
-  const services = _services as DaemonServices;
-  const wt = resolveWorktreeForHandoff(services, handoff_id);
-  if (!wt) {
-    return json(
-      { error: { code: "not_found", message: `worktree for handoff ${handoff_id} not found` } },
-      404,
-    );
-  }
-  const ownershipDenied = checkWorkerOwnership(
-    req,
-    services.handoffReader.get(handoff_id)?.worker_id,
-  );
-  if (ownershipDenied !== null) return ownershipDenied;
+  const context = getRouteContext(req, handoff_id, _services);
+  if (context instanceof Response) return context;
 
-  let body: any;
-  try {
-    body = await req.json();
-  } catch {
-    body = {};
-  }
+  const body = await requestBody(req);
+  const pattern = requiredNonEmptyString(body, "pattern");
+  if (pattern === null) return invalidArgs("pattern (string) required");
 
-  if (!body?.pattern || typeof body.pattern !== "string") {
-    return json({ error: { code: "invalid_args", message: "pattern (string) required" } }, 400);
-  }
-
-  if (body.path) {
-    try {
-      body.path = await resolveInsideWorktree(body.path, wt.path);
-    } catch (err) {
-      if (err instanceof FsPathError) {
-        return json(
-          { error: { code: err.code, message: err.message } },
-          err.code === "outside_worktree" ? 400 : 404,
-        );
-      }
-      throw err;
-    }
+  let searchPath: string | null = null;
+  const requestedPath = optionalString(body, "path");
+  if (requestedPath !== null) {
+    const resolvedPath = await resolvePathOrResponse(requestedPath, context.wt.path);
+    if (resolvedPath instanceof Response) return resolvedPath;
+    searchPath = resolvedPath;
   }
 
   try {
     return json(
       await executeGlob(
         {
-          pattern: body.pattern,
-          path: body.path ?? null,
-          max_results: typeof body.max_results === "number" ? body.max_results : null,
-          include_ignored: body.include_ignored === true,
+          pattern,
+          path: searchPath,
+          max_results: optionalNumber(body, "max_results"),
+          include_ignored: optionalBooleanTrue(body, "include_ignored"),
         },
-        wt.path,
+        context.wt.path,
       ),
     );
-  } catch (err: any) {
-    return json({ error: { code: "internal_error", message: err?.message ?? String(err) } }, 500);
+  } catch (err) {
+    return internalErrorResponse(err);
   }
 }
 
@@ -381,75 +413,42 @@ export async function worktreesGrepRoute(
   handoff_id: string,
   _services: Services,
 ): Promise<Response> {
-  const services = _services as DaemonServices;
-  const wt = resolveWorktreeForHandoff(services, handoff_id);
-  if (!wt) {
-    return json(
-      { error: { code: "not_found", message: `worktree for handoff ${handoff_id} not found` } },
-      404,
-    );
-  }
-  const ownershipDenied = checkWorkerOwnership(
-    req,
-    services.handoffReader.get(handoff_id)?.worker_id,
-  );
-  if (ownershipDenied !== null) return ownershipDenied;
+  const context = getRouteContext(req, handoff_id, _services);
+  if (context instanceof Response) return context;
 
-  let body: any;
-  try {
-    body = await req.json();
-  } catch {
-    body = {};
-  }
+  const body = await requestBody(req);
+  const pattern = requiredNonEmptyString(body, "pattern");
+  if (pattern === null) return invalidArgs("pattern (string) required");
 
-  if (!body?.pattern || typeof body.pattern !== "string") {
-    return json({ error: { code: "invalid_args", message: "pattern (string) required" } }, 400);
-  }
-
-  if (body.path) {
-    try {
-      body.path = await resolveInsideWorktree(body.path, wt.path);
-    } catch (err) {
-      if (err instanceof FsPathError) {
-        return json(
-          { error: { code: err.code, message: err.message } },
-          err.code === "outside_worktree" ? 400 : 404,
-        );
-      }
-      throw err;
-    }
+  let searchPath: string | null = null;
+  const requestedPath = optionalString(body, "path");
+  if (requestedPath !== null) {
+    const resolvedPath = await resolvePathOrResponse(requestedPath, context.wt.path);
+    if (resolvedPath instanceof Response) return resolvedPath;
+    searchPath = resolvedPath;
   }
 
   try {
     return json(
       await executeGrep(
         {
-          pattern: body.pattern,
-          path: body.path ?? null,
-          glob: body.glob ?? null,
-          output_mode: body.output_mode ?? "content",
-          case_insensitive: body.case_insensitive === true,
-          include_ignored: body.include_ignored === true,
-          max_results: typeof body.max_results === "number" ? body.max_results : null,
+          pattern,
+          path: searchPath,
+          glob: optionalString(body, "glob"),
+          output_mode: outputMode(body.output_mode) ?? "content",
+          case_insensitive: optionalBooleanTrue(body, "case_insensitive"),
+          include_ignored: optionalBooleanTrue(body, "include_ignored"),
+          max_results: optionalNumber(body, "max_results"),
         },
-        wt.path,
+        context.wt.path,
       ),
     );
   } catch (err) {
     if (err instanceof GrepError) {
-      const status =
-        err.code === "bad_pattern" ? 400 : err.code === "engine_unavailable" ? 500 : 500;
+      const status = err.code === "bad_pattern" ? 400 : 500;
       return json({ error: { code: err.code, message: err.message } }, status);
     }
-    return json(
-      {
-        error: {
-          code: "internal_error",
-          message: err instanceof Error ? err.message : String(err),
-        },
-      },
-      500,
-    );
+    return internalErrorResponse(err);
   }
 }
 
@@ -462,37 +461,18 @@ export async function worktreesExecRoute(
   handoff_id: string,
   _services: Services,
 ): Promise<Response> {
-  const services = _services as DaemonServices;
-  const wt = resolveWorktreeForHandoff(services, handoff_id);
-  if (!wt) {
-    return json(
-      { error: { code: "not_found", message: `worktree for handoff ${handoff_id} not found` } },
-      404,
-    );
-  }
-  const handoff = services.handoffReader.get(handoff_id);
-  const ownershipDenied = checkWorkerOwnership(req, handoff?.worker_id);
-  if (ownershipDenied !== null) return ownershipDenied;
+  const context = getRouteContext(req, handoff_id, _services);
+  if (context instanceof Response) return context;
 
-  let body: any;
-  try {
-    body = await req.json();
-  } catch {
-    body = {};
-  }
+  const body = await requestBody(req);
+  const command = optionalString(body, "command");
+  if (command === null || command.trim() === "")
+    return invalidArgs("command (non-empty string) required");
 
-  if (!body?.command || typeof body.command !== "string" || body.command.trim() === "") {
-    return json(
-      { error: { code: "invalid_args", message: "command (non-empty string) required" } },
-      400,
-    );
-  }
-
-  const rawTimeout =
-    typeof body.timeout_ms === "number" ? body.timeout_ms : EXEC_DEFAULT_TIMEOUT_MS;
+  const rawTimeout = optionalNumber(body, "timeout_ms") ?? EXEC_DEFAULT_TIMEOUT_MS;
   const timeout_ms = Math.min(Math.max(1, rawTimeout), EXEC_MAX_TIMEOUT_MS);
 
-  const shellConfig = services.shellConfig;
+  const shellConfig = context.services.shellConfig;
   if (!shellConfig || typeof shellConfig.dangerousCommandsForAgent !== "function") {
     return json(
       {
@@ -504,9 +484,9 @@ export async function worktreesExecRoute(
       503,
     );
   }
-  const agentName = (handoff as any)?.to_agent ?? null;
+  const agentName = context.handoff?.to_agent ?? "";
   const dangerousPatterns: string[] = shellConfig.dangerousCommandsForAgent(agentName);
-  const normalizedCommand = body.command.replace(/\s+/g, " ");
+  const normalizedCommand = command.split(/\s+/).join(" ");
   const matched = dangerousPatterns.filter((pattern: string) => {
     try {
       return new RegExp(pattern).test(normalizedCommand);
@@ -519,51 +499,26 @@ export async function worktreesExecRoute(
     return json({ error: { code: "dangerous_command", matched } }, 403);
   }
 
-  const cwd = (() => {
+  const cwd = ((): string => {
     try {
-      return fsNode.realpathSync(wt.path);
+      return fsNode.realpathSync(context.wt.path);
     } catch {
-      return wt.path;
+      return context.wt.path;
     }
   })();
 
-  return new Promise<Response>((resolve) => {
-    const child = spawn(body.command, { shell: true, cwd });
+  return await new Promise<Response>((resolve) => {
+    const child = spawn(command, { shell: true, cwd, stdio: ["ignore", "pipe", "pipe"] });
 
-    const stdoutChunks: Buffer[] = [];
-    let stdoutBytes = 0;
-    let stdoutTruncated = false;
+    const stdoutBuffer: OutputBuffer = { chunks: [], bytes: 0, truncated: false };
+    const stderrBuffer: OutputBuffer = { chunks: [], bytes: 0, truncated: false };
 
-    const stderrChunks: Buffer[] = [];
-    let stderrBytes = 0;
-    let stderrTruncated = false;
-
-    child.stdout!.on("data", (chunk: Buffer) => {
-      if (stdoutBytes < EXEC_OUTPUT_MAX_BYTES) {
-        const remaining = EXEC_OUTPUT_MAX_BYTES - stdoutBytes;
-        if (chunk.length > remaining) {
-          stdoutChunks.push(chunk.subarray(0, remaining));
-          stdoutBytes += remaining;
-          stdoutTruncated = true;
-        } else {
-          stdoutChunks.push(chunk);
-          stdoutBytes += chunk.length;
-        }
-      }
+    child.stdout.on("data", (chunk: Buffer) => {
+      appendOutputChunk(stdoutBuffer, chunk);
     });
 
-    child.stderr!.on("data", (chunk: Buffer) => {
-      if (stderrBytes < EXEC_OUTPUT_MAX_BYTES) {
-        const remaining = EXEC_OUTPUT_MAX_BYTES - stderrBytes;
-        if (chunk.length > remaining) {
-          stderrChunks.push(chunk.subarray(0, remaining));
-          stderrBytes += remaining;
-          stderrTruncated = true;
-        } else {
-          stderrChunks.push(chunk);
-          stderrBytes += chunk.length;
-        }
-      }
+    child.stderr.on("data", (chunk: Buffer) => {
+      appendOutputChunk(stderrBuffer, chunk);
     });
 
     let settled = false;
@@ -573,14 +528,16 @@ export async function worktreesExecRoute(
       settled = true;
       try {
         child.kill("SIGKILL");
-      } catch {}
+      } catch {
+        // Best-effort timeout cleanup only.
+      }
       resolve(
         json({
-          stdout: Buffer.concat(stdoutChunks).toString("utf8"),
-          stderr: Buffer.concat(stderrChunks).toString("utf8"),
+          stdout: outputBufferToString(stdoutBuffer),
+          stderr: outputBufferToString(stderrBuffer),
           exit_code: null,
           timed_out: true,
-          truncated: stdoutTruncated || stderrTruncated,
+          truncated: stdoutBuffer.truncated || stderrBuffer.truncated,
         }),
       );
     }, timeout_ms);
@@ -591,11 +548,11 @@ export async function worktreesExecRoute(
       clearTimeout(timer);
       resolve(
         json({
-          stdout: Buffer.concat(stdoutChunks).toString("utf8"),
-          stderr: Buffer.concat(stderrChunks).toString("utf8"),
+          stdout: outputBufferToString(stdoutBuffer),
+          stderr: outputBufferToString(stderrBuffer),
           exit_code: code,
           timed_out: false,
-          truncated: stdoutTruncated || stderrTruncated,
+          truncated: stdoutBuffer.truncated || stderrBuffer.truncated,
         }),
       );
     });

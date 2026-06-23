@@ -5,7 +5,7 @@ export function json(body: unknown, status = 200): Response {
   });
 }
 
-export async function bodyJson(req: Request): Promise<unknown | null> {
+export async function bodyJson(req: Request): Promise<unknown> {
   try {
     return await req.json();
   } catch {
