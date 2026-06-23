@@ -1,30 +1,32 @@
-import { z } from "zod";
-import type { ChainStartRequest, Services, CapCheckRefuse } from "@penumbra/core";
+import { ChainStartResponseSchema } from "@penumbra/api-contract";
+import { WORKLOADS } from "@penumbra/config";
 import {
+  type AgentRecommendation,
+  type AgentTaskType,
+  type CapCheckRefuse,
+  type ChainStartRequest,
   ChainStartRequestSchema,
   checkPressureCap,
   HandoffStatusSchema,
-  inspectPromptVsProject,
   inferAgentTaskTypeForRole,
   insertLane,
+  inspectPromptVsProject,
   MaestroSessionWriter,
-  routeAgent,
-  type AgentRecommendation,
-  type AgentTaskType,
-  type RecallResult,
-  type TaskClass,
   RecallRequestSchema,
+  type RecallResult,
+  routeAgent,
+  type Services,
+  type TaskClass,
 } from "@penumbra/core";
-import { ChainStartResponseSchema } from "@penumbra/api-contract";
-import { WORKLOADS } from "@penumbra/config";
-import { supportsMidSessionInject, type AcpWorkerManagerLike } from "../maestro/acp-injector.js";
-import { enforceMaestroBudget } from "../maestro/chain-budget-gate.js";
-import { buildProviderCaps } from "../maestro/build-provider-caps.js";
+import { z } from "zod";
+
 import { autoRecallForDispatch } from "../dispatch/auto-recall.js";
 import { stampPrompt } from "../long-lived/prompt-stamper.js";
-import { resolveSingleRoute } from "./role-routing.js";
-
+import { supportsMidSessionInject } from "../maestro/acp-injector.js";
+import { buildProviderCaps } from "../maestro/build-provider-caps.js";
+import { enforceMaestroBudget } from "../maestro/chain-budget-gate.js";
 import { json } from "./_helpers.js";
+import { resolveSingleRoute } from "./role-routing.js";
 interface InitialRoute {
   agent: string;
   role: string | null;
@@ -32,12 +34,12 @@ interface InitialRoute {
 }
 
 type AgentChatConfigLike = {
-  agents?: Array<{
+  agents?: {
     name: string;
     pricing_mode?: "api" | "subscription";
     subscription_provider?: string;
     subscription_model?: string;
-  }>;
+  }[];
 };
 
 type ChainStartRequestWithLongLived = Omit<ChainStartRequest, "dispatch_kind"> & {
@@ -95,6 +97,16 @@ type RoutingWarningPayload = {
 type RoutingAdvisoryPayload = {
   code: "project_registry_unavailable";
 };
+
+function collectSyntheticCaps(
+  services: Services,
+): Record<string, { max_dispatches: number; window_seconds: number }> {
+  const syntheticCaps: Record<string, { max_dispatches: number; window_seconds: number }> = {};
+  for (const quota of services.providerQuotas) {
+    if (quota.synthetic_cap) syntheticCaps[quota.provider] = quota.synthetic_cap;
+  }
+  return syntheticCaps;
+}
 
 function workerHeartbeatGuard(services: Services): Response | null {
   const timeoutMsStr = process.env.PENUMBRA_WORKER_HEARTBEAT_TIMEOUT_MS;
@@ -189,7 +201,8 @@ function resolveWorkflowDispatchExemption(
   const info = services.workflowRuns.verify(input.workflow_run_id);
   if (!info) return { ok: false, reason: "unknown_workflow_run_id" };
   if (
-    input.project_id != null &&
+    input.project_id !== null &&
+    input.project_id !== undefined &&
     info.project_id !== null &&
     info.project_id !== input.project_id
   ) {
@@ -210,23 +223,26 @@ function editDistance(a: string, b: string): number {
   if (a.length === 0) return b.length;
   if (b.length === 0) return a.length;
 
-  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
-  let curr = new Array<number>(b.length + 1).fill(0);
+  let prev: number[] = Array.from({ length: b.length + 1 }, (_, i) => i);
+  let curr: number[] = new Array<number>(b.length + 1).fill(0);
   for (let i = 1; i <= a.length; i++) {
     curr[0] = i;
     for (let j = 1; j <= b.length; j++) {
       const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      curr[j] = Math.min(prev[j]! + 1, curr[j - 1]! + 1, prev[j - 1]! + cost);
+      const above = prev[j] ?? 0;
+      const left = curr[j - 1] ?? 0;
+      const diag = prev[j - 1] ?? 0;
+      curr[j] = Math.min(above + 1, left + 1, diag + cost);
     }
     [prev, curr] = [curr, prev];
   }
-  return prev[b.length]!;
+  return prev[b.length] ?? 0;
 }
 
 function getNearestAgents(initialAgent: string, registry: string[]): string[] {
   const seen = new Set<string>();
   const lowerInitial = initialAgent.toLowerCase();
-  const add = (name: string) => {
+  const add = (name: string): void => {
     if (!seen.has(name)) seen.add(name);
   };
 
@@ -270,6 +286,115 @@ function canBypassExplicitProjectIdGate(
   return thoughtAnalyzerExemption.ok;
 }
 
+function validationErrorResponse(field_errors: { path: string[]; message: string }[]): Response {
+  return json(
+    {
+      error: {
+        code: "validation_error",
+        message: "body failed schema validation",
+        field_errors,
+      },
+    },
+    400,
+  );
+}
+
+interface ChainStartExtraFields {
+  openPrOnReview: boolean | undefined;
+  dispatchKind: DispatchKind | undefined;
+  longLivedAgentId: string | undefined;
+  longLivedTickId: string | undefined;
+  workflowRunId: string | undefined;
+  workload: Workload | undefined;
+}
+
+function parseChainStartExtraFields(
+  raw: unknown,
+): { ok: true; fields: ChainStartExtraFields } | { ok: false; response: Response } {
+  const openPr = readOptionalBooleanField(raw, "open_pr_on_review");
+  if (openPr.error)
+    return {
+      ok: false,
+      response: validationErrorResponse([{ path: ["open_pr_on_review"], message: openPr.error }]),
+    };
+  const dispatchKind = readOptionalDispatchKindField(raw, "dispatch_kind");
+  if (dispatchKind.error)
+    return {
+      ok: false,
+      response: validationErrorResponse([{ path: ["dispatch_kind"], message: dispatchKind.error }]),
+    };
+  const longLivedAgentId = readOptionalStringField(raw, "long_lived_agent_id");
+  if (longLivedAgentId.error)
+    return {
+      ok: false,
+      response: validationErrorResponse([
+        { path: ["long_lived_agent_id"], message: longLivedAgentId.error },
+      ]),
+    };
+  const longLivedTickId = readOptionalStringField(raw, "long_lived_tick_id");
+  if (longLivedTickId.error)
+    return {
+      ok: false,
+      response: validationErrorResponse([
+        { path: ["long_lived_tick_id"], message: longLivedTickId.error },
+      ]),
+    };
+  const workflowRunId = readOptionalStringField(raw, "workflow_run_id");
+  if (workflowRunId.error)
+    return {
+      ok: false,
+      response: validationErrorResponse([
+        { path: ["workflow_run_id"], message: workflowRunId.error },
+      ]),
+    };
+  const workload = readOptionalWorkloadField(raw, "workload");
+  if (workload.error)
+    return {
+      ok: false,
+      response: validationErrorResponse([{ path: ["workload"], message: workload.error }]),
+    };
+  return {
+    ok: true,
+    fields: {
+      openPrOnReview: openPr.value,
+      dispatchKind: dispatchKind.value,
+      longLivedAgentId: longLivedAgentId.value,
+      longLivedTickId: longLivedTickId.value,
+      workflowRunId: workflowRunId.value,
+      workload: workload.value,
+    },
+  };
+}
+
+function applyExtraFields(
+  input: ChainStartRequestWithLongLived,
+  fields: ChainStartExtraFields,
+): Response | null {
+  if (
+    fields.workload !== undefined &&
+    input.task_type !== undefined &&
+    fields.workload !== input.task_type
+  ) {
+    return json(
+      {
+        error: {
+          code: "validation_error",
+          message: `chain_start: workload='${fields.workload}' conflicts with task_type='${input.task_type}'; pass only one or matching values`,
+        },
+      },
+      400,
+    );
+  }
+  const resolvedTaskType = fields.workload ?? input.task_type;
+  if (resolvedTaskType !== undefined) input.task_type = resolvedTaskType;
+  if (fields.openPrOnReview !== undefined) input.open_pr_on_review = fields.openPrOnReview;
+  if (fields.dispatchKind !== undefined) input.dispatch_kind = fields.dispatchKind;
+  if (fields.longLivedAgentId !== undefined) input.long_lived_agent_id = fields.longLivedAgentId;
+  if (fields.longLivedTickId !== undefined) input.long_lived_tick_id = fields.longLivedTickId;
+  if (fields.workflowRunId !== undefined) input.workflow_run_id = fields.workflowRunId;
+  return null;
+}
+
 export async function chainStartFromInput(
   raw: unknown,
   services: Services,
@@ -286,136 +411,33 @@ export async function chainStartFromInput(
   });
   const parsed = chainStartRequestSchemaWithoutDispatchKind.safeParse(raw);
   if (!parsed.success) {
-    return json(
-      {
-        error: {
-          code: "validation_error",
-          message: "body failed schema validation",
-          field_errors: parsed.error.issues.map((i) => ({ path: i.path, message: i.message })),
-        },
-      },
-      400,
+    return validationErrorResponse(
+      parsed.error.issues.map((i) => ({ path: i.path.map(String), message: i.message })),
     );
   }
 
-  const openPrOnReviewField = readOptionalBooleanField(raw, "open_pr_on_review");
-  if (openPrOnReviewField.error) {
-    return json(
-      {
-        error: {
-          code: "validation_error",
-          message: "body failed schema validation",
-          field_errors: [{ path: ["open_pr_on_review"], message: openPrOnReviewField.error }],
-        },
-      },
-      400,
-    );
-  }
-
-  const dispatchKindField = readOptionalDispatchKindField(raw, "dispatch_kind");
-  if (dispatchKindField.error) {
-    return json(
-      {
-        error: {
-          code: "validation_error",
-          message: "body failed schema validation",
-          field_errors: [{ path: ["dispatch_kind"], message: dispatchKindField.error }],
-        },
-      },
-      400,
-    );
-  }
-
-  const longLivedAgentIdField = readOptionalStringField(raw, "long_lived_agent_id");
-  if (longLivedAgentIdField.error) {
-    return json(
-      {
-        error: {
-          code: "validation_error",
-          message: "body failed schema validation",
-          field_errors: [{ path: ["long_lived_agent_id"], message: longLivedAgentIdField.error }],
-        },
-      },
-      400,
-    );
-  }
-
-  const longLivedTickIdField = readOptionalStringField(raw, "long_lived_tick_id");
-  if (longLivedTickIdField.error) {
-    return json(
-      {
-        error: {
-          code: "validation_error",
-          message: "body failed schema validation",
-          field_errors: [{ path: ["long_lived_tick_id"], message: longLivedTickIdField.error }],
-        },
-      },
-      400,
-    );
-  }
-
-  const workflowRunIdField = readOptionalStringField(raw, "workflow_run_id");
-  if (workflowRunIdField.error) {
-    return json(
-      {
-        error: {
-          code: "validation_error",
-          message: "body failed schema validation",
-          field_errors: [{ path: ["workflow_run_id"], message: workflowRunIdField.error }],
-        },
-      },
-      400,
-    );
-  }
-  const workloadField = readOptionalWorkloadField(raw, "workload");
-  if (workloadField.error) {
-    return json(
-      {
-        error: {
-          code: "validation_error",
-          message: "body failed schema validation",
-          field_errors: [{ path: ["workload"], message: workloadField.error }],
-        },
-      },
-      400,
-    );
-  }
+  const extras = parseChainStartExtraFields(raw);
+  if (!extras.ok) return extras.response;
+  const {
+    openPrOnReview: openPrOnReviewValue,
+    dispatchKind: dispatchKindValue,
+    longLivedAgentId: longLivedAgentIdValue,
+    longLivedTickId: longLivedTickIdValue,
+    workflowRunId: workflowRunIdValue,
+    workload: workloadValue,
+  } = extras.fields;
 
   const normalizedInput = parsed.data as ChainStartRequestWithLongLived;
-  if (
-    workloadField.value !== undefined &&
-    normalizedInput.task_type !== undefined &&
-    workloadField.value !== normalizedInput.task_type
-  ) {
-    return json(
-      {
-        error: {
-          code: "validation_error",
-          message: `chain_start: workload='${workloadField.value}' conflicts with task_type='${normalizedInput.task_type}'; pass only one or matching values`,
-        },
-      },
-      400,
-    );
-  }
-  const resolvedTaskType = workloadField.value ?? normalizedInput.task_type;
-  if (resolvedTaskType !== undefined) {
-    normalizedInput.task_type = resolvedTaskType;
-  }
-  if (openPrOnReviewField.value !== undefined) {
-    normalizedInput.open_pr_on_review = openPrOnReviewField.value;
-  }
-  if (dispatchKindField.value !== undefined) {
-    normalizedInput.dispatch_kind = dispatchKindField.value;
-  }
-  if (longLivedAgentIdField.value !== undefined) {
-    normalizedInput.long_lived_agent_id = longLivedAgentIdField.value;
-  }
-  if (longLivedTickIdField.value !== undefined) {
-    normalizedInput.long_lived_tick_id = longLivedTickIdField.value;
-  }
-  if (workflowRunIdField.value !== undefined) {
-    normalizedInput.workflow_run_id = workflowRunIdField.value;
-  }
+
+  const conflictResponse = applyExtraFields(normalizedInput, {
+    openPrOnReview: openPrOnReviewValue,
+    dispatchKind: dispatchKindValue,
+    longLivedAgentId: longLivedAgentIdValue,
+    longLivedTickId: longLivedTickIdValue,
+    workflowRunId: workflowRunIdValue,
+    workload: workloadValue,
+  });
+  if (conflictResponse) return conflictResponse;
   if (normalizedInput.task_class === undefined) {
     services.log.debug(
       { event: "dispatch.legacy_no_task_class" },
@@ -423,7 +445,7 @@ export async function chainStartFromInput(
     );
   }
 
-  return chainStartInternal(normalizedInput, services, {
+  return await chainStartInternal(normalizedInput, services, {
     applyMaestroBudgetGate: opts?.applyMaestroBudgetGate ?? true,
   });
 }
@@ -435,171 +457,222 @@ export async function chainsStartRoute(req: Request, services: Services): Promis
       { error: { code: "invalid_json", message: "request body was not valid JSON" } },
       400,
     );
-  return chainStartFromInput(raw, services, {
+  return await chainStartFromInput(raw, services, {
     applyMaestroBudgetGate: true,
     requireActiveWorker: true,
   });
 }
 
-export async function chainStartInternal(
+function enforceExplicitProjectIdGate(
   input: ChainStartRequestWithLongLived,
   services: Services,
-  opts?: { applyMaestroBudgetGate?: boolean },
-): Promise<Response> {
-  const applyMaestroBudgetGate = opts?.applyMaestroBudgetGate ?? false;
+): Response | null {
   const requireExplicitProjectId = isEnvTruthy(
     process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID,
   );
-  if (requireExplicitProjectId && (input.project_id === undefined || input.project_id === null)) {
-    if (canBypassExplicitProjectIdGate(input, services)) {
-      services.log.info(
-        {
-          event: "chain_start.routing_guard.explicit_gate_exempted",
-          dispatch_kind: input.dispatch_kind ?? null,
-          long_lived_tick_id: input.long_lived_tick_id ?? null,
-          workflow_run_id: input.workflow_run_id ?? null,
-        },
-        "chain-start explicit project_id gate exempted for internal hop",
-      );
-    } else {
-      return json(
-        {
-          error: "project_id_required",
-          hint: "pass project_id explicitly, or unset PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy behavior",
-        },
-        400,
-      );
-    }
+  if (!requireExplicitProjectId) return null;
+  if (input.project_id !== undefined && input.project_id !== null) return null;
+  if (canBypassExplicitProjectIdGate(input, services)) {
+    services.log.info(
+      {
+        event: "chain_start.routing_guard.explicit_gate_exempted",
+        dispatch_kind: input.dispatch_kind ?? null,
+        long_lived_tick_id: input.long_lived_tick_id ?? null,
+        workflow_run_id: input.workflow_run_id ?? null,
+      },
+      "chain-start explicit project_id gate exempted for internal hop",
+    );
+    return null;
   }
+  return json(
+    {
+      error: "project_id_required",
+      hint: "pass project_id explicitly, or unset PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy behavior",
+    },
+    400,
+  );
+}
 
-  let routingWarning: RoutingWarningPayload | undefined;
-  let routingAdvisory: RoutingAdvisoryPayload | undefined;
-  let projectRegistryEntries: Array<{ project_id: string; root_path: string }> | undefined;
-  if (
-    services.projectRegistry !== undefined &&
-    input.project_id == null &&
-    input.dispatch_kind === "workflow" &&
-    input.workflow_run_id &&
-    isEnvTruthy(process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH)
-  ) {
-    const workflowRuns = services.workflowRuns;
-    const info = workflowRuns?.verify(input.workflow_run_id) ?? null;
+interface ProjectRegistryGuardOutcome {
+  response: Response | null;
+  routingWarning: RoutingWarningPayload | undefined;
+  routingAdvisory: RoutingAdvisoryPayload | undefined;
+  projectRegistryEntries: { project_id: string; root_path: string }[] | undefined;
+}
+
+function maybeRejectMissingProjectIdForStrictWorkflow(
+  input: ChainStartRequestWithLongLived,
+  services: Services,
+): Response | null {
+  if (services.projectRegistry === undefined) return null;
+  if (input.project_id !== null && input.project_id !== undefined) return null;
+  if (input.dispatch_kind !== "workflow") return null;
+  if (!input.workflow_run_id) return null;
+  if (!isEnvTruthy(process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH)) return null;
+  const info = services.workflowRuns?.verify(input.workflow_run_id) ?? null;
+  services.log.warn(
+    {
+      event: "chain_start.routing_guard.workflow_exemption_rejected",
+      project_id: input.project_id,
+      info_project_id: info?.project_id ?? null,
+      request_project_id: input.project_id,
+      workflow_run_id_present: true,
+    },
+    "workflow dispatch_kind without project_id; strict routing guard remains in effect",
+  );
+  return json(
+    {
+      error: {
+        code: "prompt_project_mismatch",
+        project_id: input.project_id,
+        mentioned_paths: [],
+        missing_in_project: [],
+        hint: "pass project_id explicitly or update prompt paths",
+      },
+    },
+    400,
+  );
+}
+
+function isInternalHopForMismatch(
+  input: ChainStartRequestWithLongLived,
+  services: Services,
+): boolean {
+  const longLivedExemptionResult = resolveLongLivedTickExemption(services, input);
+  if (longLivedExemptionResult.ok) return true;
+  if (input.dispatch_kind === "workflow") {
+    const workflowExemptionResult = resolveWorkflowDispatchExemption(services, input);
+    if (workflowExemptionResult.ok) return true;
     services.log.warn(
       {
         event: "chain_start.routing_guard.workflow_exemption_rejected",
         project_id: input.project_id,
-        info_project_id: info?.project_id ?? null,
+        info_project_id:
+          input.workflow_run_id && services.workflowRuns
+            ? (services.workflowRuns.verify(input.workflow_run_id)?.project_id ?? null)
+            : null,
         request_project_id: input.project_id,
-        workflow_run_id_present: true,
+        workflow_run_id_present: Boolean(input.workflow_run_id),
       },
-      "workflow dispatch_kind without project_id; strict routing guard remains in effect",
-    );
-    return json(
-      {
-        error: {
-          code: "prompt_project_mismatch",
-          project_id: input.project_id,
-          mentioned_paths: [],
-          missing_in_project: [],
-          hint: "pass project_id explicitly or update prompt paths",
-        },
-      },
-      400,
+      "workflow dispatch_kind without valid workflow_run_id; falling back to normal guard",
     );
   }
-  if (services.projectRegistry !== undefined && input.project_id != null) {
-    try {
-      projectRegistryEntries = services.projectRegistry.list();
-      const guardResult = inspectPromptVsProject({
-        prompt: input.message,
-        project_id: input.project_id,
-        registry: projectRegistryEntries,
-      });
-      if (guardResult.status === "mismatch") {
-        routingWarning = {
-          code: "prompt_project_mismatch",
-          project_id: input.project_id,
-          mentioned_paths: guardResult.mentioned_paths,
-          missing_in_project: guardResult.missing_in_project,
-          suggested_project_id: guardResult.suggested_project_id,
-          hint: "pass project_id explicitly or update prompt paths",
-        };
-        const parentHandoff =
-          typeof input.parent_handoff_id === "string"
-            ? services.handoffReader.get(input.parent_handoff_id)
-            : undefined;
-        let workflowExemption = false;
-        if (input.dispatch_kind === "workflow") {
-          const workflowExemptionResult = resolveWorkflowDispatchExemption(services, input);
-          if (workflowExemptionResult.ok) {
-            workflowExemption = true;
-          }
-          if (!workflowExemption) {
-            services.log.warn(
-              {
-                event: "chain_start.routing_guard.workflow_exemption_rejected",
-                project_id: input.project_id,
-                info_project_id:
-                  input.workflow_run_id && services.workflowRuns
-                    ? (services.workflowRuns.verify(input.workflow_run_id)?.project_id ?? null)
-                    : null,
-                request_project_id: input.project_id,
-                workflow_run_id_present: Boolean(input.workflow_run_id),
-              },
-              "workflow dispatch_kind without valid workflow_run_id; falling back to normal guard",
-            );
-          }
-        }
-        const longLivedExemptionResult = resolveLongLivedTickExemption(services, input);
-        const isInternalHop =
-          longLivedExemptionResult.ok ||
-          workflowExemption ||
-          (parentHandoff != null &&
-            input.project_id != null &&
-            parentHandoff.project_id != null &&
-            parentHandoff.project_id === input.project_id);
-        const logEvent = isInternalHop
-          ? "chain_start.routing_guard.internal_hop_mismatch"
-          : "chain_start.routing_guard.mismatch";
-        services.log.warn(
-          {
-            event: logEvent,
-            project_id: input.project_id,
-            mentioned_paths: guardResult.mentioned_paths,
-            missing_in_project: guardResult.missing_in_project,
-            suggested_project_id: guardResult.suggested_project_id,
-          },
-          isInternalHop
-            ? "chain-start internal hop prompt/project mismatch"
-            : "chain-start prompt/project mismatch",
-        );
-        if (
-          isEnvTruthy(process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH) &&
-          !isInternalHop &&
-          guardResult.suggested_project_id !== undefined
-        ) {
-          return json(
-            {
-              error: routingWarning,
-            },
-            400,
-          );
-        }
-      }
-    } catch (err) {
-      routingAdvisory = { code: "project_registry_unavailable" };
-      services.log.warn(
-        {
-          event: "chain_start.routing_guard.registry_unavailable",
-          project_id: input.project_id,
-          error: err instanceof Error ? err.message : String(err),
-        },
-        "chain-start routing guard skipped because project registry was unavailable",
-      );
-    }
-  }
+  const parentHandoff =
+    typeof input.parent_handoff_id === "string"
+      ? services.handoffReader.get(input.parent_handoff_id)
+      : undefined;
+  return (
+    parentHandoff !== undefined &&
+    parentHandoff !== null &&
+    parentHandoff.project_id !== null &&
+    parentHandoff.project_id === input.project_id
+  );
+}
 
-  // P0.3b: Auto-strip leading @
+function runProjectRegistryGuard(
+  input: ChainStartRequestWithLongLived,
+  services: Services,
+): ProjectRegistryGuardOutcome {
+  const strictReject = maybeRejectMissingProjectIdForStrictWorkflow(input, services);
+  if (strictReject) {
+    return {
+      response: strictReject,
+      routingWarning: undefined,
+      routingAdvisory: undefined,
+      projectRegistryEntries: undefined,
+    };
+  }
+  if (
+    services.projectRegistry === undefined ||
+    input.project_id === null ||
+    input.project_id === undefined
+  ) {
+    return {
+      response: null,
+      routingWarning: undefined,
+      routingAdvisory: undefined,
+      projectRegistryEntries: undefined,
+    };
+  }
+  try {
+    const projectRegistryEntries = services.projectRegistry.list();
+    const guardResult = inspectPromptVsProject({
+      prompt: input.message,
+      project_id: input.project_id,
+      registry: projectRegistryEntries,
+    });
+    if (guardResult.status !== "mismatch") {
+      return {
+        response: null,
+        routingWarning: undefined,
+        routingAdvisory: undefined,
+        projectRegistryEntries,
+      };
+    }
+    const routingWarning: RoutingWarningPayload = {
+      code: "prompt_project_mismatch",
+      project_id: input.project_id,
+      mentioned_paths: guardResult.mentioned_paths,
+      missing_in_project: guardResult.missing_in_project,
+      suggested_project_id: guardResult.suggested_project_id,
+      hint: "pass project_id explicitly or update prompt paths",
+    };
+    const isInternalHop = isInternalHopForMismatch(input, services);
+    services.log.warn(
+      {
+        event: isInternalHop
+          ? "chain_start.routing_guard.internal_hop_mismatch"
+          : "chain_start.routing_guard.mismatch",
+        project_id: input.project_id,
+        mentioned_paths: guardResult.mentioned_paths,
+        missing_in_project: guardResult.missing_in_project,
+        suggested_project_id: guardResult.suggested_project_id,
+      },
+      isInternalHop
+        ? "chain-start internal hop prompt/project mismatch"
+        : "chain-start prompt/project mismatch",
+    );
+    if (
+      isEnvTruthy(process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH) &&
+      !isInternalHop &&
+      guardResult.suggested_project_id !== undefined
+    ) {
+      return {
+        response: json({ error: routingWarning }, 400),
+        routingWarning,
+        routingAdvisory: undefined,
+        projectRegistryEntries,
+      };
+    }
+    return {
+      response: null,
+      routingWarning,
+      routingAdvisory: undefined,
+      projectRegistryEntries,
+    };
+  } catch (err) {
+    services.log.warn(
+      {
+        event: "chain_start.routing_guard.registry_unavailable",
+        project_id: input.project_id,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      "chain-start routing guard skipped because project registry was unavailable",
+    );
+    return {
+      response: null,
+      routingWarning: undefined,
+      routingAdvisory: { code: "project_registry_unavailable" },
+      projectRegistryEntries: undefined,
+    };
+  }
+}
+
+function stripAgentPrefixes(input: ChainStartRequestWithLongLived): {
+  initialAgent: string;
+  forceExactAgent: boolean;
+  response: Response | null;
+} {
   let initialAgent = input.initial_agent;
   if (initialAgent.startsWith("@")) {
     initialAgent = initialAgent.slice(1);
@@ -610,65 +683,76 @@ export async function chainStartInternal(
     initialAgent = initialAgent.slice("agent:".length);
     input.initial_agent = initialAgent;
   }
-
   if (initialAgent.length < 1) {
-    return json(
-      {
-        error: {
-          code: "invalid_agent",
-          agent: initialAgent,
-          hint: "initial_agent must be non-empty after @-prefix/agent:-prefix stripping",
+    return {
+      initialAgent,
+      forceExactAgent,
+      response: json(
+        {
+          error: {
+            code: "invalid_agent",
+            agent: initialAgent,
+            hint: "initial_agent must be non-empty after @-prefix/agent:-prefix stripping",
+          },
         },
-      },
-      400,
-    );
+        400,
+      ),
+    };
   }
+  return { initialAgent, forceExactAgent, response: null };
+}
 
-  let route = resolveInitialRoute({
-    initialAgent,
-    message: input.message,
-    taskType: input.task_type,
-    forceExactAgent,
-    services,
-  });
-
-  // P0.3a: Validate initial_agent against registry
-  if (!route && services.agentRegistry && !services.agentRegistry.includes(initialAgent)) {
-    const nearest = getNearestAgents(initialAgent, services.agentRegistry);
-    services.log.warn(
-      {
-        event: "chain_start.unknown_agent",
-        initial_agent: initialAgent,
-        force_exact_agent: forceExactAgent,
-        task_type: input.task_type ?? null,
-        parent_handoff_id: input.parent_handoff_id ?? null,
-        registry_size: services.agentRegistry.length,
-        nearest,
+function rejectUnknownAgent(
+  route: InitialRoute | null,
+  input: ChainStartRequestWithLongLived,
+  initialAgent: string,
+  forceExactAgent: boolean,
+  services: Services,
+): Response | null {
+  if (route) return null;
+  if (!services.agentRegistry) return null;
+  if (services.agentRegistry.includes(initialAgent)) return null;
+  const nearest = getNearestAgents(initialAgent, services.agentRegistry);
+  services.log.warn(
+    {
+      event: "chain_start.unknown_agent",
+      initial_agent: initialAgent,
+      force_exact_agent: forceExactAgent,
+      task_type: input.task_type ?? null,
+      parent_handoff_id: input.parent_handoff_id ?? null,
+      registry_size: services.agentRegistry.length,
+      nearest,
+    },
+    "chain-start unknown agent rejected",
+  );
+  return json(
+    {
+      error: {
+        code: "unknown_agent",
+        agent: initialAgent,
+        did_you_mean: nearest,
+        hint: "use chain.list_agents to enumerate valid agents",
       },
-      "chain-start unknown agent rejected",
-    );
-    return json(
-      {
-        error: {
-          code: "unknown_agent",
-          agent: initialAgent,
-          did_you_mean: nearest,
-          hint: "use chain.list_agents to enumerate valid agents",
-        },
-      },
-      400,
-    );
-  }
-  let routedAgent = route?.agent ?? initialAgent;
-  let routedRole = route?.role ?? null;
+    },
+    400,
+  );
+}
 
+function applyClassifierDeclineFallback(
+  input: ChainStartRequestWithLongLived,
+  services: Services,
+): { fallbackAgent: string | undefined; response: Response | null } {
   if (
-    input.parent_handoff_id &&
-    input.task_type &&
-    parentClassifierDeclined(services, input.parent_handoff_id)
+    !input.parent_handoff_id ||
+    !input.task_type ||
+    !parentClassifierDeclined(services, input.parent_handoff_id)
   ) {
-    if (hasClassifierDeclinedAncestor(services, input.parent_handoff_id)) {
-      return json(
+    return { fallbackAgent: undefined, response: null };
+  }
+  if (hasClassifierDeclinedAncestor(services, input.parent_handoff_id)) {
+    return {
+      fallbackAgent: undefined,
+      response: json(
         {
           error: {
             code: "classifier_decline_retry_exhausted",
@@ -677,18 +761,15 @@ export async function chainStartInternal(
           },
         },
         409,
-      );
-    }
-    const cfg = services.agentchatConfig;
-    const fallback = cfg
-      ? maybeSelectClassifierDeclineFallback({
-          services,
-          input,
-          cfg,
-        })
-      : null;
-    if (!fallback) {
-      return json(
+      ),
+    };
+  }
+  const cfg = services.agentchatConfig;
+  const fallback = cfg ? maybeSelectClassifierDeclineFallback({ services, input, cfg }) : null;
+  if (!fallback) {
+    return {
+      fallbackAgent: undefined,
+      response: json(
         {
           error: {
             code: "classifier_decline_no_fallback",
@@ -697,322 +778,371 @@ export async function chainStartInternal(
           },
         },
         409,
-      );
-    }
-    initialAgent = fallback;
-    input.initial_agent = fallback;
-    route = resolveInitialRoute({
-      initialAgent,
-      message: input.message,
-      taskType: input.task_type,
-      forceExactAgent: true,
-      services,
-    });
-    routedAgent = route?.agent ?? initialAgent;
-    routedRole = route?.role ?? null;
+      ),
+    };
   }
+  input.initial_agent = fallback;
+  return { fallbackAgent: fallback, response: null };
+}
 
-  if (applyMaestroBudgetGate) {
-    const maestroSessions =
-      services.maestroSessions ??
-      new MaestroSessionWriter({
-        db: services.db,
-        now: () => services.clock().getTime(),
-      });
-    const budgetGate = enforceMaestroBudget({
+function enforceMaestroBudgetForChainStart(
+  input: ChainStartRequestWithLongLived,
+  services: Services,
+): Response | null {
+  const maestroSessions =
+    services.maestroSessions ??
+    new MaestroSessionWriter({
       db: services.db,
-      sessions: maestroSessions,
-      parent_handoff_id: input.parent_handoff_id ?? undefined,
+      now: (): number => services.clock().getTime(),
     });
-    if (!budgetGate.ok) {
-      return json(budgetGate.body, budgetGate.status);
+  const budgetGate = enforceMaestroBudget({
+    db: services.db,
+    sessions: maestroSessions,
+    parent_handoff_id: input.parent_handoff_id ?? undefined,
+  });
+  if (!budgetGate.ok) return json(budgetGate.body, budgetGate.status);
+  return null;
+}
+
+type PressureGateAgent = NonNullable<NonNullable<Services["agentchatConfig"]>["agents"]>[number];
+
+function handlePressureGateOutcome(opts: {
+  input: ChainStartRequestWithLongLived;
+  services: Services;
+  parentToAgent: string;
+  cfg: NonNullable<Services["agentchatConfig"]>;
+  gate: { subject: "maestro" | "sub_agent"; agent: PressureGateAgent; agent_name: string };
+  outcome: ReturnType<typeof checkPressureCap>;
+  providerCaps: Parameters<typeof checkPressureCap>[0]["providerCaps"];
+}): { response?: Response; fallbackAgent?: string; continueLoop: boolean } {
+  const { outcome } = opts;
+  if (outcome.state === "warn") {
+    console.warn("subscription pressure warning", {
+      provider: outcome.provider,
+      window_label: outcome.window_label,
+      used_pct: outcome.used_pct,
+      warn_pct: outcome.warn_pct,
+      refuse_pct: outcome.refuse_pct,
+    });
+    return { continueLoop: true };
+  }
+  if (outcome.state !== "refuse") return { continueLoop: true };
+
+  let fallbackRefusedOutcomes: CapCheckRefuse[] = [];
+  if (opts.gate.subject === "sub_agent") {
+    const fallback = maybeSelectSubDispatchFallback({
+      services: opts.services,
+      input: opts.input,
+      cfg: opts.cfg,
+      providerCaps: opts.providerCaps,
+      maestroAgentName: opts.parentToAgent,
+      refusedOutcome: outcome,
+    });
+    fallbackRefusedOutcomes = fallback.refusedOutcomes;
+    if (fallback.selectedAgent) {
+      return { fallbackAgent: fallback.selectedAgent, continueLoop: true };
     }
   }
 
-  if (input.parent_handoff_id) {
-    const parentToAgent = services.handoffReader.get(input.parent_handoff_id)?.to_agent;
-    if (parentToAgent) {
-      const cfg = services.agentchatConfig;
-      const maestroAgent = cfg?.agents?.find((agent) => agent.name === parentToAgent);
-      const subAgent = cfg?.agents?.find((agent) => agent.name === input.initial_agent);
-      if (maestroAgent && subAgent) {
-        const providerCaps = buildProviderCaps(services.providerQuotas);
-        const gateChecks = [
-          { subject: "maestro" as const, agent: maestroAgent, agent_name: parentToAgent },
-          { subject: "sub_agent" as const, agent: subAgent, agent_name: input.initial_agent },
-        ];
-
-        const syntheticCaps: Record<string, { max_dispatches: number; window_seconds: number }> =
-          {};
-        for (const quota of services.providerQuotas as any[]) {
-          if (quota.synthetic_cap) syntheticCaps[quota.provider] = quota.synthetic_cap;
-        }
-
-        for (const gate of gateChecks) {
-          const outcome = checkPressureCap({
-            cache: services.subscriptionPressureCache,
-            agent: gate.agent,
-            providerCaps: providerCaps as unknown as Parameters<
-              typeof checkPressureCap
-            >[0]["providerCaps"],
-            now: () => services.clock(),
-            syntheticCaps,
-            getRecentDispatchCount: makeGetRecentDispatchCount(services),
-          });
-          if (outcome.state === "warn") {
-            console.warn("subscription pressure warning", {
-              provider: outcome.provider,
-              window_label: outcome.window_label,
-              used_pct: outcome.used_pct,
-              warn_pct: outcome.warn_pct,
-              refuse_pct: outcome.refuse_pct,
-            });
-            // Phase 2 will route warn outcomes into the bounds-tracker soft-warn path.
-            continue;
-          }
-          if (outcome.state !== "refuse") continue;
-
-          let fallbackRefusedOutcomes: CapCheckRefuse[] = [];
-
-          if (gate.subject === "sub_agent" && cfg) {
-            const fallback = maybeSelectSubDispatchFallback({
-              services,
-              input,
-              cfg,
-              providerCaps: providerCaps as unknown as Parameters<
-                typeof checkPressureCap
-              >[0]["providerCaps"],
-              maestroAgentName: parentToAgent,
-              refusedOutcome: outcome,
-            });
-            fallbackRefusedOutcomes = fallback.refusedOutcomes;
-
-            if (fallback.selectedAgent) {
-              initialAgent = fallback.selectedAgent;
-              input.initial_agent = fallback.selectedAgent;
-              route = resolveInitialRoute({
-                initialAgent,
-                message: input.message,
-                taskType: input.task_type,
-                forceExactAgent: true,
-                services,
-              });
-              routedAgent = route?.agent ?? initialAgent;
-              routedRole = route?.role ?? null;
-              continue;
-            }
-          }
-
-          const earliest_resets_at = earliestResetsAtForRefusals([
-            outcome,
-            ...fallbackRefusedOutcomes,
-          ]);
-
-          recordPressureCapTrip({
-            services,
-            input,
-            subject: gate.subject,
-            agent_name: gate.agent_name,
-            maestro_agent_name: parentToAgent,
-            sub_agent_name: input.initial_agent,
-            outcome,
-          });
-
-          return json(
-            {
-              error: {
-                code: "subscription_pressure_capped",
-                subject: gate.subject,
-                agent_name: gate.agent_name,
-                provider: outcome.provider,
-                window_label: outcome.window_label,
-                used_pct: outcome.used_pct,
-                cap_pct: outcome.cap_pct,
-                resets_at: outcome.resets_at,
-                earliest_resets_at,
-                snapshot_state: outcome.snapshot_state,
-                snapshot_age_seconds: outcome.snapshot_age_seconds,
-              },
-            },
-            400,
-          );
-        }
-      }
-    }
-  }
-
-  // Recursion depth guard: if parent_handoff_id is provided, walk the spawn
-  // chain and reject if the new dispatch would exceed the cap. Reads env var
-  // per-request (per observation 8351 — constructor-time latch is wrong).
-  if (input.parent_handoff_id) {
-    const cap = Number(process.env.PENUMBRA_RECURSION_DEPTH_CAP) || 8;
-    const parentDepth = services.handoffReader.getSpawnDepth(input.parent_handoff_id);
-    const newDepth = parentDepth + 1;
-    if (newDepth >= cap) {
-      return json(
-        {
-          error: {
-            code: "recursion_depth_exceeded",
-            message: `chain.start spawn depth ${newDepth} would meet/exceed cap ${cap}`,
-            depth: newDepth,
-            cap,
-          },
-        },
-        409,
-      );
-    }
-  }
-
-  if (
-    input.project_id !== null &&
-    input.project_id !== undefined &&
-    projectRegistryEntries !== undefined &&
-    projectRegistryEntries.length > 0 &&
-    !projectRegistryEntries.some((entry) => entry.project_id === input.project_id)
-  ) {
-    services.log.warn(
+  const earliest_resets_at = earliestResetsAtForRefusals([outcome, ...fallbackRefusedOutcomes]);
+  recordPressureCapTrip({
+    services: opts.services,
+    input: opts.input,
+    subject: opts.gate.subject,
+    agent_name: opts.gate.agent_name,
+    maestro_agent_name: opts.parentToAgent,
+    sub_agent_name: opts.input.initial_agent,
+    outcome,
+  });
+  return {
+    response: json(
       {
-        project_id: input.project_id,
-        known_project_ids: projectRegistryEntries.map((p) => p.project_id),
+        error: {
+          code: "subscription_pressure_capped",
+          subject: opts.gate.subject,
+          agent_name: opts.gate.agent_name,
+          provider: outcome.provider,
+          window_label: outcome.window_label,
+          used_pct: outcome.used_pct,
+          cap_pct: outcome.cap_pct,
+          resets_at: outcome.resets_at,
+          earliest_resets_at,
+          snapshot_state: outcome.snapshot_state,
+          snapshot_age_seconds: outcome.snapshot_age_seconds,
+        },
       },
-      "chain-start unknown_project_id; dropping and continuing",
-    );
-    // Drop the bad project_id so downstream auto-resolution (from cwd, etc.) can run.
-    // Hard-rejecting unknown project_id breaks long-lived ticks when the model
-    // fills the optional field with its own agent identity (for example, "home-mgmt").
-    (input as { project_id?: string }).project_id = undefined;
-  }
+      400,
+    ),
+    continueLoop: false,
+  };
+}
 
-  const conversation_id = input.conversation_id ?? `conv-${services.uuid()}`;
-  const user_prompt_event_id = services.uuid();
-  const handoff_id = services.uuid();
-  const ts = services.clock().toISOString();
-  const openPrOnReview = (input as { open_pr_on_review?: unknown }).open_pr_on_review;
-  const openPrOnReviewBool = typeof openPrOnReview === "boolean" ? openPrOnReview : undefined;
-  const taskClass = (input as { task_class?: TaskClass }).task_class;
+function enforceSubscriptionPressureGate(
+  input: ChainStartRequestWithLongLived,
+  services: Services,
+): { response?: Response; fallbackAgent?: string } {
+  if (!input.parent_handoff_id) return {};
+  const parentToAgent = services.handoffReader.get(input.parent_handoff_id)?.to_agent;
+  if (!parentToAgent) return {};
+  const cfg = services.agentchatConfig;
+  const maestroAgent = cfg?.agents?.find((agent) => agent.name === parentToAgent);
+  const subAgent = cfg?.agents?.find((agent) => agent.name === input.initial_agent);
+  if (!cfg || !maestroAgent || !subAgent) return {};
+  const providerCaps = buildProviderCaps(services.providerQuotas);
+  const gateChecks = [
+    { subject: "maestro" as const, agent: maestroAgent, agent_name: parentToAgent },
+    { subject: "sub_agent" as const, agent: subAgent, agent_name: input.initial_agent },
+  ];
+  const syntheticCaps = collectSyntheticCaps(services);
+
+  let fallbackAgent: string | undefined;
+  for (const gate of gateChecks) {
+    const outcome = checkPressureCap({
+      cache: services.subscriptionPressureCache,
+      agent: gate.agent,
+      providerCaps,
+      now: () => services.clock(),
+      syntheticCaps,
+      getRecentDispatchCount: makeGetRecentDispatchCount(services),
+    });
+    const result = handlePressureGateOutcome({
+      input,
+      services,
+      parentToAgent,
+      cfg,
+      gate,
+      outcome,
+      providerCaps,
+    });
+    if (result.response) return { response: result.response };
+    if (result.fallbackAgent !== undefined) fallbackAgent = result.fallbackAgent;
+  }
+  return fallbackAgent !== undefined ? { fallbackAgent } : {};
+}
+
+function enforceRecursionDepthGuard(
+  input: ChainStartRequestWithLongLived,
+  services: Services,
+): Response | null {
+  if (!input.parent_handoff_id) return null;
+  const cap = Number(process.env.PENUMBRA_RECURSION_DEPTH_CAP) || 8;
+  const parentDepth = services.handoffReader.getSpawnDepth(input.parent_handoff_id);
+  const newDepth = parentDepth + 1;
+  if (newDepth < cap) return null;
+  return json(
+    {
+      error: {
+        code: "recursion_depth_exceeded",
+        message: `chain.start spawn depth ${String(newDepth)} would meet/exceed cap ${String(cap)}`,
+        depth: newDepth,
+        cap,
+      },
+    },
+    409,
+  );
+}
+
+function dropUnknownProjectId(
+  input: ChainStartRequestWithLongLived,
+  services: Services,
+  projectRegistryEntries: { project_id: string; root_path: string }[] | undefined,
+): void {
+  if (
+    input.project_id === null ||
+    input.project_id === undefined ||
+    projectRegistryEntries === undefined ||
+    projectRegistryEntries.length === 0
+  ) {
+    return;
+  }
+  if (projectRegistryEntries.some((entry) => entry.project_id === input.project_id)) return;
+  services.log.warn(
+    {
+      project_id: input.project_id,
+      known_project_ids: projectRegistryEntries.map((p) => p.project_id),
+    },
+    "chain-start unknown_project_id; dropping and continuing",
+  );
+  (input as { project_id?: string }).project_id = undefined;
+}
+
+function resolveIsolatedInstall(
+  input: ChainStartRequestWithLongLived,
+  services: Services,
+  taskClass: TaskClass | undefined,
+): boolean | null {
+  if (input.isolated_install !== undefined) {
+    return input.isolated_install;
+  }
   const parentHandoffForIsolation =
     typeof input.parent_handoff_id === "string"
       ? services.handoffReader.get(input.parent_handoff_id)
       : null;
-  // Sub-dispatches inherit isolated install from an isolated parent unless
-  // they explicitly opt in or out; this preserves multi-hop isolation without
-  // adding a separate privilege gate for same-chain descendants. Inheriting
-  // via an arbitrary parent_handoff_id grants nothing a caller could not
-  // request directly with isolated_install: true (deliberately ungated for
-  // same-trust bearers) — revisit this only if direct opt-in is ever gated.
-  const isolatedInstall =
-    input.isolated_install !== undefined
-      ? input.isolated_install
-      : parentHandoffForIsolation?.isolated_install === true ||
-          (parentHandoffForIsolation?.isolated_install as unknown) === 1
-        ? true
-        : taskClass === "BOUNDARY" &&
-            isEnvTruthy(process.env.PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY)
-          ? true
-          : null;
-  if (taskClass !== undefined) {
+  if (
+    parentHandoffForIsolation?.isolated_install === true ||
+    (parentHandoffForIsolation?.isolated_install as unknown) === 1
+  ) {
+    return true;
+  }
+  if (
+    taskClass === "BOUNDARY" &&
+    isEnvTruthy(process.env.PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY)
+  ) {
+    return true;
+  }
+  return null;
+}
+
+function readAutoRecallEnabled(services: Services): boolean {
+  const v = process.env.PENUMBRA_AUTO_RECALL_ENABLED;
+  if (v === undefined) return true;
+  if (v === "true" || v === "1") return true;
+  if (v === "false" || v === "0") return false;
+  services.log.warn(
+    { event: "dispatch.auto_recall_env_invalid", value: v },
+    `PENUMBRA_AUTO_RECALL_ENABLED='${v}' is not a recognized boolean; defaulting to enabled`,
+  );
+  return true;
+}
+
+interface AutoRecallOutcome {
+  handoffMessage: string;
+  recalled_memory_ids: string[];
+  recalled_memories: { id: string; title: string; obs_type: string; snippet_head?: string }[];
+  recalled_query: string | null;
+}
+
+function maybeLoadProjectBriefInjection(services: Services, projectId: string): string | null {
+  if (!isEnvTruthy(process.env.PENUMBRA_AUTO_RECALL_PROJECT_BRIEF)) return null;
+  const projectBrief = services.db
+    .query<
+      { brief_md: string },
+      [string]
+    >(`SELECT brief_md FROM project_briefs WHERE project_id=? ORDER BY generated_at DESC LIMIT 1`)
+    .get(projectId);
+  if (!projectBrief?.brief_md) return null;
+  return renderProjectBriefInjectedText(projectBrief.brief_md);
+}
+
+async function maybeRunAutoRecall(
+  input: ChainStartRequestWithLongLived,
+  services: Services,
+  taskClass: TaskClass | undefined,
+  stampedMessage: string,
+): Promise<AutoRecallOutcome> {
+  const empty: AutoRecallOutcome = {
+    handoffMessage: stampedMessage,
+    recalled_memory_ids: [],
+    recalled_memories: [],
+    recalled_query: null,
+  };
+  if (taskClass === undefined) return empty;
+  if (!input.project_id) {
     services.log.debug(
-      { event: "dispatch.task_class", task_class: taskClass },
-      "chain-start dispatch task_class",
+      { event: "dispatch.auto_recall_skipped_no_project_id", task_class: taskClass },
+      "auto-recall skipped — no project_id on dispatch",
     );
+    return empty;
   }
-  const stamped = buildStampedLongLivedPrompt(input, services);
-  if (stamped.errorResponse) return stamped.errorResponse;
-  let handoffMessage = stamped.message;
-  let lane_id: string | null = null;
+  if (!readAutoRecallEnabled(services)) return empty;
+
+  const AUTO_RECALL_TIMEOUT_MS = 1500;
+  const injectedSections: string[] = [];
+  const projectBriefInjection = maybeLoadProjectBriefInjection(services, input.project_id);
+  if (projectBriefInjection) injectedSections.push(projectBriefInjection);
+  const autoPromise = autoRecallForDispatch(
+    {
+      prompt: input.message,
+      task_class: taskClass,
+      project_id: input.project_id,
+    },
+    {
+      memoryRecall: async (args) => {
+        const recallReq = RecallRequestSchema.parse({
+          query: args.query,
+          limit: args.top_k,
+          project_id: args.project_id ?? null,
+        });
+        const results: RecallResult[] = await services.recallReader.recall(recallReq);
+        return {
+          hits: results.map((r) => ({
+            id: r.id,
+            title: r.title ?? "",
+            snippet: r.body,
+            tier: r.tier,
+          })),
+        };
+      },
+      logger: (level, msg, meta): void => {
+        services.log[level]({ ...meta, event: "dispatch.auto_recall" }, msg);
+      },
+    },
+  );
+  const timeoutPromise = new Promise<null>((resolve) =>
+    setTimeout(() => {
+      resolve(null);
+    }, AUTO_RECALL_TIMEOUT_MS),
+  );
+  const auto = await Promise.race([autoPromise, timeoutPromise]);
   let recalled_memory_ids: string[] = [];
-  let recalled_memories: Array<{
-    id: string;
-    title: string;
-    obs_type: string;
-    snippet_head?: string;
-  }> = [];
+  let recalled_memories: AutoRecallOutcome["recalled_memories"] = [];
   let recalled_query: string | null = null;
-
-  if (taskClass !== undefined) {
-    lane_id = `lane-${services.uuid()}`;
-    const autoRecallEnabled = (() => {
-      const v = process.env.PENUMBRA_AUTO_RECALL_ENABLED;
-      if (v === undefined) return true;
-      if (v === "true" || v === "1") return true;
-      if (v === "false" || v === "0") return false;
-      services.log.warn(
-        { event: "dispatch.auto_recall_env_invalid", value: v },
-        `PENUMBRA_AUTO_RECALL_ENABLED='${v}' is not a recognized boolean; defaulting to enabled`,
-      );
-      return true;
-    })();
-
-    if (!input.project_id) {
-      services.log.debug(
-        { event: "dispatch.auto_recall_skipped_no_project_id", task_class: taskClass },
-        "auto-recall skipped — no project_id on dispatch",
-      );
-    } else if (autoRecallEnabled) {
-      const AUTO_RECALL_TIMEOUT_MS = 1500;
-      const injectedSections: string[] = [];
-      if (isEnvTruthy(process.env.PENUMBRA_AUTO_RECALL_PROJECT_BRIEF)) {
-        const projectBrief = services.db
-          .query<
-            { brief_md: string },
-            [string]
-          >(`SELECT brief_md FROM project_briefs WHERE project_id=? ORDER BY generated_at DESC LIMIT 1`)
-          .get(input.project_id);
-        if (projectBrief?.brief_md) {
-          const injectedProjectBrief = renderProjectBriefInjectedText(projectBrief.brief_md);
-          if (injectedProjectBrief) injectedSections.push(injectedProjectBrief);
-        }
-      }
-      const autoPromise = autoRecallForDispatch(
-        {
-          prompt: input.message,
-          task_class: taskClass,
-          project_id: input.project_id,
-        },
-        {
-          memoryRecall: async (args) => {
-            const recallReq = RecallRequestSchema.parse({
-              query: args.query,
-              limit: args.top_k,
-              project_id: args.project_id ?? null,
-            });
-            const results: RecallResult[] = await services.recallReader.recall(recallReq);
-            return {
-              hits: results.map((r) => ({
-                id: r.id,
-                title: r.title ?? "",
-                snippet: r.body,
-                tier: r.tier,
-              })),
-            };
-          },
-          logger: (level, msg, meta) =>
-            services.log[level]?.({ ...meta, event: "dispatch.auto_recall" }, msg),
-        },
-      );
-      const timeoutPromise = new Promise<null>((resolve) =>
-        setTimeout(() => resolve(null), AUTO_RECALL_TIMEOUT_MS),
-      );
-      const auto = await Promise.race([autoPromise, timeoutPromise]);
-      if (auto === null) {
-        services.log.warn(
-          { event: "dispatch.auto_recall_timeout", timeout_ms: AUTO_RECALL_TIMEOUT_MS },
-          "auto-recall exceeded deadline — proceeding without injection",
-        );
-      } else {
-        recalled_memory_ids = auto.recalled_memory_ids;
-        recalled_memories = auto.recalled_memories;
-        recalled_query = auto.recalled_query || null;
-        if (auto.injected_text) {
-          injectedSections.push(auto.injected_text);
-        }
-      }
-      if (injectedSections.length > 0) {
-        handoffMessage = `${injectedSections.join("\n\n")}\n\n${stamped.message}`;
-      }
-    }
+  if (auto === null) {
+    services.log.warn(
+      { event: "dispatch.auto_recall_timeout", timeout_ms: AUTO_RECALL_TIMEOUT_MS },
+      "auto-recall exceeded deadline — proceeding without injection",
+    );
+  } else {
+    recalled_memory_ids = auto.recalled_memory_ids;
+    recalled_memories = auto.recalled_memories;
+    recalled_query = auto.recalled_query || null;
+    if (auto.injected_text) injectedSections.push(auto.injected_text);
   }
+  const handoffMessage =
+    injectedSections.length > 0
+      ? `${injectedSections.join("\n\n")}\n\n${stampedMessage}`
+      : stampedMessage;
+  return { handoffMessage, recalled_memory_ids, recalled_memories, recalled_query };
+}
 
+interface PersistChainStartArgs {
+  services: Services;
+  input: ChainStartRequestWithLongLived;
+  user_prompt_event_id: string;
+  handoff_id: string;
+  ts: string;
+  conversation_id: string;
+  routedAgent: string;
+  routedRole: string | null;
+  handoffMessage: string;
+  route: InitialRoute | null;
+  isolatedInstall: boolean | null;
+  openPrOnReviewBool: boolean | undefined;
+  lane_id: string | null;
+  taskClass: TaskClass | undefined;
+  recalled_memory_ids: string[];
+  recalled_query: string | null;
+}
+
+function persistChainStart(args: PersistChainStartArgs): void {
+  const {
+    services,
+    input,
+    user_prompt_event_id,
+    handoff_id,
+    ts,
+    conversation_id,
+    routedAgent,
+    routedRole,
+    handoffMessage,
+    route,
+    isolatedInstall,
+    openPrOnReviewBool,
+    lane_id,
+    taskClass,
+    recalled_memory_ids,
+    recalled_query,
+  } = args;
   services.db.transaction(() => {
     services.t0Writer.write({
       event_id: user_prompt_event_id,
@@ -1037,7 +1167,6 @@ export async function chainStartInternal(
       payload_summary: input.message.slice(0, 240),
       origin: null,
     });
-
     services.handoffWriter.createApproved({
       handoff_id,
       ts,
@@ -1060,7 +1189,7 @@ export async function chainStartInternal(
       isolated_install: isolatedInstall,
       parent_handoff_id: input.parent_handoff_id ?? null,
       branch_base: input.branch_base ?? null,
-    } as any);
+    });
     if (openPrOnReviewBool !== undefined) {
       services.db
         .query<
@@ -1080,27 +1209,49 @@ export async function chainStartInternal(
       });
     }
   })();
+}
 
+interface BuildChainStartResponseArgs {
+  services: Services;
+  conversation_id: string;
+  handoff_id: string;
+  taskClass: TaskClass | undefined;
+  lane_id: string | null;
+  recalled_memory_ids: string[];
+  recalled_memories: { id: string; title: string; obs_type: string; snippet_head?: string }[];
+  routedAgent: string;
+  routedRole: string | null;
+  route: InitialRoute | null;
+  routingWarning: RoutingWarningPayload | undefined;
+  routingAdvisory: RoutingAdvisoryPayload | undefined;
+}
+
+function buildChainStartResponse(args: BuildChainStartResponseArgs): Response {
   const body = {
-    conversation_id,
-    handoff_id,
-    ...(taskClass !== undefined
-      ? { task_class: taskClass, lane_id, recalled_memory_ids, recalled_memories }
-      : {}),
-    ...(routedRole
+    conversation_id: args.conversation_id,
+    handoff_id: args.handoff_id,
+    ...(args.taskClass !== undefined
       ? {
-          routed_agent: routedAgent,
-          routed_role: routedRole,
-          routing_task_type: route?.taskType,
+          task_class: args.taskClass,
+          lane_id: args.lane_id,
+          recalled_memory_ids: args.recalled_memory_ids,
+          recalled_memories: args.recalled_memories,
         }
       : {}),
-    ...(routingWarning !== undefined ? { routing_warning: routingWarning } : {}),
-    ...(routingAdvisory !== undefined ? { routing_advisory: routingAdvisory } : {}),
+    ...(args.routedRole
+      ? {
+          routed_agent: args.routedAgent,
+          routed_role: args.routedRole,
+          routing_task_type: args.route?.taskType,
+        }
+      : {}),
+    ...(args.routingWarning !== undefined ? { routing_warning: args.routingWarning } : {}),
+    ...(args.routingAdvisory !== undefined ? { routing_advisory: args.routingAdvisory } : {}),
   };
   try {
     return json(ChainStartResponseSchema.parse(body));
   } catch (err) {
-    services.log.error(
+    args.services.log.error(
       {
         event: "chain_start.response_schema_parse_failed",
         error: err instanceof Error ? err.message : String(err),
@@ -1109,6 +1260,178 @@ export async function chainStartInternal(
     );
     return json(body);
   }
+}
+
+interface RoutingResolution {
+  response: Response | null;
+  route: InitialRoute | null;
+  routedAgent: string;
+  routedRole: string | null;
+}
+
+function rerouteForAgent(
+  input: ChainStartRequestWithLongLived,
+  services: Services,
+  initialAgent: string,
+): { route: InitialRoute | null; routedAgent: string; routedRole: string | null } {
+  const route = resolveInitialRoute({
+    initialAgent,
+    message: input.message,
+    taskType: input.task_type,
+    forceExactAgent: true,
+    services,
+  });
+  return {
+    route,
+    routedAgent: route?.agent ?? initialAgent,
+    routedRole: route?.role ?? null,
+  };
+}
+
+function resolveRoutingWithFallbacks(
+  input: ChainStartRequestWithLongLived,
+  services: Services,
+  applyMaestroBudgetGate: boolean,
+): RoutingResolution {
+  const stripped = stripAgentPrefixes(input);
+  if (stripped.response) {
+    return { response: stripped.response, route: null, routedAgent: "", routedRole: null };
+  }
+  let { initialAgent } = stripped;
+  const { forceExactAgent } = stripped;
+
+  let route = resolveInitialRoute({
+    initialAgent,
+    message: input.message,
+    taskType: input.task_type,
+    forceExactAgent,
+    services,
+  });
+
+  const unknownAgentResponse = rejectUnknownAgent(
+    route,
+    input,
+    initialAgent,
+    forceExactAgent,
+    services,
+  );
+  if (unknownAgentResponse) {
+    return { response: unknownAgentResponse, route: null, routedAgent: "", routedRole: null };
+  }
+
+  let routedAgent = route?.agent ?? initialAgent;
+  let routedRole = route?.role ?? null;
+
+  const classifierFallback = applyClassifierDeclineFallback(input, services);
+  if (classifierFallback.response) {
+    return {
+      response: classifierFallback.response,
+      route: null,
+      routedAgent: "",
+      routedRole: null,
+    };
+  }
+  if (classifierFallback.fallbackAgent !== undefined) {
+    initialAgent = classifierFallback.fallbackAgent;
+    ({ route, routedAgent, routedRole } = rerouteForAgent(input, services, initialAgent));
+  }
+
+  if (applyMaestroBudgetGate) {
+    const budgetResponse = enforceMaestroBudgetForChainStart(input, services);
+    if (budgetResponse) {
+      return { response: budgetResponse, route: null, routedAgent: "", routedRole: null };
+    }
+  }
+
+  const pressureOutcome = enforceSubscriptionPressureGate(input, services);
+  if (pressureOutcome.response) {
+    return { response: pressureOutcome.response, route: null, routedAgent: "", routedRole: null };
+  }
+  if (pressureOutcome.fallbackAgent !== undefined) {
+    initialAgent = pressureOutcome.fallbackAgent;
+    ({ route, routedAgent, routedRole } = rerouteForAgent(input, services, initialAgent));
+  }
+
+  return { response: null, route, routedAgent, routedRole };
+}
+
+export async function chainStartInternal(
+  input: ChainStartRequestWithLongLived,
+  services: Services,
+  opts?: { applyMaestroBudgetGate?: boolean },
+): Promise<Response> {
+  const applyMaestroBudgetGate = opts?.applyMaestroBudgetGate ?? false;
+  const explicitProjectIdResponse = enforceExplicitProjectIdGate(input, services);
+  if (explicitProjectIdResponse) return explicitProjectIdResponse;
+
+  const guardOutcome = runProjectRegistryGuard(input, services);
+  if (guardOutcome.response) return guardOutcome.response;
+  const { routingWarning, routingAdvisory, projectRegistryEntries } = guardOutcome;
+
+  const routing = resolveRoutingWithFallbacks(input, services, applyMaestroBudgetGate);
+  if (routing.response) return routing.response;
+  const { route, routedAgent, routedRole } = routing;
+
+  const depthResponse = enforceRecursionDepthGuard(input, services);
+  if (depthResponse) return depthResponse;
+
+  dropUnknownProjectId(input, services, projectRegistryEntries);
+
+  const conversation_id = input.conversation_id ?? `conv-${services.uuid()}`;
+  const user_prompt_event_id = services.uuid();
+  const handoff_id = services.uuid();
+  const ts = services.clock().toISOString();
+  const openPrOnReview = (input as { open_pr_on_review?: unknown }).open_pr_on_review;
+  const openPrOnReviewBool = typeof openPrOnReview === "boolean" ? openPrOnReview : undefined;
+  const taskClass = (input as { task_class?: TaskClass }).task_class;
+  const isolatedInstall = resolveIsolatedInstall(input, services, taskClass);
+  if (taskClass !== undefined) {
+    services.log.debug(
+      { event: "dispatch.task_class", task_class: taskClass },
+      "chain-start dispatch task_class",
+    );
+  }
+  const stamped = buildStampedLongLivedPrompt(input, services);
+  if (stamped.errorResponse) return stamped.errorResponse;
+
+  const lane_id: string | null = taskClass !== undefined ? `lane-${services.uuid()}` : null;
+  const autoRecall = await maybeRunAutoRecall(input, services, taskClass, stamped.message);
+  const handoffMessage = autoRecall.handoffMessage;
+  const { recalled_memory_ids, recalled_memories, recalled_query } = autoRecall;
+
+  persistChainStart({
+    services,
+    input,
+    user_prompt_event_id,
+    handoff_id,
+    ts,
+    conversation_id,
+    routedAgent,
+    routedRole,
+    handoffMessage,
+    route,
+    isolatedInstall,
+    openPrOnReviewBool,
+    lane_id,
+    taskClass,
+    recalled_memory_ids,
+    recalled_query,
+  });
+
+  return buildChainStartResponse({
+    services,
+    conversation_id,
+    handoff_id,
+    taskClass,
+    lane_id,
+    recalled_memory_ids,
+    recalled_memories,
+    routedAgent,
+    routedRole,
+    route,
+    routingWarning,
+    routingAdvisory,
+  });
 }
 
 function maybeSelectSubDispatchFallback(opts: {
@@ -1157,16 +1480,11 @@ function maybeSelectSubDispatchFallback(opts: {
     .filter((recommendation) => recommendation.agent_name !== opts.input.initial_agent)
     .filter((recommendation) => configAgents.has(recommendation.agent_name));
 
+  const syntheticCaps = collectSyntheticCaps(opts.services);
+
   let attemptCount = 0;
   for (const recommendation of rankedCandidates) {
     if (attemptCount >= MAX_SUB_DISPATCH_FALLBACKS) break;
-    const syntheticCaps: Record<string, { max_dispatches: number; window_seconds: number }> = {};
-    if (!("syntheticCaps" in opts)) {
-      for (const quota of opts.services.providerQuotas as any[]) {
-        if (quota.synthetic_cap) syntheticCaps[quota.provider] = quota.synthetic_cap;
-      }
-      (opts as any).syntheticCaps = syntheticCaps;
-    }
 
     const candidate = opts.cfg.agents?.find((agent) => agent.name === recommendation.agent_name);
     if (!candidate) continue;
@@ -1175,7 +1493,7 @@ function maybeSelectSubDispatchFallback(opts: {
       agent: candidate,
       providerCaps: opts.providerCaps,
       now: () => opts.services.clock(),
-      syntheticCaps: (opts as any).syntheticCaps,
+      syntheticCaps,
       getRecentDispatchCount: makeGetRecentDispatchCount(opts.services),
     });
 
@@ -1421,7 +1739,7 @@ function recordPressureFallbackEvent(opts: {
   });
 }
 
-export async function chainsHistoryRoute(req: Request, services: Services): Promise<Response> {
+export function chainsHistoryRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const conversation_id = url.searchParams.get("conversation_id");
   if (!conversation_id) {
@@ -1435,7 +1753,7 @@ export async function chainsHistoryRoute(req: Request, services: Services): Prom
   return json({ history });
 }
 
-export async function chainsResponsesRoute(req: Request, services: Services): Promise<Response> {
+export function chainsResponsesRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const conversation_id = url.searchParams.get("conversation_id");
   if (!conversation_id) {
@@ -1456,7 +1774,7 @@ export async function chainsResponsesRoute(req: Request, services: Services): Pr
   return json({ responses });
 }
 
-export async function chainsMessagesRoute(req: Request, services: Services): Promise<Response> {
+export function chainsMessagesRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const conversation_id = url.searchParams.get("conversation_id");
   if (!conversation_id) {
@@ -1508,11 +1826,7 @@ export async function chainSendMessageRoute(
       400,
     );
   }
-  if (
-    typeof raw !== "object" ||
-    raw === null ||
-    typeof (raw as Record<string, unknown>).content !== "string"
-  ) {
+  if (typeof raw !== "object" || typeof (raw as Record<string, unknown>).content !== "string") {
     return json(
       { error: { code: "validation_error", message: "body must include content:string" } },
       400,
@@ -1528,7 +1842,7 @@ export async function chainSendMessageRoute(
   if (!handoff) {
     return json({ error: { code: "not_found", message: `handoff ${handoff_id} not found` } }, 404);
   }
-  if (isTerminalHandoffStatus(String(handoff.status))) {
+  if (isTerminalHandoffStatus(handoff.status)) {
     return json(
       { error: { code: "gone", message: `handoff ${handoff_id} is no longer running` } },
       410,
@@ -1549,7 +1863,7 @@ export async function chainSendMessageRoute(
     adapter_kind?: string | null;
     metadata?: { adapter?: string | null; adapter_kind?: string | null } | null;
     worker?: { adapter?: string | null; adapter_kind?: string | null } | null;
-    inject?: (msg: { role: string; text: string }) => Promise<unknown> | unknown;
+    inject?: (msg: { role: string; text: string }) => Promise<unknown>;
   };
   const adapterId = resolveAdapterId(session);
   if (!supportsMidSessionInject(adapterId)) {
@@ -1579,7 +1893,7 @@ export async function chainSendMessageRoute(
   return json({ ok: true });
 }
 
-export async function chainsListAgentsRoute(_req: Request, services: Services): Promise<Response> {
+export function chainsListAgentsRoute(_req: Request, services: Services): Response {
   const agents = (services.agentRegistry ?? []).map((name) => ({ name }));
   return json({ agents });
 }
@@ -1593,7 +1907,7 @@ const ChainsListQuerySchema = z
   })
   .strict();
 
-export async function chainsListRoute(req: Request, services: Services): Promise<Response> {
+export function chainsListRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const parsed = ChainsListQuerySchema.safeParse({
     status: url.searchParams.get("status") ?? undefined,
@@ -1623,7 +1937,7 @@ export async function chainsListRoute(req: Request, services: Services): Promise
   return json({ chains, limit, offset });
 }
 
-async function safeJson(req: Request): Promise<unknown | null> {
+async function safeJson(req: Request): Promise<unknown> {
   try {
     return await req.json();
   } catch {
@@ -1700,50 +2014,47 @@ function readOptionalWorkloadField(
   return { value: undefined, error: `Invalid input: expected one of ${WORKLOADS.join(", ")}` };
 }
 
-function buildStampedLongLivedPrompt(
+function longLivedError(
+  input: ChainStartRequestWithLongLived,
+  body: Record<string, unknown>,
+): { message: string; errorResponse: Response } {
+  return { message: input.message, errorResponse: json({ error: body }, 400) };
+}
+
+function resolveLongLivedAgentAndTick(
   input: ChainStartRequestWithLongLived,
   services: Services,
-): {
-  message: string;
-  errorResponse?: Response;
-} {
-  if (input.dispatch_kind !== "long_lived_tick") {
-    return { message: input.message };
-  }
-
+):
+  | {
+      ok: true;
+      agent: LongLivedPromptAgentRow;
+      tick: LongLivedPromptTickRow;
+      agentId: string;
+      tickId: string;
+    }
+  | { ok: false; errorResult: { message: string; errorResponse: Response } } {
   const agentId = input.long_lived_agent_id ?? null;
   if (!agentId) {
     return {
-      message: input.message,
-      errorResponse: json(
-        {
-          error: {
-            code: "unknown_long_lived_agent",
-            message: "long-lived dispatch requires a resolvable agent",
-            long_lived_agent_id: input.long_lived_agent_id ?? null,
-          },
-        },
-        400,
-      ),
+      ok: false,
+      errorResult: longLivedError(input, {
+        code: "unknown_long_lived_agent",
+        message: "long-lived dispatch requires a resolvable agent",
+        long_lived_agent_id: input.long_lived_agent_id ?? null,
+      }),
     };
   }
   const tickId = input.long_lived_tick_id ?? null;
   if (!tickId) {
     return {
-      message: input.message,
-      errorResponse: json(
-        {
-          error: {
-            code: "unknown_long_lived_tick",
-            message: "long-lived dispatch requires a resolvable tick",
-            long_lived_tick_id: input.long_lived_tick_id ?? null,
-          },
-        },
-        400,
-      ),
+      ok: false,
+      errorResult: longLivedError(input, {
+        code: "unknown_long_lived_tick",
+        message: "long-lived dispatch requires a resolvable tick",
+        long_lived_tick_id: input.long_lived_tick_id ?? null,
+      }),
     };
   }
-
   const agent = services.db
     .query<LongLivedPromptAgentRow, [string]>(
       `SELECT id, display_name, standing_brief, working_memory_json, mcp_allowlist_json,
@@ -1755,20 +2066,14 @@ function buildStampedLongLivedPrompt(
     .get(agentId);
   if (!agent) {
     return {
-      message: input.message,
-      errorResponse: json(
-        {
-          error: {
-            code: "unknown_long_lived_agent",
-            message: `long-lived agent not found: ${agentId}`,
-            long_lived_agent_id: agentId,
-          },
-        },
-        400,
-      ),
+      ok: false,
+      errorResult: longLivedError(input, {
+        code: "unknown_long_lived_agent",
+        message: `long-lived agent not found: ${agentId}`,
+        long_lived_agent_id: agentId,
+      }),
     };
   }
-
   const tick = services.db
     .query<LongLivedPromptTickRow, [string]>(
       `SELECT id, agent_id, trigger_kind, trigger_payload_json
@@ -1779,35 +2084,42 @@ function buildStampedLongLivedPrompt(
     .get(tickId);
   if (!tick) {
     return {
-      message: input.message,
-      errorResponse: json(
-        {
-          error: {
-            code: "unknown_long_lived_tick",
-            message: `long-lived tick not found: ${tickId}`,
-            long_lived_tick_id: tickId,
-          },
-        },
-        400,
-      ),
+      ok: false,
+      errorResult: longLivedError(input, {
+        code: "unknown_long_lived_tick",
+        message: `long-lived tick not found: ${tickId}`,
+        long_lived_tick_id: tickId,
+      }),
     };
   }
   if (tick.agent_id !== agent.id) {
     return {
-      message: input.message,
-      errorResponse: json(
-        {
-          error: {
-            code: "cross_identity_long_lived",
-            message: "long-lived tick does not belong to the provided agent",
-            long_lived_agent_id: agentId,
-            long_lived_tick_id: tickId,
-          },
-        },
-        400,
-      ),
+      ok: false,
+      errorResult: longLivedError(input, {
+        code: "cross_identity_long_lived",
+        message: "long-lived tick does not belong to the provided agent",
+        long_lived_agent_id: agentId,
+        long_lived_tick_id: tickId,
+      }),
     };
   }
+  return { ok: true, agent, tick, agentId, tickId };
+}
+
+function buildStampedLongLivedPrompt(
+  input: ChainStartRequestWithLongLived,
+  services: Services,
+): {
+  message: string;
+  errorResponse?: Response;
+} {
+  if (input.dispatch_kind !== "long_lived_tick") {
+    return { message: input.message };
+  }
+
+  const resolved = resolveLongLivedAgentAndTick(input, services);
+  if (!resolved.ok) return resolved.errorResult;
+  const { agent, tick } = resolved;
 
   const agentHostedNames = new Set<string>();
   for (const entry of parseJsonWithFallback<string[]>(agent.mcp_allowlist_json, [])) {
@@ -1902,31 +2214,37 @@ function resolveRoleRoute(
 ): InitialRoute {
   const taskType = opts.taskType ?? inferTaskTypeForRole(opts.message, opts.initialAgent);
   const route = resolveSingleRoute(opts.services, opts.initialAgent, opts.message, taskType);
-  return route ?? { agent: roleAgents[0]!, role: opts.initialAgent, taskType };
+  const fallbackAgent = roleAgents[0] ?? opts.initialAgent;
+  return route ?? { agent: fallbackAgent, role: opts.initialAgent, taskType };
 }
 
 function inferTaskTypeForRole(message: string, role: string): AgentTaskType {
   return inferAgentTaskTypeForRole(message, role);
 }
 
-function makeGetRecentDispatchCount(services: any) {
+function makeGetRecentDispatchCount(
+  services: Services,
+): (provider: string, windowSeconds: number) => number {
   return (provider: string, windowSeconds: number): number => {
     const cfg = services.agentchatConfig;
-    if (!cfg || !cfg.agents) return 0;
+    if (!cfg?.agents) return 0;
     const agentsForProvider = cfg.agents
       .filter(
-        (a: any) =>
+        (a) =>
           (a.pricing_mode === "subscription"
             ? a.subscription_provider
             : (a.api_provider ?? a.subscription_provider)) === provider,
       )
-      .map((a: any) => a.name);
+      .map((a) => a.name);
     if (agentsForProvider.length === 0) return 0;
     const cutoff = new Date(services.clock().getTime() - windowSeconds * 1000).toISOString();
     const placeholders = agentsForProvider.map(() => "?").join(",");
     const row = services.db
-      .query(`SELECT COUNT(*) as c FROM handoffs WHERE to_agent IN (${placeholders}) AND ts >= ?`)
-      .get(...agentsForProvider, cutoff) as { c: number };
+      .query<
+        { c: number },
+        (string | number)[]
+      >(`SELECT COUNT(*) as c FROM handoffs WHERE to_agent IN (${placeholders}) AND ts >= ?`)
+      .get(...agentsForProvider, cutoff);
     return row?.c ?? 0;
   };
 }
