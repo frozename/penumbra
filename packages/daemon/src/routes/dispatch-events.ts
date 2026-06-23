@@ -1,11 +1,12 @@
-import { z } from "zod";
-import { DispatchEventKindSchema } from "@penumbra/api-contract";
 import type {
   DispatchEvent,
   DispatchEventInput,
   DispatchEventKind,
   Services,
 } from "@penumbra/core";
+
+import { DispatchEventKindSchema } from "@penumbra/api-contract";
+import { z } from "zod";
 
 import { json } from "./_helpers.js";
 
@@ -52,7 +53,7 @@ export async function dispatchEventsPostRoute(req: Request, services: Services):
   return json({ recorded: parsed.data.events.length });
 }
 
-export async function dispatchEventsGetRoute(req: Request, services: Services): Promise<Response> {
+export function dispatchEventsGetRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const handoff_id = url.searchParams.get("handoff_id");
   if (!handoff_id) return json({ error: "missing_handoff_id" }, 400);
@@ -63,7 +64,7 @@ export async function dispatchEventsGetRoute(req: Request, services: Services): 
     source: row.source,
     kind: row.kind,
     ts: row.ts,
-    meta: row.meta_json ? JSON.parse(row.meta_json) : null,
+    meta: row.meta_json ? (JSON.parse(row.meta_json) as unknown) : null,
   }));
   return json({ events });
 }
@@ -110,10 +111,7 @@ function hydrateRow(row: DispatchEventDbRow): DispatchEvent {
   };
 }
 
-export async function dispatchEventsStreamRoute(
-  req: Request,
-  services: Services,
-): Promise<Response> {
+export function dispatchEventsStreamRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const query = StreamQuerySchema.safeParse({
     since: url.searchParams.get("since") ?? undefined,
@@ -136,7 +134,7 @@ export async function dispatchEventsStreamRoute(
 
   let shutdown: (() => Promise<void>) | null = null;
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
+    start(controller): void {
       const encoder = new TextEncoder();
       const iterator = bus.subscribe(predicate);
       let keepalive: ReturnType<typeof setInterval> | null = null;
@@ -152,7 +150,7 @@ export async function dispatchEventsStreamRoute(
         }
       };
 
-      const close = async () => {
+      const close = async (): Promise<void> => {
         if (closed) return;
         closed = true;
         if (keepalive) clearInterval(keepalive);
@@ -188,7 +186,7 @@ export async function dispatchEventsStreamRoute(
 
       write(": ok\n\n");
 
-      void (async () => {
+      void (async (): Promise<void> => {
         try {
           for await (const event of iterator) {
             if (!write(`data: ${JSON.stringify(event)}\n\n`)) break;
@@ -204,7 +202,7 @@ export async function dispatchEventsStreamRoute(
         }
       }, 30_000);
     },
-    cancel() {
+    cancel(): void {
       if (shutdown) {
         void shutdown();
       }

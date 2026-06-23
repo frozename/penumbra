@@ -1,12 +1,11 @@
 import { classifyDispatchReliability, type Services } from "@penumbra/core";
+
 import { json } from "./_helpers.js";
 
 // Pull the worktree-changed snapshot the worker captured at dispatch.end. We
 // avoid live git probes here because by the time an audit runs (often
 // post-merge), the worktree HEAD vs main signal is already destroyed.
-function readWorktreeChangedSnapshot(
-  events: Array<{ kind: string; meta: unknown }>,
-): boolean | null {
+function readWorktreeChangedSnapshot(events: { kind: string; meta: unknown }[]): boolean | null {
   const dispatchEnd = events.filter((e) => e.kind === "dispatch.end").at(-1);
   const meta = dispatchEnd?.meta;
   if (meta && typeof meta === "object" && "worktree_changed" in meta) {
@@ -16,7 +15,7 @@ function readWorktreeChangedSnapshot(
   return null;
 }
 
-function readDispatchEndCommitted(events: Array<{ kind: string; meta: unknown }>): boolean | null {
+function readDispatchEndCommitted(events: { kind: string; meta: unknown }[]): boolean | null {
   const dispatchEnd = events.filter((e) => e.kind === "dispatch.end").at(-1);
   const meta = dispatchEnd?.meta;
   if (meta && typeof meta === "object" && "committed" in meta) {
@@ -27,7 +26,7 @@ function readDispatchEndCommitted(events: Array<{ kind: string; meta: unknown }>
 }
 
 function readClassifierDecline(
-  events: Array<{ kind: string; meta: unknown }>,
+  events: { kind: string; meta: unknown }[],
 ): { classifier_declined: true; decline_reason: string | null } | undefined {
   const dispatchEnd = events.filter((e) => e.kind === "dispatch.end").at(-1);
   const meta = dispatchEnd?.meta;
@@ -40,7 +39,7 @@ function readClassifierDecline(
   };
 }
 
-export async function dispatchAuditRoute(req: Request, services: Services): Promise<Response> {
+export function dispatchAuditRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const handoffId = url.searchParams.get("handoff_id");
   if (!handoffId) return json({ error: "missing_handoff_id" }, 400);

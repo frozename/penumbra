@@ -1,13 +1,14 @@
+import { captureAgentPerformanceFromReconciler, type Services } from "@penumbra/core";
 import { spawn } from "node:child_process";
 import { z } from "zod";
-import { captureAgentPerformanceFromReconciler, type Services } from "@penumbra/core";
-import { stampAgentPerformanceGateOutcomeForHandoff } from "../../../core/src/db/lane-ledger.js";
-import { createGhCliClient, type GhClient } from "../services/gh-client.js";
-import { memoryVerifyAuthorizeRoute } from "./memory-verify.js";
-import { dispatchAuditRoute } from "./dispatch-audit.js";
-import { lifecycleLock } from "../dispatch/lifecycle-lock.js";
 
+import { stampAgentPerformanceGateOutcomeForHandoff } from "../../../core/src/db/lane-ledger.js";
+import { lifecycleLock } from "../dispatch/lifecycle-lock.js";
+import { createGhCliClient, type GhClient } from "../services/gh-client.js";
 import { json } from "./_helpers.js";
+import { dispatchAuditRoute } from "./dispatch-audit.js";
+import { memoryVerifyAuthorizeRoute } from "./memory-verify.js";
+
 const DispatchLandInputSchema = z.object({
   handoff_id: z.string().min(1),
   commit_message: z.string().min(1).optional(),
@@ -69,7 +70,7 @@ export interface DispatchLandDeps {
 
 function parseJsonRecord(raw: string): Record<string, unknown> {
   try {
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
   } catch {
     // ignored
@@ -153,16 +154,7 @@ function isTerminalDispatchLandStatus(status: DispatchLandTaskStatus): boolean {
   return status === "done" || status === "failed";
 }
 
-function evictTerminalDispatchLandTasks(opts: {
-  now: Date;
-  ttlMs?: number;
-  maxSize?: number;
-}): void {
-  const ttlMs = opts.ttlMs ?? DISPATCH_LAND_TERMINAL_TTL_MS;
-  const maxSize = opts.maxSize ?? DISPATCH_LAND_TASKS_MAX;
-  const nowMs = opts.now.getTime();
-
-  // TTL sweep: drop terminal records whose finished_at is older than ttlMs.
+function runDispatchLandTtlSweep(nowMs: number, ttlMs: number): void {
   for (const [taskId, record] of dispatchLandTasks) {
     if (!isTerminalDispatchLandStatus(record.status)) continue;
     if (!record.finished_at) continue;
@@ -172,12 +164,11 @@ function evictTerminalDispatchLandTasks(opts: {
       dispatchLandTasks.delete(taskId);
     }
   }
+}
 
-  // Capacity cap: while the Map exceeds maxSize, evict the oldest terminal
-  // record. In-flight (queued/running) entries are skipped — idempotency and
-  // status GETs depend on them.
+function runDispatchLandCapacitySweep(maxSize: number): void {
   if (dispatchLandTasks.size <= maxSize) return;
-  const terminals: Array<{ taskId: string; finishedMs: number }> = [];
+  const terminals: { taskId: string; finishedMs: number }[] = [];
   for (const [taskId, record] of dispatchLandTasks) {
     if (!isTerminalDispatchLandStatus(record.status)) continue;
     const parsed = record.finished_at ? Date.parse(record.finished_at) : Number.NaN;
@@ -188,6 +179,17 @@ function evictTerminalDispatchLandTasks(opts: {
     if (dispatchLandTasks.size <= maxSize) return;
     dispatchLandTasks.delete(taskId);
   }
+}
+
+function evictTerminalDispatchLandTasks(opts: {
+  now: Date;
+  ttlMs?: number;
+  maxSize?: number;
+}): void {
+  const ttlMs = opts.ttlMs ?? DISPATCH_LAND_TERMINAL_TTL_MS;
+  const maxSize = opts.maxSize ?? DISPATCH_LAND_TASKS_MAX;
+  runDispatchLandTtlSweep(opts.now.getTime(), ttlMs);
+  runDispatchLandCapacitySweep(maxSize);
 }
 
 // Test-only handle: exposes the module-scoped Map and eviction routine so
@@ -209,17 +211,17 @@ function createDefaultDeps(services: Services, repoDir: string): DispatchLandDep
         });
         let stdout = "";
         let stderr = "";
-        proc.stdout?.on("data", (chunk) => {
+        proc.stdout.on("data", (chunk: Buffer) => {
           stdout += chunk.toString();
         });
-        proc.stderr?.on("data", (chunk) => {
+        proc.stderr.on("data", (chunk: Buffer) => {
           stderr += chunk.toString();
         });
         proc.on("error", reject);
-        if (opts?.stdin != null) {
-          proc.stdin?.write(opts.stdin);
+        if (opts?.stdin !== undefined) {
+          proc.stdin.write(opts.stdin);
         }
-        proc.stdin?.end();
+        proc.stdin.end();
         proc.on("close", (code) => {
           resolve({
             code: code ?? -1,
@@ -264,7 +266,7 @@ function verdictConflictFiles(verdict: Record<string, unknown> | null): string[]
 
 async function isAuditTrustedAccept(services: Services, handoffId: string): Promise<boolean> {
   try {
-    const res = await dispatchAuditRoute(
+    const res = dispatchAuditRoute(
       new Request(`http://daemon/dispatch/audit?handoff_id=${encodeURIComponent(handoffId)}`),
       services,
     );
@@ -272,7 +274,9 @@ async function isAuditTrustedAccept(services: Services, handoffId: string): Prom
     const body = (await res.json()) as {
       report?: { trustworthy?: boolean; recommended_action?: string };
     };
-    return body.report?.trustworthy === true && body.report?.recommended_action === "accept";
+    const report = body.report;
+    if (!report) return false;
+    return report.trustworthy === true && report.recommended_action === "accept";
   } catch {
     return false;
   }
@@ -341,7 +345,7 @@ async function authorizeDispatchLandMemoryVerify(input: {
   const res = await memoryVerifyAuthorizeRoute(req, input.services);
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    input.services.log?.warn?.(
+    input.services.log.warn(
       {
         handoff_id: input.handoffId,
         reviewer_handoff: input.reviewerHandoff,
@@ -354,12 +358,66 @@ async function authorizeDispatchLandMemoryVerify(input: {
   }
 }
 
+type Handoff = NonNullable<ReturnType<Services["handoffReader"]["get"]>>;
+
+function resolveLandRepoDir(services: Services, handoff: Handoff): string {
+  if (handoff.project_id === null) return process.cwd();
+  const project = services.projectRegistry?.get(handoff.project_id);
+  return project?.root_path ?? process.cwd();
+}
+
+function evaluateLandVerdictConflict(
+  branch: string,
+  force: boolean,
+  conflictFiles: string[] | null,
+): Response | null {
+  if (force || conflictFiles === null) return null;
+  return json(
+    {
+      error: {
+        code: "merge_conflict",
+        files: conflictFiles,
+        hint: `rebase ${branch} onto main and retry`,
+      },
+    },
+    409,
+  );
+}
+
+function findInflightLandTaskResponse(handoff_id: string): Response | null {
+  for (const [existingTaskId, existingTask] of dispatchLandTasks.entries()) {
+    if (existingTask.handoff_id !== handoff_id) continue;
+    if (existingTask.status !== "queued" && existingTask.status !== "running") continue;
+    return json(
+      { ok: true, task_id: existingTaskId, status: existingTask.status, idempotent: true },
+      202,
+    );
+  }
+  return null;
+}
+
+function buildLifecycleBusyResponse(): Response {
+  const holder = lifecycleLock.getHolder();
+  const elapsed = holder ? Date.now() - holder.acquired_at : 0;
+  return json(
+    {
+      ok: false,
+      error: {
+        code: "lifecycle_busy",
+        holder: holder?.handoff_id ?? "unknown",
+        retry_after_ms: Math.max(1000, lifecycleLock.ttlMs - elapsed),
+      },
+    },
+    200,
+  );
+}
+
 export async function dispatchLandRoute(
   req: Request,
   services: Services,
   deps?: DispatchLandDeps,
 ): Promise<Response> {
-  const raw = await req.json().catch(() => null);
+  const raw: unknown = await req.json().catch(() => null);
   const parsed = DispatchLandInputSchema.safeParse(raw ?? {});
   if (!parsed.success) {
     return json({ error: { code: "invalid_params", issues: parsed.error.issues } }, 400);
@@ -371,70 +429,32 @@ export async function dispatchLandRoute(
   if (!handoff) {
     return json({ error: { code: "not_found", message: `handoff ${handoff_id} not found` } }, 404);
   }
-  const repoDir = (() => {
-    if (handoff.project_id == null) return process.cwd();
-    const project = services.projectRegistry?.get(handoff.project_id);
-    return project?.root_path ?? process.cwd();
-  })();
+  const repoDir = resolveLandRepoDir(services, handoff);
   const routeDeps = deps ?? createDefaultDeps(services, repoDir);
 
   const branch = `agent/${handoff_id}`;
   const verdict = readLatestVerdict(services, handoff_id);
   const conflictFiles = verdictConflictFiles(verdict);
-  if (!force && conflictFiles !== null) {
-    return json(
-      {
-        error: {
-          code: "merge_conflict",
-          files: conflictFiles,
-          hint: `rebase ${branch} onto main and retry`,
-        },
-      },
-      409,
-    );
-  }
+  const conflictResponse = evaluateLandVerdictConflict(branch, force, conflictFiles);
+  if (conflictResponse) return conflictResponse;
   if (!force && verdictFailed(verdict) && !(await isAuditTrustedAccept(services, handoff_id))) {
     return json({ error: { code: "verdict_unverified", verdict } }, 409);
   }
   const stampPassedGateOutcome = !force && !verdictFailed(verdict);
 
-  // Idempotency: return the existing in-flight task for this handoff.
-  for (const [existingTaskId, existingTask] of dispatchLandTasks.entries()) {
-    if (
-      existingTask.handoff_id === handoff_id &&
-      (existingTask.status === "queued" || existingTask.status === "running")
-    ) {
-      return json(
-        { ok: true, task_id: existingTaskId, status: existingTask.status, idempotent: true },
-        202,
-      );
-    }
-  }
+  const inflightResponse = findInflightLandTaskResponse(handoff_id);
+  if (inflightResponse) return inflightResponse;
 
-  // Fast-reject when the git-write lock is held and the caller opts into immediate refusal.
   if (reject_if_held && lifecycleLock.isHeld()) {
-    const holder = lifecycleLock.getHolder();
-    const elapsed = holder ? Date.now() - holder.acquired_at : 0;
-    return json(
-      {
-        ok: false,
-        error: {
-          code: "lifecycle_busy",
-          holder: holder?.handoff_id ?? "unknown",
-          retry_after_ms: Math.max(1000, lifecycleLock.ttlMs - elapsed),
-        },
-      },
-      200,
-    );
+    return buildLifecycleBusyResponse();
   }
 
   const task_id = services.uuid();
-  const created_at = now().toISOString();
   const task: DispatchLandTaskRecord = {
     task_id,
     handoff_id,
     status: "queued",
-    created_at,
+    created_at: now().toISOString(),
     started_at: null,
     finished_at: null,
     result: null,
@@ -470,7 +490,7 @@ export async function dispatchLandRoute(
       }
       evictTerminalDispatchLandTasks({ now: now() });
     })
-    .catch((error) => {
+    .catch((error: unknown) => {
       task.status = "failed";
       task.finished_at = now().toISOString();
       task.error = {
@@ -490,11 +510,11 @@ export async function dispatchLandRoute(
   );
 }
 
-export async function dispatchLandTaskRoute(
+export function dispatchLandTaskRoute(
   _req: Request,
   _services: Services,
   taskId: string,
-): Promise<Response> {
+): Response {
   const task = dispatchLandTasks.get(taskId);
   if (!task) {
     return json(
@@ -512,6 +532,403 @@ export async function dispatchLandTaskRoute(
     result: task.result,
     error: task.error,
   });
+}
+
+async function resolveLandCommitMessage(
+  deps: DispatchLandDeps,
+  branch: string,
+  override: string | undefined,
+): Promise<{ message: string } | DispatchLandFailure> {
+  if (override) return { message: override };
+  const result = await deps.runGit(["log", "-1", "--format=%B", branch]);
+  if (result.code !== 0) {
+    return {
+      status: 500,
+      error: {
+        code: "git_failed",
+        step: "resolve_commit_message",
+        stderr: result.stderr.trim() || undefined,
+      },
+    };
+  }
+  return { message: result.stdout.trim() };
+}
+
+async function performLandSquashMerge(
+  deps: DispatchLandDeps,
+  branch: string,
+): Promise<DispatchLandFailure | null> {
+  const merge = await deps.runGit(["merge", "--squash", branch]);
+  if (merge.code === 0) return null;
+  const conflicts = await deps.runGit(["diff", "--name-only", "--diff-filter=U"]);
+  const files = conflicts.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (files.length > 0) {
+    const cleanup = await resetMergeAndVerifyClean(deps);
+    if (!cleanup.ok) {
+      return {
+        status: 500,
+        error: {
+          code: "merge_conflict_cleanup_failed",
+          files,
+          hint: `rebase ${branch} onto main and retry`,
+          manual_repair: "run git reset --merge in the target repo before retrying",
+          ...cleanup,
+        },
+      };
+    }
+    return {
+      status: 409,
+      error: {
+        code: "merge_conflict",
+        files,
+        hint: `rebase ${branch} onto main and retry`,
+      },
+    };
+  }
+  // A failed squash can leave partial staged state even when no unmerged
+  // paths are reported (or when the conflict read itself failed) — clean
+  // up before surfacing the error so the next land never starts dirty.
+  const fallbackCleanup = await resetMergeAndVerifyClean(deps);
+  return {
+    status: 500,
+    error: {
+      code: "git_failed",
+      step: "merge_squash",
+      stderr: merge.stderr.trim() || undefined,
+      ...(fallbackCleanup.ok ? {} : fallbackCleanup),
+    },
+  };
+}
+
+async function performLandSquashCommit(
+  deps: DispatchLandDeps,
+  resolvedCommitMessage: string,
+): Promise<{ already_landed: boolean } | DispatchLandFailure> {
+  const stagedChanges = await deps.runGit(["diff", "--cached", "--quiet"]);
+  if (stagedChanges.code === 0) {
+    return { already_landed: true };
+  }
+  const commit = await deps.runGit(["commit", "-F", "-"], { stdin: resolvedCommitMessage });
+  if (commit.code === 0) {
+    return { already_landed: false };
+  }
+  const stderr = commit.stderr.trim();
+  const cleanup = await resetMergeAndVerifyClean(deps);
+  if (!cleanup.ok) {
+    return {
+      status: 500,
+      error: {
+        code: commitFailureLooksLikeHook(stderr)
+          ? "commit_hook_cleanup_failed"
+          : "commit_cleanup_failed",
+        step: "commit_squash",
+        stderr: stderr || undefined,
+        manual_repair: "run git reset --merge in the target repo before retrying",
+        ...cleanup,
+      },
+    };
+  }
+  if (commitFailureLooksLikeHook(stderr)) {
+    return {
+      status: 500,
+      error: {
+        code: "commit_hook_failed",
+        step: "commit_squash",
+        stderr: stderr || undefined,
+      },
+    };
+  }
+  return {
+    status: 500,
+    error: {
+      code: "git_failed",
+      step: "commit_squash",
+      stderr: stderr || undefined,
+    },
+  };
+}
+
+async function performLandSquashFlow(
+  deps: DispatchLandDeps,
+  branch: string,
+  resolvedCommitMessage: string,
+): Promise<{ already_landed: boolean } | DispatchLandFailure> {
+  const checkoutFailure = await performLandCheckoutMain(deps);
+  if (checkoutFailure) return checkoutFailure;
+  const mergeFailure = await performLandSquashMerge(deps, branch);
+  if (mergeFailure) return mergeFailure;
+  return await performLandSquashCommit(deps, resolvedCommitMessage);
+}
+
+async function performLandFfFlow(
+  deps: DispatchLandDeps,
+  handoffId: string,
+): Promise<DispatchLandFailure | null> {
+  const checkoutFailure = await performLandCheckoutMain(deps);
+  if (checkoutFailure) return checkoutFailure;
+  const merge = await deps.runGit(["merge", "--ff-only", `agent/${handoffId}`]);
+  if (merge.code !== 0) {
+    return {
+      status: 500,
+      error: {
+        code: "git_failed",
+        step: "merge_ff_only",
+        stderr: merge.stderr.trim() || undefined,
+      },
+    };
+  }
+  return null;
+}
+
+async function performLandCheckoutMain(
+  deps: DispatchLandDeps,
+): Promise<DispatchLandFailure | null> {
+  const checkout = await deps.runGit(["checkout", "main"]);
+  if (checkout.code !== 0) {
+    return {
+      status: 500,
+      error: {
+        code: "git_failed",
+        step: "checkout_main",
+        stderr: checkout.stderr.trim() || undefined,
+      },
+    };
+  }
+  return null;
+}
+
+async function readMainSha(
+  deps: DispatchLandDeps,
+  step: "rev_parse_main_before" | "rev_parse_main_after",
+): Promise<{ sha: string } | DispatchLandFailure> {
+  const result = await deps.runGit(["rev-parse", "main"]);
+  if (result.code !== 0) {
+    return {
+      status: 500,
+      error: {
+        code: "git_failed",
+        step,
+        stderr: result.stderr.trim() || undefined,
+      },
+    };
+  }
+  return { sha: result.stdout.trim() };
+}
+
+async function verifyLandedFfMove(
+  deps: DispatchLandDeps,
+  branch: string,
+  beforeMainSha: string,
+  afterMainSha: string,
+): Promise<{ already_landed: boolean } | DispatchLandFailure> {
+  if (afterMainSha !== beforeMainSha) return { already_landed: false };
+  const ancestor = await deps.runGit(["merge-base", "--is-ancestor", branch, "main"]);
+  if (ancestor.code === 0) return { already_landed: true };
+  return {
+    status: 500,
+    error: {
+      code: "land_not_in_main",
+      step: "verify_landed",
+      beforeMain: beforeMainSha,
+      afterMain: afterMainSha,
+      stderr: ancestor.stderr.trim() || undefined,
+    },
+  };
+}
+
+interface PerformLandGitOpsResult {
+  commit_sha: string;
+  already_landed: boolean;
+}
+
+async function performLandGitOps(
+  deps: DispatchLandDeps,
+  handoff_id: string,
+  branch: string,
+  mode: "squash" | "ff",
+  resolvedCommitMessage: string,
+): Promise<PerformLandGitOpsResult | DispatchLandFailure> {
+  const before = await readMainSha(deps, "rev_parse_main_before");
+  if ("error" in before) return before;
+
+  let already_landed = false;
+  if (mode === "squash") {
+    const squash = await performLandSquashFlow(deps, branch, resolvedCommitMessage);
+    if ("error" in squash) return squash;
+    already_landed = squash.already_landed;
+  } else {
+    const ff = await performLandFfFlow(deps, handoff_id);
+    if (ff) return ff;
+  }
+
+  // No cleanup on this exit by design: the merge/commit already succeeded, so
+  // there is no staged residue — this is a read failure after a complete land.
+  const after = await readMainSha(deps, "rev_parse_main_after");
+  if ("error" in after) return after;
+
+  if (mode === "ff") {
+    const verified = await verifyLandedFfMove(deps, branch, before.sha, after.sha);
+    if ("error" in verified) return verified;
+    already_landed = verified.already_landed;
+  }
+
+  return { commit_sha: after.sha, already_landed };
+}
+
+function writeLifecycleLockMetric(
+  services: Services,
+  handoff: Handoff,
+  handoff_id: string,
+  held_ms: number,
+): void {
+  try {
+    const metricTs = new Date().toISOString();
+    services.t0Writer.write({
+      event_id: services.uuid(),
+      ts: metricTs,
+      ingest_ts: metricTs,
+      source: "mcp",
+      source_detail: "dispatch-land",
+      project_id: handoff.project_id,
+      user_id: "penumbra",
+      machine_id: services.machineId.get(),
+      session_id: handoff.conversation_id,
+      event_type: "lifecycle_lock_held",
+      lane: "local",
+      provider: null,
+      model: null,
+      tokens_in: null,
+      tokens_out: null,
+      cost_usd: null,
+      latency_ms: held_ms,
+      request_id: null,
+      origin: "dispatch",
+      payload_json: { handoff_id, held_ms },
+      payload_summary: `lifecycle lock held ${String(held_ms)}ms for ${handoff_id}`,
+    });
+  } catch {
+    // metric failure is non-fatal
+  }
+}
+
+function writeDispatchLandedEvent(
+  services: Services,
+  handoff: Handoff,
+  input: {
+    handoff_id: string;
+    branch: string;
+    commit_sha: string;
+    message_subject: string;
+    mode: "squash" | "ff";
+    landed_at: string;
+  },
+): void {
+  services.t0Writer.write({
+    event_id: services.uuid(),
+    ts: input.landed_at,
+    ingest_ts: input.landed_at,
+    source: "mcp",
+    source_detail: "dispatch-land",
+    project_id: handoff.project_id,
+    user_id: "penumbra",
+    machine_id: services.machineId.get(),
+    session_id: handoff.conversation_id,
+    event_type: "dispatch.landed",
+    lane: "local",
+    provider: null,
+    model: null,
+    tokens_in: null,
+    tokens_out: null,
+    cost_usd: null,
+    latency_ms: null,
+    request_id: null,
+    origin: "dispatch",
+    payload_json: {
+      handoff_id: input.handoff_id,
+      conversation_id: handoff.conversation_id,
+      mode: input.mode,
+      commit_sha: input.commit_sha,
+      branch: input.branch,
+      message_subject: input.message_subject,
+      landed_at: input.landed_at,
+    },
+    payload_summary: `landed ${input.handoff_id} via ${input.mode} -> ${input.commit_sha.slice(0, 8)}`,
+  });
+}
+
+async function teardownLandWorktree(
+  services: Services,
+  handoff: Handoff,
+  handoff_id: string,
+  delete_branch: boolean,
+): Promise<{ worktree_torn_down: boolean; branch_deleted: boolean }> {
+  try {
+    const td = await services.worktreeManager.teardownWorktree(
+      handoff_id,
+      false,
+      handoff.project_id ?? undefined,
+      delete_branch,
+    );
+    return { worktree_torn_down: td.worktreeRemoved, branch_deleted: td.branchDeleted };
+  } catch (err) {
+    services.log.warn(
+      { handoff_id, err: String(err) },
+      "dispatch-land worktree teardown failed; orphan worktree will need manual GC",
+    );
+    return { worktree_torn_down: false, branch_deleted: false };
+  }
+}
+
+function captureLandAgentPerformance(
+  services: Services,
+  handoff_id: string,
+  stampPassedGateOutcome: boolean,
+): void {
+  try {
+    captureAgentPerformanceFromReconciler({
+      db: services.db,
+      uuid: services.uuid,
+      clock: services.clock,
+      input: {
+        handoff_id,
+        result: { status: "merged", timed_out: false },
+      },
+    });
+    if (stampPassedGateOutcome) {
+      stampAgentPerformanceGateOutcomeForHandoff(services.db, handoff_id, "passed");
+    }
+  } catch (err) {
+    services.log.warn(
+      { handoff_id, err: String(err) },
+      "dispatch-land agent_performance re-stamp failed",
+    );
+  }
+}
+
+async function runLandMemoryVerify(
+  services: Services,
+  handoff_id: string,
+  commit_sha: string,
+): Promise<void> {
+  try {
+    const reviewerHandoff = resolveReviewerHandoffForDispatchLand(services, handoff_id);
+    if (reviewerHandoff) {
+      await authorizeDispatchLandMemoryVerify({
+        services,
+        handoffId: handoff_id,
+        reviewerHandoff,
+        commitSha: commit_sha,
+      });
+    }
+  } catch (err) {
+    services.log.warn(
+      { handoff_id, err: String(err) },
+      "dispatch-land memory verify authorize threw; land result unaffected",
+    );
+  }
 }
 
 async function executeLand(input: {
@@ -544,21 +961,9 @@ async function executeLand(input: {
   }
 
   const branch = `agent/${handoff_id}`;
-  let resolvedCommitMessage = commit_message;
-  if (!resolvedCommitMessage) {
-    const commitMessageFromBranch = await deps.runGit(["log", "-1", "--format=%B", branch]);
-    if (commitMessageFromBranch.code !== 0) {
-      return {
-        status: 500,
-        error: {
-          code: "git_failed",
-          step: "resolve_commit_message",
-          stderr: commitMessageFromBranch.stderr.trim() || undefined,
-        },
-      };
-    }
-    resolvedCommitMessage = commitMessageFromBranch.stdout.trim();
-  }
+  const messageResult = await resolveLandCommitMessage(deps, branch, commit_message);
+  if ("error" in messageResult) return messageResult;
+  const resolvedCommitMessage = messageResult.message;
   const message_subject = subjectFromCommitMessage(resolvedCommitMessage);
 
   // Acquire the lifecycle lock before any git writes to main.
@@ -567,312 +972,44 @@ async function executeLand(input: {
   // crash or throw cannot wedge the lock indefinitely.
   const lockAcquiredAt = Date.now();
   const releaseLock = await lifecycleLock.acquire(handoff_id);
-  let commit_sha = "";
-  let already_landed = false;
+  let gitOpsOutcome: PerformLandGitOpsResult | DispatchLandFailure;
   try {
-    const beforeMain = await deps.runGit(["rev-parse", "main"]);
-    if (beforeMain.code !== 0) {
-      return {
-        status: 500,
-        error: {
-          code: "git_failed",
-          step: "rev_parse_main_before",
-          stderr: beforeMain.stderr.trim() || undefined,
-        },
-      };
-    }
-    const beforeMainSha = beforeMain.stdout.trim();
-
-    if (mode === "squash") {
-      const checkout = await deps.runGit(["checkout", "main"]);
-      if (checkout.code !== 0) {
-        return {
-          status: 500,
-          error: {
-            code: "git_failed",
-            step: "checkout_main",
-            stderr: checkout.stderr.trim() || undefined,
-          },
-        };
-      }
-
-      const merge = await deps.runGit(["merge", "--squash", branch]);
-      if (merge.code !== 0) {
-        const conflicts = await deps.runGit(["diff", "--name-only", "--diff-filter=U"]);
-        const files = conflicts.stdout
-          .split("\n")
-          .map((line) => line.trim())
-          .filter(Boolean);
-        if (files.length > 0) {
-          const cleanup = await resetMergeAndVerifyClean(deps);
-          if (!cleanup.ok) {
-            return {
-              status: 500,
-              error: {
-                code: "merge_conflict_cleanup_failed",
-                files,
-                hint: `rebase ${branch} onto main and retry`,
-                manual_repair: "run git reset --merge in the target repo before retrying",
-                ...cleanup,
-              },
-            };
-          }
-          return {
-            status: 409,
-            error: {
-              code: "merge_conflict",
-              files,
-              hint: `rebase ${branch} onto main and retry`,
-            },
-          };
-        }
-        // A failed squash can leave partial staged state even when no unmerged
-        // paths are reported (or when the conflict read itself failed) — clean
-        // up before surfacing the error so the next land never starts dirty.
-        const fallbackCleanup = await resetMergeAndVerifyClean(deps);
-        return {
-          status: 500,
-          error: {
-            code: "git_failed",
-            step: "merge_squash",
-            stderr: merge.stderr.trim() || undefined,
-            ...(fallbackCleanup.ok ? {} : fallbackCleanup),
-          },
-        };
-      }
-
-      const stagedChanges = await deps.runGit(["diff", "--cached", "--quiet"]);
-      if (stagedChanges.code === 0) {
-        already_landed = true;
-      } else {
-        const commit = await deps.runGit(["commit", "-F", "-"], { stdin: resolvedCommitMessage });
-        if (commit.code !== 0) {
-          const stderr = commit.stderr.trim();
-          const cleanup = await resetMergeAndVerifyClean(deps);
-          if (!cleanup.ok) {
-            return {
-              status: 500,
-              error: {
-                code: commitFailureLooksLikeHook(stderr)
-                  ? "commit_hook_cleanup_failed"
-                  : "commit_cleanup_failed",
-                step: "commit_squash",
-                stderr: stderr || undefined,
-                manual_repair: "run git reset --merge in the target repo before retrying",
-                ...cleanup,
-              },
-            };
-          }
-          if (commitFailureLooksLikeHook(stderr)) {
-            return {
-              status: 500,
-              error: {
-                code: "commit_hook_failed",
-                step: "commit_squash",
-                stderr: stderr || undefined,
-              },
-            };
-          }
-          return {
-            status: 500,
-            error: {
-              code: "git_failed",
-              step: "commit_squash",
-              stderr: stderr || undefined,
-            },
-          };
-        }
-      }
-    } else {
-      const checkout = await deps.runGit(["checkout", "main"]);
-      if (checkout.code !== 0) {
-        return {
-          status: 500,
-          error: {
-            code: "git_failed",
-            step: "checkout_main",
-            stderr: checkout.stderr.trim() || undefined,
-          },
-        };
-      }
-
-      const merge = await deps.runGit(["merge", "--ff-only", `agent/${handoff_id}`]);
-      if (merge.code !== 0) {
-        return {
-          status: 500,
-          error: {
-            code: "git_failed",
-            step: "merge_ff_only",
-            stderr: merge.stderr.trim() || undefined,
-          },
-        };
-      }
-    }
-
-    // No cleanup on this exit by design: the merge/commit already succeeded, so
-    // there is no staged residue — this is a read failure after a complete land.
-    const afterMain = await deps.runGit(["rev-parse", "main"]);
-    if (afterMain.code !== 0) {
-      return {
-        status: 500,
-        error: {
-          code: "git_failed",
-          step: "rev_parse_main_after",
-          stderr: afterMain.stderr.trim() || undefined,
-        },
-      };
-    }
-    const afterMainSha = afterMain.stdout.trim();
-    commit_sha = afterMainSha;
-
-    const moved = afterMainSha !== beforeMainSha;
-    if (!moved && mode === "ff") {
-      const ancestor = await deps.runGit(["merge-base", "--is-ancestor", branch, "main"]);
-      if (ancestor.code === 0) {
-        already_landed = true;
-      } else {
-        return {
-          status: 500,
-          error: {
-            code: "land_not_in_main",
-            step: "verify_landed",
-            beforeMain: beforeMainSha,
-            afterMain: afterMainSha,
-            stderr: ancestor.stderr.trim() || undefined,
-          },
-        };
-      }
-    }
+    gitOpsOutcome = await performLandGitOps(deps, handoff_id, branch, mode, resolvedCommitMessage);
   } finally {
     const held_ms = Date.now() - lockAcquiredAt;
     releaseLock();
-    try {
-      const metricTs = new Date().toISOString();
-      services.t0Writer.write({
-        event_id: services.uuid(),
-        ts: metricTs,
-        ingest_ts: metricTs,
-        source: "mcp",
-        source_detail: "dispatch-land",
-        project_id: handoff.project_id,
-        user_id: "penumbra",
-        machine_id: services.machineId.get(),
-        session_id: handoff.conversation_id,
-        event_type: "lifecycle_lock_held",
-        lane: "local",
-        provider: null,
-        model: null,
-        tokens_in: null,
-        tokens_out: null,
-        cost_usd: null,
-        latency_ms: held_ms,
-        request_id: null,
-        origin: "dispatch",
-        payload_json: { handoff_id, held_ms },
-        payload_summary: `lifecycle lock held ${held_ms}ms for ${handoff_id}`,
-      });
-    } catch {
-      // metric failure is non-fatal
-    }
+    writeLifecycleLockMetric(services, handoff, handoff_id, held_ms);
   }
 
-  const landed_at = now().toISOString();
+  if ("error" in gitOpsOutcome) return gitOpsOutcome;
+  const { commit_sha, already_landed } = gitOpsOutcome;
 
+  const landed_at = now().toISOString();
   if (!already_landed) {
-    services.t0Writer.write({
-      event_id: services.uuid(),
-      ts: landed_at,
-      ingest_ts: landed_at,
-      source: "mcp",
-      source_detail: "dispatch-land",
-      project_id: handoff.project_id,
-      user_id: "penumbra",
-      machine_id: services.machineId.get(),
-      session_id: handoff.conversation_id,
-      event_type: "dispatch.landed",
-      lane: "local",
-      provider: null,
-      model: null,
-      tokens_in: null,
-      tokens_out: null,
-      cost_usd: null,
-      latency_ms: null,
-      request_id: null,
-      origin: "dispatch",
-      payload_json: {
-        handoff_id,
-        conversation_id: handoff.conversation_id,
-        mode,
-        commit_sha,
-        branch,
-        message_subject,
-        landed_at,
-      },
-      payload_summary: `landed ${handoff_id} via ${mode} -> ${commit_sha.slice(0, 8)}`,
+    writeDispatchLandedEvent(services, handoff, {
+      handoff_id,
+      branch,
+      commit_sha,
+      message_subject,
+      mode,
+      landed_at,
     });
   }
 
   const pr_closed = already_landed
     ? false
-    : await closeOpenPrIfAny(deps.gh, `agent/${handoff_id}`, commit_sha).catch(() => false);
+    : await closeOpenPrIfAny(deps.gh, branch, commit_sha).catch(() => false);
 
-  let branch_deleted = false;
-  let worktree_torn_down = false;
-  try {
-    const td = (await (services.worktreeManager as any).teardownWorktree(
-      handoff_id,
-      /*force=*/ false,
-      handoff.project_id ?? undefined,
-      delete_branch,
-    )) as { worktreeRemoved?: boolean; branchDeleted?: boolean } | undefined;
-    worktree_torn_down = td?.worktreeRemoved === true;
-    branch_deleted = td?.branchDeleted === true;
-  } catch (err) {
-    services.log?.warn?.(
-      { handoff_id, err: String(err) },
-      "dispatch-land worktree teardown failed; orphan worktree will need manual GC",
-    );
-  }
+  const { worktree_torn_down, branch_deleted } = await teardownLandWorktree(
+    services,
+    handoff,
+    handoff_id,
+    delete_branch,
+  );
 
   if (!already_landed) {
-    try {
-      captureAgentPerformanceFromReconciler({
-        db: services.db,
-        uuid: services.uuid,
-        clock: services.clock,
-        input: {
-          handoff_id,
-          result: { status: "merged", timed_out: false },
-        },
-      });
-      if (stampPassedGateOutcome) {
-        stampAgentPerformanceGateOutcomeForHandoff(services.db, handoff_id, "passed");
-      }
-    } catch (err) {
-      services.log?.warn?.(
-        { handoff_id, err: String(err) },
-        "dispatch-land agent_performance re-stamp failed",
-      );
-    }
-  }
-
-  if (!already_landed) {
-    try {
-      const reviewerHandoff = resolveReviewerHandoffForDispatchLand(services, handoff_id);
-      if (reviewerHandoff) {
-        await authorizeDispatchLandMemoryVerify({
-          services,
-          handoffId: handoff_id,
-          reviewerHandoff,
-          commitSha: commit_sha,
-        });
-      }
-    } catch (err) {
-      services.log?.warn?.(
-        { handoff_id, err: String(err) },
-        "dispatch-land memory verify authorize threw; land result unaffected",
-      );
-    }
+    captureLandAgentPerformance(services, handoff_id, stampPassedGateOutcome);
+    await runLandMemoryVerify(services, handoff_id, commit_sha);
   }
 
   return {

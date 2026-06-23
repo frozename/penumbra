@@ -1,4 +1,5 @@
-import { refineDispatchPrompt, RefineError, type JudgeChatFn } from "@penumbra/core";
+import { type JudgeChatFn, refineDispatchPrompt, RefineError } from "@penumbra/core";
+
 import { json } from "./_helpers.js";
 
 export interface DispatchRefineConfig {
@@ -16,7 +17,9 @@ const ERROR_MAP: Record<string, { status: number; code: string }> = {
   upstream_failed: { status: 502, code: "refiner_upstream_failed" },
 };
 
-export function makeDispatchRefineRoute(config: DispatchRefineConfig) {
+export function makeDispatchRefineRoute(
+  config: DispatchRefineConfig,
+): (req: Request) => Promise<Response> {
   return async (req: Request): Promise<Response> => {
     const contentLength = req.headers.get("content-length");
     if (contentLength && Number(contentLength) > REQUEST_BODY_MAX_BYTES) {

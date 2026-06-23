@@ -1,7 +1,10 @@
-import { z } from "zod";
 import type { Services } from "@penumbra/core";
+
+import { z } from "zod";
+
 import { runPrOrphanSweepForDaemon } from "../services/pr-orphan-sweep.js";
 import { bodyJson, json } from "./_helpers.js";
+
 const SweepInputSchema = z.object({
   dry_run: z.boolean().optional(),
   max_close: z.number().int().positive().optional(),
@@ -23,7 +26,7 @@ const VerdictsQuerySchema = z.object({
 
 function parsePayloadJson(raw: string): Record<string, unknown> {
   try {
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
   } catch {
     // ignored
@@ -31,7 +34,7 @@ function parsePayloadJson(raw: string): Record<string, unknown> {
   return {};
 }
 
-type VerdictRow = {
+interface VerdictRow {
   event_id: string;
   ts: string;
   session_id: string | null;
@@ -45,9 +48,11 @@ type VerdictRow = {
   handoff_status: string | null;
   handoff_message: string | null;
   branch_base: string | null;
-};
+}
 
-export async function reconcilerVerdictsRoute(req: Request, services: Services): Promise<Response> {
+type VerdictQueryParam = string | number;
+
+export function reconcilerVerdictsRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const parsed = VerdictsQuerySchema.safeParse({
     since: url.searchParams.get("since") ?? undefined,
@@ -59,7 +64,7 @@ export async function reconcilerVerdictsRoute(req: Request, services: Services):
   }
 
   const clauses = [`e.event_type='reconciler.verdict'`];
-  const params: Array<string | number> = [];
+  const params: VerdictQueryParam[] = [];
   if (parsed.data.since) {
     const sinceUtc = new Date(parsed.data.since).toISOString();
     clauses.push("e.ts >= ?");
@@ -71,7 +76,7 @@ export async function reconcilerVerdictsRoute(req: Request, services: Services):
   params.push(parsed.data.limit);
 
   const rows = services.db
-    .query<VerdictRow, any>(
+    .query<VerdictRow, VerdictQueryParam[]>(
       `SELECT
          e.event_id,
          e.ts,
@@ -129,10 +134,9 @@ export async function reconcilerSweepOrphanPrsRoute(
     return json({ error: { code: "invalid_params", issues: parsed.error.issues } }, 400);
   }
 
-  const daemonSettings = services.settings as any;
   const result = await runPrOrphanSweepForDaemon({
     services,
-    dryRun: parsed.data.dry_run ?? daemonSettings.prOrphanSweeperDryRun ?? true,
+    dryRun: parsed.data.dry_run ?? services.settings.prOrphanSweeperDryRun,
     maxClose: parsed.data.max_close,
   });
 
