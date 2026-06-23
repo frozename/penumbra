@@ -1,6 +1,8 @@
-import { expect, test } from "bun:test";
-import { PenumbraDaemonClient } from "../src/daemon-client.js";
 import type { T0EventInput } from "@penumbra/core";
+
+import { expect, test } from "bun:test";
+
+import { PenumbraDaemonClient } from "../src/daemon-client.js";
 
 const baseEvent: T0EventInput = {
   ts: "2026-04-25T12:00:00Z",
@@ -31,7 +33,7 @@ test("observe POSTs to /observations with bearer token and JSON body", async () 
   });
   try {
     const c = new PenumbraDaemonClient({
-      baseUrl: `http://localhost:${server.port}`,
+      baseUrl: `http://localhost:${String(server.port ?? 0)}`,
       token: "tk-1",
     });
     await c.observe(baseEvent);
@@ -45,7 +47,7 @@ test("observe POSTs to /observations with bearer token and JSON body", async () 
       event_type: "agent-prompt",
     });
   } finally {
-    server.stop(true);
+    await server.stop(true);
   }
 });
 
@@ -59,26 +61,32 @@ test("observe throws on 4xx with status in error message", async () => {
       }),
   });
   try {
-    const c = new PenumbraDaemonClient({ baseUrl: `http://localhost:${server.port}`, token: "tk" });
-    await expect(c.observe(baseEvent)).rejects.toThrow(/HTTP 400/);
+    const c = new PenumbraDaemonClient({
+      baseUrl: `http://localhost:${String(server.port ?? 0)}`,
+      token: "tk",
+    });
+    expect(c.observe(baseEvent)).rejects.toThrow(/HTTP 400/);
   } finally {
-    server.stop(true);
+    await server.stop(true);
   }
 });
 
 test("observe throws on 5xx", async () => {
   const server = Bun.serve({ port: 0, fetch: () => new Response("boom", { status: 500 }) });
   try {
-    const c = new PenumbraDaemonClient({ baseUrl: `http://localhost:${server.port}`, token: "tk" });
-    await expect(c.observe(baseEvent)).rejects.toThrow(/HTTP 500/);
+    const c = new PenumbraDaemonClient({
+      baseUrl: `http://localhost:${String(server.port ?? 0)}`,
+      token: "tk",
+    });
+    expect(c.observe(baseEvent)).rejects.toThrow(/HTTP 500/);
   } finally {
-    server.stop(true);
+    await server.stop(true);
   }
 });
 
-test("observe throws on network error", async () => {
+test("observe throws on network error", () => {
   const c = new PenumbraDaemonClient({ baseUrl: "http://127.0.0.1:1", token: "tk" });
-  await expect(c.observe(baseEvent)).rejects.toThrow();
+  expect(c.observe(baseEvent)).rejects.toThrow();
 });
 
 test("observe aborts after the configured timeout", async () => {
@@ -92,13 +100,13 @@ test("observe aborts after the configured timeout", async () => {
   });
   try {
     const c = new PenumbraDaemonClient({
-      baseUrl: `http://localhost:${server.port}`,
+      baseUrl: `http://localhost:${String(server.port ?? 0)}`,
       token: "tk",
       timeoutMs: 50,
     });
-    await expect(c.observe(baseEvent)).rejects.toThrow(/abort|timeout/i);
+    expect(c.observe(baseEvent)).rejects.toThrow(/abort|timeout/i);
   } finally {
-    server.stop(true);
+    await server.stop(true);
   }
 });
 
@@ -113,12 +121,12 @@ test("observe strips trailing slash from baseUrl", async () => {
   });
   try {
     const c = new PenumbraDaemonClient({
-      baseUrl: `http://localhost:${server.port}/`,
+      baseUrl: `http://localhost:${String(server.port ?? 0)}/`,
       token: "tk",
     });
     await c.observe(baseEvent);
     expect(path).toBe("/observations");
   } finally {
-    server.stop(true);
+    await server.stop(true);
   }
 });

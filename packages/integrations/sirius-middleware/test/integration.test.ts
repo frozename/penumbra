@@ -1,19 +1,20 @@
-import { expect, test, describe, beforeEach, afterEach } from "bun:test";
-import { Database } from "bun:sqlite";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import Fastify from "fastify";
 import {
-  spawnPenumbra,
-  waitForPortFile,
-  captureOutput,
-  killGracefully,
-  drainOutput,
   type BunSubprocess,
+  captureOutput,
+  drainOutput,
+  killGracefully,
   makeSandbox,
   type Sandbox,
+  spawnPenumbra,
+  waitForPortFile,
 } from "@penumbra/e2e";
-import { penumbraObservePlugin, loadConfig } from "../src/index.js";
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import Fastify from "fastify";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { loadConfig, penumbraObservePlugin } from "../src/index.js";
 
 const SHOULD_RUN = process.env.PENUMBRA_E2E === "1";
 const describeIf = SHOULD_RUN ? describe : describe.skip;
@@ -31,7 +32,7 @@ describeIf("sirius-middleware integration with real penumbra daemon", () => {
     const port = await waitForPortFile(sb.dir, 5000);
     const token = readFileSync(join(sb.dir, "token"), "utf8").trim();
     prevEnv = { url: process.env.PENUMBRA_DAEMON_URL, token: process.env.PENUMBRA_DAEMON_TOKEN };
-    process.env.PENUMBRA_DAEMON_URL = `http://127.0.0.1:${port}`;
+    process.env.PENUMBRA_DAEMON_URL = `http://127.0.0.1:${String(port)}`;
     process.env.PENUMBRA_DAEMON_TOKEN = token;
   });
 
@@ -51,11 +52,15 @@ describeIf("sirius-middleware integration with real penumbra daemon", () => {
   test("one chat request produces two T0 rows in penumbra (agent-prompt + agent-response)", async () => {
     const fastify = Fastify();
     const cfg = loadConfig();
-    if (cfg.enabled) {
-      await fastify.register(penumbraObservePlugin, cfg.options);
+    if (cfg.kind === "enabled") {
+      await fastify.register(penumbraObservePlugin, {
+        baseUrl: cfg.baseUrl,
+        token: cfg.token,
+        machineId: cfg.machineId,
+      });
     }
 
-    fastify.post("/v1/chat/completions", async () => {
+    fastify.post("/v1/chat/completions", () => {
       return {
         model: "fake-model",
         provider: "fake-provider",

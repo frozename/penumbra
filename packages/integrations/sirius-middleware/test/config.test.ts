@@ -1,18 +1,19 @@
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+
 import { loadConfig } from "../src/config.js";
 
 function withEnv<T>(env: Record<string, string | undefined>, fn: () => T): T {
   const prev: Record<string, string | undefined> = {};
   for (const k of Object.keys(env)) {
     prev[k] = process.env[k];
-    if (env[k] === undefined) delete process.env[k];
+    if (env[k] === undefined) process.env[k] = undefined;
     else process.env[k] = env[k];
   }
   try {
     return fn();
   } finally {
     for (const k of Object.keys(prev)) {
-      if (prev[k] === undefined) delete process.env[k];
+      if (prev[k] === undefined) process.env[k] = undefined;
       else process.env[k] = prev[k];
     }
   }
