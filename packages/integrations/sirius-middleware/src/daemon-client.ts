@@ -1,4 +1,5 @@
 import type { T0EventInput } from "@penumbra/core";
+
 import type { IPenumbraDaemonClient } from "./client.js";
 
 export interface PenumbraDaemonClientOpts {
@@ -21,7 +22,9 @@ export class PenumbraDaemonClient implements IPenumbraDaemonClient {
 
   async observe(event: T0EventInput): Promise<void> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timer = setTimeout(() => {
+      controller.abort();
+    }, this.timeoutMs);
     try {
       const res = await fetch(`${this.baseUrl}/observations`, {
         method: "POST",
@@ -35,7 +38,7 @@ export class PenumbraDaemonClient implements IPenumbraDaemonClient {
       if (!res.ok) {
         const detail = await res.text().catch(() => "");
         throw new Error(
-          `penumbra daemon /observations: HTTP ${res.status}${detail ? ` — ${detail}` : ""}`,
+          `penumbra daemon /observations: HTTP ${String(res.status)}${detail ? ` — ${detail}` : ""}`,
         );
       }
     } finally {

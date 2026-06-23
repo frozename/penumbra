@@ -35,6 +35,10 @@ export interface BuildResponseInput extends BuildPromptInput {
 
 const ROUTE = "/v1/chat/completions";
 
+function roundFiniteToken(value: number | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? Math.round(value) : null;
+}
+
 export function buildPromptEvent(input: BuildPromptInput): T0EventInput {
   return {
     ts: new Date(input.captureStartTs).toISOString(),
@@ -72,12 +76,8 @@ export function buildResponseEvent(input: BuildResponseInput): T0EventInput {
     lane: "unknown",
     provider: input.response.provider ?? null,
     model: input.model,
-    tokens_in: Number.isFinite(usage.prompt_tokens)
-      ? Math.round(usage.prompt_tokens as number)
-      : null,
-    tokens_out: Number.isFinite(usage.completion_tokens)
-      ? Math.round(usage.completion_tokens as number)
-      : null,
+    tokens_in: roundFiniteToken(usage.prompt_tokens),
+    tokens_out: roundFiniteToken(usage.completion_tokens),
     cost_usd: null,
     latency_ms: input.completionTs - input.captureStartTs,
     request_id: input.requestId,
@@ -91,26 +91,34 @@ export function buildResponseEvent(input: BuildResponseInput): T0EventInput {
 
 export function extractUserMessageText(messages: ChatMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (!m || m.role !== "user") continue;
-    const c = m.content;
-    if (typeof c === "string") return c;
-    if (Array.isArray(c)) {
-      const parts: string[] = [];
-      for (const part of c) {
-        if (part && typeof part === "object") {
-          if (part.type === "text" && typeof (part as { text?: unknown }).text === "string") {
-            parts.push((part as { text: string }).text);
-          } else if (part.type === "image_url") {
-            parts.push("[image]");
-          } else {
-            parts.push("[binary]");
-          }
-        }
-      }
-      return parts.join(" ");
+    const message = messages[i];
+    if (message === undefined) {
+      continue;
     }
-    continue;
+    if (message.role !== "user") {
+      continue;
+    }
+    const summary = summarizeContent(message.content);
+    if (summary !== null) {
+      return summary;
+    }
   }
   return "";
+}
+
+function summarizeContent(content: ChatMessage["content"]): string | null {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return null;
+  }
+  return content.map(summarizeContentPart).join(" ");
+}
+
+function summarizeContentPart(part: ChatMessageContentPart): string {
+  if (part.type === "text") {
+    return typeof part.text === "string" ? part.text : "[binary]";
+  }
+  return part.type === "image_url" ? "[image]" : "[binary]";
 }

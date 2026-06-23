@@ -5,5 +5,7 @@ export interface IPenumbraDaemonClient {
 }
 
 export class PenumbraDaemonNoopClient implements IPenumbraDaemonClient {
-  async observe(_event: T0EventInput): Promise<void> {}
+  observe(_event: T0EventInput): Promise<void> {
+    return Promise.resolve();
+  }
 }
