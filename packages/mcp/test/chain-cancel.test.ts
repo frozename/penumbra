@@ -69,12 +69,14 @@ function startDaemon(services: Services): ServeHandle {
       const url = new URL(req.url);
       if (req.method === "GET" && url.pathname.startsWith("/handoffs/")) {
         const handoff_id = decodeURIComponent(url.pathname.slice("/handoffs/".length));
-        return await handoffsGetRoute(req, handoff_id, services);
+        return await Promise.resolve(handoffsGetRoute(req, handoff_id, services));
       }
 
       const cancelMatch = /^\/conversations\/([^/]+)\/cancel$/.exec(url.pathname);
       if (req.method === "POST" && cancelMatch) {
-        return await conversationsCancelRoute(req, decodeURIComponent(cancelMatch[1]!), services);
+        return await Promise.resolve(
+          conversationsCancelRoute(req, decodeURIComponent(cancelMatch[1]!), services),
+        );
       }
 
       return Response.json(
@@ -129,7 +131,7 @@ test("complete after chain.cancel marks the handoff failed instead of completed"
   );
   services.handoffWriter.claimDispatch(handoff_id, "worker-1");
 
-  await conversationsCancelRoute(
+  conversationsCancelRoute(
     new Request("http://x/conversations/conv-cancel-complete/cancel", { method: "POST" }),
     "conv-cancel-complete",
     services,

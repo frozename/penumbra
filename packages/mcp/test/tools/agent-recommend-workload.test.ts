@@ -95,7 +95,7 @@ function makeBridgeHandler(services: Services): ReturnType<typeof agentRecommend
     if (input.risk_class !== undefined) params.set("risk_class", input.risk_class);
     if (input.window_days !== undefined) params.set("window_days", String(input.window_days));
     if (input.agent_kind !== undefined) params.set("agent_kind", input.agent_kind);
-    const res = await agentsRecommendRoute(
+    const res = agentsRecommendRoute(
       new Request(`http://x/agents/recommend?${params.toString()}`),
       services,
     );
