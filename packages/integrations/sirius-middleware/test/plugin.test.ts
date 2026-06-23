@@ -3,7 +3,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { describe, expect, mock, test } from "bun:test";
 import Fastify from "fastify";
-import { Readable } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 
 import { penumbraObservePlugin } from "../src/plugin.js";
 
@@ -28,6 +28,7 @@ interface DisabledMsg {
 
 interface WarnMsg {
   dropped_observations_total?: number;
+  error?: string;
   msg?: string;
   payload_type?: string;
 }
@@ -76,6 +77,23 @@ function parseObservationBody(rawBody: unknown): ObservationBody {
   }
   const parsed: unknown = JSON.parse(rawBody);
   return parsed as ObservationBody;
+}
+
+class ErrorableSseStream extends PassThrough {
+  destroyCalled = false;
+
+  override destroy(error?: Error | null): this {
+    this.destroyCalled = true;
+    return super.destroy(error);
+  }
+
+  fail(error: Error): void {
+    super.emit("error", error);
+  }
+
+  pushChunk(chunk: string): void {
+    super.write(chunk);
+  }
 }
 
 function urlOf(call: Parameters<FetchLike>): string {
@@ -262,6 +280,65 @@ describe("penumbraObservePlugin execution", () => {
     expect(responseBody.tokens_in).toBe(11);
     expect(responseBody.tokens_out).toBe(4);
     expect(responseBody.model).toBe("gpt-3.5-turbo"); // prompt's model wins for correlation
+  });
+
+  test("logs and destroys SSE payload when stream emits error", async () => {
+    const fastify = Fastify();
+    const mockFetch = okFetch();
+    const warnings: WarnMsg[] = [];
+    let stream: ErrorableSseStream | undefined;
+
+    await fastify.register(penumbraObservePlugin, {
+      baseUrl: "http://mock-daemon",
+      token: "fake-token",
+      logger: recordingWarnLogger(warnings),
+    });
+
+    fastify.post("/v1/chat/completions", (_req: FastifyRequest, reply: FastifyReply) => {
+      stream = new ErrorableSseStream();
+
+      reply.type("text/event-stream");
+      return reply.send(stream);
+    });
+
+    const responsePromise = fastify.inject({
+      headers: {
+        "x-penumbra-project": "test-project",
+        "x-request-id": "req-stream-error-1",
+      },
+      method: "POST",
+      payload: {
+        messages: [{ role: "user", content: "stream error" }],
+        model: "gpt-3.5-turbo",
+      },
+      url: "/v1/chat/completions",
+    });
+
+    await new Promise((r) => setTimeout(r, 10));
+    const activeStream = stream;
+    if (!activeStream) {
+      throw new Error("stream should be initialized");
+    }
+
+    activeStream.destroyCalled = false;
+    activeStream.pushChunk('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n');
+    try {
+      activeStream.fail(new Error("upstream stream exploded"));
+    } catch {
+      // The pre-fix path may have no error listener; assertions below expose that gap.
+    }
+    const responseError = await responsePromise.catch((err: unknown) => err);
+    expect(responseError).toBeInstanceOf(Error);
+    await new Promise((r) => setTimeout(r, 10));
+
+    const streamFailure = warnings.find((w) => w.msg === "penumbra response stream failed");
+    expect(streamFailure?.error).toBe("upstream stream exploded");
+    expect(activeStream.destroyCalled).toBe(true);
+
+    const observedTypes = mockFetch.mock.calls.map(
+      (c) => parseObservationBody(c[1]?.body).event_type,
+    );
+    expect(observedTypes).toEqual(["agent-prompt"]);
   });
 
   test("observes /v1/chat/completions even when the URL carries a query string", async () => {

@@ -71,6 +71,8 @@ interface FastifyReplyWithTap {
 interface SseStreamPayload {
   on(event: "data", listener: (chunk: Buffer) => void): SseStreamPayload;
   on(event: "end", listener: () => void): SseStreamPayload;
+  on(event: "error", listener: (err: Error) => void): SseStreamPayload;
+  destroy?(): void;
 }
 
 interface ObserveLaterInput {
@@ -282,10 +284,12 @@ function observeStreamPayload(
   session: PenumbraSession,
   route: string,
   dispatchStreamResponse: DispatchStreamResponse,
+  logger: PenumbraPluginLogger,
 ): void {
   const state: StreamState = { accumulated: "", finished: false };
   let buffered = "";
   const decoder = new TextDecoder();
+  let errorHandled = false;
 
   payload.on("data", (chunk) => {
     buffered += decoder.decode(chunk, { stream: true });
@@ -298,6 +302,22 @@ function observeStreamPayload(
     buffered += decoder.decode();
     consumeSseLines(buffered, state);
     dispatchStreamResponse(state, session.sessionId, session.promptInput, route);
+  });
+
+  payload.on("error", (err) => {
+    if (errorHandled) {
+      return;
+    }
+    errorHandled = true;
+    state.finished = true;
+    logger.warn({
+      msg: "penumbra response stream failed",
+      project_id: session.promptInput.projectId,
+      request_id: session.sessionId,
+      route,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    payload.destroy?.();
   });
 }
 
@@ -329,7 +349,7 @@ function registerOnSend(
     }
 
     if (isSseStreamPayload(payload)) {
-      observeStreamPayload(payload, session, route, dispatchStreamResponse);
+      observeStreamPayload(payload, session, route, dispatchStreamResponse, logger);
       done(null, payload);
       return;
     }
