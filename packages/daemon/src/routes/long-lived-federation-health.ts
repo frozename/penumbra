@@ -1,10 +1,7 @@
 import type { Services } from "@penumbra/core";
 
 import { json } from "./_helpers.js";
-export async function longLivedFederationHealthRoute(
-  _req: Request,
-  services: Services,
-): Promise<Response> {
+export function longLivedFederationHealthRoute(_req: Request, services: Services): Response {
   if (!services.mcpPool) {
     return json({ registered: [], skipped: [] });
   }

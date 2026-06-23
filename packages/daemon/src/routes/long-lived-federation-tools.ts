@@ -1,6 +1,6 @@
 import type { Services } from "@penumbra/core";
-import { globToRegExp } from "../long-lived/action-gate.js";
 
+import { globToRegExp } from "../long-lived/action-gate.js";
 import { json } from "./_helpers.js";
 interface FederationToolDescriptor {
   name: string;
@@ -36,31 +36,82 @@ function parseFederationToolRef(entry: string): { server: string; tool: string }
   };
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 function parseAllowlist(value: string, services: Services, agentId: string): string[] {
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(value);
-    if (!Array.isArray(parsed)) throw new Error("not_array");
-    const allowlist: string[] = [];
-    for (const entry of parsed) {
-      if (typeof entry !== "string") continue;
-      const parsedEntry = parseFederationToolRef(entry);
-      if (!parsedEntry) {
-        services.log?.warn?.(
-          { entry, agent_id: agentId },
-          "federation-tools-malformed-allowlist-entry",
-        );
-        continue;
-      }
-      allowlist.push(`${parsedEntry.server}.${parsedEntry.tool}`);
-    }
-    return allowlist;
+    parsed = JSON.parse(value) as unknown;
   } catch (err) {
-    services.log?.warn?.(
-      { err: String((err as Error)?.message ?? err), agent_id: agentId },
+    services.log.warn(
+      { err: errorMessage(err), agent_id: agentId },
       "federation-tools-allowlist-parse-failed",
     );
     return [];
   }
+  if (!Array.isArray(parsed)) {
+    services.log.warn(
+      { err: "not_array", agent_id: agentId },
+      "federation-tools-allowlist-parse-failed",
+    );
+    return [];
+  }
+  const allowlist: string[] = [];
+  for (const entry of parsed) {
+    if (typeof entry !== "string") continue;
+    const parsedEntry = parseFederationToolRef(entry);
+    if (!parsedEntry) {
+      services.log.warn({ entry, agent_id: agentId }, "federation-tools-malformed-allowlist-entry");
+      continue;
+    }
+    allowlist.push(`${parsedEntry.server}.${parsedEntry.tool}`);
+  }
+  return allowlist;
+}
+
+function collectServerNames(allowlist: readonly string[]): Set<string> {
+  const serverNames = new Set<string>();
+  for (const entry of allowlist) {
+    const parsedEntry = parseFederationToolRef(entry);
+    if (!parsedEntry) continue;
+    serverNames.add(parsedEntry.server);
+  }
+  serverNames.delete("penumbra");
+  return serverNames;
+}
+
+async function listMatchingToolsForServer(
+  pool: MaybeReadyMcpPool,
+  server: string,
+  matchers: readonly RegExp[],
+  services: Services,
+  agentId: string,
+): Promise<FederationToolDescriptor[]> {
+  let serverTools: FederationToolDescriptor[];
+  try {
+    await waitForFederationReady(pool, server);
+    serverTools = await pool.listTools(server);
+  } catch (err) {
+    services.log.warn(
+      { err: errorMessage(err), server, agent_id: agentId },
+      "federation-tools-listTools-failed",
+    );
+    return [];
+  }
+
+  const matched: FederationToolDescriptor[] = [];
+  for (const tool of serverTools) {
+    const canonical = `${server}.${tool.name}`;
+    if (!matchers.some((re) => re.test(canonical))) continue;
+    matched.push({
+      name: canonical,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+    });
+  }
+  return matched;
 }
 
 export async function longLivedFederationToolsRoute(
@@ -81,38 +132,19 @@ export async function longLivedFederationToolsRoute(
     return json({ tools: [] });
   }
 
-  const serverNames = new Set<string>();
-  for (const entry of allowlist) {
-    const parsedEntry = parseFederationToolRef(entry);
-    if (!parsedEntry) continue;
-    serverNames.add(parsedEntry.server);
-  }
-  serverNames.delete("penumbra");
+  const serverNames = collectServerNames(allowlist);
   const matchers = allowlist.map((glob) => globToRegExp(glob));
 
   const tools: FederationToolDescriptor[] = [];
   for (const server of serverNames) {
-    let serverTools: Array<{ name: string; description?: string; inputSchema?: unknown }>;
-    try {
-      await waitForFederationReady(services.mcpPool as MaybeReadyMcpPool, server);
-      serverTools = await services.mcpPool.listTools(server);
-    } catch (err) {
-      services.log.warn(
-        { err: String((err as Error)?.message ?? err), server, agent_id: agentId },
-        "federation-tools-listTools-failed",
-      );
-      continue;
-    }
-
-    for (const tool of serverTools) {
-      const canonical = `${server}.${tool.name}`;
-      if (!matchers.some((re) => re.test(canonical))) continue;
-      tools.push({
-        name: canonical,
-        description: tool.description,
-        inputSchema: tool.inputSchema,
-      });
-    }
+    const matched = await listMatchingToolsForServer(
+      services.mcpPool,
+      server,
+      matchers,
+      services,
+      agentId,
+    );
+    tools.push(...matched);
   }
 
   return json({ tools });

@@ -1,20 +1,20 @@
-import { z } from "zod";
-import type { Services, TaskClass } from "@penumbra/core";
 import {
-  RecallRequestSchema,
-  TaskClassSchema,
   closeLane,
   getClosedLaneRoundCountForHandoffLineage,
   getHandoffToAgent,
-  getOpenLaneForImplementer,
   getLane,
+  getOpenLaneForImplementer,
   insertLane,
-  recentLanes,
-  type LaneGateStatus,
-  LaneCloseMetadataSchema,
   LANE_CLOSE_METADATA_MAX_SERIALIZED_BYTES,
+  LaneCloseMetadataSchema,
+  RecallRequestSchema,
   type RecallResult,
+  recentLanes,
+  type Services,
+  type TaskClass,
+  TaskClassSchema,
 } from "@penumbra/core";
+import { z } from "zod";
 
 import { autoRecallForDispatch } from "../dispatch/auto-recall.js";
 import { json } from "./_helpers.js";
@@ -96,13 +96,13 @@ export async function lanesOpenRoute(req: Request, services: Services): Promise<
   const recall = await recallForManualOpen(
     services,
     parsed.data.implementer_handoff,
-    parsed.data.task_class as TaskClass,
+    parsed.data.task_class,
   );
   try {
     insertLane(services.db, {
       lane_id: parsed.data.lane_id,
       ts_opened,
-      task_class: parsed.data.task_class as TaskClass,
+      task_class: parsed.data.task_class,
       implementer_handoff: parsed.data.implementer_handoff,
       gate_status: "open",
       recalled_memory_ids: recall.recalled_memory_ids,
@@ -162,14 +162,217 @@ async function recallForManualOpen(
           })),
         };
       },
-      logger: (level, msg, meta) =>
-        services.log[level]?.({ ...meta, event: "lane.open.auto_recall" }, msg),
+      logger: (level, msg, meta): void => {
+        services.log[level]({ ...meta, event: "lane.open.auto_recall" }, msg);
+      },
     },
   );
   return {
     recalled_memory_ids: auto.recalled_memory_ids,
     recalled_query: auto.recalled_query || null,
   };
+}
+
+type CloseLaneBody = z.infer<typeof CloseLaneBodySchema>;
+
+function checkMetadataSize(raw: unknown): Response | null {
+  if (typeof raw !== "object" || raw === null || !("metadata" in raw)) return null;
+  const meta = (raw as Record<string, unknown>).metadata;
+  if (meta === undefined) return null;
+  const serialized = JSON.stringify(meta);
+  const byteLength = Buffer.byteLength(serialized, "utf8");
+  if (byteLength <= LANE_CLOSE_METADATA_MAX_SERIALIZED_BYTES) return null;
+  return json(
+    {
+      error: {
+        code: "metadata_too_large",
+        message: `metadata exceeds ${String(LANE_CLOSE_METADATA_MAX_SERIALIZED_BYTES)} byte limit`,
+      },
+    },
+    400,
+  );
+}
+
+function applyRoundCountCap(
+  services: Services,
+  implementerHandoff: string,
+  body: CloseLaneBody,
+): { overrides: string[] } | { error: Response } {
+  const overrides: string[] = [];
+  const metadataRoundCount = body.metadata?.round_count;
+  // Everything from this read to the close transaction is synchronous (no
+  // awaits), so a concurrent close cannot interleave between the lineage
+  // count and the commit within a single daemon process. The two cap checks
+  // use different denominators by design: metadata.round_count is the
+  // caller's self-reported CURRENT round (cap reached at >2), while the
+  // lineage count is the number of PRIOR closed rounds (this close would be
+  // round count+1, so it rejects at >=2).
+  const closedLineageRoundCount = getClosedLaneRoundCountForHandoffLineage(
+    services.db,
+    implementerHandoff,
+  );
+  if (metadataRoundCount !== undefined && metadataRoundCount > 2) {
+    if (body.override_reason === undefined) {
+      return {
+        error: routeError(
+          "round_count_exceeds_cap",
+          "metadata.round_count must be <= 2 unless override_reason is present",
+        ),
+      };
+    }
+    overrides.push("round_count_exceeds_cap");
+  }
+  if (closedLineageRoundCount >= 2) {
+    if (body.override_reason === undefined) {
+      return {
+        error: routeError(
+          "round_count_exceeds_cap",
+          "closed lane rounds for this handoff lineage must be <= 2 unless override_reason is present",
+        ),
+      };
+    }
+    if (!overrides.includes("round_count_exceeds_cap")) {
+      overrides.push("round_count_exceeds_cap");
+    }
+  }
+  return { overrides };
+}
+
+function applyReviewerHandoffCheck(
+  services: Services,
+  implementerHandoff: string,
+  body: CloseLaneBody,
+): { overrides: string[] } | { error: Response } {
+  if (body.reviewer_handoff === undefined) return { overrides: [] };
+  const implementerAgent = getHandoffToAgent(services.db, implementerHandoff);
+  const reviewerAgent = getHandoffToAgent(services.db, body.reviewer_handoff);
+  if (body.override_reason === undefined) {
+    return enforceReviewerHandoffStrict({
+      implementerAgent,
+      reviewerAgent,
+      implementerHandoff,
+      reviewerHandoff: body.reviewer_handoff,
+    });
+  }
+  const overrides: string[] = [];
+  if (reviewerAgent === null) {
+    overrides.push("unknown_reviewer_handoff");
+  } else if (implementerAgent !== null && implementerAgent === reviewerAgent) {
+    overrides.push("same_agent_self_review");
+  }
+  return { overrides };
+}
+
+function enforceReviewerHandoffStrict(args: {
+  implementerAgent: string | null;
+  reviewerAgent: string | null;
+  implementerHandoff: string;
+  reviewerHandoff: string;
+}): { overrides: string[] } | { error: Response } {
+  // Unresolvable handoffs on EITHER side must reject, not skip the check —
+  // otherwise a fabricated id bypasses self-review prevention (null never
+  // equals the other side's agent).
+  if (args.reviewerAgent === null) {
+    return {
+      error: routeError(
+        "unknown_reviewer_handoff",
+        "reviewer_handoff does not resolve to a known handoff",
+        400,
+        { reviewer_handoff: args.reviewerHandoff },
+      ),
+    };
+  }
+  if (args.implementerAgent === null) {
+    return {
+      error: routeError(
+        "unknown_implementer_handoff",
+        "the lane's implementer_handoff does not resolve to a known handoff; close with override_reason to acknowledge",
+        400,
+        { implementer_handoff: args.implementerHandoff },
+      ),
+    };
+  }
+  if (args.implementerAgent === args.reviewerAgent) {
+    return {
+      error: routeError(
+        "same_agent_self_review",
+        "reviewer_handoff must resolve to a different agent than implementer_handoff unless override_reason is present",
+        400,
+        { implementer_agent: args.implementerAgent, reviewer_agent: args.reviewerAgent },
+      ),
+    };
+  }
+  return { overrides: [] };
+}
+
+function commitLaneClose(
+  services: Services,
+  body: CloseLaneBody,
+  ts_closed: string,
+): Response | null {
+  try {
+    // The close commits atomically inside the transaction; closeLane stamps the
+    // matching agent_performance row as part of the same mutation path.
+    // The live-bus override events publish AFTER the commit — event delivery
+    // is not rollbackable and must not fire for a rolled-back close.
+    services.db.transaction(() => {
+      closeLane(services.db, body.lane_id, {
+        ts_closed,
+        gate_status: body.gate_status,
+        reviewer_handoff: body.reviewer_handoff ?? null,
+        override_reason: body.override_reason ?? null,
+        metadata: body.metadata ?? undefined,
+      });
+    })();
+    return null;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.startsWith("not found: lane ")) {
+      return routeError("unknown_lane", "lane_id does not exist", 404);
+    }
+    if (message.startsWith("conflict: lane ") && message.includes("already closed")) {
+      return routeError("lane_already_closed", "lane is already closed", 409);
+    }
+    throw err;
+  }
+}
+
+function emitOverrideAuditEvents(
+  services: Services,
+  implementerHandoff: string,
+  body: CloseLaneBody,
+  ts_closed: string,
+  overriddenControls: readonly string[],
+): void {
+  // Audit events publish after the commit (live-bus delivery is not
+  // rollbackable, so it must never fire for a rolled-back close). The close is
+  // the authoritative record: an audit-write failure is logged loudly but must
+  // not surface as an error for a close that already persisted.
+  for (const control of overriddenControls) {
+    try {
+      services.dispatchEventLog.record({
+        handoff_id: implementerHandoff,
+        source: "daemon",
+        kind: "lane.override",
+        ts: ts_closed,
+        meta: {
+          control,
+          lane_id: body.lane_id,
+          gate_status: body.gate_status,
+          override_reason: body.override_reason,
+        },
+      });
+    } catch (err) {
+      services.log.error(
+        {
+          err: err instanceof Error ? err.message : String(err),
+          lane_id: body.lane_id,
+          control,
+        },
+        "lane.override audit event failed after close committed",
+      );
+    }
+  }
 }
 
 export async function lanesCloseRoute(req: Request, services: Services): Promise<Response> {
@@ -181,24 +384,8 @@ export async function lanesCloseRoute(req: Request, services: Services): Promise
     );
 
   // Guard against oversized metadata before schema validation
-  if (raw !== null && typeof raw === "object" && "metadata" in (raw as object)) {
-    const meta = (raw as Record<string, unknown>).metadata;
-    if (meta !== undefined) {
-      const serialized = JSON.stringify(meta);
-      const byteLength = Buffer.byteLength(serialized, "utf8");
-      if (byteLength > LANE_CLOSE_METADATA_MAX_SERIALIZED_BYTES) {
-        return json(
-          {
-            error: {
-              code: "metadata_too_large",
-              message: `metadata exceeds ${LANE_CLOSE_METADATA_MAX_SERIALIZED_BYTES} byte limit`,
-            },
-          },
-          400,
-        );
-      }
-    }
-  }
+  const metadataTooLarge = checkMetadataSize(raw);
+  if (metadataTooLarge) return metadataTooLarge;
 
   const parsed = CloseLaneBodySchema.safeParse(raw);
   if (!parsed.success) return validationError(parsed.error);
@@ -210,134 +397,27 @@ export async function lanesCloseRoute(req: Request, services: Services): Promise
   if (beforeClose.ts_closed !== null) {
     return routeError("lane_already_closed", "lane is already closed", 409);
   }
-  const overriddenControls: string[] = [];
-  const metadataRoundCount = parsed.data.metadata?.round_count;
-  // Everything from this read to the close transaction is synchronous (no
-  // awaits), so a concurrent close cannot interleave between the lineage
-  // count and the commit within a single daemon process. The two cap checks
-  // use different denominators by design: metadata.round_count is the
-  // caller's self-reported CURRENT round (cap reached at >2), while the
-  // lineage count is the number of PRIOR closed rounds (this close would be
-  // round count+1, so it rejects at >=2).
-  const closedLineageRoundCount = getClosedLaneRoundCountForHandoffLineage(
-    services.db,
+  const roundCapResult = applyRoundCountCap(services, beforeClose.implementer_handoff, parsed.data);
+  if ("error" in roundCapResult) return roundCapResult.error;
+  const reviewerResult = applyReviewerHandoffCheck(
+    services,
     beforeClose.implementer_handoff,
+    parsed.data,
   );
-  if (metadataRoundCount !== undefined && metadataRoundCount > 2) {
-    if (parsed.data.override_reason === undefined) {
-      return routeError(
-        "round_count_exceeds_cap",
-        "metadata.round_count must be <= 2 unless override_reason is present",
-      );
-    }
-    overriddenControls.push("round_count_exceeds_cap");
-  }
-  if (closedLineageRoundCount >= 2) {
-    if (parsed.data.override_reason === undefined) {
-      return routeError(
-        "round_count_exceeds_cap",
-        "closed lane rounds for this handoff lineage must be <= 2 unless override_reason is present",
-      );
-    }
-    if (!overriddenControls.includes("round_count_exceeds_cap")) {
-      overriddenControls.push("round_count_exceeds_cap");
-    }
-  }
-  if (parsed.data.reviewer_handoff !== undefined && parsed.data.override_reason === undefined) {
-    const implementerAgent = getHandoffToAgent(services.db, beforeClose.implementer_handoff);
-    const reviewerAgent = getHandoffToAgent(services.db, parsed.data.reviewer_handoff);
-    // Unresolvable handoffs on EITHER side must reject, not skip the check —
-    // otherwise a fabricated id bypasses self-review prevention (null never
-    // equals the other side's agent).
-    if (reviewerAgent === null) {
-      return routeError(
-        "unknown_reviewer_handoff",
-        "reviewer_handoff does not resolve to a known handoff",
-        400,
-        { reviewer_handoff: parsed.data.reviewer_handoff },
-      );
-    }
-    if (implementerAgent === null) {
-      return routeError(
-        "unknown_implementer_handoff",
-        "the lane's implementer_handoff does not resolve to a known handoff; close with override_reason to acknowledge",
-        400,
-        { implementer_handoff: beforeClose.implementer_handoff },
-      );
-    }
-    if (implementerAgent === reviewerAgent) {
-      return routeError(
-        "same_agent_self_review",
-        "reviewer_handoff must resolve to a different agent than implementer_handoff unless override_reason is present",
-        400,
-        { implementer_agent: implementerAgent, reviewer_agent: reviewerAgent },
-      );
-    }
-  } else if (parsed.data.reviewer_handoff !== undefined) {
-    const implementerAgent = getHandoffToAgent(services.db, beforeClose.implementer_handoff);
-    const reviewerAgent = getHandoffToAgent(services.db, parsed.data.reviewer_handoff);
-    if (reviewerAgent === null) {
-      overriddenControls.push("unknown_reviewer_handoff");
-    } else if (implementerAgent !== null && implementerAgent === reviewerAgent) {
-      overriddenControls.push("same_agent_self_review");
-    }
-  }
+  if ("error" in reviewerResult) return reviewerResult.error;
+  const overriddenControls = [...roundCapResult.overrides, ...reviewerResult.overrides];
 
   const ts_closed = services.clock().toISOString();
-  try {
-    // The close commits atomically inside the transaction; closeLane stamps the
-    // matching agent_performance row as part of the same mutation path.
-    // The live-bus override events publish AFTER the commit — event delivery
-    // is not rollbackable and must not fire for a rolled-back close.
-    services.db.transaction(() => {
-      closeLane(services.db, parsed.data.lane_id, {
-        ts_closed,
-        gate_status: parsed.data.gate_status,
-        reviewer_handoff: parsed.data.reviewer_handoff ?? null,
-        override_reason: parsed.data.override_reason ?? null,
-        metadata: parsed.data.metadata ?? undefined,
-      });
-    })();
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (message.startsWith("not found: lane ")) {
-      return routeError("unknown_lane", "lane_id does not exist", 404);
-    }
-    if (message.startsWith("conflict: lane ") && message.includes("already closed")) {
-      return routeError("lane_already_closed", "lane is already closed", 409);
-    }
-    throw err;
-  }
+  const commitErr = commitLaneClose(services, parsed.data, ts_closed);
+  if (commitErr) return commitErr;
 
-  // Audit events publish after the commit (live-bus delivery is not
-  // rollbackable, so it must never fire for a rolled-back close). The close is
-  // the authoritative record: an audit-write failure is logged loudly but must
-  // not surface as an error for a close that already persisted.
-  for (const control of overriddenControls) {
-    try {
-      services.dispatchEventLog.record({
-        handoff_id: beforeClose.implementer_handoff,
-        source: "daemon",
-        kind: "lane.override",
-        ts: ts_closed,
-        meta: {
-          control,
-          lane_id: parsed.data.lane_id,
-          gate_status: parsed.data.gate_status,
-          override_reason: parsed.data.override_reason,
-        },
-      });
-    } catch (err) {
-      services.log?.error?.(
-        {
-          err: err instanceof Error ? err.message : String(err),
-          lane_id: parsed.data.lane_id,
-          control,
-        },
-        "lane.override audit event failed after close committed",
-      );
-    }
-  }
+  emitOverrideAuditEvents(
+    services,
+    beforeClose.implementer_handoff,
+    parsed.data,
+    ts_closed,
+    overriddenControls,
+  );
 
   const closedLane = getLane(services.db, parsed.data.lane_id);
 
@@ -356,7 +436,7 @@ export async function lanesCloseRoute(req: Request, services: Services): Promise
   return json(responseLane);
 }
 
-export async function lanesRecentRoute(req: Request, services: Services): Promise<Response> {
+export function lanesRecentRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const parsed = RecentLaneQuerySchema.safeParse({
     status: url.searchParams.get("status") ?? undefined,
@@ -379,7 +459,7 @@ export async function lanesRecentRoute(req: Request, services: Services): Promis
   const lanes = recentLanes(
     services.db,
     {
-      gate_status: parsed.data.status as LaneGateStatus | undefined,
+      gate_status: parsed.data.status,
       task_class: parsed.data.task_class,
       since_iso: sinceIso,
     },
@@ -389,7 +469,7 @@ export async function lanesRecentRoute(req: Request, services: Services): Promis
   return json({ lanes });
 }
 
-async function safeJson(req: Request): Promise<unknown | null> {
+async function safeJson(req: Request): Promise<unknown> {
   try {
     return await req.json();
   } catch {

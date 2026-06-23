@@ -1,6 +1,8 @@
-import { z } from "zod";
 import type { Services } from "@penumbra/core";
+
 import { qualityStatus } from "@penumbra/core";
+import { z } from "zod";
+
 import { json } from "./_helpers.js";
 const QuerySchema = z.object({
   window_hours: z.coerce.number().int().min(1).max(168).default(24),
@@ -8,7 +10,7 @@ const QuerySchema = z.object({
   task_type: z.string().default("implement_substantial"),
 });
 
-export async function qualityStatusRoute(req: Request, services: Services): Promise<Response> {
+export function qualityStatusRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const parsed = QuerySchema.safeParse({
     window_hours: url.searchParams.get("window_hours") ?? undefined,

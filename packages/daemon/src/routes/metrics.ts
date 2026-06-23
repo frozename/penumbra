@@ -1,6 +1,5 @@
 import type { Services } from "@penumbra/core";
 
-import { json } from "./_helpers.js";
 const startedAt = Date.now();
 
 export function metricsRoute(services: Services): Response {

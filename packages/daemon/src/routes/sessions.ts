@@ -1,4 +1,5 @@
 import type { Services } from "@penumbra/core";
+
 import { bodyJson, json } from "./_helpers.js";
 export async function sessionsTouchRoute(req: Request, services: Services): Promise<Response> {
   const raw = await bodyJson(req);
@@ -17,7 +18,7 @@ export async function sessionsTouchRoute(req: Request, services: Services): Prom
   const projectId =
     typeof body.project_id === "string" && body.project_id.length > 0 ? body.project_id : null;
 
-  const db = (services as any).db as import("bun:sqlite").Database;
+  const { db } = services;
   db.prepare(
     `INSERT INTO claude_code_sessions (session_id, session_start_at, last_seen_at, project_id)
      VALUES (?, ?, ?, ?)
@@ -46,8 +47,8 @@ const SESSION_BUDGET_MAX = 6;
 const SESSION_BUDGET_SOFT_WARN_PCT = 0.8;
 const NO_SESSION_PROJECT = { id: "—", name: "no project" };
 
-export async function sessionCurrentRoute(_req: Request, services: Services): Promise<Response> {
-  const db = (services as any).db as import("bun:sqlite").Database;
+export function sessionCurrentRoute(_req: Request, services: Services): Response {
+  const { db } = services;
 
   // Latest seen claude-code session is the working session.
   const latest = db

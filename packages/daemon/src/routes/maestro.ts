@@ -1,19 +1,19 @@
-import { z } from "zod";
 import {
+  type AgentDescriptor,
   AgentTaskTypeSchema,
   MaestroSessionExists,
   MaestroSessionWriter,
-  TaskWriter,
   type ProjectScope,
-  type AgentDescriptor,
-  type StartMaestroSessionParams,
   resolveProjectScope,
+  type Services,
+  type StartMaestroSessionParams,
+  TaskWriter,
 } from "@penumbra/core";
-import type { Services } from "@penumbra/core";
-import { orchestrateOneTask } from "../maestro/orchestrate-one-task.js";
-import { chainStartInternal } from "./chains.js";
+import { z } from "zod";
 
+import { orchestrateOneTask } from "../maestro/orchestrate-one-task.js";
 import { json } from "./_helpers.js";
+import { chainStartInternal } from "./chains.js";
 
 function isEnvTruthy(value: string | undefined): boolean {
   if (value === undefined) return false;
@@ -37,10 +37,7 @@ function resolveMaestroProjectId(opts: {
   }
 
   const requireExplicitProjectId = isEnvTruthy(process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID);
-  if (
-    requireExplicitProjectId &&
-    (opts.scope.kind === "no_match" || opts.scope.kind === "registry_unavailable")
-  ) {
+  if (requireExplicitProjectId) {
     return {
       ok: false,
       project_id: undefined,
@@ -80,11 +77,11 @@ const StartAdhocMaestroSessionRequestSchema = z
   })
   .strict();
 
-export async function maestroSessionGetRoute(
-  req: Request,
+export function maestroSessionGetRoute(
+  _req: Request,
   task_id: string,
   services: Services,
-): Promise<Response> {
+): Response {
   const maestroSessions =
     services.maestroSessions ??
     new MaestroSessionWriter({
@@ -146,37 +143,13 @@ export async function maestroSessionStartRoute(
     );
   }
 
-  if (parsed.data.chain_handoff_id) {
-    const handoffRow = services.db
-      .query<
-        { handoff_id: string; conversation_id: string },
-        [string]
-      >("SELECT handoff_id, conversation_id FROM handoffs WHERE handoff_id = ? LIMIT 1")
-      .get(parsed.data.chain_handoff_id);
-    if (!handoffRow) {
-      return json(
-        {
-          error: {
-            code: "not_found.handoff",
-            message: `handoff ${parsed.data.chain_handoff_id} not found`,
-          },
-        },
-        404,
-      );
-    }
-
-    if (taskRow.chain_id !== handoffRow.conversation_id) {
-      return json(
-        {
-          error: {
-            code: "handoff_task_mismatch",
-            message: `handoff ${parsed.data.chain_handoff_id} does not belong to task ${parsed.data.task_id}`,
-          },
-        },
-        422,
-      );
-    }
-  }
+  const handoffMismatch = validateChainHandoff(
+    services,
+    parsed.data.chain_handoff_id,
+    parsed.data.task_id,
+    taskRow.chain_id,
+  );
+  if (handoffMismatch) return handoffMismatch;
 
   const configAgents = getConfigAgents(services);
   const knownAgents = getKnownAgents(services, configAgents);
@@ -208,7 +181,7 @@ export async function maestroSessionStartRoute(
     services.maestroSessions ??
     new MaestroSessionWriter({
       db: services.db,
-      now: () => services.clock().getTime(),
+      now: (): number => services.clock().getTime(),
     });
 
   try {
@@ -289,14 +262,14 @@ export async function maestroSessionStartAdhocRoute(
     services.maestroSessions ??
     new MaestroSessionWriter({
       db: services.db,
-      now: () => services.clock().getTime(),
+      now: (): number => services.clock().getTime(),
     });
 
   const resolveAgent = buildResolveAgent(configAgents);
   const taskWriter =
     services.taskWriter ??
     new TaskWriter(services.db, {
-      now: () => services.clock().getTime(),
+      now: (): number => services.clock().getTime(),
       resolveAgent,
       maestroSessions,
     });
@@ -314,7 +287,10 @@ export async function maestroSessionStartAdhocRoute(
     return json({ error: { ...resolvedProject.error } }, 400);
   }
 
-  if (parsed.data.project_id == null && projectScope.kind === "no_match") {
+  if (
+    (parsed.data.project_id === null || parsed.data.project_id === undefined) &&
+    projectScope.kind === "no_match"
+  ) {
     console.error(
       "maestro /sessions/adhoc could not resolve project scope as registered project; using fallback dispatch scope",
       {
@@ -323,7 +299,10 @@ export async function maestroSessionStartAdhocRoute(
       },
     );
   }
-  if (parsed.data.project_id == null && projectScope.kind === "registry_unavailable") {
+  if (
+    (parsed.data.project_id === null || parsed.data.project_id === undefined) &&
+    projectScope.kind === "registry_unavailable"
+  ) {
     console.error(
       "maestro /sessions/adhoc project registry unavailable; using fallback dispatch scope",
       {
@@ -357,14 +336,16 @@ export async function maestroSessionStartAdhocRoute(
         const bodyText = await response.text();
         let errorBody: Record<string, unknown> | null = null;
         try {
-          const decoded = JSON.parse(bodyText);
+          const decoded = JSON.parse(bodyText) as unknown;
           if (typeof decoded === "object" && decoded !== null) {
             errorBody = decoded as Record<string, unknown>;
           }
         } catch {
           errorBody = null;
         }
-        const error = new Error(`chain_start failed (${response.status}): ${bodyText}`) as Error & {
+        const error = new Error(
+          `chain_start failed (${String(response.status)}): ${bodyText}`,
+        ) as Error & {
           status?: number;
           bodyText?: string;
           body?: Record<string, unknown> | null;
@@ -386,7 +367,7 @@ export async function maestroSessionStartAdhocRoute(
       cost_cents: 200,
       sub_dispatches: 10,
     },
-    now: () => services.clock().getTime(),
+    now: (): number => services.clock().getTime(),
   });
 
   if (dispatched.status === "dispatched") {
@@ -455,13 +436,10 @@ type MaestroConfigAgent = {
   tier?: string;
 };
 
-export async function maestroCapabilitiesRoute(
-  _req: Request,
-  services: Services,
-): Promise<Response> {
+export function maestroCapabilitiesRoute(_req: Request, services: Services): Response {
   const taskTypes = [...AgentTaskTypeSchema.options];
   const workflows = (services.workflowRegistry?.list() ?? [])
-    .map((spec) =>
+    .map((spec): unknown =>
       spec && typeof spec === "object" && "name" in spec ? (spec as { name?: unknown }).name : null,
     )
     .filter((name): name is string => typeof name === "string");
@@ -529,10 +507,48 @@ function isHiddenOrInternalAgent(name: string): boolean {
   return name.startsWith("_") || name.startsWith("internal-");
 }
 
-async function safeJson(req: Request): Promise<unknown | null> {
+async function safeJson(req: Request): Promise<unknown> {
   try {
     return await req.json();
   } catch {
     return null;
   }
+}
+
+function validateChainHandoff(
+  services: Services,
+  chain_handoff_id: string | undefined,
+  task_id: string,
+  task_chain_id: string | null,
+): Response | null {
+  if (!chain_handoff_id) return null;
+  const handoffRow = services.db
+    .query<
+      { handoff_id: string; conversation_id: string },
+      [string]
+    >("SELECT handoff_id, conversation_id FROM handoffs WHERE handoff_id = ? LIMIT 1")
+    .get(chain_handoff_id);
+  if (!handoffRow) {
+    return json(
+      {
+        error: {
+          code: "not_found.handoff",
+          message: `handoff ${chain_handoff_id} not found`,
+        },
+      },
+      404,
+    );
+  }
+  if (task_chain_id !== handoffRow.conversation_id) {
+    return json(
+      {
+        error: {
+          code: "handoff_task_mismatch",
+          message: `handoff ${chain_handoff_id} does not belong to task ${task_id}`,
+        },
+      },
+      422,
+    );
+  }
+  return null;
 }

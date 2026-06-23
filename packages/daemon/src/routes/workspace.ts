@@ -1,6 +1,7 @@
 import { resolveProjectId, type Services } from "@penumbra/core";
-import { promisify } from "node:util";
 import { execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
+
 import { json } from "./_helpers.js";
 
 const execFile = promisify(execFileCb);
@@ -22,7 +23,7 @@ const STATUS_EXCLUDE_PATHS = [
 let projectIdCache: { repoRoot: string; projectId: string } | null = null;
 
 function resolveProjectIdCached(repoRoot: string): string | null {
-  if (projectIdCache && projectIdCache.repoRoot === repoRoot) return projectIdCache.projectId;
+  if (projectIdCache?.repoRoot === repoRoot) return projectIdCache.projectId;
   let projectId: string | null = null;
   try {
     projectId = resolveProjectId({ cwd: repoRoot }).project_id;

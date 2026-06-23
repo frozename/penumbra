@@ -1,6 +1,6 @@
-import { json } from "./_helpers.js";
-import type { LagSampler } from "../lag-sampler.js";
 import type { Database } from "bun:sqlite";
+
+import type { LagSampler } from "../lag-sampler.js";
 
 type HealthRouteOpts = {
   sampler?: LagSampler;

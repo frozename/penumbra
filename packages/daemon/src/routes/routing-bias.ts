@@ -1,13 +1,14 @@
-import type { Services } from "@penumbra/core";
-import {
-  readRoutingBiases,
-  setRoutingBias,
-  clearRoutingBias,
-  type RoutingBias,
-} from "@penumbra/core";
 import { isCanonicalProviderValue } from "@penumbra/config";
+import {
+  clearRoutingBias,
+  readRoutingBiases,
+  type RoutingBias,
+  type Services,
+  setRoutingBias,
+} from "@penumbra/core";
 import { z } from "zod";
-import { json, bodyJson } from "./_helpers.js";
+
+import { bodyJson, json } from "./_helpers.js";
 
 const SetInputSchema = z
   .object({
@@ -16,10 +17,10 @@ const SetInputSchema = z
     mode: z.enum(["boost", "divert", "exclude"]),
     weight: z.number().min(0).max(2.0).optional(),
     ttl_seconds: z.number().int().positive().optional(),
-    expires_at: z.string().datetime().optional(),
+    expires_at: z.iso.datetime().optional(),
     reason: z.string().optional(),
   })
-  .refine((data) => data.ttl_seconds != null || data.expires_at != null, {
+  .refine((data) => data.ttl_seconds !== undefined || data.expires_at !== undefined, {
     message: "Set requires either ttl_seconds or expires_at",
   })
   // Provider-scope bias values are matched with strict `===` against an agent's
@@ -71,10 +72,10 @@ function formatTimeRemaining(ms: number): string {
   const days = Math.floor(hours / 24);
 
   const parts: string[] = [];
-  if (days > 0) parts.push(`${days}d`);
-  if (hours % 24 > 0) parts.push(`${hours % 24}h`);
-  if (minutes % 60 > 0) parts.push(`${minutes % 60}m`);
-  if (seconds % 60 > 0 || parts.length === 0) parts.push(`${seconds % 60}s`);
+  if (days > 0) parts.push(`${String(days)}d`);
+  if (hours % 24 > 0) parts.push(`${String(hours % 24)}h`);
+  if (minutes % 60 > 0) parts.push(`${String(minutes % 60)}m`);
+  if (seconds % 60 > 0 || parts.length === 0) parts.push(`${String(seconds % 60)}s`);
 
   return parts.join(" ");
 }
@@ -109,7 +110,7 @@ export async function routingBiasSetRoute(req: Request, services: Services): Pro
   }
 }
 
-export async function routingBiasListRoute(req: Request, services: Services): Promise<Response> {
+export function routingBiasListRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const parsed = ListInputSchema.safeParse({
     scope: url.searchParams.get("scope") ?? undefined,

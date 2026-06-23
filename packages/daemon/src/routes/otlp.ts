@@ -1,9 +1,10 @@
 import type { Services } from "@penumbra/core";
+
 import {
+  normalize,
+  normalizeOtlpLogsToUsageEvents,
   parseOtlpLogs,
   parseOtlpLogsProtobuf,
-  normalizeOtlpLogsToUsageEvents,
-  normalize,
 } from "@penumbra/core";
 
 import { json } from "./_helpers.js";
@@ -17,7 +18,13 @@ function isProtobuf(req: Request): boolean {
   return ct.includes("application/x-protobuf") || ct.includes("application/protobuf");
 }
 
-function makeNormalizeCtx(services: Services) {
+function makeNormalizeCtx(services: Services): {
+  userId: string;
+  machineId: string;
+  now: () => Date;
+  uuid: () => string;
+  redactor: Services["redactor"];
+} {
   return {
     userId: services.machineId.get(),
     machineId: services.machineId.get(),

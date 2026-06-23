@@ -1,9 +1,7 @@
-import type { Services } from "@penumbra/core";
-import type { EmittedPermissionEvent } from "@penumbra/core";
+import type { EmittedPermissionEvent, Services } from "@penumbra/core";
 
-import { json } from "./_helpers.js";
 function formatSse(evt: EmittedPermissionEvent): string {
-  return `event: ${evt.kind}\nid: ${evt.permission_id}:${evt.seq}\ndata: ${JSON.stringify(evt.payload)}\n\n`;
+  return `event: ${evt.kind}\nid: ${evt.permission_id}:${String(evt.seq)}\ndata: ${JSON.stringify(evt.payload)}\n\n`;
 }
 
 function parseLastEventSeq(header: string | null): number | null {
@@ -14,13 +12,13 @@ function parseLastEventSeq(header: string | null): number | null {
   return Number(m[1]);
 }
 
-export async function permissionsEventsRoute(req: Request, services: Services): Promise<Response> {
+export function permissionsEventsRoute(req: Request, services: Services): Response {
   let off: (() => void) | null = null;
   let keepalive: ReturnType<typeof setInterval> | null = null;
   const lastSeq = parseLastEventSeq(req.headers.get("last-event-id"));
 
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
+    start(controller): void {
       const encoder = new TextEncoder();
 
       // Replay missed events first if Last-Event-ID was supplied.
@@ -60,7 +58,7 @@ export async function permissionsEventsRoute(req: Request, services: Services): 
         }
       }, 15_000);
     },
-    cancel() {
+    cancel(): void {
       if (keepalive) clearInterval(keepalive);
       keepalive = null;
       try {

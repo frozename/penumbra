@@ -1,10 +1,15 @@
-import type { Services } from "@penumbra/core";
-import { CreatePermissionRequestSchema, ApprovePermissionRequestSchema } from "@penumbra/core";
+import type { PermissionStatus, Services } from "@penumbra/core";
+
+import {
+  ApprovePermissionRequestSchema,
+  CreatePermissionRequestSchema,
+  PermissionStatusSchema,
+} from "@penumbra/core";
 
 import { json } from "./_helpers.js";
 const DEFAULT_TTL_SECONDS = 300;
 
-async function safeJson(req: Request): Promise<unknown | null> {
+async function safeJson(req: Request): Promise<unknown> {
   try {
     return await req.json();
   } catch {
@@ -34,9 +39,7 @@ export async function permissionsCreateRoute(req: Request, services: Services): 
     );
   }
 
-  const ttl_seconds =
-    parsed.data.ttl_seconds ??
-    Number((services.settings as any)?.permission_ttl_seconds ?? DEFAULT_TTL_SECONDS);
+  const ttl_seconds = parsed.data.ttl_seconds ?? DEFAULT_TTL_SECONDS;
   const now = services.clock();
 
   const { row, created: isFreshCreate } = services.permissionWriter.create({
@@ -105,15 +108,13 @@ export async function permissionsCreateRoute(req: Request, services: Services): 
   });
 }
 
-import { PermissionStatusSchema } from "@penumbra/core";
-
 const VALID_STATUSES = new Set<string>(PermissionStatusSchema.options);
 
-export async function permissionsGetRoute(
+export function permissionsGetRoute(
   _req: Request,
   permission_id: string,
   services: Services,
-): Promise<Response> {
+): Response {
   const row = services.permissionReader.get(permission_id);
   if (!row) {
     return json(
@@ -124,32 +125,39 @@ export async function permissionsGetRoute(
   return json({ permission: row });
 }
 
-export async function permissionsListRoute(req: Request, services: Services): Promise<Response> {
+function isPermissionStatus(s: string): s is PermissionStatus {
+  return VALID_STATUSES.has(s);
+}
+
+export function permissionsListRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const conv = url.searchParams.get("conversation_id") ?? undefined;
   const parent = url.searchParams.get("parent_handoff_id") ?? undefined;
   const statusParam = url.searchParams.get("status");
 
-  let statuses: string[];
+  let statuses: PermissionStatus[];
   if (statusParam !== null) {
-    statuses = statusParam
+    const raw = statusParam
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
-    if (statuses.length === 0) {
+    if (raw.length === 0) {
       return json({ error: { code: "validation_error", message: "status is empty" } }, 400);
     }
-    for (const s of statuses) {
-      if (!VALID_STATUSES.has(s)) {
+    const narrowed: PermissionStatus[] = [];
+    for (const s of raw) {
+      if (!isPermissionStatus(s)) {
         return json({ error: { code: "validation_error", message: `unknown status: ${s}` } }, 400);
       }
+      narrowed.push(s);
     }
+    statuses = narrowed;
   } else {
     statuses = ["pending"];
   }
 
   const permissions = services.permissionReader.listByStatus({
-    statuses: statuses as any,
+    statuses,
     conversation_id: conv,
     parent_handoff_id: parent,
   });

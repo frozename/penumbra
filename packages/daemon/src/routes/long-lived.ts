@@ -1,4 +1,5 @@
 import type { Services } from "@penumbra/core";
+
 import {
   handleLongLivedApproveAction,
   handleLongLivedAudit,
@@ -13,8 +14,8 @@ import {
   handleLongLivedTicks,
 } from "@penumbra/mcp";
 import { ZodError } from "zod";
-import { reconcileOrphanTickRows } from "../long-lived/tick-gate.js";
 
+import { reconcileOrphanTickRows } from "../long-lived/tick-gate.js";
 import { json } from "./_helpers.js";
 interface LongLivedAgentListRow {
   id: string;
@@ -139,16 +140,16 @@ function checkAndRecordManualTickWindow(db: object, agentId: string, nowMs: numb
   return null;
 }
 
-function parseJson<T>(value: string | null): T | null {
+function parseJson(value: string | null): unknown {
   if (!value) return null;
   try {
-    return JSON.parse(value) as T;
+    return JSON.parse(value) as unknown;
   } catch {
     return null;
   }
 }
 
-export async function longLivedListRoute(_req: Request, services: Services): Promise<Response> {
+export function longLivedListRoute(_req: Request, services: Services): Response {
   const agents = services.db
     .query<LongLivedAgentListRow, []>(
       `SELECT id, display_name, status, schedule_cron,
@@ -162,20 +163,16 @@ export async function longLivedListRoute(_req: Request, services: Services): Pro
     .all()
     .map((row) => ({
       ...row,
-      subscriptions: parseJson<unknown>(row.subscriptions_json ?? null),
-      mcp_allowlist: parseJson<unknown>(row.mcp_allowlist_json) ?? [],
-      approval_required_globs: parseJson<unknown>(row.approval_required_globs_json) ?? [],
-      cooldown_overrides: parseJson<unknown>(row.cooldown_overrides_json) ?? {},
-      working_memory: parseJson<unknown>(row.working_memory_json),
+      subscriptions: parseJson(row.subscriptions_json),
+      mcp_allowlist: parseJson(row.mcp_allowlist_json) ?? [],
+      approval_required_globs: parseJson(row.approval_required_globs_json) ?? [],
+      cooldown_overrides: parseJson(row.cooldown_overrides_json) ?? {},
+      working_memory: parseJson(row.working_memory_json),
     }));
   return json({ agents });
 }
 
-export async function longLivedGetRoute(
-  _req: Request,
-  id: string,
-  services: Services,
-): Promise<Response> {
+export function longLivedGetRoute(_req: Request, id: string, services: Services): Response {
   const agent = services.db
     .query<LongLivedAgentRow, [string]>(
       `SELECT id, display_name, status, degraded_reason, consecutive_failures, circuit_breaker_threshold,
@@ -202,8 +199,8 @@ export async function longLivedGetRoute(
     .all(id)
     .map((row) => ({
       ...row,
-      trigger_payload: parseJson<unknown>(row.trigger_payload_json),
-      working_memory_diff: parseJson<unknown>(row.working_memory_diff_json),
+      trigger_payload: parseJson(row.trigger_payload_json),
+      working_memory_diff: parseJson(row.working_memory_diff_json),
     }));
 
   const pendingActions = services.db
@@ -217,7 +214,7 @@ export async function longLivedGetRoute(
     .all(id)
     .map((row) => ({
       ...row,
-      payload: parseJson<unknown>(row.payload_json),
+      payload: parseJson(row.payload_json),
     }));
 
   const recentAudit = services.db
@@ -233,11 +230,11 @@ export async function longLivedGetRoute(
   return json({
     agent: {
       ...agent,
-      subscriptions: parseJson<unknown>(agent.subscriptions_json),
-      mcp_allowlist: parseJson<unknown>(agent.mcp_allowlist_json) ?? [],
-      approval_required_globs: parseJson<unknown>(agent.approval_required_globs_json) ?? [],
-      cooldown_overrides: parseJson<unknown>(agent.cooldown_overrides_json) ?? {},
-      working_memory: parseJson<unknown>(agent.working_memory_json),
+      subscriptions: parseJson(agent.subscriptions_json),
+      mcp_allowlist: parseJson(agent.mcp_allowlist_json) ?? [],
+      approval_required_globs: parseJson(agent.approval_required_globs_json) ?? [],
+      cooldown_overrides: parseJson(agent.cooldown_overrides_json) ?? {},
+      working_memory: parseJson(agent.working_memory_json),
     },
     recent_ticks: recentTicks,
     pending_actions: pendingActions,
@@ -245,13 +242,9 @@ export async function longLivedGetRoute(
   });
 }
 
-export async function longLivedStreamRoute(
-  _req: Request,
-  _id: string,
-  _services: Services,
-): Promise<Response> {
+export function longLivedStreamRoute(_req: Request, _id: string, _services: Services): Response {
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
+    start(controller): void {
       const encoder = new TextEncoder();
       controller.enqueue(encoder.encode(": ok\n\n"));
       controller.close();
@@ -266,47 +259,31 @@ export async function longLivedStreamRoute(
   });
 }
 
-export async function longLivedPauseRoute(
-  _req: Request,
-  id: string,
-  services: Services,
-): Promise<Response> {
+export function longLivedPauseRoute(_req: Request, id: string, services: Services): Response {
   try {
-    return json(await handleLongLivedPause(services.db, { id }));
+    return json(handleLongLivedPause(services.db, { id }));
   } catch (error) {
     return errorJson(error);
   }
 }
 
-export async function longLivedResumeRoute(
-  _req: Request,
-  id: string,
-  services: Services,
-): Promise<Response> {
+export function longLivedResumeRoute(_req: Request, id: string, services: Services): Response {
   try {
-    return json(await handleLongLivedResume(services.db, { id }));
+    return json(handleLongLivedResume(services.db, { id }));
   } catch (error) {
     return errorJson(error);
   }
 }
 
-export async function longLivedRetireRoute(
-  _req: Request,
-  id: string,
-  services: Services,
-): Promise<Response> {
+export function longLivedRetireRoute(_req: Request, id: string, services: Services): Response {
   try {
-    return json(await handleLongLivedRetire(services.db, { id }));
+    return json(handleLongLivedRetire(services.db, { id }));
   } catch (error) {
     return errorJson(error);
   }
 }
 
-export async function longLivedTickRoute(
-  _req: Request,
-  id: string,
-  services: Services,
-): Promise<Response> {
+export function longLivedTickRoute(_req: Request, id: string, services: Services): Response {
   try {
     const row = services.db
       .query<{ status: string }, [string]>("SELECT status FROM long_lived_agents WHERE id = ?")
@@ -324,10 +301,7 @@ export async function longLivedTickRoute(
   }
 }
 
-export async function longLivedReconcileOrphansRoute(
-  _req: Request,
-  services: Services,
-): Promise<Response> {
+export function longLivedReconcileOrphansRoute(_req: Request, services: Services): Response {
   try {
     return json({ reconciled: reconcileOrphanTickRows(services.db, services.clock().getTime()) });
   } catch (error) {
@@ -335,13 +309,9 @@ export async function longLivedReconcileOrphansRoute(
   }
 }
 
-export async function longLivedStateGetRoute(
-  _req: Request,
-  id: string,
-  services: Services,
-): Promise<Response> {
+export function longLivedStateGetRoute(_req: Request, id: string, services: Services): Response {
   try {
-    return json(await handleLongLivedStateGet(services.db, { id }));
+    return json(handleLongLivedStateGet(services.db, { id }));
   } catch (error) {
     if (error instanceof ZodError) {
       return json(errorBody("corrupt_working_memory", { issues: error.issues }), 500);
@@ -357,21 +327,21 @@ export async function longLivedStateSetRoute(
 ): Promise<Response> {
   try {
     const body = (await req.json()) as Record<string, unknown>;
-    return json(await handleLongLivedStateSet(services.db, { id, ...body }));
+    return json(handleLongLivedStateSet(services.db, { id, ...body }));
   } catch (error) {
     return errorJson(error);
   }
 }
 
-export async function longLivedPendingActionsRoute(
+export function longLivedPendingActionsRoute(
   req: Request,
   id: string,
   services: Services,
-): Promise<Response> {
+): Response {
   try {
     const url = new URL(req.url);
     return json(
-      await handleLongLivedPendingActions(services.db, {
+      handleLongLivedPendingActions(services.db, {
         id,
         status: url.searchParams.get("status"),
       }),
@@ -402,17 +372,17 @@ export async function longLivedApproveActionRoute(
       ? (services.longLivedReactor as { injectedGoalTick?: (agentId: string) => unknown })
           .injectedGoalTick
       : undefined;
-    const response = await handleLongLivedApproveAction(
+    const response = handleLongLivedApproveAction(
       services.db,
       {
-        emit: (event) => {
+        emit: (event): void => {
           services.handoffEvents.emit({
             event: event.type,
             payload: event.payload,
             agent_id: event.agent_id,
           } as unknown as never);
         },
-        now: () => services.clock().getTime(),
+        now: (): number => services.clock().getTime(),
       },
       { action_id: actionId, decided_by: decidedBy },
     );
@@ -436,11 +406,11 @@ export async function longLivedRejectActionRoute(
     const decidedBy =
       typeof body?.decided_by === "string" && body.decided_by.length > 0 ? body.decided_by : "user";
     return json(
-      await handleLongLivedRejectAction(
+      handleLongLivedRejectAction(
         services.db,
         {
-          emit: () => {},
-          now: () => services.clock().getTime(),
+          emit: (): void => undefined,
+          now: (): number => services.clock().getTime(),
         },
         {
           action_id: actionId,
@@ -466,16 +436,18 @@ export async function longLivedInjectGoalRoute(
           .injectedGoalTick
       : undefined;
     const body = (await req.json()) as Record<string, unknown>;
+    const rawGoal = body.goal;
+    const goal = typeof rawGoal === "string" ? rawGoal : "";
     return json(
-      await handleLongLivedInjectGoal(
+      handleLongLivedInjectGoal(
         services.db,
         {
-          fireTick: ({ agent_id }) => {
+          fireTick: ({ agent_id }): void => {
             injectedGoalTick?.(agent_id);
           },
-          now: () => services.clock().getTime(),
+          now: (): number => services.clock().getTime(),
         },
-        { id, goal: String(body.goal ?? "") },
+        { id, goal },
       ),
     );
   } catch (error) {
@@ -483,17 +455,13 @@ export async function longLivedInjectGoalRoute(
   }
 }
 
-export async function longLivedAuditRoute(
-  req: Request,
-  id: string,
-  services: Services,
-): Promise<Response> {
+export function longLivedAuditRoute(req: Request, id: string, services: Services): Response {
   try {
     const url = new URL(req.url);
     const since = url.searchParams.get("since");
     const limit = url.searchParams.get("limit");
     return json(
-      await handleLongLivedAudit(services.db, {
+      handleLongLivedAudit(services.db, {
         id,
         since: since === null ? undefined : Number(since),
         limit: limit === null ? undefined : Number(limit),
@@ -504,17 +472,13 @@ export async function longLivedAuditRoute(
   }
 }
 
-export async function longLivedTicksRoute(
-  req: Request,
-  id: string,
-  services: Services,
-): Promise<Response> {
+export function longLivedTicksRoute(req: Request, id: string, services: Services): Response {
   try {
     const url = new URL(req.url);
     const since = url.searchParams.get("since");
     const limit = url.searchParams.get("limit");
     return json(
-      await handleLongLivedTicks(services.db, {
+      handleLongLivedTicks(services.db, {
         id,
         since: since === null ? undefined : Number(since),
         limit: limit === null ? undefined : Number(limit),

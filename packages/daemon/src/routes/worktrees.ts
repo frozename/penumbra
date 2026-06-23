@@ -1,6 +1,7 @@
-import { Services, WorktreeHandle } from "@penumbra/core";
-import { promisify } from "node:util";
+import { Services } from "@penumbra/core";
 import { execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
+
 import { json } from "./_helpers.js";
 import { projectIdForHandoff, resolveWorktreeForHandoff } from "./worktree-resolve.js";
 const execFile = promisify(execFileCb);
@@ -11,7 +12,11 @@ const WORKTREE_STATUS_PATHS = [
   ":(exclude).test-storage",
 ] as const;
 
-export async function worktreesListRoute(_req: Request, services: Services): Promise<Response> {
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+export function worktreesListRoute(_req: Request, services: Services): Response {
   const worktrees = services.worktreeManager.listWorktrees();
   return json({ worktrees });
 }
@@ -31,8 +36,8 @@ export async function worktreesInspectRoute(
 
   try {
     const [diffRes, statusRes, logRes] = await Promise.all([
-      execFile("git", ["-C", wt.path, "diff", "main..HEAD"]).catch((err) => ({
-        stdout: `[diff error: ${err.message}]`,
+      execFile("git", ["-C", wt.path, "diff", "main..HEAD"]).catch((err: unknown) => ({
+        stdout: `[diff error: ${errorMessage(err)}]`,
       })),
       execFile("git", [
         "-C",
@@ -42,9 +47,9 @@ export async function worktreesInspectRoute(
         "--untracked-files=all",
         "--",
         ...WORKTREE_STATUS_PATHS,
-      ]).catch((err) => ({ stdout: `[status error: ${err.message}]` })),
-      execFile("git", ["-C", wt.path, "log", "--oneline", "main..HEAD"]).catch((err) => ({
-        stdout: `[log error: ${err.message}]`,
+      ]).catch((err: unknown) => ({ stdout: `[status error: ${errorMessage(err)}]` })),
+      execFile("git", ["-C", wt.path, "log", "--oneline", "main..HEAD"]).catch((err: unknown) => ({
+        stdout: `[log error: ${errorMessage(err)}]`,
       })),
     ]);
 
@@ -62,8 +67,8 @@ export async function worktreesInspectRoute(
       diff_against_main,
       branch_log: logRes.stdout,
     });
-  } catch (err: any) {
-    return json({ error: { code: "internal_error", message: err.message } }, 500);
+  } catch (err) {
+    return json({ error: { code: "internal_error", message: errorMessage(err) } }, 500);
   }
 }
 
@@ -88,7 +93,7 @@ export async function worktreesCleanupRoute(
       await services.worktreeManager.teardownWorktree(handoff_id, force);
     }
     return json({ status: "torn_down" });
-  } catch (err: any) {
-    return json({ error: { code: "internal_error", message: err.message } }, 500);
+  } catch (err) {
+    return json({ error: { code: "internal_error", message: errorMessage(err) } }, 500);
   }
 }

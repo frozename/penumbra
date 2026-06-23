@@ -1,16 +1,16 @@
-import { z } from "zod";
-import { readFile } from "node:fs/promises";
 import {
-  PlanStatusSchema,
   derivePlanId,
+  InvalidTaskStatus,
   PlanAlreadyRegistered,
   PlanNotFound,
-  TaskNotFound,
-  InvalidTaskStatus,
-  type TaskWriter,
+  PlanStatusSchema,
   type Services,
+  TaskNotFound,
+  type TaskWriter,
 } from "@penumbra/core";
 import { parsePlanMetaFile, validatePlan } from "@penumbra/workflows";
+import { readFile } from "node:fs/promises";
+import { z } from "zod";
 
 import { json } from "./_helpers.js";
 const RegisterPlanRequestSchema = z
@@ -25,7 +25,7 @@ const ListPlansQuerySchema = z
   })
   .strict();
 
-async function safeJson(req: Request): Promise<unknown | null> {
+async function safeJson(req: Request): Promise<unknown> {
   try {
     return await req.json();
   } catch {
@@ -125,7 +125,7 @@ export async function plansRegisterRoute(req: Request, services: Services): Prom
   return json({ plan_id, status: "running" }, 201);
 }
 
-export async function plansListRoute(req: Request, services: Services): Promise<Response> {
+export function plansListRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const statusParam = url.searchParams.get("status") ?? undefined;
   const parsed = ListPlansQuerySchema.safeParse({ status: statusParam });
@@ -135,11 +135,7 @@ export async function plansListRoute(req: Request, services: Services): Promise<
   return json({ plans });
 }
 
-export async function plansGetRoute(
-  _req: Request,
-  plan_id: string,
-  services: Services,
-): Promise<Response> {
+export function plansGetRoute(_req: Request, plan_id: string, services: Services): Response {
   const plan = services.planWriter.getPlan(plan_id);
   if (!plan) {
     return json({ error: "plan_not_found", plan_id }, 404);
@@ -148,12 +144,12 @@ export async function plansGetRoute(
   return json({ plan, tasks });
 }
 
-export async function plansCancelRoute(
+export function plansCancelRoute(
   _req: Request,
   plan_id: string,
   services: Services,
   taskWriter: TaskWriter,
-): Promise<Response> {
+): Response {
   const tasksBefore = services.planWriter.getTasks(plan_id);
 
   try {
@@ -173,7 +169,7 @@ export async function plansCancelRoute(
       cancelled_running_count += 1;
     } catch (err) {
       if (err instanceof TaskNotFound || err instanceof InvalidTaskStatus) {
-        services.log?.warn?.(
+        services.log.warn(
           {
             err,
             plan_id,
@@ -183,7 +179,7 @@ export async function plansCancelRoute(
         );
         continue;
       }
-      services.log?.warn?.(
+      services.log.warn(
         {
           err,
           plan_id,
