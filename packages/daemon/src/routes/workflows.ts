@@ -1,23 +1,30 @@
+import type {
+  AgentChatConfigLike,
+  Registry,
+  TemplateVarContext,
+  Trigger,
+  WorkflowSpec,
+} from "@penumbra/workflows";
+
 import {
-  type ExtractStumblesInput,
   extractStumblesFromSession,
-  TaskDraftPayloadSchema,
-  type Services,
+  type ExtractStumblesInput,
   resolveProjectScope,
+  type Services,
+  TaskDraftPayloadSchema,
 } from "@penumbra/core";
-import type { Registry, TemplateVarContext, WorkflowSpec } from "@penumbra/workflows";
 import {
   buildWorkflowCtx,
   composeRecall,
-  executeWorkflow,
-  evaluateTriggerEvent,
-  evaluateStateThresholds,
   computeStateMetrics,
+  evaluateStateThresholds,
+  evaluateTriggerEvent,
+  executeWorkflow,
 } from "@penumbra/workflows";
-import { lookupSessionStart } from "./sessions.js";
-import { chainStartFromInput } from "./chains.js";
 
 import { json } from "./_helpers.js";
+import { chainStartFromInput } from "./chains.js";
+import { lookupSessionStart } from "./sessions.js";
 const SESSION_START_FALLBACK_MS = 8 * 60 * 60 * 1000;
 
 const MAX_EVENTS_SCANNED_DEFAULT = 500;
@@ -44,8 +51,15 @@ function getRegistry(services: Services): Registry | undefined {
   return services.workflowRegistry as Registry | undefined;
 }
 
+// Services typed agentchatConfig has a different agent element shape (strict
+// fields) than the AgentChatConfigLike workflows accepts (Record<string,unknown>[]).
+// Adapt at the route boundary via a single typed helper.
+function asAgentChatConfigLike(cfg: Services["agentchatConfig"] | undefined): AgentChatConfigLike {
+  return cfg ?? {};
+}
+
 type InputSchemaIssue = {
-  path?: ReadonlyArray<PropertyKey>;
+  path?: readonly PropertyKey[];
   message?: string;
   expected?: unknown;
 };
@@ -55,7 +69,7 @@ type InputSchemaLike = {
     input: unknown,
   ) =>
     | { success: true; data: unknown }
-    | { success: false; error: { issues: ReadonlyArray<InputSchemaIssue> } };
+    | { success: false; error: { issues: readonly InputSchemaIssue[] } };
 };
 
 function isInputSchemaLike(schema: unknown): schema is InputSchemaLike {
@@ -66,7 +80,7 @@ function isInputSchemaLike(schema: unknown): schema is InputSchemaLike {
   );
 }
 
-function invalidArgs(issues: ReadonlyArray<InputSchemaIssue>): Response {
+function invalidArgs(issues: readonly InputSchemaIssue[]): Response {
   return json(
     {
       error: {
@@ -117,20 +131,14 @@ type WorkflowScopeResolution =
   | { ok: true; project: string; repoRoot: string }
   | { ok: false; response: Response };
 
-type ProjectScopeLike =
-  | { kind: "registered"; project_id: string; repo_root: string }
-  | { kind: "no_match"; project_id: string; repo_root: string }
-  | { kind: "registry_unavailable"; project_id: string; repo_root: string }
-  | { kind: "global"; project_id: null; repo_root: null };
-
 function resolveWorkflowScopeOrReject(cwd: string, services: Services): WorkflowScopeResolution {
   const scope = resolveProjectScope({
     cwd,
     registry: services.projectRegistry,
-  }) as ProjectScopeLike;
+  });
   if (scope.kind === "global") return { ok: false, response: untrustedCwd() };
   if (scope.kind === "registry_unavailable") {
-    services.log?.error?.(
+    services.log.error(
       { cwd, resolved_project_id: scope.project_id, repo_root: scope.repo_root },
       "project registry is unavailable while resolving workflow scope",
     );
@@ -148,7 +156,7 @@ function resolveWorkflowScopeOrReject(cwd: string, services: Services): Workflow
     };
   }
   if (scope.kind === "no_match") {
-    services.log?.warn?.(
+    services.log.warn(
       { cwd, resolved_project_id: scope.project_id, repo_root: scope.repo_root },
       SYNTHETIC_PROJECT_ID_WARNING,
     );
@@ -187,7 +195,7 @@ type WorkflowRunsRegistryWithLifecycle = NonNullable<Services["workflowRuns"]> &
   ): void;
 };
 
-async function fileTaskDraftObservation(
+function fileTaskDraftObservation(
   services: Services,
   input: {
     sessionId: string;
@@ -222,11 +230,11 @@ async function fileTaskDraftObservation(
     payloadJson = TaskDraftPayloadSchema.parse(maybePayload);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    services.log?.error?.(
+    services.log.error(
       { err: msg, session_id: input.sessionId },
       "session-summarize task draft payload invalid",
     );
-    return;
+    return Promise.resolve();
   }
 
   const event = {
@@ -253,6 +261,80 @@ async function fileTaskDraftObservation(
     origin: "unknown" as const,
   };
   services.t0Writer.write(event);
+  return Promise.resolve();
+}
+
+type T0EventRow = {
+  source: string;
+  event_type: string;
+  payload_json: string | null;
+};
+
+function buildEventReader(
+  services: Services,
+  timeCutoff: string,
+  maxEvents: number,
+): ((sessionId: string) => T0EventRow[]) | undefined {
+  // Some callers (tests, transcript-only fallback paths) construct a Services
+  // mock without a db handle. Guard the runtime presence even though the type
+  // declares db non-optional.
+  const db = (services as { db?: Services["db"] }).db;
+  if (!db) return undefined;
+  return (sessionId: string): T0EventRow[] => {
+    const rows = db
+      .query(
+        `SELECT source, event_type, payload_json
+           FROM t0_events
+          WHERE session_id = ? AND ts >= ?
+            AND (source_detail IS NULL OR source_detail NOT LIKE 'workflow:%')
+          ORDER BY ts ASC, event_id ASC
+          LIMIT ?`,
+      )
+      .all(sessionId, timeCutoff, maxEvents + 1) as T0EventRow[];
+    if (rows.length > maxEvents) {
+      services.log.warn(
+        { session_id: sessionId, limit: maxEvents, total: rows.length },
+        "session-summarize event scan exceeded cap; truncating",
+      );
+      return rows.slice(0, maxEvents);
+    }
+    return rows;
+  };
+}
+
+async function fileOneStumbleDraft(
+  filer: typeof fileTaskDraftObservation,
+  services: Services,
+  sessionId: string,
+  project: string,
+  candidate: {
+    prompt: string;
+    affects_projects: string[];
+    evidence: { conv_ids: string[]; commits: string[]; files: string[]; session_id: string };
+  },
+  provenance: {
+    filing_path: string;
+    session_id: string;
+    extractor_version: string;
+    filtered_by: string[];
+  },
+): Promise<void> {
+  try {
+    await filer(services, {
+      sessionId,
+      projectId: project !== "unknown" ? project : null,
+      prompt: candidate.prompt,
+      affects_projects: candidate.affects_projects,
+      evidence: candidate.evidence,
+      provenance,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    services.log.error(
+      { err: msg, session_id: sessionId },
+      "session-summarize stumble filing failed",
+    );
+  }
 }
 
 export async function fileSessionSummarizeStumbles(opts: {
@@ -269,34 +351,7 @@ export async function fileSessionSummarizeStumbles(opts: {
   const timeCutoff = new Date(now - EVENT_TIME_WINDOW_MS_DEFAULT).toISOString();
   const maxEvents = MAX_EVENTS_SCANNED_DEFAULT;
 
-  const eventReader =
-    opts.eventReader ??
-    (opts.services.db
-      ? (sessionId: string) => {
-          const rows = opts.services
-            .db!.query(
-              `SELECT source, event_type, payload_json
-                 FROM t0_events
-                WHERE session_id = ? AND ts >= ?
-                  AND (source_detail IS NULL OR source_detail NOT LIKE 'workflow:%')
-                ORDER BY ts ASC, event_id ASC
-                LIMIT ?`,
-            )
-            .all(sessionId, timeCutoff, maxEvents + 1) as Array<{
-            source: string;
-            event_type: string;
-            payload_json: string | null;
-          }>;
-          if (rows.length > maxEvents) {
-            opts.services.log?.warn?.(
-              { session_id: sessionId, limit: maxEvents, total: rows.length },
-              "session-summarize event scan exceeded cap; truncating",
-            );
-            return rows.slice(0, maxEvents);
-          }
-          return rows;
-        }
-      : undefined);
+  const eventReader = opts.eventReader ?? buildEventReader(opts.services, timeCutoff, maxEvents);
   try {
     const candidates = await extractor({
       session_id: opts.sessionId,
@@ -312,7 +367,7 @@ export async function fileSessionSummarizeStumbles(opts: {
     if (candidates.length > MAX_DRAFTS_PER_SESSION) {
       const dropped = candidates.slice(MAX_DRAFTS_PER_SESSION);
       const droppedHeuristics = dropped.map((c) => c.prompt.slice(0, 60)).join("; ");
-      opts.services.log?.warn?.(
+      opts.services.log.warn(
         {
           session_id: opts.sessionId,
           total: candidates.length,
@@ -332,43 +387,259 @@ export async function fileSessionSummarizeStumbles(opts: {
     };
 
     for (const candidate of capped) {
-      try {
-        await filer(opts.services, {
-          sessionId: opts.sessionId,
-          projectId: opts.project !== "unknown" ? opts.project : null,
-          prompt: candidate.prompt,
-          affects_projects: candidate.affects_projects,
-          evidence: candidate.evidence,
-          provenance,
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        opts.services.log?.error?.(
-          { err: msg, session_id: opts.sessionId },
-          "session-summarize stumble filing failed",
-        );
-      }
+      await fileOneStumbleDraft(
+        filer,
+        opts.services,
+        opts.sessionId,
+        opts.project,
+        candidate,
+        provenance,
+      );
     }
-  } catch (err) {
+  } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    opts.services.log?.error?.(
+    opts.services.log.error(
       { err: msg, session_id: opts.sessionId },
       "session-summarize stumble extraction failed",
     );
   }
 }
 
-export async function workflowsListRoute(_req: Request, services: Services): Promise<Response> {
+export function workflowsListRoute(_req: Request, services: Services): Promise<Response> {
   const reg = getRegistry(services);
-  if (!reg) return json({ workflows: [] });
-  return json({
-    workflows: reg.list().map((spec) => ({
-      name: spec.name,
-      description: spec.description,
-      triggers: spec.triggers,
-    })),
-    errors: reg.errors,
+  if (!reg) return Promise.resolve(json({ workflows: [] }));
+  return Promise.resolve(
+    json({
+      workflows: reg.list().map((spec) => ({
+        name: spec.name,
+        description: spec.description,
+        triggers: spec.triggers,
+      })),
+      errors: reg.errors,
+    }),
+  );
+}
+
+function buildAgentRegistryAdapter(
+  agentRegistry: string[] | null,
+): { listAgents: () => { name: string }[] } | undefined {
+  if (!agentRegistry) return undefined;
+  return { listAgents: (): { name: string }[] => agentRegistry.map((name) => ({ name })) };
+}
+
+type WorkflowRunBody = {
+  name?: string;
+  cwd?: string;
+  session_id?: string | null;
+  args?: Record<string, unknown>;
+  wait?: boolean;
+};
+
+async function persistRunResult(
+  workflowRuns: WorkflowRunsRegistryWithLifecycle,
+  workflowRunId: string,
+  start: number,
+  result: unknown,
+): Promise<void> {
+  workflowRuns.setExecutionRecord(workflowRunId, {
+    status: "completed",
+    started_at: start,
+    finished_at: Date.now(),
+    result,
   });
+  try {
+    await workflowRuns.recordResult(workflowRunId, result);
+  } catch (err) {
+    workflowRuns.setPersistenceStatus(workflowRunId, "persistence_failed");
+    throw err;
+  }
+}
+
+async function persistRunError(
+  workflowRuns: WorkflowRunsRegistryWithLifecycle,
+  workflowRunId: string,
+  start: number,
+  error: unknown,
+): Promise<void> {
+  workflowRuns.setExecutionRecord(workflowRunId, {
+    status: "failed",
+    started_at: start,
+    finished_at: Date.now(),
+    error,
+  });
+  try {
+    await workflowRuns.recordError(workflowRunId, error);
+  } catch (err) {
+    workflowRuns.setPersistenceStatus(workflowRunId, "persistence_failed");
+    throw err;
+  }
+}
+
+type WorkflowRunPrepared = {
+  ok: true;
+  entry: NonNullable<ReturnType<Registry["getEntry"]>>;
+  name: string;
+  args: Record<string, unknown>;
+  cwd: string;
+  body: WorkflowRunBody;
+};
+
+function prepareWorkflowRun(
+  body: WorkflowRunBody | null,
+  reg: Registry,
+): WorkflowRunPrepared | { ok: false; response: Response } {
+  const name = body?.name;
+  if (!name)
+    return {
+      ok: false,
+      response: json({ error: { code: "bad_request", message: "name required" } }, 400),
+    };
+  const entry = reg.getEntry(name);
+  if (!entry)
+    return {
+      ok: false,
+      response: json({ error: { code: "not_found", message: `workflow ${name} not found` } }, 404),
+    };
+  const rawArgs = body.args ?? {};
+  const argsResult = validateWorkflowArgs(entry, rawArgs);
+  if (!argsResult.ok) return { ok: false, response: argsResult.response };
+  const args = {
+    ...argsResult.args,
+    ...(body.session_id ? { session_id: body.session_id } : {}),
+  };
+  return { ok: true, entry, name, args, cwd: body.cwd ?? process.cwd(), body };
+}
+
+function attachRunPersistHandlers(
+  runPromise: Promise<unknown>,
+  workflowRuns: WorkflowRunsRegistryWithLifecycle | undefined,
+  workflowRunId: string | null,
+  start: number,
+  services: Services,
+): void {
+  void runPromise
+    .then(
+      async (result: unknown) => {
+        if (workflowRunId && workflowRuns) {
+          await persistRunResult(workflowRuns, workflowRunId, start, result);
+        }
+      },
+      async (error: unknown) => {
+        if (workflowRunId && workflowRuns) {
+          await persistRunError(workflowRuns, workflowRunId, start, error);
+        }
+      },
+    )
+    .catch((err: unknown) => {
+      services.log.error(
+        {
+          component: "workflow_run_persist",
+          workflow_run_id: workflowRunId,
+          err: serializeError(err),
+        },
+        "workflow_run persistence failed",
+      );
+    });
+}
+
+type WorkflowExecOpts = {
+  entry: NonNullable<ReturnType<Registry["getEntry"]>>;
+  services: Services;
+  cwd: string;
+  project: string;
+  repoRoot: string;
+  args: Record<string, unknown>;
+  templateCtx: TemplateVarContext;
+  agentRegistry: { listAgents: () => { name: string }[] } | undefined;
+  workflowRunId: string | null;
+  sessionId: string;
+  observationCtx?: { sessionId?: string | null; projectId?: string | null };
+};
+
+async function composeWorkflowBundle(
+  opts: Pick<
+    WorkflowExecOpts,
+    "entry" | "services" | "cwd" | "project" | "agentRegistry" | "templateCtx"
+  >,
+): Promise<Awaited<ReturnType<typeof composeRecall>>> {
+  return await composeRecall({
+    db: opts.services.db,
+    embedder: opts.services.embedder,
+    cwd: opts.cwd,
+    project: opts.project,
+    sources: opts.entry.spec.recall,
+    budgetTokens: opts.entry.spec.recall_budget_tokens,
+    agentRegistry: opts.agentRegistry,
+    templateCtx: opts.templateCtx,
+    storageRoot: opts.services.storageRoot,
+  });
+}
+
+function startWorkflowExecution(
+  opts: WorkflowExecOpts,
+  bundle: Awaited<ReturnType<typeof composeRecall>>,
+): ReturnType<typeof executeWorkflow> {
+  const {
+    entry,
+    services,
+    cwd,
+    project,
+    repoRoot,
+    args,
+    templateCtx,
+    workflowRunId,
+    sessionId,
+    observationCtx,
+  } = opts;
+  return executeWorkflow({
+    spec: entry.spec,
+    bundle,
+    fn: entry.fn,
+    ctx:
+      entry.source === "ts"
+        ? buildWorkflowCtx({
+            services,
+            cwd,
+            storageRoot: services.storageRoot,
+            project,
+            agentchatConfig: asAgentChatConfigLike(services.agentchatConfig),
+            args,
+            workflowRunId,
+            chainStart: (input) =>
+              chainStartFromInput(input, services, { applyMaestroBudgetGate: true }),
+          })
+        : undefined,
+    storageRoot: services.storageRoot,
+    captureCtx: {
+      db: services.db,
+      project,
+      sessionId,
+      userId: "penumbra",
+      machineId: process.env.HOSTNAME ?? "unknown",
+    },
+    repoRoot,
+    observationCtx,
+    templateCtx,
+  });
+}
+
+async function waitAndPersist(
+  runPromise: Promise<unknown>,
+  workflowRuns: WorkflowRunsRegistryWithLifecycle | undefined,
+  workflowRunId: string | null,
+  start: number,
+): Promise<Response> {
+  const result = await runPromise;
+  if (workflowRunId && workflowRuns) {
+    workflowRuns.setExecutionRecord(workflowRunId, {
+      status: "completed",
+      started_at: start,
+      finished_at: Date.now(),
+      result,
+    });
+    await workflowRuns.recordResult(workflowRunId, result);
+  }
+  return json(result);
 }
 
 export async function workflowsRunRoute(req: Request, services: Services): Promise<Response> {
@@ -379,48 +650,29 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
       500,
     );
 
-  const body = (await req.json().catch(() => null)) as {
-    name?: string;
-    cwd?: string;
-    session_id?: string | null;
-    args?: Record<string, unknown>;
-    wait?: boolean;
-  } | null;
-  const name = body?.name;
-  if (!name) return json({ error: { code: "bad_request", message: "name required" } }, 400);
+  const body = (await req.json().catch(() => null)) as WorkflowRunBody | null;
+  const prepared = prepareWorkflowRun(body, reg);
+  if (!prepared.ok) return prepared.response;
+  const { entry, name, args, cwd } = prepared;
 
-  const entry = reg.getEntry(name);
-  if (!entry)
-    return json({ error: { code: "not_found", message: `workflow ${name} not found` } }, 404);
-  const rawArgs = body?.args ?? {};
-  const argsResult = validateWorkflowArgs(entry, rawArgs);
-  if (!argsResult.ok) return argsResult.response;
-  const args = {
-    ...argsResult.args,
-    ...(body?.session_id ? { session_id: body.session_id } : {}),
-  };
-
-  const cwd = body?.cwd ?? process.cwd();
   const scope = resolveWorkflowScopeOrReject(cwd, services);
   if (!scope.ok) return scope.response;
   const { project, repoRoot } = scope;
 
   const start = Date.now();
-  const sessionStart = resolveSessionStart((services as any).db, body?.session_id ?? null, start);
+  const sessionStart = resolveSessionStart(services.db, prepared.body.session_id ?? null, start);
   const templateCtx: TemplateVarContext = {
-    now: () => new Date(),
+    now: (): Date => new Date(),
     project,
     sessionStart,
     tz: process.env.TZ ?? "UTC",
     args,
     repoRoot,
   };
-  const agentRegistry = (services as any).agentRegistry
-    ? { listAgents: () => ((services as any).agentRegistry as string[]).map((name) => ({ name })) }
-    : undefined;
+  const agentRegistry = buildAgentRegistryAdapter(services.agentRegistry);
   const workflowRuns = services.workflowRuns as WorkflowRunsRegistryWithLifecycle | undefined;
-  const workflowRunId = project != null ? (workflowRuns?.register(name, project) ?? null) : null;
-  if (project != null && workflowRuns && workflowRunId == null) {
+  const workflowRunId = workflowRuns?.register(name, project) ?? null;
+  if (workflowRuns && workflowRunId === null) {
     return json(
       {
         error: { code: "capacity_exhausted", message: "workflow run registry capacity exhausted" },
@@ -428,112 +680,26 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
       503,
     );
   }
-  const shouldWait = body?.wait ?? false;
+  const shouldWait = prepared.body.wait ?? false;
   try {
-    const bundle = await composeRecall({
-      db: (services as any).db,
-      embedder: (services as any).embedder,
+    const execOpts: WorkflowExecOpts = {
+      entry,
+      services,
       cwd,
       project,
-      sources: entry.spec.recall,
-      budgetTokens: entry.spec.recall_budget_tokens,
-      agentRegistry,
-      templateCtx,
-      storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot,
-    });
-
-    const runPromise = executeWorkflow({
-      spec: entry.spec,
-      bundle,
-      fn: entry.fn as any,
-      ctx:
-        entry.source === "ts"
-          ? buildWorkflowCtx({
-              services,
-              cwd,
-              storageRoot:
-                (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? "/tmp",
-              project,
-              agentchatConfig:
-                (services as any).agentchatConfig ??
-                ({} as Parameters<
-                  typeof buildWorkflowCtx<Record<string, unknown>>
-                >[0]["agentchatConfig"]),
-              args,
-              workflowRunId,
-              chainStart: (input) =>
-                chainStartFromInput(input, services, { applyMaestroBudgetGate: true }),
-            } as Parameters<typeof buildWorkflowCtx<Record<string, unknown>>>[0])
-          : undefined,
-      storageRoot:
-        (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? "/tmp",
-      captureCtx: {
-        db: (services as any).db,
-        project,
-        sessionId: "daemon-direct",
-        userId: "penumbra",
-        machineId: process.env.HOSTNAME ?? "unknown",
-      },
       repoRoot,
-    });
+      args,
+      templateCtx,
+      agentRegistry,
+      workflowRunId,
+      sessionId: "daemon-direct",
+    };
+    const bundle = await composeWorkflowBundle(execOpts);
+    const runPromise = startWorkflowExecution(execOpts, bundle);
     if (shouldWait) {
-      const result = await runPromise;
-      if (workflowRunId && workflowRuns) {
-        workflowRuns.setExecutionRecord(workflowRunId, {
-          status: "completed",
-          started_at: start,
-          finished_at: Date.now(),
-          result,
-        });
-        await workflowRuns.recordResult(workflowRunId, result);
-      }
-      return json(result);
+      return await waitAndPersist(runPromise, workflowRuns, workflowRunId, start);
     }
-    void runPromise
-      .then(
-        async (result) => {
-          if (workflowRunId && workflowRuns) {
-            workflowRuns.setExecutionRecord(workflowRunId, {
-              status: "completed",
-              started_at: start,
-              finished_at: Date.now(),
-              result,
-            });
-            try {
-              await workflowRuns.recordResult(workflowRunId, result);
-            } catch (err) {
-              workflowRuns.setPersistenceStatus(workflowRunId, "persistence_failed");
-              throw err;
-            }
-          }
-        },
-        async (error) => {
-          if (workflowRunId && workflowRuns) {
-            workflowRuns.setExecutionRecord(workflowRunId, {
-              status: "failed",
-              started_at: start,
-              finished_at: Date.now(),
-              error,
-            });
-            try {
-              await workflowRuns.recordError(workflowRunId, error);
-            } catch (err) {
-              workflowRuns.setPersistenceStatus(workflowRunId, "persistence_failed");
-              throw err;
-            }
-          }
-        },
-      )
-      .catch((err) => {
-        services.log?.error?.(
-          {
-            component: "workflow_run_persist",
-            workflow_run_id: workflowRunId,
-            err: serializeError(err),
-          },
-          "workflow_run persistence failed",
-        );
-      });
+    attachRunPersistHandlers(runPromise, workflowRuns, workflowRunId, start, services);
     return json({ workflow_run_id: workflowRunId, started_at: start });
   } catch (error) {
     if (workflowRunId && workflowRuns) {
@@ -566,44 +732,66 @@ export async function workflowsStatusRoute(req: Request, services: Services): Pr
   return json(status);
 }
 
-export async function workflowsWaitRoute(req: Request, services: Services): Promise<Response> {
+type WorkflowWaitStatus = Awaited<
+  ReturnType<NonNullable<Services["workflowRuns"]>["waitForResult"]>
+>;
+
+type WorkflowWaitBody = {
+  workflow_run_id?: string;
+  timeout_ms?: number;
+  cwd?: string;
+};
+
+type WorkflowWaitPrepared = {
+  ok: true;
+  workflowRuns: NonNullable<Services["workflowRuns"]>;
+  workflowRunId: string;
+  timeoutMs: number;
+};
+
+function prepareWaitRequest(
+  body: WorkflowWaitBody | null,
+  services: Services,
+): WorkflowWaitPrepared | { ok: false; response: Response } {
   const workflowRuns = services.workflowRuns;
-  const body = (await req.json().catch(() => null)) as {
-    workflow_run_id?: string;
-    timeout_ms?: number;
-    cwd?: string;
-  } | null;
   if (!body?.workflow_run_id)
-    return json({ error: { code: "bad_request", message: "workflow_run_id required" } }, 400);
+    return {
+      ok: false,
+      response: json({ error: { code: "bad_request", message: "workflow_run_id required" } }, 400),
+    };
   if (!workflowRuns)
-    return json({ error: { code: "not_found", message: "workflow run not found" } }, 404);
+    return {
+      ok: false,
+      response: json({ error: { code: "not_found", message: "workflow run not found" } }, 404),
+    };
   const info = workflowRuns.verify(body.workflow_run_id);
-  if (!info) return json({ error: { code: "not_found", message: "workflow run not found" } }, 404);
+  if (!info)
+    return {
+      ok: false,
+      response: json({ error: { code: "not_found", message: "workflow run not found" } }, 404),
+    };
   const scope = resolveWorkflowScopeOrReject(body.cwd ?? process.cwd(), services);
-  if (!scope.ok) return scope.response;
+  if (!scope.ok) return { ok: false, response: scope.response };
   if (info.project_id !== scope.project) {
-    return json({ error: { code: "not_found", message: "workflow run not found" } }, 404);
+    return {
+      ok: false,
+      response: json({ error: { code: "not_found", message: "workflow run not found" } }, 404),
+    };
   }
   const timeoutMs = body.timeout_ms ?? 300000;
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 1_800_000) {
-    return json(
-      { error: { code: "invalid_args", message: "timeout_ms must be between 1 and 1800000" } },
-      400,
-    );
+    return {
+      ok: false,
+      response: json(
+        { error: { code: "invalid_args", message: "timeout_ms must be between 1 and 1800000" } },
+        400,
+      ),
+    };
   }
-  let status;
-  try {
-    status = await workflowRuns.waitForResult(body.workflow_run_id, timeoutMs);
-  } catch (error) {
-    if (error instanceof Error && error.message === "waiter_capacity_exhausted") {
-      return json(
-        { error: { code: "too_many_requests", message: "workflow wait limit reached" } },
-        429,
-      );
-    }
-    throw error;
-  }
-  if (!status) return json({ status: "timeout" });
+  return { ok: true, workflowRuns, workflowRunId: body.workflow_run_id, timeoutMs };
+}
+
+function buildWaitResponseBody(status: NonNullable<WorkflowWaitStatus>): Record<string, unknown> {
   const resultSerialized = status.result === undefined ? undefined : JSON.stringify(status.result);
   const errorSerialized = status.error === undefined ? undefined : JSON.stringify(status.error);
   const resultBytes = resultSerialized === undefined ? 0 : Buffer.byteLength(resultSerialized);
@@ -615,44 +803,201 @@ export async function workflowsWaitRoute(req: Request, services: Services): Prom
     result_bytes: resultBytes,
     error_bytes: errorBytes,
   };
-
-  if (status.result !== undefined) {
-    response.result = status.result;
-  }
-
-  if (status.error !== undefined) {
-    response.error = status.error;
-  }
-
-  return json(response);
+  if (status.result !== undefined) response.result = status.result;
+  if (status.error !== undefined) response.error = status.error;
+  return response;
 }
 
-export async function workflowsTriggerRoute(req: Request, services: Services): Promise<Response> {
-  const reg = getRegistry(services);
-  if (!reg) return json({ matched: [], additionalContext: null });
-  const body = (await req.json().catch(() => null)) as {
-    event?: any;
-    cwd?: string;
-    args?: Record<string, unknown>;
-    hookContext?: { tool_name?: string | null; file_path?: string | null };
-    transcript_path?: string | null;
-  } | null;
-  const sessionIdFromBody = (body as { session_id?: string | null } | null)?.session_id ?? null;
-  const filePathFromBody =
-    typeof body?.hookContext?.file_path === "string" ? body.hookContext.file_path : null;
-  if (!body?.event) return json({ error: { code: "bad_request", message: "event required" } }, 400);
-  const matched = evaluateTriggerEvent(reg, body.event).filter((spec: WorkflowSpec) => {
+export async function workflowsWaitRoute(req: Request, services: Services): Promise<Response> {
+  const body = (await req.json().catch(() => null)) as WorkflowWaitBody | null;
+  const prepared = prepareWaitRequest(body, services);
+  if (!prepared.ok) return prepared.response;
+  const { workflowRuns, workflowRunId, timeoutMs } = prepared;
+
+  let status: WorkflowWaitStatus;
+  try {
+    status = await workflowRuns.waitForResult(workflowRunId, timeoutMs);
+  } catch (error) {
+    if (error instanceof Error && error.message === "waiter_capacity_exhausted") {
+      return json(
+        { error: { code: "too_many_requests", message: "workflow wait limit reached" } },
+        429,
+      );
+    }
+    throw error;
+  }
+  if (!status) return json({ status: "timeout" });
+  return json(buildWaitResponseBody(status));
+}
+
+type WorkflowTriggerBody = {
+  event?: Trigger;
+  cwd?: string;
+  args?: Record<string, unknown>;
+  hookContext?: { tool_name?: string | null; file_path?: string | null };
+  transcript_path?: string | null;
+  session_id?: string | null;
+};
+
+function filterMatchedByLifecycle(
+  matched: WorkflowSpec[],
+  lifecycleEvent: string | undefined,
+  toolName: string | undefined,
+): WorkflowSpec[] {
+  return matched.filter((spec) => {
     for (const trigger of spec.triggers) {
       if (trigger.kind !== "lifecycle") continue;
-      if (trigger.event !== body.event.event) continue;
+      if (trigger.event !== lifecycleEvent) continue;
       const filter = trigger.filter;
       if (!filter?.tool_name) return true;
-      const toolName = body.hookContext?.tool_name;
       if (typeof toolName !== "string") return false;
       return filter.tool_name.includes(toolName);
     }
     return false;
   });
+}
+
+async function executeMatchedTriggerSpec(opts: {
+  spec: WorkflowSpec;
+  entry: NonNullable<ReturnType<Registry["getEntry"]>>;
+  body: WorkflowTriggerBody;
+  sessionIdFromBody: string | null;
+  filePathFromBody: string | null;
+  cwd: string;
+  project: string;
+  repoRoot: string;
+  services: Services;
+  additionalContextParts: string[];
+}): Promise<Response | undefined> {
+  const {
+    spec,
+    entry,
+    body,
+    sessionIdFromBody,
+    filePathFromBody,
+    cwd,
+    project,
+    repoRoot,
+    services,
+    additionalContextParts,
+  } = opts;
+  const rawArgs = body.args ?? {};
+  const argsResult = validateWorkflowArgs(entry, rawArgs);
+  if (!argsResult.ok) return argsResult.response;
+  const args = {
+    ...argsResult.args,
+    ...(sessionIdFromBody ? { session_id: sessionIdFromBody } : {}),
+    ...(typeof body.transcript_path === "string" && body.transcript_path.length > 0
+      ? { transcript_path: body.transcript_path }
+      : {}),
+  };
+  const start = Date.now();
+  const sessionStart = resolveSessionStart(services.db, sessionIdFromBody, start);
+  const templateCtx: TemplateVarContext = {
+    now: (): Date => new Date(),
+    project,
+    sessionStart,
+    tz: process.env.TZ ?? "UTC",
+    cwd,
+    repoRoot,
+    filePath: filePathFromBody ?? undefined,
+    args,
+  };
+  const agentRegistry = buildAgentRegistryAdapter(services.agentRegistry);
+  const workflowRuns = services.workflowRuns;
+  const workflowRunId = workflowRuns?.register(spec.name, project) ?? null;
+  if (workflowRuns && workflowRunId === null) {
+    return json(
+      {
+        error: {
+          code: "capacity_exhausted",
+          message: "workflow run registry capacity exhausted",
+        },
+      },
+      503,
+    );
+  }
+  try {
+    const execOpts: WorkflowExecOpts = {
+      entry,
+      services,
+      cwd,
+      project,
+      repoRoot,
+      args,
+      templateCtx,
+      agentRegistry,
+      workflowRunId,
+      sessionId: "hook-trigger",
+      observationCtx: {
+        sessionId: sessionIdFromBody,
+        projectId: project !== "unknown" ? project : null,
+      },
+    };
+    const bundle = await composeWorkflowBundle(execOpts);
+    const result = await startWorkflowExecution(execOpts, bundle);
+    if (result.sessionReminder) additionalContextParts.push(result.sessionReminder);
+  } finally {
+    if (workflowRunId) workflowRuns?.unregister(workflowRunId);
+  }
+  return undefined;
+}
+
+function selectMatchedSpecs(
+  reg: Registry,
+  triggerEvent: Trigger,
+  hookContext: WorkflowTriggerBody["hookContext"],
+): WorkflowSpec[] {
+  const lifecycleEvent = triggerEvent.kind === "lifecycle" ? triggerEvent.event : undefined;
+  const toolName = typeof hookContext?.tool_name === "string" ? hookContext.tool_name : undefined;
+  return filterMatchedByLifecycle(
+    evaluateTriggerEvent(reg, triggerEvent),
+    lifecycleEvent,
+    toolName,
+  );
+}
+
+async function runAllMatchedTriggerSpecs(opts: {
+  reg: Registry;
+  matched: WorkflowSpec[];
+  body: WorkflowTriggerBody;
+  sessionIdFromBody: string | null;
+  filePathFromBody: string | null;
+  cwd: string;
+  project: string;
+  repoRoot: string;
+  services: Services;
+  additionalContextParts: string[];
+}): Promise<Response | undefined> {
+  for (const spec of opts.matched) {
+    const entry = opts.reg.getEntry(spec.name);
+    if (!entry) continue;
+    const earlyResponse = await executeMatchedTriggerSpec({
+      spec,
+      entry,
+      body: opts.body,
+      sessionIdFromBody: opts.sessionIdFromBody,
+      filePathFromBody: opts.filePathFromBody,
+      cwd: opts.cwd,
+      project: opts.project,
+      repoRoot: opts.repoRoot,
+      services: opts.services,
+      additionalContextParts: opts.additionalContextParts,
+    });
+    if (earlyResponse) return earlyResponse;
+  }
+  return undefined;
+}
+
+export async function workflowsTriggerRoute(req: Request, services: Services): Promise<Response> {
+  const reg = getRegistry(services);
+  if (!reg) return json({ matched: [], additionalContext: null });
+  const body = (await req.json().catch(() => null)) as WorkflowTriggerBody | null;
+  const sessionIdFromBody = body?.session_id ?? null;
+  const filePathFromBody =
+    typeof body?.hookContext?.file_path === "string" ? body.hookContext.file_path : null;
+  if (!body?.event) return json({ error: { code: "bad_request", message: "event required" } }, 400);
+  const matched = selectMatchedSpecs(reg, body.event, body.hookContext);
 
   const cwd = body.cwd ?? process.cwd();
   const scope = resolveWorkflowScopeOrReject(cwd, services);
@@ -660,108 +1005,19 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
   const { project, repoRoot } = scope;
 
   const additionalContextParts: string[] = [];
-  for (const spec of matched) {
-    const entry = reg.getEntry(spec.name);
-    if (!entry) continue;
-    const rawArgs = body?.args ?? {};
-    const argsResult = validateWorkflowArgs(entry, rawArgs);
-    if (!argsResult.ok) return argsResult.response;
-    const args = {
-      ...argsResult.args,
-      ...(sessionIdFromBody ? { session_id: sessionIdFromBody } : {}),
-      ...(typeof body?.transcript_path === "string" && body.transcript_path.length > 0
-        ? { transcript_path: body.transcript_path }
-        : {}),
-    };
-    const start = Date.now();
-    const sessionStart = resolveSessionStart((services as any).db, sessionIdFromBody, start);
-    const templateCtx: TemplateVarContext = {
-      now: () => new Date(),
-      project,
-      sessionStart,
-      tz: process.env.TZ ?? "UTC",
-      cwd,
-      repoRoot,
-      filePath: filePathFromBody ?? undefined,
-      args,
-    };
-    const agentRegistry = (services as any).agentRegistry
-      ? {
-          listAgents: () => ((services as any).agentRegistry as string[]).map((name) => ({ name })),
-        }
-      : undefined;
-    const workflowRuns = services.workflowRuns;
-    const workflowRunId =
-      project != null ? (workflowRuns?.register(spec.name, project) ?? null) : null;
-    if (project != null && workflowRuns && workflowRunId == null) {
-      return json(
-        {
-          error: {
-            code: "capacity_exhausted",
-            message: "workflow run registry capacity exhausted",
-          },
-        },
-        503,
-      );
-    }
-    try {
-      const bundle = await composeRecall({
-        db: (services as any).db,
-        embedder: (services as any).embedder,
-        cwd,
-        project,
-        sources: entry.spec.recall,
-        budgetTokens: entry.spec.recall_budget_tokens,
-        agentRegistry,
-        templateCtx,
-        storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot,
-      });
-      const result = await executeWorkflow({
-        spec: entry.spec,
-        bundle,
-        fn: entry.fn as any,
-        ctx:
-          entry.source === "ts"
-            ? buildWorkflowCtx({
-                services,
-                cwd,
-                storageRoot:
-                  (services as any).storageRoot ??
-                  (services as any).settings?.storageRoot ??
-                  "/tmp",
-                project,
-                agentchatConfig:
-                  (services as any).agentchatConfig ??
-                  ({} as Parameters<
-                    typeof buildWorkflowCtx<Record<string, unknown>>
-                  >[0]["agentchatConfig"]),
-                args,
-                workflowRunId,
-                chainStart: (input) =>
-                  chainStartFromInput(input, services, { applyMaestroBudgetGate: true }),
-              } as Parameters<typeof buildWorkflowCtx<Record<string, unknown>>>[0])
-            : undefined,
-        storageRoot:
-          (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? "/tmp",
-        captureCtx: {
-          db: (services as any).db,
-          project,
-          sessionId: "hook-trigger",
-          userId: "penumbra",
-          machineId: process.env.HOSTNAME ?? "unknown",
-        },
-        repoRoot,
-        observationCtx: {
-          sessionId: sessionIdFromBody,
-          projectId: project !== "unknown" ? project : null,
-        },
-        templateCtx,
-      });
-      if (result.sessionReminder) additionalContextParts.push(result.sessionReminder);
-    } finally {
-      if (workflowRunId) workflowRuns?.unregister(workflowRunId);
-    }
-  }
+  const earlyResponse = await runAllMatchedTriggerSpecs({
+    reg,
+    matched,
+    body,
+    sessionIdFromBody,
+    filePathFromBody,
+    cwd,
+    project,
+    repoRoot,
+    services,
+    additionalContextParts,
+  });
+  if (earlyResponse) return earlyResponse;
 
   if (matched.some((spec) => spec.name === "session-summarize") && sessionIdFromBody) {
     await fileSessionSummarizeStumbles({
@@ -777,18 +1033,25 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
   return json({ matched: matched.map((s) => s.name), additionalContext });
 }
 
-export async function workflowsHistoryRoute(req: Request, services: Services): Promise<Response> {
+type WorkflowStatsRow = { workflow_name: string; [key: string]: unknown };
+type WorkflowOutcomeRow = { ts: string; event_type: string; payload_json: string | null };
+
+export function workflowsHistoryRoute(req: Request, services: Services): Promise<Response> {
   const url = new URL(req.url);
   const name = url.searchParams.get("name");
-  if (!name) return json({ error: { code: "bad_request", message: "name required" } }, 400);
-  const db = (services as any).db;
-  const stats = db.query("SELECT * FROM workflow_stats WHERE workflow_name = ?").get(name);
+  if (!name)
+    return Promise.resolve(json({ error: { code: "bad_request", message: "name required" } }, 400));
+  const db = services.db;
+  const stats =
+    (db.query("SELECT * FROM workflow_stats WHERE workflow_name = ?").get(name) as
+      | WorkflowStatsRow
+      | undefined) ?? null;
   const recent = db
     .query(
       `SELECT ts, event_type, payload_json FROM t0_events WHERE event_type = 'workflow.outcome' AND json_extract(payload_json, '$.workflow_name') = ? ORDER BY ts DESC LIMIT 20`,
     )
-    .all(name);
-  return json({ stats: stats ?? null, recent });
+    .all(name) as WorkflowOutcomeRow[];
+  return Promise.resolve(json({ stats, recent }));
 }
 
 export async function workflowsSuggestRoute(req: Request, services: Services): Promise<Response> {
@@ -805,7 +1068,7 @@ export async function workflowsSuggestRoute(req: Request, services: Services): P
     });
   const body = (await req.json().catch(() => ({}))) as { now?: string };
   const now = body.now ? new Date(body.now) : new Date();
-  const metrics = computeStateMetrics({ db: (services as any).db, now: () => now });
+  const metrics = computeStateMetrics({ db: services.db, now: (): Date => now });
   const suggestions = evaluateStateThresholds(reg, metrics).map((s) => ({
     name: s.name,
     description: s.description,

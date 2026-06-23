@@ -40,7 +40,20 @@ function mockServices(partial: Record<string, unknown>): Services {
   // Tests stub only the Services properties each route reads. A fully typed
   // mock would require constructing every runtime singleton (writers, registry,
   // embedder, ...); centralize the type gap here so callers stay readable.
-  return partial as unknown as Services;
+  const noopLog = {
+    error: (): undefined => undefined,
+    warn: (): undefined => undefined,
+    info: (): undefined => undefined,
+    debug: (): undefined => undefined,
+    trace: (): undefined => undefined,
+    fatal: (): undefined => undefined,
+  };
+  const partialLog =
+    typeof partial.log === "object" && partial.log !== null
+      ? (partial.log as Record<string, unknown>)
+      : {};
+  const merged: Record<string, unknown> = { ...partial, log: { ...noopLog, ...partialLog } };
+  return merged as unknown as Services;
 }
 
 function mockRegistry(partial: Record<string, unknown>): Registry {
