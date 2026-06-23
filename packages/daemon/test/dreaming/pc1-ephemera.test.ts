@@ -179,11 +179,11 @@ it("detectT2Ephemera respects approved runtime pattern", () => {
 
 // ── runPC1Phase integration tests ─────────────────────────────────────────────
 
-it("runPC1Phase queues ephemera_retire by default without retiring memory", async () => {
+it("runPC1Phase queues ephemera_retire by default without retiring memory", () => {
   const db = openTestDb();
   seedCycle(db, "cycle-1");
   const memId = seedMemory(db, { body: "429c79cc-6240-43bb-bd97-4ef675382c35" });
-  await runPC1Phase(db, "cycle-1", testConfig(), {});
+  runPC1Phase(db, "cycle-1", testConfig(), {});
   const action = db
     .prepare(`SELECT * FROM dream_actions WHERE action_type='ephemera_retire'`)
     .get() as DreamActionRow | undefined;
@@ -195,12 +195,12 @@ it("runPC1Phase queues ephemera_retire by default without retiring memory", asyn
   expect(mem.retired_at).toBeNull();
 });
 
-it("runPC1Phase auto-applies retire when PENUMBRA_PC1_AUTORETIRE is enabled", async () => {
+it("runPC1Phase auto-applies retire when PENUMBRA_PC1_AUTORETIRE is enabled", () => {
   process.env.PENUMBRA_PC1_AUTORETIRE = "1";
   const db = openTestDb();
   seedCycle(db, "cycle-1");
   const memId = seedMemory(db, { body: "429c79cc-6240-43bb-bd97-4ef675382c35" });
-  await runPC1Phase(db, "cycle-1", testConfig(), {});
+  runPC1Phase(db, "cycle-1", testConfig(), {});
   const action = db
     .prepare(`SELECT * FROM dream_actions WHERE action_type='ephemera_retire'`)
     .get() as DreamActionRow | undefined;
@@ -212,11 +212,11 @@ it("runPC1Phase auto-applies retire when PENUMBRA_PC1_AUTORETIRE is enabled", as
   expect(mem.retired_at).toBeTruthy();
 });
 
-it("runPC1Phase skips already-retired memories", async () => {
+it("runPC1Phase skips already-retired memories", () => {
   const db = openTestDb();
   seedCycle(db, "cycle-1");
   seedMemory(db, { body: "429c79cc-6240-43bb-bd97-4ef675382c35", retired_at: Date.now() });
-  await runPC1Phase(db, "cycle-1", testConfig(), {});
+  runPC1Phase(db, "cycle-1", testConfig(), {});
   const count = (
     db
       .prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE action_type='ephemera_retire'`)
@@ -225,13 +225,13 @@ it("runPC1Phase skips already-retired memories", async () => {
   expect(count).toBe(0);
 });
 
-it("runPC1Phase dedup: second cycle does not queue duplicate ephemera_retire for same memory", async () => {
+it("runPC1Phase dedup: second cycle does not queue duplicate ephemera_retire for same memory", () => {
   const db = openTestDb();
   seedCycle(db, "cycle-1");
   seedCycle(db, "cycle-2");
   const memId = seedMemory(db, { body: "429c79cc-6240-43bb-bd97-4ef675382c35" });
-  await runPC1Phase(db, "cycle-1", testConfig(), {});
-  await runPC1Phase(db, "cycle-2", testConfig(), {});
+  runPC1Phase(db, "cycle-1", testConfig(), {});
+  runPC1Phase(db, "cycle-2", testConfig(), {});
   const count = (
     db
       .prepare(
@@ -242,7 +242,7 @@ it("runPC1Phase dedup: second cycle does not queue duplicate ephemera_retire for
   expect(count).toBe(1);
 });
 
-it("runPC1Phase advances cursor across non-multiple batches and wraps on the final partial batch", async () => {
+it("runPC1Phase advances cursor across non-multiple batches and wraps on the final partial batch", () => {
   const db = openTestDb();
   seedCycle(db, "cycle-cursor");
 
@@ -259,28 +259,28 @@ it("runPC1Phase advances cursor across non-multiple batches and wraps on the fin
   const cfg = testConfig({ pc1BatchSize: 100 });
 
   // Cycle 1: cursor starts at '' → scans mem-0001..mem-0100
-  await runPC1Phase(db, "cycle-cursor", cfg, {});
+  runPC1Phase(db, "cycle-cursor", cfg, {});
   const after1 = (
     db.prepare(`SELECT value FROM curator_cursors WHERE name='pc1_memory_id'`).get() as CursorRow
   ).value;
   expect(after1).toBe("mem-0100");
 
   // Cycle 2: cursor at mem-0100 → scans mem-0101..mem-0200
-  await runPC1Phase(db, "cycle-cursor", cfg, {});
+  runPC1Phase(db, "cycle-cursor", cfg, {});
   const after2 = (
     db.prepare(`SELECT value FROM curator_cursors WHERE name='pc1_memory_id'`).get() as CursorRow
   ).value;
   expect(after2).toBe("mem-0200");
 
   // Cycle 3: cursor at mem-0200 → scans mem-0201..mem-0250 (50 < 100) → wraps to ''
-  await runPC1Phase(db, "cycle-cursor", cfg, {});
+  runPC1Phase(db, "cycle-cursor", cfg, {});
   const after3 = (
     db.prepare(`SELECT value FROM curator_cursors WHERE name='pc1_memory_id'`).get() as CursorRow
   ).value;
   expect(after3).toBe("");
 });
 
-it("runPC1Phase wraps cursor after exact multiple of batch size", async () => {
+it("runPC1Phase wraps cursor after exact multiple of batch size", () => {
   const db = openTestDb();
   seedCycle(db, "cycle-cursor-exact");
 
@@ -295,24 +295,24 @@ it("runPC1Phase wraps cursor after exact multiple of batch size", async () => {
 
   const cfg = testConfig({ pc1BatchSize: 100 });
 
-  await runPC1Phase(db, "cycle-cursor-exact", cfg, {});
+  runPC1Phase(db, "cycle-cursor-exact", cfg, {});
   const after1 = (
     db.prepare(`SELECT value FROM curator_cursors WHERE name='pc1_memory_id'`).get() as CursorRow
   ).value;
   expect(after1).toBe("mem-0100");
 
-  await runPC1Phase(db, "cycle-cursor-exact", cfg, {});
+  runPC1Phase(db, "cycle-cursor-exact", cfg, {});
   const after2 = (
     db.prepare(`SELECT value FROM curator_cursors WHERE name='pc1_memory_id'`).get() as CursorRow
   ).value;
   expect(after2).toBe("");
 });
 
-it("revertDreamAction un-retires t2 memory on ephemera_retire revert", async () => {
+it("revertDreamAction un-retires t2 memory on ephemera_retire revert", () => {
   const db = openTestDb();
   seedCycle(db, "cycle-1");
   const memId = seedMemory(db, { body: "429c79cc-6240-43bb-bd97-4ef675382c35" });
-  await runPC1Phase(db, "cycle-1", testConfig(), {});
+  runPC1Phase(db, "cycle-1", testConfig(), {});
   const action = db
     .prepare(`SELECT action_id FROM dream_actions WHERE action_type='ephemera_retire'`)
     .get() as DreamActionRow;

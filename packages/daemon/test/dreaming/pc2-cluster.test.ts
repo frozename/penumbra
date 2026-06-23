@@ -224,10 +224,10 @@ it("findSimilarityClusters groups memory_links semantic_near edges", () => {
 });
 
 it("runPC2Phase inserts cluster_retire for non-canonicals (queued by default)", async () => {
-  await withPC2AutoApply(undefined, async () => {
+  await withPC2AutoApply(undefined, () => {
     const db = openTestDb();
     seedCluster(db, ["A", "B", "C"], { similarity: 0.96, canonical: "A" });
-    await runPC2Phase(db, "cycle-1", testConfig(), {});
+    runPC2Phase(db, "cycle-1", testConfig(), {});
     const actions = db
       .prepare(`SELECT * FROM dream_actions WHERE action_type='cluster_retire'`)
       .all() as DreamActionPayloadRow[];
@@ -240,10 +240,10 @@ it("runPC2Phase inserts cluster_retire for non-canonicals (queued by default)", 
 });
 
 it("runPC2Phase auto-applies when env is enabled and similarity is above threshold", async () => {
-  await withPC2AutoApply("1", async () => {
+  await withPC2AutoApply("1", () => {
     const db = openTestDb();
     seedCluster(db, ["A", "B", "C"], { similarity: 0.98 });
-    await runPC2Phase(db, "cycle-1", testConfig({ pc2AutoThreshold: 0.97 }), {});
+    runPC2Phase(db, "cycle-1", testConfig({ pc2AutoThreshold: 0.97 }), {});
     const retired = db
       .prepare(`SELECT * FROM t2_memories WHERE retired_at IS NOT NULL`)
       .all() as MemoryRetiredRow[];
@@ -256,10 +256,10 @@ it("runPC2Phase auto-applies when env is enabled and similarity is above thresho
 });
 
 it("runPC2Phase does not auto-apply when env is unset even if similarity exceeds threshold", async () => {
-  await withPC2AutoApply(undefined, async () => {
+  await withPC2AutoApply(undefined, () => {
     const db = openTestDb();
     seedCluster(db, ["D", "E", "F"], { similarity: 0.98 });
-    await runPC2Phase(db, "cycle-2", testConfig({ pc2AutoThreshold: 0.97 }), {});
+    runPC2Phase(db, "cycle-2", testConfig({ pc2AutoThreshold: 0.97 }), {});
     const actions = db
       .prepare(`SELECT status FROM dream_actions WHERE action_type='cluster_retire'`)
       .all() as DreamActionStatusRow[];
@@ -267,7 +267,7 @@ it("runPC2Phase does not auto-apply when env is unset even if similarity exceeds
   });
 });
 
-it("runPC2Phase avoids per-member SELECTs for 5-member cluster", async () => {
+it("runPC2Phase avoids per-member SELECTs for 5-member cluster", () => {
   const db = openTestDb();
   const originalPrepare = db.prepare.bind(db);
   let totalSelects = 0;
@@ -286,7 +286,7 @@ it("runPC2Phase avoids per-member SELECTs for 5-member cluster", async () => {
   try {
     seedCluster(db, ["A", "B", "C", "D", "E"], { similarity: 0.98, canonical: "A" });
 
-    await runPC2Phase(db, "cluster-5-members", testConfig({ pc2AutoThreshold: 0.97 }), {});
+    runPC2Phase(db, "cluster-5-members", testConfig({ pc2AutoThreshold: 0.97 }), {});
 
     expect(totalSelects - similarityScanSelects).toBeLessThanOrEqual(3);
   } finally {
@@ -294,11 +294,11 @@ it("runPC2Phase avoids per-member SELECTs for 5-member cluster", async () => {
   }
 });
 
-it("runPC2Phase dedup: second cycle does not re-queue cluster_retire for same target", async () => {
+it("runPC2Phase dedup: second cycle does not re-queue cluster_retire for same target", () => {
   const db = openTestDb();
   seedCluster(db, ["A", "B", "C"], { similarity: 0.88 });
-  await runPC2Phase(db, "cycle-1", testConfig(), {});
-  await runPC2Phase(db, "cycle-2", testConfig(), {});
+  runPC2Phase(db, "cycle-1", testConfig(), {});
+  runPC2Phase(db, "cycle-2", testConfig(), {});
   const count = (
     db
       .prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE action_type='cluster_retire'`)
@@ -307,7 +307,7 @@ it("runPC2Phase dedup: second cycle does not re-queue cluster_retire for same ta
   expect(count).toBe(2); // 2 non-canonicals × 1 cycle, not × 2
 });
 
-it("runPC2Phase uses only intra-cluster non-retired edges — retired external link does not inflate max similarity", async () => {
+it("runPC2Phase uses only intra-cluster non-retired edges — retired external link does not inflate max similarity", () => {
   const db = openTestDb();
   // cluster [A,B,C] all-internal 0.86; retired external link A→Z at 0.99
   // findSimilarityClusters excludes retired_at IS NOT NULL links, so Z stays outside [A,B,C]
@@ -318,7 +318,7 @@ it("runPC2Phase uses only intra-cluster non-retired edges — retired external l
     `INSERT INTO memory_links(link_id, src_id, dst_id, link_type, weight, retired_at) VALUES(?, 'A', 'Z', 'semantic_near', 0.99, 1)`,
   ).run(crypto.randomUUID());
   // pc2AutoThreshold=0.92: intra-cluster max is 0.86 < 0.92 → queued, NOT auto_applied
-  await runPC2Phase(db, "cycle-1", testConfig({ pc2AutoThreshold: 0.92 }), {});
+  runPC2Phase(db, "cycle-1", testConfig({ pc2AutoThreshold: 0.92 }), {});
   const actions = db
     .prepare(`SELECT status FROM dream_actions WHERE action_type='cluster_retire'`)
     .all() as DreamActionStatusRow[];
@@ -326,12 +326,12 @@ it("runPC2Phase uses only intra-cluster non-retired edges — retired external l
   expect(actions.every((a) => a.status === "queued")).toBe(true);
 });
 
-it("runPC2Phase skips already-retired cluster members (no cluster_retire emitted for them)", async () => {
+it("runPC2Phase skips already-retired cluster members (no cluster_retire emitted for them)", () => {
   const db = openTestDb();
   seedCluster(db, ["A", "B", "C"], { similarity: 0.96, canonical: "C" });
   // Pre-retire B
   db.prepare(`UPDATE t2_memories SET retired_at = 1 WHERE memory_id = 'B'`).run();
-  await runPC2Phase(db, "cycle-1", testConfig(), {});
+  runPC2Phase(db, "cycle-1", testConfig(), {});
   // Only A should get cluster_retire (B is retired, C is canonical)
   const actions = db
     .prepare(`SELECT target_ids FROM dream_actions WHERE action_type='cluster_retire'`)
@@ -341,10 +341,10 @@ it("runPC2Phase skips already-retired cluster members (no cluster_retire emitted
 });
 
 it("revertDreamAction un-retires cluster_retire target", async () => {
-  await withPC2AutoApply("1", async () => {
+  await withPC2AutoApply("1", () => {
     const db = openTestDb();
     seedCluster(db, ["A", "B", "C"], { similarity: 0.98 });
-    await runPC2Phase(db, "cycle-1", testConfig({ pc2AutoThreshold: 0.97 }), {});
+    runPC2Phase(db, "cycle-1", testConfig({ pc2AutoThreshold: 0.97 }), {});
     const action = db
       .prepare(
         `SELECT action_id, target_ids FROM dream_actions WHERE action_type='cluster_retire' AND status='auto_applied' LIMIT 1`,
