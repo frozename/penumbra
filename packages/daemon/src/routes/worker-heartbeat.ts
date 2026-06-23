@@ -1,8 +1,11 @@
-import { z } from "zod";
 import type { Services } from "@penumbra/core";
+
 import { WorkerTokenStore } from "@penumbra/core";
-import { getPrincipal, requireWorkerPrincipalMatch } from "../auth.js";
+import { z } from "zod";
+
 import type { Principal } from "../auth.js";
+
+import { getPrincipal, requireWorkerPrincipalMatch } from "../auth.js";
 import { json } from "./_helpers.js";
 
 /**
@@ -35,7 +38,7 @@ export async function workerHeartbeatRoute(req: Request, services: Services): Pr
   const denied = requireWorkerPrincipalMatch(req, body.data.worker_id);
   if (denied !== null) {
     const principal = getPrincipal(req);
-    if (principal === null || principal.kind !== "worker") {
+    if (principal?.kind !== "worker") {
       services.log.warn(
         { worker_id: body.data.worker_id },
         "heartbeat rejected: caller did not present a worker token",
@@ -60,7 +63,7 @@ export async function workerHeartbeatRoute(req: Request, services: Services): Pr
   return json({ ok: true });
 }
 
-async function safeJson(req: Request): Promise<unknown | null> {
+async function safeJson(req: Request): Promise<unknown> {
   try {
     return await req.json();
   } catch {

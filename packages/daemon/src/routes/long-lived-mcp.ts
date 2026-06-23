@@ -1,14 +1,14 @@
+import { type ActionGateLike, type Services } from "@penumbra/core";
 import { z } from "zod";
-import { type Services, type ActionGateLike } from "@penumbra/core";
-import { verifyRunningIdentity } from "../long-lived/identity.js";
 
+import { verifyRunningIdentity } from "../long-lived/identity.js";
 import { json } from "./_helpers.js";
 const Input = z.object({
   agent_id: z.string().min(1),
   tick_id: z.string().min(1),
   tool: z
     .string()
-    .regex(/^[a-z0-9_-]+[.:][a-z0-9_.\-]+$/i, "tool must be in <server>:<name> format"),
+    .regex(/^[a-z0-9_-]+[.:][a-z0-9_.-]+$/i, "tool must be in <server>:<name> format"),
   args: z.unknown().optional(),
   _meta: z.record(z.string(), z.unknown()).optional(),
 });
@@ -21,13 +21,13 @@ const QUEUED_MESSAGE =
 
 export async function longLivedMcpCallRoute(req: Request, services: Services): Promise<Response> {
   const contentLength = req.headers.get("content-length");
-  if (contentLength != null && Number(contentLength) > MAX_BODY_BYTES) {
+  if (contentLength !== null && Number(contentLength) > MAX_BODY_BYTES) {
     return json({ error: "payload_too_large" }, 413);
   }
 
   const parsed = Input.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
-    return json({ error: "invalid_input", details: parsed.error.flatten() }, 400);
+    return json({ error: "invalid_input", details: z.treeifyError(parsed.error) }, 400);
   }
   if (
     parsed.data._meta &&
@@ -57,7 +57,7 @@ export async function longLivedMcpCallRoute(req: Request, services: Services): P
     tool: normalizedTool,
     args: args ?? {},
     _meta,
-  } as any);
+  });
 
   if (result.kind === "executed") {
     return json({ action_status: "executed", result: result.result });

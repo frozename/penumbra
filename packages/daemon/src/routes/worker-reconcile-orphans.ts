@@ -1,8 +1,11 @@
-import { z } from "zod";
 import type { Services } from "@penumbra/core";
-import { json } from "./_helpers.js";
+
+import { z } from "zod";
+
 import type { OrphanHandoffRecoveryService } from "../services/orphan-handoff-recovery.js";
+
 import { requireWorkerPrincipalMatch } from "../auth.js";
+import { json } from "./_helpers.js";
 
 /**
  * POST /worker/reconcile-orphans
@@ -60,7 +63,7 @@ export async function workerReconcileOrphansRoute(
   }
 }
 
-async function safeJson(req: Request): Promise<unknown | null> {
+async function safeJson(req: Request): Promise<unknown> {
   try {
     return await req.json();
   } catch {

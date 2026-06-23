@@ -1,22 +1,24 @@
-import { join } from "node:path";
 import { loadShellConfig } from "@penumbra/agentchat/worker/shell-config";
 import { reloadAgentChatConfig } from "@penumbra/config";
 import {
   defaultProjectRegistryPath,
-  type ProjectRegistry,
   loadProjectRegistry,
+  type ProjectRegistry,
   type Services,
 } from "@penumbra/core";
 import { buildRegistry as buildWorkflowRegistry } from "@penumbra/workflows";
+import { join } from "node:path";
+
+import type { DaemonServices } from "../serve.js";
+import type { ReconcileSummary } from "../workers/supervisor.js";
+
 import {
   formatAgentChatConfigError,
   loadAgentChatConfigUncached,
   loadAgentRoutingFromConfig,
   resolveAgentChatConfigPath,
 } from "../agentchat-config.js";
-import { loadExtraWorkersConfig, type ExtraWorkersConfig } from "../workers/config.js";
-import type { ReconcileSummary } from "../workers/supervisor.js";
-import type { DaemonServices } from "../serve.js";
+import { type ExtraWorkersConfig, loadExtraWorkersConfig } from "../workers/config.js";
 
 export type ReloadSubsystemName =
   | "agentchat_config"
@@ -175,9 +177,9 @@ function resolveWorkflowDirs(services: Services): WorkflowDirs {
   };
 }
 
-export async function reloadAgentChatConfigSubsystem(
+export function reloadAgentChatConfigSubsystem(
   services: DaemonServices,
-): Promise<AgentChatConfigReloadResult> {
+): AgentChatConfigReloadResult {
   const configPath = resolveAgentChatConfigPath(process.env);
 
   try {
@@ -194,8 +196,8 @@ export async function reloadAgentChatConfigSubsystem(
         quota_tokens_per_5h: provider.quota_tokens_per_5h,
         pressure_caps: provider.pressure_caps,
       })),
-      agentchatConfig: cfg as any,
-      shellConfig: loadShellConfig({ agentchat: cfg as any }),
+      agentchatConfig: cfg as unknown as DaemonServices["agentchatConfig"],
+      shellConfig: loadShellConfig({ agentchat: cfg }),
     };
     return {
       subsystem: "agentchat_config",
@@ -303,7 +305,7 @@ export async function reloadExtraWorkersSubsystem(
       log: services.log,
     });
   } catch (error: unknown) {
-    const err = String((error as Error).message ?? error);
+    const err = error instanceof Error ? error.message : String(error);
     services.log.error(
       {
         error: err,
@@ -333,7 +335,7 @@ export async function reloadExtraWorkersSubsystem(
       meta: { config, summary },
     };
   } catch (error: unknown) {
-    const err = String((error as Error).message ?? error);
+    const err = error instanceof Error ? error.message : String(error);
     services.log.error(
       {
         error: err,

@@ -1,5 +1,6 @@
-import { z } from "zod";
 import { WorkerTokenStore } from "@penumbra/core";
+import { z } from "zod";
+
 import { getPrincipal } from "../auth.js";
 
 const bodySchema = z.object({
@@ -73,7 +74,7 @@ export async function workerRegisterRoute(
   return Response.json({ worker_token: token, worker_id: parsed.data.worker_id });
 }
 
-async function safeJson(req: Request): Promise<unknown | null> {
+async function safeJson(req: Request): Promise<unknown> {
   try {
     return await req.json();
   } catch {

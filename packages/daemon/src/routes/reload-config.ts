@@ -1,15 +1,15 @@
+import type { DaemonServices } from "../serve.js";
+
+import { json } from "./_helpers.js";
 import {
   commitAgentChatConfigSubsystem,
   commitWorkflowAndProjectRegistrySubsystem,
   reloadAgentChatConfigSubsystem,
   reloadExtraWorkersSubsystem,
   reloadLongLivedReactorSubsystem,
-  reloadWorkflowAndProjectRegistrySubsystem,
   type ReloadSubsystemStatus,
+  reloadWorkflowAndProjectRegistrySubsystem,
 } from "./reload-config-orchestrators.js";
-import type { DaemonServices } from "../serve.js";
-
-import { json } from "./_helpers.js";
 
 /**
  * POST /agentchat/reload
@@ -34,13 +34,9 @@ export async function reloadConfigRoute(
   _req: Request,
   services: DaemonServices,
 ): Promise<Response> {
-  const agentchatSubsystem = await reloadAgentChatConfigSubsystem(services);
+  const agentchatSubsystem = reloadAgentChatConfigSubsystem(services);
   if (agentchatSubsystem.status === "failed") {
-    const status =
-      agentchatSubsystem.meta.reason === "missing_config" ||
-      agentchatSubsystem.meta.reason === "invalid_config"
-        ? 422
-        : 500;
+    const status = 422;
     return json({ error: agentchatSubsystem.error }, status);
   }
 
@@ -63,7 +59,7 @@ export async function reloadConfigRoute(
 
   commitAgentChatConfigSubsystem(services, agentchatSubsystem.snapshot);
   commitWorkflowAndProjectRegistrySubsystem(services, workflowProjectSubsystem.snapshot);
-  services.workerControl?.emit({ type: "agentchat_reload" });
+  services.workerControl.emit({ type: "agentchat_reload" });
 
   const reactorSubsystem = await reloadLongLivedReactorSubsystem(services);
   const workersSubsystem = await reloadExtraWorkersSubsystem(
@@ -72,7 +68,7 @@ export async function reloadConfigRoute(
   );
   const workerExtras =
     workersSubsystem.status === "failed"
-      ? { error: workersSubsystem.error ?? "failed to reload extra workers" }
+      ? { error: workersSubsystem.error }
       : workersSubsystem.status === "reloaded"
         ? workersSubsystem.meta.summary
         : {
@@ -109,9 +105,6 @@ export async function reloadConfigRoute(
     reactor_status: reactorStatus,
     worker_extras: workerExtras,
     ...(reactorError ? { reactor_error: reactorError } : {}),
-    reloaded_at:
-      typeof services.clock === "function"
-        ? (services.clock() as any).toISOString()
-        : new Date().toISOString(),
+    reloaded_at: services.clock().toISOString(),
   });
 }

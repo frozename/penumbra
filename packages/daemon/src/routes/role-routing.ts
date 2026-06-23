@@ -1,11 +1,11 @@
 import {
+  type AgentRoutingConfig,
+  type AgentTaskType,
   inferAgentTaskTypeForRole,
   readRoutingBiases,
   readSubscriptionPressure,
-  routeAgent,
-  type AgentRoutingConfig,
-  type AgentTaskType,
   type RoleRoute,
+  routeAgent,
   type Services,
 } from "@penumbra/core";
 
@@ -36,13 +36,17 @@ export function resolveSingleRoute(
   let pressure: ReturnType<typeof readSubscriptionPressure> | undefined;
   try {
     pressure = readSubscriptionPressure(services.db);
-  } catch {}
+  } catch {
+    // degrade gracefully
+  }
   // User-driven usage-steering biases. Degrade to unsteered routing on any read
   // error, mirroring the pressure read above.
   let activeBiases: ReturnType<typeof readRoutingBiases> | undefined;
   try {
     activeBiases = readRoutingBiases(services.db, { now: services.clock() });
-  } catch {}
+  } catch {
+    // degrade gracefully
+  }
   const out = routeAgent({
     db: services.db,
     detail: "single",

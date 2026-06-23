@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { getMcpEventBus } from "../events/mcp-event-bus.js";
 
+import { getMcpEventBus } from "../events/mcp-event-bus.js";
 import { json } from "./_helpers.js";
 const PublishBody = z.object({
   server: z.string().min(1),

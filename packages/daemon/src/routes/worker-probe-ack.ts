@@ -1,8 +1,11 @@
-import { z } from "zod";
 import type { Services } from "@penumbra/core";
+
+import { z } from "zod";
+
+import type { WorkerHealthProbe } from "../services/worker-health-probe.js";
+
 import { requireWorkerPrincipalMatch } from "../auth.js";
 import { json } from "./_helpers.js";
-import type { WorkerHealthProbe } from "../services/worker-health-probe.js";
 
 /**
  * POST /worker/probe-ack
