@@ -1,6 +1,5 @@
-import { afterEach, expect, mock, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import type { AgentDescriptor, ChainStartRequest } from "@penumbra/core";
+
 import {
   loadSqliteVec,
   MaestroSessionWriter,
@@ -8,13 +7,18 @@ import {
   TaskEventBus,
   TaskWriter,
 } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { afterEach, expect, mock, test } from "bun:test";
+
 import { createOrchestrateReactor } from "../../src/reactors/orchestrate-reactor.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  // setCustomSQLite is best-effort; tests fall back to bundled sqlite.
+}
 
 const DEFAULT_BOUNDS = {
   wall_clock_ms: 1_800_000,
@@ -47,7 +51,8 @@ test("orchestrate reactor forwards task.project_id into chainStart", async () =>
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: (name): AgentDescriptor | undefined =>
+      name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined,
   });
   // project_id was once added by the test; it's now part of the base schema.
   // Keep the ALTER for legacy DBs but make it idempotent.
@@ -56,7 +61,7 @@ test("orchestrate reactor forwards task.project_id into chainStart", async () =>
     .all()
     .some((row) => row.name === "project_id");
   if (!hasProjectId) {
-    db.exec("ALTER TABLE tasks ADD COLUMN project_id TEXT");
+    db.run("ALTER TABLE tasks ADD COLUMN project_id TEXT");
   }
 
   const chainStartCalls: ChainStartRequest[] = [];
@@ -65,11 +70,12 @@ test("orchestrate reactor forwards task.project_id into chainStart", async () =>
     bus,
     sessions,
     taskWriter,
-    chainStart: async (req) => {
+    chainStart: (req) => {
       chainStartCalls.push(req);
-      return { handoff_id: "handoff-1", conversation_id: "conv-1" };
+      return Promise.resolve({ handoff_id: "handoff-1", conversation_id: "conv-1" });
     },
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: (name): AgentDescriptor | undefined =>
+      name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined,
     defaults: DEFAULT_BOUNDS,
   });
   reactor.start();

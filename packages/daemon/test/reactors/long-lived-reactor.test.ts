@@ -1,11 +1,30 @@
-import { describe, it, expect, mock, spyOn } from "bun:test";
-import { Database } from "bun:sqlite";
 import { loadSqliteVec } from "@penumbra/core";
 import { applySchema } from "@penumbra/core/db/schema";
-import { createLongLivedReactor } from "@penumbra/daemon/reactors/long-lived-reactor";
 import { createMcpEventBus } from "@penumbra/daemon/events/mcp-event-bus";
+import { createLongLivedReactor } from "@penumbra/daemon/reactors/long-lived-reactor";
+import { Database } from "bun:sqlite";
+import { describe, expect, it, mock, spyOn } from "bun:test";
 
-const fakeAgent = {
+import type {
+  FederationHealthSnapshot,
+  McpPool,
+  McpToolDescriptor,
+} from "../../src/long-lived/mcp-pool.js";
+
+interface AgentRecord {
+  name: string;
+  long_lived: boolean;
+  long_lived_config: {
+    schedule_cron: string;
+    subscriptions: { server: string; event: string }[];
+    mcp_allowlist: string[];
+    bounds: { wall_clock_ms: number; cost_cents: number; max_sub_dispatches: number };
+    circuit_breaker_threshold: number;
+    standing_brief: string;
+  };
+}
+
+const fakeAgent: AgentRecord = {
   name: "home",
   long_lived: true,
   long_lived_config: {
@@ -18,20 +37,38 @@ const fakeAgent = {
   },
 };
 
+function makeMcpPool(): McpPool {
+  const empty: FederationHealthSnapshot = { registered: [], skipped: [] };
+  return {
+    ensureRunning: () => Promise.resolve(),
+    callTool: () => Promise.resolve(undefined),
+    listTools: () => Promise.resolve<McpToolDescriptor[]>([]),
+    acquire: () => undefined,
+    release: () => undefined,
+    getFederationHealth: () => empty,
+    shutdown: () => Promise.resolve(),
+  };
+}
+
+interface LogRow {
+  status: string;
+}
+
 describe("long-lived reactor", () => {
   it("reconciles, registers a cron job, and fires spawn on cron testFire", async () => {
     const db = new Database(":memory:");
     loadSqliteVec(db);
     applySchema(db, { embeddingDim: 384 });
     const bus = createMcpEventBus();
-    const spawn = mock(async () => ({ chain_id: "ch1" }));
+    const spawn = mock((): Promise<{ chain_id: string }> => Promise.resolve({ chain_id: "ch1" }));
     const reactor = createLongLivedReactor({
       db,
       bus,
       spawn,
       isChainActive: () => false,
       now: () => 100,
-      loadAgentchatYaml: async () => ({ agents: [fakeAgent] }),
+      mcpPool: makeMcpPool(),
+      loadAgentchatYaml: () => Promise.resolve({ agents: [fakeAgent] }),
     });
 
     await reactor.reload();
@@ -45,14 +82,15 @@ describe("long-lived reactor", () => {
     loadSqliteVec(db);
     applySchema(db, { embeddingDim: 384 });
     const bus = createMcpEventBus();
-    const spawn = mock(async () => ({ chain_id: "ch1" }));
+    const spawn = mock((): Promise<{ chain_id: string }> => Promise.resolve({ chain_id: "ch1" }));
     const reactor = createLongLivedReactor({
       db,
       bus,
       spawn,
       isChainActive: () => false,
       now: () => 100,
-      loadAgentchatYaml: async () => ({ agents: [fakeAgent] }),
+      mcpPool: makeMcpPool(),
+      loadAgentchatYaml: () => Promise.resolve({ agents: [fakeAgent] }),
     });
 
     await reactor.reload();
@@ -72,15 +110,16 @@ describe("long-lived reactor", () => {
     loadSqliteVec(db);
     applySchema(db, { embeddingDim: 384 });
     const bus = createMcpEventBus();
-    const spawn = mock(async () => ({ chain_id: "c" }));
-    let yamlAgents = [fakeAgent];
+    const spawn = mock((): Promise<{ chain_id: string }> => Promise.resolve({ chain_id: "c" }));
+    let yamlAgents: AgentRecord[] = [fakeAgent];
     const reactor = createLongLivedReactor({
       db,
       bus,
       spawn,
       isChainActive: () => false,
       now: () => 100,
-      loadAgentchatYaml: async () => ({ agents: yamlAgents }),
+      mcpPool: makeMcpPool(),
+      loadAgentchatYaml: () => Promise.resolve({ agents: yamlAgents }),
     });
 
     await reactor.reload();
@@ -97,8 +136,8 @@ describe("long-lived reactor", () => {
       "__sweeper_pending_expiry__",
       "__sweeper_snapshot_purge__",
     ]);
-    const row = db.query("SELECT status FROM long_lived_agents WHERE id='home'").get() as any;
-    expect(row.status).toBe("retired");
+    const row = db.query<LogRow, []>("SELECT status FROM long_lived_agents WHERE id='home'").get();
+    expect(row?.status).toBe("retired");
   });
 
   it("registers the long-lived sweepers on reload", async () => {
@@ -106,14 +145,15 @@ describe("long-lived reactor", () => {
     loadSqliteVec(db);
     applySchema(db, { embeddingDim: 384 });
     const bus = createMcpEventBus();
-    const spawn = mock(async () => ({ chain_id: "c" }));
+    const spawn = mock((): Promise<{ chain_id: string }> => Promise.resolve({ chain_id: "c" }));
     const reactor = createLongLivedReactor({
       db,
       bus,
       spawn,
       isChainActive: () => false,
       now: () => 100,
-      loadAgentchatYaml: async () => ({ agents: [] }),
+      mcpPool: makeMcpPool(),
+      loadAgentchatYaml: () => Promise.resolve({ agents: [] }),
     });
 
     await reactor.reload();
@@ -129,32 +169,37 @@ describe("long-lived reactor", () => {
     loadSqliteVec(db);
     applySchema(db, { embeddingDim: 384 });
     const bus = createMcpEventBus();
-    const spawn = mock(async () => ({ chain_id: "ch1" }));
-    const error = mock(() => undefined);
+    const spawn = mock((): Promise<{ chain_id: string }> => Promise.resolve({ chain_id: "ch1" }));
+    const error = mock((): undefined => undefined);
+    const warn = mock((): undefined => undefined);
     const reactor = createLongLivedReactor({
       db,
       bus,
       spawn,
       isChainActive: () => false,
       now: () => 100,
-      log: { error, warn: mock(() => undefined) } as any,
-      loadAgentchatYaml: async () => ({ agents: [fakeAgent] }),
+      mcpPool: makeMcpPool(),
+      log: stubLogger({ error, warn }),
+      loadAgentchatYaml: () => Promise.resolve({ agents: [fakeAgent] }),
     });
 
     await reactor.reload();
     const originalQuery = db.query.bind(db);
-    spyOn(db as any, "query").mockImplementation((sql: string, ...args: any[]) => {
-      if (sql === "UPDATE long_lived_ticks SET chain_id=? WHERE id=?") {
-        return {
-          run: () => {
-            throw new Error("db locked");
-          },
-        } as any;
-      }
-      return originalQuery(sql as any, ...args);
-    });
+    type QueryFn = (sql: string, ...args: unknown[]) => unknown;
+    const querySpy = spyOn(db as unknown as { query: QueryFn }, "query").mockImplementation(
+      (sql: string, ...args: unknown[]): unknown => {
+        if (sql === "UPDATE long_lived_ticks SET chain_id=? WHERE id=?") {
+          return {
+            run: (): never => {
+              throw new Error("db locked");
+            },
+          };
+        }
+        return (originalQuery as unknown as QueryFn)(sql, ...args);
+      },
+    );
 
-    const unhandled = mock(() => undefined);
+    const unhandled = mock((): undefined => undefined);
     process.on("unhandledRejection", unhandled);
     try {
       reactor._cronTestFire("home");
@@ -163,6 +208,26 @@ describe("long-lived reactor", () => {
       expect(unhandled).not.toHaveBeenCalled();
     } finally {
       process.off("unhandledRejection", unhandled);
+      querySpy.mockRestore();
     }
   });
 });
+
+type LoggerArg = NonNullable<Parameters<typeof createLongLivedReactor>[0]["log"]>;
+
+function stubLogger(
+  overrides: Partial<Record<"error" | "warn" | "info" | "debug" | "trace" | "fatal", unknown>>,
+): LoggerArg {
+  const noop = (): undefined => undefined;
+  const base = {
+    error: overrides.error ?? noop,
+    warn: overrides.warn ?? noop,
+    info: overrides.info ?? noop,
+    debug: overrides.debug ?? noop,
+    trace: overrides.trace ?? noop,
+    fatal: overrides.fatal ?? noop,
+    child: (): unknown => base,
+    level: "silent",
+  };
+  return base as unknown as LoggerArg;
+}

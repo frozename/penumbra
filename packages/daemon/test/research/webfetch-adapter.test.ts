@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it } from "bun:test";
-import { WebFetchAdapter, isInternalOrMetadataHost } from "../../src/research/webfetch-adapter.js";
+
 import { createResearchAdapter } from "../../src/research/firecrawl-adapter.js";
+import { isInternalOrMetadataHost, WebFetchAdapter } from "../../src/research/webfetch-adapter.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -12,65 +13,111 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
+// Bun's matcher chains (`.rejects.toMatch`) declare a void return but resolve
+// asynchronously at runtime; this helper performs the rejection assertion
+// directly against the promise so the file can stay strict-lint clean.
+async function expectRejectsToMatch(promise: Promise<unknown>, pattern: RegExp): Promise<void> {
+  let caught: unknown;
+  let rejected = false;
+  try {
+    await promise;
+  } catch (err) {
+    caught = err;
+    rejected = true;
+  }
+  if (!rejected) {
+    throw new Error(`expected rejection matching ${String(pattern)}, but promise resolved`);
+  }
+  const message =
+    typeof caught === "string"
+      ? caught
+      : caught instanceof Error
+        ? caught.message
+        : JSON.stringify(caught);
+  if (!pattern.test(message)) {
+    throw new Error(`expected rejection to match ${String(pattern)}, got: ${message}`);
+  }
+}
+
+type FetchFn = (input: string | URL, init?: RequestInit) => Promise<Response>;
+
+function installFetch(fn: FetchFn): void {
+  globalThis.fetch = fn as unknown as typeof fetch;
+}
+
+function urlOf(input: string | URL): string {
+  return typeof input === "string" ? input : input.toString();
+}
+
 it("blocks scrape of cloud metadata host even with no allowlist", async () => {
   const adapter = new WebFetchAdapter();
-  await expect(adapter.scrape({ url: "http://169.254.169.254/latest/meta-data/" })).rejects.toMatch(
+  await expectRejectsToMatch(
+    adapter.scrape({ url: "http://169.254.169.254/latest/meta-data/" }),
     /internal host blocked/i,
   );
 });
 
 it("blocks scrape of loopback IPv4 even with no allowlist", async () => {
   const adapter = new WebFetchAdapter();
-  await expect(adapter.scrape({ url: "http://127.0.0.1:8080/" })).rejects.toMatch(
+  await expectRejectsToMatch(
+    adapter.scrape({ url: "http://127.0.0.1:8080/" }),
     /internal host blocked/i,
   );
 });
 
 it("blocks scrape of RFC1918 host even with no allowlist", async () => {
   const adapter = new WebFetchAdapter();
-  await expect(adapter.scrape({ url: "http://10.0.0.5/admin" })).rejects.toMatch(
+  await expectRejectsToMatch(
+    adapter.scrape({ url: "http://10.0.0.5/admin" }),
     /internal host blocked/i,
   );
-  await expect(adapter.scrape({ url: "http://192.168.1.1/" })).rejects.toMatch(
+  await expectRejectsToMatch(
+    adapter.scrape({ url: "http://192.168.1.1/" }),
     /internal host blocked/i,
   );
-  await expect(adapter.scrape({ url: "http://172.20.5.5/" })).rejects.toMatch(
+  await expectRejectsToMatch(
+    adapter.scrape({ url: "http://172.20.5.5/" }),
     /internal host blocked/i,
   );
 });
 
 it("blocks scrape of localhost and metadata hostnames even with no allowlist", async () => {
   const adapter = new WebFetchAdapter();
-  await expect(adapter.scrape({ url: "http://localhost/" })).rejects.toMatch(
+  await expectRejectsToMatch(
+    adapter.scrape({ url: "http://localhost/" }),
     /internal host blocked/i,
   );
-  await expect(adapter.scrape({ url: "http://metadata.google.internal/" })).rejects.toMatch(
+  await expectRejectsToMatch(
+    adapter.scrape({ url: "http://metadata.google.internal/" }),
     /internal host blocked/i,
   );
 });
 
 it("blocks scrape of IPv6 loopback and link-local even with no allowlist", async () => {
   const adapter = new WebFetchAdapter();
-  await expect(adapter.scrape({ url: "http://[::1]/" })).rejects.toMatch(/internal host blocked/i);
-  await expect(adapter.scrape({ url: "http://[fe80::1]/" })).rejects.toMatch(
+  await expectRejectsToMatch(adapter.scrape({ url: "http://[::1]/" }), /internal host blocked/i);
+  await expectRejectsToMatch(
+    adapter.scrape({ url: "http://[fe80::1]/" }),
     /internal host blocked/i,
   );
 });
 
 it("blocks scrape of disallowed public host when allowlist is set", async () => {
   const adapter = new WebFetchAdapter({ allowedDomains: ["example.com"] });
-  await expect(adapter.scrape({ url: "https://evil.com/" })).rejects.toMatch(/domain not allowed/i);
+  await expectRejectsToMatch(adapter.scrape({ url: "https://evil.com/" }), /domain not allowed/i);
 });
 
 it("allows scrape of public host on allowlist", async () => {
   let calledUrl: string | undefined;
-  globalThis.fetch = (async (url: string | URL | Request) => {
-    calledUrl = typeof url === "string" ? url : url.toString();
-    return new Response("<html><body><p>hello world</p></body></html>", {
-      status: 200,
-      headers: { "content-type": "text/html" },
-    });
-  }) as unknown as typeof fetch;
+  installFetch((url) => {
+    calledUrl = urlOf(url);
+    return Promise.resolve(
+      new Response("<html><body><p>hello world</p></body></html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      }),
+    );
+  });
 
   const adapter = new WebFetchAdapter({ allowedDomains: ["example.com"] });
   const result = await adapter.scrape({ url: "https://example.com/page" });
@@ -80,11 +127,14 @@ it("allows scrape of public host on allowlist", async () => {
 });
 
 it("allows scrape of public host when no allowlist is set", async () => {
-  globalThis.fetch = (async () =>
-    new Response("<html><body>ok</body></html>", {
-      status: 200,
-      headers: { "content-type": "text/html" },
-    })) as unknown as typeof fetch;
+  installFetch(() =>
+    Promise.resolve(
+      new Response("<html><body>ok</body></html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      }),
+    ),
+  );
 
   const adapter = new WebFetchAdapter();
   const result = await adapter.scrape({ url: "https://example.com/" });
@@ -96,69 +146,78 @@ it("createResearchAdapter wires allowedDomains into webfetch adapter", async () 
     provider: "webfetch",
     allowedDomains: ["example.com"],
   });
-  await expect(adapter.scrape({ url: "https://evil.com/" })).rejects.toMatch(/domain not allowed/i);
-  await expect(adapter.scrape({ url: "http://169.254.169.254/" })).rejects.toMatch(
+  await expectRejectsToMatch(adapter.scrape({ url: "https://evil.com/" }), /domain not allowed/i);
+  await expectRejectsToMatch(
+    adapter.scrape({ url: "http://169.254.169.254/" }),
     /internal host blocked/i,
   );
 });
 
 it("rejects malformed URLs", async () => {
   const adapter = new WebFetchAdapter();
-  await expect(adapter.scrape({ url: "not a url" })).rejects.toMatch(/invalid URL/i);
+  await expectRejectsToMatch(adapter.scrape({ url: "not a url" }), /invalid URL/i);
 });
 
 it("blocks redirect target on internal/metadata host", async () => {
-  globalThis.fetch = (async (url: string | URL | Request) => {
-    const u = typeof url === "string" ? url : url.toString();
+  installFetch((url) => {
+    const u = urlOf(url);
     if (u.startsWith("https://example.com")) {
-      return new Response(null, {
-        status: 302,
-        headers: { location: "http://169.254.169.254/latest/meta-data/" },
-      });
+      return Promise.resolve(
+        new Response(null, {
+          status: 302,
+          headers: { location: "http://169.254.169.254/latest/meta-data/" },
+        }),
+      );
     }
-    return new Response("ok", { status: 200 });
-  }) as unknown as typeof fetch;
+    return Promise.resolve(new Response("ok", { status: 200 }));
+  });
 
   const adapter = new WebFetchAdapter();
-  await expect(adapter.scrape({ url: "https://example.com/redir" })).rejects.toMatch(
+  await expectRejectsToMatch(
+    adapter.scrape({ url: "https://example.com/redir" }),
     /internal host blocked/i,
   );
 });
 
 it("blocks redirect target outside allowlist", async () => {
-  globalThis.fetch = (async (url: string | URL | Request) => {
-    const u = typeof url === "string" ? url : url.toString();
+  installFetch((url) => {
+    const u = urlOf(url);
     if (u.startsWith("https://example.com")) {
-      return new Response(null, {
-        status: 301,
-        headers: { location: "https://evil.com/exfil" },
-      });
+      return Promise.resolve(
+        new Response(null, {
+          status: 301,
+          headers: { location: "https://evil.com/exfil" },
+        }),
+      );
     }
-    return new Response("ok", { status: 200 });
-  }) as unknown as typeof fetch;
+    return Promise.resolve(new Response("ok", { status: 200 }));
+  });
 
   const adapter = new WebFetchAdapter({ allowedDomains: ["example.com"] });
-  await expect(adapter.scrape({ url: "https://example.com/redir" })).rejects.toMatch(
+  await expectRejectsToMatch(
+    adapter.scrape({ url: "https://example.com/redir" }),
     /domain not allowed/i,
   );
 });
 
 it("follows allowed redirects and returns final body", async () => {
   const visited: string[] = [];
-  globalThis.fetch = (async (url: string | URL | Request) => {
-    const u = typeof url === "string" ? url : url.toString();
+  installFetch((url) => {
+    const u = urlOf(url);
     visited.push(u);
     if (u === "https://example.com/a") {
-      return new Response(null, { status: 302, headers: { location: "/b" } });
+      return Promise.resolve(new Response(null, { status: 302, headers: { location: "/b" } }));
     }
     if (u === "https://example.com/b") {
-      return new Response("<html><body>final</body></html>", {
-        status: 200,
-        headers: { "content-type": "text/html" },
-      });
+      return Promise.resolve(
+        new Response("<html><body>final</body></html>", {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        }),
+      );
     }
-    return new Response("unexpected", { status: 500 });
-  }) as unknown as typeof fetch;
+    return Promise.resolve(new Response("unexpected", { status: 500 }));
+  });
 
   const adapter = new WebFetchAdapter({ allowedDomains: ["example.com"] });
   const result = await adapter.scrape({ url: "https://example.com/a" });
@@ -169,16 +228,19 @@ it("follows allowed redirects and returns final body", async () => {
 
 it("caps redirect chain length", async () => {
   let count = 0;
-  globalThis.fetch = (async () => {
+  installFetch(() => {
     count++;
-    return new Response(null, {
-      status: 302,
-      headers: { location: "https://example.com/loop" },
-    });
-  }) as unknown as typeof fetch;
+    return Promise.resolve(
+      new Response(null, {
+        status: 302,
+        headers: { location: "https://example.com/loop" },
+      }),
+    );
+  });
 
   const adapter = new WebFetchAdapter({ allowedDomains: ["example.com"] });
-  await expect(adapter.scrape({ url: "https://example.com/loop" })).rejects.toMatch(
+  await expectRejectsToMatch(
+    adapter.scrape({ url: "https://example.com/loop" }),
     /too many redirects/i,
   );
   expect(count).toBeLessThanOrEqual(6);
@@ -186,32 +248,31 @@ it("caps redirect chain length", async () => {
 
 it("firecrawl-fallback path blocks redirect to internal host (401 -> webfetch)", async () => {
   const stubFirecrawl = {
-    search: async () => {
-      const err = Object.assign(new Error("unauthorized"), { status: 401 });
-      throw err;
-    },
-    scrape: async () => {
-      const err = Object.assign(new Error("unauthorized"), { status: 401 });
-      throw err;
-    },
+    search: (): Promise<never> =>
+      Promise.reject(Object.assign(new Error("unauthorized"), { status: 401 })),
+    scrape: (): Promise<never> =>
+      Promise.reject(Object.assign(new Error("unauthorized"), { status: 401 })),
   };
 
-  globalThis.fetch = (async (url: string | URL | Request) => {
-    const u = typeof url === "string" ? url : url.toString();
+  installFetch((url) => {
+    const u = urlOf(url);
     if (u.startsWith("https://example.com")) {
-      return new Response(null, {
-        status: 302,
-        headers: { location: "http://169.254.169.254/latest/meta-data/" },
-      });
+      return Promise.resolve(
+        new Response(null, {
+          status: 302,
+          headers: { location: "http://169.254.169.254/latest/meta-data/" },
+        }),
+      );
     }
-    return new Response("ok", { status: 200 });
-  }) as unknown as typeof fetch;
+    return Promise.resolve(new Response("ok", { status: 200 }));
+  });
 
   const adapter = createResearchAdapter(
     { provider: "firecrawl", allowedDomains: ["example.com"] },
     stubFirecrawl,
   );
-  await expect(adapter.scrape({ url: "https://example.com/redir" })).rejects.toMatch(
+  await expectRejectsToMatch(
+    adapter.scrape({ url: "https://example.com/redir" }),
     /internal host blocked/i,
   );
 });

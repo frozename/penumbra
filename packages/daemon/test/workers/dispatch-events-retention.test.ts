@@ -1,9 +1,14 @@
 import { expect } from "bun:test";
-import { serviceTest } from "../helpers/service-gates.js";
-import { makeTempDaemon } from "../helpers.js";
-import { createDispatchEventsRetentionWorker } from "../../src/workers/dispatch-events-retention.js";
 
-function insertDispatchEvent(d: ReturnType<typeof makeTempDaemon>, handoffId: string, ts: string) {
+import { createDispatchEventsRetentionWorker } from "../../src/workers/dispatch-events-retention.js";
+import { makeTempDaemon } from "../helpers.js";
+import { serviceTest } from "../helpers/service-gates.js";
+
+function insertDispatchEvent(
+  d: ReturnType<typeof makeTempDaemon>,
+  handoffId: string,
+  ts: string,
+): void {
   d.services.db.run(
     `INSERT INTO dispatch_events(handoff_id, worker_id, source, kind, ts, meta_json)
      VALUES(?, 'w1', 'worker', 'agent.heartbeat', ?, NULL)`,

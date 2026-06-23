@@ -1,8 +1,10 @@
+import type { Logger } from "@penumbra/core";
+
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Logger } from "@penumbra/core";
+
 import { ExtraWorkersConfigError, loadExtraWorkersConfig } from "../../src/workers/config.js";
 
 const tempDirs: string[] = [];
@@ -30,34 +32,42 @@ afterEach(() => {
 });
 
 function writeConfig(contents: string): string {
-  const home = process.env.HOME as string;
+  const home = process.env.HOME!;
   const configPath = join(home, ".config", "penumbra", "workers.yaml");
   writeFileSync(configPath, contents);
   return configPath;
 }
 
 function setWorkerId(id: string): void {
-  const home = process.env.HOME as string;
+  const home = process.env.HOME!;
   writeFileSync(join(home, ".penumbra", "worker-id"), `${id}\n`);
 }
 
-function withWarnSpy() {
+interface WarnSpyHandle {
+  entries: unknown[];
+  restore: () => void;
+}
+
+function withWarnSpy(): WarnSpyHandle {
   const entries: unknown[] = [];
   const warnSpy = spyOn(console, "warn").mockImplementation((entry: unknown) => {
     entries.push(entry);
   });
-  return { entries, warnSpy };
+  const restore = (): void => {
+    warnSpy.mockRestore();
+  };
+  return { entries, restore };
 }
 
 describe("extra workers config loader", () => {
   test("missing file returns empty extras", () => {
-    const { entries, warnSpy } = withWarnSpy();
+    const { entries, restore } = withWarnSpy();
     try {
       const result = loadExtraWorkersConfig();
       expect(result.extras).toEqual([]);
       expect(entries).toEqual([]);
     } finally {
-      warnSpy.mockRestore();
+      restore();
     }
   });
 
@@ -140,19 +150,20 @@ describe("extra workers config loader", () => {
 
   test("rejects extras list longer than 32 items", () => {
     writeConfig(
-      ["extras:", ...Array.from({ length: 33 }, (_, index) => `  - id: worker-${index + 1}`)].join(
-        "\n",
-      ),
+      [
+        "extras:",
+        ...Array.from({ length: 33 }, (_, index) => `  - id: worker-${String(index + 1)}`),
+      ].join("\n"),
     );
     expect(() => loadExtraWorkersConfig()).toThrow(/32/);
   });
 
   test.each([0, -1, 33, Number.MAX_SAFE_INTEGER + 1])(
     "rejects invalid concurrency %s",
-    (concurrency) => {
+    (concurrency: number) => {
       writeConfig(`extras:
   - id: too-many
-    concurrency: ${concurrency}
+    concurrency: ${String(concurrency)}
 `);
       expect(() => loadExtraWorkersConfig()).toThrow(ExtraWorkersConfigError);
     },
@@ -178,7 +189,7 @@ describe("extra workers config loader", () => {
   });
 
   test("unknown project_id is skipped with warning", () => {
-    const { entries, warnSpy } = withWarnSpy();
+    const { entries, restore } = withWarnSpy();
     try {
       writeConfig(`extras:
   - id: unknown-project
@@ -193,7 +204,7 @@ describe("extra workers config loader", () => {
         project_id: "missing",
       });
     } finally {
-      warnSpy.mockRestore();
+      restore();
     }
   });
 
@@ -246,7 +257,7 @@ describe("extra workers config loader", () => {
   });
 
   test("PENUMBRA_WORKERS_CONFIG_PATH override is respected", () => {
-    const home = process.env.HOME as string;
+    const home = process.env.HOME!;
     const override = join(home, "override-workers.yaml");
     process.env.PENUMBRA_WORKERS_CONFIG_PATH = override;
     writeFileSync(override, `extras:\n  - id: override-worker\n`);

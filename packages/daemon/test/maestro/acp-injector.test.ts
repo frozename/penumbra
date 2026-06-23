@@ -1,16 +1,30 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test";
+
 import { createAcpInjector } from "../../src/maestro/acp-injector.js";
+
+interface AcpInjectMessage {
+  role: "user";
+  text: string;
+}
+
+interface LiveSession {
+  adapter: string;
+  inject: (message: AcpInjectMessage) => Promise<void>;
+}
 
 afterEach(() => {
   mock.restore();
 });
 
 test("inject fan-through: forwards message to live session inject handler", async () => {
-  const inject = mock(async (_message: { role: "user"; text: string }) => {});
-  const lookupSession = mock(async (_handoffId: string) => ({
-    adapter: "claude-acp-sonnet",
-    inject,
-  }));
+  const inject = mock((_message: AcpInjectMessage): Promise<void> => Promise.resolve());
+  const lookupSession = mock(
+    (_handoffId: string): Promise<LiveSession> =>
+      Promise.resolve({
+        adapter: "claude-acp-sonnet",
+        inject,
+      }),
+  );
 
   const injector = createAcpInjector({
     workerManager: { lookupSession },
@@ -25,16 +39,16 @@ test("inject fan-through: forwards message to live session inject handler", asyn
 });
 
 test("no live session: resolves and logs warning", async () => {
-  const lookupSession = mock(async (_handoffId: string) => undefined);
+  const lookupSession = mock(
+    (_handoffId: string): Promise<LiveSession | undefined> => Promise.resolve(undefined),
+  );
   const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
 
   const injector = createAcpInjector({
     workerManager: { lookupSession },
   });
 
-  await expect(
-    injector.inject("h-missing", { role: "user", text: "hello" }),
-  ).resolves.toBeUndefined();
+  await injector.inject("h-missing", { role: "user", text: "hello" });
   expect(warnSpy).toHaveBeenCalledTimes(1);
   expect(String(warnSpy.mock.calls[0]?.[0])).toContain(
     "[acp-injector] no live session for chain_handoff_id=h-missing",
@@ -42,18 +56,21 @@ test("no live session: resolves and logs warning", async () => {
 });
 
 test("unsupported adapter: resolves and logs warning without injecting", async () => {
-  const inject = mock(async (_message: { role: "user"; text: string }) => {});
-  const lookupSession = mock(async (_handoffId: string) => ({
-    adapter: "openai-compat-http",
-    inject,
-  }));
+  const inject = mock((_message: AcpInjectMessage): Promise<void> => Promise.resolve());
+  const lookupSession = mock(
+    (_handoffId: string): Promise<LiveSession> =>
+      Promise.resolve({
+        adapter: "openai-compat-http",
+        inject,
+      }),
+  );
   const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
 
   const injector = createAcpInjector({
     workerManager: { lookupSession },
   });
 
-  await expect(injector.inject("h-http", { role: "user", text: "hello" })).resolves.toBeUndefined();
+  await injector.inject("h-http", { role: "user", text: "hello" });
   expect(inject).toHaveBeenCalledTimes(0);
   expect(warnSpy).toHaveBeenCalledTimes(1);
   expect(String(warnSpy.mock.calls[0]?.[0])).toContain(
@@ -62,20 +79,23 @@ test("unsupported adapter: resolves and logs warning without injecting", async (
 });
 
 test("underlying inject throws: resolves and logs error", async () => {
-  const inject = mock(async (_message: { role: "user"; text: string }) => {
-    throw new Error("boom");
-  });
-  const lookupSession = mock(async (_handoffId: string) => ({
-    adapter: "stdio-acp",
-    inject,
-  }));
+  const inject = mock(
+    (_message: AcpInjectMessage): Promise<void> => Promise.reject(new Error("boom")),
+  );
+  const lookupSession = mock(
+    (_handoffId: string): Promise<LiveSession> =>
+      Promise.resolve({
+        adapter: "stdio-acp",
+        inject,
+      }),
+  );
   const errorSpy = spyOn(console, "error").mockImplementation(() => undefined);
 
   const injector = createAcpInjector({
     workerManager: { lookupSession },
   });
 
-  await expect(injector.inject("h-fail", { role: "user", text: "hello" })).resolves.toBeUndefined();
+  await injector.inject("h-fail", { role: "user", text: "hello" });
   expect(inject).toHaveBeenCalledTimes(1);
   expect(errorSpy).toHaveBeenCalledTimes(1);
   expect(String(errorSpy.mock.calls[0]?.[0])).toContain("[acp-injector] inject failed");
