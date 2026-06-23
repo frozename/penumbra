@@ -18,7 +18,7 @@ const CANONICAL_PROVIDER_MESSAGE =
 
 /**
  * Per-agent recall-context enrichment. When `enabled: true`, the worker
- * dispatcher prepends a `<recent-relevant-context>` block to handoff.message
+ * dispatcher appends a `<recent-relevant-context>` block to handoff.message
  * before invoking the adapter. The block is built from a recall query against
  * the dispatched message text.
  *

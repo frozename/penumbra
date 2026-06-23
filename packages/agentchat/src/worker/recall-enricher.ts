@@ -7,7 +7,7 @@ const QUERY_MAX_CHARS = 500;
 const RECALL_TIMEOUT_MS = 5000;
 
 export interface EnrichOpts {
-  /** The original handoff prompt; the enricher returns the same string with a preamble prepended (or unchanged on failure). */
+  /** The original handoff prompt; the enricher returns the same string with recalled context appended (or unchanged on failure). */
   message: string;
   /** Per-agent recall config (already validated). */
   config: RecallContextConfig;
@@ -34,7 +34,7 @@ interface PreambleItem {
 }
 
 /**
- * Wraps a dispatched message with a `<recent-relevant-context>` preamble
+ * Wraps a dispatched message with a trailing `<recent-relevant-context>` block
  * derived from a recall query against the message text. Always soft-fails:
  * any thrown error or empty result returns the message unchanged so a
  * recall outage never blocks dispatch.
@@ -56,7 +56,7 @@ export class RecallEnricher {
     if (!items || items.length === 0) return opts.message;
 
     const preamble = formatPreamble(items, opts.config.max_chars_per_result);
-    return `${preamble}\n\n${opts.message}`;
+    return `${opts.message}\n\n${preamble}`;
   }
 
   private async queryRecall(query: string, opts: EnrichOpts): Promise<PreambleItem[] | null> {

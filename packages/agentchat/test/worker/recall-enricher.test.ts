@@ -103,7 +103,7 @@ describe("RecallEnricher", () => {
     expect(out).toBe("task");
   });
 
-  test("prepends a recent-relevant-context block when results exist", async () => {
+  test("appends a recent-relevant-context block after the stable message lead", async () => {
     const { client, calls } = fakeClient({
       recall: {
         results: [
@@ -127,10 +127,10 @@ describe("RecallEnricher", () => {
       config: baseConfig,
       projectId: "proj-a",
     });
-    expect(out).toContain("<recent-relevant-context>");
+    expect(out).toStartWith("fix the failing test in foo.test.ts\n\n<recent-relevant-context>");
     expect(out).toContain("approach X");
     expect(out).toContain("tier=t1");
-    expect(out).toEndWith("fix the failing test in foo.test.ts");
+    expect(out).toEndWith("</recent-relevant-context>");
     expect(calls[0]?.project_id).toBe("proj-a");
     expect(calls[0]?.limit).toBe(3);
   });
@@ -240,10 +240,10 @@ describe("RecallEnricher", () => {
       expect(corpusCalls[0]?.name).toBe("acp-work");
       expect(corpusCalls[0]?.limit).toBe(5);
       expect(corpusCalls[0]?.query).toBe("continue ACP work");
-      expect(out).toContain("<recent-relevant-context>");
+      expect(out).toStartWith("continue ACP work\n\n<recent-relevant-context>");
       expect(out).toContain("Bumped watchdog");
       expect(out).toContain("tier=corpus");
-      expect(out).toEndWith("continue ACP work");
+      expect(out).toEndWith("</recent-relevant-context>");
     });
 
     test("returns message unchanged when corpus has no hits", async () => {
