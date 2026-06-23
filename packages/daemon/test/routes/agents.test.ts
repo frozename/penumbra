@@ -224,7 +224,7 @@ describe("agent routes", () => {
       services,
     );
 
-    const res = await agentsRankRoute(
+    const res = agentsRankRoute(
       new Request("http://x/agents/rank?task_type=implement_substantial"),
       services,
     );
@@ -266,7 +266,7 @@ describe("agent routes", () => {
       "{}",
     );
 
-    const res = await agentsRankRoute(
+    const res = agentsRankRoute(
       new Request("http://x/agents/rank?task_type=implement_substantial&agent_kind=long_lived"),
       services,
     );
@@ -276,8 +276,8 @@ describe("agent routes", () => {
     expect(body.candidates[0].agent_name).toBe("orch");
   });
 
-  it("returns 400 for invalid task_type", async () => {
-    const res = await agentsRankRoute(new Request("http://x/agents/rank?task_type=bad"), services);
+  it("returns 400 for invalid task_type", () => {
+    const res = agentsRankRoute(new Request("http://x/agents/rank?task_type=bad"), services);
     expect(res.status).toBe(400);
   });
 
@@ -311,7 +311,7 @@ describe("agent routes", () => {
     `,
     ).run("h2", "worker-1", "2026-04-30T12:00:00Z", JSON.stringify({ wall_ms: 9000 }));
 
-    const res = await agentsFleetLatencyRoute(
+    const res = agentsFleetLatencyRoute(
       new Request("http://x/agents/fleet_latency?window_hours=1"),
       services,
     );
@@ -365,7 +365,7 @@ describe("agent routes", () => {
       services,
     );
 
-    const res = await agentsRecommendRoute(
+    const res = agentsRecommendRoute(
       new Request("http://x/agents/recommend?task_type=implement_substantial"),
       services,
     );
@@ -405,7 +405,7 @@ describe("agent routes", () => {
       "{}",
     );
 
-    const res = await agentsRecommendRoute(
+    const res = agentsRecommendRoute(
       new Request(
         "http://x/agents/recommend?task_type=implement_substantial&agent_kind=long_lived",
       ),
@@ -544,7 +544,7 @@ describe("agent routes", () => {
       services,
     );
 
-    const res = await agentsPerformanceMarkdownRoute(
+    const res = agentsPerformanceMarkdownRoute(
       new Request("http://x/agents/performance/markdown"),
       services,
     );

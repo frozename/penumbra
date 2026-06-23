@@ -270,7 +270,7 @@ test("GET /memory/:memory_id/verification_events returns the verification audit 
       daemon.services,
     );
 
-    const routeRes = await memoryVerificationEventsRoute(
+    const routeRes = memoryVerificationEventsRoute(
       new Request("http://x/memory/memory-audit-events/verification_events?limit=2", {
         method: "GET",
       }),

@@ -116,10 +116,7 @@ function readPatternRow(pattern_id: string): PatternRow {
 it("GET /curator/patterns returns approved patterns only by default", async () => {
   seedPattern({ pattern: "URL: %", status: "approved", enabled: 1 });
   seedPattern({ pattern: "Other: %", status: "queued" });
-  const res = await curatorPatternsListRoute(
-    new Request("http://x/curator/patterns"),
-    makeServices(),
-  );
+  const res = curatorPatternsListRoute(new Request("http://x/curator/patterns"), makeServices());
   expect(res.status).toBe(200);
   const body = (await res.json()) as PatternsListBody;
   expect(body.patterns).toHaveLength(1);
@@ -129,7 +126,7 @@ it("GET /curator/patterns returns approved patterns only by default", async () =
 it("GET /curator/patterns?status=all returns all rows", async () => {
   seedPattern({ pattern: "A", status: "approved", enabled: 1 });
   seedPattern({ pattern: "B", status: "queued" });
-  const res = await curatorPatternsListRoute(
+  const res = curatorPatternsListRoute(
     new Request("http://x/curator/patterns?status=all"),
     makeServices(),
   );
@@ -137,8 +134,8 @@ it("GET /curator/patterns?status=all returns all rows", async () => {
   expect(body.patterns).toHaveLength(2);
 });
 
-it("GET /curator/patterns?status=invalid returns 400", async () => {
-  const res = await curatorPatternsListRoute(
+it("GET /curator/patterns?status=invalid returns 400", () => {
+  const res = curatorPatternsListRoute(
     new Request("http://x/curator/patterns?status=invalid"),
     makeServices(),
   );
@@ -171,7 +168,7 @@ it("POST /curator/patterns rejects invalid body", async () => {
 
 it("POST /curator/patterns/:id/approve flips status + enabled", async () => {
   seedPattern({ pattern_id: "p1", pattern: "test", status: "queued", enabled: 0 });
-  const res = await curatorPatternsApproveRoute(
+  const res = curatorPatternsApproveRoute(
     makeSharedRequest("http://x/curator/patterns/p1/approve", "POST"),
     makeServices(),
     "p1",
@@ -185,8 +182,8 @@ it("POST /curator/patterns/:id/approve flips status + enabled", async () => {
   expect(row.enabled).toBe(1);
 });
 
-it("POST /curator/patterns/:id/approve returns 404 for unknown id", async () => {
-  const res = await curatorPatternsApproveRoute(
+it("POST /curator/patterns/:id/approve returns 404 for unknown id", () => {
+  const res = curatorPatternsApproveRoute(
     makeSharedRequest("http://x/curator/patterns/missing/approve", "POST"),
     makeServices(),
     "missing",
@@ -196,7 +193,7 @@ it("POST /curator/patterns/:id/approve returns 404 for unknown id", async () => 
 
 it("POST /curator/patterns/:id/disable sets enabled=0 without changing status", async () => {
   seedPattern({ pattern_id: "p1", pattern: "test", status: "approved", enabled: 1 });
-  const res = await curatorPatternsDisableRoute(
+  const res = curatorPatternsDisableRoute(
     makeSharedRequest("http://x/curator/patterns/p1/disable", "POST"),
     makeServices(),
     "p1",
@@ -209,8 +206,8 @@ it("POST /curator/patterns/:id/disable sets enabled=0 without changing status", 
   expect(row.enabled).toBe(0);
 });
 
-it("POST /curator/patterns/:id/disable returns 404 for unknown id", async () => {
-  const res = await curatorPatternsDisableRoute(
+it("POST /curator/patterns/:id/disable returns 404 for unknown id", () => {
+  const res = curatorPatternsDisableRoute(
     makeSharedRequest("http://x/curator/patterns/missing/disable", "POST"),
     makeServices(),
     "missing",
@@ -257,7 +254,7 @@ it("POST /curator/patterns requires non-worker bearer for admin operations", asy
 
 it("POST /curator/patterns/:id/approve rejects worker bearer with 403", async () => {
   seedPattern({ pattern_id: "p-w", pattern: "Worker: %", status: "queued" });
-  const res = await curatorPatternsApproveRoute(
+  const res = curatorPatternsApproveRoute(
     makeWorkerRequest("http://x/curator/patterns/p-w/approve"),
     makeServices(),
     "p-w",
@@ -269,7 +266,7 @@ it("POST /curator/patterns/:id/approve rejects worker bearer with 403", async ()
 
 it("POST /curator/patterns/:id/disable rejects worker bearer with 403", async () => {
   seedPattern({ pattern_id: "p-w2", pattern: "Worker2: %", status: "approved", enabled: 1 });
-  const res = await curatorPatternsDisableRoute(
+  const res = curatorPatternsDisableRoute(
     makeWorkerRequest("http://x/curator/patterns/p-w2/disable"),
     makeServices(),
     "p-w2",
@@ -279,9 +276,9 @@ it("POST /curator/patterns/:id/disable rejects worker bearer with 403", async ()
   expect(body.error.code).toBe("admin_only");
 });
 
-it("POST /curator/patterns approve succeeds for non-worker (shared) principal", async () => {
+it("POST /curator/patterns approve succeeds for non-worker (shared) principal", () => {
   seedPattern({ pattern_id: "p-ok", pattern: "Admin: %", status: "queued" });
-  const res = await curatorPatternsApproveRoute(
+  const res = curatorPatternsApproveRoute(
     makeSharedRequest("http://x/curator/patterns/p-ok/approve", "POST"),
     makeServices(),
     "p-ok",

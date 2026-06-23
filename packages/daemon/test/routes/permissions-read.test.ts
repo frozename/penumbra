@@ -77,23 +77,19 @@ test("GET /permissions/:id returns the row", async () => {
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
   await seed(services, "perm-1");
-  const res = await permissionsGetRoute(
-    new Request("http://x/permissions/perm-1"),
-    "perm-1",
-    services,
-  );
+  const res = permissionsGetRoute(new Request("http://x/permissions/perm-1"), "perm-1", services);
   expect(res.status).toBe(200);
   const body = (await res.json()) as PermissionGetBody;
   expect(body.permission.permission_id).toBe("perm-1");
   expect(body.permission.status).toBe("pending");
 });
 
-test("GET /permissions/:id returns 404 for unknown", async () => {
+test("GET /permissions/:id returns 404 for unknown", () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const res = await permissionsGetRoute(new Request("http://x/permissions/nope"), "nope", services);
+  const res = permissionsGetRoute(new Request("http://x/permissions/nope"), "nope", services);
   expect(res.status).toBe(404);
 });
 
@@ -104,7 +100,7 @@ test("GET /permissions filters by status (default pending)", async () => {
   const services = makeServices(db);
   await seed(services, "perm-1");
   await seed(services, "perm-2");
-  const res = await permissionsListRoute(new Request("http://x/permissions"), services);
+  const res = permissionsListRoute(new Request("http://x/permissions"), services);
   const body = (await res.json()) as PermissionListBody;
   expect(body.permissions.map((p) => p.permission_id).sort()).toEqual(["perm-1", "perm-2"]);
 });
@@ -116,7 +112,7 @@ test("GET /permissions filters by conversation_id", async () => {
   const services = makeServices(db);
   await seed(services, "perm-A", "conv-A");
   await seed(services, "perm-B", "conv-B");
-  const res = await permissionsListRoute(
+  const res = permissionsListRoute(
     new Request("http://x/permissions?conversation_id=conv-A"),
     services,
   );
@@ -131,7 +127,7 @@ test("GET /permissions filters by parent_handoff_id", async () => {
   const services = makeServices(db);
   await seed(services, "perm-A", "c", "h-A");
   await seed(services, "perm-B", "c", "h-B");
-  const res = await permissionsListRoute(
+  const res = permissionsListRoute(
     new Request("http://x/permissions?parent_handoff_id=h-A"),
     services,
   );
@@ -153,7 +149,7 @@ test("GET /permissions accepts comma-separated status list", async () => {
     reason: null,
   });
   await seed(services, "perm-2");
-  const res = await permissionsListRoute(
+  const res = permissionsListRoute(
     new Request("http://x/permissions?status=pending,approved"),
     services,
   );
@@ -161,14 +157,11 @@ test("GET /permissions accepts comma-separated status list", async () => {
   expect(body.permissions.map((p) => p.permission_id).sort()).toEqual(["perm-1", "perm-2"]);
 });
 
-test("GET /permissions returns 400 for unknown status", async () => {
+test("GET /permissions returns 400 for unknown status", () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const res = await permissionsListRoute(
-    new Request("http://x/permissions?status=cancelled"),
-    services,
-  );
+  const res = permissionsListRoute(new Request("http://x/permissions?status=cancelled"), services);
   expect(res.status).toBe(400);
 });

@@ -158,7 +158,7 @@ describe("GET /usage/recent", () => {
     });
     const services = makeServices(db);
     const req = new Request("http://x/usage/recent?since=2026-04-28T00:00:00Z");
-    const res = await usageRecentRoute(req, services);
+    const res = usageRecentRoute(req, services);
     expect(res.status).toBe(200);
     const body = (await res.json()) as RecentBody;
     expect(body.total_cost_usd).toBe(0.5);
@@ -168,7 +168,7 @@ describe("GET /usage/recent", () => {
   it("returns 400 on malformed since", async () => {
     const services = makeServices(db);
     const req = new Request("http://x/usage/recent?since=not-a-date");
-    const res = await usageRecentRoute(req, services);
+    const res = usageRecentRoute(req, services);
     expect(res.status).toBe(400);
     const body = (await res.json()) as ErrorBody;
     expect(body.error.code).toBe("invalid_params");
@@ -193,7 +193,7 @@ describe("GET /usage/quota_status", () => {
     });
     const services = makeServices(db, [{ provider: "anthropic", quota_usd_per_24h: 50 }]);
     const req = new Request("http://x/usage/quota_status?since=2026-04-28T00:00:00Z");
-    const res = await usageQuotaStatusRoute(req, services);
+    const res = usageQuotaStatusRoute(req, services);
     expect(res.status).toBe(200);
     const body = (await res.json()) as QuotaBody;
     expect(body.providers).toHaveLength(1);
@@ -201,14 +201,14 @@ describe("GET /usage/quota_status", () => {
     expect(body.providers[0].used_usd).toBe(12.4);
   });
 
-  it("returns 400 on malformed since", async () => {
+  it("returns 400 on malformed since", () => {
     const services = makeServices(db);
     const req = new Request("http://x/usage/quota_status?since=garbage");
-    const res = await usageQuotaStatusRoute(req, services);
+    const res = usageQuotaStatusRoute(req, services);
     expect(res.status).toBe(400);
   });
 
-  it("accepts window=5h", async () => {
+  it("accepts window=5h", () => {
     insertUsageRow(db, {
       event_id: "2",
       ts: "2026-04-28T12:00:00Z",
@@ -219,14 +219,14 @@ describe("GET /usage/quota_status", () => {
     });
     const services = makeServices(db, [{ provider: "google", quota_tokens_per_5h: 100 }]);
     const req = new Request("http://x/usage/quota_status?since=2026-04-28T00:00:00Z&window=5h");
-    const res = await usageQuotaStatusRoute(req, services);
+    const res = usageQuotaStatusRoute(req, services);
     expect(res.status).toBe(200);
   });
 
-  it("returns 400 on unknown window", async () => {
+  it("returns 400 on unknown window", () => {
     const services = makeServices(db, [{ provider: "google", quota_tokens_per_5h: 100 }]);
     const req = new Request("http://x/usage/quota_status?window=foo");
-    const res = await usageQuotaStatusRoute(req, services);
+    const res = usageQuotaStatusRoute(req, services);
     expect(res.status).toBe(400);
   });
 });
@@ -250,7 +250,7 @@ describe("GET /usage/subscription_pressure", () => {
 
     const services = makeServices(db);
     const req = new Request("http://x/usage/subscription_pressure");
-    const res = await usageSubscriptionPressureRoute(req, services);
+    const res = usageSubscriptionPressureRoute(req, services);
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as PressureBody;
@@ -276,7 +276,7 @@ describe("GET /usage/subscription_pressure", () => {
   it("returns 400 on invalid stale_after_seconds", async () => {
     const services = makeServices(db);
     const req = new Request("http://x/usage/subscription_pressure?stale_after_seconds=0");
-    const res = await usageSubscriptionPressureRoute(req, services);
+    const res = usageSubscriptionPressureRoute(req, services);
     expect(res.status).toBe(400);
     const body = (await res.json()) as ErrorBody;
     expect(body.error.code).toBe("invalid_params");
@@ -304,7 +304,7 @@ describe("GET /usage/subscription_pressure", () => {
 
     const services = makeServices(db);
     const req = new Request("http://x/usage/subscription_pressure?provider=anthropic-claude");
-    const res = await usageSubscriptionPressureRoute(req, services);
+    const res = usageSubscriptionPressureRoute(req, services);
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as PressureBody;

@@ -391,11 +391,7 @@ function seedAgentPerformanceRow(
 
 async function waitForLandTask(svc: Services, taskId: string): Promise<LandTaskBody> {
   for (let i = 0; i < 30; i += 1) {
-    const res = await dispatchLandTaskRoute(
-      new Request(`http://x/dispatch/land/${taskId}`),
-      svc,
-      taskId,
-    );
+    const res = dispatchLandTaskRoute(new Request(`http://x/dispatch/land/${taskId}`), svc, taskId);
     expect(res.status).toBe(200);
     const body = await readJsonAs<LandTaskBody>(res);
     if (body.status === "done" || body.status === "failed") return body;

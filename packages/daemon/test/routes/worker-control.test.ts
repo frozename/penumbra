@@ -101,7 +101,7 @@ test("POST /conversations/:id/cancel records in DB and broadcasts", async () => 
     emitted = event;
   });
 
-  const res = await conversationsCancelRoute(new Request("http://x"), cid, services);
+  const res = conversationsCancelRoute(new Request("http://x"), cid, services);
   expect(res.status).toBe(200);
 
   // Verify DB
@@ -133,10 +133,10 @@ test("GET /worker/control performs durable sync and live broadcast", async () =>
     }),
     services,
   );
-  await conversationsCancelRoute(new Request("http://x"), "c1", services);
+  conversationsCancelRoute(new Request("http://x"), "c1", services);
 
   // 2. Connect worker
-  const res = await workerControlRoute(new Request("http://x"), services);
+  const res = workerControlRoute(new Request("http://x"), services);
   expect(res.status).toBe(200);
 
   // 3. Request ANOTHER cancellation while connected
@@ -154,7 +154,7 @@ test("GET /worker/control performs durable sync and live broadcast", async () =>
     }),
     services,
   );
-  await conversationsCancelRoute(new Request("http://x"), "c2", services);
+  conversationsCancelRoute(new Request("http://x"), "c2", services);
 
   // 4. Read events (should get 1 durable + 1 live)
   const events = await readSseEvents(res.body!, 2);

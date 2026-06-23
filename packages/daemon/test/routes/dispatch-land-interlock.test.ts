@@ -157,11 +157,7 @@ function successRunGit(handoffId: string): RunGitFn {
 
 async function waitForLandTask(svc: Services, taskId: string): Promise<LandTaskBody> {
   for (let i = 0; i < 100; i++) {
-    const res = await dispatchLandTaskRoute(
-      new Request(`http://x/dispatch/land/${taskId}`),
-      svc,
-      taskId,
-    );
+    const res = dispatchLandTaskRoute(new Request(`http://x/dispatch/land/${taskId}`), svc, taskId);
     const body = await readJsonAs<LandTaskBody>(res);
     if (body.status === "done" || body.status === "failed") return body;
     await Bun.sleep(5);

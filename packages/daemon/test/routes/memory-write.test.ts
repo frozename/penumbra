@@ -919,7 +919,7 @@ describe("POST /memory/write", () => {
     expect(row.cc_kind).toBe("reference");
   });
 
-  test("7) PC1 retire skips direct-origin rows even when ephemera", async () => {
+  test("7) PC1 retire skips direct-origin rows even when ephemera", () => {
     const { db, root } = makeServices();
     handles.push({ db, root });
     seedCycle(db, "cycle-1");
@@ -940,7 +940,7 @@ describe("POST /memory/write", () => {
         origin: null,
       });
 
-      await runPC1Phase(db, "cycle-1", {}, {});
+      runPC1Phase(db, "cycle-1", {}, {});
 
       const directRow = db
         .query<
@@ -963,7 +963,7 @@ describe("POST /memory/write", () => {
     }
   });
 
-  test("8) PC2 cluster retire skips direct-origin rows", async () => {
+  test("8) PC2 cluster retire skips direct-origin rows", () => {
     const { db, root } = makeServices();
     handles.push({ db, root });
     seedCycle(db, "cycle-2");
@@ -1006,7 +1006,7 @@ describe("POST /memory/write", () => {
                  VALUES(?, ?, ?, 'semantic_near', ?, ?, ?)`,
       ).run("l2", "mem-regular-1", "mem-regular-2", 0.99, Date.now(), "cycle-2");
 
-      await runPC2Phase(
+      runPC2Phase(
         db,
         "cycle-2",
         { pc2MinClusterSize: 3, pc2ClusterLinkThreshold: 0.85, pc2AutoThreshold: 0.97 },

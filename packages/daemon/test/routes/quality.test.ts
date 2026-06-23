@@ -240,10 +240,7 @@ test("quality status degrades each section independently when reads fail", async
     daemon.services.db.run("DROP TABLE IF EXISTS agent_performance");
     daemon.services.db.run("DROP TABLE IF EXISTS memory_efficacy_cache");
 
-    const response = await qualityStatusRoute(
-      new Request("http://x/quality/status"),
-      daemon.services,
-    );
+    const response = qualityStatusRoute(new Request("http://x/quality/status"), daemon.services);
     expect(response.status).toBe(200);
 
     const body = (await response.json()) as QualityStatusDegradedBody;

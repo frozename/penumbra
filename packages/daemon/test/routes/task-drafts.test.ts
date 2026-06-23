@@ -37,7 +37,7 @@ test("GET /task-drafts/pending returns pending drafts and validates params", asy
   const req = new Request(
     "http://localhost/task-drafts/pending?latest_event_type=task_draft&project_id=p1&limit=5",
   );
-  const res = await taskDraftsPendingRoute(req, services as never);
+  const res = taskDraftsPendingRoute(req, services as never);
   expect(res.status).toBe(200);
   const body = (await res.json()) as { drafts: { event_id: string }[] };
   expect(body.drafts).toHaveLength(1);
@@ -48,23 +48,23 @@ test("GET /task-drafts/pending returns 400 on invalid latest_event_type", async 
   const db = freshDb();
   const services = { db, taskDraftReader: new TaskDraftReader({ db }) };
   const req = new Request("http://localhost/task-drafts/pending?latest_event_type=bogus");
-  const res = await taskDraftsPendingRoute(req, services as never);
+  const res = taskDraftsPendingRoute(req, services as never);
   expect(res.status).toBe(400);
   const body = (await res.json()) as { error: { code: string } };
   expect(body.error.code).toBe("validation_error");
 });
 
-test("GET /task-drafts/pending returns 400 when project_id is missing or empty", async () => {
+test("GET /task-drafts/pending returns 400 when project_id is missing or empty", () => {
   const db = freshDb();
   const services = { db, taskDraftReader: new TaskDraftReader({ db }) };
 
-  const missing = await taskDraftsPendingRoute(
+  const missing = taskDraftsPendingRoute(
     new Request("http://localhost/task-drafts/pending?latest_event_type=task_draft"),
     services as never,
   );
   expect(missing.status).toBe(400);
 
-  const empty = await taskDraftsPendingRoute(
+  const empty = taskDraftsPendingRoute(
     new Request("http://localhost/task-drafts/pending?latest_event_type=task_draft&project_id="),
     services as never,
   );
@@ -83,7 +83,7 @@ test("GET /task-drafts/pending-escalations returns escalations and validates par
   );
   const services = { db, taskDraftReader: new TaskDraftReader({ db }) };
   const req = new Request("http://localhost/task-drafts/pending-escalations?project_id=p1&limit=5");
-  const res = await taskDraftsPendingEscalationsRoute(req, services as never);
+  const res = taskDraftsPendingEscalationsRoute(req, services as never);
   expect(res.status).toBe(200);
   const body = (await res.json()) as {
     escalations: { event_id: string; prompt: string; escalation_reason: string }[];
@@ -96,10 +96,10 @@ test("GET /task-drafts/pending-escalations returns escalations and validates par
   });
 });
 
-test("GET /task-drafts/pending-escalations returns 400 when project_id is missing", async () => {
+test("GET /task-drafts/pending-escalations returns 400 when project_id is missing", () => {
   const db = freshDb();
   const services = { db, taskDraftReader: new TaskDraftReader({ db }) };
-  const res = await taskDraftsPendingEscalationsRoute(
+  const res = taskDraftsPendingEscalationsRoute(
     new Request("http://localhost/task-drafts/pending-escalations"),
     services as never,
   );

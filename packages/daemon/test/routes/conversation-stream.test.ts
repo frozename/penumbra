@@ -88,7 +88,7 @@ test("GET /conversations/:id/stream flushes cached state and pipes live events",
   services.conversationStream.emit(cid, { type: "token", handoff_id: "h1", seq: 1, text: "hello" });
 
   // 2. Connect
-  const res = await conversationStreamRoute(new Request("http://x"), cid, services);
+  const res = conversationStreamRoute(new Request("http://x"), cid, services);
   expect(res.status).toBe(200);
 
   // 3. Emit live event AFTER connecting
@@ -116,7 +116,7 @@ test("GET /conversations/:id/stream clears on hop-end", async () => {
   services.conversationStream.emit(cid, { type: "hop-end", handoff_id: "h1", text: "full" });
 
   // 2. Connect
-  const res = await conversationStreamRoute(new Request("http://x"), cid, services);
+  const res = conversationStreamRoute(new Request("http://x"), cid, services);
 
   // 3. Should have NO cached events because hop-end cleared them
   const events = await readSseEvents(res.body!, 1, 200);
@@ -130,8 +130,8 @@ test("GET /conversations/:id/stream clears on hop-end", async () => {
 
 test("GET /conversations/:id/stream isolates by conversation_id", async () => {
   const services = tempServices();
-  const r1 = await conversationStreamRoute(new Request("http://x"), "c1", services);
-  const r2 = await conversationStreamRoute(new Request("http://x"), "c2", services);
+  const r1 = conversationStreamRoute(new Request("http://x"), "c1", services);
+  const r2 = conversationStreamRoute(new Request("http://x"), "c2", services);
 
   services.conversationStream.emit("c1", { type: "hop-start", handoff_id: "h1", agent: "a" });
   services.conversationStream.emit("c2", { type: "hop-start", handoff_id: "h2", agent: "b" });

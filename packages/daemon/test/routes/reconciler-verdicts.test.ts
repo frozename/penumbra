@@ -131,10 +131,7 @@ describe("reconcilerVerdictsRoute", () => {
       pr_url: null,
     });
 
-    const res = await reconcilerVerdictsRoute(
-      new Request("http://x/reconciler/verdicts?limit=10"),
-      svc,
-    );
+    const res = reconcilerVerdictsRoute(new Request("http://x/reconciler/verdicts?limit=10"), svc);
     expect(res.status).toBe(200);
     const body = (await res.json()) as VerdictsBody;
     expect(body.verdicts).toHaveLength(1);
@@ -173,7 +170,7 @@ describe("reconcilerVerdictsRoute", () => {
       pr_url: "https://github.com/example/repo/pull/2",
     });
 
-    const res = await reconcilerVerdictsRoute(
+    const res = reconcilerVerdictsRoute(
       new Request("http://x/reconciler/verdicts?limit=10&only_unverified=true"),
       svc,
     );
@@ -225,7 +222,7 @@ describe("reconcilerVerdictsRoute", () => {
       pr_url: null,
     });
 
-    const res = await reconcilerVerdictsRoute(
+    const res = reconcilerVerdictsRoute(
       new Request("http://x/reconciler/verdicts?limit=10&since=2026-05-08T00%3A00%3A00-03%3A00"),
       svc,
     );

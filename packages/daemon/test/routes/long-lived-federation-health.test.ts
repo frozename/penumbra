@@ -52,7 +52,7 @@ test("GET /long-lived/federation-health returns process-wide federation snapshot
     skipped: [{ server: "beta", tool: "beta", reason: "tools_unavailable" }],
   }));
 
-  const res = await longLivedFederationHealthRoute(
+  const res = longLivedFederationHealthRoute(
     new Request("http://x/long-lived/federation-health"),
     services,
   );

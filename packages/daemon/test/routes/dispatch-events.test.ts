@@ -425,7 +425,7 @@ describe("dispatch events routes", () => {
       },
     ]);
 
-    const res = await dispatchEventsGetRoute(
+    const res = dispatchEventsGetRoute(
       new Request("http://x/dispatch/events?handoff_id=h-1"),
       services,
     );
@@ -443,10 +443,10 @@ describe("dispatch events routes", () => {
   });
 
   test("GET returns 400 without handoff_id and empty list for unknown handoff", async () => {
-    expect(
-      (await dispatchEventsGetRoute(new Request("http://x/dispatch/events"), services)).status,
-    ).toBe(400);
-    const res = await dispatchEventsGetRoute(
+    expect(dispatchEventsGetRoute(new Request("http://x/dispatch/events"), services).status).toBe(
+      400,
+    );
+    const res = dispatchEventsGetRoute(
       new Request("http://x/dispatch/events?handoff_id=missing"),
       services,
     );

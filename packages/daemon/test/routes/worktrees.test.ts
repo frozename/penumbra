@@ -90,7 +90,7 @@ test("worktree.list with no worktrees", async () => {
   const services = tempServices();
   spyOn(services.worktreeManager, "listWorktrees").mockReturnValue([]);
 
-  const res = await worktreesListRoute(new Request("http://h/worktrees"), services);
+  const res = worktreesListRoute(new Request("http://h/worktrees"), services);
   expect(res.status).toBe(200);
   const body = await readJson<WorktreeListBody>(res);
   expect(body).toEqual({ worktrees: [] });
@@ -109,7 +109,7 @@ test("worktree.list returns tracked worktrees", async () => {
   };
   spyOn(services.worktreeManager, "listWorktrees").mockReturnValue([handle]);
 
-  const res = await worktreesListRoute(new Request("http://h/worktrees"), services);
+  const res = worktreesListRoute(new Request("http://h/worktrees"), services);
   const body = await readJson<WorktreeListBody>(res);
   expect(body.worktrees).toHaveLength(1);
   expect(body.worktrees[0]?.handoffId).toBe("h1");

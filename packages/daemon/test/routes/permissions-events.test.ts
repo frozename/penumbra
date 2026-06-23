@@ -37,7 +37,7 @@ async function readChunks(stream: ReadableStream<Uint8Array>, max: number): Prom
 
 test("GET /permissions/events streams emitted events as SSE", async () => {
   const services = makeServices();
-  const res = await permissionsEventsRoute(new Request("http://x/permissions/events"), services);
+  const res = permissionsEventsRoute(new Request("http://x/permissions/events"), services);
   expect(res.status).toBe(200);
   expect(res.headers.get("content-type")).toBe("text/event-stream");
 
@@ -77,7 +77,7 @@ test("GET /permissions/events with Last-Event-ID replays missed events from ring
     payload: {},
   });
 
-  const res = await permissionsEventsRoute(
+  const res = permissionsEventsRoute(
     new Request("http://x/permissions/events", {
       headers: { "last-event-id": `seq:${String(a.seq)}` },
     }),
@@ -111,7 +111,7 @@ test("Last-Event-ID older than ring buffer signals client to resync (no replay)"
       payload: {},
     });
   }
-  const res = await permissionsEventsRoute(
+  const res = permissionsEventsRoute(
     new Request("http://x/permissions/events", {
       headers: { "last-event-id": `seq:${String(stale.seq)}` },
     }),

@@ -224,7 +224,7 @@ describe("GET /routing/bias (list)", () => {
 
   it("returns empty list when no biases", async () => {
     const req = new Request("http://x/routing/bias");
-    const res = await routingBiasListRoute(req, services);
+    const res = routingBiasListRoute(req, services);
     expect(res.status).toBe(200);
     const body = await readListBody(res);
     expect(body.biases).toEqual([]);
@@ -257,7 +257,7 @@ describe("GET /routing/bias (list)", () => {
     await routingBiasSetRoute(setReq2, services);
 
     const req = new Request("http://x/routing/bias");
-    const res = await routingBiasListRoute(req, services);
+    const res = routingBiasListRoute(req, services);
     expect(res.status).toBe(200);
     const body = await readListBody(res);
     expect(body.biases).toHaveLength(2);
@@ -293,7 +293,7 @@ describe("GET /routing/bias (list)", () => {
     await routingBiasSetRoute(setReq2, services);
 
     const req = new Request("http://x/routing/bias?scope=agent");
-    const res = await routingBiasListRoute(req, services);
+    const res = routingBiasListRoute(req, services);
     expect(res.status).toBe(200);
     const body = await readListBody(res);
     expect(body.biases).toHaveLength(1);
@@ -326,7 +326,7 @@ describe("GET /routing/bias (list)", () => {
     await routingBiasSetRoute(setReq2, services);
 
     const req = new Request("http://x/routing/bias?value=alpha");
-    const res = await routingBiasListRoute(req, services);
+    const res = routingBiasListRoute(req, services);
     expect(res.status).toBe(200);
     const body = await readListBody(res);
     expect(body.biases).toHaveLength(1);
@@ -347,7 +347,7 @@ describe("GET /routing/bias (list)", () => {
     await routingBiasSetRoute(setReq, services);
 
     const req = new Request("http://x/routing/bias");
-    const res = await routingBiasListRoute(req, services);
+    const res = routingBiasListRoute(req, services);
     expect(res.status).toBe(200);
     const body = await readListBody(res);
     expect(body.biases).toEqual([]);
@@ -399,7 +399,7 @@ describe("POST /routing/bias/clear", () => {
     expect(body.cleared_count).toBe(1);
 
     const listReq = new Request("http://x/routing/bias");
-    const listRes = await routingBiasListRoute(listReq, services);
+    const listRes = routingBiasListRoute(listReq, services);
     const listBody = await readListBody(listRes);
     expect(listBody.biases).toEqual([]);
   });

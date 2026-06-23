@@ -105,14 +105,14 @@ function writeAgentResponse(svc: Services, conversationId: string, response: str
 describe("dispatchAuditRoute", () => {
   test("returns 400 when handoff_id is missing", async () => {
     const svc = services();
-    const res = await dispatchAuditRoute(new Request("http://x/dispatch/audit"), svc);
+    const res = dispatchAuditRoute(new Request("http://x/dispatch/audit"), svc);
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "missing_handoff_id" });
   });
 
   test("returns 404 for unknown handoff", async () => {
     const svc = services();
-    const res = await dispatchAuditRoute(
+    const res = dispatchAuditRoute(
       new Request("http://x/dispatch/audit?handoff_id=h-missing"),
       svc,
     );
@@ -125,10 +125,7 @@ describe("dispatchAuditRoute", () => {
     createCompletedHandoff(svc);
     recordCompleteTimeline(svc);
 
-    const res = await dispatchAuditRoute(
-      new Request("http://x/dispatch/audit?handoff_id=h-1"),
-      svc,
-    );
+    const res = dispatchAuditRoute(new Request("http://x/dispatch/audit?handoff_id=h-1"), svc);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       report: {
@@ -150,10 +147,7 @@ describe("dispatchAuditRoute", () => {
     recordCompleteTimeline(svc);
     writeAgentResponse(svc, "c-1", "DONE");
 
-    const res = await dispatchAuditRoute(
-      new Request("http://x/dispatch/audit?handoff_id=h-1"),
-      svc,
-    );
+    const res = dispatchAuditRoute(new Request("http://x/dispatch/audit?handoff_id=h-1"), svc);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       report: {
