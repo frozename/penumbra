@@ -1,3 +1,5 @@
+import { buildAdapter } from "@penumbra/agentchat";
+import { loadConfig } from "@penumbra/agentchat/config";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -66,4 +68,25 @@ test("force-overwrites an existing agentchat config", async () => {
 
   await runInit({ storageRoot, uuid: () => "tok-123", forceAgentchat: true, claudeUserDir });
   expect(readFileSync(agentchatPath, "utf8")).toBe(AGENTCHAT_TEMPLATE);
+});
+
+test("seeded template includes devin-acp and resolves to stdio-acp(binary=devin, args=[acp])", async () => {
+  await runInit({ storageRoot, uuid: () => "tok-123", claudeUserDir });
+
+  // Run through the REAL worker config loader (full schema + adapter-option refinement),
+  // not just YAML.parse — this catches any future AgentOptionsSchema drift that would
+  // reject the seeded devin-acp entry.
+  const config = loadConfig(agentchatPath);
+  const devin = config.agents.find((a) => a.name === "devin-acp");
+  expect(devin).toBeDefined();
+  if (!devin) throw new Error("devin-acp entry missing from seeded template");
+  expect(devin.adapter).toBe("stdio-acp");
+  expect(devin.roles).toEqual(["executor", "planner"]);
+
+  // Build via the REAL registry factory (same path the worker uses) and verify
+  // it resolves to a stdio-acp adapter that will spawn `devin acp`.
+  const adapter = buildAdapter(devin.adapter, devin.options);
+  const opts = (adapter as unknown as { opts: { binary?: string; args?: string[] } }).opts;
+  expect(opts.binary).toBe("devin");
+  expect(opts.args).toEqual(["acp"]);
 });

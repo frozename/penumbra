@@ -154,6 +154,41 @@ After a daemon kickstart, in-flight ticks die mid-session and trip the agent's c
 - Boot recovery: managed extras get `PENUMBRA_BOOT_RECONCILE=0` so only daemon does all-workers orphan recovery and avoids duplicate reconcile races.
 - Kill-switch: `PENUMBRA_EXTRA_WORKERS_ENABLED=0` disables the supervisor.
 
+## Devin CLI as a fleet agent
+
+Devin's CLI ships a Zed ACP integration (`devin acp` is a stdio JSON-RPC ACP server), so it slots into penumbra via the generic `stdio-acp` adapter — no new adapter kind. `penumbra init` seeds a `devin-acp` entry; to enable it elsewhere, add the same block to `~/.config/penumbra/agents.yaml`:
+
+```yaml
+- name: devin-acp
+  adapter: stdio-acp
+  options:
+    binary: devin
+    args: [acp]
+  roles: [executor, planner]
+```
+
+To enable:
+
+1. Install the Devin CLI separately (per Devin's docs).
+2. Authenticate via `devin auth login` OR export `WINDSURF_API_KEY` in the worker/daemon environment. The `stdio-acp` adapter inherits host env (it only scrubs `CLAUDE_*` keys), so the var passes through without an explicit `options.env` block.
+3. **Verify installation:** run `devin acp --help` (or `devin --version`) to confirm the binary and the `acp` subcommand are present before dispatching. A missing binary or missing `acp` subcommand produces a silent worker-fatal crash.
+4. Reload (`penumbra daemon_reload_config` or restart) and dispatch to `devin-acp`.
+
+**Known-unverified limitation:** whether `devin acp` can drive penumbra MCP tools (`task_complete`, commit-critical paths) over ACP is not yet validated live. Until confirmed, treat `devin-acp` as a text/plan seat — the seeded entry deliberately omits `maestro_capable: true`. Flip it on after a live verification run.
+
+### Promote devin-acp to maestro_capable
+
+Before flipping `maestro_capable: true`, run this checklist end-to-end:
+
+1. **Host-side install.** Confirm `devin` is installed and authenticated on the **worker host** (where penumbra workers run), not just a laptop. Run `devin acp --help` on that host to verify.
+2. **Plan/refine smoke test.** Dispatch a small `plan_refine` handoff to `devin-acp` and confirm it returns a usable ACP response (`chain_get_response` should be non-empty).
+3. **MCP tool-call gate (critical).** Dispatch an `implement_small` handoff that **requires** a penumbra MCP tool call — e.g., `task_complete` or committing a file. Confirm `devin acp` actually invokes the penumbra MCP tool and closes the loop. This is the blocking unknown: if Devin ACP emits text but cannot drive MCP tools, it stays a text/plan seat (same failure mode as the retired `codex-spark-acp` seat that emitted text but could not call `task_complete`).
+4. **Only if step 3 passes,** add `maestro_capable: true` to the `devin-acp` entry and run `penumbra daemon_reload_config`.
+
+**Model selection:** `devin acp` likely selects its model server-side — penumbra's `model` option may be ignored; confirm live before assuming a specific model is in use. Penumbra applies the stdio-acp request timeout (~20 min default) and evicts the warm-pool seat on a non-zero devin exit.
+
+**Concurrency:** add `options.warm_pool: true` and `options.warm_pool_size: N` to the config entry if concurrent devin dispatches are expected.
+
 ## Warm-pool sizing
 
 For `stdio-acp` agents with `options.warm_pool: true`, `options.warm_pool_size` controls how many warm ACP processes a worker may keep for one `(agent, repoRoot/cwd)` pool key. The default is `1`, preserving the historical single-slot behavior where a second concurrent acquire reports `warm_miss: "in_use"` and cold-starts. Set `warm_pool_size: 2` or higher only for high-traffic premium agents that see concurrent same-agent fan-out.
